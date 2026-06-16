@@ -28,8 +28,8 @@ from __future__ import annotations
 import asyncio
 import inspect
 
-from reyn.cli.commands import eval_benchmark
 from reyn.config import OnLimitConfig
+from reyn.interfaces.cli.commands import eval_benchmark
 from reyn.limits.limit_handler import handle_limit_exceeded
 
 

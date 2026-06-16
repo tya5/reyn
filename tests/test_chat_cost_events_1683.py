@@ -22,8 +22,10 @@ import litellm
 import pytest
 
 from reyn.events.events import EventLog, set_llm_request_event_log
+from reyn.interfaces.tui.widgets.right_panel.cost_tab import (
+    render_cost,  # #2 moved chat/tui → reyn/tui
+)
 from reyn.llm.llm import recorded_acompletion
-from reyn.tui.widgets.right_panel.cost_tab import render_cost  # #2 moved chat/tui → reyn/tui
 
 
 @pytest.fixture(autouse=True)

@@ -58,7 +58,7 @@ from reyn.chat.outbox import OutboxMessage
 from reyn.chat.session import ChatSession
 from reyn.chat.transport import ExternalRef
 from reyn.events.state_log import StateLog
-from reyn.web.deps import _wire_external_outbox_interceptor
+from reyn.interfaces.web.deps import _wire_external_outbox_interceptor
 
 
 def _make_session(tmp_path: Path) -> ChatSession:

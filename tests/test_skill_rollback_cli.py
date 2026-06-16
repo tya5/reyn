@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from reyn.cli.commands.skill import (
+from reyn.interfaces.cli.commands.skill import (
     _VERSIONS_DIR,
     _atomic_write,
     _collect_snapshots,

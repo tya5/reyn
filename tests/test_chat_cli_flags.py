@@ -14,7 +14,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from reyn.cli.commands.chat import _reset_project_state, register
+from reyn.interfaces.cli.commands.chat import _reset_project_state, register
 
 # ---------------------------------------------------------------------------
 # argparse

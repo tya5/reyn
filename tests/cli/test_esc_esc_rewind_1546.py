@@ -23,9 +23,9 @@ _SRC = Path(__file__).parent.parent.parent / "src"
 if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
-import reyn.tui.app as app_mod
-from reyn.tui.app import ReynTUIApp
-from reyn.tui.widgets import ConversationView, InputBar
+import reyn.interfaces.tui.app as app_mod
+from reyn.interfaces.tui.app import ReynTUIApp
+from reyn.interfaces.tui.widgets import ConversationView, InputBar
 
 
 @pytest.fixture(autouse=True)

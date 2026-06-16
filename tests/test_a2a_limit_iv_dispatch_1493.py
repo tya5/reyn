@@ -29,9 +29,9 @@ import pytest
 
 from reyn.chat.session import ChatSession
 from reyn.config import OnLimitConfig, SafetyConfig
+from reyn.interfaces.web.a2a_intervention import A2AInterventionBus
+from reyn.interfaces.web.run_registry import RunRegistry
 from reyn.user_intervention import InterventionAnswer, UserIntervention
-from reyn.web.a2a_intervention import A2AInterventionBus
-from reyn.web.run_registry import RunRegistry
 
 
 def _make_bus_and_registry(

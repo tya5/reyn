@@ -35,7 +35,7 @@ if str(_SRC) not in sys.path:
 
 def test_append_marks_height_dirty() -> None:
     """Tier 2: ``append()`` flips ``_height_dirty`` so the next flush scrolls."""
-    from reyn.tui.widgets.streaming_row import StreamingRow
+    from reyn.interfaces.tui.widgets.streaming_row import StreamingRow
 
     row = StreamingRow(prefix="")
     assert row.height_dirty is False
@@ -46,8 +46,8 @@ def test_append_marks_height_dirty() -> None:
 @pytest.mark.asyncio
 async def test_flush_render_calls_scroll_visible_once_per_append_cycle() -> None:
     """Tier 2: scroll_visible is invoked exactly once per append + flush."""
-    from reyn.tui.app import ReynTUIApp
-    from reyn.tui.widgets import ConversationView
+    from reyn.interfaces.tui.app import ReynTUIApp
+    from reyn.interfaces.tui.widgets import ConversationView
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -85,8 +85,8 @@ async def test_cursor_blink_alone_does_not_call_scroll_visible() -> None:
     must NOT set ``_height_dirty`` — the row's rendered height doesn't
     change when only the cursor character toggles.
     """
-    from reyn.tui.app import ReynTUIApp
-    from reyn.tui.widgets import ConversationView
+    from reyn.interfaces.tui.app import ReynTUIApp
+    from reyn.interfaces.tui.widgets import ConversationView
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -126,8 +126,8 @@ async def test_scroll_visible_exception_is_swallowed() -> None:
     test harnesses), the call may raise. The bare ``try / except``
     must let the static update path proceed.
     """
-    from reyn.tui.app import ReynTUIApp
-    from reyn.tui.widgets import ConversationView
+    from reyn.interfaces.tui.app import ReynTUIApp
+    from reyn.interfaces.tui.widgets import ConversationView
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:

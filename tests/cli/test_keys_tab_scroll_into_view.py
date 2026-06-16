@@ -27,10 +27,10 @@ _SRC = Path(__file__).parent.parent.parent / "src"
 if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
-from reyn.tui.app import ReynTUIApp
-from reyn.tui.widgets import RightPanel
-from reyn.tui.widgets.right_panel import keys_tab as _kt
-from reyn.tui.widgets.right_panel.keys_tab import (
+from reyn.interfaces.tui.app import ReynTUIApp
+from reyn.interfaces.tui.widgets import RightPanel
+from reyn.interfaces.tui.widgets.right_panel import keys_tab as _kt
+from reyn.interfaces.tui.widgets.right_panel.keys_tab import (
     get_keys_cursor,
     get_keys_expanded,
     render_keys,
@@ -143,7 +143,7 @@ async def test_keys_move_calls_scroll_into_view() -> None:
         )
 
         # Verify cursor also advanced.
-        from reyn.tui.widgets.right_panel.keys_tab import get_keys_cursor
+        from reyn.interfaces.tui.widgets.right_panel.keys_tab import get_keys_cursor
         assert get_keys_cursor() == 1, (
             f"_keys_move(+1) must advance cursor to 1; got {get_keys_cursor()}"
         )

@@ -22,7 +22,7 @@ if str(_SRC) not in sys.path:
 
 def _row():
     """Construct an unmounted SkillActivityRow for direct exercise."""
-    from reyn.tui.widgets.skill_activity import SkillActivityRow
+    from reyn.interfaces.tui.widgets.skill_activity import SkillActivityRow
     return SkillActivityRow(run_id="abc1efgh", skill_name="test_skill")
 
 

@@ -43,9 +43,9 @@ def _picker_text(picker) -> str:
 @pytest.mark.asyncio
 async def test_usage_renders_with_completions_present() -> None:
     """Tier 2: usage line surfaces when completions are also being shown."""
+    from reyn.interfaces.tui.app import ReynTUIApp
+    from reyn.interfaces.tui.widgets.slash_picker import SlashPicker
     from reyn.slash import SlashCommand
-    from reyn.tui.app import ReynTUIApp
-    from reyn.tui.widgets.slash_picker import SlashPicker
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -79,9 +79,9 @@ async def test_usage_renders_without_completions() -> None:
     path. /find with usage="/find <query>" on a bare ``/find ``
     typing surfaces the same usage line either way.
     """
+    from reyn.interfaces.tui.app import ReynTUIApp
+    from reyn.interfaces.tui.widgets.slash_picker import SlashPicker
     from reyn.slash import SlashCommand
-    from reyn.tui.app import ReynTUIApp
-    from reyn.tui.widgets.slash_picker import SlashPicker
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -106,9 +106,9 @@ async def test_usage_renders_without_completions() -> None:
 @pytest.mark.asyncio
 async def test_no_usage_field_omits_line() -> None:
     """Tier 2: command without ``cmd.usage`` keeps a clean 1-line hint."""
+    from reyn.interfaces.tui.app import ReynTUIApp
+    from reyn.interfaces.tui.widgets.slash_picker import SlashPicker
     from reyn.slash import SlashCommand
-    from reyn.tui.app import ReynTUIApp
-    from reyn.tui.widgets.slash_picker import SlashPicker
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -136,9 +136,9 @@ async def test_max_completions_plus_usage_fits_height_budget() -> None:
     combined render path doesn't blow past it. Counting newlines
     in the rendered text is the simplest proxy for visual rows.
     """
+    from reyn.interfaces.tui.app import ReynTUIApp
+    from reyn.interfaces.tui.widgets.slash_picker import SlashPicker
     from reyn.slash import SlashCommand
-    from reyn.tui.app import ReynTUIApp
-    from reyn.tui.widgets.slash_picker import SlashPicker
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:

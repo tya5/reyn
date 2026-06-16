@@ -104,7 +104,7 @@ def _line_client(monkeypatch):
         def exists(self, name):
             return name == "line_agent"
 
-    from reyn.web import deps
+    from reyn.interfaces.web import deps
     monkeypatch.setattr(deps, "_get_registry", lambda: _StubRegistry())
     monkeypatch.setattr(deps, "_registry", None, raising=False)
     monkeypatch.setenv("LINE_CHANNEL_SECRET", "channel-secret")

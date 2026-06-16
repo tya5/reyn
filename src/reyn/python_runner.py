@@ -130,7 +130,7 @@ class PythonRunner:
         executes under an OS sandbox (Seatbelt / Landlock / container) — the
         same model as ``sandboxed_exec``. The harness's Python-level
         restricted-builtins stay (defense-in-depth, both layers); any subprocess
-        the step spawns (incl. ``reyn.api.unsafe.shell``) is transitively
+        the step spawns (incl. ``reyn.interfaces.api.unsafe.shell``) is transitively
         contained. ``noop`` / ``None`` → today's direct (unsandboxed) subprocess.
         ``sandbox_policy`` (the agent/operator policy dict) supplies the OS caps;
         its ``timeout_seconds`` is overridden by this step's ``timeout``.

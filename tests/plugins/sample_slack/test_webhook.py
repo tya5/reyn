@@ -129,7 +129,7 @@ def _slack_client(monkeypatch):
         def exists(self, name):
             return name == "news_agent"
 
-    from reyn.web import deps
+    from reyn.interfaces.web import deps
     monkeypatch.setattr(deps, "_get_registry", lambda: _StubRegistry())
     monkeypatch.setattr(deps, "_registry", None, raising=False)
     monkeypatch.setenv("SLACK_SIGNING_SECRET", "test-secret")

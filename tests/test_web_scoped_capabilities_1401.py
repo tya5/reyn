@@ -26,16 +26,16 @@ from pathlib import Path
 
 import pytest
 
-from reyn.cli.commands.web import _apply_cli_scoped_overrides
-from reyn.security.permissions.permissions import PermissionDecl
-from reyn.security.sandbox.policy import SandboxPolicy
-from reyn.web import deps
-from reyn.web.deps import (
+from reyn.interfaces.cli.commands.web import _apply_cli_scoped_overrides
+from reyn.interfaces.web import deps
+from reyn.interfaces.web.deps import (
     CliScopedOverrides,
     cli_scoped_overrides,
     get_cli_scoped_overrides,
     set_cli_scoped_overrides,
 )
+from reyn.security.permissions.permissions import PermissionDecl
+from reyn.security.sandbox.policy import SandboxPolicy
 
 _SRC = Path(__file__).resolve().parents[1] / "src" / "reyn"
 
@@ -119,7 +119,7 @@ def test_exclude_and_grant_thread_to_holder():
 
 
 def _deps_tree() -> ast.AST:
-    return ast.parse((_SRC / "web" / "deps.py").read_text(encoding="utf-8"))
+    return ast.parse((_SRC / "interfaces" / "web" / "deps.py").read_text(encoding="utf-8"))
 
 
 def _scoped_attr(value: ast.AST | None, attr: str) -> bool:

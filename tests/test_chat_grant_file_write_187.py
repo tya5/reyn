@@ -92,7 +92,7 @@ async def test_chat_no_grant_denies_in_repo_write() -> None:
 def test_chat_parser_exposes_grant_file_write_flag() -> None:
     """Tier 2: `reyn chat` registers --grant-file-write (dest=grant_file_write),
     default False — symmetric with `reyn run`."""
-    from reyn.cli.commands.chat import register
+    from reyn.interfaces.cli.commands.chat import register
 
     parser = argparse.ArgumentParser()
     sub = parser.add_subparsers()

@@ -511,7 +511,7 @@ def test_load_run_result_from_storage_raises_on_missing(tmp_path: Path) -> None:
 
 def _make_parser():
     """Build an argparse parser with the dogfood subcommand registered."""
-    from reyn.cli.commands import dogfood as dogfood_mod
+    from reyn.interfaces.cli.commands import dogfood as dogfood_mod
     parser = argparse.ArgumentParser(prog="reyn")
     sub = parser.add_subparsers(dest="command")
     dogfood_mod.register(sub)
@@ -596,7 +596,7 @@ def test_cli_report_prints_summary(tmp_path: Path, capsys: pytest.CaptureFixture
         )
     )
 
-    from reyn.cli.commands import dogfood as dogfood_mod
+    from reyn.interfaces.cli.commands import dogfood as dogfood_mod
     args = argparse.Namespace(
         run_id=str(storage_dir),
         output_json=False,
@@ -624,7 +624,7 @@ def test_cli_report_json_output(tmp_path: Path, capsys: pytest.CaptureFixture) -
         )
     )
 
-    from reyn.cli.commands import dogfood as dogfood_mod
+    from reyn.interfaces.cli.commands import dogfood as dogfood_mod
     args = argparse.Namespace(
         run_id=str(storage_dir),
         output_json=True,
@@ -654,7 +654,7 @@ def test_cli_compare_no_regression_exits_0(tmp_path: Path) -> None:
     asyncio.run(run_scenario_set(scenario_set, run_id="base", storage_dir=base_dir, runner_fn=_stub_runner("refuted")))
     asyncio.run(run_scenario_set(scenario_set, run_id="cand", storage_dir=cand_dir, runner_fn=_stub_runner("verified")))
 
-    from reyn.cli.commands import dogfood as dogfood_mod
+    from reyn.interfaces.cli.commands import dogfood as dogfood_mod
     args = argparse.Namespace(
         baseline_run_id=str(base_dir),
         candidate_run_id=str(cand_dir),
@@ -674,7 +674,7 @@ def test_cli_compare_regression_exits_1(tmp_path: Path) -> None:
     asyncio.run(run_scenario_set(scenario_set, run_id="base", storage_dir=base_dir, runner_fn=_stub_runner("verified")))
     asyncio.run(run_scenario_set(scenario_set, run_id="cand", storage_dir=cand_dir, runner_fn=_stub_runner("blocked")))
 
-    from reyn.cli.commands import dogfood as dogfood_mod
+    from reyn.interfaces.cli.commands import dogfood as dogfood_mod
     args = argparse.Namespace(
         baseline_run_id=str(base_dir),
         candidate_run_id=str(cand_dir),

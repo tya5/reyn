@@ -43,7 +43,7 @@ def test_mcp_routes_mounted() -> None:
     Mount is the most likely regression if the router file is renamed
     or its include is reordered.
     """
-    from reyn.web.server import app
+    from reyn.interfaces.web.server import app
 
     paths = {getattr(r, "path", None) for r in app.routes}
     assert "/mcp/sse" in paths, f"/mcp/sse missing from {paths}"
@@ -66,7 +66,7 @@ def test_mcp_messages_missing_session_id_returns_4xx() -> None:
     """
     from fastapi.testclient import TestClient
 
-    from reyn.web.server import app
+    from reyn.interfaces.web.server import app
 
     client = TestClient(app, raise_server_exceptions=False)
     response = client.post("/mcp/messages", json={"jsonrpc": "2.0", "id": 1, "method": "ping"})
@@ -87,7 +87,7 @@ def test_mcp_messages_invalid_session_id_returns_4xx() -> None:
     """
     from fastapi.testclient import TestClient
 
-    from reyn.web.server import app
+    from reyn.interfaces.web.server import app
 
     client = TestClient(app, raise_server_exceptions=False)
     response = client.post(

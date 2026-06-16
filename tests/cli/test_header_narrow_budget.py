@@ -44,7 +44,7 @@ _SRC = Path(__file__).parent.parent.parent / "src"
 if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
-from reyn.tui.widgets import ReynHeader  # noqa: E402
+from reyn.interfaces.tui.widgets import ReynHeader  # noqa: E402
 
 
 class _HeaderOnlyApp(App):

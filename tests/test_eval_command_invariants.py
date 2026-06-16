@@ -68,7 +68,7 @@ def _make_stub_run_case(pass_all: bool):
     The stub honours the 'expected' / 'input' fields from the case dict so
     the result records match what the real function would return.
     """
-    from reyn.cli.commands import eval as _eval_mod
+    from reyn.interfaces.cli.commands import eval as _eval_mod
 
     def _stub(case, skill, skill_root, model, session):
         expected = case.get("expected", {})
@@ -114,8 +114,8 @@ def eval_workspace(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.chdir(tmp_path)
 
     # Stub Session so we don't need a live reyn.yaml.
-    from reyn.cli import session as session_mod
     from reyn.config import ReynConfig, SafetyConfig
+    from reyn.interfaces.cli import session as session_mod
     from reyn.llm.model_resolver import ModelResolver
 
     class _StubSession:
@@ -149,7 +149,7 @@ def eval_workspace(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     # Stub resolve_skill_path: patch the underlying function that the CLI
     # skill_loader wrapper delegates to (_resolve_skill_path_raw) so that
     # sys.exit(1) is never triggered during tests.
-    from reyn.cli import skill_loader as sl_mod
+    from reyn.interfaces.cli import skill_loader as sl_mod
     monkeypatch.setattr(
         sl_mod,
         "_resolve_skill_path_raw",
@@ -177,7 +177,7 @@ def test_eval_run_executes_each_case(
     eval_workspace, monkeypatch: pytest.MonkeyPatch, capsys
 ) -> None:
     """Tier 2: 3-case dataset → 3 result records written to the results file."""
-    from reyn.cli.commands import eval as _eval_mod
+    from reyn.interfaces.cli.commands import eval as _eval_mod
 
     cases = [
         {"input": {"q": "a"}, "expected": {"answer": "a"}, "tags": ["smoke"]},
@@ -217,7 +217,7 @@ def test_eval_run_exact_mode_pass_fail(
     eval_workspace, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Tier 2: exact-mode compare — matching expected → pass, differing → fail."""
-    from reyn.cli.commands.eval import _compare
+    from reyn.interfaces.cli.commands.eval import _compare
 
     matching = {"summary": "hello"}
     differing = {"summary": "world"}
@@ -239,7 +239,7 @@ def test_eval_run_threshold_exit_code(
     eval_workspace, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Tier 2: pass rate below threshold → SystemExit(1) (CI gate)."""
-    from reyn.cli.commands import eval as _eval_mod
+    from reyn.interfaces.cli.commands import eval as _eval_mod
 
     cases = [
         {"input": {"q": "a"}, "expected": {"answer": "a"}, "tags": ["smoke"]},
@@ -268,7 +268,7 @@ def test_eval_run_workspace_isolation(tmp_path: Path) -> None:
     temp dir, not in the original project CWD. This is the core isolation
     invariant: eval runs never pollute the project's .reyn/.
     """
-    from reyn.cli.commands.eval import _isolated_workspace
+    from reyn.interfaces.cli.commands.eval import _isolated_workspace
 
     # Record initial CWD.
     original = Path.cwd()
@@ -306,7 +306,7 @@ def test_eval_report_lists_past_results(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys
 ) -> None:
     """Tier 2: eval report reads result files and lists them newest-first."""
-    from reyn.cli.commands import eval as _eval_mod
+    from reyn.interfaces.cli.commands import eval as _eval_mod
 
     # Set up result directory with two timestamped JSONL files.
     results_dir = tmp_path / ".reyn" / "eval-results" / "my_skill"
@@ -366,7 +366,7 @@ def test_eval_report_lists_past_results(
 
 def test_eval_run_parses() -> None:
     """Tier 2: 'eval run SKILL --dataset FILE' is a valid CLI invocation."""
-    from reyn.cli import build_parser
+    from reyn.interfaces.cli import build_parser
 
     parser = build_parser()
     args = parser.parse_args(["eval", "run", "my_skill", "--dataset", "golden.jsonl"])
@@ -379,7 +379,7 @@ def test_eval_run_parses() -> None:
 
 def test_eval_report_parses() -> None:
     """Tier 2: 'eval report SKILL' is a valid CLI invocation."""
-    from reyn.cli import build_parser
+    from reyn.interfaces.cli import build_parser
 
     parser = build_parser()
     args = parser.parse_args(["eval", "report", "my_skill"])
@@ -390,7 +390,7 @@ def test_eval_report_parses() -> None:
 
 def test_eval_spec_parses() -> None:
     """Tier 2: 'eval spec FILE' is a valid CLI invocation (legacy path preserved)."""
-    from reyn.cli import build_parser
+    from reyn.interfaces.cli import build_parser
 
     parser = build_parser()
     args = parser.parse_args(["eval", "spec", "reyn/local/my_app/eval.md"])

@@ -28,7 +28,7 @@ import asyncio
 from typing import Any
 
 from reyn.chat.outbox import OutboxMessage
-from reyn.tui.widgets.intervention import InterventionWidget
+from reyn.interfaces.tui.widgets.intervention import InterventionWidget
 from reyn.user_intervention import UserIntervention
 
 
@@ -169,7 +169,7 @@ def test_conversation_mount_intervention_accepts_detail() -> None:
     """
     import inspect
 
-    from reyn.tui.widgets.conversation import ConversationView
+    from reyn.interfaces.tui.widgets.conversation import ConversationView
     sig = inspect.signature(ConversationView.mount_intervention)
     assert "detail" in sig.parameters
     # Must be a keyword-only parameter with default None to avoid
@@ -186,7 +186,7 @@ def test_app_mount_intervention_accepts_detail() -> None:
     """
     import inspect
 
-    from reyn.tui.app import ReynTUIApp
+    from reyn.interfaces.tui.app import ReynTUIApp
     sig = inspect.signature(ReynTUIApp._mount_intervention)
     assert "detail" in sig.parameters
     param = sig.parameters["detail"]

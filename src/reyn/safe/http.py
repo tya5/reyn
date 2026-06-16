@@ -1,7 +1,7 @@
 """Safe-mode HTTP for stdlib skills.
 
 Exposes the same ``get`` / ``post`` / ``put`` / ``delete`` surface as
-``reyn.api.unsafe.http`` (= ``urllib.request``-backed, no extra deps),
+``reyn.interfaces.api.unsafe.http`` (= ``urllib.request``-backed, no extra deps),
 but in the ``reyn.safe.*`` namespace so safe-mode python steps can
 import it through the AST allowlist.
 
@@ -34,7 +34,7 @@ Return envelope
 
 All four methods return ``{status: int, body: str, headers: dict}``.
 HTTP error statuses (4xx / 5xx) are NOT raised — callers inspect
-``status``. Mirrors ``reyn.api.unsafe.http`` exactly.
+``status``. Mirrors ``reyn.interfaces.api.unsafe.http`` exactly.
 """
 from __future__ import annotations
 

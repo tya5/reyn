@@ -17,7 +17,7 @@ through manual run smoke (see PR description).
 """
 from __future__ import annotations
 
-from reyn.cli.commands.run import _parse_cli_input
+from reyn.interfaces.cli.commands.run import _parse_cli_input
 
 
 def test_bare_dict_wraps_with_default_type():

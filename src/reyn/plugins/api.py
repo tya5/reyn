@@ -27,7 +27,7 @@ versions; internal session APIs may change without notice.
   (= e.g. A2A's ``chain_id``, MCP's ``request_id``). Webhook plugins
   typically omit it; A2A/MCP convergence work is tracked separately.
 - ``registry`` defaults to the process-shared singleton from
-  ``reyn.web.deps``; tests pass a stub for isolation.
+  ``reyn.interfaces.web.deps``; tests pass a stub for isolation.
 """
 from __future__ import annotations
 
@@ -94,7 +94,7 @@ async def push_to_agent(
         When ``target_agent`` doesn't exist in the project registry.
     """
     if registry is None:
-        from reyn.web.deps import _get_registry
+        from reyn.interfaces.web.deps import _get_registry
         registry = _get_registry()
     session = await registry.ensure_running(target_agent)
     envelope: dict[str, Any] = {
@@ -124,10 +124,10 @@ def list_agents(*, registry: Any | None = None) -> list[str]:
     set of router_loop tasks.
 
     ``registry`` is optional for tests; production callers omit it and
-    the process-shared singleton from ``reyn.web.deps`` is used.
+    the process-shared singleton from ``reyn.interfaces.web.deps`` is used.
     """
     if registry is None:
-        from reyn.web.deps import _get_registry
+        from reyn.interfaces.web.deps import _get_registry
         registry = _get_registry()
     return registry.list_names()
 
@@ -145,7 +145,7 @@ def agent_exists(name: str, *, registry: Any | None = None) -> bool:
     """
     try:
         if registry is None:
-            from reyn.web.deps import _get_registry
+            from reyn.interfaces.web.deps import _get_registry
             registry = _get_registry()
         return registry.exists(name)
     except Exception:

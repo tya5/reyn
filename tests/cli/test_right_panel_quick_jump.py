@@ -53,7 +53,7 @@ _EXPECTED_BINDINGS = {
 
 def test_quick_jump_bindings_registered() -> None:
     """Tier 2: each Ctrl+N maps to its ``panel_jump_<name>`` action."""
-    from reyn.tui.app import ReynTUIApp
+    from reyn.interfaces.tui.app import ReynTUIApp
 
     binds = {(b.key, b.action) for b in ReynTUIApp.BINDINGS}
     for key, (action, _panel_type) in _EXPECTED_BINDINGS.items():
@@ -66,8 +66,8 @@ def test_quick_jump_bindings_registered() -> None:
 @pytest.mark.asyncio
 async def test_panel_jump_switches_to_target_tab() -> None:
     """Tier 2: each action sets the panel's active tab to its target."""
-    from reyn.tui.app import ReynTUIApp
-    from reyn.tui.widgets import RightPanel
+    from reyn.interfaces.tui.app import ReynTUIApp
+    from reyn.interfaces.tui.widgets import RightPanel
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -99,8 +99,8 @@ async def test_quick_jump_opens_hidden_panel() -> None:
     The "one keypress from anywhere" UX would be broken if the
     user had to Ctrl+B first.
     """
-    from reyn.tui.app import ReynTUIApp
-    from reyn.tui.widgets import RightPanel
+    from reyn.interfaces.tui.app import ReynTUIApp
+    from reyn.interfaces.tui.widgets import RightPanel
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -124,8 +124,8 @@ async def test_quick_jump_open_panel_does_not_re_toggle() -> None:
     side-effect (focus rescue / DOM mutation) shouldn't run when
     we just want a tab switch.
     """
-    from reyn.tui.app import ReynTUIApp
-    from reyn.tui.widgets import RightPanel
+    from reyn.interfaces.tui.app import ReynTUIApp
+    from reyn.interfaces.tui.widgets import RightPanel
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -146,7 +146,7 @@ async def test_quick_jump_open_panel_does_not_re_toggle() -> None:
 
 def test_keys_tab_groups_quick_jump_under_panel() -> None:
     """Tier 2: Ctrl+1 .. Ctrl+7 land in the PANEL group + pretty-print as ⌃N."""
-    from reyn.tui.widgets.right_panel.keys_tab import (
+    from reyn.interfaces.tui.widgets.right_panel.keys_tab import (
         _key_group_for,
         _pretty_key,
     )
@@ -162,8 +162,8 @@ def test_keys_tab_groups_quick_jump_under_panel() -> None:
 @pytest.mark.asyncio
 async def test_keys_tab_render_includes_quick_jump_descriptions() -> None:
     """Tier 2: rendered Keys tab markup surfaces the ⌃N quick-jump descriptions."""
-    from reyn.tui.app import ReynTUIApp
-    from reyn.tui.widgets.right_panel.keys_tab import render_keys
+    from reyn.interfaces.tui.app import ReynTUIApp
+    from reyn.interfaces.tui.widgets.right_panel.keys_tab import render_keys
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:

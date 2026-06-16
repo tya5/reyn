@@ -1499,7 +1499,7 @@ class RouterHostAdapter:
             return
 
         # --- Re-probe servers in parallel (shared helper from CLI) ---
-        from reyn.cli.commands.mcp import _probe_server_tools
+        from reyn.interfaces.cli.commands.mcp import _probe_server_tools
 
         async def _probe_all() -> dict[str, list[dict]]:
             tasks = [

@@ -6,7 +6,7 @@ GitHub), keyword-filters, and returns a candidate list.
 
 Per testing policy: no ``unittest.mock`` patches. HTTP I/O is replaced via
 ``monkeypatch.setattr`` with a real callable that returns scripted dicts
-shaped like the real ``reyn.api.unsafe.http.get`` response.
+shaped like the real ``reyn.interfaces.api.unsafe.http.get`` response.
 
 Invariants:
   - Keyword extraction is deterministic across language mixes.

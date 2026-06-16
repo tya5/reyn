@@ -1,4 +1,4 @@
-"""Tier 1: ``reyn.chainlit_app.intervention.build_intervention_prompt``.
+"""Tier 1: ``reyn.interfaces.chainlit_app.intervention.build_intervention_prompt``.
 
 The chainlit drain loop intercepts ``kind="intervention"`` outbox
 messages and feeds the meta payload to this helper before deciding
@@ -19,7 +19,7 @@ which ``cl.Ask*Message`` to send. Pins:
 """
 from __future__ import annotations
 
-from reyn.chainlit_app.intervention import (
+from reyn.interfaces.chainlit_app.intervention import (
     InterventionPrompt,
     _ChoiceSpec,
     build_intervention_prompt,

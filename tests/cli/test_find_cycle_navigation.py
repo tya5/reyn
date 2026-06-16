@@ -50,9 +50,9 @@ def _seed_lines(conv, lines: list[str]) -> None:
 async def test_cycle_find_forward_steps_through_matches() -> None:
     """Tier 2: Ctrl+G after /find moves to the next match in order."""
     from reyn.chat.outbox import OutboxMessage
-    from reyn.tui.app import ReynTUIApp
-    from reyn.tui.app_outbox import OutboxRouter
-    from reyn.tui.widgets import ConversationView
+    from reyn.interfaces.tui.app import ReynTUIApp
+    from reyn.interfaces.tui.app_outbox import OutboxRouter
+    from reyn.interfaces.tui.widgets import ConversationView
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -100,9 +100,9 @@ async def test_cycle_find_forward_steps_through_matches() -> None:
 async def test_cycle_find_forward_wraps_to_first() -> None:
     """Tier 2: Ctrl+G past the last match wraps back to the first."""
     from reyn.chat.outbox import OutboxMessage
-    from reyn.tui.app import ReynTUIApp
-    from reyn.tui.app_outbox import OutboxRouter
-    from reyn.tui.widgets import ConversationView
+    from reyn.interfaces.tui.app import ReynTUIApp
+    from reyn.interfaces.tui.app_outbox import OutboxRouter
+    from reyn.interfaces.tui.widgets import ConversationView
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -139,9 +139,9 @@ async def test_cycle_find_forward_wraps_to_first() -> None:
 async def test_cycle_find_backward_steps_and_wraps() -> None:
     """Tier 2: Ctrl+Shift+G steps backward and wraps from first → last."""
     from reyn.chat.outbox import OutboxMessage
-    from reyn.tui.app import ReynTUIApp
-    from reyn.tui.app_outbox import OutboxRouter
-    from reyn.tui.widgets import ConversationView
+    from reyn.interfaces.tui.app import ReynTUIApp
+    from reyn.interfaces.tui.app_outbox import OutboxRouter
+    from reyn.interfaces.tui.widgets import ConversationView
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -184,9 +184,9 @@ async def test_cycle_find_backward_steps_and_wraps() -> None:
 @pytest.mark.asyncio
 async def test_cycle_find_without_prior_query_shows_usage_hint() -> None:
     """Tier 2: Ctrl+G with no prior /find surfaces a usage hint."""
-    from reyn.tui.app import ReynTUIApp
-    from reyn.tui.app_outbox import OutboxRouter
-    from reyn.tui.widgets import ConversationView
+    from reyn.interfaces.tui.app import ReynTUIApp
+    from reyn.interfaces.tui.app_outbox import OutboxRouter
+    from reyn.interfaces.tui.widgets import ConversationView
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -213,9 +213,9 @@ async def test_cycle_find_handles_buffer_mutation_to_zero_matches() -> None:
     line. State is also cleared so a subsequent /find starts fresh.
     """
     from reyn.chat.outbox import OutboxMessage
-    from reyn.tui.app import ReynTUIApp
-    from reyn.tui.app_outbox import OutboxRouter
-    from reyn.tui.widgets import ConversationView
+    from reyn.interfaces.tui.app import ReynTUIApp
+    from reyn.interfaces.tui.app_outbox import OutboxRouter
+    from reyn.interfaces.tui.widgets import ConversationView
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -257,7 +257,7 @@ async def test_find_next_prev_bindings_registered() -> None:
     are the app-side entry points that delegate to the router's
     cycle state.
     """
-    from reyn.tui.app import ReynTUIApp
+    from reyn.interfaces.tui.app import ReynTUIApp
 
     binds = {(b.key, b.action) for b in ReynTUIApp.BINDINGS}
     assert ("ctrl+g", "find_next") in binds
@@ -273,7 +273,7 @@ async def test_action_find_next_safe_when_router_absent() -> None:
     binding still fires from the App's BINDINGS even with no
     backing router instance.
     """
-    from reyn.tui.app import ReynTUIApp
+    from reyn.interfaces.tui.app import ReynTUIApp
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -295,9 +295,9 @@ async def test_initial_find_seeds_cycle_state() -> None:
     ``(query, cursor_idx)`` where cursor_idx is the first match.
     """
     from reyn.chat.outbox import OutboxMessage
-    from reyn.tui.app import ReynTUIApp
-    from reyn.tui.app_outbox import OutboxRouter
-    from reyn.tui.widgets import ConversationView
+    from reyn.interfaces.tui.app import ReynTUIApp
+    from reyn.interfaces.tui.app_outbox import OutboxRouter
+    from reyn.interfaces.tui.widgets import ConversationView
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:

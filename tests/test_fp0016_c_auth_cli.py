@@ -16,7 +16,7 @@ from pathlib import Path
 
 import pytest
 
-from reyn.cli import build_parser
+from reyn.interfaces.cli import build_parser
 
 # ── helpers ────────────────────────────────────────────────────────────────────
 
@@ -75,7 +75,7 @@ def test_auth_list_empty_store(
     capsys: pytest.CaptureFixture,
 ) -> None:
     """Tier 2: run_list with empty store prints '(no OAuth tokens stored)'."""
-    from reyn.cli.commands.auth import run_list
+    from reyn.interfaces.cli.commands.auth import run_list
 
     # Point the OAuth token store to a non-existent file in tmp_path
     store = tmp_path / "oauth_tokens.json"
@@ -96,7 +96,7 @@ def test_auth_revoke_unknown_key_exits_1(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Tier 2: run_revoke on unknown key → SystemExit(1)."""
-    from reyn.cli.commands.auth import run_revoke
+    from reyn.interfaces.cli.commands.auth import run_revoke
 
     store = tmp_path / "oauth_tokens.json"
     monkeypatch.setenv("REYN_OAUTH_TOKENS_PATH", str(store))
@@ -120,8 +120,8 @@ def test_auth_login_unknown_provider_exits_1(
     load_config' call site inside run_login).
     """
     import reyn.config as _cfg_mod
-    from reyn.cli.commands.auth import run_login
     from reyn.config import AuthConfig, ReynConfig
+    from reyn.interfaces.cli.commands.auth import run_login
 
     # Patch load_config at the reyn.config module level.
     # run_login does `from reyn.config import load_config` on each call, so

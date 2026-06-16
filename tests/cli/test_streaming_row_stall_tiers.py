@@ -40,7 +40,7 @@ if str(_SRC) not in sys.path:
 
 def test_fmt_idle_under_60_returns_seconds() -> None:
     """Tier 2: ``_fmt_idle`` for sub-minute idle returns ``Ns``."""
-    from reyn.tui.widgets.streaming_row import _fmt_idle
+    from reyn.interfaces.tui.widgets.streaming_row import _fmt_idle
 
     assert _fmt_idle(0.0) == "0s"
     assert _fmt_idle(7.4) == "7s"
@@ -50,7 +50,7 @@ def test_fmt_idle_under_60_returns_seconds() -> None:
 
 def test_fmt_idle_minutes_returns_m_form() -> None:
     """Tier 2: ``_fmt_idle`` for ≥ 60s returns ``Nm`` (= minute granularity)."""
-    from reyn.tui.widgets.streaming_row import _fmt_idle
+    from reyn.interfaces.tui.widgets.streaming_row import _fmt_idle
 
     assert _fmt_idle(60.0) == "1m"
     assert _fmt_idle(89.5) == "1m"
@@ -60,7 +60,7 @@ def test_fmt_idle_minutes_returns_m_form() -> None:
 
 def test_fmt_idle_negative_clamps_to_zero() -> None:
     """Tier 2: negative idle (= clock skew) clamps to ``0s``."""
-    from reyn.tui.widgets.streaming_row import _fmt_idle
+    from reyn.interfaces.tui.widgets.streaming_row import _fmt_idle
 
     assert _fmt_idle(-3.0) == "0s"
     assert _fmt_idle(-100.0) == "0s"
@@ -69,8 +69,8 @@ def test_fmt_idle_negative_clamps_to_zero() -> None:
 @pytest.mark.asyncio
 async def test_idle_under_5s_shows_cursor_no_stall_text() -> None:
     """Tier 2: idle under tier 1 → live cursor, no stall cue text."""
-    from reyn.tui.app import ReynTUIApp
-    from reyn.tui.widgets import ConversationView
+    from reyn.interfaces.tui.app import ReynTUIApp
+    from reyn.interfaces.tui.widgets import ConversationView
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -91,8 +91,8 @@ async def test_idle_under_5s_shows_cursor_no_stall_text() -> None:
 @pytest.mark.asyncio
 async def test_tier1_dim_ellipsis_at_5s_to_30s() -> None:
     """Tier 2: 5s ≤ idle < 30s → dim " …" (= ambient pause)."""
-    from reyn.tui.app import ReynTUIApp
-    from reyn.tui.widgets import ConversationView
+    from reyn.interfaces.tui.app import ReynTUIApp
+    from reyn.interfaces.tui.widgets import ConversationView
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -111,8 +111,8 @@ async def test_tier1_dim_ellipsis_at_5s_to_30s() -> None:
 @pytest.mark.asyncio
 async def test_tier2_amber_stalled_at_30s_to_60s() -> None:
     """Tier 2: 30s ≤ idle < 60s → amber " … (stalled <fmt>)"."""
-    from reyn.tui.app import ReynTUIApp
-    from reyn.tui.widgets import ConversationView
+    from reyn.interfaces.tui.app import ReynTUIApp
+    from reyn.interfaces.tui.widgets import ConversationView
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -129,8 +129,8 @@ async def test_tier2_amber_stalled_at_30s_to_60s() -> None:
 @pytest.mark.asyncio
 async def test_tier3_red_no_token_at_60s_plus() -> None:
     """Tier 2: idle ≥ 60s → red " … (no token in <fmt>, Ctrl+C to cancel)"."""
-    from reyn.tui.app import ReynTUIApp
-    from reyn.tui.widgets import ConversationView
+    from reyn.interfaces.tui.app import ReynTUIApp
+    from reyn.interfaces.tui.widgets import ConversationView
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -147,8 +147,8 @@ async def test_tier3_red_no_token_at_60s_plus() -> None:
 @pytest.mark.asyncio
 async def test_tier3_long_idle_renders_minutes() -> None:
     """Tier 2: 5-minute idle renders ``5m`` not ``300s``."""
-    from reyn.tui.app import ReynTUIApp
-    from reyn.tui.widgets import ConversationView
+    from reyn.interfaces.tui.app import ReynTUIApp
+    from reyn.interfaces.tui.widgets import ConversationView
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -164,8 +164,8 @@ async def test_tier3_long_idle_renders_minutes() -> None:
 async def test_append_resets_stall_state() -> None:
     """Tier 2: a fresh ``append`` call resets ``_last_chunk_at`` so the
     next render returns to the cursor-blink tier."""
-    from reyn.tui.app import ReynTUIApp
-    from reyn.tui.widgets import ConversationView
+    from reyn.interfaces.tui.app import ReynTUIApp
+    from reyn.interfaces.tui.widgets import ConversationView
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -194,8 +194,8 @@ async def test_sealed_row_renders_no_stall_cue() -> None:
     text). Otherwise a slow-to-mount Markdown swap could leave a
     "stalled 5m" relic on a completed reply.
     """
-    from reyn.tui.app import ReynTUIApp
-    from reyn.tui.widgets import ConversationView
+    from reyn.interfaces.tui.app import ReynTUIApp
+    from reyn.interfaces.tui.widgets import ConversationView
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:

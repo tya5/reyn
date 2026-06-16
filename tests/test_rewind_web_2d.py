@@ -22,11 +22,11 @@ _SRC = Path(__file__).parent.parent / "src"
 if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
-from reyn.chainlit_app.slash_route import is_slash
 from reyn.chat.profile import AgentProfile
 from reyn.chat.registry import AgentRegistry
 from reyn.events.snapshot_generations import is_active_seq
 from reyn.events.state_log import StateLog
+from reyn.interfaces.chainlit_app.slash_route import is_slash
 from reyn.slash import REGISTRY
 
 

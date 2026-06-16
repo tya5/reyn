@@ -52,7 +52,7 @@ def _row(
     which falls back to 80 when not mounted.  We patch the size
     attribute to simulate narrow / wide terminals.
     """
-    from reyn.tui.widgets.skill_activity import SkillActivityRow
+    from reyn.interfaces.tui.widgets.skill_activity import SkillActivityRow
 
     return SkillActivityRow(run_id=run_id, skill_name=skill_name)
 

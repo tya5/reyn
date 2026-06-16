@@ -22,8 +22,8 @@ _SRC = Path(__file__).parent.parent.parent / "src"
 if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
-from reyn.tui import _palette
-from reyn.tui._palette import _BG_HEADER, _TEXT_BODY, css_variables
+from reyn.interfaces.tui import _palette
+from reyn.interfaces.tui._palette import _BG_HEADER, _TEXT_BODY, css_variables
 
 
 def test_css_variables_equal_their_source_tokens() -> None:
@@ -50,7 +50,7 @@ def test_css_variables_equal_their_source_tokens() -> None:
 @pytest.mark.asyncio
 async def test_app_injects_palette_css_variables() -> None:
     """Tier 2: the App's get_css_variables includes the reyn-* vars + Textual's."""
-    from reyn.tui.app import ReynTUIApp
+    from reyn.interfaces.tui.app import ReynTUIApp
 
     app = ReynTUIApp(
         registry=None, agent_name="t", model="m", budget_tracker=None,

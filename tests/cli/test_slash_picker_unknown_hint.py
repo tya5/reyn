@@ -48,8 +48,8 @@ def _picker_text(picker) -> str:
 @pytest.mark.asyncio
 async def test_set_unknown_hint_renders_unknown_row() -> None:
     """Tier 2: ``set_unknown_hint`` writes a row reading ``unknown /<typed>``."""
-    from reyn.tui.app import ReynTUIApp
-    from reyn.tui.widgets.slash_picker import SlashPicker
+    from reyn.interfaces.tui.app import ReynTUIApp
+    from reyn.interfaces.tui.widgets.slash_picker import SlashPicker
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -74,8 +74,8 @@ async def test_unknown_hint_does_not_set_visible_predicate() -> None:
     is the matches-only predicate; unknown-hint mode uses the
     ``hint-active`` CSS class for display gating.
     """
-    from reyn.tui.app import ReynTUIApp
-    from reyn.tui.widgets.slash_picker import SlashPicker
+    from reyn.interfaces.tui.app import ReynTUIApp
+    from reyn.interfaces.tui.widgets.slash_picker import SlashPicker
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -97,9 +97,9 @@ async def test_set_matches_clears_unknown_state() -> None:
     chars to ``/x`` (= multiple matches), the picker should swap to
     the match list. Pin that the unknown state doesn't leak.
     """
+    from reyn.interfaces.tui.app import ReynTUIApp
+    from reyn.interfaces.tui.widgets.slash_picker import SlashPicker
     from reyn.slash import SlashCommand
-    from reyn.tui.app import ReynTUIApp
-    from reyn.tui.widgets.slash_picker import SlashPicker
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -123,8 +123,8 @@ async def test_set_matches_clears_unknown_state() -> None:
 @pytest.mark.asyncio
 async def test_hide_clears_unknown_state() -> None:
     """Tier 2: ``hide()`` wipes unknown-hint state too."""
-    from reyn.tui.app import ReynTUIApp
-    from reyn.tui.widgets.slash_picker import SlashPicker
+    from reyn.interfaces.tui.app import ReynTUIApp
+    from reyn.interfaces.tui.widgets.slash_picker import SlashPicker
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -148,9 +148,9 @@ async def test_input_bar_typing_unknown_command_shows_hint() -> None:
     targets: before this change, ``/xxxx`` typed into the input
     would silently hide the picker.
     """
-    from reyn.tui.app import ReynTUIApp
-    from reyn.tui.widgets import InputBar
-    from reyn.tui.widgets.slash_picker import SlashPicker
+    from reyn.interfaces.tui.app import ReynTUIApp
+    from reyn.interfaces.tui.widgets import InputBar
+    from reyn.interfaces.tui.widgets.slash_picker import SlashPicker
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -177,9 +177,9 @@ async def test_input_bar_typing_unknown_command_shows_hint() -> None:
 @pytest.mark.asyncio
 async def test_input_bar_typing_known_prefix_does_not_show_unknown() -> None:
     """Tier 2: typing a known prefix shows matches, not the unknown hint."""
-    from reyn.tui.app import ReynTUIApp
-    from reyn.tui.widgets import InputBar
-    from reyn.tui.widgets.slash_picker import SlashPicker
+    from reyn.interfaces.tui.app import ReynTUIApp
+    from reyn.interfaces.tui.widgets import InputBar
+    from reyn.interfaces.tui.widgets.slash_picker import SlashPicker
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -206,9 +206,9 @@ async def test_empty_slash_token_does_not_show_unknown() -> None:
     command". Pin that the empty-token path skips the unknown
     branch entirely.
     """
-    from reyn.tui.app import ReynTUIApp
-    from reyn.tui.widgets import InputBar
-    from reyn.tui.widgets.slash_picker import SlashPicker
+    from reyn.interfaces.tui.app import ReynTUIApp
+    from reyn.interfaces.tui.widgets import InputBar
+    from reyn.interfaces.tui.widgets.slash_picker import SlashPicker
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:

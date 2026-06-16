@@ -57,7 +57,7 @@ def _make_bridge(*, captured_posts: list[tuple[str, dict]], events: EventLog | N
     given EventLog (or a fresh one). The bridge's _send is monkey-patched
     to capture posts so we don't need to mock ``post_webhook`` globally.
     """
-    from reyn.web.routers.a2a import _A2AProgressBridge
+    from reyn.interfaces.web.routers.a2a import _A2AProgressBridge
 
     class _FakeSession:
         def __init__(self, events: EventLog) -> None:
@@ -98,8 +98,8 @@ def test_a2a_progress_bridge_tracks_three_lifecycle_events() -> None:
     keeps the per-protocol bridges aligned so a future third-instance
     abstraction has a stable contract to lift.
     """
+    from reyn.interfaces.web.routers.a2a import _A2AProgressBridge
     from reyn.mcp_server import _MCPProgressBridge
-    from reyn.web.routers.a2a import _A2AProgressBridge
 
     assert _A2AProgressBridge.TRACKED_EVENTS == _MCPProgressBridge.TRACKED_EVENTS
     assert _A2AProgressBridge.TRACKED_EVENTS == frozenset({
@@ -203,7 +203,7 @@ def test_format_message_for_each_event_kind() -> None:
     text per event kind. Matches the MCP bridge's format so peer
     consumers can apply the same parser to both transports.
     """
-    from reyn.web.routers.a2a import _A2AProgressBridge
+    from reyn.interfaces.web.routers.a2a import _A2AProgressBridge
 
     assert _A2AProgressBridge.format_message(
         "phase_started", {"phase": "planning"},
@@ -235,16 +235,16 @@ def test_send_posts_canonical_progress_payload(monkeypatch) -> None:
     failed payloads (= ``run_id``, ``status``, ``agent_name``) are
     preserved → peer's payload parser can dispatch on ``status``.
     """
-    from reyn.web.routers.a2a import _A2AProgressBridge
+    from reyn.interfaces.web.routers.a2a import _A2AProgressBridge
 
     posted: list[tuple[str, dict]] = []
 
     async def _fake_post_webhook(url: str, payload: dict):  # noqa: ANN202
         posted.append((url, payload))
-        from reyn.web.notifications import DeliveryOutcome, DeliveryResult
+        from reyn.interfaces.web.notifications import DeliveryOutcome, DeliveryResult
         return DeliveryResult(outcome=DeliveryOutcome.SUCCESS)
 
-    import reyn.web.notifications as notifications_mod
+    import reyn.interfaces.web.notifications as notifications_mod
     monkeypatch.setattr(notifications_mod, "post_webhook", _fake_post_webhook)
 
     class _FakeSession:
@@ -276,12 +276,12 @@ def test_send_swallows_transport_errors(monkeypatch) -> None:
     None. Progress is best-effort; a single failed POST must not
     abort the agent's main call.
     """
-    from reyn.web.routers.a2a import _A2AProgressBridge
+    from reyn.interfaces.web.routers.a2a import _A2AProgressBridge
 
     async def _failing_post(url: str, payload: dict):  # noqa: ANN202
         raise RuntimeError("simulated transport failure")
 
-    import reyn.web.notifications as notifications_mod
+    import reyn.interfaces.web.notifications as notifications_mod
     monkeypatch.setattr(notifications_mod, "post_webhook", _failing_post)
 
     class _FakeSession:
@@ -348,7 +348,7 @@ def test_handle_async_mode_attaches_bridge_around_send_to_agent_impl() -> None:
 
     src_path = (
         Path(__file__).parent.parent
-        / "src" / "reyn" / "web" / "routers" / "a2a.py"
+        / "src" / "reyn" / "interfaces" / "web" / "routers" / "a2a.py"
     )
     tree = ast.parse(src_path.read_text(encoding="utf-8"))
 
@@ -389,7 +389,7 @@ def test_handle_async_mode_bridge_is_unconditional_after_gap1() -> None:
     """
     import inspect
 
-    from reyn.web.routers import a2a as a2a_router
+    from reyn.interfaces.web.routers import a2a as a2a_router
 
     src = inspect.getsource(a2a_router._handle_async_mode)
     # Bridge is constructed once — no `if webhook_url:` guard around

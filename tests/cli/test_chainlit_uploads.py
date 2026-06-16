@@ -1,4 +1,4 @@
-"""Tier 1: ``reyn.chainlit_app.uploads`` contract.
+"""Tier 1: ``reyn.interfaces.chainlit_app.uploads`` contract.
 
 Chainlit's attachment button drops files onto disk + hands a
 ``Message.elements`` list to ``@cl.on_message``. The uploads module
@@ -23,7 +23,7 @@ from pathlib import Path
 
 import pytest
 
-from reyn.chainlit_app.uploads import (
+from reyn.interfaces.chainlit_app.uploads import (
     _IMAGE_EXTENSIONS,
     build_image_block,
     collect_image_blocks,

@@ -1,6 +1,6 @@
 """Channel state tracking for outbound notification ack (issue #269).
 
-Pre-#269 the webhook fire path (= ``reyn.web.notifications.post_webhook``)
+Pre-#269 the webhook fire path (= ``reyn.interfaces.web.notifications.post_webhook``)
 was fire-and-forget: no HTTP 2xx check return value, no per-channel
 retry, no "is this channel still alive?" inference. That left the
 caller (= ``A2AInterventionBus.deliver``, ``_handle_async_mode._run``,
@@ -18,7 +18,7 @@ This module defines the **data model** + **inference helpers**:
     consecutive failure count, total attempt count, "is open"
     explicit register flag)
 
-Concrete senders live in ``reyn.web.notifications`` (= HTTP webhook)
+Concrete senders live in ``reyn.interfaces.web.notifications`` (= HTTP webhook)
 and channel-specific surfaces (= ``ChatSession`` listener for TUI,
 ``A2AInterventionBus.deliver`` for A2A peer). This module is the
 shared vocabulary.

@@ -2,7 +2,7 @@
 
 FP-0042 — `reyn.safe.*` is the documented public path for the helpers the
 allowlist (`src/reyn/kernel/_python_allowlist.py`) already grants safe-mode
-steps. Pre-FP-0042 the implementations lived under `reyn.api.safe.*`,
+steps. Pre-FP-0042 the implementations lived under `reyn.interfaces.api.safe.*`,
 which the allowlist does not match — closing that gap is the reason
 this package exists.
 
@@ -31,7 +31,7 @@ Available modules:
 - :mod:`reyn.safe.text` — named-group regex + safe templating.
 - :mod:`reyn.safe.time` — monotonic / wall clock helpers (ambient).
 
-Migration note: until FP-0042 Phase 3 lands, ``reyn.api.safe.*`` continues
+Migration note: until FP-0042 Phase 3 lands, ``reyn.interfaces.api.safe.*`` continues
 to work via shim re-exports from this package. New code should import from
 ``reyn.safe.*``; existing code may migrate at its own pace.
 """

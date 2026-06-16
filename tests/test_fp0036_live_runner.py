@@ -106,7 +106,7 @@ def _make_live_runner_fn(tmp_path: Path, *, agent_name: str = "default"):
     We import the function and monkey-patch the project_root discovery so
     the runner uses tmp_path instead of Path.cwd().
     """
-    from reyn.cli.commands.dogfood import _build_live_runner
+    from reyn.interfaces.cli.commands.dogfood import _build_live_runner
 
     # The live runner resolves project_root from cwd on construction.
     # monkeypatch.chdir(tmp_path) in the caller ensures this works.

@@ -1,6 +1,6 @@
 """Permission-gated file I/O for safe-mode python preprocessor / postprocessor steps.
 
-FP-0042 — replaces ``reyn.api.unsafe.file`` for stdlib (and any user skill
+FP-0042 — replaces ``reyn.interfaces.api.unsafe.file`` for stdlib (and any user skill
 that wants to opt into the Reyn permission model). Every file operation
 goes through the path-declaration check that the calling skill's
 ``skill.md`` opted into; reads / writes outside the declared paths raise
@@ -9,7 +9,7 @@ goes through the path-declaration check that the calling skill's
 Public surface
 --------------
 
-High-level (drop-in replacement for ``reyn.api.unsafe.file``):
+High-level (drop-in replacement for ``reyn.interfaces.api.unsafe.file``):
 
 - :func:`read(path, *, encoding="utf-8")` → str
 - :func:`write(path, content, *, encoding="utf-8")` → None
@@ -236,7 +236,7 @@ def _check_write(path: str) -> None:
         )
 
 
-# ── High-level API (drop-in for reyn.api.unsafe.file) ───────────────────────
+# ── High-level API (drop-in for reyn.interfaces.api.unsafe.file) ───────────────────────
 
 
 def read(path: str, *, encoding: str = "utf-8") -> str:

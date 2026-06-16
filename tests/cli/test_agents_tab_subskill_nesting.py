@@ -57,7 +57,7 @@ def _exec_entry(skill_name: str, parent_run_id: str = ""):
 @pytest.mark.asyncio
 async def test_running_skill_items_carry_parent_run_id_field(tmp_path):
     """Tier 2b: ``running_skill`` flat_items expose ``parent_run_id``."""
-    from reyn.tui.widgets.right_panel.agents_tab import render_agents
+    from reyn.interfaces.tui.widgets.right_panel.agents_tab import render_agents
 
     registry = _make_registry(tmp_path)
     exec_state = {"r-A": _exec_entry("root_skill", parent_run_id="")}
@@ -76,7 +76,7 @@ async def test_parent_emits_before_child_in_flat_items(tmp_path):
     Without it, cursor navigation could land on a child before its
     parent is even visible in the flat list.
     """
-    from reyn.tui.widgets.right_panel.agents_tab import render_agents
+    from reyn.interfaces.tui.widgets.right_panel.agents_tab import render_agents
 
     registry = _make_registry(tmp_path)
     # Insert child BEFORE parent in the dict to verify ordering is not
@@ -103,7 +103,7 @@ async def test_orphan_child_falls_back_to_root_render(tmp_path):
     The render must not crash and must still surface the child somewhere
     — falling back to root-row rendering is the contract.
     """
-    from reyn.tui.widgets.right_panel.agents_tab import render_agents
+    from reyn.interfaces.tui.widgets.right_panel.agents_tab import render_agents
 
     registry = _make_registry(tmp_path)
     exec_state = {
@@ -122,7 +122,7 @@ async def test_two_children_one_parent_all_emit(tmp_path):
     Pins that the topological pass doesn't accidentally drop siblings
     (= a "second child overwrites first" bug would corrupt navigation).
     """
-    from reyn.tui.widgets.right_panel.agents_tab import render_agents
+    from reyn.interfaces.tui.widgets.right_panel.agents_tab import render_agents
 
     registry = _make_registry(tmp_path)
     exec_state = {

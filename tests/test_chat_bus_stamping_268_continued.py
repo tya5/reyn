@@ -171,7 +171,7 @@ def test_tui_on_mount_registers_default_chat_channel_id_listener() -> None:
 
     AST grep keeps this aligned without booting a real TUI.
     """
-    from reyn.tui import app as tui_app
+    from reyn.interfaces.tui import app as tui_app
 
     src = inspect.getsource(tui_app)
     # ChatTUIApp.on_mount calls

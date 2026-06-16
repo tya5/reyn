@@ -35,13 +35,13 @@ import pytest
 
 pytest.importorskip("fastapi", reason="fastapi not installed ([web] extra missing)")
 
+from reyn.interfaces.web.a2a_intervention import A2AInterventionBus  # noqa: E402
+from reyn.interfaces.web.run_registry import RunRegistry  # noqa: E402
 from reyn.user_intervention import (  # noqa: E402
     InterventionAnswer,
     InterventionChoice,
     UserIntervention,
 )
-from reyn.web.a2a_intervention import A2AInterventionBus  # noqa: E402
-from reyn.web.run_registry import RunRegistry  # noqa: E402
 
 # ── 1. Webhook payload enrichment ─────────────────────────────────────
 
@@ -55,10 +55,10 @@ def test_webhook_payload_includes_kind_and_choices(monkeypatch) -> None:
 
     async def _fake_post_webhook(url: str, payload: dict):  # noqa: ANN202
         posted.append((url, payload))
-        from reyn.web.notifications import DeliveryOutcome, DeliveryResult
+        from reyn.interfaces.web.notifications import DeliveryOutcome, DeliveryResult
         return DeliveryResult(outcome=DeliveryOutcome.SUCCESS)
 
-    import reyn.web.notifications as notifications_mod
+    import reyn.interfaces.web.notifications as notifications_mod
 
     monkeypatch.setattr(notifications_mod, "post_webhook", _fake_post_webhook)
 
@@ -106,10 +106,10 @@ def test_webhook_payload_omits_detail_when_empty(monkeypatch) -> None:
 
     async def _fake_post_webhook(url: str, payload: dict):  # noqa: ANN202
         posted.append(payload)
-        from reyn.web.notifications import DeliveryOutcome, DeliveryResult
+        from reyn.interfaces.web.notifications import DeliveryOutcome, DeliveryResult
         return DeliveryResult(outcome=DeliveryOutcome.SUCCESS)
 
-    import reyn.web.notifications as notifications_mod
+    import reyn.interfaces.web.notifications as notifications_mod
 
     monkeypatch.setattr(notifications_mod, "post_webhook", _fake_post_webhook)
 
@@ -146,10 +146,10 @@ def test_webhook_payload_free_text_ask_user_has_empty_choices(monkeypatch) -> No
 
     async def _fake_post_webhook(url: str, payload: dict):  # noqa: ANN202
         posted.append(payload)
-        from reyn.web.notifications import DeliveryOutcome, DeliveryResult
+        from reyn.interfaces.web.notifications import DeliveryOutcome, DeliveryResult
         return DeliveryResult(outcome=DeliveryOutcome.SUCCESS)
 
-    import reyn.web.notifications as notifications_mod
+    import reyn.interfaces.web.notifications as notifications_mod
 
     monkeypatch.setattr(notifications_mod, "post_webhook", _fake_post_webhook)
 
@@ -214,7 +214,7 @@ def _run_answer_injection(*, params: dict, run_id: str) -> _FakeChatSession:
     """Drive ``_handle_answer_injection`` with a real RunRegistry and
     fake agent registry, return the captured FakeChatSession.
     """
-    from reyn.web.routers.a2a import _handle_answer_injection
+    from reyn.interfaces.web.routers.a2a import _handle_answer_injection
 
     run_registry = RunRegistry()
     # Inject a pre-existing RunEntry so the router can find the agent.

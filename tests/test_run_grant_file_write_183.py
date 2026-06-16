@@ -77,7 +77,7 @@ async def test_no_grant_denies_in_repo_write() -> None:
 def test_run_parser_exposes_grant_file_write_flag() -> None:
     """Tier 2: `reyn run` registers --grant-file-write (dest=grant_file_write),
     default False — the wiring that toggles the grant injection."""
-    from reyn.cli.commands.run import register
+    from reyn.interfaces.cli.commands.run import register
 
     parser = argparse.ArgumentParser()
     sub = parser.add_subparsers()

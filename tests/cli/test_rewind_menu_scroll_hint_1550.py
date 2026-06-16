@@ -22,10 +22,10 @@ _SRC = Path(__file__).parent.parent.parent / "src"
 if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
-from reyn.tui.app import ReynTUIApp
-from reyn.tui.widgets import ConversationView
-from reyn.tui.widgets.branch_tree import build_branch_tree_rows
-from reyn.tui.widgets.sticky_status import StickyStatus
+from reyn.interfaces.tui.app import ReynTUIApp
+from reyn.interfaces.tui.widgets import ConversationView
+from reyn.interfaces.tui.widgets.branch_tree import build_branch_tree_rows
+from reyn.interfaces.tui.widgets.sticky_status import StickyStatus
 
 
 def _make_app() -> ReynTUIApp:

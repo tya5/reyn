@@ -18,7 +18,7 @@ import sys
 
 import pytest
 
-from reyn.cli.commands.chainlit import register, run
+from reyn.interfaces.cli.commands.chainlit import register, run
 
 
 def _make_parser_with_chainlit() -> argparse.ArgumentParser:
@@ -76,7 +76,7 @@ def test_chainlit_missing_dependency_hint(monkeypatch, capsys):
 def test_chainlit_subcommand_registered_in_build_parser():
     """Tier 1: ``reyn chainlit`` is discoverable via the top-level parser
     (= chainlit module is wired into ``commands.__init__.ALL``)."""
-    from reyn.cli import build_parser
+    from reyn.interfaces.cli import build_parser
 
     parser = build_parser()
     args = parser.parse_args(["chainlit", "--port", "9999"])

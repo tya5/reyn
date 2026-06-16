@@ -37,8 +37,8 @@ async def test_a_key_on_agent_row_prefills_attach() -> None:
     """Tier 2: ``a`` on agent-label cursor → ``/attach <name>`` in InputBar."""
     from textual.widgets import TextArea
 
-    from reyn.tui.app import ReynTUIApp
-    from reyn.tui.widgets import RightPanel
+    from reyn.interfaces.tui.app import ReynTUIApp
+    from reyn.interfaces.tui.widgets import RightPanel
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -74,8 +74,8 @@ async def test_a_key_on_non_agent_row_is_silent_noop() -> None:
     """
     from textual.widgets import TextArea
 
-    from reyn.tui.app import ReynTUIApp
-    from reyn.tui.widgets import RightPanel
+    from reyn.interfaces.tui.app import ReynTUIApp
+    from reyn.interfaces.tui.widgets import RightPanel
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -104,8 +104,8 @@ async def test_a_key_on_empty_agents_tab_is_safe() -> None:
     """Tier 2b: empty flat_items → safe no-op (no IndexError) (regression)."""
     from textual.widgets import TextArea
 
-    from reyn.tui.app import ReynTUIApp
-    from reyn.tui.widgets import RightPanel
+    from reyn.interfaces.tui.app import ReynTUIApp
+    from reyn.interfaces.tui.widgets import RightPanel
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -129,10 +129,10 @@ def test_keys_tab_surfaces_a_attach_in_panel_group() -> None:
     """
     import asyncio
 
-    from reyn.tui.app import ReynTUIApp
+    from reyn.interfaces.tui.app import ReynTUIApp
 
     async def _grab_markup() -> str:
-        from reyn.tui.widgets.right_panel.keys_tab import render_keys
+        from reyn.interfaces.tui.widgets.right_panel.keys_tab import render_keys
         app = ReynTUIApp(
             registry=None, agent_name="t", model="m", budget_tracker=None,
         )

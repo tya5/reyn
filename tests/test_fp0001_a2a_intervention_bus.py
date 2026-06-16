@@ -39,9 +39,9 @@ import json
 import httpx
 import pytest
 
+from reyn.interfaces.web.a2a_intervention import A2AInterventionBus
+from reyn.interfaces.web.run_registry import RunEntry, RunRegistry
 from reyn.user_intervention import UserIntervention
-from reyn.web.a2a_intervention import A2AInterventionBus
-from reyn.web.run_registry import RunEntry, RunRegistry
 
 
 def _make_registry_with_run(
@@ -161,7 +161,7 @@ def test_on_dispatch_no_webhook_when_url_unset() -> None:
         return httpx.Response(200, json={})
 
     transport = httpx.MockTransport(_handler)
-    # Inject the transport via the reyn.web.notifications client
+    # Inject the transport via the reyn.interfaces.web.notifications client
     # factory — but the simplest pin is just: webhook_url=None should
     # skip post_webhook entirely without any transport setup.
 
@@ -187,10 +187,10 @@ def test_on_dispatch_posts_webhook_when_url_set(monkeypatch) -> None:
 
     async def _fake_post(url: str, payload: dict):  # noqa: ANN202
         posted.append((url, payload))
-        from reyn.web.notifications import DeliveryOutcome, DeliveryResult
+        from reyn.interfaces.web.notifications import DeliveryOutcome, DeliveryResult
         return DeliveryResult(outcome=DeliveryOutcome.SUCCESS)
 
-    import reyn.web.notifications as notifications_mod
+    import reyn.interfaces.web.notifications as notifications_mod
     monkeypatch.setattr(notifications_mod, "post_webhook", _fake_post)
 
     registry, run_id = _make_registry_with_run(
@@ -232,7 +232,7 @@ def test_on_dispatch_unknown_run_id_logs_warning_no_raise(caplog) -> None:
         # No raise expected.
         await bus.on_dispatch(iv)
 
-    with caplog.at_level(_logging.WARNING, logger="reyn.web.a2a_intervention"):
+    with caplog.at_level(_logging.WARNING, logger="reyn.interfaces.web.a2a_intervention"):
         asyncio.run(_drive())
 
     assert any(
@@ -249,7 +249,7 @@ def test_on_dispatch_webhook_failure_does_not_raise(monkeypatch) -> None:
     async def _failing_post(url: str, payload: dict):  # noqa: ANN202
         raise RuntimeError("simulated peer 500")
 
-    import reyn.web.notifications as notifications_mod
+    import reyn.interfaces.web.notifications as notifications_mod
     monkeypatch.setattr(notifications_mod, "post_webhook", _failing_post)
 
     registry, run_id = _make_registry_with_run(

@@ -47,8 +47,8 @@ if str(_SRC) not in sys.path:
 @pytest.mark.asyncio
 async def test_badge_offsets_populated_for_find_badge() -> None:
     """Tier 2: ``_format_status`` records the find badge's cell range."""
-    from reyn.tui.app import ReynTUIApp
-    from reyn.tui.widgets import ReynHeader
+    from reyn.interfaces.tui.app import ReynTUIApp
+    from reyn.interfaces.tui.widgets import ReynHeader
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -66,8 +66,8 @@ async def test_badge_offsets_populated_for_find_badge() -> None:
 @pytest.mark.asyncio
 async def test_badge_offsets_populated_for_pending_badge() -> None:
     """Tier 2: ``_format_status`` records the pending badge's cell range."""
-    from reyn.tui.app import ReynTUIApp
-    from reyn.tui.widgets import ReynHeader
+    from reyn.interfaces.tui.app import ReynTUIApp
+    from reyn.interfaces.tui.widgets import ReynHeader
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -83,8 +83,8 @@ async def test_badge_offsets_populated_for_pending_badge() -> None:
 @pytest.mark.asyncio
 async def test_badge_offsets_empty_when_no_badges() -> None:
     """Tier 2: cold-default state has no badge ranges (= nothing clickable)."""
-    from reyn.tui.app import ReynTUIApp
-    from reyn.tui.widgets import ReynHeader
+    from reyn.interfaces.tui.app import ReynTUIApp
+    from reyn.interfaces.tui.widgets import ReynHeader
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -99,8 +99,8 @@ async def test_badge_offsets_empty_when_no_badges() -> None:
 @pytest.mark.asyncio
 async def test_badge_at_x_returns_none_outside_text() -> None:
     """Tier 2: ``badge_at_x`` returns None for clicks outside text region."""
-    from reyn.tui.app import ReynTUIApp
-    from reyn.tui.widgets import ReynHeader
+    from reyn.interfaces.tui.app import ReynTUIApp
+    from reyn.interfaces.tui.widgets import ReynHeader
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -118,8 +118,8 @@ async def test_badge_at_x_hits_find_badge() -> None:
     """Tier 2: ``badge_at_x`` returns 'find' when clicked over the find badge."""
     from rich.cells import cell_len
 
-    from reyn.tui.app import ReynTUIApp
-    from reyn.tui.widgets import ReynHeader
+    from reyn.interfaces.tui.app import ReynTUIApp
+    from reyn.interfaces.tui.widgets import ReynHeader
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True, size=(120, 30)) as pilot:
@@ -150,9 +150,9 @@ async def test_click_on_find_badge_invokes_action_find_next() -> None:
     from textual import events as textual_events
 
     from reyn.chat.outbox import OutboxMessage
-    from reyn.tui.app import ReynTUIApp
-    from reyn.tui.app_outbox import OutboxRouter
-    from reyn.tui.widgets import ConversationView, ReynHeader
+    from reyn.interfaces.tui.app import ReynTUIApp
+    from reyn.interfaces.tui.app_outbox import OutboxRouter
+    from reyn.interfaces.tui.widgets import ConversationView, ReynHeader
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True, size=(120, 30)) as pilot:
@@ -198,8 +198,8 @@ async def test_click_on_pending_badge_opens_panel_to_pending_tab() -> None:
     from rich.cells import cell_len
     from textual import events as textual_events
 
-    from reyn.tui.app import ReynTUIApp
-    from reyn.tui.widgets import ReynHeader, RightPanel
+    from reyn.interfaces.tui.app import ReynTUIApp
+    from reyn.interfaces.tui.widgets import ReynHeader, RightPanel
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True, size=(120, 30)) as pilot:
@@ -234,8 +234,8 @@ async def test_click_outside_badge_is_silent_no_op() -> None:
     """Tier 2: click on non-badge text leaves state untouched."""
     from textual import events as textual_events
 
-    from reyn.tui.app import ReynTUIApp
-    from reyn.tui.widgets import ReynHeader
+    from reyn.interfaces.tui.app import ReynTUIApp
+    from reyn.interfaces.tui.widgets import ReynHeader
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True, size=(120, 30)) as pilot:

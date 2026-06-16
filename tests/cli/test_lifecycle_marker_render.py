@@ -34,9 +34,9 @@ if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
 from reyn.chat.outbox import OutboxMessage
-from reyn.tui.app import ReynTUIApp
-from reyn.tui.widgets import ConversationView
-from reyn.tui.widgets.conversation import (
+from reyn.interfaces.tui.app import ReynTUIApp
+from reyn.interfaces.tui.widgets import ConversationView
+from reyn.interfaces.tui.widgets.conversation import (
     _DASH_TOTAL,
     _is_lifecycle_marker,
     _render_lifecycle_marker,

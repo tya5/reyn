@@ -23,13 +23,13 @@ import sys
 from pathlib import Path
 
 _CHAT_PY = (
-    Path(__file__).resolve().parent.parent / "src" / "reyn" / "cli" / "commands" / "chat.py"
+    Path(__file__).resolve().parent.parent / "src" / "reyn" / "interfaces" / "cli" / "commands" / "chat.py"
 )
 _RUNNER = Path(__file__).resolve().parent.parent / "scripts" / "swe_bench_runner.py"
 
 
 def _run_once_parser() -> argparse.ArgumentParser:
-    from reyn.cli.commands import run_once
+    from reyn.interfaces.cli.commands import run_once
 
     p = argparse.ArgumentParser()
     run_once.register(p.add_subparsers())
@@ -70,9 +70,9 @@ def test_run_once_default_iterations_exceeds_interactive_chat() -> None:
 
 def test_run_once_delegates_to_chat_run() -> None:
     """Tier 2: run-once is a thin delegate to chat.run (shared construction)."""
-    from reyn.cli.commands import chat, run_once
+    from reyn.interfaces.cli.commands import chat, run_once
 
-    assert run_once.run.__module__ == "reyn.cli.commands.run_once"
+    assert run_once.run.__module__ == "reyn.interfaces.cli.commands.run_once"
     # the delegate calls chat.run (same construction path, only the drive differs)
     assert "chat" in run_once.run.__doc__.lower() or chat.run is not None
 
@@ -88,7 +88,7 @@ def test_one_shot_delivers_whole_stdin_as_one_message() -> None:
     import asyncio
     import io
 
-    from reyn.cli.commands import chat
+    from reyn.interfaces.cli.commands import chat
 
     multi_line = "This repo @ <commit> has this issue:\n## Issue\nline A\nline B\n"
     captured: dict = {}
@@ -125,7 +125,7 @@ def test_run_once_propagates_limit_stopped_for_nonzero_exit() -> None:
     import asyncio
     import io
 
-    from reyn.cli.commands import chat
+    from reyn.interfaces.cli.commands import chat
 
     async def _send_limit(registry, *, agent_name, message, timeout):
         return {
@@ -257,7 +257,7 @@ def test_interactive_chat_is_not_fresh_and_loads_history() -> None:
     session-isolation fix did NOT regress interactive chat's history continuity."""
     import argparse
 
-    from reyn.cli.commands import chat
+    from reyn.interfaces.cli.commands import chat
 
     p = argparse.ArgumentParser()
     chat.register(p.add_subparsers())

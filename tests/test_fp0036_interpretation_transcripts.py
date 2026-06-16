@@ -324,7 +324,7 @@ def test_cli_run_argparse_has_with_interpretation_flag() -> None:
     """Tier 1: 'reyn dogfood run' exposes --with-interpretation + model override."""
     import argparse
 
-    from reyn.cli.commands.dogfood import register
+    from reyn.interfaces.cli.commands.dogfood import register
 
     parser = argparse.ArgumentParser()
     sub = parser.add_subparsers(dest="cmd")
@@ -343,7 +343,7 @@ def test_cli_publish_argparse_has_with_transcripts_flag() -> None:
     """Tier 1: 'reyn dogfood publish' exposes --with-transcripts + --scenario-set."""
     import argparse
 
-    from reyn.cli.commands.dogfood import register
+    from reyn.interfaces.cli.commands.dogfood import register
 
     parser = argparse.ArgumentParser()
     sub = parser.add_subparsers(dest="cmd")

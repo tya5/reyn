@@ -24,7 +24,7 @@ if str(_SRC) not in sys.path:
 
 
 def _hint() -> str:
-    from reyn.tui.widgets.input_bar import InputBar
+    from reyn.interfaces.tui.widgets.input_bar import InputBar
     # ``_build_hint`` is a pure render that doesn't read any state — call
     # it on a bare instance without going through Textual mount lifecycle.
     bar = InputBar.__new__(InputBar)

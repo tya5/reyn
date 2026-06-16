@@ -25,7 +25,7 @@ import io
 
 import pytest
 
-from reyn.cli import build_parser
+from reyn.interfaces.cli import build_parser
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -132,7 +132,7 @@ def test_cron_list_no_jobs_prints_empty_message(
 ) -> None:
     """Tier 2: run_list with no cron block prints '(no jobs configured)'."""
     import reyn.config as _cfg_mod
-    from reyn.cli.commands.cron import run_list
+    from reyn.interfaces.cli.commands.cron import run_list
 
     cfg = _make_cron_config(jobs=[])
     monkeypatch.setattr(_cfg_mod, "load_config", lambda cwd=None: cfg)
@@ -170,7 +170,7 @@ def test_cron_list_two_jobs_prints_both_rows(
 ) -> None:
     """Tier 2: run_list with 2 jobs prints a row for each job name."""
     import reyn.config as _cfg_mod
-    from reyn.cli.commands.cron import run_list
+    from reyn.interfaces.cli.commands.cron import run_list
 
     cfg = _make_cron_config(jobs=_SAMPLE_JOBS)
     monkeypatch.setattr(_cfg_mod, "load_config", lambda cwd=None: cfg)
@@ -199,7 +199,7 @@ def test_cron_list_shows_header_columns(
     ``feedback_contract_reversal_rewrites_tests``.
     """
     import reyn.config as _cfg_mod
-    from reyn.cli.commands.cron import run_list
+    from reyn.interfaces.cli.commands.cron import run_list
 
     cfg = _make_cron_config(jobs=_SAMPLE_JOBS)
     monkeypatch.setattr(_cfg_mod, "load_config", lambda cwd=None: cfg)
@@ -222,7 +222,7 @@ def test_cron_list_shows_next_run_for_valid_schedules(
 ) -> None:
     """Tier 2: run_list shows a non-'-' next_run_at value for a valid cron expression."""
     import reyn.config as _cfg_mod
-    from reyn.cli.commands.cron import run_list
+    from reyn.interfaces.cli.commands.cron import run_list
 
     cfg = _make_cron_config(jobs=[_SAMPLE_JOBS[0]])
     monkeypatch.setattr(_cfg_mod, "load_config", lambda cwd=None: cfg)
@@ -252,7 +252,7 @@ def test_cron_list_shows_dash_for_invalid_schedule(
 ) -> None:
     """Tier 2: run_list shows '-' for next_run_at when schedule expression is invalid."""
     import reyn.config as _cfg_mod
-    from reyn.cli.commands.cron import run_list
+    from reyn.interfaces.cli.commands.cron import run_list
 
     cfg = _make_cron_config(jobs=[{
         "name": "bad_job",
@@ -284,7 +284,7 @@ def test_cron_status_shows_last_run_columns(
 ) -> None:
     """Tier 2: run_status output contains LAST RUN AT, LAST STATUS, LAST ERROR columns."""
     import reyn.config as _cfg_mod
-    from reyn.cli.commands.cron import run_status
+    from reyn.interfaces.cli.commands.cron import run_status
 
     cfg = _make_cron_config(jobs=_SAMPLE_JOBS)
     monkeypatch.setattr(_cfg_mod, "load_config", lambda cwd=None: cfg)
@@ -302,7 +302,7 @@ def test_cron_status_last_run_empty_standalone(
 ) -> None:
     """Tier 2: run_status in standalone mode shows '-' for last_run_* fields (no persist)."""
     import reyn.config as _cfg_mod
-    from reyn.cli.commands.cron import run_status
+    from reyn.interfaces.cli.commands.cron import run_status
 
     cfg = _make_cron_config(jobs=[_SAMPLE_JOBS[0]])
     monkeypatch.setattr(_cfg_mod, "load_config", lambda cwd=None: cfg)
@@ -332,7 +332,7 @@ def test_cron_list_enabled_flag_shown(
 ) -> None:
     """Tier 2: run_list shows 'true'/'false' for enabled field correctly."""
     import reyn.config as _cfg_mod
-    from reyn.cli.commands.cron import run_list
+    from reyn.interfaces.cli.commands.cron import run_list
 
     cfg = _make_cron_config(jobs=[
         {"name": "enabled_job", "skill": "sk1", "schedule": "0 * * * *", "enabled": True},

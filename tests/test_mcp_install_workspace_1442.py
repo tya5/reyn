@@ -23,8 +23,8 @@ from pathlib import Path
 
 import pytest
 
-from reyn.cli.commands.mcp import _resolve_install_project_root, register
 from reyn.events.events import EventLog
+from reyn.interfaces.cli.commands.mcp import _resolve_install_project_root, register
 from reyn.op_runtime.mcp_install import _resolve_write_root
 from reyn.tools.mcp_verbs import (
     _handle_mcp_install_package,

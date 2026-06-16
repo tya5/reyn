@@ -15,7 +15,7 @@ import re
 import pytest
 from rich.cells import cell_len
 
-from reyn.tui.widgets.conversation import (
+from reyn.interfaces.tui.widgets.conversation import (
     _GLYPH_AGENT,
     _GLYPH_SYSTEM,
     _GLYPH_USER,

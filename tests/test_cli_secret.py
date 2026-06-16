@@ -17,7 +17,7 @@ from pathlib import Path
 
 import pytest
 
-from reyn.cli.commands.secret import (
+from reyn.interfaces.cli.commands.secret import (
     _get_audit_log,
     _parse_key_value,
     register,

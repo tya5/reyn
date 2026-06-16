@@ -72,8 +72,8 @@ def benchmark_workspace(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.chdir(tmp_path)
 
     # Stub Session
-    from reyn.cli import session as session_mod
     from reyn.config import ReynConfig, SafetyConfig
+    from reyn.interfaces.cli import session as session_mod
     from reyn.llm.model_resolver import ModelResolver
 
     class _StubSession:
@@ -101,7 +101,7 @@ def benchmark_workspace(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(compiler_mod, "load_dsl_skill", lambda *a, **kw: sentinel_skill)
 
     # Stub resolve_skill_path
-    from reyn.cli import skill_loader as sl_mod
+    from reyn.interfaces.cli import skill_loader as sl_mod
     monkeypatch.setattr(
         sl_mod,
         "_resolve_skill_path_raw",
@@ -125,7 +125,7 @@ def benchmark_workspace(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
 
 def test_benchmark_parses() -> None:
     """Tier 2: 'eval benchmark SKILL --tasks FILE --output DIR' parses all flags."""
-    from reyn.cli import build_parser
+    from reyn.interfaces.cli import build_parser
 
     parser = build_parser()
     args = parser.parse_args([
@@ -156,7 +156,7 @@ def test_benchmark_parses_allow_flags() -> None:
     skills like ``swe_bench`` that declare ``permissions.shell: true``
     can't actually execute shell ops in batch mode.
     """
-    from reyn.cli import build_parser
+    from reyn.interfaces.cli import build_parser
 
     parser = build_parser()
     args = parser.parse_args([
@@ -170,7 +170,7 @@ def test_benchmark_parses_allow_flags() -> None:
 
 def test_benchmark_parses_legacy_unsafe_python_alias() -> None:
     """Tier 2: legacy '--allow-untrusted-python' alias still parses (parity with reyn run)."""
-    from reyn.cli import build_parser
+    from reyn.interfaces.cli import build_parser
 
     parser = build_parser()
     args = parser.parse_args([
@@ -187,7 +187,7 @@ def test_benchmark_parses_legacy_unsafe_python_alias() -> None:
 
 def test_load_tasks_valid(tmp_path: Path) -> None:
     """Tier 2: valid JSONL with 3 task objects → 3 dicts returned."""
-    from reyn.cli.commands.eval_benchmark import load_tasks
+    from reyn.interfaces.cli.commands.eval_benchmark import load_tasks
 
     tasks = [
         {"instance_id": "t1", "input": "a"},
@@ -209,7 +209,7 @@ def test_load_tasks_valid(tmp_path: Path) -> None:
 
 def test_load_tasks_malformed(tmp_path: Path, capsys) -> None:
     """Tier 2: malformed JSON line → SystemExit(1); message includes line number."""
-    from reyn.cli.commands.eval_benchmark import load_tasks
+    from reyn.interfaces.cli.commands.eval_benchmark import load_tasks
 
     content = '{"ok": 1}\nnot-valid-json\n{"ok": 3}\n'
     p = tmp_path / "bad.jsonl"
@@ -228,7 +228,7 @@ def test_load_tasks_malformed(tmp_path: Path, capsys) -> None:
 
 def test_load_tasks_trailing_newline(tmp_path: Path) -> None:
     """Tier 2: JSONL file with trailing blank line is parsed without error."""
-    from reyn.cli.commands.eval_benchmark import load_tasks
+    from reyn.interfaces.cli.commands.eval_benchmark import load_tasks
 
     content = '{"instance_id": "t1"}\n{"instance_id": "t2"}\n\n'
     p = tmp_path / "trailing.jsonl"
@@ -244,7 +244,7 @@ def test_load_tasks_trailing_newline(tmp_path: Path) -> None:
 
 def test_summary_json_shape(tmp_path: Path) -> None:
     """Tier 2: _write_summary writes all required top-level fields."""
-    from reyn.cli.commands.eval_benchmark import _write_summary
+    from reyn.interfaces.cli.commands.eval_benchmark import _write_summary
 
     run_dir = tmp_path / "run_20260527_120000"
     run_dir.mkdir()
@@ -280,7 +280,7 @@ def test_summary_json_shape(tmp_path: Path) -> None:
 
 def test_summary_json_pass_rate_null(tmp_path: Path) -> None:
     """Tier 2: pass_rate is null when no result has a tests_passed field."""
-    from reyn.cli.commands.eval_benchmark import _write_summary
+    from reyn.interfaces.cli.commands.eval_benchmark import _write_summary
 
     run_dir = tmp_path / "run_null"
     run_dir.mkdir()
@@ -301,7 +301,7 @@ def test_summary_json_pass_rate_null(tmp_path: Path) -> None:
 
 def test_summary_json_has_tests_passed(tmp_path: Path) -> None:
     """Tier 2: pass_rate is computed correctly when tests_passed is present."""
-    from reyn.cli.commands.eval_benchmark import _write_summary
+    from reyn.interfaces.cli.commands.eval_benchmark import _write_summary
 
     run_dir = tmp_path / "run_tp"
     run_dir.mkdir()
@@ -323,7 +323,7 @@ def test_summary_json_has_tests_passed(tmp_path: Path) -> None:
 
 def test_resume_skips_completed(tmp_path: Path) -> None:
     """Tier 2: _load_completed_ids + _find_latest_run_dir skip already-done instances."""
-    from reyn.cli.commands.eval_benchmark import (
+    from reyn.interfaces.cli.commands.eval_benchmark import (
         _find_latest_run_dir,
         _load_completed_ids,
     )
@@ -358,7 +358,7 @@ def test_resume_skips_completed(tmp_path: Path) -> None:
 
 def test_limit_applied_after_resume(tmp_path: Path) -> None:
     """Tier 2: --limit N caps to N remaining tasks (after skip_ids removed)."""
-    from reyn.cli.commands.eval_benchmark import _instance_id
+    from reyn.interfaces.cli.commands.eval_benchmark import _instance_id
 
     all_tasks = [{"instance_id": f"t{i}"} for i in range(10)]
     skip_ids = {"t0", "t1", "t2"}
@@ -415,7 +415,7 @@ def test_single_task_failure_no_abort(
     benchmark_workspace, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """Tier 2: one task raising an exception is recorded as error; others complete."""
-    from reyn.cli.commands import eval_benchmark as bm
+    from reyn.interfaces.cli.commands import eval_benchmark as bm
 
     call_count = 0
 
@@ -477,7 +477,7 @@ def test_single_task_failure_no_abort(
 
 def test_benchmark_parses_clone_task_repo_flag() -> None:
     """Tier 2: '--clone-task-repo' parses to truthy on args (FP-0008 PR-E)."""
-    from reyn.cli import build_parser
+    from reyn.interfaces.cli import build_parser
 
     parser = build_parser()
     args = parser.parse_args([
@@ -491,7 +491,7 @@ def test_benchmark_parses_clone_task_repo_flag() -> None:
 
 def test_benchmark_clone_task_repo_default_off() -> None:
     """Tier 2: '--clone-task-repo' is OFF by default (= preserves generic batch)."""
-    from reyn.cli import build_parser
+    from reyn.interfaces.cli import build_parser
 
     parser = build_parser()
     args = parser.parse_args([
@@ -511,7 +511,7 @@ def test_clone_task_repo_propagates_to_single_task(
     receives clone_task_repo=True; the inverse case (= absent flag) gets
     False (= default-off preserves generic batch behaviour).
     """
-    from reyn.cli.commands import eval_benchmark as bm
+    from reyn.interfaces.cli.commands import eval_benchmark as bm
 
     captured: dict[str, object] = {}
 
@@ -565,7 +565,7 @@ def test_workspace_no_clone_when_flag_off(tmp_path: Path) -> None:
     batch runner contract (= no SWE-bench-specific I/O for non-SWE
     tasks).
     """
-    from reyn.cli.commands.eval_benchmark import _benchmark_isolated_workspace
+    from reyn.interfaces.cli.commands.eval_benchmark import _benchmark_isolated_workspace
 
     task = {"data": {"repo": "any/repo", "base_commit": "deadbeef"}}
     with _benchmark_isolated_workspace(task=task, clone_task_repo=False) as ws:
@@ -575,7 +575,7 @@ def test_workspace_no_clone_when_flag_off(tmp_path: Path) -> None:
 
 def test_workspace_no_clone_when_task_missing_fields(tmp_path: Path) -> None:
     """Tier 2: clone_task_repo=True + task lacks repo/base_commit → no clone, clean degrade."""
-    from reyn.cli.commands.eval_benchmark import _benchmark_isolated_workspace
+    from reyn.interfaces.cli.commands.eval_benchmark import _benchmark_isolated_workspace
 
     task = {"data": {"instance_id": "t1"}}  # no repo / base_commit
     with _benchmark_isolated_workspace(task=task, clone_task_repo=True) as ws:
@@ -619,7 +619,7 @@ def test_workspace_clone_from_local_file_url(tmp_path: Path) -> None:
     ).stdout.strip()
 
     # Monkeypatch _init_workspace_from_repo to use file:// URL
-    from reyn.cli.commands import eval_benchmark as bm
+    from reyn.interfaces.cli.commands import eval_benchmark as bm
 
     real_init = bm._init_workspace_from_repo
 
@@ -664,13 +664,13 @@ def test_workspace_clone_failure_is_silent(
     import logging
     import subprocess
 
-    from reyn.cli.commands import eval_benchmark as bm
+    from reyn.interfaces.cli.commands import eval_benchmark as bm
 
     def _failing_subprocess_run(*args, **kwargs):
         raise subprocess.CalledProcessError(returncode=128, cmd=args[0])
 
     monkeypatch.setattr(
-        "reyn.cli.commands.eval_benchmark.subprocess.run",
+        "reyn.interfaces.cli.commands.eval_benchmark.subprocess.run",
         _failing_subprocess_run,
         raising=False,
     )

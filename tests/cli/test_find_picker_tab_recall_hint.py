@@ -58,9 +58,9 @@ def _clear_find_history() -> None:
 @pytest.mark.asyncio
 async def test_find_hint_shows_tab_recall_footer_when_history_nonempty() -> None:
     """Tier 2: /find hint shows Tab-recall footer when history is non-empty."""
+    from reyn.interfaces.tui.app import ReynTUIApp
+    from reyn.interfaces.tui.widgets.slash_picker import SlashPicker
     from reyn.slash import REGISTRY
-    from reyn.tui.app import ReynTUIApp
-    from reyn.tui.widgets.slash_picker import SlashPicker
 
     _clear_find_history()
     _seed_find_history("myquery")
@@ -89,9 +89,9 @@ async def test_find_hint_shows_tab_recall_footer_when_history_nonempty() -> None
 @pytest.mark.asyncio
 async def test_find_hint_omits_tab_recall_footer_when_history_empty() -> None:
     """Tier 2: /find hint omits Tab-recall footer when history is empty."""
+    from reyn.interfaces.tui.app import ReynTUIApp
+    from reyn.interfaces.tui.widgets.slash_picker import SlashPicker
     from reyn.slash import REGISTRY
-    from reyn.tui.app import ReynTUIApp
-    from reyn.tui.widgets.slash_picker import SlashPicker
 
     _clear_find_history()
 
@@ -116,9 +116,9 @@ async def test_find_hint_omits_tab_recall_footer_when_history_empty() -> None:
 @pytest.mark.asyncio
 async def test_command_without_tab_footer_fn_renders_no_footer() -> None:
     """Tier 2: a command that supplies no tab_footer_fn renders no footer (back-compat)."""
+    from reyn.interfaces.tui.app import ReynTUIApp
+    from reyn.interfaces.tui.widgets.slash_picker import SlashPicker
     from reyn.slash import SlashCommand
-    from reyn.tui.app import ReynTUIApp
-    from reyn.tui.widgets.slash_picker import SlashPicker
 
     # Populated find history must NOT leak into an unrelated command's hint:
     # the picker keys off the command's own tab_footer_fn, not global state.
@@ -155,9 +155,9 @@ async def test_command_without_tab_footer_fn_renders_no_footer() -> None:
 @pytest.mark.asyncio
 async def test_generic_command_tab_footer_fn_text_is_rendered() -> None:
     """Tier 2: the picker renders ANY command's tab_footer_fn message (not /find-specific)."""
+    from reyn.interfaces.tui.app import ReynTUIApp
+    from reyn.interfaces.tui.widgets.slash_picker import SlashPicker
     from reyn.slash import SlashCommand
-    from reyn.tui.app import ReynTUIApp
-    from reyn.tui.widgets.slash_picker import SlashPicker
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -188,9 +188,9 @@ async def test_generic_command_tab_footer_fn_text_is_rendered() -> None:
 @pytest.mark.asyncio
 async def test_generic_command_tab_footer_fn_none_renders_no_footer() -> None:
     """Tier 2: a tab_footer_fn returning None renders no footer (visibility is command-owned)."""
+    from reyn.interfaces.tui.app import ReynTUIApp
+    from reyn.interfaces.tui.widgets.slash_picker import SlashPicker
     from reyn.slash import SlashCommand
-    from reyn.tui.app import ReynTUIApp
-    from reyn.tui.widgets.slash_picker import SlashPicker
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:

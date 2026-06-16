@@ -20,7 +20,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from reyn.cli.commands.mcp import (
+from reyn.interfaces.cli.commands.mcp import (
     _all_servers_with_scope,
     _get_servers_from_scope,
     _infer_credentials,

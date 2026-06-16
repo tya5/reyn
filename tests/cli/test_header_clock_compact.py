@@ -30,7 +30,7 @@ _SRC = Path(__file__).parent.parent.parent / "src"
 if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
-from reyn.tui.widgets.header import ReynHeader
+from reyn.interfaces.tui.widgets.header import ReynHeader
 
 
 def test_now_text_is_hh_mm_ss_only() -> None:

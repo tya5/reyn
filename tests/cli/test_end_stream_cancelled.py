@@ -57,8 +57,8 @@ def _richlog_plain(conv) -> str:
 @pytest.mark.asyncio
 async def test_end_stream_cancelled_emits_header_and_dim_body() -> None:
     """Tier 2: cancelled stream commits header + partial body to RichLog."""
-    from reyn.tui.app import ReynTUIApp
-    from reyn.tui.widgets import ConversationView
+    from reyn.interfaces.tui.app import ReynTUIApp
+    from reyn.interfaces.tui.widgets import ConversationView
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -94,8 +94,8 @@ async def test_end_stream_cancelled_does_not_render_markdown() -> None:
     incorrectly under Markdown. The dim plain text reads as "fragment"
     without misleading styling.
     """
-    from reyn.tui.app import ReynTUIApp
-    from reyn.tui.widgets import ConversationView
+    from reyn.interfaces.tui.app import ReynTUIApp
+    from reyn.interfaces.tui.widgets import ConversationView
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -125,8 +125,8 @@ async def test_end_stream_unchanged_for_completed_reply() -> None:
     finish must continue to produce a real Markdown render with no
     "cancelled (partial reply)" header.
     """
-    from reyn.tui.app import ReynTUIApp
-    from reyn.tui.widgets import ConversationView
+    from reyn.interfaces.tui.app import ReynTUIApp
+    from reyn.interfaces.tui.widgets import ConversationView
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:

@@ -33,8 +33,8 @@ async def test_crlf_text_stored_verbatim_in_recent_replies() -> None:
     passing it to RichMarkdown for rendering. The buffer should preserve
     the exact input so ``/copy`` returns what the LLM actually sent.
     """
-    from reyn.tui.app import ReynTUIApp
-    from reyn.tui.widgets import ConversationView
+    from reyn.interfaces.tui.app import ReynTUIApp
+    from reyn.interfaces.tui.widgets import ConversationView
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -50,8 +50,8 @@ async def test_crlf_text_stored_verbatim_in_recent_replies() -> None:
 @pytest.mark.asyncio
 async def test_lf_only_text_unchanged_regression() -> None:
     """Tier 2b: plain LF text round-trips unchanged through _write_agent_markdown."""
-    from reyn.tui.app import ReynTUIApp
-    from reyn.tui.widgets import ConversationView
+    from reyn.interfaces.tui.app import ReynTUIApp
+    from reyn.interfaces.tui.widgets import ConversationView
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:

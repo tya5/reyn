@@ -31,8 +31,8 @@ if str(_SRC) not in sys.path:
 @pytest.mark.asyncio
 async def test_start_boundary_hint_writes_sticky_only() -> None:
     """Tier 2: ``start`` boundary → sticky body set + log unchanged."""
-    from reyn.tui.app import ReynTUIApp
-    from reyn.tui.widgets import ConversationView
+    from reyn.interfaces.tui.app import ReynTUIApp
+    from reyn.interfaces.tui.widgets import ConversationView
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -58,8 +58,8 @@ async def test_start_boundary_hint_writes_sticky_only() -> None:
 @pytest.mark.asyncio
 async def test_end_boundary_hint_writes_sticky_only() -> None:
     """Tier 2: ``end`` boundary → sticky body set + log unchanged."""
-    from reyn.tui.app import ReynTUIApp
-    from reyn.tui.widgets import ConversationView
+    from reyn.interfaces.tui.app import ReynTUIApp
+    from reyn.interfaces.tui.widgets import ConversationView
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -81,8 +81,8 @@ async def test_end_boundary_hint_writes_sticky_only() -> None:
 @pytest.mark.asyncio
 async def test_repeated_direction_dedup_unchanged() -> None:
     """Tier 2b: rapid boundary repeats still deduped (regression)."""
-    from reyn.tui.app import ReynTUIApp
-    from reyn.tui.widgets import ConversationView
+    from reyn.interfaces.tui.app import ReynTUIApp
+    from reyn.interfaces.tui.widgets import ConversationView
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:

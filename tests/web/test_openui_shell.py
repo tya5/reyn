@@ -73,7 +73,7 @@ def _make_client(tmp_project: Path, monkeypatch, env_overrides: dict | None = No
 
     from fastapi.testclient import TestClient
 
-    import reyn.web.deps as deps
+    import reyn.interfaces.web.deps as deps
 
     # Reset cached singletons
     deps._get_project_root.cache_clear()
@@ -91,13 +91,13 @@ def _make_client(tmp_project: Path, monkeypatch, env_overrides: dict | None = No
     else:
         monkeypatch.delenv("REYN_WEB_DEFAULT_DESIGN", raising=False)
 
-    from reyn.web.server import app
+    from reyn.interfaces.web.server import app
     client = TestClient(app, raise_server_exceptions=False)
     return client
 
 
 def _cleanup(monkeypatch):
-    import reyn.web.deps as deps
+    import reyn.interfaces.web.deps as deps
     deps._get_project_root.cache_clear()
     deps._load_config.cache_clear()
     deps._state_log = None

@@ -34,7 +34,7 @@ from reyn.chat.channel_state import (  # noqa: E402
     DeliveryOutcome,
     RetryPolicy,
 )
-from reyn.web.notifications import post_webhook  # noqa: E402
+from reyn.interfaces.web.notifications import post_webhook  # noqa: E402
 
 
 def _client_with_responses(responses: list[httpx.Response]) -> httpx.AsyncClient:

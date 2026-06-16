@@ -38,13 +38,13 @@ import pytest
 pytest.importorskip("fastapi", reason="fastapi not installed ([web] extra missing)")
 
 from reyn.events.events import EventLog  # noqa: E402
+from reyn.interfaces.web.a2a_intervention import A2AInterventionBus  # noqa: E402
+from reyn.interfaces.web.run_registry import RunRegistry  # noqa: E402
 from reyn.user_intervention import (  # noqa: E402
     InterventionAnswer,
     InterventionChoice,
     UserIntervention,
 )
-from reyn.web.a2a_intervention import A2AInterventionBus  # noqa: E402
-from reyn.web.run_registry import RunRegistry  # noqa: E402
 
 # ── 1. Bridge constructor accepts webhook_url=None ────────────────────
 
@@ -55,7 +55,7 @@ def test_bridge_constructor_accepts_optional_webhook_url() -> None:
     only built when webhook_url was set, so this signature flip is the
     contract that enables SSE-only deployments.
     """
-    from reyn.web.routers.a2a import _A2AProgressBridge
+    from reyn.interfaces.web.routers.a2a import _A2AProgressBridge
 
     class _FakeSession:
         _chat_events = EventLog()
@@ -79,7 +79,7 @@ def test_send_appends_payload_to_history_events() -> None:
     core): without it, history_events stays empty + the SSE stream
     yields nothing.
     """
-    from reyn.web.routers.a2a import _A2AProgressBridge
+    from reyn.interfaces.web.routers.a2a import _A2AProgressBridge
 
     registry = RunRegistry()
     entry = registry.create(agent_name="demo", chain_id="chain-A")
@@ -116,14 +116,14 @@ def test_send_skips_webhook_when_webhook_url_is_none(monkeypatch) -> None:
     """Tier 2: with ``webhook_url=None``, ``_send`` does NOT call
     ``post_webhook`` (= the SSE-only deployment pays zero HTTP cost).
     """
-    from reyn.web.routers.a2a import _A2AProgressBridge
+    from reyn.interfaces.web.routers.a2a import _A2AProgressBridge
 
     posted: list = []
 
     async def _fake_post(url: str, payload: dict):  # noqa: ANN202
         posted.append((url, payload))
 
-    import reyn.web.notifications as notifications_mod
+    import reyn.interfaces.web.notifications as notifications_mod
     monkeypatch.setattr(notifications_mod, "post_webhook", _fake_post)
 
     class _FakeSession:
@@ -147,14 +147,14 @@ def test_send_posts_webhook_when_webhook_url_set(monkeypatch) -> None:
     effects so the SSE consumer + webhook consumer see consistent
     state.
     """
-    from reyn.web.routers.a2a import _A2AProgressBridge
+    from reyn.interfaces.web.routers.a2a import _A2AProgressBridge
 
     posted: list[tuple[str, dict]] = []
 
     async def _fake_post(url: str, payload: dict):  # noqa: ANN202
         posted.append((url, payload))
 
-    import reyn.web.notifications as notifications_mod
+    import reyn.interfaces.web.notifications as notifications_mod
     monkeypatch.setattr(notifications_mod, "post_webhook", _fake_post)
 
     registry = RunRegistry()
@@ -191,7 +191,7 @@ def test_sse_sink_failure_does_not_block_webhook(monkeypatch) -> None:
     fires the webhook. Each sink swallows its own failure
     independently.
     """
-    from reyn.web.routers.a2a import _A2AProgressBridge
+    from reyn.interfaces.web.routers.a2a import _A2AProgressBridge
 
     class _RaisingRegistry:
         def append_event(self, run_id, event):
@@ -202,7 +202,7 @@ def test_sse_sink_failure_does_not_block_webhook(monkeypatch) -> None:
     async def _fake_post(url: str, payload: dict):  # noqa: ANN202
         posted.append((url, payload))
 
-    import reyn.web.notifications as notifications_mod
+    import reyn.interfaces.web.notifications as notifications_mod
     monkeypatch.setattr(notifications_mod, "post_webhook", _fake_post)
 
     class _FakeSession:
@@ -226,12 +226,12 @@ def test_webhook_sink_failure_does_not_block_sse(monkeypatch) -> None:
     already happened (= sequential, SSE first then webhook). Confirms
     independence in both directions.
     """
-    from reyn.web.routers.a2a import _A2AProgressBridge
+    from reyn.interfaces.web.routers.a2a import _A2AProgressBridge
 
     async def _failing_post(url: str, payload: dict):  # noqa: ANN202
         raise RuntimeError("simulated webhook failure")
 
-    import reyn.web.notifications as notifications_mod
+    import reyn.interfaces.web.notifications as notifications_mod
     monkeypatch.setattr(notifications_mod, "post_webhook", _failing_post)
 
     registry = RunRegistry()
@@ -321,7 +321,7 @@ def test_sse_endpoint_replays_appended_events_via_history() -> None:
     ASGI stack); instead pin that the data flow lands where the
     endpoint reads from.
     """
-    from reyn.web.routers.a2a import _A2AProgressBridge
+    from reyn.interfaces.web.routers.a2a import _A2AProgressBridge
 
     registry = RunRegistry()
     entry = registry.create(agent_name="demo", chain_id="chain-A")

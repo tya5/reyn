@@ -10,7 +10,7 @@ No mocks, no app — pure functions over synthetic contract-shape data.
 """
 from __future__ import annotations
 
-from reyn.tui.widgets.branch_tree import (
+from reyn.interfaces.tui.widgets.branch_tree import (
     ROW_CHECKPOINT,
     ROW_HEADER,
     build_branch_tree_rows,

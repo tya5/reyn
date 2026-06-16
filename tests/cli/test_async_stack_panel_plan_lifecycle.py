@@ -39,9 +39,9 @@ if str(_SRC) not in sys.path:
 async def test_plan_summary_adds_async_stack_row() -> None:
     """Tier 2: plan_summary system msg → AsyncStackPanel row mounted."""
     from reyn.chat.outbox import OutboxMessage
-    from reyn.tui.app import ReynTUIApp
-    from reyn.tui.app_outbox import OutboxRouter
-    from reyn.tui.widgets import ConversationView
+    from reyn.interfaces.tui.app import ReynTUIApp
+    from reyn.interfaces.tui.app_outbox import OutboxRouter
+    from reyn.interfaces.tui.widgets import ConversationView
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -69,9 +69,9 @@ async def test_plan_summary_adds_async_stack_row() -> None:
 async def test_plan_complete_removes_async_stack_row() -> None:
     """Tier 2: plan_complete system msg → AsyncStackPanel row dropped."""
     from reyn.chat.outbox import OutboxMessage
-    from reyn.tui.app import ReynTUIApp
-    from reyn.tui.app_outbox import OutboxRouter
-    from reyn.tui.widgets import ConversationView
+    from reyn.interfaces.tui.app import ReynTUIApp
+    from reyn.interfaces.tui.app_outbox import OutboxRouter
+    from reyn.interfaces.tui.widgets import ConversationView
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -117,9 +117,9 @@ async def test_non_plan_system_message_does_not_touch_async_stack() -> None:
     carry no plan_id. They must NOT add ghost rows to the panel.
     """
     from reyn.chat.outbox import OutboxMessage
-    from reyn.tui.app import ReynTUIApp
-    from reyn.tui.app_outbox import OutboxRouter
-    from reyn.tui.widgets import ConversationView
+    from reyn.interfaces.tui.app import ReynTUIApp
+    from reyn.interfaces.tui.app_outbox import OutboxRouter
+    from reyn.interfaces.tui.widgets import ConversationView
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -152,9 +152,9 @@ async def test_missing_plan_id_is_silent_noop() -> None:
     empty string.
     """
     from reyn.chat.outbox import OutboxMessage
-    from reyn.tui.app import ReynTUIApp
-    from reyn.tui.app_outbox import OutboxRouter
-    from reyn.tui.widgets import ConversationView
+    from reyn.interfaces.tui.app import ReynTUIApp
+    from reyn.interfaces.tui.app_outbox import OutboxRouter
+    from reyn.interfaces.tui.widgets import ConversationView
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:

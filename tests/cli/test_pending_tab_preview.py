@@ -46,7 +46,7 @@ def _pending_item(
 
 def test_has_previewable_content_returns_true_for_pending_with_items() -> None:
     """Tier 2: pending tab now reports previewable content when items exist."""
-    from reyn.tui.widgets.right_panel import RightPanel
+    from reyn.interfaces.tui.widgets.right_panel import RightPanel
 
     panel = RightPanel.__new__(RightPanel)
     panel._panel_type = "pending"
@@ -60,7 +60,7 @@ def test_has_previewable_content_returns_true_for_pending_with_items() -> None:
 
 def test_has_previewable_content_returns_false_for_pending_empty() -> None:
     """Tier 2: empty pending → no preview (= cold-default unchanged)."""
-    from reyn.tui.widgets.right_panel import RightPanel
+    from reyn.interfaces.tui.widgets.right_panel import RightPanel
 
     panel = RightPanel.__new__(RightPanel)
     panel._panel_type = "pending"
@@ -75,7 +75,7 @@ def test_has_previewable_content_returns_false_for_pending_empty() -> None:
 def test_show_pending_in_preview_writes_intervention_fields() -> None:
     """Tier 2: ``_show_pending_in_preview`` produces a renderable carrying
     the kind / id / origin / summary / detail fields."""
-    from reyn.tui.widgets.right_panel import RightPanel
+    from reyn.interfaces.tui.widgets.right_panel import RightPanel
 
     panel = RightPanel.__new__(RightPanel)
     panel._panel_type = "pending"
@@ -118,7 +118,7 @@ def test_show_pending_in_preview_writes_intervention_fields() -> None:
 
 def test_show_pending_in_preview_with_empty_items_clears_pane() -> None:
     """Tier 2: empty pending list → ``pane.clear()`` not ``show_text``."""
-    from reyn.tui.widgets.right_panel import RightPanel
+    from reyn.interfaces.tui.widgets.right_panel import RightPanel
 
     panel = RightPanel.__new__(RightPanel)
     panel._pending_cursor = 0
@@ -145,7 +145,7 @@ def test_pending_header_hint_includes_sp_open() -> None:
     ``_panel_header_markup`` is pure over ``_panel_type`` and the
     Textual app context isn't needed for the markup-string computation.
     """
-    from reyn.tui.widgets.right_panel import RightPanel
+    from reyn.interfaces.tui.widgets.right_panel import RightPanel
 
     panel = RightPanel.__new__(RightPanel)
     panel._panel_type = "pending"

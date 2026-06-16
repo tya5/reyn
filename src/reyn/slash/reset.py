@@ -86,7 +86,7 @@ async def reset_cmd(session: "object", args: str) -> None:
 
     # Lazy import so the slash registry doesn't pull the CLI module on every
     # session bootstrap (slash dispatch happens far more often than reset).
-    from reyn.cli.commands.chat import _reset_project_state
+    from reyn.interfaces.cli.commands.chat import _reset_project_state
 
     proceeded = _reset_project_state(project_root, confirm=False)
     if proceeded:

@@ -16,7 +16,7 @@ This preprocessor:
   3. Selects ``.md`` siblings (= not ``SKILL.md`` itself, not
      ``LICENSE.txt``, not anything binary).
   4. Fetches each via the raw URL using
-     ``reyn.api.unsafe.http.get`` (= same I/O route the other
+     ``reyn.interfaces.api.unsafe.http.get`` (= same I/O route the other
      preprocessors use).
   5. Returns the collected siblings as a list under
      ``data._sibling_files`` for the convert phase LLM to write to

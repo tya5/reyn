@@ -45,7 +45,7 @@ if str(_SRC) not in sys.path:
 
 async def _sticky(pilot):
     """Get the StickyStatus mounted under the ConversationView."""
-    from reyn.tui.widgets import ConversationView
+    from reyn.interfaces.tui.widgets import ConversationView
     conv = pilot.app.query_one("#conversation", ConversationView)
     return conv._sticky()
 
@@ -53,7 +53,7 @@ async def _sticky(pilot):
 @pytest.mark.asyncio
 async def test_general_show_suppressed_when_error_active() -> None:
     """Tier 2b: a general flash cannot overwrite an active error (I-F8)."""
-    from reyn.tui.app import ReynTUIApp
+    from reyn.interfaces.tui.app import ReynTUIApp
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -80,7 +80,7 @@ async def test_error_overwrites_error_body() -> None:
 
     The natural error-body update must not be suppressed.
     """
-    from reyn.tui.app import ReynTUIApp
+    from reyn.interfaces.tui.app import ReynTUIApp
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -96,7 +96,7 @@ async def test_error_overwrites_error_body() -> None:
 @pytest.mark.asyncio
 async def test_error_overwrites_general_when_general_active() -> None:
     """Tier 2: higher-priority show DISPLACES lower-priority active."""
-    from reyn.tui.app import ReynTUIApp
+    from reyn.interfaces.tui.app import ReynTUIApp
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -113,7 +113,7 @@ async def test_error_overwrites_general_when_general_active() -> None:
 @pytest.mark.asyncio
 async def test_general_overwrites_general() -> None:
     """Tier 2: same-priority general → general overwrites (turn-flash chain)."""
-    from reyn.tui.app import ReynTUIApp
+    from reyn.interfaces.tui.app import ReynTUIApp
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -135,8 +135,8 @@ async def test_trim_warning_writes_permanent_log_line() -> None:
     written as a permanent dim log line that survives any sticky
     update.
     """
-    from reyn.tui.app import ReynTUIApp
-    from reyn.tui.widgets import ConversationView
+    from reyn.interfaces.tui.app import ReynTUIApp
+    from reyn.interfaces.tui.widgets import ConversationView
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:

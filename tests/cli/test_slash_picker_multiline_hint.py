@@ -77,9 +77,9 @@ def test_slash_decorator_forwards_usage() -> None:
 @pytest.mark.asyncio
 async def test_hint_with_usage_renders_two_lines() -> None:
     """Tier 2: hint mode shows the usage line below the summary."""
+    from reyn.interfaces.tui.app import ReynTUIApp
+    from reyn.interfaces.tui.widgets.slash_picker import SlashPicker
     from reyn.slash import SlashCommand
-    from reyn.tui.app import ReynTUIApp
-    from reyn.tui.widgets.slash_picker import SlashPicker
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -109,9 +109,9 @@ async def test_hint_with_usage_renders_two_lines() -> None:
 @pytest.mark.asyncio
 async def test_hint_without_usage_renders_one_line() -> None:
     """Tier 2: legacy command (no usage set) keeps the original 1-line hint."""
+    from reyn.interfaces.tui.app import ReynTUIApp
+    from reyn.interfaces.tui.widgets.slash_picker import SlashPicker
     from reyn.slash import SlashCommand
-    from reyn.tui.app import ReynTUIApp
-    from reyn.tui.widgets.slash_picker import SlashPicker
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -145,9 +145,9 @@ async def test_usage_and_completions_render_together() -> None:
     (= 1 summary + 1 usage + ≤ 8 completions + optional "+N more")
     stays within the CSS ``max-height: 11`` budget.
     """
+    from reyn.interfaces.tui.app import ReynTUIApp
+    from reyn.interfaces.tui.widgets.slash_picker import SlashPicker
     from reyn.slash import SlashCommand
-    from reyn.tui.app import ReynTUIApp
-    from reyn.tui.widgets.slash_picker import SlashPicker
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:

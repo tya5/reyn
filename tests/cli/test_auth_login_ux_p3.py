@@ -27,7 +27,7 @@ _SRC = Path(__file__).parent.parent.parent / "src"
 if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
-from reyn.cli.commands import auth as auth_mod
+from reyn.interfaces.cli.commands import auth as auth_mod
 
 # ── _print_scope_advertisement ──────────────────────────────────────────────
 

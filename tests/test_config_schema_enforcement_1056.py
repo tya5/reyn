@@ -125,7 +125,7 @@ def test_every_scalar_leaf_takes_effect_on_nondefault_set(tmp_path: Path) -> Non
     A field that silently returns its default after a non-default set is a no-op
     (the operator's value is discarded on reload) = FAIL.
     """
-    from reyn.cli.commands.config import _set
+    from reyn.interfaces.cli.commands.config import _set
 
     nodes = [n for n in walk_config_schema() if not n.is_dict_leaf]
     assert nodes, "walk returned no scalar leaves — catastrophic introspection failure"

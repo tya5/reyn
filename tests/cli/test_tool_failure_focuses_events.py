@@ -22,10 +22,10 @@ if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
 from reyn.chat.outbox import OutboxMessage
-from reyn.tui.app import ReynTUIApp
-from reyn.tui.app_outbox import OutboxRouter
-from reyn.tui.widgets import ConversationView
-from reyn.tui.widgets.right_panel import RightPanel
+from reyn.interfaces.tui.app import ReynTUIApp
+from reyn.interfaces.tui.app_outbox import OutboxRouter
+from reyn.interfaces.tui.widgets import ConversationView
+from reyn.interfaces.tui.widgets.right_panel import RightPanel
 
 
 def _make_app() -> ReynTUIApp:
