@@ -106,6 +106,12 @@ class OSRuntime:
         self.events = EventLog(
             subscribers=subscribers, run_id=run_id, plan_step=plan_step,
         )
+        # #1669: publish this runtime's EventLog as the ambient sink for the LLM
+        # acompletion chokepoint, so every LLM call in this run emits an observable
+        # `llm_request` event (non-message params) without threading events through
+        # the call stack. Set at creation → propagates into the op-loop's tasks.
+        from reyn.events.events import set_llm_request_event_log
+        set_llm_request_event_log(self.events)
         self.workspace = Workspace(
             self.events,
             permission_resolver=permission_resolver,

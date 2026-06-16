@@ -1591,6 +1591,12 @@ class ChatSession:
             subscribers=[self._event_store],
             agent_id=self._agent_id,  # FP-0016 E: auto-inject agent_id into every event
         )
+        # #1669: publish this session's EventLog as the ambient sink for the LLM
+        # acompletion chokepoint, so every in-session LLM call emits an observable
+        # `llm_request` event (non-message params) without threading events through
+        # the call stack. Set at creation → propagates into the run loop's tasks.
+        from reyn.events.events import set_llm_request_event_log
+        set_llm_request_event_log(self._chat_events)
         # Issue #162: surface session-level lifecycle events (compaction
         # today; attach/detach + budget warnings as growth) into the
         # conv pane via OutboxMessage(kind="system"). Sibling of the
