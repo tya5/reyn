@@ -5,13 +5,18 @@ syscall reduction. landlock is import-guarded — if the package or kernel
 support is absent, `available()` returns False and the OS falls back to
 NoopBackend (per FP-0017 auto-selection table).
 
-Network restriction note: Landlock ABI v4+ (Linux 6.7+) supports outbound
-network port restriction via LANDLOCK_RULE_NET_PORT. On kernels with ABI < 4,
-network isolation is unavailable at the Landlock layer; a WARN is logged once.
+Network restriction note: the py-landlock package (1.0.0.dev*) exposes no
+network-port rule API, so Landlock does NOT restrict outbound network here. When
+a policy denies network, that guarantee comes from a different mechanism (the
+no-network-fd / proxy gate); the Landlock layer logs a one-shot WARN so the gap
+is diagnosable rather than faking enforcement it can't deliver (#1693).
 
-Marker: contributor-friendly track. The maintainer dev environment is
-macOS-only; Linux contributors are invited to validate the actual
-landlock_restrict_self() effects end-to-end (see TODO comments).
+Filesystem model: allowlist-only. The HANDLED access set (Ruleset
+``restrict_rules``) always governs the full write surface (write/make/remove) so
+writes are denied-by-default and granted only to ``policy.write_paths``; reads +
+exec are granted broadly on ``/``. Landlock cannot express a read deny-list, so
+``policy.read_deny_paths`` is not enforced here (the network gate is the
+exfiltration guard) — documented residual risk.
 """
 from __future__ import annotations
 
@@ -46,9 +51,11 @@ def _warn_net_once(abi: int) -> None:
 class LandlockBackend:
     """Linux Landlock LSM backend (FP-0017 Component B).
 
-    Applies filesystem path-beneath rules and (ABI 4+) network port rules
-    before exec via landlock.Ruleset.restrict_self() in a preexec_fn. The
-    restriction is irrevocable within the child process.
+    Applies filesystem path-beneath rules before exec via
+    ``landlock.Ruleset(restrict_rules=…).allow(path, rules=…)`` built in the
+    parent, then ``ruleset.apply()`` in a preexec_fn. The restriction is
+    irrevocable within the child process. (Network is not enforced at this layer
+    — the py-landlock package has no net-port rule API; see module docstring.)
     """
 
     name: str = "landlock"
@@ -78,37 +85,29 @@ class LandlockBackend:
             self._available = False
             return False
 
-        # Try importing the landlock package.
+        # Try importing the landlock package (importlib so the import attempt is
+        # a single interceptable call — the availability result is cached below).
         try:
             import importlib
 
-            importlib.import_module("landlock")
+            landlock = importlib.import_module("landlock")
         except ImportError as exc:
             self._import_error = str(exc)
             self._available = False
             return False
 
-        # Probe ABI version.
+        # Probe the kernel's supported Landlock ABI via the package's
+        # module-level ``landlock_abi_version()`` (the real py-landlock API). It
+        # returns the best ABI the running kernel supports, or <= 0 when Landlock
+        # is unavailable (kernel too old / disabled). <1 → fall back to Noop.
         try:
-            import landlock  # noqa: PLC0415
-
-            # TODO(fp-0017-b): Linux validation needed — verify the correct
-            # attribute/function name for the installed landlock package version.
-            if hasattr(landlock, "abi_version"):
-                self._abi_version = landlock.abi_version()
-            elif hasattr(landlock, "LANDLOCK_ABI_BEST"):
-                self._abi_version = landlock.LANDLOCK_ABI_BEST
-            else:
-                # Fall back to running a minimal ruleset creation to detect support.
-                # TODO(fp-0017-b): Linux validation needed — adjust probe if API differs.
-                ruleset = landlock.Ruleset()
-                self._abi_version = getattr(ruleset, "abi_version", 1)
+            self._abi_version = int(landlock.landlock_abi_version())
         except Exception as exc:  # noqa: BLE001
             _logger.debug("LandlockBackend ABI probe failed: %s", exc)
             self._available = False
             return False
 
-        if self._abi_version is None or self._abi_version < 1:
+        if self._abi_version < 1:
             self._available = False
             return False
 
@@ -138,9 +137,10 @@ class LandlockBackend:
 
         abi = self._abi_version  # guaranteed non-None after available() == True
 
-        # Build the Landlock ruleset.
-        # TODO(fp-0017-b): Linux validation needed — verify Ruleset construction API
-        # and access-right constants for the installed landlock package version.
+        # Build the Landlock ruleset against the real py-landlock porcelain API
+        # (landlock 1.0.0.dev*): ``Ruleset(restrict_rules=FSAccess…)`` declares the
+        # HANDLED (governed) access set, ``.allow(path, rules=FSAccess…)`` grants
+        # rights on a path-beneath, ``.apply()`` enforces irrevocably (#1693).
         import landlock  # noqa: PLC0415
 
         # Build env from the passthrough allowlist (mirrors NoopBackend exactly).
@@ -160,76 +160,87 @@ class LandlockBackend:
         def _build_preexec(ruleset: object) -> None:
             """Apply Landlock restrictions in the child process (preexec_fn).
 
-            Called after fork(), before exec(). Irrevocable after restrict_self().
+            Called after fork(), before exec(). The ruleset is built in the parent
+            (its ruleset fd survives the fork); ``apply()`` issues
+            ``landlock_restrict_self`` on the calling (child) thread and is
+            irrevocable for the rest of that process's lifetime.
             """
-            # TODO(fp-0017-b): Linux validation needed — verify restrict_self() call.
             try:
-                ruleset.restrict_self()  # type: ignore[union-attr]
+                ruleset.apply()  # type: ignore[union-attr]
             except Exception as exc:  # noqa: BLE001
-                # If restrict_self fails (e.g., kernel too old despite probe), log
-                # and continue — the process will run without Landlock enforcement
+                # If apply() fails (e.g., kernel too old despite probe), log and
+                # continue — the process will run without Landlock enforcement
                 # rather than silently failing to start.
                 import sys  # noqa: PLC0415
 
                 print(  # noqa: T201
-                    f"LandlockBackend: restrict_self() failed: {exc}",
+                    f"LandlockBackend: ruleset.apply() failed: {exc}",
                     file=sys.stderr,
                 )
 
             if install_seccomp_filter is not None and not policy.allow_subprocess:
-                # TODO(fp-0017-b): Linux validation needed — verify seccomp integration.
                 install_seccomp_filter(policy)
 
-        # Build ruleset with path-beneath rules.
-        # TODO(fp-0017-b): Linux validation needed — verify Ruleset, PathBeneath,
-        # and access constant names/values for the installed package version.
+        # Build the ruleset (real py-landlock porcelain API).
         try:
-            # Attempt to build the ruleset using the landlock package API.
-            # The `landlock` PyPI package (https://github.com/landlock-lsm/py-landlock)
-            # uses Ruleset(handled_access_fs=...) and add_path_beneath_rule().
-            _fs_read = getattr(
-                landlock,
-                "AccessFS",
-                None,
+            FS = landlock.FSAccess  # type: ignore[attr-defined]
+
+            # Rights GRANTED on the broad-read surface: read files, list dirs, and
+            # execute binaries (so the child can load /usr,/lib and exec the
+            # target). Mirrors Seatbelt's broad ``(allow file-read*)`` +
+            # ``(allow process-exec*)``.
+            read_rules = FS.READ_FILE | FS.READ_DIR | FS.EXECUTE
+            # Rights GRANTED on each write_path: the full create/modify/remove
+            # surface; write implies read, so the read rights are included.
+            write_rules = (
+                read_rules
+                | FS.WRITE_FILE
+                | FS.MAKE_REG | FS.MAKE_DIR | FS.MAKE_SYM
+                | FS.MAKE_CHAR | FS.MAKE_BLOCK | FS.MAKE_FIFO | FS.MAKE_SOCK
+                | FS.REMOVE_FILE | FS.REMOVE_DIR
             )
-            ruleset = landlock.Ruleset()  # type: ignore[attr-defined]
+            # REFER (cross-directory link/rename) is ABI 2+. Grant it on
+            # write_paths so intra-sandbox moves between writable dirs work; gate it
+            # on the probed ABI so neither the handled set nor a grant ever exceeds
+            # the kernel (an unsupported flag would make ruleset creation fail).
+            if (abi or 0) >= 2:
+                write_rules |= FS.REFER
+
+            # HANDLED (governed) set: every access type the ruleset restricts. An
+            # access type NOT handled is UNRESTRICTED (a hole), so we always handle
+            # the full write surface — even with no write_paths — so writes are
+            # governed (denied-by-default) and granted ONLY to write_paths. With no
+            # write_paths that means no writes anywhere, which is exactly correct
+            # for a sandbox (lead-confirmed secure default, #1693).
+            handled = read_rules | write_rules
 
             # #1199 realignment — broad read surface. Landlock is allowlist-only
             # (path-beneath grants; anything not granted is denied), so broad-read
-            # is a single read rule on the filesystem root. This subsumes the old
-            # per-path read allowlist (policy.read_paths) AND fixes the Linux gap
-            # where system paths (/usr, /lib, dyld-equivalents) had to be
-            # enumerated for binaries to even load.
+            # is a single read+exec grant on the filesystem root. This subsumes the
+            # old per-path read allowlist (policy.read_paths) AND fixes the Linux
+            # gap where system paths (/usr, /lib) had to be enumerated for binaries
+            # to even load.
             #
             # Residual risk: Landlock CANNOT express a read deny-list (you cannot
             # carve a subpath out of an allowed parent), so policy.read_deny_paths
             # is NOT enforced here — unlike Seatbelt (SBPL deny-after-allow). The
-            # core guarantee rests instead on the network gate below: a compromised
+            # core guarantee rests instead on the network gate: a compromised
             # process on Linux may read sensitive paths but cannot exfiltrate
             # (network off unless policy.network). This asymmetry is documented in
             # the permission-model residual-risk section.
-            # TODO(fp-0017-b): Linux validation needed — verify access right constants.
-            ruleset.add_path_beneath_rule(  # type: ignore[attr-defined]
-                "/",
-                read_only=True,
-            )
-
+            ruleset = landlock.Ruleset(restrict_rules=handled)  # type: ignore[attr-defined]
+            ruleset.allow("/", rules=read_rules)
             for path in policy.write_paths:
-                # TODO(fp-0017-b): Linux validation needed — verify access right constants.
-                ruleset.add_path_beneath_rule(  # type: ignore[attr-defined]
-                    path,
-                    read_only=False,
-                )
+                ruleset.allow(path, rules=write_rules)
 
-            # Network restriction (ABI 4+ only).
+            # Network: the py-landlock package exposes no net-port rule API at this
+            # ABI, so Landlock CANNOT restrict outbound network here. When the
+            # policy denies network, that guarantee is delivered by a DIFFERENT
+            # mechanism (the no-network-fd / proxy gate), not Landlock — warn once
+            # so the gap is diagnosable rather than faking an enforcement we can't
+            # deliver (documented residual risk, #1693).
             if not policy.network:
-                if abi is not None and abi >= 4:
-                    # TODO(fp-0017-b): Linux validation needed — verify
-                    # LANDLOCK_RULE_NET_PORT API for outbound TCP restriction.
-                    if hasattr(ruleset, "add_net_port_rule"):
-                        ruleset.add_net_port_rule(deny_all_outbound=True)  # type: ignore[attr-defined]
-                else:
-                    _warn_net_once(abi or 0)
+                _warn_net_once(abi or 0)
 
         except Exception as exc:  # noqa: BLE001
             # If ruleset construction fails, surface a clear error.
