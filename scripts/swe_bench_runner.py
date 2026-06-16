@@ -308,6 +308,13 @@ def run_reyn_once_in_container(
             # benchmark answer) — matching SWE-agent/OpenHands (no web in-bench). The
             # exec network path is already sandbox-gated off; web is the only leak.
             "--exclude-tools", "web__search,web__fetch",
+            # #1667 explicit opt-out: this is an external-repo task on /testbed, so
+            # Reyn's own source (reyn_source__read/list/glob/grep self-help surface)
+            # is irrelevant — hide the whole category at the catalog source so the
+            # weak model doesn't misselect reyn_source__grep over file__* (it would
+            # search Reyn's source, never the repo → empty patch). The interactive
+            # agent keeps reyn_source (this is per-invocation explicit, owner 明示).
+            "--exclude-categories", "reyn_source",
             # autonomous SWE needs many tool rounds (explore→edit→verify) > chat's 5.
             "--max-iterations", str(max_iterations),
         ]

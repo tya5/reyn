@@ -1388,6 +1388,7 @@ class RouterLoop:
         system_prompt_override: str | None = None,
         non_interactive: bool = False,  # #1440 followup: run-once (no TTY) → live router SP proceeds instead of asking a clarifying question (13398). Threaded from ChatSession.
         exclude_tools: set[str] | None = None,
+        excluded_categories: set[str] | None = None,  # #1667 catalog categories skipped at source
         memo_provider: Any = None,  # SubLoopMemoProvider | None (ADR-0025)
         skill_search_config: "SkillSearchConfig | None" = None,  # FP-0024-A BM25 pre-filter
         empty_stop_retry_directive: str | None = None,  # B42-NF-W6-1 opt-in retry
@@ -1439,6 +1440,9 @@ class RouterLoop:
         # compare" produced 3 plan invocations because step LLMs saw plan
         # in their tool catalog and self-decomposed.
         self._exclude_tools: frozenset[str] = frozenset(exclude_tools or set())
+        # #1667: catalog categories skipped at the source (_enumerate_category),
+        # threaded onto RouterCallerState so the universal catalog drops them.
+        self._excluded_categories: frozenset[str] = frozenset(excluded_categories or set())
         # FP-0034 Phase 2 step 1: action embedding index background
         # build task handle.  None until the first turn that finds the
         # index configured + not ready, then asyncio.Task while
@@ -3869,6 +3873,8 @@ class RouterLoop:
             budget=self.budget,
             router_model=self.router_model,
             available_tool_names=list(self._tool_names),
+            # #1667: catalog categories the universal catalog skips at source.
+            excluded_categories=self._excluded_categories,
             # OpContext factory (= for file / mcp / web handlers; Phase 3.5-A+C).
             # ``getattr`` fallback keeps test stubs (= FakeRouterHost without
             # the method) compatible — the handler then uses its minimal

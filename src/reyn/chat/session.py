@@ -1192,6 +1192,7 @@ class ChatSession:
         tool_calls_op_loop_skills: list[str] | None = None,  # #1212: op-loop gate for chat-run skills
         agent_id: str | None = None,
         exclude_tools: "frozenset[str] | set[str] | None" = None,  # #187: tool names hidden from the LLM catalog (e.g. web for faithful eval)
+        excluded_categories: "frozenset[str] | set[str] | None" = None,  # #1667: catalog categories hidden at source (e.g. reyn_source for external-repo eval)
         router_max_iterations: int = 5,  # #187: per-message tool-call budget for the MAIN chat loop (interactive=5; one-shot autonomous SWE sets higher)
         non_interactive: bool = False,  # #1439 Fix #1: run-once (piped, no TTY) — no user to ask, so the SP directs proceed-with-assumption instead of clarifying
     ) -> None:
@@ -1226,6 +1227,10 @@ class ChatSession:
         # SWE-eval excludes web__search/web__fetch so the agent solves from the
         # repo + issue, not a web lookup of the gold solution.
         self._exclude_tools = frozenset(exclude_tools or ())
+        # #1667: catalog categories hidden at the universal-catalog source (e.g.
+        # reyn_source on the external-repo eval path so it doesn't compete with
+        # file__* for the weak model); interactive default empty = reyn_source kept.
+        self._excluded_categories = frozenset(excluded_categories or ())
         # #187: per-message tool-call budget for the MAIN chat RouterLoop. The
         # interactive default (5) suits a human turn; an autonomous one-shot run
         # (`reyn chat --once` for SWE) needs far more (explore→edit→verify rounds),
@@ -2023,6 +2028,7 @@ class ChatSession:
             budget_tracker=self._budget_tracker,
             non_interactive=self._non_interactive,
             exclude_tools=self._exclude_tools,
+            excluded_categories=self._excluded_categories,
             budget=self._budget,
             resolver=self._resolver,
             compaction=self._compaction,

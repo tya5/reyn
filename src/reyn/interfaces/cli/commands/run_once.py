@@ -58,6 +58,15 @@ def register(sub) -> None:
         ),
     )
     p.add_argument(
+        "--exclude-categories", dest="exclude_categories", default=None,
+        metavar="NAMES",
+        help=(
+            "Comma-separated catalog category names to hide at the catalog source "
+            "(e.g. 'reyn_source' for an external-repo task where Reyn's own source "
+            "is irrelevant). Same as `reyn chat --exclude-categories`. #1667."
+        ),
+    )
+    p.add_argument(
         "--max-iterations", dest="max_iterations", type=int, default=80, metavar="N",
         help=(
             "Per-message tool-call budget for the autonomous loop (default 80). "

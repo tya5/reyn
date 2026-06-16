@@ -561,6 +561,20 @@ def _enumerate_category(category: str, ctx: ToolContext) -> list[dict[str, str]]
     """
     rs = ctx.router_state
 
+    # #1667: explicit per-session category exclusion. The task-agent / external-repo
+    # eval path (e.g. SWE-bench on /testbed) sets ``excluded_categories`` so a
+    # category irrelevant to the task — Reyn's own ``reyn_source`` self-help surface
+    # — does not compete with ``file__*`` for the weak model's selection. Applied at
+    # the catalog SOURCE so the category vanishes UNIFORMLY from ``catalog_entries``
+    # (every scheme's flat list: codeact code-API / enumerate-all / retrieval) +
+    # ``list_actions`` + dispatch — a top-level ``exclude_tools`` name filter cannot
+    # reach this. The general/interactive agent leaves it empty and keeps the
+    # category (self-help preserved). P7-clean: the excluded set is caller data, no
+    # hardcoded category name here.
+    excluded = getattr(rs, "excluded_categories", None) or frozenset()
+    if category in excluded:
+        return []
+
     if category in (
         "file", "web", "memory_operation", "reyn_source", "rag_operation",
         "mcp", "multi_agent", "validation",

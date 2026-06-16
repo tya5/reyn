@@ -430,6 +430,7 @@ def run_serve(args: argparse.Namespace) -> None:
             # (behavior-preserving). Fill = 1-line follow-up when a consumer needs it.
             agent_id=None,
             exclude_tools=None,
+            excluded_categories=frozenset(),  # #1667: MCP server — keep all categories
             router_max_iterations=session_cfg.config.safety.loop.max_router_iterations,
             non_interactive=False,  # #1439 Fix #1: stdio-MCP byte-identical (run-once-only fix)
             environment_backend=None,  # gap: MCP-serve lacks env-backend / container-rooting
