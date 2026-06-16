@@ -66,7 +66,7 @@ Servers covered:
   server (= one-liner shown in each section).
 
 The smoke runner `scripts/mcp_smoke.py` goes straight to
-`reyn.mcp_client.MCPClient`, bypassing the chat router. Useful for
+`reyn.mcp.client.MCPClient`, bypassing the chat router. Useful for
 connectivity sanity. For agent-driven usage (= the typical end-user
 shape), the chat router calls the server via the universal
 `mcp__call_tool` / `invoke_action` dispatch.
