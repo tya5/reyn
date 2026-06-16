@@ -897,6 +897,88 @@ def _redact_llm_request_params(base_kwargs: dict, response_format: dict | None) 
     return out
 
 
+# #1676: env vars whose values are API secrets — scrubbed from the (freeform)
+# provider error text so a captured 405/4xx body never leaks a key.
+_LLM_SECRET_ENV_VARS: tuple[str, ...] = (
+    "OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY",
+    "LITELLM_API_KEY", "AZURE_API_KEY",
+)
+
+
+def _collect_secret_values(base_kwargs: dict) -> list[str]:
+    """#1676: the concrete secret VALUES to scrub from freeform provider error
+    text — the secret-keyed kwargs (e.g. the proxy-injected ``api_key``) + known
+    API-key env vars. Scrubbing the actual value is precise (vs guessing patterns
+    in arbitrary provider output)."""
+    vals: list[str] = []
+    for k, v in base_kwargs.items():
+        if isinstance(v, str) and v and any(h in k.lower() for h in _LLM_REQUEST_SECRET_HINTS):
+            vals.append(v)
+    for env in _LLM_SECRET_ENV_VARS:
+        val = os.environ.get(env)
+        if val:
+            vals.append(val)
+    return vals
+
+
+def _scrub_secrets(value: object, secrets: list[str]) -> object:
+    """#1676: replace any known secret value occurring in a string with a marker.
+    Non-strings pass through unchanged (dict/list provider bodies are kept whole —
+    providers do not echo your API key in the error body, and the full body is the
+    root-cause signal we must NOT truncate)."""
+    if not isinstance(value, str) or not secrets:
+        return value
+    for s in secrets:
+        if s:
+            value = value.replace(s, "***REDACTED***")
+    return value
+
+
+def _emit_llm_request_error(
+    model: str, purpose: str, exc: BaseException, base_kwargs: dict,
+) -> None:
+    """#1676: emit a P6 ``llm_request_error`` with the FULL provider error detail
+    (status_code + whole message/body, NOT truncated — the owner's 405 root-cause
+    signal) so an LLM-call failure is visible in the event tab. Same ambient
+    EventLog (ContextVar) + ``model``/``purpose`` context as ``llm_request``
+    (#1669). Secret values are scrubbed from the freeform text. Wrapped so the
+    audit emit can never mask the real exception (the caller re-raises regardless)."""
+    try:
+        from reyn.events.events import get_llm_request_event_log
+        log = get_llm_request_event_log()
+        if log is None:
+            return
+        secrets = _collect_secret_values(base_kwargs)
+        detail: dict = {
+            "error_type": type(exc).__name__,
+            "error_message": _scrub_secrets(str(exc), secrets),
+            "status_code": getattr(exc, "status_code", None),
+        }
+        # litellm exceptions carry the provider body on ``.body`` (often the parsed
+        # error dict) and/or ``.response`` (an httpx.Response). Capture BOTH, whole.
+        body = getattr(exc, "body", None)
+        if body is not None:
+            detail["provider_body"] = (
+                body if isinstance(body, (dict, list))
+                else _scrub_secrets(str(body), secrets)
+            )
+        resp = getattr(exc, "response", None)
+        if resp is not None:
+            text = getattr(resp, "text", None)
+            detail["provider_response"] = _scrub_secrets(
+                text if isinstance(text, str) else str(resp), secrets,
+            )
+        log.emit(
+            "llm_request_error",
+            model=model,
+            purpose=purpose,
+            params=_redact_llm_request_params(base_kwargs, None),
+            **detail,
+        )
+    except Exception:  # noqa: BLE001 — audit emit must never mask the real error
+        pass
+
+
 async def recorded_acompletion(
     *,
     model: str,
@@ -987,13 +1069,21 @@ async def recorded_acompletion(
     # separate-decide) and never combines tools+response_format, so the
     # per-(model, call-shape) combine-degrade cache (D5) was superseded and
     # pruned (#1226, user GO).
+    # #1676: capture an LLM-call failure as a P6 ``llm_request_error`` (full
+    # provider detail incl status_code + whole body) at this single chokepoint,
+    # then RE-RAISE (never swallow). Wraps the response_format-fallback retry so a
+    # final failure (no fallback, or the fallback also failed) emits exactly once.
     try:
-        response = await _once(response_format)
-    except Exception:
-        if response_format is not None and fallback_without_response_format:
-            response = await _once(None)
-        else:
-            raise
+        try:
+            response = await _once(response_format)
+        except Exception:
+            if response_format is not None and fallback_without_response_format:
+                response = await _once(None)
+            else:
+                raise
+    except Exception as exc:
+        _emit_llm_request_error(effective_model, purpose, exc, base_kwargs)
+        raise
 
     if recorder is not None:
         usage = _extract_usage(response)
