@@ -125,11 +125,13 @@ def test_write_file_router_render_exact_description():
     """
     rendered = WRITE_FILE.render_for_router()
     expected_description = (
+        # #1625: reworded scheme-agnostic (WHAT not HOW) — was
+        # "describe_action(...) for its args, then invoke_action" (the universal-
+        # wrapper idiom leaking into the rendered code-API catalog, P7/P8).
         "Write content to a file under the agent's write scope. "
         "Creates or overwrites the WHOLE file. For a partial or surgical "
-        "change to an existing file, prefer the edit action instead of "
-        "rewriting: describe_action(action_name='file__edit') for its args, "
-        "then invoke_action."
+        "change to an existing file, prefer the `file__edit` action instead of "
+        "rewriting the whole file."
     )
     assert rendered["function"]["description"] == expected_description
 

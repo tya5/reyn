@@ -18,9 +18,8 @@ from reyn.tools.types import ToolContext, ToolDefinition, ToolGates, ToolResult
 _LINT_DESCRIPTION = (
     "Run the DSL linter on a skill and return structured issue results. "
     "skill_path: identifier of the skill to lint. Accepts the qualified "
-    "action name as returned by list_actions(category=['skill']) "
-    "(= 'skill__<name>'), the bare skill name, or a workspace-relative "
-    "path to the skill directory. Skill names are resolved via the "
+    "skill action name (= 'skill__<name>'), the bare skill name, or a "
+    "workspace-relative path to the skill directory. Skill names are resolved via the "
     "standard search path (reyn/local → reyn/project → stdlib). "
     "Returns passed, error_count, warning_count, and issues."
 )

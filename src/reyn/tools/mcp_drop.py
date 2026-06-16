@@ -46,8 +46,7 @@ _MCP_DROP_SERVER_PARAMETERS: dict[str, Any] = {
             "type": "string",
             "description": (
                 "Short server name as it appears under mcp.servers in "
-                "configuration (e.g. 'filesystem', 'brave'). Use "
-                "list_actions(category=['mcp.server']) to discover."
+                "configuration (e.g. 'filesystem', 'brave')."
             ),
         },
         "scope": {
