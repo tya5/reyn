@@ -573,7 +573,7 @@ Bounded-operation checkpoints that stop the agent gracefully rather than hard-fa
 
 ### TUI
 
-The Textual terminal interface for `reyn chat` (`src/reyn/chat/tui/`).
+The Textual terminal interface for `reyn chat` (`src/reyn/interfaces/tui/`).
 
 | Feature | Description | Documentation |
 |---------|-------------|---------------|

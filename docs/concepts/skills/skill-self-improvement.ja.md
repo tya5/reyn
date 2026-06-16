@@ -41,8 +41,8 @@ skill_improver (stdlib スキル)
 | A | すべての `run_skill_started` イベントに `skill_version_hash` フィールドを付与 | `src/reyn/op_runtime/run_skill.py` |
 | B | `.reyn/skill-versions/<name>/v<N>.md` スナップショット + `current` ポインタ | `skill_improver/version_snapshot.py` + `phases/finalize.md` |
 | C | `collect_traces` フェーズ（recall パス + raw-events フォールバック） | `skill_improver/trace_collector.py` + `phases/collect_traces.md` |
-| D | `on_propose: ask_user\|auto\|disabled` 設定 + finalize ゲート | `src/reyn/config.py` `SelfImprovementConfig` + `phases/finalize.md` |
-| E | `reyn skill versions / rollback` CLI | `src/reyn/cli/commands/skill.py` |
+| D | `on_propose: ask_user\|auto\|disabled` 設定 + finalize ゲート | `src/reyn/config/execution.py` `SelfImprovementConfig` + `phases/finalize.md` |
+| E | `reyn skill versions / rollback` CLI | `src/reyn/interfaces/cli/commands/skill.py` |
 
 ## ワークフロー詳細
 

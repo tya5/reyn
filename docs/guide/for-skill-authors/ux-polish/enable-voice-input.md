@@ -130,5 +130,5 @@ to OpenAI — opt-in only, never the default.
 - [`reyn chat` reference](../../../reference/cli/chat.md)
 - **Customizing key bindings**: `Ctrl+R` and its `Enter`-while-recording
   companion are declared in `BINDINGS` at the top of
-  `src/reyn/chat/tui/app.py`. To remap them, edit that file directly —
+  `src/reyn/interfaces/tui/app.py`. To remap them, edit that file directly —
   there is no config-file key-binding layer at this time.

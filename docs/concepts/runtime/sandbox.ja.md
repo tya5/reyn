@@ -12,7 +12,7 @@ Reyn のサンドボックスレイヤーは、スキルが宣言したポリシ
 
 ## `SandboxPolicy` フィールドリファレンス
 
-`src/reyn/sandbox/policy.py` で定義。`sandboxed_exec` Control IR op のフィールドとして渡されます。
+`src/reyn/security/sandbox/policy.py` で定義。`sandboxed_exec` Control IR op のフィールドとして渡されます。
 
 | フィールド | 型 | デフォルト | 意味 |
 |---|---|---|---|

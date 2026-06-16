@@ -12,7 +12,7 @@ The sandbox complements the [permission model](../runtime/permission-model.md): 
 
 ## `SandboxPolicy` field reference
 
-Defined in `src/reyn/sandbox/policy.py`. Passed as fields on a `sandboxed_exec` Control IR op.
+Defined in `src/reyn/security/sandbox/policy.py`. Passed as fields on a `sandboxed_exec` Control IR op.
 
 | Field | Type | Default | Meaning |
 |-------|------|---------|---------|
