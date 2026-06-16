@@ -947,8 +947,17 @@ async def execute_plan(
             # T_SP=0: step-results context is not the main session SP;
             # main_pool = T_max - 0 = T_max, so threshold =
             # step_results_ratio * T_max (conservative large-window default).
+            # #1679: honor a documented model_class_by_purpose.compaction override
+            # when set; otherwise keep router_model (byte-identical). Guarded for a
+            # host without a resolver (= router_model passes through unchanged).
+            _compaction_resolver = getattr(parent_host, "resolver", None)
+            _compaction_model = (
+                _compaction_resolver.purpose_class_or("compaction", router_model)
+                if _compaction_resolver is not None
+                else router_model
+            )
             _effective_engine = CompactionEngine(
-                model=router_model,
+                model=_compaction_model,
                 events=parent_host.events,
                 T_SP=0,
                 cfg=None,  # use default CompactionConfig for budget derivation

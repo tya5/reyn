@@ -1922,12 +1922,15 @@ class ChatSession:
             history_access=lambda: self.history,
             latest_summary=self._latest_summary,
             compaction_engine=CompactionEngine(
-                # #1172: pass self.model (a model CLASS like "standard") plus
-                # the resolver — CompactionEngine resolves to a litellm string
-                # by construction. Without resolution the engine would hand
-                # "standard" straight to litellm (BadRequestError) and every
-                # compaction trigger would fail (dead-end-critical).
-                model=self.model,
+                # #1172: pass a model CLASS (like "standard") plus the resolver —
+                # CompactionEngine resolves to a litellm string by construction.
+                # Without resolution the engine would hand "standard" straight to
+                # litellm (BadRequestError) and every compaction trigger would
+                # fail (dead-end-critical).
+                # #1679: honor a documented model_class_by_purpose.compaction
+                # override when set; otherwise keep self.model (byte-identical to
+                # the former hardcode, incl. an Agent(model=…) override).
+                model=self._resolver.purpose_class_or("compaction", self.model),
                 events=self._chat_events,
                 system_prompt_provider=self._build_router_system_prompt,
                 resolver=self._resolver,
