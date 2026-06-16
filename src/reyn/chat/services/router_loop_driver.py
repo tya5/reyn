@@ -336,6 +336,13 @@ class RouterLoopDriver:
             "plan_invalid_retries",
             1,
         )
+        # #1666: per-turn tool_call count cap (cost-bound) sourced from
+        # safety.loop.max_tool_calls_per_turn (default 50). 0 = unlimited.
+        _max_tool_calls_per_turn = getattr(
+            getattr(self._safety, "loop", None),
+            "max_tool_calls_per_turn",
+            50,
+        )
         loop = RouterLoop(
             host=self._router_host, chain_id=chain_id,
             # #1593 PR-2: select the chat-layer tool-use scheme (None → universal).
@@ -353,6 +360,8 @@ class RouterLoopDriver:
             empty_stop_retry_directive=EMPTY_STOP_RETRY_DIRECTIVE,
             empty_stop_retry_auto=True,
             plan_invalid_retries=_plan_invalid_retries_cap,
+            # #1666: per-turn tool_call count cap (cost-bound).
+            max_tool_calls_per_turn=_max_tool_calls_per_turn,
             # FP-0005: wire safety.on_limit so max_iterations exhaustion routes
             # through handle_limit_exceeded instead of flat-aborting.
             on_limit=getattr(self._safety, "on_limit", None),

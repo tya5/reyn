@@ -1393,6 +1393,7 @@ class RouterLoop:
         empty_stop_retry_directive: str | None = None,  # B42-NF-W6-1 opt-in retry
         empty_stop_retry_auto: bool = False,  # #187: always-on (no env opt-in); all prod sites pass True
         plan_invalid_retries: int = 1,  # B51 NF-W6-3 — safety.loop.plan_invalid_retries
+        max_tool_calls_per_turn: int = 50,  # #1666 — safety.loop.max_tool_calls_per_turn (0 = unlimited)
         on_limit: "Any | None" = None,  # OnLimitConfig | None — FP-0005 max_iterations checkpoint
         llm_caller: "Any | None" = None,  # Tier 2 test seam: real-fake injection
         scheme_name: "str | None" = None,  # #1593 PR-2: per-layer tool-use scheme (None → universal default; the construction site resolves config.tool_use.<layer>)
@@ -1480,6 +1481,8 @@ class RouterLoop:
         # (``max_router_calls_per_turn`` + ``max_iterations``) still
         # apply on top. ``0`` disables the retry (= pre-fix behaviour).
         self._plan_invalid_max_retries = max(0, int(plan_invalid_retries))
+        # #1666: per-turn tool_call count cap (cost-bound). 0 = unlimited.
+        self._max_tool_calls_per_turn = max(0, int(max_tool_calls_per_turn))
         # Tier 2 test seam: when set, ``run()`` calls this callable instead of
         # the module-level ``call_llm_tools``. Allows real-fake injection
         # (= scripted async callable) without ``unittest.mock.patch`` — per
@@ -2089,6 +2092,11 @@ class RouterLoop:
                 ExecutionResult,
                 RePresent,
             )
+            # #1666: bound the per-turn tool_call count BEFORE interpret, so all
+            # branches + the assistant↔tool-result alignment inherit the cap from a
+            # single choke point. ``_cap_info`` carries (attempted, kept) when it
+            # fired → the round appends a re-grounding notice after its results.
+            _cap_info = self._enforce_tool_call_cap(result)
             interp = self._scheme.interpret(
                 result, tool_catalog=self._catalog, ops=self,
             )
@@ -2162,6 +2170,11 @@ class RouterLoop:
                         "tool_call_id": _tc["id"],
                         "content": _REPRESENT_ACK,
                     })
+                # #1666: if the cap fired on this re-present turn, append the
+                # re-grounding notice after the synthetic acks (cost-bound applies
+                # to every branch, not only Execute).
+                if _cap_info is not None:
+                    messages.append(self._tool_call_cap_notice(*_cap_info))
                 _represent_layer_ctx = {
                     **(getattr(self, "_scheme_layer_ctx", None) or {}),
                     "refinement": interp.refinement,
@@ -2620,6 +2633,20 @@ class RouterLoop:
                     ops=self,
                 ):
                     messages.append(_fb_msg)
+
+                # #1666: after a capped round's results, append the single
+                # re-grounding notice (placed AFTER all tool results so the
+                # assistant.tool_calls ↔ tool_result pairing stays intact —
+                # same ordering contract as the plan_invalid directive below).
+                if _cap_info is not None:
+                    _cap_msg = self._tool_call_cap_notice(*_cap_info)
+                    messages.append(_cap_msg)
+                    _cap_append = getattr(host, "append_history_entry", None)
+                    if _cap_append is not None:
+                        _cap_append(
+                            role=_cap_msg["role"], content=_cap_msg["content"],
+                            meta={"chain_id": self.chain_id, "source": "tool_call_cap_notice"},
+                        )
 
                 # B51 NF-W6-3: plan_invalid self-correction loop. When the
                 # plan tool returned ``{status:error, error:{kind:plan_invalid}}``
@@ -3379,6 +3406,62 @@ class RouterLoop:
                 if followup is not None:
                     out.append(followup)
         return out
+
+    def _enforce_tool_call_cap(self, result) -> "tuple[int, int] | None":
+        """#1666: bound the per-turn ``tool_calls`` count (cost-bound, OS-level).
+
+        A degenerate (weak-model, long-context) completion can emit thousands of
+        ``tool_calls`` — observed 3451 in one SWE-bench completion — each costing a
+        tool-result message + token inflation. This caps the count at
+        ``self._max_tool_calls_per_turn`` (``0`` = unlimited): the overflow calls are
+        TRUNCATED off ``result.tool_calls`` **in place, before ``interpret``**, so
+        every downstream branch (Execute / RePresent) and the assistant-message ↔
+        tool-result alignment inherit the bound from a single choke point (only the
+        kept calls are interpreted, executed, and appended).
+
+        Scheme-agnostic (operates on the generic ``result.tool_calls`` shape, no
+        skill-specific strings — P7-clean). Emits the P6 ``tool_call_cap_exceeded``
+        event recording the **original attempted count** so history is bounded to
+        ``kept`` while the true magnitude survives in the audit log.
+
+        Returns ``(attempted, kept)`` when the cap fired (so the caller appends the
+        re-grounding notice), else ``None``.
+        """
+        cap = self._max_tool_calls_per_turn
+        if cap <= 0:
+            return None
+        tcs = getattr(result, "tool_calls", None) or []
+        attempted = len(tcs)
+        if attempted <= cap:
+            return None
+        # Truncate in place — the assistant message + interpret + execute all read
+        # this same list, so 50 calls ↔ 50 results stays aligned by construction.
+        result.tool_calls = tcs[:cap]
+        try:
+            self.host.events.emit(
+                "tool_call_cap_exceeded",
+                chain_id=self.chain_id,
+                attempted=attempted,
+                kept=cap,
+            )
+        except Exception:  # noqa: BLE001 — never let an audit emit break the loop
+            pass
+        return attempted, cap
+
+    def _tool_call_cap_notice(self, attempted: int, kept: int) -> dict:
+        """#1666: the single decision-enabling notice appended after a capped
+        round's results so the model re-grounds (deny-message-is-decision-enabling:
+        states what happened + what to do, with the true attempted count)."""
+        return {
+            "role": "user",
+            "content": (
+                f"[system notice] Your last turn emitted {attempted} tool_calls, "
+                f"which exceeds the per-turn cap of {kept}. Only the first {kept} "
+                "were executed; the rest were dropped. This usually means the model "
+                "is looping or over-fanning-out — issue far fewer tool_calls "
+                "(typically one to a few) and proceed step by step."
+            ),
+        }
 
     async def _run_execute_round(self, interp) -> "tuple[list[dict], list[dict]]":
         """The ``Execute`` arm — **byte-identical** to the former

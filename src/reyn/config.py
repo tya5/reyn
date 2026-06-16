@@ -220,6 +220,16 @@ class LoopConfig:
             (= per user turn). ``0`` = unlimited. CLI ``--max-iterations``
             overrides this when provided. Run-once / autonomous contexts
             typically set this higher (e.g. 80) via CLI.
+        max_tool_calls_per_turn:
+            Cost-bound (#1666): the maximum number of ``tool_calls`` honoured
+            from a SINGLE LLM completion. A degenerate (weak-model, long-context)
+            completion can emit thousands of tool_calls — observed 3451 in one
+            SWE-bench completion — each costing a tool-result message + token
+            inflation. When a completion exceeds this cap the OS processes only
+            the first ``max_tool_calls_per_turn`` calls, drops the overflow
+            (un-executed, un-appended), and appends a single re-grounding notice.
+            Default ``50`` is generous headroom over legitimate parallel tool use
+            (observed < 10) yet ~70x below the runaway. ``0`` = unlimited.
     """
 
     max_act_turns_per_phase: int = 10
@@ -227,6 +237,7 @@ class LoopConfig:
     max_router_calls_per_turn: int = 3
     max_agent_hops: int = 3
     max_router_iterations: int = 5
+    max_tool_calls_per_turn: int = 50
     skill_calls_per_chain: CostLimitConfig = field(default_factory=CostLimitConfig)
     skill_tokens_per_chain: CostLimitConfig = field(default_factory=CostLimitConfig)
 
@@ -2665,6 +2676,9 @@ def _build_safety_config(raw: object) -> SafetyConfig:
         )),
         max_router_iterations=int(loop_raw.get(
             "max_router_iterations", loop_defaults.max_router_iterations,
+        )),
+        max_tool_calls_per_turn=int(loop_raw.get(
+            "max_tool_calls_per_turn", loop_defaults.max_tool_calls_per_turn,
         )),
         skill_calls_per_chain=_build_cost_limit(
             loop_raw.get("skill_calls_per_chain")
