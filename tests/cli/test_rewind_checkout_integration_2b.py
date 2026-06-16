@@ -31,7 +31,7 @@ from reyn.chat.registry import AgentRegistry
 from reyn.events.agent_snapshot import AgentSnapshot
 from reyn.events.state_log import StateLog
 from reyn.tui.app import ReynTUIApp
-from reyn.tui.widgets._branch_tree import ROW_HEADER
+from reyn.tui.widgets.branch_tree import ROW_HEADER
 
 
 def _no_factory(_profile):

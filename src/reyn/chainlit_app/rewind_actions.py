@@ -11,7 +11,7 @@ across TUI + web (lead-approved cross-surface reuse).
 """
 from __future__ import annotations
 
-from reyn.tui.widgets._branch_tree import (
+from reyn.tui.widgets.branch_tree import (
     ROW_CHECKPOINT,
     build_branch_tree_rows,
 )

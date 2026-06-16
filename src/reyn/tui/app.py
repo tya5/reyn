@@ -2543,7 +2543,7 @@ class ReynTUIApp(App):
         """
         import dataclasses
 
-        from .widgets._branch_tree import build_branch_tree_rows
+        from .widgets.branch_tree import build_branch_tree_rows
         registry = self._agent_registry
         if registry is None:
             return []

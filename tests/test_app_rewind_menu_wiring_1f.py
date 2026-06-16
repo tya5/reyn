@@ -24,7 +24,7 @@ if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
 from reyn.tui.app import ReynTUIApp
-from reyn.tui.widgets._branch_tree import build_branch_tree_rows
+from reyn.tui.widgets.branch_tree import build_branch_tree_rows
 from reyn.tui.widgets.rewind_menu import RewindMenuWidget
 
 
