@@ -324,9 +324,9 @@ def test_iv_input_required_capability_backed_by_in_source_wire() -> None:
     backed by ``_MCPInterventionBus.on_dispatch`` + the
     ``answer_intervention`` tool dispatch. Pin both wires.
     """
-    src_path = (
+    src_path = (  # #1682: impl moved to reyn/mcp/server.py (old path = shim)
         Path(__file__).parent.parent
-        / "src" / "reyn" / "mcp_server.py"
+        / "src" / "reyn" / "mcp" / "server.py"
     )
     src = src_path.read_text(encoding="utf-8")
 

@@ -16,7 +16,7 @@ from .context import OpContext
 
 
 async def _execute(op: MCPIROp, ctx: OpContext) -> dict:
-    from reyn.mcp_client import MCPClient, MCPError, expand_env
+    from reyn.mcp.client import MCPClient, MCPError, expand_env
 
     server_cfg = ctx.mcp_servers.get(op.server)
     if not server_cfg:

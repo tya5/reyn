@@ -44,7 +44,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Request
 
 from reyn.chat.agent_locks import get_agent_lock
-from reyn.mcp_server import DEFAULT_SEND_TIMEOUT_SECONDS, send_to_agent_impl
+from reyn.mcp.server import DEFAULT_SEND_TIMEOUT_SECONDS, send_to_agent_impl
 from reyn.web.deps import get_registry, get_run_registry
 
 logger = logging.getLogger(__name__)

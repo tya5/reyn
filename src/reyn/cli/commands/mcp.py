@@ -327,7 +327,7 @@ def run_serve(args: argparse.Namespace) -> None:
     from reyn.chat.scoped_session_factory import build_scoped_chat_session
     from reyn.config import _find_project_root, load_project_context
     from reyn.events.state_log import StateLog
-    from reyn.mcp_server import serve_stdio
+    from reyn.mcp.server import serve_stdio
     from reyn.permissions.permissions import PermissionResolver
 
     session_cfg = Session.from_args(args)
@@ -993,7 +993,7 @@ def _probe_status(name: str, cfg: dict) -> str:
 
     async def _handshake() -> str:
         try:
-            from reyn.mcp_client import MCPClient
+            from reyn.mcp.client import MCPClient
             client = MCPClient(name, cfg)
             async with client:
                 return "ready"
@@ -1240,7 +1240,7 @@ async def _probe_server_tools(
     """
     import asyncio
 
-    from reyn.mcp_client import MCPClient
+    from reyn.mcp.client import MCPClient
 
     try:
         async with asyncio.timeout(per_server_timeout):
