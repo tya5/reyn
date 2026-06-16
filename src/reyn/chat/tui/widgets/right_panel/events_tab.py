@@ -78,6 +78,7 @@ _EVENT_COLORS: dict[str, str] = {
     "context_built":               _GREEN_DIMMEST,
     "llm_called":                  _EVENT_LLM,
     "llm_response_received":       _EVENT_LLM,
+    "llm_request":                 _EVENT_LLM,  # #1669 — non-message call params
     "artifact_created":            _EVENT_SKILL,
     "artifact_validated":          _EVENT_SKILL,
     "validation_error":            _STATUS_ERROR,
@@ -170,6 +171,11 @@ _FILTER_GROUPS: list[tuple[str, frozenset]] = [
         "control_ir_failed", "control_ir_skipped",
     })),
     ("llm",   frozenset({"llm_called", "llm_response_received"})),
+    # #1669 — non-message LLM call params (reasoning_effort / temperature /
+    # extra_body / …). A DEDICATED group (not lumped into "llm") so the owner can
+    # ISOLATE just the request-param events while verifying a model's call params
+    # (e.g. GPT-5.4) — one-per-LLM-call, so independent toggle-ability matters.
+    ("request", frozenset({"llm_request"})),
     ("tool",  frozenset({
         "tool_called", "tool_returned", "tool_failed", "tool_executed",
         "mcp_called", "mcp_completed", "mcp_failed",
@@ -266,6 +272,23 @@ def _event_hint(ev: dict) -> str:
         ct = d.get("completion_tokens", 0)
         cost = d.get("cost_usd", 0)
         return f"{pt}+{ct}t ${cost:.4f}"
+    if t == "llm_request":
+        # #1669: model + purpose + the salient non-message params inline; the
+        # FULL param set is in the Space→JSON preview. Params live under the
+        # nested ``params`` key (#1669 schema); absent keys are simply omitted
+        # (no ``=None`` noise). tools_count is top-level.
+        params = d.get("params") or {}
+        bits = [str(d.get("model", "")), str(d.get("purpose", ""))]
+        re_ = params.get("reasoning_effort")
+        if re_ is not None:
+            bits.append(f"reasoning_effort={re_}")
+        temp = params.get("temperature")
+        if temp is not None:
+            bits.append(f"temp={temp}")
+        tc = d.get("tools_count")
+        if tc:
+            bits.append(f"tools={tc}")
+        return " · ".join(b for b in bits if b)
     if t == "artifact_created":
         return f"{d.get('artifact_type', '')} @ {d.get('phase', '')}"
     if t == "artifact_validated":
