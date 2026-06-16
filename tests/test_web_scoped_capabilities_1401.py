@@ -119,7 +119,7 @@ def test_exclude_and_grant_thread_to_holder():
 
 
 def _deps_tree() -> ast.AST:
-    return ast.parse((_SRC / "web" / "deps.py").read_text(encoding="utf-8"))
+    return ast.parse((_SRC / "interfaces" / "web" / "deps.py").read_text(encoding="utf-8"))
 
 
 def _scoped_attr(value: ast.AST | None, attr: str) -> bool:

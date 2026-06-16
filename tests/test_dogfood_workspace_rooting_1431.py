@@ -21,7 +21,7 @@ from pathlib import Path
 
 _DOGFOOD = (
     Path(__file__).resolve().parents[1]
-    / "src" / "reyn" / "cli" / "commands" / "dogfood.py"
+    / "src" / "reyn" / "interfaces" / "cli" / "commands" / "dogfood.py"
 )
 
 

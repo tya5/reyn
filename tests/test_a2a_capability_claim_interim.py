@@ -110,7 +110,7 @@ def test_push_notifications_claim_backed_by_webhook_post_call_sites() -> None:
     _maybe_skip_if_router_unavailable()
     from pathlib import Path
 
-    repo_root = Path(__file__).parent.parent / "src" / "reyn" / "web"
+    repo_root = Path(__file__).parent.parent / "src" / "reyn" / "interfaces" / "web"
     a2a_router_src = (repo_root / "routers" / "a2a.py").read_text(
         encoding="utf-8",
     )

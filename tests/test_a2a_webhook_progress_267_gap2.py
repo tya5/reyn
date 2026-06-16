@@ -348,7 +348,7 @@ def test_handle_async_mode_attaches_bridge_around_send_to_agent_impl() -> None:
 
     src_path = (
         Path(__file__).parent.parent
-        / "src" / "reyn" / "web" / "routers" / "a2a.py"
+        / "src" / "reyn" / "interfaces" / "web" / "routers" / "a2a.py"
     )
     tree = ast.parse(src_path.read_text(encoding="utf-8"))
 

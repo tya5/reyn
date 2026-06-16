@@ -23,7 +23,7 @@ import sys
 from pathlib import Path
 
 _CHAT_PY = (
-    Path(__file__).resolve().parent.parent / "src" / "reyn" / "cli" / "commands" / "chat.py"
+    Path(__file__).resolve().parent.parent / "src" / "reyn" / "interfaces" / "cli" / "commands" / "chat.py"
 )
 _RUNNER = Path(__file__).resolve().parent.parent / "scripts" / "swe_bench_runner.py"
 
