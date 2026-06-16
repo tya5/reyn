@@ -39,7 +39,7 @@ def _truncate_json_for_event(raw: str, pos: "int | None", cap: int = _JSON_DECOD
     head = f"…[{start} bytes before]\n" if start > 0 else ""
     tail = f"\n…[{len(raw) - end} bytes after]" if end < len(raw) else ""
     return head + raw[start:end] + tail
-from reyn.llm.pricing import TokenUsage
+from reyn.llm.pricing import TokenUsage, estimate_cost
 from reyn.schemas.models import ContextFrame
 
 if TYPE_CHECKING:
@@ -1005,6 +1005,37 @@ def _to_responses_model(model: str) -> str:
     return f"responses/{model}"
 
 
+def _emit_chat_cost_events(model: str, usage: "TokenUsage | None") -> None:
+    """#1683: emit the cost-tab's usage events for the chat path via the #1669
+    ambient EventLog. The TUI cost tab reads ``llm_called`` (model) then accumulates
+    tokens/cost on ``llm_response_received``, so emit BOTH (in that order). Minimal
+    fields — the cost tab derives skill="(chat)" from the events file path, so no
+    run_id/skill is needed. None EventLog (no active session) → skip. Wrapped so an
+    observability emit never breaks the LLM call."""
+    if usage is None:
+        return
+    try:
+        from reyn.events.events import get_llm_request_event_log
+        log = get_llm_request_event_log()
+        if log is None:
+            return
+        # Strip the proxy provider-prefix for the pricing lookup (mirrors the
+        # kernel's LLMCallRecorder), then emit model + tokens + cost_usd.
+        _pricing_model = (
+            model.split("/", 1)[1] if "/" in model and proxy_kwargs() else model
+        )
+        cost_usd, _snapshot = estimate_cost(_pricing_model, usage)
+        log.emit("llm_called", model=model)
+        log.emit(
+            "llm_response_received",
+            prompt_tokens=usage.prompt_tokens,
+            completion_tokens=usage.completion_tokens,
+            cost_usd=cost_usd,
+        )
+    except Exception:  # noqa: BLE001 — observability emit must never break the call
+        pass
+
+
 async def recorded_acompletion(
     *,
     model: str,
@@ -1015,6 +1046,7 @@ async def recorded_acompletion(
     response_format: dict | None = None,
     fallback_without_response_format: bool = False,
     extra_kwargs: dict | None = None,
+    emit_cost_events: bool = False,  # #1683: chat path opts in (kernel emits via LLMCallRecorder)
 ) -> object:
     """Single cost-observability chokepoint for ALL ``litellm.acompletion`` calls (#1190).
 
@@ -1141,12 +1173,21 @@ async def recorded_acompletion(
             ) from exc
         raise
 
-    if recorder is not None:
-        usage = _extract_usage(response)
-        if usage is not None:
-            recorder.record_llm(
-                model=effective_model, agent=agent, usage=usage, purpose=purpose,
-            )
+    usage = _extract_usage(response)
+    if recorder is not None and usage is not None:
+        recorder.record_llm(
+            model=effective_model, agent=agent, usage=usage, purpose=purpose,
+        )
+    # #1683: the interactive chat path records cost to the in-memory recorder
+    # (→ header) but emits NO usage event, so the TUI cost tab (which reads
+    # `llm_called` + accumulates on `llm_response_received` from the events log)
+    # stays empty. Opt-in callers (the chat router) emit BOTH events here via the
+    # #1669 ambient EventLog. The kernel/phase path leaves this False — it emits
+    # these events via LLMCallRecorder, so emitting here too would double-count.
+    # (Interim: a future cleanup could centralize the kernel's emission into this
+    # chokepoint and drop the flag — out of scope here.)
+    if emit_cost_events:
+        _emit_chat_cost_events(effective_model, usage)
     return response
 
 
@@ -1470,6 +1511,7 @@ async def call_llm_tools(
     purpose: str = "main",  # #1190 cost-attribution bucket (chat router = main)
     trace_caller: str | None = None,
     event_log: "EventLog | None" = None,
+    emit_cost_events: bool = False,  # #1683: forwarded to recorded_acompletion (chat opts in)
 ) -> LLMToolCallResult:
     """Tool-use variant of call_llm. Returns raw assistant message.
 
@@ -1611,6 +1653,7 @@ async def call_llm_tools(
         return await recorded_acompletion(
             model=_model, messages=_messages, purpose=purpose,
             recorder=None, extra_kwargs=_kw,
+            emit_cost_events=emit_cost_events,  # #1683: chat opts in
         )
 
     response = await _llm_call_with_retry(_tools_call, effective_model, event_log)
