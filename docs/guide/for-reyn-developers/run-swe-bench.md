@@ -96,6 +96,16 @@ which scores inline.
 `reyn eval benchmark` runs a skill across a JSONL task file (one task per line)
 with concurrent dispatch, and scores each result inline:
 
+> **There is no bundled `swe_bench` skill.** The batch driver runs whatever
+> skill you name, and the previously bundled `swe_bench` skill was retired — so
+> `reyn eval benchmark swe_bench …` will dead-end with "skill not found". The
+> batch path requires a **caller-supplied** skill. The agent-routed (no-skill)
+> SWE-bench solve is the [single-instance runner](#solve-a-single-instance)
+> above; to cover a full dataset that way, loop the runner over instances and
+> score the predictions with the `swebench` harness yourself. There is no single
+> bundled command that runs the agent-routed solve over all of SWE-bench
+> Verified **and** scores it.
+
 ```bash
 reyn eval benchmark <SKILL> \
   --tasks swe_bench_verified.jsonl \
