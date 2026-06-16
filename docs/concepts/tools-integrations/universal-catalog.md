@@ -476,5 +476,5 @@ in a single retry. See `_LEGACY_CATEGORY_REDIRECTS` in
 - [`src/reyn/tools/universal_dispatch.py`](https://github.com/anthropics/reyn) — routing tables, `ResolvedAction`, `UnknownActionError`, `suggest_similar_names`
 - [`src/reyn/chat/router_tools.py`](https://github.com/anthropics/reyn) — `build_tools` integration (flag-gated wrappers)
 - [`src/reyn/chat/router_system_prompt.py`](https://github.com/anthropics/reyn) — `## Action categories` section
-- [`src/reyn/config.py`](https://github.com/anthropics/reyn) — `ActionRetrievalConfig`
+- [`src/reyn/config/embedding.py`](https://github.com/anthropics/reyn) — `ActionRetrievalConfig`
 - [`docs/reference/config/reyn-yaml.md`](../../reference/config/reyn-yaml.md#action_retrieval-block) — config reference

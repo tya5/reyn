@@ -127,4 +127,4 @@ opt-in のみでデフォルトにはしない。
 ## 関連
 
 - [`reyn chat` リファレンス](../../../reference/cli/chat.md)
-- TUI キーバインドのカスタマイズ *(doc 予定、 当面は `src/reyn/chat/tui/app.py` の `Ctrl+R` を直接編集)*
+- TUI キーバインドのカスタマイズ *(doc 予定、 当面は `src/reyn/interfaces/tui/app.py` の `Ctrl+R` を直接編集)*

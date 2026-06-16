@@ -225,4 +225,4 @@ Reyn config 階層 (ADR-0031 3-layer: `~/.reyn/config.yaml` / `<project>/reyn.ya
 - `docs/deep-dives/research/competitive/{openclaw,hermes-agent,pi}.md` — enterprise differentiation の競合 baseline
 - 既存 `mcp_search` skill: `src/reyn/stdlib/skills/mcp_search/`
 - `MCPClient` + `expand_env()`: `src/reyn/mcp/client.py`
-- `PermissionDecl` / `require_mcp()`: `src/reyn/permissions/permissions.py`
+- `PermissionDecl` / `require_mcp()`: `src/reyn/security/permissions/permissions.py`

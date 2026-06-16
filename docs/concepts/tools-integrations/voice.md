@@ -68,5 +68,5 @@ Set `language: ""` or `language: null` to opt back into Whisper auto-detection.
 
 ## See also
 
-- `src/reyn/chat/tui/voice.py`
-- `src/reyn/config.py` — `VoiceConfig`
+- `src/reyn/interfaces/tui/voice.py`
+- `src/reyn/config/media.py` — `VoiceConfig`
