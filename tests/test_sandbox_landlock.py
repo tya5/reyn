@@ -169,7 +169,7 @@ async def test_landlock_blocks_writes_outside_policy() -> None:
             ["/bin/sh", "-c", f"echo test > {target}"],
             policy,
         )
-        # The write should be blocked by Landlock (EACCES/EPERM → non-zero exit).
-        # TODO(fp-0017-b): Linux validation needed — confirm the exact returncode
-        # and that the kernel actually denies the write with these access rights.
+        # The write should be blocked by Landlock (EACCES/EPERM → non-zero exit):
+        # WRITE_FILE/MAKE_* are in the HANDLED set but granted on no path (empty
+        # write_paths), so writes are denied everywhere (#1693).
         assert result.returncode != 0

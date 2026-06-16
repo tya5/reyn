@@ -105,7 +105,11 @@ release = [
     "twine>=5.0",
 ]
 sandbox-linux = [
-    "landlock>=1.0",
+    # No stable landlock >=1.0 exists on PyPI — only 1.0.0.dev* pre-releases.
+    # A specifier that names a pre-release opts this requirement into them
+    # (PEP 440), so `>=1.0.0.dev4` installs where a bare `>=1.0` resolves to
+    # nothing (pip excludes pre-releases by default). #1693.
+    "landlock>=1.0.0.dev4",
     "pyseccomp>=0.1",
 ]
 voice = [
