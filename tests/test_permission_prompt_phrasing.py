@@ -28,7 +28,7 @@ import pytest
 from reyn.chat.outbox import OutboxMessage
 from reyn.chat.services.intervention_handler import InterventionHandler
 from reyn.intervention_choices import generic_yn_choices
-from reyn.permissions.permissions import PermissionDecl, PermissionResolver
+from reyn.security.permissions.permissions import PermissionDecl, PermissionResolver
 from reyn.user_intervention import (
     InterventionAnswer,
     InterventionBus,

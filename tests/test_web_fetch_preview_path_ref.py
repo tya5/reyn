@@ -44,7 +44,7 @@ from reyn.workspace.media_store import MediaStore, MediaStoreConfig
 def _ctx_with_media_store(tmp_path: Path) -> Any:
     """Build a real OpContext with a MediaStore rooted at ``tmp_path``."""
     from reyn.op_runtime.context import OpContext
-    from reyn.permissions.permissions import PermissionDecl
+    from reyn.security.permissions.permissions import PermissionDecl
 
     class _FakeEventLog:
         subscribers: list = []
@@ -69,7 +69,7 @@ def _ctx_with_media_store(tmp_path: Path) -> Any:
 def _ctx_without_media_store() -> Any:
     """Pre-#385 OpContext (= no MediaStore wired)."""
     from reyn.op_runtime.context import OpContext
-    from reyn.permissions.permissions import PermissionDecl
+    from reyn.security.permissions.permissions import PermissionDecl
 
     class _FakeEventLog:
         subscribers: list = []

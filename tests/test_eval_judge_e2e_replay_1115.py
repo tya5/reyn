@@ -29,7 +29,7 @@ from reyn.events.events import EventLog
 from reyn.kernel.runtime import OSRuntime, RunResult
 from reyn.llm.llm import LLMCallResult
 from reyn.llm.pricing import TokenUsage
-from reyn.permissions.permissions import PermissionResolver
+from reyn.security.permissions.permissions import PermissionResolver
 from reyn.skill.skill_paths import stdlib_root
 from reyn.workspace.workspace import Workspace
 

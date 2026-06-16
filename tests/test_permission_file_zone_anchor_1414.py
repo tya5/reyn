@@ -11,13 +11,13 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from reyn.permissions import PermissionDecl
-from reyn.permissions.effective import (
+from reyn.security.permissions import PermissionDecl
+from reyn.security.permissions.effective import (
     AgentLayer,
     CapabilityAxis,
     EffectivePermission,
 )
-from reyn.permissions.permissions import PermissionResolver
+from reyn.security.permissions.permissions import PermissionResolver
 
 _HOST = Path("/host/proj")
 _CONTAINER = Path("/testbed")

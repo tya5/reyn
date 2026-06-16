@@ -26,7 +26,7 @@ import httpx
 import pytest
 
 from reyn.config import MultimodalConfig, _build_multimodal_config
-from reyn.permissions.permissions import PermissionDecl, PermissionResolver
+from reyn.security.permissions.permissions import PermissionDecl, PermissionResolver
 from reyn.user_intervention import (
     InterventionAnswer,
     UserIntervention,

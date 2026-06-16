@@ -16,7 +16,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from reyn.compiler.loader import load_dsl_skill
-from reyn.permissions.permissions import PermissionDecl, PermissionResolver
+from reyn.security.permissions.permissions import PermissionDecl, PermissionResolver
 from reyn.skill.skill_paths import resolve_skill_path, stdlib_root
 
 # ── helpers ────────────────────────────────────────────────────────────────────

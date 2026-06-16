@@ -21,8 +21,8 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from reyn.config import MultimodalConfig, SandboxConfig
-    from reyn.sandbox.backend import SandboxBackend
-    from reyn.secrets.store import ScopedSecretStore
+    from reyn.security.sandbox.backend import SandboxBackend
+    from reyn.security.secrets.store import ScopedSecretStore
     from reyn.workspace.media_store import MediaStore
 
 from reyn.dispatch import DispatchContext, dispatch_tool
@@ -30,11 +30,11 @@ from reyn.events.events import EventLog
 from reyn.llm.model_resolver import ModelResolver
 from reyn.op_runtime import execute_op
 from reyn.op_runtime.context import OpContext
-from reyn.permissions.permissions import PermissionDecl, PermissionResolver
 from reyn.schemas.models import (
     ControlIROp,
     ControlIROpSpec,
 )
+from reyn.security.permissions.permissions import PermissionDecl, PermissionResolver
 from reyn.user_intervention import RequestBus
 from reyn.workspace.workspace import Workspace
 

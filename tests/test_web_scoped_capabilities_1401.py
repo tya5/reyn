@@ -27,8 +27,8 @@ from pathlib import Path
 import pytest
 
 from reyn.cli.commands.web import _apply_cli_scoped_overrides
-from reyn.permissions.permissions import PermissionDecl
-from reyn.sandbox.policy import SandboxPolicy
+from reyn.security.permissions.permissions import PermissionDecl
+from reyn.security.sandbox.policy import SandboxPolicy
 from reyn.web import deps
 from reyn.web.deps import (
     CliScopedOverrides,

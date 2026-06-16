@@ -89,8 +89,8 @@ async def _handle_mcp_drop_server_op(
     """
     from reyn.op_runtime.context import OpContext
     from reyn.op_runtime.mcp_drop_server import handle as drop_handle
-    from reyn.permissions.permissions import PermissionDecl
     from reyn.schemas.models import MCPDropServerIROp
+    from reyn.security.permissions.permissions import PermissionDecl
 
     server = str(args["server"])
     scope_raw = args.get("scope")

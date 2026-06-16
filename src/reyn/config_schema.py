@@ -177,7 +177,7 @@ def _patch_localns(ns: dict[str, Any]) -> None:
             pass
     if "OAuthProviderConfig" not in ns:
         try:
-            from reyn.secrets.oauth import OAuthProviderConfig  # noqa: PLC0415
+            from reyn.security.secrets.oauth import OAuthProviderConfig  # noqa: PLC0415
             ns["OAuthProviderConfig"] = OAuthProviderConfig
         except ImportError:
             pass

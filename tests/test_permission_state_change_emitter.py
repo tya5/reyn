@@ -36,7 +36,7 @@ import pytest
 
 from reyn.chat.session import ChatMessage, ChatSession
 from reyn.events.state_log import StateLog
-from reyn.permissions.permissions import PermissionResolver
+from reyn.security.permissions.permissions import PermissionResolver
 
 
 def _make_session(

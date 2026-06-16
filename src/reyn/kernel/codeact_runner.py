@@ -234,7 +234,7 @@ class CodeActRunner:
                 "Landlock); none available — refusing to run unsandboxed (fail-closed)."
             )
 
-        from reyn.sandbox import SandboxPolicy  # noqa: PLC0415
+        from reyn.security.sandbox import SandboxPolicy  # noqa: PLC0415
 
         policy_dict = dict(sandbox_policy or {})
         policy_dict["timeout_seconds"] = timeout
@@ -243,7 +243,7 @@ class CodeActRunner:
         if name == "seatbelt":
             import tempfile  # noqa: PLC0415
 
-            from reyn.sandbox.backends.seatbelt import (  # noqa: PLC0415
+            from reyn.security.sandbox.backends.seatbelt import (  # noqa: PLC0415
                 _build_sbpl_profile,
             )
 

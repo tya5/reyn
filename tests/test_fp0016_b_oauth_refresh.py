@@ -24,7 +24,7 @@ import httpx
 import pytest
 
 from reyn.events.events import EventLog
-from reyn.secrets.oauth import (
+from reyn.security.secrets.oauth import (
     _REFRESH_LOCKS,
     OAuthRefreshError,
     OAuthToken,

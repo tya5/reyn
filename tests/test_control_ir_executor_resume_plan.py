@@ -21,8 +21,8 @@ from pathlib import Path
 
 from reyn.events.events import EventLog
 from reyn.kernel.control_ir_executor import ControlIRExecutor
-from reyn.permissions.permissions import PermissionDecl
 from reyn.schemas.models import FileIROp
+from reyn.security.permissions.permissions import PermissionDecl
 from reyn.skill.skill_resume_analyzer import (
     CommittedStep,
     ResumePlan,
@@ -36,7 +36,7 @@ def _executor(
     resume_plan: ResumePlan | None = None,
     skill_run_id: str | None = "run_001",
 ) -> tuple[ControlIRExecutor, EventLog]:
-    from reyn.permissions.permissions import PermissionResolver
+    from reyn.security.permissions.permissions import PermissionResolver
     events = EventLog()
     ws = Workspace(events=events)
     resolver = PermissionResolver(

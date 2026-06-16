@@ -121,7 +121,7 @@ _perm_resolver = None
 def _get_perm_resolver():
     global _perm_resolver
     if _perm_resolver is None:
-        from reyn.permissions.permissions import PermissionResolver
+        from reyn.security.permissions.permissions import PermissionResolver
         config = _load_config()
         root = _get_project_root()
         # Copy so the #1401 grant setdefault below never mutates the shared config.

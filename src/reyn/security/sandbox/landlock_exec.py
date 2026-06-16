@@ -7,7 +7,7 @@ backend's one-shot ``run()`` does not fit; the wrap must be at the COMMAND level
 ``mcp_client._sandbox_wrap_stdio``. Landlock has no CLI wrapper, so this module
 IS the wrapper::
 
-    python -m reyn.sandbox.landlock_exec --policy <json> -- <command> <args...>
+    python -m reyn.security.sandbox.landlock_exec --policy <json> -- <command> <args...>
 
 ``main()`` applies ``landlock.Ruleset().restrict_self()`` to *itself*, then
 ``os.execvp()``s the target — the target inherits the irrevocable restriction
@@ -38,7 +38,7 @@ import sys
 
 from .policy import SandboxPolicy
 
-_MODULE = "reyn.sandbox.landlock_exec"
+_MODULE = "reyn.security.sandbox.landlock_exec"
 
 
 def _policy_to_json(policy: SandboxPolicy) -> str:

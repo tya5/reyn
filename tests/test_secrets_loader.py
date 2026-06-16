@@ -1,6 +1,6 @@
 """Tier 2: OS invariant — secrets.env startup loader.
 
-Pins the following invariants for ``reyn.secrets.loader.load_secrets_to_environ``:
+Pins the following invariants for ``reyn.security.secrets.loader.load_secrets_to_environ``:
 
   - File absent: gracefully returns without error
   - File present: values are injected into os.environ
@@ -19,7 +19,7 @@ from pathlib import Path
 
 import pytest
 
-from reyn.secrets.loader import load_secrets_to_environ
+from reyn.security.secrets.loader import load_secrets_to_environ
 
 # ── helpers ──────────────────────────────────────────────────────────────────
 

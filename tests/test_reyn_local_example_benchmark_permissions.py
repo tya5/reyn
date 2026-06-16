@@ -27,7 +27,7 @@ from pathlib import Path
 
 import pytest
 
-from reyn.permissions.permissions import PermissionDecl, PermissionResolver
+from reyn.security.permissions.permissions import PermissionDecl, PermissionResolver
 
 _EXAMPLE_PATH = Path(__file__).resolve().parents[1] / "reyn.local.yaml.example"
 

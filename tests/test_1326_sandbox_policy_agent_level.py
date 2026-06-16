@@ -31,8 +31,6 @@ from reyn.config import SandboxConfig, _build_sandbox_config
 from reyn.events.events import EventLog
 from reyn.kernel.postprocessor_executor import PostprocessorExecutor
 from reyn.kernel.preprocessor_executor import PreprocessorExecutor
-from reyn.permissions.permissions import PermissionResolver
-from reyn.sandbox.backend import SandboxResult
 from reyn.schemas.models import (
     Phase,
     Postprocessor,
@@ -42,6 +40,8 @@ from reyn.schemas.models import (
     Skill,
     SkillGraph,
 )
+from reyn.security.permissions.permissions import PermissionResolver
+from reyn.security.sandbox.backend import SandboxResult
 from reyn.workspace.workspace import Workspace
 
 # A broad operator policy mirroring swe_bench's (the live eval-lane value).
@@ -259,7 +259,7 @@ def test_osruntime_resolves_concrete_default_when_operator_absent(tmp_path: Path
     DEFAULT_SANDBOX_NETWORK), NOT None. FAILS pre-#1 (was sandbox_config.policy-or-
     None → None → the phase SandboxLayer stayed ⊤ = permission-only)."""
     from reyn.kernel.runtime import OSRuntime
-    from reyn.sandbox.policy import DEFAULT_SANDBOX_NETWORK
+    from reyn.security.sandbox.policy import DEFAULT_SANDBOX_NETWORK
 
     runtime = OSRuntime(
         _one_phase_skill(), model="gpt-3.5-turbo", run_id="sym-default",

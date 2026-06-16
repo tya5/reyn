@@ -38,8 +38,8 @@ if TYPE_CHECKING:
     from reyn.kernel.phase_executor import PhaseExecutor
     from reyn.kernel.preprocessor_executor import PreprocessorExecutor
     from reyn.kernel.run_state import RunState
-    from reyn.permissions.permissions import PermissionResolver
     from reyn.schemas.models import CandidateOutput, Skill
+    from reyn.security.permissions.permissions import PermissionResolver
     from reyn.skill.skill_registry import SkillRegistry
     from reyn.user_intervention import RequestBus
     from reyn.workspace.workspace import Workspace

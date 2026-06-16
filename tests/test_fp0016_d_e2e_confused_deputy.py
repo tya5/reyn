@@ -18,7 +18,7 @@ Demonstrates the full mitigation path for the Confused Deputy threat:
   3. sub_skill_credential_scope P6 event: the effective allowed set is recorded
      on every run_skill invocation for audit.
 
-No mocks. Uses real ScopedSecretStore / CredentialScopeError from reyn.secrets.
+No mocks. Uses real ScopedSecretStore / CredentialScopeError from reyn.security.secrets.
 
 Note: the full invoke_sub_skill → Agent.run path requires a real LLM call and
 is exercised by integration-level dogfood scenarios (batch 23+). The scope
@@ -34,7 +34,7 @@ from pathlib import Path
 
 import pytest
 
-from reyn.secrets import CredentialScopeError, ScopedSecretStore
+from reyn.security.secrets import CredentialScopeError, ScopedSecretStore
 
 # ---------------------------------------------------------------------------
 # Helpers

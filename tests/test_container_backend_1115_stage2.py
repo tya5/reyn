@@ -32,8 +32,8 @@ import pytest
 from reyn.environment.backend import EnvironmentBackend
 from reyn.environment.container_backend import DockerEnvironmentBackend
 from reyn.environment.host_backend import HostBackend
-from reyn.sandbox.backend import SandboxBackend, SandboxResult
-from reyn.sandbox.policy import SandboxPolicy
+from reyn.security.sandbox.backend import SandboxBackend, SandboxResult
+from reyn.security.sandbox.policy import SandboxPolicy
 
 
 def _local_docker_runner(argv, *, stdin=None, timeout=None) -> SandboxResult:

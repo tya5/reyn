@@ -25,11 +25,11 @@ from contextlib import AsyncExitStack
 from typing import Any
 
 # ── Env var expansion ─────────────────────────────────────────────────────────
-# Shared resolver lives in reyn.secrets.interpolation (ADR-0030).
+# Shared resolver lives in reyn.security.secrets.interpolation (ADR-0030).
 # This re-export keeps the public surface of this module backward-compatible:
 # callers that import ``from reyn.mcp_client import expand_env`` continue to
 # work without change.
-from reyn.secrets.interpolation import expand_env as expand_env  # noqa: F401
+from reyn.security.secrets.interpolation import expand_env as expand_env  # noqa: F401
 
 # ── Errors ───────────────────────────────────────────────────────────────────
 
@@ -155,7 +155,7 @@ class MCPClient:
             # operator isolates a server with `network: false`. If a server was
             # isolated and fails init for a network reason, point the operator at
             # the knob rather than leave an opaque error.
-            from reyn.sandbox.policy import DEFAULT_SANDBOX_NETWORK
+            from reyn.security.sandbox.policy import DEFAULT_SANDBOX_NETWORK
 
             hint = ""
             if self._type == "stdio" and not self._config.get(
@@ -317,15 +317,15 @@ class MCPClient:
         read broad (#1323 scoping) + the default sensitive deny-list; write tight
         to the server's working dir; ``network`` is OPERATOR-declared per server
         (``network: false`` in the MCP config to isolate) and defaults to
-        :data:`~reyn.sandbox.policy.DEFAULT_SANDBOX_NETWORK` (#1339 / sandbox-model
+        :data:`~reyn.security.sandbox.policy.DEFAULT_SANDBOX_NETWORK` (#1339 / sandbox-model
         completion D) — the SAME single-source default as sandboxed_exec, so the
         sandbox network posture is consistent across surfaces. The guarantee is
         operator-ownership (the policy is the operator's, not the LLM's — the LLM
         cannot set it), not default-off; an operator who wants an isolated server
         sets ``network: false`` (see the migration hint surfaced on init failure).
         """
-        from reyn.sandbox import SandboxPolicy
-        from reyn.sandbox.policy import DEFAULT_SANDBOX_NETWORK
+        from reyn.security.sandbox import SandboxPolicy
+        from reyn.security.sandbox.policy import DEFAULT_SANDBOX_NETWORK
 
         cwd = self._config.get("cwd") or os.getcwd()
         return SandboxPolicy(
@@ -339,13 +339,13 @@ class MCPClient:
         Seatbelt (macOS): returns ``("sandbox-exec", ["-f", <profile>, command,
         *args])`` with a generated SBPL profile (a temp ``.sb`` unlinked in
         ``close``). Landlock (Linux, #1344 follow-up E): returns the
-        ``reyn.sandbox.landlock_exec`` re-exec shim argv (the COMMAND-level
+        ``reyn.security.sandbox.landlock_exec`` re-exec shim argv (the COMMAND-level
         analog — Landlock has no CLI wrapper). MCP stdio is persistent, so the
         wrap is at the COMMAND level (the backend's one-shot ``run()`` does not
         fit). Other backends (docker) are not yet wrapped here — the server then
         runs UNSANDBOXED with a warning (never silently).
         """
-        from reyn.sandbox import get_default_backend
+        from reyn.security.sandbox import get_default_backend
 
         try:
             backend = get_default_backend()
@@ -354,7 +354,7 @@ class MCPClient:
         except Exception:  # noqa: BLE001 — a backend probe must not block a launch
             name, available = None, False
         if name == "seatbelt" and available:
-            from reyn.sandbox.backends.seatbelt import _build_sbpl_profile
+            from reyn.security.sandbox.backends.seatbelt import _build_sbpl_profile
 
             profile = _build_sbpl_profile(self._build_mcp_sandbox_policy())
             fh = tempfile.NamedTemporaryFile(
@@ -367,7 +367,7 @@ class MCPClient:
         if name == "landlock" and available:
             # #1344 follow-up E: the Landlock re-exec shim restricts itself then
             # execs the target (Linux-validation-pending — see landlock_exec).
-            from reyn.sandbox.landlock_exec import build_landlock_exec_argv
+            from reyn.security.sandbox.landlock_exec import build_landlock_exec_argv
 
             return build_landlock_exec_argv(
                 self._build_mcp_sandbox_policy(), command, args

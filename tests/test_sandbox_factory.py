@@ -18,8 +18,8 @@ import sys
 import pytest
 
 from reyn.config import SandboxConfig
-from reyn.sandbox import NoopBackend, SandboxBackend, get_default_backend
-from reyn.sandbox import noop_backend as _noop_module
+from reyn.security.sandbox import NoopBackend, SandboxBackend, get_default_backend
+from reyn.security.sandbox import noop_backend as _noop_module
 
 # ─── 1. SandboxConfig dataclass ───────────────────────────────────────────────
 
@@ -68,7 +68,7 @@ def test_valid_combinations_do_not_raise():
 def test_auto_on_macos_picks_seatbelt_when_available():
     """Tier 2: on Darwin, auto-select returns SeatbeltBackend when available(), else Noop."""
     try:
-        from reyn.sandbox.backends.seatbelt import SeatbeltBackend  # type: ignore[import]
+        from reyn.security.sandbox.backends.seatbelt import SeatbeltBackend  # type: ignore[import]
         seatbelt_cls = SeatbeltBackend
     except ImportError:
         seatbelt_cls = None
@@ -88,7 +88,7 @@ def test_auto_on_macos_picks_seatbelt_when_available():
 def test_auto_on_linux_picks_landlock_when_available():
     """Tier 2: on Linux, auto-select returns LandlockBackend when available(), else Noop."""
     try:
-        from reyn.sandbox.backends.landlock import LandlockBackend  # type: ignore[import]
+        from reyn.security.sandbox.backends.landlock import LandlockBackend  # type: ignore[import]
         landlock_cls = LandlockBackend
     except ImportError:
         landlock_cls = None
@@ -130,7 +130,7 @@ def test_auto_unsupported_warn_is_loud_at_selection(monkeypatch, caplog):
     AND a WARN logged AT SELECTION (not silent — the operator is told upfront that AI
     exec will run unsandboxed, vs the prior selection-time silence)."""
     monkeypatch.setattr("platform.system", lambda: "FreeBSD")
-    with caplog.at_level(logging.WARNING, logger="reyn.sandbox"):
+    with caplog.at_level(logging.WARNING, logger="reyn.security.sandbox"):
         result = get_default_backend(SandboxConfig(backend="auto", on_unsupported="warn"))
     assert isinstance(result, NoopBackend)
     assert any("UNSANDBOXED" in r.message for r in caplog.records), (
@@ -142,7 +142,7 @@ def test_auto_unsupported_ignore_is_silent(monkeypatch, caplog):
     """Tier 2: #1660 — on_unsupported='ignore' → NoopBackend with NO selection-time
     warn (explicit opt-in to silence)."""
     monkeypatch.setattr("platform.system", lambda: "FreeBSD")
-    with caplog.at_level(logging.WARNING, logger="reyn.sandbox"):
+    with caplog.at_level(logging.WARNING, logger="reyn.security.sandbox"):
         result = get_default_backend(SandboxConfig(backend="auto", on_unsupported="ignore"))
     assert isinstance(result, NoopBackend)
     assert not any("UNSANDBOXED" in r.message for r in caplog.records)
@@ -152,7 +152,7 @@ def test_auto_unsupported_does_not_fire_when_backend_available(monkeypatch):
     """Tier 2: #1660 regression guard — on a SUPPORTED platform the policy is NOT
     consulted: auto returns the real backend even with on_unsupported='error' (no
     spurious raise). The policy applies ONLY on the no-backend fallback."""
-    from reyn.sandbox import _auto_select
+    from reyn.security.sandbox import _auto_select
 
     monkeypatch.setattr("platform.system", lambda: "Linux")
 
@@ -186,7 +186,7 @@ def test_force_seatbelt_on_linux_warn_falls_back_to_noop(monkeypatch, caplog):
     # we rely on that — no need to patch imports.
     _noop_module._reset_warning_for_tests()
 
-    with caplog.at_level(logging.WARNING, logger="reyn.sandbox"):
+    with caplog.at_level(logging.WARNING, logger="reyn.security.sandbox"):
         result = get_default_backend(SandboxConfig(backend="seatbelt", on_unsupported="warn"))
 
     assert result.name == "noop"
@@ -213,7 +213,7 @@ def test_force_seatbelt_on_linux_ignore_silently_falls_back(monkeypatch, caplog)
     monkeypatch.setattr("platform.system", lambda: "Linux")
     _noop_module._reset_warning_for_tests()
 
-    with caplog.at_level(logging.WARNING, logger="reyn.sandbox"):
+    with caplog.at_level(logging.WARNING, logger="reyn.security.sandbox"):
         result = get_default_backend(SandboxConfig(backend="seatbelt", on_unsupported="ignore"))
 
     assert result.name == "noop"

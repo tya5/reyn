@@ -27,7 +27,7 @@ from reyn.environment.container_launcher import (
     _map_devcontainer,
     load_devcontainer_config,
 )
-from reyn.sandbox.backend import SandboxResult
+from reyn.security.sandbox.backend import SandboxResult
 
 
 class _FakeRunner:

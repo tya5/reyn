@@ -99,7 +99,7 @@ class _ContainerGitRunner:
         self._work_tree = work_tree
 
     async def run(self, args: list[str], *, check: bool = True) -> tuple[int, str]:
-        from reyn.sandbox.policy import SandboxPolicy
+        from reyn.security.sandbox.policy import SandboxPolicy
 
         argv = [
             "git",

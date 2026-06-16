@@ -297,7 +297,7 @@ async def handle(
     #     retries. No mid-flight ask_user from the chat router.
     # #571 Phase 6: every save_secret call routes through
     # require_secret_write against the calling decl.
-    from reyn.secrets.store import list_secret_keys
+    from reyn.security.secrets.store import list_secret_keys
 
     env_overrides = dict(op.env_overrides or {})
     secret_keys_set: list[str] = []
@@ -309,7 +309,7 @@ async def handle(
             ctx.permission_resolver.require_secret_write(
                 ctx.permission_decl, key, ctx.skill_name,
             )
-        from reyn.secrets.store import save_secret
+        from reyn.security.secrets.store import save_secret
         save_secret(key, value)
 
     interactive = ctx.intervention_bus is not None

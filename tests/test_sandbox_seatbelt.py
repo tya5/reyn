@@ -5,13 +5,13 @@ import sys
 
 import pytest
 
-from reyn.sandbox.backend import SandboxBackend
-from reyn.sandbox.backends.seatbelt import (
+from reyn.security.sandbox.backend import SandboxBackend
+from reyn.security.sandbox.backends.seatbelt import (
     SeatbeltBackend,
     _build_sbpl_profile,
     _sbpl_quote,
 )
-from reyn.sandbox.policy import SandboxPolicy
+from reyn.security.sandbox.policy import SandboxPolicy
 
 # ─── 1. Availability ──────────────────────────────────────────────────────────
 

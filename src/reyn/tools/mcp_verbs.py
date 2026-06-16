@@ -159,8 +159,8 @@ async def _handle_mcp_install_registry(
     matches the registry-aware contract — see module docstring.
     """
     from reyn.op_runtime.mcp_install import handle as mcp_install_handle
-    from reyn.permissions.permissions import PermissionDecl
     from reyn.schemas.models import MCPInstallIROp
+    from reyn.security.permissions.permissions import PermissionDecl
     from reyn.tools.op_context_bridge import build_legacy_op_context
 
     server_id = str(args.get("server_id") or "")
@@ -285,8 +285,8 @@ async def _handle_mcp_install_package(
     registry HTTP path is skipped.
     """
     from reyn.op_runtime.mcp_install import handle as mcp_install_handle
-    from reyn.permissions.permissions import PermissionDecl
     from reyn.schemas.models import MCPInstallIROp
+    from reyn.security.permissions.permissions import PermissionDecl
     from reyn.tools.op_context_bridge import build_legacy_op_context
 
     kind = str(args.get("kind") or "")
@@ -403,7 +403,7 @@ async def _handle_mcp_install_local(
         _scope_to_path,
         _write_yaml_config,
     )
-    from reyn.permissions.permissions import PermissionDecl
+    from reyn.security.permissions.permissions import PermissionDecl
 
     name = str(args.get("name") or "").strip()
     command = str(args.get("command") or "").strip()

@@ -93,7 +93,7 @@ _context_initialised: bool = False
 # ``.reyn/`` in its write_paths, see preprocessor_executor). The parent
 # permissions.py gate alone did not cover this enforcement path.
 #
-# Mirrors ``reyn.permissions.permissions._CANONICAL_PROTECTED_WRITE_PATHS``
+# Mirrors ``reyn.security.permissions.permissions._CANONICAL_PROTECTED_WRITE_PATHS``
 # — keep the two lists in sync (drift-guarded by
 # ``test_canonical_protected_lists_stay_in_sync``). They live in two
 # modules because this one runs in the python-harness subprocess where

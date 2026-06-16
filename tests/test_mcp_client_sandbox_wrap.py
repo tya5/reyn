@@ -8,7 +8,7 @@ with operator opt-in / opt-out, the unsandboxed warning for other backends,
 and the temp-profile cleanup.
 
 No mocks: a real ``_FakeBackend`` (name + available()) injected via monkeypatch
-of ``reyn.sandbox.get_default_backend``; the real ``_build_sbpl_profile`` builds
+of ``reyn.security.sandbox.get_default_backend``; the real ``_build_sbpl_profile`` builds
 the asserted SBPL.
 """
 from __future__ import annotations
@@ -38,7 +38,7 @@ def _stdio_client(**cfg) -> MCPClient:
 
 
 def _patch_backend(monkeypatch, backend) -> None:
-    monkeypatch.setattr("reyn.sandbox.get_default_backend", lambda config=None: backend)
+    monkeypatch.setattr("reyn.security.sandbox.get_default_backend", lambda config=None: backend)
 
 
 def test_seatbelt_wrap_wraps_command(monkeypatch):
@@ -62,7 +62,7 @@ def test_seatbelt_wrap_network_default(monkeypatch):
     profile follows the single-source default (network ON when
     DEFAULT_SANDBOX_NETWORK is True). FAILS on the pre-D hardcoded default-off
     (asserts on observable wrap output, not the private policy object)."""
-    from reyn.sandbox.policy import DEFAULT_SANDBOX_NETWORK
+    from reyn.security.sandbox.policy import DEFAULT_SANDBOX_NETWORK
 
     _patch_backend(monkeypatch, _FakeBackend("seatbelt"))
     client = _stdio_client()  # no `network` key
@@ -92,7 +92,7 @@ def test_seatbelt_wrap_network_opt_out(monkeypatch):
 
 def test_landlock_wrap_uses_reexec_shim(monkeypatch):
     """Tier 2: under Landlock (#1344 follow-up E), the command is wrapped as the
-    reyn.sandbox.landlock_exec re-exec shim (python -m ... --policy ... -- cmd
+    reyn.security.sandbox.landlock_exec re-exec shim (python -m ... --policy ... -- cmd
     args) — the COMMAND-level analog of the Seatbelt wrap (no UNSANDBOXED warn)."""
     import sys
     import warnings
@@ -103,7 +103,7 @@ def test_landlock_wrap_uses_reexec_shim(monkeypatch):
         warnings.simplefilter("error")  # any UNSANDBOXED warn would fail here
         cmd, args = client._sandbox_wrap_stdio("my-mcp", ["--flag"])
     assert cmd == sys.executable
-    assert args[:2] == ["-m", "reyn.sandbox.landlock_exec"]
+    assert args[:2] == ["-m", "reyn.security.sandbox.landlock_exec"]
     sep = args.index("--")
     assert args[sep + 1:] == ["my-mcp", "--flag"]  # original command preserved
 

@@ -50,8 +50,8 @@ async def _handle_compact(args: Mapping[str, Any], ctx: ToolContext) -> ToolResu
     """
     from reyn.op_runtime import execute_op
     from reyn.op_runtime.context import OpContext
-    from reyn.permissions.permissions import PermissionDecl
     from reyn.schemas.models import CompactIROp
+    from reyn.security.permissions.permissions import PermissionDecl
 
     reason = args.get("reason")
     op = CompactIROp(kind="compact", reason=str(reason) if reason else None)

@@ -13,7 +13,11 @@ from pathlib import Path
 
 import pytest
 
-from reyn.permissions.permissions import PermissionDecl, PermissionResolver, PythonPermission
+from reyn.security.permissions.permissions import (
+    PermissionDecl,
+    PermissionResolver,
+    PythonPermission,
+)
 from reyn.user_intervention import InterventionAnswer, InterventionBus, UserIntervention
 
 # ── Helpers ───────────────────────────────────────────────────────────────────

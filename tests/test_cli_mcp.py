@@ -36,7 +36,7 @@ from reyn.cli.commands.mcp import (
     run_remove,
     run_set_secret,
 )
-from reyn.secrets.store import load_secrets, save_secret
+from reyn.security.secrets.store import load_secrets, save_secret
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -419,7 +419,7 @@ def test_remove_shows_runtime_note(tmp_path, capsys, monkeypatch):
 
 def test_run_set_secret_saves_to_store(tmp_path, capsys, monkeypatch):
     """Tier 2: run_set_secret writes the value to secrets.store."""
-    from reyn.secrets.store import clear_secret as _clear
+    from reyn.security.secrets.store import clear_secret as _clear
 
     _setup_project(tmp_path)
     monkeypatch.chdir(tmp_path)
@@ -442,7 +442,7 @@ def test_run_set_secret_saves_to_store(tmp_path, capsys, monkeypatch):
 
 def test_run_set_secret_unknown_key_warns(tmp_path, capsys, monkeypatch):
     """Tier 2: setting an undeclared KEY emits a warning but proceeds."""
-    from reyn.secrets.store import clear_secret as _clear
+    from reyn.security.secrets.store import clear_secret as _clear
 
     _setup_project(tmp_path)
     local_cfg = tmp_path / "reyn.local.yaml"
@@ -463,7 +463,7 @@ def test_run_set_secret_unknown_key_warns(tmp_path, capsys, monkeypatch):
 
 def test_run_set_secret_adds_env_ref(tmp_path, capsys, monkeypatch):
     """Tier 2: run_set_secret ensures a ${KEY} ref exists in the local yaml."""
-    from reyn.secrets.store import clear_secret as _clear
+    from reyn.security.secrets.store import clear_secret as _clear
 
     _setup_project(tmp_path)
     monkeypatch.chdir(tmp_path)

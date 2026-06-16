@@ -23,8 +23,8 @@ from typing import Any
 import pytest
 import yaml
 
-from reyn.permissions.permissions import PermissionDecl, PermissionResolver
 from reyn.schemas.models import MCPDropServerIROp
+from reyn.security.permissions.permissions import PermissionDecl, PermissionResolver
 from reyn.user_intervention import (
     InterventionAnswer,
     InterventionBus,
@@ -330,7 +330,7 @@ def test_mcp_drop_server_clears_secrets_when_requested(
 ) -> None:
     """Tier 2: clear_secrets=True removes matching keys from secrets.env."""
     from reyn.op_runtime.mcp_drop_server import handle as drop_handle
-    from reyn.secrets.store import list_secret_keys, save_secret
+    from reyn.security.secrets.store import list_secret_keys, save_secret
 
     # Redirect secrets store to tmp_path
     secrets_file = tmp_path / "secrets.env"
@@ -372,7 +372,7 @@ def test_mcp_drop_server_preserves_secrets_when_requested(
 ) -> None:
     """Tier 2: clear_secrets=False leaves the secrets.env unchanged."""
     from reyn.op_runtime.mcp_drop_server import handle as drop_handle
-    from reyn.secrets.store import list_secret_keys, save_secret
+    from reyn.security.secrets.store import list_secret_keys, save_secret
 
     secrets_file = tmp_path / "secrets.env"
     monkeypatch.setenv("REYN_SECRETS_PATH", str(secrets_file))

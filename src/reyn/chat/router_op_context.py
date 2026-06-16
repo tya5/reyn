@@ -66,8 +66,8 @@ def build_router_op_context(
     identical across hosts; per-host fields are passed explicitly. See module
     docstring for the drift-class + behavior-preserving rationale."""
     from reyn.op_runtime.context import OpContext
-    from reyn.permissions.permissions import PermissionDecl
-    from reyn.sandbox.policy import resolve_sandbox_policy
+    from reyn.security.permissions.permissions import PermissionDecl
+    from reyn.security.sandbox.policy import resolve_sandbox_policy
     from reyn.workspace.workspace import Workspace
 
     file_perms = file_permissions or {}

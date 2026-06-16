@@ -25,16 +25,16 @@ from reyn.op_runtime.registry import (
     OP_PURITY,
     OpPurity,
 )
-from reyn.permissions.permissions import PermissionDecl
-from reyn.sandbox import (
+from reyn.schemas.models import SandboxedExecIROp
+from reyn.security.permissions.permissions import PermissionDecl
+from reyn.security.sandbox import (
     NoopBackend,
     SandboxBackend,
     SandboxPolicy,
     SandboxResult,
     get_default_backend,
 )
-from reyn.sandbox import noop_backend as _noop_module
-from reyn.schemas.models import SandboxedExecIROp
+from reyn.security.sandbox import noop_backend as _noop_module
 from reyn.workspace.workspace import Workspace
 
 # ─── 1. SandboxPolicy ────────────────────────────────────────────────────────
@@ -329,7 +329,7 @@ async def test_noop_emits_warning_once(caplog):
     policy = SandboxPolicy(env_passthrough=["PATH"])
 
     import logging
-    with caplog.at_level(logging.WARNING, logger="reyn.sandbox.noop_backend"):
+    with caplog.at_level(logging.WARNING, logger="reyn.security.sandbox.noop_backend"):
         await backend.run(["echo", "1"], policy)
         await backend.run(["echo", "2"], policy)
 

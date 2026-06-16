@@ -123,7 +123,7 @@ async def _get_or_build_registry() -> "AgentRegistry":
         from reyn.cli.session import Session
         from reyn.config import _find_project_root, load_project_context
         from reyn.events.state_log import StateLog
-        from reyn.permissions.permissions import PermissionResolver
+        from reyn.security.permissions.permissions import PermissionResolver
 
         # Reuse the same yaml-loading path the CLI uses so reyn.yaml /
         # reyn.local.yaml / env overrides Just Work. The *_for(args)

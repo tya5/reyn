@@ -15,8 +15,8 @@ from reyn.index.backend import ChunkRecord
 from reyn.index.backends.sqlite import SqliteIndexBackend
 from reyn.op_runtime import execute_op
 from reyn.op_runtime.context import OpContext
-from reyn.permissions.permissions import PermissionDecl
 from reyn.schemas.models import IndexQueryIROp
+from reyn.security.permissions.permissions import PermissionDecl
 from reyn.workspace.workspace import Workspace
 
 # ---------------------------------------------------------------------------

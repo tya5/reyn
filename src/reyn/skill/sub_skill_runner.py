@@ -14,9 +14,9 @@ from reyn.llm.pricing import TokenUsage
 
 if TYPE_CHECKING:
     from reyn.llm.model_resolver import ModelResolver
-    from reyn.permissions.permissions import PermissionResolver
     from reyn.schemas.models import Skill
-    from reyn.secrets.store import ScopedSecretStore
+    from reyn.security.permissions.permissions import PermissionResolver
+    from reyn.security.secrets.store import ScopedSecretStore
     from reyn.user_intervention import RequestBus
 
 

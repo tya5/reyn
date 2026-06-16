@@ -22,7 +22,11 @@ from pathlib import Path
 import pytest
 import yaml
 
-from reyn.permissions.permissions import PermissionDecl, PermissionResolver, PythonPermission
+from reyn.security.permissions.permissions import (
+    PermissionDecl,
+    PermissionResolver,
+    PythonPermission,
+)
 from reyn.user_intervention import InterventionAnswer, UserIntervention
 
 # ---------------------------------------------------------------------------

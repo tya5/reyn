@@ -44,7 +44,7 @@ def build_legacy_op_context(ctx: "ToolContext") -> Any:
         return rs.op_context_factory()
 
     from reyn.op_runtime.context import OpContext
-    from reyn.permissions.permissions import PermissionDecl
+    from reyn.security.permissions.permissions import PermissionDecl
 
     # Propagate the active phase's PermissionDecl via phase_state.op_context
     # (FP-0008 Tool→OpContext bridge fix 2026-05-28).

@@ -1,4 +1,4 @@
-"""Tier 2: OS invariant — generic ${VAR} interpolation in reyn.secrets.interpolation.
+"""Tier 2: OS invariant — generic ${VAR} interpolation in reyn.security.secrets.interpolation.
 
 Pins the contract for ``expand_env()``:
 
@@ -18,7 +18,7 @@ import warnings
 
 import pytest
 
-from reyn.secrets.interpolation import expand_env
+from reyn.security.secrets.interpolation import expand_env
 
 # ── simple string ────────────────────────────────────────────────────────────
 

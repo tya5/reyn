@@ -1,6 +1,6 @@
 """Tier 2: OS invariant — secrets store CRUD API.
 
-Pins the contract for the public API in ``reyn.secrets.store``:
+Pins the contract for the public API in ``reyn.security.secrets.store``:
 
   - save_secret: creates the file, sets chmod 600, stores KEY=value
   - save_secret: updates an existing key in-place (other keys preserved)
@@ -17,7 +17,7 @@ from pathlib import Path
 
 import pytest
 
-from reyn.secrets.store import (
+from reyn.security.secrets.store import (
     clear_secret,
     list_secret_keys,
     load_secrets,

@@ -183,7 +183,7 @@ def test_op_handler_progress_callback_emits_mcp_progress_event() -> None:
 
     # Build a minimal OpContext.
     from reyn.op_runtime.context import OpContext
-    from reyn.permissions.permissions import PermissionDecl
+    from reyn.security.permissions.permissions import PermissionDecl
 
     events = EventLog()
     ctx = OpContext(
@@ -249,7 +249,7 @@ def test_op_handler_reads_call_timeout_from_server_config() -> None:
             return _FakeResult()
 
     from reyn.op_runtime.context import OpContext
-    from reyn.permissions.permissions import PermissionDecl
+    from reyn.security.permissions.permissions import PermissionDecl
 
     events = EventLog()
     ctx = OpContext(
@@ -315,7 +315,7 @@ def test_op_handler_treats_missing_or_invalid_call_timeout_as_unset() -> None:
                 return _FakeResult()
 
         from reyn.op_runtime.context import OpContext
-        from reyn.permissions.permissions import PermissionDecl
+        from reyn.security.permissions.permissions import PermissionDecl
 
         events = EventLog()
         ctx = OpContext(

@@ -47,7 +47,7 @@ from reyn.user_intervention import (
 )
 
 if TYPE_CHECKING:
-    from reyn.sandbox.policy import SandboxPolicy
+    from reyn.security.sandbox.policy import SandboxPolicy
 
     from .models import Skill
 
@@ -1021,7 +1021,7 @@ class PermissionResolver:
                 f"read from '{path}' denied by config (file.read: deny)."
             )
 
-        from reyn.permissions.effective import (
+        from reyn.security.permissions.effective import (
             AgentLayer,
             CapabilityAxis,
             EffectivePermission,
@@ -1085,7 +1085,7 @@ class PermissionResolver:
                 f"write to '{path}' denied by config (file.write: deny)."
             )
 
-        from reyn.permissions.effective import (
+        from reyn.security.permissions.effective import (
             AgentLayer,
             CapabilityAxis,
             EffectivePermission,
@@ -1176,13 +1176,13 @@ class PermissionResolver:
         # persisted / legacy) — a config-allowed host must NOT bypass a sandbox
         # that disallows network. Placed after config-DENY (deny still wins) and
         # before every allow tier. ``None`` (non-sandboxed callers) → no veto.
-        from reyn.permissions.effective import (
+        from reyn.security.permissions.effective import (
             CapabilityAxis as _AX,
         )
-        from reyn.permissions.effective import (
+        from reyn.security.permissions.effective import (
             EffectivePermission as _EP,
         )
-        from reyn.permissions.effective import (
+        from reyn.security.permissions.effective import (
             SandboxLayer as _SL,
         )
 
@@ -1218,7 +1218,7 @@ class PermissionResolver:
         # `has_specific OR has_wildcard`. This is the seam S3.1c uses to ∩
         # SandboxLayer.network (closing the gap where a sandboxed skill's http_get
         # is not network-bound today). has_wildcard stays local for the prompt label.
-        from reyn.permissions.effective import (
+        from reyn.security.permissions.effective import (
             AgentLayer,
             CapabilityAxis,
             EffectivePermission,
@@ -1317,7 +1317,7 @@ class PermissionResolver:
         # wildcard) flows through the unified model (SECRET_WRITE axis).
         # Byte-identical. The operator's per-value op-execution prompt (for the
         # wildcard) is the separate runtime gate, unchanged.
-        from reyn.permissions.effective import (
+        from reyn.security.permissions.effective import (
             AgentLayer,
             CapabilityAxis,
             EffectivePermission,
@@ -1351,7 +1351,7 @@ class PermissionResolver:
         decl-less, so the two now make the SAME decision (the S3.1b-2 transitional
         divergence is resolved).
         """
-        from reyn.permissions.effective import (
+        from reyn.security.permissions.effective import (
             AgentLayer,
             CapabilityAxis,
             EffectivePermission,
@@ -1386,7 +1386,7 @@ class PermissionResolver:
         SAME decision (the S3.1b-2 transitional divergence is resolved). The
         config/path approvals fold INSIDE the layer (② grant-back-safe).
         """
-        from reyn.permissions.effective import (
+        from reyn.security.permissions.effective import (
             AgentLayer,
             CapabilityAxis,
             EffectivePermission,
@@ -1413,7 +1413,7 @@ class PermissionResolver:
         # diagnostics below are preserved (same messages + order). Local import
         # avoids the effective.py → permissions.py circular. The interactive
         # _approve prompt remains the separate runtime gate (not part of the ∩).
-        from reyn.permissions.effective import (
+        from reyn.security.permissions.effective import (
             AgentLayer,
             CapabilityAxis,
             EffectivePermission,
@@ -1526,7 +1526,7 @@ class PermissionResolver:
     ) -> None:
         # #1199 S3.1b-2c: the static tool authority (decl.tool) flows through the
         # unified model (TOOL axis). Byte-identical; the _approve prompt remains.
-        from reyn.permissions.effective import (
+        from reyn.security.permissions.effective import (
             AgentLayer,
             CapabilityAxis,
             EffectivePermission,

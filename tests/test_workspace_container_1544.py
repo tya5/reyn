@@ -25,7 +25,7 @@ from reyn.events.workspace_version_store import (
     WorkspaceVersionStore,
     _ContainerGitRunner,
 )
-from reyn.sandbox.backend import SandboxResult
+from reyn.security.sandbox.backend import SandboxResult
 
 
 class _FakeBackend:

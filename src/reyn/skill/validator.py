@@ -252,7 +252,7 @@ def validate_skill_dir(skill_dir: Path) -> ValidationResult:
     result = ValidationResult(skill_name=skill_name)
 
     # Parse permissions from frontmatter.
-    from reyn.permissions.permissions import PermissionDecl
+    from reyn.security.permissions.permissions import PermissionDecl
     raw_perm = skill_fm.get("permissions") or {}
     if not isinstance(raw_perm, dict):
         raw_perm = {}

@@ -30,7 +30,11 @@ from pathlib import Path
 
 import pytest
 
-from reyn.permissions.permissions import PermissionDecl, PermissionResolver, PythonPermission
+from reyn.security.permissions.permissions import (
+    PermissionDecl,
+    PermissionResolver,
+    PythonPermission,
+)
 from reyn.skill.skill_paths import is_stdlib_skill, stdlib_root
 from reyn.user_intervention import InterventionAnswer, UserIntervention
 

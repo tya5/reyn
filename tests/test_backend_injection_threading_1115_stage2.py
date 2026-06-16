@@ -26,9 +26,9 @@ from reyn.events.events import EventLog
 from reyn.kernel.control_ir_executor import ControlIRExecutor
 from reyn.kernel.preprocessor_executor import PreprocessorExecutor
 from reyn.kernel.runtime import OSRuntime
-from reyn.permissions.permissions import PermissionDecl, PermissionResolver
-from reyn.sandbox.backend import SandboxResult
 from reyn.schemas.models import Phase, RunOpStep, SandboxedExecIROp, Skill, SkillGraph
+from reyn.security.permissions.permissions import PermissionDecl, PermissionResolver
+from reyn.security.sandbox.backend import SandboxResult
 from reyn.workspace.workspace import Workspace
 
 
