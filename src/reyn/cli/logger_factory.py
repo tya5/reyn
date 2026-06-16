@@ -8,7 +8,7 @@ from __future__ import annotations
 
 
 def make_logger(**opts):
-    from reyn.reporters.console import ConsoleLogger
+    from reyn.reporters import ConsoleLogger
     return ConsoleLogger(**opts)
 
 
