@@ -866,6 +866,37 @@ LLM_PURPOSES: tuple[str, ...] = (
 )
 
 
+# #1669: top-level kwarg keys whose VALUE is secret-like and must be redacted
+# from the llm_request observability event (the proxy path injects ``api_key``,
+# see ``proxy_kwargs``). Substring match, case-insensitive.
+_LLM_REQUEST_SECRET_HINTS: tuple[str, ...] = (
+    "api_key", "api-key", "authorization", "secret", "token",
+)
+
+
+def _redact_llm_request_params(base_kwargs: dict, response_format: dict | None) -> dict:
+    """#1669: build the non-message, non-tools LLM call params for the
+    ``llm_request`` event, with secret-like values redacted.
+
+    ``messages`` is never present (separate positional arg); ``tools`` is dropped
+    (surfaced as ``tools_count``); ``response_format`` is added explicitly because
+    it is applied inside ``_once`` rather than carried in ``base_kwargs``, so the
+    event still reflects the actual outgoing param.
+    """
+    out: dict = {}
+    for k, v in base_kwargs.items():
+        if k in ("tools", "messages"):  # tools → count; messages never surfaced
+            continue
+        kl = k.lower()
+        if any(hint in kl for hint in _LLM_REQUEST_SECRET_HINTS):
+            out[k] = "***REDACTED***"
+        else:
+            out[k] = v
+    if response_format is not None and "response_format" not in out:
+        out["response_format"] = response_format
+    return out
+
+
 async def recorded_acompletion(
     *,
     model: str,
@@ -921,6 +952,27 @@ async def recorded_acompletion(
         if "reasoning_effort" not in _allowed:
             _allowed.append("reasoning_effort")
         base_kwargs["allowed_openai_params"] = _allowed
+
+    # #1669: emit a P6 ``llm_request`` event (TUI-observable) carrying the
+    # non-message call params, ONCE here — before the ``_once`` response_format
+    # retry loop, so a fallback retry does not double-emit. Ambient EventLog via
+    # ContextVar (set by the session / kernel runtime); None → skip, mirroring the
+    # ``recorder=None`` graceful path. ``messages`` is excluded by construction
+    # (a separate positional arg, never in base_kwargs); ``tools`` → count;
+    # secret-like fields redacted. Never let an audit emit break the LLM call.
+    try:
+        from reyn.events.events import get_llm_request_event_log
+        _llm_event_log = get_llm_request_event_log()
+        if _llm_event_log is not None:
+            _llm_event_log.emit(
+                "llm_request",
+                model=effective_model,
+                purpose=purpose,
+                tools_count=len(base_kwargs.get("tools") or []),
+                params=_redact_llm_request_params(base_kwargs, response_format),
+            )
+    except Exception:  # noqa: BLE001
+        pass
 
     async def _once(rf: dict | None) -> object:
         call_kwargs = dict(base_kwargs)

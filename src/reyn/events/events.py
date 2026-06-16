@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextvars
 import logging
 from datetime import date
 from pathlib import Path
@@ -8,6 +9,35 @@ from typing import Callable
 from reyn.schemas.models import Event
 
 logger = logging.getLogger(__name__)
+
+
+# #1669: session-scoped ambient EventLog for the single LLM acompletion chokepoint.
+# ``recorded_acompletion`` (reyn.llm.llm) is the one place ALL LLM calls funnel
+# through (#1190 AST-guarded), but it receives no events sink (only budget /
+# recorder). Threading one through its 9 call sites would be churn AND incomplete
+# (judge / compaction / dogfood callers lack a sink). Instead the chat session /
+# kernel runtime sets this ContextVar to its EventLog at creation; the chokepoint
+# reads it and emits ``llm_request``. ContextVars copy into child asyncio tasks at
+# spawn, so a set-before-the-run-loop propagates to every in-session LLM call.
+# None (tests / dogfood / CLI, no active session) → the chokepoint skips the emit,
+# mirroring the ``recorder=None`` graceful path.
+_llm_request_event_log: contextvars.ContextVar["EventLog | None"] = contextvars.ContextVar(
+    "reyn_llm_request_event_log", default=None,
+)
+
+
+def set_llm_request_event_log(log: "EventLog | None") -> contextvars.Token:
+    """Set the ambient EventLog the LLM chokepoint emits ``llm_request`` to (#1669).
+
+    Returns the token so a caller MAY reset to the prior value for a nested scope;
+    the session / runtime set-at-creation sites do not reset (last-set-wins is the
+    intended session-scoped lifetime — the active top-level run owns the sink)."""
+    return _llm_request_event_log.set(log)
+
+
+def get_llm_request_event_log() -> "EventLog | None":
+    """Read the ambient EventLog for the LLM chokepoint (#1669); None when unset."""
+    return _llm_request_event_log.get()
 
 
 class EventLog:
