@@ -355,6 +355,7 @@ def _get_registry():
                 allowed_mcp=None,
                 agent_id=None,
                 exclude_tools=_scoped.exclude_tools,
+                excluded_categories=frozenset(),  # #1667: web/A2A is interactive — keep all categories (a `reyn web` category opt-out would extend _scoped separately)
                 router_max_iterations=config.safety.loop.max_router_iterations,
                 non_interactive=False,  # #1439 Fix #1: A2A byte-identical (run-once-only fix). A2A-non-interactive = documented follow-up (cf factory module doc)
                 environment_backend=_scoped.environment_backend,

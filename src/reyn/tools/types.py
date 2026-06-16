@@ -75,6 +75,14 @@ class RouterCallerState:
     router_model: str | None = None
     available_tool_names: list[str] | None = None
 
+    # #1667: catalog categories to skip at the SOURCE (``_enumerate_category``),
+    # so an excluded category vanishes UNIFORMLY from ``catalog_entries`` (every
+    # scheme's flat list) + ``list_actions`` + dispatch — orthogonal to
+    # ``exclude_tools`` (which filters top-level ``tools=`` by name and cannot
+    # reach the universal catalog source). The task-agent / external-repo eval path
+    # sets e.g. ``{"reyn_source"}``; the general/interactive agent leaves it empty.
+    excluded_categories: frozenset[str] = frozenset()
+
     # Memory access (= for memory tools when invoked router-side;
     # router uses MemoryService directly, phase wraps via
     # ctx.workspace callbacks)

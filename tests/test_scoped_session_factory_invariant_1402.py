@@ -51,6 +51,7 @@ _REQUIRED_SCOPED = frozenset({
     "workspace_base_dir",
     "workspace_state_dir",
     "exclude_tools",
+    "excluded_categories",  # #1667 catalog category opt-out (per-frontend scoped)
     "agent_id",
     "router_max_iterations",
     "non_interactive",  # #1439 Fix #1: run-once SP autonomy flag (per-frontend scoped)

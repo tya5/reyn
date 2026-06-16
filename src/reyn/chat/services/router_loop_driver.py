@@ -43,6 +43,7 @@ class RouterLoopDriver:
         budget_tracker: Any,          # BudgetTracker — for RouterLoop
         non_interactive: bool,
         exclude_tools: Any,           # set — for RouterLoop
+        excluded_categories: Any = frozenset(),  # #1667 set — catalog categories for RouterLoop
         budget: Any,                  # BudgetGateway — cap + usage accounting
         resolver: Any,                # LLMResolver — model resolution
         compaction: Any,              # CompactionConfig — retry_loop cfg
@@ -63,6 +64,7 @@ class RouterLoopDriver:
         self._budget_tracker = budget_tracker
         self._non_interactive = non_interactive
         self._exclude_tools = exclude_tools
+        self._excluded_categories = excluded_categories  # #1667
         self._budget = budget
         self._resolver = resolver
         self._compaction = compaction
@@ -355,6 +357,7 @@ class RouterLoopDriver:
             # #187: hide excluded tools from the MAIN agent loop's LLM-visible
             # catalog.
             exclude_tools=self._exclude_tools,
+            excluded_categories=self._excluded_categories,  # #1667
             # B43-NF-W6-1 / #187: chat router empty-stop retry — always-on +
             # uniform "resume" directive.
             empty_stop_retry_directive=EMPTY_STOP_RETRY_DIRECTIVE,

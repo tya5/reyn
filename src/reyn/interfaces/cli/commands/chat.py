@@ -133,6 +133,22 @@ def register(sub) -> None:
             "are just not offered to the model this session."
         ),
     )
+    # #1667: hide whole catalog CATEGORIES at the universal-catalog source
+    # (orthogonal to --exclude-tools, which is top-level tool names). The
+    # external-repo eval path (SWE-bench on /testbed) passes 'reyn_source' so
+    # Reyn's own self-help surface doesn't compete with file__* for the weak
+    # model. Empty (the interactive default) keeps every category.
+    p.add_argument(
+        "--exclude-categories", dest="exclude_categories", default=None,
+        metavar="NAMES",
+        help=(
+            "Comma-separated catalog category names to hide from the agent's "
+            "catalog at the source (e.g. 'reyn_source' for an external-repo task "
+            "where Reyn's own source is irrelevant). Distinct from --exclude-tools "
+            "(top-level tool names); this drops the whole category from "
+            "list_actions + every scheme's action list + dispatch."
+        ),
+    )
     p.add_argument(
         "--banner",
         action="store_true",
@@ -350,6 +366,12 @@ def run(args: argparse.Namespace) -> None:
     _exclude_tools = frozenset(
         t.strip() for t in (getattr(args, "exclude_tools", None) or "").split(",") if t.strip()
     )
+    # #1667: parse --exclude-categories (comma-separated category names) → frozenset,
+    # threaded to ChatSession → RouterCallerState.excluded_categories → the universal
+    # catalog skips them at the source. Empty (interactive default) keeps every category.
+    _excluded_categories = frozenset(
+        c.strip() for c in (getattr(args, "exclude_categories", None) or "").split(",") if c.strip()
+    )
     # #1414: the single PermissionResolver is constructed BELOW, after
     # build_environment_backend, because it needs ``ws_base_dir`` for the
     # container file-zone anchor (file_zone_root). It isn't used before then.
@@ -410,6 +432,7 @@ def run(args: argparse.Namespace) -> None:
             eager_embedding_build=getattr(args, "eager_embedding_build", False),
             agent_id=session_cfg.config.agent.id,  # FP-0016 E
             exclude_tools=_exclude_tools,  # #187: hide tools (e.g. web) from the LLM catalog
+            excluded_categories=_excluded_categories,  # #1667: hide categories (e.g. reyn_source) at the catalog source
             # #187: per-message tool-call budget. Interactive chat uses
             # safety.loop.max_router_iterations (default 5); the one-shot
             # autonomous path raises it via --max-iterations (CLI wins).

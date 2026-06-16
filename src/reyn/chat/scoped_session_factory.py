@@ -50,6 +50,7 @@ def build_scoped_chat_session(
     workspace_base_dir: "Path | None",  # #187 chat OpContext FS root (container repo) / None=host cwd
     workspace_state_dir: "Path | None",  # #187 host-side OS state dir
     exclude_tools: "frozenset[str] | set[str] | None",  # #1400 tool names hidden + execution-blocked
+    excluded_categories: "frozenset[str] | set[str] | None",  # #1667 catalog categories hidden at source (reyn_source for external-repo eval)
     agent_id: str | None,  # FP-0016 agent-id-scoped memory
     router_max_iterations: int,  # #187 per-message tool-call budget
     non_interactive: bool,  # #1439 Fix #1: run-once (no TTY) → SP proceeds instead of asking a clarifying question. Per-frontend: chat-CLI = not isatty(); A2A/MCP/chainlit/dogfood = False (interactive byte-identical)
@@ -77,6 +78,7 @@ def build_scoped_chat_session(
         workspace_base_dir=workspace_base_dir,
         workspace_state_dir=workspace_state_dir,
         exclude_tools=exclude_tools,
+        excluded_categories=excluded_categories,
         agent_id=agent_id,
         router_max_iterations=router_max_iterations,
         non_interactive=non_interactive,
