@@ -30,9 +30,9 @@ _LINT_PARAMETERS: dict[str, Any] = {
         "skill_path": {
             "type": "string",
             "description": (
-                'qualified action name like "skill__<name>" '
-                "(returned by list_actions), the bare skill name, "
-                "or a workspace-relative directory path. NOT a "
+                'the skill to lint — a qualified action name like '
+                '"skill__<name>", the bare skill name, or a '
+                "workspace-relative directory path. NOT a "
                 "slash-style path under \"skill/\""
             ),
         },
