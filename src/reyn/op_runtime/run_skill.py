@@ -149,10 +149,19 @@ async def handle(op: RunSkillIROp, ctx: OpContext, caller: Literal["preprocessor
     # falls back to the runtime model, keeping the proxy config the single
     # source of truth. #1454 PR-B: the guard is the shared resolver gate.
     if ctx.resolver is not None:
+        # #1672: op.model (skill-supplied) wins, then the runtime ctx.model, then
+        # the configured default class (via class_for_purpose — unset "tool"
+        # purpose → config.model) instead of a hidden "standard" tier. Byte-
+        # identical at default and when ctx.model is set (ctx.model still wins).
         model = ctx.resolver.resolve_class_or_fallback(
-            op.model, ctx.model, where="run_skill",
+            op.model,
+            ctx.model or ctx.resolver.class_for_purpose("tool"),
+            where="run_skill",
         )
     else:
+        # No resolver (tool-invoked skill passes resolver=None — the latent bug +
+        # config-ification tracked in the CAT-3 fast-follow); "standard" is the
+        # only safe fallback without a config-aware resolver here.
         model = op.model or ctx.model or "standard"
 
     # Compute sub-state-dir based on caller context.

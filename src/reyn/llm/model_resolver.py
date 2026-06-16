@@ -164,12 +164,33 @@ def _strip_keys(d: dict, keys: set[str]) -> dict:
     return {k: v for k, v in d.items() if k not in keys}
 
 
+def resolve_purpose_class(
+    explicit: "str | None", resolver: "ModelResolver | None", purpose: str,
+) -> str:
+    """#1672: pick the model CLASS for a *purpose*, with explicit-wins precedence.
+
+    An ``explicit`` (caller-supplied) value wins; otherwise the *resolver*'s
+    per-purpose class (``class_for_purpose``, which falls back to the configured
+    default class); otherwise ``"standard"`` when no config-aware resolver is
+    available (a stub / no-resolver context — byte-identical to the former
+    hardcodes). Shared by ``RouterLoop`` (router) + the planner so the chat router
+    and plan-decomposition router resolve identically from one place.
+    """
+    if explicit is not None:
+        return explicit
+    if resolver is not None and hasattr(resolver, "class_for_purpose"):
+        return resolver.class_for_purpose(purpose)
+    return "standard"
+
+
 class ModelResolver:
     def __init__(
         self,
         mapping: dict[str, Any],
         *,
         builtin: dict[str, dict] | None = None,
+        default_class: str = "standard",
+        purpose_classes: dict[str, str] | None = None,
     ) -> None:
         """Build a ModelResolver.
 
@@ -178,9 +199,19 @@ class ModelResolver:
             builtin:  Built-in catalog.  Defaults to ``BUILTIN_MODELS``.
                       User entries in *mapping* override entries with the same
                       name.  Pass ``{}`` to disable built-ins (useful in tests).
+            default_class: #1672 — the configured default model class
+                      (``ReynConfig.model``) returned by ``class_for_purpose`` for
+                      any unset purpose. Defaults to ``"standard"`` so resolvers
+                      built without it stay byte-identical to the old hardcodes.
+            purpose_classes: #1672 — per-purpose class overrides
+                      (``ReynConfig.model_class_by_purpose``). A purpose present
+                      here wins over ``default_class`` in ``class_for_purpose``.
         """
         if builtin is None:
             builtin = BUILTIN_MODELS
+
+        self._default_class = default_class
+        self._purpose_classes: dict[str, str] = dict(purpose_classes or {})
 
         # Flat namespace: user entries override built-ins.
         self._namespace: dict[str, Any] = {**builtin, **mapping}
@@ -219,6 +250,20 @@ class ModelResolver:
             return self._resolved[name]
         # Unknown name: passthrough — the name IS the LiteLLM model string.
         return ModelSpec(model=name, kwargs={})
+
+    def class_for_purpose(self, purpose: str) -> str:
+        """#1672: the model CLASS for a logical call *purpose* (router / control_ir
+        / tool / compaction / judge).
+
+        A per-purpose override (``model_class_by_purpose``) wins; otherwise the
+        configured default class (``ReynConfig.model``). This is the OS-side mirror
+        of ``ReynConfig.model_class_for`` for the many call sites that hold a
+        threaded ``ModelResolver`` but not the ``ReynConfig`` object. Explicit
+        per-call selections (op.model / frontmatter) are applied by the caller
+        BEFORE this fallback and still win. Returns a CLASS name — feed it through
+        ``resolve()`` to get the ModelSpec / litellm string.
+        """
+        return self._purpose_classes.get(purpose, self._default_class)
 
     def is_known_class(self, name: str) -> bool:
         """Return True if name is a configured model class (i.e. present in the namespace).

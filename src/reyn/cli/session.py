@@ -25,7 +25,11 @@ class Session:
         config = load_config()
         if config.api_base:
             os.environ.setdefault("LITELLM_API_BASE", config.api_base)
-        return cls(config=config, resolver=ModelResolver(config.models))
+        return cls(config=config, resolver=ModelResolver(
+            config.models,
+            default_class=config.model,
+            purpose_classes=config.model_class_by_purpose,
+        ))
 
     # ── argparse-aware setting resolution (CLI > config) ─────────────────────
 

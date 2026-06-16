@@ -106,11 +106,21 @@ async def handle(
     # (#1454 PR-B): a non-class value falls back to the runtime model rather
     # than passing through as a literal LiteLLM string that bypasses the proxy.
     if ctx.resolver is not None:
+        # #1672: op.model (explicit) wins, then the runtime ctx.model, then the
+        # configured "judge" purpose class (was an implicit "standard" tier) — so an
+        # op-less, ctx.model-less judge call follows config instead of a hidden tier.
+        # Byte-identical at default (judge unset → config.model) and when ctx.model
+        # is set (ctx.model still wins).
         model_class = ctx.resolver.resolve_class_or_fallback(
-            op.model, ctx.model, where="judge_output",
+            op.model,
+            ctx.model or ctx.resolver.class_for_purpose("judge"),
+            where="judge_output",
         )
         resolved_model = ctx.resolver.resolve(model_class).model
     else:
+        # No resolver (degenerate / tool-spawned resolver=None path — tracked with
+        # the CAT-3 resolver-threading fast-follow); "standard" is the only safe
+        # fallback without a config-aware resolver here.
         model_class = op.model or ctx.model or "standard"
         resolved_model = model_class
 

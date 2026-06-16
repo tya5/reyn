@@ -359,7 +359,10 @@ class ControlIRExecutor:
             permission_resolver=self._perm,
             skill_name=self._skill_name,
             skill=None,  # control IR doesn't lean on preloaded sub-skills
-            model="standard",
+            # #1672: the control_ir purpose class follows config (was hardcoded
+            # "standard"); byte-identical at default (config.model defaults to
+            # "standard"). Resolver is config-aware (class_for_purpose).
+            model=self._resolver.class_for_purpose("control_ir"),
             resolver=self._resolver,
             subscribers=self.events.subscribers,
             output_language=None,

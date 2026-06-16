@@ -1742,6 +1742,23 @@ class ReynConfig:
         default_factory=dict,
         metadata={"desc": "Map of model class names to LiteLLM model strings."},
     )
+    # #1672: per-purpose model-class override. The mapping from a logical call
+    # purpose (router / control_ir / tool / compaction / judge) to a model CLASS
+    # was hardcoded in code (router="light", control_ir/tool="standard"), so the
+    # user could set what a class resolves to but NOT which class each purpose
+    # uses — the owner's "don't do things users can't customize" complaint. This
+    # map exposes it: an UNSET purpose falls back to ``model`` (the configured
+    # main), so by default routing follows the configured model — no hidden
+    # cheaper tier. Setting e.g. ``router: light`` is the explicit opt-in to the
+    # cheap per-turn router. Explicit per-call selections (run_skill op.model,
+    # phase frontmatter model_class) still WIN over this fallback.
+    model_class_by_purpose: dict[str, str] = field(
+        default_factory=dict,
+        metadata={"desc": (
+            "Per-purpose model class override (router / control_ir / tool / "
+            "compaction / judge). Unset purpose → the `model` default."
+        )},
+    )
     tool_calls_op_loop_skills: list[str] = field(
         default_factory=list,
         metadata={"desc": (
@@ -1903,6 +1920,46 @@ class ReynConfig:
     external_transports: "ExternalTransportRouting" = field(
         default_factory=lambda: _empty_external_transports(),
     )
+
+    def model_class_for(self, purpose: str) -> str:
+        """#1672: the model CLASS for a logical call *purpose*.
+
+        A per-purpose override in ``model_class_by_purpose`` wins; otherwise the
+        configured default class ``model`` (so unset purposes follow the user's
+        configured model — no hidden cheaper tier). Explicit per-call selections
+        (run_skill ``op.model``, phase frontmatter ``model_class``) are applied by
+        the caller BEFORE this fallback and still win.
+        """
+        return self.model_class_by_purpose.get(purpose, self.model)
+
+
+# #1672: the logical purposes whose model class is configurable via
+# ``model_class_by_purpose``. A typo'd key would silently never apply (the call
+# sites look up fixed keys), so the parser warns on an unknown key rather than
+# hard-failing (forward-compatible — a future purpose key is a warn, not a crash).
+MODEL_CLASS_PURPOSES: frozenset[str] = frozenset({
+    "router", "control_ir", "tool", "compaction", "judge",
+})
+
+
+def _build_model_class_by_purpose(raw: object) -> dict[str, str]:
+    """#1672: parse ``model_class_by_purpose`` (purpose → model class). Unknown
+    purpose keys WARN (not error) — a typo would silently never apply, so flag it
+    decision-enablingly while staying forward-compatible with future purposes."""
+    if not isinstance(raw, dict):
+        return {}
+    out: dict[str, str] = {}
+    for k, v in raw.items():
+        key = str(k)
+        if key not in MODEL_CLASS_PURPOSES:
+            import logging
+            logging.getLogger(__name__).warning(
+                "model_class_by_purpose.%s is not a known purpose %s — it will "
+                "never be applied; check for a typo.",
+                key, sorted(MODEL_CLASS_PURPOSES),
+            )
+        out[key] = str(v)
+    return out
 
 
 def _empty_external_transports():
@@ -2328,6 +2385,9 @@ def load_config(cwd: Path | None = None) -> ReynConfig:
             str(k): (v if isinstance(v, dict) else str(v))
             for k, v in (merged.get("models") or {}).items()
         },
+        model_class_by_purpose=_build_model_class_by_purpose(
+            merged.get("model_class_by_purpose"),
+        ),
         tool_calls_op_loop_skills=[
             str(s) for s in (merged.get("tool_calls_op_loop_skills") or [])
         ],

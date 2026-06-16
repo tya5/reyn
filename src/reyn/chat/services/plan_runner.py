@@ -182,7 +182,7 @@ class PlanRunner:
         *,
         decision: Any,
         budget: Any = None,
-        router_model: str = "light",
+        router_model: "str | None" = None,  # #1672: None → config "router" class (resolved downstream by execute_plan)
     ) -> None:
         """Launch a PlanRuntime for a resume decision (ADR-0023 §3.4).
 

@@ -857,13 +857,23 @@ def _build_sub_loop_memo_provider(
     )
 
 
+def _resolve_router_model(router_model: "str | None", host: Any) -> str:
+    """#1672: resolve an UNSET (None) router_model to the configured "router"
+    purpose class via the host's config-aware ModelResolver — so the plan
+    decomposition router follows the configured model instead of a hidden "light"
+    tier. An explicit value passes through unchanged. Delegates to the shared
+    ``resolve_purpose_class`` so it stays identical to RouterLoop's resolution."""
+    from reyn.llm.model_resolver import resolve_purpose_class
+    return resolve_purpose_class(router_model, getattr(host, "resolver", None), "router")
+
+
 async def execute_plan(
     plan: Plan,
     *,
     parent_host: RouterLoopHost,
     chain_id: str,
     budget: Any = None,
-    router_model: str = "light",
+    router_model: "str | None" = None,  # #1672: None → config "router" purpose class (was "light")
     plan_id: str | None = None,
     resume_plan: Any = None,
     step_max_iterations: int | None = None,
@@ -899,6 +909,9 @@ async def execute_plan(
     sharing). When neither is provided, step-results compaction is skipped
     (= legacy / no-config path, backward-compatible).
     """
+    # #1672: resolve an unset router_model to the configured "router" class so the
+    # plan decomposition router follows config (not the old hidden "light").
+    router_model = _resolve_router_model(router_model, parent_host)
     # PR-N4: lazy engine construction (path b).
     #
     # Design choice: path (b) rather than path (a) from the spec.
@@ -1456,7 +1469,7 @@ async def dispatch_plan_tool(
     parent_host: RouterLoopHost,
     chain_id: str,
     budget: Any = None,
-    router_model: str = "light",
+    router_model: "str | None" = None,  # #1672: None → config "router" purpose class (was "light")
     available_tool_names: set[str],
 ) -> dict:
     """Entry point invoked from the chat router's ``plan`` tool dispatch.
@@ -1491,6 +1504,8 @@ async def dispatch_plan_tool(
     ``plan_<plan_id>`` so R-D14 notifications target the right
     waiter on plan discard.
     """
+    # #1672: an unset router_model follows the configured "router" class (was "light").
+    router_model = _resolve_router_model(router_model, parent_host)
     try:
         plan = parse_and_validate_plan(args, allowed_tool_names=available_tool_names)
     except PlanValidationError as exc:

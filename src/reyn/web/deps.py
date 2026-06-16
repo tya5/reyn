@@ -288,7 +288,11 @@ def _get_registry():
             os.environ.setdefault("LITELLM_API_BASE", config.api_base)
 
         from reyn.llm.model_resolver import ModelResolver
-        resolver = ModelResolver(config.models)
+        resolver = ModelResolver(
+            config.models,
+            default_class=config.model,
+            purpose_classes=config.model_class_by_purpose,
+        )
         model = config.model
         output_language = config.output_language
 

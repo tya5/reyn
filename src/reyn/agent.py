@@ -195,7 +195,11 @@ class Agent:
             strict=strict,
             subscribers=subscribers,
             intervention_bus=intervention_bus,
-            resolver=resolver if resolver is not None else ModelResolver(config.models),
+            resolver=resolver if resolver is not None else ModelResolver(
+                config.models,
+                default_class=config.model,
+                purpose_classes=config.model_class_by_purpose,
+            ),
             permission_resolver=permission_resolver,
             safety=safety if safety is not None else config.safety,
             mcp_servers=config.mcp,

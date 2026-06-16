@@ -281,7 +281,12 @@ def _tool_result(calls: list[dict]) -> LLMToolCallResult:
 
 
 def _make_loop(host: FakeRouterHost, max_iterations: int = 5) -> RouterLoop:
-    return RouterLoop(host=host, chain_id="chain-test", max_iterations=max_iterations, scheme_name="universal-category")  # #1657: this suite covers universal-category
+    # #1672: pin router_model="light" — these fixtures were recorded with the
+    # former hardcoded "light" default. The suite verifies ROUTING LOGIC, not the
+    # model-class default (which #1672 flips to follow config); pinning the
+    # recorded value keeps the fixtures valid without re-recording. The new
+    # default-follows-config behavior is covered by test_model_class_by_purpose_1672.
+    return RouterLoop(host=host, chain_id="chain-test", max_iterations=max_iterations, router_model="light", scheme_name="universal-category")  # #1657: this suite covers universal-category
 
 
 # ---------------------------------------------------------------------------
