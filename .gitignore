@@ -72,3 +72,6 @@ spike_results/
 
 # Local dogfood/MCP sandbox scratch (traces, replay fixtures, test.db) — never commit
 .mcp-sandbox/
+
+# Dev-team broker MCP config — per-developer, not reyn source
+/.mcp.json
