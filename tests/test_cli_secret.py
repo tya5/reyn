@@ -26,7 +26,7 @@ from reyn.cli.commands.secret import (
     run_rotate,
     run_set,
 )
-from reyn.secrets.store import load_secrets, save_secret
+from reyn.security.secrets.store import load_secrets, save_secret
 
 # ── helper ────────────────────────────────────────────────────────────────────
 

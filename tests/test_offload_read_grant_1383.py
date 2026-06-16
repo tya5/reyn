@@ -24,8 +24,8 @@ from pathlib import Path
 import pytest
 
 from reyn.context_builder import maybe_ref_artifact, offload_control_ir_result
-from reyn.permissions.permissions import PermissionDecl, PermissionResolver
-from reyn.sandbox.policy import SandboxPolicy
+from reyn.security.permissions.permissions import PermissionDecl, PermissionResolver
+from reyn.security.sandbox.policy import SandboxPolicy
 
 
 def _resolver(project_root: Path) -> PermissionResolver:

@@ -24,7 +24,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from reyn.sandbox.backend import SandboxBackend
+    from reyn.security.sandbox.backend import SandboxBackend
 
 
 class PythonStepError(RuntimeError):
@@ -247,7 +247,7 @@ class PythonRunner:
         argv through ``backend.run`` (Seatbelt / Landlock / container — uniform
         interface). Returns ``(stdout, returncode, stderr, timed_out)``; the
         backend signals timeout/kill via ``returncode == -1``."""
-        from reyn.sandbox import SandboxPolicy
+        from reyn.security.sandbox import SandboxPolicy
 
         policy_dict = dict(sandbox_policy or {})
         policy_dict["timeout_seconds"] = timeout

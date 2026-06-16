@@ -35,10 +35,10 @@ from reyn.python_runner import PythonRunner, PythonStepError
 if TYPE_CHECKING:
     from reyn.events.events import EventLog
     from reyn.llm.model_resolver import ModelResolver
-    from reyn.permissions.permissions import PermissionResolver
-    from reyn.sandbox.backend import SandboxBackend
     from reyn.schemas.models import Phase, PreprocessorStep, Skill
-    from reyn.secrets.store import ScopedSecretStore
+    from reyn.security.permissions.permissions import PermissionResolver
+    from reyn.security.sandbox.backend import SandboxBackend
+    from reyn.security.secrets.store import ScopedSecretStore
     from reyn.user_intervention import RequestBus
     from reyn.workspace.workspace import Workspace
 
@@ -485,7 +485,7 @@ class PreprocessorExecutor:
                     f"{step.module}:{step.function}: {exc}"
                 ) from exc
         else:
-            from reyn.permissions.permissions import PythonPermission
+            from reyn.security.permissions.permissions import PythonPermission
             # When no resolver is configured (e.g. unit tests), look up the
             # declared mode from the skill's permissions block so that skills
             # declaring `mode: unsafe` are not silently downgraded to safe.

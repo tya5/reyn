@@ -47,7 +47,7 @@ import pytest
 
 from reyn.events.events import EventLog
 from reyn.op_runtime.context import OpContext
-from reyn.permissions.permissions import PermissionDecl
+from reyn.security.permissions.permissions import PermissionDecl
 from reyn.tools.types import PhaseCallerState, ToolContext
 from reyn.workspace.workspace import Workspace
 

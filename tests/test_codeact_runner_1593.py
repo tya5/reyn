@@ -152,7 +152,7 @@ async def test_fail_closed_when_no_sandbox_backend() -> None:
 @pytest.mark.asyncio
 async def test_noop_backend_is_fail_closed() -> None:
     """Tier 2: a noop backend (no real isolation) is treated as no-sandbox → refused."""
-    from reyn.sandbox.noop_backend import NoopBackend  # noqa: PLC0415
+    from reyn.security.sandbox.noop_backend import NoopBackend  # noqa: PLC0415
 
     async def dispatch(name: str, args: dict) -> dict:
         raise AssertionError("must not run under noop")
@@ -169,7 +169,7 @@ async def test_seatbelt_real_runner_round_trip() -> None:
     under an actual Seatbelt sandbox (fd-survival re-verified via the runner path,
     not a standalone probe). Network is denied by the default policy; the AF_UNIX
     control fd still round-trips."""
-    from reyn.sandbox.backends.seatbelt import SeatbeltBackend  # noqa: PLC0415
+    from reyn.security.sandbox.backends.seatbelt import SeatbeltBackend  # noqa: PLC0415
 
     backend = SeatbeltBackend()
     if not backend.available():

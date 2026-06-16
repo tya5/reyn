@@ -17,8 +17,8 @@ from reyn.index.backends.sqlite import SqliteIndexBackend
 from reyn.index.source_manifest import SourceEntry, get_source_manifest
 from reyn.op_runtime import execute_op
 from reyn.op_runtime.context import OpContext
-from reyn.permissions.permissions import PermissionDecl, PermissionResolver
 from reyn.schemas.models import IndexDropIROp
+from reyn.security.permissions.permissions import PermissionDecl, PermissionResolver
 from reyn.workspace.workspace import Workspace
 
 # ---------------------------------------------------------------------------

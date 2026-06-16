@@ -14,7 +14,7 @@ Handler logic (one-shot, no sub-phases):
   4. Remove the entry from yaml, prune empty `mcp.servers` / `mcp`
      containers so the file stays tidy. Write back.
   5. When op.clear_secrets=True, remove the captured keys from the
-     user-level secrets store via reyn.secrets.store.clear_secret.
+     user-level secrets store via reyn.security.secrets.store.clear_secret.
   6. Emit ``mcp_server_removed`` P6 event with the audit metadata.
 
 Scope → file mapping mirrors mcp_install:
@@ -245,7 +245,7 @@ async def handle(
     # ── 5. Clean up secrets when requested ─────────────────────────────
     cleared_keys: list[str] = []
     if op.clear_secrets and env_keys:
-        from reyn.secrets.store import clear_secret
+        from reyn.security.secrets.store import clear_secret
         for key in env_keys:
             if clear_secret(key):
                 cleared_keys.append(key)

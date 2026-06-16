@@ -24,9 +24,9 @@ import pytest
 from reyn.events.events import EventLog
 from reyn.op_runtime.context import OpContext
 from reyn.op_runtime.mcp_install import handle as mcp_install_handle
-from reyn.permissions.permissions import PermissionDecl, PermissionResolver
 from reyn.registry.source_resolver import resolve
 from reyn.schemas.models import MCPInstallIROp
+from reyn.security.permissions.permissions import PermissionDecl, PermissionResolver
 from reyn.tools.mcp import _handle_list_mcp_tools
 from reyn.tools.types import RouterCallerState, ToolContext
 from reyn.user_intervention import InterventionAnswer, UserIntervention

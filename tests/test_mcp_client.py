@@ -136,7 +136,7 @@ def patched_sdk():
     with mock.patch("mcp.client.stdio.stdio_client", _fake_stdio_client), \
          mock.patch("mcp.client.streamable_http.streamablehttp_client", _fake_http_client), \
          mock.patch("mcp.ClientSession", _FakeSession), \
-         mock.patch("reyn.sandbox.get_default_backend", lambda config=None: _NoopBackend()), \
+         mock.patch("reyn.security.sandbox.get_default_backend", lambda config=None: _NoopBackend()), \
          warnings.catch_warnings():
         # The noop backend makes the #1344 stdio wrap a no-op + warn — expected
         # here (these tests isolate transport forwarding, not the sandbox wrap).

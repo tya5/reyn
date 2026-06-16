@@ -18,7 +18,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from reyn.environment.container_backend import DockerEnvironmentBackend
-from reyn.sandbox.backend import SandboxResult
+from reyn.security.sandbox.backend import SandboxResult
 from reyn.workspace.workspace import Workspace
 
 

@@ -46,7 +46,7 @@ def test_mcp_headers_field_load_with_env_interpolation(tmp_path, monkeypatch):
     monkeypatch.setenv("GITHUB_TOKEN", "ghp_t0pSecret")
     # Avoid pollution from the developer's real ~/.reyn/secrets.env loader.
     monkeypatch.setattr(
-        "reyn.secrets.loader.load_secrets_to_environ", lambda *a, **k: None
+        "reyn.security.secrets.loader.load_secrets_to_environ", lambda *a, **k: None
     )
 
     reyn_yaml = tmp_path / "reyn.yaml"
@@ -85,7 +85,7 @@ def test_mcp_headers_optional_back_compat(tmp_path, monkeypatch):
     """Tier 2: omitting ``headers`` is valid (back-compat: pre-FP-0016 configs
     without the field continue to load and run)."""
     monkeypatch.setattr(
-        "reyn.secrets.loader.load_secrets_to_environ", lambda *a, **k: None
+        "reyn.security.secrets.loader.load_secrets_to_environ", lambda *a, **k: None
     )
 
     reyn_yaml = tmp_path / "reyn.yaml"

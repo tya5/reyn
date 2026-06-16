@@ -29,8 +29,8 @@ import subprocess
 import tempfile
 from pathlib import Path
 
-from reyn.sandbox.backend import SandboxResult
-from reyn.sandbox.policy import SandboxPolicy
+from reyn.security.sandbox.backend import SandboxResult
+from reyn.security.sandbox.policy import SandboxPolicy
 
 _logger = logging.getLogger(__name__)
 

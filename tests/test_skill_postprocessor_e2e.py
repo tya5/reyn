@@ -37,13 +37,13 @@ from reyn.kernel.postprocessor_executor import PostprocessorError
 from reyn.kernel.runtime import OSRuntime, RunResult
 from reyn.llm.llm import LLMCallResult
 from reyn.llm.pricing import TokenUsage
-from reyn.permissions.permissions import PermissionDecl, PythonPermission
 from reyn.schemas.models import (
     Phase,
     Postprocessor,
     Skill,
     SkillGraph,
 )
+from reyn.security.permissions.permissions import PermissionDecl, PythonPermission
 
 # ---------------------------------------------------------------------------
 # Tiny scripted LLM — a real callable, not a Mock.

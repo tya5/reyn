@@ -27,7 +27,7 @@ than a backend primitive.
 
 ``exec`` convergence with the FP-0017 ``SandboxBackend`` is intentionally NOT
 part of this Protocol yet — ``exec`` already has a backend abstraction
-(``reyn.sandbox``); folding it in is a separate step (#1115 Stage 1b) to keep
+(``reyn.security.sandbox``); folding it in is a separate step (#1115 Stage 1b) to keep
 this repo-FS seam behavior-preserving and reviewable in isolation.
 """
 from __future__ import annotations

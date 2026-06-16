@@ -30,7 +30,7 @@ import asyncio
 
 import pytest
 
-from reyn.permissions.permissions import (
+from reyn.security.permissions.permissions import (
     PermissionDecl,
     PermissionResolver,
 )

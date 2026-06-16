@@ -7,7 +7,7 @@ Exports:
     NoopBackend     — default fallback (no isolation enforced)
     get_default_backend() — factory; platform-aware lazy auto-selection
 
-Platform-specific backends live in `reyn.sandbox.backends.*` and are
+Platform-specific backends live in `reyn.security.sandbox.backends.*` and are
 lazy-imported so a missing sibling file (e.g. before Component B / C lands
 in a given checkout) gracefully degrades to NoopBackend.
 """

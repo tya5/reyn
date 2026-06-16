@@ -10,7 +10,7 @@ from reyn.events.events import EventLog
 
 if TYPE_CHECKING:
     from reyn.environment.backend import EnvironmentBackend, GrepResult
-    from reyn.permissions.permissions import PermissionResolver
+    from reyn.security.permissions.permissions import PermissionResolver
 
 
 class Workspace:

@@ -101,7 +101,7 @@ def test_docker_attach_builds_backend_with_dirs() -> None:
 def test_docker_attach_satisfies_both_protocols() -> None:
     """Tier 2: the single docker instance satisfies BOTH the FS and exec Protocols."""
     from reyn.environment import EnvironmentBackend
-    from reyn.sandbox import SandboxBackend
+    from reyn.security.sandbox import SandboxBackend
 
     backend, _b, _s, _c = _build_environment_backend(
         _args(env_backend="docker", container="c", repo_dir="/testbed", state_dir="/h")

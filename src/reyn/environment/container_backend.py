@@ -3,7 +3,7 @@
 One class implementing BOTH Protocols (案C-pure):
   - :class:`~reyn.environment.backend.EnvironmentBackend` — repo filesystem ops
     run *inside* the container against ``repo_dir`` (e.g. ``/testbed``);
-  - :class:`~reyn.sandbox.backend.SandboxBackend` — ``run()`` exec inside the
+  - :class:`~reyn.security.sandbox.backend.SandboxBackend` — ``run()`` exec inside the
     same container.
 
 Injecting the SAME instance at ``Workspace.environment_backend`` (FS) and
@@ -40,8 +40,8 @@ from pathlib import Path
 from typing import Any, Awaitable, Callable, Pattern
 
 from reyn.environment.backend import GrepResult
-from reyn.sandbox.backend import SandboxResult
-from reyn.sandbox.policy import SandboxPolicy
+from reyn.security.sandbox.backend import SandboxResult
+from reyn.security.sandbox.policy import SandboxPolicy
 
 # Sync runner: execute argv (optionally stdin), return SandboxResult. Injected so
 # the FS-op orchestration is testable without Docker; default = _sync_runner.

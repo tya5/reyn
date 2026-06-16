@@ -143,7 +143,7 @@ def test_chat_path_uses_factory_workspace_not_cwd(tmp_path, monkeypatch):
     Workspace (agent base_dir), NOT cwd. Falsifiable: the pre-fix hand-build from
     ctx.workspace=None resolved cwd."""
     from reyn.op_runtime.context import OpContext
-    from reyn.permissions.permissions import PermissionDecl
+    from reyn.security.permissions.permissions import PermissionDecl
 
     real_ws = Workspace(events=EventLog(), base_dir=tmp_path)
 

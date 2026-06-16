@@ -248,7 +248,7 @@ def load_config(cwd: Path | None = None) -> ReynConfig:
 
     # ADR-0030: load ~/.reyn/secrets.env into os.environ before YAML is
     # parsed so that ${VAR} references in any config field resolve correctly.
-    from reyn.secrets.loader import load_secrets_to_environ
+    from reyn.security.secrets.loader import load_secrets_to_environ
     load_secrets_to_environ()
 
     # `output_language` intentionally omitted from merged defaults so we
@@ -302,7 +302,7 @@ def load_config(cwd: Path | None = None) -> ReynConfig:
     # ADR-0030: apply ${VAR} interpolation across all string fields of the
     # merged config dict.  At this point os.environ already contains values
     # loaded from ~/.reyn/secrets.env (see load_secrets_to_environ() above).
-    from reyn.secrets.interpolation import expand_env
+    from reyn.security.secrets.interpolation import expand_env
     merged = expand_env(merged)
 
     # #571 follow-up (post-collapse-arc): propagate ``mcp.registries: [...]``

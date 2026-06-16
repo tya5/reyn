@@ -14,8 +14,8 @@ from pathlib import Path
 
 import pytest
 
-from reyn.permissions.effective import AgentLayer, CapabilityAxis
-from reyn.permissions.permissions import PermissionDecl
+from reyn.security.permissions.effective import AgentLayer, CapabilityAxis
+from reyn.security.permissions.permissions import PermissionDecl
 from tests.test_permissions import _make_resolver
 
 AX = CapabilityAxis

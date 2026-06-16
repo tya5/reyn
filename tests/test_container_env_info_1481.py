@@ -23,7 +23,7 @@ import json
 # collection order for the same reason.
 from reyn.workspace.text_codec import decode_text_or_none  # noqa: F401
 from reyn.environment.container_backend import DockerEnvironmentBackend, _ENV_INFO
-from reyn.sandbox.backend import SandboxResult
+from reyn.security.sandbox.backend import SandboxResult
 # isort: on
 
 

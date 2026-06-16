@@ -15,7 +15,7 @@ attach/exec model is reused unchanged.
 container lifecycle (image / mount / network / security) is a once-per-run
 operator decision, supplied via CLI / operator config. It does NOT derive from
 a phase's ``default_sandbox_policy`` (the retired #3 remnant); the per-phase
-:class:`~reyn.sandbox.policy.SandboxPolicy` continues to govern ``sandboxed_exec``
+:class:`~reyn.security.sandbox.policy.SandboxPolicy` continues to govern ``sandboxed_exec``
 *inside* the container, a separate layer.
 
 **Security defaults** follow the owner decision (#1324), shared across the
@@ -46,7 +46,7 @@ from pathlib import Path
 from typing import Any
 
 from reyn.environment.container_backend import SyncRunner, _sync_runner
-from reyn.sandbox.backend import SandboxResult
+from reyn.security.sandbox.backend import SandboxResult
 
 # The bundled reyn base image (#1324): a minimal generic agent runtime built ON
 # DEMAND from reyn_base.Dockerfile (local-build, no registry). The tag is local

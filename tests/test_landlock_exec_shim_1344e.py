@@ -2,7 +2,7 @@
 
 A persistent stdio MCP server can't use the backend's one-shot run(); on Linux
 it is wrapped at the COMMAND level by re-execing through
-``reyn.sandbox.landlock_exec``, which restricts itself then execs the target.
+``reyn.security.sandbox.landlock_exec``, which restricts itself then execs the target.
 
 Scope of these tests is STRUCTURAL (the maintainer dev env is macOS-only):
   - the pure argv builder + policy JSON round-trip + arg parse (no Landlock);
@@ -21,18 +21,18 @@ import sys
 
 import pytest
 
-from reyn.sandbox.landlock_exec import (
+from reyn.security.sandbox.landlock_exec import (
     _MODULE,
     _parse_args,
     _policy_from_json,
     _policy_to_json,
     build_landlock_exec_argv,
 )
-from reyn.sandbox.policy import SandboxPolicy
+from reyn.security.sandbox.policy import SandboxPolicy
 
 
 def _landlock_available() -> bool:
-    from reyn.sandbox.backends.landlock import LandlockBackend
+    from reyn.security.sandbox.backends.landlock import LandlockBackend
 
     return LandlockBackend().available()
 
@@ -91,7 +91,7 @@ def test_parse_args_recovers_policy_and_target():
 def test_apply_landlock_refuses_when_unavailable():
     """Tier 2: where Landlock is unavailable, _apply_landlock RAISES — the shim
     must never exec the target unrestricted (no silent escape)."""
-    from reyn.sandbox.landlock_exec import _apply_landlock
+    from reyn.security.sandbox.landlock_exec import _apply_landlock
 
     with pytest.raises(RuntimeError, match="Landlock unavailable"):
         _apply_landlock(SandboxPolicy())

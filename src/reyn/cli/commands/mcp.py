@@ -328,7 +328,7 @@ def run_serve(args: argparse.Namespace) -> None:
     from reyn.config import _find_project_root, load_project_context
     from reyn.events.state_log import StateLog
     from reyn.mcp.server import serve_stdio
-    from reyn.permissions.permissions import PermissionResolver
+    from reyn.security.permissions.permissions import PermissionResolver
 
     session_cfg = Session.from_args(args)
     from reyn.cli.credentials_check import verify_credentials_or_exit
@@ -672,7 +672,7 @@ def run_install(args: argparse.Namespace) -> None:
     from reyn.config import load_config, load_project_context
     from reyn.llm.llm import run_async as _run_async
     from reyn.llm.model_resolver import ModelResolver
-    from reyn.permissions.permissions import PermissionResolver
+    from reyn.security.permissions.permissions import PermissionResolver
     from reyn.skill.skill_paths import SkillNotFoundError, is_stdlib_skill
     from reyn.skill.skill_paths import resolve_skill_path as _resolve_skill_path_raw
     from reyn.user_intervention import StdinInterventionBus
@@ -792,8 +792,8 @@ def _run_install_from_source(
     from reyn.events.events import EventLog
     from reyn.op_runtime.context import OpContext
     from reyn.op_runtime.mcp_install import handle as _mcp_install_handle
-    from reyn.permissions.permissions import PermissionDecl, PermissionResolver
     from reyn.schemas.models import MCPInstallIROp
+    from reyn.security.permissions.permissions import PermissionDecl, PermissionResolver
     from reyn.user_intervention import StdinInterventionBus
 
     config = load_config()
@@ -1086,7 +1086,7 @@ def run_set_secret(args: argparse.Namespace) -> None:
     in the local scope yaml has a ``${KEY}`` reference so the value is picked
     up at runtime.
     """
-    from reyn.secrets.store import save_secret
+    from reyn.security.secrets.store import save_secret
 
     server_name = args.server.strip()
     raw_kv = args.key_value.strip()
@@ -1177,7 +1177,7 @@ def run_clear_secret(args: argparse.Namespace) -> None:
     The yaml side ``${KEY}`` reference is NOT touched — server config structure
     is preserved.
     """
-    from reyn.secrets.store import clear_secret
+    from reyn.security.secrets.store import clear_secret
 
     server_name = args.server.strip()
     key: str | None = getattr(args, "key", None)

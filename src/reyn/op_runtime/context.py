@@ -17,11 +17,11 @@ if TYPE_CHECKING:
     from reyn.config import MultimodalConfig, SandboxConfig, WebConfig
     from reyn.events.events import EventLog
     from reyn.llm.model_resolver import ModelResolver
-    from reyn.permissions.permissions import PermissionDecl, PermissionResolver
-    from reyn.sandbox import SandboxBackend
-    from reyn.sandbox.policy import SandboxPolicy
     from reyn.schemas.models import Skill
-    from reyn.secrets.store import ScopedSecretStore
+    from reyn.security.permissions.permissions import PermissionDecl, PermissionResolver
+    from reyn.security.sandbox import SandboxBackend
+    from reyn.security.sandbox.policy import SandboxPolicy
+    from reyn.security.secrets.store import ScopedSecretStore
     from reyn.user_intervention import RequestBus
     from reyn.workspace.media_store import MediaStore
     from reyn.workspace.workspace import Workspace
@@ -184,6 +184,6 @@ def sandbox_policy_from_ctx(ctx: "OpContext") -> "SandboxPolicy | None":
     ``None`` → the SandboxLayer is ⊤ (non-sandboxed callers unchanged)."""
     if ctx.default_sandbox_policy is None:
         return None
-    from reyn.sandbox.policy import SandboxPolicy
+    from reyn.security.sandbox.policy import SandboxPolicy
 
     return SandboxPolicy(**ctx.default_sandbox_policy)

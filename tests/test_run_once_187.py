@@ -151,7 +151,7 @@ def test_docker_backend_routes_ops_in_container() -> None:
     `docker exec <container>` argv; a stdin op keeps `-i` open (the #1356/#1363
     detail a fake backend dropped)."""
     from reyn.environment.container_backend import DockerEnvironmentBackend
-    from reyn.sandbox.backend import SandboxResult
+    from reyn.security.sandbox.backend import SandboxResult
 
     captured: dict = {}
 

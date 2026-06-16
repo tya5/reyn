@@ -274,8 +274,8 @@ async def _handle_call_mcp_tool(
     # Lazy import to avoid circular dependency at registry-init time.
     from reyn.op_runtime.context import OpContext
     from reyn.op_runtime.mcp import handle as mcp_handle
-    from reyn.permissions.permissions import PermissionDecl
     from reyn.schemas.models import MCPIROp
+    from reyn.security.permissions.permissions import PermissionDecl
 
     server = str(args["server"])
     mcp_tool_name = str(args["mcp_tool_name"])

@@ -14,8 +14,8 @@ if TYPE_CHECKING:
     from reyn.config import MultimodalConfig, PhaseActResultsCompactionConfig, SandboxConfig
     from reyn.environment.backend import EnvironmentBackend
     from reyn.events.state_log import StateLog
-    from reyn.sandbox.backend import SandboxBackend
-    from reyn.secrets.store import ScopedSecretStore
+    from reyn.security.sandbox.backend import SandboxBackend
+    from reyn.security.secrets.store import ScopedSecretStore
     from reyn.services.compaction.engine import CompactionEngine
     from reyn.skill.skill_registry import SkillRegistry
     from reyn.workspace.media_store import MediaStore
@@ -37,7 +37,7 @@ from reyn.kernel.runtime_types import (
 )
 from reyn.llm.model_resolver import ModelResolver
 from reyn.llm.pricing import TokenUsage
-from reyn.permissions.permissions import PermissionResolver
+from reyn.security.permissions.permissions import PermissionResolver
 from reyn.user_intervention import RequestBus
 from reyn.workspace.workspace import Workspace
 
@@ -180,7 +180,7 @@ class OSRuntime:
         # base_dir, network=DEFAULT_SANDBOX_NETWORK, sensitive read-deny), so the
         # sandbox ∩ is active for phase ops by default too. Operator config still
         # wins verbatim when set. (Audit residual #1; chat/phase asymmetry closed.)
-        from reyn.sandbox.policy import resolve_sandbox_policy
+        from reyn.security.sandbox.policy import resolve_sandbox_policy
 
         self._agent_sandbox_policy = resolve_sandbox_policy(
             sandbox_config.policy if sandbox_config is not None else None,

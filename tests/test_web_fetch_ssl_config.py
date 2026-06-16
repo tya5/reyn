@@ -36,7 +36,7 @@ def _make_ctx(web_config: WebConfig | None = None, tmp_path: Path | None = None)
     import tempfile
 
     from reyn.op_runtime.context import OpContext
-    from reyn.permissions.permissions import PermissionDecl
+    from reyn.security.permissions.permissions import PermissionDecl
 
     # EventLog stub — only needs emit().
     class _FakeEventLog:

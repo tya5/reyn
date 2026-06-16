@@ -2,7 +2,6 @@ from typing import Any
 
 from pydantic import TypeAdapter
 
-from reyn.permissions.permissions import PermissionDecl
 from reyn.schemas.models import (
     Phase,
     Postprocessor,
@@ -11,6 +10,7 @@ from reyn.schemas.models import (
     SkillGraph,
     SkillNodeSpec,
 )
+from reyn.security.permissions.permissions import PermissionDecl
 
 from .ir import ArtifactDef, PhaseDef, SkillDef
 from .shape_renderer import render_shape_only_blocks

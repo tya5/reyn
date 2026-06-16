@@ -5,8 +5,8 @@ import sys
 
 import pytest
 
-from reyn.sandbox import SandboxBackend, SandboxPolicy
-from reyn.sandbox.backends.landlock import LandlockBackend
+from reyn.security.sandbox import SandboxBackend, SandboxPolicy
+from reyn.security.sandbox.backends.landlock import LandlockBackend
 
 # ---------------------------------------------------------------------------
 # Platform-independent tests (run on every platform)
@@ -75,7 +75,7 @@ def test_landlock_abi_probe_caches(monkeypatch: pytest.MonkeyPatch) -> None:
         return original_import(name, *args, **kwargs)  # type: ignore[arg-type]
 
     # Patch importlib.import_module in the landlock backend module's namespace.
-    import reyn.sandbox.backends.landlock as _ll_mod
+    import reyn.security.sandbox.backends.landlock as _ll_mod
 
     monkeypatch.setattr(_ll_mod, "__builtins__", _ll_mod.__builtins__)  # no-op ensure attr
     monkeypatch.setattr(_importlib, "import_module", counting_import)

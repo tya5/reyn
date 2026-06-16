@@ -281,7 +281,7 @@ def _parse_cli_input(raw: str, *, default_type: str | None = None) -> dict:
 
 def _build_permission_resolver(config, unsafe_python: bool = False):
     from reyn.config import _find_project_root
-    from reyn.permissions.permissions import PermissionResolver
+    from reyn.security.permissions.permissions import PermissionResolver
     project_root = _find_project_root(Path.cwd())
     perm_config = getattr(config, "permissions", {}) or {}
     return PermissionResolver(

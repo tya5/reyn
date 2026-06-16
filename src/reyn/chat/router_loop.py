@@ -3521,7 +3521,7 @@ class RouterLoop:
         ``_dispatch_resolved`` (``dispatch_tool`` → permission_resolver, P5). The
         snippet runs in the sandboxed subprocess (``CodeActRunner`` via
         ``exec_ctx.sandbox``, fail-closed); the scheme orchestrates, the OS gates."""
-        from reyn.sandbox import get_default_backend  # noqa: PLC0415
+        from reyn.security.sandbox import get_default_backend  # noqa: PLC0415
         from reyn.tools.scheme import ExecContext  # noqa: PLC0415
 
         async def _os_gate(name: str, args: dict) -> dict:

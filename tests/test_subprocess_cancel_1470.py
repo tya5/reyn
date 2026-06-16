@@ -16,9 +16,9 @@ import textwrap
 
 import pytest
 
-from reyn.sandbox.backend import SandboxResult
-from reyn.sandbox.noop_backend import NoopBackend
-from reyn.sandbox.policy import SandboxPolicy
+from reyn.security.sandbox.backend import SandboxResult
+from reyn.security.sandbox.noop_backend import NoopBackend
+from reyn.security.sandbox.policy import SandboxPolicy
 
 _POLICY = SandboxPolicy(env_passthrough=["PATH"], timeout_seconds=30)
 
@@ -130,7 +130,7 @@ async def test_noop_no_cancel_does_not_set_cancelled() -> None:
 @pytest.mark.asyncio
 async def test_seatbelt_cancel_kills_subprocess() -> None:
     """Tier 2: SeatbeltBackend — cancel_event kills sandbox-exec wrapper + child."""
-    from reyn.sandbox.backends.seatbelt import SeatbeltBackend  # noqa: PLC0415
+    from reyn.security.sandbox.backends.seatbelt import SeatbeltBackend  # noqa: PLC0415
 
     backend = SeatbeltBackend()
     if not backend.available():
@@ -150,7 +150,7 @@ async def test_seatbelt_cancel_kills_subprocess() -> None:
 @pytest.mark.asyncio
 async def test_seatbelt_cancel_none_equivalence() -> None:
     """Tier 2: SeatbeltBackend cancel_event=None → normal completion (Popen-equiv)."""
-    from reyn.sandbox.backends.seatbelt import SeatbeltBackend  # noqa: PLC0415
+    from reyn.security.sandbox.backends.seatbelt import SeatbeltBackend  # noqa: PLC0415
 
     backend = SeatbeltBackend()
     if not backend.available():
@@ -179,7 +179,7 @@ async def test_seatbelt_cancel_none_equivalence() -> None:
 async def test_landlock_cancel_kills_subprocess() -> None:
     """Tier 2: LandlockBackend — cancel_event kills the landlock-wrapped child's
     process group, returning cancelled=True (the #1527 untested path)."""
-    from reyn.sandbox.backends.landlock import LandlockBackend  # noqa: PLC0415
+    from reyn.security.sandbox.backends.landlock import LandlockBackend  # noqa: PLC0415
 
     backend = LandlockBackend()
     if not backend.available():
@@ -200,7 +200,7 @@ async def test_landlock_cancel_kills_subprocess() -> None:
 async def test_landlock_cancel_none_equivalence() -> None:
     """Tier 2: LandlockBackend cancel_event=None → normal completion (Popen-equiv,
     no-regression guard for the cancel-aware path)."""
-    from reyn.sandbox.backends.landlock import LandlockBackend  # noqa: PLC0415
+    from reyn.security.sandbox.backends.landlock import LandlockBackend  # noqa: PLC0415
 
     backend = LandlockBackend()
     if not backend.available():
@@ -226,9 +226,9 @@ async def test_sandboxed_exec_op_cancel_event_p6_p5() -> None:
     from reyn.events.events import EventLog  # noqa: PLC0415
     from reyn.op_runtime import execute_op  # noqa: PLC0415
     from reyn.op_runtime.context import OpContext  # noqa: PLC0415
-    from reyn.permissions.permissions import PermissionDecl  # noqa: PLC0415
-    from reyn.sandbox.noop_backend import NoopBackend  # noqa: PLC0415
     from reyn.schemas.models import SandboxedExecIROp  # noqa: PLC0415
+    from reyn.security.permissions.permissions import PermissionDecl  # noqa: PLC0415
+    from reyn.security.sandbox.noop_backend import NoopBackend  # noqa: PLC0415
     from reyn.workspace.workspace import Workspace  # noqa: PLC0415
 
     events = EventLog()

@@ -8,14 +8,14 @@ the new model behavior, especially the ★② grant-back safety.
 """
 from __future__ import annotations
 
-from reyn.permissions.effective import (
+from reyn.security.permissions.effective import (
     AgentLayer,
     CapabilityAxis,
     EffectivePermission,
     SandboxLayer,
 )
-from reyn.permissions.permissions import PermissionDecl
-from reyn.sandbox.policy import SandboxPolicy
+from reyn.security.permissions.permissions import PermissionDecl
+from reyn.security.sandbox.policy import SandboxPolicy
 
 AX = CapabilityAxis
 

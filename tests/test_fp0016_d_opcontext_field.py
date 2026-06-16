@@ -16,11 +16,11 @@ import pytest
 
 from reyn.events.events import EventLog
 from reyn.op_runtime.context import OpContext
-from reyn.permissions.permissions import PermissionDecl
+from reyn.security.permissions.permissions import PermissionDecl
 from reyn.workspace.workspace import Workspace
 
 # ---------------------------------------------------------------------------
-# Stub: stand-in for reyn.secrets.store.ScopedSecretStore until D1 lands.
+# Stub: stand-in for reyn.security.secrets.store.ScopedSecretStore until D1 lands.
 # If D1 has already landed, the real class is used in test 2 instead.
 # ---------------------------------------------------------------------------
 
@@ -80,7 +80,7 @@ def test_secret_store_none_explicit() -> None:
 def test_real_scoped_secret_store_if_available() -> None:
     """Tier 2: If ScopedSecretStore is available from D1, field accepts the real class."""
     try:
-        from reyn.secrets.store import ScopedSecretStore  # type: ignore[attr-defined]
+        from reyn.security.secrets.store import ScopedSecretStore  # type: ignore[attr-defined]
     except (ImportError, AttributeError):
         pytest.skip("ScopedSecretStore not yet available (D1 not landed)")
 

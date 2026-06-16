@@ -50,8 +50,8 @@ async def _handle_drop_source(
     """
     from reyn.op_runtime import execute_op
     from reyn.op_runtime.context import OpContext
-    from reyn.permissions.permissions import PermissionDecl
     from reyn.schemas.models import IndexDropIROp
+    from reyn.security.permissions.permissions import PermissionDecl
 
     # B34 LLM-attractor fix: accept common synonyms before KeyError.
     # LLM sends {source_id:...} instead of {source:...} — observed B33 W4 S6.

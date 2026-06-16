@@ -17,7 +17,7 @@ from pathlib import Path
 
 import pytest
 
-from reyn.permissions.permissions import PermissionDecl, PermissionResolver
+from reyn.security.permissions.permissions import PermissionDecl, PermissionResolver
 
 
 def _resolver(project_root: Path) -> PermissionResolver:

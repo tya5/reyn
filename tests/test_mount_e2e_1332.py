@@ -33,7 +33,7 @@ from reyn.environment.container_launcher import (
     ContainerLauncher,
     LaunchConfig,
 )
-from reyn.sandbox.policy import SandboxPolicy
+from reyn.security.sandbox.policy import SandboxPolicy
 
 # Lightweight public image: python3 + bash + coreutils present, fast to pull.
 _E2E_IMAGE = "python:3.12-slim"

@@ -250,7 +250,7 @@ def test_require_web_fetch_config_allow_pre_approves(tmp_path: Path) -> None:
     FP-0022 backward compat: existing `web.fetch: allow` users must not see
     any interactive prompt — the config grant short-circuits at Layer 1.
     """
-    from reyn.permissions.permissions import PermissionResolver
+    from reyn.security.permissions.permissions import PermissionResolver
 
     resolver = PermissionResolver(
         config_permissions={"web.fetch": "allow"},
@@ -268,7 +268,7 @@ def test_require_web_fetch_config_deny_raises_immediately(tmp_path: Path) -> Non
 
     FP-0022: deny config must raise immediately, not reach the interactive bus.
     """
-    from reyn.permissions.permissions import PermissionResolver
+    from reyn.security.permissions.permissions import PermissionResolver
 
     resolver = PermissionResolver(
         config_permissions={"web.fetch": "deny"},
@@ -292,7 +292,7 @@ def _make_router_op_ctx_factory(resolver, bus, events):
     up a full ChatSession.
     """
     from reyn.op_runtime.context import OpContext
-    from reyn.permissions.permissions import PermissionDecl
+    from reyn.security.permissions.permissions import PermissionDecl
     from reyn.workspace.workspace import Workspace
 
     def _factory():
@@ -338,7 +338,7 @@ def test_router_invoke_action_web_fetch_deny_raises_permission_error(
     event — but the propagation itself is enough for this regression guard.
     """
     from reyn.events.events import EventLog
-    from reyn.permissions.permissions import PermissionResolver
+    from reyn.security.permissions.permissions import PermissionResolver
     from reyn.tools.types import RouterCallerState, ToolContext
 
     events = EventLog()
@@ -378,7 +378,7 @@ def test_router_invoke_action_web_fetch_allow_no_deny_proceeds(
     through, not that the fetch succeeds).
     """
     from reyn.events.events import EventLog
-    from reyn.permissions.permissions import PermissionResolver
+    from reyn.security.permissions.permissions import PermissionResolver
     from reyn.tools.types import RouterCallerState, ToolContext
 
     events = EventLog()
@@ -440,7 +440,7 @@ def test_phase_dispatch_reuses_op_context_intervention_bus(tmp_path: Path) -> No
     """
     from reyn.events.events import EventLog
     from reyn.op_runtime.context import OpContext
-    from reyn.permissions.permissions import PermissionDecl, PermissionResolver
+    from reyn.security.permissions.permissions import PermissionDecl, PermissionResolver
     from reyn.tools.types import PhaseCallerState, ToolContext
     from reyn.workspace.workspace import Workspace
 
@@ -510,7 +510,7 @@ def test_phase_dispatch_without_op_context_falls_back_to_minimal(
     bus-missing RuntimeError.
     """
     from reyn.events.events import EventLog
-    from reyn.permissions.permissions import PermissionResolver
+    from reyn.security.permissions.permissions import PermissionResolver
     from reyn.tools.types import PhaseCallerState, ToolContext
 
     events = EventLog()

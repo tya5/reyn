@@ -35,8 +35,8 @@ import pytest
 from reyn.events.events import EventLog
 from reyn.kernel.control_ir_executor import ControlIRExecutor
 from reyn.kernel.runtime import OSRuntime
-from reyn.permissions.permissions import PermissionResolver
 from reyn.schemas.models import Phase, Skill, SkillGraph
+from reyn.security.permissions.permissions import PermissionResolver
 from reyn.workspace.workspace import Workspace
 
 # Ops the catalog advertises regardless of runtime flags. sandbox_exec is the

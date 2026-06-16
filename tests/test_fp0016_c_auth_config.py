@@ -50,7 +50,7 @@ def test_parser_none_returns_empty() -> None:
 
 def test_parser_full_spec_round_trip() -> None:
     """Tier 2: full provider spec → OAuthProviderConfig fields all populated."""
-    from reyn.secrets.oauth import OAuthProviderConfig
+    from reyn.security.secrets.oauth import OAuthProviderConfig
 
     raw = {
         "providers": {

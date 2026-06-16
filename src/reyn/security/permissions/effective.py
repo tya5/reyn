@@ -31,15 +31,15 @@ from __future__ import annotations
 from enum import Enum
 from typing import TYPE_CHECKING, Any, Protocol
 
-from reyn.permissions.permissions import (
+from reyn.security.permissions.permissions import (
     _in_default_read_zone,
     _in_default_write_zone,
 )
 
 if TYPE_CHECKING:
     from reyn.chat.profile import AgentProfile
-    from reyn.permissions.permissions import PermissionDecl
-    from reyn.sandbox.policy import SandboxPolicy
+    from reyn.security.permissions.permissions import PermissionDecl
+    from reyn.security.sandbox.policy import SandboxPolicy
 
 
 class CapabilityAxis(Enum):

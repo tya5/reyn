@@ -62,7 +62,7 @@ from reyn.limits.limit_handler import (
     reset_run_extensions,
 )
 from reyn.llm.model_resolver import ModelResolver
-from reyn.permissions.permissions import PermissionResolver
+from reyn.security.permissions.permissions import PermissionResolver
 from reyn.services.compaction.engine import CompactionEngine
 from reyn.skill.skill_paths import SkillNotFoundError, resolve_skill_path, stdlib_root
 from reyn.skill.skill_registry import SkillRegistry
@@ -4943,8 +4943,8 @@ class ChatSession:
         task-close discipline still applies.
         """
         from reyn.op_runtime import execute_op
-        from reyn.permissions.permissions import PermissionDecl
         from reyn.schemas.models import MCPIROp
+        from reyn.security.permissions.permissions import PermissionDecl
 
         op = MCPIROp(kind="mcp", server=server, tool=tool, args=args)
         ctx = self._make_router_op_context()

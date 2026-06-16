@@ -239,7 +239,7 @@ def run_login(args: argparse.Namespace) -> None:
     """Run device grant flow + persist the token."""
     from reyn.config import load_config
     from reyn.events.events import EventLog
-    from reyn.secrets import (
+    from reyn.security.secrets import (
         DeviceGrantError,
         OAuthProviderConfig,
         device_grant_flow,
@@ -318,7 +318,7 @@ def classify_token_status(delta_seconds: float) -> str:
 
 def run_list(args: argparse.Namespace) -> None:
     """List token keys in the OAuth store. Values are never printed."""
-    from reyn.secrets import list_oauth_token_keys, load_oauth_token
+    from reyn.security.secrets import list_oauth_token_keys, load_oauth_token
 
     keys = list_oauth_token_keys()
     if not keys:
@@ -337,7 +337,7 @@ def run_list(args: argparse.Namespace) -> None:
 
 def run_revoke(args: argparse.Namespace) -> None:
     """Remove a key from the local OAuth store."""
-    from reyn.secrets import clear_oauth_token
+    from reyn.security.secrets import clear_oauth_token
 
     removed = clear_oauth_token(args.key)
     if removed:

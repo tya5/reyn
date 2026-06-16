@@ -27,7 +27,7 @@ from pathlib import Path
 
 from reyn.environment.host_backend import HostBackend
 from reyn.events.events import EventLog
-from reyn.permissions.permissions import PermissionResolver
+from reyn.security.permissions.permissions import PermissionResolver
 from reyn.workspace.workspace import Workspace
 
 

@@ -66,8 +66,8 @@ async def _handle(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
     # Lazy import to avoid circular dependency at registry-init time.
     from reyn.op_runtime.context import OpContext
     from reyn.op_runtime.web import handle_web_fetch
-    from reyn.permissions.permissions import PermissionDecl
     from reyn.schemas.models import WebFetchIROp
+    from reyn.security.permissions.permissions import PermissionDecl
 
     op = WebFetchIROp(
         kind="web_fetch",

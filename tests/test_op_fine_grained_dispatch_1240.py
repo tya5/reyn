@@ -30,7 +30,6 @@ from pathlib import Path
 from reyn.compiler import load_dsl_skill
 from reyn.events.events import EventLog
 from reyn.kernel.control_ir_executor import ControlIRExecutor
-from reyn.permissions.permissions import PermissionResolver
 from reyn.schemas.models import (
     EditFileIROp,
     GlobFilesIROp,
@@ -38,6 +37,7 @@ from reyn.schemas.models import (
     ReadFileIROp,
     WriteFileIROp,
 )
+from reyn.security.permissions.permissions import PermissionResolver
 from reyn.skill.skill_paths import stdlib_root
 from reyn.workspace.workspace import Workspace
 

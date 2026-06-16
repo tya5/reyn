@@ -16,8 +16,8 @@ from pathlib import Path
 
 import pytest
 
-from reyn.permissions.permissions import PermissionDecl, PermissionResolver
-from reyn.sandbox.policy import SandboxPolicy
+from reyn.security.permissions.permissions import PermissionDecl, PermissionResolver
+from reyn.security.sandbox.policy import SandboxPolicy
 from tests.test_permissions import _make_resolver
 
 # ── file gates: SandboxLayer ∩ (path caps) ───────────────────────────────────

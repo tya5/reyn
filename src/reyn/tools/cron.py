@@ -219,7 +219,7 @@ async def _gate(ctx: ToolContext, job_name: str) -> None:
 
     No-op in unit-test contexts (= ``ctx.permission_resolver`` is None).
     """
-    from reyn.permissions.permissions import PermissionDecl
+    from reyn.security.permissions.permissions import PermissionDecl
     if ctx.permission_resolver is None:
         return
     cron_yaml_path = str(_dynamic_cron_yaml_path(ctx))

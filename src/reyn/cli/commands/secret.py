@@ -93,7 +93,7 @@ def _prompt_value(key: str) -> str:
 
 def run_set(args: argparse.Namespace) -> None:
     """Set a secret. Emits ``secret_set`` audit event (value masked)."""
-    from reyn.secrets.store import save_secret
+    from reyn.security.secrets.store import save_secret
 
     key, value = _parse_key_value(args.key_value)
     if not key:
@@ -109,7 +109,7 @@ def run_set(args: argparse.Namespace) -> None:
 
 def run_list(args: argparse.Namespace) -> None:
     """List secret KEY names and their status (set / unset in os.environ)."""
-    from reyn.secrets.store import list_secret_keys
+    from reyn.security.secrets.store import list_secret_keys
 
     keys = list_secret_keys()
     if not keys:
@@ -130,7 +130,7 @@ def run_list(args: argparse.Namespace) -> None:
 
 def run_clear(args: argparse.Namespace) -> None:
     """Remove a secret. Emits ``secret_cleared`` audit event."""
-    from reyn.secrets.store import clear_secret
+    from reyn.security.secrets.store import clear_secret
 
     key = args.key.strip()
     if not key:
@@ -147,7 +147,7 @@ def run_clear(args: argparse.Namespace) -> None:
 
 def run_rotate(args: argparse.Namespace) -> None:
     """Rotate a secret. Emits ``secret_rotated`` audit event (value masked)."""
-    from reyn.secrets.store import save_secret
+    from reyn.security.secrets.store import save_secret
 
     key, value = _parse_key_value(args.key_value)
     if not key:

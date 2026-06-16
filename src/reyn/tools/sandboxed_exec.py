@@ -58,8 +58,8 @@ async def _handle(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
     """
     from reyn.op_runtime.context import OpContext
     from reyn.op_runtime.sandboxed_exec import handle as handle_sandboxed_exec
-    from reyn.permissions.permissions import PermissionDecl
     from reyn.schemas.models import SandboxedExecIROp
+    from reyn.security.permissions.permissions import PermissionDecl
 
     # #1339 / sandbox-model completion: the LLM supplies only argv (+ timeout).
     # The op's policy fields keep their defaults here — the effective sandbox

@@ -1,6 +1,6 @@
 """Tier 1: Contract tests for ScopedSecretStore and CredentialScopeError (FP-0016 Component D).
 
-Pins the public API surface of ScopedSecretStore as exported from reyn.secrets:
+Pins the public API surface of ScopedSecretStore as exported from reyn.security.secrets:
 
   - get(key) returns value when key is allowed and present
   - get(key) returns default when key is allowed but absent
@@ -23,7 +23,7 @@ from pathlib import Path
 
 import pytest
 
-from reyn.secrets import CredentialScopeError, ScopedSecretStore
+from reyn.security.secrets import CredentialScopeError, ScopedSecretStore
 
 
 def _write_dotenv(tmp_path: Path, pairs: list[tuple[str, str]]) -> Path:

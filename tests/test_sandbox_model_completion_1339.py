@@ -18,7 +18,7 @@ _TESTS_DIR = Path(__file__).resolve().parent
 if str(_TESTS_DIR) not in sys.path:
     sys.path.insert(0, str(_TESTS_DIR))
 
-from reyn.sandbox.policy import (  # noqa: E402
+from reyn.security.sandbox.policy import (  # noqa: E402
     DEFAULT_SANDBOX_NETWORK,
     resolve_sandbox_policy,
 )
@@ -71,8 +71,8 @@ async def test_handler_event_shows_enforced_policy_network(tmp_path):
     from reyn.events.events import EventLog
     from reyn.op_runtime.context import OpContext
     from reyn.op_runtime.sandboxed_exec import handle
-    from reyn.permissions.permissions import PermissionDecl
     from reyn.schemas.models import SandboxedExecIROp
+    from reyn.security.permissions.permissions import PermissionDecl
     from reyn.workspace.workspace import Workspace
 
     events = EventLog()

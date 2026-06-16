@@ -27,7 +27,7 @@ from pathlib import Path
 
 import pytest
 
-from reyn.permissions.permissions import (
+from reyn.security.permissions.permissions import (
     _CANONICAL_PROTECTED_WRITE_PATHS,
     PermissionDecl,
     PermissionResolver,
@@ -151,7 +151,7 @@ def test_canonical_path_via_explicit_file_write_requires_startup_approval(tmp_pa
     decl = PermissionDecl.from_dict({
         "file.write": [{"path": ".reyn/index/sources.yaml", "scope": "just_path"}],
     })
-    from reyn.permissions.permissions import _in_default_write_zone
+    from reyn.security.permissions.permissions import _in_default_write_zone
     prompt_paths = [
         entry["path"]
         for entry in decl.file_write

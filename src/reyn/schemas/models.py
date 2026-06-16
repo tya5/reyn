@@ -5,7 +5,7 @@ from typing import Annotated, Any, Literal, Union
 
 from pydantic import BaseModel, Field, model_serializer, model_validator
 
-from reyn.permissions.permissions import PermissionDecl
+from reyn.security.permissions.permissions import PermissionDecl
 
 # ── Preprocessor step types ───────────────────────────────────────────────────
 
@@ -344,7 +344,7 @@ class SandboxedExecIROp(BaseModel):
     (= no enforcement). Future waves add SeatbeltBackend (macOS) and
     LandlockBackend (Linux).
 
-    Policy fields mirror `reyn.sandbox.policy.SandboxPolicy` (= the dataclass
+    Policy fields mirror `reyn.security.sandbox.policy.SandboxPolicy` (= the dataclass
     the backend ultimately receives).
     """
     kind: Literal["sandboxed_exec"]

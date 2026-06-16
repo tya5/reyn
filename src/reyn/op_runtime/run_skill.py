@@ -189,7 +189,7 @@ async def handle(op: RunSkillIROp, ctx: OpContext, caller: Literal["preprocessor
     # declaration. If the parent already had a (non-unrestricted) scope,
     # intersect with it — a sub-skill can never have wider access than its
     # parent. Emit a P6 event recording the effective scope.
-    from reyn.secrets.store import ScopedSecretStore
+    from reyn.security.secrets.store import ScopedSecretStore
 
     allowed: list[str] = list(sub_skill.required_credentials)  # default ["*"]
     parent = ctx.secret_store

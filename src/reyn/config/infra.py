@@ -94,7 +94,7 @@ def _build_auth_config(raw: object) -> AuthConfig:
     ``None`` / missing → empty AuthConfig.providers.
     Unknown provider fields are ignored (= forward-compatible).
     """
-    from reyn.secrets.oauth import OAuthProviderConfig
+    from reyn.security.secrets.oauth import OAuthProviderConfig
 
     if raw is None:
         return AuthConfig()
@@ -244,7 +244,7 @@ class SandboxConfig:
         if self.policy is not None:
             # Fail-fast on a malformed operator policy: construct a SandboxPolicy
             # to validate the keys (unknown key → TypeError → clear ValueError).
-            from reyn.sandbox.policy import SandboxPolicy
+            from reyn.security.sandbox.policy import SandboxPolicy
 
             if not isinstance(self.policy, dict):
                 raise ValueError(

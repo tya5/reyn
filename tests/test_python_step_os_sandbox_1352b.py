@@ -20,7 +20,7 @@ from pathlib import Path
 import pytest
 
 from reyn.python_runner import PythonRunner
-from reyn.sandbox.backend import SandboxResult
+from reyn.security.sandbox.backend import SandboxResult
 
 
 class _RecordingBackend:

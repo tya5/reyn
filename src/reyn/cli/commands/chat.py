@@ -297,7 +297,7 @@ def run(args: argparse.Namespace) -> None:
     from reyn.chat.scoped_session_factory import build_scoped_chat_session
     from reyn.config import _find_project_root, load_project_context
     from reyn.events.state_log import StateLog
-    from reyn.permissions.permissions import PermissionResolver
+    from reyn.security.permissions.permissions import PermissionResolver
 
     session_cfg = Session.from_args(args)
     from reyn.cli.credentials_check import verify_credentials_or_exit

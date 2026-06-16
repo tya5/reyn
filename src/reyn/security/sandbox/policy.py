@@ -2,7 +2,7 @@
 
 The policy is data only: declared in skill.md (= FP-0017) and passed by the OS
 to a SandboxBackend. P3/P7-aligned — the policy is mechanism-agnostic; backend
-selection lives in `reyn.sandbox.backend.get_default_backend()`.
+selection lives in `reyn.security.sandbox.backend.get_default_backend()`.
 
 Scoping model (#1199 realignment, per-axis):
     write   — tight workspace-allowlist (``write_paths``) = the hard guard.

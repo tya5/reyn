@@ -211,7 +211,7 @@ def _make_op_context(config_permissions: dict, tmp_path: Path):
     """Build a real OpContext with PermissionResolver wired in for test use."""
     from reyn.events.events import EventLog
     from reyn.op_runtime.context import OpContext
-    from reyn.permissions.permissions import PermissionDecl, PermissionResolver
+    from reyn.security.permissions.permissions import PermissionDecl, PermissionResolver
     from reyn.workspace.workspace import Workspace
 
     events = EventLog()

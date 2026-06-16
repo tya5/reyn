@@ -39,7 +39,6 @@ from reyn.events.events import EventLog
 from reyn.llm.llm import LLMCallResult
 from reyn.op_runtime import execute_op
 from reyn.op_runtime.context import OpContext
-from reyn.permissions.permissions import PermissionDecl, PermissionResolver
 from reyn.schemas.models import (
     AskUserIROp,
     FileIROp,
@@ -47,6 +46,7 @@ from reyn.schemas.models import (
     Skill,
     SkillGraph,
 )
+from reyn.security.permissions.permissions import PermissionDecl, PermissionResolver
 from reyn.user_intervention import InterventionAnswer, InterventionBus, UserIntervention
 from reyn.workspace.workspace import Workspace
 
