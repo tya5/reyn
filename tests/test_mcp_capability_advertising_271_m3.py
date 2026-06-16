@@ -58,9 +58,9 @@ def test_no_notify_changed_calls_in_mcp_server_source() -> None:
     call sites (= empirical confirmation that ``tools_changed=False``
     in the declaration is honest).
     """
-    src_path = (
+    src_path = (  # #1682: impl moved to reyn/mcp/server.py (old path = shim)
         Path(__file__).parent.parent
-        / "src" / "reyn" / "mcp_server.py"
+        / "src" / "reyn" / "mcp" / "server.py"
     )
     src = src_path.read_text(encoding="utf-8")
     for forbidden in (
@@ -134,9 +134,12 @@ def test_cancellation_wire_exists_in_call_tool_handler() -> None:
     refactor that removes the handler is forced to update the
     declaration in the same PR.
     """
+    # #1682: the server impl moved to reyn.mcp.server (the old mcp_server.py is
+    # now a re-export shim). This source-grep test reads the impl FILE, so it must
+    # point at the new path.
     src_path = (
         Path(__file__).parent.parent
-        / "src" / "reyn" / "mcp_server.py"
+        / "src" / "reyn" / "mcp" / "server.py"
     )
     tree = ast.parse(src_path.read_text(encoding="utf-8"))
 
