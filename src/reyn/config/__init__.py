@@ -26,9 +26,32 @@ Submodules (#1682 grouping, by domain concern not yaml-key shape):
 # the union of the sections. Listed explicitly (not `import *`) so the dependency
 # is auditable; the per-module namespace copy below also picks up underscore
 # privates + constants that `import *` would skip.
-from reyn.config import root as _root
+from reyn.config import (
+    chat as _chat,
+)
+from reyn.config import (
+    embedding as _embedding,
+)
+from reyn.config import (
+    execution as _execution,
+)
+from reyn.config import (
+    infra as _infra,
+)
+from reyn.config import (
+    loader as _loader,
+)
+from reyn.config import (
+    media as _media,
+)
+from reyn.config import (
+    root as _root,
+)
 
-_SECTIONS = (_root,)
+# Order: sections first, then loader (it references section builders), then root
+# (ReynConfig references all section configs). The mechanical copy below makes
+# order irrelevant for the re-export, but this mirrors the dependency direction.
+_SECTIONS = (_chat, _embedding, _media, _execution, _infra, _loader, _root)
 
 
 def _reexport() -> None:
