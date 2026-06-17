@@ -21,6 +21,7 @@ import difflib
 import re
 from pathlib import Path
 
+import reyn
 from reyn.interfaces.slash import reply, reply_error, slash
 
 # Canonical path relative to the project root.  Resolved at call time so
@@ -32,13 +33,17 @@ _GLOSSARY_REL = Path(
 
 
 def _project_root() -> Path:
-    """Return the project root (= ancestor of ``src/reyn``)."""
-    # src/reyn/interfaces/slash/concept.py → root is 5 parents up
-    # (slash → interfaces → reyn → src → root). #1682 broad-#5 A1 moved
-    # this module one level deeper (reyn/slash → reyn/interfaces/slash);
-    # the default-glossary parent-walk needs the extra hop (tests inject
-    # _glossary_path, so the default path was not exercised by CI).
-    return Path(__file__).parent.parent.parent.parent.parent
+    """Return the project root (= ancestor of ``src/reyn``).
+
+    Anchored on the ``reyn`` PACKAGE root (``reyn.__file__`` =
+    ``src/reyn/__init__.py``), not this module's own ``__file__`` — so the
+    walk is stable regardless of where this module lives. A parent-count
+    off this module's path re-breaks every time the module is regrouped
+    (it did in #1682 A1: reyn/slash → reyn/interfaces/slash). The package
+    anchor is move-robust by construction.
+    """
+    # src/reyn/__init__.py → src/reyn → src → repo root  (3 parents)
+    return Path(reyn.__file__).resolve().parent.parent.parent
 
 
 def _default_glossary_path() -> Path:

@@ -20,6 +20,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+import reyn
+
 logger = logging.getLogger(__name__)
 
 _GRAPHQL_URL = "https://api.github.com/graphql"
@@ -31,11 +33,12 @@ _DEFAULT_CATEGORY_ID = "DIC_kwDOSWAku84C9M8T"
 _DEFAULT_REPO_NODE_ID = "R_kgDOSWAkuw"
 
 _DEFAULT_TEMPLATE_PATH = (
-    # src/reyn/dev/dogfood/publish.py → repo root is 5 parents up
-    # (dogfood → dev → reyn → src → root). #1682 broad-#5 B1 moved this
-    # module one level deeper (reyn/dogfood → reyn/dev/dogfood), so the
-    # parent-walk gained one hop.
-    Path(__file__).parent.parent.parent.parent.parent
+    # Anchored on the reyn PACKAGE root (reyn.__file__ = src/reyn/__init__.py
+    # → src/reyn → src → repo root, 3 parents), NOT this module's own
+    # __file__. A parent-count off this module re-breaks on every regroup
+    # (it did in #1682 B1: reyn/dogfood → reyn/dev/dogfood); the package
+    # anchor is move-robust by construction.
+    Path(reyn.__file__).resolve().parent.parent.parent
     / "docs"
     / "deep-dives"
     / "contributing"
