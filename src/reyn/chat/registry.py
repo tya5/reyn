@@ -1683,6 +1683,25 @@ class AgentRegistry:
             self._forward_tasks[key] = asyncio.create_task(self._forwarder(name, sid))
         return session
 
+    def ensure_session_running(self, name: str, sid: str) -> "object | None":
+        """FP-0043 Stage 4b-2: start a session's run-loop WITHOUT a forwarder.
+
+        For a transport that drains a Session's ``.outbox`` DIRECTLY (web: each
+        browser thread drains its own ``web:<thread>`` session), the registry-level
+        forwarder must NOT run — the forwarder ``await``s ``session.outbox.get()``
+        and would race / steal the messages the direct drain needs. So this only
+        boots ``session.run()`` (so the inbox is consumed), keyed by ``(name, sid)``,
+        and leaves output to the caller's direct drain. Idempotent; no-op if the
+        session is not loaded (the caller resolves/spawns it first). Distinct from
+        ``ensure_running`` (default session + forwarder for the REPL/TUI sink)."""
+        session = self._peek_session(name, sid)
+        if session is None:
+            return None
+        key = (name, sid)
+        if key not in self._tasks or self._tasks[key].done():
+            self._tasks[key] = asyncio.create_task(session.run())
+        return session
+
     async def attach(self, name: str) -> "object":
         """Switch the attached agent to `name`. Loads + starts session.run()
         and the outbox forwarder for the new agent if not already running.
