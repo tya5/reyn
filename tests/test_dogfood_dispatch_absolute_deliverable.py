@@ -20,7 +20,7 @@ inconsistency" carry-over: W2/W3/W7 wrote to the worktree-relative
 ``docs/...`` path inside ``/tmp/reyn-worktrees/b{n}-{w}/...`` rather
 than the main repo's ``docs/...``. The aggregator then couldn't find
 the files and a manual ``cp`` step was required. B47 worked around it
-by hand-coding "from MAIN repo CWD" into each Agent() dispatch prompt;
+by hand-coding "from MAIN repo CWD" into each SkillRuntime() dispatch prompt;
 this fix lifts that into the script-generated template.
 
 testing.ja.md compliance:

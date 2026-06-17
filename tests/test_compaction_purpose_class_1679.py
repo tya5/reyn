@@ -10,7 +10,7 @@ The fix wires both sites through `ModelResolver.purpose_class_or(purpose, defaul
 (NOT the resolver's `default_class`). Keeping each site's existing fallback is what
 makes the wiring byte-identical for every current config: it preserves
 `self.model` / `router_model` even when those diverge from `default_class`, which
-they do under `Agent.from_config(config, model=X)` (the model-override path). The
+they do under `SkillRuntime.from_config(config, model=X)` (the model-override path). The
 naive `resolve_purpose_class(None, …, "compaction")` would fall back to
 `default_class` and silently move compaction OFF the agent's explicit model — a
 behavior change masked as a wiring. `purpose_class_or` avoids that by construction.
@@ -25,7 +25,7 @@ from __future__ import annotations
 from reyn.llm.model_resolver import ModelResolver
 
 # A resolver whose default_class deliberately differs from the per-site fallback,
-# modelling `Agent.from_config(config, model="agent_model")`: the session/planner
+# modelling `SkillRuntime.from_config(config, model="agent_model")`: the session/planner
 # fallback is the agent's model ("agent_model"), while the resolver's default_class
 # is the config default ("config_default"). This is the divergence the fix must
 # preserve.
@@ -36,7 +36,7 @@ _SITE_FALLBACK = "agent_model"  # = self.model / router_model under a model over
 def test_purpose_class_or_unset_uses_supplied_fallback_not_default_class() -> None:
     """Tier 2: #1679 (a) — compaction UNSET → the caller-supplied fallback, NOT the
     resolver's default_class. This is the no-regression proof for the model-override
-    (Agent.from_config(model=X)) case: compaction must stay on the agent's model
+    (SkillRuntime.from_config(model=X)) case: compaction must stay on the agent's model
     even though it differs from default_class. (Naive resolve_purpose_class would
     return default_class here = the divergence avoided.)"""
     r = ModelResolver({}, default_class=_DEFAULT_CLASS, purpose_classes={})

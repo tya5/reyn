@@ -33,7 +33,7 @@ def _make_cron_runner():
     shape via ``build_default_runner``.
 
       - Skill-based legacy: resolves the skill by name and runs through
-        ``Agent.run`` with sane defaults from ``load_config()``.
+        ``SkillRuntime.run`` with sane defaults from ``load_config()``.
       - Message-based (FP-0041): pushes message into target agent's
         inbox via ``AgentRegistry.ensure_running``, with
         ``sender="cron:<name>"`` envelope so the agent reads it as a
@@ -44,11 +44,11 @@ def _make_cron_runner():
     async def _legacy_skill_runner(job) -> str:
         from pathlib import Path as _Path
 
-        from reyn.agent import Agent
         from reyn.config import _find_project_root, load_config, load_project_context
         from reyn.core.compiler import load_dsl_skill
         from reyn.security.permissions.permissions import PermissionResolver
         from reyn.skill.skill_paths import resolve_skill_path
+        from reyn.skill_runtime import SkillRuntime
 
         cfg = load_config()
         project_root = _find_project_root(_Path.cwd())
@@ -63,7 +63,7 @@ def _make_cron_runner():
         # (the web cron path is non-interactive → interactive=False, matching the
         # prior hand-built resolver). resolver now derives from cfg.models (was an
         # empty ModelResolver() default) so class-name model resolution works.
-        agent = Agent.from_config(
+        agent = SkillRuntime.from_config(
             cfg,
             interactive=False,
             project_context=project_context,

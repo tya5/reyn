@@ -15,11 +15,11 @@ via `_make_run_id`, producing a 2-form mismatch:
 The fix threads run_id through:
   ChatSession._build_agent_for_skill_runner(run_id, ...)
     → ChatSession._build_agent(run_id=..., ...)
-      → Agent(run_id=..., ...) ctor (= sets self.run_id)
+      → SkillRuntime(run_id=..., ...) ctor (= sets self.run_id)
         → agent.run() honors self.run_id (= no fresh _make_run_id)
 
 This file pins:
-  1. Agent.__init__ accepts run_id and sets it on the instance.
+  1. SkillRuntime.__init__ accepts run_id and sets it on the instance.
   2. agent.run() honors the constructor-set run_id (= no fresh
      generation when one was provided pre-run).
   3. agent.run() falls back to _make_run_id when no run_id was set
@@ -36,27 +36,27 @@ import asyncio
 
 import pytest
 
-from reyn.agent import Agent
+from reyn.skill_runtime import SkillRuntime
 
-# ── 1. Agent.__init__ accepts run_id ─────────────────────────────────────
+# ── 1. SkillRuntime.__init__ accepts run_id ─────────────────────────────────────
 
 
 def test_agent_init_accepts_run_id_kwarg() -> None:
-    """Tier 2: Agent.__init__ accepts a run_id kwarg and sets it on the instance."""
+    """Tier 2: SkillRuntime.__init__ accepts a run_id kwarg and sets it on the instance."""
     pre_set_id = "20260528T122441355122Z_test_skill_a197"
-    agent = Agent(model="standard", run_id=pre_set_id)
+    agent = SkillRuntime(model="standard", run_id=pre_set_id)
     assert agent.run_id == pre_set_id, (
-        f"Agent.__init__(run_id={pre_set_id!r}) did not set instance "
+        f"SkillRuntime.__init__(run_id={pre_set_id!r}) did not set instance "
         f"run_id; got {agent.run_id!r}. PR-R wiring required for "
         f"chat-side spawn → Agent instance propagation."
     )
 
 
 def test_agent_init_without_run_id_defaults_to_none() -> None:
-    """Tier 2: Agent.__init__ without run_id sets instance run_id to None."""
-    agent = Agent(model="standard")
+    """Tier 2: SkillRuntime.__init__ without run_id sets instance run_id to None."""
+    agent = SkillRuntime(model="standard")
     assert agent.run_id is None, (
-        f"Agent.__init__() without run_id should leave self.run_id = None "
+        f"SkillRuntime.__init__() without run_id should leave self.run_id = None "
         f"so agent.run() falls back to _make_run_id; got {agent.run_id!r}."
     )
 
@@ -66,14 +66,14 @@ def test_agent_init_without_run_id_defaults_to_none() -> None:
 
 @pytest.mark.asyncio
 async def test_agent_run_honors_constructor_run_id() -> None:
-    """Tier 2: when Agent(run_id=X), agent.run() does NOT regenerate; self.run_id stays X.
+    """Tier 2: when SkillRuntime(run_id=X), agent.run() does NOT regenerate; self.run_id stays X.
 
     The 2-form mismatch tui-coder caught was exactly the case where the
     constructor-set value was OVERWRITTEN by a fresh _make_run_id at
     agent.run() time. The fix preserves the constructor value.
     """
     pre_set_id = "20260528T122441355122Z_test_skill_a197"
-    agent = Agent(model="standard", run_id=pre_set_id)
+    agent = SkillRuntime(model="standard", run_id=pre_set_id)
 
     # Build a minimal stub skill to invoke agent.run with — we only need
     # the run_id resolution logic, which runs at the top of agent.run().
@@ -92,7 +92,7 @@ async def test_agent_run_honors_constructor_run_id() -> None:
     # so we capture run_id immediately after the resolution step but
     # before any heavy work. (= no mocks; we're injecting a known-stop
     # callable via the module's import path.)
-    import reyn.agent as agent_mod
+    import reyn.skill_runtime as agent_mod
     real_event_store = agent_mod.EventStore
     agent_mod.EventStore = _capture_and_stop  # type: ignore[assignment]
 
@@ -127,7 +127,7 @@ async def test_agent_run_kwarg_overrides_constructor_run_id() -> None:
     """
     ctor_id = "20260528T122441000000Z_test_skill_aaaa"
     override_id = "20260528T200000000000Z_test_skill_bbbb"
-    agent = Agent(model="standard", run_id=ctor_id)
+    agent = SkillRuntime(model="standard", run_id=ctor_id)
 
     captured: dict[str, str | None] = {}
 
@@ -138,7 +138,7 @@ async def test_agent_run_kwarg_overrides_constructor_run_id() -> None:
         captured["run_id"] = agent.run_id
         raise _StopSentinel
 
-    import reyn.agent as agent_mod
+    import reyn.skill_runtime as agent_mod
     real_event_store = agent_mod.EventStore
     agent_mod.EventStore = _capture_and_stop  # type: ignore[assignment]
 
@@ -168,7 +168,7 @@ async def test_agent_run_falls_back_to_make_run_id_when_none() -> None:
     Preserves prior behavior for direct callers (= `reyn run` CLI path)
     that do not pre-determine a run_id at construction time.
     """
-    agent = Agent(model="standard")
+    agent = SkillRuntime(model="standard")
     assert agent.run_id is None  # baseline
 
     captured: dict[str, str | None] = {}
@@ -180,7 +180,7 @@ async def test_agent_run_falls_back_to_make_run_id_when_none() -> None:
         captured["run_id"] = agent.run_id
         raise _StopSentinel
 
-    import reyn.agent as agent_mod
+    import reyn.skill_runtime as agent_mod
     real_event_store = agent_mod.EventStore
     agent_mod.EventStore = _capture_and_stop  # type: ignore[assignment]
 

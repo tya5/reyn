@@ -50,7 +50,7 @@ class AutoResumeHandler:
     launcher:
         Async callable ``(ResumeDecision) -> None``.  In production this is
         ``ChatSession._spawn_resumed_skill``; in tests it is a stub that records
-        dispatched decisions without launching a real Agent.
+        dispatched decisions without launching a real SkillRuntime.
     """
 
     def __init__(

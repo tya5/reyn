@@ -1,7 +1,7 @@
 """
 ConsoleLogger — event subscriber that renders OS events as human-readable console output.
 
-Wire up by passing an instance as a subscriber to EventLog or Agent.
+Wire up by passing an instance as a subscriber to EventLog or SkillRuntime.
 """
 from __future__ import annotations
 

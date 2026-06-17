@@ -1180,7 +1180,7 @@ async def execute_plan(
             # Issue #214 (= #180 #2 split): set the plan_step contextvar
             # for the duration of this step's sub-loop. The ContextVar
             # propagates through any asyncio.Task the sub-loop spawns
-            # (= invoke_skill → skill_runner → Agent.run), so the spawned
+            # (= invoke_skill → skill_runner → SkillRuntime.run), so the spawned
             # skill's OSRuntime / EventLog stamps "plan N/M" into every
             # event and the TUI's SkillActivityRow can render the plan
             # context as detail. ``n_done`` is the 1-based step number

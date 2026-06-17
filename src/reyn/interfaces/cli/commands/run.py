@@ -133,8 +133,8 @@ def run(args: argparse.Namespace) -> None:
     if not unsafe_python and loaded.skill_md is not None:
         from reyn.skill.skill_paths import is_stdlib_skill
         unsafe_python = is_stdlib_skill(loaded.skill_md.parent)
-    from reyn.agent import Agent
     from reyn.config import _find_project_root, load_project_context
+    from reyn.skill_runtime import SkillRuntime
     from reyn.user_intervention import StdinInterventionBus
     project_root = _find_project_root(Path.cwd())
     project_context = load_project_context(session.config, project_root)
@@ -142,11 +142,11 @@ def run(args: argparse.Namespace) -> None:
     env_backend, ws_base_dir, ws_state_dir, env_cleanup = build_environment_backend(args)
     # #997 dir2: the permission/runtime bundle (permission_resolver, mcp_servers,
     # python_allowed_modules, prompt_cache_enabled, sandbox_config, resolver) is
-    # derived from config inside Agent.from_config — a caller cannot omit it (the
+    # derived from config inside SkillRuntime.from_config — a caller cannot omit it (the
     # FP-0008 / #1133 wiring-gap class). Only the per-invocation overrides
     # (args-aware safety, the docker env backend, workspace dirs, logger) are
     # passed here.
-    agent = Agent.from_config(
+    agent = SkillRuntime.from_config(
         session.config,
         model=model,
         safety=safety,

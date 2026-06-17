@@ -23,7 +23,7 @@ async def handle(op: AskUserIROp, ctx: OpContext, caller: Literal["preprocessor"
         raise RuntimeError(
             "ask_user invoked without an intervention_bus on OpContext. "
             "Wire a bus (StdinInterventionBus for CLI, ChatInterventionBus "
-            "for chat) when constructing the Agent."
+            "for chat) when constructing the SkillRuntime."
         )
 
     iv = UserIntervention(

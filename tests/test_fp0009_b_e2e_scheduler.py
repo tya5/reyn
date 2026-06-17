@@ -4,7 +4,7 @@ Tier 3: Demonstrates the full pipeline from reyn.yaml config loading through
 CronScheduler construction and job execution, verifying side-effects via a
 recording runner rather than a live LLM invocation.
 
-The test does NOT invoke Agent.run (= B4's lifespan integration owns that
+The test does NOT invoke SkillRuntime.run (= B4's lifespan integration owns that
 sanity check). The purpose here is to verify the
 config→CronJob→CronScheduler→runner pipeline end-to-end without LLM.
 """

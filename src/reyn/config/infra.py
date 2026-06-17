@@ -356,7 +356,7 @@ class CronJobConfig:
         dispatches the message to the target agent's inbox with
         ``sender="cron:<name>"`` envelope.
       - **Skill-based** (legacy): ``skill``. Cron runs the skill
-        directly via ``Agent.run`` (= FP-0009 original shape).
+        directly via ``SkillRuntime.run`` (= FP-0009 original shape).
 
     Exactly one shape per job. Validation rejects both / neither.
     """

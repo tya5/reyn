@@ -56,10 +56,10 @@ import datetime as _dt
 import pytest
 
 import reyn.schemas.models as _models
-from reyn.agent import Agent
 from reyn.config import ReynConfig
 from reyn.dev.testing.replay import REPLAY_DATETIME
 from reyn.schemas.models import Phase, Skill, SkillGraph
+from reyn.skill_runtime import SkillRuntime
 
 _SKILL_NAME = "converge_replay"
 # Direct-to-Google standard model (GOOGLE_API_KEY), the free dogfood workhorse.
@@ -152,7 +152,7 @@ def test_converged_op_loop_records_and_replays_deterministically(tmp_path, monke
     config = ReynConfig(
         tool_calls_op_loop_skills=[_SKILL_NAME], prompt_cache_enabled=False,
     )
-    agent = Agent.from_config(
+    agent = SkillRuntime.from_config(
         config, model=_MODEL, subscribers=[sink.append],
     )
     result = asyncio.run(agent.run(_skill(), {"type": "input", "data": {}}))

@@ -8,9 +8,9 @@ agent / llm / httpx chain in through this ``__init__``.
 This extends the FP-0008 C4 lazy-litellm fix (which made ``import litellm``
 lazy) one layer down: the harness path now imports only what it needs
 (allowlist + stdlib), so its cold import stays well under the python-step
-timeout. The eager chain (``Agent`` -> ``llm`` -> ``httpx``) cost ~0.5s, which
-under the in-container venv path on an emulated host inflated past the ~5s
-step timeout and aborted steps. ``from reyn import Agent`` / ``reyn.Agent``
+timeout. The eager chain (``SkillRuntime`` -> ``llm`` -> ``httpx``) cost ~0.5s,
+which under the in-container venv path on an emulated host inflated past the ~5s
+step timeout and aborted steps. ``from reyn import SkillRuntime`` / ``reyn.SkillRuntime``
 still work — they trigger the lazy load on first access.
 """
 from __future__ import annotations
@@ -18,14 +18,14 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:  # import-cost-free hints for type checkers / IDEs
-    from reyn.agent import Agent
     from reyn.core.kernel.runtime import RunResult
     from reyn.schemas.models import Phase, Skill, SkillGraph
+    from reyn.skill_runtime import SkillRuntime
 
-__all__ = ["Skill", "Phase", "SkillGraph", "Agent", "RunResult"]
+__all__ = ["Skill", "Phase", "SkillGraph", "SkillRuntime", "RunResult"]
 
 _LAZY_ATTRS = {
-    "Agent": "reyn.agent",
+    "SkillRuntime": "reyn.skill_runtime",
     "RunResult": "reyn.core.kernel.runtime",
     "Phase": "reyn.schemas.models",
     "Skill": "reyn.schemas.models",

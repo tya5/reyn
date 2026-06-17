@@ -8,7 +8,7 @@ plan context. Per the owner decision direction (ii), this PR threads
 
   planner (ContextVar setter) →
     skill_runner (ContextVar reader) →
-    Agent.run / sub_skill_runner.invoke_sub_skill →
+    SkillRuntime.run / sub_skill_runner.invoke_sub_skill →
     OSRuntime / EventLog (caller-wins auto-injection mirror of run_id) →
     ChatEventForwarder (one-shot ``detail: plan N/M`` on first phase_started)
 

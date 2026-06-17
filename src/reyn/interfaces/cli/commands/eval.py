@@ -252,9 +252,9 @@ def _run_case(
     session,
 ) -> dict:
     """Run a single eval case; return a result record."""
-    from reyn.agent import Agent
     from reyn.config import _find_project_root, load_project_context
     from reyn.llm.llm import run_async
+    from reyn.skill_runtime import SkillRuntime
     from reyn.user_intervention import StdinInterventionBus
 
     case_id = _make_case_id(case)
@@ -273,7 +273,7 @@ def _run_case(
     project_context = load_project_context(session.config, project_root)
 
     # #997 dir2: config-derived permission/runtime bundle via from_config.
-    agent = Agent.from_config(
+    agent = SkillRuntime.from_config(
         session.config,
         model=model,
         resolver=session.resolver,
@@ -810,9 +810,9 @@ def _run_spec_case(
     case, eval_app, args, spec, target_skill_path, target_skill_root,
     model, output_language, session,
 ) -> tuple[dict, object, float | None]:
-    from reyn.agent import Agent
     from reyn.config import _find_project_root, load_project_context
     from reyn.llm.llm import run_async
+    from reyn.skill_runtime import SkillRuntime
     from reyn.user_intervention import StdinInterventionBus
 
     print(f"━━━ case: {case.name} ━━━")
@@ -849,7 +849,7 @@ def _run_spec_case(
         session.config, _find_project_root(Path.cwd()),
     )
     # #997 dir2: config-derived permission/runtime bundle via from_config.
-    agent = Agent.from_config(
+    agent = SkillRuntime.from_config(
         session.config,
         model=model,
         resolver=session.resolver,
