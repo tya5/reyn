@@ -1,6 +1,6 @@
 """Per-agent serialization lock registry — shared by ALL transport layers.
 
-MCP (``reyn.mcp_server``) and A2A (``reyn.interfaces.web.routers.a2a``) both drive
+MCP (``reyn.mcp.server``) and A2A (``reyn.interfaces.web.routers.a2a``) both drive
 ``ChatSession.run_one_iteration`` for the same shared session instance. Without
 cross-transport coordination a concurrent MCP request and an A2A drain loop on
 the same agent race at every ``await`` inside ``run_one_iteration``, corrupting

@@ -17,7 +17,7 @@ from pathlib import Path
 
 import pytest
 
-from reyn.mcp_client import MCPClient
+from reyn.mcp.client import MCPClient
 
 
 class _FakeBackend:

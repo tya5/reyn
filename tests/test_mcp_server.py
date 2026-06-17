@@ -25,7 +25,7 @@ from reyn.chat.session import ChatSession
 from reyn.core.events.state_log import StateLog
 from reyn.llm.llm import LLMToolCallResult
 from reyn.llm.pricing import TokenUsage
-from reyn.mcp_server import list_agents_impl, send_to_agent_impl
+from reyn.mcp.server import list_agents_impl, send_to_agent_impl
 from reyn.runtime.budget.budget import BudgetTracker, CostConfig
 
 _EMPTY_USAGE = TokenUsage(prompt_tokens=10, completion_tokens=5)
@@ -504,7 +504,7 @@ def test_build_server_exposes_documented_tools(tmp_path):
     issue #270 Phase B added ``answer_intervention`` (= MCP-side
     answer-delivery wire for ivs emitted by send_to_agent skills).
     """
-    from reyn.mcp_server import build_server
+    from reyn.mcp.server import build_server
 
     registry = _build_registry(tmp_path, [("default", "")])
     server = build_server(registry)

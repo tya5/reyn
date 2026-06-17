@@ -1,7 +1,7 @@
 """A2A (Agent2Agent) protocol router — expose Reyn agents as A2A endpoints.
 
 Sister to ``reyn.interfaces.web.routers.mcp`` — same backing implementation
-(``reyn.mcp_server.send_to_agent_impl``), different wire protocol.
+(``reyn.mcp.server.send_to_agent_impl``), different wire protocol.
 
   - **MCP** (Model Context Protocol): an *outer LLM client* (Claude
     Desktop, Cursor, …) treats Reyn as a tool provider. Tools are

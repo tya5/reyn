@@ -1,6 +1,6 @@
 """MCP server — expose Reyn agents to outer LLM clients.
 
-This is the *server* side counterpart to :mod:`reyn.mcp_client` (which
+This is the *server* side counterpart to :mod:`reyn.mcp.client` (which
 *consumes* third-party MCP servers). External clients (Claude Code,
 Cursor, OpenAI Agents SDK with MCP enabled, …) spawn ``reyn mcp serve``
 as a stdio subprocess and converse with a Reyn agent through two tools:

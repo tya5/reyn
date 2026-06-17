@@ -56,7 +56,7 @@ async def _run() -> int:
         print(f"available: {sorted(servers)}", file=sys.stderr)
         return 2
 
-    from reyn.mcp_client import MCPClient
+    from reyn.mcp.client import MCPClient
 
     client = MCPClient(servers[server_name])
     try:

@@ -33,7 +33,7 @@ from reyn.chat.registry import AgentRegistry
 from reyn.chat.session import ChatSession
 from reyn.core.events.state_log import StateLog
 from reyn.data.workspace.media_store import MediaStore, MediaStoreConfig
-from reyn.mcp_server import build_server
+from reyn.mcp.server import build_server
 
 
 def _build_registry_with_agent(tmp_path: Path, agent_name: str) -> AgentRegistry:

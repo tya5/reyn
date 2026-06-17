@@ -27,7 +27,7 @@ from typing import Any
 # ── Env var expansion ─────────────────────────────────────────────────────────
 # Shared resolver lives in reyn.security.secrets.interpolation (ADR-0030).
 # This re-export keeps the public surface of this module backward-compatible:
-# callers that import ``from reyn.mcp_client import expand_env`` continue to
+# callers that import ``from reyn.mcp.client import expand_env`` continue to
 # work without change.
 from reyn.security.secrets.interpolation import expand_env as expand_env  # noqa: F401
 

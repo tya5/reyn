@@ -45,7 +45,7 @@ def test_serve_stdio_declares_static_tool_list() -> None:
     a corresponding ``notify_tools_changed`` call would be the
     inverse #267 Z-b mismatch.
     """
-    from reyn import mcp_server
+    from reyn.mcp import server as mcp_server
 
     src = inspect.getsource(mcp_server.serve_stdio)
     assert "tools_changed=False" in src
@@ -84,7 +84,7 @@ def test_experimental_capability_declares_skill_lifecycle_progress() -> None:
     names that ``_MCPProgressBridge`` subscribes to (= the contract
     between declaration and PR #279 wire).
     """
-    from reyn import mcp_server
+    from reyn.mcp import server as mcp_server
 
     src = inspect.getsource(mcp_server.serve_stdio)
     assert '"reyn.progress.skill_lifecycle"' in src
@@ -101,7 +101,7 @@ def test_progress_bridge_subscribes_to_declared_event_names() -> None:
     on. Pin the mapping so a future bridge edit (= e.g. adding /
     removing an event kind) is forced to update the declaration.
     """
-    from reyn import mcp_server
+    from reyn.mcp import server as mcp_server
 
     bridge_src = inspect.getsource(mcp_server._MCPProgressBridge)
     for declared_event in ("phase_started", "llm_called", "act_executed"):
@@ -121,7 +121,7 @@ def test_experimental_capability_declares_cooperative_cancellation() -> None:
     ``reyn.cancellation.cooperative`` is declared (= matches PR #279's
     CancelledError propagation wire).
     """
-    from reyn import mcp_server
+    from reyn.mcp import server as mcp_server
 
     src = inspect.getsource(mcp_server.serve_stdio)
     assert '"reyn.cancellation.cooperative"' in src

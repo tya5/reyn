@@ -131,7 +131,7 @@ def test_send_to_agent_impl_registers_a2a_channel_id_as_listener(
     from reyn.chat.profile import AgentProfile
     from reyn.chat.registry import AgentRegistry
     from reyn.core.events.state_log import StateLog
-    from reyn.mcp_server import send_to_agent_impl
+    from reyn.mcp.server import send_to_agent_impl
     from reyn.runtime.budget.budget import BudgetTracker, CostConfig
 
     state_log = StateLog(tmp_path / ".reyn" / "state" / "wal.jsonl")
@@ -221,7 +221,7 @@ def test_send_to_agent_impl_skips_listener_when_override_has_no_channel_id(
     from reyn.chat.profile import AgentProfile
     from reyn.chat.registry import AgentRegistry
     from reyn.core.events.state_log import StateLog
-    from reyn.mcp_server import send_to_agent_impl
+    from reyn.mcp.server import send_to_agent_impl
     from reyn.runtime.budget.budget import BudgetTracker, CostConfig
 
     class _StubBusNoChannelId:
@@ -286,7 +286,7 @@ def test_send_to_agent_impl_without_override_does_not_register_listener(
     from reyn.chat.profile import AgentProfile
     from reyn.chat.registry import AgentRegistry
     from reyn.core.events.state_log import StateLog
-    from reyn.mcp_server import send_to_agent_impl
+    from reyn.mcp.server import send_to_agent_impl
     from reyn.runtime.budget.budget import BudgetTracker, CostConfig
 
     state_log = StateLog(tmp_path / ".reyn" / "state" / "wal.jsonl")

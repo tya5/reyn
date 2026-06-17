@@ -47,7 +47,7 @@ def test_mcp_intervention_bus_exposes_on_dispatch_not_request_or_deliver() -> No
     """Tier 2: α contract — ``on_dispatch`` only. No ``request`` /
     ``deliver`` (= pre-α names that returned an answer).
     """
-    from reyn.mcp_server import _MCPInterventionBus
+    from reyn.mcp.server import _MCPInterventionBus
 
     bus = _MCPInterventionBus(
         mcp_session=None, related_request_id="rq-1",
@@ -62,7 +62,7 @@ def test_mcp_intervention_bus_channel_id_format() -> None:
     convention as A2A's ``a2a:<run_id>`` (issue #268 origin-pin
     routing).
     """
-    from reyn.mcp_server import _MCPInterventionBus
+    from reyn.mcp.server import _MCPInterventionBus
 
     bus = _MCPInterventionBus(
         mcp_session=None, related_request_id="rq-42",
@@ -77,7 +77,7 @@ def test_on_dispatch_stamps_origin_channel_id() -> None:
     """Tier 2: ``on_dispatch`` stamps ``iv.origin_channel_id`` when
     unset (= same contract A2AInterventionBus follows for #268).
     """
-    from reyn.mcp_server import _MCPInterventionBus
+    from reyn.mcp.server import _MCPInterventionBus
     from reyn.user_intervention import UserIntervention
 
     class _FakeSession:
@@ -99,7 +99,7 @@ def test_on_dispatch_stamps_origin_channel_id() -> None:
 
 def test_on_dispatch_respects_preexisting_origin() -> None:
     """Tier 2: pre-set origin_channel_id is NOT overwritten."""
-    from reyn.mcp_server import _MCPInterventionBus
+    from reyn.mcp.server import _MCPInterventionBus
     from reyn.user_intervention import UserIntervention
 
     class _FakeSession:
@@ -126,7 +126,7 @@ def test_on_dispatch_returns_without_awaiting_future() -> None:
     """Tier 2: α contract — ``on_dispatch`` returns promptly without
     awaiting ``iv.future``. The handler awaits on the skill's behalf.
     """
-    from reyn.mcp_server import _MCPInterventionBus
+    from reyn.mcp.server import _MCPInterventionBus
     from reyn.user_intervention import UserIntervention
 
     class _FakeSession:
@@ -154,7 +154,7 @@ def test_on_dispatch_emits_canonical_payload() -> None:
     with the canonical input-required JSON payload (= Gap 4 shape
     with kind / choices / detail).
     """
-    from reyn.mcp_server import _MCPInterventionBus
+    from reyn.mcp.server import _MCPInterventionBus
     from reyn.user_intervention import InterventionChoice, UserIntervention
 
     captured: list[dict] = []
@@ -212,7 +212,7 @@ def test_on_dispatch_payload_omits_detail_when_empty() -> None:
     """Tier 2: empty ``iv.detail`` is omitted from the payload (=
     Gap 4 contract preserved on MCP side).
     """
-    from reyn.mcp_server import _MCPInterventionBus
+    from reyn.mcp.server import _MCPInterventionBus
     from reyn.user_intervention import UserIntervention
 
     captured: list[str] = []
@@ -246,7 +246,7 @@ def test_on_dispatch_swallows_send_failure() -> None:
     """Tier 2: when ``send_progress_notification`` raises, ``on_dispatch``
     returns cleanly (= side-effect failure must not block dispatch).
     """
-    from reyn.mcp_server import _MCPInterventionBus
+    from reyn.mcp.server import _MCPInterventionBus
     from reyn.user_intervention import UserIntervention
 
     class _FailingSession:
@@ -274,7 +274,7 @@ def test_call_tool_send_to_agent_passes_iv_bus_as_override() -> None:
     ``intervention_override`` to ``send_to_agent_impl``. Pin the
     wiring so a refactor that drops it fails first.
     """
-    from reyn import mcp_server
+    from reyn.mcp import server as mcp_server
 
     src = inspect.getsource(mcp_server.build_server)
     assert "_make_mcp_intervention_bus" in src
@@ -290,7 +290,7 @@ def test_answer_intervention_tool_is_declared() -> None:
     ``agent_name`` / ``run_id`` / ``text`` required, ``choice_id``
     optional).
     """
-    from reyn import mcp_server
+    from reyn.mcp import server as mcp_server
 
     src = inspect.getsource(mcp_server.build_server)
     # The tool definition must appear in build_server's source.
@@ -310,7 +310,7 @@ def test_serve_stdio_declares_iv_input_required_capability() -> None:
     contract so future refactors that drop one without the other
     fail first).
     """
-    from reyn import mcp_server
+    from reyn.mcp import server as mcp_server
 
     src = inspect.getsource(mcp_server.serve_stdio)
     assert '"reyn.iv.input_required"' in src
