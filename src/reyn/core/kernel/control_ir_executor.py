@@ -25,11 +25,11 @@ if TYPE_CHECKING:
     from reyn.security.sandbox.backend import SandboxBackend
     from reyn.security.secrets.store import ScopedSecretStore
 
+from reyn.core.dispatch import DispatchContext, dispatch_tool
 from reyn.core.events.events import EventLog
 from reyn.core.op_runtime import execute_op
 from reyn.core.op_runtime.context import OpContext
 from reyn.data.workspace.workspace import Workspace
-from reyn.dispatch import DispatchContext, dispatch_tool
 from reyn.llm.model_resolver import ModelResolver
 from reyn.schemas.models import (
     ControlIROp,

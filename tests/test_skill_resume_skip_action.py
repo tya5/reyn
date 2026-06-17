@@ -12,7 +12,7 @@ defeating the whole point of skip.
 from __future__ import annotations
 
 from reyn.config import SkillResumeConfig
-from reyn.dispatch.dispatcher import _compute_args_hash
+from reyn.core.dispatch.dispatcher import _compute_args_hash
 from reyn.skill.skill_resume_analyzer import (
     AmbiguousStep,
     CommittedStep,
@@ -165,7 +165,7 @@ def test_skip_synthetic_step_memoizes_via_dispatch_tool(tmp_path, monkeypatch):
     """
     monkeypatch.chdir(tmp_path)
 
-    from reyn.dispatch.dispatcher import (
+    from reyn.core.dispatch.dispatcher import (
         _lookup_memoized_step,
     )
 

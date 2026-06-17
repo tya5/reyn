@@ -205,7 +205,7 @@ def test_unknown_op_kind_caught_by_dispatch_tool(tmp_path: Path):
     # The op kind is not in allowed_ops → skipped at frontend level, not reaching dispatch_tool
     # Let's instead test: op kind in allowed_ops but absent from catalog (via direct catalog call)
     # We test _build_phase_tool_catalog + dispatch_tool directly here.
-    from reyn.dispatch import DispatchContext, dispatch_tool
+    from reyn.core.dispatch import DispatchContext, dispatch_tool
 
     class FakeEvents:
         def __init__(self):

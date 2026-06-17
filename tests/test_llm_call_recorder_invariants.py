@@ -27,9 +27,9 @@ import pytest
 
 import reyn.core.kernel.llm_call_recorder as llm_call_recorder_mod
 from reyn.budget.budget import BudgetTracker, CostConfig, CostLimitConfig
+from reyn.core.dispatch.dispatcher import _compute_llm_args_hash
 from reyn.core.events.state_log import StateLog
 from reyn.core.kernel.runtime import OSRuntime
-from reyn.dispatch.dispatcher import _compute_llm_args_hash
 from reyn.llm.llm import LLMCallResult
 from reyn.llm.pricing import TokenUsage
 from reyn.schemas.models import Phase, Skill, SkillGraph

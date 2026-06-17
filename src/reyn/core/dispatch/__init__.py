@@ -1,4 +1,4 @@
-from reyn.dispatch.dispatcher import (
+from reyn.core.dispatch.dispatcher import (
     DispatchContext,
     InvalidArgsError,
     UnknownToolError,

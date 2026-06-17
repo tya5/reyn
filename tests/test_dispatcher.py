@@ -4,7 +4,7 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
-from reyn.dispatch import (
+from reyn.core.dispatch import (
     DispatchContext,
     dispatch_tool,
 )

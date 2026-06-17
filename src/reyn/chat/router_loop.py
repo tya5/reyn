@@ -24,8 +24,8 @@ from reyn.chat.router_tools import (
 )
 from reyn.chat.services.skill_search import BM25Backend
 from reyn.chat.session import _TOOL_FAILED_FALLBACK_MSG
+from reyn.core.dispatch import DispatchContext, dispatch_tool
 from reyn.data.index.source_manifest import get_source_manifest
-from reyn.dispatch import DispatchContext, dispatch_tool
 from reyn.llm.llm import call_llm_tools
 from reyn.llm.pricing import TokenUsage
 from reyn.services.compaction.engine import _IMAGE_FIXED_TOKEN_COST
