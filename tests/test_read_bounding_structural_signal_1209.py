@@ -20,7 +20,7 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 
-from reyn.context_builder import (
+from reyn.core.context_builder import (
     MAX_CONTROL_IR_RESULT_INLINE_BYTES,
     control_ir_inline_cap,
     offload_control_ir_result,

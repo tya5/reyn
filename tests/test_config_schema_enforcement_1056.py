@@ -32,7 +32,7 @@ from pathlib import Path
 import yaml
 
 from reyn.config import ReynConfig, load_config
-from reyn.config_schema import (
+from reyn.config.config_schema import (
     MISSING,
     SchemaNode,
     is_valid_config_key,

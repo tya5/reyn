@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import sys
 
-from reyn.python_runner import PythonRunner
+from reyn.core.python_runner import PythonRunner
 
 
 def test_env_var_sets_harness_python(monkeypatch) -> None:

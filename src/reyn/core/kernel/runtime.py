@@ -20,7 +20,7 @@ if TYPE_CHECKING:
     from reyn.services.compaction.engine import CompactionEngine
     from reyn.skill.skill_registry import SkillRegistry
 from reyn.config import SafetyConfig
-from reyn.context_builder import build_frame
+from reyn.core.context_builder import build_frame
 from reyn.core.events.events import EventLog
 from reyn.core.kernel.control_ir_executor import ControlIRExecutor
 from reyn.core.kernel.llm_call_recorder import LLMCallRecorder

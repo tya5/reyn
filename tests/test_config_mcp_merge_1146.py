@@ -23,7 +23,7 @@ import os
 from pathlib import Path
 
 from reyn.config import ReynConfig, load_config
-from reyn.config_schema import (
+from reyn.config.config_schema import (
     is_valid_config_key,
     resolve_config_value,
     walk_config_schema,

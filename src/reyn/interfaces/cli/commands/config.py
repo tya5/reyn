@@ -6,7 +6,7 @@ import sys
 from pathlib import Path
 
 from reyn.config import load_config
-from reyn.config_schema import is_valid_config_key, resolve_config_value, walk_config_schema
+from reyn.config.config_schema import is_valid_config_key, resolve_config_value, walk_config_schema
 
 
 def register(sub) -> None:
