@@ -67,10 +67,55 @@ that route an incoming message to a Session by a **routing-key**; the Agent
 The same interface can target multiple Sessions; a peer A2A delegation can open /
 target a Session.
 
-> **OPEN — routing-key.** Candidates: (a) explicit `session_id` (interface
-> specifies, OpenAI-Thread style), (b) per-source default Session, (c) per-interface.
-> Lead lean: **(a) explicit session-id + per-source default** (interface-agnostic,
-> flexible). To be settled.
+The S4b transport/session design converged in owner co-design (2026-06-18); the
+finalized model follows.
+
+### Transport roster
+
+Interactive (user-attended): REPL ✓, web, slack / line / telegram. Programmatic
+(unattended): a2a, **cron**, **webhook**, **MCP-server**. The normalization layer
+already exists — the sender-envelope `<transport>:<id>`. A new transport slots in
+as one row; the routing + output models below are transport-agnostic. (Industry
+shape: transport-plugin → normalize-to-common-event → route-to-session, with
+thread/channel-id ↔ session the standard mapping. Reyn's differentiator is that
+Sessions are persistent / time-travel / **attachable**.)
+
+### Routing-key (settled)
+
+- **Default — deterministic mapping**: `native-id → session_id`, namespaced by
+  transport (`slack:T123`, `cron:morning_news`, `web:<tab>`, `mcp:<conn>`). The
+  first message auto-spawns; the same id resumes the same Session (stateful
+  per-conversation + isolation, zero-config). REPL's `"main"` is just repl's mapping.
+- **Explicit — join an EXISTING Session** (cross-transport bridging: webhook /
+  cron / MCP into a live Session). A **non-existent explicit id is an ERROR**
+  (owner call): Sessions are created only via the mapping default or an explicit
+  spawn op — never silently by a typo'd id.
+- **Scope — within one Agent**: explicit-join is across the same Agent's Sessions
+  (shared identity / permissions, safe). Cross-Agent is delegation, not join.
+
+### Unattended output model (C3 — layered)
+
+The output paths layer (not mutually exclusive):
+
+- **Base (always): event-log** (P6) — free, audited, replayable; also the attach buffer.
+- **Auto: reply-to-source** for synchronous / caller-driven transports
+  (MCP → result, a2a → peer, sync-webhook → HTTP response).
+- **Opt-in: notification** (broker / telegram / webhook-out) for callerless
+  transports (cron especially) and async.
+- **Always available: attach** — any background Session is attachable (live
+  observe / intervene / catch-up). The differentiator.
+
+Per-transport behaviour falls out of the layers: cron = event-log + opt-in-notify
++ attach; webhook = event-log + (sync reply / async notify) + attach; a2a / MCP =
+event-log + reply-to-source + attach. Sub-decisions: verbosity defaults to
+final-result + errors (full narration opt-in); the notification channel is
+declared per job / Session (`morning_news → telegram`).
+
+### S4b staging
+
+S4b-1 routing-core (transport-agnostic routing + output core) → S4b-2 web →
+S4b-3 output-model + cron → remaining transport adapters — the same staged shape
+as the S2–S5 arc (this is the per-stage breakdown of migration stage 4 below).
 
 ## Inter-session interactions
 
@@ -170,7 +215,6 @@ restructure step.
 
 ## Open questions
 
-- Routing-key (explicit session-id + per-source default — lean).
 - Sub-session inheritance-mode default (full / compacted / copy-on-write).
 - The exact Agent-identity ↔ Session boundary — esp. **memory and workspace
   scoping** (agent-scoped shared vs session-scoped). This is the lever that
