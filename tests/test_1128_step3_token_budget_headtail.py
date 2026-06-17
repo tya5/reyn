@@ -16,7 +16,7 @@ Policy compliance:
 - No private-state assertions.
 - Docstrings start with ``Tier 2: ``.
 - Real config loader (not a mock) for the deprecation test.
-- Real ChatSession with monkeypatched ``get_max_input_tokens`` for the
+- Real Session with monkeypatched ``get_max_input_tokens`` for the
   elide test (no mocked collaborators).
 """
 from __future__ import annotations
@@ -106,12 +106,12 @@ def test_clean_config_no_warning() -> None:
 
 
 def _make_session_with_t_max(tmp_path: Path, t_max: int):
-    """Return a ChatSession with a synthetic T_max.
+    """Return a Session with a synthetic T_max.
 
     ``section_caps_spec_tokens=0`` keeps B_M positive for small T_max.
     ``use_chars4_estimate=True`` makes token counting deterministic.
     """
-    from reyn.chat.session import ChatSession
+    from reyn.chat.session import Session
     from reyn.config import CompactionConfig
     from reyn.core.events.state_log import StateLog
     from reyn.runtime.budget.budget import BudgetTracker, CostConfig
@@ -119,7 +119,7 @@ def _make_session_with_t_max(tmp_path: Path, t_max: int):
     original = _mb.get_max_input_tokens
     _mb.get_max_input_tokens = lambda model, **kw: t_max  # type: ignore[assignment]
     try:
-        session = ChatSession(
+        session = Session(
             agent_name="default",
             agent_role="",
             output_language="en",

@@ -227,9 +227,9 @@ class _SessionWithCancelSeam:
         return self._loop_driver.is_cancel_requested()
 
     async def cancel_inflight(self) -> str:
-        from reyn.chat.session import ChatSession
+        from reyn.chat.session import Session
         # Call the real method (unbound, passing self)
-        return await ChatSession.cancel_inflight(self)  # type: ignore[arg-type]
+        return await Session.cancel_inflight(self)  # type: ignore[arg-type]
 
 
 @pytest.mark.asyncio

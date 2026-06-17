@@ -656,7 +656,7 @@ class RouterLoopHost(RouterLoopCore, Protocol):
     def get_action_embedding_index(self) -> Any:
         """Return the session-scoped ActionEmbeddingIndex, or None.
 
-        FP-0034 Phase 2 step 1.  Bound by ChatSession when the operator
+        FP-0034 Phase 2 step 1.  Bound by Session when the operator
         has configured ``action_retrieval.embedding_class``.
         """
         ...
@@ -819,7 +819,7 @@ class RouterLoopHost(RouterLoopCore, Protocol):
     ) -> None: ...
 
     # Plan-mode per-step WAL persistence (ADR-0023 Phase 2 step 6).
-    # Optional — test stubs may omit. ChatSession routes these through
+    # Optional — test stubs may omit. Session routes these through
     # SnapshotJournal.record_plan_step_*.
     async def record_plan_step_started(
         self, *, plan_id: str, step_id: str, depends_on: list[str],
@@ -837,7 +837,7 @@ class RouterLoopHost(RouterLoopCore, Protocol):
 
     # Decomposition artifact persistence (ADR-0023 §3.5).
     # The artifact is the canonical SSoT for the plan shape on resume.
-    # ChatSession threads this through reyn.core.plan.decomposition with the
+    # Session threads this through reyn.core.plan.decomposition with the
     # agent-specific state directory; test stubs may no-op.
     async def write_plan_decomposition(
         self, *, plan_id: str, plan: "Any",
@@ -854,7 +854,7 @@ class RouterLoopHost(RouterLoopCore, Protocol):
     ) -> None:
         """Register a PlanRuntime as a background task (ADR-0023 Phase 2.1).
 
-        ChatSession owns the task lifecycle (= ``running_plans`` dict)
+        Session owns the task lifecycle (= ``running_plans`` dict)
         and the wrap-around finally that emits the terminal aggregator
         text via ``put_outbox(kind="agent")`` and cleans up the
         decomposition artifact on clean exit. dispatch_plan_tool hands
@@ -1386,7 +1386,7 @@ class RouterLoop:
         router_model: "str | None" = None,  # #1672: None → config (model_class_for("router")); was hardcoded "light"
         budget: Any = None,  # BudgetTracker | None — process-shared cost tracker
         system_prompt_override: str | None = None,
-        non_interactive: bool = False,  # #1440 followup: run-once (no TTY) → live router SP proceeds instead of asking a clarifying question (13398). Threaded from ChatSession.
+        non_interactive: bool = False,  # #1440 followup: run-once (no TTY) → live router SP proceeds instead of asking a clarifying question (13398). Threaded from Session.
         exclude_tools: set[str] | None = None,
         excluded_categories: set[str] | None = None,  # #1667 catalog categories skipped at source
         memo_provider: Any = None,  # SubLoopMemoProvider | None (ADR-0025)
@@ -1431,7 +1431,7 @@ class RouterLoop:
         # clarifying question" directive. The original #1440 wired only the
         # session-side _build_router_system_prompt (override/budget path), missing
         # this live path → run-once still dead-stopped (13398). Threaded from
-        # ChatSession._non_interactive via the constructor.
+        # Session._non_interactive via the constructor.
         self._non_interactive = bool(non_interactive)
         # Tool names to drop from the catalog (= post-build filter). Used by
         # plan executor to pass ``{"plan"}`` so plan steps cannot recursively
@@ -1844,7 +1844,7 @@ class RouterLoop:
                     host, "reasoning_continuity_section", lambda: ""
                 )(),
             )
-        # ChatSession._handle_user_message appends the user turn to history
+        # Session._handle_user_message appends the user turn to history
         # BEFORE invoking _run_router_loop, so by the time we get here the
         # caller's `history` argument already ends with this turn's user
         # message. Appending it again as a trailing user message creates a
@@ -1859,7 +1859,7 @@ class RouterLoop:
         # When history's last entry is a user message, trust it — it is
         # either:
         #   - text identical to ``user_text`` (= the normal chat path,
-        #     ChatSession already appended it via _append_history); or
+        #     Session already appended it via _append_history); or
         #   - a content-list shape (= issue #366 multimodal turn where
         #     the user attached images via /image; comparing string
         #     ``user_text`` against the list would always fail and

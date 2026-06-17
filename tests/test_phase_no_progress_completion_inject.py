@@ -38,7 +38,7 @@ from pathlib import Path
 
 import pytest
 
-from reyn.chat.session import ChatSession
+from reyn.chat.session import Session
 from reyn.config import SafetyConfig, TimeoutConfig
 from reyn.core.events.state_log import StateLog
 from reyn.core.kernel.runtime_types import WorkflowAbortedError
@@ -48,9 +48,9 @@ from reyn.core.kernel.runtime_types import WorkflowAbortedError
 # ---------------------------------------------------------------------------
 
 
-def _make_session(tmp_path: Path, *, agent_name: str = "test_agent") -> ChatSession:
+def _make_session(tmp_path: Path, *, agent_name: str = "test_agent") -> Session:
     safety = SafetyConfig(timeout=TimeoutConfig(chain_seconds=60.0))
-    return ChatSession(
+    return Session(
         agent_name=agent_name,
         state_log=StateLog(tmp_path / "state.wal"),
         safety=safety,

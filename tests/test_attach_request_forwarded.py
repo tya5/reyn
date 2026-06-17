@@ -34,7 +34,7 @@ class _FakeInterventions:
 
 
 class _FakeSession:
-    """Minimal stand-in for ChatSession that AgentRegistry can attach.
+    """Minimal stand-in for Session that AgentRegistry can attach.
 
     Only exposes the attributes the registry's attach() + _forwarder()
     paths read (= .outbox, .is_attached, .run, ._interventions). The

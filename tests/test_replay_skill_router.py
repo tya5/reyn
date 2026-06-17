@@ -160,7 +160,7 @@ class FakeRouterHost:
     # --- Memory paths ---
 
     def memory_path(self, layer: str, slug: str) -> str:
-        # Match production ChatSession._memory_path: appends .md.
+        # Match production Session._memory_path: appends .md.
         return f"/memory/{layer}/{slug}.md"
 
     def memory_dir(self, layer: str) -> str:
@@ -734,7 +734,7 @@ async def test_named_skill_direct_invoke_without_list_skills():
 # ---------------------------------------------------------------------------
 #
 # These tests exercise the full chain with `universal_wrappers_enabled=True`:
-#   ChatSession (here: FakeRouterHost) → RouterHostAdapter-equivalent
+#   Session (here: FakeRouterHost) → RouterHostAdapter-equivalent
 #   → RouterLoop reads get_universal_wrappers_enabled() → build_tools
 #   appends list_actions / describe_action / invoke_action → LLM may call
 #   either legacy OR wrapper paths → dispatch routes to host callbacks.

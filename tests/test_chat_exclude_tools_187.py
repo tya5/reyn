@@ -8,7 +8,7 @@ agent solves from the issue + repo only.
 Mechanism: RouterLoop already filters its LLM-visible catalog by `exclude_tools`
 (router_loop.py:1791-1796); the sub-loops use `exclude_tools={"plan"}`
 (planner.py:1136). #187 exposes this via `reyn chat --exclude-tools <names>`,
-threaded ChatSession → the MAIN agent loop (session.py).
+threaded Session → the MAIN agent loop (session.py).
 
 The load-bearing constraint (lead-coder): the web-exclusion must be the real
 catalog-filter behavior, not a source-string check. This file pins:

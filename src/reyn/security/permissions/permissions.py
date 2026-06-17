@@ -401,11 +401,11 @@ class PermissionResolver:
         self._unsafe_python_allowed = unsafe_python_allowed
         # #398 v4 emitter wiring: subscribers fired when ``_persist`` lands
         # an approval (= "always allow") or revoke decision to approvals.yaml.
-        # ChatSession registers a callback that mints a ``state_change``
+        # Session registers a callback that mints a ``state_change``
         # history entry so the LLM sees "permission for X was
         # granted/revoked" in its next turn — directly mitigates the
         # #352 in-context-learning refusal trap. PermissionResolver is
-        # shared across sessions; each ChatSession registers its own
+        # shared across sessions; each Session registers its own
         # callback so a project-wide grant notifies every active session.
         self._on_persist_callbacks: list[Callable[[str, bool], None]] = []
 
@@ -454,7 +454,7 @@ class PermissionResolver:
             )
         except Exception:
             pass
-        # #398 v4 emitter wiring: notify subscribers (= ChatSession
+        # #398 v4 emitter wiring: notify subscribers (= Session
         # instances that registered themselves) so the LLM sees the
         # permission change as a ``state_change`` history entry next
         # turn. Iterate a snapshot so a callback that unregisters
@@ -477,13 +477,13 @@ class PermissionResolver:
         """Subscribe to ``_persist`` events for emitter wiring (= #398 v4).
 
         ``callback(key, approved)`` is invoked after the approval is
-        written to ``approvals.yaml``. Used by ChatSession to mint
+        written to ``approvals.yaml``. Used by Session to mint
         a ``state_change`` history entry per ``notify_state_change``
         so the LLM sees the permission update in its next turn
         (= directly mitigates the #352 in-context-learning refusal
         trap pattern).
 
-        Multiple ChatSessions can register the same shared resolver
+        Multiple Sessions can register the same shared resolver
         so a project-wide grant notifies every active session
         independently.
         """
@@ -495,10 +495,10 @@ class PermissionResolver:
         """Detach a previously registered callback.
 
         Returns True iff the callback was found and removed. Use this
-        on ChatSession shutdown to prevent dead-session callbacks from
+        on Session shutdown to prevent dead-session callbacks from
         accumulating in long-running PermissionResolver instances
         (= the shared singleton model in ``reyn web`` / ``reyn run``
-        sessions outlive individual ChatSessions).
+        sessions outlive individual Sessions).
         """
         try:
             self._on_persist_callbacks.remove(callback)

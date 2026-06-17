@@ -1,6 +1,6 @@
 """AutoResumeHandler — crash recovery for in-flight skill_runs.
 
-Extracted from ChatSession (FP-0019 Wave 3). Reads WAL on session start,
+Extracted from Session (FP-0019 Wave 3). Reads WAL on session start,
 identifies skill_runs that were in-flight at the last shutdown / crash,
 and re-spawns them via the injected launcher callback.
 
@@ -9,7 +9,7 @@ narrator path that previously co-existed with the resume logic.
 Depends on FP-0019 Wave 1b SkillRunner (landed ``9ae66fa``).
 
 All event emissions go through the injected ``event_log``; no silent
-state changes (P6).  Business logic lives entirely here; ChatSession
+state changes (P6).  Business logic lives entirely here; Session
 delegates via :meth:`resume_active` (P3).
 """
 from __future__ import annotations
@@ -49,7 +49,7 @@ class AutoResumeHandler:
         stale pending interventions are pruned from the session.
     launcher:
         Async callable ``(ResumeDecision) -> None``.  In production this is
-        ``ChatSession._spawn_resumed_skill``; in tests it is a stub that records
+        ``Session._spawn_resumed_skill``; in tests it is a stub that records
         dispatched decisions without launching a real SkillRuntime.
     """
 
@@ -107,7 +107,7 @@ class AutoResumeHandler:
           3. ``discard`` decisions: call SkillRegistry.complete +
              drop pending interventions (no task launched)
           4. All other decisions: invoke ``launcher(decision)`` so
-             the caller (production = ``ChatSession._spawn_resumed_skill``)
+             the caller (production = ``Session._spawn_resumed_skill``)
              can wire the actual asyncio task
 
         ``launcher`` kwarg overrides the instance-level launcher injected at

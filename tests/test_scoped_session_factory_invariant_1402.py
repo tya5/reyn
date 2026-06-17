@@ -1,7 +1,7 @@
-"""Tier 2: #1402 — scoped ChatSession construction is single-sourced (src-wide).
+"""Tier 2: #1402 — scoped Session construction is single-sourced (src-wide).
 
 Multiple frontends (chat-CLI / web-deps A2A / mcp-serve / dogfood / chainlit)
-built a ChatSession with overlapping-but-divergent scoped wiring. A scoped
+built a Session with overlapping-but-divergent scoped wiring. A scoped
 capability hand-added to one factory silently leaked from the others — the
 forwarding-gap class (sibling to base_dir #1410 / permission-zone #1415 /
 exec-seam #1419 / empty-stop #1424). (The issue named "3 factories"; a flow-trace
@@ -12,11 +12,11 @@ whose scoped params are required (completeness-by-construction).
 This is a PERMANENT drift guard (not scaffold), and it is **src-WIDE**: it
 subsumes (strictly stronger) the former per-config uniformity point-tests
 (test_session_factory_{sandbox,multimodal}_config_uniform), which checked
-"every known ChatSession() call site passes config X / no unknown call sites".
+"every known Session() call site passes config X / no unknown call sites".
 
 Pinned invariants:
 
-- ``ChatSession(...)`` is constructed ONLY in ``chat/scoped_session_factory.py``
+- ``Session(...)`` is constructed ONLY in ``chat/scoped_session_factory.py``
   anywhere in ``src/reyn`` — every other module routes through
   ``build_scoped_chat_session`` (falsifiable: a new/unmigrated/HIDDEN
   construction site anywhere in src/ fails this, naming file:line; this is what
@@ -39,7 +39,7 @@ from reyn.chat.scoped_session_factory import build_scoped_chat_session
 
 _SRC = Path(__file__).resolve().parents[1] / "src" / "reyn"
 
-# The ONE module allowed to construct ChatSession directly.
+# The ONE module allowed to construct Session directly.
 _FACTORY_REL = "chat/scoped_session_factory.py"
 
 # The drift surface: scoped capability + per-session config params that MUST stay
@@ -76,14 +76,14 @@ def _chatsession_call_sites() -> list[str]:
             if (
                 isinstance(node, ast.Call)
                 and isinstance(node.func, ast.Name)
-                and node.func.id == "ChatSession"
+                and node.func.id == "Session"
             ):
                 sites.append(f"{rel}:{node.lineno}")
     return sites
 
 
 def test_chatsession_constructed_only_in_scoped_factory() -> None:
-    """Tier 2: #1402 — within src/reyn, ``ChatSession(...)`` is constructed ONLY
+    """Tier 2: #1402 — within src/reyn, ``Session(...)`` is constructed ONLY
     in scoped_session_factory.py; every frontend routes through
     build_scoped_chat_session so a new scoped capability reaches every path by
     construction. Strictly stronger than the former per-config uniformity
@@ -91,7 +91,7 @@ def test_chatsession_constructed_only_in_scoped_factory() -> None:
     src/ fails this, naming file:line."""
     offenders = [s for s in _chatsession_call_sites() if not s.startswith(_FACTORY_REL + ":")]
     assert not offenders, (
-        "ChatSession(...) constructed outside chat/scoped_session_factory.py — "
+        "Session(...) constructed outside chat/scoped_session_factory.py — "
         "re-opens the #1402 drift class; route through build_scoped_chat_session: "
         f"{offenders}"
     )
@@ -99,10 +99,10 @@ def test_chatsession_constructed_only_in_scoped_factory() -> None:
 
 def test_scoped_factory_is_the_sole_constructor() -> None:
     """Tier 2: #1402 — positive guard: scoped_session_factory.py DOES construct
-    ChatSession (the chokepoint exists and is used, not merely imported)."""
+    Session (the chokepoint exists and is used, not merely imported)."""
     factory_sites = [s for s in _chatsession_call_sites() if s.startswith(_FACTORY_REL + ":")]
     assert factory_sites, (
-        "scoped_session_factory.py must construct ChatSession (the single "
+        "scoped_session_factory.py must construct Session (the single "
         "chokepoint) — none found"
     )
 

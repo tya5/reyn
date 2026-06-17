@@ -1,7 +1,7 @@
 """`reyn chat [name]` — interactive chat, optionally attaching to a named agent.
 
 PR10: launches the AgentRegistry, attaches to the named agent (or `default`),
-then hands off to `run_repl`. The registry holds all loaded ChatSession
+then hands off to `run_repl`. The registry holds all loaded Session
 instances; switching agents mid-REPL via `/attach <name>` happens through it.
 """
 from __future__ import annotations
@@ -18,7 +18,7 @@ from reyn.interfaces.cli.env_backend import (
 from reyn.llm.llm import run_async
 
 from ..common_args import add_common_args
-from ..session import Session
+from ..invocation_context import InvocationContext
 
 # #187: send_to_agent_impl timeout for the one-shot (`reyn run-once`) drive. The
 # autonomous SWE agent may iterate for many minutes; the external bound is the
@@ -173,7 +173,7 @@ def register(sub) -> None:
         ),
     )
     # Issue #276 Phase A — TUI thin client mode connecting to a remote
-    # `reyn web` server. When set, the local ChatSession / AgentRegistry
+    # `reyn web` server. When set, the local Session / AgentRegistry
     # / state restore are skipped; the TUI streams from
     # ``ws://<host>[:port]/ws/chat/<agent>``. Right panel features that
     # depend on local files (events / memory / pending) render
@@ -249,7 +249,7 @@ def _reset_project_state(project_root: Path, *, confirm: bool = True) -> bool:
 def _run_connect_mode(args: argparse.Namespace, base_url: str) -> None:
     """Issue #276 Phase A — connect to a remote `reyn web` server.
 
-    Skips local ChatSession / AgentRegistry / state restore. The TUI
+    Skips local Session / AgentRegistry / state restore. The TUI
     streams frames from ``ws://<host>[:port]/ws/chat/<agent_name>``;
     user input is forwarded to the server as ``user_message`` frames.
 
@@ -315,10 +315,10 @@ def run(args: argparse.Namespace) -> None:
     from reyn.runtime.budget.budget import BudgetTracker
     from reyn.security.permissions.permissions import PermissionResolver
 
-    session_cfg = Session.from_args(args)
+    session_cfg = InvocationContext.from_args(args)
     from reyn.interfaces.cli.credentials_check import verify_credentials_or_exit
     verify_credentials_or_exit(session_cfg, args)
-    # ``model`` (= tier key like "standard" / "strong") drives ChatSession's
+    # ``model`` (= tier key like "standard" / "strong") drives Session's
     # ModelResolver. ``resolved_model`` (= the litellm string like
     # "openai/gemini-2.5-flash-lite") is what the header should surface so
     # the user can see which model their requests actually go to.
@@ -338,7 +338,7 @@ def run(args: argparse.Namespace) -> None:
         print("State reset. Starting with empty session.", file=sys.stderr)
 
     # PR21: process-shared WAL for crash recovery. Owned by AgentRegistry,
-    # injected into each ChatSession at construction.
+    # injected into each Session at construction.
     state_log = StateLog(project_root / ".reyn" / "state" / "wal.jsonl")
     # PR22: process-shared budget tracker. Defaults to all unlimited unless
     # `cost:` is configured.
@@ -362,12 +362,12 @@ def run(args: argparse.Namespace) -> None:
         perm_config.setdefault("file.write", "allow")
     unsafe_python = bool(getattr(args, "allow_unsafe_python", False))
     # #187: parse --exclude-tools (comma-separated tool names) → frozenset, threaded
-    # to ChatSession → the MAIN RouterLoop's exclude_tools (LLM-visible catalog filter).
+    # to Session → the MAIN RouterLoop's exclude_tools (LLM-visible catalog filter).
     _exclude_tools = frozenset(
         t.strip() for t in (getattr(args, "exclude_tools", None) or "").split(",") if t.strip()
     )
     # #1667: parse --exclude-categories (comma-separated category names) → frozenset,
-    # threaded to ChatSession → RouterCallerState.excluded_categories → the universal
+    # threaded to Session → RouterCallerState.excluded_categories → the universal
     # catalog skips them at the source. Empty (interactive default) keeps every category.
     _excluded_categories = frozenset(
         c.strip() for c in (getattr(args, "exclude_categories", None) or "").split(",") if c.strip()
@@ -379,7 +379,7 @@ def run(args: argparse.Namespace) -> None:
     project_context = load_project_context(session_cfg.config, project_root)
 
     # #1289: build the agent-level EnvironmentBackend (host / docker attach|launch)
-    # and pass the SAME instance to BOTH ChatSession seams (FS environment_backend
+    # and pass the SAME instance to BOTH Session seams (FS environment_backend
     # + exec sandbox_backend) — the #1200 single-shared-sandbox invariant. A
     # launched container is torn down at process exit.
     env_backend, ws_base_dir, ws_state_dir, env_cleanup = build_environment_backend(args)

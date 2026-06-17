@@ -3,7 +3,7 @@
 When the OS-injected context-size signal shows the window is filling, the model
 may emit a ``compact`` control_ir op instead of waiting for the mandatory
 ``retry_loop`` backstop. The op routes through ``ctx.compact_now`` — an
-awaitable the caller (ChatSession / phase runtime) wires to its existing
+awaitable the caller (Session / phase runtime) wires to its existing
 synchronous compaction (``force_compact_now``). The result reports freed tokens
 and the free window afterwards in EXACT tokens, unit-aligned with the
 context-size signal + the media load-contract error, so the model reasons

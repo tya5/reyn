@@ -6,14 +6,14 @@ when registered as a chain override — ``_dispatch_intervention``
 replaced its normal handler-dispatch path with ``override.request(iv)``
 and the bus awaited ``iv.future`` directly. The iv lived in this bus +
 ``RunRegistry.pending_intervention`` only; it never entered
-``ChatSession._interventions._active`` or the WAL / snapshot persistence
+``Session._interventions._active`` or the WAL / snapshot persistence
 channels. On restart, the bus coroutine died and the restored iv was
 orphaned — no in-process awaiter, no R-D12 buffer eligibility, no
 ``SkillResumeCoordinator`` integration. See issue #292 body for the
 full analysis.
 
 Post-α this class is a **side-effect observer**: ``on_dispatch(iv)``
-is invoked by ``ChatSession._dispatch_intervention`` BEFORE
+is invoked by ``Session._dispatch_intervention`` BEFORE
 ``InterventionHandler.dispatch`` runs. The bus:
 
   - Mirrors ``status="input-required"`` on the RunEntry so polling
@@ -26,19 +26,19 @@ is invoked by ``ChatSession._dispatch_intervention`` BEFORE
     the skill; the bus has no in-process answer-resolution role.
 
 Peer answers arrive via the A2A router's ``POST /a2a/agents/<name>
-{task_id, answer}`` → ``ChatSession.answer_pending_intervention`` →
+{task_id, answer}`` → ``Session.answer_pending_intervention`` →
 ``handler.deliver_answer_to`` (= same path the TUI uses). The iv future
 is resolved by the handler; the bus is unaware. R-D12's persistent
 answer buffer captures the answer if a crash intervenes before the
 skill consumes it, so restart-resume picks up cleanly.
 
 Wired by ``mcp_server.send_to_agent_impl`` through
-``ChatSession.register_intervention_override(chain_id, bus)``.
+``Session.register_intervention_override(chain_id, bus)``.
 
 Scope guard:
   - ⭕ in-scope: notify A2A peer of input-required state via webhook +
     SSE buffer + RunEntry status mirror.
-  - ❌ out-of-scope: iv ownership (= ChatSession owns it post-α),
+  - ❌ out-of-scope: iv ownership (= Session owns it post-α),
     iv.future resolution (= handler does it), skill completion
     narration (= flows through ``_handle_skill_completed``).
 """
@@ -80,7 +80,7 @@ class A2AInterventionBus:
         """Fire A2A peer-facing side effects when ``iv`` is about to be
         dispatched by the agent.
 
-        Called by ``ChatSession._dispatch_intervention`` for each iv
+        Called by ``Session._dispatch_intervention`` for each iv
         whose chain has this bus registered as an override. Runs
         BEFORE ``InterventionHandler.dispatch`` so the peer learns
         input-required before the awaiter blocks.
@@ -108,7 +108,7 @@ class A2AInterventionBus:
             )
             return
 
-        # Mirror status. Post-α the iv itself lives in ChatSession's
+        # Mirror status. Post-α the iv itself lives in Session's
         # outstanding_interventions; we only reflect the high-level
         # state on the RunEntry for peer polling visibility.
         self._registry.update(self._run_id, status="input-required")

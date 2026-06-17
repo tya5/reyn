@@ -7,11 +7,11 @@ shared workspace shadow-git + anchor stores. This gate proves that auto-attach
 makes a web-path-acquired session's ``checkout`` restore the **workspace**
 (not just runtime) — i.e. the web session is NOT runtime-only.
 
-Distinct from ``test_live_fork_gate`` (which builds ``ChatSession`` directly and
+Distinct from ``test_live_fork_gate`` (which builds ``Session`` directly and
 attaches the stores MANUALLY): here NO manual ``attach_*`` call is made — the
 ``get_or_load`` seam does it. If the seam didn't auto-attach (the #1556-class
 web-construction bug), the workspace would NOT revert on checkout and this test
-would fail. Real AgentRegistry + ChatSession + StateLog + git, no mocks; a
+would fail. Real AgentRegistry + Session + StateLog + git, no mocks; a
 no-LLM ``_FakeTurnDriver`` drives the real ``_run_router_loop`` so genuine
 ``cut_generation`` fires (only the file write is simulated).
 """
@@ -24,7 +24,7 @@ import pytest
 
 from reyn.chat.profile import AgentProfile
 from reyn.chat.registry import AgentRegistry
-from reyn.chat.session import ChatSession
+from reyn.chat.session import Session
 from reyn.core.events.state_log import StateLog
 
 pytestmark = pytest.mark.skipif(
@@ -39,7 +39,7 @@ class _FakeTurnDriver:
     marker, so the real ``_run_router_loop`` runs and its genuine
     ``cut_generation`` fires. Only the file write is simulated."""
 
-    def __init__(self, session: ChatSession, ws_root: Path, content: dict[str, str]) -> None:
+    def __init__(self, session: Session, ws_root: Path, content: dict[str, str]) -> None:
         self._session = session
         self._ws = ws_root
         self._content = content
@@ -64,9 +64,9 @@ async def test_web_path_session_checkout_restores_workspace(tmp_path) -> None:
     store (no manual attach). The #1556-class runtime-only bug fails this."""
     state_log = StateLog(tmp_path / ".reyn" / "wal.jsonl")
 
-    def _factory(profile: AgentProfile) -> ChatSession:
+    def _factory(profile: AgentProfile) -> Session:
         snap = tmp_path / ".reyn" / "agents" / profile.name / "state" / "snapshot.json"
-        return ChatSession(agent_name=profile.name, state_log=state_log, snapshot_path=snap)
+        return Session(agent_name=profile.name, state_log=state_log, snapshot_path=snap)
 
     reg = AgentRegistry(project_root=tmp_path, session_factory=_factory, state_log=state_log)
     AgentProfile.new("alpha", role="").save(tmp_path / ".reyn" / "agents" / "alpha")
@@ -97,9 +97,9 @@ async def test_web_path_session_records_anchor_for_picker(tmp_path) -> None:
     preview + the edit pre-fill source). Empty anchor store = #1556-class bug."""
     state_log = StateLog(tmp_path / ".reyn" / "wal.jsonl")
 
-    def _factory(profile: AgentProfile) -> ChatSession:
+    def _factory(profile: AgentProfile) -> Session:
         snap = tmp_path / ".reyn" / "agents" / profile.name / "state" / "snapshot.json"
-        return ChatSession(agent_name=profile.name, state_log=state_log, snapshot_path=snap)
+        return Session(agent_name=profile.name, state_log=state_log, snapshot_path=snap)
 
     reg = AgentRegistry(project_root=tmp_path, session_factory=_factory, state_log=state_log)
     AgentProfile.new("alpha", role="").save(tmp_path / ".reyn" / "agents" / "alpha")

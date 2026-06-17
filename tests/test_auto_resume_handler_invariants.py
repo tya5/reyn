@@ -6,7 +6,7 @@ Policy compliance (docs/deep-dives/contributing/testing.md):
 - WAL observation via ``StateLog.iter_from(0)`` (public read accessor).
 - Each test docstring's first line starts with ``Tier 2: ...``.
 
-Reference: FP-0019 Wave 3 (extracted from ChatSession._auto_resume_active_skills).
+Reference: FP-0019 Wave 3 (extracted from Session._auto_resume_active_skills).
 """
 from __future__ import annotations
 

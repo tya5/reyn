@@ -11,7 +11,7 @@ Scenario:
     - Process crash mid-await (skill task dies, future never delivered)
 
   Run 2 (restart):
-    - ChatSession.restore_state re-enqueues the intervention from snapshot
+    - Session.restore_state re-enqueues the intervention from snapshot
     - User answers via _maybe_answer_oldest_intervention
     - Watcher buffers the answer keyed by run_id
     - intervention_resolved emitted to WAL (snapshot pruned)
@@ -21,7 +21,7 @@ Scenario:
       and returns it WITHOUT dispatching a new intervention
     - Skill continues with the recovered answer
 
-Persistence note: the buffered answer lives in ChatSession in-memory
+Persistence note: the buffered answer lives in Session in-memory
 state. If the process crashes between the user's answer and the skill's
 resume, the buffer is lost — that's R-D12 (durable answer buffering).
 For most practical scenarios, restart → answer → skill resume happens
@@ -34,7 +34,7 @@ from pathlib import Path
 
 import pytest
 
-from reyn.chat.session import ChatInterventionBus, ChatSession
+from reyn.chat.session import ChatInterventionBus, Session
 from reyn.core.events.agent_snapshot import AgentSnapshot
 from reyn.core.events.state_log import StateLog
 from reyn.user_intervention import (
@@ -47,15 +47,15 @@ from reyn.user_intervention import (
 # ---------------------------------------------------------------------------
 
 
-def _make_session(tmp_path: Path, *, agent_name: str = "alpha") -> ChatSession:
-    """Build a ChatSession redirected to ``tmp_path`` via public kwargs.
+def _make_session(tmp_path: Path, *, agent_name: str = "alpha") -> Session:
+    """Build a Session redirected to ``tmp_path`` via public kwargs.
 
     issue #254 Phase 1: register a placeholder listener so the registry's
     ``enforce_listener_presence=True`` short-circuit does not fire — these
     tests drive ``_maybe_answer_oldest_intervention`` manually and are
     effectively their own listener.
     """
-    session = ChatSession(
+    session = Session(
         agent_name=agent_name,
         state_log=StateLog(tmp_path / "state.wal"),
         snapshot_path=tmp_path / f"{agent_name}_snapshot.json",

@@ -25,7 +25,7 @@ from reyn.chat.outbox import OutboxMessage
 from reyn.interfaces.slash import reply, reply_error, slash
 
 if TYPE_CHECKING:
-    from reyn.chat.session import ChatSession
+    from reyn.chat.session import Session
 
 _USAGE = "usage: /session new | /session switch <sid> | /session list"
 
@@ -36,7 +36,7 @@ _USAGE = "usage: /session new | /session switch <sid> | /session list"
     usage="/session new | /session switch <sid> | /session list",
     see_also=("docs/concepts/multi-agent/multi-agent.md",),
 )
-async def session_cmd(session: "ChatSession", args: str) -> None:
+async def session_cmd(session: "Session", args: str) -> None:
     """``/session <new|switch <sid>|list>`` — per-agent multi-session control."""
     reg = session._registry
     if reg is None:

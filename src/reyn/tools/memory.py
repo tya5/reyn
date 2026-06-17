@@ -27,7 +27,7 @@ defensive guards, not as live phase-dispatch paths.
 MemoryService access path — design-revisit finding:
   ToolContext.workspace is a reyn.data.workspace.Workspace instance which
   does NOT carry a MemoryService attribute. MemoryService lives on the
-  ChatSession / RouterHostAdapter layer (constructed per-session with
+  Session / RouterHostAdapter layer (constructed per-session with
   injected file-op callbacks). The handlers below duplicate the
   router_loop.py logic directly against workspace file primitives —
   they use ctx.workspace.read_file / write_file / delete_file — rather

@@ -15,11 +15,11 @@ from reyn.chat.session import _run_meta, _run_short
 from reyn.interfaces.slash import reply, reply_error, slash
 
 if TYPE_CHECKING:
-    from reyn.chat.session import ChatSession
+    from reyn.chat.session import Session
 
 
 @slash("list", summary="List running skills and pending interventions")
-async def list_cmd(session: "ChatSession", args: str) -> None:
+async def list_cmd(session: "Session", args: str) -> None:
     """``/list`` — show running skill tasks + pending interventions."""
     now = time.monotonic()
     lines: list[str] = []
@@ -79,7 +79,7 @@ def _running_run_id_completer(
     usage="/cancel <id-prefix> [confirm]",
     completer=_running_run_id_completer,
 )
-async def cancel_cmd(session: "ChatSession", args: str) -> None:
+async def cancel_cmd(session: "Session", args: str) -> None:
     """``/cancel <id-prefix>`` — cancel a running skill task (2-step confirm).
 
     First invocation prints a warning and asks the user to re-type with
@@ -178,7 +178,7 @@ def _intervention_id_completer(
     usage="/answer <id-prefix> <text>",
     completer=_intervention_id_completer,
 )
-async def answer_cmd(session: "ChatSession", args: str) -> None:
+async def answer_cmd(session: "Session", args: str) -> None:
     """``/answer <id-prefix> <text>`` — deliver answer to a non-head
     intervention.
 

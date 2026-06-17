@@ -322,7 +322,7 @@ class ActionRetrievalConfig:
             **Default since FP-0043 Phase 4**: ``"local-mini"`` (=
             ``sentence-transformers/all-MiniLM-L6-v2``). When the
             ``local-embed`` extras are not installed (= ``import
-            sentence_transformers`` fails), ChatSession silently
+            sentence_transformers`` fails), Session silently
             degrades to None — ``search_actions`` stays hidden and
             ``list_actions`` injects a hidden-state hint pointing
             operators at ``pip install 'reyn[local-embed]'``. So the

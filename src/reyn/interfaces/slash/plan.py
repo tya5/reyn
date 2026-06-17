@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING
 from reyn.interfaces.slash import reply, reply_error, slash
 
 if TYPE_CHECKING:
-    from reyn.chat.session import ChatSession
+    from reyn.chat.session import Session
 
 
 _USAGE = (
@@ -28,7 +28,7 @@ _USAGE = (
 )
 
 
-def _plan_completer(session: "ChatSession", arg_partial: str = "") -> list[str]:
+def _plan_completer(session: "Session", arg_partial: str = "") -> list[str]:
     """Surface plan IDs or step IDs for the ``/plan`` arg the user is typing.
 
     Two contexts handled:
@@ -65,7 +65,7 @@ def _plan_completer(session: "ChatSession", arg_partial: str = "") -> list[str]:
 
 
 def _step_ids_for_plan(
-    session: "ChatSession", plan_id: str,
+    session: "Session", plan_id: str,
 ) -> list[str]:
     """Load the decomposition artifact for ``plan_id`` and return step IDs.
 
@@ -94,7 +94,7 @@ def _step_ids_for_plan(
     completer=_plan_completer,
     see_also=("docs/concepts/multi-agent/plan-mode.md",),
 )
-async def plan_cmd(session: "ChatSession", args: str) -> None:
+async def plan_cmd(session: "Session", args: str) -> None:
     """Dispatch to sub-command based on the first argument."""
     parts = args.strip().split(maxsplit=1)
     if not parts:
@@ -112,7 +112,7 @@ async def plan_cmd(session: "ChatSession", args: str) -> None:
         await reply_error(session, _USAGE)
 
 
-async def _list_plan_runs(session: "ChatSession") -> None:
+async def _list_plan_runs(session: "Session") -> None:
     """Emit a status message listing active plan runs.
 
     Reads from session.running_plans (= the asyncio.Task tracking dict
@@ -148,7 +148,7 @@ async def _list_plan_runs(session: "ChatSession") -> None:
     await reply(session, "\n".join(lines))
 
 
-async def _discard_plan_run(session: "ChatSession", args: str) -> None:
+async def _discard_plan_run(session: "Session", args: str) -> None:
     """Abort a plan: cancel task, surface outbox notice, clean up state.
 
     Two-step confirm pattern (mirrors ``/reset``): first invocation prints
@@ -321,7 +321,7 @@ def _parse_resume_args(args: str) -> tuple[str, str] | None:
     return (plan_id, step_id)
 
 
-async def _resume_from_step(session: "ChatSession", args: str) -> None:
+async def _resume_from_step(session: "Session", args: str) -> None:
     """Reset step results from <step_id> onward and re-launch the plan.
 
     ADR-0023 §3.7 surgical operator escape hatch. Use cases:
@@ -335,7 +335,7 @@ async def _resume_from_step(session: "ChatSession", args: str) -> None:
       2. Cancel any currently-running task for this plan.
       3. Load the decomposition artifact (= for topological step order).
       4. Call PlanRegistry.reset_from_step (mutates + persists snapshot).
-      5. Re-launch via ChatSession._spawn_resumed_plan with a fresh
+      5. Re-launch via Session._spawn_resumed_plan with a fresh
          resume_plan derived from the post-reset snapshot.
 
     On any failure surface a /plan list-style hint so the operator

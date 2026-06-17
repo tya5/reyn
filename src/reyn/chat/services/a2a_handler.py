@@ -1,6 +1,6 @@
 """A2AHandler — agent-to-agent messaging logic.
 
-Extracted from ChatSession (FP-0019 Wave 2 part 2, final).  Owns the
+Extracted from Session (FP-0019 Wave 2 part 2, final).  Owns the
 agent-side of the A2A protocol: inbox handling for ``agent_request`` /
 ``agent_response``, pending-chain lifecycle, and multi-hop relay
 coordination.
@@ -14,7 +14,7 @@ and the FP-0013 RoutingLayer's ``AgentRef`` handler.
 
 Design constraints (same pattern as Wave 1/1b/2 services):
 - Injected deps at construction (typed + Callable callbacks).
-- No direct reference to ChatSession.
+- No direct reference to Session.
 - All state mutations go through injected event_log (P6).
 - No skill-specific strings (P7).
 """
@@ -94,7 +94,7 @@ _PEER_REPLY_FAILED_MSG: dict[str, str] = {
 class A2AHandler:
     """Agent-to-agent messaging service.
 
-    Extracted from ChatSession (FP-0019 Wave 2 part 2).
+    Extracted from Session (FP-0019 Wave 2 part 2).
 
     Owns:
     - ``_send_to_agent`` — depth-guarded delegation request dispatch
@@ -116,7 +116,7 @@ class A2AHandler:
     max_hop_depth:
         Maximum delegation hop depth (LangGraph-style guard).
     safety_extensions:
-        Mutable ``dict[str, float]`` from ChatSession — shared by reference so
+        Mutable ``dict[str, float]`` from Session — shared by reference so
         extensions granted by ``handle_chat_limit_checkpoint`` are visible here.
     output_language:
         BCP-47 language code for localised user-facing error messages.  Falls
@@ -145,7 +145,7 @@ class A2AHandler:
         call.  A2AHandler calls this after the depth-drop guard passes.
     on_chain_timeout_fire:
         Async callable ``(chain_id) -> None`` — invoked by ChainManager when a
-        chain's watchdog fires.  Stays in ChatSession; A2AHandler only passes
+        chain's watchdog fires.  Stays in Session; A2AHandler only passes
         it as ``on_fire`` to ``chain_manager.arm_timeout``.
     """
 
@@ -168,7 +168,7 @@ class A2AHandler:
         send_response_callback: "Callable[[str, str, str, int, str], Awaitable[None]]",
         on_chain_timeout_fire: "Callable[[str], Awaitable[None]]",
         emit_router_cap_exhausted_fn: "Callable",  # async (exc, *, chain_id) → None
-        # Delegation tracking (mutable list refs owned by ChatSession)
+        # Delegation tracking (mutable list refs owned by Session)
         get_router_loop_delegations: "Callable[[], list[dict] | None]",
         set_router_loop_delegations: "Callable[[list[dict] | None], None]",
         get_router_loop_agent_replies: "Callable[[], list[str] | None]",
@@ -658,7 +658,7 @@ class A2AHandler:
     ) -> None:
         """User-facing wrap-up when the per-turn router cap is reached.
 
-        Delegates to ChatSession._emit_router_cap_exhausted_user (injected at
+        Delegates to Session._emit_router_cap_exhausted_user (injected at
         construction) so both the SkillPlanGlue and A2AHandler paths call a
         single implementation — zero drift by construction (#1538).
         """

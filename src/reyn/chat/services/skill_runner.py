@@ -1,13 +1,13 @@
 """SkillRunner — skill task lifecycle (launch / track / cancel).
 
-Extracted from ChatSession (FP-0019 Wave 1b). Owns the running_skills
+Extracted from Session (FP-0019 Wave 1b). Owns the running_skills
 dict and stdlib skill invocation path. Required as foundation for
 InterventionHandler (Wave 2) and AutoResumeHandler (Wave 3).
 
 Intervention coupling audit (FP-0019 Wave 1b):
     _run_stdlib_skill and _spawn_skill/_run_one_skill both pass a
     ChatInterventionBus to _build_agent. The bus holds a reference to
-    ChatSession (for _dispatch_intervention and
+    Session (for _dispatch_intervention and
     consume_buffered_intervention_answer). SkillRunner does NOT call
     intervention methods directly; it receives a ``build_agent_fn``
     callback from the session that encapsulates the bus construction.
@@ -16,7 +16,7 @@ Intervention coupling audit (FP-0019 Wave 1b):
     reference to ChatInterventionBus or InterventionRegistry here.
 
 All event emissions go through the injected ``event_log``; no silent
-state changes (P6).  Business logic lives entirely here; ChatSession
+state changes (P6).  Business logic lives entirely here; Session
 delegates via :meth:`spawn`, :meth:`spawn_for_router`,
 :meth:`run_stdlib`, :meth:`cancel`, :meth:`cancel_all`, and
 :meth:`running_names` (P3).
@@ -209,7 +209,7 @@ class SkillRunner:
     async def spawn(self, spec: dict, *, chain_id: str | None = None) -> "dict | None":
         """Launch a skill task and register it in the running dicts.
 
-        Extracted from ``ChatSession._spawn_skill``.  Enforces the
+        Extracted from ``Session._spawn_skill``.  Enforces the
         allowlist, budget cap, FP-0003 budget extension, and pre-spawn
         input_schema validation before creating the asyncio Task.
 
@@ -453,7 +453,7 @@ class SkillRunner:
     async def spawn_for_router(self, spec: dict, *, chain_id: str) -> dict:
         """Non-blocking router-side spawn entry point.
 
-        Extracted from ``ChatSession._spawn_skill_for_router``.  Wraps
+        Extracted from ``Session._spawn_skill_for_router``.  Wraps
         :meth:`spawn` and returns the spawn-ack dict the router LLM
         consumes via ``invoke_skill``'s tool_result.
 
@@ -508,7 +508,7 @@ class SkillRunner:
     ):
         """Load a stdlib skill, build an Agent, run it, accumulate cost.
 
-        Extracted from ``ChatSession._run_stdlib_skill``.  Inline stdlib
+        Extracted from ``Session._run_stdlib_skill``.  Inline stdlib
         runs (router / compactor) are NOT tracked in running_skills, so
         run_id is None — intervention cleanup won't fire on them.
 
@@ -776,7 +776,7 @@ class SkillRunner:
     ) -> None:
         """Core skill execution coroutine.
 
-        Extracted from ``ChatSession._run_one_skill``.  Loads the skill,
+        Extracted from ``Session._run_one_skill``.  Loads the skill,
         builds the agent with a ChatEventForwarder subscriber, runs it,
         and emits lifecycle events (P6).
 

@@ -24,7 +24,7 @@ Per-purity child actions (= when a step spawned a child skill):
   - ``cancel`` — discard via SkillRegistry.complete(status="discarded")
 
 P7-clean: coordinator takes registries via dependency injection, no
-direct imports of ChatSession internals.
+direct imports of Session internals.
 """
 from __future__ import annotations
 
@@ -283,7 +283,7 @@ class PlanResumeCoordinator:
             adopted children stay live for skill auto-resume.
 
         Returns the subset where ``action ∈ {"resume", "retry_pending"}``
-        — the caller (ChatSession) launches a ``PlanRuntime`` for each.
+        — the caller (Session) launches a ``PlanRuntime`` for each.
         """
         launchable: list[PlanResumeDecision] = []
         for decision in decisions:

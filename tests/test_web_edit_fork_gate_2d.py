@@ -13,7 +13,7 @@ must be proven is that the chainlit-free ``resolve_edit_target`` +
   fork target to the PARENT's fork-point turn (not None, not a same-branch miss).
 
 Plus the genesis guard (first turn → reject, decision B). Real AgentRegistry +
-ChatSession + StateLog + git; a no-LLM ``_FakeTurnDriver`` drives the real
+Session + StateLog + git; a no-LLM ``_FakeTurnDriver`` drives the real
 ``_run_router_loop`` so genuine ``cut_generation`` / fork records fire. No mocks.
 """
 from __future__ import annotations
@@ -25,7 +25,7 @@ import pytest
 
 from reyn.chat.profile import AgentProfile
 from reyn.chat.registry import AgentRegistry
-from reyn.chat.session import ChatSession
+from reyn.chat.session import Session
 from reyn.core.events.snapshot_generations import is_active_seq
 from reyn.core.events.state_log import StateLog
 from reyn.interfaces.chainlit_app.rewind_actions import (
@@ -45,7 +45,7 @@ class _FakeTurnDriver:
     appends a runtime inbox marker, so the real ``_run_router_loop`` runs and its
     genuine ``cut_generation`` / fork records fire. Only the write is simulated."""
 
-    def __init__(self, session: ChatSession, ws_root: Path, content: dict[str, str]) -> None:
+    def __init__(self, session: Session, ws_root: Path, content: dict[str, str]) -> None:
         self._session = session
         self._ws = ws_root
         self._content = content
@@ -66,9 +66,9 @@ class _FakeTurnDriver:
 def _make_registry(tmp_path: Path) -> AgentRegistry:
     state_log = StateLog(tmp_path / ".reyn" / "wal.jsonl")
 
-    def _factory(profile: AgentProfile) -> ChatSession:
+    def _factory(profile: AgentProfile) -> Session:
         snap = tmp_path / ".reyn" / "agents" / profile.name / "state" / "snapshot.json"
-        return ChatSession(agent_name=profile.name, state_log=state_log, snapshot_path=snap)
+        return Session(agent_name=profile.name, state_log=state_log, snapshot_path=snap)
 
     reg = AgentRegistry(project_root=tmp_path, session_factory=_factory, state_log=state_log)
     AgentProfile.new("alpha", role="").save(tmp_path / ".reyn" / "agents" / "alpha")

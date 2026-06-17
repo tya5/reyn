@@ -1,4 +1,4 @@
-"""InterventionRegistry — owns active-intervention queue (extracted from ChatSession wave 1C).
+"""InterventionRegistry — owns active-intervention queue (extracted from Session wave 1C).
 
 Crash-recovery persistence (PR-intervention-link L2/L5/L6 + R-D12):
 in-flight interventions ARE durably tracked. ``SnapshotJournal`` records
@@ -6,14 +6,14 @@ in-flight interventions ARE durably tracked. ``SnapshotJournal`` records
 ``intervention_answer_buffered`` / ``intervention_answer_consumed`` events
 to the WAL and maintains ``outstanding_interventions`` +
 ``buffered_intervention_answers`` in the per-agent snapshot. After a
-restart, ``ChatSession.restore_state`` calls :meth:`restore` to re-enqueue
+restart, ``Session.restore_state`` calls :meth:`restore` to re-enqueue
 the saved interventions with a watcher coroutine that fires
 ``intervention_resolved`` once the user answers — see
 ``test_intervention_restore`` + ``test_session_intervention_persistence``
 for the e2e pins.
 
 Announce callback is injected at construction so the registry has no direct
-dependency on ChatSession.
+dependency on Session.
 """
 from __future__ import annotations
 
@@ -33,7 +33,7 @@ class InterventionRegistry:
 
     Crash-recovery persistence is handled outside this class — the
     ``SnapshotJournal`` records dispatch/resolve/buffer events to the WAL
-    and ``ChatSession.restore_state`` calls :meth:`restore` to re-enqueue
+    and ``Session.restore_state`` calls :meth:`restore` to re-enqueue
     saved interventions after a restart. See module docstring for the full
     flow.
 
@@ -70,7 +70,7 @@ class InterventionRegistry:
             registry without a real listener and feed answers manually via
             ``deliver_answer``).
 
-            ChatSession (and any future top-level entry that owns its own
+            Session (and any future top-level entry that owns its own
             listener wiring) opts in via this flag so a missing listener
             (= headless deploy, test without TUI mount, A2A peer offline)
             fails closed instead of waiting on an unresolvable future.
@@ -85,7 +85,7 @@ class InterventionRegistry:
         self._listeners: set[str] = set()
         # issue #268 Phase 1: stalled queue — iv whose origin channel
         # closed while the iv was unresolved. Other channels can
-        # observe / discard / claim entries here via the ChatSession
+        # observe / discard / claim entries here via the Session
         # API; the iv's future stays unresolved until a claim moves it
         # back to ``_active`` for a new origin channel or a discard
         # cancels it. ``_active`` and ``_stalled`` are mutually
@@ -165,7 +165,7 @@ class InterventionRegistry:
     def mark_stalled(self, iv_id: str) -> bool:
         """Move *iv_id* from ``_active`` to ``_stalled``.
 
-        Called by ``ChatSession.handle_intervention`` when the iv's
+        Called by ``Session.handle_intervention`` when the iv's
         ``origin_channel_id`` no longer maps to a registered listener
         (= origin channel closed). Returns True iff the iv was in
         ``_active`` and is now in ``_stalled``.
@@ -189,7 +189,7 @@ class InterventionRegistry:
 
         Read-only snapshot — caller iterates without holding the
         registry's internal collection. Used by
-        ``ChatSession.list_stalled_interventions`` for the cross-channel
+        ``Session.list_stalled_interventions`` for the cross-channel
         observe surface.
         """
         return list(self._stalled.values())
@@ -449,7 +449,7 @@ class InterventionRegistry:
         alive and avoid task GC warnings). FIFO order matches the input list.
 
         Synchronous (not async) so callers from sync context — like
-        ``ChatSession.restore_state`` — don't have to wrap in
+        ``Session.restore_state`` — don't have to wrap in
         ``asyncio.ensure_future`` (which would add a task layer that delays
         when the children become visible in the queue).
         """

@@ -47,7 +47,7 @@ def _make_registry(tmp_path: Path) -> AgentRegistry:
 
 
 class _ShimSession:
-    """Minimal duck-typed ChatSession exposing only ``iter_applied_seqs``.
+    """Minimal duck-typed Session exposing only ``iter_applied_seqs``.
 
     PR-N7 (FP-0008): the WAL truncation floor reads exclusively from
     in-memory session state. Tests register a shim into ``_agents`` and

@@ -1,4 +1,4 @@
-"""Service classes extracted from ChatSession (waves 1, 2, and 3)."""
+"""Service classes extracted from Session (waves 1, 2, and 3)."""
 from reyn.chat.services.a2a_handler import A2AHandler
 from reyn.chat.services.auto_resume_handler import AutoResumeHandler
 from reyn.chat.services.budget_gateway import BudgetGateway

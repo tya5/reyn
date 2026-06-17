@@ -30,7 +30,7 @@ pytest.importorskip("mcp", reason="MCP SDK not installed")
 
 from reyn.chat.profile import AgentProfile
 from reyn.chat.registry import AgentRegistry
-from reyn.chat.session import ChatSession
+from reyn.chat.session import Session
 from reyn.core.events.state_log import StateLog
 from reyn.data.workspace.media_store import MediaStore, MediaStoreConfig
 from reyn.mcp.server import build_server
@@ -40,10 +40,10 @@ def _build_registry_with_agent(tmp_path: Path, agent_name: str) -> AgentRegistry
     """Minimal AgentRegistry with one agent under tmp_path."""
     state_log = StateLog(tmp_path / ".reyn" / "state" / "wal.jsonl")
 
-    def factory(profile: AgentProfile) -> ChatSession:
+    def factory(profile: AgentProfile) -> Session:
         agent_dir = tmp_path / ".reyn" / "agents" / profile.name
         agent_dir.mkdir(parents=True, exist_ok=True)
-        return ChatSession(
+        return Session(
             agent_name=profile.name,
             agent_role=profile.role,
             output_language="en",

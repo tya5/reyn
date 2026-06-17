@@ -1,6 +1,6 @@
-"""SkillPlanGlue — skill/plan completion routing and chain timeout for ChatSession.
+"""SkillPlanGlue — skill/plan completion routing and chain timeout for Session.
 
-Extracted from ChatSession (session.py refactor PR-4 — FP-0019 series final).
+Extracted from Session (session.py refactor PR-4 — FP-0019 series final).
 Owns the cluster that routes completed skill/plan work back into the router
 loop and handles chain timeout lifecycle:
 
@@ -12,7 +12,7 @@ loop and handles chain timeout lifecycle:
   - enqueue_plan_completed(**kw)           — was _enqueue_plan_completed
 
 Public-surface note: ``drain_skill_completed_inbox`` is called from
-``mcp_server.py`` (R-A2A-COMPLETION-DRAIN); ChatSession keeps a forwarding
+``mcp_server.py`` (R-A2A-COMPLETION-DRAIN); Session keeps a forwarding
 wrapper so the external call site is unaffected.
 """
 from __future__ import annotations
@@ -31,20 +31,20 @@ class SkillPlanGlue:
     """Routes skill/plan completions into router narration turns; handles chain
     timeout lifecycle.
 
-    Constructed once per ChatSession.  All state (inbox, chains, journal) is
+    Constructed once per Session.  All state (inbox, chains, journal) is
     provided at construction time; this class owns no durable state of its own.
     """
 
     def __init__(
         self,
         *,
-        append_history_fn: Callable,           # ChatSession._append_history
+        append_history_fn: Callable,           # Session._append_history
         events: Any,                           # EventLog — emit events
-        reset_turn_counter_fn: Callable,       # ChatSession._reset_router_turn_counter
+        reset_turn_counter_fn: Callable,       # Session._reset_router_turn_counter
         run_router_loop_fn: Callable,          # async (text, chain_id) → None
         emit_cap_exhausted_fn: Callable,       # async (exc, *, chain_id) → None
         put_outbox_fn: Callable,               # async OutboxMessage → None
-        inbox: asyncio.Queue,                  # ChatSession.inbox
+        inbox: asyncio.Queue,                  # Session.inbox
         journal: Any,                          # SnapshotJournal
         on_limit: Any,                         # SafetyOnLimitConfig
         chains: Any,                           # ChainManager

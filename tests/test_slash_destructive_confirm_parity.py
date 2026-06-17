@@ -133,10 +133,10 @@ async def test_cancel_with_confirm_cancels_task() -> None:
 async def test_plan_discard_no_confirm_shows_warning(tmp_path, monkeypatch):
     """Tier 2: /plan discard <id> (no confirm) → warning msg; plan not discarded."""
     monkeypatch.chdir(tmp_path)
-    from reyn.chat.session import ChatSession
+    from reyn.chat.session import Session
     from reyn.core.events.state_log import StateLog
 
-    session = ChatSession(
+    session = Session(
         agent_name="alpha",
         state_log=StateLog(tmp_path / "state.wal"),
         snapshot_path=tmp_path / "alpha_snapshot.json",
@@ -167,10 +167,10 @@ async def test_plan_discard_no_confirm_shows_warning(tmp_path, monkeypatch):
 async def test_plan_discard_with_confirm_discards_plan(tmp_path, monkeypatch):
     """Tier 2: /plan discard <id> confirm discards the plan (clears active_plan_ids)."""
     monkeypatch.chdir(tmp_path)
-    from reyn.chat.session import ChatSession
+    from reyn.chat.session import Session
     from reyn.core.events.state_log import StateLog
 
-    session = ChatSession(
+    session = Session(
         agent_name="alpha",
         state_log=StateLog(tmp_path / "state.wal"),
         snapshot_path=tmp_path / "alpha_snapshot.json",

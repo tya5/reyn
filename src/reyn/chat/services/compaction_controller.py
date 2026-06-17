@@ -1,20 +1,20 @@
 """CompactionController — synchronous head/body/tail compaction.
 
-Extracted from ChatSession (FP-0019 Wave 1).  Drives OS-internal compaction
+Extracted from Session (FP-0019 Wave 1).  Drives OS-internal compaction
 (PR-N3: direct Python helper, no skill/phase overhead) via
 :meth:`force_compact_now`, the synchronous pre-frame guard path.
 
 #1128 PR-a: the background fire-and-forget path (``spawn_maybe`` →
 ``_maybe_compact``, the 30K-absolute ``trigger_total_tokens`` trigger) was
 removed. Auto-compaction is now driven solely by the synchronous pre-frame
-guard (``ChatSession._maybe_force_compact_for_router`` → :meth:`force_compact_now`,
+guard (``Session._maybe_force_compact_for_router`` → :meth:`force_compact_now`,
 window-relative ``effective_trigger``, token-budget candidate selection per
 step 3), plus on-demand (the ``compact`` op / ``/compact``) and the
 ``retry_loop`` overflow backstop. With no background task, compaction always
 runs synchronously inside the serial router handler.
 
 All event emissions go through the injected ``event_log``; no silent
-state changes (P6).  Business logic lives entirely here; ChatSession
+state changes (P6).  Business logic lives entirely here; Session
 delegates via :meth:`force_compact_now` (P3).
 """
 from __future__ import annotations
@@ -101,7 +101,7 @@ class CompactionController:
         that owns the single LLM call (PR-N3: OS-internal, no skill/phase).
     history_appender:
         Callable ``(ChatMessage) -> None`` that appends a message to the
-        persisted history.  Wraps ``ChatSession._append_history``.
+        persisted history.  Wraps ``Session._append_history``.
     make_summary_message:
         Callable ``(rendered_text, structured, covers_through_seq) ->
         ChatMessage`` that constructs the summary ``ChatMessage`` to be

@@ -15,7 +15,7 @@ Designed for growth — additional lifecycle handlers (attach / detach
 notifications, budget warnings, session-level errors) can land here
 without expanding the skill forwarder's per-skill contract.
 
-Wired up in :class:`reyn.chat.session.ChatSession` via
+Wired up in :class:`reyn.chat.session.Session` via
 ``self._chat_events.add_subscriber(ChatLifecycleForwarder(self.outbox))``.
 """
 from __future__ import annotations

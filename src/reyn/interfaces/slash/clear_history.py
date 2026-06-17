@@ -1,7 +1,7 @@
 """``/clear-history`` — wipe chat history + action-usage table.
 
 Sibling to ``/reset`` (skill state) at a different scope: this command
-clears the conversation thread (``ChatSession.history`` + per-agent
+clears the conversation thread (``Session.history`` + per-agent
 ``history.jsonl``) and the action-usage tracker (= the ranking that
 backs the Memory tab's hot-list augmentation, persisted at
 ``.reyn/state/action_usage.jsonl``). Everything else stays intact:

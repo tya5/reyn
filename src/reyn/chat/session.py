@@ -1,4 +1,4 @@
-"""ChatSession — long-lived chat loop driving the skill_router stdlib skill."""
+"""Session — long-lived chat loop driving the skill_router stdlib skill."""
 from __future__ import annotations
 
 import asyncio
@@ -324,7 +324,7 @@ class PendingOpView:
 
 
 class AgentRequestBus:
-    """``RequestBus`` adapter that subscribes to a ChatSession (= Agent).
+    """``RequestBus`` adapter that subscribes to a Session (= Agent).
 
     issue #254 Phase 3: OS-layer callers (= ``handle_limit_exceeded``,
     permission gates, ``ask_user`` op) hold a ``RequestBus``-typed
@@ -341,12 +341,12 @@ class AgentRequestBus:
     ``InterventionBus`` alias) accepts it without further wiring.
     """
 
-    def __init__(self, session: "ChatSession") -> None:
+    def __init__(self, session: "Session") -> None:
         self._session = session
 
     @property
-    def session(self) -> "ChatSession":
-        """Read-only accessor for the backing ChatSession. Tests verify
+    def session(self) -> "Session":
+        """Read-only accessor for the backing Session. Tests verify
         that adapters from the same session share identity through this
         surface."""
         return self._session
@@ -357,7 +357,7 @@ class AgentRequestBus:
 
 
 class ChatInterventionBus:
-    """``UserChannel`` implementation that routes through ChatSession's
+    """``UserChannel`` implementation that routes through Session's
     outbox/inbox to the attached TUI listener.
 
     One instance per skill spawn — captures `run_id` and a default `skill_name`
@@ -377,7 +377,7 @@ class ChatInterventionBus:
 
     def __init__(
         self,
-        session: "ChatSession",
+        session: "Session",
         run_id: str | None,
         skill_name: str | None,
         *,
@@ -387,7 +387,7 @@ class ChatInterventionBus:
         self._run_id = run_id
         self._skill_name = skill_name
         # issue #268 Phase 2 continuation: optional channel_id stamping.
-        # Production wiring (= ChatSession._build_intervention_bus_for_skill)
+        # Production wiring (= Session._build_intervention_bus_for_skill)
         # passes the session's canonical channel_id (e.g. "tui") so
         # skill-emitted ivs carry provenance for cross-channel routing.
         # Test fixtures that construct ChatInterventionBus directly
@@ -404,7 +404,7 @@ class ChatInterventionBus:
         return self._channel_id
 
     async def deliver(self, iv: "UserIntervention") -> "InterventionAnswer":
-        """``UserChannel.deliver`` — route the prompt to ChatSession's
+        """``UserChannel.deliver`` — route the prompt to Session's
         outbox/inbox so the attached TUI surfaces it to the user.
 
         issue #268 Phase 2 continuation: when this bus was constructed
@@ -791,7 +791,7 @@ def _format_sender_label(sender: str | None) -> str:
 # #398 v4 emitter family — events-log subscriber dispatch table.
 #
 # Maps known emitter event types to (source, template) tuples used by
-# ``ChatSession._on_chat_event_for_state_change`` to convert events
+# ``Session._on_chat_event_for_state_change`` to convert events
 # into ``notify_state_change`` calls. Adding a new emitter is one
 # entry here + the emitter emitting its event on the session's
 # events log (= OpContext.events, bound to ``_chat_events`` for
@@ -878,7 +878,7 @@ def _merge_memory_indexes(
     The router phase used to read `.reyn/memory/MEMORY.md` via a preprocessor
     `file/read` step; that step is removed because the agent-scoped path
     `.reyn/agents/<name>/memory/MEMORY.md` is dynamic and a static phase
-    YAML cannot interpolate it. ChatSession synthesizes the merged view
+    YAML cannot interpolate it. Session synthesizes the merged view
     here and stuffs it directly into the artifact.
 
     The two layers are kept separate in the output markdown — `(shared)` and
@@ -1136,7 +1136,7 @@ def enumerate_available_skills(exclude: set[str]) -> list[dict]:
     return results
 
 
-class ChatSession:
+class Session:
     def __init__(
         self,
         agent_name: str,
@@ -1193,7 +1193,7 @@ class ChatSession:
         # router resolves the selected ToolUseScheme. Default "universal-category"
         # #1657: default enumerate-all (owner H1 fix) — matches ToolUseConfig.chat.
         # The 5 entry callers pass the resolved config.tool_use.chat; this fallback
-        # only applies to direct ChatSession construction without that kwarg.
+        # only applies to direct Session construction without that kwarg.
         chat_tool_use_scheme: str = "enumerate-all",
         embedding_config: "EmbeddingConfig | None" = None,
         eager_embedding_build: bool = False,
@@ -1203,7 +1203,7 @@ class ChatSession:
         excluded_categories: "frozenset[str] | set[str] | None" = None,  # #1667: catalog categories hidden at source (e.g. reyn_source for external-repo eval)
         router_max_iterations: int = 5,  # #187: per-message tool-call budget for the MAIN chat loop (interactive=5; one-shot autonomous SWE sets higher)
         non_interactive: bool = False,  # #1439 Fix #1: run-once (piped, no TTY) — no user to ask, so the SP directs proceed-with-assumption instead of clarifying
-        # FP-0043 Stage 5: the conversation session id this ChatSession records WAL
+        # FP-0043 Stage 5: the conversation session id this Session records WAL
         # entries under. Default "main" = the implicit single session (byte-identical
         # pre-S5). The registry sets a spawned session's real sid post-construction
         # (spawn_session → set_session_id) before its run-loop goes live, so every
@@ -1296,7 +1296,7 @@ class ChatSession:
         self._multimodal_config = multimodal_config
         # #1212: op-loop gate, threaded to Agents spawned for chat-run skills.
         self._tool_calls_op_loop_skills = list(tool_calls_op_loop_skills or [])
-        # Issue #383 PR-C — single MediaStore instance per ChatSession,
+        # Issue #383 PR-C — single MediaStore instance per Session,
         # constructed from the multimodal config's storage dirs.
         # Subsequently threaded into spawned Agents (= for control-IR
         # ops invoked from skills) AND into the router host adapter
@@ -1409,7 +1409,7 @@ class ChatSession:
                 # construction time — the EventLog is built later in
                 # __init__ (= line ~1482). The previous C.3 wiring
                 # captured ``self.events`` (= attribute that does NOT
-                # exist on ChatSession), which silently raised
+                # exist on Session), which silently raised
                 # AttributeError at this point and the outer ``except``
                 # swallowed it, disabling search_actions for every
                 # operator who had ``embedding_class`` set. Mirrors the
@@ -1651,7 +1651,7 @@ class ChatSession:
 
         # PR-refactor-session-1 wave 3 PR1: per-session budget adapter.
         # Absorbs total_usage / total_cost_usd / router-cap state that
-        # previously lived as scattered attributes on ChatSession.
+        # previously lived as scattered attributes on Session.
         self._budget = BudgetGateway(
             budget_tracker=budget_tracker,
             events=self._chat_events,
@@ -1703,7 +1703,7 @@ class ChatSession:
         )
 
         # FP-0019 Wave 2 part 1: InterventionHandler — ask_user dispatch service.
-        # Extracted from ChatSession.  Session keeps thin wrappers on
+        # Extracted from Session.  Session keeps thin wrappers on
         # _dispatch_intervention / _maybe_answer_oldest_intervention /
         # _announce_intervention / _deliver_answer_to so the existing test
         # surface (and ChatInterventionBus) remain stable.
@@ -1782,7 +1782,7 @@ class ChatSession:
         )
 
         # PR-refactor-session-1 wave 3 PR3: RouterHostAdapter — concrete
-        # RouterLoopHost implementation extracted from ChatSession. Constructed
+        # RouterLoopHost implementation extracted from Session. Constructed
         # last in __init__ because it receives callbacks that reference self
         # (all of which are bound methods, resolved at call time not here).
         self._router_host = RouterHostAdapter(
@@ -2003,7 +2003,7 @@ class ChatSession:
 
         # FP-0019 Wave 2 part 2: A2AHandler — agent-to-agent messaging service.
         # Extracts _send_to_agent / _send_agent_response / _handle_agent_request /
-        # _handle_agent_response / _resolve_pending_chain from ChatSession.
+        # _handle_agent_response / _resolve_pending_chain from Session.
         # Hybrid design (案 C): A2AHandler owns agent-side logic; transport-side
         # routing handled by FP-0013 RoutingLayer via send_request_callback /
         # send_response_callback injection.
@@ -2246,7 +2246,7 @@ class ChatSession:
         ``queued_count`` / ``list_active`` / ``has_active_listener`` /
         ``is_listener_enforcement_enabled``), so exposing it directly
         keeps callers off the underscore field without forcing a
-        delegate-method explosion on ChatSession. The registry
+        delegate-method explosion on Session. The registry
         instance is set once in ``__init__`` and never re-bound.
         """
         return self._interventions
@@ -2863,7 +2863,7 @@ class ChatSession:
 
         InterventionHandler needs to append a user history entry when an
         intervention is answered.  This adapter bridges the handler's
-        ``(role, text, ts, meta)`` signature to ChatSession._append_history
+        ``(role, text, ts, meta)`` signature to Session._append_history
         (which takes a ChatMessage).
         """
         self._append_history(ChatMessage(
@@ -2877,7 +2877,7 @@ class ChatSession:
         """Adapter callback injected into A2AHandler.
 
         A2AHandler uses the same ``(role, text, ts, meta)`` signature as
-        InterventionHandler.  This adapter bridges to ChatSession._append_history
+        InterventionHandler.  This adapter bridges to Session._append_history
         (which takes a ChatMessage).
         """
         self._append_history(ChatMessage(
@@ -3778,7 +3778,7 @@ class ChatSession:
         """FP-0005: chat-side wrapper for ``handle_limit_exceeded``.
 
         Mirrors ``OSRuntime._handle_limit_checkpoint`` but uses the
-        ChatSession's intervention dispatcher (= ``_dispatch_intervention``,
+        Session's intervention dispatcher (= ``_dispatch_intervention``,
         which records the WAL ``intervention_dispatched`` event before
         delivering the prompt) + on_limit + a session-stable run_id
         (= the agent name when no narrower scope applies, or the
@@ -3787,7 +3787,7 @@ class ChatSession:
         visible alongside the existing chat events.
         """
         # Adapter that conforms to the InterventionBus Protocol by
-        # delegating to ChatSession's existing intervention dispatcher.
+        # delegating to Session's existing intervention dispatcher.
         # _dispatch_intervention records the intervention_dispatched /
         # intervention_resolved WAL events automatically, so per-site
         # callers don't need to.
@@ -4092,7 +4092,7 @@ class ChatSession:
         so it lands in ``_interventions._active`` + WAL +
         ``outstanding_interventions`` + becomes eligible for R-D12's
         persistent answer buffer. Pre-#292, the override replaced
-        dispatch and A2A ivs were invisible to ChatSession's iv
+        dispatch and A2A ivs were invisible to Session's iv
         machinery — fixed structurally here, not patched.
         """
         # FP-0001 / issue #292: chain_id-scoped override notification
@@ -4179,7 +4179,7 @@ class ChatSession:
         instrumenting the hook implementations themselves.
 
         Callers that obtain a ``RequestBus``-typed view of an Agent use
-        ``ChatSession.as_request_bus()`` (which returns an
+        ``Session.as_request_bus()`` (which returns an
         ``AgentRequestBus`` adapter forwarding ``request(iv)`` here).
         """
         # Branch 1: self_answer policy.
@@ -4258,10 +4258,10 @@ class ChatSession:
 
     def resolve_parent_agent(
         self, iv: UserIntervention,
-    ) -> "ChatSession | None":
+    ) -> "Session | None":
         """Hook for parent-agent delegation routing (issue #254 Phase 4).
 
-        Return a ChatSession to forward the request to a chain-upstream
+        Return a Session to forward the request to a chain-upstream
         agent; return ``None`` to fall through to user_channel delivery.
 
         Default implementation returns ``None`` (= no parent resolution).
@@ -4272,17 +4272,17 @@ class ChatSession:
         return None
 
     def as_request_bus(self) -> "AgentRequestBus":
-        """Return a ``RequestBus``-typed adapter for this ChatSession.
+        """Return a ``RequestBus``-typed adapter for this Session.
 
         OS-layer callers (= ``handle_limit_exceeded``, permission gates,
         ``ask_user`` op) can hold an ``AgentRequestBus`` without
-        importing ChatSession or knowing about the Agent's downstream
+        importing Session or knowing about the Agent's downstream
         routing choices. The adapter forwards ``request(iv)`` to
         ``handle_intervention(iv)``.
 
         issue #254 Phase 3 — the type-level realisation of the [A]
         contract from Phase 2: OS owns a ``RequestBus``, the bus is
-        backed by an Agent (= ChatSession), the Agent owns the routing
+        backed by an Agent (= Session), the Agent owns the routing
         decision and the downstream ``UserChannel`` selection.
         """
         return AgentRequestBus(self)
@@ -4777,7 +4777,7 @@ class ChatSession:
             return
 
     # ── RouterLoop helper methods (Wave 3 F1, kept for session callbacks) ──────────
-    # _make_router_op_context + 3 helpers remain on ChatSession because the
+    # _make_router_op_context + 3 helpers remain on Session because the
     # session's internal MCP/file callbacks (_mcp_list_tools, _mcp_call_tool,
     # _file_op) use them. The adapter has its own private copies.
 
@@ -4824,7 +4824,7 @@ class ChatSession:
     def _mcp_servers_flat(self) -> dict:
         """Unwrap config.mcp's `{servers: {...}}` shape to flat `{name: cfg}`.
 
-        ChatSession receives the wrapped form from CLI bootstrap (config.mcp).
+        Session receives the wrapped form from CLI bootstrap (config.mcp).
         The Agent / control_ir_executor unwraps via `.get("servers", {})`;
         chat-router-side helpers historically did not (PR35 oversight) and
         treated "servers" as if it were a server name. Centralized unwrap.
@@ -4867,7 +4867,7 @@ class ChatSession:
         from reyn.chat.router_op_context import build_router_op_context
 
         # #1412: single-sourced via build_router_op_context (shared with
-        # RouterHostAdapter). ChatSession wires intervention_bus POST-HOC on the
+        # RouterHostAdapter). Session wires intervention_bus POST-HOC on the
         # returned ctx (the MCP-op caller), so it is None at construction here;
         # media/multimodal/compact ops go via the registry / RouterHostAdapter
         # path (None here) — behavior-preserving.

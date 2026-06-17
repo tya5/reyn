@@ -3,7 +3,7 @@
 When the operator switches to a different agent via the chat-profile
 picker (or just opens a new browser tab on the same agent), chainlit
 spins up a fresh per-session UI thread — but the reyn-side
-``ChatSession.history`` already holds every prior turn from disk
+``Session.history`` already holds every prior turn from disk
 (``load_history`` reads ``history.jsonl``). Without replay, the
 operator sees an empty conversation while the agent still
 "remembers" everything from the LLM side, which is confusing.
@@ -34,7 +34,7 @@ class _MessageLike(Protocol):
 
     Defined as a Protocol so tests can pass a tiny fake without
     instantiating the real ``ChatMessage`` (= avoids dragging in
-    ChatSession's full import graph).
+    Session's full import graph).
     """
     role: str
     content: "str | list[dict]"
@@ -117,7 +117,7 @@ def _truncation_marker(omitted: int) -> HistoryEntry:
 def history_to_chainlit(
     history: Iterable[_MessageLike], *, cap: int | None = None,
 ) -> list[HistoryEntry]:
-    """Convert ``ChatSession.history`` into a list of replay-ready entries.
+    """Convert ``Session.history`` into a list of replay-ready entries.
 
     Order preserved (= chronological), drops applied per
     ``_DROPPED_ROLES``. Empty-text turns (= ``content`` flattens to ``""``)

@@ -1,6 +1,6 @@
 """Tier 2: A2A iv restart-resume end-to-end (= structural pin for #292 α deliverable).
 
-Pre-#292 (= pre-PR #300): A2A async-mode ivs bypassed ChatSession's
+Pre-#292 (= pre-PR #300): A2A async-mode ivs bypassed Session's
 iv machinery (= ``InterventionHandler.dispatch`` was replaced, not
 decorated, by the chain override). The iv lived only in the A2A bus
 + ``RunEntry.pending_intervention``. On process restart the bus
@@ -17,17 +17,17 @@ answers:
 
   Phase 1 (pre-crash):
     - Skill emits iv via the chain-override decorated path
-    - Iv lands in ChatSession's outstanding_interventions
+    - Iv lands in Session's outstanding_interventions
     - AgentSnapshot persists the iv
     - "Crash" = drop the session reference
 
   Phase 2 (restart):
-    - Fresh ChatSession loads from the same snapshot path
+    - Fresh Session loads from the same snapshot path
     - ``restore_state`` re-enqueues the iv with a fresh future
 
   Phase 3 (peer answer):
     - Simulate the A2A POST answer path via
-      ``ChatSession.answer_pending_intervention(run_id, answer)``
+      ``Session.answer_pending_intervention(run_id, answer)``
     - Restore watcher fires → R-D12 persists answer to
       ``buffered_intervention_answers`` (= survives second crash)
 
@@ -53,7 +53,7 @@ import pytest
 from reyn.chat.session import (
     DEFAULT_CHAT_CHANNEL_ID,
     ChatInterventionBus,
-    ChatSession,
+    Session,
 )
 from reyn.core.events.agent_snapshot import AgentSnapshot
 from reyn.core.events.state_log import StateLog
@@ -67,9 +67,9 @@ from reyn.user_intervention import (
 # ── helpers ────────────────────────────────────────────────────────────
 
 
-def _make_session(tmp_path: Path, *, agent_name: str = "demo") -> ChatSession:
-    """Build a ChatSession redirected to ``tmp_path``."""
-    session = ChatSession(
+def _make_session(tmp_path: Path, *, agent_name: str = "demo") -> Session:
+    """Build a Session redirected to ``tmp_path``."""
+    session = Session(
         agent_name=agent_name,
         state_log=StateLog(tmp_path / "state.wal"),
         snapshot_path=tmp_path / f"{agent_name}_snapshot.json",
@@ -128,7 +128,7 @@ def test_a2a_restart_resume_round_trip_ask_user(tmp_path: Path) -> None:
     )
 
     async def _drive() -> None:
-        # ── Phase 2: restart — fresh ChatSession + restore_state ────
+        # ── Phase 2: restart — fresh Session + restore_state ────
         session = _make_session(tmp_path, agent_name=agent_name)
         session.restore_state(snap)
         # Let the restored intervention task settle.
@@ -333,7 +333,7 @@ def test_handle_answer_injection_routes_through_chat_session(
 ) -> None:
     """Tier 2: the A2A router's ``_handle_answer_injection`` looks up
     the agent via RunEntry.agent_name and calls
-    ``ChatSession.answer_pending_intervention``. Pin that the wiring
+    ``Session.answer_pending_intervention``. Pin that the wiring
     survives — a refactor that drops the registry lookup or reverts
     to ``run_registry.answer_intervention`` (removed in #292) fails
     this test.
@@ -348,7 +348,7 @@ def test_handle_answer_injection_routes_through_chat_session(
     src = inspect.getsource(a2a_router._handle_answer_injection)
     assert "answer_pending_intervention" in src, (
         "_handle_answer_injection must call "
-        "ChatSession.answer_pending_intervention (issue #292 α path)"
+        "Session.answer_pending_intervention (issue #292 α path)"
     )
     assert "get_or_load" in src, (
         "_handle_answer_injection must look up the owning agent via "

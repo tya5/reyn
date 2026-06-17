@@ -13,8 +13,8 @@ from reyn.interfaces.cli.env_backend import (
 from reyn.llm.llm import run_async
 
 from ..common_args import add_common_args
+from ..invocation_context import InvocationContext
 from ..logger_factory import make_logger
-from ..session import Session
 from ..skill_loader import load_skill_from_args
 from ..summary import print_run_result
 
@@ -96,7 +96,7 @@ def register(sub) -> None:
 
 
 def run(args: argparse.Namespace) -> None:
-    session = Session.from_args(args)
+    session = InvocationContext.from_args(args)
     from reyn.interfaces.cli.credentials_check import verify_credentials_or_exit
     verify_credentials_or_exit(session, args)
     loaded = load_skill_from_args(args)

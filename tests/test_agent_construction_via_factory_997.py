@@ -17,7 +17,7 @@ already-wired parent context (NOT a fresh ReynConfig), so ``from_config`` does
 not apply — they forward the bundle they were given:
   - ``skill/sub_skill_runner.py``: a sub-skill inherits the parent OSRuntime's
     resolver + permission_resolver.
-  - ``chat/session.py``: ChatSession's agent-spawn forwards the session's own
+  - ``chat/session.py``: Session's agent-spawn forwards the session's own
     ``self._perm`` / ``self._resolver`` / ``self._mcp_servers``, all wired at
     session construction.
 """

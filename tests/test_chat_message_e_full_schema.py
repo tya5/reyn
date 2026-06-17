@@ -218,15 +218,15 @@ def test_chat_message_round_trips_via_asdict_and_constructor() -> None:
 
 
 def test_load_history_migrates_legacy_lines(tmp_path: Path) -> None:
-    """Tier 2: ChatSession.load_history rewrites pre-#383 entries on read
+    """Tier 2: Session.load_history rewrites pre-#383 entries on read
     (= the on-disk file stays in the old shape until the next append, but
     the in-memory ``self.history`` carries the migrated shape).
     """
     # Build a minimal Session-like object that exercises load_history's
-    # file-reading code path without booting the full ChatSession.
-    from reyn.chat.session import ChatSession
+    # file-reading code path without booting the full Session.
+    from reyn.chat.session import Session
 
-    session = ChatSession.__new__(ChatSession)  # bypass __init__
+    session = Session.__new__(Session)  # bypass __init__
     session.history_path = tmp_path / "history.jsonl"
     session.history = []
     session._next_seq = 1  # touched by post-load init; safe default

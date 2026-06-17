@@ -2,7 +2,7 @@
 
 FP-0013 Component D.
 
-``MessageBus.request`` drives ``ChatSession.run_one_iteration()`` from the
+``MessageBus.request`` drives ``Session.run_one_iteration()`` from the
 same task that handles the MCP / A2A request, sidestepping the anyio
 stdio-starvation problem documented in FP-0013 §ADR-A.
 
@@ -32,7 +32,7 @@ from reyn.chat.outbox import OutboxMessage
 from reyn.chat.transport import TransportRef
 
 if TYPE_CHECKING:
-    from reyn.chat.session import ChatSession
+    from reyn.chat.session import Session
 
 logger = logging.getLogger(__name__)
 
@@ -78,7 +78,7 @@ class MessageBus:
 
     async def request(
         self,
-        agent: "ChatSession",
+        agent: "Session",
         kind: str,
         payload: dict,
         reply_to: TransportRef,
@@ -92,7 +92,7 @@ class MessageBus:
         Parameters
         ----------
         agent:
-            The ChatSession to drive.
+            The Session to drive.
         kind:
             Inbox message kind (e.g. ``"user"``).
         payload:
@@ -154,7 +154,7 @@ class MessageBus:
         return collected
 
     @staticmethod
-    def _drain_outbox(agent: "ChatSession", collected: list[OutboxMessage]) -> None:
+    def _drain_outbox(agent: "Session", collected: list[OutboxMessage]) -> None:
         """Non-blocking drain of all currently queued outbox messages."""
         while True:
             try:
@@ -168,7 +168,7 @@ class MessageBus:
             collected.append(msg)
 
     @staticmethod
-    def _is_quiescent(agent: "ChatSession") -> bool:
+    def _is_quiescent(agent: "Session") -> bool:
         """Return True when the agent has no pending work for the current call.
 
         Quiescent ≡ inbox empty AND no running skills AND no running plans.

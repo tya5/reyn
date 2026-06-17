@@ -1,7 +1,7 @@
 """Tier 2: OS invariant — Phase-2 end-to-end live-fork gate (ADR-0038 D8, #1533).
 
 The Phase-2 (A)-equivalent of `test_live_rewind_gate.py`. Real `AgentRegistry` +
-`ChatSession` + `StateLog` + real git (no mocks). 2a-2's two-substrate test proves
+`Session` + `StateLog` + real git (no mocks). 2a-2's two-substrate test proves
 checkout *correctness* with manually-built captures; THIS gate proves the
 **production-wiring composition**: a genuine `_run_router_loop` turn's
 `cut_generation` auto-capture × Phase-2 `checkout` (branch-switch to an abandoned
@@ -28,7 +28,7 @@ import pytest
 
 from reyn.chat.profile import AgentProfile
 from reyn.chat.registry import AgentRegistry
-from reyn.chat.session import ChatSession
+from reyn.chat.session import Session
 from reyn.core.events.agent_snapshot import AgentSnapshot
 from reyn.core.events.state_log import StateLog
 
@@ -46,7 +46,7 @@ class _FakeTurnDriver:
     without an LLM. The only simulated effect is the file write (the op effect).
     """
 
-    def __init__(self, session: ChatSession, workspace_root: Path, content_by_turn: dict[str, str]):
+    def __init__(self, session: Session, workspace_root: Path, content_by_turn: dict[str, str]):
         self._session = session
         self._ws = workspace_root
         self._content = content_by_turn
@@ -87,7 +87,7 @@ async def test_live_fork_checkout_back_follows_lineage_both_substrates(tmp_path)
     AgentProfile.new("alpha", role="").save(tmp_path / ".reyn" / "agents" / "alpha")
     snap_path = tmp_path / ".reyn" / "agents" / "alpha" / "state" / "snapshot.json"
 
-    session = ChatSession(agent_name="alpha", state_log=state_log, snapshot_path=snap_path)
+    session = Session(agent_name="alpha", state_log=state_log, snapshot_path=snap_path)
     session.register_intervention_listener("test")
     session.attach_workspace_store(reg.workspace_store)
     session.attach_anchor_store(reg.anchor_store)

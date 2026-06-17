@@ -27,7 +27,7 @@ def _format_currently_line(session: "object") -> str:
     """Build the 'Currently: N skills, M plans' context line.
 
     Reads from ``session.current_state_summary()`` when available.
-    Returns an empty string when the session is not a full ChatSession
+    Returns an empty string when the session is not a full Session
     (e.g. test stubs that don't expose the method).
     """
     summary_fn = getattr(session, "current_state_summary", None)

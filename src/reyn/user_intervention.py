@@ -83,7 +83,7 @@ class UserIntervention:
     # (= "tui:<session>" / "a2a:<run_id>" / etc.). When the origin channel
     # closes while the iv is unresolved, the iv becomes **stalled** in
     # the agent layer — other channels can observe / discard / claim it
-    # via ``ChatSession.list_stalled_interventions`` /
+    # via ``Session.list_stalled_interventions`` /
     # ``discard_pending_intervention`` / ``claim_pending_intervention``.
     # ``None`` (= legacy default) skips the origin-pin routing entirely
     # so existing in-tree callers + tests see no change in behaviour.

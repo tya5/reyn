@@ -10,7 +10,7 @@ these tests pin that the gate flips the behavior and runtime rewind still works.
 Non-default round-trip (feedback_roundtrip_test_nondefault_value): the opt-out
 (`False`, the NON-default) is exercised end-to-end — gate off → no workspace gen
 + rewind reverts runtime but NOT the workspace; default (`True`) → workspace gen
-present. Real AgentRegistry + ChatSession + StateLog; a no-LLM `_FakeTurnDriver`
+present. Real AgentRegistry + Session + StateLog; a no-LLM `_FakeTurnDriver`
 drives the real `_run_router_loop` so genuine `cut_generation` fires. No mocks.
 """
 from __future__ import annotations
@@ -22,7 +22,7 @@ import pytest
 
 from reyn.chat.profile import AgentProfile
 from reyn.chat.registry import AgentRegistry
-from reyn.chat.session import ChatSession
+from reyn.chat.session import Session
 from reyn.config import TimeTravelConfig, _build_time_travel_config
 from reyn.core.events.snapshot_generations import is_active_seq
 from reyn.core.events.state_log import StateLog
@@ -35,7 +35,7 @@ class _FakeTurnDriver:
     marker so the real `_run_router_loop` runs and its genuine `cut_generation`
     fires. Only the file write is simulated."""
 
-    def __init__(self, session: ChatSession, ws_root: Path, content: dict[str, str]) -> None:
+    def __init__(self, session: Session, ws_root: Path, content: dict[str, str]) -> None:
         self._session = session
         self._ws = ws_root
         self._content = content
@@ -56,9 +56,9 @@ class _FakeTurnDriver:
 def _make_registry(tmp_path: Path, *, workspace_capture: bool) -> AgentRegistry:
     state_log = StateLog(tmp_path / ".reyn" / "wal.jsonl")
 
-    def _factory(profile: AgentProfile) -> ChatSession:
+    def _factory(profile: AgentProfile) -> Session:
         snap = tmp_path / ".reyn" / "agents" / profile.name / "state" / "snapshot.json"
-        return ChatSession(agent_name=profile.name, state_log=state_log, snapshot_path=snap)
+        return Session(agent_name=profile.name, state_log=state_log, snapshot_path=snap)
 
     reg = AgentRegistry(
         project_root=tmp_path, session_factory=_factory, state_log=state_log,

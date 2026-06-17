@@ -1,6 +1,6 @@
-"""RouterHistoryBuffer — history slicing and SP assembly for ChatSession.
+"""RouterHistoryBuffer — history slicing and SP assembly for Session.
 
-Extracted from ChatSession (session.py refactor PR-2).  Owns:
+Extracted from Session (session.py refactor PR-2).  Owns:
 
   - build_history              — slice history into OpenAI-style messages
   - decompose_history_for_retry — head/raw_middle/tail/summary for retry_loop
@@ -133,9 +133,9 @@ def _materialise_path_ref_content(
 
 
 class RouterHistoryBuffer:
-    """Router-view history slicer and system-prompt assembler for ChatSession.
+    """Router-view history slicer and system-prompt assembler for Session.
 
-    Constructed once per ChatSession; owns the three methods that build the
+    Constructed once per Session; owns the three methods that build the
     context presented to the router LLM each turn.
     """
 

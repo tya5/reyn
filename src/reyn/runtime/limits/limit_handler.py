@@ -6,12 +6,12 @@ Six sites in the codebase raise on a safety limit hit:
   - F (phase_seconds)         — ``OSRuntime._check_phase_budget``
   - A (max_act_turns)         — ``skill_node_runner`` act-loop
   - C (router_cap)            — ``BudgetGateway.check_and_increment_router_cap``
-  - E (max_hop_depth)         — ``ChatSession._send_to_agent``
+  - E (max_hop_depth)         — ``Session._send_to_agent``
   - G (chain_seconds)         — ``ChainManager`` watchdog fire path
 
 Plus FP-0003 already covers:
 
-  - D (per_chain_skill_calls) — ``ChatSession._ask_budget_extension``
+  - D (per_chain_skill_calls) — ``Session._ask_budget_extension``
 
 This module replaces the bespoke ``_ask_budget_extension`` with a
 generic ``handle_limit_exceeded`` callable that all seven sites share.
@@ -79,7 +79,7 @@ def reset_run_extensions(run_id: str) -> None:
     """Reset auto_extend bookkeeping for ``run_id``.
 
     Call at the start of a run (= ``OSRuntime.run`` entry,
-    ``ChatSession`` turn boundary). After this, ``auto_extend_times``
+    ``Session`` turn boundary). After this, ``auto_extend_times``
     grants are fresh.
     """
     keys_to_drop = [k for k in _auto_extend_used if k[0] == run_id]

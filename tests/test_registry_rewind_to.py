@@ -16,7 +16,7 @@ import pytest
 
 from reyn.chat.profile import AgentProfile
 from reyn.chat.registry import AgentRegistry
-from reyn.chat.session import ChatSession
+from reyn.chat.session import Session
 from reyn.core.events.agent_snapshot import AgentSnapshot
 from reyn.core.events.snapshot_generations import RewindIntoAbandonedError, rewind
 from reyn.core.events.state_log import StateLog
@@ -161,7 +161,7 @@ async def test_rewind_to_gates_compaction_during_window(tmp_path):
 async def test_rewind_to_drives_loaded_session_to_as_of_n_zero_residue(tmp_path):
     """Tier 2: rewind_to drives a REAL loaded session through the full path.
 
-    A real ChatSession (aligned to the registry's on-disk paths) is injected; the
+    A real Session (aligned to the registry's on-disk paths) is injected; the
     user-facing rewind cancels + quiesces it, reconstructs as-of-N, clears live
     in-memory residue (reset_for_rewind), and re-adopts the as-of-N snapshot
     (restore_state). Post-rewind the session reflects as-of-N with zero pre-rewind
@@ -170,7 +170,7 @@ async def test_rewind_to_drives_loaded_session_to_as_of_n_zero_residue(tmp_path)
     reg = _make_registry(tmp_path)
     _seed_agent(tmp_path, "alpha")
     log = reg.state_log
-    session = ChatSession(
+    session = Session(
         agent_name="alpha", state_log=log,
         snapshot_path=_snap_path(tmp_path, "alpha"),
     )

@@ -1,7 +1,7 @@
 """#1412: single-source the chat-router OpContext construction.
 
 Two hosts built the ``skill_name="chat_router"`` OpContext with ~95% identical
-code: ``ChatSession._make_router_op_context`` (session.py) and
+code: ``Session._make_router_op_context`` (session.py) and
 ``RouterHostAdapter.make_router_op_context`` (services/router_host_adapter.py).
 They drifted — #1410/#1411 threaded ``base_dir`` to one and lagged the other
 (the #187 wrong-FS class). This factory is the single source for the common
@@ -16,7 +16,7 @@ The divergence the single-sourcing makes explicit (e.g. RouterHostAdapter never
 wires ``agent_id``) is surfaced for a follow-up classification, NOT folded here
 (same "root-fix surfaces a latent gap" pattern as #1402 -> #1431).
 
-Which-ops trace (#1412): ChatSession's impl serves file ops (``_file_op``) +
+Which-ops trace (#1412): Session's impl serves file ops (``_file_op``) +
 MCP ops (which wire ``intervention_bus`` POST-HOC on the returned ctx), so its
 ``intervention_bus=None`` at construction is a wiring-style difference, not a
 missing capability; media/multimodal/compact ops go via the registry /
@@ -53,7 +53,7 @@ def build_router_op_context(
     sandbox_policy: Any,  # raw policy → resolve_sandbox_policy here (#1339)
     # ── per-host fields (caller-supplied; behavior-preserving) ─────────────
     agent_id: str | None,  # FP-0016 memory scope (RouterHostAdapter: None — gap candidate)
-    intervention_bus: Any = None,  # ChatSession wires post-hoc; RouterHostAdapter inline
+    intervention_bus: Any = None,  # Session wires post-hoc; RouterHostAdapter inline
     multimodal_config: Any = None,  # #364
     media_store: Any = None,  # #383
     compact_now: Any = None,  # #272/#1128

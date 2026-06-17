@@ -524,7 +524,7 @@ def compute_covers_through_seq(new_turn_seqs: list) -> int:
 
     Deterministic; the LLM is not trusted to compute this correctly on
     weak models (a wrong value causes turn duplication or loss in
-    ChatSession.history).
+    Session.history).
     """
     if not new_turn_seqs:
         return 0

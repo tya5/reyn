@@ -106,7 +106,7 @@ def test_precision_axis_fixtures_resolve_in_static_catalog() -> None:
     fresh-context (= router_state=None) catalog enumeration.
 
     This pins the "fresh-user precision" framing: bench measurement is over
-    the catalog a brand-new ChatSession sees before any dynamic skill /
+    the catalog a brand-new Session sees before any dynamic skill /
     sandbox-backed exec is wired. Fixtures that would require dynamic
     enumeration go into a future section with explicit router-state setup.
     """

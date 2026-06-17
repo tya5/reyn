@@ -32,7 +32,7 @@ LANGUAGE_ITEMS: dict[str, str] = {
 
 
 def language_to_value(lang: str | None) -> str:
-    """Map ``ChatSession.output_language`` → widget select value.
+    """Map ``Session.output_language`` → widget select value.
 
     None / empty → ``"auto"`` (= the widget always renders a concrete
     selection, never blank). Known codes pass through; unknown codes
@@ -46,7 +46,7 @@ def language_to_value(lang: str | None) -> str:
 
 
 def value_to_language(value: str | None) -> str | None:
-    """Map widget select value → ``ChatSession.output_language``.
+    """Map widget select value → ``Session.output_language``.
 
     ``"auto"`` / None / empty → ``None`` (= let the LLM pick). Any
     other value passes through verbatim so a future widget item
@@ -121,7 +121,7 @@ def list_model_names(resolver: object) -> list[str]:
 
 
 def value_to_model(value: str | None, *, default: str) -> str:
-    """Map widget select value → ``ChatSession.model`` tier name.
+    """Map widget select value → ``Session.model`` tier name.
 
     Empty / None → ``default`` (= preserves current model rather than
     silently flipping to an arbitrary fallback). Any other value

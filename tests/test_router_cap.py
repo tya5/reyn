@@ -2,7 +2,7 @@
 
 Background: Pre-OSS dogfood S4 Run 3 logged 16 router invocations / 245k
 prompt tokens for a single user paste — runaway loop with no upper bound.
-ChatSession now enforces a configurable cap (default 3) on consecutive
+Session now enforces a configurable cap (default 3) on consecutive
 `skill_router` invocations within one user turn (or one fresh
 agent_request).
 
@@ -26,7 +26,7 @@ from pathlib import Path
 
 import pytest
 
-from reyn.chat.session import ChatSession, RouterCapExceeded
+from reyn.chat.session import RouterCapExceeded, Session
 from reyn.config import LoopConfig, SafetyConfig
 from reyn.runtime.budget.budget import BudgetTracker, CostConfig
 
@@ -39,20 +39,20 @@ def _make_session(
     tmp_path: Path,
     *,
     cap: int = 3,
-) -> ChatSession:
-    """Construct a minimal ChatSession rooted at `tmp_path`. Workspace and
+) -> Session:
+    """Construct a minimal Session rooted at `tmp_path`. Workspace and
     events dirs are created under `.reyn/` relative to the chdir caller.
     The caller is responsible for chdir-ing into `tmp_path`.
     """
     safety = SafetyConfig(loop=LoopConfig(max_router_calls_per_turn=cap))
-    return ChatSession(
+    return Session(
         agent_name="test_agent",
         budget_tracker=BudgetTracker(CostConfig()),
         safety=safety,
     )
 
 
-def _drain_outbox(session: ChatSession) -> list:
+def _drain_outbox(session: Session) -> list:
     msgs = []
     while not session.outbox.empty():
         msgs.append(session.outbox.get_nowait())
@@ -105,7 +105,7 @@ def test_handle_user_message_emits_fallback_when_cap_exhausted(
     # calls _run_router_loop — so to simulate exhaustion we monkeypatch
     # the reset to no-op AND pre-set the counter.
     monkeypatch.setattr(
-        ChatSession, "_reset_router_turn_counter", lambda self: None,
+        Session, "_reset_router_turn_counter", lambda self: None,
     )
     session.router_invocations_this_turn = 3
     session._router_last_reason = "out_of_scope"

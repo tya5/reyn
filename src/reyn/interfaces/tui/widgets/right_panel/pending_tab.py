@@ -3,7 +3,7 @@
 Issue #277 (= Phase A TUI surface split from #268 / #270 umbrella).
 
 Consumes ``list[PendingOpView]`` returned by
-``ChatSession.list_stalled_interventions()``. Each row carries the
+``Session.list_stalled_interventions()``. Each row carries the
 ``kind`` discriminator (currently ``"intervention"`` only; future
 ``"mcp_call"`` / ``"peer_delegate"`` per #270 Phase B lift up).
 

@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING
 from reyn.interfaces.slash import reply, reply_error, slash
 
 if TYPE_CHECKING:
-    from reyn.chat.session import ChatSession
+    from reyn.chat.session import Session
 
 
 _USAGE = (
@@ -29,7 +29,7 @@ _USAGE = (
 
 
 def _memory_completer(
-    session: "ChatSession", arg_partial: str = "",
+    session: "Session", arg_partial: str = "",
 ) -> list[str]:
     """Surface memory entry names after ``/memory view ``.
 
@@ -55,7 +55,7 @@ def _memory_completer(
     completer=_memory_completer,
     see_also=("docs/concepts/data-retrieval/memory.md",),
 )
-async def memory_cmd(session: "ChatSession", args: str) -> None:
+async def memory_cmd(session: "Session", args: str) -> None:
     """Dispatch ``list`` / ``view <name>`` subcommands."""
     parts = args.strip().split(maxsplit=1)
     if not parts:
@@ -71,7 +71,7 @@ async def memory_cmd(session: "ChatSession", args: str) -> None:
         await reply_error(session, _USAGE)
 
 
-async def _list_memory(session: "ChatSession") -> None:
+async def _list_memory(session: "Session") -> None:
     """Render every memory entry as one line per row.
 
     Sorted by name (the same order ``list_entries`` returns). Type +
@@ -103,7 +103,7 @@ async def _list_memory(session: "ChatSession") -> None:
     await reply(session, "\n".join(lines))
 
 
-async def _view_memory(session: "ChatSession", name: str) -> None:
+async def _view_memory(session: "Session", name: str) -> None:
     """Print the full body of the named entry."""
     name = name.strip()
     if not name:

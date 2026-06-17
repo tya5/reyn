@@ -911,10 +911,10 @@ def _write_instance_log(log_path: Path, run_result) -> None:
 async def _run_benchmark_async(args: argparse.Namespace) -> None:
     """Core async implementation of `reyn eval benchmark`."""
     from reyn.core.compiler import load_dsl_skill
-    from reyn.interfaces.cli import session as session_mod
+    from reyn.interfaces.cli import invocation_context as invocation_mod
     from reyn.interfaces.cli.skill_loader import resolve_skill_path
 
-    session = session_mod.Session.from_args(args)
+    session = invocation_mod.InvocationContext.from_args(args)
     model = getattr(args, "model", None) or session.config.model
 
     # Derive unsafe_python once at batch start and thread it

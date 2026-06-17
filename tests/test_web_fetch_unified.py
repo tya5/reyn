@@ -289,7 +289,7 @@ def _make_router_op_ctx_factory(resolver, bus, events):
     Builds an OpContext whose ``permission_resolver`` / ``intervention_bus`` /
     ``permission_decl`` mirror what the production factory wires. Used to
     exercise the router-invoked path of WEB_FETCH._handle without spinning
-    up a full ChatSession.
+    up a full Session.
     """
     from reyn.core.op_runtime.context import OpContext
     from reyn.data.workspace.workspace import Workspace

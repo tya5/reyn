@@ -1,5 +1,5 @@
 """Tier 2: FP-0043 Phase 4 — default ``embedding_class`` flip to ``local-mini``
-+ ChatSession graceful-degrade probe when the ``local-embed`` extras
++ Session graceful-degrade probe when the ``local-embed`` extras
 aren't installed.
 
 What lands here:
@@ -96,7 +96,7 @@ def test_probe_st_class_when_extras_missing_returns_true(
     Simulates a fresh user who set ``embedding_class: local-mini`` (or
     inherited the Phase 4 default) but never ran
     ``pip install 'reyn[local-embed]'``. The probe must return True so
-    ChatSession skips embedding wiring entirely; the hidden-state hint
+    Session skips embedding wiring entirely; the hidden-state hint
     path on ``list_actions`` takes over the user-discovery surface.
     """
     monkeypatch.setattr(
@@ -204,9 +204,9 @@ def test_probe_st_prefix_substring_doesnt_trigger() -> None:
 
 
 def test_probe_is_referenced_in_session_init_source() -> None:
-    """Tier 2: the probe call appears in ChatSession.__init__'s gate.
+    """Tier 2: the probe call appears in Session.__init__'s gate.
 
-    We don't construct a full ChatSession here (= heavy deps). Instead
+    We don't construct a full Session here (= heavy deps). Instead
     we sanity-check that ``_embedding_class_needs_missing_extras`` is
     actually invoked from the gate by inspecting the module source.
     Catches a future accidental removal that would silently disable
@@ -217,5 +217,5 @@ def test_probe_is_referenced_in_session_init_source() -> None:
     import inspect
 
     import reyn.chat.session as session_mod
-    src = inspect.getsource(session_mod.ChatSession.__init__)
+    src = inspect.getsource(session_mod.Session.__init__)
     assert "_embedding_class_needs_missing_extras" in src

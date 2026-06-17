@@ -124,10 +124,10 @@ def _register_run(eval_sub) -> None:
 
 def _run_golden(args: argparse.Namespace) -> None:
     """Execute `reyn eval run`."""
-    from reyn.interfaces.cli.session import Session
+    from reyn.interfaces.cli.invocation_context import InvocationContext
     from reyn.interfaces.cli.skill_loader import resolve_skill_path
 
-    session = Session.from_args(args)
+    session = InvocationContext.from_args(args)
     model = getattr(args, "model", None) or session.config.model
 
     # Load dataset
@@ -720,12 +720,12 @@ def _run_spec(args: argparse.Namespace) -> None:
     from reyn.core.compiler import load_dsl_skill
     from reyn.core.compiler.eval_loader import load_eval_spec
     from reyn.interfaces.cli.eval_report import EvalReport
-    from reyn.interfaces.cli.session import Session
+    from reyn.interfaces.cli.invocation_context import InvocationContext
     from reyn.interfaces.cli.skill_loader import resolve_skill_path, stdlib_root
     from reyn.llm.llm import run_async
     from reyn.llm.pricing import TokenUsage
 
-    session = Session.from_args(args)
+    session = InvocationContext.from_args(args)
 
     try:
         spec = load_eval_spec(args.spec)

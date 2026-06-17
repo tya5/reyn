@@ -38,7 +38,7 @@ import pytest
 
 pytest.importorskip("fastapi", reason="fastapi not installed ([web] extra missing)")
 
-from reyn.chat.session import ChatSession  # noqa: E402
+from reyn.chat.session import Session  # noqa: E402
 from reyn.interfaces.web.a2a_intervention import A2AInterventionBus  # noqa: E402
 from reyn.interfaces.web.run_registry import RunRegistry  # noqa: E402
 from reyn.user_intervention import (  # noqa: E402
@@ -136,10 +136,10 @@ def test_send_to_agent_impl_registers_a2a_channel_id_as_listener(
 
     state_log = StateLog(tmp_path / ".reyn" / "state" / "wal.jsonl")
 
-    def factory(profile: AgentProfile) -> ChatSession:
+    def factory(profile: AgentProfile) -> Session:
         agent_dir = tmp_path / ".reyn" / "agents" / profile.name
         agent_dir.mkdir(parents=True, exist_ok=True)
-        return ChatSession(
+        return Session(
             agent_name=profile.name,
             agent_role=profile.role,
             output_language="en",
@@ -232,10 +232,10 @@ def test_send_to_agent_impl_skips_listener_when_override_has_no_channel_id(
 
     state_log = StateLog(tmp_path / ".reyn" / "state" / "wal.jsonl")
 
-    def factory(profile: AgentProfile) -> ChatSession:
+    def factory(profile: AgentProfile) -> Session:
         agent_dir = tmp_path / ".reyn" / "agents" / profile.name
         agent_dir.mkdir(parents=True, exist_ok=True)
-        return ChatSession(
+        return Session(
             agent_name=profile.name,
             agent_role=profile.role,
             output_language="en",
@@ -291,10 +291,10 @@ def test_send_to_agent_impl_without_override_does_not_register_listener(
 
     state_log = StateLog(tmp_path / ".reyn" / "state" / "wal.jsonl")
 
-    def factory(profile: AgentProfile) -> ChatSession:
+    def factory(profile: AgentProfile) -> Session:
         agent_dir = tmp_path / ".reyn" / "agents" / profile.name
         agent_dir.mkdir(parents=True, exist_ok=True)
-        return ChatSession(
+        return Session(
             agent_name=profile.name,
             agent_role=profile.role,
             output_language="en",

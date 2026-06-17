@@ -253,7 +253,7 @@ class ActionUsageTracker:
         Intended for the ``/clear-history`` slash command and similar
         explicit "start fresh" affordances. Preserves the tracker's
         identity (= caller's reference stays valid) so the active
-        ChatSession's wiring keeps working immediately after the
+        Session's wiring keeps working immediately after the
         reset — only the *data* is wiped.
 
         Persist-file removal is best-effort (= matches the

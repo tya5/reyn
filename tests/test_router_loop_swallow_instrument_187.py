@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import pytest
 
-from reyn.chat.session import ChatSession
+from reyn.chat.session import Session
 
 
 @pytest.mark.asyncio
@@ -31,7 +31,7 @@ async def test_swallowed_router_loop_exception_emits_p6_event():
     event with the error type + repr so the root error is recoverable from the
     event log even when the outbox only carries a classified summary.
     """
-    s = ChatSession(agent_name="t")
+    s = Session(agent_name="t")
 
     async def _raise_mid_work(text: str, chain_id: str) -> None:
         # Stand-in for the real mid-work crash (final call_llm raising after

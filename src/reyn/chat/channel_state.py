@@ -19,7 +19,7 @@ This module defines the **data model** + **inference helpers**:
     explicit register flag)
 
 Concrete senders live in ``reyn.interfaces.web.notifications`` (= HTTP webhook)
-and channel-specific surfaces (= ``ChatSession`` listener for TUI,
+and channel-specific surfaces (= ``Session`` listener for TUI,
 ``A2AInterventionBus.deliver`` for A2A peer). This module is the
 shared vocabulary.
 
@@ -140,7 +140,7 @@ class ChannelState:
     """Per-channel running state for liveness inference (issue #269).
 
     Mutable; the owner (= ``RunRegistry`` per RunEntry for A2A peers,
-    or ``ChatSession`` per attached listener for TUI / future
+    or ``Session`` per attached listener for TUI / future
     channels) updates it on each delivery attempt.
 
     ``is_alive`` reads three signals together:

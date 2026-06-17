@@ -54,7 +54,7 @@ class _Msg:
 
 
 class _Session:
-    """Stand-in ChatSession with the attributes the escalation path reads."""
+    """Stand-in Session with the attributes the escalation path reads."""
 
     def __init__(self, *, running_skills: dict | None = None, history: list | None = None):
         self.running_skills = running_skills or {}

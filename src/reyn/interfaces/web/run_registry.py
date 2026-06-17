@@ -16,7 +16,7 @@ Persistence boundary (= issue #292 α refactor):
 
 Pre-#292, ``RunEntry`` also persisted ``pending_intervention`` (= the
 full ``UserIntervention`` object). That field has been **removed**:
-the iv is owned by ``ChatSession._interventions`` (= same machinery
+the iv is owned by ``Session._interventions`` (= same machinery
 TUI ivs use, including R-D12's persistent answer buffer). What
 ``RunRegistry`` persists is only the A2A-task-wrapper state.
 
@@ -26,7 +26,7 @@ What persists:
 
 What does NOT persist (= volatile, restored as ``None`` / dropped):
   - asyncio.Task reference (= bound to the process that died)
-  - pending iv state (= owned by ChatSession; queried at request time
+  - pending iv state (= owned by Session; queried at request time
     rather than mirrored here)
 """
 from __future__ import annotations
@@ -51,7 +51,7 @@ class RunEntry:
     """One A2A async task. Mutable; ``RunRegistry`` owns lifecycle.
 
     issue #292 (α): ``pending_intervention`` and ``question`` fields
-    removed — iv state lives in ``ChatSession._interventions``. This
+    removed — iv state lives in ``Session._interventions``. This
     entry only carries A2A-task-wrapper state.
 
     issue #269 Phase 2: ``_webhook_channel_state`` (private, lazy-init)
@@ -95,7 +95,7 @@ class RunEntry:
 
         Includes webhook_url + history_events for post-restart peer
         notification + SSE replay continuity. iv state (formerly
-        ``pending_intervention``) is owned by ChatSession and persisted
+        ``pending_intervention``) is owned by Session and persisted
         via AgentSnapshot — see issue #292 body for the layering.
 
         Excludes volatile fields:
@@ -121,7 +121,7 @@ class RunEntry:
         Rebuilds a ``RunEntry`` from the persistence snapshot. Tolerant
         of pre-#292 snapshots that included ``pending_intervention`` /
         ``question`` keys (= silently ignored, the iv is restored via
-        ChatSession's AgentSnapshot instead).
+        Session's AgentSnapshot instead).
         """
 
         def _parse_ts(value: object) -> datetime:
@@ -272,7 +272,7 @@ class RunRegistry:
     ) -> RunEntry | None:
         """Update task-wrapper state. issue #292 (α): ``question`` and
         ``pending_intervention`` params removed — iv lifecycle is owned
-        by ChatSession.
+        by Session.
         """
         entry = self._runs.get(run_id)
         if entry is None:

@@ -61,7 +61,7 @@ class AgentSnapshot:
     # Populated when the user answers an intervention post-restart but
     # before the resuming skill consumes it. Survives a *second* crash
     # so the answer is replayed when the skill finally resumes (the
-    # in-memory ``_buffered_intervention_answers`` dict in ChatSession
+    # in-memory ``_buffered_intervention_answers`` dict in Session
     # is the runtime cache; this field is its on-disk durable form).
     # Each value is ``{"text": str, "choice_id": str | None}``.
     buffered_intervention_answers: dict[str, dict] = field(default_factory=dict)

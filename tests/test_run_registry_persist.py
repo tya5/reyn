@@ -96,7 +96,7 @@ def test_restore_from_existing_snapshot_repopulates_runs(tmp_path: Path) -> None
     registry_a = RunRegistry(persist_path=persist_path)
     entry = registry_a.create(agent_name="demo", chain_id="chain-A")
     # issue #292 (α): ``question`` field removed — iv state owned by
-    # ChatSession. We only mirror the public ``status`` on RunEntry.
+    # Session. We only mirror the public ``status`` on RunEntry.
     registry_a.update(entry.run_id, status="input-required")
     registry_a.append_event(entry.run_id, {"type": "phase", "name": "greet"})
 
@@ -152,19 +152,19 @@ def test_restored_pending_intervention_has_fresh_future(tmp_path: Path) -> None:
     registry_a = RunRegistry(persist_path=persist_path)
     entry = registry_a.create(agent_name="demo", chain_id="chain-A")
 
-    # issue #292 (α): iv state lives in ChatSession, not RunRegistry.
+    # issue #292 (α): iv state lives in Session, not RunRegistry.
     # Restart simulation just mirrors the public status; iv restore is
     # tested in tests/test_intervention_restore.py via AgentSnapshot.
     registry_a.update(entry.run_id, status="input-required")
 
     # Restart: restored RunEntry has the status mirror; iv state is
-    # restored separately by ChatSession's snapshot path.
+    # restored separately by Session's snapshot path.
     registry_b = RunRegistry(persist_path=persist_path)
     restored = registry_b.get(entry.run_id)
     assert restored is not None
     assert restored.status == "input-required"
     # α: RunEntry no longer carries pending_intervention. iv lives in
-    # ChatSession's AgentSnapshot.outstanding_interventions.
+    # Session's AgentSnapshot.outstanding_interventions.
     assert not hasattr(restored, "pending_intervention")
 
 
@@ -226,7 +226,7 @@ def test_remove_drops_entry_from_snapshot(tmp_path: Path) -> None:
 def test_answer_status_mirror_persists(tmp_path: Path) -> None:
     """Tier 2: post-α, ``answer_intervention`` is removed from
     RunRegistry. The peer-answer flow lives in
-    ``_handle_answer_injection`` → ``ChatSession.answer_pending_intervention``.
+    ``_handle_answer_injection`` → ``Session.answer_pending_intervention``.
     The RunRegistry only mirrors the public ``status`` back to
     ``"running"`` after the answer is delivered. Pin the status
     transition persists correctly.

@@ -1,6 +1,6 @@
 """Tier 2: #1412 — the chat-router OpContext is built from a single source.
 
-``ChatSession._make_router_op_context`` and
+``Session._make_router_op_context`` and
 ``RouterHostAdapter.make_router_op_context`` built the
 ``skill_name="chat_router"`` OpContext with ~95% identical code and drifted
 (#1410/#1411 threaded base_dir to one, lagged the other — the #187 wrong-FS
@@ -76,7 +76,7 @@ def test_chat_router_opcontext_built_only_in_factory() -> None:
 
 
 def test_both_hosts_delegate_to_build_router_op_context() -> None:
-    """Tier 2: #1412 — ChatSession and RouterHostAdapter both call
+    """Tier 2: #1412 — Session and RouterHostAdapter both call
     build_router_op_context (positive guard: the chokepoint is used)."""
     for rel in ("chat/session.py", "chat/services/router_host_adapter.py"):
         assert _calls_named(rel, "build_router_op_context") >= 1, (

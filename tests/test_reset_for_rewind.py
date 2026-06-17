@@ -1,6 +1,6 @@
-"""Tier 2: ChatSession.reset_for_rewind — pre-rewind in-memory residue clearing.
+"""Tier 2: Session.reset_for_rewind — pre-rewind in-memory residue clearing.
 
-ADR-0038 Stage 1c-2. Real `ChatSession` + `StateLog` (no mocks). The global
+ADR-0038 Stage 1c-2. Real `Session` + `StateLog` (no mocks). The global
 rewind path calls ``reset_for_rewind()`` after ``await_quiescent`` and before
 ``restore_state(reconstructed)``; its clear-scope must EXACTLY mirror
 ``restore_state``'s set-scope so re-adopting the reconstructed snapshot leaves
@@ -14,14 +14,14 @@ from pathlib import Path
 
 import pytest
 
-from reyn.chat.session import ChatSession
+from reyn.chat.session import Session
 from reyn.core.events.agent_snapshot import AgentSnapshot
 from reyn.core.events.state_log import StateLog
 from reyn.user_intervention import InterventionAnswer, UserIntervention
 
 
-def _session(tmp_path: Path, log: StateLog, *, agent: str = "alpha") -> ChatSession:
-    session = ChatSession(
+def _session(tmp_path: Path, log: StateLog, *, agent: str = "alpha") -> Session:
+    session = Session(
         agent_name=agent, state_log=log, snapshot_path=tmp_path / "snap.json",
     )
     session.register_intervention_listener("test")

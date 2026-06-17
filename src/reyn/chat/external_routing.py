@@ -288,7 +288,7 @@ def make_outbox_interceptor(
     """Build an outbox interceptor for FP-0041 PR-D2 wiring.
 
     Returns an async ``(OutboxMessage) -> bool`` callable to register
-    on ``ChatSession._outbox_interceptor``. When invoked:
+    on ``Session._outbox_interceptor``. When invoked:
 
       1. If ``msg.reply_to`` is not an ``ExternalRef`` → return False
          (= caller falls through to normal outbox queue).

@@ -21,7 +21,7 @@ import pytest
 
 from reyn.chat.profile import AgentProfile
 from reyn.chat.registry import AgentRegistry
-from reyn.chat.session import ChatSession
+from reyn.chat.session import Session
 from reyn.core.events.state_log import StateLog
 from reyn.llm.llm import LLMToolCallResult
 from reyn.llm.pricing import TokenUsage
@@ -51,11 +51,11 @@ def _build_registry(
     """
     state_log = StateLog(tmp_path / ".reyn" / "state" / "wal.jsonl")
 
-    def factory(profile: AgentProfile) -> ChatSession:
+    def factory(profile: AgentProfile) -> Session:
         agent_dir = tmp_path / ".reyn" / "agents" / profile.name
         agent_dir.mkdir(parents=True, exist_ok=True)
         bt = BudgetTracker(CostConfig())
-        return ChatSession(
+        return Session(
             agent_name=profile.name,
             agent_role=profile.role,
             output_language="en",
@@ -342,9 +342,9 @@ def test_send_to_agent_waits_for_plan_terminal_text(tmp_path, monkeypatch):
         # Track in running_plans so send_to_agent_impl awaits it.
         self.running_plans["fake_plan_id"] = task
 
-    from reyn.chat.session import ChatSession
+    from reyn.chat.session import Session
     monkeypatch.setattr(
-        ChatSession, "_handle_user_message", _fake_handle_user_message,
+        Session, "_handle_user_message", _fake_handle_user_message,
     )
 
     async def go():
@@ -374,7 +374,7 @@ def test_send_to_agent_drains_skill_completed_inbox(tmp_path, monkeypatch):
 
     Fix: ``send_to_agent_impl`` awaits ``running_skills`` after
     ``_handle_user_message`` returns, then calls
-    ``ChatSession.drain_skill_completed_inbox`` to dispatch any queued
+    ``Session.drain_skill_completed_inbox`` to dispatch any queued
     ``skill_completed`` items inline. This test pins the contract by:
 
     1. Faking ``_handle_user_message`` to spawn a background "skill"
@@ -422,10 +422,10 @@ def test_send_to_agent_drains_skill_completed_inbox(tmp_path, monkeypatch):
         ))
 
     monkeypatch.setattr(
-        ChatSession, "_handle_user_message", _fake_handle_user_message,
+        Session, "_handle_user_message", _fake_handle_user_message,
     )
     monkeypatch.setattr(
-        ChatSession, "_handle_skill_completed", _fake_handle_skill_completed,
+        Session, "_handle_skill_completed", _fake_handle_skill_completed,
     )
 
     async def go():

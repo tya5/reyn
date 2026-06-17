@@ -38,7 +38,7 @@ import pytest
 
 from reyn.chat.profile import AgentProfile
 from reyn.chat.registry import AgentRegistry
-from reyn.chat.session import ChatSession
+from reyn.chat.session import Session
 from reyn.config import SafetyConfig, TimeoutConfig
 from reyn.core.events.state_log import StateLog
 from reyn.core.kernel.normalizer import NormalizationResult
@@ -205,18 +205,18 @@ class _FinishRuntime(OSRuntime):
 
 def _make_registry_with_two_agents(
     tmp_path: Path,
-) -> tuple[AgentRegistry, ChatSession, ChatSession, StateLog]:
-    """Build a registry holding two real ChatSessions named 'a' and 'b'.
+) -> tuple[AgentRegistry, Session, Session, StateLog]:
+    """Build a registry holding two real Sessions named 'a' and 'b'.
 
     Both sessions share the same StateLog. The registry's _agents dict is
     populated by calling get_or_load for each name.
     """
     state_log = StateLog(tmp_path / ".reyn" / "wal.jsonl")
 
-    def factory(profile: AgentProfile) -> ChatSession:
+    def factory(profile: AgentProfile) -> Session:
         agent_dir = tmp_path / ".reyn" / "agents" / profile.name
         agent_dir.mkdir(parents=True, exist_ok=True)
-        return ChatSession(
+        return Session(
             agent_name=profile.name,
             state_log=state_log,
             snapshot_path=agent_dir / "state" / "snapshot.json",
@@ -368,10 +368,10 @@ def test_postprocessor_mid_run_chain_timeout_fires(
 
     state_log = StateLog(tmp_path / ".reyn" / "wal.jsonl")
 
-    def factory(profile: AgentProfile) -> ChatSession:
+    def factory(profile: AgentProfile) -> Session:
         agent_dir = tmp_path / ".reyn" / "agents" / profile.name
         agent_dir.mkdir(parents=True, exist_ok=True)
-        return ChatSession(
+        return Session(
             agent_name=profile.name,
             state_log=state_log,
             snapshot_path=agent_dir / "state" / "snapshot.json",

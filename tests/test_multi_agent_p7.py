@@ -38,7 +38,7 @@ import pytest
 from reyn.chat.profile import AgentProfile
 from reyn.chat.registry import AgentRegistry
 from reyn.chat.services.chain_manager import ChainManager
-from reyn.chat.session import ChatSession
+from reyn.chat.session import Session
 from reyn.chat.topology import Topology
 from reyn.core.events.state_log import StateLog
 
@@ -50,18 +50,18 @@ from reyn.core.events.state_log import StateLog
 def _make_registry_with_agents(
     tmp_path: Path,
     names: list[str],
-) -> tuple[AgentRegistry, dict[str, ChatSession], StateLog]:
-    """Build a registry that holds real ChatSessions for each name.
+) -> tuple[AgentRegistry, dict[str, Session], StateLog]:
+    """Build a registry that holds real Sessions for each name.
 
     No background tasks are started — test logic drives inboxes
     synchronously.  Returns (registry, {name: session}, state_log).
     """
     state_log = StateLog(tmp_path / ".reyn" / "wal.jsonl")
 
-    def factory(profile: AgentProfile) -> ChatSession:
+    def factory(profile: AgentProfile) -> Session:
         agent_dir = tmp_path / ".reyn" / "agents" / profile.name
         agent_dir.mkdir(parents=True, exist_ok=True)
-        return ChatSession(
+        return Session(
             agent_name=profile.name,
             state_log=state_log,
             snapshot_path=agent_dir / "state" / "snapshot.json",
@@ -72,7 +72,7 @@ def _make_registry_with_agents(
         session_factory=factory,
         state_log=state_log,
     )
-    sessions: dict[str, ChatSession] = {}
+    sessions: dict[str, Session] = {}
     for name in names:
         agent_dir = tmp_path / ".reyn" / "agents" / name
         agent_dir.mkdir(parents=True, exist_ok=True)
@@ -123,7 +123,7 @@ async def test_two_simultaneous_delegations_both_resolve(tmp_path: Path):
     snapshot after both replies arrive.
 
     No LLM required — this exercises pure chain register/resolve mechanics
-    at the ChatSession public surface.
+    at the Session public surface.
     """
     registry, sessions, state_log = _make_registry_with_agents(
         tmp_path, ["A", "B", "C"]

@@ -1,7 +1,7 @@
-"""ContextBudgetAdvisor — per-turn token budget computation for ChatSession.
+"""ContextBudgetAdvisor — per-turn token budget computation for Session.
 
-Extracted from ChatSession (session.py refactor PR-1).  Owns the five
-budget-arithmetic methods that were inline on ChatSession:
+Extracted from Session (session.py refactor PR-1).  Owns the five
+budget-arithmetic methods that were inline on Session:
 
   - cap_tool_result       — truncate oversized tool-result text (#1128 size axis)
   - per_turn_cap_tokens   — derive B_M-relative per-turn token ceiling
@@ -14,7 +14,7 @@ Plus the shared helper:
   - _free_window_now      — (effective_trigger, estimated_history_tokens)
 
 All public methods are pure or only cause contained async side effects on
-the compaction controller.  ChatSession holds an instance and forwards
+the compaction controller.  Session holds an instance and forwards
 each method as a callback to RouterHostAdapter, keeping the external API
 byte-identical (no caller changes outside session.py).
 
@@ -34,7 +34,7 @@ if TYPE_CHECKING:
 class ContextBudgetAdvisor:
     """Per-turn token budget advisor for the chat router loop.
 
-    Constructed once per ChatSession; passed as callbacks to RouterHostAdapter.
+    Constructed once per Session; passed as callbacks to RouterHostAdapter.
     """
 
     def __init__(

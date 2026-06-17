@@ -1,13 +1,13 @@
 """Agent — the per-agent IDENTITY value object (FP-0043 Stage 2).
 
-Extracted from ``ChatSession``, which historically fused two concerns: the
+Extracted from ``Session``, which historically fused two concerns: the
 **identity** (who the agent is — name, profile role, permissions, workspace
 root, exec/FS backends) and the **conversation** (history, inbox, the running
 ``session.run()`` task). This object owns the identity cluster so that — in a
 later stage — N conversation Sessions can SHARE one ``Agent`` (identity is
 agent-scoped; conversation is session-scoped). Stage 2 is a pure, byte-identical
-extraction: one ``ChatSession`` still holds exactly one ``Agent``, and every
-former ``ChatSession`` identity field reads through it via a delegating property
+extraction: one ``Session`` still holds exactly one ``Agent``, and every
+former ``Session`` identity field reads through it via a delegating property
 — no observable behaviour changes.
 
 Assembled at the construction chokepoint (``build_scoped_chat_session``), which
@@ -17,7 +17,7 @@ profile. ``AgentRegistry`` / ``AgentProfile`` / ``AgentSnapshot`` are unchanged
 extraction stays orthogonal to it).
 
 Scope note (Stage 2, byte-identical): the agent holds ``name`` + ``role`` (the
-two identity fields that flow into a ChatSession today), NOT the full
+two identity fields that flow into a Session today), NOT the full
 ``AgentProfile`` object — threading the profile's allowlists into the session is
 NEW wiring deferred to a later stage (when permissions become explicitly
 agent-scoped). Conceptually the agent owns the profile; the wiring waits.
@@ -35,7 +35,7 @@ if TYPE_CHECKING:
 @dataclass(frozen=True)
 class Agent:
     """The agent's identity cluster (FP-0043 Stage 2). Frozen — identity is
-    immutable for a session's lifetime (no ChatSession identity field is
+    immutable for a session's lifetime (no Session identity field is
     reassigned post-construction; verified)."""
 
     # Identity proper.
@@ -64,6 +64,6 @@ class Agent:
     @property
     def workspace_dir(self) -> Path:
         """The agent's home directory (``.reyn/agents/<name>``) — derived from
-        the name, byte-identical to ChatSession's former
+        the name, byte-identical to Session's former
         ``Path(".reyn") / "agents" / self.agent_name``."""
         return Path(".reyn") / "agents" / self.agent_name

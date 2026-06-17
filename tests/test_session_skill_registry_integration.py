@@ -1,4 +1,4 @@
-"""Tier 2: OS invariant — ChatSession lazily constructs and configures a per-agent SkillRegistry.
+"""Tier 2: OS invariant — Session lazily constructs and configures a per-agent SkillRegistry.
 
 The session is the layer that owns the production wiring:
   - state_log → SkillRegistry (so step events land in the right WAL)
@@ -12,10 +12,10 @@ them a correctly-wired SkillRegistry. A wiring regression would silently
 disable resume.
 
 Observation flows through:
-  - ChatSession.get_skill_registry() return value type
+  - Session.get_skill_registry() return value type
   - The returned registry's behavior when its lifecycle methods are called
     (does start() append to the WAL? does the hook fire?)
-No mocks — real ChatSession with no LLM (we never call _run_skill_awaitable),
+No mocks — real Session with no LLM (we never call _run_skill_awaitable),
 real StateLog.
 """
 from __future__ import annotations
@@ -23,13 +23,13 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 
-from reyn.chat.session import ChatSession
+from reyn.chat.session import Session
 from reyn.core.events.state_log import StateLog
 from reyn.skill.skill_registry import SkillRegistry
 
 
 def _make_session(tmp_path: Path, *, with_state_log: bool, with_registry: bool):
-    """Construct a ChatSession with optional state_log + registry back-ref."""
+    """Construct a Session with optional state_log + registry back-ref."""
     state_log = StateLog(tmp_path / ".reyn" / "wal.jsonl") if with_state_log else None
     registry = None
     if with_registry:
@@ -44,7 +44,7 @@ def _make_session(tmp_path: Path, *, with_state_log: bool, with_registry: bool):
             session_factory=_no_factory,
             state_log=state_log,
         )
-    return ChatSession(
+    return Session(
         agent_name="alpha",
         state_log=state_log,
         registry=registry,
@@ -116,7 +116,7 @@ def test_truncate_hook_unwired_without_registry(tmp_path, monkeypatch):
     """Tier 2: with registry=None (test fixtures), the SkillRegistry's truncate hook is None — no truncation triggered.
 
     Production tests that need truncation triggered must instantiate an
-    AgentRegistry; bare ChatSession unit tests get a no-trigger registry.
+    AgentRegistry; bare Session unit tests get a no-trigger registry.
     """
     monkeypatch.chdir(tmp_path)
     session = _make_session(tmp_path, with_state_log=True, with_registry=False)
@@ -128,7 +128,7 @@ def test_truncate_hook_wired_with_registry(tmp_path, monkeypatch):
     """Tier 2: with registry set, the hook bridges to AgentRegistry.truncate_wal_if_eligible.
 
     PR-N7 (FP-0008): the floor calc reads in-memory session state via
-    ``ChatSession.iter_applied_seqs``. The session must be registered
+    ``Session.iter_applied_seqs``. The session must be registered
     in ``AgentRegistry._agents`` so the floor walk picks it up; the
     on-disk profile is created so ``list_names`` reflects the agent
     (some unrelated paths rely on that).
@@ -136,7 +136,7 @@ def test_truncate_hook_wired_with_registry(tmp_path, monkeypatch):
     Verified end-to-end: register the live session into AgentRegistry,
     call ``advance_phase`` → SkillRegistry's in-memory snapshot bumps
     ``last_phase_applied_seq`` → hook fires →
-    ``ChatSession.iter_applied_seqs`` yields a non-zero watermark via
+    ``Session.iter_applied_seqs`` yields a non-zero watermark via
     the skill_registry pass-through → AgentRegistry executes a real
     truncation pass. Observable signal is the throttle stamp, which is
     set only when truncation actually attempts a rewrite (floor > 0).

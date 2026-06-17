@@ -16,7 +16,7 @@ Covers:
 
 Policy compliance (docs/deep-dives/contributing/testing.ja.md):
   - No unittest.mock / AsyncMock / patch usage for collaborators.
-  - Real ChatSession instances and a concrete _CaptureBus fake.
+  - Real Session instances and a concrete _CaptureBus fake.
   - Tier 2 OS invariant tests only.
 """
 from __future__ import annotations
@@ -28,7 +28,7 @@ import pytest
 
 from reyn.chat.profile import AgentProfile
 from reyn.chat.registry import AgentRegistry
-from reyn.chat.session import ChatSession
+from reyn.chat.session import Session
 from reyn.core.events.state_log import StateLog
 from reyn.mcp.server import send_to_agent_impl
 from reyn.runtime.budget.budget import BudgetTracker, CostConfig
@@ -84,15 +84,15 @@ class _RecordingHandler:
 # ---------------------------------------------------------------------------
 
 
-def _make_session(tmp_path: Path, *, agent_name: str = "test_agent") -> ChatSession:
-    """Build a ChatSession with I/O redirected to tmp_path.
+def _make_session(tmp_path: Path, *, agent_name: str = "test_agent") -> Session:
+    """Build a Session with I/O redirected to tmp_path.
 
     issue #254 Phase 1: register a placeholder listener so the registry's
     ``enforce_listener_presence=True`` short-circuit does not fire — these
     tests exercise the chain-scoped override path and may dispatch to the
     fallback registry path when no override is set.
     """
-    session = ChatSession(
+    session = Session(
         agent_name=agent_name,
         state_log=StateLog(tmp_path / f"{agent_name}_state.wal"),
         snapshot_path=tmp_path / f"{agent_name}_snapshot.json",
@@ -111,11 +111,11 @@ def _build_registry(tmp_path: Path, agent_specs: list[tuple[str, str]]) -> Agent
     """Construct an AgentRegistry on tmp_path (mirrors test_mcp_server.py pattern)."""
     state_log = StateLog(tmp_path / ".reyn" / "state" / "wal.jsonl")
 
-    def factory(profile: AgentProfile) -> ChatSession:
+    def factory(profile: AgentProfile) -> Session:
         agent_dir = tmp_path / ".reyn" / "agents" / profile.name
         agent_dir.mkdir(parents=True, exist_ok=True)
         bt = BudgetTracker(CostConfig())
-        session = ChatSession(
+        session = Session(
             agent_name=profile.name,
             agent_role=profile.role,
             output_language="en",
@@ -413,7 +413,7 @@ def test_send_to_agent_impl_override_registered_and_cleaned_up(tmp_path, monkeyp
             meta={"chain_id": chain_id},
         ))
 
-    monkeypatch.setattr(ChatSession, "_handle_user_message", _fake_handle)
+    monkeypatch.setattr(Session, "_handle_user_message", _fake_handle)
 
     async def go():
         return await send_to_agent_impl(
@@ -529,7 +529,7 @@ def test_concurrent_send_to_agent_impl_no_override_leak(tmp_path, monkeypatch):
             meta={"chain_id": chain_id},
         ))
 
-    monkeypatch.setattr(ChatSession, "_handle_user_message", _fake_handle)
+    monkeypatch.setattr(Session, "_handle_user_message", _fake_handle)
 
     async def go():
         r1, r2 = await asyncio.gather(

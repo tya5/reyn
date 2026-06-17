@@ -10,7 +10,7 @@ These tests verify that:
   7. StreamingRow accumulates text correctly.
   8. InterventionWidget can be mounted and answered.
 
-No ChatSession or AgentRegistry is wired — tests run fully headless
+No Session or AgentRegistry is wired — tests run fully headless
 against ReynTUIApp(registry=None).
 """
 from __future__ import annotations

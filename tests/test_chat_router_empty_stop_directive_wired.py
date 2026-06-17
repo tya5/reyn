@@ -1,9 +1,9 @@
-"""Tier 2: ChatSession wires the empty-stop retry into the chat router's
+"""Tier 2: Session wires the empty-stop retry into the chat router's
 RouterLoop — now the SHARED uniform ``"resume"`` directive, always-on (#187).
 
 Pinned invariants:
 
-- ``ChatSession._handle_user_message`` constructs ``RouterLoop`` with
+- ``Session._handle_user_message`` constructs ``RouterLoop`` with
   ``empty_stop_retry_directive=EMPTY_STOP_RETRY_DIRECTIVE`` (the single shared
   "resume" directive — NOT a chat-specific string) AND
   ``empty_stop_retry_auto=True`` (always-on; the ``REYN_EMPTY_STOP_RETRY`` env
@@ -19,7 +19,7 @@ tool-call. All sites (chat / plan-step / agent op-loop) now use the single
 content-neutral ``EMPTY_STOP_RETRY_DIRECTIVE`` = "resume". The cross-site
 uniform-wiring invariant is pinned in
 ``test_empty_stop_retry_uniform_187``; this file pins the chat site's wiring
-behaviourally (driving the real ChatSession construction).
+behaviourally (driving the real Session construction).
 """
 from __future__ import annotations
 
@@ -30,7 +30,7 @@ import pytest
 
 from reyn.chat import router_loop as rl
 from reyn.chat.router_loop import EMPTY_STOP_RETRY_DIRECTIVE
-from reyn.chat.session import ChatSession
+from reyn.chat.session import Session
 from reyn.llm.llm import LLMToolCallResult
 from reyn.llm.pricing import TokenUsage
 
@@ -59,19 +59,19 @@ class _ScriptedLLM:
         return result
 
 
-def _make_session(tmp_path: Path) -> ChatSession:
-    return ChatSession(agent_name="test_agent_b44")
+def _make_session(tmp_path: Path) -> Session:
+    return Session(agent_name="test_agent_b44")
 
 
 # ---------------------------------------------------------------------------
-# Wiring pin — ChatSession constructs RouterLoop with the shared directive
+# Wiring pin — Session constructs RouterLoop with the shared directive
 # ---------------------------------------------------------------------------
 
 
 class _CapturingRouterLoop(rl.RouterLoop):
     """Real subclass that records the kwargs every RouterLoop construction
     receives. Used in place of the production RouterLoop via
-    ``monkeypatch.setattr`` so the test observes ChatSession's construction
+    ``monkeypatch.setattr`` so the test observes Session's construction
     call without mocking the type contract."""
 
     last_kwargs: dict[str, Any] = {}
@@ -83,7 +83,7 @@ class _CapturingRouterLoop(rl.RouterLoop):
 
 @pytest.mark.asyncio
 async def test_chat_session_passes_shared_resume_directive_always_on(monkeypatch, tmp_path):
-    """Tier 2c: ``ChatSession._handle_user_message`` wires the SHARED
+    """Tier 2c: ``Session._handle_user_message`` wires the SHARED
     ``EMPTY_STOP_RETRY_DIRECTIVE`` ("resume") + ``empty_stop_retry_auto=True``
     to ``RouterLoop`` (#187 uniform always-on).
 
@@ -105,12 +105,12 @@ async def test_chat_session_passes_shared_resume_directive_always_on(monkeypatch
 
     captured = _CapturingRouterLoop.last_kwargs
     assert captured.get("empty_stop_retry_directive") == EMPTY_STOP_RETRY_DIRECTIVE, (
-        "ChatSession must pass the shared EMPTY_STOP_RETRY_DIRECTIVE, not an "
+        "Session must pass the shared EMPTY_STOP_RETRY_DIRECTIVE, not an "
         "inlined or chat-specific string. Got: "
         + repr(captured.get("empty_stop_retry_directive"))
     )
     assert captured.get("empty_stop_retry_auto") is True, (
-        "ChatSession must pass empty_stop_retry_auto=True (#187 always-on; the "
+        "Session must pass empty_stop_retry_auto=True (#187 always-on; the "
         "REYN_EMPTY_STOP_RETRY env opt-in is retired). Got kwargs: "
         + str(sorted(captured))
     )

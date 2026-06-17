@@ -55,14 +55,14 @@ from reyn.chat.external_routing import (
     ExternalTransportRouting,
 )
 from reyn.chat.outbox import OutboxMessage
-from reyn.chat.session import ChatSession
+from reyn.chat.session import Session
 from reyn.chat.transport import ExternalRef
 from reyn.core.events.state_log import StateLog
 from reyn.interfaces.web.deps import _wire_external_outbox_interceptor
 
 
-def _make_session(tmp_path: Path) -> ChatSession:
-    return ChatSession(
+def _make_session(tmp_path: Path) -> Session:
+    return Session(
         agent_name="alpha",
         state_log=StateLog(tmp_path / "alpha.wal"),
         snapshot_path=tmp_path / "alpha_snapshot.json",

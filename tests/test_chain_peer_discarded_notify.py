@@ -7,7 +7,7 @@ skill_run is discarded by the user mid-flight. R-D14 plumbs an
 immediate notification so the waiter resolves within milliseconds.
 
 Layers exercised here:
-  - ``ChatSession._on_chain_peer_discarded`` handler: pops the chain,
+  - ``Session._on_chain_peer_discarded`` handler: pops the chain,
     emits ``chain_peer_discarded`` audit event, sends synthesised
     upstream agent_response (Tier 2)
   - ``AgentRegistry.notify_chain_discarded``: scans every other
@@ -25,7 +25,7 @@ from pathlib import Path
 
 from reyn.chat.profile import AgentProfile
 from reyn.chat.registry import AgentRegistry
-from reyn.chat.session import ChatSession
+from reyn.chat.session import Session
 from reyn.core.events.state_log import StateLog
 
 # ---------------------------------------------------------------------------
@@ -35,8 +35,8 @@ from reyn.core.events.state_log import StateLog
 
 def _make_registry_with_two_agents(
     tmp_path: Path,
-) -> tuple[AgentRegistry, ChatSession, ChatSession, StateLog]:
-    """Build a registry holding two real ChatSessions named A and B.
+) -> tuple[AgentRegistry, Session, Session, StateLog]:
+    """Build a registry holding two real Sessions named A and B.
 
     Both sessions share the same StateLog (single-process invariant).
     The registry's ``_agents`` dict is populated by calling
@@ -45,12 +45,12 @@ def _make_registry_with_two_agents(
     """
     state_log = StateLog(tmp_path / ".reyn" / "wal.jsonl")
 
-    def factory(profile: AgentProfile) -> ChatSession:
+    def factory(profile: AgentProfile) -> Session:
         # Each session gets its own snapshot path under the agent's
         # state dir so they don't collide.
         agent_dir = tmp_path / ".reyn" / "agents" / profile.name
         agent_dir.mkdir(parents=True, exist_ok=True)
-        return ChatSession(
+        return Session(
             agent_name=profile.name,
             state_log=state_log,
             snapshot_path=agent_dir / "state" / "snapshot.json",
@@ -69,13 +69,13 @@ def _make_registry_with_two_agents(
 
     sess_a = registry.get_or_load("A")
     sess_b = registry.get_or_load("B")
-    # Wire the back-reference so ChatSession can call into registry.
+    # Wire the back-reference so Session can call into registry.
     sess_a._registry = registry
     sess_b._registry = registry
     return registry, sess_a, sess_b, state_log
 
 
-def _drain_outbox(session: ChatSession) -> list:
+def _drain_outbox(session: Session) -> list:
     out = []
     while not session.outbox.empty():
         out.append(session.outbox.get_nowait())

@@ -1,9 +1,9 @@
 """RouterHostAdapter — concrete RouterLoopHost implementation.
 
-Extracted from ChatSession wave 3 PR3. Composes ChatSession's collaborators
+Extracted from Session wave 3 PR3. Composes Session's collaborators
 (MemoryService, SnapshotJournal, op-runtime callbacks) so RouterLoop has no
-direct dependency on ChatSession internals. The adapter satisfies the
-RouterLoopHost Protocol structurally; ChatSession constructs one and exposes
+direct dependency on Session internals. The adapter satisfies the
+RouterLoopHost Protocol structurally; Session constructs one and exposes
 it via `self._router_host`.
 """
 from __future__ import annotations
@@ -21,11 +21,11 @@ _DEFAULT_STATE_DIR = Path(".reyn") / "state"
 
 
 class RouterHostAdapter:
-    """Concrete RouterLoopHost implementation extracted from ChatSession.
+    """Concrete RouterLoopHost implementation extracted from Session.
 
     Holds injected identity attrs, catalogue deps, and async callbacks so
     RouterLoop can call host methods without importing or referencing
-    ChatSession directly.
+    Session directly.
 
     Parameters
     ----------
@@ -143,7 +143,7 @@ class RouterHostAdapter:
         agent_replies_tracker: Callable[[], "list[str] | None"],
         # FP-0034 PR-3b-iii/iv: universal catalog wrapper visibility
         # (= reyn.yaml action_retrieval.universal_wrappers_enabled).
-        # ChatSession passes True by default since PR-3b-iv flipped the
+        # Session passes True by default since PR-3b-iv flipped the
         # ActionRetrievalConfig default; this constructor parameter
         # still defaults to False so direct callers (= tests that build
         # adapters by hand) preserve the prior tools= shape and don't
@@ -151,7 +151,7 @@ class RouterHostAdapter:
         universal_wrappers_enabled: bool = False,
         # FP-0034 Phase 2 step 1: ActionEmbeddingIndex + EmbeddingProvider
         # for search_actions.  When all three are set (= operator configured
-        # ``action_retrieval.embedding_class`` AND ChatSession built a
+        # ``action_retrieval.embedding_class`` AND Session built a
         # provider AND the index has been initialized), search_actions
         # appears in tools= and routes to the index.  When any is None
         # the wrapper stays out of tools= (= D14 visibility gate).
@@ -182,11 +182,11 @@ class RouterHostAdapter:
         # router's exec ran on the host (``No such file or directory:
         # '/testbed'``), so the agent's verify loop always failed. Parallel to
         # ``environment_backend`` for FS (#1411) — the legacy
-        # ``ChatSession._make_router_op_context`` already passes it; the live
+        # ``Session._make_router_op_context`` already passes it; the live
         # adapter omitted it (the same live-vs-legacy seam gap as #1410/#1411).
         sandbox_backend_instance: Any = None,
         # FP-0034 Phase 2 step 5: ActionUsageTracker for hot list freq+recency.
-        # ChatSession passes the session-scoped tracker; None when wrappers are
+        # Session passes the session-scoped tracker; None when wrappers are
         # off or hot_list_n == 0.
         action_usage_tracker: Any = None,
         # FP-0034 refactor: zero-arg callable returning the live (=
@@ -199,7 +199,7 @@ class RouterHostAdapter:
             Callable[[], list[tuple[str, float]]] | None
         ) = None,
         # FP-0034 Phase 2 step 5: ActionRetrievalConfig for hot_list_n /
-        # hot_list_seed.  ChatSession passes its config; None → default.
+        # hot_list_seed.  Session passes its config; None → default.
         action_retrieval_config: Any = None,
         # B25-S5-1: when True, RouterLoop awaits the action embedding index
         # build synchronously on the first turn before computing the D14
@@ -208,7 +208,7 @@ class RouterHostAdapter:
         # FP-0022 fix (#53): callable that yields an InterventionBus for
         # router-initiated tools that need the 4-layer approval flow
         # (web_fetch interactive prompt, mcp install / drop ask gates).
-        # ChatSession passes a factory that wraps ``ChatInterventionBus(
+        # Session passes a factory that wraps ``ChatInterventionBus(
         # session, run_id=None, skill_name="chat_router")``; tests can
         # pass None and the OpContext gets ``intervention_bus=None`` (=
         # config-deny path still raises, interactive prompt path raises
@@ -236,7 +236,7 @@ class RouterHostAdapter:
         # router_loop bounds media materialisation. ``None`` = unbounded (pre-#272).
         media_followup_budget: Any = None,
         # #272/#1128 compact op: awaitable () -> {freed_tokens, free_window_after}
-        # wired by ChatSession to its force_compact_now wrapper, so the LLM-
+        # wired by Session to its force_compact_now wrapper, so the LLM-
         # emittable `compact` control_ir op can voluntarily compact history.
         # ``None`` = no compaction context (compact op returns a clear error).
         compact_now: Any = None,
@@ -251,10 +251,10 @@ class RouterHostAdapter:
         state_dir: Path | None = None,
         # FP-0037 S2: project root for yaml mtime watch (3-scope cascade).
         # When None, only the user-global ~/.reyn/config.yaml is watched.
-        # ChatSession passes the project root so all 3 tiers are covered.
+        # Session passes the project root so all 3 tiers are covered.
         project_root: Path | None = None,
         # #1092 PR-F1 (chat activation): the shared turn_budget engine the chat
-        # axis budgets against. Built by ChatSession via
+        # axis budgets against. Built by Session via
         # build_default_turn_budget_engine off the CompactionEngine's RESOLVED
         # model (#1172-safe). Sole consumer (for now) is wrap_up_output_reserve —
         # which hard-caps the force-close wrap-up call's output. None = no engine
@@ -262,7 +262,7 @@ class RouterHostAdapter:
         # never calls _force_close_call until the F2 handoff lands, so wiring the
         # reserve here is inert until then.
         turn_budget_engine: Any = None,
-        # #1468: cooperative turn-cancel signal. ChatSession passes
+        # #1468: cooperative turn-cancel signal. Session passes
         # self._is_turn_cancel_requested; test hosts pass None (= never cancel).
         # run_loop polls via getattr(host, "_is_turn_cancel_requested", None).
         turn_cancel_fn: "Callable[[], bool] | None" = None,
@@ -623,7 +623,7 @@ class RouterHostAdapter:
     def get_action_embedding_index(self) -> Any:
         """Return the ActionEmbeddingIndex instance, or None.
 
-        FP-0034 Phase 2 step 1.  Bound by ChatSession when the operator
+        FP-0034 Phase 2 step 1.  Bound by Session when the operator
         has configured ``action_retrieval.embedding_class``.  RouterLoop
         forwards into ``RouterCallerState.action_embedding_index`` so
         the ``search_actions`` handler can call ``query()``.
@@ -808,7 +808,7 @@ class RouterHostAdapter:
         """FP-0012 non-blocking spawn — returns immediately with the
         ``{status: "spawned", run_id, chain_id, note}`` ack. The skill
         runs in the background; completion arrives via the
-        ``skill_completed`` inbox kind. See ``ChatSession.spawn_skill``
+        ``skill_completed`` inbox kind. See ``Session.spawn_skill``
         for the underlying implementation.
         """
         return await self._spawn_skill_cb(
@@ -1166,7 +1166,7 @@ class RouterHostAdapter:
     ) -> None:
         """Delegate to the session-owned spawn_plan_task callback.
 
-        Task lifecycle (running_plans dict) stays with ChatSession.
+        Task lifecycle (running_plans dict) stays with Session.
         """
         await self._spawn_plan_task_cb(
             plan_id=plan_id,
@@ -1256,7 +1256,7 @@ class RouterHostAdapter:
         """Probe every configured MCP server's tool list and cache the
         results for the session lifetime.
 
-        Called by `ChatSession._handle_user_message` at the start of each
+        Called by `Session._handle_user_message` at the start of each
         user turn. The first call populates the cache (= lazy, post-startup,
         per FP-0037 issue #160). Subsequent calls are no-ops.
 
@@ -1351,7 +1351,7 @@ class RouterHostAdapter:
     def maybe_reload_mcp_tools_cache_from_disk(self) -> None:
         """Reload the in-memory MCP tools cache if the on-disk file is newer.
 
-        FP-0037 S1: called at each turn boundary (in ChatSession before
+        FP-0037 S1: called at each turn boundary (in Session before
         `ensure_mcp_tools_cached`). When the operator runs ``reyn mcp refresh``
         while a session is active, the cache file's mtime advances. This
         method detects that and hot-swaps the in-memory cache so the very next
@@ -1578,7 +1578,7 @@ class RouterHostAdapter:
         from reyn.chat.router_op_context import build_router_op_context
 
         # #1412: single-sourced via build_router_op_context (shared with
-        # ChatSession). RouterHostAdapter wires intervention_bus inline (via the
+        # Session). RouterHostAdapter wires intervention_bus inline (via the
         # factory) + media/multimodal/compact (the registry-dispatch path serves
         # web/media ops). agent_id is unset here (registry-dispatch lacks one) —
         # a #1412 follow-up gap candidate, preserved behaviorally.

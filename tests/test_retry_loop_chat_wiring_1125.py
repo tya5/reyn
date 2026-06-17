@@ -6,7 +6,7 @@ hard-failed if the first compaction itself overflowed. axis-1's eager 30K
 trigger masked the gap by keeping the middle small. This wires the real
 mechanism in:
 
-- ``ChatSession._decompose_history_for_retry`` exposes the
+- ``Session._decompose_history_for_retry`` exposes the
   head / raw_middle / tail / summary decomposition retry_loop consumes (the
   structural refactor the prior degraded path's comment punted as "follow-up").
 - The router overflow handler hands that decomposition to ``retry_loop`` so it
@@ -18,7 +18,7 @@ and the session's real engine/learner feed it). retry_loop's shrink mechanics
 are covered by test_pr_n6_compaction_overflow_retry.py (Fake engine); the literal
 except-block → retry_loop invocation is verified live via dogfood (the real
 RouterLoop LLM overflow is not reconstructable in a unit test without the full
-router stack). No mocks — real ChatSession + real CompactionEngine + real
+router stack). No mocks — real Session + real CompactionEngine + real
 retry_loop; ``main_call`` is a retry_loop parameter (a test async fn, as the
 PR-N6 tests use), not a mocked collaborator.
 """
@@ -28,7 +28,7 @@ import asyncio
 from datetime import datetime, timezone
 from pathlib import Path
 
-from reyn.chat.session import ChatMessage, ChatSession, _RouterUsageShim
+from reyn.chat.session import ChatMessage, Session, _RouterUsageShim
 from reyn.config import CompactionConfig
 from reyn.core.events.state_log import StateLog
 from reyn.llm.pricing import TokenUsage
@@ -40,8 +40,8 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def _make_session(tmp_path: Path, *, t_max: int = 1_000_000) -> ChatSession:
-    """Create a ChatSession with a synthetic T_max controlling effective_trigger.
+def _make_session(tmp_path: Path, *, t_max: int = 1_000_000) -> Session:
+    """Create a Session with a synthetic T_max controlling effective_trigger.
 
     #1128 step 3: slicing is token-budget based (not turn-count).
     ``use_chars4_estimate=True`` makes counting deterministic (chars // 4).
@@ -68,7 +68,7 @@ def _make_session(tmp_path: Path, *, t_max: int = 1_000_000) -> ChatSession:
     original = _mb.get_max_input_tokens
     _mb.get_max_input_tokens = lambda model, **kw: t_max  # type: ignore[assignment]  # noqa: E501
     try:
-        session = ChatSession(
+        session = Session(
             agent_name="default",
             agent_role="",
             output_language="en",
@@ -87,7 +87,7 @@ def _make_session(tmp_path: Path, *, t_max: int = 1_000_000) -> ChatSession:
 _TURN_80TOK = "X" * 320
 
 
-def _push(session: ChatSession, role: str, text: str) -> None:
+def _push(session: Session, role: str, text: str) -> None:
     if role == "agent":
         role = "assistant"
     session.history.append(ChatMessage(role=role, content=text, ts=_now()))

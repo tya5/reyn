@@ -1,4 +1,4 @@
-"""SnapshotJournal — owns AgentSnapshot + StateLog WAL (extracted from ChatSession wave 1).
+"""SnapshotJournal — owns AgentSnapshot + StateLog WAL (extracted from Session wave 1).
 
 All WAL-recorded mutations go through here; in-memory readers go via the
 `.snapshot` property.
@@ -157,7 +157,7 @@ class SnapshotJournal:
     async def append_inbox(self, *, kind: str, payload: dict) -> str:
         """Append ``inbox_put`` to WAL, update snapshot, return assigned msg_id.
 
-        Mirrors ``ChatSession._put_inbox``.  Note: this method does NOT
+        Mirrors ``Session._put_inbox``.  Note: this method does NOT
         queue the message onto the asyncio inbox — the caller (session) is
         responsible for ``inbox.put`` so that the queue ownership stays in
         the session layer.
@@ -179,7 +179,7 @@ class SnapshotJournal:
     async def consume_inbox(self, *, msg_id: str) -> None:
         """Append ``inbox_consume`` to WAL and prune the snapshot entry.
 
-        Mirrors the WAL/snapshot portion of ``ChatSession._consume_inbox``.
+        Mirrors the WAL/snapshot portion of ``Session._consume_inbox``.
         No-op when ``state_log is None`` or ``msg_id`` is ``None``.
         """
         if self._state_log is None or msg_id is None:
@@ -196,7 +196,7 @@ class SnapshotJournal:
     async def record_chain_register(self, *, chain_id: str, fields: dict) -> None:
         """Append ``chain_register`` to WAL and create the pending_chains entry.
 
-        Mirrors ``ChatSession._record_chain_register``.  ``fields`` must
+        Mirrors ``Session._record_chain_register``.  ``fields`` must
         contain the chain metadata keys produced by the caller (origin_agent,
         origin_depth, original_request, waiting_on).
         """
@@ -216,7 +216,7 @@ class SnapshotJournal:
     async def record_chain_update(self, *, chain_id: str, fields: dict) -> None:
         """Append ``chain_update`` to WAL and update waiting_on in snapshot.
 
-        Mirrors ``ChatSession._record_chain_update``.  ``fields`` must
+        Mirrors ``Session._record_chain_update``.  ``fields`` must
         contain at least ``waiting_on: list[str]``.
         """
         if self._state_log is None:
@@ -235,7 +235,7 @@ class SnapshotJournal:
     async def record_chain_resolve(self, *, chain_id: str) -> None:
         """Append ``chain_resolve`` to WAL and remove the pending_chains entry.
 
-        Mirrors ``ChatSession._record_chain_resolve``.
+        Mirrors ``Session._record_chain_resolve``.
         """
         if self._state_log is None:
             return
@@ -249,7 +249,7 @@ class SnapshotJournal:
     async def record_chain_timeout_fired(self, *, chain_id: str) -> None:
         """Append ``chain_timeout_fired`` to WAL and remove the pending_chains entry.
 
-        Mirrors ``ChatSession._record_chain_timeout_fired``.
+        Mirrors ``Session._record_chain_timeout_fired``.
         """
         if self._state_log is None:
             return
@@ -315,7 +315,7 @@ class SnapshotJournal:
         but before the resuming skill consumes the answer. Persisting
         this to the WAL+snapshot lets the answer survive a second crash
         (the buffer would otherwise be lost since it lives in
-        ChatSession's in-memory dict).
+        Session's in-memory dict).
         """
         if self._state_log is None:
             return
@@ -490,7 +490,7 @@ class SnapshotJournal:
         """Adopt a recovered snapshot and immediately persist it.
 
         Mirrors the WAL/snapshot install portion of
-        ``ChatSession.restore_state`` (the asyncio queue repopulation and
+        ``Session.restore_state`` (the asyncio queue repopulation and
         chain timeout re-arming remain the session's responsibility).
         """
         self._snapshot = snapshot
@@ -499,7 +499,7 @@ class SnapshotJournal:
     def save(self) -> None:
         """Persist the current snapshot to disk (atomic write via AgentSnapshot.save).
 
-        Mirrors ``ChatSession._save_snapshot``.  Follows the existing
+        Mirrors ``Session._save_snapshot``.  Follows the existing
         convention: no try/except — let I/O errors propagate (there is no
         error-suppression in the original implementation).
         """

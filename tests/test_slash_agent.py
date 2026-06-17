@@ -33,12 +33,12 @@ class _FakeSession:
     def __init__(self, registry, *, agent_name: str = "default", agent_role: str = "") -> None:
         self._registry = registry
         self.agent_name = agent_name
-        # Mirror the real ChatSession's surface: ``_agent_role`` is the
+        # Mirror the real Session's surface: ``_agent_role`` is the
         # mutable backing field (production code writes here), and
         # ``agent_role`` is the public read-only accessor (tests assert
         # through this). Keep the two-attribute shape so the slash
         # handler's ``session._agent_role = ...`` works against the fake
-        # exactly as it does against ChatSession.
+        # exactly as it does against Session.
         self._agent_role = agent_role
         self.outbox_calls: list[OutboxMessage] = []
 

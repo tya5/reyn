@@ -3,7 +3,7 @@
 Headline scenario:
   1. Run 1 of a 2-phase skill draft → review crashes mid-review (per
      ``test_resume_e2e._CrashAfterFirstPhase``).
-  2. ChatSession is restored from disk (snapshot survives because the
+  2. Session is restored from disk (snapshot survives because the
      simulated crash bypassed the ``finally`` cleanup).
   3. ``_auto_resume_active_skills`` is called → discovers the in-flight
      run, applies default policy (retry), and invokes the launcher with
@@ -24,7 +24,7 @@ import asyncio
 from pathlib import Path
 from typing import Any
 
-from reyn.chat.session import ChatSession
+from reyn.chat.session import Session
 from reyn.core.events.state_log import StateLog
 from reyn.core.kernel.normalizer import NormalizationResult
 from reyn.core.kernel.runtime import OSRuntime, RunResult
@@ -125,7 +125,7 @@ class _StubResumeRuntime(OSRuntime):
 
 
 def test_e2e_chatsession_auto_resume_completes_crashed_skill(tmp_path: Path, monkeypatch):
-    """Tier 3: crashed skill on disk → ChatSession.auto_resume → completes via launcher.
+    """Tier 3: crashed skill on disk → Session.auto_resume → completes via launcher.
 
     The injected launcher mimics what production does (build OSRuntime,
     call run with resume_plan) but with a deterministic stub instead
@@ -156,9 +156,9 @@ def test_e2e_chatsession_auto_resume_completes_crashed_skill(tmp_path: Path, mon
     snap_path = skills_dir / f"{_RUN_ID}.snapshot.json"
     snap.save(snap_path)
 
-    # ChatSession with WAL configured (the SkillRegistry derives its
+    # Session with WAL configured (the SkillRegistry derives its
     # state_dir from agent_name, which matches our seed above).
-    session = ChatSession(
+    session = Session(
         agent_name="alpha",
         state_log=StateLog(tmp_path / ".reyn" / "wal.jsonl"),
         snapshot_path=tmp_path / "alpha_snapshot.json",

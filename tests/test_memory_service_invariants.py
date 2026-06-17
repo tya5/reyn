@@ -5,7 +5,7 @@ Policy compliance (`docs/deep-dives/contributing/testing.md`):
 - NO private-state assertions.
 - File callbacks are thin closures over tmp_path (plain open/os.unlink/os.listdir).
   These facsimiles stand in for the real _file_write / _file_read / _file_delete /
-  _file_regenerate_index methods on ChatSession; the real ones gate on OpContext +
+  _file_regenerate_index methods on Session; the real ones gate on OpContext +
   Workspace + PermissionResolver, which would pull the entire OS stack into what
   should be a unit-level Tier 2 test. The closures do identical filesystem work
   without the permission layer — permissible because this test verifies
@@ -33,7 +33,7 @@ def _make_callbacks(base: Path):
     """Return (file_write, file_read, file_delete, file_regenerate_index)
     as plain async closures over *base*.
 
-    These exercise the same filesystem surface as ChatSession's real callbacks
+    These exercise the same filesystem surface as Session's real callbacks
     without pulling in OpContext or PermissionResolver.
     """
 

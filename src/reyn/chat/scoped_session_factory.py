@@ -1,6 +1,6 @@
-"""#1402: single-source scoped ChatSession construction.
+"""#1402: single-source scoped Session construction.
 
-Three frontends build a ``ChatSession`` with overlapping-but-divergent scoped
+Three frontends build a ``Session`` with overlapping-but-divergent scoped
 wiring:
 
 - ``cli/commands/chat.py`` (chat-CLI / ``run-once``) — the full scoped set;
@@ -15,7 +15,7 @@ exec-seam #1419, empty-stop #1424). This factory is the single chokepoint:
   so every frontend MUST pass them explicitly — ``None`` / off means "not used
   here" *documented*, never silently omitted. Adding a new scoped capability
   here forces all three factories to decide (completeness-by-construction);
-- the common base params flow through ``**base`` so a non-scoped ``ChatSession``
+- the common base params flow through ``**base`` so a non-scoped ``Session``
   param can never drift between factories.
 
 This is a **behavior-preserving** refactor (#1402 lead decision): each factory
@@ -25,7 +25,7 @@ container-rooting) are an explicit-default-documented follow-up — a consumer
 that needs one (e.g. an A2A SWE runner) flips that factory's default to a real
 value in one line.
 
-The multi-callsite invariant (no factory constructs ``ChatSession`` directly —
+The multi-callsite invariant (no factory constructs ``Session`` directly —
 all route through here) is pinned by
 ``tests/test_scoped_session_factory_invariant_1402.py``.
 """
@@ -34,7 +34,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from reyn.chat.agent import Agent
-from reyn.chat.session import ChatSession
+from reyn.chat.session import Session
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -69,17 +69,17 @@ def build_scoped_chat_session(
     chat_tool_use_scheme: str,  # #1593 PR-2 config.tool_use.chat — chat-layer ToolUseScheme name (UNIFORM: every frontend resolves the same reyn.yaml value)
     # ── common base (pass-through; session identity/infra, not a drift surface) ──
     **base: Any,
-) -> ChatSession:
-    """Construct a ``ChatSession`` with the scoped capability + per-session
+) -> Session:
+    """Construct a ``Session`` with the scoped capability + per-session
     config surface passed explicitly. See module docstring for the drift-class
     rationale."""
     # FP-0043 Stage 2: assemble the Agent identity value object at this single
     # construction chokepoint (it gathers every identity input — the explicit
     # scoped env/sandbox/workspace params + the name/model/resolver/role that flow
-    # via ``**base``). ChatSession reads all identity fields through this object
+    # via ``**base``). Session reads all identity fields through this object
     # (delegating properties). This is the prerequisite seam for N Sessions sharing
     # one Agent (a later stage); behaviour here is byte-identical. The identity
-    # params still flow through (for ChatSession's direct/test fallback) — pruning
+    # params still flow through (for Session's direct/test fallback) — pruning
     # them is a later-stage cleanup once sharing is wired.
     agent = Agent(
         agent_name=base["agent_name"],
@@ -92,7 +92,7 @@ def build_scoped_chat_session(
         sandbox_backend=sandbox_backend,
         environment_backend=environment_backend,
     )
-    return ChatSession(
+    return Session(
         agent=agent,
         environment_backend=environment_backend,
         sandbox_backend=sandbox_backend,

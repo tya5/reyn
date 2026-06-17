@@ -1,6 +1,6 @@
 """Convert chainlit ``Element`` uploads into reyn's image-attach queue.
 
-Reyn's ``/image`` slash and ``ChatSession._handle_user_message`` already
+Reyn's ``/image`` slash and ``Session._handle_user_message`` already
 share a per-session queue (``session._pending_user_images: list[dict]``)
 drained on the next user turn. This module mirrors that queue's
 contract from the chainlit side so a file dropped via chainlit's
@@ -22,7 +22,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 # Mirror reyn.interfaces.slash.image._IMAGE_EXTENSIONS. Duplicated rather
-# than imported because the slash module pulls in ChatSession
+# than imported because the slash module pulls in Session
 # internals; the chainlit adapter intentionally stays decoupled from
 # that import graph so unit tests run fast.
 _IMAGE_EXTENSIONS: dict[str, str] = {

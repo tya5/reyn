@@ -13,7 +13,7 @@ summaries (no ``consolidation`` field) fall through to the unchanged
 head/tail+bridge path → normal chat stays byte-identical (pinned below + by the
 unchanged test_session_router_history_slicing suite).
 
-No mocks: a real ChatSession with a synthetic T_max.
+No mocks: a real Session with a synthetic T_max.
 """
 from __future__ import annotations
 

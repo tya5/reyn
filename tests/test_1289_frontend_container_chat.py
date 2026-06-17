@@ -1,14 +1,14 @@
 """Tier 2: per-frontend container-chat activation (#1289).
 
-#1200 wired ChatSession's two seams (FS Workspace + exec OpContext) to a single
+#1200 wired Session's two seams (FS Workspace + exec OpContext) to a single
 injected backend (verified in test_1200_*). #1289 ACTIVATES that at the CLI
 frontends: a shared `reyn.interfaces.cli.env_backend` helper registers the `--env-backend`
 args + builds the EnvironmentBackend; `reyn chat` / `reyn dogfood` (like `reyn
-run`) build it and pass the SAME instance to BOTH ChatSession seams.
+run`) build it and pass the SAME instance to BOTH Session seams.
 
 These pin the shared-helper surface + the frontend-activation contract (the same
 instance reaches both seams = the #1200 single-shared-sandbox review-gate that any
-frontend must uphold). No mocks: a real argparse parser + real ChatSession +
+frontend must uphold). No mocks: a real argparse parser + real Session +
 a real backend instance.
 """
 from __future__ import annotations
@@ -16,7 +16,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from reyn.chat.session import ChatSession
+from reyn.chat.session import Session
 from reyn.core.events.state_log import StateLog
 from reyn.environment.host_backend import HostBackend
 from reyn.interfaces.cli.env_backend import build_environment_backend, register_env_backend_args
@@ -56,7 +56,7 @@ def test_frontend_contract_same_instance_reaches_both_seams(tmp_path: Path) -> N
     object. This is the #1200 single-shared-sandbox invariant the activation must
     uphold (a frontend wiring different instances = reject)."""
     one = HostBackend()  # stands in for a built DockerEnvironmentBackend
-    session = ChatSession(
+    session = Session(
         agent_name="b",
         state_log=StateLog(tmp_path / "state.wal"),
         snapshot_path=tmp_path / "snap.json",

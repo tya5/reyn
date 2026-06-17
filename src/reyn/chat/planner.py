@@ -915,7 +915,7 @@ async def execute_plan(
     # PR-N4: lazy engine construction (path b).
     #
     # Design choice: path (b) rather than path (a) from the spec.
-    # Threading the ChatSession's engine through dispatcher → RouterLoop →
+    # Threading the Session's engine through dispatcher → RouterLoop →
     # RouterCallerState → PlanRuntime → execute_plan would require touching
     # router_loop.py and session.py (outside the ALLOWED file list for this
     # PR). Path (b) constructs a minimal engine per-plan-run from router_model.
@@ -1500,7 +1500,7 @@ async def dispatch_plan_tool(
          cross-agent notify works for ``/plan discard``).
       3. Write decomposition artifact (= P5 SSoT for resume).
       4. Construct ``PlanRuntime(plan_id=…, chain_id=plan_chain_id)``.
-      5. Hand off to ``host.spawn_plan_task`` — ChatSession owns the
+      5. Hand off to ``host.spawn_plan_task`` — Session owns the
          task lifecycle, terminal-text outbox emit, and decomposition
          cleanup on clean exit.
       6. Return ``{"status": "spawned", "plan_id": ..., ...}``.
@@ -1540,7 +1540,7 @@ async def dispatch_plan_tool(
     except Exception as exc:  # noqa: BLE001
         logger.warning("write_plan_decomposition failed: %r", exc)
 
-    # Construct the runtime; ChatSession spawns it as a task and owns
+    # Construct the runtime; Session spawns it as a task and owns
     # the lifecycle (= terminal outbox emit + artifact cleanup).
     from reyn.core.plan import PlanRuntime
     runtime = PlanRuntime(

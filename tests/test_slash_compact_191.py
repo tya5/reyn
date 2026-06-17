@@ -6,7 +6,7 @@ dead-end (the LLM `compact` op + the retry_loop backstop being the other routes)
 via the same `force_compact_now` wrapper the compact op uses (`_compact_now_for_op`),
 and reports freed tokens + the free window afterwards.
 
-Real instances, no mocks: a real ChatSession with a real CompactionController/
+Real instances, no mocks: a real Session with a real CompactionController/
 engine; only `litellm.acompletion` (the compaction LLM call) is monkeypatched to a
 plain async callable returning a scripted summary. Verifies the slash actually
 fires compaction and reports the freed tokens — not LLM behavior.
@@ -20,7 +20,7 @@ from types import SimpleNamespace
 
 import litellm
 
-from reyn.chat.session import ChatMessage, ChatSession
+from reyn.chat.session import ChatMessage, Session
 from reyn.config import CompactionConfig
 from reyn.core.events.state_log import StateLog
 from reyn.interfaces.slash import REGISTRY
@@ -40,8 +40,8 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def _make_session(tmp_path) -> ChatSession:
-    """Create a ChatSession with a small synthetic T_max to force non-empty candidates.
+def _make_session(tmp_path) -> Session:
+    """Create a Session with a small synthetic T_max to force non-empty candidates.
 
     #1128 step 3: _select_candidates uses token-budget boundaries from the engine.
     With ``t_max=2000`` and ``section_caps_spec_tokens=0`` (T_SP≈1125, T_comp_SP≈481):
@@ -55,7 +55,7 @@ def _make_session(tmp_path) -> ChatSession:
     original = _mb.get_max_input_tokens
     _mb.get_max_input_tokens = lambda model, **kw: 2000  # type: ignore[assignment]
     try:
-        session = ChatSession(
+        session = Session(
             agent_name="default",
             budget_tracker=BudgetTracker(CostConfig()),
             state_log=StateLog(tmp_path / ".reyn" / "state" / "wal.jsonl"),

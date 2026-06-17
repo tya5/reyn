@@ -21,7 +21,7 @@ from pathlib import Path
 from reyn.llm.llm import run_async
 
 from ..common_args import add_common_args
-from ..session import Session
+from ..invocation_context import InvocationContext
 
 # ---------------------------------------------------------------------------
 # Scope tier helpers
@@ -330,7 +330,7 @@ def run_serve(args: argparse.Namespace) -> None:
     from reyn.runtime.budget.budget import BudgetTracker
     from reyn.security.permissions.permissions import PermissionResolver
 
-    session_cfg = Session.from_args(args)
+    session_cfg = InvocationContext.from_args(args)
     from reyn.interfaces.cli.credentials_check import verify_credentials_or_exit
     verify_credentials_or_exit(session_cfg, args)
     model, _ = session_cfg.model_for(args)
@@ -369,7 +369,7 @@ def run_serve(args: argparse.Namespace) -> None:
     # which causes any code that uses relative `.reyn/...` paths to try to
     # write under the filesystem root and crash with a read-only-fs error.
     # `--project` only fixes the explicit StateLog/budget paths in this
-    # function; deeper code paths (ChatSession, Workspace, AgentRegistry)
+    # function; deeper code paths (Session, Workspace, AgentRegistry)
     # also use relative paths internally. Anchor the whole process at the
     # project root so the same code that works under `reyn chat` works
     # here unchanged.
@@ -414,7 +414,7 @@ def run_serve(args: argparse.Namespace) -> None:
             events_config=session_cfg.config.events,
             state_log=state_log,
             budget_tracker=budget_tracker,
-            # Same fix as web/deps.py: A2A / MCP-serve ChatSession factory
+            # Same fix as web/deps.py: A2A / MCP-serve Session factory
             # was missing ``sandbox_config`` propagation. Without it, the
             # operator's reyn.yaml ``sandbox.backend`` selection (e.g.
             # ``noop``) never reaches the sandboxed_exec handler.

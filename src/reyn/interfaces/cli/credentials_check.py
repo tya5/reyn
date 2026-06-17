@@ -15,7 +15,7 @@ import sys
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from reyn.interfaces.cli.session import Session
+    from reyn.interfaces.cli.invocation_context import InvocationContext
 
 
 # Mapping from litellm provider prefix → required env var (litellm convention).
@@ -32,7 +32,7 @@ _PROVIDER_ENV_VARS: dict[str, str] = {
 
 
 def verify_credentials_or_exit(
-    session: "Session", args: argparse.Namespace,
+    session: "InvocationContext", args: argparse.Namespace,
 ) -> None:
     """Exit 1 with an actionable message if the model the command will use
     has no credentials configured (no env var AND no api_base proxy).

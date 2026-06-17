@@ -1,8 +1,8 @@
-"""Tier 2: AgentRegistry + ChatSession invariants for intervention restore.
+"""Tier 2: AgentRegistry + Session invariants for intervention restore.
 
 PR-intervention-link L4+L5. After a process crash, the WAL replay
 populates ``AgentSnapshot.outstanding_interventions``. AgentRegistry must
-include this in the "non-empty restore" decision and ChatSession must
+include this in the "non-empty restore" decision and Session must
 re-enqueue the restored interventions into the InterventionRegistry so
 that:
 
@@ -22,7 +22,7 @@ from pathlib import Path
 
 import pytest
 
-from reyn.chat.session import ChatSession
+from reyn.chat.session import Session
 from reyn.core.events.agent_snapshot import AgentSnapshot
 from reyn.core.events.state_log import StateLog
 
@@ -31,14 +31,14 @@ from reyn.core.events.state_log import StateLog
 # ---------------------------------------------------------------------------
 
 
-def _make_session(tmp_path: Path, *, agent_name: str = "alpha") -> ChatSession:
-    """Build a ChatSession redirected to ``tmp_path`` via public kwargs.
+def _make_session(tmp_path: Path, *, agent_name: str = "alpha") -> Session:
+    """Build a Session redirected to ``tmp_path`` via public kwargs.
 
     issue #254 Phase 1: register a placeholder listener so the registry's
     ``enforce_listener_presence=True`` short-circuit does not fire — these
     tests exercise restore + answer paths, acting as their own listener.
     """
-    session = ChatSession(
+    session = Session(
         agent_name=agent_name,
         state_log=StateLog(tmp_path / "state.wal"),
         snapshot_path=tmp_path / f"{agent_name}_snapshot.json",
@@ -99,10 +99,10 @@ async def test_registry_restore_all_includes_outstanding_interventions(tmp_path,
     snap.save(state_dir / "snapshot.json")
 
     state_log = StateLog(tmp_path / ".reyn" / "wal.jsonl")
-    # session_factory: minimal ChatSession with WAL persistence enabled,
+    # session_factory: minimal Session with WAL persistence enabled,
     # consistent with how the chat REPL builds them in production.
     def _factory(profile: AgentProfile):
-        s = ChatSession(agent_name=profile.name, state_log=state_log)
+        s = Session(agent_name=profile.name, state_log=state_log)
         s.register_intervention_listener("test")
         return s
     registry = AgentRegistry(
@@ -128,7 +128,7 @@ async def test_registry_restore_all_includes_outstanding_interventions(tmp_path,
 
 
 # ---------------------------------------------------------------------------
-# L5: ChatSession.restore_state intervention re-enqueue
+# L5: Session.restore_state intervention re-enqueue
 # ---------------------------------------------------------------------------
 
 

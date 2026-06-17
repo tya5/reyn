@@ -66,14 +66,14 @@ def _make_tasks_jsonl(tasks: list[dict]) -> str:
 def benchmark_workspace(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     """Set up a temporary benchmark workspace.
 
-    Returns a namespace with helpers; monkeypatches Session, load_dsl_skill,
+    Returns a namespace with helpers; monkeypatches InvocationContext, load_dsl_skill,
     resolve_skill_path so tests run without a live reyn.yaml or skill on disk.
     """
     monkeypatch.chdir(tmp_path)
 
-    # Stub Session
+    # Stub InvocationContext
     from reyn.config import ReynConfig, SafetyConfig
-    from reyn.interfaces.cli import session as session_mod
+    from reyn.interfaces.cli import invocation_context as invocation_mod
     from reyn.llm.model_resolver import ModelResolver
 
     class _StubSession:
@@ -93,7 +93,7 @@ def benchmark_workspace(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
         def safety_for(self, args):
             return SafetyConfig()
 
-    monkeypatch.setattr(session_mod, "Session", _StubSession)
+    monkeypatch.setattr(invocation_mod, "InvocationContext", _StubSession)
 
     # Stub load_dsl_skill
     import reyn.core.compiler as compiler_mod

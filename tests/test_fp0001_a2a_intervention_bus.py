@@ -3,15 +3,15 @@
 Pre-#292 this file pinned the bus as an iv owner: ``request(iv)``
 awaited ``iv.future`` and returned the answer; the iv was stored in
 ``RunEntry.pending_intervention``. The pre-α architecture is described
-in issue #292 body (= "A2A override completely bypasses ChatSession's
+in issue #292 body (= "A2A override completely bypasses Session's
 iv machinery"); see history of this file in git for the old test
 shape.
 
 Post-α the bus is a **side-effect observer**: ``on_dispatch(iv)`` is
-invoked by ``ChatSession._dispatch_intervention`` for chain-registered
+invoked by ``Session._dispatch_intervention`` for chain-registered
 overrides and runs A2A peer-facing notifications (RunRegistry status
 mirror, SSE history append, webhook POST) without taking iv
-ownership. The iv lives in ``ChatSession._interventions._active`` and
+ownership. The iv lives in ``Session._interventions._active`` and
 the future is awaited by ``InterventionHandler.dispatch`` like any
 other (= TUI) iv.
 
@@ -19,7 +19,7 @@ Pins (= α contract):
 
   1. ``A2AInterventionBus.on_dispatch(iv)`` exists; ``request`` /
      ``deliver`` are removed (= peer answers no longer flow through
-     the bus; they flow through ``ChatSession.answer_pending_intervention``).
+     the bus; they flow through ``Session.answer_pending_intervention``).
   2. ``on_dispatch`` mirrors ``status="input-required"`` on the RunEntry.
   3. ``on_dispatch`` does NOT write ``pending_intervention`` to
      RunEntry (= the field is dropped from RunEntry entirely).
@@ -89,7 +89,7 @@ def test_bus_channel_id_format_unchanged() -> None:
 def test_on_dispatch_mirrors_input_required_status() -> None:
     """Tier 2: ``on_dispatch`` flips RunEntry.status to ``"input-required"``
     so polling peers see the pending state. The iv itself stays in
-    ChatSession; this is a public-status mirror only.
+    Session; this is a public-status mirror only.
     """
     registry, run_id = _make_registry_with_run()
     bus = A2AInterventionBus(run_id=run_id, registry=registry)
@@ -105,7 +105,7 @@ def test_on_dispatch_mirrors_input_required_status() -> None:
 
 def test_on_dispatch_does_not_write_pending_intervention_to_run_entry() -> None:
     """Tier 2: α contract — the RunEntry has NO ``pending_intervention``
-    field. The iv lives in ChatSession's outstanding_interventions.
+    field. The iv lives in Session's outstanding_interventions.
     Verifies the dataclass shape change ships cleanly.
     """
     registry, run_id = _make_registry_with_run()

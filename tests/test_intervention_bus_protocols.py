@@ -35,7 +35,7 @@ import asyncio
 import inspect
 from pathlib import Path
 
-from reyn.chat.session import ChatInterventionBus, ChatSession
+from reyn.chat.session import ChatInterventionBus, Session
 from reyn.interfaces.web.a2a_intervention import A2AInterventionBus
 from reyn.user_intervention import (
     InterventionAnswer,
@@ -98,7 +98,7 @@ def test_stdin_intervention_bus_satisfies_both_protocols() -> None:
 
 def test_chat_intervention_bus_satisfies_both_protocols(tmp_path: Path) -> None:
     """Tier 2: ``ChatInterventionBus`` satisfies both Protocols."""
-    session = ChatSession(agent_name="t")
+    session = Session(agent_name="t")
     bus = ChatInterventionBus(session, run_id="r1", skill_name="demo")
     assert isinstance(bus, RequestBus)
     assert isinstance(bus, UserChannel)
@@ -169,7 +169,7 @@ def test_a2a_bus_only_exposes_on_dispatch_post_alpha() -> None:
     """Tier 2: ``A2AInterventionBus.request`` /
     ``deliver`` were removed (issue #292 α) when the bus became a side-effect
     observer. Pin the absence so a future refactor that re-adds them
-    fails first (= the iv ownership question is settled: ChatSession
+    fails first (= the iv ownership question is settled: Session
     owns it, the bus only emits side effects).
     """
     assert not hasattr(A2AInterventionBus, "request")
