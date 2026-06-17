@@ -27,9 +27,9 @@ from pathlib import Path
 
 import pytest
 
-import reyn.kernel.llm_call_recorder as llm_call_recorder_mod
-from reyn.events.state_log import StateLog
-from reyn.kernel.runtime import OSRuntime
+import reyn.core.kernel.llm_call_recorder as llm_call_recorder_mod
+from reyn.core.events.state_log import StateLog
+from reyn.core.kernel.runtime import OSRuntime
 from reyn.llm.llm import LLMCallResult
 from reyn.schemas.models import Phase, Skill, SkillGraph
 from reyn.skill.skill_registry import SkillRegistry

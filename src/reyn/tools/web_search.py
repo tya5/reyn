@@ -50,8 +50,8 @@ async def _handle(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
     body of handle_web_search may be inlined here in M4 cleanup.
     """
     # Lazy import to avoid circular dependency at registry-init time.
-    from reyn.op_runtime.context import OpContext
-    from reyn.op_runtime.web import handle_web_search
+    from reyn.core.op_runtime.context import OpContext
+    from reyn.core.op_runtime.web import handle_web_search
     from reyn.schemas.models import WebSearchIROp
     from reyn.security.permissions.permissions import PermissionDecl
 

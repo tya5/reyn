@@ -15,7 +15,7 @@ from pathlib import Path
 import pytest
 
 from reyn.chat.planner import Plan, PlanStep
-from reyn.plan import (
+from reyn.core.plan import (
     DECOMPOSITION_SCHEMA_VERSION,
     DecompositionCorruptError,
     decomposition_dir,

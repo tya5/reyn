@@ -27,7 +27,7 @@ import pytest
 
 from reyn.chat.profile import AgentProfile
 from reyn.chat.registry import AgentRegistry
-from reyn.events.state_log import StateLog
+from reyn.core.events.state_log import StateLog
 from reyn.skill.skill_snapshot import SkillSnapshot
 
 # ---------------------------------------------------------------------------

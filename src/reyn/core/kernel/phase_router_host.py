@@ -187,11 +187,11 @@ class PhaseRouterLoopHost:
         (P7). Chat hosts do NOT implement this method; RouterLoop getattr-guards it and
         falls back to ``compute_sub_loop_args_hash`` → chat memo key byte-identical.
         """
+        from reyn.core.plan.sub_loop_memo import compute_sub_loop_args_hash
         from reyn.dispatch.dispatcher import (
             _LLM_VOLATILE_FRAME_FIELDS,
             _LLM_VOLATILE_NESTED_FIELDS,
         )
-        from reyn.plan.sub_loop_memo import compute_sub_loop_args_hash
 
         robust = [
             self._strip_volatile_frame_fields(
@@ -421,7 +421,7 @@ class PhaseRouterLoopHost:
         ``_run_op_loop`` does today (``phase_executor.py``): ``allowed_ops`` →
         ``_build_phase_tool_catalog`` → ``{"type": "function", **entry}`` list.
         """
-        from reyn.kernel.control_ir_executor import _build_phase_tool_catalog
+        from reyn.core.kernel.control_ir_executor import _build_phase_tool_catalog
 
         catalog = _build_phase_tool_catalog(self._allowed_ops or set())
         return [{"type": "function", **entry} for entry in catalog.values()]

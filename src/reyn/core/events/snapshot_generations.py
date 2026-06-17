@@ -22,8 +22,8 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
-from reyn.events.agent_snapshot import AgentSnapshot
-from reyn.events.state_log import StateLog
+from reyn.core.events.agent_snapshot import AgentSnapshot
+from reyn.core.events.state_log import StateLog
 
 _GEN_RE = re.compile(r"^gen-(\d+)\.json$")
 

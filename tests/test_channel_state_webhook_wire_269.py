@@ -53,7 +53,7 @@ from reyn.chat.channel_state import (  # noqa: E402
     DeliveryOutcome,
     DeliveryResult,
 )
-from reyn.events.events import EventLog  # noqa: E402
+from reyn.core.events.events import EventLog  # noqa: E402
 from reyn.interfaces.web.a2a_intervention import A2AInterventionBus  # noqa: E402
 from reyn.interfaces.web.run_registry import RunRegistry  # noqa: E402
 from reyn.user_intervention import UserIntervention  # noqa: E402

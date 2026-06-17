@@ -198,7 +198,7 @@ def test_run_adds_i_flag_only_when_stdin_provided(tmp_path: Path) -> None:
     # with stdin → `-i` immediately after "exec" (so docker forwards stdin)
     asyncio.run(
         be.run(
-            ["python", "-m", "reyn.kernel._python_harness"],
+            ["python", "-m", "reyn.core.kernel._python_harness"],
             SandboxPolicy(timeout_seconds=30),
             stdin=b'{"req": 1}',
         )

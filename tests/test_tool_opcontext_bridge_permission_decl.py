@@ -45,9 +45,9 @@ from typing import Any
 
 import pytest
 
+from reyn.core.events.events import EventLog
+from reyn.core.op_runtime.context import OpContext
 from reyn.data.workspace.workspace import Workspace
-from reyn.events.events import EventLog
-from reyn.op_runtime.context import OpContext
 from reyn.security.permissions.permissions import PermissionDecl
 from reyn.tools.types import PhaseCallerState, ToolContext
 
@@ -162,14 +162,14 @@ async def test_tool_bridge_preserves_decl_from_phase_state(
         return {"status": "ok"}
 
     # Patch the canonical op_runtime entry point each tool delegates to.
-    # Each Tool wrapper does `from reyn.op_runtime.<x> import handle as handle_X`
+    # Each Tool wrapper does `from reyn.core.op_runtime.<x> import handle as handle_X`
     # inside its _handle function — patch the source module's `handle`.
     if tool_module_name == "reyn.tools.lint":
-        import reyn.op_runtime.lint as op_mod
+        import reyn.core.op_runtime.lint as op_mod
         monkeypatch.setattr(op_mod, "handle", _capture)
     elif tool_module_name == "reyn.tools.web_search":
-        # web_search delegates to handle_web_search in reyn.op_runtime.web
-        from reyn.op_runtime import web as op_mod
+        # web_search delegates to handle_web_search in reyn.core.op_runtime.web
+        from reyn.core.op_runtime import web as op_mod
         monkeypatch.setattr(op_mod, "handle_web_search", _capture)
 
     skill_decl = PermissionDecl(mcp=["github"])

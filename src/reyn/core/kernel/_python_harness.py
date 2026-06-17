@@ -33,7 +33,7 @@ import traceback
 from typing import Any
 
 # Re-exported to keep parent and child agreeing on the constants.
-from reyn.kernel._python_allowlist import (
+from reyn.core.kernel._python_allowlist import (
     BANNED_BUILTINS,
     PURE_STDLIB_ALLOWLIST,
     module_is_allowed,

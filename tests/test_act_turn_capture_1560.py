@@ -26,7 +26,7 @@ import pytest
 from reyn.chat.profile import AgentProfile
 from reyn.chat.registry import AgentRegistry
 from reyn.config import TimeTravelConfig, _build_time_travel_config
-from reyn.events.state_log import StateLog
+from reyn.core.events.state_log import StateLog
 
 # ── config ─────────────────────────────────────────────────────────────────
 

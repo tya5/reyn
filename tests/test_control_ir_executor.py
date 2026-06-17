@@ -12,9 +12,9 @@ import asyncio
 from pathlib import Path
 from typing import Any
 
+from reyn.core.events.events import EventLog
+from reyn.core.kernel.control_ir_executor import ControlIRExecutor, _build_phase_tool_catalog
 from reyn.data.workspace.workspace import Workspace
-from reyn.events.events import EventLog
-from reyn.kernel.control_ir_executor import ControlIRExecutor, _build_phase_tool_catalog
 from reyn.schemas.models import FileIROp
 from reyn.security.permissions.permissions import PermissionDecl, PermissionResolver
 

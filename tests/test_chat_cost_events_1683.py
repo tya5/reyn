@@ -21,7 +21,7 @@ from types import SimpleNamespace
 import litellm
 import pytest
 
-from reyn.events.events import EventLog, set_llm_request_event_log
+from reyn.core.events.events import EventLog, set_llm_request_event_log
 from reyn.interfaces.tui.widgets.right_panel.cost_tab import (
     render_cost,  # #2 moved chat/tui → reyn/tui
 )

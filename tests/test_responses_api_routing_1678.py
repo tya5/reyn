@@ -19,7 +19,7 @@ from types import SimpleNamespace
 import litellm
 import pytest
 
-from reyn.events.events import EventLog, set_llm_request_event_log
+from reyn.core.events.events import EventLog, set_llm_request_event_log
 from reyn.llm.llm import (
     ResponsesEndpointRequiredError,
     _to_responses_model,

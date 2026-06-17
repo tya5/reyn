@@ -22,9 +22,9 @@ from pathlib import Path
 
 import pytest
 
-from reyn.compiler.expander import expand_phase, expand_skill
-from reyn.compiler.ir import ArtifactDef, PhaseDef, SkillDef
-from reyn.compiler.parser import parse_skill
+from reyn.core.compiler.expander import expand_phase, expand_skill
+from reyn.core.compiler.ir import ArtifactDef, PhaseDef, SkillDef
+from reyn.core.compiler.parser import parse_skill
 from reyn.schemas.models import Skill
 
 # ---------------------------------------------------------------------------

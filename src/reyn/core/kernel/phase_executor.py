@@ -22,27 +22,27 @@ from typing import TYPE_CHECKING
 
 import pydantic
 
-from reyn.data.workspace.artifact_validator import validate_artifact_data
-from reyn.kernel.normalizer import (
+from reyn.core.kernel.normalizer import (
     ControlIRValidationError,
     NormalizationError,
     NormalizationResult,
     normalize,
 )
-from reyn.kernel.runtime_types import (
+from reyn.core.kernel.runtime_types import (
     PhaseBudgetExceededError,
     WorkflowAbortedError,
     _normalize_artifact,
     _validate_artifact_structure,
 )
-from reyn.kernel.validation import ValidationError, validate_output
+from reyn.core.kernel.validation import ValidationError, validate_output
+from reyn.data.workspace.artifact_validator import validate_artifact_data
 from reyn.limits.limit_handler import LimitDecision, handle_limit_exceeded
 from reyn.schemas.models import ActOutput, CandidateOutput, LLMOutput
 
 if TYPE_CHECKING:
     from reyn.config import PhaseActResultsCompactionConfig
-    from reyn.kernel.llm_call_recorder import LLMCallRecorder
-    from reyn.kernel.run_state import RunState
+    from reyn.core.kernel.llm_call_recorder import LLMCallRecorder
+    from reyn.core.kernel.run_state import RunState
     from reyn.schemas.models import Skill
     from reyn.services.compaction.engine import CompactionEngine
     from reyn.user_intervention import RequestBus
@@ -525,7 +525,7 @@ class PhaseExecutor:
         import json as _json
 
         from reyn.chat.router_loop import EMPTY_STOP_RETRY_DIRECTIVE, RouterLoop
-        from reyn.kernel.phase_router_host import PhaseRouterLoopHost
+        from reyn.core.kernel.phase_router_host import PhaseRouterLoopHost
         from reyn.services.turn_budget import try_build_default_turn_budget_engine
 
         phase_def = self._skill.phases.get(phase)
@@ -933,7 +933,7 @@ class PhaseExecutor:
             # ActOutput.model_validate so the ControlIROp discriminated union
             # resolves correctly.  The raw dict is shallow-copied so the
             # original is untouched (needed for error reporting below).
-            from reyn.op_runtime.registry import _PHASE_TOOL_NAME_ALIAS
+            from reyn.core.op_runtime.registry import _PHASE_TOOL_NAME_ALIAS
             if raw.get("type") == "act" and isinstance(raw.get("ops"), list):
                 ops_list = raw["ops"]
                 if any(

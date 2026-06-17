@@ -3,7 +3,7 @@
 Extracted to a leaf module to break circular imports between runtime.py
 and the layer modules (phase_executor.py, llm_call_recorder.py,
 run_orchestrator.py). Other kernel modules import from here; this file
-imports nothing from the rest of reyn.kernel.
+imports nothing from the rest of reyn.core.kernel.
 
 FP-0020 follow-up: surfaces during Component C (PhaseExecutor) extraction.
 """

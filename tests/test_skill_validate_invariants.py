@@ -156,10 +156,10 @@ def test_skill_load_warns_on_inconsistency(tmp_path: Path, caplog) -> None:
     """Tier 2: loading a skill with op/permission inconsistency emits a logger.warning.
 
     Invariant: load_dsl_skill completes successfully (no raise) AND at least one
-    WARNING-level log message appears in reyn.compiler.loader for the inconsistent
+    WARNING-level log message appears in reyn.core.compiler.loader for the inconsistent
     skill.  No mocks used — real skill fixture + real loader.
     """
-    from reyn.compiler.loader import load_dsl_skill
+    from reyn.core.compiler.loader import load_dsl_skill
 
     skill_dir = _build_skill_dir(
         tmp_path,
@@ -171,7 +171,7 @@ def test_skill_load_warns_on_inconsistency(tmp_path: Path, caplog) -> None:
     # The _build_skill_dir helper already creates artifacts/out.yaml.
     skill_md = skill_dir / "skill.md"
 
-    with caplog.at_level(logging.WARNING, logger="reyn.compiler.loader"):
+    with caplog.at_level(logging.WARNING, logger="reyn.core.compiler.loader"):
         # Must not raise — load completes even with inconsistency.
         skill = load_dsl_skill(skill_md, skill_root=skill_dir.parent)
 

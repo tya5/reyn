@@ -44,7 +44,7 @@ import httpx
 import litellm
 import pytest
 
-from reyn.events.events import EventLog
+from reyn.core.events.events import EventLog
 from reyn.llm.llm import (
     _LLM_RETRY_BASE_S,
     _LLM_RETRY_MAX_ATTEMPTS,

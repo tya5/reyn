@@ -23,6 +23,7 @@ from pathlib import Path
 
 import pytest
 
+from reyn.core.events.events import EventLog
 from reyn.eval.export import (
     FileExporter,
     IETFAuditExporter,
@@ -31,7 +32,6 @@ from reyn.eval.export import (
     TraceExporter,
 )
 from reyn.eval.export_dispatcher import EventExportDispatcher
-from reyn.events.events import EventLog
 
 # ── Shared test fixtures ─────────────────────────────────────────────────────
 

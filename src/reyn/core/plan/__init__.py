@@ -7,7 +7,7 @@ analyzer, coordinator.
 """
 from __future__ import annotations
 
-from reyn.plan.decomposition import (
+from reyn.core.plan.decomposition import (
     DECOMPOSITION_SCHEMA_VERSION,
     DecompositionCorruptError,
     decomposition_dir,
@@ -17,13 +17,13 @@ from reyn.plan.decomposition import (
     read_decomposition,
     write_decomposition,
 )
-from reyn.plan.plan_registry import PlanRegistry
-from reyn.plan.plan_resume_analyzer import (
+from reyn.core.plan.plan_registry import PlanRegistry
+from reyn.core.plan.plan_resume_analyzer import (
     PlanResumeAnalyzer,
     PlanResumePlan,
     PlanStepState,
 )
-from reyn.plan.plan_resume_coordinator import (
+from reyn.core.plan.plan_resume_coordinator import (
     PlanResumeAction,
     PlanResumeChildAction,
     PlanResumeConfig,
@@ -31,15 +31,15 @@ from reyn.plan.plan_resume_coordinator import (
     PlanResumeDecision,
     build_plan_resume_config,
 )
-from reyn.plan.plan_runtime import PlanRuntime
-from reyn.plan.plan_snapshot import (
+from reyn.core.plan.plan_runtime import PlanRuntime
+from reyn.core.plan.plan_snapshot import (
     PLAN_SNAPSHOT_VERSION,
     PlanSnapshot,
     get_step_result,
     plan_snapshot_path,
     step_result_file_path,
 )
-from reyn.plan.sub_loop_memo import (
+from reyn.core.plan.sub_loop_memo import (
     SubLoopMemoProvider,
     compute_sub_loop_args_hash,
     extract_step_llm_call_records,

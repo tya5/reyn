@@ -209,9 +209,9 @@ def test_web_search_parameters_constant_matches_render():
 
 def _make_op_context(config_permissions: dict, tmp_path: Path):
     """Build a real OpContext with PermissionResolver wired in for test use."""
+    from reyn.core.events.events import EventLog
+    from reyn.core.op_runtime.context import OpContext
     from reyn.data.workspace.workspace import Workspace
-    from reyn.events.events import EventLog
-    from reyn.op_runtime.context import OpContext
     from reyn.security.permissions.permissions import PermissionDecl, PermissionResolver
 
     events = EventLog()
@@ -237,7 +237,7 @@ def test_web_search_config_deny_raises_permission_error(tmp_path: Path) -> None:
     is issued — operator deny is the only sensible restriction for a
     read-only op with no side effects.
     """
-    from reyn.op_runtime.web import handle_web_search
+    from reyn.core.op_runtime.web import handle_web_search
     from reyn.schemas.models import WebSearchIROp
 
     ctx = _make_op_context({"web.search": "deny"}, tmp_path)
@@ -253,7 +253,7 @@ def test_web_search_no_deny_config_does_not_raise(tmp_path: Path) -> None:
     This test uses a non-existent backend to avoid real network calls; the
     backend error occurs AFTER the permission check passes.
     """
-    from reyn.op_runtime.web import handle_web_search
+    from reyn.core.op_runtime.web import handle_web_search
     from reyn.schemas.models import WebSearchIROp
 
     ctx = _make_op_context({}, tmp_path)  # no web.search config → allow

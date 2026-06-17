@@ -24,8 +24,8 @@ if str(_SRC) not in sys.path:
 
 from reyn.chat.profile import AgentProfile
 from reyn.chat.registry import AgentRegistry
-from reyn.events.snapshot_generations import is_active_seq
-from reyn.events.state_log import StateLog
+from reyn.core.events.snapshot_generations import is_active_seq
+from reyn.core.events.state_log import StateLog
 from reyn.interfaces.chainlit_app.slash_route import is_slash
 from reyn.slash import REGISTRY
 

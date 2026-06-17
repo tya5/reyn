@@ -16,7 +16,7 @@ import pytest
 from reyn.budget.budget import BudgetTracker, CostConfig
 from reyn.chat.services.budget_gateway import BudgetGateway
 from reyn.chat.session import RouterCapExceeded
-from reyn.events.events import EventLog
+from reyn.core.events.events import EventLog
 from reyn.llm.model_resolver import ModelResolver
 from reyn.llm.pricing import TokenUsage
 

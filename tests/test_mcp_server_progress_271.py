@@ -44,7 +44,7 @@ import pytest
 
 pytest.importorskip("mcp", reason="mcp not installed")
 
-from reyn.events.events import EventLog  # noqa: E402
+from reyn.core.events.events import EventLog  # noqa: E402
 from reyn.mcp_server import _MCPProgressBridge  # noqa: E402
 from reyn.schemas.models import Event  # noqa: E402
 

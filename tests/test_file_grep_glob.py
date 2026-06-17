@@ -18,8 +18,8 @@ from pathlib import Path
 
 import pytest
 
+from reyn.core.events.events import EventLog
 from reyn.data.workspace.workspace import Workspace
-from reyn.events.events import EventLog
 from reyn.tools.file import (  # noqa: F401 (ToolRegistry imported for type check)
     GLOB_FILES,
     GREP_FILES,

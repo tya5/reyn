@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable
 
 from reyn.budget.budget import BudgetExceeded
-from reyn.kernel.runtime_types import (
+from reyn.core.kernel.runtime_types import (
     LoopLimitExceededError,
     PhaseBudgetExceededError,
     RunResult,
@@ -34,11 +34,11 @@ from reyn.skill.skill_node_runner import execute_skill_node
 
 if TYPE_CHECKING:
     from reyn.config import SafetyConfig
+    from reyn.core.events.events import EventLog
+    from reyn.core.kernel.phase_executor import PhaseExecutor
+    from reyn.core.kernel.preprocessor_executor import PreprocessorExecutor
+    from reyn.core.kernel.run_state import RunState
     from reyn.data.workspace.workspace import Workspace
-    from reyn.events.events import EventLog
-    from reyn.kernel.phase_executor import PhaseExecutor
-    from reyn.kernel.preprocessor_executor import PreprocessorExecutor
-    from reyn.kernel.run_state import RunState
     from reyn.schemas.models import CandidateOutput, Skill
     from reyn.security.permissions.permissions import PermissionResolver
     from reyn.skill.skill_registry import SkillRegistry
@@ -399,7 +399,7 @@ class RunOrchestrator:
                         last_phase_artifact_path=artifact_path,
                     )
 
-            from reyn.kernel.postprocessor_executor import PostprocessorExecutor
+            from reyn.core.kernel.postprocessor_executor import PostprocessorExecutor
             post_executor = PostprocessorExecutor(
                 skill=self._skill,
                 workspace=self._workspace,

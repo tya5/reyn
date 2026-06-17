@@ -635,7 +635,7 @@ def regenerate_index_impl(
     - Writes `header + "\\n".join(entries) + "\\n"` (trailing newline only
       when entries exist).
     """
-    from reyn.compiler.parser import _split_frontmatter
+    from reyn.core.compiler.parser import _split_frontmatter
 
     output_basename = output_path.name
     entries: list[str] = []

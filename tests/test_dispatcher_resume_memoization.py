@@ -302,7 +302,7 @@ def test_memoized_call_does_not_emit_wal_step_events(tmp_path):
     Verified by wiring a real StateLog into the context and confirming
     no step events appear after the memoized call.
     """
-    from reyn.events.state_log import StateLog
+    from reyn.core.events.state_log import StateLog
     log = StateLog(tmp_path / "wal.jsonl")
 
     async def invoker(args):

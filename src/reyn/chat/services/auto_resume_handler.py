@@ -17,11 +17,11 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Awaitable, Callable
 
-from reyn.events.events import EventLog
+from reyn.core.events.events import EventLog
 
 if TYPE_CHECKING:
     from reyn.config import SkillResumeConfig
-    from reyn.events.state_log import StateLog
+    from reyn.core.events.state_log import StateLog
     from reyn.skill.skill_registry import SkillRegistry
     from reyn.skill.skill_resume_coordinator import ResumeDecision, SkillResumeCoordinator
 
@@ -34,7 +34,7 @@ class AutoResumeHandler:
     Parameters
     ----------
     event_log:
-        Session-scoped :class:`~reyn.events.events.EventLog`.  All resume
+        Session-scoped :class:`~reyn.core.events.events.EventLog`.  All resume
         lifecycle events are emitted here (P6).
     state_log:
         Per-process WAL used by :class:`~reyn.skill.skill_resume_coordinator.SkillResumeCoordinator`

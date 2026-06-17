@@ -26,7 +26,7 @@ from pathlib import Path
 from typing import Callable, Iterable, Literal
 
 from reyn.chat.planner import Plan, PlanStep
-from reyn.plan.plan_snapshot import PlanSnapshot, get_step_result
+from reyn.core.plan.plan_snapshot import PlanSnapshot, get_step_result
 
 logger = logging.getLogger(__name__)
 

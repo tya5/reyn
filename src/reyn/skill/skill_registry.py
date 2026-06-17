@@ -37,7 +37,7 @@ from typing import TYPE_CHECKING, Awaitable, Callable
 from reyn.skill.skill_snapshot import SkillSnapshot
 
 if TYPE_CHECKING:
-    from reyn.events.state_log import StateLog
+    from reyn.core.events.state_log import StateLog
 
 logger = logging.getLogger(__name__)
 

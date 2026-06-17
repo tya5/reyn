@@ -36,7 +36,7 @@ def _search_roots(project_root: Path) -> list[tuple[str, Path]]:
 
 
 def _read_skill_md(skill_md: Path) -> tuple[dict, str]:
-    from reyn.compiler.parser import _split_frontmatter
+    from reyn.core.compiler.parser import _split_frontmatter
     try:
         fm, body = _split_frontmatter(skill_md.read_text(encoding="utf-8"))
         return fm, body

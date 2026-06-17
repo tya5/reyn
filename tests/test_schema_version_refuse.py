@@ -15,7 +15,7 @@ import json
 
 import pytest
 
-from reyn.events.agent_snapshot import (
+from reyn.core.events.agent_snapshot import (
     SNAPSHOT_VERSION,
     AgentSnapshot,
     SchemaVersionError,

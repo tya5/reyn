@@ -3,32 +3,31 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable
 
-from reyn.kernel.rollback_state import (
+from reyn.core.kernel.rollback_state import (
     RollbackState,  # noqa: F401 – re-exported for existing callers
 )
-from reyn.kernel.run_state import RunState
+from reyn.core.kernel.run_state import RunState
 from reyn.schemas.models import CandidateOutput, ContextFrame, Skill
 
 if TYPE_CHECKING:
     from reyn.budget.budget import BudgetTracker
     from reyn.config import MultimodalConfig, PhaseActResultsCompactionConfig, SandboxConfig
+    from reyn.core.events.state_log import StateLog
     from reyn.data.workspace.media_store import MediaStore
     from reyn.environment.backend import EnvironmentBackend
-    from reyn.events.state_log import StateLog
     from reyn.security.sandbox.backend import SandboxBackend
     from reyn.security.secrets.store import ScopedSecretStore
     from reyn.services.compaction.engine import CompactionEngine
     from reyn.skill.skill_registry import SkillRegistry
 from reyn.config import SafetyConfig
 from reyn.context_builder import build_frame
-from reyn.data.workspace.workspace import Workspace
-from reyn.events.events import EventLog
-from reyn.kernel.control_ir_executor import ControlIRExecutor
-from reyn.kernel.llm_call_recorder import LLMCallRecorder
-from reyn.kernel.phase_executor import PhaseExecutor
-from reyn.kernel.preprocessor_executor import PreprocessorExecutor
-from reyn.kernel.run_orchestrator import RunOrchestrator
-from reyn.kernel.runtime_types import (
+from reyn.core.events.events import EventLog
+from reyn.core.kernel.control_ir_executor import ControlIRExecutor
+from reyn.core.kernel.llm_call_recorder import LLMCallRecorder
+from reyn.core.kernel.phase_executor import PhaseExecutor
+from reyn.core.kernel.preprocessor_executor import PreprocessorExecutor
+from reyn.core.kernel.run_orchestrator import RunOrchestrator
+from reyn.core.kernel.runtime_types import (
     LoopLimitExceededError,
     PhaseBudgetExceededError,
     RunResult,
@@ -36,6 +35,7 @@ from reyn.kernel.runtime_types import (
     _normalize_artifact,
     _validate_artifact_structure,
 )
+from reyn.data.workspace.workspace import Workspace
 from reyn.llm.model_resolver import ModelResolver
 from reyn.llm.pricing import TokenUsage
 from reyn.security.permissions.permissions import PermissionResolver
@@ -43,10 +43,10 @@ from reyn.user_intervention import RequestBus
 
 # LoopLimitExceededError / PhaseBudgetExceededError / WorkflowAbortedError /
 # RunResult / _normalize_artifact / _validate_artifact_structure moved to
-# reyn.kernel.runtime_types (FP-0020 Component C follow-up — break circular
+# reyn.core.kernel.runtime_types (FP-0020 Component C follow-up — break circular
 # imports between runtime.py and phase_executor.py). Re-exported above via
-# `from reyn.kernel.runtime_types import (...)` for backward compatibility.
-# RollbackState moved to reyn.kernel.rollback_state (FP-0020 Component A).
+# `from reyn.core.kernel.runtime_types import (...)` for backward compatibility.
+# RollbackState moved to reyn.core.kernel.rollback_state (FP-0020 Component A).
 # RunOrchestrator extracted from OSRuntime.run() body (FP-0020 Component D).
 # OSRuntime is now a wiring layer; run() delegates to RunOrchestrator.run().
 
@@ -110,7 +110,7 @@ class OSRuntime:
         # acompletion chokepoint, so every LLM call in this run emits an observable
         # `llm_request` event (non-message params) without threading events through
         # the call stack. Set at creation → propagates into the op-loop's tasks.
-        from reyn.events.events import set_llm_request_event_log
+        from reyn.core.events.events import set_llm_request_event_log
         set_llm_request_event_log(self.events)
         self.workspace = Workspace(
             self.events,
@@ -503,7 +503,7 @@ class OSRuntime:
         # to an op kind (e.g. "invoke_skill" → "run_skill").  Resolve the alias
         # before checking membership so allowed_ops=[run_skill] includes the
         # invoke_skill spec and allowed_ops=[mcp] includes call_mcp_tool.
-        from reyn.op_runtime.registry import _PHASE_TOOL_NAME_ALIAS
+        from reyn.core.op_runtime.registry import _PHASE_TOOL_NAME_ALIAS
         filtered_ops = [
             op for op in all_ops
             if _PHASE_TOOL_NAME_ALIAS.get(op.kind, op.kind) in allowed

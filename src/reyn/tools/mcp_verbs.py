@@ -87,7 +87,7 @@ async def _handle_mcp_search_registry(
             "data": {"error": "text is required"},
         }
 
-    from reyn.registry.client import RegistryClient, RegistryError
+    from reyn.core.registry.client import RegistryClient, RegistryError
 
     try:
         async with RegistryClient() as client:
@@ -158,7 +158,7 @@ async def _handle_mcp_install_registry(
     mcp__install_package or mcp__install_local instead. Secret handling
     matches the registry-aware contract — see module docstring.
     """
-    from reyn.op_runtime.mcp_install import handle as mcp_install_handle
+    from reyn.core.op_runtime.mcp_install import handle as mcp_install_handle
     from reyn.schemas.models import MCPInstallIROp
     from reyn.security.permissions.permissions import PermissionDecl
     from reyn.tools.op_context_bridge import build_legacy_op_context
@@ -284,7 +284,7 @@ async def _handle_mcp_install_package(
     then delegates to op_runtime/mcp_install with ``server_id=""`` so the
     registry HTTP path is skipped.
     """
-    from reyn.op_runtime.mcp_install import handle as mcp_install_handle
+    from reyn.core.op_runtime.mcp_install import handle as mcp_install_handle
     from reyn.schemas.models import MCPInstallIROp
     from reyn.security.permissions.permissions import PermissionDecl
     from reyn.tools.op_context_bridge import build_legacy_op_context
@@ -398,7 +398,7 @@ async def _handle_mcp_install_local(
     """
     from pathlib import Path
 
-    from reyn.op_runtime.mcp_install import (
+    from reyn.core.op_runtime.mcp_install import (
         _read_yaml_config,
         _scope_to_path,
         _write_yaml_config,

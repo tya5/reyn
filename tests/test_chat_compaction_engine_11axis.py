@@ -37,7 +37,7 @@ from dataclasses import dataclass, field
 import pytest
 
 from reyn.config import CompactionConfig
-from reyn.events.events import EventLog
+from reyn.core.events.events import EventLog
 from reyn.services.compaction.engine import (
     ChatSummary,
     CompactionEngine,

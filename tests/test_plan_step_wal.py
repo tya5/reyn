@@ -13,7 +13,7 @@ from pathlib import Path
 import pytest
 
 from reyn.chat.services.snapshot_journal import SnapshotJournal
-from reyn.events.state_log import WAL_EVENT_KINDS, StateLog
+from reyn.core.events.state_log import WAL_EVENT_KINDS, StateLog
 
 
 def _make_journal(tmp_path: Path) -> tuple[SnapshotJournal, StateLog]:
@@ -178,7 +178,7 @@ async def test_apply_events_skips_plan_step_kinds_without_state_mutation(
         plan_id="p001", step_id="s1", content_len=10,
     )
 
-    from reyn.events.agent_snapshot import AgentSnapshot
+    from reyn.core.events.agent_snapshot import AgentSnapshot
 
     snap = AgentSnapshot.empty("default")
     events = list(log.iter_from(0))

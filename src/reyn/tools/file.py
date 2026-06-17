@@ -209,7 +209,7 @@ async def _handle_read(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
     ``offset`` / ``limit`` line-slice args are forwarded to FileIROp (=
     already supported by ``op_runtime/file.py``).
     """
-    from reyn.op_runtime import execute_op
+    from reyn.core.op_runtime import execute_op
     from reyn.schemas.models import FileIROp
 
     op = FileIROp(
@@ -228,7 +228,7 @@ async def _handle_write(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult
 
     Builds FileIROp(op="write") with path and content from args.
     """
-    from reyn.op_runtime import execute_op
+    from reyn.core.op_runtime import execute_op
     from reyn.schemas.models import FileIROp
 
     # B34 LLM-attractor fix: accept common synonyms before KeyError.
@@ -247,7 +247,7 @@ async def _handle_delete(args: Mapping[str, Any], ctx: ToolContext) -> ToolResul
 
     Builds FileIROp(op="delete").
     """
-    from reyn.op_runtime import execute_op
+    from reyn.core.op_runtime import execute_op
     from reyn.schemas.models import FileIROp
 
     op = FileIROp(kind="file", op="delete", path=args["path"])
@@ -264,7 +264,7 @@ async def _handle_edit(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
         without replace_all → error with count)
       * write permission gating (same tier as write_file / delete_file)
     """
-    from reyn.op_runtime import execute_op
+    from reyn.core.op_runtime import execute_op
     from reyn.schemas.models import FileIROp
 
     op = FileIROp(
@@ -290,7 +290,7 @@ async def _handle_list(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
     Path normalisation: map "" / "/" / "./" to "." so the LLM's typical
     "list files here" intent resolves to cwd rather than filesystem root.
     """
-    from reyn.op_runtime import execute_op
+    from reyn.core.op_runtime import execute_op
     from reyn.schemas.models import FileIROp
 
     path = args["path"]
@@ -313,7 +313,7 @@ async def _handle_grep(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
     Maps the router-side `case_sensitive` boolean to the op_runtime
     `case_insensitive` convention (= FileIROp.case_insensitive).
     """
-    from reyn.op_runtime import execute_op
+    from reyn.core.op_runtime import execute_op
     from reyn.schemas.models import FileIROp
 
     case_sensitive = args.get("case_sensitive", False)
@@ -338,7 +338,7 @@ async def _handle_glob(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
     interprets FileIROp.path as the full glob pattern, so we build
     `<path>/<pattern>` (or just `<pattern>` when path is absent / ".").
     """
-    from reyn.op_runtime import execute_op
+    from reyn.core.op_runtime import execute_op
     from reyn.schemas.models import FileIROp
 
     root = args.get("path", ".").rstrip("/")

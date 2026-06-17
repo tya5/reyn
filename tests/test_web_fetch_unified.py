@@ -291,8 +291,8 @@ def _make_router_op_ctx_factory(resolver, bus, events):
     exercise the router-invoked path of WEB_FETCH._handle without spinning
     up a full ChatSession.
     """
+    from reyn.core.op_runtime.context import OpContext
     from reyn.data.workspace.workspace import Workspace
-    from reyn.op_runtime.context import OpContext
     from reyn.security.permissions.permissions import PermissionDecl
 
     def _factory():
@@ -337,7 +337,7 @@ def test_router_invoke_action_web_fetch_deny_raises_permission_error(
     wraps that into a ``permission_denied`` error_kind and a tool_failed
     event — but the propagation itself is enough for this regression guard.
     """
-    from reyn.events.events import EventLog
+    from reyn.core.events.events import EventLog
     from reyn.security.permissions.permissions import PermissionResolver
     from reyn.tools.types import RouterCallerState, ToolContext
 
@@ -377,7 +377,7 @@ def test_router_invoke_action_web_fetch_allow_no_deny_proceeds(
     layer fails fast (we only care that the permission gate let us
     through, not that the fetch succeeds).
     """
-    from reyn.events.events import EventLog
+    from reyn.core.events.events import EventLog
     from reyn.security.permissions.permissions import PermissionResolver
     from reyn.tools.types import RouterCallerState, ToolContext
 
@@ -438,9 +438,9 @@ def test_phase_dispatch_reuses_op_context_intervention_bus(tmp_path: Path) -> No
     layer fails fast — what we're guarding is that the permission path
     didn't trip on a missing bus.
     """
+    from reyn.core.events.events import EventLog
+    from reyn.core.op_runtime.context import OpContext
     from reyn.data.workspace.workspace import Workspace
-    from reyn.events.events import EventLog
-    from reyn.op_runtime.context import OpContext
     from reyn.security.permissions.permissions import PermissionDecl, PermissionResolver
     from reyn.tools.types import PhaseCallerState, ToolContext
 
@@ -509,7 +509,7 @@ def test_phase_dispatch_without_op_context_falls_back_to_minimal(
     the visible failure shape (a web_fetch error dict) — NOT a
     bus-missing RuntimeError.
     """
-    from reyn.events.events import EventLog
+    from reyn.core.events.events import EventLog
     from reyn.security.permissions.permissions import PermissionResolver
     from reyn.tools.types import PhaseCallerState, ToolContext
 

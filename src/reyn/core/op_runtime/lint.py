@@ -11,7 +11,7 @@ from .context import OpContext
 
 
 async def handle(op: LintIROp, ctx: OpContext, caller: Literal["preprocessor", "control_ir"]) -> dict:
-    from reyn.compiler.linter import lint_skill_dir
+    from reyn.core.compiler.linter import lint_skill_dir
 
     # B49 W3-S6 fix (2026-05-22): accept the qualified action name format
     # returned by ``list_actions(category=['skill'])`` (= ``skill__<name>``)

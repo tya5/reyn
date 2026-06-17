@@ -112,8 +112,8 @@ async def _handle_recall(args: Mapping[str, Any], ctx: ToolContext) -> ToolResul
     OpContext is obtained from ctx.phase_state.op_context when available
     (phase-side call) or constructed minimally (router-side call).
     """
-    from reyn.op_runtime import execute_op
-    from reyn.op_runtime.context import OpContext
+    from reyn.core.op_runtime import execute_op
+    from reyn.core.op_runtime.context import OpContext
     from reyn.schemas.models import RecallIROp
     from reyn.security.permissions.permissions import PermissionDecl
 

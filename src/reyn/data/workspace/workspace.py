@@ -5,8 +5,8 @@ import re
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from reyn.core.events.events import EventLog
 from reyn.environment.host_backend import HostBackend
-from reyn.events.events import EventLog
 
 if TYPE_CHECKING:
     from reyn.environment.backend import EnvironmentBackend, GrepResult

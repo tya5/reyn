@@ -16,7 +16,7 @@ import sys
 
 import pytest
 
-from reyn.kernel.codeact_runner import CodeActRunner
+from reyn.core.kernel.codeact_runner import CodeActRunner
 
 
 @pytest.mark.asyncio
@@ -200,14 +200,14 @@ async def test_seatbelt_real_runner_round_trip() -> None:
 
 def test_harness_subprocess_env_prepends_reyn_tree() -> None:
     """Tier 2: #1609 — the harness subprocess env prepends THIS process's reyn tree
-    to PYTHONPATH, so `python -m reyn.kernel._codeact_harness` resolves the SAME tree
+    to PYTHONPATH, so `python -m reyn.core.kernel._codeact_harness` resolves the SAME tree
     (fixes the multi-worktree editable-install import-drift). Single-tree prod is
     unaffected (same path)."""
     import os
     from pathlib import Path
 
     import reyn
-    from reyn.kernel.codeact_runner import _harness_subprocess_env
+    from reyn.core.kernel.codeact_runner import _harness_subprocess_env
 
     tree = str(Path(reyn.__file__).resolve().parent.parent)
     env = _harness_subprocess_env()
@@ -220,7 +220,7 @@ def test_harness_subprocess_env_preserves_existing_pythonpath(monkeypatch) -> No
     import os
 
     monkeypatch.setenv("PYTHONPATH", "/some/existing/path")
-    from reyn.kernel.codeact_runner import _harness_subprocess_env
+    from reyn.core.kernel.codeact_runner import _harness_subprocess_env
 
     parts = _harness_subprocess_env()["PYTHONPATH"].split(os.pathsep)
     assert "/some/existing/path" in parts

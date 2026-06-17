@@ -49,8 +49,8 @@ async def _handle(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
     the body of lint.handle may be inlined here in M4 cleanup.
     """
     # Lazy import to avoid circular dependency at registry-init time.
-    from reyn.op_runtime.context import OpContext
-    from reyn.op_runtime.lint import handle as handle_lint
+    from reyn.core.op_runtime.context import OpContext
+    from reyn.core.op_runtime.lint import handle as handle_lint
     from reyn.schemas.models import LintIROp
     from reyn.security.permissions.permissions import PermissionDecl
 

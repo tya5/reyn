@@ -407,8 +407,8 @@ def _build_live_runner(agent_name: str, *, env_backend=None, ws_base_dir=None, w
     from reyn.chat.registry import AgentRegistry
     from reyn.chat.scoped_session_factory import build_scoped_chat_session
     from reyn.config import _find_project_root, load_config, load_project_context
+    from reyn.core.events.event_store import EventStore
     from reyn.dogfood.runner import ScenarioRunResult
-    from reyn.events.event_store import EventStore
     from reyn.llm.model_resolver import ModelResolver
     from reyn.mcp.server import send_to_agent_impl
     from reyn.security.permissions.permissions import PermissionResolver

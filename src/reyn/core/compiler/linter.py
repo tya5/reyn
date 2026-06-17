@@ -13,7 +13,7 @@ from pathlib import Path
 
 import jsonschema
 
-from reyn.op_runtime.registry import ALL_TOOL_NAMES as _KNOWN_ALLOWED_OPS_NAMES
+from reyn.core.op_runtime.registry import ALL_TOOL_NAMES as _KNOWN_ALLOWED_OPS_NAMES
 
 from .parser import _split_frontmatter, parse_artifact
 
@@ -302,7 +302,7 @@ def _lint_python_preprocessor(phase_path: Path, fm: dict) -> list[LintIssue]:
         # python.allowed_modules can legitimately whitelist additional imports)
         if mode == "safe":
             try:
-                from reyn.kernel._python_harness import _validate_safe_ast
+                from reyn.core.kernel._python_harness import _validate_safe_ast
             except Exception:
                 # harness isn't importable in this lint context — skip silently
                 continue

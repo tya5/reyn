@@ -15,11 +15,11 @@ from pathlib import Path
 
 import pytest
 
+from reyn.core.events.events import EventLog
+from reyn.core.op_runtime.context import OpContext
 from reyn.data.index.backend import ChunkRecord
 from reyn.data.index.backends.sqlite import SqliteIndexBackend
 from reyn.data.workspace.workspace import Workspace
-from reyn.events.events import EventLog
-from reyn.op_runtime.context import OpContext
 from reyn.schemas.models import IndexDropIROp, IndexQueryIROp
 from reyn.security.permissions.permissions import PermissionDecl, PermissionResolver
 
@@ -136,7 +136,7 @@ def test_index_query_gated_by_sandbox_read_cap(tmp_path: Path, monkeypatch) -> N
     """Tier 2: index_query routes through require_file_read with the phase
     sandbox_policy ∩ — a read_paths cap excluding the index path DENIES the query
     (the in-zone DB path is narrowed by the sandbox)."""
-    from reyn.op_runtime.index_query import handle
+    from reyn.core.op_runtime.index_query import handle
 
     monkeypatch.chdir(tmp_path)  # so .reyn/index/... is in the default read zone
     ctx = _ctx(tmp_path, sandbox_policy={"read_paths": ["/sandboxed"]})
@@ -148,7 +148,7 @@ def test_index_query_gated_by_sandbox_read_cap(tmp_path: Path, monkeypatch) -> N
 def test_index_query_no_policy_passes(tmp_path: Path, monkeypatch) -> None:
     """Tier 2: with no sandbox policy, the in-zone index read is not blocked
     (returns fallback for an absent index)."""
-    from reyn.op_runtime.index_query import handle
+    from reyn.core.op_runtime.index_query import handle
 
     monkeypatch.chdir(tmp_path)
     ctx = _ctx(tmp_path, sandbox_policy=None)
@@ -160,7 +160,7 @@ def test_index_query_no_policy_passes(tmp_path: Path, monkeypatch) -> None:
 def test_index_drop_gates_source_dir_by_sandbox_cap(tmp_path: Path, monkeypatch) -> None:
     """Tier 2: index_drop gates the SOURCE DIR (the deletion target) under the
     sandbox write_paths cap — a cap excluding it DENIES the destructive drop."""
-    from reyn.op_runtime.index_drop import handle
+    from reyn.core.op_runtime.index_drop import handle
 
     monkeypatch.chdir(tmp_path)
     ctx = _ctx(tmp_path, sandbox_policy={"write_paths": ["/sandboxed"]})

@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 from typing import Any, Callable
 
-from reyn.events.events import EventLog
+from reyn.core.events.events import EventLog
 from reyn.llm.model_resolver import ModelResolver
 from reyn.llm.pricing import TokenUsage
 from reyn.schemas.models import SkillNodeSpec
@@ -102,8 +102,8 @@ async def execute_skill_node(
     Run a sub-app to completion and adapt its final_output to target_schema.
     Returns (adapted_artifact, accumulated_token_usage).
     """
-    from reyn.compiler import load_dsl_skill
-    from reyn.kernel.runtime import OSRuntime
+    from reyn.core.compiler import load_dsl_skill
+    from reyn.core.kernel.runtime import OSRuntime
 
     events.emit("skill_node_started", node=node_id, skill_path=node_spec.skill_path)
 

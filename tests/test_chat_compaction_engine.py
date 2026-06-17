@@ -74,7 +74,7 @@ def test_trim_head_single_oversized_turn_emits_event() -> None:
     still return the turn (= not zero, which would leave no head at all) and
     must not raise.
     """
-    from reyn.events.events import EventLog
+    from reyn.core.events.events import EventLog
     events = EventLog()
     # 4000-char turn → ~1000 tokens (chars//4); cap=10
     turns = _turns(["x" * 4000])
@@ -122,7 +122,7 @@ def test_trim_tail_single_oversized_turn_emits_event() -> None:
     """Tier 2: when a single tail turn exceeds max_tokens, it is included and
     turn_too_large_truncated is emitted (Axis 7).
     """
-    from reyn.events.events import EventLog
+    from reyn.core.events.events import EventLog
     events = EventLog()
     turns = _turns(["x" * 4000])
     result = trim_tail(turns, max_tokens=10, events=events)

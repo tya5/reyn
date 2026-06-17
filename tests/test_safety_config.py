@@ -167,7 +167,7 @@ def test_loop_limit_exception_carries_hint_key() -> None:
     """Tier 2: ``LoopLimitExceededError.hint_config_key`` is the
     user-facing config key surfaced in error messages.
     """
-    from reyn.kernel.runtime import LoopLimitExceededError
+    from reyn.core.kernel.runtime import LoopLimitExceededError
 
     assert LoopLimitExceededError.hint_config_key == "safety.loop.max_phase_visits"
 
@@ -176,7 +176,7 @@ def test_phase_budget_exception_carries_hint_key() -> None:
     """Tier 2: ``PhaseBudgetExceededError.hint_config_key`` names the
     timeout knob.
     """
-    from reyn.kernel.runtime import PhaseBudgetExceededError
+    from reyn.core.kernel.runtime import PhaseBudgetExceededError
 
     assert PhaseBudgetExceededError.hint_config_key == "safety.timeout.phase_seconds"
     # And the message includes the hint.

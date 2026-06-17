@@ -15,9 +15,9 @@ if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
 
     from reyn.config import MultimodalConfig, SandboxConfig, WebConfig
+    from reyn.core.events.events import EventLog
     from reyn.data.workspace.media_store import MediaStore
     from reyn.data.workspace.workspace import Workspace
-    from reyn.events.events import EventLog
     from reyn.llm.model_resolver import ModelResolver
     from reyn.schemas.models import Skill
     from reyn.security.permissions.permissions import PermissionDecl, PermissionResolver

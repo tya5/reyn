@@ -114,7 +114,7 @@ def _make_session_with_t_max(tmp_path: Path, t_max: int):
     from reyn.budget.budget import BudgetTracker, CostConfig
     from reyn.chat.session import ChatSession
     from reyn.config import CompactionConfig
-    from reyn.events.state_log import StateLog
+    from reyn.core.events.state_log import StateLog
 
     original = _mb.get_max_input_tokens
     _mb.get_max_input_tokens = lambda model, **kw: t_max  # type: ignore[assignment]

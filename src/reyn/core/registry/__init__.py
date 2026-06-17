@@ -1,4 +1,4 @@
-"""reyn.registry — MCP server registry client and cache.
+"""reyn.core.registry — MCP server registry client and cache.
 
 Public API:
   RegistryClient  — async HTTP client (context manager).
@@ -9,17 +9,17 @@ Public API:
 
 Quick usage::
 
-    from reyn.registry import RegistryClient, RegistryError
+    from reyn.core.registry import RegistryClient, RegistryError
 
     async with RegistryClient() as client:
         results = await client.search("slack")
         for info in results:
             print(info.name, info.description)
 """
-from reyn.registry.client import RegistryClient, RegistryError
-from reyn.registry.models import ServerInfo, ServerJson, ServerPackage, ServerRemote
-from reyn.registry.source_resolver import SourceResolution
-from reyn.registry.source_resolver import resolve as resolve_source
+from reyn.core.registry.client import RegistryClient, RegistryError
+from reyn.core.registry.models import ServerInfo, ServerJson, ServerPackage, ServerRemote
+from reyn.core.registry.source_resolver import SourceResolution
+from reyn.core.registry.source_resolver import resolve as resolve_source
 
 __all__ = [
     "RegistryClient",

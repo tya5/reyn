@@ -13,15 +13,15 @@ from pathlib import Path
 
 import pytest
 
-from reyn.events.agent_snapshot import AgentSnapshot
-from reyn.events.snapshot_generations import (
+from reyn.core.events.agent_snapshot import AgentSnapshot
+from reyn.core.events.snapshot_generations import (
     RewindIntoAbandonedError,
     SnapshotGenerationStore,
     is_active_seq,
     reconstruct,
     rewind,
 )
-from reyn.events.state_log import StateLog
+from reyn.core.events.state_log import StateLog
 
 AGENT = "alpha"
 

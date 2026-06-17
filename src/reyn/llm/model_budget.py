@@ -19,7 +19,7 @@ import logging
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from reyn.events.events import EventLog
+    from reyn.core.events.events import EventLog
 
 logger = logging.getLogger(__name__)
 

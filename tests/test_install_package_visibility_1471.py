@@ -22,9 +22,9 @@ import asyncio
 
 import pytest
 
+from reyn.core.events.events import EventLog
+from reyn.core.registry.client import RegistryError
 from reyn.data.workspace.workspace import Workspace
-from reyn.events.events import EventLog
-from reyn.registry.client import RegistryError
 from reyn.schemas.models import MCPInstallIROp
 from reyn.tools.types import RouterCallerState, ToolContext
 
@@ -62,7 +62,7 @@ def test_hot_list_n_default_is_zero() -> None:
 class _RegistryClientNotFound:
     """Real fake RegistryClient that always raises HTTP 404 on get_server.
 
-    Used via monkeypatch.setattr on reyn.registry.client.RegistryClient so
+    Used via monkeypatch.setattr on reyn.core.registry.client.RegistryClient so
     mcp_install.handle's local import resolves to this class without touching
     the real network.  No AsyncMock — pure subclass with real coroutine methods.
     """
@@ -121,10 +121,10 @@ async def test_not_found_error_mentions_install_package(tmp_path, monkeypatch) -
     """Tier 2: #1471 — when install_registry gets HTTP 404 (server not in
     registry), the error data must mention mcp__install_package so the LLM can
     immediately pivot without a list_actions round-trip."""
-    import reyn.registry.client as _rc
+    import reyn.core.registry.client as _rc
     monkeypatch.setattr(_rc, "RegistryClient", _RegistryClientNotFound)
 
-    from reyn.op_runtime import mcp_install as _mi
+    from reyn.core.op_runtime import mcp_install as _mi
     result = await _mi.handle(_make_registry_op("some-npm-package"), _minimal_ctx(tmp_path), caller="control_ir")
 
     assert result["status"] == "error"
@@ -138,10 +138,10 @@ async def test_not_found_error_mentions_install_package(tmp_path, monkeypatch) -
 async def test_not_found_error_mentions_source_param(tmp_path, monkeypatch) -> None:
     """Tier 2: #1471 — the not-found guidance must include source= so the LLM
     knows the required parameter name for mcp__install_package."""
-    import reyn.registry.client as _rc
+    import reyn.core.registry.client as _rc
     monkeypatch.setattr(_rc, "RegistryClient", _RegistryClientNotFound)
 
-    from reyn.op_runtime import mcp_install as _mi
+    from reyn.core.op_runtime import mcp_install as _mi
     result = await _mi.handle(_make_registry_op("mypackage"), _minimal_ctx(tmp_path), caller="control_ir")
 
     assert result["status"] == "error"
@@ -156,10 +156,10 @@ async def test_non_404_error_does_not_get_install_package_guidance(
 ) -> None:
     """Tier 2: #1471 — a non-404 RegistryError (network failure) must NOT get
     the install_package guidance. The guidance is specific to HTTP 404."""
-    import reyn.registry.client as _rc
+    import reyn.core.registry.client as _rc
     monkeypatch.setattr(_rc, "RegistryClient", _RegistryClientNetworkError)
 
-    from reyn.op_runtime import mcp_install as _mi
+    from reyn.core.op_runtime import mcp_install as _mi
     result = await _mi.handle(_make_registry_op("someserver"), _minimal_ctx(tmp_path), caller="control_ir")
 
     assert result["status"] == "error"

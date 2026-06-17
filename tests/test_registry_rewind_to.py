@@ -17,9 +17,9 @@ import pytest
 from reyn.chat.profile import AgentProfile
 from reyn.chat.registry import AgentRegistry
 from reyn.chat.session import ChatSession
-from reyn.events.agent_snapshot import AgentSnapshot
-from reyn.events.snapshot_generations import RewindIntoAbandonedError, rewind
-from reyn.events.state_log import StateLog
+from reyn.core.events.agent_snapshot import AgentSnapshot
+from reyn.core.events.snapshot_generations import RewindIntoAbandonedError, rewind
+from reyn.core.events.state_log import StateLog
 
 _needs_git = pytest.mark.skipif(shutil.which("git") is None, reason="git not on PATH")
 
@@ -313,7 +313,7 @@ class _WatermarkShim:
 async def test_compute_truncate_floor_clamped_by_retention(tmp_path):
     """Tier 2: a deeper retention policy clamps the truncate floor below the live floor."""
     from reyn.chat.registry import AgentRegistry
-    from reyn.events.retention import RetentionPolicy
+    from reyn.core.events.retention import RetentionPolicy
 
     state_log = StateLog(tmp_path / ".reyn" / "wal.jsonl")
     reg = AgentRegistry(
@@ -372,7 +372,7 @@ async def test_truncate_gcs_generations_below_floor(tmp_path):
 @pytest.mark.asyncio
 async def test_rewind_to_rejects_target_truncated_out_of_wal(tmp_path):
     """Tier 2: rewinding to a seq below the retained WAL raises (decision-enabling, Q4)."""
-    from reyn.events.snapshot_generations import RewindBeyondRetentionError
+    from reyn.core.events.snapshot_generations import RewindBeyondRetentionError
 
     reg = _make_registry(tmp_path)
     _seed_agent(tmp_path, "alpha")

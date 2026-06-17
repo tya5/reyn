@@ -24,7 +24,7 @@ win). The subprocess running safe-mode python steps inherits the env
 var from the parent process automatically.
 
 This mirrors the resolution chain used by
-:class:`reyn.registry.client.RegistryClient`, so both surfaces — the
+:class:`reyn.core.registry.client.RegistryClient`, so both surfaces — the
 async op-handler client and this safe-mode skill-internal lookup —
 agree on which registries to try and in what order.
 
@@ -51,7 +51,7 @@ Internal layering
 -----------------
 
 This module is reyn-package internal code (= not subject to the
-safe-mode AST validator). It is free to import urllib / reyn.registry
+safe-mode AST validator). It is free to import urllib / reyn.core.registry
 helpers; the validator only rejects user-code imports outside the
 allowlist, and ``reyn.safe.*`` is admitted.
 
@@ -84,9 +84,9 @@ from typing import Any
 # (= dedup is a list transform; server_info_from_raw is a dict reshape)
 # or scoped to reyn-internal disk cache. None of them are reachable from
 # user code through this safe namespace surface.
-from reyn.registry import cache as _cache
-from reyn.registry.client import _dedup_by_latest
-from reyn.registry.models import server_info_from_raw
+from reyn.core.registry import cache as _cache
+from reyn.core.registry.client import _dedup_by_latest
+from reyn.core.registry.models import server_info_from_raw
 
 _DEFAULT_BASE_URL = "https://registry.modelcontextprotocol.io"
 
@@ -95,7 +95,7 @@ def registry_urls() -> list[str]:
     """Resolve the ordered list of registry URLs to try.
 
     Resolution priority (= same chain as
-    :func:`reyn.registry.client._base_urls`):
+    :func:`reyn.core.registry.client._base_urls`):
 
     1. ``REYN_MCP_REGISTRY_URLS`` (plural) — comma-separated list.
     2. ``REYN_MCP_REGISTRY_URL`` (singular, legacy) — single-item list.
@@ -159,7 +159,7 @@ def _http_get_json(url: str) -> dict:
 
 
 def _info_to_dict(info: Any) -> dict:
-    """Convert a :class:`reyn.registry.models.ServerInfo` to the public dict shape."""
+    """Convert a :class:`reyn.core.registry.models.ServerInfo` to the public dict shape."""
     return {
         "name": info.name,
         "description": info.description,

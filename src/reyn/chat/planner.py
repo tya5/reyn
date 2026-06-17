@@ -71,7 +71,7 @@ def _is_workflow_abort(exc_type: type | None) -> bool:
     if exc_type is None:
         return False
     try:
-        from reyn.kernel.runtime import WorkflowAbortedError
+        from reyn.core.kernel.runtime import WorkflowAbortedError
         return issubclass(exc_type, WorkflowAbortedError)
     except ImportError:
         return False
@@ -183,7 +183,7 @@ def _build_retry_excluded() -> tuple:
     except ImportError:
         pass
     try:
-        from reyn.kernel.runtime_types import (
+        from reyn.core.kernel.runtime_types import (
             LoopLimitExceededError,
             PhaseBudgetExceededError,
         )
@@ -845,10 +845,10 @@ def _build_sub_loop_memo_provider(
         return None
     seed: list = []
     if resume_plan is not None:
-        from reyn.plan import extract_step_llm_call_records
+        from reyn.core.plan import extract_step_llm_call_records
         log = getattr(resume_plan, "step_llm_call_log", None) or {}
         seed = extract_step_llm_call_records(log, step_id)
-    from reyn.plan import SubLoopMemoProvider
+    from reyn.core.plan import SubLoopMemoProvider
     return SubLoopMemoProvider(
         plan_registry=plan_registry,
         plan_id=plan_id,
@@ -1542,7 +1542,7 @@ async def dispatch_plan_tool(
 
     # Construct the runtime; ChatSession spawns it as a task and owns
     # the lifecycle (= terminal outbox emit + artifact cleanup).
-    from reyn.plan import PlanRuntime
+    from reyn.core.plan import PlanRuntime
     runtime = PlanRuntime(
         plan,
         host=parent_host,

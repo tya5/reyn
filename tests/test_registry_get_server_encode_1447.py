@@ -12,7 +12,7 @@ import asyncio
 
 import pytest
 
-from reyn.registry.client import RegistryClient
+from reyn.core.registry.client import RegistryClient
 
 
 class _CapturedPath(Exception):

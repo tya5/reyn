@@ -32,9 +32,9 @@ from typing import Any
 
 import pytest
 
-import reyn.kernel.llm_call_recorder as runtime_mod
-from reyn.kernel.postprocessor_executor import PostprocessorError
-from reyn.kernel.runtime import OSRuntime, RunResult
+import reyn.core.kernel.llm_call_recorder as runtime_mod
+from reyn.core.kernel.postprocessor_executor import PostprocessorError
+from reyn.core.kernel.runtime import OSRuntime, RunResult
 from reyn.llm.llm import LLMCallResult
 from reyn.llm.pricing import TokenUsage
 from reyn.schemas.models import (

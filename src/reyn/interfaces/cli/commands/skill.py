@@ -31,7 +31,7 @@ import tempfile
 from datetime import datetime
 from pathlib import Path
 
-from reyn.events.events import emit_cli_event
+from reyn.core.events.events import emit_cli_event
 from reyn.skill.skill_paths import (
     SkillNotFoundError,
     is_stdlib_skill,

@@ -33,8 +33,8 @@ import pytest
 
 from reyn.chat.session import ChatSession
 from reyn.config import OnLimitConfig, SafetyConfig, TimeoutConfig
-from reyn.events.agent_snapshot import AgentSnapshot
-from reyn.events.state_log import StateLog
+from reyn.core.events.agent_snapshot import AgentSnapshot
+from reyn.core.events.state_log import StateLog
 from reyn.llm.llm import LLMToolCallResult
 from reyn.llm.pricing import TokenUsage
 from reyn.user_intervention import (
@@ -1202,7 +1202,7 @@ async def test_run_skill_awaitable_returns_status_data_no_outbox(
     monkeypatch.chdir(tmp_path)
 
     import reyn.chat.session as session_mod
-    from reyn.kernel.runtime import RunResult
+    from reyn.core.kernel.runtime import RunResult
 
     dummy_skill_dir = tmp_path / "dummy_skill"
     dummy_skill_dir.mkdir()
@@ -1346,7 +1346,7 @@ async def test_skill_completed_inbox_enqueued_on_finish(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
 
     import reyn.chat.services.skill_runner as skill_runner_mod
-    from reyn.kernel.runtime import RunResult
+    from reyn.core.kernel.runtime import RunResult
 
     dummy_skill_dir = tmp_path / "dummy_skill"
     dummy_skill_dir.mkdir()

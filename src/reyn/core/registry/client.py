@@ -143,7 +143,7 @@ class RegistryClient:
 
     Callers that have a ``ReynConfig`` available should pass the resolved
     value from ``_resolve_ssl_verify_from_config(config.web.fetch)``
-    (see ``reyn.op_runtime.web``).  The default ``None`` preserves the
+    (see ``reyn.core.op_runtime.web``).  The default ``None`` preserves the
     existing env-var behaviour so all current callers remain unaffected.
     """
 
@@ -233,15 +233,15 @@ class RegistryClient:
         error is re-raised.
 
         Returns a deduplicated list of ``ServerInfo`` dataclasses (from
-        ``reyn.registry.models``).  When the registry returns multiple
+        ``reyn.core.registry.models``).  When the registry returns multiple
         version entries for the same server name, only the latest
         version is kept: first by ``_meta.isLatest == true``, then by
         highest semver.
 
         Results are cached for 24 h.
         """
-        from reyn.registry import cache
-        from reyn.registry.models import server_info_from_raw
+        from reyn.core.registry import cache
+        from reyn.core.registry.models import server_info_from_raw
 
         cache_key = f"search:{query}:{limit}"
         cached = cache.get(cache_key)
@@ -284,8 +284,8 @@ class RegistryClient:
 
         Returns a ``ServerJson`` dataclass.  Result is cached for 24 h.
         """
-        from reyn.registry import cache
-        from reyn.registry.models import server_json_from_raw
+        from reyn.core.registry import cache
+        from reyn.core.registry.models import server_json_from_raw
 
         cache_key = f"server:{server_name}"
         cached = cache.get(cache_key)

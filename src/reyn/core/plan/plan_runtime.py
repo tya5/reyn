@@ -32,7 +32,7 @@ from reyn.chat.planner import (
     PlanExecutionResult,
     execute_plan,
 )
-from reyn.plan.plan_resume_analyzer import PlanResumePlan
+from reyn.core.plan.plan_resume_analyzer import PlanResumePlan
 
 if TYPE_CHECKING:
     from reyn.chat.router_loop import RouterLoopHost

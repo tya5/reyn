@@ -29,7 +29,7 @@ import asyncio
 from typing import Any
 
 from reyn.chat.forwarder import ChatEventForwarder
-from reyn.events.events import EventLog
+from reyn.core.events.events import EventLog
 from reyn.schemas.models import Event
 
 # ── 1. EventLog stamps run_id ─────────────────────────────────────────────

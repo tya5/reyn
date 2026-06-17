@@ -20,7 +20,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from reyn.compiler.loader import load_dsl_skill
+from reyn.core.compiler.loader import load_dsl_skill
 
 # ---------------------------------------------------------------------------
 # Helpers

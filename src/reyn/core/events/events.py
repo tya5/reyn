@@ -172,7 +172,7 @@ def emit_cli_event(kind: str, **payload) -> None:
     The file is appended to (P6 append-only contract). Dir creation is
     idempotent (``mkdir(parents=True, exist_ok=True)``).
     """
-    from reyn.events.event_store import EventStore
+    from reyn.core.events.event_store import EventStore
 
     reyn_dir = _find_reyn_dir(Path.cwd())
     if reyn_dir is None:

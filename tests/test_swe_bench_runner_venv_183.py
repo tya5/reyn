@@ -13,7 +13,7 @@ solver were retired in #187) and is exercised end-to-end by the faithful N-run.
 
 Primary-evidence note (not a unit test): the exact `provision_command` was run in
 a real swebench astropy-13453 container — the venv built and
-`/opt/reyn-venv/bin/python -m reyn.kernel._python_harness` imported + executed.
+`/opt/reyn-venv/bin/python -m reyn.core.kernel._python_harness` imported + executed.
 """
 from __future__ import annotations
 

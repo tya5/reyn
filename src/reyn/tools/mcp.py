@@ -272,8 +272,8 @@ async def _handle_call_mcp_tool(
 
     # Phase path: build MCPIROp and dispatch through op_runtime.
     # Lazy import to avoid circular dependency at registry-init time.
-    from reyn.op_runtime.context import OpContext
-    from reyn.op_runtime.mcp import handle as mcp_handle
+    from reyn.core.op_runtime.context import OpContext
+    from reyn.core.op_runtime.mcp import handle as mcp_handle
     from reyn.schemas.models import MCPIROp
     from reyn.security.permissions.permissions import PermissionDecl
 

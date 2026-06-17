@@ -123,7 +123,7 @@ def _compute_skill_hash(skill_path: Path) -> str:
 
 
 async def handle(op: RunSkillIROp, ctx: OpContext, caller: Literal["preprocessor", "control_ir"]) -> dict:
-    from reyn.compiler import load_dsl_skill
+    from reyn.core.compiler import load_dsl_skill
     from reyn.skill.sub_skill_runner import invoke_sub_skill
 
     # Resolve sub-skill: prefer preloaded preprocessor sub-skills (set up at compile time)

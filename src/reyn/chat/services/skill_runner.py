@@ -31,14 +31,14 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Awaitable, Callable
 
 from reyn.chat.outbox import OutboxMessage
-from reyn.compiler import load_dsl_skill
-from reyn.events.events import EventLog
+from reyn.core.compiler import load_dsl_skill
+from reyn.core.events.events import EventLog
 from reyn.skill.skill_paths import SkillNotFoundError, resolve_skill_path, stdlib_root
 
 if TYPE_CHECKING:
     from reyn.agent import Agent
     from reyn.budget.budget import BudgetGateway
-    from reyn.events.state_log import StateLog
+    from reyn.core.events.state_log import StateLog
     from reyn.schemas.models import Skill
     from reyn.skill.skill_registry import SkillRegistry
 
@@ -61,7 +61,7 @@ class SkillRunner:
     Parameters
     ----------
     event_log:
-        Session-scoped :class:`~reyn.events.events.EventLog`.
+        Session-scoped :class:`~reyn.core.events.events.EventLog`.
     agent_name:
         Name of the owning agent, used for allowlist refusal messages.
     output_language:

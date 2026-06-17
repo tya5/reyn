@@ -25,9 +25,9 @@ from pathlib import Path
 from typing import Any
 
 from reyn.chat.session import ChatSession
-from reyn.events.state_log import StateLog
-from reyn.kernel.normalizer import NormalizationResult
-from reyn.kernel.runtime import OSRuntime, RunResult
+from reyn.core.events.state_log import StateLog
+from reyn.core.kernel.normalizer import NormalizationResult
+from reyn.core.kernel.runtime import OSRuntime, RunResult
 from reyn.schemas.models import (
     ControlDecision,
     ControlReason,

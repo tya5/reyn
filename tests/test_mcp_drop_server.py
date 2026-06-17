@@ -136,7 +136,7 @@ def _make_op_ctx(
     events: _CapturingEvents | None = None,
 ) -> Any:
     """Build a minimal OpContext for op_runtime handler tests."""
-    from reyn.op_runtime.context import OpContext
+    from reyn.core.op_runtime.context import OpContext
 
     effective_decl = permission_decl
     if effective_decl is None:
@@ -158,7 +158,7 @@ def _make_op_ctx(
 
 def test_mcp_drop_server_removes_entry_local_scope(tmp_path: Path) -> None:
     """Tier 2: explicit local scope removes the entry from reyn.local.yaml."""
-    from reyn.op_runtime.mcp_drop_server import handle as drop_handle
+    from reyn.core.op_runtime.mcp_drop_server import handle as drop_handle
 
     cfg_path = tmp_path / "reyn.local.yaml"
     _seed_config(cfg_path, {
@@ -186,7 +186,7 @@ def test_mcp_drop_server_removes_entry_local_scope(tmp_path: Path) -> None:
 
 def test_mcp_drop_server_auto_detects_scope(tmp_path: Path) -> None:
     """Tier 2: scope=None walks local → project → user and removes from first match."""
-    from reyn.op_runtime.mcp_drop_server import handle as drop_handle
+    from reyn.core.op_runtime.mcp_drop_server import handle as drop_handle
 
     # Server lives in project, not local
     _seed_config(tmp_path / "reyn.local.yaml", {"other": {}})
@@ -212,7 +212,7 @@ def test_mcp_drop_server_auto_detects_scope(tmp_path: Path) -> None:
 
 def test_mcp_drop_server_prunes_empty_containers(tmp_path: Path) -> None:
     """Tier 2: when removing the last server, mcp.servers and mcp are pruned."""
-    from reyn.op_runtime.mcp_drop_server import handle as drop_handle
+    from reyn.core.op_runtime.mcp_drop_server import handle as drop_handle
 
     cfg_path = tmp_path / "reyn.local.yaml"
     _seed_config(cfg_path, {"filesystem": {"command": "npx"}})
@@ -230,7 +230,7 @@ def test_mcp_drop_server_prunes_empty_containers(tmp_path: Path) -> None:
 
 def test_mcp_drop_server_not_found_in_explicit_scope(tmp_path: Path) -> None:
     """Tier 2: explicit scope without the server returns status=not_found."""
-    from reyn.op_runtime.mcp_drop_server import handle as drop_handle
+    from reyn.core.op_runtime.mcp_drop_server import handle as drop_handle
 
     _seed_config(tmp_path / "reyn.local.yaml", {"other": {}})
 
@@ -247,7 +247,7 @@ def test_mcp_drop_server_not_found_in_explicit_scope(tmp_path: Path) -> None:
 
 def test_mcp_drop_server_not_found_auto_scope(tmp_path: Path) -> None:
     """Tier 2: auto-detect with no matching scope returns status=not_found."""
-    from reyn.op_runtime.mcp_drop_server import handle as drop_handle
+    from reyn.core.op_runtime.mcp_drop_server import handle as drop_handle
 
     # No config files exist at all
     op = MCPDropServerIROp(
@@ -263,7 +263,7 @@ def test_mcp_drop_server_not_found_auto_scope(tmp_path: Path) -> None:
 
 def test_mcp_drop_server_empty_server_raises(tmp_path: Path) -> None:
     """Tier 2: empty server string raises ValueError (= input validation)."""
-    from reyn.op_runtime.mcp_drop_server import handle as drop_handle
+    from reyn.core.op_runtime.mcp_drop_server import handle as drop_handle
 
     op = MCPDropServerIROp(kind="mcp_drop_server", server="   ", scope="local")
     with pytest.raises(ValueError, match="non-empty"):
@@ -275,7 +275,7 @@ def test_mcp_drop_server_empty_server_raises(tmp_path: Path) -> None:
 
 def test_mcp_drop_server_emits_p6_event_on_success(tmp_path: Path) -> None:
     """Tier 2: mcp_server_removed event emitted with audit metadata."""
-    from reyn.op_runtime.mcp_drop_server import handle as drop_handle
+    from reyn.core.op_runtime.mcp_drop_server import handle as drop_handle
 
     cfg_path = tmp_path / "reyn.local.yaml"
     _seed_config(cfg_path, {
@@ -308,7 +308,7 @@ def test_mcp_drop_server_emits_p6_event_on_success(tmp_path: Path) -> None:
 
 def test_mcp_drop_server_no_event_on_not_found(tmp_path: Path) -> None:
     """Tier 2: status=not_found does NOT emit mcp_server_removed."""
-    from reyn.op_runtime.mcp_drop_server import handle as drop_handle
+    from reyn.core.op_runtime.mcp_drop_server import handle as drop_handle
 
     events = _CapturingEvents()
     op = MCPDropServerIROp(kind="mcp_drop_server", server="ghost", scope=None)
@@ -329,7 +329,7 @@ def test_mcp_drop_server_clears_secrets_when_requested(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Tier 2: clear_secrets=True removes matching keys from secrets.env."""
-    from reyn.op_runtime.mcp_drop_server import handle as drop_handle
+    from reyn.core.op_runtime.mcp_drop_server import handle as drop_handle
     from reyn.security.secrets.store import list_secret_keys, save_secret
 
     # Redirect secrets store to tmp_path
@@ -371,7 +371,7 @@ def test_mcp_drop_server_preserves_secrets_when_requested(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Tier 2: clear_secrets=False leaves the secrets.env unchanged."""
-    from reyn.op_runtime.mcp_drop_server import handle as drop_handle
+    from reyn.core.op_runtime.mcp_drop_server import handle as drop_handle
     from reyn.security.secrets.store import list_secret_keys, save_secret
 
     secrets_file = tmp_path / "secrets.env"
@@ -483,7 +483,7 @@ def test_mcp_drop_server_sandbox_policy_denies_out_of_cap_write(tmp_path: Path) 
     → the permission grant alone lets the write through)."""
     import dataclasses
 
-    from reyn.op_runtime.mcp_drop_server import handle as drop_handle
+    from reyn.core.op_runtime.mcp_drop_server import handle as drop_handle
 
     cfg_path = tmp_path / "reyn.local.yaml"
     _seed_config(cfg_path, {"filesystem": {"command": "npx", "args": ["-y", "@mcp/fs"]}})
@@ -517,7 +517,7 @@ def test_mcp_drop_server_realistic_workspace_default_allows_config_write(tmp_pat
     threading sandbox_policy would block legitimate in-workspace config writes."""
     import dataclasses
 
-    from reyn.op_runtime.mcp_drop_server import handle as drop_handle
+    from reyn.core.op_runtime.mcp_drop_server import handle as drop_handle
 
     cfg_path = tmp_path / "reyn.local.yaml"
     _seed_config(cfg_path, {"filesystem": {"command": "npx", "args": ["-y", "@mcp/fs"]}})

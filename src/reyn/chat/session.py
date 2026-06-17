@@ -39,8 +39,6 @@ from reyn.chat.services import (
 from reyn.chat.services.a2a_handler import A2AHandler
 from reyn.chat.services.chain_manager import _PendingChain
 from reyn.chat.services.skill_runner import SkillRunner
-from reyn.compiler import load_dsl_skill
-from reyn.compiler.parser import _split_frontmatter
 from reyn.config import (  # noqa: F401
     ActionRetrievalConfig,
     EmbeddingConfig,
@@ -50,12 +48,14 @@ from reyn.config import (  # noqa: F401
     SafetyConfig,
     SandboxConfig,
 )
-from reyn.events.agent_snapshot import AgentSnapshot
-from reyn.events.anchor_store import truncate_anchor as _truncate_anchor
-from reyn.events.event_store import EventStore
-from reyn.events.events import EventLog
-from reyn.events.snapshot_generations import SnapshotGenerationStore
-from reyn.events.state_log import StateLog
+from reyn.core.compiler import load_dsl_skill
+from reyn.core.compiler.parser import _split_frontmatter
+from reyn.core.events.agent_snapshot import AgentSnapshot
+from reyn.core.events.anchor_store import truncate_anchor as _truncate_anchor
+from reyn.core.events.event_store import EventStore
+from reyn.core.events.events import EventLog
+from reyn.core.events.snapshot_generations import SnapshotGenerationStore
+from reyn.core.events.state_log import StateLog
 from reyn.limits.limit_handler import (
     LimitDecision,
     handle_limit_exceeded,
@@ -808,13 +808,13 @@ def _format_sender_label(sender: str | None) -> str:
 # benefits from a direct subscriber list; op_runtime ops already emit
 # session-scoped events so the events log is the natural seam.
 _STATE_CHANGE_EVENT_MAPPINGS: dict[str, tuple[str, str]] = {
-    # MCP server install success (= ``reyn.op_runtime.mcp_install``
+    # MCP server install success (= ``reyn.core.op_runtime.mcp_install``
     # emits this on the events log after writing the config).
     "mcp_server_installed": (
         "mcp_install",
         "MCP server '{server_name}' was installed.",
     ),
-    # MCP server removal success (= ``reyn.op_runtime.mcp_drop_server``
+    # MCP server removal success (= ``reyn.core.op_runtime.mcp_drop_server``
     # emits this after removing the config entry). Symmetric to
     # mcp_server_installed — surfaces the "no longer available"
     # state-change to the LLM so it doesn't keep trying.
@@ -822,7 +822,7 @@ _STATE_CHANGE_EVENT_MAPPINGS: dict[str, tuple[str, str]] = {
         "mcp_drop_server",
         "MCP server '{server}' was removed.",
     ),
-    # Indexed corpus removal (= ``reyn.op_runtime.index_drop`` emits
+    # Indexed corpus removal (= ``reyn.core.op_runtime.index_drop`` emits
     # this after dropping chunks from the backend). Recall against
     # the dropped source will now miss; surfacing the change lets
     # the LLM understand "the source it was citing yesterday doesn't
@@ -1600,7 +1600,7 @@ class ChatSession:
         # acompletion chokepoint, so every in-session LLM call emits an observable
         # `llm_request` event (non-message params) without threading events through
         # the call stack. Set at creation → propagates into the run loop's tasks.
-        from reyn.events.events import set_llm_request_event_log
+        from reyn.core.events.events import set_llm_request_event_log
         set_llm_request_event_log(self._chat_events)
         # Issue #162: surface session-level lifecycle events (compaction
         # today; attach/detach + budget warnings as growth) into the
@@ -3431,7 +3431,7 @@ class ChatSession:
         if self._state_log is None:
             return None
         if self._plan_registry is None:
-            from reyn.plan import PlanRegistry
+            from reyn.core.plan import PlanRegistry
             agent_state_dir = (
                 Path(".reyn") / "agents" / self.agent_name / "state"
             )
@@ -4813,7 +4813,7 @@ class ChatSession:
 
     async def _file_op(self, op_dict: dict) -> dict:
         """Dispatch a file op via op_runtime. Returns result dict."""
-        from reyn.op_runtime import execute_op
+        from reyn.core.op_runtime import execute_op
         from reyn.schemas.models import FileIROp
 
         op = FileIROp(**op_dict)
@@ -4948,7 +4948,7 @@ class ChatSession:
         per-server within a single chat-turn act batch, but the same-
         task-close discipline still applies.
         """
-        from reyn.op_runtime import execute_op
+        from reyn.core.op_runtime import execute_op
         from reyn.schemas.models import MCPIROp
         from reyn.security.permissions.permissions import PermissionDecl
 

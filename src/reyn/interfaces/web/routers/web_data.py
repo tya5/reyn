@@ -191,7 +191,7 @@ def _build_library(project_root: Path) -> list[dict[str, Any]]:
             # Try to read description from skill.md frontmatter
             description = ""
             try:
-                from reyn.compiler.parser import _split_frontmatter
+                from reyn.core.compiler.parser import _split_frontmatter
                 fm, _ = _split_frontmatter((skill_dir / "skill.md").read_text(encoding="utf-8"))
                 description = (fm.get("description") or "").strip()
             except Exception:

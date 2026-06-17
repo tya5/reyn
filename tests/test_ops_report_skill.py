@@ -494,7 +494,7 @@ def test_ops_report_skill_md_compiles() -> None:
     """Tier 2: ops_report skill.md compiles without 'Phase not found' error (BUG-3 regression)."""
     from pathlib import Path
 
-    from reyn.compiler.loader import load_dsl_skill
+    from reyn.core.compiler.loader import load_dsl_skill
 
     skill_md = (
         Path(__file__).parent.parent
@@ -534,7 +534,7 @@ def test_aggregate_pure_imports_only_safe_modules() -> None:
     import ast
     from pathlib import Path
 
-    from reyn.kernel._python_allowlist import PURE_STDLIB_ALLOWLIST
+    from reyn.core.kernel._python_allowlist import PURE_STDLIB_ALLOWLIST
 
     src = (
         Path(__file__).parent.parent

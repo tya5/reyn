@@ -8,9 +8,9 @@ from __future__ import annotations
 import uuid
 from pathlib import Path
 
-from reyn.events.agent_snapshot import AgentSnapshot
-from reyn.events.snapshot_generations import SnapshotGenerationStore
-from reyn.events.state_log import StateLog
+from reyn.core.events.agent_snapshot import AgentSnapshot
+from reyn.core.events.snapshot_generations import SnapshotGenerationStore
+from reyn.core.events.state_log import StateLog
 
 
 class SnapshotJournal:

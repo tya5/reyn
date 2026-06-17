@@ -26,7 +26,7 @@ from pathlib import Path
 
 from reyn.chat.profile import AgentProfile
 from reyn.chat.registry import AgentRegistry
-from reyn.events.state_log import StateLog
+from reyn.core.events.state_log import StateLog
 
 # ---------------------------------------------------------------------------
 # Helpers (mirrors test_registry_wal_truncate.py post-PR-N7)

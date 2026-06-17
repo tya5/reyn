@@ -15,7 +15,7 @@ Available modules:
   :class:`PermissionError`.
 
 - :mod:`reyn.safe.cache` — 24h-TTL file cache (`get` / `set`). New in
-  FP-0042 Phase 3 drift-fix; thin re-export of `reyn.registry.cache`
+  FP-0042 Phase 3 drift-fix; thin re-export of `reyn.core.registry.cache`
   so safe-mode skills can use the existing shared cache store.
 - :mod:`reyn.safe.hash` — `sha256` / `sha256_hex`.
 - :mod:`reyn.safe.http` — urllib-backed HTTP (`get` / `post` / `put` /

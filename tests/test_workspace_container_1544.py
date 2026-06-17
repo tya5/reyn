@@ -20,7 +20,7 @@ from pathlib import Path
 
 import pytest
 
-from reyn.events.workspace_version_store import (
+from reyn.core.events.workspace_version_store import (
     GitUnavailable,
     WorkspaceVersionStore,
     _ContainerGitRunner,
@@ -110,7 +110,7 @@ async def test_registry_routes_container_backend_through_backend_run(tmp_path):
     proving the routing without asserting internal structure.
     """
     from reyn.chat.registry import AgentRegistry
-    from reyn.events.state_log import StateLog
+    from reyn.core.events.state_log import StateLog
 
     backend = _FakeBackend(returncode=0, stdout=b"")
     reg = AgentRegistry(

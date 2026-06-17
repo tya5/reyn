@@ -30,9 +30,9 @@ Helper:
     and ``run_skill`` coarse→fine mappings (prefix-wildcard).
 
 Consumers:
-  - ``reyn.compiler.linter``     — ``ALL_OP_KINDS``
+  - ``reyn.core.compiler.linter``     — ``ALL_OP_KINDS``
   - ``reyn.dispatch.dispatcher`` — ``OP_PURITY`` (skip emission for ``pure``)
-  - ``reyn.kernel.control_ir_executor`` — ``is_op_allowed`` for the
+  - ``reyn.core.kernel.control_ir_executor`` — ``is_op_allowed`` for the
     ``allowed_ops`` filter
 
 Note: ``_WRITE_OPS`` / ``_READ_OPS`` in ``op_runtime/file.py`` classify

@@ -110,7 +110,7 @@ def test_compaction_engine_records_compaction_purpose(monkeypatch) -> None:
     records its compaction LLM call as purpose="compaction" (end-to-end through
     recorded_acompletion), confirming the recorder threading."""
     from reyn.config import CompactionConfig
-    from reyn.events.events import EventLog
+    from reyn.core.events.events import EventLog
     from reyn.services.compaction.engine import CompactionEngine, HistoryChunkToCompact
 
     async def _fake(model, messages, **kw):  # noqa: ANN001, ANN003
@@ -169,7 +169,7 @@ def test_compaction_engine_threads_agent(monkeypatch) -> None:
     its compaction spend to that agent (end-to-end agent threading through
     recorded_acompletion → record_llm)."""
     from reyn.config import CompactionConfig
-    from reyn.events.events import EventLog
+    from reyn.core.events.events import EventLog
     from reyn.services.compaction.engine import CompactionEngine, HistoryChunkToCompact
 
     async def _fake(model, messages, **kw):  # noqa: ANN001, ANN003

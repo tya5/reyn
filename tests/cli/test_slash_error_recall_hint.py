@@ -45,7 +45,7 @@ if str(_SRC) not in sys.path:
 
 def _make_session(tmp_path: Path, *, agent_name: str = "t") -> "ChatSession":
     from reyn.chat.session import ChatSession
-    from reyn.events.state_log import StateLog
+    from reyn.core.events.state_log import StateLog
 
     return ChatSession(
         agent_name=agent_name,

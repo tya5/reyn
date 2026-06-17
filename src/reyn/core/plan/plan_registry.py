@@ -31,8 +31,8 @@ import os
 from pathlib import Path
 from typing import TYPE_CHECKING, Awaitable, Callable
 
-from reyn.plan.decomposition import delete_decomposition, delete_plan_workspace
-from reyn.plan.plan_snapshot import (
+from reyn.core.plan.decomposition import delete_decomposition, delete_plan_workspace
+from reyn.core.plan.plan_snapshot import (
     PlanSnapshot,
     plan_snapshot_path,
     step_result_file_path,

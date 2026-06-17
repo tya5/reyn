@@ -96,7 +96,7 @@ def benchmark_workspace(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(session_mod, "Session", _StubSession)
 
     # Stub load_dsl_skill
-    import reyn.compiler as compiler_mod
+    import reyn.core.compiler as compiler_mod
     sentinel_skill = types.SimpleNamespace(name="test_skill")
     monkeypatch.setattr(compiler_mod, "load_dsl_skill", lambda *a, **kw: sentinel_skill)
 

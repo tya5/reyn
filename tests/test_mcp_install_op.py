@@ -25,9 +25,9 @@ from unittest import mock
 
 import pytest
 
-from reyn.events.events import EventLog
-from reyn.op_runtime.context import OpContext
-from reyn.op_runtime.mcp_install import handle as mcp_install_handle
+from reyn.core.events.events import EventLog
+from reyn.core.op_runtime.context import OpContext
+from reyn.core.op_runtime.mcp_install import handle as mcp_install_handle
 from reyn.schemas.models import MCPInstallIROp
 from reyn.security.permissions.permissions import PermissionDecl, PermissionResolver
 from reyn.user_intervention import InterventionAnswer, UserIntervention
@@ -188,12 +188,12 @@ def _patch_registry_get(server_response: dict, status: int = 200):
 
     async def _fake_get(self, path: str, params=None, base_url=None):
         if status >= 400:
-            from reyn.registry.client import RegistryError
+            from reyn.core.registry.client import RegistryError
             raise RegistryError(f"HTTP {status}")
         # get_server wraps with {"server": ...} for the versions/latest endpoint
         return {"server": server_response}
 
-    return mock.patch("reyn.registry.client.RegistryClient._get", _fake_get)
+    return mock.patch("reyn.core.registry.client.RegistryClient._get", _fake_get)
 
 
 def _run(coro):
@@ -537,7 +537,7 @@ def test_mcp_install_irop_model_defaults():
 
 def test_mcp_install_irop_in_op_kind_model_map():
     """Tier 2: mcp_install is registered in OP_KIND_MODEL_MAP."""
-    from reyn.op_runtime.registry import OP_KIND_MODEL_MAP
+    from reyn.core.op_runtime.registry import OP_KIND_MODEL_MAP
     from reyn.schemas.models import MCPInstallIROp
 
     assert "mcp_install" in OP_KIND_MODEL_MAP
@@ -546,7 +546,7 @@ def test_mcp_install_irop_in_op_kind_model_map():
 
 def test_mcp_install_in_all_op_kinds():
     """Tier 2: mcp_install is in ALL_OP_KINDS (used by DSL linter)."""
-    from reyn.op_runtime.registry import ALL_OP_KINDS
+    from reyn.core.op_runtime.registry import ALL_OP_KINDS
 
     assert "mcp_install" in ALL_OP_KINDS
 

@@ -20,9 +20,7 @@ from pathlib import Path
 
 import pytest
 
-from reyn.llm.llm import LLMToolCallResult
-from reyn.llm.pricing import TokenUsage
-from reyn.plan import (
+from reyn.core.plan import (
     PlanRegistry,
     PlanSnapshot,
     SubLoopMemoProvider,
@@ -30,6 +28,8 @@ from reyn.plan import (
     extract_step_llm_call_records,
     plan_snapshot_path,
 )
+from reyn.llm.llm import LLMToolCallResult
+from reyn.llm.pricing import TokenUsage
 
 # ── compute_sub_loop_args_hash ────────────────────────────────────────────
 
@@ -290,7 +290,7 @@ def test_analyzer_forwards_step_llm_call_log_to_resume_plan(tmp_path: Path) -> N
     """Tier 2: PlanResumeAnalyzer.analyze populates
     PlanResumePlan.step_llm_call_log from snapshot.step_llm_calls."""
     from reyn.chat.planner import Plan, PlanStep
-    from reyn.plan import PlanResumeAnalyzer
+    from reyn.core.plan import PlanResumeAnalyzer
 
     snap = PlanSnapshot.empty(
         plan_id="p001", agent_name="default", chain_id="c0", goal="g",

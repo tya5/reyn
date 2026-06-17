@@ -11,13 +11,13 @@ from typing import Any
 
 import pytest
 
+from reyn.core.events.events import EventLog
+from reyn.core.op_runtime import execute_op
+from reyn.core.op_runtime.context import OpContext
 from reyn.data.embedding.provider import EmbedBatchResult
 from reyn.data.index.backend import ChunkRecord
 from reyn.data.index.backends.sqlite import SqliteIndexBackend
 from reyn.data.workspace.workspace import Workspace
-from reyn.events.events import EventLog
-from reyn.op_runtime import execute_op
-from reyn.op_runtime.context import OpContext
 from reyn.schemas.models import RecallIROp
 from reyn.security.permissions.permissions import PermissionDecl
 
@@ -86,7 +86,7 @@ def _chunk(text: str, vec: list[float], ch: str) -> ChunkRecord:
 async def test_recall_happy_path_returns_chunks(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Tier 2: recall macro embeds query, queries source, returns merged top-K."""
     fake = FakeEmbeddingProvider()
-    import reyn.op_runtime.recall as _recall_mod
+    import reyn.core.op_runtime.recall as _recall_mod
     monkeypatch.setattr(_recall_mod, "get_provider", lambda *a, **kw: fake)
 
     import os
@@ -117,7 +117,7 @@ async def test_recall_happy_path_returns_chunks(tmp_path: Path, monkeypatch: pyt
 async def test_recall_empty_sources_returns_fallback(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Tier 2: recall with empty sources list returns fallback immediately."""
     fake = FakeEmbeddingProvider()
-    import reyn.op_runtime.recall as _recall_mod
+    import reyn.core.op_runtime.recall as _recall_mod
     monkeypatch.setattr(_recall_mod, "get_provider", lambda *a, **kw: fake)
 
     import os
@@ -142,7 +142,7 @@ async def test_recall_empty_sources_returns_fallback(tmp_path: Path, monkeypatch
 async def test_recall_merges_multiple_sources(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Tier 2: recall merges chunks from multiple sources, sorted by score."""
     fake = FakeEmbeddingProvider()
-    import reyn.op_runtime.recall as _recall_mod
+    import reyn.core.op_runtime.recall as _recall_mod
     monkeypatch.setattr(_recall_mod, "get_provider", lambda *a, **kw: fake)
 
     import os
@@ -171,7 +171,7 @@ async def test_recall_merges_multiple_sources(tmp_path: Path, monkeypatch: pytes
 async def test_recall_top_k_limits_merged_results(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Tier 2: recall top_k limits total chunks returned across all sources."""
     fake = FakeEmbeddingProvider()
-    import reyn.op_runtime.recall as _recall_mod
+    import reyn.core.op_runtime.recall as _recall_mod
     monkeypatch.setattr(_recall_mod, "get_provider", lambda *a, **kw: fake)
 
     import os
@@ -200,7 +200,7 @@ async def test_recall_top_k_limits_merged_results(tmp_path: Path, monkeypatch: p
 async def test_recall_mode_all_semantic(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Tier 2: when all sources return semantic results, mode='semantic'."""
     fake = FakeEmbeddingProvider()
-    import reyn.op_runtime.recall as _recall_mod
+    import reyn.core.op_runtime.recall as _recall_mod
     monkeypatch.setattr(_recall_mod, "get_provider", lambda *a, **kw: fake)
 
     import os
@@ -241,7 +241,7 @@ async def test_recall_embed_failure_falls_back(tmp_path: Path, monkeypatch: pyte
         def get_dimension(self, model: str) -> int:
             return 3
 
-    import reyn.op_runtime.recall as _recall_mod
+    import reyn.core.op_runtime.recall as _recall_mod
     monkeypatch.setattr(_recall_mod, "get_provider", lambda *a, **kw: _RaisingProvider())
     monkeypatch.chdir(tmp_path)
 

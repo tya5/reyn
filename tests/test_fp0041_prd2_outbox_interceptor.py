@@ -43,7 +43,7 @@ from reyn.chat.external_routing import (
 from reyn.chat.outbox import OutboxMessage
 from reyn.chat.session import ChatSession
 from reyn.chat.transport import ExternalRef, TuiRef
-from reyn.events.state_log import StateLog
+from reyn.core.events.state_log import StateLog
 
 
 def _make_session(tmp_path: Path, *, agent_name: str = "alpha") -> ChatSession:

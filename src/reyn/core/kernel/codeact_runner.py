@@ -1,6 +1,6 @@
 """Parent-side orchestrator for a CodeAct snippet (#1593 PR-3, S2).
 
-Runs the model's snippet in a subprocess (``reyn.kernel._codeact_harness``) and
+Runs the model's snippet in a subprocess (``reyn.core.kernel._codeact_harness``) and
 services its duplex permission-proxy: each ``tool(name, **args)`` the snippet calls
 round-trips over an inherited AF_UNIX socketpair to ``dispatch`` here in the parent
 — the SAME OS exclude + ``dispatch_tool`` + permission gate (P5). The snippet holds
@@ -35,10 +35,10 @@ from typing import Any, Awaitable, Callable
 
 def _harness_subprocess_env() -> dict[str, str]:
     """Env for the harness subprocess with the PARENT process's reyn tree propagated
-    onto PYTHONPATH (#1609). Without this, ``python -m reyn.kernel._codeact_harness``
+    onto PYTHONPATH (#1609). Without this, ``python -m reyn.core.kernel._codeact_harness``
     resolves ``reyn`` from the spawned interpreter's default ``sys.path`` — which in a
     multi-worktree editable-install dev env can point at a DIFFERENT worktree lacking
-    this harness module (``No module named reyn.kernel._codeact_harness``). Prepending
+    this harness module (``No module named reyn.core.kernel._codeact_harness``). Prepending
     this process's reyn tree makes the subprocess resolve the SAME tree. Production
     (single reyn install) is unaffected — same path either way. (The codeact harness
     interpreter is always the host ``sys.executable`` — #1663; it does NOT honor
@@ -109,7 +109,7 @@ class CodeActRunner:
         S2b wires the Seatbelt wrap (reusing ``_build_sbpl_profile``); S2c wires
         Landlock.
         """
-        base_argv = [self.python_executable, "-m", "reyn.kernel._codeact_harness"]
+        base_argv = [self.python_executable, "-m", "reyn.core.kernel._codeact_harness"]
         argv, cleanup, spawn_error = self._resolve_sandbox_spawn(
             base_argv, sandbox_backend, sandbox_policy, timeout, allow_unsandboxed,
         )

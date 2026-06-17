@@ -20,12 +20,12 @@ from typing import Any
 import httpx
 import pytest
 
-from reyn.op_runtime.web import handle_web_fetch
+from reyn.core.op_runtime.web import handle_web_fetch
 from reyn.schemas.models import WebFetchIROp
 
 
 def _make_ctx() -> Any:
-    from reyn.op_runtime.context import OpContext
+    from reyn.core.op_runtime.context import OpContext
     from reyn.security.permissions.permissions import PermissionDecl
 
     class _FakeEventLog:

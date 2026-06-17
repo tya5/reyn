@@ -29,7 +29,7 @@ from typing import Any
 import pytest
 
 from reyn.chat.planner import Plan, PlanStep, execute_plan
-from reyn.events.agent_snapshot import SNAPSHOT_VERSION, AgentSnapshot
+from reyn.core.events.agent_snapshot import SNAPSHOT_VERSION, AgentSnapshot
 
 # ── Stub host that records lifecycle calls ──────────────────────────────────
 
@@ -130,7 +130,7 @@ class _StubRouterLoop:
         if _StubRouterLoop._behavior.startswith("raise:"):
             exc_name = _StubRouterLoop._behavior.split(":", 1)[1]
             if exc_name == "WorkflowAbortedError":
-                from reyn.kernel.runtime import WorkflowAbortedError
+                from reyn.core.kernel.runtime import WorkflowAbortedError
                 raise WorkflowAbortedError("test abort")
             elif exc_name == "RuntimeError":
                 raise RuntimeError("test crash")

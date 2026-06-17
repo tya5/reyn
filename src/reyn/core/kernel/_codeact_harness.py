@@ -1,6 +1,6 @@
 """Child-process entry point for a CodeAct snippet (#1593 PR-3).
 
-Invoked as ``python -m reyn.kernel._codeact_harness`` inside the sandbox. Unlike
+Invoked as ``python -m reyn.core.kernel._codeact_harness`` inside the sandbox. Unlike
 ``_python_harness`` (a pure one-shot function runner), CodeAct code interleaves
 computation with **synchronous tool calls** mid-execution, so this harness opens a
 **duplex control channel** to the parent: the only world-effect path exposed to the
@@ -42,7 +42,7 @@ from typing import Any
 # Reuse the existing safe-mode validator + restricted builtins (#1593
 # correspondence: harness restricted-namespace mechanism reused; CodeAct only
 # adds the permission-proxy shim on top).
-from reyn.kernel._python_harness import (
+from reyn.core.kernel._python_harness import (
     _build_restricted_builtins,
     _validate_safe_ast,
 )

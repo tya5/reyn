@@ -38,7 +38,7 @@ import pytest
 
 pytest.importorskip("fastapi", reason="fastapi not installed ([web] extra missing)")
 
-from reyn.events.events import EventLog  # noqa: E402
+from reyn.core.events.events import EventLog  # noqa: E402
 from reyn.schemas.models import Event  # noqa: E402
 
 

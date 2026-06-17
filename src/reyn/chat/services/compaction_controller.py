@@ -23,7 +23,7 @@ import logging
 from typing import TYPE_CHECKING, Callable
 
 from reyn.config import CompactionConfig
-from reyn.events.events import EventLog
+from reyn.core.events.events import EventLog
 from reyn.services.compaction.engine import (
     CompactionEngine,
     HistoryChunkToCompact,
@@ -86,7 +86,7 @@ class CompactionController:
     Parameters
     ----------
     event_log:
-        Session-scoped :class:`~reyn.events.events.EventLog`.  All
+        Session-scoped :class:`~reyn.core.events.events.EventLog`.  All
         compaction events are emitted here.
     config:
         :class:`~reyn.config.CompactionConfig` — thresholds and sizing.

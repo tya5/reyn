@@ -13,7 +13,7 @@ from pathlib import Path
 import pytest
 
 from reyn.chat.planner import Plan, PlanStep
-from reyn.plan import (
+from reyn.core.plan import (
     PlanRegistry,
     PlanResumeConfig,
     PlanResumeCoordinator,
@@ -184,7 +184,7 @@ def test_discover_forces_discard_on_missing_artifact(tmp_path: Path) -> None:
 
 def test_discover_forces_discard_on_corrupt_artifact(tmp_path: Path) -> None:
     """Tier 2: artifact load raising any exception → forced discard."""
-    from reyn.plan.decomposition import DecompositionCorruptError
+    from reyn.core.plan.decomposition import DecompositionCorruptError
 
     reg = PlanRegistry(agent_name="default", agent_state_dir=tmp_path)
     reg.start(plan_id="p001", chain_id="c0", goal="g", applied_seq=10)

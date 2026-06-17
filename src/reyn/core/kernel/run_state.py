@@ -16,7 +16,7 @@ import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
-from reyn.kernel.rollback_state import RollbackState
+from reyn.core.kernel.rollback_state import RollbackState
 from reyn.llm.pricing import TokenUsage
 
 if TYPE_CHECKING:

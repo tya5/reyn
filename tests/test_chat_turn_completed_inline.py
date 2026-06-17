@@ -31,7 +31,7 @@ from pathlib import Path
 import pytest
 
 from reyn.chat.router_loop import RouterLoop
-from reyn.events.event_schema import EVENT_AUDIT_REQUIREMENTS
+from reyn.core.events.event_schema import EVENT_AUDIT_REQUIREMENTS
 from reyn.llm.llm import LLMToolCallResult
 from reyn.llm.pricing import TokenUsage
 

@@ -17,8 +17,8 @@ from pathlib import Path
 import pytest
 
 from reyn.chat.session import ChatSession
-from reyn.events.state_log import StateLog
-from reyn.plan import (
+from reyn.core.events.state_log import StateLog
+from reyn.core.plan import (
     PlanRegistry,
     plan_snapshot_path,
 )
@@ -101,7 +101,7 @@ async def test_record_plan_step_completed_persists_to_snapshot(tmp_path, monkeyp
 async def test_record_plan_step_completed_spills_large_text(tmp_path, monkeypatch):
     """Tier 2: large result_text routes through ADR-0024 spill path so
     fresh runs benefit from the spill (= no 32KB silent truncation)."""
-    from reyn.plan import step_result_file_path
+    from reyn.core.plan import step_result_file_path
 
     monkeypatch.chdir(tmp_path)
     session = _make_session(tmp_path)
@@ -126,7 +126,7 @@ async def test_record_plan_step_completed_spills_large_text(tmp_path, monkeypatc
 async def test_record_plan_completed_removes_per_plan_workspace(tmp_path, monkeypatch):
     """Tier 2: RouterHostAdapter.record_plan_completed reclaims the per-plan
     workspace via PlanRegistry.complete (= delete_plan_workspace)."""
-    from reyn.plan import decomposition_dir
+    from reyn.core.plan import decomposition_dir
 
     monkeypatch.chdir(tmp_path)
     session = _make_session(tmp_path)
@@ -151,7 +151,7 @@ async def test_record_plan_completed_removes_per_plan_workspace(tmp_path, monkey
 async def test_record_plan_aborted_removes_per_plan_workspace(tmp_path, monkeypatch):
     """Tier 2: RouterHostAdapter.record_plan_aborted similarly cleans up the
     per-plan workspace (= /plan discard / restart-cleanup paths)."""
-    from reyn.plan import decomposition_dir
+    from reyn.core.plan import decomposition_dir
 
     monkeypatch.chdir(tmp_path)
     session = _make_session(tmp_path)

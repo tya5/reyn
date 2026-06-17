@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Any
 
 from reyn.chat.services import MemoryService, RouterHostAdapter
-from reyn.events.events import EventLog
+from reyn.core.events.events import EventLog
 from reyn.llm.model_resolver import ModelResolver, ModelSpec
 
 _EFFORT = "high"     # non-default reasoning_effort

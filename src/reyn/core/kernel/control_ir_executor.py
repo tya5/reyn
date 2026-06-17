@@ -25,12 +25,12 @@ if TYPE_CHECKING:
     from reyn.security.sandbox.backend import SandboxBackend
     from reyn.security.secrets.store import ScopedSecretStore
 
+from reyn.core.events.events import EventLog
+from reyn.core.op_runtime import execute_op
+from reyn.core.op_runtime.context import OpContext
 from reyn.data.workspace.workspace import Workspace
 from reyn.dispatch import DispatchContext, dispatch_tool
-from reyn.events.events import EventLog
 from reyn.llm.model_resolver import ModelResolver
-from reyn.op_runtime import execute_op
-from reyn.op_runtime.context import OpContext
 from reyn.schemas.models import (
     ControlIROp,
     ControlIROpSpec,
@@ -456,7 +456,7 @@ class ControlIRExecutor:
         if allowed_ops is not None:
             catalog_ops = allowed_ops
         else:
-            from reyn.op_runtime.registry import OP_KIND_MODEL_MAP
+            from reyn.core.op_runtime.registry import OP_KIND_MODEL_MAP
             catalog_ops = set(OP_KIND_MODEL_MAP.keys())
         tool_catalog = _build_phase_tool_catalog(catalog_ops)
 
@@ -481,7 +481,7 @@ class ControlIRExecutor:
         _registry = get_default_registry()
 
         # Lazy import to avoid module-init cycles.
-        from reyn.op_runtime.registry import is_op_instance_allowed
+        from reyn.core.op_runtime.registry import is_op_instance_allowed
 
         for op_idx, op in enumerate(ops):
             if allowed_ops is not None and not is_op_instance_allowed(op, allowed_ops):

@@ -35,8 +35,8 @@ import platform
 import subprocess
 import sys
 
-from reyn.op_runtime.mcp_install import _build_server_entry
-from reyn.registry.source_resolver import (
+from reyn.core.op_runtime.mcp_install import _build_server_entry
+from reyn.core.registry.source_resolver import (
     _npm_package_name,
     _pypi_package_name,
     _strip_mcp_prefix,

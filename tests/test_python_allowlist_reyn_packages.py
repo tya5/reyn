@@ -13,7 +13,7 @@ harness AST validator uses).
 """
 from __future__ import annotations
 
-from reyn.kernel._python_allowlist import module_is_allowed
+from reyn.core.kernel._python_allowlist import module_is_allowed
 
 
 def test_reyn_safe_root_is_allowed():
@@ -46,8 +46,8 @@ def test_reyn_bare_remains_rejected():
     path).
     """
     assert module_is_allowed("reyn", frozenset()) is False
-    assert module_is_allowed("reyn.kernel", frozenset()) is False
-    assert module_is_allowed("reyn.events", frozenset()) is False
+    assert module_is_allowed("reyn.core.kernel", frozenset()) is False
+    assert module_is_allowed("reyn.core.events", frozenset()) is False
 
 
 def test_stdlib_still_works():

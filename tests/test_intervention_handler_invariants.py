@@ -29,9 +29,9 @@ from reyn.chat.outbox import OutboxMessage
 from reyn.chat.services.intervention_handler import InterventionHandler
 from reyn.chat.services.intervention_registry import InterventionRegistry
 from reyn.chat.services.snapshot_journal import SnapshotJournal
-from reyn.events.event_store import EventStore
-from reyn.events.events import EventLog
-from reyn.events.state_log import StateLog
+from reyn.core.events.event_store import EventStore
+from reyn.core.events.events import EventLog
+from reyn.core.events.state_log import StateLog
 from reyn.user_intervention import (
     InterventionAnswer,
     InterventionChoice,

@@ -42,7 +42,7 @@ _SRC = Path(__file__).resolve().parent.parent / "src"
 if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
-from reyn.compiler.loader import load_dsl_skill
+from reyn.core.compiler.loader import load_dsl_skill
 
 _SKILL_PATH = (
     Path(__file__).resolve().parent.parent

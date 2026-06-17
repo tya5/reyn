@@ -1,12 +1,12 @@
 """kernel — OS runtime engine (P3: context build, LLM call, validation, transitions).
 
 Public names are resolved lazily (PEP 562 ``__getattr__``) so that importing a
-kernel *submodule* — notably ``reyn.kernel._python_harness``, the python
+kernel *submodule* — notably ``reyn.core.kernel._python_harness``, the python
 preprocessor-step child entry point — does not eagerly pull the runtime / llm
 chain in through this ``__init__``. See ``reyn/__init__.py`` for the rationale
 (FP-0008 C4 lazy-import line extended to the package surface). ``from
-reyn.kernel import OSRuntime`` / ``reyn.kernel.OSRuntime`` still work via the
-lazy load on first access; submodule imports (``from reyn.kernel.normalizer
+reyn.core.kernel import OSRuntime`` / ``reyn.core.kernel.OSRuntime`` still work via the
+lazy load on first access; submodule imports (``from reyn.core.kernel.normalizer
 import ...``) are unaffected.
 """
 from __future__ import annotations

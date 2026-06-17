@@ -124,9 +124,9 @@ def test_sandbox_policy_from_ctx_builds_and_none() -> None:
     """Tier 2: the op-handler helper builds a SandboxPolicy from the phase dict and
     returns None when unset (the caller-split: phase handlers thread the policy,
     OS-internal callers get None = SandboxLayer ⊤)."""
+    from reyn.core.events.events import EventLog
+    from reyn.core.op_runtime.context import OpContext, sandbox_policy_from_ctx
     from reyn.data.workspace.workspace import Workspace
-    from reyn.events.events import EventLog
-    from reyn.op_runtime.context import OpContext, sandbox_policy_from_ctx
 
     events = EventLog()
     ws = Workspace(events)

@@ -10,8 +10,8 @@ import json
 import pytest
 
 from reyn.chat.services.snapshot_journal import SnapshotJournal
-from reyn.events.agent_snapshot import AgentSnapshot
-from reyn.events.state_log import StateLog
+from reyn.core.events.agent_snapshot import AgentSnapshot
+from reyn.core.events.state_log import StateLog
 
 # ── helpers ──────────────────────────────────────────────────────────────────
 
@@ -265,8 +265,8 @@ async def test_cut_generation_captures_both_substrates_at_same_seq(tmp_path):
     cut_generation must produce a runtime generation AND a shadow-git commit
     keyed by the same seq, so rewind/recovery can restore them together.
     """
-    from reyn.events.snapshot_generations import SnapshotGenerationStore
-    from reyn.events.workspace_version_store import WorkspaceVersionStore
+    from reyn.core.events.snapshot_generations import SnapshotGenerationStore
+    from reyn.core.events.workspace_version_store import WorkspaceVersionStore
 
     state_log = StateLog(tmp_path / "state.wal")
     seq = await state_log.append(

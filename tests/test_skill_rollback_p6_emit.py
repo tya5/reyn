@@ -20,7 +20,7 @@ from pathlib import Path
 
 import pytest
 
-from reyn.events.events import emit_cli_event
+from reyn.core.events.events import emit_cli_event
 from reyn.interfaces.cli.commands.skill import cmd_rollback
 
 # ---------------------------------------------------------------------------
@@ -181,7 +181,7 @@ def test_emit_cli_event_no_op_when_outside_reyn_project(tmp_path, monkeypatch, c
     no_reyn.mkdir()
     monkeypatch.chdir(no_reyn)
 
-    with caplog.at_level(logging.WARNING, logger="reyn.events.events"):
+    with caplog.at_level(logging.WARNING, logger="reyn.core.events.events"):
         # Must not raise.
         emit_cli_event("test_event", key="value")
 

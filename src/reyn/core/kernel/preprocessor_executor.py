@@ -33,8 +33,8 @@ from reyn.llm.pricing import TokenUsage
 from reyn.python_runner import PythonRunner, PythonStepError
 
 if TYPE_CHECKING:
+    from reyn.core.events.events import EventLog
     from reyn.data.workspace.workspace import Workspace
-    from reyn.events.events import EventLog
     from reyn.llm.model_resolver import ModelResolver
     from reyn.schemas.models import Phase, PreprocessorStep, Skill
     from reyn.security.permissions.permissions import PermissionResolver
@@ -149,7 +149,7 @@ class PreprocessorExecutor:
 
     def _build_op_ctx(self, phase: "Phase", step_index: int):
         """Construct an OpContext for an op_runtime call from this preprocessor."""
-        from reyn.op_runtime.context import OpContext
+        from reyn.core.op_runtime.context import OpContext
         return OpContext(
             workspace=self._workspace,
             events=self._events,
@@ -297,7 +297,7 @@ class PreprocessorExecutor:
         self, step: Any, artifact: dict, index: int,
         phase: "Phase", output_language: str | None,
     ) -> tuple[dict, TokenUsage]:
-        from reyn.op_runtime import execute_op
+        from reyn.core.op_runtime import execute_op
         ctx = self._build_op_ctx(phase, index)
         ctx.output_language = output_language
         try:
@@ -365,7 +365,7 @@ class PreprocessorExecutor:
         self, step: Any, artifact: dict, index: int,
         phase: "Phase", output_language: str | None,
     ) -> tuple[dict, TokenUsage]:
-        from reyn.op_runtime import execute_op
+        from reyn.core.op_runtime import execute_op
         from reyn.schemas.models import RunOpStep
 
         phase_name = phase.name
@@ -436,7 +436,7 @@ class PreprocessorExecutor:
     def _apply_lint_plan(
         self, step: Any, artifact: dict, index: int, phase_name: str,
     ) -> tuple[dict, TokenUsage]:
-        from reyn.compiler.linter import lint_plan
+        from reyn.core.compiler.linter import lint_plan
         plan = _get_at_path(artifact, step.over)
         if not isinstance(plan, dict):
             raise PreprocessorError(

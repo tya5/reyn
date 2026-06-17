@@ -214,9 +214,9 @@ class _CapturingImageClient:
 
 
 def _make_ctx(tmp_path: Path, *, multimodal: MultimodalConfig, bus_answer: str = "yes") -> Any:
+    from reyn.core.events.events import EventLog
+    from reyn.core.op_runtime.context import OpContext
     from reyn.data.workspace.workspace import Workspace
-    from reyn.events.events import EventLog
-    from reyn.op_runtime.context import OpContext
 
     events = EventLog()
     # Pre-approve the URL-level web.fetch gate via config so these tests
@@ -239,7 +239,7 @@ def test_image_under_limit_returns_media_blocks(tmp_path, monkeypatch) -> None:
     payload, content empty, status=ok.
     """
     monkeypatch.chdir(tmp_path)
-    from reyn.op_runtime.web import handle_web_fetch
+    from reyn.core.op_runtime.web import handle_web_fetch
     from reyn.schemas.models import WebFetchIROp
 
     _CapturingImageClient.body_bytes = b"\x89PNG\r\n\x1a\n" + b"\x00" * 200  # ~200 bytes
@@ -271,7 +271,7 @@ def test_image_over_limit_with_deny_returns_status_denied(tmp_path, monkeypatch)
     media_blocks, no model-context bloat.
     """
     monkeypatch.chdir(tmp_path)
-    from reyn.op_runtime.web import handle_web_fetch
+    from reyn.core.op_runtime.web import handle_web_fetch
     from reyn.schemas.models import WebFetchIROp
 
     _CapturingImageClient.body_bytes = b"x" * 10_000_000  # 10MB
@@ -294,7 +294,7 @@ def test_image_over_limit_with_deny_returns_status_denied(tmp_path, monkeypatch)
 def test_image_over_limit_with_ask_no_returns_status_denied(tmp_path, monkeypatch) -> None:
     """Tier 2: image > cap + on_oversize=ask + user says no → status=denied."""
     monkeypatch.chdir(tmp_path)
-    from reyn.op_runtime.web import handle_web_fetch
+    from reyn.core.op_runtime.web import handle_web_fetch
     from reyn.schemas.models import WebFetchIROp
 
     _CapturingImageClient.body_bytes = b"x" * 10_000_000
@@ -315,7 +315,7 @@ def test_image_over_limit_with_ask_no_returns_status_denied(tmp_path, monkeypatc
 def test_image_over_limit_with_allow_returns_media_blocks(tmp_path, monkeypatch) -> None:
     """Tier 2: image > cap + on_oversize=allow → loads anyway, no prompt."""
     monkeypatch.chdir(tmp_path)
-    from reyn.op_runtime.web import handle_web_fetch
+    from reyn.core.op_runtime.web import handle_web_fetch
     from reyn.schemas.models import WebFetchIROp
 
     _CapturingImageClient.body_bytes = b"x" * 10_000_000
@@ -339,7 +339,7 @@ def test_html_response_unchanged_when_image_gate_present(tmp_path, monkeypatch) 
     extracted text. Backward compat with #355 / #357 paths preserved.
     """
     monkeypatch.chdir(tmp_path)
-    from reyn.op_runtime.web import handle_web_fetch
+    from reyn.core.op_runtime.web import handle_web_fetch
     from reyn.schemas.models import WebFetchIROp
 
     class _HTMLClient:

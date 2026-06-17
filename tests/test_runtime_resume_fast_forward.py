@@ -18,8 +18,8 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass, field
 
-from reyn.kernel.normalizer import NormalizationResult
-from reyn.kernel.runtime import OSRuntime, RunResult
+from reyn.core.kernel.normalizer import NormalizationResult
+from reyn.core.kernel.runtime import OSRuntime, RunResult
 from reyn.schemas.models import (
     ControlDecision,
     ControlReason,

@@ -18,7 +18,7 @@ from pathlib import Path
 
 import pytest
 
-from reyn.registry.source_resolver import SourceResolution, resolve
+from reyn.core.registry.source_resolver import SourceResolution, resolve
 
 # ===========================================================================
 # Part 1: source_resolver unit tests
@@ -183,9 +183,9 @@ class TestSourceResolverUnknownScheme:
 # Part 2: mcp_install op handler — source path
 # ===========================================================================
 
-from reyn.events.events import EventLog
-from reyn.op_runtime.context import OpContext
-from reyn.op_runtime.mcp_install import handle as mcp_install_handle
+from reyn.core.events.events import EventLog
+from reyn.core.op_runtime.context import OpContext
+from reyn.core.op_runtime.mcp_install import handle as mcp_install_handle
 from reyn.schemas.models import MCPInstallIROp
 from reyn.security.permissions.permissions import PermissionDecl, PermissionResolver
 from reyn.user_intervention import InterventionAnswer, UserIntervention
@@ -453,7 +453,7 @@ def test_registry_path_unaffected_by_source_field_being_none(tmp_path, monkeypat
     async def _fake_get(self, path: str, params=None, base_url=None):
         return {"server": _FILESYSTEM_RESPONSE}
 
-    from reyn.registry.client import RegistryClient
+    from reyn.core.registry.client import RegistryClient
     monkeypatch.setattr(RegistryClient, "_get", _fake_get)
     monkeypatch.setattr("shutil.which", lambda name: "/usr/bin/npx")
     result = _run(mcp_install_handle(op, ctx, "control_ir"))

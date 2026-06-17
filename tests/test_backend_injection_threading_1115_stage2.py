@@ -21,12 +21,12 @@ from pathlib import Path
 
 import pytest
 
+from reyn.core.events.events import EventLog
+from reyn.core.kernel.control_ir_executor import ControlIRExecutor
+from reyn.core.kernel.preprocessor_executor import PreprocessorExecutor
+from reyn.core.kernel.runtime import OSRuntime
 from reyn.data.workspace.workspace import Workspace
 from reyn.environment.host_backend import HostBackend
-from reyn.events.events import EventLog
-from reyn.kernel.control_ir_executor import ControlIRExecutor
-from reyn.kernel.preprocessor_executor import PreprocessorExecutor
-from reyn.kernel.runtime import OSRuntime
 from reyn.schemas.models import Phase, RunOpStep, SandboxedExecIROp, Skill, SkillGraph
 from reyn.security.permissions.permissions import PermissionDecl, PermissionResolver
 from reyn.security.sandbox.backend import SandboxResult
@@ -127,7 +127,7 @@ def test_preprocessor_executor_accepts_sandbox_backend(tmp_path: Path) -> None:
     executor stores it and builds it into the op context. Run a one-step
     preprocessor with a sandboxed_exec run_op and assert the injected backend ran.
     """
-    from reyn.events.events import EventLog
+    from reyn.core.events.events import EventLog
 
     events = EventLog()
     skill = _one_phase_skill()

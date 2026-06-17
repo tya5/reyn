@@ -44,7 +44,7 @@ from reyn.schemas.models import ContextFrame
 
 if TYPE_CHECKING:
     from reyn.budget.budget import BudgetTracker
-    from reyn.events.events import EventLog
+    from reyn.core.events.events import EventLog
 
 T = TypeVar("T")
 
@@ -944,7 +944,7 @@ def _emit_llm_request_error(
     (#1669). Secret values are scrubbed from the freeform text. Wrapped so the
     audit emit can never mask the real exception (the caller re-raises regardless)."""
     try:
-        from reyn.events.events import get_llm_request_event_log
+        from reyn.core.events.events import get_llm_request_event_log
         log = get_llm_request_event_log()
         if log is None:
             return
@@ -1015,7 +1015,7 @@ def _emit_chat_cost_events(model: str, usage: "TokenUsage | None") -> None:
     if usage is None:
         return
     try:
-        from reyn.events.events import get_llm_request_event_log
+        from reyn.core.events.events import get_llm_request_event_log
         log = get_llm_request_event_log()
         if log is None:
             return
@@ -1117,7 +1117,7 @@ async def recorded_acompletion(
     # (a separate positional arg, never in base_kwargs); ``tools`` → count;
     # secret-like fields redacted. Never let an audit emit break the LLM call.
     try:
-        from reyn.events.events import get_llm_request_event_log
+        from reyn.core.events.events import get_llm_request_event_log
         _llm_event_log = get_llm_request_event_log()
         if _llm_event_log is not None:
             _llm_event_log.emit(

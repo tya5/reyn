@@ -35,8 +35,8 @@ from typing import TYPE_CHECKING, Any
 from reyn.llm.pricing import TokenUsage
 
 if TYPE_CHECKING:
+    from reyn.core.plan.plan_registry import PlanRegistry
     from reyn.llm.llm import LLMToolCallResult
-    from reyn.plan.plan_registry import PlanRegistry
 
 logger = logging.getLogger(__name__)
 

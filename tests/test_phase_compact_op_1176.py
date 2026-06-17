@@ -22,8 +22,8 @@ import json
 from typing import Any
 
 from reyn.config import CompactionConfig, PhaseActResultsCompactionConfig
-from reyn.events.events import EventLog
-from reyn.kernel.phase_executor import (
+from reyn.core.events.events import EventLog
+from reyn.core.kernel.phase_executor import (
     _ControlIRResultsHolder,
     _make_phase_compact_now,
 )

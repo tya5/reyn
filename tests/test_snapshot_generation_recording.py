@@ -15,8 +15,8 @@ from pathlib import Path
 import pytest
 
 from reyn.chat.services.snapshot_journal import SnapshotJournal
-from reyn.events.snapshot_generations import SnapshotGenerationStore, reconstruct
-from reyn.events.state_log import StateLog
+from reyn.core.events.snapshot_generations import SnapshotGenerationStore, reconstruct
+from reyn.core.events.state_log import StateLog
 
 AGENT = "alpha"
 

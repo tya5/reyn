@@ -31,10 +31,10 @@ from __future__ import annotations
 
 import asyncio
 
-import reyn.kernel.llm_call_recorder as runtime_mod
+import reyn.core.kernel.llm_call_recorder as runtime_mod
 from reyn.config import SkillResumeConfig
-from reyn.events.state_log import StateLog
-from reyn.kernel.runtime import OSRuntime
+from reyn.core.events.state_log import StateLog
+from reyn.core.kernel.runtime import OSRuntime
 from reyn.llm.llm import LLMCallResult
 from reyn.schemas.models import (
     Phase,
@@ -112,7 +112,7 @@ _SCRIPT = [
 class _ScriptedLLM:
     """Replays scripted responses; counts invocations.
 
-    Used as a monkeypatch target for ``reyn.kernel.runtime.call_llm``.
+    Used as a monkeypatch target for ``reyn.core.kernel.runtime.call_llm``.
     """
 
     def __init__(self, script: list[dict]) -> None:

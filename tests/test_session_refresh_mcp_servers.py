@@ -30,7 +30,7 @@ import pytest
 
 from reyn.chat.services.mcp_cache_file import cache_file_path, write_cache
 from reyn.chat.session import ChatSession
-from reyn.events.state_log import StateLog
+from reyn.core.events.state_log import StateLog
 
 # ---------------------------------------------------------------------------
 # Minimal ChatSession factory

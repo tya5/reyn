@@ -25,12 +25,12 @@ import datetime as _dt
 
 import litellm
 
-import reyn.kernel.llm_call_recorder as lcr
+import reyn.core.kernel.llm_call_recorder as lcr
 import reyn.schemas.models as _models
 from reyn.config import CompactionConfig, PhaseActResultsCompactionConfig
-from reyn.events.events import EventLog
-from reyn.events.state_log import StateLog
-from reyn.kernel.runtime import OSRuntime
+from reyn.core.events.events import EventLog
+from reyn.core.events.state_log import StateLog
+from reyn.core.kernel.runtime import OSRuntime
 from reyn.llm.llm import LLMCallResult, LLMToolCallResult
 from reyn.llm.pricing import TokenUsage
 from reyn.schemas.models import Phase, Skill, SkillGraph

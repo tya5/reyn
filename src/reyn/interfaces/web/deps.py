@@ -73,7 +73,7 @@ _state_log = None
 def _get_state_log():
     global _state_log
     if _state_log is None:
-        from reyn.events.state_log import StateLog
+        from reyn.core.events.state_log import StateLog
         root = _get_project_root()
         _state_log = StateLog(root / ".reyn" / "state" / "wal.jsonl")
     return _state_log
@@ -191,7 +191,7 @@ def _wire_external_outbox_interceptor(session, routing) -> None:
                 f"got {mcp_tool!r}",
             )
         server, tool = mcp_tool.split("__", 1)
-        from reyn.op_runtime.mcp import handle as mcp_handle
+        from reyn.core.op_runtime.mcp import handle as mcp_handle
         from reyn.schemas.models import MCPIROp
         op = MCPIROp(kind="mcp", server=server, tool=tool, args=dict(args))
         ctx = session._make_router_op_context()

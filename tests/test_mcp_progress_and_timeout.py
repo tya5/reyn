@@ -35,7 +35,7 @@ import pytest
 
 from reyn.chat.forwarder import ChatEventForwarder
 from reyn.chat.outbox import OutboxMessage
-from reyn.events.events import EventLog
+from reyn.core.events.events import EventLog
 from reyn.mcp_client import MCPClient
 from reyn.schemas.models import MCPIROp
 
@@ -152,7 +152,7 @@ def test_op_handler_progress_callback_emits_mcp_progress_event() -> None:
     when invoked by the MCP SDK, emits an ``mcp_progress`` event on the
     run's EventLog with structured fields the forwarder consumes.
     """
-    from reyn.op_runtime import mcp as mcp_op_handler
+    from reyn.core.op_runtime import mcp as mcp_op_handler
 
     captured_callback: dict[str, Any] = {}
 
@@ -182,7 +182,7 @@ def test_op_handler_progress_callback_emits_mcp_progress_event() -> None:
             return _FakeResult()
 
     # Build a minimal OpContext.
-    from reyn.op_runtime.context import OpContext
+    from reyn.core.op_runtime.context import OpContext
     from reyn.security.permissions.permissions import PermissionDecl
 
     events = EventLog()
@@ -228,7 +228,7 @@ def test_op_handler_reads_call_timeout_from_server_config() -> None:
     ``timeout_seconds`` to ``MCPClient.call_tool`` (which converts to
     ``timedelta`` and passes as ``read_timeout_seconds`` to the SDK).
     """
-    from reyn.op_runtime import mcp as mcp_op_handler
+    from reyn.core.op_runtime import mcp as mcp_op_handler
 
     captured: dict[str, Any] = {}
 
@@ -248,7 +248,7 @@ def test_op_handler_reads_call_timeout_from_server_config() -> None:
             )
             return _FakeResult()
 
-    from reyn.op_runtime.context import OpContext
+    from reyn.core.op_runtime.context import OpContext
     from reyn.security.permissions.permissions import PermissionDecl
 
     events = EventLog()
@@ -289,7 +289,7 @@ def test_op_handler_treats_missing_or_invalid_call_timeout_as_unset() -> None:
     Pinning the defensive handling here avoids surprising fail-fasts
     from typos like ``call_timeout_seconds: -1`` or ``"slow"``.
     """
-    from reyn.op_runtime import mcp as mcp_op_handler
+    from reyn.core.op_runtime import mcp as mcp_op_handler
 
     cases: list[dict[str, Any]] = [
         {"type": "stdio", "command": "/bin/true"},  # missing key
@@ -314,7 +314,7 @@ def test_op_handler_treats_missing_or_invalid_call_timeout_as_unset() -> None:
                 captured["kwargs"] = kwargs
                 return _FakeResult()
 
-        from reyn.op_runtime.context import OpContext
+        from reyn.core.op_runtime.context import OpContext
         from reyn.security.permissions.permissions import PermissionDecl
 
         events = EventLog()

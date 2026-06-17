@@ -26,7 +26,7 @@ from pathlib import Path
 
 import pytest
 
-import reyn.registry.cache as cache_mod
+import reyn.core.registry.cache as cache_mod
 from reyn.stdlib.skills.skill_search import registry_fetch
 from reyn.stdlib.skills.skill_search.registry_fetch import (
     _extract_keyword,
@@ -78,7 +78,7 @@ def _err_response() -> dict:
 
 @pytest.fixture()
 def isolated_cache(monkeypatch, tmp_path: Path):
-    """Redirect ``reyn.registry.cache`` to an empty per-test dir.
+    """Redirect ``reyn.core.registry.cache`` to an empty per-test dir.
 
     The cache module computes its location via ``_cache_dir()``; we
     override that function with one that returns a per-test directory.
@@ -274,7 +274,7 @@ def test_fetch_stale_cache_after_explicit_eviction(
     monkeypatch.setattr(registry_fetch, "http_get", _list_broken)
 
     # Drop the list cache so the preprocessor goes to network again.
-    import reyn.registry.cache as cache
+    import reyn.core.registry.cache as cache
     list_key = f"skill_search:list:{registry_fetch._list_url()}"
     cache_path = Path(isolated_cache) / "cache"
     # Best-effort cache wipe (= the cache module owns the layout).

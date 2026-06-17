@@ -71,8 +71,8 @@ async def _handle_mcp_install_op(
     Builds an MCPInstallIROp from args and dispatches through
     op_runtime.mcp_install.handle, which owns the full install lifecycle.
     """
-    from reyn.op_runtime.context import OpContext
-    from reyn.op_runtime.mcp_install import handle as mcp_install_handle
+    from reyn.core.op_runtime.context import OpContext
+    from reyn.core.op_runtime.mcp_install import handle as mcp_install_handle
     from reyn.schemas.models import MCPInstallIROp
     from reyn.security.permissions.permissions import PermissionDecl
 

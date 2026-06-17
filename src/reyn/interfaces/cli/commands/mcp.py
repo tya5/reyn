@@ -326,7 +326,7 @@ def run_serve(args: argparse.Namespace) -> None:
     from reyn.chat.registry import AgentRegistry
     from reyn.chat.scoped_session_factory import build_scoped_chat_session
     from reyn.config import _find_project_root, load_project_context
-    from reyn.events.state_log import StateLog
+    from reyn.core.events.state_log import StateLog
     from reyn.mcp.server import serve_stdio
     from reyn.security.permissions.permissions import PermissionResolver
 
@@ -456,7 +456,7 @@ def run_serve(args: argparse.Namespace) -> None:
         # Replay WAL into per-agent snapshots so any stranded in-flight skills
         # resume cleanly, the same as `reyn chat` startup. Schema mismatch
         # surfaces a clean stderr line and exits non-zero.
-        from reyn.events.agent_snapshot import SchemaVersionError
+        from reyn.core.events.agent_snapshot import SchemaVersionError
         try:
             await registry.restore_all()
         except SchemaVersionError as e:
@@ -477,8 +477,8 @@ def run_search(args: argparse.Namespace) -> None:
     This is a thin CLI wrapper over RegistryClient.search().  No LLM or skill
     invocation is required for the discovery step.
     """
+    from reyn.core.registry.client import RegistryClient, RegistryError
     from reyn.llm.llm import run_async as _run_async
-    from reyn.registry.client import RegistryClient, RegistryError
 
     query = args.query.strip()
     if not query:
@@ -698,7 +698,7 @@ def run_install(args: argparse.Namespace) -> None:
         )
         sys.exit(1)
 
-    from reyn.compiler import load_dsl_skill
+    from reyn.core.compiler import load_dsl_skill
     skill = load_dsl_skill(str(skill_dir / "skill.md"), skill_root=str(skill_root))
 
     initial_input = {
@@ -790,9 +790,9 @@ def _run_install_from_source(
     import json
 
     from reyn.config import load_config
-    from reyn.events.events import EventLog
-    from reyn.op_runtime.context import OpContext
-    from reyn.op_runtime.mcp_install import handle as _mcp_install_handle
+    from reyn.core.events.events import EventLog
+    from reyn.core.op_runtime.context import OpContext
+    from reyn.core.op_runtime.mcp_install import handle as _mcp_install_handle
     from reyn.schemas.models import MCPInstallIROp
     from reyn.security.permissions.permissions import PermissionDecl, PermissionResolver
     from reyn.user_intervention import StdinInterventionBus

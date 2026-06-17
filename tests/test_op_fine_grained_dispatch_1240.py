@@ -27,10 +27,10 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 
-from reyn.compiler import load_dsl_skill
+from reyn.core.compiler import load_dsl_skill
+from reyn.core.events.events import EventLog
+from reyn.core.kernel.control_ir_executor import ControlIRExecutor
 from reyn.data.workspace.workspace import Workspace
-from reyn.events.events import EventLog
-from reyn.kernel.control_ir_executor import ControlIRExecutor
 from reyn.schemas.models import (
     EditFileIROp,
     GlobFilesIROp,

@@ -21,9 +21,9 @@ from typing import Any
 import pytest
 
 from reyn.chat.router_loop import RouterLoop
+from reyn.core.events.events import EventLog
+from reyn.core.kernel.phase_executor import persist_force_close_checkpoint
 from reyn.data.workspace.workspace import Workspace
-from reyn.events.events import EventLog
-from reyn.kernel.phase_executor import persist_force_close_checkpoint
 from reyn.llm.llm import LLMToolCallResult
 from reyn.llm.pricing import TokenUsage
 from tests.test_router_loop import FakeRouterHost
@@ -126,7 +126,7 @@ async def test_run_loop_no_record_hook_is_noop() -> None:
 def test_phase_host_record_force_close_stores_result() -> None:
     """Tier 2: PhaseRouterLoopHost.record_force_close stores the consolidation on
     forced_close_result (initially None)."""
-    from reyn.kernel.phase_router_host import PhaseRouterLoopHost
+    from reyn.core.kernel.phase_router_host import PhaseRouterLoopHost
     from tests.test_router_loop import FakeEventLog
 
     host = PhaseRouterLoopHost(

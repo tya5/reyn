@@ -17,8 +17,8 @@ import argparse
 from pathlib import Path
 
 from reyn.chat.session import ChatSession
+from reyn.core.events.state_log import StateLog
 from reyn.environment.host_backend import HostBackend
-from reyn.events.state_log import StateLog
 from reyn.interfaces.cli.env_backend import build_environment_backend, register_env_backend_args
 
 

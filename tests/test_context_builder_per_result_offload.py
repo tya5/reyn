@@ -52,8 +52,8 @@ from reyn.context_builder import (
     maybe_offload_control_ir_results,
     offload_control_ir_result,
 )
-from reyn.events.events import EventLog
-from reyn.kernel.runtime import OSRuntime
+from reyn.core.events.events import EventLog
+from reyn.core.kernel.runtime import OSRuntime
 from reyn.schemas.models import Phase, Skill, SkillGraph
 from reyn.services.offload.store import read_offloaded
 

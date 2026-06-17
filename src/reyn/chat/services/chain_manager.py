@@ -20,7 +20,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Awaitable, Callable, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
-    from reyn.events.agent_snapshot import AgentSnapshot
+    from reyn.core.events.agent_snapshot import AgentSnapshot
 
 logger = logging.getLogger(__name__)
 

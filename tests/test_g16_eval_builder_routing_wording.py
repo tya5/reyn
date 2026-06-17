@@ -24,7 +24,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from reyn.chat.router_tools import MAX_DESC_LEN_FOR_LISTING
-from reyn.compiler.parser import _split_frontmatter
+from reyn.core.compiler.parser import _split_frontmatter
 from reyn.skill.skill_paths import resolve_skill_path
 
 # ── helpers ────────────────────────────────────────────────────────────────────

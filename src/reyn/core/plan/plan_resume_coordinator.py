@@ -32,11 +32,11 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any, Callable, Iterable, Literal
 
-from reyn.plan.plan_resume_analyzer import (
+from reyn.core.plan.plan_resume_analyzer import (
     PlanResumeAnalyzer,
     PlanResumePlan,
 )
-from reyn.plan.plan_snapshot import PlanSnapshot
+from reyn.core.plan.plan_snapshot import PlanSnapshot
 
 logger = logging.getLogger(__name__)
 
@@ -203,7 +203,7 @@ class PlanResumeCoordinator:
         ``decomposition_loader(plan_id) -> Plan``: callable that returns
         the parsed decomposition (= reads the artifact). On
         :class:`FileNotFoundError` or
-        :class:`reyn.plan.DecompositionCorruptError`, the coordinator
+        :class:`reyn.core.plan.DecompositionCorruptError`, the coordinator
         forces ``action=discard`` for that plan (= ADR-0023 §3.5
         corruption fallback).
         ``child_skill_lookup``: forwarded to the analyzer.

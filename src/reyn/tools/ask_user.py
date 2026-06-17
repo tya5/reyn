@@ -49,7 +49,7 @@ async def _handle(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
     (M4 Phase 3).
     """
     # Lazy import to avoid circular dependency at registry-init time.
-    from reyn.op_runtime.ask_user import handle
+    from reyn.core.op_runtime.ask_user import handle
     from reyn.schemas.models import AskUserIROp
 
     # Build a transient AskUserIROp from args (= reuse Pydantic

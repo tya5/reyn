@@ -152,7 +152,7 @@ class PlanSnapshot:
             return cls.empty(
                 plan_id=plan_id, agent_name="", chain_id="", goal=""
             )
-        from reyn.events.agent_snapshot import SchemaVersionError
+        from reyn.core.events.agent_snapshot import SchemaVersionError
 
         version = data.get("schema_version")
         if version != PLAN_SNAPSHOT_VERSION:

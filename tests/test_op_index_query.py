@@ -10,12 +10,12 @@ from typing import Any
 
 import pytest
 
+from reyn.core.events.events import EventLog
+from reyn.core.op_runtime import execute_op
+from reyn.core.op_runtime.context import OpContext
 from reyn.data.index.backend import ChunkRecord
 from reyn.data.index.backends.sqlite import SqliteIndexBackend
 from reyn.data.workspace.workspace import Workspace
-from reyn.events.events import EventLog
-from reyn.op_runtime import execute_op
-from reyn.op_runtime.context import OpContext
 from reyn.schemas.models import IndexQueryIROp
 from reyn.security.permissions.permissions import PermissionDecl
 

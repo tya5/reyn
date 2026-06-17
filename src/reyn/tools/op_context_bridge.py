@@ -1,7 +1,7 @@
 """Single-source Tool→OpContext bridge for op_runtime delegation.
 
 Tool handlers that delegate to an ``op_runtime`` handler need an
-:class:`~reyn.op_runtime.context.OpContext`. The router binds the real one
+:class:`~reyn.core.op_runtime.context.OpContext`. The router binds the real one
 (populated ``PermissionDecl``, a real ``Workspace`` rooted at the agent's
 ``workspace_base_dir``, the flattened MCP map) via
 ``ctx.router_state.op_context_factory``; phase / test callers fall back to a
@@ -43,7 +43,7 @@ def build_legacy_op_context(ctx: "ToolContext") -> Any:
     if rs is not None and rs.op_context_factory is not None:
         return rs.op_context_factory()
 
-    from reyn.op_runtime.context import OpContext
+    from reyn.core.op_runtime.context import OpContext
     from reyn.security.permissions.permissions import PermissionDecl
 
     # Propagate the active phase's PermissionDecl via phase_state.op_context

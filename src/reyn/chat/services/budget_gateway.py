@@ -9,7 +9,7 @@ ChatSession: total_usage, total_cost_usd, router cap counter, last reason.
 """
 from __future__ import annotations
 
-from reyn.events.events import EventLog
+from reyn.core.events.events import EventLog
 from reyn.llm.pricing import TokenUsage
 
 

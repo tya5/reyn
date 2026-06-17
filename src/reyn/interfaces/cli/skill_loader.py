@@ -88,7 +88,7 @@ def load_skill_from_args(args: argparse.Namespace) -> LoadedSkill:
 
 
 def _compile(skill_md: Path, skill_root: str | None) -> Skill:
-    from reyn.compiler import load_dsl_skill
+    from reyn.core.compiler import load_dsl_skill
     try:
         return load_dsl_skill(str(skill_md), skill_root=skill_root)
     except Exception as e:

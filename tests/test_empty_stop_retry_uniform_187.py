@@ -44,7 +44,7 @@ from pathlib import Path
 import reyn.chat.planner as planner_mod
 import reyn.chat.services.router_loop_driver as loop_driver_mod
 import reyn.chat.session as session_mod  # used for src-root path only
-import reyn.kernel.phase_executor as pe_mod
+import reyn.core.kernel.phase_executor as pe_mod
 from reyn.chat.router_loop import EMPTY_STOP_RETRY_DIRECTIVE
 
 _DIRECTIVE_NAME = "EMPTY_STOP_RETRY_DIRECTIVE"

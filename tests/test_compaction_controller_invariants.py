@@ -24,7 +24,7 @@ import pytest  # noqa: F401 — used implicitly by pytest discovery
 
 from reyn.chat.services.compaction_controller import CompactionController
 from reyn.config import CompactionConfig
-from reyn.events.events import EventLog
+from reyn.core.events.events import EventLog
 from reyn.services.compaction.engine import (
     ChatSummary,
     CompactionEngine,

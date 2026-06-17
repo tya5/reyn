@@ -39,8 +39,8 @@ from reyn.schemas.models import ContextFrame, Skill
 
 if TYPE_CHECKING:
     from reyn.budget.budget import BudgetTracker
-    from reyn.events.state_log import StateLog
-    from reyn.kernel.run_state import RunState
+    from reyn.core.events.state_log import StateLog
+    from reyn.core.kernel.run_state import RunState
     from reyn.llm.llm import LLMToolCallResult
     from reyn.llm.model_resolver import ModelResolver
     from reyn.skill.skill_registry import SkillRegistry

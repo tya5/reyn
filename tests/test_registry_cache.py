@@ -1,4 +1,4 @@
-"""Tier 2: reyn.registry.cache invariants.
+"""Tier 2: reyn.core.registry.cache invariants.
 
 Verifies TTL hit / miss / expired / set+get roundtrip / corrupt-file graceful.
 No mocks — uses real filesystem via tmp_path.
@@ -12,7 +12,7 @@ from unittest import mock
 
 import pytest
 
-import reyn.registry.cache as cache_mod
+import reyn.core.registry.cache as cache_mod
 
 
 def _patch_cache_dir(tmp_path: Path):

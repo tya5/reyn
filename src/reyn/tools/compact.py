@@ -48,8 +48,8 @@ async def _handle_compact(args: Mapping[str, Any], ctx: ToolContext) -> ToolResu
     (router-side). The op handler errors cleanly if no compaction capability
     is wired, so this never silently no-ops.
     """
-    from reyn.op_runtime import execute_op
-    from reyn.op_runtime.context import OpContext
+    from reyn.core.op_runtime import execute_op
+    from reyn.core.op_runtime.context import OpContext
     from reyn.schemas.models import CompactIROp
     from reyn.security.permissions.permissions import PermissionDecl
 

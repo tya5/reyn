@@ -15,7 +15,7 @@ import getpass
 import os
 import sys
 
-from reyn.events.events import EventLog
+from reyn.core.events.events import EventLog
 
 # Module-level event log for secret audit events (P6).
 # CLI commands emit into this log; callers can subscribe for persistence.

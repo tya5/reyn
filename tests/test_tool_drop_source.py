@@ -131,7 +131,7 @@ async def test_drop_source_handler_builds_index_drop_ir_op(monkeypatch):
         captured_ops.append(op)
         return {"removed": True, "chunks_dropped": 42}
 
-    import reyn.op_runtime as _orm
+    import reyn.core.op_runtime as _orm
     monkeypatch.setattr(_orm, "execute_op", fake_execute_op)
 
     ctx = _make_ctx()
@@ -159,7 +159,7 @@ async def test_drop_source_handler_different_source(monkeypatch):
         captured_ops.append(op)
         return {"removed": False, "chunks_dropped": 0}
 
-    import reyn.op_runtime as _orm
+    import reyn.core.op_runtime as _orm
     monkeypatch.setattr(_orm, "execute_op", fake_execute_op)
 
     ctx = _make_ctx()
@@ -175,7 +175,7 @@ async def test_drop_source_handler_returns_op_result(monkeypatch):
     async def fake_execute_op(op, ctx, *, caller):
         return {"removed": True, "chunks_dropped": 99}
 
-    import reyn.op_runtime as _orm
+    import reyn.core.op_runtime as _orm
     monkeypatch.setattr(_orm, "execute_op", fake_execute_op)
 
     ctx = _make_ctx()

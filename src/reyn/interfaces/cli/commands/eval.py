@@ -155,7 +155,7 @@ def _run_golden(args: argparse.Namespace) -> None:
     skill_dir, inferred_root = resolve_skill_path(args.skill_name)
     skill_md = skill_dir / "skill.md"
 
-    from reyn.compiler import load_dsl_skill
+    from reyn.core.compiler import load_dsl_skill
     try:
         skill = load_dsl_skill(str(skill_md), skill_root=str(inferred_root))
     except Exception as e:
@@ -717,8 +717,8 @@ def _register_spec(eval_sub) -> None:
 
 def _run_spec(args: argparse.Namespace) -> None:
     """Execute `reyn eval spec` — the legacy Component-A eval path."""
-    from reyn.compiler import load_dsl_skill
-    from reyn.compiler.eval_loader import load_eval_spec
+    from reyn.core.compiler import load_dsl_skill
+    from reyn.core.compiler.eval_loader import load_eval_spec
     from reyn.interfaces.cli.eval_report import EvalReport
     from reyn.interfaces.cli.session import Session
     from reyn.interfaces.cli.skill_loader import resolve_skill_path, stdlib_root

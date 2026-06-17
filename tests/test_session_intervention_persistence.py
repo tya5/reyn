@@ -23,7 +23,7 @@ from pathlib import Path
 import pytest
 
 from reyn.chat.session import ChatSession
-from reyn.events.state_log import StateLog
+from reyn.core.events.state_log import StateLog
 from reyn.user_intervention import (
     InterventionChoice,
     UserIntervention,

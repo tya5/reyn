@@ -2,7 +2,7 @@
 import json
 from pathlib import Path
 
-from reyn.events.agent_snapshot import AgentSnapshot
+from reyn.core.events.agent_snapshot import AgentSnapshot
 
 # ── helpers ─────────────────────────────────────────────────────────────────
 

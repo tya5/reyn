@@ -14,7 +14,7 @@ from typing import Any
 import pytest
 
 from reyn.chat.services.skill_runner import SkillRunner
-from reyn.events.events import EventLog
+from reyn.core.events.events import EventLog
 
 # ---------------------------------------------------------------------------
 # Helpers — minimal fakes and SkillRunner factory

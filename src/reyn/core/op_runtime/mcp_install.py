@@ -192,7 +192,7 @@ async def handle(
     # ── 1. Resolve server metadata ────────────────────────────────────────────
     if op.source:
         # Source-based path: skip registry fetch, resolve from specifier.
-        from reyn.registry.source_resolver import resolve as _resolve_source
+        from reyn.core.registry.source_resolver import resolve as _resolve_source
 
         resolution = _resolve_source(op.source)
         if resolution.error:
@@ -212,7 +212,7 @@ async def handle(
 
     else:
         # Registry path (existing behaviour).
-        from reyn.registry.client import RegistryClient, RegistryError
+        from reyn.core.registry.client import RegistryClient, RegistryError
 
         try:
             async with RegistryClient() as client:

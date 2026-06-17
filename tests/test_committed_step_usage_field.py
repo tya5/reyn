@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import asyncio
 
-from reyn.events.state_log import StateLog
+from reyn.core.events.state_log import StateLog
 from reyn.skill.skill_resume_analyzer import (
     CommittedStep,
     SkillResumeAnalyzer,

@@ -121,7 +121,7 @@ async def _get_or_build_registry() -> "AgentRegistry":
         from reyn.chat.registry import AgentRegistry
         from reyn.chat.scoped_session_factory import build_scoped_chat_session
         from reyn.config import _find_project_root, load_project_context
-        from reyn.events.state_log import StateLog
+        from reyn.core.events.state_log import StateLog
         from reyn.interfaces.cli.session import Session
         from reyn.security.permissions.permissions import PermissionResolver
 

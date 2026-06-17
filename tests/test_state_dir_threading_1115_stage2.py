@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from reyn.kernel.runtime import OSRuntime
+from reyn.core.kernel.runtime import OSRuntime
 from reyn.schemas.models import Phase, Skill, SkillGraph
 
 

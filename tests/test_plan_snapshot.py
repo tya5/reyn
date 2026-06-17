@@ -11,8 +11,8 @@ from pathlib import Path
 
 import pytest
 
-from reyn.events.agent_snapshot import SchemaVersionError
-from reyn.plan import (
+from reyn.core.events.agent_snapshot import SchemaVersionError
+from reyn.core.plan import (
     PLAN_SNAPSHOT_VERSION,
     PlanSnapshot,
     plan_snapshot_path,

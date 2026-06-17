@@ -15,7 +15,7 @@ from typing import Any
 import pytest
 
 from reyn.chat.planner import Plan, PlanStep, execute_plan
-from reyn.plan import (
+from reyn.core.plan import (
     PlanResumePlan,
     PlanRuntime,
     PlanStepState,

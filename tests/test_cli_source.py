@@ -304,8 +304,8 @@ async def test_cmd_rm_yes_removes_source(tmp_path, capsys, monkeypatch):
     environment). The invariant under test is that the CLI correctly wires
     the op and prints the result.
     """
+    import reyn.core.op_runtime as _orm
     import reyn.interfaces.cli.commands.source as _src_mod
-    import reyn.op_runtime as _orm
 
     entry = _make_entry("trial_source", chunk_count=77)
     manifest = await _seed_manifest(tmp_path, [entry])
@@ -318,7 +318,7 @@ async def test_cmd_rm_yes_removes_source(tmp_path, capsys, monkeypatch):
         return {"removed": True, "chunks_dropped": 77}
 
     # Patch execute_op at the op_runtime level so the CLI handler's lazy
-    # import picks it up (the handler does `from reyn.op_runtime import execute_op`
+    # import picks it up (the handler does `from reyn.core.op_runtime import execute_op`
     # at call time, so we patch the module attribute).
     monkeypatch.setattr(_orm, "execute_op", fake_execute_op)
 

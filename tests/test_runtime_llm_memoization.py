@@ -18,10 +18,10 @@ from __future__ import annotations
 
 import asyncio
 
-import reyn.kernel.llm_call_recorder as runtime_mod
+import reyn.core.kernel.llm_call_recorder as runtime_mod
+from reyn.core.events.state_log import StateLog
+from reyn.core.kernel.runtime import OSRuntime
 from reyn.dispatch.dispatcher import _compute_llm_args_hash
-from reyn.events.state_log import StateLog
-from reyn.kernel.runtime import OSRuntime
 from reyn.llm.llm import LLMCallResult
 from reyn.schemas.models import (
     Phase,
@@ -39,7 +39,7 @@ class _CallCounter:
     """Records every call_llm invocation; returns a configurable response.
 
     Acts as a pytest-monkeypatch target replacing
-    ``reyn.kernel.runtime.call_llm`` for the duration of a test.
+    ``reyn.core.kernel.runtime.call_llm`` for the duration of a test.
     """
 
     def __init__(self, response: dict | None = None) -> None:

@@ -35,12 +35,12 @@ from typing import TYPE_CHECKING, Any
 
 import jsonschema
 
-from reyn.kernel.preprocessor_executor import PreprocessorError, PreprocessorExecutor
+from reyn.core.kernel.preprocessor_executor import PreprocessorError, PreprocessorExecutor
 from reyn.llm.pricing import TokenUsage
 
 if TYPE_CHECKING:
+    from reyn.core.events.events import EventLog
     from reyn.data.workspace.workspace import Workspace
-    from reyn.events.events import EventLog
     from reyn.llm.model_resolver import ModelResolver
     from reyn.python_runner import PythonRunner
     from reyn.schemas.models import PreprocessorStep, Skill

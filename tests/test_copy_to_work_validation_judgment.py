@@ -25,7 +25,7 @@ from pathlib import Path
 
 import pytest
 
-from reyn.compiler.loader import load_dsl_skill
+from reyn.core.compiler.loader import load_dsl_skill
 from reyn.llm.llm import call_llm
 from reyn.schemas.models import (
     CandidateOutput,

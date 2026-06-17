@@ -151,7 +151,7 @@ def test_compiled_postprocessor_output_schema_is_envelope_shaped():
     ``[type, data]`` (= envelope-wrapped), AND ``properties.type.const``
     must be ``eval_result``.
     """
-    from reyn.compiler import load_dsl_skill
+    from reyn.core.compiler import load_dsl_skill
     skill = load_dsl_skill(
         str(_EVAL_SKILL_DIR / "skill.md"),
         skill_root=str(_EVAL_SKILL_DIR),

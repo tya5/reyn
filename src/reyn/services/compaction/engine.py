@@ -60,7 +60,7 @@ if TYPE_CHECKING:
         PhaseActResultsCompactionConfig,
         PlannerStepCompactionConfig,
     )
-    from reyn.events.events import EventLog
+    from reyn.core.events.events import EventLog
     from reyn.llm.model_resolver import ModelResolver
 
 logger = logging.getLogger(__name__)
