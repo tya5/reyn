@@ -30,6 +30,7 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
+from urllib.parse import quote, unquote
 from uuid import uuid4
 
 logger = logging.getLogger(__name__)
@@ -275,6 +276,45 @@ class AgentRegistry:
         spawned ids thereafter."""
         return list(self._sessions.get(name, {}).keys())
 
+    def resolve_session(
+        self,
+        agent_name: str,
+        transport: str,
+        native_id: str,
+        explicit_sid: "str | None" = None,
+    ) -> "object":
+        """FP-0043 Stage 4b-1: the routing-core primitive — map an inbound message
+        to the right Session of ``agent_name`` by routing-key (settled design, the
+        0043 §Routing-key). Scope is WITHIN one Agent (shared identity/permissions).
+
+        - **Default — deterministic mapping**: ``session_id = "<transport>:<native_id>"``
+          (namespaced; e.g. ``slack:T123`` / ``cron:morning_news`` / ``web:<tab>``).
+          get-or-spawn: the first message for a key auto-spawns the Session; the
+          same key resumes it (stateful per-conversation + isolation, zero-config).
+        - **Explicit — join an EXISTING Session** (``explicit_sid``; cross-transport
+          bridging): looked up only. A non-existent explicit id is an ERROR — a
+          Session is created via the mapping default or an explicit spawn op, never
+          silently by a typo'd id.
+
+        This is a pure S3 reuse (``_has_session`` / ``spawn_session`` /
+        ``get_session``); transport wiring of the inbound sites is staged separately
+        (S4b-2+). Returns the resolved Session."""
+        if explicit_sid is not None:
+            session = self.get_session(agent_name, explicit_sid)
+            if session is None:
+                raise KeyError(
+                    f"explicit-join target session {explicit_sid!r} does not exist "
+                    f"for agent {agent_name!r}. An explicit session id must already "
+                    f"exist (created via the routing-key mapping default or an "
+                    f"explicit spawn) — it is never auto-created, so a typo'd id is "
+                    f"rejected rather than silently opening a new conversation."
+                )
+            return session
+        sid = f"{transport}:{native_id}"
+        if not self._has_session(agent_name, sid):
+            self.spawn_session(agent_name, sid=sid)
+        return self.get_session(agent_name, sid)
+
     def load_profile(self, name: str) -> AgentProfile:
         return AgentProfile.load(self._dir / name)
 
@@ -392,16 +432,40 @@ class AgentRegistry:
 
     # ── PR21: crash recovery ─────────────────────────────────────────────────
 
+    @staticmethod
+    def _encode_sid_for_dir(sid: str) -> str:
+        """FP-0043 S4b-1: bijective-encode a logical sid into a SAFE single-path-
+        segment directory name.
+
+        A routing-key sid is ``<transport>:<native_id>`` where native_id is
+        arbitrary (webhook source / MCP conn id can carry ``:`` ``/`` whitespace).
+        Used verbatim as a dir name that breaks (``/`` → nested/garbled dirs) or is
+        non-portable. percent-encode with an EMPTY safe set so every reserved /
+        unsafe char (``:`` ``/`` space …) is escaped into one flat segment;
+        alphanumerics + ``_.-~`` pass through unchanged, so an existing safe sid
+        (uuid hex, "main") encodes to ITSELF = byte-identical for pre-S4b sessions.
+        The logical sid is unchanged everywhere else (dict key / WAL session_id /
+        _matches_agent filter) — only the filesystem dir component is encoded."""
+        return quote(sid, safe="")
+
+    @staticmethod
+    def _decode_sid_from_dir(dirname: str) -> str:
+        """FP-0043 S4b-1: inverse of ``_encode_sid_for_dir`` — recover the logical
+        sid from an on-disk session dir name (round-trip for discovery/restore)."""
+        return unquote(dirname)
+
     def _session_state_dir(self, name: str, sid: str) -> Path:
         """FP-0043 Stage 5: on-disk state dir for ``(name, sid)``.
 
         The "main" session keeps the legacy agent-level dir (byte-identical
-        pre-S5); spawned sessions nest under ``state/sessions/<sid>/`` — the same
-        layout spawn_session's fixup writes to (base-aligned via self._dir)."""
+        pre-S5); spawned sessions nest under ``state/sessions/<enc(sid)>/`` — the
+        same layout spawn_session's fixup writes to (base-aligned via self._dir).
+        S4b-1: the dir component is bijective-encoded so an arbitrary routing-key
+        sid (``slack:T123``, ``webhook:a/b``) is a single safe path segment."""
         state_dir = self._dir / name / "state"
         if sid == _DEFAULT_SID:
             return state_dir
-        return state_dir / "sessions" / sid
+        return state_dir / "sessions" / self._encode_sid_for_dir(sid)
 
     def _session_snapshot_path(self, name: str, sid: str) -> Path:
         """FP-0043 Stage 5: snapshot.json path for ``(name, sid)``."""
@@ -424,7 +488,8 @@ class AgentRegistry:
         if sessions_root.is_dir():
             for child in sessions_root.iterdir():
                 if child.is_dir():
-                    sids.add(child.name)
+                    # S4b-1: dir names are encoded → decode back to logical sid.
+                    sids.add(self._decode_sid_from_dir(child.name))
         return sorted(sids)
 
     async def restore_all(self) -> dict[str, AgentSnapshot]:
@@ -476,7 +541,10 @@ class AgentRegistry:
                 for sid_dir in sorted(sessions_root.iterdir()):
                     sp = sid_dir / "snapshot.json"
                     if sp.is_file():
-                        sid = sid_dir.name
+                        # S4b-1: dir name is encoded → decode to the logical sid so
+                        # the session restores under its routing-key, not the escaped
+                        # form (else get_session(logical_sid) misses post-restore).
+                        sid = self._decode_sid_from_dir(sid_dir.name)
                         all_snaps[(name, sid)] = AgentSnapshot.load(
                             name, sp, session_id=sid,
                         )
@@ -1580,9 +1648,11 @@ class AgentRegistry:
         # parent of its current main snapshot path) so a test tmp-base is respected
         # — the same base-alignment invariant restore_all's discovery relies on:
         #   <state>/snapshot.json          (main, byte-identical legacy path)
-        #   <state>/sessions/<sid>/snapshot.json + .../generations  (spawned)
+        #   <state>/sessions/<enc(sid)>/snapshot.json + .../generations  (spawned)
+        # S4b-1: dir component bijective-encoded (same as _session_state_dir) so an
+        # arbitrary routing-key sid is one safe segment; discovery reverse-decodes.
         state_dir = Path(session._snapshot_path).parent
-        session_dir = state_dir / "sessions" / new_sid
+        session_dir = state_dir / "sessions" / self._encode_sid_for_dir(new_sid)
         per_session_snapshot = session_dir / "snapshot.json"
         per_session_generations = SnapshotGenerationStore(
             name, session_dir / "generations",
