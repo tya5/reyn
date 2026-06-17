@@ -327,8 +327,10 @@ async def test_runner_dispatches_message_based_to_inbox_pusher():
 
     pushed: list = []
 
-    async def _pusher(to, envelope):
-        pushed.append((to, envelope))
+    # FP-0043 S4b-3a: the pusher now also receives ``native_id`` (= job.name) so
+    # it can route to the job's own cron:<job_name> Session.
+    async def _pusher(to, envelope, native_id):
+        pushed.append((to, envelope, native_id))
         return "ok"
 
     async def _legacy(job):
@@ -347,10 +349,12 @@ async def test_runner_dispatches_message_based_to_inbox_pusher():
 
     assert result == "ok"
     assert pushed, "inbox_pusher must be called at least once for message-based job"
-    target, envelope = pushed[0]
+    target, envelope, native_id = pushed[0]
     assert target == "news_agent"
     assert envelope["text"] == "今日のニュース"
     assert envelope["sender"] == "cron:morning_news"
+    # S4b-3a: the routing-key native-id is the job name (→ cron:morning_news session).
+    assert native_id == "morning_news"
 
 
 @pytest.mark.asyncio
