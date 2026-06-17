@@ -92,7 +92,7 @@ async def test_live_rewind_reverts_both_substrates_to_as_of_n(tmp_path):
     # production wiring: the registry injects its single shared stores.
     session.attach_workspace_store(reg.workspace_store)
     session.attach_anchor_store(reg.anchor_store)
-    reg._agents["alpha"] = session
+    reg._sessions["alpha"] = {"main": session}
     # swap the no-LLM driver in; the rest of _run_router_loop (incl cut_generation) is real.
     session._loop_driver = _FakeTurnDriver(
         session, tmp_path, {"turn A": "v1", "turn B": "v2"},

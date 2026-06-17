@@ -152,7 +152,7 @@ def test_truncate_hook_wired_with_registry(tmp_path, monkeypatch):
     )
     # Register the live session into the registry's in-memory map so the
     # PR-N7 in-memory floor walk picks up its iter_applied_seqs.
-    session.agent_registry._agents["alpha"] = session
+    session.agent_registry._sessions["alpha"] = {"main": session}
 
     reg = session.get_skill_registry()
     assert reg.truncate_hook is not None

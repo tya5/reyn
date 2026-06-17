@@ -91,7 +91,7 @@ async def test_live_fork_checkout_back_follows_lineage_both_substrates(tmp_path)
     session.register_intervention_listener("test")
     session.attach_workspace_store(reg.workspace_store)
     session.attach_anchor_store(reg.anchor_store)
-    reg._agents["alpha"] = session
+    reg._sessions["alpha"] = {"main": session}
     session._loop_driver = _FakeTurnDriver(
         session, tmp_path, {"turn A": "v1", "turn B": "v2", "turn C": "v3"},
     )

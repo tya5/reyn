@@ -76,10 +76,10 @@ def _get_or_create_shim(registry: AgentRegistry, name: str) -> _ShimSession:
     on first use. Mirrors the on-disk-profile creation pattern so
     ``list_names`` still includes the agent.
     """
-    if name not in registry._agents:
+    if name not in registry._sessions:
         AgentProfile.new(name, role="").save(registry._dir / name)
-        registry._agents[name] = _ShimSession()
-    shim = registry._agents[name]
+        registry._sessions[name] = {"main": _ShimSession()}
+    shim = registry._sessions[name]["main"]
     assert isinstance(shim, _ShimSession), (
         f"agent {name!r} is registered with a non-shim object — test fixture bug"
     )
@@ -305,7 +305,7 @@ def test_truncate_advances_seqs_across_active_skill_completion(tmp_path):
     registry = _make_registry(tmp_path)
     _seed_agent(registry, "alpha", applied_seq=10)
     _seed_skill(registry, "alpha", "run_zzz", last_phase_applied_seq=3)
-    shim = registry._agents["alpha"]
+    shim = registry._sessions["alpha"]["main"]
 
     async def go():
         for i in range(1, 21):

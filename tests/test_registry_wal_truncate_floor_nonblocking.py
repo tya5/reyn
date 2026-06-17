@@ -93,7 +93,7 @@ def _register_shim(registry: AgentRegistry, name: str, seqs: list[int]) -> _Shim
     """
     AgentProfile.new(name, role="").save(registry._dir / name)
     shim = _ShimSession(seqs)
-    registry._agents[name] = shim
+    registry._sessions[name] = {"main": shim}
     return shim
 
 
