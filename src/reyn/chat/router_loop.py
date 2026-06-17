@@ -2121,12 +2121,16 @@ class RouterLoop:
                 # CodeActRunner — each in-code tool() call re-enters the SAME exclude
                 # + dispatch_tool + permission gate per call (so a CodeAct call is
                 # gated >= a JSON call) — then append the [assistant: code] turn + the
-                # scheme's format_feedback message(s) and loop. Separate path from the
-                # Execute zip (a CodeBlock turn has no tool_calls): the scheme OWNS the
-                # feedback message shape, the OS only appends (no synthetic tool_call =
-                # provider-safe). Documented contract divergence (Execute →
-                # tool_results-for-zip / CodeBlock → messages-for-append); unification
-                # is a tracked follow-up, out of PR-3 scope.
+                # scheme's format_feedback message(s) and loop. A CodeBlock turn has
+                # no tool_calls, so the scheme returns observation message(s) and the
+                # OS only appends (no synthetic tool_call = provider-safe). #1608
+                # (#1611) UNIFIED format_feedback to a SINGLE-SHAPE appendable-messages
+                # contract across BOTH paths: the Execute arm delegates to ops.feedback
+                # (the assistant + {role:tool, tool_call_id} zip relocated there, so the
+                # OS no longer knows the JSON correlation shape — P7), this CodeBlock arm
+                # returns observation messages; the OS *appends* in either case. The arms
+                # stay separate because the INTERPRETATION differs (snippet vs tool_calls),
+                # not because the feedback shape differs.
                 cb_feedback = await self._run_codeblock_round(interp)
                 _cb_content = result.content or ""
                 messages.append({"role": "assistant", "content": _cb_content})
