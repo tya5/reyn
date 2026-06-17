@@ -48,7 +48,7 @@ run_id    — 実行の uuid
 ### 監査フィールド付き event (FP-0021)
 
 8 種類の event に対して、`data` dict に特定の監査フィールドが
-必須となりました。権威ある registry は `src/reyn/events/event_schema.py`
+必須となりました。権威ある registry は `src/reyn/core/events/event_schema.py`
 （`EVENT_AUDIT_REQUIREMENTS`）にあります。Tier 2 不変条件テスト
 （`tests/test_event_audit_invariants.py`）が CI の各実行で各 event 種に宣言済みの
 フィールドが含まれていることを検証します。

@@ -753,7 +753,7 @@ Equivalent env-var override (= wins when both set):
 export REYN_MCP_REGISTRY_URLS="https://mcp-registry.internal.acme.com,https://registry.modelcontextprotocol.io"
 ```
 
-Both the async op-handler client (`reyn.registry.client`) and the safe-mode skill-internal lookup (`reyn.safe.mcp.registry`) iterate the list in order:
+Both the async op-handler client (`reyn.core.registry.client`) and the safe-mode skill-internal lookup (`reyn.safe.mcp.registry`) iterate the list in order:
 
 - `lookup(server_id)` returns the first non-404 hit; all 404 → `None`.
 - `search(query)` returns the first non-empty result list; all empty → `[]`.

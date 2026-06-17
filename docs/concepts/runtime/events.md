@@ -57,7 +57,7 @@ a run context (e.g. `chat_started`).
 
 Eight event kinds are now required to carry specific
 audit fields in their `data` dict.  The authoritative registry lives in
-`src/reyn/events/event_schema.py` (`EVENT_AUDIT_REQUIREMENTS`).  A Tier 2
+`src/reyn/core/events/event_schema.py` (`EVENT_AUDIT_REQUIREMENTS`).  A Tier 2
 invariant test (`tests/test_event_audit_invariants.py`) verifies that each
 event kind carries its declared fields on every CI run.
 

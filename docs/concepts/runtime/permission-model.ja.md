@@ -349,7 +349,7 @@ Phase 7 は `http.get` 軸を `file.write` と同じ prompt model に揃えて a
 | `safe` | `python.safe: allow` | `PURE_STDLIB_ALLOWLIST` に含まれるモジュールのみ import 可能なステップ — clock、entropy、純粋計算、および `__future__`（コンパイラディレクティブ）。ファイルシステム・ネットワーク・プロセスへのアクセス不可。 |
 | `unsafe` | `python.unsafe: allow` | ファイルシステム・ネットワークを含む任意モジュールの import が可能なステップ。 |
 
-`PURE_STDLIB_ALLOWLIST` は `src/reyn/kernel/_python_allowlist.py` で定義されています。`__future__` はコンパイラディレクティブとして一覧に含まれており、ランタイムのケイパビリティを持ちません。
+`PURE_STDLIB_ALLOWLIST` は `src/reyn/core/kernel/_python_allowlist.py` で定義されています。`__future__` はコンパイラディレクティブとして一覧に含まれており、ランタイムのケイパビリティを持ちません。
 
 **非インタラクティブ自動許可**: stdlib スキルが `reyn run`（非インタラクティブコンテキスト）経由で呼び出される場合、`mode: safe` と `mode: unsafe` の両方の python ステップはプロンプトなしで自動許可されます。これは eval / CI 実行で他の op に既に適用されている非インタラクティブ動作と同等です。
 

@@ -47,7 +47,7 @@ Reyn invokes the LLM in two structurally distinct contexts: the chat router (and
 
 No native function calling. The LLM declares its intended side effects in `control_ir` as typed op objects; the OS dispatches them.
 
-**Op surface:** the Control IR op kinds are defined in `OP_KIND_MODEL_MAP` in `src/reyn/op_runtime/registry.py`. The core kinds (the RAG / sandbox / compaction kinds are omitted here for brevity):
+**Op surface:** the Control IR op kinds are defined in `OP_KIND_MODEL_MAP` in `src/reyn/core/op_runtime/registry.py`. The core kinds (the RAG / sandbox / compaction kinds are omitted here for brevity):
 
 | Op kind | Purpose |
 |---------|---------|

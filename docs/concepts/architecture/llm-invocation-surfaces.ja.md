@@ -47,7 +47,7 @@ Reyn は LLM を2つの異なる文脈で呼び出す。チャットルーター
 
 ネイティブ function calling はない。LLM は意図するサイドエフェクトを型付き op オブジェクトとして `control_ir` に宣言し、OS がそれらをディスパッチする。
 
-**Op surface:** `src/reyn/op_runtime/registry.py` の `OP_KIND_MODEL_MAP` で定義された 8 種類の Control IR op kind。
+**Op surface:** `src/reyn/core/op_runtime/registry.py` の `OP_KIND_MODEL_MAP` で定義された 8 種類の Control IR op kind。
 
 | Op kind | 目的 |
 |---------|------|

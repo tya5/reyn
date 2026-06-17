@@ -38,7 +38,7 @@ The `collect_traces` phase is optional — it depends on [Operational Intelligen
 
 | Component | What it adds | Source |
 |-----------|--------------|--------|
-| A | `skill_version_hash` field on every `run_skill_started` event | `src/reyn/op_runtime/run_skill.py` |
+| A | `skill_version_hash` field on every `run_skill_started` event | `src/reyn/core/op_runtime/run_skill.py` |
 | B | `.reyn/skill-versions/<name>/v<N>.md` snapshot + `current` pointer | `skill_improver/version_snapshot.py` + `phases/finalize.md` |
 | C | `collect_traces` phase (recall path + raw-events fallback) | `skill_improver/trace_collector.py` + `phases/collect_traces.md` |
 | D | `on_propose: ask_user\|auto\|disabled` config + finalize gate | `src/reyn/config/execution.py` `SelfImprovementConfig` + `phases/finalize.md` |
