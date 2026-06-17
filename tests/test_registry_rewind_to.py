@@ -384,3 +384,51 @@ async def test_rewind_to_rejects_target_truncated_out_of_wal(tmp_path):
 
     with pytest.raises(RewindBeyondRetentionError):
         await reg.rewind_to(2)             # seq 2 truncated → outside retention window
+
+
+async def _put_sid(log: StateLog, agent: str, sid: str, text: str) -> int:
+    """Append a session-tagged inbox_put (mirrors the journal's _wal_append)."""
+    return await log.append(
+        "inbox_put", target=agent, session_id=sid,
+        msg_id=text, msg_kind="user", payload={"text": text},
+    )
+
+
+@pytest.mark.asyncio
+async def test_rewind_to_is_per_session_consistent_cut(tmp_path):
+    """Tier 2: FP-0043 S5 — a global rewind reconstructs EACH session at the cut.
+
+    A whole-world rewind (D2) must bring every (agent, session) to the target,
+    each reconstructed from ONLY its own session_id-routed WAL entries. Pre-S5
+    this loop was main-only, so a spawned session's snapshot would be left at HEAD
+    — an inconsistent world. Asserts both per-session correctness (each keeps its
+    pre-cut entry, drops its post-cut entry) AND cross-session isolation.
+    """
+    reg = _make_registry(tmp_path)
+    _seed_agent(tmp_path, "alpha")
+    log = reg.state_log
+
+    # The spawned session's on-disk dir must exist for disk-discovery (the rewind
+    # materialiser is shared with crash-recovery, where sessions are not loaded).
+    spawn_snap_path = (
+        tmp_path / ".reyn" / "agents" / "alpha" / "state" / "sessions" / "s1"
+        / "snapshot.json"
+    )
+    AgentSnapshot.empty("alpha", session_id="s1").save(spawn_snap_path)
+
+    await _put_sid(log, "alpha", "main", "m1")   # seq 1 — main, pre-cut
+    await _put_sid(log, "alpha", "s1", "x1")     # seq 2 — spawned, pre-cut (the cut)
+    await _put_sid(log, "alpha", "main", "m2")   # seq 3 — main, post-cut (undone)
+    await _put_sid(log, "alpha", "s1", "x2")     # seq 4 — spawned, post-cut (undone)
+
+    await reg.rewind_to(2)                        # global cut at seq 2
+
+    main_snap = AgentSnapshot.load("alpha", _snap_path(tmp_path, "alpha"))
+    spawn_snap = AgentSnapshot.load("alpha", spawn_snap_path, session_id="s1")
+
+    # each session reconstructed to ONLY its own pre-cut entry; post-cut undone.
+    assert _inbox_ids(main_snap) == ["m1"]
+    assert _inbox_ids(spawn_snap) == ["x1"]
+    # cross-session isolation (both directions).
+    assert "x1" not in _inbox_ids(main_snap)
+    assert "m1" not in _inbox_ids(spawn_snap)

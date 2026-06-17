@@ -392,16 +392,40 @@ class AgentRegistry:
 
     # ── PR21: crash recovery ─────────────────────────────────────────────────
 
-    def _session_snapshot_path(self, name: str, sid: str) -> Path:
-        """FP-0043 Stage 5: on-disk snapshot path for ``(name, sid)``.
+    def _session_state_dir(self, name: str, sid: str) -> Path:
+        """FP-0043 Stage 5: on-disk state dir for ``(name, sid)``.
 
-        The "main" session keeps the legacy agent-level path (byte-identical
+        The "main" session keeps the legacy agent-level dir (byte-identical
         pre-S5); spawned sessions nest under ``state/sessions/<sid>/`` — the same
         layout spawn_session's fixup writes to (base-aligned via self._dir)."""
         state_dir = self._dir / name / "state"
         if sid == _DEFAULT_SID:
-            return state_dir / "snapshot.json"
-        return state_dir / "sessions" / sid / "snapshot.json"
+            return state_dir
+        return state_dir / "sessions" / sid
+
+    def _session_snapshot_path(self, name: str, sid: str) -> Path:
+        """FP-0043 Stage 5: snapshot.json path for ``(name, sid)``."""
+        return self._session_state_dir(name, sid) / "snapshot.json"
+
+    def _session_generations_dir(self, name: str, sid: str) -> Path:
+        """FP-0043 Stage 5: PITR generations dir for ``(name, sid)``."""
+        return self._session_state_dir(name, sid) / "generations"
+
+    def _discover_session_ids(self, name: str) -> list[str]:
+        """FP-0043 Stage 5: every session id for ``name`` — "main" + loaded +
+        on-disk spawned (``state/sessions/<sid>/``).
+
+        Used by the rewind materialiser, which is shared with crash-recovery
+        (sessions not yet loaded), so disk discovery — not just the loaded map —
+        is required to bring EVERY session's substrate to the target cut."""
+        sids = {_DEFAULT_SID}
+        sids.update(self._sessions.get(name, {}).keys())
+        sessions_root = self._dir / name / "state" / "sessions"
+        if sessions_root.is_dir():
+            for child in sessions_root.iterdir():
+                if child.is_dir():
+                    sids.add(child.name)
+        return sorted(sids)
 
     async def restore_all(self) -> dict[str, AgentSnapshot]:
         """Reconstruct each known agent's runtime state from snapshot + WAL.
@@ -530,19 +554,19 @@ class AgentRegistry:
 
     # ── Global rewind (ADR-0038 Stage 1c-2, D2 consistent-cut) ──────────────
 
-    def _store_for(self, name: str) -> SnapshotGenerationStore:
-        """Return the snapshot-generation store for ``name``.
+    def _store_for(self, name: str, sid: str = _DEFAULT_SID) -> SnapshotGenerationStore:
+        """Return the snapshot-generation store for session ``(name, sid)``.
 
-        Reuses the live session's store when the agent is loaded (so an
-        in-flight session and the rewind path share one view of the
-        generations dir); otherwise constructs one over the on-disk path.
-        """
-        session = self._peek_session(name)
+        Reuses the live session's store when that session is loaded (so an
+        in-flight session and the rewind path share one view of the generations
+        dir); otherwise constructs one over the per-session on-disk path. Default
+        sid "main" = the legacy agent-level generations dir (byte-identical)."""
+        session = self._peek_session(name, sid)
         store = getattr(session, "_generation_store", None)
         if isinstance(store, SnapshotGenerationStore):
             return store
         return SnapshotGenerationStore(
-            name, self._dir / name / "state" / "generations",
+            name, self._session_generations_dir(name, sid),
         )
 
     async def checkout(self, seq: int) -> dict:
@@ -927,22 +951,32 @@ class AgentRegistry:
         rewind_to (= gen-N) or head in recovery (= latest active gen, keeping
         post-rewind workspace work). Returns the agents materialised.
         """
+        # FP-0043 Stage 5: the runtime snapshot is reconstructed PER SESSION (each
+        # (name, sid) from its own generations + session_id-routed WAL delta), so a
+        # global cut moves every session of every agent to the target — consistent
+        # with the D2 whole-world invariant. The workspace substrate stays global
+        # (one SSoT per agent) and is restored once below. Session discovery is from
+        # disk (this is shared with crash-recovery, where sessions are not loaded).
         agents: list[str] = []
         for name in self.list_names():
-            store = self._store_for(name)
-            snap = reconstruct(
-                name, store, self._state_log, target_seq=reconstruct_seq,
-            )
-            # Self-contained: the reset-record carries no agent target, so
-            # reconstruct leaves applied_seq at the last active entry. Pin it to
-            # the head so restore_all's replay floor skips the abandoned segment.
-            snap.applied_seq = reconstruct_seq
-            snap.save(self._dir / name / "state" / "snapshot.json")
-            session = self._peek_session(name)
-            if session is not None:
-                await session.reset_for_rewind()
-                session.restore_state(snap)
-            agents.append(name)
+            for sid in self._discover_session_ids(name):
+                store = self._store_for(name, sid)
+                snap = reconstruct(
+                    name, store, self._state_log,
+                    target_seq=reconstruct_seq, session_id=sid,
+                )
+                # Self-contained: the reset-record carries no agent target, so
+                # reconstruct leaves applied_seq at the last active entry. Pin it to
+                # the head so restore_all's replay floor skips the abandoned segment.
+                snap.applied_seq = reconstruct_seq
+                snap.save(self._session_snapshot_path(name, sid))
+                session = self._peek_session(name, sid)
+                if session is not None:
+                    await session.reset_for_rewind()
+                    session.restore_state(snap)
+                # main → bare name (back-compat with single-session callers);
+                # spawned → "name/sid".
+                agents.append(name if sid == _DEFAULT_SID else f"{name}/{sid}")
         await self._restore_workspace_active(at_or_below=workspace_at_or_below)
         return agents
 
@@ -1235,7 +1269,10 @@ class AgentRegistry:
         """
         try:
             for name in self.list_names():
-                self._store_for(name).prune_below(floor)   # SnapshotGenerationStore (sync)
+                # FP-0043 S5: prune EVERY session's generations (main + spawned),
+                # not just main — per-session generation dirs now exist.
+                for sid in self._discover_session_ids(name):
+                    self._store_for(name, sid).prune_below(floor)  # SnapshotGenerationStore (sync)
             ws = self.workspace_store
             if ws is not None:
                 await ws.prune_below(floor)
