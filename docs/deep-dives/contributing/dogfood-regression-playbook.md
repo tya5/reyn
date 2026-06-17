@@ -22,8 +22,8 @@ and what to decide at each gate.
 Run the full scenario suite in the following situations:
 
 - **Before tagging a release** — any version tag that reaches users.
-- **After landing any PR that touches OS layer code** — `src/reyn/op_runtime/`,
-  `src/reyn/kernel/`, `src/reyn/chat/`. Structural OS changes can silently break
+- **After landing any PR that touches OS layer code** — `src/reyn/core/op_runtime/`,
+  `src/reyn/core/kernel/`, `src/reyn/chat/`. Structural OS changes can silently break
   routing behaviour that only the scenario suite exercises end-to-end.
 - **After landing any PR that touches stdlib skill prompt content** — mutations
   to `skill.md` or phase `instructions` fields affect LLM routing and output

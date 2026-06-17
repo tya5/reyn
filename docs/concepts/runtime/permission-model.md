@@ -408,7 +408,7 @@ The `python` permission has two levels:
 | `safe` | `python.safe: allow` | Steps that import only from `PURE_STDLIB_ALLOWLIST` — clock, entropy, pure compute, and `__future__` (compiler directive). No filesystem, network, or process access. |
 | `unsafe` | `python.unsafe: allow` | Steps that may import any module, including filesystem and network. |
 
-`PURE_STDLIB_ALLOWLIST` is defined in `src/reyn/kernel/_python_allowlist.py`. `__future__` is in the list as a compiler directive — it carries no runtime capability.
+`PURE_STDLIB_ALLOWLIST` is defined in `src/reyn/core/kernel/_python_allowlist.py`. `__future__` is in the list as a compiler directive — it carries no runtime capability.
 
 **Non-interactive auto-allow**: when a stdlib skill is invoked via `reyn run` (non-interactive context), both `mode: safe` and `mode: unsafe` python steps are auto-allowed without a prompt. This mirrors the same non-interactive behavior already in place for other ops in eval/CI runs.
 

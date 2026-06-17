@@ -98,7 +98,7 @@ environment that the step did not already receive as input.
 
 ## Reading the allowlist
 
-Each entry in [`src/reyn/kernel/_python_allowlist.py`](https://github.com/tya5/reyn/blob/main/src/reyn/kernel/_python_allowlist.py)
+Each entry in [`src/reyn/core/kernel/_python_allowlist.py`](https://github.com/tya5/reyn/blob/main/src/reyn/core/kernel/_python_allowlist.py)
 carries a short inline comment explaining why it satisfies the contract.
 The categories are:
 
@@ -129,7 +129,7 @@ The categories are:
 | `zoneinfo` | ambient: bundled static data | IANA TZ database shipped with Python — same install = deterministic |
 
 The list of record is
-[`src/reyn/kernel/_python_allowlist.py`](https://github.com/tya5/reyn/blob/main/src/reyn/kernel/_python_allowlist.py).
+[`src/reyn/core/kernel/_python_allowlist.py`](https://github.com/tya5/reyn/blob/main/src/reyn/core/kernel/_python_allowlist.py).
 A project may extend it via `python.allowed_modules` in
 `reyn.yaml`; the same "ambient sources only" property is the bar for any
 extension.
@@ -251,6 +251,6 @@ CI-silent change).
 - [Reference: postprocessor DSL](../../reference/dsl/postprocessor.md) — same DSL on the finish side
 - [Concept: preprocessor](../skills/preprocessor.md) — the deterministic-split story
 - [Concept: postprocessor](../skills/postprocessor.md) — finish-side mirror
-- [`src/reyn/kernel/_python_allowlist.py`](https://github.com/tya5/reyn/blob/main/src/reyn/kernel/_python_allowlist.py) — list of record
+- [`src/reyn/core/kernel/_python_allowlist.py`](https://github.com/tya5/reyn/blob/main/src/reyn/core/kernel/_python_allowlist.py) — list of record
 - [FP-0042 proposal](../../deep-dives/proposals/0042-stdlib-safe-only-and-permission-gated-file-api.md) — stdlib safe-only + permission-gated `reyn.safe.file` API
 - [`tests/test_fp0042_stdlib_safe_only.py`](https://github.com/tya5/reyn/blob/main/tests/test_fp0042_stdlib_safe_only.py) — CI enforcement for the doctrine above

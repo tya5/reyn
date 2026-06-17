@@ -99,7 +99,7 @@ state ではないために残されています。
 
 ## allowlist の読み方
 
-[`src/reyn/kernel/_python_allowlist.py`](https://github.com/tya5/reyn/blob/main/src/reyn/kernel/_python_allowlist.py)
+[`src/reyn/core/kernel/_python_allowlist.py`](https://github.com/tya5/reyn/blob/main/src/reyn/core/kernel/_python_allowlist.py)
 の各エントリには、なぜ contract を満たすかを説明する短い inline コメントが
 付いています。 カテゴリは以下のとおりです。
 
@@ -129,7 +129,7 @@ state ではないために残されています。
 | `zoneinfo` | ambient: 同梱静的データ | Python 同梱 IANA TZ データベース — 同じ install = 決定的 |
 
 正本リストは
-[`src/reyn/kernel/_python_allowlist.py`](https://github.com/tya5/reyn/blob/main/src/reyn/kernel/_python_allowlist.py)
+[`src/reyn/core/kernel/_python_allowlist.py`](https://github.com/tya5/reyn/blob/main/src/reyn/core/kernel/_python_allowlist.py)
 です。 プロジェクトは `reyn.yaml` の `python.allowed_modules`
 で拡張できますが、拡張の基準は同じ「ambient sources only」性質です。
 
@@ -212,4 +212,4 @@ preprocessor / postprocessor チェーンで `type: run_op` を使います。
 - [Reference: postprocessor DSL](../../reference/dsl/postprocessor.md) — finish 側の同じ DSL
 - [コンセプト: preprocessor](../skills/preprocessor.md) — deterministic-split の説明
 - [コンセプト: postprocessor](../skills/postprocessor.md) — finish 側のミラー
-- [`src/reyn/kernel/_python_allowlist.py`](https://github.com/tya5/reyn/blob/main/src/reyn/kernel/_python_allowlist.py) — 正本リスト
+- [`src/reyn/core/kernel/_python_allowlist.py`](https://github.com/tya5/reyn/blob/main/src/reyn/core/kernel/_python_allowlist.py) — 正本リスト
