@@ -82,5 +82,5 @@ def run(args: argparse.Namespace) -> None:
     print()
     print("MCP servers (optional):")
     print("  To use stdlib skills that depend on MCP, uncomment the mcp:")
-    print("  block in reyn.yaml.  Full example: cookbook/configs/with-mcp.yaml")
+    print("  block in reyn.yaml.  Full example: docs/cookbook/configs/with-mcp.yaml")
     print("  Setup guide:          docs/guide/for-skill-authors/use-an-mcp-server.md")

@@ -25,13 +25,13 @@ topology call the existing `reyn agent new` / `reyn topology new` commands.
 
 | Recipe | Status | What it shows |
 |--------|--------|---------------|
-| [eval-a-skill](eval-a-skill/) | ✅ Works today | Score a skill against a test case with `eval` |
-| [multi-agent-research](multi-agent-research/) | ✅ Works today | 3-agent team via `reyn agent new` + `reyn topology new --kind team` |
-| [improve-a-skill](improve-a-skill/) | ℹ️ Works today (custom skill) | Iteratively raise eval score with `skill_improver`; uses a deliberately weak bundled `sample_skill` |
-| [translate-doc](translate-doc/) | ℹ️ Works today (custom skill) | en → ja document translation; uses a bundled `translate_doc` skill (no stdlib equivalent) |
-| [research-topic](research-topic/) | 🔮 Roadmap | Generic web research; `mcp_search` stdlib only finds MCP **servers** in the GitHub registry — generic web search needs an external search MCP server you've configured |
-| [write-readme](write-readme/) | 🔮 Roadmap | Generate a Reyn-style README; `skill_builder` builds **new skills**, not arbitrary docs — needs a dedicated doc-writer skill |
-| [weekly-summary](weekly-summary/) | 🔮 Roadmap | Cron-style recurring summarizer; needs scheduling / persistent state |
+| [eval-a-skill](eval-a-skill/README.md) | ✅ Works today | Score a skill against a test case with `eval` |
+| [multi-agent-research](multi-agent-research/README.md) | ✅ Works today | 3-agent team via `reyn agent new` + `reyn topology new --kind team` |
+| [improve-a-skill](improve-a-skill/README.md) | ℹ️ Works today (custom skill) | Iteratively raise eval score with `skill_improver`; uses a deliberately weak bundled `sample_skill` |
+| [translate-doc](translate-doc/README.md) | ℹ️ Works today (custom skill) | en → ja document translation; uses a bundled `translate_doc` skill (no stdlib equivalent) |
+| [research-topic](research-topic/README.md) | 🔮 Roadmap | Generic web research; `mcp_search` stdlib only finds MCP **servers** in the GitHub registry — generic web search needs an external search MCP server you've configured |
+| [write-readme](write-readme/README.md) | 🔮 Roadmap | Generate a Reyn-style README; `skill_builder` builds **new skills**, not arbitrary docs — needs a dedicated doc-writer skill |
+| [weekly-summary](weekly-summary/README.md) | 🔮 Roadmap | Cron-style recurring summarizer; needs scheduling / persistent state |
 
 ## Prerequisites (all recipes)
 

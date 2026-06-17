@@ -21,7 +21,7 @@ ROOT = Path(__file__).parent.parent
 # Class-ref shorthands (e.g. gemini-flash-lite) are the correct form.
 TRACKED_CONFIGS = [
     Path("reyn.yaml"),
-    Path("cookbook/configs/with-mcp.yaml"),
+    Path("docs/cookbook/configs/with-mcp.yaml"),
     Path("dogfood/fixtures/fizzbuzz_5bugs_interleaved/reyn.yaml"),
     Path("dogfood/fixtures/fizzbuzz_bug_planted/reyn.yaml"),
     Path("dogfood/fixtures/fizzbuzz_tdd/reyn.yaml"),

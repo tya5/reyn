@@ -52,7 +52,7 @@ jobs:
         run: python website/build.py
 
       - name: Build documentation (site/)
-        run: mkdocs build --strict
+        run: mkdocs build --strict -f .mkdocs/mkdocs.yml
 
       - name: Assemble deploy directory
         # The Pages artifact wants a single directory whose root contains

@@ -78,5 +78,5 @@ The `shell` Control IR op is gated for safety; you opt in per invocation.
 
 ## See also
 
-- [stdlib/skill_improver](../../src/reyn/stdlib/skills/skill_improver/skill.md)
-- [eval-a-skill](../eval-a-skill/) — the scoring step in isolation.
+- [stdlib/skill_improver](https://github.com/tya5/reyn/blob/main/src/reyn/stdlib/skills/skill_improver/skill.md)
+- [eval-a-skill](../eval-a-skill/README.md) — the scoring step in isolation.

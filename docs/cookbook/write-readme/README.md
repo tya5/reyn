@@ -69,6 +69,6 @@ is more reference-toned.
 
 ## See also
 
-- [stdlib/skill_builder](../../src/reyn/stdlib/skills/skill_builder/skill.md)
-- [stdlib/skill_router](../../src/reyn/stdlib/skills/skill_router/skill.md)
-- [Tutorial: chat mode](../../docs/guide/getting-started/05-chat-mode.md)
+- [stdlib/skill_builder](https://github.com/tya5/reyn/blob/main/src/reyn/stdlib/skills/skill_builder/skill.md)
+- [stdlib/skill_router](https://github.com/tya5/reyn/blob/main/src/reyn/stdlib/skills/skill_router/skill.md)
+- [Tutorial: chat mode](../../guide/getting-started/02-chat-mode.md)
