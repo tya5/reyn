@@ -39,8 +39,15 @@ class SnapshotJournal:
         snapshot_path: Path,
         state_log: StateLog | None,
         generation_store: SnapshotGenerationStore | None = None,
+        session_id: str = "main",
     ) -> None:
         self._agent_name = agent_name
+        # FP-0043 Stage 5: the conversation session this journal records for. Tagged
+        # onto every WAL append (session_id=) so replay routes entries to the right
+        # per-session AgentSnapshot; default "main" = byte-identical single session.
+        # Set post-construction by spawn_session for spawned sessions (set_session_id)
+        # — mirroring the _workspace_store/_anchor_store post-construction pattern.
+        self._session_id = session_id
         self._snapshot_path = Path(snapshot_path)
         self._state_log = state_log
         # ADR-0038 Stage 1a: PITR generation store. When None (tests /
@@ -55,7 +62,44 @@ class SnapshotJournal:
         # #1547: per-checkpoint anchor text (truncated last user message). Set
         # post-construction by the registry. None → no anchor capture.
         self._anchor_store = None
-        self._snapshot: AgentSnapshot = AgentSnapshot.empty(agent_name)
+        self._snapshot: AgentSnapshot = AgentSnapshot.empty(agent_name, session_id)
+
+    async def _wal_append(self, kind: str, **fields):
+        """FP-0043 Stage 5: the single WAL-append chokepoint for this journal.
+
+        Injects ``session_id=self._session_id`` into EVERY entry so replay routes
+        it to this session's snapshot (the funnel-completeness guarantee — a future
+        journal append inherits session-tagging by construction). Preserves the
+        prior no-state_log behaviour (returns None when the journal has no WAL)."""
+        if self._state_log is None:
+            return None
+        log = self._state_log  # local so the funnel replace doesn't recurse into this call
+        return await log.append(kind, session_id=self._session_id, **fields)
+
+    def set_session_id(self, session_id: str) -> None:
+        """FP-0043 Stage 5: set the conversation session id post-construction
+        (spawn_session uses this for a spawned session, before its run-loop goes
+        live — mirroring set_workspace_store). The in-memory snapshot's session_id
+        is updated too so its save() + apply routing stay consistent."""
+        self._session_id = session_id
+        self._snapshot.session_id = session_id
+
+    def set_snapshot_path(self, snapshot_path: Path) -> None:
+        """FP-0043 Stage 5: re-point the on-disk snapshot path post-construction.
+
+        spawn_session uses this so a spawned session persists to its OWN per-session
+        location (``<state>/sessions/<sid>/snapshot.json``) instead of colliding with
+        the agent's "main" snapshot. Pre-live (before any append/save), so no entry
+        is ever written to the wrong path."""
+        self._snapshot_path = Path(snapshot_path)
+
+    def set_generation_store(self, generation_store) -> None:
+        """FP-0043 Stage 5: re-point the PITR generation store post-construction.
+
+        spawn_session uses this so a spawned session's generations land in its own
+        per-session ``generations`` dir (paired with set_snapshot_path). None →
+        generation cuts become no-ops (unchanged from the no-store default)."""
+        self._generation_store = generation_store
 
     def set_workspace_store(self, workspace_store) -> None:
         """Attach the shared workspace shadow-git store (ADR-0038 Stage 1d).
@@ -121,7 +165,7 @@ class SnapshotJournal:
         msg_id = uuid.uuid4().hex[:8]
         full_payload = {**payload, "_msg_id": msg_id}
         if self._state_log is not None:
-            seq = await self._state_log.append(
+            seq = await self._wal_append(
                 "inbox_put", target=self._agent_name,
                 msg_id=msg_id, msg_kind=kind, payload=full_payload,
             )
@@ -140,7 +184,7 @@ class SnapshotJournal:
         """
         if self._state_log is None or msg_id is None:
             return
-        seq = await self._state_log.append(
+        seq = await self._wal_append(
             "inbox_consume", agent=self._agent_name, msg_id=msg_id,
         )
         self._snapshot.applied_seq = seq
@@ -158,7 +202,7 @@ class SnapshotJournal:
         """
         if self._state_log is None:
             return
-        seq = await self._state_log.append(
+        seq = await self._wal_append(
             "chain_register", agent=self._agent_name, chain_id=chain_id,
             **fields,
         )
@@ -177,7 +221,7 @@ class SnapshotJournal:
         """
         if self._state_log is None:
             return
-        seq = await self._state_log.append(
+        seq = await self._wal_append(
             "chain_update", agent=self._agent_name, chain_id=chain_id,
             **fields,
         )
@@ -195,7 +239,7 @@ class SnapshotJournal:
         """
         if self._state_log is None:
             return
-        seq = await self._state_log.append(
+        seq = await self._wal_append(
             "chain_resolve", agent=self._agent_name, chain_id=chain_id,
         )
         self._snapshot.applied_seq = seq
@@ -209,7 +253,7 @@ class SnapshotJournal:
         """
         if self._state_log is None:
             return
-        seq = await self._state_log.append(
+        seq = await self._wal_append(
             "chain_timeout_fired", agent=self._agent_name, chain_id=chain_id,
         )
         self._snapshot.applied_seq = seq
@@ -233,7 +277,7 @@ class SnapshotJournal:
         """
         if self._state_log is None:
             return
-        seq = await self._state_log.append(
+        seq = await self._wal_append(
             "intervention_dispatched",
             target=self._agent_name,
             intervention_id=intervention_id,
@@ -253,7 +297,7 @@ class SnapshotJournal:
         """
         if self._state_log is None:
             return
-        seq = await self._state_log.append(
+        seq = await self._wal_append(
             "intervention_resolved",
             target=self._agent_name,
             intervention_id=intervention_id,
@@ -275,7 +319,7 @@ class SnapshotJournal:
         """
         if self._state_log is None:
             return
-        seq = await self._state_log.append(
+        seq = await self._wal_append(
             "intervention_answer_buffered",
             target=self._agent_name,
             run_id=run_id,
@@ -302,7 +346,7 @@ class SnapshotJournal:
         """
         if self._state_log is None:
             return
-        seq = await self._state_log.append(
+        seq = await self._wal_append(
             "intervention_answer_consumed",
             target=self._agent_name,
             run_id=run_id,
@@ -325,7 +369,7 @@ class SnapshotJournal:
         """
         if self._state_log is None:
             return
-        seq = await self._state_log.append(
+        seq = await self._wal_append(
             "plan_started",
             target=self._agent_name,
             plan_id=plan_id,
@@ -345,7 +389,7 @@ class SnapshotJournal:
         """
         if self._state_log is None:
             return
-        seq = await self._state_log.append(
+        seq = await self._wal_append(
             "plan_completed",
             target=self._agent_name,
             plan_id=plan_id,
@@ -366,7 +410,7 @@ class SnapshotJournal:
         """
         if self._state_log is None:
             return
-        seq = await self._state_log.append(
+        seq = await self._wal_append(
             "plan_aborted",
             target=self._agent_name,
             plan_id=plan_id,
@@ -392,7 +436,7 @@ class SnapshotJournal:
         """Append ``plan_step_started`` to WAL. Returns the assigned seq."""
         if self._state_log is None:
             return None
-        seq = await self._state_log.append(
+        seq = await self._wal_append(
             "plan_step_started",
             target=self._agent_name,
             plan_id=plan_id,
@@ -410,7 +454,7 @@ class SnapshotJournal:
         """Append ``plan_step_completed`` to WAL. Returns the assigned seq."""
         if self._state_log is None:
             return None
-        seq = await self._state_log.append(
+        seq = await self._wal_append(
             "plan_step_completed",
             target=self._agent_name,
             plan_id=plan_id,
@@ -429,7 +473,7 @@ class SnapshotJournal:
         """Append ``plan_step_failed`` to WAL. Returns the assigned seq."""
         if self._state_log is None:
             return None
-        seq = await self._state_log.append(
+        seq = await self._wal_append(
             "plan_step_failed",
             target=self._agent_name,
             plan_id=plan_id,

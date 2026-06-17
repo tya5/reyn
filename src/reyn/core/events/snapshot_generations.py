@@ -71,9 +71,15 @@ class SnapshotGenerationStore:
         candidates = [s for s in self.seqs() if s <= n]
         return candidates[-1] if candidates else None
 
-    def load(self, seq: int) -> AgentSnapshot:
-        """Load the generation at ``seq`` (raises if absent / schema-mismatch)."""
-        return AgentSnapshot.load(self._agent_name, self._path_for(seq))
+    def load(self, seq: int, session_id: str = "main") -> AgentSnapshot:
+        """Load the generation at ``seq`` (raises if absent / schema-mismatch).
+
+        FP-0043 Stage 5: ``session_id`` is the fallback when the on-disk generation
+        predates the field; a generation written post-S5 carries its own session_id
+        (AgentSnapshot.save) which takes precedence."""
+        return AgentSnapshot.load(
+            self._agent_name, self._path_for(seq), session_id=session_id,
+        )
 
     def prune_below(self, min_keep_seq: int) -> int:
         """Drop generations with seq < ``min_keep_seq``. Returns count dropped.
@@ -345,6 +351,7 @@ def reconstruct(
     store: SnapshotGenerationStore,
     state_log: StateLog,
     target_seq: int,
+    session_id: str = "main",
 ) -> AgentSnapshot:
     """Reconstruct ``agent_name``'s state as-of WAL ``target_seq`` (PITR), on the
     **active branch**.
@@ -369,7 +376,15 @@ def reconstruct(
         (s for s in reversed(store.seqs()) if s <= target_seq and is_active(s)),
         None,
     )
-    base = store.load(base_seq) if base_seq is not None else AgentSnapshot.empty(agent_name)
+    # FP-0043 Stage 5: the reconstructed base is tagged with session_id so the
+    # WAL-delta apply_events below routes ONLY this session's entries into it
+    # (the empty fallback for a session with no generation yet; an on-disk
+    # generation carries its own session_id which store.load prefers).
+    base = (
+        store.load(base_seq, session_id=session_id)
+        if base_seq is not None
+        else AgentSnapshot.empty(agent_name, session_id)
+    )
 
     # Replay the ACTIVE WAL delta, bounded above by target_seq. apply_events skips
     # seq <= base.applied_seq; we additionally cap at target_seq (point-in-time)

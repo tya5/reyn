@@ -1203,6 +1203,12 @@ class ChatSession:
         excluded_categories: "frozenset[str] | set[str] | None" = None,  # #1667: catalog categories hidden at source (e.g. reyn_source for external-repo eval)
         router_max_iterations: int = 5,  # #187: per-message tool-call budget for the MAIN chat loop (interactive=5; one-shot autonomous SWE sets higher)
         non_interactive: bool = False,  # #1439 Fix #1: run-once (piped, no TTY) — no user to ask, so the SP directs proceed-with-assumption instead of clarifying
+        # FP-0043 Stage 5: the conversation session id this ChatSession records WAL
+        # entries under. Default "main" = the implicit single session (byte-identical
+        # pre-S5). The registry sets a spawned session's real sid post-construction
+        # (spawn_session → set_session_id) before its run-loop goes live, so every
+        # WAL append carries the right session_id for per-session snapshot routing.
+        session_id: str = "main",
     ) -> None:
         """
         snapshot_path: optional override for the per-agent snapshot file
@@ -1520,6 +1526,10 @@ class ChatSession:
         # SnapshotJournal (extracted service). The session keeps the
         # snapshot_path here only because other init code references it
         # for diagnostic logging — the journal owns the actual I/O.
+        # FP-0043 Stage 5: the conversation session id (default "main"); threaded to
+        # the journal + skill_registry so every WAL append carries it. A spawned
+        # session's real sid is set post-construction (set_session_id) by the registry.
+        self._session_id = session_id
         self._snapshot_path = snapshot_path or (
             Path(".reyn") / "agents" / self.agent_name / "state" / "snapshot.json"
         )
@@ -1532,6 +1542,7 @@ class ChatSession:
             snapshot_path=self._snapshot_path,
             state_log=state_log,
             generation_store=self._generation_store,
+            session_id=session_id,  # FP-0043 S5: per-session WAL routing
         )
         # ADR-0038 Stage 1c: turn-idle event for quiescence. Set = no turn in
         # flight; cleared while run_one_iteration processes a turn. Lets a global
@@ -3476,6 +3487,7 @@ class ChatSession:
                 agent_state_dir=agent_state_dir,
                 state_log=self._state_log,
                 truncate_eligible_hook=hook,
+                session_id=self._session_id,  # FP-0043 S5: per-session WAL routing
             )
         return self._skill_registry
 

@@ -84,6 +84,10 @@ def test_reset_for_rewind_clear_scope_covers_all_agentsnapshot_fields():
     """
     disposition = {
         "agent_name": "identity — unchanged by rewind (same agent)",
+        # FP-0043 Stage 5: a rewind operates within ONE session's timeline, so the
+        # session id is identity-like — unchanged by rewind (same session), exactly
+        # like agent_name. reset_for_rewind must NOT clear it.
+        "session_id": "identity — unchanged by rewind (same session)",
         "applied_seq": "replaced wholesale by journal.install (no separate holder)",
         "inbox": "session.inbox drained",
         "pending_chains": "session._chains.reset()",
