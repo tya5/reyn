@@ -73,21 +73,26 @@ def _make_cron_runner():
         result = await agent.run(skill, dict(job.input))
         return "ok" if result.ok else "error"
 
-    async def _inbox_pusher(to: str, envelope: dict) -> str:
-        """Deliver ``envelope`` to agent ``to`` via the registry.
+    async def _inbox_pusher(to: str, envelope: dict, native_id: str) -> str:
+        """Deliver ``envelope`` to the job's own ``cron:<job_name>`` Session of
+        agent ``to`` via the registry.
 
-        Uses ``ensure_running`` so the agent's router loop is live to
-        consume the inbox put — same pattern A2A uses. The envelope
-        is dispatched as ``kind="user"`` so the LLM processes the
-        text as a turn; PR-A sender attribution emits the
-        ``[context shift]`` state_change entry from the
-        ``sender="cron:<name>"`` field.
+        FP-0043 S4b-3a: a message-based cron job is re-keyed from the agent's
+        "main" session to a per-job ``cron:<native_id>`` Session (resolve_session
+        get-or-spawn). Persistent per job — the stable ``native_id`` (= job name)
+        resumes the SAME session across fires, so the conversation accumulates a
+        history of prior runs ("what changed since last run"). The run-loop is
+        booted WITHOUT a forwarder (``ensure_session_running``) since cron is
+        unattended (output handling = S4b-3b notify layer); the envelope is
+        dispatched as ``kind="user"`` so the LLM processes the text as a turn, with
+        ``sender="cron:<name>"`` driving the PR-A attribution state_change.
         """
         from reyn.interfaces.web.deps import _get_registry
+        from reyn.runtime.cron.routing import resolve_cron_session
         registry = _get_registry()
         try:
-            session = await registry.ensure_running(to)
-        except FileNotFoundError:
+            session = resolve_cron_session(registry, to, native_id)
+        except (FileNotFoundError, KeyError):
             return "error"
         await session._put_inbox("user", dict(envelope))
         return "ok"

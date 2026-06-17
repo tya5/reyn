@@ -37,7 +37,7 @@ logger = logging.getLogger(__name__)
 def build_default_runner(
     *,
     legacy_skill_runner: Callable[["CronJob"], Awaitable[str]] | None = None,
-    inbox_pusher: Callable[[str, dict], Awaitable[str]] | None = None,
+    inbox_pusher: Callable[[str, dict, str], Awaitable[str]] | None = None,
 ) -> Callable[["CronJob"], Awaitable[str]]:
     """Construct a CronScheduler-compatible runner.
 
@@ -47,10 +47,12 @@ def build_default_runner(
         ``async (job: CronJob) -> str`` that executes a skill-based job.
         When None, skill-based jobs return "error" with a warning.
     inbox_pusher:
-        ``async (to: str, envelope: dict) -> str`` that delivers an
-        envelope to the target agent's inbox. When None, message-based
-        jobs return "error" with a warning (= e.g. CLI standalone mode
-        with no AgentRegistry context).
+        ``async (to: str, envelope: dict, native_id: str) -> str`` that
+        delivers an envelope to the target agent's inbox. ``native_id`` is the
+        job name (FP-0043 S4b-3a routing-key native-id) so the pusher routes to
+        the job's own ``cron:<job_name>`` Session. When None, message-based jobs
+        return "error" with a warning (= e.g. CLI standalone mode with no
+        AgentRegistry context).
 
     Returns
     -------
@@ -73,7 +75,9 @@ def build_default_runner(
                 "text": job.message,
                 "sender": f"cron:{job.name}",
             }
-            return await inbox_pusher(job.to, envelope)
+            # FP-0043 S4b-3a: pass job.name as the routing-key native-id so the
+            # pusher delivers to the job's own cron:<job_name> Session.
+            return await inbox_pusher(job.to, envelope, job.name)
         # Skill-based legacy path.
         if legacy_skill_runner is None:
             logger.warning(
