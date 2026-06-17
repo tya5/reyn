@@ -41,7 +41,7 @@ def _memory_completer(
     if sub != "view":
         return []
     try:
-        from reyn.memory import list_entries
+        from reyn.data.memory import list_entries
         entries = list_entries()
         return [e.name for e in entries]
     except Exception:
@@ -78,7 +78,7 @@ async def _list_memory(session: "ChatSession") -> None:
     one-line description gives the reader a scannable index without
     having to open the side panel.
     """
-    from reyn.memory import list_entries
+    from reyn.data.memory import list_entries
 
     entries = list_entries()
     if not entries:
@@ -109,7 +109,7 @@ async def _view_memory(session: "ChatSession", name: str) -> None:
     if not name:
         await reply_error(session, "Usage: /memory view <name>")
         return
-    from reyn.memory import find_one, list_entries
+    from reyn.data.memory import find_one, list_entries
 
     try:
         entry = find_one(name)

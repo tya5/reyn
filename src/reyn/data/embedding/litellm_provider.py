@@ -20,7 +20,7 @@ import logging
 import os
 from typing import Any
 
-from reyn.embedding.provider import EmbedBatchResult
+from reyn.data.embedding.provider import EmbedBatchResult
 
 logger = logging.getLogger(__name__)
 

@@ -68,12 +68,12 @@ async def test_handler_event_shows_enforced_policy_network(tmp_path):
     """Tier 2: #1339 —op requests network=True but the ctx policy is network=False;
     the started event must report the ENFORCED value (False), and the run must
     actually use the policy (not the op's request)."""
+    from reyn.data.workspace.workspace import Workspace
     from reyn.events.events import EventLog
     from reyn.op_runtime.context import OpContext
     from reyn.op_runtime.sandboxed_exec import handle
     from reyn.schemas.models import SandboxedExecIROp
     from reyn.security.permissions.permissions import PermissionDecl
-    from reyn.workspace.workspace import Workspace
 
     events = EventLog()
     ws = Workspace(events=events)

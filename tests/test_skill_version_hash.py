@@ -21,12 +21,12 @@ from pathlib import Path
 
 import pytest
 
+from reyn.data.workspace.workspace import Workspace
 from reyn.events.events import EventLog
 from reyn.op_runtime.run_skill import _compute_skill_hash
 from reyn.schemas.models import RunSkillIROp
 from reyn.security.permissions.permissions import PermissionDecl, PermissionResolver
 from reyn.skill.sub_skill_runner import SubSkillResult
-from reyn.workspace.workspace import Workspace
 
 # ---------------------------------------------------------------------------
 # Plain fake for invoke_sub_skill — NOT a mock

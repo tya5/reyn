@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import pytest
 
+from reyn.data.workspace.workspace import Workspace
 from reyn.events.events import EventLog
 from reyn.kernel.normalizer import (
     ControlIRValidationError,
@@ -26,7 +27,6 @@ from reyn.schemas.models import (
     Skill,
     SkillGraph,
 )
-from reyn.workspace.workspace import Workspace
 
 # ── P4: LLM output contract ────────────────────────────────────────────────────
 

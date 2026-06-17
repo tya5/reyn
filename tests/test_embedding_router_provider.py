@@ -28,7 +28,7 @@ from typing import Any
 import pytest
 
 from reyn.config import EmbeddingClassSpec, EmbeddingConfig
-from reyn.embedding.router_provider import RoutingEmbeddingProvider
+from reyn.data.embedding.router_provider import RoutingEmbeddingProvider
 
 
 def _config_with_local_class() -> EmbeddingConfig:

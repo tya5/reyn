@@ -20,9 +20,9 @@ from pathlib import Path
 
 import pytest
 
-# import reyn.workspace first to pre-resolve the pre-existing environment/workspace
+# import reyn.data.workspace first to pre-resolve the pre-existing environment/workspace
 # import cycle, so this module collects in isolation (not just in full-suite order).
-import reyn.workspace  # noqa: F401
+import reyn.data.workspace  # noqa: F401
 from reyn.environment.container_backend import DockerEnvironmentBackend
 from reyn.environment.container_launcher import (
     WORKSPACE_DEST_DEFAULT,

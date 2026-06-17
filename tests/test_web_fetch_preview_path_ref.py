@@ -36,9 +36,9 @@ from typing import Any
 import httpx
 import pytest
 
+from reyn.data.workspace.media_store import MediaStore, MediaStoreConfig
 from reyn.op_runtime.web import handle_web_fetch
 from reyn.schemas.models import WebFetchIROp
-from reyn.workspace.media_store import MediaStore, MediaStoreConfig
 
 
 def _ctx_with_media_store(tmp_path: Path) -> Any:

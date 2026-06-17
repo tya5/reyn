@@ -1,6 +1,6 @@
 """EnvironmentBackend Protocol — repo-filesystem mechanism abstraction (FP-0008 #1115 Stage 1).
 
-The Protocol decouples the :class:`~reyn.workspace.workspace.Workspace` from the
+The Protocol decouples the :class:`~reyn.data.workspace.workspace.Workspace` from the
 concrete filesystem the repo working tree lives on. The **host** backend
 (:class:`~reyn.environment.host_backend.HostBackend`) is an identity over the
 local Python filesystem — exactly the behavior Workspace had inline before this

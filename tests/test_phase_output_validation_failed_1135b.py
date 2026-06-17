@@ -21,11 +21,11 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from reyn.data.workspace.workspace import Workspace
 from reyn.events.events import EventLog
 from reyn.kernel.control_ir_executor import ControlIRExecutor
 from reyn.kernel.phase_executor import _RAW_OUTPUT_INLINE_CAP, PhaseExecutor
 from reyn.services.offload import read_offloaded
-from reyn.workspace.workspace import Workspace
 
 
 def _executor(tmp_path: Path) -> tuple[PhaseExecutor, EventLog, Workspace]:

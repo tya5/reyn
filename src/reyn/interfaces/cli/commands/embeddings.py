@@ -68,7 +68,7 @@ def _resolve_st_cache_dir() -> Path:
 
     Honours the same precedence the runtime backend uses:
       REYN_CACHE_DIR > XDG_CACHE_HOME > ~/.cache/reyn/
-    See ``src/reyn/embedding/sentence_transformers_provider.py``
+    See ``src/reyn/data/embedding/sentence_transformers_provider.py``
     for the canonical implementation; we duplicate the resolution
     here (rather than importing it) to avoid a transitive
     ``sentence_transformers`` import the CLI doesn't need.

@@ -18,8 +18,8 @@ from __future__ import annotations
 
 from typing import Any, Iterator
 
-from reyn.replay.engine import ReplayEngine, ScopeType
-from reyn.replay.model import DiffFrame, StepFrame
+from reyn.data.replay.engine import ReplayEngine, ScopeType
+from reyn.data.replay.model import DiffFrame, StepFrame
 
 # ---------------------------------------------------------------------------
 # Public API

@@ -14,7 +14,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from reyn.index.source_manifest import (
+from reyn.data.index.source_manifest import (
     _MANIFESTS,
     SourceEntry,
     SourceLockedError,

@@ -20,10 +20,10 @@ from pathlib import Path
 
 import pytest
 
-from reyn.embedding import register_provider
-from reyn.embedding.provider import EmbedBatchResult
-from reyn.index import SqliteIndexBackend
-from reyn.index.source_manifest import get_source_manifest
+from reyn.data.embedding import register_provider
+from reyn.data.embedding.provider import EmbedBatchResult
+from reyn.data.index import SqliteIndexBackend
+from reyn.data.index.source_manifest import get_source_manifest
 from reyn.safe import embed_index as ei
 from reyn.safe import file as sf
 

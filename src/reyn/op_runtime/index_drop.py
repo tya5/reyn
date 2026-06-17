@@ -13,8 +13,8 @@ from __future__ import annotations
 
 from typing import Literal
 
-from reyn.index import SqliteIndexBackend
-from reyn.index.source_manifest import get_source_manifest
+from reyn.data.index import SqliteIndexBackend
+from reyn.data.index.source_manifest import get_source_manifest
 from reyn.schemas.models import IndexDropIROp
 
 from . import register

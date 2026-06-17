@@ -23,6 +23,7 @@ from pathlib import Path
 
 import pytest
 
+from reyn.data.workspace.workspace import Workspace
 from reyn.events.events import EventLog
 from reyn.interfaces.cli.commands.mcp import _resolve_install_project_root, register
 from reyn.op_runtime.mcp_install import _resolve_write_root
@@ -31,7 +32,6 @@ from reyn.tools.mcp_verbs import (
     _handle_mcp_install_registry,
 )
 from reyn.tools.types import RouterCallerState, ToolContext
-from reyn.workspace.workspace import Workspace
 
 # ── Layer A: --project + resolve-once + fail-loud ───────────────────────────
 

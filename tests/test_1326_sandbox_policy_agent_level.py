@@ -28,6 +28,7 @@ from typing import Any
 import pytest
 
 from reyn.config import SandboxConfig, _build_sandbox_config
+from reyn.data.workspace.workspace import Workspace
 from reyn.events.events import EventLog
 from reyn.kernel.postprocessor_executor import PostprocessorExecutor
 from reyn.kernel.preprocessor_executor import PreprocessorExecutor
@@ -42,7 +43,6 @@ from reyn.schemas.models import (
 )
 from reyn.security.permissions.permissions import PermissionResolver
 from reyn.security.sandbox.backend import SandboxResult
-from reyn.workspace.workspace import Workspace
 
 # A broad operator policy mirroring swe_bench's (the live eval-lane value).
 _AGENT_POLICY = {

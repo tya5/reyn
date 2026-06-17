@@ -210,7 +210,7 @@ Two new modes in `scripts/dogfood_trace.py` expose the recorded WAL and LLM
 trace data as a navigable step-by-step walk.  No LLM calls are made —
 everything is deterministic read-only from the dump files.
 
-Engine: `src/reyn/replay/` (internal API, TUI-reusable).  The CLI modes are a
+Engine: `src/reyn/data/replay/` (internal API, TUI-reusable).  The CLI modes are a
 thin presentation layer over `ReplayEngine` and `compare()` from that module.
 
 ## `--mode replay` — inspect a session step by step
@@ -312,12 +312,12 @@ Checkpoints use the shell-friendly `run_id:phase:step_idx` format.  Get valid
 checkpoint strings from `--mode replay` output (each frame header shows the
 checkpoint), then pass to `--at` for targeted inspection.
 
-## Engine API (`src/reyn/replay/`)
+## Engine API (`src/reyn/data/replay/`)
 
 The CLI modes are a presentation layer over an importable engine:
 
 ```python
-from reyn.replay import ReplayEngine, Checkpoint, compare
+from reyn.data.replay import ReplayEngine, Checkpoint, compare
 
 # Walk a session
 engine = ReplayEngine("/tmp/b14_run.jsonl")
@@ -334,7 +334,7 @@ for diff in compare("/tmp/pre_fix.jsonl", "/tmp/post_fix.jsonl", scope="phase"):
 ```
 
 The engine yields `StepFrame` and `DiffFrame` dataclasses — render-agnostic,
-reusable in a future TUI (`src/reyn/replay/` can be imported directly by
+reusable in a future TUI (`src/reyn/data/replay/` can be imported directly by
 Textual widgets in phase 3+).
 
 ---

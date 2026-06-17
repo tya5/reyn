@@ -11,15 +11,15 @@ from typing import Any
 
 import pytest
 
-from reyn.embedding.provider import EmbedBatchResult
+from reyn.data.embedding.provider import EmbedBatchResult
+from reyn.data.index.backend import ChunkRecord
+from reyn.data.index.backends.sqlite import SqliteIndexBackend
+from reyn.data.workspace.workspace import Workspace
 from reyn.events.events import EventLog
-from reyn.index.backend import ChunkRecord
-from reyn.index.backends.sqlite import SqliteIndexBackend
 from reyn.op_runtime import execute_op
 from reyn.op_runtime.context import OpContext
 from reyn.schemas.models import RecallIROp
 from reyn.security.permissions.permissions import PermissionDecl
-from reyn.workspace.workspace import Workspace
 
 # ---------------------------------------------------------------------------
 # Fake provider

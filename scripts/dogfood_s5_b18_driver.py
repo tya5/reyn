@@ -73,7 +73,7 @@ def wipe_state(workspace: Path) -> None:
 
     # Best-effort singleton reset (only matters if seeding from this same Python process)
     try:
-        import reyn.index.source_manifest as sm_mod
+        import reyn.data.index.source_manifest as sm_mod
         if hasattr(sm_mod, "_MANIFEST_CACHE"):
             sm_mod._MANIFEST_CACHE.clear()
         if hasattr(sm_mod, "_singleton"):

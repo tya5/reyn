@@ -16,6 +16,7 @@ from pathlib import Path
 
 import pytest
 
+from reyn.data.workspace.workspace import Workspace
 from reyn.events.events import EventLog
 from reyn.op_runtime import execute_op
 from reyn.op_runtime.context import OpContext
@@ -35,7 +36,6 @@ from reyn.security.sandbox import (
     get_default_backend,
 )
 from reyn.security.sandbox import noop_backend as _noop_module
-from reyn.workspace.workspace import Workspace
 
 # ─── 1. SandboxPolicy ────────────────────────────────────────────────────────
 
@@ -276,9 +276,9 @@ async def test_default_backend_actually_runs_in_workspace_cwd(tmp_path):
     """
     import os
 
+    from reyn.data.workspace.workspace import Workspace
     from reyn.events.events import EventLog
     from reyn.op_runtime.context import OpContext
-    from reyn.workspace.workspace import Workspace
 
     events = EventLog()
     ws = Workspace(events=events, base_dir=tmp_path)

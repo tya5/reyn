@@ -21,11 +21,11 @@ from typing import Any
 import pytest
 
 from reyn.chat.router_loop import RouterLoop
+from reyn.data.workspace.workspace import Workspace
 from reyn.events.events import EventLog
 from reyn.kernel.phase_executor import persist_force_close_checkpoint
 from reyn.llm.llm import LLMToolCallResult
 from reyn.llm.pricing import TokenUsage
-from reyn.workspace.workspace import Workspace
 from tests.test_router_loop import FakeRouterHost
 
 

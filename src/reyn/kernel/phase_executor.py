@@ -22,6 +22,7 @@ from typing import TYPE_CHECKING
 
 import pydantic
 
+from reyn.data.workspace.artifact_validator import validate_artifact_data
 from reyn.kernel.normalizer import (
     ControlIRValidationError,
     NormalizationError,
@@ -37,7 +38,6 @@ from reyn.kernel.runtime_types import (
 from reyn.kernel.validation import ValidationError, validate_output
 from reyn.limits.limit_handler import LimitDecision, handle_limit_exceeded
 from reyn.schemas.models import ActOutput, CandidateOutput, LLMOutput
-from reyn.workspace.artifact_validator import validate_artifact_data
 
 if TYPE_CHECKING:
     from reyn.config import PhaseActResultsCompactionConfig

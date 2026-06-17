@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from reyn.embedding.provider import EmbeddingProvider
+from reyn.data.embedding.provider import EmbeddingProvider
 
 # ---------------------------------------------------------------------------
 # Cost table (USD per 1M tokens, as of 2026)

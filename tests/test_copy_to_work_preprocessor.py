@@ -20,9 +20,9 @@ import asyncio
 from pathlib import Path
 
 from reyn.compiler.loader import load_dsl_skill
+from reyn.data.workspace.workspace import Workspace
 from reyn.events.events import EventLog
 from reyn.kernel.preprocessor_executor import PreprocessorExecutor
-from reyn.workspace.workspace import Workspace
 
 # ── helpers ────────────────────────────────────────────────────────────────────
 

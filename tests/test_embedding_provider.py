@@ -22,7 +22,7 @@ from typing import Any
 
 import pytest
 
-from reyn.embedding import (
+from reyn.data.embedding import (
     CostEstimate,
     EmbedBatchResult,
     EmbeddingProvider,
@@ -31,8 +31,8 @@ from reyn.embedding import (
     get_provider,
     register_provider,
 )
-from reyn.embedding.cost_estimator import _MODEL_COST_PER_M_TOKENS
-from reyn.embedding.litellm_provider import (
+from reyn.data.embedding.cost_estimator import _MODEL_COST_PER_M_TOKENS
+from reyn.data.embedding.litellm_provider import (
     _DEFAULT_DIMENSION,
     _MODEL_DIMENSIONS,
     _resolve_model_from_config,
@@ -416,7 +416,7 @@ class TestProviderRegistry:
         backend. The wrapper preserves byte-identical LiteLLM-backed
         behaviour for openai/* and other LiteLLM-routable models.
         """
-        from reyn.embedding.router_provider import RoutingEmbeddingProvider
+        from reyn.data.embedding.router_provider import RoutingEmbeddingProvider
         provider = get_provider()
         assert isinstance(provider, RoutingEmbeddingProvider)
 
@@ -433,7 +433,7 @@ class TestProviderRegistry:
         honours tokenizer, batch processing honours batch_size) so we
         don't assert on private state here.
         """
-        from reyn.embedding.router_provider import RoutingEmbeddingProvider
+        from reyn.data.embedding.router_provider import RoutingEmbeddingProvider
         config = {"batch_size": 50}
         provider = get_provider("litellm", config=config)
         assert isinstance(provider, RoutingEmbeddingProvider)
@@ -470,14 +470,14 @@ class TestProviderRegistry:
 
 class TestPublicApi:
     def test_all_exports_importable(self):
-        """Tier 2: every name in __all__ is importable from reyn.embedding."""
-        import reyn.embedding as mod
+        """Tier 2: every name in __all__ is importable from reyn.data.embedding."""
+        import reyn.data.embedding as mod
         for name in mod.__all__:
             assert hasattr(mod, name), f"{name!r} in __all__ but missing from module"
 
     def test_expected_names_in_all(self):
         """Tier 2: __all__ contains all required public names."""
-        import reyn.embedding as mod
+        import reyn.data.embedding as mod
         required = {
             "EmbeddingProvider",
             "EmbedBatchResult",

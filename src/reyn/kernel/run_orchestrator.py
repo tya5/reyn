@@ -34,6 +34,7 @@ from reyn.skill.skill_node_runner import execute_skill_node
 
 if TYPE_CHECKING:
     from reyn.config import SafetyConfig
+    from reyn.data.workspace.workspace import Workspace
     from reyn.events.events import EventLog
     from reyn.kernel.phase_executor import PhaseExecutor
     from reyn.kernel.preprocessor_executor import PreprocessorExecutor
@@ -42,7 +43,6 @@ if TYPE_CHECKING:
     from reyn.security.permissions.permissions import PermissionResolver
     from reyn.skill.skill_registry import SkillRegistry
     from reyn.user_intervention import RequestBus
-    from reyn.workspace.workspace import Workspace
 
 _log = logging.getLogger(__name__)
 

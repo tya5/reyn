@@ -99,7 +99,7 @@ def _wipe_test_drop_state(workspace: Path) -> None:
 
     # Clear singleton cache
     try:
-        import reyn.index.source_manifest as sm_mod
+        import reyn.data.index.source_manifest as sm_mod
         if hasattr(sm_mod, "_MANIFESTS"):
             sm_mod._MANIFESTS.clear()
     except (ImportError, AttributeError):

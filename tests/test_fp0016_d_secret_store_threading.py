@@ -22,13 +22,13 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from reyn.data.workspace.workspace import Workspace
 from reyn.events.events import EventLog
 from reyn.kernel.control_ir_executor import ControlIRExecutor
 from reyn.kernel.preprocessor_executor import PreprocessorExecutor
 from reyn.schemas.models import Phase, Skill, SkillGraph
 from reyn.security.permissions.permissions import PermissionDecl
 from reyn.security.secrets.store import ScopedSecretStore
-from reyn.workspace.workspace import Workspace
 
 # ---------------------------------------------------------------------------
 # Helpers

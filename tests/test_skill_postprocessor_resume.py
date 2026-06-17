@@ -23,6 +23,7 @@ import pytest
 
 from reyn.compiler.expander import expand_phase, expand_skill
 from reyn.compiler.ir import ArtifactDef, PhaseDef, SkillDef
+from reyn.data.workspace.workspace import Workspace
 from reyn.events.events import EventLog
 from reyn.events.state_log import StateLog
 from reyn.kernel.normalizer import NormalizationResult
@@ -39,7 +40,6 @@ from reyn.schemas.models import (
 )
 from reyn.skill.skill_registry import SkillRegistry
 from reyn.skill.skill_resume_analyzer import CommittedStep, ResumePlan, SkillResumeAnalyzer
-from reyn.workspace.workspace import Workspace
 
 # ---------------------------------------------------------------------------
 # Shared helpers

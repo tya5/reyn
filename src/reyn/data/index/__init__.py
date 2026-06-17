@@ -1,14 +1,14 @@
 """Reyn RAG index layer — public API (ADR-0033 Phase 1)."""
 from __future__ import annotations
 
-from reyn.index.backend import (
+from reyn.data.index.backend import (
     ChunkRecord,
     DropResult,
     IndexBackend,
     StatResult,
     WriteResult,
 )
-from reyn.index.backends.sqlite import SqliteIndexBackend
+from reyn.data.index.backends.sqlite import SqliteIndexBackend
 
 _BACKENDS: dict[str, type] = {"sqlite": SqliteIndexBackend}
 

@@ -88,7 +88,7 @@ def _client():
 
 def _mint_path_ref(tmp_project: Path, content: str = "hello world\n") -> dict:
     """Use MediaStore to write a real path_ref under the tmp project."""
-    from reyn.workspace.media_store import MediaStore, MediaStoreConfig
+    from reyn.data.workspace.media_store import MediaStore, MediaStoreConfig
     store = MediaStore(
         MediaStoreConfig(),
         project_root=tmp_project,

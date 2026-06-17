@@ -93,7 +93,7 @@ def render_memory(
     if project_root is None:
         return f"[{_TEXT_DIM}]  (no project root)[/]", [], []
 
-    from reyn.memory.memory import list_entries
+    from reyn.data.memory.memory import list_entries
 
     lines: list[str] = []
     flat_entries: list[Any] = []

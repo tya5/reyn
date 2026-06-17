@@ -21,7 +21,7 @@ import json
 # touches host_backend) doesn't hit a partial-init circular import when this
 # module is collected first. The existing container-backend suite relies on
 # collection order for the same reason.
-from reyn.workspace.text_codec import decode_text_or_none  # noqa: F401
+from reyn.data.workspace.text_codec import decode_text_or_none  # noqa: F401
 from reyn.environment.container_backend import DockerEnvironmentBackend, _ENV_INFO
 from reyn.security.sandbox.backend import SandboxResult
 # isort: on

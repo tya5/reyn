@@ -32,12 +32,12 @@ from pathlib import Path
 
 import pytest
 
+from reyn.data.workspace.workspace import Workspace
 from reyn.events.events import EventLog
 from reyn.kernel.control_ir_executor import ControlIRExecutor
 from reyn.kernel.runtime import OSRuntime
 from reyn.schemas.models import Phase, Skill, SkillGraph
 from reyn.security.permissions.permissions import PermissionResolver
-from reyn.workspace.workspace import Workspace
 
 # Ops the catalog advertises regardless of runtime flags. sandbox_exec is the
 # #1133 regression anchor (it was the op that went missing). The list is derived

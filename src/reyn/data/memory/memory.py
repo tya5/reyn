@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from reyn.compiler.parser import _split_frontmatter
-from reyn.memory.memory_paths import memory_dir
+from reyn.data.memory.memory_paths import memory_dir
 
 VALID_TYPES = ("user", "feedback", "project", "reference")
 

@@ -44,10 +44,10 @@ class _FakeMCPClient:
 
 def _make_ctx(tmp_path, mcp_client: _FakeMCPClient) -> Any:
     """Build a minimal OpContext that uses the fake client for the test server."""
+    from reyn.data.workspace.workspace import Workspace
     from reyn.events.events import EventLog
     from reyn.op_runtime.context import OpContext
     from reyn.security.permissions.permissions import PermissionDecl
-    from reyn.workspace.workspace import Workspace
 
     events = EventLog()
     return OpContext(

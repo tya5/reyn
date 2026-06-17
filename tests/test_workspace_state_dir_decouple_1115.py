@@ -21,8 +21,8 @@ from pathlib import Path
 
 import pytest
 
+from reyn.data.workspace.workspace import Workspace
 from reyn.events.events import EventLog
-from reyn.workspace.workspace import Workspace
 
 
 def test_default_state_dir_is_base_dir_reyn(tmp_path: Path) -> None:

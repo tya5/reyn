@@ -1427,7 +1427,7 @@ def mode_replay(trace_paths: list[str], at: str | None, scope: str) -> None:
     """
     import sys
     sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
-    from reyn.replay import Checkpoint, ReplayEngine
+    from reyn.data.replay import Checkpoint, ReplayEngine
 
     try:
         engine = ReplayEngine(trace_paths)
@@ -1474,7 +1474,7 @@ def mode_compare(
     """
     import sys
     sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
-    from reyn.replay import compare
+    from reyn.data.replay import compare
 
     scope_val: str = scope or "step"
     try:
@@ -1543,7 +1543,7 @@ def mode_compare(
 
 def _print_step_frame(frame: object, *, show_llm: bool = True) -> None:
     """Pretty-print a single StepFrame."""
-    from reyn.replay.model import StepFrame
+    from reyn.data.replay.model import StepFrame
     if not isinstance(frame, StepFrame):
         return
     print(f"  checkpoint:  {frame.checkpoint}")

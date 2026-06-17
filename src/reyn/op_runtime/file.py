@@ -6,8 +6,8 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Any, Literal
 
+from reyn.data.workspace.text_codec import decode_text_or_none, encode_text
 from reyn.schemas.models import FileIROp
-from reyn.workspace.text_codec import decode_text_or_none, encode_text
 
 from . import register
 from .context import OpContext

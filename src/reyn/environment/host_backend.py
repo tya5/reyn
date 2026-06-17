@@ -1,7 +1,7 @@
 """HostBackend — identity EnvironmentBackend over the local Python filesystem.
 
 FP-0008 #1115 Stage 1. This backend reproduces exactly the filesystem behavior
-the :class:`~reyn.workspace.workspace.Workspace` performed inline before the
+the :class:`~reyn.data.workspace.workspace.Workspace` performed inline before the
 :class:`~reyn.environment.backend.EnvironmentBackend` seam existed — so wiring
 Workspace to a ``HostBackend`` is behavior-preserving. It receives ABSOLUTE,
 already-permission-resolved paths (the Workspace owns the permission gate +
@@ -13,8 +13,8 @@ import glob as _glob
 from pathlib import Path
 from typing import Any, Pattern
 
+from reyn.data.workspace.text_codec import decode_text_or_none
 from reyn.environment.backend import GrepResult
-from reyn.workspace.text_codec import decode_text_or_none
 
 
 def _grep_decode(path: Path) -> str | None:

@@ -31,7 +31,7 @@ from typing import Any
 
 import pytest
 
-from reyn.embedding.provider import EmbedBatchResult
+from reyn.data.embedding.provider import EmbedBatchResult
 from reyn.tools.action_index import (
     ActionEmbeddingIndex,
     _pid_alive,

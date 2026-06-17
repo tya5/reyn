@@ -78,8 +78,8 @@ SRC_TEXTS = [
     "await ctx.manifest.upsert(SourceEntry(name=source, ...)); return result",
     "def handle_index_drop(args, ctx): source = args['source']; await ctx.backend.drop(source); "
     "await ctx.manifest.remove(source); return {'dropped': True}",
-    "from reyn.index import SqliteIndexBackend; from reyn.index.source_manifest import "
-    "get_source_manifest, SourceEntry; from reyn.embedding import get_provider, register_provider",
+    "from reyn.data.index import SqliteIndexBackend; from reyn.data.index.source_manifest import "
+    "get_source_manifest, SourceEntry; from reyn.data.embedding import get_provider, register_provider",
 ]
 
 

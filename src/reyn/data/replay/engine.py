@@ -23,7 +23,7 @@ import json
 from pathlib import Path
 from typing import Any, Iterator, Literal
 
-from reyn.replay.model import Checkpoint, StepFrame
+from reyn.data.replay.model import Checkpoint, StepFrame
 
 ScopeType = Literal["step", "phase", "skill_run"]
 

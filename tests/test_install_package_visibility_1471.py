@@ -22,11 +22,11 @@ import asyncio
 
 import pytest
 
+from reyn.data.workspace.workspace import Workspace
 from reyn.events.events import EventLog
 from reyn.registry.client import RegistryError
 from reyn.schemas.models import MCPInstallIROp
 from reyn.tools.types import RouterCallerState, ToolContext
-from reyn.workspace.workspace import Workspace
 
 # ── 1. Seed contains install_package ────────────────────────────────────────
 

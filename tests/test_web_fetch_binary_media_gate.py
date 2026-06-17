@@ -214,9 +214,9 @@ class _CapturingImageClient:
 
 
 def _make_ctx(tmp_path: Path, *, multimodal: MultimodalConfig, bus_answer: str = "yes") -> Any:
+    from reyn.data.workspace.workspace import Workspace
     from reyn.events.events import EventLog
     from reyn.op_runtime.context import OpContext
-    from reyn.workspace.workspace import Workspace
 
     events = EventLog()
     # Pre-approve the URL-level web.fetch gate via config so these tests

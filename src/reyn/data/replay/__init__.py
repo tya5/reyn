@@ -3,7 +3,7 @@
 Public API
 ----------
 
-    from reyn.replay import ReplayEngine, Checkpoint, StepFrame, DiffFrame, compare
+    from reyn.data.replay import ReplayEngine, Checkpoint, StepFrame, DiffFrame, compare
 
 ReplayEngine
     Walk and seek over a recorded session (WAL + LLM trace dump).
@@ -42,7 +42,7 @@ the same module and bind ``StepFrame`` fields directly to reactive attributes::
 
     # Example sketch (not implemented — phase 3+ separate PR):
     #
-    #   from reyn.replay import ReplayEngine, StepFrame
+    #   from reyn.data.replay import ReplayEngine, StepFrame
     #   from textual.reactive import reactive
     #
     #   class StepInspector(Widget):
@@ -64,9 +64,9 @@ the same module and bind ``StepFrame`` fields directly to reactive attributes::
     # left column = diff.before, right column = diff.after, highlighted by
     # diff.events_diff / diff.state_diff / diff.llm_diff.
 """
-from reyn.replay.compare import compare
-from reyn.replay.engine import ReplayEngine
-from reyn.replay.model import Checkpoint, DiffFrame, StepFrame
+from reyn.data.replay.compare import compare
+from reyn.data.replay.engine import ReplayEngine
+from reyn.data.replay.model import Checkpoint, DiffFrame, StepFrame
 
 __all__ = [
     "ReplayEngine",

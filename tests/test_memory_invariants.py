@@ -1,14 +1,14 @@
-"""Tier 2b (subsystem invariant) tests for reyn.memory.
+"""Tier 2b (subsystem invariant) tests for reyn.data.memory.
 
 These tests guard the public-API contracts of the memory subsystem
-(`reyn.memory`). No mocks — all assertions go through the real
+(`reyn.data.memory`). No mocks — all assertions go through the real
 `read_entry`, `list_entries`, `find_one`, `render_body`, and `memory_dir`
 surfaces, using `tmp_path` for real filesystem operations.
 
 NOTE — known bug (do NOT fix here):
-  `reyn.memory.memory.rewrite_index` has a broken relative import:
+  `reyn.data.memory.memory.rewrite_index` has a broken relative import:
       from .op_runtime.file import regenerate_index_impl
-  `op_runtime` is NOT a sub-package of `reyn.memory`; the correct path is
+  `op_runtime` is NOT a sub-package of `reyn.data.memory`; the correct path is
   `reyn.op_runtime`. As a result, calling `rewrite_index()` raises
   `ModuleNotFoundError`. The index-rewrite tests below call
   `regenerate_index_impl` directly from its real location
@@ -23,7 +23,7 @@ from pathlib import Path
 
 import pytest
 
-from reyn.memory.memory import (
+from reyn.data.memory.memory import (
     ENTRY_TEMPLATE,
     INDEX_FILENAME,
     INDEX_HEADER,
@@ -33,12 +33,12 @@ from reyn.memory.memory import (
     read_entry,
     render_body,
 )
-from reyn.memory.memory_paths import memory_dir
+from reyn.data.memory.memory_paths import memory_dir
 from reyn.op_runtime.file import regenerate_index_impl
 
 
 def _rewrite_index(scope_dir: Path) -> None:
-    """Local stand-in for reyn.memory.memory.rewrite_index.
+    """Local stand-in for reyn.data.memory.memory.rewrite_index.
 
     rewrite_index() is currently broken (ModuleNotFoundError — see module
     docstring). This helper calls regenerate_index_impl directly using the

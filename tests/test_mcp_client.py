@@ -319,9 +319,9 @@ def test_teardown_mcp_clients_closes_all_clients(patched_sdk):
     G11 fix: the explicit close must happen in the same asyncio task that
     opened the clients so anyio cancel-scope task-affinity is honoured.
     """
+    from reyn.data.workspace.workspace import Workspace
     from reyn.events.events import EventLog
     from reyn.kernel.control_ir_executor import ControlIRExecutor
-    from reyn.workspace.workspace import Workspace
 
     cfg_a = {"type": "http", "url": "http://a/mcp"}
     cfg_b = {"type": "http", "url": "http://b/mcp"}
@@ -361,9 +361,9 @@ def test_teardown_mcp_clients_empties_dict(patched_sdk):
     available_ops() path (which does not depend on _mcp_clients contents),
     plus a second teardown call that must not raise.
     """
+    from reyn.data.workspace.workspace import Workspace
     from reyn.events.events import EventLog
     from reyn.kernel.control_ir_executor import ControlIRExecutor
-    from reyn.workspace.workspace import Workspace
 
     cfg = {"type": "http", "url": "http://x/mcp"}
 

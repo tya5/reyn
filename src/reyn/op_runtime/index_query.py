@@ -12,7 +12,7 @@ from __future__ import annotations
 import sqlite3
 from typing import Literal
 
-from reyn.index import SqliteIndexBackend
+from reyn.data.index import SqliteIndexBackend
 from reyn.schemas.models import IndexQueryIROp
 
 from . import register
