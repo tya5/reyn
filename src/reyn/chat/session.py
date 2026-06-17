@@ -14,6 +14,7 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
+from reyn.chat.agent import Agent
 from reyn.chat.error_format import classify_router_error
 from reyn.chat.outbox import OutboxMessage
 from reyn.chat.services import (
@@ -1142,6 +1143,13 @@ class ChatSession:
         model: str = "standard",
         resolver: ModelResolver | None = None,
         permission_resolver: PermissionResolver | None = None,
+        # FP-0043 Stage 2: the identity value object, assembled at the
+        # build_scoped_chat_session chokepoint. When provided it is the single
+        # source for every identity field (agent_name/model/_perm/workspace
+        # dirs/backends/sandbox); when None (direct/test construction) it is built
+        # from the identity params below. The identity params remain in the
+        # signature for that fallback + byte-identical frontend call sites.
+        agent: "Agent | None" = None,
         safety: "SafetyConfig | None" = None,
         mcp_servers: dict | None = None,
         output_language: str | None = None,
@@ -1203,10 +1211,24 @@ class ChatSession:
             redirect snapshot I/O to a tmp_path without touching private
             attributes.
         """
-        self.agent_name = agent_name
-        self.model = model
+        # FP-0043 Stage 2: the identity cluster is owned by the Agent value object,
+        # assembled at the build_scoped_chat_session chokepoint and passed in. A
+        # direct/test construction without one falls back to building it from the
+        # identity params (byte-identical). agent_name / model / _perm / workspace
+        # dirs / environment_backend / sandbox_config / sandbox_backend / workspace_dir
+        # / agent_role are read-only @property delegations to self._agent (below).
+        self._agent = agent if agent is not None else Agent(
+            agent_name=agent_name,
+            role=agent_role,
+            model=model,
+            permission_resolver=permission_resolver,
+            workspace_base_dir=workspace_base_dir,
+            workspace_state_dir=workspace_state_dir,
+            sandbox_config=sandbox_config,
+            sandbox_backend=sandbox_backend,
+            environment_backend=environment_backend,
+        )
         self._resolver = resolver or ModelResolver({})
-        self._perm = permission_resolver
         # #398 v4 emitter wiring (= permission_manager → state_change).
         # Subscribe to ``_persist`` events on the shared PermissionResolver
         # so a permission grant / revoke mints a state_change history
@@ -1245,24 +1267,23 @@ class ChatSession:
         # FP-0017 follow-up: declarative sandbox config (reyn.yaml `sandbox:`).
         # Plumbed through to spawned Agents so sandboxed_exec backend selection
         # honors the operator's declared policy.
-        self._sandbox_config = sandbox_config
-        # #1200 PR-F1: agent EnvironmentBackend instance for the chat FS seam
-        # (passed to the router Workspace in make_router_op_context). None →
-        # HostBackend default.
-        self._environment_backend = environment_backend
-        # #187: the chat OpContext Workspace's FS root + host-side state dir. With
-        # a container env-backend the agent's repo lives in the container, so
-        # base_dir must be the container repo root (the partner of the backend
-        # returned by build_environment_backend) — otherwise file__read/grep/glob
-        # resolve against the host cwd (the reyn repo) and the agent never sees
-        # the target tree (the #187 step-3 empty-FS defect: 0/134 reads, grep
-        # hitting reyn's own tests/venv).
-        self._workspace_base_dir = workspace_base_dir
-        self._workspace_state_dir = workspace_state_dir
-        # #1200 PR-F2: agent SandboxBackend instance for the chat exec seam (set
-        # on the router OpContext). None → get_default_backend. The INSTANCE, not
-        # the sandbox_config.backend STRING (exec-tool gating).
-        self._sandbox_backend = sandbox_backend
+        # FP-0043 Stage 2: the following identity fields are owned by self._agent
+        # (built above) and exposed via read-only @property delegations (see the
+        # property block below) — byte-identical to the former direct attributes.
+        # The comments document each field's semantics (now Agent-held):
+        #   _sandbox_config — exec-tool backend policy, plumbed to spawned Agents.
+        #   #1200 PR-F1 _environment_backend — agent EnvironmentBackend INSTANCE for
+        #     the chat FS seam (router Workspace in make_router_op_context); None →
+        #     HostBackend default.
+        #   #187 _workspace_base_dir / _workspace_state_dir — the chat OpContext
+        #     Workspace's FS root + host-side state dir. With a container env-backend
+        #     the repo lives in the container, so base_dir must be the container repo
+        #     root (partner of build_environment_backend's backend) — else
+        #     file__read/grep/glob resolve against the host cwd and the agent never
+        #     sees the target tree (the #187 step-3 empty-FS defect).
+        #   #1200 PR-F2 _sandbox_backend — agent SandboxBackend INSTANCE for the chat
+        #     exec seam (router OpContext); None → get_default_backend. The INSTANCE,
+        #     not the sandbox_config.backend STRING (exec-tool gating).
         # Issue #364 — multi-modal cluster: media-size gate config plumbed
         # through to spawned Agents AND to the router host adapter (=
         # chat-router web__fetch / file__read / mcp paths).
@@ -1454,13 +1475,10 @@ class ChatSession:
         self.output_language = output_language
         self._prompt_cache_enabled = prompt_cache_enabled
         self._project_context = project_context
-        self._agent_role = agent_role
-        # ``agent_role`` (public read-only via @property below) gives callers a
-        # stable accessor without exposing the private backing field; mutation
-        # still goes through ``self._agent_role = ...`` (= same convention as
-        # other per-session knobs flipped at runtime, e.g. ``output_language``
-        # / ``model``). The property exists so tests and external read-only
-        # consumers don't reach into the underscore attribute directly.
+        # FP-0043 Stage 2: ``agent_role`` is Agent-owned; the @property below
+        # delegates to ``self._agent.role`` (read-only — no post-init mutation,
+        # verified). The property exists so tests and external read-only consumers
+        # don't reach into the identity object directly.
         # Optional back-reference for slash commands like /agents / /attach
         # and for agent-to-agent message routing (PR11). The factory in
         # cli/commands/chat.py wires this; tests can leave it None.
@@ -1570,7 +1588,8 @@ class ChatSession:
 
         # `agents/<name>/` is state-only as of PR20: profile / history /
         # memory / .input_history. Audit log lives under `events/`.
-        self.workspace_dir = Path(".reyn") / "agents" / self.agent_name
+        # FP-0043 Stage 2: workspace_dir is Agent-derived (@property below →
+        # self._agent.workspace_dir = .reyn/agents/<name>); ensure it exists.
         self.workspace_dir.mkdir(parents=True, exist_ok=True)
         self.history_path = self.workspace_dir / "history.jsonl"
         # PR20: chat events live at `events/agents/<name>/chat/<YYYY-MM>/...`.
@@ -2078,17 +2097,65 @@ class ChatSession:
     def total_cost_usd(self) -> float:
         return self._budget.total_cost_usd
 
+    # ── FP-0043 Stage 2: identity-field delegations to the Agent value object ──
+    # Read-only by construction (identity is immutable for the session lifetime;
+    # no field is reassigned post-__init__, verified). Every former direct
+    # attribute (public agent_name/model/workspace_dir + the "private" _perm /
+    # _workspace_* / _environment_backend / _sandbox_* read internally AND by
+    # external consumers) keeps the SAME name + value via these properties →
+    # byte-identical surface; the single source of truth is self._agent.
+    @property
+    def agent_name(self) -> str:
+        return self._agent.agent_name
+
+    @property
+    def model(self) -> str:
+        return self._agent.model
+
+    @property
+    def workspace_dir(self) -> "Path":
+        return self._agent.workspace_dir
+
+    @property
+    def _perm(self) -> "PermissionResolver | None":
+        return self._agent.permission_resolver
+
+    @property
+    def _workspace_base_dir(self) -> "Path | None":
+        return self._agent.workspace_base_dir
+
+    @property
+    def _workspace_state_dir(self) -> "Path | None":
+        return self._agent.workspace_state_dir
+
+    @property
+    def _environment_backend(self) -> Any:
+        return self._agent.environment_backend
+
+    @property
+    def _sandbox_config(self) -> Any:
+        return self._agent.sandbox_config
+
+    @property
+    def _sandbox_backend(self) -> Any:
+        return self._agent.sandbox_backend
+
+    @property
+    def _agent_role(self) -> str:
+        # Internal backing-name for agent_role, kept as a delegating property so
+        # existing internal read-sites (agent_role= passthrough to the router host,
+        # etc.) keep working over the Agent identity object.
+        return self._agent.role
+
     @property
     def agent_role(self) -> str:
         """Read-only public accessor for the attached agent's role text.
 
-        Mutation still goes through ``self._agent_role = ...`` so the
-        intent of "this is a runtime knob, not a constructor-time
-        immutable" stays visible at the call site. Reads via the
-        property are the encapsulation-respecting surface for slash
-        commands and tests that need to verify the role.
+        FP-0043 Stage 2: delegates to the Agent identity object (read-only —
+        identity is immutable for the session's lifetime). Reads via the property
+        are the encapsulation-respecting surface for slash commands and tests.
         """
-        return self._agent_role
+        return self._agent.role
 
     @property
     def router_loop_agent_replies(self) -> "list[str] | None":
