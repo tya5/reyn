@@ -8,11 +8,12 @@ docs-maintainer to confirm/renumber.
 
 `reyn.agent.Agent` is overloaded. Two distinct things both read as "agent":
 
-- **`Agent` (agent.py)** is, in fact, a **per-skill OS-runtime host**: `run(skill)`
-  builds an `OSRuntime` *for that skill* and runs the skill's phase-graph. It is
-  not the multi-agent node, and it does not run an autonomous agent-loop — **the
-  skill runs** (via `OSRuntime`); the Agent hosts the boundary (workspace /
-  permissions / budget / events / secrets).
+- **`Agent` (agent.py — renamed to `SkillRuntime` / `skill_runtime.py` in #1724,
+  stage 1 of this restructure)** was, in fact, a **per-skill OS-runtime host**:
+  `run(skill)` builds an `OSRuntime` *for that skill* and runs the skill's
+  phase-graph. It is not the multi-agent node, and it does not run an autonomous
+  agent-loop — **the skill runs** (via `OSRuntime`); it hosts the boundary
+  (workspace / permissions / budget / events / secrets).
 - **`ChatSession`** is the actual multi-agent **node** — `AgentRegistry` maps
   `agent_name → ChatSession` ("multiple agents = multiple ChatSession instances",
   PR10). It conflates the agent **identity** (name, `.reyn/agents/<name>/`
@@ -152,10 +153,11 @@ restructure step.
 
 ## Staged migration (each stage byte-gated; time-travel/crash-recovery preserved)
 
-1. **SkillRuntime rename** (in progress) — `agent.py Agent` → `skill_runtime.SkillRuntime`,
-   clean-rewrite-no-alias; **frees the `Agent` name** for the identity concept.
-   (Surgically excludes the 280+ `Agent*` identity-layer identifiers —
-   AgentRegistry/AgentProfile/AgentSnapshot/etc.)
+1. **SkillRuntime rename** — **DONE (#1724)**. `agent.py Agent` →
+   `skill_runtime.SkillRuntime`, clean-rewrite-no-alias; **frees the `Agent`
+   name** for the identity concept. (Surgically excluded the 300+ `Agent*`
+   identity-layer identifiers — AgentRegistry/AgentProfile/AgentSnapshot/etc;
+   time-travel + crash-recovery verified orthogonal, 210 tests passed.)
 2. **Extract Agent-identity** from ChatSession (name / memory / permissions /
    workspace / peer). The `AgentRegistry` / `AgentProfile` layer already partially
    holds this — consolidate.
@@ -182,3 +184,15 @@ checkpoint + time-travel), mem0 (`agent_id` shared / `run_id` isolated memory
 scoping), Cursor Agents Window / Claude Code Agent Teams (multi-agent
 parallelism). The model is mainstream; Reyn's differentiation is the
 event-sourced / deterministic-replay / permission-gated persistence beneath it.
+
+## See also
+
+- Concept docs this builds on: [multi-agent](../../concepts/multi-agent/multi-agent.md),
+  [A2A](../../concepts/multi-agent/a2a.md),
+  [topology](../../concepts/multi-agent/topology.md).
+- [ADR-0038](../decisions/0038-user-facing-time-travel-rewind.md) — the
+  time-travel / rewind fork machinery the sub-session reuses.
+- Tracking umbrella: **#1726**.
+
+> **.ja mirror deferred** — this is a living design proposal that evolves
+> through the stages; the `.ja` mirror follows once the design stabilizes.
