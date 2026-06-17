@@ -60,13 +60,35 @@ _TOOL_CALL_KINDS = frozenset({
 })
 _TOOL_STEP_SESSION_PREFIX = "reyn_tool_step_"
 from reyn.interfaces.chainlit_app.uploads import collect_image_blocks
+from reyn.interfaces.chainlit_app.web_routing import resolve_web_session
 
 if TYPE_CHECKING:
     from reyn.chat.registry import AgentRegistry
 
 _DRAIN_KEY = "reyn_drain_task"
+# FP-0043 S4b-2: the per-browser web Session resolved at chat-start, stored on the
+# per-websocket cl.user_session so every handler in THIS browser thread acts on its
+# own ``web:<thread>`` Session (not the single registry-attached one).
+_SESSION_KEY = "reyn_web_session"
 _REGISTRY_LOCK = asyncio.Lock()
 _REGISTRY: "AgentRegistry | None" = None
+
+
+def _web_thread_id() -> "str | None":
+    """The chainlit per-websocket thread id (the web routing-key native id).
+    Defensive: a missing context degrades to None → resolve_web_session maps it to
+    ``web:default``."""
+    try:
+        return cl.context.session.id
+    except Exception:  # noqa: BLE001 — absent/!chainlit context → fall back
+        return None
+
+
+def _current_session() -> "object | None":
+    """The per-browser web Session resolved at chat-start (read from cl.user_session).
+    Replaces ``registry.attached_session()`` for the web surface — each browser
+    thread has its own Session, not the single registry-attached focus."""
+    return cl.user_session.get(_SESSION_KEY)
 
 
 def _agent_name_from_env() -> str:
@@ -225,14 +247,19 @@ async def _get_or_build_registry() -> "AgentRegistry":
         return registry
 
 
-async def _drain_loop(registry: "AgentRegistry") -> None:
-    """Pump ``registry.repl_outbox`` to the Chainlit browser session.
+async def _drain_loop(registry: "AgentRegistry", session: "object") -> None:
+    """Pump THIS browser's web Session ``.outbox`` to the Chainlit browser thread.
 
-    Runs as a per-cl-session background task. Terminates on ``__end__``
-    sentinel (= session shutdown) or task cancellation.
+    FP-0043 S4b-2: web is per-session — each browser drains its OWN resolved
+    ``web:<thread>`` session's outbox directly (the registry forwarder + shared
+    ``repl_outbox`` are the REPL/TUI single-focus sink and are NOT used here, so
+    two browser tabs never cross-leak). ``registry`` is still threaded for
+    intervention round-trips. Runs as a per-cl-session background task; terminates
+    on ``__end__`` (session shutdown) or task cancellation.
     """
+    outbox = session.outbox
     while True:
-        msg = await registry.repl_outbox.get()
+        msg = await outbox.get()
         if msg.kind == "intervention":
             # Intercept before the adapter — the adapter only knows how
             # to render IVs as plain author="intervention" text, but
@@ -362,7 +389,7 @@ async def _handle_intervention(registry: "AgentRegistry", msg) -> None:
     fires) and the drain loop keeps pumping subsequent messages.
     """
     prompt = build_intervention_prompt(msg.meta, text=msg.text or "")
-    session = registry.attached_session()
+    session = _current_session()
     if session is None or prompt.intervention_id is None:
         # Can't dispatch the answer (= no attached session or malformed
         # meta lacking intervention_id) — fall back to plain-text render
@@ -571,7 +598,11 @@ async def _on_chat_start() -> None:
         return
 
     await registry.restore_all()
-    session = await registry.attach(name)
+    # FP-0043 S4b-2: resolve THIS browser thread to its own web:<thread> Session
+    # (mapping default; behaviour change — web no longer shares "main"). Stored on
+    # cl.user_session so every handler in this browser acts on it.
+    session = resolve_web_session(registry, name, _web_thread_id())
+    cl.user_session.set(_SESSION_KEY, session)
 
     # Register the chainlit surface as the canonical chat-channel
     # intervention listener. The id MUST match ``DEFAULT_CHAT_CHANNEL_ID``
@@ -604,7 +635,7 @@ async def _on_chat_start() -> None:
             content=entry.content, author=entry.author,
         ).send()
 
-    task = asyncio.create_task(_drain_loop(registry))
+    task = asyncio.create_task(_drain_loop(registry, session))
     cl.user_session.set(_DRAIN_KEY, task)
 
     # Settings panel: surface ``output_language`` as a per-cl-session
@@ -699,7 +730,7 @@ async def _on_settings_update(settings: dict) -> None:
     skill filter) plug into this same dispatcher.
     """
     registry = await _get_or_build_registry()
-    session = registry.attached_session()
+    session = _current_session()
     if session is None:
         return
     if LANGUAGE_SETTING_ID in settings:
@@ -780,7 +811,7 @@ async def _persist_agent_role(registry, session, new_role: str) -> None:
 @cl.on_message
 async def _on_message(message: cl.Message) -> None:
     registry = await _get_or_build_registry()
-    session = registry.attached_session()
+    session = _current_session()
     if session is None:
         await cl.ErrorMessage(
             content="No agent attached. Reload the page to reconnect.",
@@ -970,7 +1001,7 @@ async def _run_quick_action(action_payload: dict) -> None:
     and the dispatch logic is testable on its own.
     """
     registry = await _get_or_build_registry()
-    session = registry.attached_session()
+    session = _current_session()
     if session is None:
         await cl.ErrorMessage(
             content="No agent attached. Reload the page to reconnect.",
@@ -1014,7 +1045,7 @@ async def _on_chat_end() -> None:
     # missing / session detached is a no-op.
     try:
         registry = await _get_or_build_registry()
-        session = registry.attached_session()
+        session = _current_session()
         if session is not None:
             from reyn.chat.session import DEFAULT_CHAT_CHANNEL_ID
             session.unregister_intervention_listener(DEFAULT_CHAT_CHANNEL_ID)
