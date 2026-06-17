@@ -50,7 +50,7 @@ def test_cronjob_message_based_detected():
     """Tier 2: ``CronJob.is_message_based()`` returns True only when
     BOTH ``to`` and ``message`` are populated.
     """
-    from reyn.cron import CronJob
+    from reyn.runtime.cron import CronJob
 
     msg = CronJob(name="x", schedule="0 9 * * *", to="agent_x", message="hi")
     assert msg.is_message_based() is True
@@ -70,7 +70,7 @@ def test_cronjob_to_dict_carries_all_shape_fields():
     fields regardless of which shape is set. Operators inspecting
     ``reyn cron status`` JSON see the complete row.
     """
-    from reyn.cron import CronJob
+    from reyn.runtime.cron import CronJob
 
     msg = CronJob(name="x", schedule="0 9 * * *", to="agent_x", message="hi")
     d = msg.to_dict()
@@ -322,8 +322,8 @@ async def test_runner_dispatches_message_based_to_inbox_pusher():
     ``inbox_pusher`` callable, NOT the legacy skill runner. Envelope
     carries ``sender="cron:<name>"`` for PR-A attribution.
     """
-    from reyn.cron import CronJob
-    from reyn.cron.runners import build_default_runner
+    from reyn.runtime.cron import CronJob
+    from reyn.runtime.cron.runners import build_default_runner
 
     pushed: list = []
 
@@ -359,8 +359,8 @@ async def test_runner_dispatches_skill_based_to_legacy_runner():
     skill runner, NOT the inbox pusher. Backward compat for FP-0009
     skill-based jobs.
     """
-    from reyn.cron import CronJob
-    from reyn.cron.runners import build_default_runner
+    from reyn.runtime.cron import CronJob
+    from reyn.runtime.cron.runners import build_default_runner
 
     called_with: list = []
 
@@ -390,8 +390,8 @@ async def test_runner_message_based_without_pusher_returns_error():
     logs a warning. Operator should use ``reyn web`` for
     message-based jobs.
     """
-    from reyn.cron import CronJob
-    from reyn.cron.runners import build_default_runner
+    from reyn.runtime.cron import CronJob
+    from reyn.runtime.cron.runners import build_default_runner
 
     async def _legacy(job):
         return "ok"
@@ -415,8 +415,8 @@ async def test_runner_skill_based_without_legacy_runner_returns_error():
     Defensive — host process should always provide one for
     legacy support.
     """
-    from reyn.cron import CronJob
-    from reyn.cron.runners import build_default_runner
+    from reyn.runtime.cron import CronJob
+    from reyn.runtime.cron.runners import build_default_runner
 
     async def _pusher(to, envelope):
         return "ok"

@@ -753,7 +753,7 @@ async def test_plan_step_does_not_retry_budget_exceeded():
     from reyn.chat.planner import execute_plan
 
     try:
-        from reyn.budget.budget import BudgetExceeded
+        from reyn.runtime.budget.budget import BudgetExceeded
     except ImportError:
         pytest.skip("BudgetExceeded not available in this environment")
 

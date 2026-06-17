@@ -6,7 +6,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
 
-from reyn.budget.budget import CostConfig, CostLimitConfig
 from reyn.config.chat import (  # #1682 #3 cross-section
     _build_chat_config,
     _build_cost_config,  # #1682 #3: cost builder lives in chat
@@ -40,6 +39,7 @@ from reyn.config.media import (  # #1682 #3 cross-section
     _build_web_config,
 )
 from reyn.config.root import ReynConfig, _build_model_class_by_purpose  # #1682 #3 cross-section
+from reyn.runtime.budget.budget import CostConfig, CostLimitConfig
 
 
 def _load_yaml(path: Path) -> dict:

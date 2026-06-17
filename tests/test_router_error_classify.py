@@ -13,8 +13,8 @@ from __future__ import annotations
 
 import pytest
 
-from reyn.budget.budget import BudgetExceeded
 from reyn.chat.error_format import classify_router_error
+from reyn.runtime.budget.budget import BudgetExceeded
 
 # ── synthetic exception shapes mimicking provider classes ────────────────────
 

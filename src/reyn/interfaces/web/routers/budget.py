@@ -110,7 +110,7 @@ async def patch_budget_caps(
 
     To make changes permanent, edit reyn.yaml directly.
     """
-    from reyn.budget.budget import CostLimitConfig
+    from reyn.runtime.budget.budget import CostLimitConfig
     cfg = tracker.config
 
     def _apply(field_name: str, new_hard_limit: float | None) -> None:

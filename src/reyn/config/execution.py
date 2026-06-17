@@ -6,12 +6,12 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
 
-from reyn.budget.budget import CostConfig, CostLimitConfig
 from reyn.config.chat import (  # #1682 #3: plan-step compaction configs live in chat
     PhaseActResultsCompactionConfig,
     PlannerStepCompactionConfig,
     _build_plan_step_compaction_config,  # #1682 #3 cross-section
 )
+from reyn.runtime.budget.budget import CostConfig, CostLimitConfig
 
 SKILL_RESUME_POLICIES = ("prompt", "retry", "skip", "discard_skill")
 

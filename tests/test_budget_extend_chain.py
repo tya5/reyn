@@ -16,12 +16,12 @@ covered by the session invariants suite once it lands.
 """
 from __future__ import annotations
 
-from reyn.budget.budget import (
+from reyn.config import LoopConfig, SafetyConfig
+from reyn.runtime.budget.budget import (
     BudgetTracker,
     CostConfig,
     CostLimitConfig,
 )
-from reyn.config import LoopConfig, SafetyConfig
 
 
 def _make_tracker(

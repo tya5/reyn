@@ -172,7 +172,7 @@ class BudgetGateway:
         Returns BudgetCheck (allow / warn / refuse), or a permissive
         BudgetCheck when tracker is None (unlimited mode).
         """
-        from reyn.budget.budget import BudgetCheck
+        from reyn.runtime.budget.budget import BudgetCheck
         if self._tracker is None:
             return BudgetCheck(allowed=True)
         return self._tracker.check_pre_spawn(chain_id=chain_id, skill=skill)
@@ -192,7 +192,7 @@ class BudgetGateway:
         """
         if self._tracker is None:
             return None
-        from reyn.budget.budget import format_cost_line
+        from reyn.runtime.budget.budget import format_cost_line
         snap = self._tracker.snapshot()
         return format_cost_line(snap, self._agent_name)
 
@@ -203,7 +203,7 @@ class BudgetGateway:
         """
         if self._tracker is None:
             return None
-        from reyn.budget.budget import format_budget_full
+        from reyn.runtime.budget.budget import format_budget_full
         snap = self._tracker.snapshot()
         return format_budget_full(snap, attached=self._agent_name)
 

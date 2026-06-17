@@ -19,14 +19,14 @@ import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable
 
-from reyn.budget.budget import BudgetExceeded
 from reyn.core.kernel.runtime_types import (
     LoopLimitExceededError,
     PhaseBudgetExceededError,
     RunResult,
     WorkflowAbortedError,
 )
-from reyn.limits.limit_handler import (
+from reyn.runtime.budget.budget import BudgetExceeded
+from reyn.runtime.limits.limit_handler import (
     handle_limit_exceeded,
     reset_run_extensions,
 )

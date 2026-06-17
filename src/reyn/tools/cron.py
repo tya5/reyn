@@ -273,7 +273,7 @@ async def _handle_cron_register(
     _write_dynamic_cron(path, _set_jobs_list(data, out_jobs))
 
     # Live update if a scheduler is registered.
-    from reyn.cron import CronJob, get_active_scheduler
+    from reyn.runtime.cron import CronJob, get_active_scheduler
     sched = get_active_scheduler()
     if sched is not None:
         await sched.add_job(CronJob(
@@ -308,7 +308,7 @@ async def _handle_cron_unregister(
     if removed:
         _write_dynamic_cron(path, _set_jobs_list(data, out_jobs))
 
-    from reyn.cron import get_active_scheduler
+    from reyn.runtime.cron import get_active_scheduler
     sched = get_active_scheduler()
     live_removed = False
     if sched is not None:
@@ -335,7 +335,7 @@ async def _handle_cron_list(
     test).
     """
     _ = args  # noqa: ARG001 — list takes no args
-    from reyn.cron import get_active_scheduler
+    from reyn.runtime.cron import get_active_scheduler
     sched = get_active_scheduler()
     if sched is not None:
         rows = [j.to_dict() for j in sched.jobs()]
@@ -399,7 +399,7 @@ async def _set_enabled(
     if found:
         _write_dynamic_cron(path, _set_jobs_list(data, out_jobs))
 
-    from reyn.cron import get_active_scheduler
+    from reyn.runtime.cron import get_active_scheduler
     sched = get_active_scheduler()
     live_applied = False
     if sched is not None:

@@ -43,8 +43,8 @@ from reyn.llm.pricing import TokenUsage, estimate_cost
 from reyn.schemas.models import ContextFrame
 
 if TYPE_CHECKING:
-    from reyn.budget.budget import BudgetTracker
     from reyn.core.events.events import EventLog
+    from reyn.runtime.budget.budget import BudgetTracker
 
 T = TypeVar("T")
 
@@ -1308,7 +1308,7 @@ async def call_llm(
 
     # Budget pre-check — runs before any LLM call
     if budget is not None:
-        from reyn.budget.budget import BudgetExceeded, format_refusal_message
+        from reyn.runtime.budget.budget import BudgetExceeded, format_refusal_message
         check = budget.check_pre_llm(model=spec.model, agent=budget_agent)
         if not check.allowed:
             raise BudgetExceeded(
@@ -1529,7 +1529,7 @@ async def call_llm_tools(
 
     # Budget pre-check — runs before the LLM call
     if budget is not None:
-        from reyn.budget.budget import BudgetExceeded, format_refusal_message
+        from reyn.runtime.budget.budget import BudgetExceeded, format_refusal_message
         check = budget.check_pre_llm(model=spec.model, agent=budget_agent)
         if not check.allowed:
             raise BudgetExceeded(

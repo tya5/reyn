@@ -6,8 +6,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable
 
-from reyn.budget.budget import BudgetTracker
 from reyn.config import OnLimitConfig, SafetyConfig
+from reyn.runtime.budget.budget import BudgetTracker
 
 if TYPE_CHECKING:
     from reyn.config import MultimodalConfig, SandboxConfig

@@ -36,7 +36,7 @@ MINIMAL_TOOLS = [
 
 def _make_budget_tracker(*, per_agent_tokens_hard: int | None = None):
     """Build a real BudgetTracker with optional per-agent token cap."""
-    from reyn.budget.budget import BudgetTracker, CostConfig, CostLimitConfig
+    from reyn.runtime.budget.budget import BudgetTracker, CostConfig, CostLimitConfig
     cfg = CostConfig()
     if per_agent_tokens_hard is not None:
         cfg.per_agent_tokens = CostLimitConfig(hard_limit=per_agent_tokens_hard)
@@ -181,8 +181,8 @@ async def test_call_llm_tools_pre_check_blocks_when_over_quota(monkeypatch):
 
     monkeypatch.setattr(litellm, "acompletion", fake_acompletion)
 
-    from reyn.budget.budget import BudgetExceeded
     from reyn.llm.pricing import TokenUsage
+    from reyn.runtime.budget.budget import BudgetExceeded
 
     # Set hard limit of 10 tokens, then fill it up
     tracker = _make_budget_tracker(per_agent_tokens_hard=10)
@@ -221,8 +221,8 @@ async def test_call_llm_pre_check_blocks_when_over_quota(monkeypatch):
 
     monkeypatch.setattr(litellm, "acompletion", fake_acompletion)
 
-    from reyn.budget.budget import BudgetExceeded
     from reyn.llm.pricing import TokenUsage
+    from reyn.runtime.budget.budget import BudgetExceeded
 
     tracker = _make_budget_tracker(per_agent_tokens_hard=5)
     tracker.record_llm(

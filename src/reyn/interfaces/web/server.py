@@ -39,7 +39,7 @@ def _make_cron_runner():
         ``sender="cron:<name>"`` envelope so the agent reads it as a
         normal attributed turn from a scheduled trigger.
     """
-    from reyn.cron.runners import build_default_runner
+    from reyn.runtime.cron.runners import build_default_runner
 
     async def _legacy_skill_runner(job) -> str:
         from pathlib import Path as _Path
@@ -122,7 +122,7 @@ async def _lifespan(app: FastAPI):
     app.state.cron_scheduler = None  # default — overwritten below if needed
     try:
         from reyn.config import load_config
-        from reyn.cron import CronJob, CronScheduler
+        from reyn.runtime.cron import CronJob, CronScheduler
         cfg = load_config()
         cron_jobs = [
             CronJob(
@@ -144,7 +144,7 @@ async def _lifespan(app: FastAPI):
             # FP-0041 #489 PR-B2: expose the scheduler to LLM-callable
             # cron tools (= cron__register / unregister / enable /
             # disable) so they can apply live updates without restart.
-            from reyn.cron import set_active_scheduler
+            from reyn.runtime.cron import set_active_scheduler
             set_active_scheduler(scheduler)
             logger.info(
                 "Started cron scheduler with %d enabled job(s)",
@@ -166,7 +166,7 @@ async def _lifespan(app: FastAPI):
             logger.warning("Cron scheduler stop failed: %s", exc)
         # Clear the active-scheduler registry so LLM-callable tools
         # invoked after shutdown don't dispatch to a stopped scheduler.
-        from reyn.cron import set_active_scheduler
+        from reyn.runtime.cron import set_active_scheduler
         set_active_scheduler(None)
 
 

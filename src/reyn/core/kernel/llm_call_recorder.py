@@ -30,19 +30,19 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Callable
 
-from reyn.budget.budget import BudgetExceeded, format_refusal_message
 from reyn.core.dispatch.dispatcher import _compute_llm_args_hash, _lookup_memoized_step
 from reyn.llm.llm import call_llm, call_llm_tools
 from reyn.llm.llm import proxy_kwargs as _proxy_kwargs
 from reyn.llm.pricing import TokenUsage, estimate_cost
+from reyn.runtime.budget.budget import BudgetExceeded, format_refusal_message
 from reyn.schemas.models import ContextFrame, Skill
 
 if TYPE_CHECKING:
-    from reyn.budget.budget import BudgetTracker
     from reyn.core.events.state_log import StateLog
     from reyn.core.kernel.run_state import RunState
     from reyn.llm.llm import LLMToolCallResult
     from reyn.llm.model_resolver import ModelResolver
+    from reyn.runtime.budget.budget import BudgetTracker
     from reyn.skill.skill_registry import SkillRegistry
 
 _log = logging.getLogger(__name__)

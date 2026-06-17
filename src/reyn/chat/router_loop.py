@@ -2794,7 +2794,7 @@ class RouterLoop:
 
          # max_iterations exhausted — FP-0005 checkpoint
          if self._on_limit is not None:
-            from reyn.limits.limit_handler import handle_limit_exceeded as _hle
+            from reyn.runtime.limits.limit_handler import handle_limit_exceeded as _hle
             _bus = getattr(self.host, "make_intervention_bus", lambda: None)()
             _dec = await _hle(
                 bus=_bus,

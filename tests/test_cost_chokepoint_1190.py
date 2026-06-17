@@ -20,9 +20,9 @@ from typing import Any
 
 import litellm
 
-from reyn.budget.budget import BudgetLedger
 from reyn.llm.llm import LLM_PURPOSES, recorded_acompletion
 from reyn.llm.pricing import TokenUsage
+from reyn.runtime.budget.budget import BudgetLedger
 
 
 class _Recorder:
@@ -198,7 +198,7 @@ def test_budget_per_purpose_breakdown_visible() -> None:
     """Tier 2: stage (iii) Part 2 — the cost-observability payoff: per-purpose
     spend is aggregated and surfaced (snapshot + /budget full rendering), so a
     user can see how much compaction vs main cost."""
-    from reyn.budget.budget import BudgetTracker, CostConfig, format_budget_full
+    from reyn.runtime.budget.budget import BudgetTracker, CostConfig, format_budget_full
 
     tracker = BudgetTracker(CostConfig())
     tracker.record_llm(model="m", agent="a", usage=TokenUsage(prompt_tokens=100, completion_tokens=20), purpose="main")

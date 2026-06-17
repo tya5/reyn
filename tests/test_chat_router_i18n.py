@@ -21,7 +21,6 @@ import asyncio
 import json
 from pathlib import Path
 
-from reyn.budget.budget import BudgetTracker, CostConfig
 from reyn.chat.router_system_prompt import build_system_prompt
 from reyn.chat.session import (
     _ROUTER_RETRY_EXHAUSTED_MSG,
@@ -29,6 +28,7 @@ from reyn.chat.session import (
 )
 from reyn.llm.llm import LLMToolCallResult
 from reyn.llm.pricing import TokenUsage
+from reyn.runtime.budget.budget import BudgetTracker, CostConfig
 
 # ---------------------------------------------------------------------------
 # Helpers
