@@ -79,10 +79,10 @@ class _LongAwaitShim:
 
 
 def _get_or_create_shim(registry: AgentRegistry, name: str) -> _LongAwaitShim:
-    if name not in registry._agents:
+    if name not in registry._sessions:
         AgentProfile.new(name, role="").save(registry._dir / name)
-        registry._agents[name] = _LongAwaitShim()
-    shim = registry._agents[name]
+        registry._sessions[name] = {"main": _LongAwaitShim()}
+    shim = registry._sessions[name]["main"]
     assert isinstance(shim, _LongAwaitShim)
     return shim
 
@@ -206,7 +206,7 @@ def test_clearing_awaiting_since_restores_inclusion(tmp_path: Path, monkeypatch)
         registry, "alpha", "run-x",
         last_phase_applied_seq=50, awaiting_since=10.0,
     )
-    shim = registry._agents["alpha"]
+    shim = registry._sessions["alpha"]["main"]
 
     # First: long-await → excluded, floor=1001
     monkeypatch.setattr("reyn.chat.registry.time.monotonic", lambda: 500.0)

@@ -62,10 +62,10 @@ class _ShimSession:
 
 
 def _get_or_create_shim(registry: AgentRegistry, name: str) -> _ShimSession:
-    if name not in registry._agents:
+    if name not in registry._sessions:
         AgentProfile.new(name, role="").save(registry._dir / name)
-        registry._agents[name] = _ShimSession()
-    shim = registry._agents[name]
+        registry._sessions[name] = {"main": _ShimSession()}
+    shim = registry._sessions[name]["main"]
     assert isinstance(shim, _ShimSession)
     return shim
 

@@ -207,7 +207,7 @@ def test_send_to_agent_history_persists_across_calls(tmp_path, monkeypatch):
         )
         # Read history through the registry's cached session — same
         # in-process instance both calls landed on.
-        session = registry._agents["default"]
+        session = registry._sessions["default"]["main"]
         return r1, r2, list(session.history)
 
     r1, r2, history = asyncio.run(go())

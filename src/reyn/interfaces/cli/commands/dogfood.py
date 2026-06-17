@@ -527,7 +527,7 @@ def _build_live_runner(agent_name: str, *, env_backend=None, ws_base_dir=None, w
 
     def _collect_events(registry: AgentRegistry) -> list[dict]:
         """Harvest events emitted during the scenario from the EventStore."""
-        session = registry._agents.get(agent_name)
+        session = registry.get_session(agent_name)
         if session is None:
             return []
         try:

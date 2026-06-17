@@ -175,7 +175,7 @@ async def test_rewind_to_drives_loaded_session_to_as_of_n_zero_residue(tmp_path)
         snapshot_path=_snap_path(tmp_path, "alpha"),
     )
     session.register_intervention_listener("test")
-    reg._agents["alpha"] = session
+    reg._sessions["alpha"] = {"main": session}
 
     await _put(log, "alpha", "a1")         # seq 1 (kept by rewind to 1)
     await _put(log, "alpha", "a2")         # seq 2 (abandoned)
@@ -321,7 +321,7 @@ async def test_compute_truncate_floor_clamped_by_retention(tmp_path):
         retention_policy=RetentionPolicy(keep_generations=2),
     )
     _seed_agent(tmp_path, "alpha")
-    reg._agents["alpha"] = _WatermarkShim([10])         # live floor = 11
+    reg._sessions["alpha"] = {"main": _WatermarkShim([10])}  # live floor = 11
 
     store = reg._store_for("alpha")                      # record 3 checkpoints
     for s in (1, 2, 3):
@@ -341,7 +341,7 @@ async def test_live_policy_floor_unchanged(tmp_path):
         project_root=tmp_path, session_factory=_no_factory, state_log=state_log,
     )  # default policy = live
     _seed_agent(tmp_path, "alpha")
-    reg._agents["alpha"] = _WatermarkShim([10])
+    reg._sessions["alpha"] = {"main": _WatermarkShim([10])}
     store = reg._store_for("alpha")
     for s in (1, 2, 3):
         snap = AgentSnapshot.empty("alpha")

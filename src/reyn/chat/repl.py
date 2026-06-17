@@ -159,7 +159,7 @@ async def run_repl(registry: AgentRegistry, renderer: ChatRenderer) -> None:
         total_usage = TokenUsage()
         total_cost = 0.0
         for name in registry.loaded_names():
-            session = registry._agents.get(name)
+            session = registry.get_session(name)
             if session is None:
                 continue
             total_usage += session.total_usage

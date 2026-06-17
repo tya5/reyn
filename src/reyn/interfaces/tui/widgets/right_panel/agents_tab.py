@@ -337,7 +337,7 @@ def _plans_for_agent(registry: "AgentRegistry", name: str) -> list[dict]:
     """
     out: list[dict] = []
     try:
-        session = registry._agents.get(name)  # type: ignore[attr-defined]
+        session = registry.get_session(name)  # type: ignore[attr-defined]
     except Exception:
         return out
     if session is None:

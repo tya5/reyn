@@ -30,6 +30,7 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
+from uuid import uuid4
 
 logger = logging.getLogger(__name__)
 
@@ -57,6 +58,10 @@ from .profile import PROFILE_FILENAME, AgentProfile
 from .topology import TOPOLOGY_DIRNAME, Topology, _validate_topology_name
 
 DEFAULT_AGENT_NAME = "default"
+# FP-0043 Stage 3: the implicit per-agent session id. Single-session paths
+# resolve to this id, keeping N=1 behaviour byte-identical. Spawned sessions get
+# generated ids (Stage 4 routes inbound messages to non-default sessions).
+_DEFAULT_SID = "main"
 
 # ADR-0038 1f: WAL-entry-kind → rewind-point boundary label. All inputs are
 # OS-level ``WAL_EVENT_KINDS`` (P7-safe — no skill/domain strings). The three
@@ -137,10 +142,19 @@ class AgentRegistry:
         self._factory = session_factory
         self._state_log = state_log
         self._project_root = project_root
-        self._agents: dict[str, "object"] = {}            # name -> ChatSession
-        self._tasks: dict[str, asyncio.Task] = {}         # name -> session.run() task
-        self._forward_tasks: dict[str, asyncio.Task] = {} # name -> outbox forwarder
-        self._attached: str | None = None
+        # FP-0043 Stage 3: the Registry holds N conversation Sessions per Agent.
+        # Identity (the Agent value object, S2) is shared per name; the
+        # conversation instances (= today's ChatSession, inbox+run-loop+history)
+        # are keyed by an opaque session-id, default ``_DEFAULT_SID`` ("main") so
+        # single-session behaviour is byte-identical. Inbound routing to non-main
+        # sessions is Stage 4 — S3 just lets the structure hold N.
+        self._identities: dict[str, "object"] = {}            # name -> Agent (shared identity)
+        self._sessions: dict[str, dict[str, "object"]] = {}   # name -> {sid -> Session}
+        # Run-loop + outbox-forwarder task handles, keyed by (name, sid) — they are
+        # per-conversation, so they scale with sessions, not identities.
+        self._tasks: dict[tuple[str, str], asyncio.Task] = {}         # (name,sid) -> session.run() task
+        self._forward_tasks: dict[tuple[str, str], asyncio.Task] = {} # (name,sid) -> outbox forwarder
+        self._attached: "tuple[str, str] | None" = None              # (name, sid) focus
         # WAL truncation throttle (skill resume design). monotonic ts of last
         # successful truncation attempt; ``None`` means no throttle is active.
         self._last_truncation_ts: float | None = None
@@ -221,6 +235,40 @@ class AgentRegistry:
                 out.append(entry.name)
         return sorted(out)
 
+    # ── FP-0043 Stage 3: session-store accessors (centralize sid-defaulting) ──
+    # Every former ``self._agents[name]`` access routes through these so the
+    # ~25 internal call-sites + the public API stay correct by construction
+    # (default sid = "main" → byte-identical at N=1). The conversation Session
+    # lives in self._sessions[name][sid]; the shared Agent in self._identities.
+    def _peek_session(self, name: str, sid: str = _DEFAULT_SID) -> "object | None":
+        """Non-loading lookup of a Session (= the former ``self._agents.get(name)``)."""
+        return self._sessions.get(name, {}).get(sid)
+
+    def _store_session(self, name: str, session: "object", sid: str = _DEFAULT_SID) -> None:
+        """Insert a Session under (name, sid), capturing its shared Agent identity."""
+        self._sessions.setdefault(name, {})[sid] = session
+        ident = getattr(session, "_agent", None)
+        if ident is not None:
+            self._identities.setdefault(name, ident)
+
+    def _has_session(self, name: str, sid: str = _DEFAULT_SID) -> bool:
+        return sid in self._sessions.get(name, {})
+
+    def _iter_sessions(self) -> "list[object]":
+        """All conversation Sessions across every (name, sid)."""
+        return [s for sd in self._sessions.values() for s in sd.values()]
+
+    def _iter_named_sessions(self) -> "list[tuple[str, object]]":
+        """(name, Session) for every (name, sid) — for per-agent-name fan-out."""
+        return [(name, s) for name, sd in self._sessions.items() for s in sd.values()]
+
+    def get_session(self, name: str, sid: str = _DEFAULT_SID) -> "object | None":
+        """Public non-loading accessor for a Session (FP-0043 Stage 3) — the
+        supported replacement for external ``registry._agents.get(name)`` reach-in.
+        Defaults to the implicit "main" session (byte-identical to the prior
+        single-session lookup)."""
+        return self._peek_session(name, sid)
+
     def load_profile(self, name: str) -> AgentProfile:
         return AgentProfile.load(self._dir / name)
 
@@ -238,17 +286,21 @@ class AgentRegistry:
     def remove(self, name: str) -> None:
         if name == DEFAULT_AGENT_NAME:
             raise ValueError("cannot remove the default agent")
-        if name == self._attached:
+        if self._attached is not None and self._attached[0] == name:
             raise ValueError(f"cannot remove attached agent {name!r}")
         target = self._dir / name
         if not target.is_dir():
             raise FileNotFoundError(target)
-        # Cancel any cached tasks / drop session before deleting on-disk state.
+        # Cancel any cached tasks / drop sessions before deleting on-disk state.
+        # FP-0043 Stage 3: removing an agent drops ALL its sessions (every sid).
+        sids = list(self._sessions.get(name, {}).keys())
         for task_dict in (self._tasks, self._forward_tasks):
-            task = task_dict.pop(name, None)
-            if task and not task.done():
-                task.cancel()
-        self._agents.pop(name, None)
+            for sid in sids:
+                task = task_dict.pop((name, sid), None)
+                if task and not task.done():
+                    task.cancel()
+        self._sessions.pop(name, None)
+        self._identities.pop(name, None)
         # Recursive rm — agents/<name>/ is reyn-managed, no surprises expected.
         import shutil
         shutil.rmtree(target)
@@ -411,7 +463,7 @@ class AgentRegistry:
         for name, snap in snapshots.items():
             if not snap.active_plan_ids:
                 continue
-            session = self._agents.get(name)
+            session = self._peek_session(name)
             if session is None:
                 continue
             try:
@@ -432,7 +484,7 @@ class AgentRegistry:
         in-flight session and the rewind path share one view of the
         generations dir); otherwise constructs one over the on-disk path.
         """
-        session = self._agents.get(name)
+        session = self._peek_session(name)
         store = getattr(session, "_generation_store", None)
         if isinstance(store, SnapshotGenerationStore):
             return store
@@ -492,7 +544,7 @@ class AgentRegistry:
 
         self._rewind_in_progress = True
         try:
-            sessions = list(self._agents.values())
+            sessions = self._iter_sessions()
             # 2. all-cancel (stop-world).
             for session in sessions:
                 await session.cancel_inflight()
@@ -833,7 +885,7 @@ class AgentRegistry:
             # the head so restore_all's replay floor skips the abandoned segment.
             snap.applied_seq = reconstruct_seq
             snap.save(self._dir / name / "state" / "snapshot.json")
-            session = self._agents.get(name)
+            session = self._peek_session(name)
             if session is not None:
                 await session.reset_for_rewind()
                 session.restore_state(snap)
@@ -1228,7 +1280,7 @@ class AgentRegistry:
         discard path.
         """
         notified = False
-        for name, session in self._agents.items():
+        for name, session in self._iter_named_sessions():
             if name == by_agent_name:
                 continue
             chain_mgr = getattr(session, "_chains", None)
@@ -1344,7 +1396,7 @@ class AgentRegistry:
         """
         seqs: list[int] = []
         now = time.monotonic()
-        for session in self._agents.values():
+        for session in self._iter_sessions():
             iter_method = getattr(session, "iter_applied_seqs", None)
             if iter_method is None:
                 # Conservative: a session shim without the method (test
@@ -1368,13 +1420,22 @@ class AgentRegistry:
 
     def get_or_load(self, name: str) -> "object":
         """Return the ChatSession for `name`, instantiating from profile if new."""
-        if name in self._agents:
-            return self._agents[name]
+        existing = self._peek_session(name)
+        if existing is not None:
+            return existing
         if not self.exists(name):
             raise FileNotFoundError(
                 f"agent {name!r} not found; run `reyn agent new {name}` to create it"
             )
         profile = self.load_profile(name)
+        session = self._construct_session(profile)
+        self._store_session(name, session)
+        return session
+
+    def _construct_session(self, profile: AgentProfile) -> "object":
+        """Build a configured Session from a profile (factory + shared-store
+        attach), WITHOUT inserting it into the session map. Shared by get_or_load
+        (default session) and spawn_session (additional sessions) — FP-0043 S3."""
         session = self._factory(profile)
         # ADR-0038 Stage 1d: hand the session the single shared workspace
         # shadow-git store so cut_generation captures the workspace at each
@@ -1389,8 +1450,29 @@ class AgentRegistry:
         attach_anchor = getattr(session, "attach_anchor_store", None)
         if anchors is not None and callable(attach_anchor):
             attach_anchor(anchors)
-        self._agents[name] = session
         return session
+
+    def spawn_session(self, name: str, sid: "str | None" = None) -> str:
+        """FP-0043 Stage 3: open a NEW conversation Session under an existing
+        Agent, SHARING the agent's identity object. Returns the new session-id.
+
+        Structure-only (lead-confirmed): this lets the Registry hold N sessions
+        per agent; INBOUND routing to a non-default session is Stage 4 — until
+        then the default "main" session receives all inbound traffic. The new
+        session shares ``self._identities[name]`` (the same Agent object, S2's
+        ``agent=`` seam) so identity is genuinely shared, not duplicated."""
+        self.get_or_load(name)  # ensure the default session + _identities[name] exist
+        shared = self._identities.get(name)
+        new_sid = sid or uuid4().hex[:8]
+        if self._has_session(name, new_sid):
+            raise ValueError(f"session {new_sid!r} already exists for agent {name!r}")
+        session = self._construct_session(self.load_profile(name))
+        if shared is not None:
+            # Share the SAME identity object (not the fresh one the factory built),
+            # so a future identity change propagates to all of the agent's sessions.
+            session._agent = shared
+        self._sessions.setdefault(name, {})[new_sid] = session
+        return new_sid
 
     async def ensure_running(self, name: str) -> "object":
         """Load + start session.run() + forwarder for `name` without
@@ -1403,10 +1485,12 @@ class AgentRegistry:
         attach to B, B's pre-existing outbox messages route correctly.
         """
         session = self.get_or_load(name)
-        if name not in self._tasks or self._tasks[name].done():
-            self._tasks[name] = asyncio.create_task(session.run())
-        if name not in self._forward_tasks or self._forward_tasks[name].done():
-            self._forward_tasks[name] = asyncio.create_task(self._forwarder(name))
+        sid = _DEFAULT_SID  # FP-0043 S3: name-keyed API drives the default session
+        key = (name, sid)
+        if key not in self._tasks or self._tasks[key].done():
+            self._tasks[key] = asyncio.create_task(session.run())
+        if key not in self._forward_tasks or self._forward_tasks[key].done():
+            self._forward_tasks[key] = asyncio.create_task(self._forwarder(name, sid))
         return session
 
     async def attach(self, name: str) -> "object":
@@ -1414,9 +1498,11 @@ class AgentRegistry:
         and the outbox forwarder for the new agent if not already running.
         Old agent stays in `self._tasks` (background)."""
         new_session = self.get_or_load(name)
-        old_name = self._attached
-        if old_name and old_name != name:
-            old_session = self._agents.get(old_name)
+        sid = _DEFAULT_SID  # FP-0043 S3: attach(name) focuses the default session
+        key = (name, sid)
+        old = self._attached
+        if old is not None and old != key:
+            old_session = self._peek_session(old[0], old[1])
             if old_session is not None:
                 # Mark detached BEFORE switching so transient outbox emissions
                 # from the old session start dropping at the source
@@ -1426,13 +1512,13 @@ class AgentRegistry:
         new_session.is_attached = True
         # Boot session.run() + forwarder on first attach. Keep them alive
         # across detach/re-attach cycles — shutdown drains via `running_tasks()`.
-        if name not in self._tasks or self._tasks[name].done():
-            self._tasks[name] = asyncio.create_task(new_session.run())
-        if name not in self._forward_tasks or self._forward_tasks[name].done():
-            self._forward_tasks[name] = asyncio.create_task(
-                self._forwarder(name)
+        if key not in self._tasks or self._tasks[key].done():
+            self._tasks[key] = asyncio.create_task(new_session.run())
+        if key not in self._forward_tasks or self._forward_tasks[key].done():
+            self._forward_tasks[key] = asyncio.create_task(
+                self._forwarder(name, sid)
             )
-        self._attached = name
+        self._attached = key
 
         # Re-announce any pending interventions for the user. While detached,
         # `_announce_intervention` already put the original message on the
@@ -1445,22 +1531,23 @@ class AgentRegistry:
                 await new_session._announce_intervention(iv)
         return new_session
 
-    async def _forwarder(self, name: str) -> None:
-        """Pump one agent's outbox into the registry-level repl_outbox.
+    async def _forwarder(self, name: str, sid: str = _DEFAULT_SID) -> None:
+        """Pump one session's outbox into the registry-level repl_outbox.
 
-        Runs continuously per agent. Only forwards when this agent is the
-        attached one; otherwise drops the message (transient kinds were
-        already dropped at source, durable narration is in history). Special
-        kind `__attach_request__` is consumed here as a control signal.
+        Runs continuously per (name, sid) session. Only forwards when that
+        session is the attached one; otherwise drops the message (transient
+        kinds were already dropped at source, durable narration is in history).
+        Special kind `__attach_request__` is consumed here as a control signal.
         """
-        agent = self._agents[name]
+        key = (name, sid)
+        agent = self._peek_session(name, sid)
         while True:
             msg = await agent.outbox.get()
             if msg.kind == "__end__":
                 # Session shut down — propagate to REPL only if we're the
                 # attached one (otherwise REPL would terminate spuriously
-                # on a detached agent's shutdown).
-                if name == self._attached:
+                # on a detached session's shutdown).
+                if key == self._attached:
                     await self.repl_outbox.put(msg)
                 return
             if msg.kind == "__attach_request__":
@@ -1474,28 +1561,31 @@ class AgentRegistry:
                     # but TUI needs the same signal for render update.
                     await self.repl_outbox.put(msg)
                 continue
-            if name == self._attached:
+            if key == self._attached:
                 await self.repl_outbox.put(msg)
-            # else: drop — agent is detached, transient kinds were already
+            # else: drop — session is detached, transient kinds were already
             # dropped at source, durable narration is in history.jsonl
 
     def detach(self) -> None:
-        """Mark the attached agent as detached without stopping its task."""
+        """Mark the attached session as detached without stopping its task."""
         if self._attached is None:
             return
-        session = self._agents.get(self._attached)
+        session = self._peek_session(self._attached[0], self._attached[1])
         if session is not None:
             session.is_attached = False
         self._attached = None
 
     @property
     def attached_name(self) -> str | None:
-        return self._attached
+        # FP-0043 S3: _attached is (name, sid); the public accessor exposes the
+        # agent NAME (byte-identical to the prior str|None) — the focused sid is
+        # an internal detail until multi-session UI lands.
+        return self._attached[0] if self._attached is not None else None
 
     def attached_session(self) -> "object | None":
         if self._attached is None:
             return None
-        return self._agents.get(self._attached)
+        return self._peek_session(self._attached[0], self._attached[1])
 
     def running_tasks(self) -> list[asyncio.Task]:
         """All non-completed tasks (session.run + forwarders) for shutdown drain."""
@@ -1506,7 +1596,7 @@ class AgentRegistry:
 
     async def shutdown(self) -> None:
         """Best-effort: stop all loaded sessions, then await tasks."""
-        for name, agent in list(self._agents.items()):
+        for name, agent in self._iter_named_sessions():
             try:
                 await agent.shutdown()
             except Exception as exc:
@@ -1519,7 +1609,7 @@ class AgentRegistry:
             await asyncio.gather(*self.running_tasks(), return_exceptions=True)
 
     def loaded_names(self) -> list[str]:
-        return list(self._agents.keys())
+        return list(self._sessions.keys())
 
     def iter_other_agents(self, self_name: str) -> list[dict]:
         """List `{name, role}` for every agent except `self_name`.
