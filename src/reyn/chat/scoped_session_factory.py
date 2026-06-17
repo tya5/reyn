@@ -33,6 +33,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from reyn.chat.agent import Agent
 from reyn.chat.session import ChatSession
 
 if TYPE_CHECKING:
@@ -72,7 +73,27 @@ def build_scoped_chat_session(
     """Construct a ``ChatSession`` with the scoped capability + per-session
     config surface passed explicitly. See module docstring for the drift-class
     rationale."""
+    # FP-0043 Stage 2: assemble the Agent identity value object at this single
+    # construction chokepoint (it gathers every identity input — the explicit
+    # scoped env/sandbox/workspace params + the name/model/resolver/role that flow
+    # via ``**base``). ChatSession reads all identity fields through this object
+    # (delegating properties). This is the prerequisite seam for N Sessions sharing
+    # one Agent (a later stage); behaviour here is byte-identical. The identity
+    # params still flow through (for ChatSession's direct/test fallback) — pruning
+    # them is a later-stage cleanup once sharing is wired.
+    agent = Agent(
+        agent_name=base["agent_name"],
+        role=base.get("agent_role", ""),
+        model=base.get("model", "standard"),
+        permission_resolver=base.get("permission_resolver"),
+        workspace_base_dir=workspace_base_dir,
+        workspace_state_dir=workspace_state_dir,
+        sandbox_config=sandbox_config,
+        sandbox_backend=sandbox_backend,
+        environment_backend=environment_backend,
+    )
     return ChatSession(
+        agent=agent,
         environment_backend=environment_backend,
         sandbox_backend=sandbox_backend,
         workspace_base_dir=workspace_base_dir,
