@@ -7,7 +7,7 @@ interrupted_with_child.
 from __future__ import annotations
 
 from reyn.chat.planner import Plan, PlanStep
-from reyn.plan import (
+from reyn.core.plan import (
     PlanResumeAnalyzer,
     PlanResumePlan,
     PlanSnapshot,

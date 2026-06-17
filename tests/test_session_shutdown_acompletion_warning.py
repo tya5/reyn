@@ -181,7 +181,7 @@ def test_drain_on_shutdown_does_not_leak_warning(tmp_path, monkeypatch):
     chain), and asserts no warning leaks out.
     """
     from reyn.chat.session import ChatSession
-    from reyn.events.state_log import StateLog
+    from reyn.core.events.state_log import StateLog
 
     monkeypatch.chdir(tmp_path)
 

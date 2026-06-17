@@ -9,10 +9,10 @@ NOTE — known bug (do NOT fix here):
   `reyn.data.memory.memory.rewrite_index` has a broken relative import:
       from .op_runtime.file import regenerate_index_impl
   `op_runtime` is NOT a sub-package of `reyn.data.memory`; the correct path is
-  `reyn.op_runtime`. As a result, calling `rewrite_index()` raises
+  `reyn.core.op_runtime`. As a result, calling `rewrite_index()` raises
   `ModuleNotFoundError`. The index-rewrite tests below call
   `regenerate_index_impl` directly from its real location
-  (`reyn.op_runtime.file`) so the tests cover the invariant without being
+  (`reyn.core.op_runtime.file`) so the tests cover the invariant without being
   blocked by the upstream bug. The bug should be fixed in a separate PR.
 
 See docs/deep-dives/contributing/testing.md for the tier model.
@@ -23,6 +23,7 @@ from pathlib import Path
 
 import pytest
 
+from reyn.core.op_runtime.file import regenerate_index_impl
 from reyn.data.memory.memory import (
     ENTRY_TEMPLATE,
     INDEX_FILENAME,
@@ -34,7 +35,6 @@ from reyn.data.memory.memory import (
     render_body,
 )
 from reyn.data.memory.memory_paths import memory_dir
-from reyn.op_runtime.file import regenerate_index_impl
 
 
 def _rewrite_index(scope_dir: Path) -> None:

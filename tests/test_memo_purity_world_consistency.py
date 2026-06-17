@@ -21,8 +21,8 @@ import asyncio
 from pathlib import Path
 from typing import Any
 
+from reyn.core.events.state_log import StateLog
 from reyn.dispatch import DispatchContext, dispatch_tool
-from reyn.events.state_log import StateLog
 from reyn.skill.skill_resume_analyzer import (
     CommittedStep,
     ResumePlan,

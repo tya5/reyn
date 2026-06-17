@@ -284,7 +284,7 @@ def test_sub_skill_credential_scope_event_emitted(tmp_path: Path) -> None:
     Uses a real EventLog and inspects its emitted events via the public
     snapshot API (not private state).
     """
-    from reyn.events.events import EventLog
+    from reyn.core.events.events import EventLog
 
     events = EventLog()
     allowed = ["github_token"]
@@ -308,7 +308,7 @@ def test_sub_skill_credential_scope_event_emitted(tmp_path: Path) -> None:
 
 def test_sub_skill_credential_scope_event_wildcard(tmp_path: Path) -> None:
     """Tier 2c: sub_skill_credential_scope event carries [\"*\"] for unrestricted scope."""
-    from reyn.events.events import EventLog
+    from reyn.core.events.events import EventLog
 
     events = EventLog()
     allowed = ["*"]

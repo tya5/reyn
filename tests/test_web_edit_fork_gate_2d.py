@@ -26,8 +26,8 @@ import pytest
 from reyn.chat.profile import AgentProfile
 from reyn.chat.registry import AgentRegistry
 from reyn.chat.session import ChatSession
-from reyn.events.snapshot_generations import is_active_seq
-from reyn.events.state_log import StateLog
+from reyn.core.events.snapshot_generations import is_active_seq
+from reyn.core.events.state_log import StateLog
 from reyn.interfaces.chainlit_app.rewind_actions import (
     handle_rewind_edit_submit,
     resolve_edit_target,

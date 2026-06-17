@@ -28,10 +28,10 @@ from typing import Any
 import pytest
 
 from reyn.config import SandboxConfig, _build_sandbox_config
+from reyn.core.events.events import EventLog
+from reyn.core.kernel.postprocessor_executor import PostprocessorExecutor
+from reyn.core.kernel.preprocessor_executor import PreprocessorExecutor
 from reyn.data.workspace.workspace import Workspace
-from reyn.events.events import EventLog
-from reyn.kernel.postprocessor_executor import PostprocessorExecutor
-from reyn.kernel.preprocessor_executor import PreprocessorExecutor
 from reyn.schemas.models import (
     Phase,
     Postprocessor,
@@ -258,7 +258,7 @@ def test_osruntime_resolves_concrete_default_when_operator_absent(tmp_path: Path
     CONCRETE default (write-tight to workspace base_dir, network=
     DEFAULT_SANDBOX_NETWORK), NOT None. FAILS pre-#1 (was sandbox_config.policy-or-
     None → None → the phase SandboxLayer stayed ⊤ = permission-only)."""
-    from reyn.kernel.runtime import OSRuntime
+    from reyn.core.kernel.runtime import OSRuntime
     from reyn.security.sandbox.policy import DEFAULT_SANDBOX_NETWORK
 
     runtime = OSRuntime(
@@ -276,7 +276,7 @@ def test_osruntime_operator_policy_wins_verbatim(tmp_path: Path) -> None:
     verbatim (resolve_sandbox_policy passes config through), so symmetrization does
     not override an explicit operator policy."""
     from reyn.config import SandboxConfig
-    from reyn.kernel.runtime import OSRuntime
+    from reyn.core.kernel.runtime import OSRuntime
 
     cfg = SandboxConfig(policy={"network": False, "write_paths": ["/only/here"]})
     runtime = OSRuntime(

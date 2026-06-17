@@ -56,8 +56,8 @@ async def _handle(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
     Builds a SandboxedExecIROp from args and a legacy OpContext from
     ToolContext, then delegates to the op_runtime handler.
     """
-    from reyn.op_runtime.context import OpContext
-    from reyn.op_runtime.sandboxed_exec import handle as handle_sandboxed_exec
+    from reyn.core.op_runtime.context import OpContext
+    from reyn.core.op_runtime.sandboxed_exec import handle as handle_sandboxed_exec
     from reyn.schemas.models import SandboxedExecIROp
     from reyn.security.permissions.permissions import PermissionDecl
 

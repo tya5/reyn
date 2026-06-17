@@ -16,7 +16,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-from reyn.compiler.parser import _split_frontmatter
+from reyn.core.compiler.parser import _split_frontmatter
 from reyn.data.memory.memory_paths import memory_dir
 
 VALID_TYPES = ("user", "feedback", "project", "reference")
@@ -149,7 +149,7 @@ def rewrite_index(scope_dir: Path) -> None:
     mutation paths share the same traversal + format here so on-disk
     indexes never drift between the two writers.
     """
-    from reyn.op_runtime.file import regenerate_index_impl
+    from reyn.core.op_runtime.file import regenerate_index_impl
     regenerate_index_impl(
         dir_path=scope_dir,
         output_path=scope_dir / INDEX_FILENAME,

@@ -339,7 +339,7 @@ async def _check4_events_log() -> None:
     """
     label = "Check 4 — events log has llm_called events"
     try:
-        from reyn.events.events import EventLog
+        from reyn.core.events.events import EventLog
 
         captured_events: list[dict] = []
 
@@ -368,7 +368,7 @@ async def _check4_events_log() -> None:
                 issues.append("llm_called event missing 'phase' field")
 
         # Verify round-trip via EventStore (write + read JSONL)
-        from reyn.events.event_store import EventStore
+        from reyn.core.events.event_store import EventStore
         tmp_dir = Path(tempfile.mkdtemp(prefix="spike_preflight_events_"))
         store = EventStore(tmp_dir)
         for ev_raw in ev_log.all():

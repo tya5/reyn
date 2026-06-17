@@ -12,13 +12,13 @@ from __future__ import annotations
 
 import pytest
 
-from reyn.data.workspace.workspace import Workspace
-from reyn.events.events import EventLog
-from reyn.kernel.normalizer import (
+from reyn.core.events.events import EventLog
+from reyn.core.kernel.normalizer import (
     ControlIRValidationError,
     normalize,
 )
-from reyn.kernel.runtime import OSRuntime
+from reyn.core.kernel.runtime import OSRuntime
+from reyn.data.workspace.workspace import Workspace
 from reyn.schemas.models import (
     ControlDecision,
     ControlReason,

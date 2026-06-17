@@ -15,7 +15,7 @@ from pathlib import Path
 
 import pytest
 
-from reyn.events.workspace_version_store import WorkspaceVersionStore
+from reyn.core.events.workspace_version_store import WorkspaceVersionStore
 
 pytestmark = pytest.mark.skipif(
     shutil.which("git") is None, reason="git not on PATH",

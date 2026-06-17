@@ -1,6 +1,6 @@
 """Tier 2: PythonRunner resolves the harness interpreter (REYN_HARNESS_PYTHON).
 
-The harness subprocess (`reyn.kernel._python_harness`) runs under a resolvable
+The harness subprocess (`reyn.core.kernel._python_harness`) runs under a resolvable
 interpreter: an explicit constructor arg, else the ``REYN_HARNESS_PYTHON``
 operator override, else ``sys.executable``. The override lets the harness run
 under a reyn-capable interpreter that differs from the one reyn was launched with

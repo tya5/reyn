@@ -29,9 +29,9 @@ from reyn.chat.outbox import OutboxMessage
 from reyn.chat.services.a2a_handler import A2AHandler
 from reyn.chat.services.chain_manager import ChainManager
 from reyn.chat.services.snapshot_journal import SnapshotJournal
-from reyn.events.event_store import EventStore
-from reyn.events.events import EventLog
-from reyn.events.state_log import StateLog
+from reyn.core.events.event_store import EventStore
+from reyn.core.events.events import EventLog
+from reyn.core.events.state_log import StateLog
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -229,7 +229,7 @@ async def test_handle_agent_request_appends_history_emits_event(
     assert entry["meta"].get("chain_id") == "chain-test-001"
 
     # Event log must have agent_request_received.
-    from reyn.events.event_store import EventStore
+    from reyn.core.events.event_store import EventStore
     store: EventStore = trackers["event_log"]._subscribers[0]
     # We can't directly iterate events; use the WAL as a proxy for chain events.
     # For the EventLog subscriber we verify via the outbox path is not applicable

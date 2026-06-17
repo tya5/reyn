@@ -112,7 +112,7 @@ class _StubRouterLoop:
         if _StubRouterLoop._behavior == "raise:RuntimeError":
             raise RuntimeError("test crash")
         if _StubRouterLoop._behavior == "raise:WorkflowAbortedError":
-            from reyn.kernel.runtime import WorkflowAbortedError
+            from reyn.core.kernel.runtime import WorkflowAbortedError
             raise WorkflowAbortedError("test abort")
         await self.host.put_outbox(kind="agent", text="ok", meta={})
         return None

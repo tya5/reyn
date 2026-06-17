@@ -18,7 +18,7 @@ import stat
 
 import pytest
 
-from reyn.events.event_store import EventStore
+from reyn.core.events.event_store import EventStore
 from reyn.schemas.models import Event
 
 # ---------------------------------------------------------------------------

@@ -3,7 +3,7 @@
 The function is the public CLI seam called by `reyn memory edit / delete /
 import` after every mutation, but it was silently broken on a
 `from .op_runtime.file import regenerate_index_impl` (relative path that
-does not resolve — `op_runtime` lives at `reyn.op_runtime`, not
+does not resolve — `op_runtime` lives at `reyn.core.op_runtime`, not
 `reyn.data.memory.op_runtime`). The bug surfaced while drafting
 `tests/test_memory_invariants.py` whose tests bypass `rewrite_index` and
 call `regenerate_index_impl` directly. This file pins the entire seam.

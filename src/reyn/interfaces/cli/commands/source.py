@@ -176,9 +176,9 @@ async def _cmd_rm_async(args: argparse.Namespace) -> int:
 
     # Dispatch index_drop via op_runtime — permission gate, audit event (P6).
     # Mirrors _run_install_from_source in mcp.py: minimal OpContext for CLI.
-    import reyn.op_runtime as _op_runtime
-    from reyn.events.events import EventLog
-    from reyn.op_runtime.context import OpContext
+    import reyn.core.op_runtime as _op_runtime
+    from reyn.core.events.events import EventLog
+    from reyn.core.op_runtime.context import OpContext
     from reyn.schemas.models import IndexDropIROp
     from reyn.security.permissions.permissions import PermissionDecl, PermissionResolver
     from reyn.user_intervention import StdinInterventionBus

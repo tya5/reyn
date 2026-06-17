@@ -10,7 +10,7 @@ from pathlib import Path
 import pytest
 
 from reyn.chat.planner import Plan, PlanStep
-from reyn.plan import (
+from reyn.core.plan import (
     PlanRegistry,
     PlanSnapshot,
     decomposition_dir,
@@ -123,7 +123,7 @@ async def test_record_step_completed_spills_long_result_to_file(tmp_path: Path) 
     and snapshot.step_results does NOT contain the entry; instead
     snapshot.step_result_refs holds the relative path. Full text is
     preserved (no [truncated] suffix)."""
-    from reyn.plan import get_step_result, step_result_file_path
+    from reyn.core.plan import get_step_result, step_result_file_path
 
     reg = _make_registry(tmp_path)
     reg.start(plan_id="p001", chain_id="c1", goal="g", applied_seq=10)
@@ -149,7 +149,7 @@ async def test_record_step_completed_inline_for_small_result(tmp_path: Path) -> 
     """Tier 2: ADR-0024 — small step results stay inline on
     snapshot.step_results without touching the file system (= cheap
     read path for chat-like steps)."""
-    from reyn.plan import step_result_file_path
+    from reyn.core.plan import step_result_file_path
 
     reg = _make_registry(tmp_path)
     reg.start(plan_id="p001", chain_id="c1", goal="g", applied_seq=10)
@@ -186,7 +186,7 @@ async def test_record_step_completed_re_run_clears_stale_inline(tmp_path: Path) 
 async def test_record_step_completed_re_run_clears_stale_spill(tmp_path: Path) -> None:
     """Tier 2: re-running a previously spilled step with a small result
     moves to inline AND deletes the stale spilled file."""
-    from reyn.plan import step_result_file_path
+    from reyn.core.plan import step_result_file_path
 
     reg = _make_registry(tmp_path)
     reg.start(plan_id="p001", chain_id="c1", goal="g", applied_seq=10)

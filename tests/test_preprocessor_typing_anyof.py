@@ -25,7 +25,7 @@ from __future__ import annotations
 
 import pytest
 
-from reyn.compiler.preprocessor_typing import (
+from reyn.core.compiler.preprocessor_typing import (
     PreprocessorTypeError,
     _get_at_path,
     _require_parent_exists,

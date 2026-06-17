@@ -209,7 +209,7 @@ def test_eval_builder_permissions_python_has_safe_resolve_paths_from_op():
     """
     from pathlib import Path
 
-    from reyn.compiler.loader import load_dsl_skill
+    from reyn.core.compiler.loader import load_dsl_skill
     from reyn.skill.skill_paths import resolve_skill_path
 
     skill_dir, _ = resolve_skill_path("eval_builder")

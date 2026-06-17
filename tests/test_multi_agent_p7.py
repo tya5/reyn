@@ -40,7 +40,7 @@ from reyn.chat.registry import AgentRegistry
 from reyn.chat.services.chain_manager import ChainManager
 from reyn.chat.session import ChatSession
 from reyn.chat.topology import Topology
-from reyn.events.state_log import StateLog
+from reyn.core.events.state_log import StateLog
 
 # ---------------------------------------------------------------------------
 # Helpers shared across tests

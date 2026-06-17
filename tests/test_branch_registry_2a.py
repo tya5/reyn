@@ -11,13 +11,13 @@ from __future__ import annotations
 
 import pytest
 
-from reyn.events.snapshot_generations import (
+from reyn.core.events.snapshot_generations import (
     ACTIVE_BRANCH_ID,
     branch_ids_for,
     list_branches,
     rewind,
 )
-from reyn.events.state_log import StateLog
+from reyn.core.events.state_log import StateLog
 
 
 async def _put(log: StateLog, text: str) -> int:
@@ -160,7 +160,7 @@ async def test_list_rewind_points_branch_id_and_include_abandoned(tmp_path):
     """
     from reyn.chat.profile import AgentProfile
     from reyn.chat.registry import AgentRegistry
-    from reyn.events.agent_snapshot import AgentSnapshot
+    from reyn.core.events.agent_snapshot import AgentSnapshot
 
     state_log = StateLog(tmp_path / ".reyn" / "wal.jsonl")
     reg = AgentRegistry(

@@ -75,7 +75,7 @@ def _step_ids_for_plan(
     """
     from pathlib import Path
 
-    from reyn.plan import read_decomposition
+    from reyn.core.plan import read_decomposition
 
     try:
         agent_state_dir = (
@@ -194,7 +194,7 @@ async def _discard_plan_run(session: "ChatSession", args: str) -> None:
         try:
             from pathlib import Path
 
-            from reyn.plan import read_decomposition
+            from reyn.core.plan import read_decomposition
             agent_state_dir = (
                 Path(".reyn") / "agents" / session.agent_name / "state"
             )
@@ -266,7 +266,7 @@ async def _discard_plan_run(session: "ChatSession", args: str) -> None:
     try:
         from pathlib import Path
 
-        from reyn.plan.plan_snapshot import plan_snapshot_path
+        from reyn.core.plan.plan_snapshot import plan_snapshot_path
         agent_state_dir = (
             Path(".reyn") / "agents" / session.agent_name / "state"
         )
@@ -363,7 +363,7 @@ async def _resume_from_step(session: "ChatSession", args: str) -> None:
     # Build per-agent PlanRegistry against the on-disk plan snapshots.
     from pathlib import Path
 
-    from reyn.plan import (
+    from reyn.core.plan import (
         PlanRegistry,
         PlanResumeAnalyzer,
         PlanResumeCoordinator,

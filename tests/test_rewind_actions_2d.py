@@ -19,7 +19,7 @@ if str(_SRC) not in sys.path:
 
 from reyn.chat.profile import AgentProfile
 from reyn.chat.registry import AgentRegistry
-from reyn.events.state_log import StateLog
+from reyn.core.events.state_log import StateLog
 from reyn.interfaces.chainlit_app.rewind_actions import (
     build_rewind_action_specs,
     handle_rewind_checkout,

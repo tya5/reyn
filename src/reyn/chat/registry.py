@@ -33,10 +33,10 @@ from typing import Callable
 
 logger = logging.getLogger(__name__)
 
-from reyn.events.agent_snapshot import AgentSnapshot
-from reyn.events.anchor_store import AnchorStore
-from reyn.events.retention import RetentionPolicy, compute_retention_floor
-from reyn.events.snapshot_generations import (
+from reyn.core.events.agent_snapshot import AgentSnapshot
+from reyn.core.events.anchor_store import AnchorStore
+from reyn.core.events.retention import RetentionPolicy, compute_retention_floor
+from reyn.core.events.snapshot_generations import (
     Branch,
     RewindBeyondRetentionError,
     RewindIntoAbandonedError,
@@ -48,10 +48,10 @@ from reyn.events.snapshot_generations import (
     list_branches,
     reconstruct,
 )
-from reyn.events.snapshot_generations import checkout as _append_reset_record
-from reyn.events.state_log import StateLog
-from reyn.events.workspace_op_content_log import WorkspaceOpContentLog
-from reyn.events.workspace_version_store import WorkspaceVersionStore
+from reyn.core.events.snapshot_generations import checkout as _append_reset_record
+from reyn.core.events.state_log import StateLog
+from reyn.core.events.workspace_op_content_log import WorkspaceOpContentLog
+from reyn.core.events.workspace_version_store import WorkspaceVersionStore
 
 from .profile import PROFILE_FILENAME, AgentProfile
 from .topology import TOPOLOGY_DIRNAME, Topology, _validate_topology_name
@@ -700,7 +700,7 @@ class AgentRegistry:
         host_git_dir = host_git_root / "workspace-shadow.git"
         backend = self._environment_backend
         if backend is not None and getattr(backend, "name", "") == "container":
-            from reyn.events.workspace_version_store import _ContainerGitRunner
+            from reyn.core.events.workspace_version_store import _ContainerGitRunner
 
             repo_dir = str(getattr(backend, "repo_dir", "/workspace"))
             runner = _ContainerGitRunner(
@@ -906,7 +906,7 @@ class AgentRegistry:
         to defaults; an unloadable artifact yields forced discard with
         outbox notice (= ADR-0023 §3.5 corruption fallback).
         """
-        from reyn.plan import (
+        from reyn.core.plan import (
             PlanRegistry,
             PlanResumeCoordinator,
             build_plan_resume_config,

@@ -135,7 +135,7 @@ def test_mcp_install_scope_to_path_returns_dot_reyn_mcp_yaml(tmp_path):
     no-op for CLI backward compat; the architectural decision is "one
     canonical dynamic registry location".
     """
-    from reyn.op_runtime.mcp_install import _scope_to_path
+    from reyn.core.op_runtime.mcp_install import _scope_to_path
 
     for scope in ("local", "project", "user", ""):
         result = _scope_to_path(scope, tmp_path)
@@ -153,7 +153,7 @@ def test_mcp_drop_detects_dynamic_scope_first(tmp_path):
     a legacy location, ``_detect_scope`` returns ``"dynamic"`` first
     (= canonical drop target is the newer location).
     """
-    from reyn.op_runtime.mcp_drop_server import _detect_scope
+    from reyn.core.op_runtime.mcp_drop_server import _detect_scope
 
     _write_yaml(
         tmp_path / "reyn.yaml",
@@ -172,7 +172,7 @@ def test_mcp_drop_detects_legacy_when_dynamic_missing(tmp_path):
     pre-migration) is still droppable — ``_detect_scope`` walks
     through ``dynamic`` → ``local`` → ``project`` → ``user``.
     """
-    from reyn.op_runtime.mcp_drop_server import _detect_scope
+    from reyn.core.op_runtime.mcp_drop_server import _detect_scope
 
     _write_yaml(
         tmp_path / "reyn.yaml",
@@ -186,7 +186,7 @@ def test_mcp_drop_returns_none_for_absent_server(tmp_path):
     """Tier 2: a server absent from all scopes returns None — drop
     op handles this as "nothing to remove".
     """
-    from reyn.op_runtime.mcp_drop_server import _detect_scope
+    from reyn.core.op_runtime.mcp_drop_server import _detect_scope
 
     # No reyn.yaml, no .reyn/mcp.yaml.
     assert _detect_scope("nope", tmp_path) is None
@@ -197,7 +197,7 @@ def test_mcp_drop_scope_to_path_dynamic_returns_dot_reyn_mcp_yaml(tmp_path):
     ``.reyn/mcp.yaml``. The new scope name lets ``_detect_scope``
     identify which location to mutate after finding the server there.
     """
-    from reyn.op_runtime.mcp_drop_server import _scope_to_path
+    from reyn.core.op_runtime.mcp_drop_server import _scope_to_path
 
     assert _scope_to_path("dynamic", tmp_path) == tmp_path / ".reyn" / "mcp.yaml"
 
@@ -208,7 +208,7 @@ def test_mcp_drop_legacy_scopes_unchanged(tmp_path):
     ``dynamic`` scope is additive; old behaviour is preserved for
     backward-compat drop paths.
     """
-    from reyn.op_runtime.mcp_drop_server import _scope_to_path
+    from reyn.core.op_runtime.mcp_drop_server import _scope_to_path
 
     assert _scope_to_path("local", tmp_path) == tmp_path / "reyn.local.yaml"
     assert _scope_to_path("project", tmp_path) == tmp_path / "reyn.yaml"

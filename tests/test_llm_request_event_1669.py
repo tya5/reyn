@@ -25,7 +25,7 @@ import asyncio
 import litellm
 import pytest
 
-from reyn.events.events import (
+from reyn.core.events.events import (
     EventLog,
     get_llm_request_event_log,
     set_llm_request_event_log,

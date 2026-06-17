@@ -371,7 +371,7 @@ def test_cursor_overwrite(tmp_path):
 
 def test_index_events_skill_md_compiles():
     """Tier 2: index_events skill.md exists and compiles without errors."""
-    from reyn.compiler.loader import load_dsl_skill
+    from reyn.core.compiler.loader import load_dsl_skill
     from reyn.schemas.models import Skill
 
     skill_md = (
@@ -388,7 +388,7 @@ def test_index_events_skill_md_compiles():
 
 def test_index_events_skill_entry_phase():
     """Tier 2: entry phase is 'scan'."""
-    from reyn.compiler.loader import load_dsl_skill
+    from reyn.core.compiler.loader import load_dsl_skill
 
     skill_md = (
         Path(__file__).parent.parent
@@ -401,7 +401,7 @@ def test_index_events_skill_entry_phase():
 
 def test_index_events_skill_has_postprocessor():
     """Tier 2: skill.postprocessor is non-None with 4 steps."""
-    from reyn.compiler.loader import load_dsl_skill
+    from reyn.core.compiler.loader import load_dsl_skill
     from reyn.schemas.models import Postprocessor
 
     skill_md = (
@@ -425,7 +425,7 @@ def test_index_events_skill_has_postprocessor():
 
 def test_index_events_skill_postprocessor_output():
     """Tier 2: postprocessor.output_name == 'index_events_summary'."""
-    from reyn.compiler.loader import load_dsl_skill
+    from reyn.core.compiler.loader import load_dsl_skill
 
     skill_md = (
         Path(__file__).parent.parent
@@ -438,7 +438,7 @@ def test_index_events_skill_postprocessor_output():
 
 def test_index_events_skill_graph_single_phase():
     """Tier 2: graph has no transitions from scan (single-phase skill)."""
-    from reyn.compiler.loader import load_dsl_skill
+    from reyn.core.compiler.loader import load_dsl_skill
 
     skill_md = (
         Path(__file__).parent.parent

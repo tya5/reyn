@@ -30,8 +30,8 @@ from typing import Any
 
 import pytest
 
-from reyn.kernel.normalizer import NormalizationResult
-from reyn.kernel.runtime import OSRuntime, WorkflowAbortedError
+from reyn.core.kernel.normalizer import NormalizationResult
+from reyn.core.kernel.runtime import OSRuntime, WorkflowAbortedError
 from reyn.schemas.models import (
     ControlDecision,
     ControlReason,

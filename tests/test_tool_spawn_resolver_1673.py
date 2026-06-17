@@ -72,7 +72,7 @@ def test_invoke_skill_threads_real_resolver_and_resolvable_model(monkeypatch) ->
         return {"status": "ok"}
 
     # Replace the run_skill handler invoke_skill delegates to (lazy import target).
-    monkeypatch.setattr("reyn.op_runtime.run_skill.handle", _capture_handle)
+    monkeypatch.setattr("reyn.core.op_runtime.run_skill.handle", _capture_handle)
 
     resolver = ModelResolver(
         {"standard": "openai/gpt-4o"}, default_class="standard",
@@ -98,7 +98,7 @@ def test_invoke_skill_follows_tool_purpose_class(monkeypatch) -> None:
         captured["model"] = ctx.model
         return {"status": "ok"}
 
-    monkeypatch.setattr("reyn.op_runtime.run_skill.handle", _capture_handle)
+    monkeypatch.setattr("reyn.core.op_runtime.run_skill.handle", _capture_handle)
 
     resolver = ModelResolver(
         {"standard": "openai/gpt-4o", "strong": "anthropic/claude-3-7-sonnet"},

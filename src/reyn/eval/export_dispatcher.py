@@ -25,8 +25,8 @@ from typing import TYPE_CHECKING
 from reyn.schemas.models import Event
 
 if TYPE_CHECKING:
+    from reyn.core.events.events import EventLog
     from reyn.eval.export import TraceExporter
-    from reyn.events.events import EventLog
 
 logger = logging.getLogger(__name__)
 

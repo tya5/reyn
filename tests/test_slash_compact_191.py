@@ -23,7 +23,7 @@ import litellm
 from reyn.budget.budget import BudgetTracker, CostConfig
 from reyn.chat.session import ChatMessage, ChatSession
 from reyn.config import CompactionConfig
-from reyn.events.state_log import StateLog
+from reyn.core.events.state_log import StateLog
 from reyn.slash import REGISTRY
 
 # Compaction summary the engine's litellm call returns; new_turn_seqs lists the

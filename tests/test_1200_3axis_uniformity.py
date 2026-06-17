@@ -23,8 +23,8 @@ import pytest
 
 from reyn.chat.planner import Plan, PlanStep, _PlanStepHost
 from reyn.chat.session import ChatSession
+from reyn.core.events.state_log import StateLog
 from reyn.environment.host_backend import HostBackend
-from reyn.events.state_log import StateLog
 
 # ── chat: one agent backend → both seams (the review-gate invariant) ─────────
 

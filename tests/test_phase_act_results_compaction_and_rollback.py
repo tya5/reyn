@@ -33,8 +33,8 @@ from typing import Any
 import pytest
 
 from reyn.config import PhaseActResultsCompactionConfig
-from reyn.events.events import EventLog
-from reyn.kernel.rollback_state import RollbackState
+from reyn.core.events.events import EventLog
+from reyn.core.kernel.rollback_state import RollbackState
 from reyn.services.compaction.engine import (
     CompactionEngine,
     compact_control_ir_results,
@@ -486,9 +486,9 @@ async def test_phase_executor_restores_control_ir_results_from_rollback_context(
     """
     # Build a minimal PhaseExecutor with spies.
     from reyn.config import SafetyConfig
-    from reyn.events.events import EventLog
-    from reyn.kernel.phase_executor import PhaseExecutor
-    from reyn.kernel.run_state import RunState
+    from reyn.core.events.events import EventLog
+    from reyn.core.kernel.phase_executor import PhaseExecutor
+    from reyn.core.kernel.run_state import RunState
     from reyn.schemas.models import ContextFrame
 
     events = EventLog()
@@ -587,9 +587,9 @@ async def test_phase_executor_starts_empty_without_rollback_context() -> None:
     Invariant: no rollback_context → no prior observations injected.
     """
     from reyn.config import SafetyConfig
-    from reyn.events.events import EventLog as _EventLog
-    from reyn.kernel.phase_executor import PhaseExecutor
-    from reyn.kernel.run_state import RunState
+    from reyn.core.events.events import EventLog as _EventLog
+    from reyn.core.kernel.phase_executor import PhaseExecutor
+    from reyn.core.kernel.run_state import RunState
     from reyn.schemas.models import ContextFrame
 
     captured: list[list[dict]] = []

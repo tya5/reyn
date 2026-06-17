@@ -22,7 +22,7 @@ if str(_SRC) not in sys.path:
 
 from reyn.chat.profile import AgentProfile
 from reyn.chat.registry import AgentRegistry
-from reyn.events.state_log import StateLog
+from reyn.core.events.state_log import StateLog
 from reyn.slash import REGISTRY
 
 
@@ -121,7 +121,7 @@ async def test_rewind_abandoned_target_checks_out_fork_switch(tmp_path) -> None:
     active-target guard, so checking out a dead-branch seq revives that lineage
     — a fork-switch, not an error. Pins the new behaviour decisively.
     """
-    from reyn.events.snapshot_generations import rewind as _rewind_record
+    from reyn.core.events.snapshot_generations import rewind as _rewind_record
     reg = _make_registry(tmp_path)
     log = reg.state_log
     await log.append("inbox_put", target="alpha", msg_id="a", msg_kind="user", payload={})

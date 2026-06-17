@@ -22,7 +22,7 @@ import json
 from pathlib import Path
 
 from reyn.chat.session import ChatSession
-from reyn.events.state_log import StateLog
+from reyn.core.events.state_log import StateLog
 from reyn.skill.skill_registry import SkillRegistry
 from reyn.skill.skill_snapshot import SkillSnapshot
 

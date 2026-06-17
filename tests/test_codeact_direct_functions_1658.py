@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import pytest
 
-from reyn.kernel.codeact_runner import CodeActRunner
+from reyn.core.kernel.codeact_runner import CodeActRunner
 
 
 @pytest.mark.asyncio

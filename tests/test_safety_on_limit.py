@@ -145,7 +145,7 @@ def test_runresult_partial_data_default_is_none() -> None:
     ``partial_data=None``. Callers can use ``None`` to distinguish a
     clean completion from an abort that produced partial output.
     """
-    from reyn.kernel.runtime import RunResult
+    from reyn.core.kernel.runtime import RunResult
 
     r = RunResult(data={"final": "ok"}, status="finished")
     assert r.partial_data is None
@@ -158,7 +158,7 @@ def test_runresult_partial_data_populated_on_abort_status() -> None:
     have so far". Constructing a RunResult with both is the contract
     the OS abort paths use.
     """
-    from reyn.kernel.runtime import RunResult
+    from reyn.core.kernel.runtime import RunResult
 
     r = RunResult(
         data={"phase_x": "draft"},

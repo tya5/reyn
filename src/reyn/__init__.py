@@ -1,7 +1,7 @@
 """reyn — Agent OS public API (lazy-loaded top-level names).
 
 The package's public names are resolved lazily via PEP 562 ``__getattr__`` so
-that importing a *submodule* — notably ``reyn.kernel._python_harness``, the
+that importing a *submodule* — notably ``reyn.core.kernel._python_harness``, the
 python preprocessor-step child entry point — does NOT eagerly pull the
 agent / llm / httpx chain in through this ``__init__``.
 
@@ -19,14 +19,14 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:  # import-cost-free hints for type checkers / IDEs
     from reyn.agent import Agent
-    from reyn.kernel.runtime import RunResult
+    from reyn.core.kernel.runtime import RunResult
     from reyn.schemas.models import Phase, Skill, SkillGraph
 
 __all__ = ["Skill", "Phase", "SkillGraph", "Agent", "RunResult"]
 
 _LAZY_ATTRS = {
     "Agent": "reyn.agent",
-    "RunResult": "reyn.kernel.runtime",
+    "RunResult": "reyn.core.kernel.runtime",
     "Phase": "reyn.schemas.models",
     "Skill": "reyn.schemas.models",
     "SkillGraph": "reyn.schemas.models",

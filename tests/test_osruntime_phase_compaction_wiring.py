@@ -37,9 +37,9 @@ from typing import Any
 import pytest
 
 from reyn.config import CompactionConfig, PhaseActResultsCompactionConfig
-from reyn.events.events import EventLog
-from reyn.kernel.phase_executor import PhaseExecutor
-from reyn.kernel.runtime import OSRuntime
+from reyn.core.events.events import EventLog
+from reyn.core.kernel.phase_executor import PhaseExecutor
+from reyn.core.kernel.runtime import OSRuntime
 from reyn.schemas.models import (
     ControlDecision,
     ControlReason,

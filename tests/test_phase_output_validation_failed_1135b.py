@@ -21,10 +21,10 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from reyn.core.events.events import EventLog
+from reyn.core.kernel.control_ir_executor import ControlIRExecutor
+from reyn.core.kernel.phase_executor import _RAW_OUTPUT_INLINE_CAP, PhaseExecutor
 from reyn.data.workspace.workspace import Workspace
-from reyn.events.events import EventLog
-from reyn.kernel.control_ir_executor import ControlIRExecutor
-from reyn.kernel.phase_executor import _RAW_OUTPUT_INLINE_CAP, PhaseExecutor
 from reyn.services.offload import read_offloaded
 
 
@@ -103,7 +103,7 @@ def test_existing_validation_events_unchanged_and_new_event_additive(tmp_path: P
     normalize() rejects it — exercising the additive emit (back-compat: the
     existing control_ir_validation_error / normalization_error event still fires).
     """
-    from reyn.kernel.run_state import RunState
+    from reyn.core.kernel.run_state import RunState
     from reyn.schemas.models import CandidateOutput
 
     px, events, _ws = _executor(tmp_path)

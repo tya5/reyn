@@ -33,13 +33,13 @@ import asyncio
 
 import pytest
 
-import reyn.kernel.llm_call_recorder as runtime_mod
+import reyn.core.kernel.llm_call_recorder as runtime_mod
+from reyn.core.events.event_schema import EVENT_AUDIT_REQUIREMENTS
+from reyn.core.events.events import EventLog
+from reyn.core.op_runtime import execute_op
+from reyn.core.op_runtime.context import OpContext
 from reyn.data.workspace.workspace import Workspace
-from reyn.events.event_schema import EVENT_AUDIT_REQUIREMENTS
-from reyn.events.events import EventLog
 from reyn.llm.llm import LLMCallResult
-from reyn.op_runtime import execute_op
-from reyn.op_runtime.context import OpContext
 from reyn.schemas.models import (
     AskUserIROp,
     FileIROp,
@@ -147,7 +147,7 @@ def test_workflow_events_carry_audit_fields(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
 
     # ── Part A: OSRuntime.run() fires workflow_* + llm_* events ────────────
-    from reyn.kernel.runtime import OSRuntime
+    from reyn.core.kernel.runtime import OSRuntime
 
     monkeypatch.setattr(runtime_mod, "call_llm", _FinishCallLLM())
 

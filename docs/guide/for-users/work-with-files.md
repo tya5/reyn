@@ -54,7 +54,7 @@ Name more than one file in a single request:
 
 ```
 > Compare the approach in docs/concepts/runtime/workspace.md and docs/concepts/runtime/events.md
-> What's different between src/reyn/models.py and src/reyn/op_runtime/registry.py?
+> What's different between src/reyn/models.py and src/reyn/core/op_runtime/registry.py?
 > Read CHANGELOG.md and pyproject.toml and tell me what version we are on
 ```
 
@@ -67,7 +67,7 @@ Reyn reads up to five files per turn. If a request would need more, break it int
 Name a directory and Reyn picks the most relevant entry point — an `__init__.py`, `index.md`, `README`, or similar:
 
 ```
-> What's in src/reyn/op_runtime/?
+> What's in src/reyn/core/op_runtime/?
 > Walk me through what's under docs/concepts/
 ```
 
@@ -88,7 +88,7 @@ It will not read every file in a large directory; it infers which file to start 
 
 ```
 > What does the `ContextFrame` class in src/reyn/models.py do?
-> List the public functions in src/reyn/op_runtime/registry.py
+> List the public functions in src/reyn/core/op_runtime/registry.py
 > How does src/reyn/runtime.py start a skill run?
 ```
 
@@ -131,7 +131,7 @@ The filesystem MCP server's root is set when you start it (the final argument in
 Say which file you meant:
 
 ```
-> Not that one — I meant src/reyn/op_runtime/registry.py
+> Not that one — I meant src/reyn/core/op_runtime/registry.py
 ```
 
 The skill will re-read the correct path.

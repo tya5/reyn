@@ -18,7 +18,7 @@ from reyn.context_builder import (
     MAX_INLINE_BOOST,
     maybe_ref_artifact,
 )
-from reyn.events.events import EventLog
+from reyn.core.events.events import EventLog
 
 # ── helpers ────────────────────────────────────────────────────────────────────
 

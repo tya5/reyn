@@ -238,7 +238,7 @@ def _print_slow_down_notice(new_interval: float) -> None:
 def run_login(args: argparse.Namespace) -> None:
     """Run device grant flow + persist the token."""
     from reyn.config import load_config
-    from reyn.events.events import EventLog
+    from reyn.core.events.events import EventLog
     from reyn.security.secrets import (
         DeviceGrantError,
         OAuthProviderConfig,

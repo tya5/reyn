@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pytest
 
-from reyn.compiler.parser import parse_phase
+from reyn.core.compiler.parser import parse_phase
 
 
 def _write_phase(tmp_path: Path, content: str) -> Path:

@@ -23,7 +23,7 @@ from types import SimpleNamespace
 import pytest
 
 from reyn.config import CompactionConfig
-from reyn.events.events import EventLog
+from reyn.core.events.events import EventLog
 from reyn.services.compaction.engine import (
     _COMPACTION_SYSTEM_PROMPT,
     _RESUMMARIZE_SYSTEM_PROMPT,

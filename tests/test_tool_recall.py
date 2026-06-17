@@ -150,7 +150,7 @@ async def test_recall_handler_builds_recall_ir_op(monkeypatch):
     monkeypatch.setattr("reyn.tools.recall.execute_op", fake_execute_op, raising=False)
 
     # Patch the import inside the handler (lazy import path)
-    import reyn.op_runtime as _orm
+    import reyn.core.op_runtime as _orm
     monkeypatch.setattr(_orm, "execute_op", fake_execute_op)
 
     ctx = _make_ctx()
@@ -187,7 +187,7 @@ async def test_recall_handler_defaults(monkeypatch):
         captured_ops.append(op)
         return {"chunks": [], "mode": "fallback"}
 
-    import reyn.op_runtime as _orm
+    import reyn.core.op_runtime as _orm
     monkeypatch.setattr(_orm, "execute_op", fake_execute_op)
 
     ctx = _make_ctx()

@@ -24,8 +24,8 @@ import pytest
 
 from reyn.chat.profile import AgentProfile
 from reyn.chat.registry import AgentRegistry
-from reyn.events.snapshot_generations import is_active_seq, rewind
-from reyn.events.state_log import StateLog
+from reyn.core.events.snapshot_generations import is_active_seq, rewind
+from reyn.core.events.state_log import StateLog
 from reyn.skill.skill_resume_coordinator import SkillResumeCoordinator
 from reyn.skill.skill_snapshot import SkillSnapshot
 

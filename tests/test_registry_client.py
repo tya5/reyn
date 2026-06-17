@@ -1,4 +1,4 @@
-"""Tier 2: reyn.registry.RegistryClient HTTP path invariants.
+"""Tier 2: reyn.core.registry.RegistryClient HTTP path invariants.
 
 Uses httpx's built-in transport mock (``httpx.MockTransport``) to record
 and replay HTTP responses without real network calls.  This is not a Mock
@@ -25,9 +25,9 @@ import httpx
 import pytest
 import pytest_asyncio
 
-import reyn.registry.cache as cache_mod
-from reyn.registry import RegistryClient, RegistryError
-from reyn.registry.models import ServerInfo, ServerJson
+import reyn.core.registry.cache as cache_mod
+from reyn.core.registry import RegistryClient, RegistryError
+from reyn.core.registry.models import ServerInfo, ServerJson
 
 # ---------------------------------------------------------------------------
 # Fixtures — recorded response bodies
@@ -289,7 +289,7 @@ async def test_get_server_raises_on_404(tmp_path):
 
 def test_base_url_uses_env_override(monkeypatch):
     """Tier 2: _base_url() returns REYN_MCP_REGISTRY_URL when set."""
-    from reyn.registry.client import _base_url
+    from reyn.core.registry.client import _base_url
 
     monkeypatch.setenv("REYN_MCP_REGISTRY_URL", "https://my-internal-registry.example.com")
     assert _base_url() == "https://my-internal-registry.example.com"
@@ -297,7 +297,7 @@ def test_base_url_uses_env_override(monkeypatch):
 
 def test_base_url_defaults_to_public_registry(monkeypatch):
     """Tier 2: _base_url() defaults to official public registry."""
-    from reyn.registry.client import _base_url
+    from reyn.core.registry.client import _base_url
 
     monkeypatch.delenv("REYN_MCP_REGISTRY_URL", raising=False)
     assert _base_url() == "https://registry.modelcontextprotocol.io"
@@ -488,7 +488,7 @@ async def test_search_missing_repository_url_returns_none(tmp_path):
 
 def test_display_none_repo_url_renders_placeholder():
     """Tier 2: run_search display path renders '(no repo URL)' when repository_url is None."""
-    from reyn.registry.models import ServerInfo
+    from reyn.core.registry.models import ServerInfo
 
     server = ServerInfo(
         name="io.example/test-mcp",

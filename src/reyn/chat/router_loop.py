@@ -837,7 +837,7 @@ class RouterLoopHost(RouterLoopCore, Protocol):
 
     # Decomposition artifact persistence (ADR-0023 §3.5).
     # The artifact is the canonical SSoT for the plan shape on resume.
-    # ChatSession threads this through reyn.plan.decomposition with the
+    # ChatSession threads this through reyn.core.plan.decomposition with the
     # agent-specific state directory; test stubs may no-op.
     async def write_plan_decomposition(
         self, *, plan_id: str, plan: "Any",
@@ -2014,7 +2014,7 @@ class RouterLoop:
                         tool_choice="auto",
                     )
                 else:
-                    from reyn.plan.sub_loop_memo import compute_sub_loop_args_hash
+                    from reyn.core.plan.sub_loop_memo import compute_sub_loop_args_hash
                     args_hash = compute_sub_loop_args_hash(
                         model=resolved_model,
                         messages=messages,

@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from reyn.compiler.linter import lint_skill
+from reyn.core.compiler.linter import lint_skill
 
 # ── helpers ───────────────────────────────────────────────────────────────────
 

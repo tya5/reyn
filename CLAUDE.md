@@ -90,7 +90,7 @@ Single format for all phases:
 - NEVER describe Control IR format in Phase instructions (P8)
 - ALWAYS validate LLM output (Transition + Finish above)
 - ALWAYS emit events for state changes (P6)
-- **`docs/reference/runtime/control-ir.md` must stay synced with `OP_KIND_MODEL_MAP`** in `src/reyn/op_runtime/registry.py`. New op kinds get a section in the reference in the same PR.
+- **`docs/reference/runtime/control-ir.md` must stay synced with `OP_KIND_MODEL_MAP`** in `src/reyn/core/op_runtime/registry.py`. New op kinds get a section in the reference in the same PR.
 
 ## Testing policy (READ BEFORE WRITING TESTS)
 
@@ -229,7 +229,7 @@ and run the checklist below before continuing:
   / lint_plan / python)**: read the corresponding stdlib skill (`skill_router`,
   `eval`, `skill_improver`) for live examples
 - **ContextFrame / Output schemas**: `src/reyn/models.py`
-- **Op catalog and dispatch**: `src/reyn/op_runtime/`
+- **Op catalog and dispatch**: `src/reyn/core/op_runtime/`
 - **LLM trace analysis**: `docs/reference/dogfood-tracing.md` — `scripts/dogfood_trace.py --mode llm-payloads` is the canonical entry point for inspecting LLM payloads; do not hand-parse JSONL.
 - **Full feature inventory**: `docs/feature-map.md` — every implemented feature grouped by subsystem, each linked to its reference/concept doc (impl-extracted; impl↔doc mirror).
 

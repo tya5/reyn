@@ -102,7 +102,7 @@ class SkillSnapshot:
         if not isinstance(data, dict):
             return cls.empty(run_id, "", {})
         # PR-resume-ux β U4: schema version refuse
-        from reyn.events.agent_snapshot import SchemaVersionError
+        from reyn.core.events.agent_snapshot import SchemaVersionError
         version = data.get("version")
         if version != SKILL_SNAPSHOT_VERSION:
             raise SchemaVersionError(

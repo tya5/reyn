@@ -29,7 +29,7 @@ import asyncio
 import litellm
 
 from reyn.config import CompactionConfig, PhaseActResultsCompactionConfig
-from reyn.events.events import EventLog
+from reyn.core.events.events import EventLog
 from reyn.services.compaction.engine import CompactionEngine, compact_control_ir_results
 
 

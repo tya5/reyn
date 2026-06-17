@@ -29,7 +29,7 @@ from reyn.chat.outbox import OutboxMessage
 
 if TYPE_CHECKING:
     from reyn.chat.services.chain_manager import ChainManager, _PendingChain
-    from reyn.events.events import EventLog
+    from reyn.core.events.events import EventLog
     from reyn.limits.limit_handler import LimitDecision
 
 logger = logging.getLogger(__name__)
@@ -106,7 +106,7 @@ class A2AHandler:
     Parameters
     ----------
     event_log:
-        Session-scoped :class:`~reyn.events.events.EventLog`.  All A2A
+        Session-scoped :class:`~reyn.core.events.events.EventLog`.  All A2A
         lifecycle events are emitted here (P6).
     chain_manager:
         :class:`~reyn.chat.services.chain_manager.ChainManager` owning

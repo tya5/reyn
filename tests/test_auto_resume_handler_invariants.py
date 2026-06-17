@@ -14,8 +14,8 @@ import asyncio
 from pathlib import Path
 
 from reyn.chat.services.auto_resume_handler import AutoResumeHandler
-from reyn.events.events import EventLog
-from reyn.events.state_log import StateLog
+from reyn.core.events.events import EventLog
+from reyn.core.events.state_log import StateLog
 from reyn.skill.skill_resume_coordinator import ResumeDecision
 from reyn.skill.skill_snapshot import SkillSnapshot
 

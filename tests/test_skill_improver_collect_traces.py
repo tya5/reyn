@@ -172,7 +172,7 @@ def _make_recall_chunk(
 
 def test_collect_traces_skill_md_compiles() -> None:
     """Tier 2: skill_improver skill.md compiles; collect_traces in graph → copy_to_work."""
-    from reyn.compiler.loader import load_dsl_skill
+    from reyn.core.compiler.loader import load_dsl_skill
 
     skill_md = (
         Path(__file__).parent.parent

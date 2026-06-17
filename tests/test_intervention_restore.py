@@ -23,8 +23,8 @@ from pathlib import Path
 import pytest
 
 from reyn.chat.session import ChatSession
-from reyn.events.agent_snapshot import AgentSnapshot
-from reyn.events.state_log import StateLog
+from reyn.core.events.agent_snapshot import AgentSnapshot
+from reyn.core.events.state_log import StateLog
 
 # ---------------------------------------------------------------------------
 # Helpers

@@ -32,7 +32,7 @@ import asyncio
 from typing import Any
 
 from reyn.chat.forwarder import ChatEventForwarder
-from reyn.events.events import EventLog
+from reyn.core.events.events import EventLog
 from reyn.schemas.models import Event
 from reyn.skill._plan_step_context import current_plan_step, set_plan_step
 

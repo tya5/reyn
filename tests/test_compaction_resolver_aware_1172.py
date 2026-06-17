@@ -31,7 +31,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from reyn.config import CompactionConfig
-from reyn.events.events import EventLog
+from reyn.core.events.events import EventLog
 from reyn.llm.model_resolver import ModelResolver
 from reyn.services.compaction.engine import CompactionEngine, HistoryChunkToCompact
 

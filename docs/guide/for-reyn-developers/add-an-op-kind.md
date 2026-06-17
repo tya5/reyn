@@ -69,7 +69,7 @@ Rules for the model:
 Two dicts need an entry. Add the import and the two entries:
 
 ```python
-# src/reyn/op_runtime/registry.py
+# src/reyn/core/op_runtime/registry.py
 
 from reyn.schemas.models import (
     ...,
@@ -125,13 +125,13 @@ events; the risk of under-classifying is silent data loss on resume.
 
 ## Step 3 — Implement the handler (`op_runtime/notify.py`)
 
-Create a new file under `src/reyn/op_runtime/`. The handler is an `async`
+Create a new file under `src/reyn/core/op_runtime/`. The handler is an `async`
 function that takes the typed op, an `OpContext`, and a `caller` literal.
 It must return a JSON-serializable dict. Register it at module level so the
 self-registration mechanism picks it up.
 
 ```python
-# src/reyn/op_runtime/notify.py
+# src/reyn/core/op_runtime/notify.py
 """notify op handler — send a notification to an external channel."""
 from __future__ import annotations
 
@@ -179,11 +179,11 @@ Handler conventions:
 - Never import skill-specific modules or reference skill-specific strings
   (P7 — the OS must remain skill-agnostic).
 
-Then add the import to `src/reyn/op_runtime/__init__.py` so the module
+Then add the import to `src/reyn/core/op_runtime/__init__.py` so the module
 self-registers at startup:
 
 ```python
-# src/reyn/op_runtime/__init__.py (end of file, with the other handler imports)
+# src/reyn/core/op_runtime/__init__.py (end of file, with the other handler imports)
 from . import notify as _notify  # noqa: F401, E402
 ```
 

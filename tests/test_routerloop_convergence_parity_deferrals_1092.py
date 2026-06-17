@@ -24,12 +24,12 @@ import asyncio
 
 import pytest
 
-import reyn.kernel.llm_call_recorder as lcr
-import reyn.kernel.run_state as run_state
+import reyn.core.kernel.llm_call_recorder as lcr
+import reyn.core.kernel.run_state as run_state
 from reyn.config import OnLimitConfig, SafetyConfig, TimeoutConfig
-from reyn.kernel.run_state import RunState
-from reyn.kernel.runtime import OSRuntime
-from reyn.kernel.runtime_types import PhaseBudgetExceededError
+from reyn.core.kernel.run_state import RunState
+from reyn.core.kernel.runtime import OSRuntime
+from reyn.core.kernel.runtime_types import PhaseBudgetExceededError
 from reyn.llm.llm import LLMCallResult, LLMToolCallResult
 from reyn.llm.pricing import TokenUsage
 from reyn.schemas.models import CandidateOutput, Phase, Skill, SkillGraph

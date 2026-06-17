@@ -13,7 +13,7 @@ import logging
 from pathlib import Path
 from typing import Any, Awaitable, Callable
 
-from reyn.events.events import EventLog
+from reyn.core.events.events import EventLog
 
 logger = logging.getLogger(__name__)
 
@@ -715,7 +715,7 @@ class RouterHostAdapter:
 
     async def web_search(self, *, query: str, max_results: int) -> dict:
         """Dispatch the OS-native web/search op (DuckDuckGo) from the router."""
-        from reyn.op_runtime.web import handle_web_search
+        from reyn.core.op_runtime.web import handle_web_search
         from reyn.schemas.models import WebSearchIROp
 
         op = WebSearchIROp(
@@ -733,7 +733,7 @@ class RouterHostAdapter:
         FP-0022: authorization is now enforced at the handler level via
         PermissionResolver.require_web_fetch() inside handle_web_fetch().
         """
-        from reyn.op_runtime.web import handle_web_fetch
+        from reyn.core.op_runtime.web import handle_web_fetch
         from reyn.schemas.models import WebFetchIROp
 
         op = WebFetchIROp(
@@ -1039,7 +1039,7 @@ class RouterHostAdapter:
                 agent_state_dir = (
                     Path(".reyn") / "agents" / self._agent_name / "state"
                 )
-                from reyn.plan import decomposition_path
+                from reyn.core.plan import decomposition_path
                 artifact = decomposition_path(agent_state_dir, plan_id)
                 plan_reg.start(
                     plan_id=plan_id,
@@ -1135,7 +1135,7 @@ class RouterHostAdapter:
         self, *, plan_id: str, plan: Any,
     ) -> str | None:
         """Persist the plan decomposition. Returns the artifact path or None."""
-        from reyn.plan import write_decomposition
+        from reyn.core.plan import write_decomposition
         agent_state_dir = (
             Path(".reyn") / "agents" / self._agent_name / "state"
         )
@@ -1149,7 +1149,7 @@ class RouterHostAdapter:
 
     async def delete_plan_decomposition(self, *, plan_id: str) -> None:
         """Remove the plan decomposition artifact (P5 cleanup on success)."""
-        from reyn.plan import delete_decomposition
+        from reyn.core.plan import delete_decomposition
         agent_state_dir = (
             Path(".reyn") / "agents" / self._agent_name / "state"
         )

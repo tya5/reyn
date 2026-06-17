@@ -27,7 +27,7 @@ from reyn.chat.transport import (
     TransportRef,
     TuiRef,
 )
-from reyn.events.state_log import StateLog
+from reyn.core.events.state_log import StateLog
 
 # ---------------------------------------------------------------------------
 # Helpers

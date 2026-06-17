@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from reyn.compiler.loader import load_dsl_skill
+from reyn.core.compiler.loader import load_dsl_skill
 from reyn.security.permissions.permissions import PermissionDecl, PermissionResolver
 from reyn.skill.skill_paths import resolve_skill_path, stdlib_root
 
@@ -24,7 +24,7 @@ from reyn.skill.skill_paths import resolve_skill_path, stdlib_root
 
 def _load_skill_permissions(skill_name: str) -> PermissionDecl:
     """Load the PermissionDecl declared in a stdlib skill's frontmatter."""
-    from reyn.compiler.parser import _split_frontmatter
+    from reyn.core.compiler.parser import _split_frontmatter
 
     skill_md = stdlib_root() / "skills" / skill_name / "skill.md"
     text = skill_md.read_text(encoding="utf-8")

@@ -15,7 +15,7 @@ def register(sub) -> None:
 
 
 def run(args: argparse.Namespace) -> None:
-    from reyn.compiler.linter import lint_skill_dir
+    from reyn.core.compiler.linter import lint_skill_dir
 
     app_dir, _ = resolve_skill_path(args.skill)
     issues = lint_skill_dir(app_dir)

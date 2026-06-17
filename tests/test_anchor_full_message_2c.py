@@ -17,9 +17,9 @@ import json
 import pytest
 
 from reyn.chat.services.snapshot_journal import SnapshotJournal
-from reyn.events.anchor_store import AnchorStore
-from reyn.events.snapshot_generations import SnapshotGenerationStore
-from reyn.events.state_log import StateLog
+from reyn.core.events.anchor_store import AnchorStore
+from reyn.core.events.snapshot_generations import SnapshotGenerationStore
+from reyn.core.events.state_log import StateLog
 
 # ── AnchorStore: full alongside truncated ─────────────────────────────────────
 

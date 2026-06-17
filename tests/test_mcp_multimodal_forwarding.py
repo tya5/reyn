@@ -44,9 +44,9 @@ class _FakeMCPClient:
 
 def _make_ctx(tmp_path, mcp_client: _FakeMCPClient) -> Any:
     """Build a minimal OpContext that uses the fake client for the test server."""
+    from reyn.core.events.events import EventLog
+    from reyn.core.op_runtime.context import OpContext
     from reyn.data.workspace.workspace import Workspace
-    from reyn.events.events import EventLog
-    from reyn.op_runtime.context import OpContext
     from reyn.security.permissions.permissions import PermissionDecl
 
     events = EventLog()
@@ -65,7 +65,7 @@ def test_op_result_preserves_image_blocks(tmp_path, monkeypatch):
     carries the image block; text content remains the text-only join.
     """
     monkeypatch.chdir(tmp_path)
-    from reyn.op_runtime.mcp import _execute
+    from reyn.core.op_runtime.mcp import _execute
     from reyn.schemas.models import MCPIROp
 
     image_block = {
@@ -90,7 +90,7 @@ def test_op_result_text_only_keeps_empty_media_blocks(tmp_path, monkeypatch):
     backward compat for callers that only read `content`).
     """
     monkeypatch.chdir(tmp_path)
-    from reyn.op_runtime.mcp import _execute
+    from reyn.core.op_runtime.mcp import _execute
     from reyn.schemas.models import MCPIROp
 
     client = _FakeMCPClient(content=[{"type": "text", "text": "hello"}])
@@ -106,7 +106,7 @@ def test_op_result_text_only_keeps_empty_media_blocks(tmp_path, monkeypatch):
 def test_op_result_multiple_images_all_preserved(tmp_path, monkeypatch):
     """Tier 2: MCP result with multiple image blocks → all preserved in order."""
     monkeypatch.chdir(tmp_path)
-    from reyn.op_runtime.mcp import _execute
+    from reyn.core.op_runtime.mcp import _execute
     from reyn.schemas.models import MCPIROp
 
     img1 = {"type": "image", "data": "AAAA", "mimeType": "image/png"}

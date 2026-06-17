@@ -23,13 +23,13 @@ import pytest
 # import reyn.data.workspace first to pre-resolve the pre-existing environment/workspace
 # import cycle, so this module collects in isolation (not just in full-suite order).
 import reyn.data.workspace  # noqa: F401
+from reyn.core.events.workspace_version_store import WorkspaceVersionStore, _ContainerGitRunner
 from reyn.environment.container_backend import DockerEnvironmentBackend
 from reyn.environment.container_launcher import (
     WORKSPACE_DEST_DEFAULT,
     ContainerLauncher,
     LaunchConfig,
 )
-from reyn.events.workspace_version_store import WorkspaceVersionStore, _ContainerGitRunner
 
 # Production uses reyn-base (python:3.12-slim + git); python:3.12 (full) ships
 # git+bash too and needs no build, so the path is exercised image-agnostically.

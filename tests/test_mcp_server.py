@@ -23,7 +23,7 @@ from reyn.budget.budget import BudgetTracker, CostConfig
 from reyn.chat.profile import AgentProfile
 from reyn.chat.registry import AgentRegistry
 from reyn.chat.session import ChatSession
-from reyn.events.state_log import StateLog
+from reyn.core.events.state_log import StateLog
 from reyn.llm.llm import LLMToolCallResult
 from reyn.llm.pricing import TokenUsage
 from reyn.mcp_server import list_agents_impl, send_to_agent_impl

@@ -24,7 +24,7 @@ from urllib.parse import parse_qs
 import httpx
 import pytest
 
-from reyn.events.events import EventLog
+from reyn.core.events.events import EventLog
 from reyn.security.secrets.oauth import (
     _REFRESH_LOCKS,
     DeviceGrantError,

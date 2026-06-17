@@ -273,8 +273,8 @@ def _build_runner():
 
     async def _legacy_skill_runner(job) -> str:
         from reyn.agent import Agent
-        from reyn.compiler import load_dsl_skill
         from reyn.config import _find_project_root, load_config, load_project_context
+        from reyn.core.compiler import load_dsl_skill
         from reyn.interfaces.cli.commands.run import _build_permission_resolver
         from reyn.interfaces.cli.logger_factory import make_logger
         from reyn.interfaces.cli.skill_loader import resolve_skill_path

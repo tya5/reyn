@@ -1,11 +1,11 @@
 """Run user-supplied Python preprocessor functions in a subprocess.
 
-The actual function execution lives in `reyn.kernel._python_harness` (child
+The actual function execution lives in `reyn.core.kernel._python_harness` (child
 process). This module is the parent-side wrapper that:
 
   - resolves the module path relative to a skill's directory and refuses
     paths that escape it
-  - launches `python -m reyn.kernel._python_harness` with a JSON request on stdin
+  - launches `python -m reyn.core.kernel._python_harness` with a JSON request on stdin
   - applies a wall-clock timeout via subprocess.run
   - converts the harness's JSON response (success / failure) into either
     a Python value or a raised PythonStepError
@@ -155,7 +155,7 @@ class PythonRunner:
         if sandbox_write_paths is not None:
             request["sandbox_write_paths"] = list(sandbox_write_paths)
 
-        argv = [self.python_executable, "-m", "reyn.kernel._python_harness"]
+        argv = [self.python_executable, "-m", "reyn.core.kernel._python_harness"]
         stdin_text = json.dumps(request, ensure_ascii=False)
 
         # #1352-B: route through the OS sandbox backend when one is configured

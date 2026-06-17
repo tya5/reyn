@@ -223,10 +223,10 @@ async def test_sandboxed_exec_op_cancel_event_p6_p5() -> None:
     + P5 result status='cancelled'. Uses real NoopBackend + cancel_event=set."""
     import dataclasses  # noqa: PLC0415
 
+    from reyn.core.events.events import EventLog  # noqa: PLC0415
+    from reyn.core.op_runtime import execute_op  # noqa: PLC0415
+    from reyn.core.op_runtime.context import OpContext  # noqa: PLC0415
     from reyn.data.workspace.workspace import Workspace  # noqa: PLC0415
-    from reyn.events.events import EventLog  # noqa: PLC0415
-    from reyn.op_runtime import execute_op  # noqa: PLC0415
-    from reyn.op_runtime.context import OpContext  # noqa: PLC0415
     from reyn.schemas.models import SandboxedExecIROp  # noqa: PLC0415
     from reyn.security.permissions.permissions import PermissionDecl  # noqa: PLC0415
     from reyn.security.sandbox.noop_backend import NoopBackend  # noqa: PLC0415

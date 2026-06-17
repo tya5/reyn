@@ -35,7 +35,7 @@ from pathlib import Path
 
 import pytest
 
-from reyn.compiler.loader import load_dsl_skill
+from reyn.core.compiler.loader import load_dsl_skill
 from reyn.skill.skill_paths import SkillNotFoundError, resolve_skill_path, stdlib_root
 from reyn.stdlib.skills.eval_builder.analyze_skill import (
     extract_skill_name,

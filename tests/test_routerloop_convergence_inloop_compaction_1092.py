@@ -34,10 +34,10 @@ import json
 
 import litellm
 
-import reyn.kernel.llm_call_recorder as lcr
+import reyn.core.kernel.llm_call_recorder as lcr
 from reyn.config import CompactionConfig, PhaseActResultsCompactionConfig
-from reyn.events.events import EventLog
-from reyn.kernel.runtime import OSRuntime
+from reyn.core.events.events import EventLog
+from reyn.core.kernel.runtime import OSRuntime
 from reyn.llm.llm import LLMCallResult, LLMToolCallResult
 from reyn.llm.pricing import TokenUsage
 from reyn.schemas.models import Phase, Skill, SkillGraph

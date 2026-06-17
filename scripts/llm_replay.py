@@ -860,7 +860,7 @@ async def _exec_describe_action(args: dict) -> dict:
         "action_name": action_name,
         "op": op_name,
         "description": description,
-        "parameters_hint": "See reyn.op_runtime.registry for per-op schema.",
+        "parameters_hint": "See reyn.core.op_runtime.registry for per-op schema.",
     }
 
 

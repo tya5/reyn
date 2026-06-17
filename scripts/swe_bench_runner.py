@@ -114,7 +114,7 @@ def provision_command(deps: list[str], reyn_src: str) -> str:
     Builds a python3.11 venv, installs reyn's runtime deps (version-pinned), and
     puts reyn itself on sys.path via a `.pth` to ``reyn_src`` (the bind-mounted
     source, at its host-absolute path inside the container) — so
-    `<venv>/bin/python -m reyn.kernel._python_harness` imports reyn with no
+    `<venv>/bin/python -m reyn.core.kernel._python_harness` imports reyn with no
     PYTHONPATH threading. Each dep is shell-quoted (version specs contain `>`)."""
     deps_arg = " ".join(shlex.quote(d) for d in deps)
     return (

@@ -79,7 +79,7 @@ async def test_python_step_routes_through_sandbox_backend(tmp_path: Path) -> Non
     assert backend.calls, "harness must be routed through backend.run"
     call = backend.calls[0]
     # the harness module is the routed command (behavioral, not arg-format pin)
-    assert "reyn.kernel._python_harness" in call["argv"]
+    assert "reyn.core.kernel._python_harness" in call["argv"]
     # agent policy caps reached the backend; per-step timeout overrode policy
     assert call["policy"].write_paths == [str(tmp_path)]
     assert call["policy"].network is False

@@ -31,7 +31,7 @@ from pathlib import Path
 from reyn.budget.budget import BudgetTracker, CostConfig
 from reyn.chat.session import ChatMessage, ChatSession, _RouterUsageShim
 from reyn.config import CompactionConfig
-from reyn.events.state_log import StateLog
+from reyn.core.events.state_log import StateLog
 from reyn.llm.pricing import TokenUsage
 from reyn.services.compaction.engine import retry_loop
 

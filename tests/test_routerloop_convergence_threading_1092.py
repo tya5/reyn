@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import asyncio
 
-import reyn.kernel.llm_call_recorder as lcr
+import reyn.core.kernel.llm_call_recorder as lcr
 from reyn.agent import Agent
 from reyn.config import ReynConfig
 from reyn.llm.llm import LLMCallResult, LLMToolCallResult

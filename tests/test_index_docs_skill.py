@@ -18,7 +18,7 @@ from pathlib import Path
 
 import pytest
 
-from reyn.compiler.loader import load_dsl_skill
+from reyn.core.compiler.loader import load_dsl_skill
 from reyn.schemas.models import Postprocessor, PythonStep, Skill
 
 # ---------------------------------------------------------------------------

@@ -186,7 +186,7 @@ def test_chat_session_intervention_override_is_used():
 
     from reyn.budget.budget import BudgetTracker, CostConfig
     from reyn.chat.session import ChatSession, _new_chain_id
-    from reyn.events.state_log import StateLog
+    from reyn.core.events.state_log import StateLog
     from reyn.user_intervention import InterventionAnswer, InterventionBus, UserIntervention
     with tempfile.TemporaryDirectory() as td:
         tmp = Path(td)
@@ -273,7 +273,7 @@ def _build_registry_for_test(tmp_path: Path):
     from reyn.chat.profile import AgentProfile
     from reyn.chat.registry import AgentRegistry
     from reyn.chat.session import ChatSession
-    from reyn.events.state_log import StateLog
+    from reyn.core.events.state_log import StateLog
 
     state_log = StateLog(tmp_path / ".reyn" / "state" / "wal.jsonl")
 

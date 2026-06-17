@@ -111,7 +111,7 @@ def _set_permission_context(
 ) -> None:
     """Wire permission paths into this module.
 
-    Called by :mod:`reyn.kernel._python_harness` before the user step
+    Called by :mod:`reyn.core.kernel._python_harness` before the user step
     runs. Tests that exercise the file API directly may call this to
     establish a controlled context; production code should not.
 

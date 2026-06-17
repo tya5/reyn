@@ -28,9 +28,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from reyn.core.events.events import EventLog
 from reyn.data.workspace.workspace import Workspace
 from reyn.environment.host_backend import HostBackend
-from reyn.events.events import EventLog
 
 
 def test_host_backend_glob_relative_excludes_directories(tmp_path: Path) -> None:

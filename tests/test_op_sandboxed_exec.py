@@ -16,16 +16,16 @@ from pathlib import Path
 
 import pytest
 
-from reyn.data.workspace.workspace import Workspace
-from reyn.events.events import EventLog
-from reyn.op_runtime import execute_op
-from reyn.op_runtime.context import OpContext
-from reyn.op_runtime.registry import (
+from reyn.core.events.events import EventLog
+from reyn.core.op_runtime import execute_op
+from reyn.core.op_runtime.context import OpContext
+from reyn.core.op_runtime.registry import (
     ALL_OP_KINDS,
     OP_KIND_MODEL_MAP,
     OP_PURITY,
     OpPurity,
 )
+from reyn.data.workspace.workspace import Workspace
 from reyn.schemas.models import SandboxedExecIROp
 from reyn.security.permissions.permissions import PermissionDecl
 from reyn.security.sandbox import (
@@ -276,9 +276,9 @@ async def test_default_backend_actually_runs_in_workspace_cwd(tmp_path):
     """
     import os
 
+    from reyn.core.events.events import EventLog
+    from reyn.core.op_runtime.context import OpContext
     from reyn.data.workspace.workspace import Workspace
-    from reyn.events.events import EventLog
-    from reyn.op_runtime.context import OpContext
 
     events = EventLog()
     ws = Workspace(events=events, base_dir=tmp_path)

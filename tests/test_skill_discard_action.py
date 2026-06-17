@@ -13,8 +13,8 @@ from pathlib import Path
 
 import pytest
 
-from reyn.events.agent_snapshot import AgentSnapshot
-from reyn.events.state_log import StateLog
+from reyn.core.events.agent_snapshot import AgentSnapshot
+from reyn.core.events.state_log import StateLog
 from reyn.skill.skill_registry import SkillRegistry
 
 
@@ -108,7 +108,7 @@ def test_skill_discarded_in_wal_event_kinds():
     Without registration, ``StateLog.append`` would reject the event
     at write time (validation by WAL_EVENT_KINDS).
     """
-    from reyn.events.state_log import WAL_EVENT_KINDS
+    from reyn.core.events.state_log import WAL_EVENT_KINDS
     assert "skill_discarded" in WAL_EVENT_KINDS
 
 

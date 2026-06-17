@@ -23,11 +23,11 @@ import json
 from pathlib import Path
 from typing import Any
 
-import reyn.kernel.llm_call_recorder as runtime_mod
-from reyn.compiler import load_dsl_skill
+import reyn.core.kernel.llm_call_recorder as runtime_mod
+from reyn.core.compiler import load_dsl_skill
+from reyn.core.events.events import EventLog
+from reyn.core.kernel.runtime import OSRuntime, RunResult
 from reyn.data.workspace.workspace import Workspace
-from reyn.events.events import EventLog
-from reyn.kernel.runtime import OSRuntime, RunResult
 from reyn.llm.llm import LLMCallResult
 from reyn.llm.pricing import TokenUsage
 from reyn.security.permissions.permissions import PermissionResolver

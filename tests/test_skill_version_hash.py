@@ -21,9 +21,9 @@ from pathlib import Path
 
 import pytest
 
+from reyn.core.events.events import EventLog
+from reyn.core.op_runtime.run_skill import _compute_skill_hash
 from reyn.data.workspace.workspace import Workspace
-from reyn.events.events import EventLog
-from reyn.op_runtime.run_skill import _compute_skill_hash
 from reyn.schemas.models import RunSkillIROp
 from reyn.security.permissions.permissions import PermissionDecl, PermissionResolver
 from reyn.skill.sub_skill_runner import SubSkillResult
@@ -60,7 +60,7 @@ def _stdlib_skill_path(name: str) -> Path:
 
 
 def _make_ctx(tmp_path: Path, events: EventLog) -> "OpContext":  # type: ignore[name-defined]
-    from reyn.op_runtime.context import OpContext
+    from reyn.core.op_runtime.context import OpContext
 
     ws = Workspace(events=events)
     resolver = PermissionResolver(
@@ -97,7 +97,7 @@ def test_skill_version_hash_in_run_skill_started_event(tmp_path, monkeypatch):
     Verifies the emitted event carries a 64-char lowercase hex string.
     """
     monkeypatch.chdir(tmp_path)
-    import reyn.op_runtime.run_skill as run_skill_mod
+    import reyn.core.op_runtime.run_skill as run_skill_mod
 
     monkeypatch.setattr(
         "reyn.skill.sub_skill_runner.invoke_sub_skill",
@@ -137,7 +137,7 @@ def test_skill_version_hash_stable_across_runs(tmp_path, monkeypatch):
     Confirms the hash is deterministic (same skill.md bytes → same digest).
     """
     monkeypatch.chdir(tmp_path)
-    import reyn.op_runtime.run_skill as run_skill_mod
+    import reyn.core.op_runtime.run_skill as run_skill_mod
 
     monkeypatch.setattr(
         "reyn.skill.sub_skill_runner.invoke_sub_skill",

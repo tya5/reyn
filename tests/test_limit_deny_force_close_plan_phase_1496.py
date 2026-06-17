@@ -23,7 +23,7 @@ import pytest
 from reyn.chat.planner import Plan, PlanStep, _PlanStepHost
 from reyn.chat.router_loop import RouterLoop
 from reyn.config import OnLimitConfig
-from reyn.kernel.phase_router_host import PhaseRouterLoopHost
+from reyn.core.kernel.phase_router_host import PhaseRouterLoopHost
 from reyn.llm.llm import LLMToolCallResult
 from reyn.llm.pricing import TokenUsage
 from tests.test_router_loop import FakeEventLog, FakeRouterHost, _ScriptedLLM, text_result

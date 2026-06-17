@@ -33,7 +33,7 @@ from reyn.chat.services.token_multiplier_learner import (
     detect_content_type,
 )
 from reyn.config import CompactionConfig
-from reyn.events.events import EventLog
+from reyn.core.events.events import EventLog
 from reyn.services.compaction.engine import (
     CompactionOverflowError,
     ContextOverflowError,

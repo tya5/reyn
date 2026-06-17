@@ -23,10 +23,10 @@ from pathlib import Path
 
 import pytest
 
+from reyn.core.events.events import EventLog
+from reyn.core.op_runtime.mcp_install import _resolve_write_root
 from reyn.data.workspace.workspace import Workspace
-from reyn.events.events import EventLog
 from reyn.interfaces.cli.commands.mcp import _resolve_install_project_root, register
-from reyn.op_runtime.mcp_install import _resolve_write_root
 from reyn.tools.mcp_verbs import (
     _handle_mcp_install_package,
     _handle_mcp_install_registry,
@@ -100,7 +100,7 @@ def _drive_verb(verb, args, ws, monkeypatch):
         captured["op_ctx"] = op_ctx
         return {"installed": True, "caller": caller}
 
-    monkeypatch.setattr("reyn.op_runtime.mcp_install.handle", _recording_handle)
+    monkeypatch.setattr("reyn.core.op_runtime.mcp_install.handle", _recording_handle)
     result = asyncio.run(verb(args, _ctx_with_workspace(ws)))
     return result, captured
 
@@ -142,7 +142,7 @@ def test_chat_path_uses_factory_workspace_not_cwd(tmp_path, monkeypatch):
     op_context_factory (the chat reality), the verb resolves the factory's REAL
     Workspace (agent base_dir), NOT cwd. Falsifiable: the pre-fix hand-build from
     ctx.workspace=None resolved cwd."""
-    from reyn.op_runtime.context import OpContext
+    from reyn.core.op_runtime.context import OpContext
     from reyn.security.permissions.permissions import PermissionDecl
 
     real_ws = Workspace(events=EventLog(), base_dir=tmp_path)
@@ -169,7 +169,7 @@ def test_chat_path_uses_factory_workspace_not_cwd(tmp_path, monkeypatch):
         captured["op_ctx"] = op_ctx
         return {"installed": True}
 
-    monkeypatch.setattr("reyn.op_runtime.mcp_install.handle", _rec)
+    monkeypatch.setattr("reyn.core.op_runtime.mcp_install.handle", _rec)
     result = asyncio.run(_handle_mcp_install_registry({"server_id": "io.x/y"}, ctx))
 
     assert result["status"] == "ok"

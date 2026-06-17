@@ -40,8 +40,8 @@ import pytest
 
 from reyn.chat.session import ChatSession
 from reyn.config import SafetyConfig, TimeoutConfig
-from reyn.events.state_log import StateLog
-from reyn.kernel.runtime_types import WorkflowAbortedError
+from reyn.core.events.state_log import StateLog
+from reyn.core.kernel.runtime_types import WorkflowAbortedError
 
 # ---------------------------------------------------------------------------
 # Helpers

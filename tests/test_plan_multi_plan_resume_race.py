@@ -32,8 +32,8 @@ from typing import Any
 import pytest
 
 from reyn.chat.session import ChatSession
-from reyn.events.state_log import StateLog
-from reyn.plan import (
+from reyn.core.events.state_log import StateLog
+from reyn.core.plan import (
     PlanRegistry,
     decomposition_dir,
     plan_snapshot_path,

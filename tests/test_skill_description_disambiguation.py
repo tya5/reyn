@@ -27,7 +27,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from reyn.compiler.parser import _split_frontmatter
+from reyn.core.compiler.parser import _split_frontmatter
 from reyn.skill.skill_paths import resolve_skill_path
 
 # ── constants ──────────────────────────────────────────────────────────────────

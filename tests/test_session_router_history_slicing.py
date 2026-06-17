@@ -24,7 +24,7 @@ import reyn.llm.model_budget as _mb
 from reyn.budget.budget import BudgetTracker, CostConfig
 from reyn.chat.session import ChatMessage, ChatSession
 from reyn.config import CompactionConfig
-from reyn.events.state_log import StateLog
+from reyn.core.events.state_log import StateLog
 
 
 def _now() -> str:

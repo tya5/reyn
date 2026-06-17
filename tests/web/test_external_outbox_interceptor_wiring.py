@@ -21,17 +21,17 @@ Tests:
 
 Deleted (Wave 15 / Tier 4 cleanup):
   - test_dispatcher_resolves_server_and_tool_from_mcp_tool_name
-      Patched ``reyn.op_runtime.mcp.handle`` (internal) and private
+      Patched ``reyn.core.op_runtime.mcp.handle`` (internal) and private
       ``session._make_router_op_context``. Pure implementation detail;
       the separator-split invariant is observable through the reject
       test (no ``__`` raises, logged as error). DELETE.
   - test_end_to_end_agent_reply_dispatches_to_mcp
-      Patched ``reyn.op_runtime.mcp.handle`` (internal). The
+      Patched ``reyn.core.op_runtime.mcp.handle`` (internal). The
       "interceptor consumes ExternalRef + queue stays empty" invariant
       is already pinned by test_dispatcher_rejects_tool_name_without_separator
       (same queue-empty assertion, no patch needed). Redundant. DELETE.
   - test_dispatcher_uses_session_router_op_context
-      Patched ``reyn.op_runtime.mcp.handle`` (internal) to verify
+      Patched ``reyn.core.op_runtime.mcp.handle`` (internal) to verify
       ``_make_router_op_context`` call count. Pins private closure
       detail; no production-contract is lost by removing it.
       Follow-up Tier 2 note: if the permission-gate invariant (=
@@ -57,7 +57,7 @@ from reyn.chat.external_routing import (
 from reyn.chat.outbox import OutboxMessage
 from reyn.chat.session import ChatSession
 from reyn.chat.transport import ExternalRef
-from reyn.events.state_log import StateLog
+from reyn.core.events.state_log import StateLog
 from reyn.interfaces.web.deps import _wire_external_outbox_interceptor
 
 

@@ -18,7 +18,7 @@ floor-fits + monotonic-progress empirical guarantee).
 """
 from __future__ import annotations
 
-from reyn.kernel.rollback_state import RollbackState
+from reyn.core.kernel.rollback_state import RollbackState
 
 
 def test_arm_force_close_reentry_sets_previous_control_ir_results() -> None:

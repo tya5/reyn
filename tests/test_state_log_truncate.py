@@ -11,7 +11,7 @@ import asyncio
 import json
 from pathlib import Path
 
-from reyn.events.state_log import StateLog
+from reyn.core.events.state_log import StateLog
 
 
 def _read_all(path: Path) -> list[dict]:

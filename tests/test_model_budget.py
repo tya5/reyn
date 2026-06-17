@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import pytest
 
-from reyn.events.events import EventLog
+from reyn.core.events.events import EventLog
 from reyn.llm.model_budget import _FALLBACK_MAX_INPUT_TOKENS, get_max_input_tokens
 
 

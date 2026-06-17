@@ -22,10 +22,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from reyn.core.events.events import EventLog
+from reyn.core.kernel.control_ir_executor import ControlIRExecutor
+from reyn.core.kernel.preprocessor_executor import PreprocessorExecutor
 from reyn.data.workspace.workspace import Workspace
-from reyn.events.events import EventLog
-from reyn.kernel.control_ir_executor import ControlIRExecutor
-from reyn.kernel.preprocessor_executor import PreprocessorExecutor
 from reyn.schemas.models import Phase, Skill, SkillGraph
 from reyn.security.permissions.permissions import PermissionDecl
 from reyn.security.secrets.store import ScopedSecretStore
@@ -125,7 +125,7 @@ def test_agent_explicit_secret_store_is_stored() -> None:
 
 def test_osruntime_stores_secret_store(tmp_path: Path) -> None:
     """Tier 2: OSRuntime(secret_store=<store>) stores it as _secret_store."""
-    from reyn.kernel.runtime import OSRuntime
+    from reyn.core.kernel.runtime import OSRuntime
 
     skill = _make_minimal_skill()
     store = _make_store(["DB_PASSWORD"])
@@ -135,7 +135,7 @@ def test_osruntime_stores_secret_store(tmp_path: Path) -> None:
 
 def test_osruntime_propagates_store_to_control_ir_executor(tmp_path: Path) -> None:
     """Tier 2: OSRuntime threads secret_store into ControlIRExecutor.secret_store."""
-    from reyn.kernel.runtime import OSRuntime
+    from reyn.core.kernel.runtime import OSRuntime
 
     skill = _make_minimal_skill()
     store = _make_store(["TOKEN"])
@@ -145,7 +145,7 @@ def test_osruntime_propagates_store_to_control_ir_executor(tmp_path: Path) -> No
 
 def test_osruntime_propagates_store_to_preprocessor_executor(tmp_path: Path) -> None:
     """Tier 2: OSRuntime threads secret_store into PreprocessorExecutor.secret_store."""
-    from reyn.kernel.runtime import OSRuntime
+    from reyn.core.kernel.runtime import OSRuntime
 
     skill = _make_minimal_skill()
     store = _make_store(["SECRET_TOKEN"])
@@ -155,7 +155,7 @@ def test_osruntime_propagates_store_to_preprocessor_executor(tmp_path: Path) -> 
 
 def test_osruntime_none_store_propagates_as_none(tmp_path: Path) -> None:
     """Tier 2: OSRuntime(secret_store=None) propagates None into all sub-executors."""
-    from reyn.kernel.runtime import OSRuntime
+    from reyn.core.kernel.runtime import OSRuntime
 
     skill = _make_minimal_skill()
     runtime = OSRuntime(skill, "standard")
@@ -248,7 +248,7 @@ def test_threading_preserves_identity_not_copy(tmp_path: Path) -> None:
     and the OpContext built by _build_ctx / _build_op_ctx.
     No copies or re-construction should occur.
     """
-    from reyn.kernel.runtime import OSRuntime
+    from reyn.core.kernel.runtime import OSRuntime
 
     skill = _make_minimal_skill()
     store = _make_store(["IDENTITY_KEY"])

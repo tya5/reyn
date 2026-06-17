@@ -12,7 +12,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Awaitable, Callable
 
-from reyn.events.events import EventLog
+from reyn.core.events.events import EventLog
 
 
 class MemoryService:

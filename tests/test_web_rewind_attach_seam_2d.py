@@ -25,7 +25,7 @@ import pytest
 from reyn.chat.profile import AgentProfile
 from reyn.chat.registry import AgentRegistry
 from reyn.chat.session import ChatSession
-from reyn.events.state_log import StateLog
+from reyn.core.events.state_log import StateLog
 
 pytestmark = pytest.mark.skipif(
     shutil.which("git") is None, reason="git required for the workspace substrate",

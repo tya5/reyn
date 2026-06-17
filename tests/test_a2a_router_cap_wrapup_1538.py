@@ -51,7 +51,7 @@ class _FakeJournal:
 
     @property
     def snapshot(self) -> Any:
-        from reyn.events.agent_snapshot import AgentSnapshot
+        from reyn.core.events.agent_snapshot import AgentSnapshot
         return AgentSnapshot(agent_name="test-agent")
 
     async def record_chain_register(self, *, chain_id: str, fields: dict) -> None:

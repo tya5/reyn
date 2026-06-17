@@ -15,15 +15,15 @@ if TYPE_CHECKING:
     from reyn.environment.backend import EnvironmentBackend
     from reyn.security.sandbox.backend import SandboxBackend
     from reyn.security.secrets.store import ScopedSecretStore
-from reyn.events.event_store import EventStore
-from reyn.kernel.runtime import OSRuntime, RunResult
+from reyn.core.events.event_store import EventStore
+from reyn.core.kernel.runtime import OSRuntime, RunResult
 from reyn.llm.model_resolver import ModelResolver
 from reyn.schemas.models import Skill
 from reyn.security.permissions.permissions import PermissionResolver
 from reyn.user_intervention import RequestBus
 
 if TYPE_CHECKING:
-    from reyn.events.state_log import StateLog
+    from reyn.core.events.state_log import StateLog
     from reyn.skill.skill_registry import SkillRegistry
 
 

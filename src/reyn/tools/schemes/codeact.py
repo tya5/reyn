@@ -27,7 +27,7 @@ import keyword
 import re
 from typing import Any
 
-from reyn.kernel.codeact_runner import CodeActRunner
+from reyn.core.kernel.codeact_runner import CodeActRunner
 
 
 def _sanitize_identifier(name: str) -> str:

@@ -19,7 +19,7 @@ from pathlib import Path
 
 from reyn.chat.services.chain_manager import ChainManager, _PendingChain
 from reyn.chat.services.snapshot_journal import SnapshotJournal
-from reyn.events.state_log import StateLog
+from reyn.core.events.state_log import StateLog
 
 # ---------------------------------------------------------------------------
 # Helpers

@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import sys
 
-from reyn.kernel.codeact_runner import CodeActRunner
+from reyn.core.kernel.codeact_runner import CodeActRunner
 
 
 def test_codeact_ignores_harness_python_env(monkeypatch) -> None:

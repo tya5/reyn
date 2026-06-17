@@ -1,7 +1,7 @@
 """Tier 2: python harness import does NOT load litellm (subprocess).
 
 OS invariant (FP-0008 C4):
-  Importing `reyn.kernel._python_harness` — the child-process entry point
+  Importing `reyn.core.kernel._python_harness` — the child-process entry point
   for python preprocessor steps — must NOT trigger a transitive `import
   litellm`. The litellm package takes ~8-14s to initialise; the sandboxed
   preprocessor subprocess has a 5s timeout, so an eager litellm import
@@ -20,7 +20,7 @@ import time
 def test_harness_import_does_not_load_litellm():
     """Tier 2: fresh subprocess import of harness leaves litellm out of sys.modules."""
     code = (
-        "import reyn.kernel._python_harness; "
+        "import reyn.core.kernel._python_harness; "
         "import sys; "
         "assert 'litellm' not in sys.modules, "
         "'litellm was eagerly loaded by harness import: ' + str(sorted(k for k in sys.modules if k.startswith('litellm')))"
@@ -50,7 +50,7 @@ def test_harness_import_does_not_load_agent_llm_chain():
     (robust to host speed); the timing guard below is a coarse backstop.
     """
     code = (
-        "import reyn.kernel._python_harness; import sys; "
+        "import reyn.core.kernel._python_harness; import sys; "
         "leaked = [m for m in ('reyn.agent', 'reyn.llm', 'reyn.llm.llm', 'httpx') "
         "          if m in sys.modules]; "
         "assert not leaked, 'harness import eagerly loaded heavy chain: ' + str(leaked)"
@@ -72,7 +72,7 @@ def test_lazy_public_api_still_resolves():
     """Tier 2: PEP 562-lazy __init__ still exposes the public names on access.
 
     Falsification guard for the lazy refactor: ``from reyn import Agent`` and
-    ``from reyn.kernel import OSRuntime`` must still resolve (now triggering the
+    ``from reyn.core.kernel import OSRuntime`` must still resolve (now triggering the
     lazy load), and an unknown attribute must raise AttributeError — proving the
     laziness did not silently drop the public surface.
     """
@@ -80,7 +80,7 @@ def test_lazy_public_api_still_resolves():
         [
             "import reyn",
             "from reyn import Agent, RunResult, Phase, Skill, SkillGraph",
-            "from reyn.kernel import OSRuntime, validate_output, normalize",
+            "from reyn.core.kernel import OSRuntime, validate_output, normalize",
             "names = (Agent, RunResult, Phase, Skill, SkillGraph,",
             "         OSRuntime, validate_output, normalize)",
             "assert all(x is not None for x in names), 'a public name resolved to None'",
@@ -116,7 +116,7 @@ def test_harness_import_time_is_below_ceiling():
     code = (
         "import sys, time; "
         "t = time.time(); "
-        "import reyn.kernel._python_harness; "
+        "import reyn.core.kernel._python_harness; "
         "elapsed = time.time() - t; "
         "assert elapsed < 3.0, f'harness import took {elapsed:.2f}s (ceiling 3.0s)'"
     )

@@ -193,7 +193,7 @@ class PlanRunner:
         is marked aborted (ADR-0023 §3.5 corruption fallback, even after
         the coordinator earlier-validated path).
         """
-        from reyn.plan import (
+        from reyn.core.plan import (
             PlanRuntime,
             read_decomposition,
         )

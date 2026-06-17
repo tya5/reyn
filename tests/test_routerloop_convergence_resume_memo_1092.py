@@ -38,10 +38,10 @@ from __future__ import annotations
 import asyncio
 import datetime as _dt
 
-import reyn.kernel.llm_call_recorder as lcr
+import reyn.core.kernel.llm_call_recorder as lcr
 import reyn.schemas.models as _models
-from reyn.events.state_log import StateLog
-from reyn.kernel.runtime import OSRuntime
+from reyn.core.events.state_log import StateLog
+from reyn.core.kernel.runtime import OSRuntime
 from reyn.llm.llm import LLMCallResult, LLMToolCallResult
 from reyn.llm.pricing import TokenUsage
 from reyn.schemas.models import Phase, Skill, SkillGraph

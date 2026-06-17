@@ -1,7 +1,7 @@
 """Back-compat shim (#1682): the MCP registry-lookup impl moved to
 ``reyn.mcp.registry``. ``reyn.safe.mcp.registry`` remains as the public allowlist
 surface for skills (FP-0042) — mirroring how ``reyn.safe.cache`` re-exports
-``reyn.registry.cache``. Repointing the allowlist + removing this shim is part of
+``reyn.core.registry.cache``. Repointing the allowlist + removing this shim is part of
 the separate safe/ cleanup (#1).
 
 This shim ALIASES the module (``sys.modules`` re-bind) rather than re-exporting

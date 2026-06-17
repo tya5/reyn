@@ -18,9 +18,9 @@ import pytest
 
 from reyn.chat.profile import AgentProfile
 from reyn.chat.registry import AgentRegistry
-from reyn.events.state_log import StateLog
-from reyn.events.workspace_op_content_log import WorkspaceOpContentLog
-from reyn.events.workspace_version_store import _OP_REF_PREFIX, WorkspaceVersionStore
+from reyn.core.events.state_log import StateLog
+from reyn.core.events.workspace_op_content_log import WorkspaceOpContentLog
+from reyn.core.events.workspace_version_store import _OP_REF_PREFIX, WorkspaceVersionStore
 
 pytestmark = pytest.mark.skipif(shutil.which("git") is None, reason="git required")
 

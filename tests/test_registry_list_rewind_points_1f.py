@@ -24,9 +24,9 @@ import pytest
 
 from reyn.chat.profile import AgentProfile
 from reyn.chat.registry import AgentRegistry, _rewind_point_kind
-from reyn.events.agent_snapshot import AgentSnapshot
-from reyn.events.snapshot_generations import rewind
-from reyn.events.state_log import StateLog
+from reyn.core.events.agent_snapshot import AgentSnapshot
+from reyn.core.events.snapshot_generations import rewind
+from reyn.core.events.state_log import StateLog
 
 
 def _no_factory(_profile):

@@ -18,9 +18,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from reyn.core.events.events import EventLog
+from reyn.core.kernel.control_ir_executor import ControlIRExecutor
 from reyn.data.workspace.workspace import Workspace
-from reyn.events.events import EventLog
-from reyn.kernel.control_ir_executor import ControlIRExecutor
 from reyn.schemas.models import SandboxedExecIROp
 from reyn.security.permissions.permissions import PermissionResolver
 

@@ -36,9 +36,9 @@ from pathlib import Path
 import pytest
 
 from reyn.budget.budget import BudgetExceeded
-from reyn.events.state_log import StateLog
-from reyn.kernel.normalizer import NormalizationResult
-from reyn.kernel.runtime import (
+from reyn.core.events.state_log import StateLog
+from reyn.core.kernel.normalizer import NormalizationResult
+from reyn.core.kernel.runtime import (
     OSRuntime,
     RunResult,
     WorkflowAbortedError,

@@ -17,8 +17,8 @@ from __future__ import annotations
 
 import asyncio
 
-from reyn.op_runtime import execute_op
-from reyn.op_runtime.context import OpContext
+from reyn.core.op_runtime import execute_op
+from reyn.core.op_runtime.context import OpContext
 from reyn.schemas.models import CompactIROp
 from reyn.security.permissions.permissions import PermissionDecl
 from reyn.services.compaction.context_signal import render_context_size_signal

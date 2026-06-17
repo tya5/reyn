@@ -312,7 +312,7 @@ def run(args: argparse.Namespace) -> None:
     from reyn.chat.repl import run_repl
     from reyn.chat.scoped_session_factory import build_scoped_chat_session
     from reyn.config import _find_project_root, load_project_context
-    from reyn.events.state_log import StateLog
+    from reyn.core.events.state_log import StateLog
     from reyn.security.permissions.permissions import PermissionResolver
 
     session_cfg = Session.from_args(args)
@@ -498,7 +498,7 @@ def run(args: argparse.Namespace) -> None:
 
     # PR-resume-ux β U4: catch schema mismatch surfaced from restore_all
     # to give the operator a clean error rather than a stack trace.
-    from reyn.events.agent_snapshot import SchemaVersionError
+    from reyn.core.events.agent_snapshot import SchemaVersionError
 
     async def _safe_restore() -> bool:
         """Returns True on success, False if the operator should retry."""

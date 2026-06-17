@@ -15,7 +15,7 @@ from __future__ import annotations
 import asyncio
 
 from reyn.config import SkillResumeConfig
-from reyn.events.state_log import StateLog
+from reyn.core.events.state_log import StateLog
 from reyn.skill.skill_registry import SkillRegistry
 from reyn.skill.skill_resume_analyzer import (
     AmbiguousStep,

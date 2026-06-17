@@ -26,8 +26,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from reyn.core.events.events import EventLog
 from reyn.data.workspace.workspace import Workspace
-from reyn.events.events import EventLog
 
 
 def test_bare_handle_not_readable_across_workspace_boundary(tmp_path: Path) -> None:

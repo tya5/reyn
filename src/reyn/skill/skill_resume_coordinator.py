@@ -31,7 +31,7 @@ from reyn.skill.skill_resume_analyzer import (
 
 if TYPE_CHECKING:
     from reyn.config import SkillResumeConfig
-    from reyn.events.state_log import StateLog
+    from reyn.core.events.state_log import StateLog
     from reyn.skill.skill_registry import SkillRegistry
     from reyn.skill.skill_snapshot import SkillSnapshot
 

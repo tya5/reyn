@@ -59,7 +59,7 @@ async def test_write_file_accepts_text_synonym(monkeypatch):
         captured_ops.append(op)
         return {"status": "ok", "path": op.path}
 
-    import reyn.op_runtime as _orm
+    import reyn.core.op_runtime as _orm
     monkeypatch.setattr(_orm, "execute_op", fake_execute_op)
 
     ctx = _make_ctx()
@@ -89,7 +89,7 @@ async def test_write_file_canonical_content_wins_over_text(monkeypatch):
         captured_ops.append(op)
         return {"status": "ok", "path": op.path}
 
-    import reyn.op_runtime as _orm
+    import reyn.core.op_runtime as _orm
     monkeypatch.setattr(_orm, "execute_op", fake_execute_op)
 
     ctx = _make_ctx()
@@ -113,7 +113,7 @@ async def test_write_file_canonical_content_still_works(monkeypatch):
         captured_ops.append(op)
         return {"status": "ok", "path": op.path}
 
-    import reyn.op_runtime as _orm
+    import reyn.core.op_runtime as _orm
     monkeypatch.setattr(_orm, "execute_op", fake_execute_op)
 
     ctx = _make_ctx()
@@ -144,7 +144,7 @@ async def test_drop_source_accepts_source_id_synonym(monkeypatch):
         captured_ops.append(op)
         return {"removed": True, "chunks_dropped": 5}
 
-    import reyn.op_runtime as _orm
+    import reyn.core.op_runtime as _orm
     monkeypatch.setattr(_orm, "execute_op", fake_execute_op)
 
     ctx = _make_ctx()
@@ -173,7 +173,7 @@ async def test_drop_source_canonical_source_wins_over_source_id(monkeypatch):
         captured_ops.append(op)
         return {"removed": True, "chunks_dropped": 1}
 
-    import reyn.op_runtime as _orm
+    import reyn.core.op_runtime as _orm
     monkeypatch.setattr(_orm, "execute_op", fake_execute_op)
 
     ctx = _make_ctx()
@@ -197,7 +197,7 @@ async def test_drop_source_canonical_source_still_works(monkeypatch):
         captured_ops.append(op)
         return {"removed": True, "chunks_dropped": 0}
 
-    import reyn.op_runtime as _orm
+    import reyn.core.op_runtime as _orm
     monkeypatch.setattr(_orm, "execute_op", fake_execute_op)
 
     ctx = _make_ctx()

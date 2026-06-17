@@ -16,7 +16,7 @@ from typing import Any
 import pytest
 
 from reyn.chat.planner import Plan, PlanStep
-from reyn.plan import PlanResumePlan, PlanRuntime
+from reyn.core.plan import PlanResumePlan, PlanRuntime
 
 # ── stub host (= mirror test_plan_lifecycle_crash._RecordingHost) ───────
 
@@ -143,7 +143,7 @@ async def test_plan_runtime_run_returns_plan_execution_result() -> None:
 def test_plan_resume_plan_dataclass_shape() -> None:
     """Tier 2: PlanResumePlan exposes the documented fields (= analyzer
     output contract for Step 7). Frozen so accidental mutation surfaces."""
-    from reyn.plan import PlanStepState
+    from reyn.core.plan import PlanStepState
 
     rp = PlanResumePlan(
         plan_id="p001",

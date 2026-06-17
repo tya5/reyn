@@ -18,8 +18,8 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 
+from reyn.core.events.events import EventLog
 from reyn.data.workspace.workspace import Workspace
-from reyn.events.events import EventLog
 from reyn.security.permissions.permissions import PermissionResolver
 from reyn.tools import get_default_registry
 from reyn.tools.dispatch import invoke_tool

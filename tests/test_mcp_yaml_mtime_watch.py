@@ -24,7 +24,7 @@ import pytest
 
 from reyn.chat.services import MemoryService, RouterHostAdapter
 from reyn.chat.services.mcp_cache_file import cache_file_path, read_cache, write_cache
-from reyn.events.events import EventLog
+from reyn.core.events.events import EventLog
 from reyn.llm.model_resolver import ModelResolver
 
 # ---------------------------------------------------------------------------

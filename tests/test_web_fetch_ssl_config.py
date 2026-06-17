@@ -35,7 +35,7 @@ def _make_ctx(web_config: WebConfig | None = None, tmp_path: Path | None = None)
     """
     import tempfile
 
-    from reyn.op_runtime.context import OpContext
+    from reyn.core.op_runtime.context import OpContext
     from reyn.security.permissions.permissions import PermissionDecl
 
     # EventLog stub — only needs emit().
@@ -101,7 +101,7 @@ def test_verify_ssl_ca_bundle_in_config_passes_to_httpx(monkeypatch: pytest.Monk
     is forwarded to httpx.AsyncClient(verify=...) so requests are validated
     against the custom CA (corporate MITM proxy / private PKI use case).
     """
-    from reyn.op_runtime.web import handle_web_fetch
+    from reyn.core.op_runtime.web import handle_web_fetch
     from reyn.schemas.models import WebFetchIROp
 
     cfg = WebConfig(fetch=WebFetchConfig(ca_bundle="/etc/ssl/certs/corp-ca.pem"))
@@ -125,7 +125,7 @@ def test_verify_ssl_false_in_config_passes_to_httpx(monkeypatch: pytest.MonkeyPa
     certificate validation is disabled in httpx (controlled environment use).
     ca_bundle takes priority over verify_ssl; this test has no ca_bundle set.
     """
-    from reyn.op_runtime.web import handle_web_fetch
+    from reyn.core.op_runtime.web import handle_web_fetch
     from reyn.schemas.models import WebFetchIROp
 
     cfg = WebConfig(fetch=WebFetchConfig(verify_ssl=False))
@@ -147,7 +147,7 @@ def test_verify_ssl_true_in_config_passes_to_httpx(monkeypatch: pytest.MonkeyPat
 
     Invariant: explicit true forces SSL verification regardless of env vars.
     """
-    from reyn.op_runtime.web import handle_web_fetch
+    from reyn.core.op_runtime.web import handle_web_fetch
     from reyn.schemas.models import WebFetchIROp
 
     cfg = WebConfig(fetch=WebFetchConfig(verify_ssl=True))
@@ -170,7 +170,7 @@ def test_ca_bundle_takes_priority_over_verify_ssl(monkeypatch: pytest.MonkeyPatc
     Invariant: the ca_bundle path is the highest-priority SSL knob. Setting
     verify_ssl: false alongside ca_bundle must not override the bundle path.
     """
-    from reyn.op_runtime.web import handle_web_fetch
+    from reyn.core.op_runtime.web import handle_web_fetch
     from reyn.schemas.models import WebFetchIROp
 
     cfg = WebConfig(fetch=WebFetchConfig(
@@ -205,7 +205,7 @@ def test_env_var_fallback_when_config_unset(
     """
     from litellm.llms.custom_httpx.http_handler import get_ssl_verify
 
-    from reyn.op_runtime.web import handle_web_fetch
+    from reyn.core.op_runtime.web import handle_web_fetch
     from reyn.schemas.models import WebFetchIROp
 
     # Set SSL_VERIFY=0 so get_ssl_verify() returns a non-True value.
@@ -270,7 +270,7 @@ def test_registry_client_verify_false_passed_to_httpx(monkeypatch: pytest.Monkey
     Invariant: the RegistryClient's verify constructor arg is forwarded to
     httpx so MCP registry requests skip SSL validation when configured.
     """
-    from reyn.registry.client import RegistryClient
+    from reyn.core.registry.client import RegistryClient
 
     captured: dict[str, Any] = {}
 
@@ -304,7 +304,7 @@ def test_registry_client_ca_bundle_passed_to_httpx(monkeypatch: pytest.MonkeyPat
     Invariant: string verify (= CA bundle path) flows from constructor to httpx
     so registry requests use the corporate CA bundle.
     """
-    from reyn.registry.client import RegistryClient
+    from reyn.core.registry.client import RegistryClient
 
     captured: dict[str, Any] = {}
 

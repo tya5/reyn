@@ -28,8 +28,8 @@ if str(_SRC) not in sys.path:
 
 from reyn.chat.profile import AgentProfile
 from reyn.chat.registry import AgentRegistry
-from reyn.events.agent_snapshot import AgentSnapshot
-from reyn.events.state_log import StateLog
+from reyn.core.events.agent_snapshot import AgentSnapshot
+from reyn.core.events.state_log import StateLog
 from reyn.interfaces.tui.app import ReynTUIApp
 from reyn.interfaces.tui.widgets.branch_tree import ROW_HEADER
 

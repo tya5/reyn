@@ -7,7 +7,7 @@ real against a per-test tmp cache dir.
 
 URL resolution: PR-9 (post #571 collapse arc, 2026-05-24) made the
 base URL resolution honor ``REYN_MCP_REGISTRY_URL`` env var, mirroring
-the chain used by ``reyn.registry.client.base_url``. See the "URL
+the chain used by ``reyn.core.registry.client.base_url``. See the "URL
 resolution" section below for the tests pinning that behavior.
 
 Threat-model rationale (= ambient registry lookup, no per-skill
@@ -20,7 +20,7 @@ from unittest import mock
 
 import pytest
 
-import reyn.registry.cache as cache_mod
+import reyn.core.registry.cache as cache_mod
 import reyn.safe.mcp.registry as sr
 
 # ── Fixtures ────────────────────────────────────────────────────────────────
@@ -132,7 +132,7 @@ def test_search_propagates_registry_error(_isolated_cache):
 
 def test_search_dedups_multiple_versions(_isolated_cache):
     """Tier 2: when registry returns multiple versions of one server, only
-    the latest survives (= reuses reyn.registry.client._dedup_by_latest)."""
+    the latest survives (= reuses reyn.core.registry.client._dedup_by_latest)."""
     payload = {
         "servers": [
             {
@@ -236,7 +236,7 @@ def test_base_url_honors_env_var(monkeypatch):
     """Tier 2: ``REYN_MCP_REGISTRY_URL`` overrides the default URL.
 
     Mirrors the resolution chain in
-    ``reyn.registry.client.base_url`` so an operator-set private /
+    ``reyn.core.registry.client.base_url`` so an operator-set private /
     corporate registry applies uniformly to both the async op-handler
     client and this safe-mode skill-internal lookup.
     """

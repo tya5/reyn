@@ -119,7 +119,7 @@ async def dispatch_tool(
     raw result (any JSON-serializable value). PermissionError raised
     inside invoker becomes a "permission_denied" error result.
     """
-    from reyn.op_runtime.registry import OpPurity, get_op_purity
+    from reyn.core.op_runtime.registry import OpPurity, get_op_purity
 
     # 1. Name validation
     if name not in ctx.tool_catalog:

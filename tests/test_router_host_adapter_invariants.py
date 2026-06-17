@@ -13,7 +13,7 @@ import pytest
 
 from reyn.chat.router_loop import RouterLoopHost
 from reyn.chat.services import MemoryService, RouterHostAdapter
-from reyn.events.events import EventLog
+from reyn.core.events.events import EventLog
 from reyn.llm.model_resolver import ModelResolver
 
 # ---------------------------------------------------------------------------
@@ -325,7 +325,7 @@ def test_adapter_exposes_permission_resolver_property(tmp_path):
     # Re-build with the resolver argument set — _make_adapter doesn't take it.
     from reyn.chat.services import MemoryService
     from reyn.chat.services.router_host_adapter import RouterHostAdapter
-    from reyn.events.events import EventLog
+    from reyn.core.events.events import EventLog
     from reyn.llm.model_resolver import ModelResolver
     workspace = tmp_path / "agents" / "alpha2"
     events = EventLog(subscribers=[])
@@ -390,7 +390,7 @@ def test_make_router_op_context_wires_intervention_bus(tmp_path):
     """
     from reyn.chat.services import MemoryService
     from reyn.chat.services.router_host_adapter import RouterHostAdapter
-    from reyn.events.events import EventLog
+    from reyn.core.events.events import EventLog
     from reyn.llm.model_resolver import ModelResolver
     workspace = tmp_path / "agents" / "bus-test"
     events = EventLog(subscribers=[])
@@ -456,7 +456,7 @@ def test_make_router_op_context_no_factory_leaves_bus_none(tmp_path):
     """
     from reyn.chat.services import MemoryService
     from reyn.chat.services.router_host_adapter import RouterHostAdapter
-    from reyn.events.events import EventLog
+    from reyn.core.events.events import EventLog
     from reyn.llm.model_resolver import ModelResolver
     workspace = tmp_path / "agents" / "nobus-test"
     events = EventLog(subscribers=[])

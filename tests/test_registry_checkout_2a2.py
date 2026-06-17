@@ -23,9 +23,9 @@ import pytest
 
 from reyn.chat.profile import AgentProfile
 from reyn.chat.registry import AgentRegistry
-from reyn.events.agent_snapshot import AgentSnapshot
-from reyn.events.snapshot_generations import RewindIntoAbandonedError, rewind
-from reyn.events.state_log import StateLog
+from reyn.core.events.agent_snapshot import AgentSnapshot
+from reyn.core.events.snapshot_generations import RewindIntoAbandonedError, rewind
+from reyn.core.events.state_log import StateLog
 
 _needs_git = pytest.mark.skipif(shutil.which("git") is None, reason="git not on PATH")
 

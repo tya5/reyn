@@ -29,7 +29,7 @@ from __future__ import annotations
 
 import pytest
 
-from reyn.op_runtime.registry import OP_KIND_MODEL_MAP
+from reyn.core.op_runtime.registry import OP_KIND_MODEL_MAP
 from reyn.tools import get_default_registry
 
 # Coarse op kinds that dispatch through the unified registry.

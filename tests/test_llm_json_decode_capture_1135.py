@@ -90,7 +90,7 @@ async def test_call_llm_emits_json_decode_failed_event(monkeypatch) -> None:
     """
     import litellm
 
-    from reyn.events.events import EventLog
+    from reyn.core.events.events import EventLog
     from reyn.llm.llm import call_llm
     from reyn.schemas.models import ContextFrame
     from reyn.testing.replay import REPLAY_DATETIME

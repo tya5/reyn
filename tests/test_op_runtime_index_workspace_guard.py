@@ -32,9 +32,9 @@ import asyncio
 
 import pytest
 
-from reyn.op_runtime.context import OpContext
-from reyn.op_runtime.index_drop import handle as index_drop_handle
-from reyn.op_runtime.index_query import handle as index_query_handle
+from reyn.core.op_runtime.context import OpContext
+from reyn.core.op_runtime.index_drop import handle as index_drop_handle
+from reyn.core.op_runtime.index_query import handle as index_query_handle
 from reyn.schemas.models import IndexDropIROp, IndexQueryIROp
 from reyn.security.permissions.permissions import PermissionDecl
 

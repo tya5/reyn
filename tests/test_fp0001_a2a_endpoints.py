@@ -223,7 +223,7 @@ def test_agent_card_shows_streaming_and_push_notifications_true(tmp_path) -> Non
     from reyn.chat.profile import AgentProfile
     from reyn.chat.registry import AgentRegistry
     from reyn.chat.session import ChatSession
-    from reyn.events.state_log import StateLog
+    from reyn.core.events.state_log import StateLog
     from reyn.interfaces.web.deps import get_registry
     from reyn.interfaces.web.server import app
 
@@ -294,7 +294,7 @@ def test_answer_injection_delivers_to_pending_intervention(tmp_path) -> None:
     from reyn.chat.profile import AgentProfile
     from reyn.chat.registry import AgentRegistry
     from reyn.chat.session import ChatSession
-    from reyn.events.state_log import StateLog
+    from reyn.core.events.state_log import StateLog
     from reyn.interfaces.web.deps import get_registry, get_run_registry
     from reyn.interfaces.web.server import app
     from reyn.user_intervention import UserIntervention
@@ -390,7 +390,7 @@ def test_answer_injection_returns_answered_false_for_unknown_task(tmp_path) -> N
     from reyn.chat.profile import AgentProfile
     from reyn.chat.registry import AgentRegistry
     from reyn.chat.session import ChatSession
-    from reyn.events.state_log import StateLog
+    from reyn.core.events.state_log import StateLog
     from reyn.interfaces.web.deps import get_registry, get_run_registry
     from reyn.interfaces.web.server import app
 

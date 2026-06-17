@@ -31,7 +31,7 @@ from reyn.user_intervention import (
 if TYPE_CHECKING:
     from reyn.chat.services.intervention_registry import InterventionRegistry
     from reyn.chat.services.snapshot_journal import SnapshotJournal
-    from reyn.events.events import EventLog
+    from reyn.core.events.events import EventLog
 
 logger = logging.getLogger(__name__)
 
@@ -122,7 +122,7 @@ class InterventionHandler:
         persistence (``intervention_dispatched`` / ``intervention_resolved``
         events — PR-intervention-link L3).
     event_log:
-        Session-scoped :class:`~reyn.events.events.EventLog`.  All audit
+        Session-scoped :class:`~reyn.core.events.events.EventLog`.  All audit
         events (``user_answered_intervention``) are emitted here (P6).
     put_outbox:
         Async callable ``(OutboxMessage) -> None`` — forwards intervention

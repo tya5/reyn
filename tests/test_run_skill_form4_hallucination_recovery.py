@@ -31,7 +31,7 @@ from __future__ import annotations
 
 import pytest
 
-from reyn.op_runtime.run_skill import _resolve_skill_ref
+from reyn.core.op_runtime.run_skill import _resolve_skill_ref
 from reyn.skill.skill_paths import SkillNotFoundError
 
 # ---------------------------------------------------------------------------

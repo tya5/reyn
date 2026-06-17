@@ -21,14 +21,14 @@ import json
 
 import pytest
 
-from reyn.compiler.expander import expand_phase, expand_skill
-from reyn.compiler.ir import ArtifactDef, PhaseDef, SkillDef
+from reyn.core.compiler.expander import expand_phase, expand_skill
+from reyn.core.compiler.ir import ArtifactDef, PhaseDef, SkillDef
+from reyn.core.events.events import EventLog
+from reyn.core.events.state_log import StateLog
+from reyn.core.kernel.normalizer import NormalizationResult
+from reyn.core.kernel.postprocessor_executor import PostprocessorExecutor
+from reyn.core.kernel.runtime import OSRuntime, RunResult, WorkflowAbortedError
 from reyn.data.workspace.workspace import Workspace
-from reyn.events.events import EventLog
-from reyn.events.state_log import StateLog
-from reyn.kernel.normalizer import NormalizationResult
-from reyn.kernel.postprocessor_executor import PostprocessorExecutor
-from reyn.kernel.runtime import OSRuntime, RunResult, WorkflowAbortedError
 from reyn.llm.model_resolver import ModelResolver
 from reyn.schemas.models import (
     ControlDecision,
@@ -351,7 +351,7 @@ def test_postprocessor_step_memo_returns_recorded_result(tmp_path, monkeypatch):
     """
     monkeypatch.chdir(tmp_path)
 
-    from reyn.kernel.postprocessor_executor import _compute_step_hash
+    from reyn.core.kernel.postprocessor_executor import _compute_step_hash
 
     events = _event_log()
     ws = Workspace(events)
@@ -439,7 +439,7 @@ def test_mid_postprocessor_crash_resume_step1_memo_step2_reexecutes(tmp_path, mo
     """
     monkeypatch.chdir(tmp_path)
 
-    from reyn.kernel.postprocessor_executor import _compute_step_hash
+    from reyn.core.kernel.postprocessor_executor import _compute_step_hash
 
     state_log = StateLog(tmp_path / ".reyn" / "wal.jsonl")
 

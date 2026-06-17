@@ -15,7 +15,7 @@ Reference: PR-memo-purity-fix M1 in the active plan.
 """
 from __future__ import annotations
 
-from reyn.op_runtime.registry import (
+from reyn.core.op_runtime.registry import (
     ALL_OP_KINDS,
     OP_PURITY,
     OpPurity,

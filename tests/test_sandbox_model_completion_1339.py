@@ -68,10 +68,10 @@ async def test_handler_event_shows_enforced_policy_network(tmp_path):
     """Tier 2: #1339 —op requests network=True but the ctx policy is network=False;
     the started event must report the ENFORCED value (False), and the run must
     actually use the policy (not the op's request)."""
+    from reyn.core.events.events import EventLog
+    from reyn.core.op_runtime.context import OpContext
+    from reyn.core.op_runtime.sandboxed_exec import handle
     from reyn.data.workspace.workspace import Workspace
-    from reyn.events.events import EventLog
-    from reyn.op_runtime.context import OpContext
-    from reyn.op_runtime.sandboxed_exec import handle
     from reyn.schemas.models import SandboxedExecIROp
     from reyn.security.permissions.permissions import PermissionDecl
 
@@ -100,7 +100,7 @@ def test_chat_session_factory_resolves_concrete_policy(tmp_path):
     """Tier 2: #1339 reproduce-first —the ChatSession router OpContext carries a
     concrete default_sandbox_policy (was None → op-fields fallback = the gap)."""
     from reyn.chat.session import ChatSession
-    from reyn.events.state_log import StateLog
+    from reyn.core.events.state_log import StateLog
 
     session = ChatSession(
         agent_name="b",

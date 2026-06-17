@@ -29,8 +29,8 @@ import pytest
 from reyn.chat.profile import AgentProfile
 from reyn.chat.registry import AgentRegistry
 from reyn.chat.session import ChatSession
-from reyn.events.agent_snapshot import AgentSnapshot
-from reyn.events.state_log import StateLog
+from reyn.core.events.agent_snapshot import AgentSnapshot
+from reyn.core.events.state_log import StateLog
 
 pytestmark = pytest.mark.skipif(
     shutil.which("git") is None, reason="git required for the workspace substrate",
@@ -136,5 +136,5 @@ async def test_live_fork_checkout_back_follows_lineage_both_substrates(tmp_path)
 
 def _active_workspace_seqs(reg: AgentRegistry, ws_seqs) -> set[int]:
     """The workspace generation seqs currently on the active branch."""
-    from reyn.events.snapshot_generations import is_active_seq
+    from reyn.core.events.snapshot_generations import is_active_seq
     return {s for s in ws_seqs if is_active_seq(reg.state_log, s)}

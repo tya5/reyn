@@ -27,7 +27,7 @@ from typing import Any
 import pytest
 
 from reyn.config import PlannerStepCompactionConfig
-from reyn.events.events import EventLog
+from reyn.core.events.events import EventLog
 from reyn.services.compaction.engine import (
     STEP_RESULTS_COMPACTED_KEY,
     CompactionEngine,
