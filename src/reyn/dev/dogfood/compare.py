@@ -17,9 +17,9 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from reyn.dogfood.runner import RunResult
+    from reyn.dev.dogfood.runner import RunResult
 
-from reyn.dogfood.runner import OUTCOME_ORDER, _outcome_rank
+from reyn.dev.dogfood.runner import OUTCOME_ORDER, _outcome_rank
 
 # ---------------------------------------------------------------------------
 # Data classes

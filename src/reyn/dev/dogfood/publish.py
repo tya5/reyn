@@ -31,7 +31,11 @@ _DEFAULT_CATEGORY_ID = "DIC_kwDOSWAku84C9M8T"
 _DEFAULT_REPO_NODE_ID = "R_kgDOSWAkuw"
 
 _DEFAULT_TEMPLATE_PATH = (
-    Path(__file__).parent.parent.parent.parent
+    # src/reyn/dev/dogfood/publish.py → repo root is 5 parents up
+    # (dogfood → dev → reyn → src → root). #1682 broad-#5 B1 moved this
+    # module one level deeper (reyn/dogfood → reyn/dev/dogfood), so the
+    # parent-walk gained one hop.
+    Path(__file__).parent.parent.parent.parent.parent
     / "docs"
     / "deep-dives"
     / "contributing"

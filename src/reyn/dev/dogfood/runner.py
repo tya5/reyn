@@ -35,7 +35,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Awaitable, Callable
 
 if TYPE_CHECKING:
-    from reyn.dogfood.scenarios import Scenario, ScenarioSet
+    from reyn.dev.dogfood.scenarios import Scenario, ScenarioSet
 
 
 # ---------------------------------------------------------------------------
@@ -303,7 +303,7 @@ async def run_scenario_set(
         Scenario results across repetitions are aggregated (worst-case outcome
         wins — a single ``refuted`` in N runs marks the scenario refuted).
     replay_fixture_dir:
-        When set, the framework loads ``reyn.dogfood.replay`` and uses recorded
+        When set, the framework loads ``reyn.dev.dogfood.replay`` and uses recorded
         fixtures instead of live LLM calls. Takes precedence over runner_fn.
     runner_fn:
         Injectable async callable ``(Scenario) -> ScenarioRunResult``. If
@@ -311,13 +311,13 @@ async def run_scenario_set(
         The CLI populates this with the real headless chat-router path.
     with_interpretation:
         When True, after the verifier finishes, invoke
-        ``reyn.dogfood.interpretation.generate_interpretation`` for every
+        ``reyn.dev.dogfood.interpretation.generate_interpretation`` for every
         scenario and store the resulting 3-line summary in
         ``result.detail["interpretation"]``. Adds one cheap LLM call per
         scenario (~$0.0005 at flash-lite tier).
     interpretation_model:
         Override the LiteLLM model id used for interpretation. Defaults to
-        ``reyn.dogfood.interpretation.DEFAULT_MODEL``.
+        ``reyn.dev.dogfood.interpretation.DEFAULT_MODEL``.
 
     Returns
     -------
@@ -335,7 +335,7 @@ async def run_scenario_set(
     # Replay mode: delegate runner_fn to the F5 replay module
     if replay_fixture_dir is not None:
         try:
-            from reyn.dogfood.replay import replay_run  # type: ignore[import]
+            from reyn.dev.dogfood.replay import replay_run  # type: ignore[import]
 
             async def _replay_runner(scenario: "Scenario") -> ScenarioRunResult:
                 return await replay_run(scenario, fixture_dir=replay_fixture_dir)
@@ -343,7 +343,7 @@ async def run_scenario_set(
             effective_runner_fn: RunnerFn = _replay_runner
         except ImportError:
             raise ImportError(
-                "reyn.dogfood.replay is not yet available. "
+                "reyn.dev.dogfood.replay is not yet available. "
                 "Install the full FP-0036 package to use --replay mode."
             )
     else:
@@ -356,7 +356,7 @@ async def run_scenario_set(
     # Import verifier triad once — all three live in the same package so a
     # single ImportError means the package is not installed.
     try:
-        from reyn.dogfood.verifiers import (
+        from reyn.dev.dogfood.verifiers import (
             verify_artifacts,
             verify_events,
             verify_reply,
@@ -449,7 +449,7 @@ async def run_scenario_set(
     # whether the run matched expectations. Failures are isolated to the
     # auxiliary detail field and never abort the run.
     if with_interpretation:
-        from reyn.dogfood.interpretation import (
+        from reyn.dev.dogfood.interpretation import (
             DEFAULT_MODEL,
             generate_interpretation,
         )

@@ -45,7 +45,7 @@ def _make_budget_tracker(*, per_agent_tokens_hard: int | None = None):
 
 def _minimal_context_frame() -> ContextFrame:
     """Minimal ContextFrame for call_llm replay tests."""
-    from reyn.testing.replay import REPLAY_DATETIME
+    from reyn.dev.testing.replay import REPLAY_DATETIME
     return ContextFrame(
         current_phase="test",
         instructions="Reply with a minimal valid JSON decide turn.",
@@ -356,7 +356,7 @@ async def test_llm_tools_drift_detection():
     """Tier 3a: drift detection: changes in messages/tools must invalidate the fixture key
     and raise MissingFixture. Ensures that replay test keys are tight enough to catch
     prompt drift."""
-    from reyn.testing.replay import MissingFixture
+    from reyn.dev.testing.replay import MissingFixture
 
     # Use a different message from the fixture — the SHA-256 key will not match
     different_messages = [{"role": "user", "content": "intentionally different from fixture"}]

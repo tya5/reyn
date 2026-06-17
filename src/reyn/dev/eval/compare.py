@@ -1,4 +1,4 @@
-"""reyn.eval.compare — pure-function regression diff logic (FP-0007 Component C).
+"""reyn.dev.eval.compare — pure-function regression diff logic (FP-0007 Component C).
 
 ``compute_diff(baseline_result, candidate_result, threshold)`` compares two
 eval run result dicts (each produced by ``load_eval_result``) and returns a

@@ -26,7 +26,7 @@ from reyn.schemas.models import Event
 
 if TYPE_CHECKING:
     from reyn.core.events.events import EventLog
-    from reyn.eval.export import TraceExporter
+    from reyn.dev.eval.export import TraceExporter
 
 logger = logging.getLogger(__name__)
 

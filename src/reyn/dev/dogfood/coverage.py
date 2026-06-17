@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from reyn.dogfood.scenarios import ScenarioSet
+    from reyn.dev.dogfood.scenarios import ScenarioSet
 
 
 def _to_kebab(text: str) -> str:

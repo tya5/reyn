@@ -22,6 +22,7 @@ import asyncio
 
 import pytest
 
+from reyn.dev.testing.replay import REPLAY_DATETIME
 from reyn.llm.llm import call_llm
 from reyn.schemas.models import (
     CandidateOutput,
@@ -30,7 +31,6 @@ from reyn.schemas.models import (
     ExecutionState,
     PhaseConstraints,
 )
-from reyn.testing.replay import REPLAY_DATETIME
 
 MODEL = "gemini-2.5-flash-lite"
 SKILL_NAME = "skill_improver"

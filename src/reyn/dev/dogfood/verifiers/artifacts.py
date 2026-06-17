@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING
 from .types import VerifierResult
 
 if TYPE_CHECKING:
-    from reyn.dogfood.scenarios import ArtifactAssertion, ExpectedArtifacts
+    from reyn.dev.dogfood.scenarios import ArtifactAssertion, ExpectedArtifacts
 
 
 # ---------------------------------------------------------------------------

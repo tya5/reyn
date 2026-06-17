@@ -15,6 +15,7 @@ import asyncio
 
 import pytest
 
+from reyn.dev.testing.replay import REPLAY_DATETIME
 from reyn.llm.llm import call_llm
 from reyn.schemas.models import (
     CandidateOutput,
@@ -22,7 +23,6 @@ from reyn.schemas.models import (
     ExecutionState,
     PhaseConstraints,
 )
-from reyn.testing.replay import REPLAY_DATETIME
 
 MODEL = "gemini-2.5-flash-lite"
 SKILL_DESC = (
@@ -149,7 +149,7 @@ def test_chain_id_in_input_affects_fixture_key():
     include chain_id, a prompt drift in chain-propagation logic would pass
     silently.
     """
-    from reyn.testing.replay import MissingFixture
+    from reyn.dev.testing.replay import MissingFixture
 
     with pytest.raises(MissingFixture, match="No fixture entry"):
         _run(

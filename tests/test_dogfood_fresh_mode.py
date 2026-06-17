@@ -161,7 +161,7 @@ class TestDogfoodFreshResetScript:
 class TestStateModeField:
     def test_scenario_run_result_default_state_mode(self) -> None:
         """Tier 2: ScenarioRunResult carries state_mode='fresh' by default."""
-        from reyn.dogfood.runner import ScenarioRunResult
+        from reyn.dev.dogfood.runner import ScenarioRunResult
 
         result = ScenarioRunResult(
             scenario_id="s1",
@@ -178,7 +178,7 @@ class TestStateModeField:
         # Re-import _resolve_state_mode so env var takes effect
         import importlib
 
-        import reyn.dogfood.runner as runner_mod
+        import reyn.dev.dogfood.runner as runner_mod
         importlib.reload(runner_mod)
 
         result = runner_mod.ScenarioRunResult(
@@ -195,7 +195,7 @@ class TestStateModeField:
 
     def test_state_mode_written_to_output_json(self, tmp_path: Path) -> None:
         """Tier 2: state_mode field appears in persisted output.json."""
-        from reyn.dogfood.runner import ScenarioRunResult, _persist_scenario_result
+        from reyn.dev.dogfood.runner import ScenarioRunResult, _persist_scenario_result
 
         result = ScenarioRunResult(
             scenario_id="s-fresh-1",
@@ -214,7 +214,7 @@ class TestStateModeField:
         """Tier 2: load_run_result_from_storage preserves state_mode from output.json."""
         from datetime import datetime, timezone
 
-        from reyn.dogfood.runner import (
+        from reyn.dev.dogfood.runner import (
             RunResult,
             ScenarioRunResult,
             _build_summary,
@@ -253,7 +253,7 @@ class TestStateModeField:
         """Tier 2: loading a legacy output.json without state_mode defaults to 'fresh'."""
         from datetime import datetime, timezone
 
-        from reyn.dogfood.runner import (
+        from reyn.dev.dogfood.runner import (
             RunResult,
             ScenarioRunResult,
             _build_summary,
@@ -301,7 +301,7 @@ class TestStateModeField:
 
     def test_run_scenario_set_persists_state_mode(self, tmp_path: Path) -> None:
         """Tier 2: run_scenario_set end-to-end writes state_mode into output.json."""
-        from reyn.dogfood.runner import ScenarioRunResult, run_scenario_set
+        from reyn.dev.dogfood.runner import ScenarioRunResult, run_scenario_set
 
         # Minimal mock scenario set
         class _FakeScenario:

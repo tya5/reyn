@@ -1,4 +1,4 @@
-"""Tier 1/2: FP-0036 dogfood Discussion publisher (reyn.dogfood.publish).
+"""Tier 1/2: FP-0036 dogfood Discussion publisher (reyn.dev.dogfood.publish).
 
 Policy compliance (docs/deep-dives/contributing/testing.md):
 - No unittest.mock / AsyncMock / patch.
@@ -16,7 +16,7 @@ from pathlib import Path
 import httpx
 import pytest
 
-from reyn.dogfood.publish import (
+from reyn.dev.dogfood.publish import (
     _DEFAULT_TEMPLATE_PATH,
     DEFAULT_CATEGORY_SLUG,
     DEFAULT_REPO,
@@ -113,7 +113,7 @@ def test_detect_repo_ssh_url(monkeypatch) -> None:
         )
         return result
 
-    monkeypatch.setattr("reyn.dogfood.publish.subprocess.run", _fake_run)
+    monkeypatch.setattr("reyn.dev.dogfood.publish.subprocess.run", _fake_run)
 
     result = detect_repo_from_git()
     assert result == "tya5/reyn"
@@ -133,7 +133,7 @@ def test_detect_repo_https_url(monkeypatch) -> None:
             stdout="https://github.com/acme/my-project\n",
         )
 
-    monkeypatch.setattr("reyn.dogfood.publish.subprocess.run", _fake_run)
+    monkeypatch.setattr("reyn.dev.dogfood.publish.subprocess.run", _fake_run)
 
     result = detect_repo_from_git()
     assert result == "acme/my-project"
@@ -153,7 +153,7 @@ def test_detect_repo_non_github_url(monkeypatch) -> None:
             stdout="https://gitlab.com/acme/my-project.git\n",
         )
 
-    monkeypatch.setattr("reyn.dogfood.publish.subprocess.run", _fake_run)
+    monkeypatch.setattr("reyn.dev.dogfood.publish.subprocess.run", _fake_run)
 
     result = detect_repo_from_git()
     assert result is None
@@ -474,7 +474,7 @@ def test_build_title_no_regressed_count() -> None:
 
 def test_resolve_category_id_default_repo_no_http() -> None:
     """Tier 2: resolve_category_id returns the shipped default without HTTP calls."""
-    from reyn.dogfood.publish import _DEFAULT_CATEGORY_ID
+    from reyn.dev.dogfood.publish import _DEFAULT_CATEGORY_ID
 
     # If HTTP were attempted without a transport, httpx would raise.
     # Passing no http_client and matching DEFAULT_REPO triggers the fast path.
@@ -486,7 +486,7 @@ def test_resolve_category_id_default_repo_no_http() -> None:
 
 def test_resolve_repo_id_default_repo_no_http() -> None:
     """Tier 2: resolve_repo_id returns the shipped default without HTTP calls."""
-    from reyn.dogfood.publish import _DEFAULT_REPO_NODE_ID
+    from reyn.dev.dogfood.publish import _DEFAULT_REPO_NODE_ID
 
     result = resolve_repo_id("any-token", DEFAULT_REPO)
     assert result == _DEFAULT_REPO_NODE_ID

@@ -1,6 +1,6 @@
 """LLMReplay integration for dogfood scenario runs (FP-0036 Component F).
 
-Wraps ``reyn.testing.replay.LLMReplay`` for use by the dogfood runner.
+Wraps ``reyn.dev.testing.replay.LLMReplay`` for use by the dogfood runner.
 The runner accepts a ``replay_fixture_dir``; when set, the litellm calls
 made during scenario execution are intercepted by an active LLMReplay
 instance (record or replay mode based on file presence).
@@ -48,9 +48,9 @@ from pathlib import Path
 from typing import TYPE_CHECKING, AsyncGenerator
 
 if TYPE_CHECKING:
-    from reyn.dogfood.runner import ScenarioRunResult
-    from reyn.dogfood.scenarios import Scenario
-    from reyn.testing.replay import LLMReplay
+    from reyn.dev.dogfood.runner import ScenarioRunResult
+    from reyn.dev.dogfood.scenarios import Scenario
+    from reyn.dev.testing.replay import LLMReplay
 
 logger = logging.getLogger(__name__)
 
@@ -115,11 +115,11 @@ async def scenario_replay_context(
 
     Raises
     ------
-    reyn.testing.replay.MissingFixture
+    reyn.dev.testing.replay.MissingFixture
         In replay mode: raised when the LLM is called but no matching
         fixture entry exists.  The caller should treat this as ``blocked``.
     """
-    from reyn.testing.replay import LLMReplay
+    from reyn.dev.testing.replay import LLMReplay
 
     fixture_path = fixture_path_for(fixture_dir, set_name, scenario_id)
 
@@ -189,8 +189,8 @@ async def replay_run(
         The execution result.  In the MVP, always ``inconclusive``.
         When the live runner is wired in, this carries real verdicts.
     """
-    from reyn.dogfood.runner import ScenarioRunResult
-    from reyn.testing.replay import MissingFixture
+    from reyn.dev.dogfood.runner import ScenarioRunResult
+    from reyn.dev.testing.replay import MissingFixture
 
     async with scenario_replay_context(fixture_dir, set_name, scenario.id) as _replay:
         # Execution stub: LLMReplay is now active — any litellm call in this

@@ -91,9 +91,9 @@ async def test_call_llm_emits_json_decode_failed_event(monkeypatch) -> None:
     import litellm
 
     from reyn.core.events.events import EventLog
+    from reyn.dev.testing.replay import REPLAY_DATETIME
     from reyn.llm.llm import call_llm
     from reyn.schemas.models import ContextFrame
-    from reyn.testing.replay import REPLAY_DATETIME
 
     # Unclosed object (missing final `}`): genuinely malformed, so neither the
     # escape-repair (D6) nor raw_decode can recover a complete leading value.
