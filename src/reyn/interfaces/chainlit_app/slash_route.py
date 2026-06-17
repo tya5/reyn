@@ -1,6 +1,6 @@
 """Pure helpers for routing slash commands from the chainlit surface.
 
-``ChatSession.submit_user_text`` bypasses slash dispatch (= slash
+``Session.submit_user_text`` bypasses slash dispatch (= slash
 handling lives on the TUI / CUI wrappers via
 ``session._maybe_handle_slash``). The chainlit ``@cl.on_message`` glue
 mirrors the same pattern: if the typed content starts with ``/``,

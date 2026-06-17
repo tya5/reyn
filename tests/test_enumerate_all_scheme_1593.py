@@ -162,7 +162,7 @@ def test_default_chat_layer_resolves_to_enumerate_all() -> None:
     dataclass (``ToolUseConfig``), the scheme resolver (``_resolve_tool_use_scheme``),
     and the scheme's public ``.name`` — NOT a running router or private state. The
     config value is what each frontend threads (chat_tool_use_scheme) through the
-    factory → ChatSession → RouterLoopDriver → RouterLoop(scheme_name=)."""
+    factory → Session → RouterLoopDriver → RouterLoop(scheme_name=)."""
     from reyn.chat.router_loop import _resolve_tool_use_scheme
     from reyn.config import _build_tool_use_config
 

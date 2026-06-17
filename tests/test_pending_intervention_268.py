@@ -4,7 +4,7 @@
 Pins the cross-channel intervention routing introduced by #268:
 
   - iv carries ``origin_channel_id`` (= "tui:..." / "a2a:..." / etc.).
-  - ``ChatSession.handle_intervention`` checks if the origin channel
+  - ``Session.handle_intervention`` checks if the origin channel
     is still registered as a listener; if not, the iv is parked in
     the stalled queue instead of being delivered to a different
     channel.
@@ -25,14 +25,14 @@ Pins:
      registered (or ``origin_channel_id=None``).
   3. Stalled queue API: list_stalled / get_stalled / stalled_count /
      discard_stalled / claim_stalled all behave as documented.
-  4. ChatSession session-level operations dispatch to registry
+  4. Session session-level operations dispatch to registry
      correctly + emit audit events.
   5. PendingOpView field shape is the documented set; from_intervention
      populates from iv correctly.
   6. Backwards-compat: iv with ``origin_channel_id=None`` follows the
      pre-#268 dispatch path unchanged.
 
-No mocks. Real ChatSession + real InterventionRegistry.
+No mocks. Real Session + real InterventionRegistry.
 """
 from __future__ import annotations
 
@@ -43,7 +43,7 @@ from datetime import datetime
 import pytest
 
 from reyn.chat.services.intervention_registry import InterventionRegistry
-from reyn.chat.session import ChatSession, PendingOpView
+from reyn.chat.session import PendingOpView, Session
 from reyn.user_intervention import (
     InterventionAnswer,
     UserIntervention,
@@ -199,7 +199,7 @@ def test_registry_claim_stalled_returns_none_when_not_stalled() -> None:
     assert reg.claim_stalled("nonexistent", "tui:session") is None
 
 
-# ── 3. ChatSession handle_intervention origin-pin routing ─────────────
+# ── 3. Session handle_intervention origin-pin routing ─────────────
 
 
 def test_handle_intervention_with_no_origin_uses_existing_path() -> None:
@@ -210,7 +210,7 @@ def test_handle_intervention_with_no_origin_uses_existing_path() -> None:
     dispatch short-circuits to empty answer; we verify the path
     reached the short-circuit rather than the stall queue.
     """
-    session = ChatSession(agent_name="test")
+    session = Session(agent_name="test")
     iv = UserIntervention(kind="ask_user", prompt="Q?")
     # No origin_channel_id, no listener.
 
@@ -225,7 +225,7 @@ def test_handle_intervention_with_registered_origin_uses_dispatch_path() -> None
     """Tier 2: when origin_channel_id is registered as a listener,
     the dispatch path runs (= origin alive → not stalled).
     """
-    session = ChatSession(agent_name="test")
+    session = Session(agent_name="test")
     session.register_intervention_listener("tui:session-a")
 
     async def _drive() -> tuple[InterventionAnswer, str]:
@@ -260,7 +260,7 @@ def test_handle_intervention_with_closed_origin_parks_in_stalled_queue() -> None
       - handle_intervention is awaiting (= doesn't return until
         future resolves via discard / claim)
     """
-    session = ChatSession(agent_name="test")
+    session = Session(agent_name="test")
     # Register a different listener — origin won't match.
     session.register_intervention_listener("tui:current-session")
 
@@ -291,7 +291,7 @@ def test_handle_intervention_emits_user_channel_stalled_route_event() -> None:
     ``intervention_routed{route="user_channel_stalled"}`` is emitted,
     distinct from the regular ``"user_channel"`` route event.
     """
-    session = ChatSession(agent_name="test")
+    session = Session(agent_name="test")
     session.register_intervention_listener("tui:current")
 
     async def _drive() -> None:
@@ -318,14 +318,14 @@ def test_handle_intervention_emits_user_channel_stalled_route_event() -> None:
     assert last["origin_channel_id"] == "tui:closed"
 
 
-# ── 4. ChatSession cross-channel operations ───────────────────────────
+# ── 4. Session cross-channel operations ───────────────────────────
 
 
 def test_list_stalled_interventions_returns_pending_op_views() -> None:
     """Tier 2: list_stalled_interventions returns a list of
     PendingOpView with the documented field shape.
     """
-    session = ChatSession(agent_name="test")
+    session = Session(agent_name="test")
     session.register_intervention_listener("tui:current")
 
     async def _drive() -> list[PendingOpView]:
@@ -359,7 +359,7 @@ def test_discard_pending_intervention_emits_audit_event_on_success() -> None:
     ``pending_intervention_discarded`` audit event for the P6 audit
     trail when the iv was actually discarded.
     """
-    session = ChatSession(agent_name="test")
+    session = Session(agent_name="test")
     session.register_intervention_listener("tui:current")
 
     async def _drive() -> None:
@@ -391,7 +391,7 @@ def test_discard_pending_intervention_returns_false_for_unknown_id() -> None:
     """Tier 2: discard on unknown id is safe + returns False without
     raising or emitting an event.
     """
-    session = ChatSession(agent_name="test")
+    session = Session(agent_name="test")
 
     async def _drive() -> bool:
         return await session.discard_pending_intervention("nonexistent")
@@ -411,7 +411,7 @@ def test_claim_pending_intervention_rebinds_origin_and_returns_view() -> None:
         rebound iv; we deliver an answer via the new channel to
         complete the lifecycle cleanly
     """
-    session = ChatSession(agent_name="test")
+    session = Session(agent_name="test")
     session.register_intervention_listener("tui:current")
     session.register_intervention_listener("tui:claimer")
 
@@ -445,7 +445,7 @@ def test_claim_pending_intervention_rebinds_origin_and_returns_view() -> None:
 
 def test_claim_pending_intervention_returns_none_for_unknown_id() -> None:
     """Tier 2: claim on unknown id returns None, no exception."""
-    session = ChatSession(agent_name="test")
+    session = Session(agent_name="test")
 
     async def _drive() -> "PendingOpView | None":
         return await session.claim_pending_intervention(

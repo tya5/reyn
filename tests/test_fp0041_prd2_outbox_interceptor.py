@@ -4,7 +4,7 @@ End-to-end reply path completion for the Slack chat-transport. PR-D
 landed inbound (= Slack → Reyn inbox). PR-D2 completes outbound:
 
   inbox payload reply_to (= ExternalRef from PR-D handler)
-    → ChatSession captures into self._last_reply_to
+    → Session captures into self._last_reply_to
     → agent reply via _put_outbox
     → reply_to defaults from _last_reply_to (when not explicit)
     → _outbox_interceptor invoked (= PR-D2 wiring)
@@ -41,13 +41,13 @@ from reyn.chat.external_routing import (
     make_outbox_interceptor,
 )
 from reyn.chat.outbox import OutboxMessage
-from reyn.chat.session import ChatSession
+from reyn.chat.session import Session
 from reyn.chat.transport import ExternalRef, TuiRef
 from reyn.core.events.state_log import StateLog
 
 
-def _make_session(tmp_path: Path, *, agent_name: str = "alpha") -> ChatSession:
-    return ChatSession(
+def _make_session(tmp_path: Path, *, agent_name: str = "alpha") -> Session:
+    return Session(
         agent_name=agent_name,
         state_log=StateLog(tmp_path / f"{agent_name}.wal"),
         snapshot_path=tmp_path / f"{agent_name}_snapshot.json",

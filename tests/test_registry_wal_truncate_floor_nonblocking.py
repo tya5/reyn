@@ -1,7 +1,7 @@
 """Tier 2: OS invariant — compute_truncate_floor reads in-memory state only.
 
 PR-N7 (FP-0008): the floor calculation was rewritten to read exclusively
-from in-memory session state (= ``ChatSession.iter_applied_seqs`` via the
+from in-memory session state (= ``Session.iter_applied_seqs`` via the
 session's journal snapshot + skill_registry + plan_registry public
 methods). The pre-N7 implementation walked snapshot files on disk inside
 the async ``truncate_wal_if_eligible`` caller — sync I/O in an async
@@ -68,11 +68,11 @@ def _make_registry(tmp_path: Path, *, with_state_log: bool = True) -> AgentRegis
 
 
 class _ShimSession:
-    """Minimal duck-typed ChatSession exposing only ``iter_applied_seqs``.
+    """Minimal duck-typed Session exposing only ``iter_applied_seqs``.
 
     The public-surface contract that compute_truncate_floor depends on
     is exactly one method. Tests construct shims with the desired
-    watermarks; no ChatSession boot path needed.
+    watermarks; no Session boot path needed.
     """
 
     def __init__(self, seqs: list[int]) -> None:

@@ -8,7 +8,7 @@ LLM, no real workspace) and verify both the legacy abort path
 
 Sites covered here:
   - B (max_phase_visits) — ``OSRuntime._enter_phase``
-  - C (router_cap)        — ``ChatSession._check_and_increment_router_cap``
+  - C (router_cap)        — ``Session._check_and_increment_router_cap``
 
 The remaining sites (F phase_seconds, A max_act_turns, E max_hop_depth,
 G chain_seconds) share the same helper and are exercised indirectly
@@ -22,7 +22,7 @@ import asyncio
 
 import pytest
 
-from reyn.chat.session import ChatSession, RouterCapExceeded
+from reyn.chat.session import RouterCapExceeded, Session
 from reyn.config import LoopConfig, OnLimitConfig, SafetyConfig
 from reyn.core.kernel.runtime import LoopLimitExceededError, OSRuntime
 from reyn.runtime.budget.budget import BudgetTracker, CostConfig
@@ -98,15 +98,15 @@ async def test_os_max_phase_visits_auto_extend_grants_then_aborts() -> None:
         await rt._enter_phase("greet", {"type": "greet_in", "data": {}})
 
 
-# ─── C (router_cap) — ChatSession._check_and_increment_router_cap ──────
+# ─── C (router_cap) — Session._check_and_increment_router_cap ──────
 
 
-def _make_session(*, cap: int, on_limit: OnLimitConfig) -> ChatSession:
+def _make_session(*, cap: int, on_limit: OnLimitConfig) -> Session:
     safety = SafetyConfig(
         loop=LoopConfig(max_router_calls_per_turn=cap),
         on_limit=on_limit,
     )
-    return ChatSession(
+    return Session(
         agent_name="test_agent",
         budget_tracker=BudgetTracker(CostConfig()),
         safety=safety,
@@ -159,16 +159,16 @@ def test_router_cap_auto_extend_grants_then_aborts(
         asyncio.run(session._check_and_increment_router_cap("d"))
 
 
-# ─── ChatSession threads on_limit through the constructor ─────────────
+# ─── Session threads on_limit through the constructor ─────────────
 
 
 def test_chatsession_default_on_limit_is_interactive() -> None:
-    """Tier 2: a ChatSession without an explicit ``safety`` argument
+    """Tier 2: a Session without an explicit ``safety`` argument
     defaults to ``interactive`` on_limit so a TUI / a2a run holds open
     for a user reply rather than silently discarding mid-run state.
     See ``OnLimitConfig`` docstring for the headless safety story.
     """
-    s = ChatSession(agent_name="t")
+    s = Session(agent_name="t")
     assert s.on_limit.mode == "interactive"
 
 
@@ -179,7 +179,7 @@ def test_chatsession_threads_on_limit_through_constructor() -> None:
     which passes ``config.safety`` from the loaded ReynConfig.
     """
     on_limit = OnLimitConfig(mode="interactive", auto_extend_times=5)
-    s = ChatSession(agent_name="t", safety=SafetyConfig(on_limit=on_limit))
+    s = Session(agent_name="t", safety=SafetyConfig(on_limit=on_limit))
     assert s.on_limit is on_limit
     assert s.on_limit.mode == "interactive"
     assert s.on_limit.auto_extend_times == 5

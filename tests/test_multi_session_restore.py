@@ -26,7 +26,7 @@ import pytest
 
 from reyn.chat.profile import AgentProfile
 from reyn.chat.registry import AgentRegistry
-from reyn.chat.session import ChatSession
+from reyn.chat.session import Session
 from reyn.core.events.state_log import StateLog
 
 
@@ -38,8 +38,8 @@ def _make_registry(tmp_path: Path, wal: Path) -> AgentRegistry:
     """
     state_log = StateLog(wal)
 
-    def _factory(profile: AgentProfile) -> ChatSession:
-        s = ChatSession(agent_name=profile.name, state_log=state_log)
+    def _factory(profile: AgentProfile) -> Session:
+        s = Session(agent_name=profile.name, state_log=state_log)
         s.register_intervention_listener("test")  # satisfy listener-presence guard
         return s
 
@@ -63,7 +63,7 @@ def _iv_dict(iv_id: str, run_id: str) -> dict:
     }
 
 
-def _active_iv_ids(session: "ChatSession") -> list[str]:
+def _active_iv_ids(session: "Session") -> list[str]:
     """Public read of a session's restored, re-enqueued interventions."""
     return [iv.id for iv in session.interventions.list_active()]
 
@@ -77,7 +77,7 @@ async def test_multi_session_restore_is_per_session_independent(tmp_path, monkey
     fell to "main" (the cond-4 forwarding gap) — or where the two sessions shared
     one snapshot.json — would surface as cross-contamination or a missing iv.
     """
-    # chdir so a factory-built ChatSession's default snapshot path
+    # chdir so a factory-built Session's default snapshot path
     # (.reyn/agents/<name>/state/snapshot.json) resolves under tmp_path, aligning
     # the session's base with registry._dir (the base-alignment invariant S5 relies on).
     monkeypatch.chdir(tmp_path)

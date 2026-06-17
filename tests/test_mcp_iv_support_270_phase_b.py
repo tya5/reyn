@@ -2,7 +2,7 @@
 
 Pre-#270 Phase B: Reyn-as-MCP-server's ``send_to_agent`` ran skills
 that could emit ``UserIntervention`` ivs, but the MCP transport had
-no chain-override observer registered → iv landed in ChatSession's
+no chain-override observer registered → iv landed in Session's
 ``_active`` queue and would hang if no TUI was simultaneously attached
 (= the typical MCP-only deployment). The peer also had no way to
 answer.
@@ -23,7 +23,7 @@ PR #300 established):
      shape PR #285 Gap 4 standardised).
   5. New MCP tool ``answer_intervention`` accepts
      ``{agent_name, run_id, text, choice_id?}`` and routes to
-     ``ChatSession.answer_pending_intervention``.
+     ``Session.answer_pending_intervention``.
   6. Experimental capability ``reyn.iv.input_required`` declared in
      the ``initialize`` response (= mirrors PR #284's calibration
      pattern: declared capability ↔ in-source wire AST pin).
@@ -295,7 +295,7 @@ def test_answer_intervention_tool_is_declared() -> None:
     src = inspect.getsource(mcp_server.build_server)
     # The tool definition must appear in build_server's source.
     assert 'name="answer_intervention"' in src
-    assert "ChatSession.answer_pending_intervention" in src
+    assert "Session.answer_pending_intervention" in src
     # Schema sanity: required fields are listed.
     assert '"required": ["agent_name", "run_id", "text"]' in src
 

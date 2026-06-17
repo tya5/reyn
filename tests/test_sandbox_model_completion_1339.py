@@ -5,7 +5,7 @@ TOOL exposes only argv(+timeout) so the LLM cannot set sandbox axes; (C') the
 handler's started event shows the ENFORCED policy network (not the op's request);
 (B) both chat OpContext factories resolve a concrete default_sandbox_policy (was
 None → the op-fields fallback = the sandbox-escape gap). permission layer
-unchanged. No mocks — real ChatSession / adapter / op_runtime handler.
+unchanged. No mocks — real Session / adapter / op_runtime handler.
 """
 from __future__ import annotations
 
@@ -97,12 +97,12 @@ async def test_handler_event_shows_enforced_policy_network(tmp_path):
 
 
 def test_chat_session_factory_resolves_concrete_policy(tmp_path):
-    """Tier 2: #1339 reproduce-first —the ChatSession router OpContext carries a
+    """Tier 2: #1339 reproduce-first —the Session router OpContext carries a
     concrete default_sandbox_policy (was None → op-fields fallback = the gap)."""
-    from reyn.chat.session import ChatSession
+    from reyn.chat.session import Session
     from reyn.core.events.state_log import StateLog
 
-    session = ChatSession(
+    session = Session(
         agent_name="b",
         state_log=StateLog(tmp_path / "state.wal"),
         snapshot_path=tmp_path / "snap.json",

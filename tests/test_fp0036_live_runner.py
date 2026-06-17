@@ -13,13 +13,13 @@ Covers:
   5. History isolation: chat history written by a prior scenario does not
      leak into the next scenario's LLM context. The runner wipes
      .reyn/agents/<name>/history.jsonl before each scenario so that
-     ChatSession.load_history() returns empty for scenario N.
+     Session.load_history() returns empty for scenario N.
 
 Policy compliance (docs/deep-dives/contributing/testing.md):
 - No unittest.mock.MagicMock / AsyncMock.  `patch` used only to replace
   `call_llm_tools` with a real async callable — same pattern as
   test_mcp_server.py.
-- Real AgentRegistry + ChatSession instances under tmp_path.
+- Real AgentRegistry + Session instances under tmp_path.
 - Each test docstring's first line declares its Tier.
 """
 from __future__ import annotations
@@ -32,7 +32,7 @@ import pytest
 
 from reyn.chat.profile import AgentProfile
 from reyn.chat.registry import AgentRegistry
-from reyn.chat.session import ChatSession
+from reyn.chat.session import Session
 from reyn.core.events.state_log import StateLog
 from reyn.dev.dogfood.scenarios import Scenario
 from reyn.llm.llm import LLMToolCallResult
@@ -58,7 +58,7 @@ def _text_result(text: str) -> LLMToolCallResult:
 def _make_registry(tmp_path: Path, *, agent_name: str = "default") -> AgentRegistry:
     """Build a real AgentRegistry on tmp_path with a minimal session factory.
 
-    Session factory produces real ChatSession instances with I/O redirected
+    Session factory produces real Session instances with I/O redirected
     to tmp_path so global .reyn state is never touched.  No StateLog is
     wired (= no WAL) which matches the live_runner's own factory.
     """
@@ -67,11 +67,11 @@ def _make_registry(tmp_path: Path, *, agent_name: str = "default") -> AgentRegis
 
     _reg_cell: list = []
 
-    def factory(profile: AgentProfile) -> ChatSession:
+    def factory(profile: AgentProfile) -> Session:
         agent_dir = tmp_path / ".reyn" / "agents" / profile.name
         agent_dir.mkdir(parents=True, exist_ok=True)
         bt = BudgetTracker(CostConfig())
-        session = ChatSession(
+        session = Session(
             agent_name=profile.name,
             agent_role=profile.role,
             output_language="en",
@@ -319,7 +319,7 @@ async def test_history_jsonl_wiped_before_scenario(tmp_path, monkeypatch):
 
     Regression guard for the 2026-05-17 dogfood runner gap: before this
     fix, `_wipe_scenario_state` cleaned events and action_usage but left
-    `.reyn/agents/<name>/history.jsonl` on disk. `ChatSession.load_history()`
+    `.reyn/agents/<name>/history.jsonl` on disk. `Session.load_history()`
     (called by the session factory) reads that file unconditionally, so
     scenario N inside a single `reyn dogfood run` saw scenarios 1..N-1's
     user/assistant turns in its `messages[]` — defeating "fresh per

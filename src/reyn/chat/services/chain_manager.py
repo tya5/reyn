@@ -1,4 +1,4 @@
-"""ChainManager — owns pending_chains lifecycle (extracted from ChatSession wave 1B).
+"""ChainManager — owns pending_chains lifecycle (extracted from Session wave 1B).
 
 Manages: register / update / resolve / timeout + asyncio timer arm/cancel.
 Persistent fields go through SnapshotJournal (via _JournalLike protocol).

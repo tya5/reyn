@@ -15,15 +15,15 @@ Pins:
   2. Enforced mode with zero listeners short-circuits to empty answer.
   3. Enforced mode with one+ listeners awaits as normal.
   4. Register / unregister round-trip restores short-circuit behaviour.
-  5. ChatSession constructs the registry in enforced mode and exposes
+  5. Session constructs the registry in enforced mode and exposes
      ``register_intervention_listener`` / ``unregister_intervention_listener``
      wrappers.
-  6. End-to-end: a ChatSession that hits a safety limit under
+  6. End-to-end: a Session that hits a safety limit under
      ``interactive`` + ``ask_timeout_seconds=0`` with no listener returns
      immediately (no hang) and lets the caller fall through to its
      legacy abort path.
 
-No mocks. Real registry, real ChatSession.
+No mocks. Real registry, real Session.
 """
 from __future__ import annotations
 
@@ -33,7 +33,7 @@ from pathlib import Path
 import pytest
 
 from reyn.chat.services.intervention_registry import InterventionRegistry
-from reyn.chat.session import ChatSession
+from reyn.chat.session import Session
 from reyn.config import LoopConfig, OnLimitConfig, SafetyConfig
 from reyn.runtime.budget.budget import BudgetTracker, CostConfig
 from reyn.user_intervention import InterventionAnswer, UserIntervention
@@ -212,15 +212,15 @@ def test_unregistering_after_register_re_enables_short_circuit() -> None:
     assert answer.text == ""
 
 
-# ── 5. ChatSession exposes the wrappers and opts into enforcement ──────
+# ── 5. Session exposes the wrappers and opts into enforcement ──────
 
 
 def test_chat_session_constructs_registry_in_enforced_mode(tmp_path: Path) -> None:
-    """Tier 2: a fresh ChatSession has the registry in enforcement mode
+    """Tier 2: a fresh Session has the registry in enforcement mode
     AND starts with zero listeners (= test / headless contexts get the
     short-circuit by default).
     """
-    session = ChatSession(agent_name="test_agent")
+    session = Session(agent_name="test_agent")
     # Internal attribute access is acceptable here because we are pinning
     # the wiring invariant the entry-point relies on. The public surface
     # ``register_intervention_listener`` is what callers use.
@@ -229,10 +229,10 @@ def test_chat_session_constructs_registry_in_enforced_mode(tmp_path: Path) -> No
 
 
 def test_chat_session_register_intervention_listener_round_trip() -> None:
-    """Tier 2: ChatSession's public register / unregister thin wrappers
+    """Tier 2: Session's public register / unregister thin wrappers
     update the registry's listener set.
     """
-    session = ChatSession(agent_name="test_agent")
+    session = Session(agent_name="test_agent")
 
     session.register_intervention_listener("tui")
     assert session.interventions.has_active_listener() is True
@@ -263,7 +263,7 @@ def test_safety_limit_under_interactive_no_timeout_no_listener_no_hang(
         loop=LoopConfig(max_router_calls_per_turn=3),
         on_limit=OnLimitConfig(mode="interactive", ask_timeout_seconds=0.0),
     )
-    session = ChatSession(
+    session = Session(
         agent_name="test_agent",
         output_language="ja",
         budget_tracker=BudgetTracker(CostConfig()),

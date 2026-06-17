@@ -1,4 +1,4 @@
-"""Tier 2: ChatSession._build_history_for_router token-budget slicing correctness.
+"""Tier 2: Session._build_history_for_router token-budget slicing correctness.
 
 #1128 step 3 (Fork B): elide threshold now coincides with effective_trigger
 (the existing pre-frame compaction trigger) instead of the old turn-count
@@ -21,7 +21,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import reyn.llm.model_budget as _mb
-from reyn.chat.session import ChatMessage, ChatSession
+from reyn.chat.session import ChatMessage, Session
 from reyn.config import CompactionConfig
 from reyn.core.events.state_log import StateLog
 from reyn.runtime.budget.budget import BudgetTracker, CostConfig
@@ -46,8 +46,8 @@ def _synthetic_t_max(t_max: int):
         _mb.get_max_input_tokens = original
 
 
-def _make_session(tmp_path: Path, *, t_max: int = 1_000_000) -> ChatSession:
-    """Create a ChatSession whose compaction engine uses a synthetic T_max.
+def _make_session(tmp_path: Path, *, t_max: int = 1_000_000) -> Session:
+    """Create a Session whose compaction engine uses a synthetic T_max.
 
     ``use_chars4_estimate=True`` makes token estimation deterministic:
     each character counts as 1/4 token.
@@ -64,9 +64,9 @@ def _make_session(tmp_path: Path, *, t_max: int = 1_000_000) -> ChatSession:
         use_chars4_estimate=True,  # deterministic: chars // 4
         section_caps_spec_tokens=0,  # keeps B_M positive for small T_max values
     )
-    # Monkeypatch covers the engine's compute_budgets() call at ChatSession init.
+    # Monkeypatch covers the engine's compute_budgets() call at Session init.
     with _synthetic_t_max(t_max):
-        return ChatSession(
+        return Session(
             agent_name="default",
             agent_role="",
             output_language="en",
@@ -77,7 +77,7 @@ def _make_session(tmp_path: Path, *, t_max: int = 1_000_000) -> ChatSession:
         )
 
 
-def _push(session: ChatSession, role: str, text: str) -> None:
+def _push(session: Session, role: str, text: str) -> None:
     if role == "agent":
         role = "assistant"
     session.history.append(ChatMessage(role=role, content=text, ts=_now()))

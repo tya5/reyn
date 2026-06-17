@@ -12,7 +12,7 @@ Layout:
 RightPanel (ctrl+b to toggle, ctrl+o to focus, ctrl+w to cycle tabs):
   keys · events · agents · memory · docs
 
-ChatSession integration (phase 3+):
+Session integration (phase 3+):
   - subscribe_outbox():    coroutine draining registry.repl_outbox → render
   - on input submit:       call session.submit_user_text(text)
   - slash dispatch:        REGISTRY.get(cmd).handler(session, args)
@@ -51,7 +51,7 @@ from .widgets import ConversationView, InputBar, InterventionWidget, ReynHeader,
 
 if TYPE_CHECKING:
     from reyn.chat.registry import AgentRegistry
-    from reyn.chat.session import ChatSession
+    from reyn.chat.session import Session
 
 
 # Debounce window for the "nothing-in-flight cancel" line — repeat
@@ -440,7 +440,7 @@ class ReynTUIApp(App):
         self._cost_inline_enabled = bool(prefs.get("cost_inline", False))
 
         # issue #254 Phase 1: declare ourselves as the intervention listener
-        # for the attached session. Without this, ``ChatSession`` constructed
+        # for the attached session. Without this, ``Session`` constructed
         # with ``enforce_listener_presence=True`` would short-circuit
         # ``_dispatch_intervention`` and prompts would never reach the TUI.
         # ``_get_session()`` may return None during early lifecycle (no
@@ -2898,7 +2898,7 @@ class ReynTUIApp(App):
 
     # ── helpers ───────────────────────────────────────────────────────────────
 
-    def _get_session(self) -> "ChatSession | None":
+    def _get_session(self) -> "Session | None":
         if self._agent_registry is None:
             return None
         return self._agent_registry.attached_session()

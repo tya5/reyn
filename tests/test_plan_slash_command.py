@@ -4,7 +4,7 @@ Two sub-commands:
   /plan list                 — show active plan runs
   /plan discard <plan_id>    — abort a specific plan run + cleanup
 
-Mirrors test_skill_slash_command.py shape; uses real ChatSession +
+Mirrors test_skill_slash_command.py shape; uses real Session +
 SnapshotJournal so the WAL/snapshot paths exercise the production
 wiring.
 """
@@ -16,19 +16,19 @@ from pathlib import Path
 
 import pytest
 
-from reyn.chat.session import ChatSession
+from reyn.chat.session import Session
 from reyn.core.events.state_log import StateLog
 
 
-def _make_session(tmp_path: Path, *, agent_name: str = "alpha") -> ChatSession:
-    return ChatSession(
+def _make_session(tmp_path: Path, *, agent_name: str = "alpha") -> Session:
+    return Session(
         agent_name=agent_name,
         state_log=StateLog(tmp_path / "state.wal"),
         snapshot_path=tmp_path / f"{agent_name}_snapshot.json",
     )
 
 
-def _drain_outbox(session: ChatSession) -> list:
+def _drain_outbox(session: Session) -> list:
     out = []
     while not session.outbox.empty():
         out.append(session.outbox.get_nowait())

@@ -6,7 +6,7 @@ byte-identical). spawn_session opens an additional Session under the SAME Agent
 object. Inbound routing to non-default sessions is Stage 4 — S3 just makes the
 structure hold N.
 
-Real AgentRegistry + real ChatSession (no mocks).
+Real AgentRegistry + real Session (no mocks).
 """
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ import pytest
 
 from reyn.chat.profile import AgentProfile
 from reyn.chat.registry import _DEFAULT_SID, AgentRegistry
-from reyn.chat.session import ChatSession
+from reyn.chat.session import Session
 from reyn.runtime.budget.budget import BudgetTracker, CostConfig
 
 
@@ -22,7 +22,7 @@ def _registry(tmp_path):
     def factory(profile: AgentProfile):
         agent_dir = tmp_path / ".reyn" / "agents" / profile.name
         agent_dir.mkdir(parents=True, exist_ok=True)
-        return ChatSession(
+        return Session(
             agent_name=profile.name,
             agent_role=profile.role,
             output_language="en",

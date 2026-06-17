@@ -18,7 +18,7 @@ Scope:
     can disambiguate by plan_id)
   - Crash mid-flight (kill tasks + drop session) leaves both
     snapshots durable
-  - New ChatSession against same disk state spawns both resume tasks
+  - New Session against same disk state spawns both resume tasks
     (= AgentRegistry._recover_plans_for_agent path)
   - No cross-plan contamination (= each resume reads its own
     decomposition + step results)
@@ -31,7 +31,7 @@ from typing import Any
 
 import pytest
 
-from reyn.chat.session import ChatSession
+from reyn.chat.session import Session
 from reyn.core.events.state_log import StateLog
 from reyn.core.plan import (
     PlanRegistry,
@@ -80,8 +80,8 @@ def _stub_router_loop(monkeypatch):
 # ── helpers ──────────────────────────────────────────────────────────────
 
 
-def _make_session(tmp_path: Path, *, agent_name: str = "alpha") -> ChatSession:
-    return ChatSession(
+def _make_session(tmp_path: Path, *, agent_name: str = "alpha") -> Session:
+    return Session(
         agent_name=agent_name,
         state_log=StateLog(tmp_path / "wal.jsonl"),
         snapshot_path=tmp_path / f"{agent_name}_snapshot.json",
@@ -99,7 +99,7 @@ def _plan_args(goal: str, n_steps: int = 2) -> dict:
     }
 
 
-async def _drain(session: ChatSession) -> None:
+async def _drain(session: Session) -> None:
     """Run pending tasks (= let spawn_plan_task workers complete)."""
     if session.running_plans:
         await asyncio.gather(
@@ -212,7 +212,7 @@ async def test_concurrent_plans_record_distinct_step_results(
 @pytest.mark.asyncio
 async def test_crash_mid_flight_two_plans_resume_both(tmp_path, monkeypatch):
     """Tier 2: two plans in flight, simulate process crash
-    (= kill tasks before completion + new ChatSession against same
+    (= kill tasks before completion + new Session against same
     disk), restart triggers _recover_plans_for_agent which spawns
     both resume tasks. Each picks up its own decomposition and
     completes.
@@ -277,7 +277,7 @@ async def test_crash_mid_flight_two_plans_resume_both(tmp_path, monkeypatch):
         await asyncio.sleep(0.05)
 
     # Simulate crash: cancel all running plan tasks. This drops the
-    # in-memory ChatSession but leaves disk state intact.
+    # in-memory Session but leaves disk state intact.
     for task in list(session1.running_plans.values()):
         if not task.done():
             task.cancel()

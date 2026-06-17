@@ -1,7 +1,7 @@
 """Tier 2: chat-axis turn_budget activation (#1092 PR-F1, ADDITIVE).
 
 F1 wires the chat axis to the SHARED turn_budget service (the C2 payoff): the
-ChatSession builds a TurnBudgetEngine off the RESOLVED model (#1172-safe) and
+Session builds a TurnBudgetEngine off the RESOLVED model (#1172-safe) and
 hands it to RouterHostAdapter, which exposes ``wrap_up_output_reserve`` — the
 ``output_reserve`` that RouterLoop._force_close_call will pass as ``max_tokens``
 to hard-cap the chat handoff's consolidation (the F2 by-construction floor).
@@ -13,13 +13,13 @@ proactive mid-turn force-close would truncate a live conversation; a phase, bein
 task execution, proactively wraps up — a deliberate per-axis architectural
 choice, not a missing trigger).
 
-No mocks: real engines, a real ModelResolver, a real ChatSession.
+No mocks: real engines, a real ModelResolver, a real Session.
 """
 from __future__ import annotations
 
 from pathlib import Path
 
-from reyn.chat.session import ChatSession
+from reyn.chat.session import Session
 from reyn.core.events.state_log import StateLog
 from reyn.services.turn_budget import (
     DEFAULT_WRAP_UP_OUTPUT_RESERVE_TOKENS,
@@ -62,12 +62,12 @@ def test_adapter_does_not_expose_proactive_trigger() -> None:
 
 
 def test_chat_session_activates_turn_budget_via_resolved_model(tmp_path: Path) -> None:
-    """Tier 2: a real ChatSession builds the chat turn_budget engine off the
+    """Tier 2: a real Session builds the chat turn_budget engine off the
     RESOLVED model (#1172-safe — never the cosmetic class) and its router host
     exposes a non-None, asserted reserve. Exercises the session wiring (resolve
     self.model + build_default_turn_budget_engine + pass to the adapter), via the
     public ``session.router_host`` surface."""
-    session = ChatSession(
+    session = Session(
         agent_name="f1",
         state_log=StateLog(tmp_path / "state.wal"),
         snapshot_path=tmp_path / "snap.json",
@@ -100,7 +100,7 @@ def test_try_build_returns_engine_for_large_context_model() -> None:
 def test_chat_session_on_small_model_constructs_without_force_close(
     tmp_path: Path, monkeypatch
 ) -> None:
-    """Tier 2: a ChatSession on a too-small-context model STILL CONSTRUCTS (no
+    """Tier 2: a Session on a too-small-context model STILL CONSTRUCTS (no
     __init__ raise) and exposes reserve=None — force-close is simply unavailable,
     chat falls back to the pre-force-close path. Regression guard: building the
     engine unconditionally would assert-fail here and break every small-model
@@ -108,7 +108,7 @@ def test_chat_session_on_small_model_constructs_without_force_close(
     monkeypatch.setattr(
         "reyn.llm.model_budget.get_max_input_tokens", lambda model, **kw: 2000
     )
-    session = ChatSession(
+    session = Session(
         agent_name="f1-small",
         state_log=StateLog(tmp_path / "state.wal"),
         snapshot_path=tmp_path / "snap.json",

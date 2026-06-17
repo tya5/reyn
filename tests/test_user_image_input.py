@@ -46,7 +46,7 @@ class _OutboxRecord:
 
 @dataclass
 class _FakeSession:
-    """Minimal ChatSession-shaped stand-in for /image testing.
+    """Minimal Session-shaped stand-in for /image testing.
 
     Holds only the attributes ``image_cmd`` touches: the pending-images
     queue, the multimodal config, the permission resolver, the
@@ -60,7 +60,7 @@ class _FakeSession:
 
     @property
     def pending_user_images(self) -> list[dict]:
-        """Mirror of ChatSession.pending_user_images for the fake stub."""
+        """Mirror of Session.pending_user_images for the fake stub."""
         return self._pending_user_images
 
     async def _put_outbox(self, msg: object) -> None:
@@ -285,10 +285,10 @@ def _make_history_builder():
     all turns are returned raw — no elide, no duplication.
     """
     from reyn.chat.services.router_history_buffer import RouterHistoryBuffer
-    from reyn.chat.session import ChatSession
+    from reyn.chat.session import Session
     from reyn.config import CompactionConfig
 
-    cs = ChatSession.__new__(ChatSession)  # bypass __init__
+    cs = Session.__new__(Session)  # bypass __init__
     cs.history = []  # set by tests
     cs._compaction = CompactionConfig(use_chars4_estimate=True)
     cs._latest_summary = lambda: None  # type: ignore[method-assign]

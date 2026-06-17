@@ -1360,7 +1360,7 @@ class RightPanel(Widget):
     def _pending_action_discard(self) -> None:
         """Discard the iv at the current cursor.
 
-        Calls ``ChatSession.discard_pending_intervention``. Flashes
+        Calls ``Session.discard_pending_intervention``. Flashes
         a short status confirmation in the conv pane on success;
         silently no-ops when the cursor isn't on a valid row.
         """

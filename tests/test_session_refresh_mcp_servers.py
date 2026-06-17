@@ -1,6 +1,6 @@
-"""Tier 2: ChatSession.refresh_mcp_servers() — FP-0037 S3 programmatic API.
+"""Tier 2: Session.refresh_mcp_servers() — FP-0037 S3 programmatic API.
 
-Pins the contract for the new public coroutine on ChatSession:
+Pins the contract for the new public coroutine on Session:
   - Calls the 3-step turn-boundary chain (yaml-watch → disk-reload → ensure-cached).
     Ordering is verified via observable effects on the disk-reload path:
     a disk cache written between calls is visible on the next refresh.
@@ -14,7 +14,7 @@ Pins the contract for the new public coroutine on ChatSession:
 No unittest.mock / AsyncMock / MagicMock / patch.
 Private-state access: NONE.  Observable surfaces used:
   - refresh_mcp_servers() return dict (primary observable)
-  - router_host (public ChatSession property)
+  - router_host (public Session property)
   - mcp_tools_cache_snapshot (public RouterHostAdapter property, S1)
 
 All tests chdir to tmp_path so the adapter's default state_dir
@@ -29,11 +29,11 @@ from pathlib import Path
 import pytest
 
 from reyn.chat.services.mcp_cache_file import cache_file_path, write_cache
-from reyn.chat.session import ChatSession
+from reyn.chat.session import Session
 from reyn.core.events.state_log import StateLog
 
 # ---------------------------------------------------------------------------
-# Minimal ChatSession factory
+# Minimal Session factory
 # ---------------------------------------------------------------------------
 
 
@@ -42,15 +42,15 @@ def _make_session(
     *,
     agent_name: str = "s3-test-agent",
     mcp_servers: dict | None = None,
-) -> ChatSession:
-    """Build a minimal ChatSession suitable for refresh_mcp_servers tests.
+) -> Session:
+    """Build a minimal Session suitable for refresh_mcp_servers tests.
 
     WAL + snapshot redirect to tmp_path so tests do not write to the
     real .reyn/ directory.  All tests chdir to tmp_path before calling
     this so the session's default state_dir (``cwd / .reyn / state``)
     resolves inside tmp_path.
     """
-    return ChatSession(
+    return Session(
         agent_name=agent_name,
         mcp_servers=mcp_servers,
         state_log=StateLog(tmp_path / "state.wal"),

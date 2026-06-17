@@ -1,11 +1,11 @@
 """BudgetGateway — per-session adapter on top of process-shared BudgetTracker
-(extracted from ChatSession wave 3 PR1).
+(extracted from Session wave 3 PR1).
 
 BudgetTracker is a process-shared, ledger-backed object owned by the
 AgentRegistry / startup config; it is NOT owned by this gateway. The gateway
 holds a reference to it (or None for unlimited mode) and absorbs the
 per-session bookkeeping that previously lived as scattered attributes on
-ChatSession: total_usage, total_cost_usd, router cap counter, last reason.
+Session: total_usage, total_cost_usd, router cap counter, last reason.
 """
 from __future__ import annotations
 
@@ -70,7 +70,7 @@ class BudgetGateway:
 
     def accumulate(self, result) -> None:
         """Accumulate a single LLM call result's tokens + cost into per-session
-        totals. Mirrors ChatSession._accumulate."""
+        totals. Mirrors Session._accumulate."""
         if result.token_usage is not None:
             self._total_usage += result.token_usage
         if result.cost_usd is not None:

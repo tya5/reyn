@@ -5,7 +5,7 @@ SSoT for the plan shape on resume; LLM re-decomposition is non-
 deterministic and would break step-result memoization.
 
 These tests pin the round-trip + corruption-fallback behavior. No
-ChatSession / RouterLoop coupling — the helpers are standalone.
+Session / RouterLoop coupling — the helpers are standalone.
 """
 from __future__ import annotations
 

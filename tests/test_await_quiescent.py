@@ -1,6 +1,6 @@
-"""Tier 2: ChatSession.await_quiescent — the global-rewind quiescence primitive.
+"""Tier 2: Session.await_quiescent — the global-rewind quiescence primitive.
 
-ADR-0038 Stage 1c part-1. Real `ChatSession` + `StateLog` + real asyncio tasks
+ADR-0038 Stage 1c part-1. Real `Session` + `StateLog` + real asyncio tasks
 (no mocks). `await_quiescent()` must return only once no turn / skill / plan is
 in flight, and — the correctness-critical invariant — **no WAL append lands after
 it returns** (a straggler past the future rewind reset-record would contaminate
@@ -13,13 +13,13 @@ from pathlib import Path
 
 import pytest
 
-from reyn.chat.session import ChatSession
+from reyn.chat.session import Session
 from reyn.core.events.state_log import StateLog
 from reyn.user_intervention import InterventionAnswer, UserIntervention
 
 
-def _session(tmp_path: Path, log: StateLog, *, agent: str = "alpha") -> ChatSession:
-    session = ChatSession(
+def _session(tmp_path: Path, log: StateLog, *, agent: str = "alpha") -> Session:
+    session = Session(
         agent_name=agent, state_log=log, snapshot_path=tmp_path / "snap.json",
     )
     session.register_intervention_listener("test")

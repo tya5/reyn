@@ -8,7 +8,7 @@ exposes:
   attributes for ``ReynTUIApp._outbox_loop`` and ``_get_session`` to
   function). Drains the WS connection in a background task and pushes
   reconstructed ``OutboxMessage`` items onto its ``repl_outbox`` queue.
-- :class:`_WSSessionProxy` — a minimal ChatSession shape exposing the
+- :class:`_WSSessionProxy` — a minimal Session shape exposing the
   TUI's submit / session-attribute paths the foreground code touches
   on user input. Phase B will expand this with intervention answer /
   cancel / list-agents support.
@@ -55,7 +55,7 @@ _KNOWN_KINDS = frozenset({
 
 
 class _WSSessionProxy:
-    """Minimal ChatSession-shaped object backing the TUI in ``--connect`` mode.
+    """Minimal Session-shaped object backing the TUI in ``--connect`` mode.
 
     The TUI reads ``agent_name`` (for header / Pending tab claim
     channel id construction) and calls ``submit_user_text(text)`` on
@@ -88,7 +88,7 @@ class _WSSessionProxy:
     def interventions(self):
         """Intervention registry — ``None`` in Phase A proxy (no local state).
 
-        Local ``ChatSession`` stores intervention data in ``_interventions``.
+        Local ``Session`` stores intervention data in ``_interventions``.
         The Phase A proxy has no round-trip to the server for this, so
         ``None`` is the correct placeholder: TUI paths that read it already
         use ``getattr(session, "_interventions", None)`` / ``getattr(session,
@@ -104,7 +104,7 @@ class _WSSessionProxy:
     async def submit_user_text(self, text: str) -> None:
         """Send a ``user_message`` WS frame.
 
-        Mirrors :py:meth:`ChatSession.submit_user_text` from the TUI's
+        Mirrors :py:meth:`Session.submit_user_text` from the TUI's
         point of view — kicks off a turn on the remote agent.
         """
         await self._send_fn({"type": "user_message", "text": text})
@@ -112,7 +112,7 @@ class _WSSessionProxy:
     def register_intervention_listener(self, listener_id: str) -> None:
         """No-op stub for the TUI's ``on_mount`` listener registration.
 
-        The local ``ChatSession`` uses this to declare which UI surface
+        The local ``Session`` uses this to declare which UI surface
         consumes intervention prompts (= local TUI vs MCP vs A2A). In
         remote (``--connect``) mode the server-side session handles its
         own listener registration; the thin client doesn't need to
@@ -131,7 +131,7 @@ class _WSSessionProxy:
     async def _maybe_handle_slash(self, text: str) -> bool:
         """Issue #276 Phase B (4/5): forward all slash commands to the server.
 
-        The local ``ChatSession._maybe_handle_slash`` dispatches to a
+        The local ``Session._maybe_handle_slash`` dispatches to a
         registered handler (e.g. ``agents_cmd``, ``attach_cmd``) that
         reads ``session._registry`` — server-side state the proxy
         cannot reach locally. Forward the raw command text instead;
@@ -155,7 +155,7 @@ class _WSSessionProxy:
     async def _maybe_answer_oldest_intervention(self, text: str) -> None:
         """Issue #276 Phase B (2/5): send an ``answer_intervention`` WS frame.
 
-        Mirrors :py:meth:`ChatSession._maybe_answer_oldest_intervention`
+        Mirrors :py:meth:`Session._maybe_answer_oldest_intervention`
         from the TUI's intervention-widget callback path: when the
         user clicks a chip or types a free-text answer, the widget's
         ``answer_callback`` calls this with the chosen string.

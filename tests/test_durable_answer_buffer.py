@@ -2,7 +2,7 @@
 
 Background: when an intervention is answered post-restart but before
 the resuming skill consumes the answer, the answer is held in
-ChatSession's in-memory ``_buffered_intervention_answers`` dict. If a
+Session's in-memory ``_buffered_intervention_answers`` dict. If a
 SECOND crash happens in this narrow window, the in-memory buffer is
 lost — the user's answer evaporates and they have to answer again.
 
@@ -15,7 +15,7 @@ Invariants pinned:
   - WAL events ``intervention_answer_buffered`` / ``..._consumed``
     apply correctly to the snapshot.
   - SnapshotJournal records both events with the right shape.
-  - ChatSession.restore_state rehydrates the in-memory buffer from
+  - Session.restore_state rehydrates the in-memory buffer from
     the snapshot field.
 
 Reference: PR-durable-answer-buffer (R-D12) in the active plan.
@@ -27,7 +27,7 @@ import json
 from pathlib import Path
 
 from reyn.chat.services.snapshot_journal import SnapshotJournal
-from reyn.chat.session import ChatSession
+from reyn.chat.session import Session
 from reyn.core.events.agent_snapshot import AgentSnapshot
 from reyn.core.events.state_log import StateLog
 from reyn.user_intervention import InterventionAnswer
@@ -184,15 +184,15 @@ def test_journal_consume_is_idempotent(tmp_path: Path):
 
 
 # ---------------------------------------------------------------------------
-# ChatSession.restore_state rehydrates the buffer
+# Session.restore_state rehydrates the buffer
 # ---------------------------------------------------------------------------
 
 
-def _make_session(tmp_path: Path, agent_name: str = "alpha") -> ChatSession:
+def _make_session(tmp_path: Path, agent_name: str = "alpha") -> Session:
     """issue #254 Phase 1: register a placeholder listener so the registry's
     ``enforce_listener_presence=True`` short-circuit does not fire.
     """
-    session = ChatSession(
+    session = Session(
         agent_name=agent_name,
         state_log=StateLog(tmp_path / "state.wal"),
         snapshot_path=tmp_path / f"{agent_name}_snapshot.json",

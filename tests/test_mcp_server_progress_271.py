@@ -50,7 +50,7 @@ from reyn.schemas.models import Event  # noqa: E402
 
 
 class _FakeSession:
-    """Minimal stand-in for ChatSession exposing `_chat_events`."""
+    """Minimal stand-in for Session exposing `_chat_events`."""
 
     def __init__(self, event_log: EventLog) -> None:
         self._chat_events = event_log

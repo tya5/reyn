@@ -19,7 +19,7 @@ import asyncio
 from pathlib import Path
 
 from reyn.chat.services import MemoryService, RouterHostAdapter
-from reyn.chat.session import ChatMessage, ChatSession
+from reyn.chat.session import ChatMessage, Session
 from reyn.config import ReasoningConfig
 from reyn.core.events.events import EventLog
 from reyn.core.events.state_log import StateLog
@@ -149,7 +149,7 @@ def test_continuity_section_surfaces_via_host():
 
 
 def _session(reasoning_config, tmp_path):
-    return ChatSession(
+    return Session(
         agent_name="t",
         state_log=StateLog(tmp_path / "wal.jsonl"),
         snapshot_path=tmp_path / "snap.json",

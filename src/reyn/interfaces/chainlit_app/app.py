@@ -169,7 +169,7 @@ async def _get_or_build_registry() -> "AgentRegistry":
 
         registry_ref: list = []
 
-        def _session_factory(profile: AgentProfile) -> ChatSession:
+        def _session_factory(profile: AgentProfile) -> Session:
             s = build_scoped_chat_session(
                 agent_name=profile.name,
                 model=model,
@@ -398,7 +398,7 @@ async def _handle_intervention(registry: "AgentRegistry", msg) -> None:
 
     # Empty-answer fallback used on every "no response" path below.
     # Without this, the agent stays awaiting ``iv.future`` forever and
-    # ChatSession.run_one_iteration never picks up the next inbox
+    # Session.run_one_iteration never picks up the next inbox
     # message — the entire chat appears frozen.
     async def _resolve_empty() -> None:
         try:
@@ -594,7 +594,7 @@ async def _on_chat_start() -> None:
         # Stripped / mocked session in tests — degrade gracefully.
         pass
 
-    # Replay prior chat turns from ``ChatSession.history`` (= what
+    # Replay prior chat turns from ``Session.history`` (= what
     # ``load_history`` read from ``history.jsonl``) so the operator
     # sees the conversation they had previously with this agent
     # instead of an empty thread on every re-attach / browser open.
@@ -790,7 +790,7 @@ async def _on_message(message: cl.Message) -> None:
     # Multimodal upload bridge: any image element dropped via the
     # chainlit attachment button rides the same ``_pending_user_images``
     # queue that ``/image PATH`` uses. The queue is drained on the
-    # next user turn by ``ChatSession._handle_user_message``.
+    # next user turn by ``Session._handle_user_message``.
     elements = getattr(message, "elements", None) or []
     if elements:
         blocks = collect_image_blocks(elements)

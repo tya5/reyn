@@ -117,7 +117,7 @@ async def _handle(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
     sub-skill task spawns.
 
     FP-0012 chat-mode preference: when ``rs.spawn_skill_fn`` is
-    populated (= chat-mode RouterLoop, ChatSession host), prefer the
+    populated (= chat-mode RouterLoop, Session host), prefer the
     non-blocking spawn path. The handler returns the spawn-ack
     ``{status: "spawned", run_id, chain_id, note}`` immediately and the
     background task delivers completion via the ``skill_completed``

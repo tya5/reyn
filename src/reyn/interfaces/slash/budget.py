@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING
 from reyn.interfaces.slash import reply, slash
 
 if TYPE_CHECKING:
-    from reyn.chat.session import ChatSession
+    from reyn.chat.session import Session
 
 
 _TRACKER_DISABLED = (
@@ -20,7 +20,7 @@ _TRACKER_DISABLED = (
 
 
 @slash("cost", summary="Quick token + USD cost summary for this agent")
-async def cost_cmd(session: "ChatSession", args: str) -> None:
+async def cost_cmd(session: "Session", args: str) -> None:
     """``/cost`` — one-line token + USD spend for the attached agent."""
     line = session._budget.cost_line()
     if line is None:
@@ -35,7 +35,7 @@ async def cost_cmd(session: "ChatSession", args: str) -> None:
     usage="/budget [reset]",
     see_also=("docs/reference/config/budget.md",),
 )
-async def budget_cmd(session: "ChatSession", args: str) -> None:
+async def budget_cmd(session: "Session", args: str) -> None:
     """``/budget`` (full breakdown) or ``/budget reset`` (clear counters).
 
     ``reset`` clears per-process counters (agent tokens / cost, chain skill

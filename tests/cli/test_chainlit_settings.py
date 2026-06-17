@@ -3,10 +3,10 @@
 The chat-settings panel surfaces ``output_language`` as a Select
 widget. Two round-trips need to stay consistent:
 
-1. ``ChatSession.output_language`` (str | None) → widget select value
+1. ``Session.output_language`` (str | None) → widget select value
    (always non-empty string, ``"auto"`` for None) so the dropdown is
    never blank.
-2. widget select value → ``ChatSession.output_language`` (str | None)
+2. widget select value → ``Session.output_language`` (str | None)
    so ``"auto"`` round-trips back to ``None`` and reaches reyn's
    "let the LLM decide" branch.
 

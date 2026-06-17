@@ -2,11 +2,11 @@
 
 Chainlit (https://chainlit.io) を `python -m chainlit run` 経由で起動し、
 ``src/reyn/chainlit_app/app.py`` に定義した @cl.on_chat_start /
-@cl.on_message ハンドラ越しに `ChatSession` と接続する。
+@cl.on_message ハンドラ越しに `Session` と接続する。
 
 TUI (`reyn chat`) / FastAPI Web UI (`reyn web`) と共存する第三の surface:
 - 既存 `reyn web` (FP-0013 MessageBus + openui) と同じ "サーバ起動" 体験
-- 各 Chainlit ブラウザセッション = 独立の `ChatSession`
+- 各 Chainlit ブラウザセッション = 独立の `Session`
 - multi-user は Chainlit 側 WebSocket セッション分離に乗る
 
 このコマンドは reyn の `[chainlit]` オプション依存を必要とする:

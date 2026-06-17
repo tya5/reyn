@@ -1,7 +1,7 @@
 """Tier 2: events tab renders ``intervention_routed`` events with route + kind + iv_id.
 
 Issue #261 — Phase 4 emits ``intervention_routed`` from
-``ChatSession.handle_intervention``'s three branches (self_answer /
+``Session.handle_intervention``'s three branches (self_answer /
 parent_delegate / user_channel). The events tab surfaces those as
 one-line entries so the user can audit routing decisions.
 

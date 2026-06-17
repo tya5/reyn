@@ -18,7 +18,7 @@ import pytest
 from reyn.chat.message_bus import MessageBus
 from reyn.chat.outbox import OutboxMessage
 from reyn.chat.routing import RoutingLayer
-from reyn.chat.session import ChatSession
+from reyn.chat.session import Session
 from reyn.chat.transport import (
     A2aRef,
     AgentRef,
@@ -34,16 +34,16 @@ from reyn.core.events.state_log import StateLog
 # ---------------------------------------------------------------------------
 
 
-def _make_session(tmp_path: Path, *, agent_name: str = "test_agent") -> ChatSession:
-    """Build a minimal ChatSession wired to tmp_path."""
-    return ChatSession(
+def _make_session(tmp_path: Path, *, agent_name: str = "test_agent") -> Session:
+    """Build a minimal Session wired to tmp_path."""
+    return Session(
         agent_name=agent_name,
         state_log=StateLog(tmp_path / "state.wal"),
         snapshot_path=tmp_path / f"{agent_name}_snapshot.json",
     )
 
 
-def _drain_outbox(session: ChatSession) -> list[OutboxMessage]:
+def _drain_outbox(session: Session) -> list[OutboxMessage]:
     """Non-blocking drain of all outbox messages."""
     msgs = []
     while not session.outbox.empty():
@@ -150,7 +150,7 @@ async def test_run_one_iteration_processes_single_kind(tmp_path, monkeypatch):
     async def _fake_handle_user_message(self, text, *, chain_id):
         processed.append(text)
 
-    monkeypatch.setattr(ChatSession, "_handle_user_message", _fake_handle_user_message)
+    monkeypatch.setattr(Session, "_handle_user_message", _fake_handle_user_message)
 
     # Enqueue two "user" messages.
     await session._put_inbox("user", {"text": "first"})
@@ -208,11 +208,11 @@ async def test_run_one_iteration_dispatches_all_known_kinds(tmp_path, monkeypatc
     async def _record_agent_response(self, payload):
         dispatched.append("agent_response")
 
-    monkeypatch.setattr(ChatSession, "_handle_user_message", _record_user)
-    monkeypatch.setattr(ChatSession, "_handle_skill_completed", _record_skill_completed)
-    monkeypatch.setattr(ChatSession, "_handle_plan_completed", _record_plan_completed)
-    monkeypatch.setattr(ChatSession, "_handle_agent_request", _record_agent_request)
-    monkeypatch.setattr(ChatSession, "_handle_agent_response", _record_agent_response)
+    monkeypatch.setattr(Session, "_handle_user_message", _record_user)
+    monkeypatch.setattr(Session, "_handle_skill_completed", _record_skill_completed)
+    monkeypatch.setattr(Session, "_handle_plan_completed", _record_plan_completed)
+    monkeypatch.setattr(Session, "_handle_agent_request", _record_agent_request)
+    monkeypatch.setattr(Session, "_handle_agent_response", _record_agent_response)
 
     for kind in ("user", "skill_completed", "plan_completed", "agent_request", "agent_response"):
         await session._put_inbox(kind, {"text": "x"})
@@ -241,7 +241,7 @@ async def test_run_wraps_run_one_iteration(tmp_path, monkeypatch):
         processed.append(text)
         await self._put_outbox(OutboxMessage(kind="agent", text=f"echo:{text}"))
 
-    monkeypatch.setattr(ChatSession, "_handle_user_message", _fake_handle_user_message)
+    monkeypatch.setattr(Session, "_handle_user_message", _fake_handle_user_message)
 
     await session._put_inbox("user", {"text": "ping"})
     await session.inbox.put(("shutdown", {}))  # out-of-band, no WAL entry
@@ -366,7 +366,7 @@ async def test_message_bus_request_pumps_until_quiescent(tmp_path, monkeypatch):
     async def _fake_handle_user_message(self, text, *, chain_id):
         await self._put_outbox(OutboxMessage(kind="agent", text=f"echo:{text}"))
 
-    monkeypatch.setattr(ChatSession, "_handle_user_message", _fake_handle_user_message)
+    monkeypatch.setattr(Session, "_handle_user_message", _fake_handle_user_message)
 
     bus = MessageBus()
     replies = await bus.request(
@@ -397,7 +397,7 @@ async def test_message_bus_collects_multiple_outbox_messages(tmp_path, monkeypat
         await self._put_outbox(OutboxMessage(kind="agent", text="first_fragment"))
         await self._put_outbox(OutboxMessage(kind="agent", text="done"))
 
-    monkeypatch.setattr(ChatSession, "_handle_user_message", _fake_handle_user_message)
+    monkeypatch.setattr(Session, "_handle_user_message", _fake_handle_user_message)
 
     bus = MessageBus()
     replies = await bus.request(
@@ -434,7 +434,7 @@ async def test_message_bus_waits_for_running_tasks(tmp_path, monkeypatch):
         task = asyncio.create_task(_bg())
         self.running_skills["fake_skill"] = task
 
-    monkeypatch.setattr(ChatSession, "_handle_user_message", _fake_handle_user_message)
+    monkeypatch.setattr(Session, "_handle_user_message", _fake_handle_user_message)
 
     bus = MessageBus()
     replies = await bus.request(
@@ -473,11 +473,11 @@ async def test_a2a_endpoint_uses_message_bus(tmp_path, monkeypatch):
 
     state_log = StateLog(tmp_path / ".reyn" / "state" / "wal.jsonl")
 
-    def factory(profile: AgentProfile) -> ChatSession:
+    def factory(profile: AgentProfile) -> Session:
         agent_dir = tmp_path / ".reyn" / "agents" / profile.name
         agent_dir.mkdir(parents=True, exist_ok=True)
         bt = BudgetTracker(CostConfig())
-        return ChatSession(
+        return Session(
             agent_name=profile.name,
             agent_role=profile.role,
             output_language="en",
@@ -493,10 +493,10 @@ async def test_a2a_endpoint_uses_message_bus(tmp_path, monkeypatch):
     )
     monkeypatch.chdir(tmp_path)
 
-    # Use a real ChatSession (via factory) and track how inbox was consumed.
+    # Use a real Session (via factory) and track how inbox was consumed.
     inbox_consumed: list[str] = []
 
-    original_put_inbox = ChatSession._put_inbox
+    original_put_inbox = Session._put_inbox
 
     async def _tracking_put_inbox(self, kind, payload):
         inbox_consumed.append(kind)
@@ -514,8 +514,8 @@ async def test_a2a_endpoint_uses_message_bus(tmp_path, monkeypatch):
             meta={"chain_id": chain_id},
         ))
 
-    monkeypatch.setattr(ChatSession, "_put_inbox", _tracking_put_inbox)
-    monkeypatch.setattr(ChatSession, "_handle_user_message", _fake_handle_user_message)
+    monkeypatch.setattr(Session, "_put_inbox", _tracking_put_inbox)
+    monkeypatch.setattr(Session, "_handle_user_message", _fake_handle_user_message)
 
     result = await send_to_agent_impl(
         registry,

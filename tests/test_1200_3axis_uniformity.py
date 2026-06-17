@@ -22,7 +22,7 @@ from pathlib import Path
 import pytest
 
 from reyn.chat.planner import Plan, PlanStep, _PlanStepHost
-from reyn.chat.session import ChatSession
+from reyn.chat.session import Session
 from reyn.core.events.state_log import StateLog
 from reyn.environment.host_backend import HostBackend
 
@@ -34,7 +34,7 @@ def test_chat_shares_one_instance_across_fs_and_exec_seams(tmp_path: Path) -> No
     exec seam (OpContext.sandbox_backend) as the SAME object — chat does not
     diverge its two seams (review-gate: differ = reject)."""
     agent_backend = HostBackend()
-    session = ChatSession(
+    session = Session(
         agent_name="u",
         state_log=StateLog(tmp_path / "state.wal"),
         snapshot_path=tmp_path / "snap.json",

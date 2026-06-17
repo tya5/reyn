@@ -41,7 +41,7 @@ async def test_session_proxy_slash_sends_wire_frame() -> None:
     result = await proxy._maybe_handle_slash("/attach research")
 
     assert sent == [{"type": "slash_command", "text": "/attach research"}]
-    # Local ChatSession returns True when a slash was handled — match
+    # Local Session returns True when a slash was handled — match
     # the shape so the TUI dispatch doesn't fall through to
     # user_message.
     assert result is True

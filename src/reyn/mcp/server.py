@@ -10,9 +10,9 @@ as a stdio subprocess and converse with a Reyn agent through two tools:
     message to a named agent and block (with timeout) for the final
     reply text.
 
-Multi-turn continuity falls out for free: ``ChatSession.history`` is
+Multi-turn continuity falls out for free: ``Session.history`` is
 persistent across calls because the registry caches each session
-in-process and ``ChatSession.load_history`` rehydrates from
+in-process and ``Session.load_history`` rehydrates from
 ``history.jsonl`` on construction.
 
 FP-0013: ``send_to_agent_impl`` now drives ``session.run_one_iteration()``
@@ -72,7 +72,7 @@ _IDLE_GRACE_SECONDS: float = 0.05
 
 
 async def _get_session(registry: "AgentRegistry", name: str) -> "object":
-    """Return a loaded ChatSession for `name`.
+    """Return a loaded Session for `name`.
 
     Note: unlike `reyn chat`, the MCP path does NOT spawn a long-lived
     ``session.run()`` task. The MCP SDK's stdio transport (under
@@ -215,7 +215,7 @@ async def send_to_agent_impl(
         # issue #268 Phase 2: when the override exposes a stable
         # ``channel_id`` (= A2AInterventionBus does), register it as
         # an intervention listener so the agent layer's origin-pin
-        # check (= ``ChatSession.handle_intervention`` Branch 3)
+        # check (= ``Session.handle_intervention`` Branch 3)
         # treats the A2A channel as alive while the bus is active.
         # ``getattr`` lets future buses without channel_id participate
         # via the override path without forcing them to expose one.
@@ -385,7 +385,7 @@ def build_server(
                     "Deliver an answer to a pending ask_user / "
                     "permission / safety intervention on a running "
                     "send_to_agent call (issue #270 Phase B). "
-                    "Routes via ChatSession.answer_pending_intervention. "
+                    "Routes via Session.answer_pending_intervention. "
                     "Identify the iv by ``run_id`` (= surfaced in the "
                     "progress notification that the server pushed when "
                     "the iv was dispatched, see experimental capability "
@@ -636,7 +636,7 @@ async def _make_mcp_intervention_bus(
 
     issue #292 α extended to MCP: when a skill spawned via
     ``send_to_agent_impl`` emits a ``UserIntervention``, that iv lands
-    in ``ChatSession._interventions._active`` and ``handler.dispatch``
+    in ``Session._interventions._active`` and ``handler.dispatch``
     awaits its future. Pre-#270 Phase B the MCP transport had no
     observer registered as chain override → no peer-facing surface to
     push the iv question to → the iv would hang if no TUI was
@@ -647,7 +647,7 @@ async def _make_mcp_intervention_bus(
     pushes an MCP notification carrying the iv payload; does NOT await
     ``iv.future``). The peer answers via a separate
     ``answer_intervention`` MCP tool call that lands at
-    ``ChatSession.answer_pending_intervention``.
+    ``Session.answer_pending_intervention``.
 
     Returns ``None`` when the request context is unavailable (= e.g.
     direct test calls bypassing the MCP server). The caller (= send-
@@ -673,7 +673,7 @@ class _MCPInterventionBus:
     Mirrors ``A2AInterventionBus``'s post-α observer shape:
 
       - ``on_dispatch(iv)`` runs as a side effect inside
-        ``ChatSession._dispatch_intervention``, BEFORE the regular
+        ``Session._dispatch_intervention``, BEFORE the regular
         handler dispatch awaits ``iv.future``.
       - Stamps ``iv.origin_channel_id`` so the agent layer can attribute
         this iv to the MCP channel.
@@ -683,7 +683,7 @@ class _MCPInterventionBus:
       - Does NOT await ``iv.future``. The handler awaits on the
         skill's behalf; the peer answers via the
         ``answer_intervention`` MCP tool which routes to
-        ``ChatSession.answer_pending_intervention``.
+        ``Session.answer_pending_intervention``.
 
     Notification transport: uses ``Session.send_progress_notification``
     with the iv payload encoded as JSON in the ``message`` field +

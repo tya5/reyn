@@ -21,7 +21,7 @@ from reyn.chat.profile import AgentProfile
 from reyn.interfaces.slash import reply, reply_error, slash
 
 if TYPE_CHECKING:
-    from reyn.chat.session import ChatSession
+    from reyn.chat.session import Session
 
 
 _USAGE = (
@@ -44,7 +44,7 @@ _NO_REGISTRY = (
     ),
     usage="/agent new <name> | /agent edit role <text>",
 )
-async def agent_cmd(session: "ChatSession", args: str) -> None:
+async def agent_cmd(session: "Session", args: str) -> None:
     """Dispatch ``/agent <sub>`` subcommands."""
     parts = args.strip().split(maxsplit=1)
     if not parts:
@@ -60,7 +60,7 @@ async def agent_cmd(session: "ChatSession", args: str) -> None:
         await reply_error(session, _USAGE)
 
 
-async def _create_agent(session: "ChatSession", name: str) -> None:
+async def _create_agent(session: "Session", name: str) -> None:
     """Create a new agent profile and attach to it.
 
     Uses the same ``__attach_request__`` sentinel as ``/attach`` so the
@@ -93,7 +93,7 @@ async def _create_agent(session: "ChatSession", name: str) -> None:
     ))
 
 
-async def _edit_agent(session: "ChatSession", args: str) -> None:
+async def _edit_agent(session: "Session", args: str) -> None:
     """Dispatch ``/agent edit <field> <value>`` — currently ``role`` only.
 
     Edits operate on the **attached agent** (= ``session.agent_name``).
@@ -115,7 +115,7 @@ async def _edit_agent(session: "ChatSession", args: str) -> None:
         )
 
 
-async def _edit_role(session: "ChatSession", new_role: str) -> None:
+async def _edit_role(session: "Session", new_role: str) -> None:
     """Replace the attached agent's role text on disk + in-memory.
 
     Two-side update:

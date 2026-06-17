@@ -1,8 +1,8 @@
-"""Tier 2: OS invariant tests for ChatSession (chain mgmt + intervention + WAL/snapshot).
+"""Tier 2: OS invariant tests for Session (chain mgmt + intervention + WAL/snapshot).
 
 Re-encodes the invariants formerly pinned by `tests/scaffold/test_chain_manager.py`
 and `tests/scaffold/test_intervention_registry.py` (Tier 4 — Mock + private
-state) at the ChatSession public surface (Tier 2). The scaffold files are
+state) at the Session public surface (Tier 2). The scaffold files are
 removed in the same PR that lands these tests.
 
 Policy compliance (`docs/deep-dives/contributing/testing.ja.md`):
@@ -31,7 +31,7 @@ from pathlib import Path
 
 import pytest
 
-from reyn.chat.session import ChatSession
+from reyn.chat.session import Session
 from reyn.config import OnLimitConfig, SafetyConfig, TimeoutConfig
 from reyn.core.events.agent_snapshot import AgentSnapshot
 from reyn.core.events.state_log import StateLog
@@ -100,7 +100,7 @@ class _FakeRegistry:
         self.sent_requests: list[dict] = []
         self.sent_responses: list[dict] = []
 
-    def register(self, name: str, session: "ChatSession") -> None:
+    def register(self, name: str, session: "Session") -> None:
         self._targets[name] = session
 
     def exists(self, name: str) -> bool:
@@ -116,7 +116,7 @@ class _FakeRegistry:
             if n != self_name
         ]
 
-    def get_or_load(self, name: str) -> "ChatSession":
+    def get_or_load(self, name: str) -> "Session":
         return self._targets[name]
 
     async def ensure_running(self, name: str) -> None:
@@ -130,8 +130,8 @@ def _make_session(
     chain_timeout_seconds: float = 60.0,
     registry: _FakeRegistry | None = None,
     on_limit: OnLimitConfig | None = None,
-) -> ChatSession:
-    """Build a ChatSession with WAL + per-test snapshot path via public kwargs.
+) -> Session:
+    """Build a Session with WAL + per-test snapshot path via public kwargs.
 
     issue #254 Phase 1: register a placeholder listener so the registry's
     ``enforce_listener_presence=True`` short-circuit does not fire — these
@@ -148,7 +148,7 @@ def _make_session(
     if on_limit is not None:
         safety_kwargs["on_limit"] = on_limit
     safety = SafetyConfig(**safety_kwargs)
-    session = ChatSession(
+    session = Session(
         agent_name=agent_name,
         state_log=StateLog(tmp_path / "state.wal"),
         safety=safety,
@@ -173,7 +173,7 @@ def _wal_events(tmp_path: Path) -> list[dict]:
     return list(log.iter_from(0))
 
 
-def _drain_outbox(session: ChatSession) -> list:
+def _drain_outbox(session: Session) -> list:
     msgs = []
     while not session.outbox.empty():
         msgs.append(session.outbox.get_nowait())
@@ -224,7 +224,7 @@ async def test_chain_register_emits_wal_event(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
 
     registry = _FakeRegistry()
-    peer_session = ChatSession(agent_name="peer_agent")
+    peer_session = Session(agent_name="peer_agent")
     registry.register("peer_agent", peer_session)
 
     session = _make_session(tmp_path, registry=registry,
@@ -283,7 +283,7 @@ async def test_chain_resolve_clears_snapshot_and_emits_resolve(tmp_path, monkeyp
     monkeypatch.chdir(tmp_path)
 
     # Peer session: receives agent_request from us, we feed agent_response back.
-    peer_session = ChatSession(agent_name="peer_agent")
+    peer_session = Session(agent_name="peer_agent")
     registry = _FakeRegistry()
     registry.register("peer_agent", peer_session)
 
@@ -350,7 +350,7 @@ async def test_chain_timeout_fires_upstream_error_and_emits_event(tmp_path, monk
     monkeypatch.chdir(tmp_path)
 
     # upstream_session receives the error agent_response.
-    upstream_session = ChatSession(agent_name="upstream_agent")
+    upstream_session = Session(agent_name="upstream_agent")
     upstream_received: list[dict] = []
 
     async def _fake_submit_agent_response(*, from_agent, response, depth, chain_id):
@@ -365,7 +365,7 @@ async def test_chain_timeout_fires_upstream_error_and_emits_event(tmp_path, monk
     registry = _FakeRegistry()
     registry.register("upstream_agent", upstream_session)
     # Also add a peer so delegation succeeds.
-    peer_session = ChatSession(agent_name="slow_peer")
+    peer_session = Session(agent_name="slow_peer")
     registry.register("slow_peer", peer_session)
 
     # Short timeout so it fires fast. Use unattended mode so the chain
@@ -429,7 +429,7 @@ async def test_restore_reconstructs_chains_and_inbox_from_snapshot(tmp_path, mon
     """Tier 2: restore_state() re-populates inbox queue and re-arms chain from snapshot.
 
     Scenario: build a pre-populated AgentSnapshot with one pending chain and
-    one inbox message → construct a fresh ChatSession → call restore_state().
+    one inbox message → construct a fresh Session → call restore_state().
 
     P5 invariant: workspace is the single source of truth; restoration must
     reconstruct in-memory state faithfully from the persisted snapshot.
@@ -870,7 +870,7 @@ async def test_agent_request_empty_router_reply_sends_marker_upstream(
     """
     monkeypatch.chdir(tmp_path)
 
-    upstream_session = ChatSession(agent_name="origin_agent")
+    upstream_session = Session(agent_name="origin_agent")
     upstream_received: list[dict] = []
 
     async def _fake_submit_agent_response(*, from_agent, response, depth, chain_id):
@@ -893,7 +893,7 @@ async def test_agent_request_empty_router_reply_sends_marker_upstream(
     # LLM returns empty content (finish_reason="stop", content="").
     # With ADR-0021 Option F, RouterLoop detects this as empty-stop and
     # emits a failure message to the outbox (kind="agent", non-empty text).
-    # ChatSession's capture filter picks it up → agent_replies non-empty
+    # Session's capture filter picks it up → agent_replies non-empty
     # → failure message forwarded upstream (not the no-reply marker).
     stub = _make_llm_stub(_text_result(""))
     monkeypatch.setattr("reyn.chat.router_loop.call_llm_tools", stub)
@@ -936,7 +936,7 @@ async def test_agent_request_router_cap_exhausted_sends_marker_upstream(
     """
     monkeypatch.chdir(tmp_path)
 
-    upstream_session = ChatSession(agent_name="origin_agent")
+    upstream_session = Session(agent_name="origin_agent")
     upstream_received: list[dict] = []
 
     async def _fake_submit_agent_response(*, from_agent, response, depth, chain_id):
@@ -1071,7 +1071,7 @@ async def test_peer_no_reply_marker_forwarded_upstream_in_pending_chain(
     from reyn.chat.session import _no_reply_marker
 
     # Set up upstream origin agent to capture the forwarded response.
-    origin_session = ChatSession(agent_name="origin_agent")
+    origin_session = Session(agent_name="origin_agent")
     upstream_received: list[dict] = []
 
     async def _fake_submit_agent_response(*, from_agent, response, depth, chain_id):

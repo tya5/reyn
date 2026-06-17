@@ -27,7 +27,7 @@ Schema (``DECOMPOSITION_SCHEMA_VERSION = 1``):
       ]
     }
 
-This module is **standalone** — no ChatSession / RouterLoopHost coupling.
+This module is **standalone** — no Session / RouterLoopHost coupling.
 Callers (= ``dispatch_plan_tool`` write path, ``PlanRuntime`` read path,
 ``AgentRegistry.restore_all`` cleanup) thread the agent-state directory
 explicitly. P7-clean: no skill-specific strings.

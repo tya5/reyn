@@ -119,7 +119,7 @@ class SkillRuntime:
         self._runtime: OSRuntime | None = None
         # FP-0008 PR-R (= tui-coder finding #1 propagation): run_id from
         # construction site preserves the canonical run_id set by the
-        # caller (e.g. ChatSession._build_agent_for_skill_runner passes
+        # caller (e.g. Session._build_agent_for_skill_runner passes
         # the skill_runner-generated canonical here so the Agent instance
         # carries the same id from birth, before agent.run() is invoked).
         # When None, agent.run() will generate a fresh canonical at
@@ -254,9 +254,9 @@ class SkillRuntime:
     ) -> RunResult:
         # Run-id resolution priority (FP-0008 PR-R wiring contract):
         #   1. ``run_id`` kwarg to this call    (= caller overrides per-call)
-        #   2. ``self.run_id`` set at __init__  (= ChatSession spawn path)
+        #   2. ``self.run_id`` set at __init__  (= Session spawn path)
         #   3. fresh ``_make_run_id(skill.name)`` (= direct callers, resume)
-        # The (2) layer is what PR-R adds: ChatSession's
+        # The (2) layer is what PR-R adds: Session's
         # ``_build_agent_for_skill_runner`` passes the skill_runner-
         # generated canonical to SkillRuntime.__init__, so by the time
         # agent.run() runs, the instance already owns the canonical id.

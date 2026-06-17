@@ -369,7 +369,7 @@ def run_serve(args: argparse.Namespace) -> None:
     # which causes any code that uses relative `.reyn/...` paths to try to
     # write under the filesystem root and crash with a read-only-fs error.
     # `--project` only fixes the explicit StateLog/budget paths in this
-    # function; deeper code paths (ChatSession, Workspace, AgentRegistry)
+    # function; deeper code paths (Session, Workspace, AgentRegistry)
     # also use relative paths internally. Anchor the whole process at the
     # project root so the same code that works under `reyn chat` works
     # here unchanged.
@@ -414,7 +414,7 @@ def run_serve(args: argparse.Namespace) -> None:
             events_config=session_cfg.config.events,
             state_log=state_log,
             budget_tracker=budget_tracker,
-            # Same fix as web/deps.py: A2A / MCP-serve ChatSession factory
+            # Same fix as web/deps.py: A2A / MCP-serve Session factory
             # was missing ``sandbox_config`` propagation. Without it, the
             # operator's reyn.yaml ``sandbox.backend`` selection (e.g.
             # ``noop``) never reaches the sandboxed_exec handler.

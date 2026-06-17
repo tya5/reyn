@@ -1,6 +1,6 @@
 """Tier 1: contract test for classify_router_error.
 
-The router-loop catch in ``ChatSession`` previously surfaced raw
+The router-loop catch in ``Session`` previously surfaced raw
 exceptions as ``router failed: <repr>`` — typically a litellm class
 name followed by a multi-line JSON blob, truncated mid-sentence by the
 ErrorBox renderer. This module classifies the common buckets so the

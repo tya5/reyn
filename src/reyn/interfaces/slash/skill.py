@@ -22,7 +22,7 @@ from typing import TYPE_CHECKING
 from reyn.interfaces.slash import reply, reply_error, slash
 
 if TYPE_CHECKING:
-    from reyn.chat.session import ChatSession
+    from reyn.chat.session import Session
 
 
 _USAGE = (
@@ -38,7 +38,7 @@ _USAGE = (
     summary="Manage active skill runs",
     usage="/skill [list|discard <id>]",
 )
-async def skill_cmd(session: "ChatSession", args: str) -> None:
+async def skill_cmd(session: "Session", args: str) -> None:
     """Dispatch to sub-command based on the first argument."""
     parts = args.strip().split(maxsplit=1)
     if not parts:
@@ -54,7 +54,7 @@ async def skill_cmd(session: "ChatSession", args: str) -> None:
         await reply_error(session, _USAGE)
 
 
-async def _list_skill_runs(session: "ChatSession") -> None:
+async def _list_skill_runs(session: "Session") -> None:
     """Emit a status message listing active skill runs.
 
     R-D13: when a child run was spawned via ``run_skill`` and the parent
@@ -153,7 +153,7 @@ def _format_elapsed(started_monotonic: float | None) -> str:
     return f"{hrs}h{mins:02d}m"
 
 
-async def _discard_skill_run(session: "ChatSession", args: str) -> None:
+async def _discard_skill_run(session: "Session", args: str) -> None:
     """Abort the run: cancel task, drop interventions, mark discarded.
 
     Two-step flow:

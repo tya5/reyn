@@ -5,7 +5,7 @@ Two fixes tested here:
          (e.g. "openai/gemini-2.5-flash-lite") which litellm.model_cost
          does not recognise, so cost stayed 0.0 forever.
   Bug 2: RouterLoop.run() returned None, so the router's LLM call usage
-         never reached ChatSession._total_usage / _total_cost_usd.
+         never reached Session._total_usage / _total_cost_usd.
 
 Policy: no MagicMock on collaborators — use real RouterLoop + fake host,
 and real estimate_cost with a fake model_cost entry.
@@ -15,7 +15,7 @@ from __future__ import annotations
 import asyncio
 
 from reyn.chat.router_loop import RouterLoop
-from reyn.chat.session import ChatSession
+from reyn.chat.session import Session
 from reyn.llm.llm import LLMToolCallResult
 from reyn.llm.pricing import TokenUsage, estimate_cost
 
@@ -147,10 +147,10 @@ def test_router_loop_total_usage_propagates_to_session(tmp_path, monkeypatch):
     """Tier 2: after a chat turn hitting RouterLoop, session.total_usage.prompt_tokens > 0.
 
     Verifies Bug 2 fix: RouterLoop.run() now returns the accumulated
-    TokenUsage and _run_router_loop credits it to ChatSession._total_usage.
+    TokenUsage and _run_router_loop credits it to Session._total_usage.
     """
     monkeypatch.chdir(tmp_path)
-    session = ChatSession(agent_name="test_agent")
+    session = Session(agent_name="test_agent")
 
     async def _stub_call_llm_tools(**kwargs):
         return _text_result("こんにちは")

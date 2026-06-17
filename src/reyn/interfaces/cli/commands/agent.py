@@ -1,6 +1,6 @@
 """`reyn agent {list,new,rm,show}` — manage persistent agents.
 
-PR10 introduces multi-agent: each agent is a long-lived ChatSession with its
+PR10 introduces multi-agent: each agent is a long-lived Session with its
 own history under `.reyn/agents/<name>/`. The `default` agent is auto-created
 on first use; users can spin up additional named agents with their own role
 prompts via `reyn agent new`.

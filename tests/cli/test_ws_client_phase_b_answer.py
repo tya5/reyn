@@ -71,7 +71,7 @@ async def test_session_proxy_answer_intervention_returns_none() -> None:
     """Tier 2: returns ``None`` — actual answer-delivery outcome is
     async server-side.
 
-    Mirrors the local ``ChatSession._maybe_answer_oldest_intervention``
+    Mirrors the local ``Session._maybe_answer_oldest_intervention``
     return shape from the *TUI's* point of view: the local method
     returns bool, but the TUI's ``_mount_intervention`` callback
     doesn't use the return value (just calls + awaits). The remote

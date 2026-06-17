@@ -303,7 +303,7 @@ def run_run(args: argparse.Namespace) -> None:
 
     # Build the live-LLM runner_fn (injected seam for the real agent path)
     # #1289: build the agent-level EnvironmentBackend and pass the SAME instance
-    # to both ChatSession seams (FS + exec) via _build_live_runner (single-shared
+    # to both Session seams (FS + exec) via _build_live_runner (single-shared
     # sandbox, #1200). A launched container is torn down at process exit.
     _env_backend, _wb, _ws, _env_cleanup = build_environment_backend(args)
     if _env_cleanup is not None:
@@ -371,13 +371,13 @@ def _build_live_runner(agent_name: str, *, env_backend=None, ws_base_dir=None, w
       frequency counters don't bleed across scenarios.
     - Wipes agents/<name>/history.jsonl before each scenario so chat
       history from prior scenarios is not injected into the LLM's
-      messages. Without this, ChatSession.load_history() (called by the
+      messages. Without this, Session.load_history() (called by the
       session factory) loads the accumulated history-jsonl from disk,
       and scenario N sees scenario 1..N-1's user/assistant turns in its
       context — defeating the "fresh per scenario" guarantee. The
       dogfood_fresh_reset.sh script explicitly defers per-agent history
       wipe to callers (= the runner is the caller); this is that wipe.
-    - Drops the cached ChatSession from the registry between scenarios so
+    - Drops the cached Session from the registry between scenarios so
       the session's in-memory EventLog starts empty each time.
 
     Artifact collection:
@@ -445,7 +445,7 @@ def _build_live_runner(agent_name: str, *, env_backend=None, ws_base_dir=None, w
         # cell so the factory can reference it before assignment completes.
         _reg_cell: list = []
 
-        def _session_factory(profile: AgentProfile) -> ChatSession:
+        def _session_factory(profile: AgentProfile) -> Session:
             s = build_scoped_chat_session(
                 agent_name=profile.name,
                 model=model,
@@ -517,7 +517,7 @@ def _build_live_runner(agent_name: str, *, env_backend=None, ws_base_dir=None, w
         action_usage_path.unlink(missing_ok=True)
         # Wipe per-agent chat history so prior scenarios' user/assistant
         # turns are NOT injected into the LLM context for this scenario.
-        # ChatSession.load_history() (called by the session factory) reads
+        # Session.load_history() (called by the session factory) reads
         # this file unconditionally; without the wipe, scenario N sees
         # scenarios 1..N-1's messages. dogfood_fresh_reset.sh intentionally
         # defers this wipe to callers because it requires knowing the

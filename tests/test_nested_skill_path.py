@@ -21,7 +21,7 @@ import asyncio
 import json
 from pathlib import Path
 
-from reyn.chat.session import ChatSession
+from reyn.chat.session import Session
 from reyn.core.events.state_log import StateLog
 from reyn.skill.skill_registry import SkillRegistry
 from reyn.skill.skill_snapshot import SkillSnapshot
@@ -136,15 +136,15 @@ def test_registry_skill_started_wal_includes_parent_run_id(tmp_path: Path):
 # ---------------------------------------------------------------------------
 
 
-def _make_session(tmp_path: Path) -> ChatSession:
-    return ChatSession(
+def _make_session(tmp_path: Path) -> Session:
+    return Session(
         agent_name="alpha",
         state_log=StateLog(tmp_path / "wal.wal"),
         snapshot_path=tmp_path / "alpha_snapshot.json",
     )
 
 
-def _drain_outbox(session: ChatSession) -> list:
+def _drain_outbox(session: Session) -> list:
     out = []
     while not session.outbox.empty():
         out.append(session.outbox.get_nowait())

@@ -36,20 +36,20 @@ import pytest
 from reyn.chat.session import (
     _STATE_CHANGE_EVENT_MAPPINGS,
     ChatMessage,
-    ChatSession,
+    Session,
 )
 from reyn.core.events.state_log import StateLog
 
 
-def _make_session(tmp_path: Path, *, agent_name: str = "alpha") -> ChatSession:
-    return ChatSession(
+def _make_session(tmp_path: Path, *, agent_name: str = "alpha") -> Session:
+    return Session(
         agent_name=agent_name,
         state_log=StateLog(tmp_path / f"{agent_name}.wal"),
         snapshot_path=tmp_path / f"{agent_name}_snapshot.json",
     )
 
 
-def _state_changes(session: ChatSession) -> list[ChatMessage]:
+def _state_changes(session: Session) -> list[ChatMessage]:
     return [
         m for m in session.history
         if m.role == "system" and (m.meta or {}).get("kind") == "state_change"

@@ -1,6 +1,6 @@
 """Tier 2: OS invariant — Phase-1 end-to-end live-rewind gate (ADR-0038, #1533).
 
-Real `AgentRegistry` + `ChatSession` + `StateLog` + real git (no mocks). The unit
+Real `AgentRegistry` + `Session` + `StateLog` + real git (no mocks). The unit
 tests cover each piece (await_quiescent, rewind_to, WorkspaceVersionStore, the
 cut_generation capture wiring); THIS gate proves the **composition** end-to-end —
 that a live session's turn-boundary auto-capture and a subsequent global rewind
@@ -21,7 +21,7 @@ import pytest
 
 from reyn.chat.profile import AgentProfile
 from reyn.chat.registry import AgentRegistry
-from reyn.chat.session import ChatSession
+from reyn.chat.session import Session
 from reyn.core.events.agent_snapshot import AgentSnapshot
 from reyn.core.events.state_log import StateLog
 
@@ -39,7 +39,7 @@ class _FakeTurnDriver:
     without an LLM. The only simulated effect is the file write (the op effect).
     """
 
-    def __init__(self, session: ChatSession, workspace_root: Path, content_by_turn: dict[str, str]):
+    def __init__(self, session: Session, workspace_root: Path, content_by_turn: dict[str, str]):
         self._session = session
         self._ws = workspace_root
         self._content = content_by_turn
@@ -87,7 +87,7 @@ async def test_live_rewind_reverts_both_substrates_to_as_of_n(tmp_path):
     AgentProfile.new("alpha", role="").save(tmp_path / ".reyn" / "agents" / "alpha")
     snap_path = tmp_path / ".reyn" / "agents" / "alpha" / "state" / "snapshot.json"
 
-    session = ChatSession(agent_name="alpha", state_log=state_log, snapshot_path=snap_path)
+    session = Session(agent_name="alpha", state_log=state_log, snapshot_path=snap_path)
     session.register_intervention_listener("test")
     # production wiring: the registry injects its single shared stores.
     session.attach_workspace_store(reg.workspace_store)

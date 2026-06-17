@@ -1,6 +1,6 @@
-"""AgentRegistry — owner of all ChatSession instances in a `reyn chat` process.
+"""AgentRegistry — owner of all Session instances in a `reyn chat` process.
 
-PR10 introduces multiple agents (= multiple ChatSession instances) sharing
+PR10 introduces multiple agents (= multiple Session instances) sharing
 one process. The registry handles persistence (`.reyn/agents/<name>/`),
 lifecycle (lazy load, background `session.run()` task, attach/detach), and
 attached-agent routing for the REPL.
@@ -16,7 +16,7 @@ Lifecycle invariants (PR10):
 The registry deliberately knows nothing about prompt_toolkit, renderers,
 or the inbox/outbox queue mechanics — those live in `repl.py`. Registry's
 contract is:
-- `attached` returns the currently-attached ChatSession (or None)
+- `attached` returns the currently-attached Session (or None)
 - `attach(name)` makes that session the attached one and returns it
 - `running_tasks_for_agents()` lets the REPL `await` shutdown drain
 """
@@ -101,7 +101,7 @@ def _validate_agent_name(name: str) -> None:
 
 
 class AgentRegistry:
-    """In-process map of agent_name -> ChatSession with persistence wired in.
+    """In-process map of agent_name -> Session with persistence wired in.
 
     Owns the **REPL-facing outbox**: a single queue that consumers (e.g.
     `repl._output_loop`) read regardless of which agent is attached. A
@@ -109,7 +109,7 @@ class AgentRegistry:
     only while that agent is the attached one — detached agents drop
     transient outbox items, durable kinds (agent / skill_done) still
     persist to history via the agent's `_append_history` (handled at the
-    ChatSession layer, not here).
+    Session layer, not here).
     """
 
     def __init__(
@@ -125,7 +125,7 @@ class AgentRegistry:
         act_turn_capture: bool = False,
     ) -> None:
         """
-        session_factory: returns a configured ChatSession given an AgentProfile.
+        session_factory: returns a configured Session given an AgentProfile.
             The factory captures CLI-derived defaults (model, resolver, permissions,
             limits, mcp config, …) — registry doesn't need to know them.
         state_log: PR21 WAL for crash recovery. When None, persistence is
@@ -144,7 +144,7 @@ class AgentRegistry:
         self._project_root = project_root
         # FP-0043 Stage 3: the Registry holds N conversation Sessions per Agent.
         # Identity (the Agent value object, S2) is shared per name; the
-        # conversation instances (= today's ChatSession, inbox+run-loop+history)
+        # conversation instances (= today's Session, inbox+run-loop+history)
         # are keyed by an opaque session-id, default ``_DEFAULT_SID`` ("main") so
         # single-session behaviour is byte-identical. Inbound routing to non-main
         # sessions is Stage 4 — S3 just lets the structure hold N.
@@ -1197,7 +1197,7 @@ class AgentRegistry:
     # would force the WAL to know about agent / skill layout.
 
     _TRUNCATION_THROTTLE_SECS: float = 5.0
-    # R-D4: size safety net default. ChatSession's chat-turn-boundary
+    # R-D4: size safety net default. Session's chat-turn-boundary
     # call uses this threshold. Long-idle skills with no semantic
     # boundary events (= no phase_advanced / skill_completed) would
     # otherwise let the WAL grow unboundedly between turns.
@@ -1298,7 +1298,7 @@ class AgentRegistry:
 
         Called from places that don't naturally fire phase-completion
         events but still want to bound WAL growth — primarily the
-        ChatSession chat-turn boundary (each user message handled).
+        Session chat-turn boundary (each user message handled).
 
         Behavior:
           - If WAL file size <= threshold (default 1 MB): no-op, no
@@ -1458,13 +1458,13 @@ class AgentRegistry:
         choice (event loop friendly, event-sourced state from WAL apply,
         no thread offload).
 
-        Dormant agents (no live ChatSession registered in
+        Dormant agents (no live Session registered in
         ``self._agents``) are excluded from the floor calculation — the
         same skip the pre-N7 disk-read path applied for
         ``applied_seq == 0`` snapshots. The invariant that justifies
         this:
 
-          A dormant agent has no live ``ChatSession``. WAL events are
+          A dormant agent has no live ``Session``. WAL events are
           only appended through a session's ``SnapshotJournal``, which
           targets the session's own agent. Therefore no WAL event can
           target an agent whose session has never been instantiated
@@ -1509,7 +1509,7 @@ class AgentRegistry:
     # ── lifecycle ────────────────────────────────────────────────────────────
 
     def get_or_load(self, name: str) -> "object":
-        """Return the ChatSession for `name`, instantiating from profile if new."""
+        """Return the Session for `name`, instantiating from profile if new."""
         existing = self._peek_session(name)
         if existing is not None:
             return existing
@@ -1626,7 +1626,7 @@ class AgentRegistry:
             if old_session is not None:
                 # Mark detached BEFORE switching so transient outbox emissions
                 # from the old session start dropping at the source
-                # (`ChatSession._put_outbox` filters status/trace).
+                # (`Session._put_outbox` filters status/trace).
                 old_session.is_attached = False
 
         new_session.is_attached = True
@@ -1784,7 +1784,7 @@ class AgentRegistry:
     def iter_other_agents(self, self_name: str) -> list[dict]:
         """List `{name, role}` for every agent except `self_name`.
 
-        Used by RouterLoop (via ChatSession.list_available_agents) to populate
+        Used by RouterLoop (via Session.list_available_agents) to populate
         the reachable agent list. `role` is the first non-empty line of
         each agent's profile.role; empty when the agent has no role.
         """

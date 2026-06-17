@@ -1,4 +1,4 @@
-"""OutboxMessage — structured payload for ChatSession's display stream.
+"""OutboxMessage — structured payload for Session's display stream.
 
 Replaces the previous (kind, text) tuple. Provenance fields (run_id,
 skill_name, intervention_id, …) live in `meta: dict` rather than as fixed
@@ -7,7 +7,7 @@ don't require dataclass schema changes. This mirrors the `ChatMessage.meta`
 convention already used for history entries.
 
 Outbox is the **presentation stream**, distinct from history (durable log).
-- agent / skill_done → also persisted to history.jsonl by ChatSession
+- agent / skill_done → also persisted to history.jsonl by Session
 - status / error / trace / intervention → display-only, never in history
 - __end__ → control signal for _output_loop shutdown
 """
@@ -22,7 +22,7 @@ if TYPE_CHECKING:
 
 @dataclass(frozen=True)
 class OutboxMessage:
-    """One item published by ChatSession to its outbox queue.
+    """One item published by Session to its outbox queue.
 
     `kind` selects the renderer's formatting branch. `meta` carries
     optional provenance:

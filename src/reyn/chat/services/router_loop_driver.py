@@ -1,6 +1,6 @@
-"""RouterLoopDriver — per-turn router loop orchestration for ChatSession.
+"""RouterLoopDriver — per-turn router loop orchestration for Session.
 
-Extracted from ChatSession (session.py refactor PR-3).  Owns:
+Extracted from Session (session.py refactor PR-3).  Owns:
 
   - run_turn(user_text, chain_id)  — was _run_router_loop
   - _run_with_shrink(loop, text)   — was _router_run_with_shrink
@@ -11,9 +11,9 @@ Extracted from ChatSession (session.py refactor PR-3).  Owns:
   - request_cancel()               — turn-cancel seam (called by cancel_inflight)
 
 Cancel lifecycle (#1468): the cooperative-cancel flag lives here.
-``request_cancel()`` is called by ChatSession.cancel_inflight() for the turn
+``request_cancel()`` is called by Session.cancel_inflight() for the turn
 piece; ``is_cancel_requested()`` is polled at each run_loop iteration via the
-RouterHostAdapter.turn_cancel_fn callback wired in ChatSession.__init__.
+RouterHostAdapter.turn_cancel_fn callback wired in Session.__init__.
 """
 from __future__ import annotations
 
@@ -28,10 +28,10 @@ _MAX_FORCE_CLOSE_HANDOFFS = 1
 
 
 class RouterLoopDriver:
-    """Orchestrates the per-turn router loop for one ChatSession.
+    """Orchestrates the per-turn router loop for one Session.
 
-    Constructed once per ChatSession; all stateful orchestration that previously
-    lived inline in ChatSession._run_router_loop is concentrated here.
+    Constructed once per Session; all stateful orchestration that previously
+    lived inline in Session._run_router_loop is concentrated here.
     """
 
     def __init__(
@@ -53,9 +53,9 @@ class RouterLoopDriver:
         model: str,
         history_buffer: Any,          # RouterHistoryBuffer — history + SP
         budget_advisor: Any,          # ContextBudgetAdvisor — maybe_force_compact
-        limit_checkpoint_fn: Callable,  # async; ChatSession._handle_chat_limit_checkpoint
-        next_seq_fn: Callable[[], int], # ChatSession._next_seq reader
-        append_history_fn: Callable,    # ChatSession._append_history
+        limit_checkpoint_fn: Callable,  # async; Session._handle_chat_limit_checkpoint
+        next_seq_fn: Callable[[], int], # Session._next_seq reader
+        append_history_fn: Callable,    # Session._append_history
         chat_scheme_name: "str | None" = None,  # #1593 PR-2: chat-layer ToolUseScheme name → RouterLoop(scheme_name=); None → universal default
     ) -> None:
         self._router_host = router_host

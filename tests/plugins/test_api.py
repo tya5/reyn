@@ -5,7 +5,7 @@ Pins the stable contract that webhook plugins consume:
   push_to_agent(target_agent, text, sender, reply_to=None,
                 kind="user", extra_meta=None, registry=None)
 
-Internal ``ChatSession._put_inbox`` is deliberately private; the
+Internal ``Session._put_inbox`` is deliberately private; the
 helper is the documented path. Tests cover:
 
   1. Happy path: helper resolves registry, calls ensure_running,

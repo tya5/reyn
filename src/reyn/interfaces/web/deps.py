@@ -300,7 +300,7 @@ def _get_registry():
         registry_ref: list = []
 
         # `reyn web --eager-embedding-build` flag (parity with `reyn chat`).
-        # When set, ChatSession waits for the action_embedding_index build
+        # When set, Session waits for the action_embedding_index build
         # synchronously on the first router turn so ``search_actions`` is
         # visible in tools[] from Turn 1 instead of only after the
         # background build completes. Default False keeps existing
@@ -310,7 +310,7 @@ def _get_registry():
             os.environ.get("REYN_WEB_EAGER_EMBEDDING_BUILD", "").strip() == "1"
         )
 
-        def _session_factory(profile: AgentProfile) -> ChatSession:
+        def _session_factory(profile: AgentProfile) -> Session:
             registry = registry_ref[0]
             _scoped = get_cli_scoped_overrides()  # #1401 CLI-scoped capabilities
             s = build_scoped_chat_session(
@@ -331,7 +331,7 @@ def _get_registry():
                 events_config=config.events,
                 state_log=state_log,
                 budget_tracker=budget_tracker,
-                # B52 retro fix: A2A-side ChatSession was missing
+                # B52 retro fix: A2A-side Session was missing
                 # ``sandbox_config`` propagation — ``reyn.yaml`` ``sandbox.backend``
                 # set in reyn.local.yaml never reached the sandboxed_exec
                 # handler via the chat-router path. Cron-side

@@ -1,9 +1,9 @@
 """MemoryService — per-session memory persistence helpers
-(extracted from ChatSession wave 3 PR2).
+(extracted from Session wave 3 PR2).
 
 Stateless service that centralises the path-resolution + file-op orchestration
 for the remember / forget / read_body operations that previously lived on
-ChatSession.  All file I/O goes through injected async callbacks so the
+Session.  All file I/O goes through injected async callbacks so the
 permission boundary (OpContext) is never bypassed — MemoryService intentionally
 knows nothing about op_runtime, OpContext, Workspace, or PermissionResolver.
 """

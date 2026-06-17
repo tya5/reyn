@@ -34,7 +34,7 @@ pytest.importorskip("httpx", reason="httpx not installed (needed by TestClient)"
 
 from reyn.chat.profile import AgentProfile  # noqa: E402
 from reyn.chat.registry import AgentRegistry  # noqa: E402
-from reyn.chat.session import ChatSession  # noqa: E402
+from reyn.chat.session import Session  # noqa: E402
 from reyn.core.events.state_log import StateLog  # noqa: E402
 from reyn.llm.llm import LLMToolCallResult  # noqa: E402
 from reyn.llm.pricing import TokenUsage  # noqa: E402
@@ -56,11 +56,11 @@ def _build_registry(tmp_path: Path, agents: list[tuple[str, str]]) -> AgentRegis
     """Construct an AgentRegistry on tmp_path with the given (name, role) agents."""
     state_log = StateLog(tmp_path / ".reyn" / "state" / "wal.jsonl")
 
-    def factory(profile: AgentProfile) -> ChatSession:
+    def factory(profile: AgentProfile) -> Session:
         agent_dir = tmp_path / ".reyn" / "agents" / profile.name
         agent_dir.mkdir(parents=True, exist_ok=True)
         bt = BudgetTracker(CostConfig())
-        return ChatSession(
+        return Session(
             agent_name=profile.name,
             agent_role=profile.role,
             output_language="en",

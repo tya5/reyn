@@ -9,7 +9,7 @@ imposing it.
 
 Unlike the `compact` op (LLM-emitted, routed through the op runtime), this is
 user input → it calls the session-level compaction directly. It reuses
-``ChatSession._compact_now_for_op`` (the same `force_compact_now` wrapper the
+``Session._compact_now_for_op`` (the same `force_compact_now` wrapper the
 compact op uses), so the freed-token report is the **same contract** as the op:
 ``{freed_tokens, free_window_after}``.
 """
@@ -20,7 +20,7 @@ from typing import TYPE_CHECKING
 from reyn.interfaces.slash import reply, reply_error, slash
 
 if TYPE_CHECKING:
-    from reyn.chat.session import ChatSession
+    from reyn.chat.session import Session
 
 
 @slash(
@@ -29,7 +29,7 @@ if TYPE_CHECKING:
     usage="/compact",
     see_also=("docs/reference/runtime/control-ir.md",),
 )
-async def compact_cmd(session: "ChatSession", args: str) -> None:
+async def compact_cmd(session: "Session", args: str) -> None:
     """``/compact`` — fire on-demand history compaction and report what it freed.
 
     Routes through the session's compaction wrapper (force_compact_now); reports

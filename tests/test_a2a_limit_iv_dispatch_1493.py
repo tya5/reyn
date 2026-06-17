@@ -27,7 +27,7 @@ import asyncio
 
 import pytest
 
-from reyn.chat.session import ChatSession
+from reyn.chat.session import Session
 from reyn.config import OnLimitConfig, SafetyConfig
 from reyn.interfaces.web.a2a_intervention import A2AInterventionBus
 from reyn.interfaces.web.run_registry import RunRegistry
@@ -84,7 +84,7 @@ async def test_a2a_limit_answer_injection_resolves_future() -> None:
 
     await bus.on_dispatch(iv)
 
-    # Inject answer (simulates ChatSession.answer_pending_intervention path).
+    # Inject answer (simulates Session.answer_pending_intervention path).
     answer = InterventionAnswer(text="yes", choice_id="yes")
     iv.future.set_result(answer)
 
@@ -131,7 +131,7 @@ def test_a2a_session_on_limit_threads_from_safety_config() -> None:
     """Tier 2: #1493 regression gate — the A2A session factory (deps.py) must
     pass config.safety unmodified so on_limit.mode is NOT forced to "unattended".
 
-    ChatSession(safety=SafetyConfig(on_limit=OnLimitConfig(mode="interactive")))
+    Session(safety=SafetyConfig(on_limit=OnLimitConfig(mode="interactive")))
     must expose session.on_limit.mode == "interactive". If deps.py re-introduces
     a `_dc.replace(config.safety, on_limit=OnLimitConfig(mode="unattended"))` force,
     A2A sessions would silently abort at every limit instead of dispatching iv to
@@ -140,10 +140,10 @@ def test_a2a_session_on_limit_threads_from_safety_config() -> None:
 
     Scope note: the full web-layer _session_factory closure (deps._get_registry)
     is too heavy for isolation testing (requires AgentRegistry + ModelResolver +
-    config-from-disk). This test covers the closest feasible seam: ChatSession
+    config-from-disk). This test covers the closest feasible seam: Session
     constructor threads the provided SafetyConfig.on_limit without override.
     The deps.py seam is inspection-trivial (one `safety=config.safety` kwarg).
     """
     safety = SafetyConfig(on_limit=OnLimitConfig(mode="interactive"))
-    session = ChatSession(agent_name="a2a-regression-test", safety=safety)
+    session = Session(agent_name="a2a-regression-test", safety=safety)
     assert session.on_limit.mode == "interactive"

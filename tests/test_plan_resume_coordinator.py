@@ -238,7 +238,7 @@ class _MockSkillRegistry:
 
 @pytest.mark.asyncio
 async def test_apply_returns_launchable_subset(tmp_path: Path) -> None:
-    """Tier 2: apply_decisions returns plans for ChatSession to spawn
+    """Tier 2: apply_decisions returns plans for Session to spawn
     (= action ∈ {resume, retry_pending}); discard plans are excluded."""
     reg = PlanRegistry(agent_name="default", agent_state_dir=tmp_path)
     reg.start(plan_id="p001", chain_id="c0", goal="g", applied_seq=10)

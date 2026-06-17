@@ -158,7 +158,7 @@ async def test_attach_task_stores_task_reference() -> None:
 
 # ---------------------------------------------------------------------------
 # Tests 6-8: removed in issue #292 (α). RunRegistry.answer_intervention is
-# gone; iv resolution lives in ChatSession.answer_pending_intervention,
+# gone; iv resolution lives in Session.answer_pending_intervention,
 # tested in tests/test_fp0001_a2a_intervention_bus.py + the new
 # tests/test_a2a_iv_kind_choices_267_gap4.py answer-injection block.
 # ---------------------------------------------------------------------------
@@ -266,7 +266,7 @@ async def test_to_public_dict_returns_json_safe_fields() -> None:
     """Tier 1: to_public_dict() exposes run_id / agent_name / chain_id
     / status / result / error / timestamps. issue #292 (α):
     ``question`` and ``pending_intervention`` no longer exist on
-    RunEntry (= iv lives in ChatSession).
+    RunEntry (= iv lives in Session).
     """
     registry = _make_registry()
     entry = registry.create(agent_name="myagent", chain_id="chain-99", webhook_url="http://example.com")

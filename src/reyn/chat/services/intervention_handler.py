@@ -1,6 +1,6 @@
 """InterventionHandler — user-facing ask_user flow routing.
 
-Extracted from ChatSession (FP-0019 Wave 2 part 1).  Owns the
+Extracted from Session (FP-0019 Wave 2 part 1).  Owns the
 ask_user dispatch path, intervention announcement to outbox, and
 answer delivery coordination.
 
@@ -10,7 +10,7 @@ extraction, snapshot_journal).
 
 Design constraints (same pattern as other Wave 1/1b services):
 - Injected deps at construction (typed + Callable callbacks).
-- No direct reference to ChatSession.
+- No direct reference to Session.
 - All state mutations go through injected event_log (P6).
 - No skill-specific strings (P7).
 """
@@ -38,7 +38,7 @@ logger = logging.getLogger(__name__)
 
 # Issue #261 / #254 Phase 4 follow-up — source-agent threading.
 #
-# When ``ChatSession.handle_intervention`` takes the ``parent_delegate``
+# When ``Session.handle_intervention`` takes the ``parent_delegate``
 # branch, it sets this var to the name of the agent that decided to
 # delegate (= the *upstream* / source agent, i.e. the recipient who
 # couldn't answer locally and forwarded to its parent). The downstream
@@ -110,7 +110,7 @@ def _iv_meta(iv: UserIntervention) -> dict:
 class InterventionHandler:
     """Routes user-input answers to pending ask_user interventions.
 
-    Extracted from ChatSession (FP-0019 Wave 2 part 1).
+    Extracted from Session (FP-0019 Wave 2 part 1).
 
     Parameters
     ----------
@@ -130,7 +130,7 @@ class InterventionHandler:
     append_history:
         Sync callable ``(role, text, ts, meta) -> None`` — appends a
         conversational history entry for answered interventions.  The
-        callable receives the same positional kwargs as ChatSession's
+        callable receives the same positional kwargs as Session's
         internal ``_append_history`` helper, except it is simplified to
         only the fields InterventionHandler needs.
     """

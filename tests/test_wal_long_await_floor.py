@@ -49,7 +49,7 @@ def _make_registry(tmp_path: Path) -> AgentRegistry:
 
 
 class _LongAwaitShim:
-    """Minimal duck-typed ChatSession exposing only ``iter_applied_seqs``.
+    """Minimal duck-typed Session exposing only ``iter_applied_seqs``.
 
     PR-N7 (FP-0008): the floor calc reads in-memory state via the
     session's ``iter_applied_seqs`` public method. This shim mirrors
@@ -60,7 +60,7 @@ class _LongAwaitShim:
     """
 
     def __init__(self) -> None:
-        self.agent_seq: int = 0  # ChatSession.journal.snapshot.applied_seq
+        self.agent_seq: int = 0  # Session.journal.snapshot.applied_seq
         # (last_phase_applied_seq, awaiting_since)
         self.skills: list[tuple[int, "float | None"]] = []
 

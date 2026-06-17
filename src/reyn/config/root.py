@@ -189,7 +189,7 @@ class ReynConfig:
     python: PythonConfig = field(default_factory=PythonConfig)
     # FP-0016 Component E — agent identity for audit trail + HTTP header
     # propagation. Default `reyn/<hostname>` when reyn.yaml has no
-    # `agent:` block. Read by ChatSession to construct its EventLog and
+    # `agent:` block. Read by Session to construct its EventLog and
     # by mcp_client.MCPClient for the X-Reyn-Agent-Id header.
     agent: AgentConfig = field(default_factory=AgentConfig)
     # FP-0016 Component C — OAuth provider configurations for

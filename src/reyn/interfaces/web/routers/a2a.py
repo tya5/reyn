@@ -536,7 +536,7 @@ async def _escalate_to_task(
 
 
 async def _get_session_for_monitor(registry, agent_name: str):
-    """Resolve the ChatSession instance for the monitor task.
+    """Resolve the Session instance for the monitor task.
 
     Mirrors ``mcp_server._get_session`` but kept local so the import
     surface of this router stays small.
@@ -584,7 +584,7 @@ async def _await_skill_completion(
     # narration turn lands in history.
     # Each iteration is wrapped in the per-agent lock so A2A drain turns
     # serialize with concurrent MCP (or registry.run()) turns on the same
-    # shared ChatSession.
+    # shared Session.
     for _ in range(20):  # bounded; each iteration consumes one inbox msg
         if session.inbox.empty():
             break
@@ -636,7 +636,7 @@ async def _handle_answer_injection(
     """Deliver an answer to a pending ask_user intervention on an async task.
 
     Extracts text from ``params.message.parts`` (same as normal send),
-    then routes to ``ChatSession.answer_pending_intervention`` (= issue
+    then routes to ``Session.answer_pending_intervention`` (= issue
     #292 α path).
 
     issue #267 Gap 4: also extracts ``choice_id`` for closed-set prompts
@@ -650,7 +650,7 @@ async def _handle_answer_injection(
 
     issue #292 (α): pre-#292 this called
     ``run_registry.answer_intervention`` which resolved a separate iv
-    future owned by RunRegistry. Post-α, the iv lives in ChatSession's
+    future owned by RunRegistry. Post-α, the iv lives in Session's
     ``_interventions._active`` and the agent's
     ``answer_pending_intervention`` is the single authoritative entry
     point — R-D12's persistent answer buffer applies automatically so
@@ -679,7 +679,7 @@ async def _handle_answer_injection(
     if isinstance(top_choice, str) and top_choice:
         choice_id = top_choice
 
-    # Look up the owning agent via RunEntry → load ChatSession →
+    # Look up the owning agent via RunEntry → load Session →
     # authoritative answer delivery.
     entry = run_registry.get(task_id)
     if entry is None:
@@ -705,7 +705,7 @@ async def _handle_answer_injection(
     if delivered:
         # Mirror status back to "running" on the RunEntry for peer
         # polling. The actual iv resolution already happened in
-        # ChatSession; this is just the public-status mirror.
+        # Session; this is just the public-status mirror.
         run_registry.update(task_id, status="running")
         result = {"task_id": task_id, "answered": True}
     else:

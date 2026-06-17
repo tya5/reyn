@@ -1,12 +1,12 @@
 """Tier 2: Phase 2 fresh-run wiring (= ADR-0023 Phase 2 v1 gap fix).
 
-Pins the contract that ChatSession's record_plan_* methods populate
+Pins the contract that Session's record_plan_* methods populate
 the per-agent PlanRegistry alongside SnapshotJournal's WAL-side
 bookkeeping. Without this, ADR-0023 forward replay was dormant
 (PlanRegistry.load_active() returns empty for every fresh-run plan)
 and ADR-0024/ADR-0025 features had nothing to record into.
 
-Tests target the public surface (ChatSession.record_plan_* methods)
+Tests target the public surface (Session.record_plan_* methods)
 and observe via PlanRegistry's on-disk snapshots — no private state
 assertions, no mocks.
 """
@@ -16,7 +16,7 @@ from pathlib import Path
 
 import pytest
 
-from reyn.chat.session import ChatSession
+from reyn.chat.session import Session
 from reyn.core.events.state_log import StateLog
 from reyn.core.plan import (
     PlanRegistry,
@@ -24,8 +24,8 @@ from reyn.core.plan import (
 )
 
 
-def _make_session(tmp_path: Path, *, agent_name: str = "alpha") -> ChatSession:
-    return ChatSession(
+def _make_session(tmp_path: Path, *, agent_name: str = "alpha") -> Session:
+    return Session(
         agent_name=agent_name,
         state_log=StateLog(tmp_path / "state.wal"),
         snapshot_path=tmp_path / f"{agent_name}_snapshot.json",
@@ -183,7 +183,7 @@ def test_get_plan_registry_returns_singleton(tmp_path, monkeypatch):
 
 def test_get_plan_registry_returns_none_without_state_log(tmp_path):
     """Tier 2: no state_log → no plan registry (= test/standalone mode)."""
-    session = ChatSession(
+    session = Session(
         agent_name="alpha", state_log=None,
         snapshot_path=tmp_path / "snap.json",
     )

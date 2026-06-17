@@ -1,11 +1,11 @@
 """PlanRunner — plan task lifecycle (launch / track / resume).
 
-Extracted from ChatSession (FP-0019 follow-up, RunSpawner wave). Owns the
+Extracted from Session (FP-0019 follow-up, RunSpawner wave). Owns the
 ``running_plans`` dict and the spawn paths for both fresh plan runs
 (:meth:`spawn_plan_task`) and resumed plans (:meth:`spawn_resumed_plan`).
 Mirrors the SkillRunner contract: the session wires callbacks
 (:func:`put_outbox`, :func:`enqueue_plan_completed`, …) so this service
-never holds a direct ChatSession reference.
+never holds a direct Session reference.
 
 The router-facing entry point for spawning a plan is
 ``RouterHostAdapter.spawn_plan_task`` which is bound to

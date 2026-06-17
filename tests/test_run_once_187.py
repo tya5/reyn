@@ -220,10 +220,10 @@ def test_fresh_one_shot_does_not_load_persisted_history(tmp_path, monkeypatch) -
     `load_history()` call below demonstrates (empty → 2)."""
     import json
 
-    from reyn.chat.session import ChatSession
+    from reyn.chat.session import Session
 
     monkeypatch.chdir(tmp_path)  # workspace_dir (.reyn/agents/<name>) is cwd-relative
-    s = ChatSession(agent_name="default")
+    s = Session(agent_name="default")
     # a contaminated persisted history (unrelated prior conversation)
     s.history_path.parent.mkdir(parents=True, exist_ok=True)
     with s.history_path.open("w", encoding="utf-8") as f:

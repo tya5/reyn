@@ -7,7 +7,7 @@ on top of ``StateLog.truncate_below`` (the rewrite primitive, tested
 separately).
 
 PR-N7 (FP-0008): the floor calculation reads exclusively from in-memory
-state (= ``ChatSession.iter_applied_seqs`` via the session's journal +
+state (= ``Session.iter_applied_seqs`` via the session's journal +
 skill / plan registries), not from disk. Tests therefore register a
 duck-typed shim session into ``registry._agents`` and accumulate
 watermarks (= the seqs the shim yields) in the shim's seq list. On-disk
@@ -55,7 +55,7 @@ def _make_registry(tmp_path: Path, *, with_state_log: bool = True) -> AgentRegis
 
 
 class _ShimSession:
-    """Minimal duck-typed ChatSession exposing only ``iter_applied_seqs``.
+    """Minimal duck-typed Session exposing only ``iter_applied_seqs``.
 
     Tests accumulate watermarks via the seed helpers below; the shim
     surfaces them through the same public-surface contract that

@@ -219,7 +219,7 @@ class ActionEmbeddingIndex:
     cosine similarity, returning the top-K items.
 
     Production wiring (= Phase 2 step 2):
-      - One instance per ChatSession (= router-scoped).
+      - One instance per Session (= router-scoped).
       - RouterLoop bootstraps an async ``build()`` task on first turn
         when ``action_retrieval.embedding_class`` is configured.
       - ``search_actions`` handler delegates to ``query()`` when

@@ -1,11 +1,11 @@
 """Tier 2: Agent routing logic for intervention requests (issue #254 Phase 4).
 
 Pins the 3-way routing decision the Agent makes in
-``ChatSession.handle_intervention(iv)``:
+``Session.handle_intervention(iv)``:
 
   1. ``self_answer`` (= ``try_self_answer`` hook returns non-None)
   2. ``parent_agent.delegate`` (= ``resolve_parent_agent`` hook returns
-     a ChatSession)
+     a Session)
   3. ``user_channel.deliver`` (= default, falls through to
      ``_dispatch_intervention``)
 
@@ -18,7 +18,7 @@ Each branch emits an ``intervention_routed`` event for observability;
 the Phase 4 sub-issue (= dispatched by tui-coder) will surface the
 event in the TUI events tab.
 
-No mocks. Real ChatSession + subclass overrides for the hook tests.
+No mocks. Real Session + subclass overrides for the hook tests.
 """
 from __future__ import annotations
 
@@ -28,31 +28,31 @@ from pathlib import Path
 
 import pytest
 
-from reyn.chat.session import AgentRequestBus, ChatSession
+from reyn.chat.session import AgentRequestBus, Session
 from reyn.user_intervention import InterventionAnswer, UserIntervention
 
 # ── 1. Hook methods exist with the canonical signatures ────────────────
 
 
 def test_try_self_answer_hook_exists() -> None:
-    """Tier 2: ChatSession exposes ``try_self_answer(iv) -> Answer|None``
+    """Tier 2: Session exposes ``try_self_answer(iv) -> Answer|None``
     as the self-answer routing hook.
     """
-    assert hasattr(ChatSession, "try_self_answer")
-    assert inspect.iscoroutinefunction(ChatSession.try_self_answer)
-    sig = inspect.signature(ChatSession.try_self_answer)
+    assert hasattr(Session, "try_self_answer")
+    assert inspect.iscoroutinefunction(Session.try_self_answer)
+    sig = inspect.signature(Session.try_self_answer)
     assert list(sig.parameters.keys()) == ["self", "iv"]
 
 
 def test_resolve_parent_agent_hook_exists() -> None:
-    """Tier 2: ChatSession exposes ``resolve_parent_agent(iv) -> ChatSession|None``
+    """Tier 2: Session exposes ``resolve_parent_agent(iv) -> Session|None``
     as the parent-delegate routing hook.
 
     Synchronous (not async) — chain-walk lookups don't need to await.
     """
-    assert hasattr(ChatSession, "resolve_parent_agent")
-    assert not inspect.iscoroutinefunction(ChatSession.resolve_parent_agent)
-    sig = inspect.signature(ChatSession.resolve_parent_agent)
+    assert hasattr(Session, "resolve_parent_agent")
+    assert not inspect.iscoroutinefunction(Session.resolve_parent_agent)
+    sig = inspect.signature(Session.resolve_parent_agent)
     assert list(sig.parameters.keys()) == ["self", "iv"]
 
 
@@ -60,7 +60,7 @@ def test_default_hooks_return_none() -> None:
     """Tier 2: default implementations return None — Phase 4 ships pure
     scaffold, no kind-specific policies enabled out-of-the-box.
     """
-    session = ChatSession(agent_name="t")
+    session = Session(agent_name="t")
     iv = UserIntervention(kind="ask_user", prompt="Q?")
 
     async def _check_self_answer() -> InterventionAnswer | None:
@@ -82,7 +82,7 @@ def test_default_routing_fires_user_channel_branch(tmp_path: Path) -> None:
     to verify the branch was actually taken (= the answer's emptiness
     is observable only if dispatch was reached).
     """
-    session = ChatSession(agent_name="t")
+    session = Session(agent_name="t")
     iv = UserIntervention(kind="ask_user", prompt="Q?")
 
     answer = asyncio.run(session.handle_intervention(iv))
@@ -96,7 +96,7 @@ def test_default_routing_emits_user_channel_event(tmp_path: Path) -> None:
     ``route="user_channel"`` so observers (= TUI events tab, debug
     traces, future routing-policy analysis) can see the decision.
     """
-    session = ChatSession(agent_name="t")
+    session = Session(agent_name="t")
     iv = UserIntervention(kind="ask_user", prompt="Q?")
 
     asyncio.run(session.handle_intervention(iv))
@@ -116,7 +116,7 @@ def test_default_routing_emits_user_channel_event(tmp_path: Path) -> None:
 # ── 3. self_answer branch — fires when _try_self_answer returns answer ──
 
 
-class _SelfAnsweringSession(ChatSession):
+class _SelfAnsweringSession(Session):
     """Subclass that always self-answers with a fixed answer."""
 
     async def try_self_answer(self, iv: UserIntervention) -> InterventionAnswer | None:
@@ -162,15 +162,15 @@ def test_self_answer_branch_emits_self_answer_event() -> None:
 #      returns a session ─────────────────────────────────────────────────
 
 
-class _DelegatingSession(ChatSession):
+class _DelegatingSession(Session):
     """Subclass that delegates all interventions to a designated parent
     session. Used to verify the parent_delegate routing branch.
     """
 
-    def set_parent(self, parent: ChatSession) -> None:
+    def set_parent(self, parent: Session) -> None:
         self._parent_session = parent
 
-    def resolve_parent_agent(self, iv: UserIntervention) -> ChatSession | None:
+    def resolve_parent_agent(self, iv: UserIntervention) -> Session | None:
         return getattr(self, "_parent_session", None)
 
 
@@ -274,7 +274,7 @@ def test_chain_override_is_notified_through_user_channel_branch(tmp_path: Path) 
     override REPLACED the dispatch; α changed it to DECORATE — the
     iv still flows to the default handler.
     """
-    session = ChatSession(agent_name="t")
+    session = Session(agent_name="t")
     # The default handler awaits iv.future; register a listener so
     # dispatch doesn't short-circuit on no-listener.
     session.register_intervention_listener("test")

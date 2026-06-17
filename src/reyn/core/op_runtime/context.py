@@ -61,7 +61,7 @@ class OpContext:
     # Mutable cache for MCP HTTP clients keyed by server name
     mcp_clients: dict = field(default_factory=dict)
     # FP-0016 Component E: agent identity for X-Reyn-Agent-Id header on
-    # outgoing MCP / external HTTP calls. Plumbed from ChatSession's
+    # outgoing MCP / external HTTP calls. Plumbed from Session's
     # ReynConfig.agent.id (= `reyn/<hostname>` by default). None
     # preserves prior behaviour for direct OpContext construction (e.g.
     # tests that don't simulate a multi-agent identity).
@@ -72,7 +72,7 @@ class OpContext:
     current_phase: str = ""
 
     # #272/#1128: voluntary-compaction capability for the `compact` op.
-    # An awaitable zero-arg callable the caller (ChatSession / phase runtime)
+    # An awaitable zero-arg callable the caller (Session / phase runtime)
     # wires to its synchronous compaction (force_compact_now), returning
     # {"freed_tokens", "free_window_after", ...} in exact tokens. None when no
     # compaction context is available (e.g. preprocessor / direct construction)

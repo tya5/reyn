@@ -1,6 +1,6 @@
 """Tier 2: ``OutboxMessage(kind="intervention").meta["source_agent"]`` opt-in.
 
-Phase 4 follow-up (issue #261) — when ``ChatSession.handle_intervention``
+Phase 4 follow-up (issue #261) — when ``Session.handle_intervention``
 takes the ``parent_delegate`` branch, the downstream ``user_channel``
 emit must stamp ``meta["source_agent"]`` with the delegating agent's
 name so the TUI can render a ``[parent: <name>]`` badge.

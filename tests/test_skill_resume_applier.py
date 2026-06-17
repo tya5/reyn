@@ -1,7 +1,7 @@
 """Tier 2: OS invariant — SkillResumeCoordinator.apply_decisions.
 
 Background: ``decide_for_plan`` returns ``ResumeDecision`` per active
-skill run. The runtime layer (ChatSession startup) needs to consume
+skill run. The runtime layer (Session startup) needs to consume
 these decisions:
   - ``discard`` → call ``SkillRegistry.complete(status='discarded')``
     + drop pending interventions for the run_id

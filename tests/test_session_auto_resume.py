@@ -1,4 +1,4 @@
-"""Tier 2: OS invariant — ChatSession startup auto-resume hook.
+"""Tier 2: OS invariant — Session startup auto-resume hook.
 
 After ``restore_state`` rehydrates the agent's snapshot + WAL, the
 session must auto-launch resume tasks for every active skill run.
@@ -22,7 +22,7 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 
-from reyn.chat.session import ChatSession
+from reyn.chat.session import Session
 from reyn.core.events.state_log import StateLog
 from reyn.skill.skill_resume_coordinator import (
     ResumeDecision,
@@ -33,8 +33,8 @@ from reyn.skill.skill_resume_coordinator import (
 # ---------------------------------------------------------------------------
 
 
-def _make_session(tmp_path: Path, *, agent_name: str = "alpha") -> ChatSession:
-    return ChatSession(
+def _make_session(tmp_path: Path, *, agent_name: str = "alpha") -> Session:
+    return Session(
         agent_name=agent_name,
         state_log=StateLog(tmp_path / "state.wal"),
         snapshot_path=tmp_path / f"{agent_name}_snapshot.json",

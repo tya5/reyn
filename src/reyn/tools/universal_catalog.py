@@ -857,7 +857,7 @@ def _should_inject_hidden_state_hint(rs: Any) -> bool:
     """Return True iff the hint should be added to a list_actions response.
 
     Fires when (a) a production-context router_state is present (=
-    ChatSession-mediated; rules out pure unit-test contexts that
+    Session-mediated; rules out pure unit-test contexts that
     don't construct an rs at all) AND (b) search_actions is not
     currently usable. Pure-test contexts (``rs is None``) are
     explicitly excluded so test fixtures + LLMReplay don't drift.

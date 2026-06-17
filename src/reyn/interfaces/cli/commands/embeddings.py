@@ -407,7 +407,7 @@ def register(sub: Any) -> None:
         description=(
             "Remove the cached action index SQLite and build-lock "
             "marker. Does NOT itself trigger embedding; the next "
-            "ChatSession that uses search_actions will re-embed."
+            "Session that uses search_actions will re-embed."
         ),
     )
     rebuild.add_argument(

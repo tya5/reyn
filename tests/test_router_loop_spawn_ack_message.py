@@ -7,7 +7,7 @@ user-visible acknowledgment via ``put_outbox(kind="agent")`` to close
 the silence window without re-introducing the LLM-composition race
 that H3 fixed.
 
-The full ``ChatSession→RouterLoop`` spawn-ack contract is covered in
+The full ``Session→RouterLoop`` spawn-ack contract is covered in
 ``test_router_loop_chatsession.test_user_message_invoke_skill_e2e``.
 These tests focus on the OS-message invariants:
 

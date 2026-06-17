@@ -105,10 +105,10 @@ async def _lifespan(app: FastAPI):
     # FP-0001 + issue #267 Gap 5: RunRegistry singleton — process-wide
     # task lifecycle tracking with snapshot persistence so a process
     # restart preserves A2A async-task state (= the structural gap that
-    # left A2A peer routing half-restored against the ChatSession-side
+    # left A2A peer routing half-restored against the Session-side
     # outstanding_interventions persistence wired by PR-intervention-link
     # L2-L6). Snapshot path follows the convention established by
-    # ChatSession's per-agent snapshot.json: server-level state lives at
+    # Session's per-agent snapshot.json: server-level state lives at
     # ``.reyn/state/run_registry.json``.
     from pathlib import Path  # noqa: PLC0415
 

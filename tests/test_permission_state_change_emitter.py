@@ -3,7 +3,7 @@
 The first concrete emitter for the ``notify_state_change`` API
 landed in PR #455. When a permission decision is persisted to
 ``approvals.yaml`` (= user said "yes always" / "no never" on an
-intervention), ChatSession mints a ``state_change`` history entry so
+intervention), Session mints a ``state_change`` history entry so
 the LLM sees the world-state change in its next turn. Directly
 mitigates the #352 in-context-learning refusal trap pattern (= the
 LLM was continuing to refuse a capability after the user had granted
@@ -15,14 +15,14 @@ Pins:
      subscriber API exists and stores callbacks in a list.
   2. ``_persist(key, approved)`` fires all registered callbacks with the
      same ``(key, approved)`` args.
-  3. ChatSession subscribes itself on construction; the callback fires
+  3. Session subscribes itself on construction; the callback fires
      a ``notify_state_change`` with summary derived from ``key`` and
      ``approved``.
-  4. Multiple ChatSessions on the same PermissionResolver all receive
+  4. Multiple Sessions on the same PermissionResolver all receive
      notifications independently (= shared-resolver model).
   5. A bad callback doesn't crash ``_persist`` (= other subscribers
      and the core persistence path are unaffected).
-  6. ChatSession.shutdown unregisters the callback so dead-session
+  6. Session.shutdown unregisters the callback so dead-session
      references don't accumulate.
 
 Tier 2 because the contract is load-bearing for #352 closure —
@@ -34,18 +34,18 @@ from pathlib import Path
 
 import pytest
 
-from reyn.chat.session import ChatMessage, ChatSession
+from reyn.chat.session import ChatMessage, Session
 from reyn.core.events.state_log import StateLog
 from reyn.security.permissions.permissions import PermissionResolver
 
 
 def _make_session(
     tmp_path: Path, *, agent_name: str, perm_resolver: PermissionResolver,
-) -> ChatSession:
-    """Build a ChatSession redirected to ``tmp_path`` with a shared
+) -> Session:
+    """Build a Session redirected to ``tmp_path`` with a shared
     PermissionResolver injected.
     """
-    return ChatSession(
+    return Session(
         agent_name=agent_name,
         state_log=StateLog(tmp_path / f"{agent_name}.wal"),
         snapshot_path=tmp_path / f"{agent_name}_snapshot.json",
@@ -59,7 +59,7 @@ def _make_resolver(tmp_path: Path) -> PermissionResolver:
     )
 
 
-def _state_changes(session: ChatSession) -> list[ChatMessage]:
+def _state_changes(session: Session) -> list[ChatMessage]:
     return [
         m for m in session.history
         if m.role == "system" and (m.meta or {}).get("kind") == "state_change"
@@ -149,7 +149,7 @@ def test_persist_callback_exception_does_not_crash_persist(tmp_path):
     assert resolver.saved_get("safe.key") is True
 
 
-# ── ChatSession wiring ────────────────────────────────────────────────
+# ── Session wiring ────────────────────────────────────────────────
 
 
 def test_session_mints_state_change_on_permission_grant(tmp_path):
@@ -189,7 +189,7 @@ def test_session_mints_state_change_on_permission_revoke(tmp_path):
 
 
 def test_multiple_sessions_all_notified_on_shared_resolver(tmp_path):
-    """Tier 2: when N ChatSessions share the same PermissionResolver
+    """Tier 2: when N Sessions share the same PermissionResolver
     (= the typical reyn web / reyn run model), a single permission
     grant notifies all N sessions independently. Each gets its own
     state_change history entry — the grant is project-wide, all
@@ -206,11 +206,11 @@ def test_multiple_sessions_all_notified_on_shared_resolver(tmp_path):
 
 
 def test_session_with_no_resolver_works_unchanged(tmp_path):
-    """Tier 2: ChatSession can be constructed without a
+    """Tier 2: Session can be constructed without a
     PermissionResolver (= CLI / test stubs). No callback registered,
     no crash on shutdown. Backward compat path.
     """
-    session = ChatSession(
+    session = Session(
         agent_name="loner",
         state_log=StateLog(tmp_path / "loner.wal"),
         snapshot_path=tmp_path / "loner_snapshot.json",
@@ -222,7 +222,7 @@ def test_session_with_no_resolver_works_unchanged(tmp_path):
 
 @pytest.mark.asyncio
 async def test_session_shutdown_unregisters_callback(tmp_path):
-    """Tier 2: ``ChatSession.shutdown`` unregisters its callback from
+    """Tier 2: ``Session.shutdown`` unregisters its callback from
     the shared PermissionResolver — prevents dead-session references
     from accumulating across long-running ``reyn web`` sessions.
     """

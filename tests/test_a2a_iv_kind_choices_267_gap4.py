@@ -182,7 +182,7 @@ def test_webhook_payload_free_text_ask_user_has_empty_choices(monkeypatch) -> No
 
 class _FakeAgentRegistry:
     """Minimal stub — ``_handle_answer_injection`` only calls
-    ``get_or_load(name)``. Returns a captured ChatSession-shape stub.
+    ``get_or_load(name)``. Returns a captured Session-shape stub.
     """
 
     def __init__(self, session) -> None:
@@ -192,9 +192,9 @@ class _FakeAgentRegistry:
         return self._session
 
 
-class _FakeChatSession:
+class _FakeSession:
     """Captures ``answer_pending_intervention`` calls. issue #292 (α):
-    the iv future is owned by ChatSession; the router calls this method
+    the iv future is owned by Session; the router calls this method
     instead of ``RunRegistry.answer_intervention`` (= removed).
     """
 
@@ -210,9 +210,9 @@ class _FakeChatSession:
         return self.return_value
 
 
-def _run_answer_injection(*, params: dict, run_id: str) -> _FakeChatSession:
+def _run_answer_injection(*, params: dict, run_id: str) -> _FakeSession:
     """Drive ``_handle_answer_injection`` with a real RunRegistry and
-    fake agent registry, return the captured FakeChatSession.
+    fake agent registry, return the captured FakeSession.
     """
     from reyn.interfaces.web.routers.a2a import _handle_answer_injection
 
@@ -223,7 +223,7 @@ def _run_answer_injection(*, params: dict, run_id: str) -> _FakeChatSession:
     list(run_registry._runs.values())[0].run_id = run_id  # noqa: SLF001
     run_registry._runs = {run_id: list(run_registry._runs.values())[0]}  # noqa: SLF001
 
-    session = _FakeChatSession()
+    session = _FakeSession()
     agent_registry = _FakeAgentRegistry(session)
 
     asyncio.run(
@@ -241,7 +241,7 @@ def _run_answer_injection(*, params: dict, run_id: str) -> _FakeChatSession:
 def test_handle_answer_injection_extracts_top_level_choice_id() -> None:
     """Tier 2: ``params.choice_id`` (= top-level convenience) is extracted
     and passed into ``InterventionAnswer.choice_id`` for the
-    ChatSession-side delivery (issue #292 α).
+    Session-side delivery (issue #292 α).
     """
     session = _run_answer_injection(
         run_id="run-tlc",

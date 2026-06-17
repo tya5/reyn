@@ -11,7 +11,7 @@ G10: when an invoke_skill tool call fails (tool_failed event), the router must
     emit a deterministic i18n message in output_language instead of letting the
     LLM generate an English fallback reply (B2-M2 fix).
 
-Policy: no MagicMock / AsyncMock on collaborators. Real ChatSession and
+Policy: no MagicMock / AsyncMock on collaborators. Real Session and
 build_system_prompt instances. RouterLoop.run() is patched only where strictly
 necessary to avoid network calls (Tier 3 LLM-replay tests are separate).
 """
@@ -24,7 +24,7 @@ from pathlib import Path
 from reyn.chat.router_system_prompt import build_system_prompt
 from reyn.chat.session import (
     _ROUTER_RETRY_EXHAUSTED_MSG,
-    ChatSession,
+    Session,
 )
 from reyn.llm.llm import LLMToolCallResult
 from reyn.llm.pricing import TokenUsage
@@ -39,15 +39,15 @@ def _make_session(
     *,
     cap: int = 3,
     output_language: str | None = "ja",
-) -> ChatSession:
-    """Minimal ChatSession with a real BudgetTracker and configurable language.
+) -> Session:
+    """Minimal Session with a real BudgetTracker and configurable language.
 
     output_language=None tests the unset-user behavior (= no language
     directive in router prompt; fallback messages use English).
     """
     from reyn.config import LoopConfig, SafetyConfig
     safety = SafetyConfig(loop=LoopConfig(max_router_calls_per_turn=cap))
-    return ChatSession(
+    return Session(
         agent_name="test_agent",
         output_language=output_language,
         budget_tracker=BudgetTracker(CostConfig()),
@@ -55,7 +55,7 @@ def _make_session(
     )
 
 
-def _drain_outbox(session: ChatSession) -> list:
+def _drain_outbox(session: Session) -> list:
     msgs = []
     while not session.outbox.empty():
         msgs.append(session.outbox.get_nowait())
@@ -96,7 +96,7 @@ def test_retry_exhausted_fallback_is_japanese_when_output_language_ja(
 
     # Pre-spend the budget and suppress the reset so the very first
     # _run_router_loop attempt inside _handle_user_message is rejected.
-    monkeypatch.setattr(ChatSession, "_reset_router_turn_counter", lambda self: None)
+    monkeypatch.setattr(Session, "_reset_router_turn_counter", lambda self: None)
     session.router_invocations_this_turn = 3
     session._router_last_reason = "out_of_scope"
 
@@ -125,7 +125,7 @@ def test_retry_exhausted_fallback_is_english_when_output_language_en(
     monkeypatch.chdir(tmp_path)
     session = _make_session(tmp_path, cap=3, output_language="en")
 
-    monkeypatch.setattr(ChatSession, "_reset_router_turn_counter", lambda self: None)
+    monkeypatch.setattr(Session, "_reset_router_turn_counter", lambda self: None)
     session.router_invocations_this_turn = 3
     session._router_last_reason = "test_reason"
 
@@ -150,7 +150,7 @@ def test_retry_exhausted_fallback_defaults_to_english_for_unsupported_language(
     monkeypatch.chdir(tmp_path)
     session = _make_session(tmp_path, cap=3, output_language="fr")
 
-    monkeypatch.setattr(ChatSession, "_reset_router_turn_counter", lambda self: None)
+    monkeypatch.setattr(Session, "_reset_router_turn_counter", lambda self: None)
     session.router_invocations_this_turn = 3
     session._router_last_reason = ""
 
@@ -257,7 +257,7 @@ def test_system_prompt_default_output_language_is_none():
 def test_router_loop_passes_output_language_to_system_prompt(tmp_path, monkeypatch):
     """Tier 2: RouterLoop.run() passes the host's output_language to
     build_system_prompt so the LLM receives the correct language instruction
-    (F11 — integration path: ChatSession → RouterLoop → build_system_prompt).
+    (F11 — integration path: Session → RouterLoop → build_system_prompt).
 
     We stub call_llm_tools to avoid network I/O and capture the system prompt
     that RouterLoop would send.

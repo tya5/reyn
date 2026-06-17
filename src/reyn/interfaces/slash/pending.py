@@ -9,7 +9,7 @@ Sub-commands:
   /pending claim <id>   — rebind origin to this TUI channel + re-dispatch
 
 The 3 operations match the #270 framework vocabulary (= observe / discard /
-claim). All routed through ``ChatSession.{list_stalled_interventions,
+claim). All routed through ``Session.{list_stalled_interventions,
 discard_pending_intervention, claim_pending_intervention}`` introduced in
 PR #275.
 """
@@ -20,7 +20,7 @@ from typing import TYPE_CHECKING
 from reyn.interfaces.slash import reply, reply_error, slash
 
 if TYPE_CHECKING:
-    from reyn.chat.session import ChatSession
+    from reyn.chat.session import Session
 
 
 _USAGE = (
@@ -70,7 +70,7 @@ def _render_list(pending_ops: list) -> str:
 
 
 def _resolve_iv_id(
-    session: "ChatSession", supplied: str,
+    session: "Session", supplied: str,
 ) -> tuple[str | None, str | None]:
     """Resolve a possibly-short iv id to the full one in the stalled list.
 
@@ -105,7 +105,7 @@ def _resolve_iv_id(
     ),
     usage="/pending [list|discard <id>|claim <id>]",
 )
-async def pending_cmd(session: "ChatSession", args: str) -> None:
+async def pending_cmd(session: "Session", args: str) -> None:
     """Dispatch ``/pending [list|discard|claim]`` subcommands."""
     parts = args.strip().split(maxsplit=1)
     if not parts or parts[0] == "list":
@@ -149,7 +149,7 @@ def _render_needs_attention(summary: dict) -> str:
     return "needs attention:\n" + "\n".join(lines)
 
 
-async def _list(session: "ChatSession") -> None:
+async def _list(session: "Session") -> None:
     if not hasattr(session, "list_stalled_interventions"):
         await reply_error(session, _NO_SESSION)
         return
@@ -175,7 +175,7 @@ async def _list(session: "ChatSession") -> None:
     await reply(session, output)
 
 
-async def _discard(session: "ChatSession", supplied_id: str) -> None:
+async def _discard(session: "Session", supplied_id: str) -> None:
     """Two-step confirm: first invocation shows a warning; second executes.
 
     Mirrors ``/reset``'s pattern (Wave-13 B#2).  The user must re-type
@@ -243,7 +243,7 @@ async def _discard(session: "ChatSession", supplied_id: str) -> None:
         await reply_error(session, f"discard {iv_id[:8]}: not in stalled queue")
 
 
-async def _claim(session: "ChatSession", supplied_id: str) -> None:
+async def _claim(session: "Session", supplied_id: str) -> None:
     if not hasattr(session, "claim_pending_intervention"):
         await reply_error(session, _NO_SESSION)
         return

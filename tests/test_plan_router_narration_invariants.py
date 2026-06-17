@@ -10,7 +10,7 @@ Pins the contract that plan completion drives router synthesis via the
 3. ``_handle_plan_completed`` calls ``_run_router_loop`` exactly once (=
    the synthesis turn).
 
-No mocks of collaborators — real ChatSession + real PlanExecutionResult.
+No mocks of collaborators — real Session + real PlanExecutionResult.
 ``_run_router_loop`` is stubbed via monkeypatch.setattr (not MagicMock/patch)
 so the LLM is not invoked in the invariant tests (Tier 2 scope: inbox
 enqueue / history inject / turn invocation; not LLM response content).
@@ -23,13 +23,13 @@ from pathlib import Path
 import pytest
 
 from reyn.chat.planner import PlanExecutionResult
-from reyn.chat.session import ChatSession
+from reyn.chat.session import Session
 from reyn.core.events.state_log import StateLog
 from reyn.core.plan import PlanRegistry
 
 
-def _make_session(tmp_path: Path, *, agent_name: str = "alpha") -> ChatSession:
-    return ChatSession(
+def _make_session(tmp_path: Path, *, agent_name: str = "alpha") -> Session:
+    return Session(
         agent_name=agent_name,
         state_log=StateLog(tmp_path / "wal.jsonl"),
         snapshot_path=tmp_path / f"{agent_name}_snapshot.json",
@@ -61,7 +61,7 @@ async def test_plan_completion_emits_plan_completed_inbox(
     async def _stub_run_router_loop(self, user_text: str, chain_id: str) -> None:
         router_calls.append((user_text, chain_id))
 
-    monkeypatch.setattr(ChatSession, "_run_router_loop", _stub_run_router_loop)
+    monkeypatch.setattr(Session, "_run_router_loop", _stub_run_router_loop)
 
     # Build a minimal fake runtime that returns a clean PlanExecutionResult.
     fake_result = PlanExecutionResult(
@@ -137,7 +137,7 @@ async def test_handle_plan_completed_injects_user_message(
     async def _noop_router_loop(self, user_text: str, chain_id: str) -> None:
         pass
 
-    monkeypatch.setattr(ChatSession, "_run_router_loop", _noop_router_loop)
+    monkeypatch.setattr(Session, "_run_router_loop", _noop_router_loop)
 
     payload = {
         "plan_id": "p_narrate_001",
@@ -194,7 +194,7 @@ async def test_handle_plan_completed_runs_router_turn(
         nonlocal router_call_count
         router_call_count += 1
 
-    monkeypatch.setattr(ChatSession, "_run_router_loop", _counting_router_loop)
+    monkeypatch.setattr(Session, "_run_router_loop", _counting_router_loop)
 
     payload = {
         "plan_id": "p_synth_002",
@@ -235,7 +235,7 @@ async def test_handle_plan_completed_injects_step_failures_when_present(
     async def _noop_router_loop(self, user_text: str, chain_id: str) -> None:
         pass
 
-    monkeypatch.setattr(ChatSession, "_run_router_loop", _noop_router_loop)
+    monkeypatch.setattr(Session, "_run_router_loop", _noop_router_loop)
 
     # ── Case A: plan with a failed step ─────────────────────────────────
     payload_with_failures = {

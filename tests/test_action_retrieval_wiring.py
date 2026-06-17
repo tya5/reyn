@@ -1,7 +1,7 @@
 """Tier 2: FP-0034 PR-3b-iii config-to-router_loop wiring.
 
 Verifies that ``ActionRetrievalConfig.universal_wrappers_enabled``
-flows from reyn.yaml → ChatSession → RouterHostAdapter →
+flows from reyn.yaml → Session → RouterHostAdapter →
 RouterLoopHost.get_universal_wrappers_enabled() and reaches
 build_tools() with the correct value.
 
@@ -121,11 +121,11 @@ def test_build_tools_on_when_flag_on() -> None:
     assert names[-3:] == ["list_actions", "describe_action", "invoke_action"]
 
 
-# ── 3. ChatSession constructor accepts action_retrieval_config ───────────
+# ── 3. Session constructor accepts action_retrieval_config ───────────
 
 
 def test_chat_session_accepts_action_retrieval_config() -> None:
-    """Tier 2: ChatSession constructor signature includes
+    """Tier 2: Session constructor signature includes
     action_retrieval_config parameter (= PR-3b-iii integration point).
 
     The constructor accepts the config; downstream wiring is verified
@@ -133,9 +133,9 @@ def test_chat_session_accepts_action_retrieval_config() -> None:
     """
     import inspect
 
-    from reyn.chat.session import ChatSession
+    from reyn.chat.session import Session
 
-    sig = inspect.signature(ChatSession.__init__)
+    sig = inspect.signature(Session.__init__)
     assert "action_retrieval_config" in sig.parameters
     # Default must be None so existing callers don't break
     default = sig.parameters["action_retrieval_config"].default

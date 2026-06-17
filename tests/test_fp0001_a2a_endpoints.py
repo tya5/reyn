@@ -221,7 +221,7 @@ def test_agent_card_shows_streaming_and_push_notifications_true(tmp_path) -> Non
 
     from reyn.chat.profile import AgentProfile
     from reyn.chat.registry import AgentRegistry
-    from reyn.chat.session import ChatSession
+    from reyn.chat.session import Session
     from reyn.core.events.state_log import StateLog
     from reyn.interfaces.web.deps import get_registry
     from reyn.interfaces.web.server import app
@@ -229,11 +229,11 @@ def test_agent_card_shows_streaming_and_push_notifications_true(tmp_path) -> Non
 
     state_log = StateLog(tmp_path / ".reyn" / "state" / "wal.jsonl")
 
-    def factory(profile: AgentProfile) -> ChatSession:
+    def factory(profile: AgentProfile) -> Session:
         agent_dir = tmp_path / ".reyn" / "agents" / profile.name
         agent_dir.mkdir(parents=True, exist_ok=True)
         bt = BudgetTracker(CostConfig())
-        return ChatSession(
+        return Session(
             agent_name=profile.name,
             agent_role=profile.role,
             output_language="en",
@@ -282,17 +282,17 @@ def test_answer_injection_delivers_to_pending_intervention(tmp_path) -> None:
     an InterventionAnswer to the agent's pending intervention and
     returns ``{"answered": True}``.
 
-    issue #292 (α): iv lives in ``ChatSession._interventions._active``,
+    issue #292 (α): iv lives in ``Session._interventions._active``,
     NOT in ``RunEntry.pending_intervention`` (removed). We seed the iv
     directly into the agent's intervention registry; the router looks
     up the agent via the RunEntry's ``agent_name`` and calls
-    ``ChatSession.answer_pending_intervention``.
+    ``Session.answer_pending_intervention``.
     """
     from fastapi.testclient import TestClient
 
     from reyn.chat.profile import AgentProfile
     from reyn.chat.registry import AgentRegistry
-    from reyn.chat.session import ChatSession
+    from reyn.chat.session import Session
     from reyn.core.events.state_log import StateLog
     from reyn.interfaces.web.deps import get_registry, get_run_registry
     from reyn.interfaces.web.server import app
@@ -301,11 +301,11 @@ def test_answer_injection_delivers_to_pending_intervention(tmp_path) -> None:
 
     state_log = StateLog(tmp_path / ".reyn" / "state" / "wal.jsonl")
 
-    def factory(profile: AgentProfile) -> ChatSession:
+    def factory(profile: AgentProfile) -> Session:
         agent_dir = tmp_path / ".reyn" / "agents" / profile.name
         agent_dir.mkdir(parents=True, exist_ok=True)
         bt = BudgetTracker(CostConfig())
-        return ChatSession(
+        return Session(
             agent_name=profile.name,
             agent_role=profile.role,
             output_language="en",
@@ -325,7 +325,7 @@ def test_answer_injection_delivers_to_pending_intervention(tmp_path) -> None:
     entry = run_registry.create(agent_name="demo", chain_id="chain-iv")
 
     # Seed the iv directly into the agent's outstanding intervention
-    # queue (= post-α: ChatSession owns iv state). Use the same loop
+    # queue (= post-α: Session owns iv state). Use the same loop
     # the TestClient will drive so the future is on the right loop.
     loop = asyncio.new_event_loop()
     try:
@@ -388,7 +388,7 @@ def test_answer_injection_returns_answered_false_for_unknown_task(tmp_path) -> N
 
     from reyn.chat.profile import AgentProfile
     from reyn.chat.registry import AgentRegistry
-    from reyn.chat.session import ChatSession
+    from reyn.chat.session import Session
     from reyn.core.events.state_log import StateLog
     from reyn.interfaces.web.deps import get_registry, get_run_registry
     from reyn.interfaces.web.server import app
@@ -396,11 +396,11 @@ def test_answer_injection_returns_answered_false_for_unknown_task(tmp_path) -> N
 
     state_log = StateLog(tmp_path / ".reyn" / "state" / "wal.jsonl")
 
-    def factory(profile: AgentProfile) -> ChatSession:
+    def factory(profile: AgentProfile) -> Session:
         agent_dir = tmp_path / ".reyn" / "agents" / profile.name
         agent_dir.mkdir(parents=True, exist_ok=True)
         bt = BudgetTracker(CostConfig())
-        return ChatSession(
+        return Session(
             agent_name=profile.name,
             agent_role=profile.role,
             output_language="en",
@@ -450,7 +450,7 @@ def test_answer_injection_returns_answered_false_for_unknown_task(tmp_path) -> N
 # ---------------------------------------------------------------------------
 
 # Test 8 (async_mode=true with real agent spawning a background task) requires
-# F1 (ChatSession.register_intervention_override), F2 (RunRegistry fully wired),
+# F1 (Session.register_intervention_override), F2 (RunRegistry fully wired),
 # and F3 (A2AInterventionBus) to be integrated so the background task can
 # complete without a real LLM. Deferred to F5 e2e integration test.
 

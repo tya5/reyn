@@ -114,7 +114,7 @@ class FakeRouterHost:
     # --- Memory paths ---
 
     def memory_path(self, layer: str, slug: str) -> str:
-        # Match production ChatSession._memory_path contract: appends .md.
+        # Match production Session._memory_path contract: appends .md.
         return f"/memory/{layer}/{slug}.md"
 
     def memory_dir(self, layer: str) -> str:

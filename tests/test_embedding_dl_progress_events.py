@@ -321,7 +321,7 @@ def test_get_provider_threads_event_sink_through_routing_wrapper(
     """Tier 2: ``get_provider("litellm", config, event_sink=…)`` plumbs the sink.
 
     The factory must hand the sink to the routing wrapper so production
-    callers (= ChatSession) only need to call ``get_provider`` once.
+    callers (= Session) only need to call ``get_provider`` once.
     """
     monkeypatch.setenv("REYN_CACHE_DIR", str(tmp_path))
     _FakeST.instances.clear()

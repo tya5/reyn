@@ -24,7 +24,7 @@ from pathlib import Path
 import pytest
 
 from reyn.chat.outbox import OutboxMessage
-from reyn.chat.session import ChatSession, RouterCapExceeded
+from reyn.chat.session import RouterCapExceeded, Session
 from reyn.config import LoopConfig, OnLimitConfig, SafetyConfig
 from reyn.llm.llm import LLMToolCallResult
 from reyn.llm.pricing import TokenUsage
@@ -34,9 +34,9 @@ from tests.test_router_loop import _ScriptedLLM, text_result
 _USAGE = TokenUsage(prompt_tokens=10, completion_tokens=5)
 
 
-def _make_session(tmp_path: Path, cap: int = 3) -> ChatSession:
+def _make_session(tmp_path: Path, cap: int = 3) -> Session:
     safety = SafetyConfig(loop=LoopConfig(max_router_calls_per_turn=cap))
-    return ChatSession(
+    return Session(
         agent_name="test_cap_agent",
         budget_tracker=BudgetTracker(CostConfig()),
         safety=safety,
@@ -51,7 +51,7 @@ def _run(coro):
     return asyncio.run(coro)
 
 
-def _drain(session: ChatSession) -> list[OutboxMessage]:
+def _drain(session: Session) -> list[OutboxMessage]:
     msgs = []
     while not session.outbox.empty():
         msgs.append(session.outbox.get_nowait())

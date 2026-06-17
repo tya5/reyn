@@ -1,6 +1,6 @@
-"""End-to-end tests: ChatSession + RouterLoop integration (PR35 wave F2).
+"""End-to-end tests: Session + RouterLoop integration (PR35 wave F2).
 
-These tests exercise the full ChatSession → RouterLoopHost → RouterLoop
+These tests exercise the full Session → RouterLoopHost → RouterLoop
 path. call_llm_tools is patched to return scripted results without hitting
 the network.
 """
@@ -10,7 +10,7 @@ import asyncio
 import json
 from pathlib import Path
 
-from reyn.chat.session import ChatSession, _PendingChain
+from reyn.chat.session import Session, _PendingChain
 from reyn.llm.llm import LLMToolCallResult
 from reyn.llm.pricing import TokenUsage
 
@@ -50,14 +50,14 @@ def _tool_result(calls: list[dict]) -> LLMToolCallResult:
     )
 
 
-def _make_session(tmp_path: Path) -> ChatSession:
-    return ChatSession(
+def _make_session(tmp_path: Path) -> Session:
+    return Session(
         agent_name="test_agent",
         chat_tool_use_scheme="universal-category",  # #1657: suite uses universal-category stub shape
     )
 
 
-def _drain_outbox(session: ChatSession) -> list:
+def _drain_outbox(session: Session) -> list:
     msgs = []
     while not session.outbox.empty():
         msgs.append(session.outbox.get_nowait())
@@ -68,11 +68,11 @@ def _run(coro):
     return asyncio.run(coro)
 
 
-class _StubChatSession:
-    """Minimal peer ChatSession stub for delegate_to_agent tests.
+class _StubSession:
+    """Minimal peer Session stub for delegate_to_agent tests.
 
     Records submit_agent_request calls without invoking real session lifecycle.
-    Real ChatSession instantiation pulls in the full agent/event/loop stack;
+    Real Session instantiation pulls in the full agent/event/loop stack;
     a stub is sufficient because the test only verifies the chain registration.
     """
 
@@ -92,7 +92,7 @@ class _StubAgentRegistry:
     test only verifies the chain registration side-effect.
     """
 
-    def __init__(self, target_session: _StubChatSession) -> None:
+    def __init__(self, target_session: _StubSession) -> None:
         self._target = target_session
 
     def iter_reachable_agents(self, self_name: str) -> list[dict]:
@@ -104,7 +104,7 @@ class _StubAgentRegistry:
     def permit(self, from_agent: str, to_agent: str) -> bool:
         return True
 
-    def get_or_load(self, name: str) -> _StubChatSession:
+    def get_or_load(self, name: str) -> _StubSession:
         return self._target
 
     async def ensure_running(self, name: str) -> None:
@@ -116,7 +116,7 @@ class _StubAgentRegistry:
 # ---------------------------------------------------------------------------
 
 def test_user_message_chitchat_e2e(tmp_path, monkeypatch):
-    """Tier 1: ChatSession→RouterLoop integration — user message produces kind=agent outbox entry. AsyncMock isolates from network for e2e path verification.
+    """Tier 1: Session→RouterLoop integration — user message produces kind=agent outbox entry. AsyncMock isolates from network for e2e path verification.
 
     Minimal session: mock call_llm_tools to return text 'hi'.
     User message → router → assert outbox has kind='agent', text='hi'.
@@ -168,7 +168,7 @@ def test_user_message_chitchat_appended_to_history(tmp_path, monkeypatch):
 # ---------------------------------------------------------------------------
 
 def test_user_message_invoke_skill_e2e(tmp_path, monkeypatch):
-    """Tier 1: ChatSession→RouterLoop invoke_skill — round 1 spawns skill (FP-0012 non-blocking) and the router exits on spawn-ack. AsyncMock required for the e2e path.
+    """Tier 1: Session→RouterLoop invoke_skill — round 1 spawns skill (FP-0012 non-blocking) and the router exits on spawn-ack. AsyncMock required for the e2e path.
 
     Post-H3-ablation contract (= dogfood B32 §4.2 + H3 ablation diagnosis):
     invoke_skill / invoke_action returning the spawn-ack
@@ -287,10 +287,10 @@ def test_delegate_registers_pending_chain(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
 
     # Stub a registry with a single reachable peer.
-    target_session = _StubChatSession()
+    target_session = _StubSession()
     registry = _StubAgentRegistry(target_session)
 
-    session = ChatSession(
+    session = Session(
         agent_name="test_agent",
         registry=registry,
         chat_tool_use_scheme="universal-category",  # #1657
@@ -336,7 +336,7 @@ def test_delegate_registers_pending_chain(tmp_path, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# Test 4: RouterLoopHost protocol satisfied by ChatSession
+# Test 4: RouterLoopHost protocol satisfied by Session
 # ---------------------------------------------------------------------------
 
 def test_chatsession_satisfies_host_protocol(tmp_path, monkeypatch):
@@ -375,7 +375,7 @@ def test_resolve_model_uses_resolver(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     from reyn.llm.model_resolver import ModelResolver
     resolver = ModelResolver({"router": "openai/gpt-4o-mini"})
-    session = ChatSession(agent_name="test_agent", resolver=resolver)
+    session = Session(agent_name="test_agent", resolver=resolver)
 
     assert session.router_host.resolve_model("router") == "openai/gpt-4o-mini"
     assert session.router_host.resolve_model("unknown") == "unknown"  # pass-through

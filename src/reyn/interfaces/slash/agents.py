@@ -14,7 +14,7 @@ from reyn.chat.outbox import OutboxMessage
 from reyn.interfaces.slash import reply, reply_error, slash
 
 if TYPE_CHECKING:
-    from reyn.chat.session import ChatSession
+    from reyn.chat.session import Session
 
 
 _NO_REGISTRY_AGENTS = (
@@ -38,7 +38,7 @@ def _attach_completer(session: "object", arg_partial: str = "") -> list[str]:
 
 
 @slash("agents", summary="List all agents (* = attached, · = loaded)")
-async def agents_cmd(session: "ChatSession", args: str) -> None:
+async def agents_cmd(session: "Session", args: str) -> None:
     """``/agents`` — list known agents with attach / loaded markers."""
     if session._registry is None:
         await reply_error(session, _NO_REGISTRY_AGENTS)
@@ -90,7 +90,7 @@ async def agents_cmd(session: "ChatSession", args: str) -> None:
     completer=_attach_completer,
     see_also=("docs/concepts/multi-agent/multi-agent.md",),
 )
-async def attach_cmd(session: "ChatSession", args: str) -> None:
+async def attach_cmd(session: "Session", args: str) -> None:
     """``/attach <name>`` — request the REPL switch to a different agent.
 
     The actual switch happens in ``repl._input_loop`` (which owns the

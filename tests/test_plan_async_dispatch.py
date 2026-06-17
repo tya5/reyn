@@ -45,7 +45,7 @@ class _RecordingEvents:
 
 
 class _AsyncCapableHost:
-    """Host that exposes spawn_plan_task; mimics ChatSession's task
+    """Host that exposes spawn_plan_task; mimics Session's task
     handoff. Runs the runtime synchronously inside spawn_plan_task so
     test assertions are deterministic without create_task scheduling."""
 
@@ -74,7 +74,7 @@ class _AsyncCapableHost:
     async def spawn_plan_task(self, *, plan_id, runtime, chain_id):
         # Record handoff metadata; defer runtime.run() until the test
         # explicitly drives it via host.run_spawned() (= mirrors
-        # ChatSession's create_task semantics without scheduling).
+        # Session's create_task semantics without scheduling).
         self.spawn_calls.append(
             {"plan_id": plan_id, "chain_id": chain_id}
         )
@@ -210,7 +210,7 @@ async def test_async_dispatch_decomposition_written_before_spawn() -> None:
 @pytest.mark.asyncio
 async def test_async_runtime_runs_to_completion_via_host() -> None:
     """Tier 2: when the host eventually drives spawned runtimes (= the
-    ChatSession analog calls runtime.run()), plan_started + completed
+    Session analog calls runtime.run()), plan_started + completed
     fire, terminal text reaches outbox."""
     host = _AsyncCapableHost()
     await dispatch_plan_tool(
@@ -218,7 +218,7 @@ async def test_async_runtime_runs_to_completion_via_host() -> None:
         parent_host=host, chain_id="c0",
         available_tool_names=set(),
     )
-    # Drive the runtime now (= mirror ChatSession.spawn_plan_task wrapper).
+    # Drive the runtime now (= mirror Session.spawn_plan_task wrapper).
     await host.run_spawned()
     (only_started,) = host.plan_started_calls
     assert "plan_id" in only_started

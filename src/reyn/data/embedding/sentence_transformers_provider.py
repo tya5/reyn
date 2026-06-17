@@ -98,7 +98,7 @@ def is_available() -> bool:
     heavy module, just checks whether the import would succeed. Used by
     callers that need to decide between an ST-backed path and a graceful
     fallback before any actual embed() call (= FP-0043 Phase 4 default-
-    switch graceful-degrade in :class:`ChatSession`).
+    switch graceful-degrade in :class:`Session`).
     """
     import importlib.util
     return importlib.util.find_spec("sentence_transformers") is not None

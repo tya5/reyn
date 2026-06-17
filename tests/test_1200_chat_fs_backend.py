@@ -2,25 +2,25 @@
 
 #1200 threads the agent's EnvironmentBackend INSTANCE to the chat axis so chat
 file ops run on the SAME backend as the OSRuntime path (and plan, which delegates
-tool exec to chat via _PlanStepHost). F1 is the FS seam: ChatSession gains an
+tool exec to chat via _PlanStepHost). F1 is the FS seam: Session gains an
 ``environment_backend`` param → its router Workspace runs IO on it. Additive —
 None falls back to the workspace's HostBackend default (unchanged behaviour); the
 exec seam (sandbox_backend string via sandbox_config) already flows agent-level,
 so this is safe-to-land regardless of the (pending) exec instance-vs-string call.
 
-No mocks: real ChatSession + real EnvironmentBackend instances.
+No mocks: real Session + real EnvironmentBackend instances.
 """
 from __future__ import annotations
 
 from pathlib import Path
 
-from reyn.chat.session import ChatSession
+from reyn.chat.session import Session
 from reyn.core.events.state_log import StateLog
 from reyn.environment.host_backend import HostBackend
 
 
-def _session(tmp_path: Path, *, environment_backend=None, sandbox_backend=None) -> ChatSession:
-    return ChatSession(
+def _session(tmp_path: Path, *, environment_backend=None, sandbox_backend=None) -> Session:
+    return Session(
         agent_name="b",
         state_log=StateLog(tmp_path / "state.wal"),
         snapshot_path=tmp_path / "snap.json",

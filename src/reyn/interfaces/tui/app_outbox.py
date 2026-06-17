@@ -1180,7 +1180,7 @@ class OutboxRouter:
         # compat for the CLI Panel path and any legacy producers.
         question_text = str(msg.meta.get("prompt") or msg.text)
         detail_text = msg.meta.get("detail")
-        # Issue #261 — opt-in source_agent stamped by ChatSession's
+        # Issue #261 — opt-in source_agent stamped by Session's
         # parent_delegate branch (see services/intervention_handler.py
         # ``source_agent_var``). Absent on the default user_channel
         # path, so the existing non-delegated flow is unaffected.

@@ -40,7 +40,7 @@ from pathlib import Path
 from reyn.chat.session import (
     DEFAULT_CHAT_CHANNEL_ID,
     ChatInterventionBus,
-    ChatSession,
+    Session,
 )
 from reyn.user_intervention import (
     InterventionAnswer,
@@ -58,7 +58,7 @@ def test_chat_bus_without_channel_id_does_not_stamp(tmp_path: Path) -> None:
     construct without channel_id; they need iv to dispatch normally
     against their "test" listener registration).
     """
-    session = ChatSession(agent_name="t")
+    session = Session(agent_name="t")
     session.register_intervention_listener("test")
     bus = ChatInterventionBus(session, run_id="r1", skill_name="demo")
 
@@ -86,7 +86,7 @@ def test_chat_bus_with_channel_id_stamps_when_iv_origin_is_none(tmp_path: Path) 
     stamps ``iv.origin_channel_id`` to the configured value when the
     iv came in without one (= the common case for skill-emitted ivs).
     """
-    session = ChatSession(agent_name="t")
+    session = Session(agent_name="t")
     session.register_intervention_listener("tui")
     bus = ChatInterventionBus(
         session, run_id="r1", skill_name="demo", channel_id="tui",
@@ -110,7 +110,7 @@ def test_chat_bus_with_channel_id_respects_preexisting_origin(tmp_path: Path) ->
     set (= e.g. upstream delegation), the bus does NOT overwrite.
     Symmetric with the A2AInterventionBus rule (PR #281).
     """
-    session = ChatSession(agent_name="t")
+    session = Session(agent_name="t")
     session.register_intervention_listener("upstream:hop")
     bus = ChatInterventionBus(
         session, run_id="r1", skill_name="demo", channel_id="tui",
@@ -140,7 +140,7 @@ def test_chat_bus_channel_id_property_returns_configured_value() -> None:
     """Tier 2: ``ChatInterventionBus.channel_id`` returns the value
     passed at construction, or None when unset.
     """
-    session = ChatSession(agent_name="t")
+    session = Session(agent_name="t")
     bus_with = ChatInterventionBus(
         session, run_id=None, skill_name=None, channel_id="tui",
     )
@@ -246,7 +246,7 @@ def test_end_to_end_stamped_iv_with_matching_listener_dispatches(tmp_path: Path)
     DEFAULT_CHAT_CHANNEL_ID + ChatTUIApp.on_mount + handle_intervention
     Branch 3 all agree).
     """
-    session = ChatSession(agent_name="t")
+    session = Session(agent_name="t")
     session.register_intervention_listener(DEFAULT_CHAT_CHANNEL_ID)
     bus = ChatInterventionBus(
         session, run_id="r1", skill_name="demo",
@@ -285,7 +285,7 @@ def test_end_to_end_stamped_iv_without_listener_stalls(tmp_path: Path) -> None:
     moved there from handle_intervention so bus.deliver also benefits
     — issue #268 Phase 2 continuation).
     """
-    session = ChatSession(agent_name="t")
+    session = Session(agent_name="t")
     # Register a NON-tui listener — passes Phase 1 guard but doesn't
     # match the bus's channel_id stamp.
     session.register_intervention_listener("other")
@@ -331,7 +331,7 @@ def test_chat_bus_skips_stamping_when_chain_override_active(tmp_path: Path) -> N
     override is registered for the chain and skips its stamp if so,
     leaving the slot clean for the observer.
     """
-    session = ChatSession(agent_name="t")
+    session = Session(agent_name="t")
     session.register_intervention_listener("test")
 
     # Simulate A2A-style override observer for chain "chain-A2A".
@@ -381,7 +381,7 @@ def test_chat_bus_stamps_when_no_chain_override_active(tmp_path: Path) -> None:
     TUI-only path), stamping engages normally. Differentiates against
     the override-active branch.
     """
-    session = ChatSession(agent_name="t")
+    session = Session(agent_name="t")
     session.register_intervention_listener("tui")
     bus = ChatInterventionBus(
         session, run_id="run-TUI", skill_name="demo",
@@ -413,7 +413,7 @@ def test_dispatch_intervention_stall_check_fires_from_bus_path(tmp_path: Path) -
     with a stamped iv whose listener is absent puts the iv in the
     stalled queue + emits a ``user_channel_stalled`` route event.
     """
-    session = ChatSession(agent_name="t")
+    session = Session(agent_name="t")
     session.register_intervention_listener("other")
 
     routed_events: list[dict] = []

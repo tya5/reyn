@@ -1,4 +1,4 @@
-"""Tier 2: ``ChatSession.notify_state_change`` — first-class state-change
+"""Tier 2: ``Session.notify_state_change`` — first-class state-change
 history entries (#398 v4 frozen contract, 2026-05-22).
 
 Pins the API + storage shape that #398 lands. The contract:
@@ -27,20 +27,20 @@ from pathlib import Path
 
 import pytest
 
-from reyn.chat.session import ChatMessage, ChatSession
+from reyn.chat.session import ChatMessage, Session
 from reyn.core.events.state_log import StateLog
 
 
-def _make_session(tmp_path: Path, *, agent_name: str = "alpha") -> ChatSession:
-    """Build a minimal ChatSession redirected to ``tmp_path``."""
-    return ChatSession(
+def _make_session(tmp_path: Path, *, agent_name: str = "alpha") -> Session:
+    """Build a minimal Session redirected to ``tmp_path``."""
+    return Session(
         agent_name=agent_name,
         state_log=StateLog(tmp_path / "state.wal"),
         snapshot_path=tmp_path / f"{agent_name}_snapshot.json",
     )
 
 
-def _state_change_entries(session: ChatSession) -> list[ChatMessage]:
+def _state_change_entries(session: Session) -> list[ChatMessage]:
     """Return all history entries that look like state-change events."""
     return [
         m for m in session.history

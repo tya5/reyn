@@ -39,7 +39,7 @@ def test_default_action_retrieval_config_is_on() -> None:
     FP-0034 Phase 6 removed hide_legacy_tools (wrapper-only is the sole path).
     FP-0043 Phase 4 flipped embedding_class default from None to "local-mini"
     so semantic action search is on the moment ``reyn[local-embed]`` extras
-    are installed — graceful-degrade kicks in at ChatSession construction
+    are installed — graceful-degrade kicks in at Session construction
     when the extras are absent.
     """
     cfg = ActionRetrievalConfig()

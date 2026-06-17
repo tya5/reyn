@@ -2,20 +2,20 @@
 
 Before #1538, A2AHandler._emit_router_cap_exhausted_user was a standalone
 canned-only implementation: it emitted a static _ROUTER_RETRY_EXHAUSTED_MSG
-without attempting the LLM force-close wrap-up that ChatSession site C (#1496)
+without attempting the LLM force-close wrap-up that Session site C (#1496)
 produces. The tui-coder trace confirmed that router_cap fires exclusively on
 the a2a path (no-reset accumulation) — site C was dead code.
 
 After #1538, A2AHandler receives `emit_router_cap_exhausted_fn` injected from
-ChatSession at construction. Both SkillPlanGlue and A2AHandler paths call the
-single ChatSession._emit_router_cap_exhausted_user — zero drift by construction.
+Session at construction. Both SkillPlanGlue and A2AHandler paths call the
+single Session._emit_router_cap_exhausted_user — zero drift by construction.
 
 Invariants pinned:
 
 1. (wiring gate) A2AHandler._emit_router_cap_exhausted_user delegates to the
    injected callback with (exc, chain_id=...). The old canned path is removed.
 2. (LLM wrap-up reachable) When a scripted LLM returns wrap-up content,
-   ChatSession._emit_router_cap_exhausted_user emits an outbox message with
+   Session._emit_router_cap_exhausted_user emits an outbox message with
    meta["limit_stopped"] is True — proving the dead code is now reachable and
    the user receives a contextual summary instead of a canned string.
 3. (end-to-end a2a path) Driving through handle_agent_response with a
@@ -23,7 +23,7 @@ Invariants pinned:
    live proof that the a2a accumulation path (no-reset) reaches the
    wrap-up, not just compositional reasoning (#1538 definitive closure).
 
-No mocks — real A2AHandler + real ChatSession + real scripted LLM callable.
+No mocks — real A2AHandler + real Session + real scripted LLM callable.
 """
 from __future__ import annotations
 
@@ -34,7 +34,7 @@ import pytest
 
 from reyn.chat.services.a2a_handler import A2AHandler
 from reyn.chat.services.chain_manager import ChainManager
-from reyn.chat.session import ChatSession, RouterCapExceeded
+from reyn.chat.session import RouterCapExceeded, Session
 from reyn.config import LoopConfig, OnLimitConfig, SafetyConfig
 from reyn.llm.llm import LLMToolCallResult
 from reyn.llm.pricing import TokenUsage
@@ -81,7 +81,7 @@ class _ScriptedWrapupLLM:
     """Real scripted LLM callable that returns a fixed wrap-up text on call.
 
     Used to inject a successful LLM wrap-up response via the _llm_caller
-    test seam on ChatSession._emit_router_cap_exhausted_user.
+    test seam on Session._emit_router_cap_exhausted_user.
     """
 
     def __init__(self, wrapup_text: str) -> None:
@@ -169,7 +169,7 @@ async def test_a2a_emit_router_cap_delegates_to_injected_fn() -> None:
 
 @pytest.mark.asyncio
 async def test_a2a_router_cap_wrapup_produces_limit_stopped_meta() -> None:
-    """Tier 2: ChatSession._emit_router_cap_exhausted_user (the fn A2AHandler
+    """Tier 2: Session._emit_router_cap_exhausted_user (the fn A2AHandler
     delegates to) emits an outbox message with meta["limit_stopped"] is True
     when the scripted LLM returns wrap-up content.
 
@@ -180,7 +180,7 @@ async def test_a2a_router_cap_wrapup_produces_limit_stopped_meta() -> None:
     Uses the _llm_caller test seam to inject a scripted LLM without touching
     the real LiteLLM stack.
     """
-    session = ChatSession(agent_name="a2a-wrapup-test")
+    session = Session(agent_name="a2a-wrapup-test")
     scripted = _ScriptedWrapupLLM("Turn ended at limit — here is a summary.")
     exc = RouterCapExceeded(count=3, cap=3, last_reason="a2a chain")
 
@@ -228,7 +228,7 @@ async def test_a2a_handle_agent_response_cap_hit_delivers_wrapup_e2e(
         loop=LoopConfig(max_router_calls_per_turn=1),
         on_limit=OnLimitConfig(mode="unattended"),
     )
-    session = ChatSession(agent_name="a2a-e2e-test", safety=safety)
+    session = Session(agent_name="a2a-e2e-test", safety=safety)
 
     # Scripted LLM: call 0 = router loop text reply; call 1 = wrap-up text.
     class _SequencedLLM:

@@ -6,13 +6,13 @@ PR-N3: `compute_covers_through_seq` moved from the retired
 changed: it now takes ``new_turn_seqs: list`` directly instead of
 an ``artifact`` dict wrapper.
 
-Getting this value wrong corrupts ChatSession.history — a too-low
+Getting this value wrong corrupts Session.history — a too-low
 value re-includes already-summarized turns (duplication); a too-high value
 skips turns that have not been folded into a summary (loss).
 
 Contract:
   - max from a normal list → returns the largest seq
-  - empty / missing list → returns 0 (ChatSession falls back gracefully)
+  - empty / missing list → returns 0 (Session falls back gracefully)
   - single-entry list → returns that entry's seq
   - non-monotonic order → still returns the maximum
 """

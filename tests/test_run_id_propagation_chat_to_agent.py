@@ -2,7 +2,7 @@
 
 FP-0008 PR-R (= tui-coder finding #1 propagation layer; PR-N
 canonical-form follow-up). PR-N landed the canonical run_id form in
-`skill_runner.spawn`, but ChatSession's `_build_agent_for_skill_runner`
+`skill_runner.spawn`, but Session's `_build_agent_for_skill_runner`
 received the run_id only for `ChatInterventionBus` and did NOT forward
 it to `_build_agent`. The Agent instance therefore had `self.run_id =
 None` at construction; `agent.run()` then generated a fresh canonical
@@ -13,8 +13,8 @@ via `_make_run_id`, producing a 2-form mismatch:
   skill events.jsonl:     20260528T122441357899Z_word_stats_demo_a197  (different microsec)
 
 The fix threads run_id through:
-  ChatSession._build_agent_for_skill_runner(run_id, ...)
-    → ChatSession._build_agent(run_id=..., ...)
+  Session._build_agent_for_skill_runner(run_id, ...)
+    → Session._build_agent(run_id=..., ...)
       → SkillRuntime(run_id=..., ...) ctor (= sets self.run_id)
         → agent.run() honors self.run_id (= no fresh _make_run_id)
 
@@ -210,7 +210,7 @@ async def test_agent_run_falls_back_to_make_run_id_when_none() -> None:
 
 
 def test_build_agent_for_skill_runner_threads_run_id_to_build_agent() -> None:
-    """Tier 2: source-level audit — ChatSession._build_agent_for_skill_runner passes run_id.
+    """Tier 2: source-level audit — Session._build_agent_for_skill_runner passes run_id.
 
     Catches future regression where _build_agent_for_skill_runner stops
     forwarding run_id to _build_agent (= the exact PR-R defect).

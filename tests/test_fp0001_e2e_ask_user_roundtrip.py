@@ -7,7 +7,7 @@ Pins the FP-0001 task lifecycle contracts:
   2. ``A2AInterventionBus.request`` publishes to the registry and awaits
      the Future that ``answer_intervention`` resolves — verifying the
      intervention routing contract without a live HTTP server.
-  3. ``ChatSession.register_intervention_override`` / ``unregister_intervention_override``
+  3. ``Session.register_intervention_override`` / ``unregister_intervention_override``
      — the chain-id-scoped override hook that wires an external bus into
      a skill's ask_user path.
 
@@ -19,15 +19,15 @@ yet present in the router — indicated by the absence of
 flags this for the F4 implementing agent to remove once the endpoints land.
 
 Approach: we exercise the JSON envelopes by driving RunRegistry and
-A2AInterventionBus directly, plus the ChatSession override hook with a
-scripted fake LLM callable (= real ChatSession, no MagicMock).  This
+A2AInterventionBus directly, plus the Session override hook with a
+scripted fake LLM callable (= real Session, no MagicMock).  This
 validates the component-level contracts that the router will rely on without
 requiring the async-mode router extensions to be present.
 
 Policy compliance (docs/deep-dives/contributing/testing.ja.md):
 - Tier 2c (multi-component integration, OS invariant).
 - No MagicMock / AsyncMock / patch of real collaborators.
-- Real RunRegistry, real A2AInterventionBus, real ChatSession instances.
+- Real RunRegistry, real A2AInterventionBus, real Session instances.
 - Observed via public API: RunEntry.status, RunEntry.question,
   RunEntry.result, RunEntry.to_public_dict(), answer_intervention return value.
 """
@@ -118,7 +118,7 @@ def test_run_registry_to_public_dict_excludes_internals():
     """Tier 2c: RunEntry.to_public_dict excludes asyncio.Task. issue
     #292 (α): ``pending_intervention`` / ``question`` were also
     excluded pre-α; α removes them entirely from RunEntry's data
-    shape (= they live in ChatSession).
+    shape (= they live in Session).
     """
     registry = _new_run_registry()
     entry = registry.create(agent_name="b", chain_id="c2")
@@ -135,7 +135,7 @@ def test_run_registry_to_public_dict_excludes_internals():
 
 # Tests for ``RunRegistry.answer_intervention`` removed: post-issue-#292,
 # the method is gone and peer-answer flows go through
-# ``ChatSession.answer_pending_intervention``. See
+# ``Session.answer_pending_intervention``. See
 # tests/test_fp0001_a2a_intervention_bus.py for the post-α coverage.
 
 
@@ -169,12 +169,12 @@ def test_run_registry_cancel_marks_cancelled():
 
 
 # ---------------------------------------------------------------------------
-# Part 3: ChatSession.register_intervention_override
+# Part 3: Session.register_intervention_override
 # ---------------------------------------------------------------------------
 
 
 def test_chat_session_intervention_override_is_used():
-    """Tier 2c: ChatSession.register_intervention_override / unregister pins
+    """Tier 2c: Session.register_intervention_override / unregister pins
     the chain-id-scoped override hook introduced by FP-0001.
 
     Verifies that when an override bus is registered for a chain_id,
@@ -184,7 +184,7 @@ def test_chat_session_intervention_override_is_used():
     """
     import tempfile
 
-    from reyn.chat.session import ChatSession, _new_chain_id
+    from reyn.chat.session import Session, _new_chain_id
     from reyn.core.events.state_log import StateLog
     from reyn.runtime.budget.budget import BudgetTracker, CostConfig
     from reyn.user_intervention import InterventionAnswer, InterventionBus, UserIntervention
@@ -193,7 +193,7 @@ def test_chat_session_intervention_override_is_used():
         state_log = StateLog(tmp / "wal.jsonl")
         snapshot_path = tmp / "snap.json"
         bt = BudgetTracker(CostConfig())
-        session = ChatSession(
+        session = Session(
             agent_name="test-agent",
             agent_role="tester",
             output_language="en",
@@ -271,16 +271,16 @@ def _build_registry_for_test(tmp_path: Path):
     """
     from reyn.chat.profile import AgentProfile
     from reyn.chat.registry import AgentRegistry
-    from reyn.chat.session import ChatSession
+    from reyn.chat.session import Session
     from reyn.core.events.state_log import StateLog
     from reyn.runtime.budget.budget import BudgetTracker, CostConfig
 
     state_log = StateLog(tmp_path / ".reyn" / "state" / "wal.jsonl")
 
-    def factory(profile: AgentProfile) -> ChatSession:
+    def factory(profile: AgentProfile) -> Session:
         agent_dir = tmp_path / ".reyn" / "agents" / profile.name
         agent_dir.mkdir(parents=True, exist_ok=True)
-        return ChatSession(
+        return Session(
             agent_name=profile.name,
             agent_role=profile.role,
             output_language="en",

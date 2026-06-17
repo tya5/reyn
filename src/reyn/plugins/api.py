@@ -3,7 +3,7 @@
 Plugins (= webhook handlers under ``reyn.plugins.*`` or external pip
 packages registered via the ``reyn.webhooks`` entry-point group)
 SHOULD use the helpers in this module to interact with Reyn agents,
-NOT call internal ``ChatSession`` methods (= ``_put_inbox``,
+NOT call internal ``Session`` methods (= ``_put_inbox``,
 ``_handle_user_message``) directly.
 
 The contract here is intended to stay stable across Reyn minor
@@ -49,7 +49,7 @@ async def push_to_agent(
     """Deliver a message to a Reyn agent's inbox.
 
     This is the **stable public API** for webhook / chat-transport
-    plugins. Use it instead of touching ``ChatSession._put_inbox``
+    plugins. Use it instead of touching ``Session._put_inbox``
     directly. Internal session APIs may change between Reyn versions;
     this function won't.
 

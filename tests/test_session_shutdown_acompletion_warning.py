@@ -17,7 +17,7 @@ acompletion``::
 The thread-pool ``completion()`` builds and returns an
 ``OpenAIChatCompletion.acompletion(...)`` coroutine when ``acompletion=True``
 (see ``openai.py:706``); the outer ``await init_response`` is the only point
-that consumes it. When ``ChatSession._drain_on_shutdown`` forces
+that consumes it. When ``Session._drain_on_shutdown`` forces
 ``SkillRunner.cancel_all()`` while a skill's LLM call is at that checkpoint,
 ``CancelledError`` lands BEFORE ``await init_response`` is entered, the inner
 coroutine is GC'd unawaited, and Python emits ::
@@ -62,7 +62,7 @@ def _make_unawaited_coro() -> None:
 
 
 def _shutdown_warning_filter():
-    """Mirror the filter installed by ``ChatSession._drain_on_shutdown``.
+    """Mirror the filter installed by ``Session._drain_on_shutdown``.
 
     Kept in lockstep with ``src/reyn/chat/session.py`` so a future tweak to
     the production filter is forced to update this test (= the assertion
@@ -172,20 +172,20 @@ def test_shutdown_filter_does_not_swallow_unrelated_warnings():
 
 
 def test_drain_on_shutdown_does_not_leak_warning(tmp_path, monkeypatch):
-    """Tier 2: end-to-end — ChatSession._drain_on_shutdown swallows the warning.
+    """Tier 2: end-to-end — Session._drain_on_shutdown swallows the warning.
 
     Integrates the filter into the actual production code path: builds a
-    real ChatSession, monkeypatches ``SkillRunner.cancel_all`` to provoke
+    real Session, monkeypatches ``SkillRunner.cancel_all`` to provoke
     the unawaited-coroutine pattern WHILE the filter window is active
     (mirrors what the litellm executor race does inside cancel_all's await
     chain), and asserts no warning leaks out.
     """
-    from reyn.chat.session import ChatSession
+    from reyn.chat.session import Session
     from reyn.core.events.state_log import StateLog
 
     monkeypatch.chdir(tmp_path)
 
-    session = ChatSession(
+    session = Session(
         agent_name="alpha",
         state_log=StateLog(tmp_path / "state.wal"),
         snapshot_path=tmp_path / "alpha_snapshot.json",

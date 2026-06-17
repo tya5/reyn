@@ -26,7 +26,7 @@ from typing import TYPE_CHECKING
 from reyn.interfaces.slash import reply, reply_error, slash
 
 if TYPE_CHECKING:
-    from reyn.chat.session import ChatSession
+    from reyn.chat.session import Session
 
 # Mirror op_runtime/file._IMAGE_EXTENSIONS so the slash command accepts
 # the same set #365 accepts via `file__read`.
@@ -59,7 +59,7 @@ _COMPLETER_MAX = 20
 
 
 def _image_path_completer(
-    session: "ChatSession", arg_partial: str = "",
+    session: "Session", arg_partial: str = "",
 ) -> list[str]:
     """Filesystem path completer for ``/image <path>``.
 
@@ -144,7 +144,7 @@ async def image_cmd(session: object, args: str) -> None:
         )
         return
 
-    # Resolve relative to CWD (= the same scope ChatSession uses for
+    # Resolve relative to CWD (= the same scope Session uses for
     # file reads). Absolute paths are honoured as-is.
     path = Path(path_str).expanduser()
     if not path.is_absolute():
@@ -210,11 +210,11 @@ async def image_cmd(session: object, args: str) -> None:
         "mime_type": mime,
         "content_hash": content_hash,
     }
-    # Queue is drained by ChatSession._handle_user_message on the next
+    # Queue is drained by Session._handle_user_message on the next
     # user turn (= attached to that ChatMessage.media).
     queue: list[dict] = getattr(session, "_pending_user_images", None)
     if queue is None:
-        # ChatSession variants without #366 wiring shouldn't accept the
+        # Session variants without #366 wiring shouldn't accept the
         # command — surface a clear error rather than silently no-op.
         await reply_error(
             session,

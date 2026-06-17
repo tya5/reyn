@@ -28,7 +28,7 @@ from typing import TYPE_CHECKING
 from reyn.interfaces.slash import reply, reply_error, slash
 
 if TYPE_CHECKING:
-    from reyn.chat.session import ChatSession
+    from reyn.chat.session import Session
 
 
 _USAGE = (
@@ -44,7 +44,7 @@ _USAGE = (
     summary="Unified view of running async tasks (skills + plans)",
     usage="/tasks [list|status <run_id>|kill <run_id>]",
 )
-async def tasks_cmd(session: "ChatSession", args: str) -> None:
+async def tasks_cmd(session: "Session", args: str) -> None:
     parts = args.strip().split(maxsplit=1)
     if not parts or parts[0] == "list":
         await _list_tasks(session)
@@ -74,7 +74,7 @@ def _format_elapsed(seconds: float) -> str:
 
 
 def _resolve_task(
-    session: "ChatSession", prefix: str,
+    session: "Session", prefix: str,
 ) -> tuple[str | None, str, list[str]]:
     """Resolve a run_id / plan_id from a prefix.
 
@@ -107,7 +107,7 @@ def _resolve_task(
 # ── /tasks list ──────────────────────────────────────────────────────────────
 
 
-async def _list_tasks(session: "ChatSession") -> None:
+async def _list_tasks(session: "Session") -> None:
     skill_lines = _list_skill_lines(session)
     plan_lines = _list_plan_lines(session)
     if not skill_lines and not plan_lines:
@@ -126,7 +126,7 @@ async def _list_tasks(session: "ChatSession") -> None:
     await reply(session, "\n".join(out))
 
 
-def _list_skill_lines(session: "ChatSession") -> list[str]:
+def _list_skill_lines(session: "Session") -> list[str]:
     running = getattr(session, "running_skills", {}) or {}
     if not running:
         return []
@@ -150,7 +150,7 @@ def _list_skill_lines(session: "ChatSession") -> list[str]:
     return lines
 
 
-def _list_plan_lines(session: "ChatSession") -> list[str]:
+def _list_plan_lines(session: "Session") -> list[str]:
     running = getattr(session, "running_plans", None)
     if not running:
         return []
@@ -167,7 +167,7 @@ def _list_plan_lines(session: "ChatSession") -> list[str]:
 # ── /tasks status ────────────────────────────────────────────────────────────
 
 
-async def _task_status(session: "ChatSession", args: str) -> None:
+async def _task_status(session: "Session", args: str) -> None:
     prefix = args.strip()
     if not prefix:
         await reply_error(session, "Usage: /tasks status <run_id_prefix>")
@@ -191,7 +191,7 @@ async def _task_status(session: "ChatSession", args: str) -> None:
         await reply_error(session, f"unknown task kind for {resolved}")
 
 
-async def _skill_status(session: "ChatSession", run_id: str) -> None:
+async def _skill_status(session: "Session", run_id: str) -> None:
     started_at = getattr(session, "running_skills_started_at", {}) or {}
     elapsed = time.monotonic() - started_at.get(run_id, time.monotonic())
     reg = session.get_skill_registry()
@@ -213,7 +213,7 @@ async def _skill_status(session: "ChatSession", run_id: str) -> None:
     await reply(session, "\n".join(out))
 
 
-async def _plan_status(session: "ChatSession", plan_id: str) -> None:
+async def _plan_status(session: "Session", plan_id: str) -> None:
     out = [f"plan {plan_id}", "  (use `/plan list` for the running plan view)"]
     await reply(session, "\n".join(out))
 
@@ -221,7 +221,7 @@ async def _plan_status(session: "ChatSession", plan_id: str) -> None:
 # ── /tasks kill ──────────────────────────────────────────────────────────────
 
 
-async def _kill_task(session: "ChatSession", args: str) -> None:
+async def _kill_task(session: "Session", args: str) -> None:
     prefix = args.strip()
     if not prefix:
         await reply_error(session, "Usage: /tasks kill <run_id_prefix>")
