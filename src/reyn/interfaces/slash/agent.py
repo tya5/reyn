@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING
 
 from reyn.chat.outbox import OutboxMessage
 from reyn.chat.profile import AgentProfile
-from reyn.slash import reply, reply_error, slash
+from reyn.interfaces.slash import reply, reply_error, slash
 
 if TYPE_CHECKING:
     from reyn.chat.session import ChatSession

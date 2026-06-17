@@ -4476,7 +4476,7 @@ class ChatSession:
     async def _maybe_handle_slash(self, text: str) -> bool:
         """Dispatch `/command args...` lines. Returns True when consumed.
 
-        Delegates to the SlashRegistry in `reyn.slash` so new commands
+        Delegates to the SlashRegistry in `reyn.interfaces.slash` so new commands
         can be added without touching this method.
 
         Unknown slash commands also return True (with a hint on outbox) to
@@ -4490,7 +4490,7 @@ class ChatSession:
         handler only the first line, so the user sees that the extra lines
         were not part of the command.
         """
-        from reyn.slash import REGISTRY
+        from reyn.interfaces.slash import REGISTRY
 
         # Multi-line guard — keep only the first line for dispatch, warn if
         # any non-whitespace content exists on later lines.
@@ -4522,9 +4522,9 @@ class ChatSession:
             # 20+ command catalog into the error line (the previous list
             # truncated mid-name at ``try: /agent, /agents, /answer, /attach,``
             # hiding the actionable tail). ``suggest_for_unknown`` is a pure
-            # helper in ``reyn.slash`` so the suggestion contract is
+            # helper in ``reyn.interfaces.slash`` so the suggestion contract is
             # directly testable without the surrounding session machinery.
-            from reyn.slash import suggest_for_unknown
+            from reyn.interfaces.slash import suggest_for_unknown
             suggestions = suggest_for_unknown(cmd)
             known = ", ".join(f"/{n}" for n in suggestions)
             # ``kind="error"`` so the TUI renders an inline error (✗ glyph,

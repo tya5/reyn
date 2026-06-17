@@ -50,7 +50,7 @@ if str(_SRC) not in sys.path:
 @pytest.fixture(autouse=True)
 def _clear_find_history():
     """Reset the module-level deque between tests so cases are isolated."""
-    from reyn.slash.find import _find_history
+    from reyn.interfaces.slash.find import _find_history
     _find_history.clear()
     yield
     _find_history.clear()
@@ -58,7 +58,7 @@ def _clear_find_history():
 
 def test_record_appends_to_front() -> None:
     """Tier 2: ``_record_find_history`` puts new entries at the front."""
-    from reyn.slash.find import (
+    from reyn.interfaces.slash.find import (
         _find_history_snapshot,
         _record_find_history,
     )
@@ -71,7 +71,7 @@ def test_record_appends_to_front() -> None:
 
 def test_record_lru_moves_duplicate_to_front() -> None:
     """Tier 2: re-recording an existing entry moves it to the front."""
-    from reyn.slash.find import (
+    from reyn.interfaces.slash.find import (
         _find_history_snapshot,
         _record_find_history,
     )
@@ -86,7 +86,7 @@ def test_record_lru_moves_duplicate_to_front() -> None:
 
 def test_record_caps_at_max() -> None:
     """Tier 2: history evicts the oldest entry past the cap."""
-    from reyn.slash.find import (
+    from reyn.interfaces.slash.find import (
         _FIND_HISTORY_MAX,
         _find_history_snapshot,
         _record_find_history,
@@ -106,7 +106,7 @@ def test_record_caps_at_max() -> None:
 
 def test_record_empty_arg_no_op() -> None:
     """Tier 2: empty arg doesn't pollute history."""
-    from reyn.slash.find import (
+    from reyn.interfaces.slash.find import (
         _find_history_snapshot,
         _record_find_history,
     )
@@ -123,7 +123,7 @@ def test_record_empty_arg_no_op() -> None:
 
 def test_completer_empty_partial_returns_full_history() -> None:
     """Tier 2: empty ``arg_partial`` surfaces the entire history."""
-    from reyn.slash.find import _find_completer, _record_find_history
+    from reyn.interfaces.slash.find import _find_completer, _record_find_history
 
     _record_find_history("alpha")
     _record_find_history("beta")
@@ -133,7 +133,7 @@ def test_completer_empty_partial_returns_full_history() -> None:
 
 def test_completer_filters_by_prefix() -> None:
     """Tier 2: prefix in ``arg_partial`` narrows the completion list."""
-    from reyn.slash.find import _find_completer, _record_find_history
+    from reyn.interfaces.slash.find import _find_completer, _record_find_history
 
     _record_find_history("apple")
     _record_find_history("banana")
@@ -149,7 +149,7 @@ def test_completer_filters_by_prefix() -> None:
 
 def test_completer_preserves_flag_prefix() -> None:
     """Tier 2: history queries WITH flags surface intact + filter on flag prefix."""
-    from reyn.slash.find import _find_completer, _record_find_history
+    from reyn.interfaces.slash.find import _find_completer, _record_find_history
 
     _record_find_history("-r foo.*")
     _record_find_history("-c Bar")
@@ -163,8 +163,8 @@ def test_completer_preserves_flag_prefix() -> None:
 
 def test_find_slash_has_completer_registered() -> None:
     """Tier 2: ``/find`` registers ``_find_completer`` in the slash registry."""
-    from reyn.slash import REGISTRY
-    from reyn.slash.find import _find_completer
+    from reyn.interfaces.slash import REGISTRY
+    from reyn.interfaces.slash.find import _find_completer
 
     cmd = REGISTRY.get("find")
     assert cmd is not None
@@ -174,7 +174,7 @@ def test_find_slash_has_completer_registered() -> None:
 @pytest.mark.asyncio
 async def test_find_cmd_records_history_on_invocation() -> None:
     """Tier 2: end-to-end — calling ``find_cmd`` adds the arg to history."""
-    from reyn.slash.find import _find_history_snapshot, find_cmd
+    from reyn.interfaces.slash.find import _find_history_snapshot, find_cmd
 
     class _StubSession:
         """Minimal session stub — collects outbox messages."""
@@ -198,7 +198,7 @@ async def test_find_cmd_records_history_on_invocation() -> None:
 @pytest.mark.asyncio
 async def test_find_cmd_empty_arg_does_not_record() -> None:
     """Tier 2: empty ``/find`` (usage-hint path) doesn't pollute history."""
-    from reyn.slash.find import _find_history_snapshot, find_cmd
+    from reyn.interfaces.slash.find import _find_history_snapshot, find_cmd
 
     class _StubSession:
         def __init__(self) -> None:

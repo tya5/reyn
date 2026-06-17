@@ -239,7 +239,7 @@ def render_keys(
         expanded = set()
 
     # Local import keeps right_panel/keys_tab decoupled from widget-init
-    # order (InputBar imports from reyn.slash, which would otherwise be
+    # order (InputBar imports from reyn.interfaces.slash, which would otherwise be
     # pulled in at module-load time).
     from ..input_bar import InputBar
 

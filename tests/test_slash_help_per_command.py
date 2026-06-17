@@ -42,7 +42,7 @@ if str(_SRC) not in sys.path:
 
 def test_render_focus_known_command_has_summary() -> None:
     """Tier 2: a known command's focus panel includes its summary."""
-    from reyn.slash.help import _render_command_focus
+    from reyn.interfaces.slash.help import _render_command_focus
 
     panel = _render_command_focus("find")
     assert "/find" in panel
@@ -59,7 +59,7 @@ def test_render_focus_known_command_with_usage_includes_usage_line() -> None:
     not the exact flag syntax (= avoids re-pinning on every /find
     evolution).
     """
-    from reyn.slash.help import _render_command_focus
+    from reyn.interfaces.slash.help import _render_command_focus
 
     panel = _render_command_focus("find")
     assert "usage:" in panel
@@ -73,7 +73,7 @@ def test_render_focus_without_usage_omits_usage_line() -> None:
     Backward-compat — only commands that explicitly opted in
     (PR #552's four commands so far) get the usage line.
     """
-    from reyn.slash.help import _render_command_focus
+    from reyn.interfaces.slash.help import _render_command_focus
 
     # /help itself does have usage now, so pick a no-usage command.
     # (/expand was removed with the conversation-reply fold; use /skills.)
@@ -88,7 +88,7 @@ def test_render_focus_without_usage_omits_usage_line() -> None:
 
 def test_render_focus_renders_aliases_when_present() -> None:
     """Tier 2: a command with aliases (/quit ↔ /exit) surfaces them."""
-    from reyn.slash.help import _render_command_focus
+    from reyn.interfaces.slash.help import _render_command_focus
 
     panel = _render_command_focus("quit")
     assert "/quit" in panel
@@ -101,7 +101,7 @@ def test_render_focus_renders_aliases_when_present() -> None:
 
 def test_render_focus_unknown_command_shows_suggestions() -> None:
     """Tier 2: typo → "unknown … did you mean: /<sug>?" with suggestions."""
-    from reyn.slash.help import _render_command_focus
+    from reyn.interfaces.slash.help import _render_command_focus
 
     panel = _render_command_focus("fnd")  # typo of /find
     assert "unknown" in panel.lower()
@@ -116,8 +116,8 @@ def test_render_focus_alias_resolves_to_canonical() -> None:
     Uses ``REGISTRY.get(name)`` which already handles alias →
     canonical lookup. Pins that ``/help <alias>`` doesn't 404.
     """
-    from reyn.slash import REGISTRY, SlashCommand
-    from reyn.slash.help import _render_command_focus
+    from reyn.interfaces.slash import REGISTRY, SlashCommand
+    from reyn.interfaces.slash.help import _render_command_focus
 
     # Register a temp command with an alias for the test, to avoid
     # depending on whichever commands happen to have aliases in
@@ -137,8 +137,8 @@ def test_render_focus_alias_resolves_to_canonical() -> None:
 
 def test_render_focus_hidden_command_is_annotated() -> None:
     """Tier 2: hidden commands include a "(hidden …)" annotation."""
-    from reyn.slash import REGISTRY, SlashCommand
-    from reyn.slash.help import _render_command_focus
+    from reyn.interfaces.slash import REGISTRY, SlashCommand
+    from reyn.interfaces.slash.help import _render_command_focus
 
     async def _h(s, a):
         return None
@@ -154,8 +154,8 @@ def test_render_focus_hidden_command_is_annotated() -> None:
 
 def test_help_command_itself_has_usage_and_focus_works() -> None:
     """Tier 2: /help opted into the structured usage field too."""
-    from reyn.slash import REGISTRY
-    from reyn.slash.help import _render_command_focus
+    from reyn.interfaces.slash import REGISTRY
+    from reyn.interfaces.slash.help import _render_command_focus
 
     cmd = REGISTRY.get("help")
     assert cmd is not None

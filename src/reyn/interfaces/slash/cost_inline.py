@@ -14,7 +14,7 @@ Usage::
 from __future__ import annotations
 
 from reyn.chat.outbox import OutboxMessage
-from reyn.slash import slash
+from reyn.interfaces.slash import slash
 
 
 def _normalise(args: str) -> str:

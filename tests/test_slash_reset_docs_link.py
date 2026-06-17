@@ -33,8 +33,8 @@ class _FakeSession:
 
 def test_reset_confirm_includes_docs_path() -> None:
     """Tier 2: /reset (without args) confirm-prompt includes crash-recovery-and-resume.md."""
-    from reyn.slash import REGISTRY  # noqa: F401 — triggers registration
-    from reyn.slash.reset import reset_cmd
+    from reyn.interfaces.slash import REGISTRY  # noqa: F401 — triggers registration
+    from reyn.interfaces.slash.reset import reset_cmd
 
     session = _FakeSession()
     asyncio.run(reset_cmd(session, ""))

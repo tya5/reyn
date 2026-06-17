@@ -21,7 +21,7 @@ typical project layout).
 """
 from __future__ import annotations
 
-from reyn.slash import reply, reply_error, slash
+from reyn.interfaces.slash import reply, reply_error, slash
 
 
 def _format_currently_line(session: "object") -> str:

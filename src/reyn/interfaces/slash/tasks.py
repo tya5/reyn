@@ -25,7 +25,7 @@ import asyncio
 import time
 from typing import TYPE_CHECKING
 
-from reyn.slash import reply, reply_error, slash
+from reyn.interfaces.slash import reply, reply_error, slash
 
 if TYPE_CHECKING:
     from reyn.chat.session import ChatSession
@@ -241,7 +241,7 @@ async def _kill_task(session: "ChatSession", args: str) -> None:
         # Reuse the existing /skill discard implementation rather than
         # duplicating cancel+notify+complete logic. Lazy-import to avoid
         # circular imports at module load time.
-        from reyn.slash.skill import _discard_skill_run
+        from reyn.interfaces.slash.skill import _discard_skill_run
         await _discard_skill_run(session, resolved)
     elif kind == "plan":
         # Mirror /plan discard semantics — cancel the task; the plan's

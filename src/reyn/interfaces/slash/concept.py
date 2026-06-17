@@ -20,7 +20,7 @@ import difflib
 import re
 from pathlib import Path
 
-from reyn.slash import reply, reply_error, slash
+from reyn.interfaces.slash import reply, reply_error, slash
 
 # Canonical path relative to the project root.  Resolved at call time so
 # tests can inject a custom path via the ``_glossary_path`` kwarg on the
