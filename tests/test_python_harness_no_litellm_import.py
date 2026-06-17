@@ -81,7 +81,7 @@ def test_lazy_public_api_still_resolves():
             "import reyn",
             "from reyn import SkillRuntime, RunResult, Phase, Skill, SkillGraph",
             "from reyn.core.kernel import OSRuntime, validate_output, normalize",
-            "names = (Agent, RunResult, Phase, Skill, SkillGraph,",
+            "names = (SkillRuntime, RunResult, Phase, Skill, SkillGraph,",
             "         OSRuntime, validate_output, normalize)",
             "assert all(x is not None for x in names), 'a public name resolved to None'",
             "raised = False",
