@@ -1,9 +1,11 @@
 # Build the landing page + mkdocs site and deploy them to GitHub Pages.
 #
-# Layout produced under the deploy artifact:
-#   /                     → website/dist/index.html (the LP)
-#   /assets/              → LP assets
-#   /docs/                → mkdocs site (built from docs/ via mkdocs.yml)
+# Unified-root layout (#1733) produced under the deploy artifact:
+#   /                     → website/dist/index.html (the landing page)
+#   /architecture.html    → website/dist/architecture.html (landing arch page)
+#   /assets/              → landing assets
+#   /<path>/              → mkdocs site, served root-relative (e.g. /start/, /guide/…)
+#   /docs/<path>/         → legacy meta-refresh redirect stubs → /<path>/ (old URLs)
 #
 # Trigger: every push to main, plus manual dispatch from the Actions tab.
 # Settings → Pages → Source must be set to "GitHub Actions" (one-time click
@@ -55,13 +57,19 @@ jobs:
         run: mkdocs build --strict -f .mkdocs/mkdocs.yml
 
       - name: Assemble deploy directory
-        # The Pages artifact wants a single directory whose root contains
-        # the site to serve. Combine LP at the root + mkdocs under /docs/.
+        # Unified-root (#1733): mkdocs docs serve at the root (/start/, /guide/…),
+        # the landing (build.py output) takes the root home (/) + /architecture.html.
         run: |
-          mkdir -p _deploy/docs
+          mkdir -p _deploy
+          # 1) mkdocs docs at the root (root-relative URLs)
+          cp -r site/. _deploy/
+          # 2) legacy /docs/* meta-refresh redirect stubs (Pages has no server
+          #    redirects) — one per built page, old docs home → /start/
+          python scripts/gen_docs_redirects.py site _deploy/docs /reyn/
+          # 3) landing overwrites the root home (its index.html beats mkdocs's
+          #    shadowed i18n home) + adds /architecture.html
           cp -r website/dist/. _deploy/
           cp -r website/assets _deploy/assets
-          cp -r site/. _deploy/docs/
           # Disable Jekyll: GitHub Pages would otherwise apply Jekyll
           # filtering, which strips files starting with `_` (mkdocs uses
           # them under search/) and reformats some HTML.
