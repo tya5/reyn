@@ -15,7 +15,7 @@ from pathlib import Path
 
 import pytest
 
-from reyn.replay import Checkpoint, ReplayEngine, StepFrame
+from reyn.data.replay import Checkpoint, ReplayEngine, StepFrame
 
 # ---------------------------------------------------------------------------
 # Fixture helpers

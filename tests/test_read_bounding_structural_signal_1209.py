@@ -25,12 +25,12 @@ from reyn.context_builder import (
     control_ir_inline_cap,
     offload_control_ir_result,
 )
+from reyn.data.workspace.workspace import Workspace
 from reyn.events.events import EventLog
 from reyn.op_runtime.context import OpContext
 from reyn.op_runtime.file import handle
 from reyn.schemas.models import FileIROp
 from reyn.security.permissions.permissions import PermissionDecl
-from reyn.workspace.workspace import Workspace
 
 
 def _make_ctx(tmp_path: Path) -> OpContext:

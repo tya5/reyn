@@ -25,8 +25,8 @@ from pathlib import Path
 import pytest
 
 from reyn.context_builder import ARTIFACT_REF_THRESHOLD
-from reyn.embedding import register_provider
-from reyn.embedding.provider import EmbedBatchResult
+from reyn.data.embedding import register_provider
+from reyn.data.embedding.provider import EmbedBatchResult
 from reyn.safe import embed_index as ei
 from reyn.safe import file as sf
 from reyn.stdlib.skills.index_events.chunkers import (
@@ -567,7 +567,7 @@ def test_run_collect_chunks_reglobs_files_internally(tmp_path, monkeypatch):
     assert not (tmp_path / "artifacts" / "event_chunks.jsonl").exists()
     import asyncio
 
-    from reyn.index import SqliteIndexBackend
+    from reyn.data.index import SqliteIndexBackend
 
     stat = asyncio.run(SqliteIndexBackend(workspace_root=tmp_path).stat("events"))
     assert stat["chunk_count"] == 1

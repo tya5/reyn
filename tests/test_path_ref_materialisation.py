@@ -22,7 +22,7 @@ from reyn.chat.services.router_history_buffer import (
     _read_pathref_image,
 )
 from reyn.chat.session import ChatMessage
-from reyn.workspace.media_store import MediaStore, MediaStoreConfig
+from reyn.data.workspace.media_store import MediaStore, MediaStoreConfig
 
 # ── helpers ────────────────────────────────────────────────────────────
 

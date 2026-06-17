@@ -28,6 +28,7 @@ import asyncio
 from pathlib import Path
 
 from reyn.compiler import load_dsl_skill
+from reyn.data.workspace.workspace import Workspace
 from reyn.events.events import EventLog
 from reyn.kernel.control_ir_executor import ControlIRExecutor
 from reyn.schemas.models import (
@@ -39,7 +40,6 @@ from reyn.schemas.models import (
 )
 from reyn.security.permissions.permissions import PermissionResolver
 from reyn.skill.skill_paths import stdlib_root
-from reyn.workspace.workspace import Workspace
 
 
 def _executor(tmp_path: Path, *, grant: bool) -> ControlIRExecutor:

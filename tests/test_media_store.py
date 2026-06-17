@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from reyn.workspace.media_store import MediaStore, MediaStoreConfig
+from reyn.data.workspace.media_store import MediaStore, MediaStoreConfig
 
 
 def _store(tmp_path: Path) -> MediaStore:
@@ -298,7 +298,7 @@ def test_save_with_agent_name_but_no_chain_id_omits_audit_field(tmp_path):
 )
 def test_parse_resource_uri_valid(uri, expected):
     """Tier 2: well-formed URIs split into (agent, artifact)."""
-    from reyn.workspace.media_store import parse_resource_uri
+    from reyn.data.workspace.media_store import parse_resource_uri
 
     assert parse_resource_uri(uri) == expected
 
@@ -319,7 +319,7 @@ def test_parse_resource_uri_invalid_returns_none(uri):
     """Tier 2: malformed URIs return None (= not an exception). The
     handler treats None as a structured-error signal.
     """
-    from reyn.workspace.media_store import parse_resource_uri
+    from reyn.data.workspace.media_store import parse_resource_uri
 
     assert parse_resource_uri(uri) is None
 

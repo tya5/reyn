@@ -30,8 +30,8 @@ from reyn.chat.services.tool_result_cap import (
     cap_tool_result_content,
     compute_cap_tokens,
 )
+from reyn.data.workspace.media_store import MediaStore
 from reyn.services.compaction.engine import estimate_tokens
-from reyn.workspace.media_store import MediaStore
 
 _MODEL = "gpt-4o"
 

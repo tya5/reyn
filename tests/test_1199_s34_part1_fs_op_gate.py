@@ -15,13 +15,13 @@ from pathlib import Path
 
 import pytest
 
+from reyn.data.index.backend import ChunkRecord
+from reyn.data.index.backends.sqlite import SqliteIndexBackend
+from reyn.data.workspace.workspace import Workspace
 from reyn.events.events import EventLog
-from reyn.index.backend import ChunkRecord
-from reyn.index.backends.sqlite import SqliteIndexBackend
 from reyn.op_runtime.context import OpContext
 from reyn.schemas.models import IndexDropIROp, IndexQueryIROp
 from reyn.security.permissions.permissions import PermissionDecl, PermissionResolver
-from reyn.workspace.workspace import Workspace
 
 
 def _chunk() -> ChunkRecord:
@@ -99,7 +99,7 @@ class _FakeProvider:
 def test_embed_index_forwards_cap_to_backend(tmp_path: Path) -> None:
     """Tier 2: the harness-set sandbox_write_paths context flows from embed_index
     into SqliteIndexBackend → a restrictive cap DENIES the streamed index write."""
-    from reyn.embedding import register_provider
+    from reyn.data.embedding import register_provider
     from reyn.safe import embed_index as ei
 
     register_provider("fake_s34", _FakeProvider)

@@ -14,10 +14,10 @@ from __future__ import annotations
 
 import pytest
 
+from reyn.data.workspace.workspace import Workspace
 from reyn.events.events import EventLog
 from reyn.op_runtime.context import OpContext
 from reyn.security.permissions.permissions import PermissionDecl
-from reyn.workspace.workspace import Workspace
 
 # ---------------------------------------------------------------------------
 # Stub: stand-in for reyn.security.secrets.store.ScopedSecretStore until D1 lands.

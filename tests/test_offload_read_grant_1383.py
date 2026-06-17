@@ -194,8 +194,8 @@ def test_workspace_read_gate_honors_offload_grant_end_to_end(tmp_path: Path) -> 
     """Tier 2c: end-to-end through the real Workspace — `Workspace.read_file` of an
     offloaded out-of-zone path raises 'outside project' before the grant and succeeds
     after (this is the exact gate-2 that left 13236 aborting)."""
+    from reyn.data.workspace.workspace import Workspace
     from reyn.events.events import EventLog
-    from reyn.workspace.workspace import Workspace
 
     r, offloaded, _ = _out_of_zone(tmp_path)
     offloaded.write_text("INPUT-CONTENT")

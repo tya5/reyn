@@ -192,9 +192,9 @@ def test_mcp_client_operator_header_wins(monkeypatch) -> None:
 
 def test_op_context_agent_id_default_is_none() -> None:
     """Tier 2: OpContext.agent_id default None (= no auto-inject)."""
+    from reyn.data.workspace.workspace import Workspace
     from reyn.op_runtime.context import OpContext
     from reyn.security.permissions.permissions import PermissionDecl
-    from reyn.workspace.workspace import Workspace
 
     ws = Workspace(events=EventLog(), skill_name="t")
     ctx = OpContext(
@@ -207,9 +207,9 @@ def test_op_context_agent_id_default_is_none() -> None:
 
 def test_op_context_agent_id_flows_through() -> None:
     """Tier 2: OpContext(agent_id=...) is preserved."""
+    from reyn.data.workspace.workspace import Workspace
     from reyn.op_runtime.context import OpContext
     from reyn.security.permissions.permissions import PermissionDecl
-    from reyn.workspace.workspace import Workspace
 
     ws = Workspace(events=EventLog(), skill_name="t")
     ctx = OpContext(

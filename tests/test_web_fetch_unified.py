@@ -291,9 +291,9 @@ def _make_router_op_ctx_factory(resolver, bus, events):
     exercise the router-invoked path of WEB_FETCH._handle without spinning
     up a full ChatSession.
     """
+    from reyn.data.workspace.workspace import Workspace
     from reyn.op_runtime.context import OpContext
     from reyn.security.permissions.permissions import PermissionDecl
-    from reyn.workspace.workspace import Workspace
 
     def _factory():
         ws = Workspace(
@@ -438,11 +438,11 @@ def test_phase_dispatch_reuses_op_context_intervention_bus(tmp_path: Path) -> No
     layer fails fast — what we're guarding is that the permission path
     didn't trip on a missing bus.
     """
+    from reyn.data.workspace.workspace import Workspace
     from reyn.events.events import EventLog
     from reyn.op_runtime.context import OpContext
     from reyn.security.permissions.permissions import PermissionDecl, PermissionResolver
     from reyn.tools.types import PhaseCallerState, ToolContext
-    from reyn.workspace.workspace import Workspace
 
     events = EventLog()
     resolver = PermissionResolver(

@@ -8,7 +8,7 @@ Activation
 ----------
 Reached only when the configured ``EmbeddingClassSpec.model`` carries the
 ``sentence-transformers/`` prefix; the routing layer in
-``reyn.embedding.RoutingEmbeddingProvider`` dispatches to this backend.
+``reyn.data.embedding.RoutingEmbeddingProvider`` dispatches to this backend.
 For consumers calling the protocol directly (= ``get_provider("st", ...)``),
 this class can also be instantiated standalone.
 
@@ -59,7 +59,7 @@ import warnings
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable
 
-from reyn.embedding.provider import EmbedBatchResult
+from reyn.data.embedding.provider import EmbedBatchResult
 
 # FP-0043 Component C.3 — first-time DL progress UX.
 #

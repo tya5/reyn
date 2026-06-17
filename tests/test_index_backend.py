@@ -11,8 +11,8 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from reyn.index.backend import ChunkRecord
-from reyn.index.backends.sqlite import SqliteIndexBackend
+from reyn.data.index.backend import ChunkRecord
+from reyn.data.index.backends.sqlite import SqliteIndexBackend
 
 # ---------------------------------------------------------------------------
 # helpers

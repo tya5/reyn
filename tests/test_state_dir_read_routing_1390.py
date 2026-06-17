@@ -25,10 +25,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from reyn.data.workspace.workspace import Workspace
 from reyn.environment.host_backend import HostBackend
 from reyn.events.events import EventLog
 from reyn.security.permissions.permissions import PermissionResolver
-from reyn.workspace.workspace import Workspace
 
 
 class _RecordingRepoBackend:

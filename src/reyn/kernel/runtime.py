@@ -12,15 +12,16 @@ from reyn.schemas.models import CandidateOutput, ContextFrame, Skill
 if TYPE_CHECKING:
     from reyn.budget.budget import BudgetTracker
     from reyn.config import MultimodalConfig, PhaseActResultsCompactionConfig, SandboxConfig
+    from reyn.data.workspace.media_store import MediaStore
     from reyn.environment.backend import EnvironmentBackend
     from reyn.events.state_log import StateLog
     from reyn.security.sandbox.backend import SandboxBackend
     from reyn.security.secrets.store import ScopedSecretStore
     from reyn.services.compaction.engine import CompactionEngine
     from reyn.skill.skill_registry import SkillRegistry
-    from reyn.workspace.media_store import MediaStore
 from reyn.config import SafetyConfig
 from reyn.context_builder import build_frame
+from reyn.data.workspace.workspace import Workspace
 from reyn.events.events import EventLog
 from reyn.kernel.control_ir_executor import ControlIRExecutor
 from reyn.kernel.llm_call_recorder import LLMCallRecorder
@@ -39,7 +40,6 @@ from reyn.llm.model_resolver import ModelResolver
 from reyn.llm.pricing import TokenUsage
 from reyn.security.permissions.permissions import PermissionResolver
 from reyn.user_intervention import RequestBus
-from reyn.workspace.workspace import Workspace
 
 # LoopLimitExceededError / PhaseBudgetExceededError / WorkflowAbortedError /
 # RunResult / _normalize_artifact / _validate_artifact_structure moved to

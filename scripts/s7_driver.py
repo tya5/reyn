@@ -123,7 +123,7 @@ def setup_agent_memory(agent_dir: Path) -> None:
 import sys
 sys.path.insert(0, '{REYN_ROOT}/src')
 from pathlib import Path
-from reyn.memory.memory import rewrite_index
+from reyn.data.memory.memory import rewrite_index
 rewrite_index(Path('{shared_mem_dir}'))
 print("index rebuilt")
 """
@@ -163,7 +163,7 @@ def restore_memory(original_had_index: bool) -> None:
 import sys
 sys.path.insert(0, '{REYN_ROOT}/src')
 from pathlib import Path
-from reyn.memory.memory import rewrite_index
+from reyn.data.memory.memory import rewrite_index
 rewrite_index(Path('{shared_mem_dir}'))
 """
         subprocess.run([str(PYTHON), "-c", rebuild_script], capture_output=True, timeout=15)
@@ -181,7 +181,7 @@ os.chdir('{WORKSPACE}')
 from pathlib import Path
 from reyn.chat.router_system_prompt import build_system_prompt
 from reyn.chat.session import _merge_memory_indexes
-from reyn.index.source_manifest import get_source_manifest
+from reyn.data.index.source_manifest import get_source_manifest
 
 async def main():
     # Build memory index the same way ChatSession does

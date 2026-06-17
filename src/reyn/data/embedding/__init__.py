@@ -24,10 +24,10 @@ from __future__ import annotations
 
 from typing import Any
 
-from reyn.embedding.cost_estimator import CostEstimate, estimate_indexing_cost
-from reyn.embedding.litellm_provider import LiteLLMEmbeddingProvider
-from reyn.embedding.provider import EmbedBatchResult, EmbeddingProvider
-from reyn.embedding.router_provider import RoutingEmbeddingProvider
+from reyn.data.embedding.cost_estimator import CostEstimate, estimate_indexing_cost
+from reyn.data.embedding.litellm_provider import LiteLLMEmbeddingProvider
+from reyn.data.embedding.provider import EmbedBatchResult, EmbeddingProvider
+from reyn.data.embedding.router_provider import RoutingEmbeddingProvider
 
 # Registry maps provider name → factory class. The ``"litellm"`` slot
 # points at the routing wrapper so callers using the historical name

@@ -134,7 +134,7 @@ async def _run_class(
 ) -> tuple[str, list[HitResult]]:
     """Build a fresh index for `class_name` and score each fixture."""
     from reyn.config import load_config
-    from reyn.embedding.litellm_provider import LiteLLMEmbeddingProvider
+    from reyn.data.embedding.litellm_provider import LiteLLMEmbeddingProvider
     from reyn.tools.action_index import ActionEmbeddingIndex
 
     cfg = load_config()

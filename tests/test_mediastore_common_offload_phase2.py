@@ -35,8 +35,8 @@ from typing import Any
 
 import pytest
 
+from reyn.data.workspace.media_store import MediaStore, MediaStoreConfig
 from reyn.services.offload.store import OffloadResult, offload_value
-from reyn.workspace.media_store import MediaStore, MediaStoreConfig
 
 # ---------------------------------------------------------------------------
 # Helpers

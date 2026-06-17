@@ -23,10 +23,10 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+from reyn.data.workspace.workspace import Workspace
 from reyn.environment.backend import EnvironmentBackend, GrepResult
 from reyn.environment.host_backend import HostBackend
 from reyn.events.events import EventLog
-from reyn.workspace.workspace import Workspace
 
 
 class _RecordingBackend:

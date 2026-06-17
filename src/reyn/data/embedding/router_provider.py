@@ -32,8 +32,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from reyn.embedding.litellm_provider import LiteLLMEmbeddingProvider
-from reyn.embedding.provider import EmbedBatchResult
+from reyn.data.embedding.litellm_provider import LiteLLMEmbeddingProvider
+from reyn.data.embedding.provider import EmbedBatchResult
 
 
 def _resolve_via_classes(
@@ -126,11 +126,11 @@ class RoutingEmbeddingProvider:
         found" naming the alias). Single resolution point = no dual-resolution
         drift; downstream sees only model names.
         """
-        from reyn.embedding.sentence_transformers_provider import _PREFIX
+        from reyn.data.embedding.sentence_transformers_provider import _PREFIX
         resolved = _resolve_via_classes(self._classes, model)
         if resolved.startswith(_PREFIX):
             if self._st is None:
-                from reyn.embedding.sentence_transformers_provider import (
+                from reyn.data.embedding.sentence_transformers_provider import (
                     SentenceTransformersEmbeddingProvider,
                 )
                 self._st = SentenceTransformersEmbeddingProvider(

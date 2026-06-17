@@ -62,7 +62,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Iterator, Mapping
 
 if TYPE_CHECKING:
-    from reyn.embedding.provider import EmbeddingProvider
+    from reyn.data.embedding.provider import EmbeddingProvider
 
 
 def _pid_alive(pid: int) -> bool:

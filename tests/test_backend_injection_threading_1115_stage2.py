@@ -21,6 +21,7 @@ from pathlib import Path
 
 import pytest
 
+from reyn.data.workspace.workspace import Workspace
 from reyn.environment.host_backend import HostBackend
 from reyn.events.events import EventLog
 from reyn.kernel.control_ir_executor import ControlIRExecutor
@@ -29,7 +30,6 @@ from reyn.kernel.runtime import OSRuntime
 from reyn.schemas.models import Phase, RunOpStep, SandboxedExecIROp, Skill, SkillGraph
 from reyn.security.permissions.permissions import PermissionDecl, PermissionResolver
 from reyn.security.sandbox.backend import SandboxResult
-from reyn.workspace.workspace import Workspace
 
 
 class _RecordingEnvBackend:

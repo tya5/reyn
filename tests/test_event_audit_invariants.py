@@ -34,6 +34,7 @@ import asyncio
 import pytest
 
 import reyn.kernel.llm_call_recorder as runtime_mod
+from reyn.data.workspace.workspace import Workspace
 from reyn.events.event_schema import EVENT_AUDIT_REQUIREMENTS
 from reyn.events.events import EventLog
 from reyn.llm.llm import LLMCallResult
@@ -48,7 +49,6 @@ from reyn.schemas.models import (
 )
 from reyn.security.permissions.permissions import PermissionDecl, PermissionResolver
 from reyn.user_intervention import InterventionAnswer, InterventionBus, UserIntervention
-from reyn.workspace.workspace import Workspace
 
 # ---------------------------------------------------------------------------
 # Shared helpers

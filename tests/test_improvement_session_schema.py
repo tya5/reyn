@@ -29,7 +29,7 @@ from pathlib import Path
 
 import yaml
 
-from reyn.workspace.artifact_validator import _strip_data
+from reyn.data.workspace.artifact_validator import _strip_data
 
 _SCHEMA_PATH = (
     Path(__file__).parent.parent

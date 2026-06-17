@@ -77,7 +77,7 @@ def register_fake_embedding_provider() -> None:
     After this, code that calls `get_provider("fake", config={...})` returns
     a FakeEmbeddingProvider instance.
     """
-    from reyn.embedding import register_provider
+    from reyn.data.embedding import register_provider
     register_provider("fake", FakeEmbeddingProvider)
 
 
@@ -145,8 +145,8 @@ async def write_index_directly(
     """
     from datetime import datetime, timezone
 
-    from reyn.index import SqliteIndexBackend
-    from reyn.index.source_manifest import SourceEntry, get_source_manifest
+    from reyn.data.index import SqliteIndexBackend
+    from reyn.data.index.source_manifest import SourceEntry, get_source_manifest
 
     backend = SqliteIndexBackend(workspace)
     write_result = await backend.write(source, iter(chunks_data), mode="replace")
@@ -195,7 +195,7 @@ REYN_ROOT = Path(__file__).parent.parent
 if __name__ == "__main__":
     # Self-test
     register_fake_embedding_provider()
-    from reyn.embedding import get_provider
+    from reyn.data.embedding import get_provider
     p = get_provider("fake")
     result = asyncio.run(p.embed(["hello", "world"], "standard"))
     assert len(result["vectors"]) == 2

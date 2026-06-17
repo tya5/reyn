@@ -25,11 +25,11 @@ import pytest
 
 from reyn.compiler.expander import expand_phase, expand_skill
 from reyn.compiler.ir import ArtifactDef, PhaseDef, SkillDef
+from reyn.data.workspace.workspace import Workspace
 from reyn.events.events import EventLog
 from reyn.kernel.postprocessor_executor import PostprocessorError, PostprocessorExecutor
 from reyn.llm.model_resolver import ModelResolver
 from reyn.schemas.models import Skill
-from reyn.workspace.workspace import Workspace
 
 # ── Fixtures / helpers ────────────────────────────────────────────────────────
 

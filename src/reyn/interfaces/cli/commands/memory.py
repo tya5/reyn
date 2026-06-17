@@ -10,7 +10,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from reyn.memory.memory import (
+from reyn.data.memory.memory import (
     AmbiguousMemoryError,
     MemoryEntry,
     find_one,
@@ -18,7 +18,7 @@ from reyn.memory.memory import (
     render_body,
     rewrite_index,
 )
-from reyn.memory.memory_paths import memory_dir
+from reyn.data.memory.memory_paths import memory_dir
 
 # ── argparse wiring ───────────────────────────────────────────────────────────
 

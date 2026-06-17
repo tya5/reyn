@@ -65,10 +65,10 @@ def build_router_op_context(
     The PermissionDecl + canonical-path approval + Workspace + OpContext are
     identical across hosts; per-host fields are passed explicitly. See module
     docstring for the drift-class + behavior-preserving rationale."""
+    from reyn.data.workspace.workspace import Workspace
     from reyn.op_runtime.context import OpContext
     from reyn.security.permissions.permissions import PermissionDecl
     from reyn.security.sandbox.policy import resolve_sandbox_policy
-    from reyn.workspace.workspace import Workspace
 
     file_perms = file_permissions or {}
     servers = mcp_servers or []

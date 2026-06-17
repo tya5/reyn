@@ -24,12 +24,12 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 
+from reyn.data.workspace.workspace import Workspace
 from reyn.events.events import EventLog
 from reyn.op_runtime import execute_op
 from reyn.op_runtime.context import OpContext
 from reyn.schemas.models import FileIROp
 from reyn.security.permissions.permissions import PermissionDecl, PermissionResolver
-from reyn.workspace.workspace import Workspace
 
 # ── helpers ────────────────────────────────────────────────────────────────────
 

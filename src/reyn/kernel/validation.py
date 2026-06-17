@@ -1,7 +1,7 @@
 import jsonschema
 
+from reyn.data.workspace.artifact_validator import extract_data_schema
 from reyn.schemas.models import CandidateOutput, LLMOutput
-from reyn.workspace.artifact_validator import extract_data_schema
 
 
 class ValidationError(Exception):

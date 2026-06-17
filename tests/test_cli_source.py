@@ -25,7 +25,7 @@ from pathlib import Path
 
 import pytest
 
-from reyn.index.source_manifest import SourceEntry, SourceManifest, get_source_manifest
+from reyn.data.index.source_manifest import SourceEntry, SourceManifest, get_source_manifest
 from reyn.interfaces.cli.commands.source import (
     _cmd_describe_async,
     _cmd_list_async,

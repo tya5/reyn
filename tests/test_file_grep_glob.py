@@ -18,13 +18,13 @@ from pathlib import Path
 
 import pytest
 
+from reyn.data.workspace.workspace import Workspace
 from reyn.events.events import EventLog
 from reyn.tools.file import (  # noqa: F401 (ToolRegistry imported for type check)
     GLOB_FILES,
     GREP_FILES,
 )
 from reyn.tools.types import ToolContext
-from reyn.workspace.workspace import Workspace
 
 # ── helpers ───────────────────────────────────────────────────────────────────
 

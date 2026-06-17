@@ -25,7 +25,7 @@ from pathlib import Path
 import pytest
 
 from reyn.config import EmbeddingClassSpec, EmbeddingConfig
-from reyn.embedding.sentence_transformers_provider import (
+from reyn.data.embedding.sentence_transformers_provider import (
     SentenceTransformersEmbeddingProvider,
     _resolve_cache_dir,
     _resolve_device,

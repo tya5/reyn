@@ -15,6 +15,8 @@ if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
 
     from reyn.config import MultimodalConfig, SandboxConfig, WebConfig
+    from reyn.data.workspace.media_store import MediaStore
+    from reyn.data.workspace.workspace import Workspace
     from reyn.events.events import EventLog
     from reyn.llm.model_resolver import ModelResolver
     from reyn.schemas.models import Skill
@@ -23,8 +25,6 @@ if TYPE_CHECKING:
     from reyn.security.sandbox.policy import SandboxPolicy
     from reyn.security.secrets.store import ScopedSecretStore
     from reyn.user_intervention import RequestBus
-    from reyn.workspace.media_store import MediaStore
-    from reyn.workspace.workspace import Workspace
 
 
 @dataclass

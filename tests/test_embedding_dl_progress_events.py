@@ -113,7 +113,7 @@ def test_no_sink_no_emissions_on_successful_load(monkeypatch, tmp_path) -> None:
     _FakeST.instances.clear()
     _install_fake_st(monkeypatch, _FakeST)
 
-    from reyn.embedding.sentence_transformers_provider import (
+    from reyn.data.embedding.sentence_transformers_provider import (
         SentenceTransformersEmbeddingProvider,
     )
     p = SentenceTransformersEmbeddingProvider(config={})
@@ -138,7 +138,7 @@ def test_import_error_emits_error_event_with_install_hint(
     _uninstall_st(monkeypatch)
 
     events, sink = _record()
-    from reyn.embedding.sentence_transformers_provider import (
+    from reyn.data.embedding.sentence_transformers_provider import (
         SentenceTransformersEmbeddingProvider,
     )
     p = SentenceTransformersEmbeddingProvider(config={}, event_sink=sink)
@@ -171,7 +171,7 @@ def test_successful_load_emits_status_then_done(
     _install_fake_st(monkeypatch, _FakeST)
 
     events, sink = _record()
-    from reyn.embedding.sentence_transformers_provider import (
+    from reyn.data.embedding.sentence_transformers_provider import (
         SentenceTransformersEmbeddingProvider,
     )
     p = SentenceTransformersEmbeddingProvider(config={}, event_sink=sink)
@@ -206,7 +206,7 @@ def test_subsequent_load_emits_no_events_when_cached(
     _install_fake_st(monkeypatch, _FakeST)
 
     events, sink = _record()
-    from reyn.embedding.sentence_transformers_provider import (
+    from reyn.data.embedding.sentence_transformers_provider import (
         SentenceTransformersEmbeddingProvider,
     )
     p = SentenceTransformersEmbeddingProvider(config={}, event_sink=sink)
@@ -232,7 +232,7 @@ def test_load_failure_emits_status_then_error_with_clear_hint(
     _install_fake_st(monkeypatch, _ExplodingST)
 
     events, sink = _record()
-    from reyn.embedding.sentence_transformers_provider import (
+    from reyn.data.embedding.sentence_transformers_provider import (
         SentenceTransformersEmbeddingProvider,
     )
     p = SentenceTransformersEmbeddingProvider(config={}, event_sink=sink)
@@ -260,7 +260,7 @@ def test_sink_exception_does_not_crash_load(monkeypatch, tmp_path) -> None:
     def _bad_sink(kind: str, text: str, meta: dict) -> None:
         raise RuntimeError("sink imploded")
 
-    from reyn.embedding.sentence_transformers_provider import (
+    from reyn.data.embedding.sentence_transformers_provider import (
         SentenceTransformersEmbeddingProvider,
     )
     p = SentenceTransformersEmbeddingProvider(
@@ -291,7 +291,7 @@ def test_routing_wrapper_forwards_event_sink_to_st_backend(
 
     events, sink = _record()
     from reyn.config import EmbeddingClassSpec, EmbeddingConfig
-    from reyn.embedding.router_provider import RoutingEmbeddingProvider
+    from reyn.data.embedding.router_provider import RoutingEmbeddingProvider
 
     cfg = EmbeddingConfig(
         default_class="local-mini",
@@ -329,7 +329,7 @@ def test_get_provider_threads_event_sink_through_routing_wrapper(
 
     events, sink = _record()
     from reyn.config import EmbeddingClassSpec, EmbeddingConfig
-    from reyn.embedding import get_provider
+    from reyn.data.embedding import get_provider
 
     cfg = EmbeddingConfig(
         default_class="local-mini",
@@ -362,7 +362,7 @@ def test_get_provider_without_event_sink_keeps_backward_compat(
     _install_fake_st(monkeypatch, _FakeST)
 
     from reyn.config import EmbeddingClassSpec, EmbeddingConfig
-    from reyn.embedding import get_provider
+    from reyn.data.embedding import get_provider
 
     cfg = EmbeddingConfig(
         default_class="local-mini",

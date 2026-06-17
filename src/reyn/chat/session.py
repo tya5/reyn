@@ -167,7 +167,7 @@ def _embedding_class_needs_missing_extras(
     False — let the normal try/except path handle it.
     """
     try:
-        from reyn.embedding.sentence_transformers_provider import (
+        from reyn.data.embedding.sentence_transformers_provider import (
             _PREFIX,
             is_available,
         )
@@ -1276,7 +1276,7 @@ class ChatSession:
         # (= for ops invoked directly from the chat router via tool
         # calls). ``None`` when no multimodal config is supplied —
         # handlers then fall back to the pre-#383 inline shape.
-        from reyn.workspace.media_store import MediaStore, MediaStoreConfig
+        from reyn.data.workspace.media_store import MediaStore, MediaStoreConfig
         if multimodal_config is not None:
             self._media_store: "MediaStore | None" = MediaStore(
                 MediaStoreConfig(
@@ -1365,7 +1365,7 @@ class ChatSession:
             )
         ):
             try:
-                from reyn.embedding import get_provider as _get_provider
+                from reyn.data.embedding import get_provider as _get_provider
                 from reyn.tools.action_index import ActionEmbeddingIndex
 
                 # FP-0043 Component C.3: surface the sentence-transformers

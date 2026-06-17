@@ -22,12 +22,12 @@ from pathlib import Path
 
 import pytest
 
+from reyn.data.workspace.workspace import Workspace
 from reyn.events.events import EventLog
 from reyn.op_runtime.context import OpContext
 from reyn.op_runtime.file import handle
 from reyn.schemas.models import FileIROp
 from reyn.security.permissions.permissions import PermissionDecl, PermissionResolver
-from reyn.workspace.workspace import Workspace
 
 
 def _ctx(tmp_path: Path, base_dir: Path, *, write_cap: Path, read_cap: Path) -> OpContext:

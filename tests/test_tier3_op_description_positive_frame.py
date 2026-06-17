@@ -69,9 +69,9 @@ def _build_executor(
     """Construct a minimal ControlIRExecutor under tmp_path (no global state)."""
     import os
 
+    from reyn.data.workspace.workspace import Workspace
     from reyn.events.events import EventLog
     from reyn.kernel.control_ir_executor import ControlIRExecutor
-    from reyn.workspace.workspace import Workspace
 
     os.chdir(tmp_path)  # Workspace anchors to CWD; isolate to tmp
     events = EventLog()

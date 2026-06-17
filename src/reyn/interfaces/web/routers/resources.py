@@ -167,7 +167,7 @@ async def get_tool_result(
     #    the project's ``.reyn/tool-results/`` directory. We re-use
     #    MediaStore's existing boundary check so the route and the
     #    same-host fs reader share one rule (= no chance of drift).
-    from reyn.workspace.media_store import MediaStore, MediaStoreConfig
+    from reyn.data.workspace.media_store import MediaStore, MediaStoreConfig
     store = MediaStore(
         MediaStoreConfig(),
         project_root=Path.cwd(),

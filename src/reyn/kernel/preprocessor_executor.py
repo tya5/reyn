@@ -33,6 +33,7 @@ from reyn.llm.pricing import TokenUsage
 from reyn.python_runner import PythonRunner, PythonStepError
 
 if TYPE_CHECKING:
+    from reyn.data.workspace.workspace import Workspace
     from reyn.events.events import EventLog
     from reyn.llm.model_resolver import ModelResolver
     from reyn.schemas.models import Phase, PreprocessorStep, Skill
@@ -40,7 +41,6 @@ if TYPE_CHECKING:
     from reyn.security.sandbox.backend import SandboxBackend
     from reyn.security.secrets.store import ScopedSecretStore
     from reyn.user_intervention import RequestBus
-    from reyn.workspace.workspace import Workspace
 
 
 class PreprocessorError(RuntimeError):

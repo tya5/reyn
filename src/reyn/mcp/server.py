@@ -580,7 +580,7 @@ def build_server(
         """
         from mcp.server.lowlevel.helper_types import ReadResourceContents
 
-        from reyn.workspace.media_store import (
+        from reyn.data.workspace.media_store import (
             MediaStore,
             MediaStoreConfig,
             parse_resource_uri,

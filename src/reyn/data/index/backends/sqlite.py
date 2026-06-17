@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Iterable, Literal
 
-from reyn.index.backend import ChunkRecord, DropResult, StatResult, WriteResult
+from reyn.data.index.backend import ChunkRecord, DropResult, StatResult, WriteResult
 
 if TYPE_CHECKING:
     import numpy as np  # pragma: no cover
@@ -57,7 +57,7 @@ def _within_paths(path: Path, roots: "list[str]") -> bool:
     """True if ``path`` is one of ``roots`` or a descendant (resolved). #1199
     S3.4 Part1 — the sandbox write_paths cap check for the host-direct index
     write. Mirrors the resolved-path-under match in permissions/effective.py
-    (replicated here so reyn.index does not depend on reyn.security.permissions)."""
+    (replicated here so reyn.data.index does not depend on reyn.security.permissions)."""
     try:
         p = Path(path).expanduser().resolve()
     except Exception:

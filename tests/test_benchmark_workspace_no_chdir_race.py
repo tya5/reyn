@@ -25,9 +25,9 @@ from pathlib import Path
 
 import pytest
 
+from reyn.data.workspace.workspace import Workspace
 from reyn.events.events import EventLog
 from reyn.interfaces.cli.commands.eval_benchmark import _benchmark_isolated_workspace
-from reyn.workspace.workspace import Workspace
 
 # ── test 1: context manager does not mutate CWD ──────────────────────────────
 

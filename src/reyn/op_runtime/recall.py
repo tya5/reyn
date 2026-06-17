@@ -11,7 +11,7 @@ from __future__ import annotations
 import os
 from typing import Literal
 
-from reyn.embedding import get_provider
+from reyn.data.embedding import get_provider
 from reyn.schemas.models import IndexQueryIROp, RecallIROp
 
 from . import execute_op, register

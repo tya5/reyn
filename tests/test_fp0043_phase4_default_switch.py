@@ -40,7 +40,7 @@ from reyn.config import (
     EmbeddingClassSpec,
     EmbeddingConfig,
 )
-from reyn.embedding.sentence_transformers_provider import is_available
+from reyn.data.embedding.sentence_transformers_provider import is_available
 
 # ── 1. Default config value ────────────────────────────────────────────────
 
@@ -100,7 +100,7 @@ def test_probe_st_class_when_extras_missing_returns_true(
     path on ``list_actions`` takes over the user-discovery surface.
     """
     monkeypatch.setattr(
-        "reyn.embedding.sentence_transformers_provider.is_available",
+        "reyn.data.embedding.sentence_transformers_provider.is_available",
         lambda: False,
     )
     cfg = _config_with_classes()
@@ -119,7 +119,7 @@ def test_probe_st_class_when_extras_present_returns_false(
     the first index build completes.
     """
     monkeypatch.setattr(
-        "reyn.embedding.sentence_transformers_provider.is_available",
+        "reyn.data.embedding.sentence_transformers_provider.is_available",
         lambda: True,
     )
     cfg = _config_with_classes()
@@ -142,7 +142,7 @@ def test_probe_openai_class_returns_false(
     probe is irrelevant to that path.
     """
     monkeypatch.setattr(
-        "reyn.embedding.sentence_transformers_provider.is_available",
+        "reyn.data.embedding.sentence_transformers_provider.is_available",
         lambda: st_available,
     )
     cfg = _config_with_classes()

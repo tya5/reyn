@@ -45,11 +45,11 @@ from typing import Any
 
 import pytest
 
+from reyn.data.workspace.workspace import Workspace
 from reyn.events.events import EventLog
 from reyn.op_runtime.context import OpContext
 from reyn.security.permissions.permissions import PermissionDecl
 from reyn.tools.types import PhaseCallerState, ToolContext
-from reyn.workspace.workspace import Workspace
 
 
 def _build_phase_state(perm_decl: PermissionDecl) -> PhaseCallerState:

@@ -13,9 +13,9 @@ from pathlib import Path
 
 import pytest
 
+from reyn.data.workspace.workspace import Workspace
 from reyn.events.events import EventLog
 from reyn.security.permissions.permissions import PermissionResolver
-from reyn.workspace.workspace import Workspace
 
 # ── helpers ───────────────────────────────────────────────────────────────────
 

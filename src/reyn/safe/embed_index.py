@@ -58,10 +58,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterable
 
-from reyn.embedding import get_provider
-from reyn.index import SqliteIndexBackend
-from reyn.index.backend import ChunkRecord
-from reyn.index.source_manifest import SourceEntry, get_source_manifest
+from reyn.data.embedding import get_provider
+from reyn.data.index import SqliteIndexBackend
+from reyn.data.index.backend import ChunkRecord
+from reyn.data.index.source_manifest import SourceEntry, get_source_manifest
 
 # ── Internal state ─────────────────────────────────────────────────────────
 #

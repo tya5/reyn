@@ -15,7 +15,7 @@ from pathlib import Path
 # Module-level import so tests can monkeypatch via
 # "reyn.interfaces.cli.commands.source.get_source_manifest" and
 # "reyn.interfaces.cli.commands.source._get_workspace_root".
-from reyn.index.source_manifest import get_source_manifest  # noqa: E402
+from reyn.data.index.source_manifest import get_source_manifest  # noqa: E402
 
 
 def register(sub: argparse._SubParsersAction) -> None:
@@ -291,7 +291,7 @@ def _make_cli_workspace(workspace_root: Path):
     try:
         import os
 
-        from reyn.workspace.workspace import Workspace
+        from reyn.data.workspace.workspace import Workspace
 
         old_cwd = Path.cwd()
         os.chdir(workspace_root)

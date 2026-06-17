@@ -11,10 +11,10 @@ from reyn.config import OnLimitConfig, SafetyConfig
 
 if TYPE_CHECKING:
     from reyn.config import MultimodalConfig, SandboxConfig
+    from reyn.data.workspace.media_store import MediaStore
     from reyn.environment.backend import EnvironmentBackend
     from reyn.security.sandbox.backend import SandboxBackend
     from reyn.security.secrets.store import ScopedSecretStore
-    from reyn.workspace.media_store import MediaStore
 from reyn.events.event_store import EventStore
 from reyn.kernel.runtime import OSRuntime, RunResult
 from reyn.llm.model_resolver import ModelResolver

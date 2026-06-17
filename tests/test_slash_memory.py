@@ -3,7 +3,7 @@
 Pins the new read-only command's surface contract: the registry
 includes ``/memory``, the completer returns entry names after
 ``view ``, and the list / view subcommands route to handlers that
-read through ``reyn.memory.list_entries`` / ``find_one``.
+read through ``reyn.data.memory.list_entries`` / ``find_one``.
 """
 from __future__ import annotations
 

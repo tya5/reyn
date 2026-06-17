@@ -21,10 +21,11 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from reyn.config import MultimodalConfig, SandboxConfig
+    from reyn.data.workspace.media_store import MediaStore
     from reyn.security.sandbox.backend import SandboxBackend
     from reyn.security.secrets.store import ScopedSecretStore
-    from reyn.workspace.media_store import MediaStore
 
+from reyn.data.workspace.workspace import Workspace
 from reyn.dispatch import DispatchContext, dispatch_tool
 from reyn.events.events import EventLog
 from reyn.llm.model_resolver import ModelResolver
@@ -36,7 +37,6 @@ from reyn.schemas.models import (
 )
 from reyn.security.permissions.permissions import PermissionDecl, PermissionResolver
 from reyn.user_intervention import RequestBus
-from reyn.workspace.workspace import Workspace
 
 
 def _build_phase_tool_catalog(allowed_ops: set[str]) -> dict[str, dict]:

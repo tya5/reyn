@@ -12,7 +12,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from reyn.replay import compare
+from reyn.data.replay import compare
 
 # ---------------------------------------------------------------------------
 # Fixture helpers (duplicated from test_replay_engine.py for isolation)
