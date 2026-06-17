@@ -21,7 +21,7 @@ from pathlib import Path
 from reyn.llm.llm import run_async
 
 from ..common_args import add_common_args
-from ..session import Session
+from ..invocation_context import InvocationContext
 
 # ---------------------------------------------------------------------------
 # Scope tier helpers
@@ -330,7 +330,7 @@ def run_serve(args: argparse.Namespace) -> None:
     from reyn.runtime.budget.budget import BudgetTracker
     from reyn.security.permissions.permissions import PermissionResolver
 
-    session_cfg = Session.from_args(args)
+    session_cfg = InvocationContext.from_args(args)
     from reyn.interfaces.cli.credentials_check import verify_credentials_or_exit
     verify_credentials_or_exit(session_cfg, args)
     model, _ = session_cfg.model_for(args)

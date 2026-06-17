@@ -18,7 +18,7 @@ from reyn.interfaces.cli.env_backend import (
 from reyn.llm.llm import run_async
 
 from ..common_args import add_common_args
-from ..session import Session
+from ..invocation_context import InvocationContext
 
 # #187: send_to_agent_impl timeout for the one-shot (`reyn run-once`) drive. The
 # autonomous SWE agent may iterate for many minutes; the external bound is the
@@ -315,7 +315,7 @@ def run(args: argparse.Namespace) -> None:
     from reyn.runtime.budget.budget import BudgetTracker
     from reyn.security.permissions.permissions import PermissionResolver
 
-    session_cfg = Session.from_args(args)
+    session_cfg = InvocationContext.from_args(args)
     from reyn.interfaces.cli.credentials_check import verify_credentials_or_exit
     verify_credentials_or_exit(session_cfg, args)
     # ``model`` (= tier key like "standard" / "strong") drives ChatSession's

@@ -1,8 +1,8 @@
 """
-Session: per-invocation bootstrap.
+InvocationContext: per-invocation bootstrap.
 
 Loads config, applies environment, builds the model resolver. Each command
-receives a Session so it can read effective values without re-running the
+receives an InvocationContext so it can read effective values without re-running the
 load/merge logic.
 """
 from __future__ import annotations
@@ -16,12 +16,12 @@ from reyn.llm.model_resolver import ModelResolver
 
 
 @dataclass
-class Session:
+class InvocationContext:
     config: ReynConfig
     resolver: ModelResolver
 
     @classmethod
-    def from_args(cls, args: argparse.Namespace) -> "Session":
+    def from_args(cls, args: argparse.Namespace) -> "InvocationContext":
         config = load_config()
         if config.api_base:
             os.environ.setdefault("LITELLM_API_BASE", config.api_base)

@@ -121,7 +121,7 @@ async def _get_or_build_registry() -> "AgentRegistry":
         from reyn.chat.scoped_session_factory import build_scoped_chat_session
         from reyn.config import _find_project_root, load_project_context
         from reyn.core.events.state_log import StateLog
-        from reyn.interfaces.cli.session import Session
+        from reyn.interfaces.cli.invocation_context import InvocationContext
         from reyn.runtime.budget.budget import BudgetTracker
         from reyn.security.permissions.permissions import PermissionResolver
 
@@ -130,7 +130,7 @@ async def _get_or_build_registry() -> "AgentRegistry":
         # helpers do ``getattr(args, "...", None)`` everywhere, so an
         # empty Namespace gives us config defaults across the board.
         empty_args = argparse.Namespace()
-        session_cfg = Session.from_args(empty_args)
+        session_cfg = InvocationContext.from_args(empty_args)
         model, _resolved = session_cfg.model_for(empty_args)
         output_language = session_cfg.output_language_for(empty_args)
         safety = session_cfg.safety_for(empty_args)

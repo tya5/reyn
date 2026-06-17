@@ -105,7 +105,7 @@ def eval_workspace(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
 
     Monkeypatches:
       - CWD → tmp_path   (so .reyn/ resolves under tmp_path)
-      - Session.from_args → minimal stub that avoids reading real reyn.yaml
+      - InvocationContext.from_args → minimal stub that avoids reading real reyn.yaml
       - load_dsl_skill    → returns a sentinel object (skill execution is
                             replaced via _run_case monkeypatch in each test)
     """
@@ -113,9 +113,9 @@ def eval_workspace(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
 
     monkeypatch.chdir(tmp_path)
 
-    # Stub Session so we don't need a live reyn.yaml.
+    # Stub InvocationContext so we don't need a live reyn.yaml.
     from reyn.config import ReynConfig, SafetyConfig
-    from reyn.interfaces.cli import session as session_mod
+    from reyn.interfaces.cli import invocation_context as invocation_mod
     from reyn.llm.model_resolver import ModelResolver
 
     class _StubSession:
@@ -138,7 +138,7 @@ def eval_workspace(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
         def shell_allowed_for(self, args):
             return False
 
-    monkeypatch.setattr(session_mod, "Session", _StubSession)
+    monkeypatch.setattr(invocation_mod, "InvocationContext", _StubSession)
 
     # Stub load_dsl_skill so tests don't need a real skill on disk.
     import reyn.core.compiler as compiler_mod
