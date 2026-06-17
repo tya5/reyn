@@ -44,7 +44,7 @@ from pathlib import Path
 
 import pytest
 
-from reyn.context_builder import (
+from reyn.core.context_builder import (
     MAX_CONTROL_IR_RESULT_INLINE_BYTES,
     MAX_OFFLOADED_INLINE_BYTES,
     OFFLOAD_HEAD_CHARS,
@@ -506,7 +506,7 @@ def test_many_medium_fields_hard_bound_fallback(tmp_path: Path) -> None:
     This tests the correctness of the whole-inline-replace fallback (step 3 of
     the bounded-by-construction design).
     """
-    from reyn.context_builder import _FIELD_KEEP_THRESHOLD
+    from reyn.core.context_builder import _FIELD_KEEP_THRESHOLD
 
     # Build a result with many fields each slightly under the per-field threshold
     # so per-field preview logic keeps them all, but the total blows up.

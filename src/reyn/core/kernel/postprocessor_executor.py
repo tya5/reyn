@@ -40,9 +40,9 @@ from reyn.llm.pricing import TokenUsage
 
 if TYPE_CHECKING:
     from reyn.core.events.events import EventLog
+    from reyn.core.python_runner import PythonRunner
     from reyn.data.workspace.workspace import Workspace
     from reyn.llm.model_resolver import ModelResolver
-    from reyn.python_runner import PythonRunner
     from reyn.schemas.models import PreprocessorStep, Skill
     from reyn.security.permissions.permissions import PermissionResolver
     from reyn.user_intervention import RequestBus

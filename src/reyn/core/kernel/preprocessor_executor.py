@@ -29,8 +29,8 @@ from typing import TYPE_CHECKING, Any
 
 import jsonschema
 
+from reyn.core.python_runner import PythonRunner, PythonStepError
 from reyn.llm.pricing import TokenUsage
-from reyn.python_runner import PythonRunner, PythonStepError
 
 if TYPE_CHECKING:
     from reyn.core.events.events import EventLog

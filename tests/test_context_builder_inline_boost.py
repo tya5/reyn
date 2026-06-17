@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import json
 
-from reyn.context_builder import (
+from reyn.core.context_builder import (
     ARTIFACT_REF_THRESHOLD,
     MAX_INLINE_BOOST,
     maybe_ref_artifact,

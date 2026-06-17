@@ -290,7 +290,7 @@ def build_default_turn_budget_engine(
     across chat/plan/phase (no per-axis drift); PR-F reuses it verbatim. The
     import of the offload ceiling is local to avoid a module-load cycle.
     """
-    from reyn.context_builder import MAX_OFFLOADED_INLINE_BYTES
+    from reyn.core.context_builder import MAX_OFFLOADED_INLINE_BYTES
 
     # The offload ceiling is a BYTE bound; convert to the model's tokens so it is
     # comparable with the (token-denominated) threshold. Measured once at build.

@@ -19,7 +19,7 @@ from pathlib import Path
 
 import pytest
 
-from reyn.python_runner import PythonRunner
+from reyn.core.python_runner import PythonRunner
 from reyn.security.sandbox.backend import SandboxResult
 
 

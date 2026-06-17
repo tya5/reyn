@@ -161,7 +161,7 @@ def _read_inline_cap(ctx: OpContext) -> int:
     ``control_ir_inline_cap`` so read-bounding and offload use the same cap.
     Falls back to the fixed floor when there is no resolver.
     """
-    from reyn.context_builder import control_ir_inline_cap
+    from reyn.core.context_builder import control_ir_inline_cap
 
     model_str: str | None = None
     if ctx.resolver is not None:

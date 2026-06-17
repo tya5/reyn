@@ -24,7 +24,7 @@ from pathlib import Path
 
 import pytest
 
-from reyn.context_builder import ARTIFACT_REF_THRESHOLD
+from reyn.core.context_builder import ARTIFACT_REF_THRESHOLD
 from reyn.data.embedding import register_provider
 from reyn.data.embedding.provider import EmbedBatchResult
 from reyn.safe import embed_index as ei
