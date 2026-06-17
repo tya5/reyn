@@ -70,6 +70,16 @@ catalogues.
 **Use when:** the tool set is **very large** and presenting it in full would cost
 too many tokens — the search narrows the candidates before the call.
 
+**Measured (weak-model 4-way refresh, #1604-followup — internal signal):** retrieval
+is clean on single-step reads and read→transform→write chains, but on **read-heavy
+multi-file** tasks the weak model reads files sequentially and the search→re-present
+per-round overhead makes it slow (timeout-prone) — *correct-but-slow*, a tuning cost,
+not a cognition gap (uncapped, it completes the same task). So retrieval is a
+**catalogue-scaling opt-in, not a weak-default replacement**: `enumerate-all` remains
+the weak-model chat default (highest task-completion and fastest-terminating in the
+comparison; #1657). See the 4-way refresh journal under
+`docs/deep-dives/journal/dogfood/2026-06-17-4way-retrieval-refresh/`.
+
 ### `CodeAct`
 
 Code-as-tools. The LLM writes a short Python snippet, and tool calls happen as
