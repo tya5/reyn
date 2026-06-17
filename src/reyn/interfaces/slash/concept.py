@@ -1,6 +1,7 @@
 """/concept [<term>] — inline glossary lookup for TUI vocabulary.
 
-Surfaces definitions from ``docs/guide/for-skill-authors/glossary.md``
+Surfaces definitions from
+``docs/guide/for-skill-authors/stdlib-authoring-tools/glossary.md``
 without leaving the chat pane.  The glossary uses Markdown tables with
 ``| English | 日本語 | Definition |`` rows (and some two-column variant
 tables); the parser walks all tables and captures every term → definition
@@ -25,12 +26,19 @@ from reyn.interfaces.slash import reply, reply_error, slash
 # Canonical path relative to the project root.  Resolved at call time so
 # tests can inject a custom path via the ``_glossary_path`` kwarg on the
 # internal helpers.
-_GLOSSARY_REL = Path("docs/guide/for-skill-authors/glossary.md")
+_GLOSSARY_REL = Path(
+    "docs/guide/for-skill-authors/stdlib-authoring-tools/glossary.md"
+)
 
 
 def _project_root() -> Path:
     """Return the project root (= ancestor of ``src/reyn``)."""
-    return Path(__file__).parent.parent.parent.parent
+    # src/reyn/interfaces/slash/concept.py → root is 5 parents up
+    # (slash → interfaces → reyn → src → root). #1682 broad-#5 A1 moved
+    # this module one level deeper (reyn/slash → reyn/interfaces/slash);
+    # the default-glossary parent-walk needs the extra hop (tests inject
+    # _glossary_path, so the default path was not exercised by CI).
+    return Path(__file__).parent.parent.parent.parent.parent
 
 
 def _default_glossary_path() -> Path:
@@ -135,7 +143,8 @@ def _lookup(
 # ── slash command ──────────────────────────────────────────────────────────
 
 _GLOSSARY_PATH_HINT = (
-    "Full glossary: Ctrl+B → Docs → guide/for-skill-authors/glossary"
+    "Full glossary: Ctrl+B → Docs → "
+    "guide/for-skill-authors/stdlib-authoring-tools/glossary"
 )
 
 

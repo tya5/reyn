@@ -264,3 +264,35 @@ def test_concept_in_registry() -> None:
     cmd = REGISTRY.get("concept")
     assert cmd is not None
     assert cmd.name == "concept"
+
+
+# ── regression: the REAL default glossary path (no injection) ──────────────
+#
+# Every test above injects glossary_path, so a broken DEFAULT path was
+# invisible to CI. Two defects hid here at once: the #1682 A1 package move
+# (reyn/slash → reyn/interfaces/slash) added a directory level that the
+# _project_root() parent-walk did not account for, AND the glossary file had
+# been relocated under stdlib-authoring-tools/ (#1091) without _GLOSSARY_REL
+# being updated. These exercise the real, non-injected path end-to-end.
+
+
+def test_default_glossary_path_resolves_to_real_file() -> None:
+    """Tier 2: the shipped default glossary path resolves to an existing file."""
+    from reyn.interfaces.slash.concept import _default_glossary_path
+
+    path = _default_glossary_path()
+    assert path.exists(), f"default glossary path does not resolve: {path}"
+
+
+def test_default_glossary_loads_canonical_terms() -> None:
+    """Tier 2: the real shipped glossary parses to a non-empty map with a stable core term."""
+    from reyn.interfaces.slash.concept import (
+        _default_glossary_path,
+        _parse_glossary,
+    )
+
+    glossary = _parse_glossary(
+        _default_glossary_path().read_text(encoding="utf-8")
+    )
+    assert len(glossary) > 0
+    assert "skill" in glossary  # foundational reyn concept, stable across edits
