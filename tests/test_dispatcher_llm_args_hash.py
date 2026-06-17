@@ -10,7 +10,7 @@ input.
 """
 from __future__ import annotations
 
-from reyn.dispatch.dispatcher import _compute_llm_args_hash
+from reyn.core.dispatch.dispatcher import _compute_llm_args_hash
 
 
 def test_current_datetime_difference_yields_same_hash():

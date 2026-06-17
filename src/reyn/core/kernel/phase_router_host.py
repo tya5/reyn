@@ -187,11 +187,11 @@ class PhaseRouterLoopHost:
         (P7). Chat hosts do NOT implement this method; RouterLoop getattr-guards it and
         falls back to ``compute_sub_loop_args_hash`` → chat memo key byte-identical.
         """
-        from reyn.core.plan.sub_loop_memo import compute_sub_loop_args_hash
-        from reyn.dispatch.dispatcher import (
+        from reyn.core.dispatch.dispatcher import (
             _LLM_VOLATILE_FRAME_FIELDS,
             _LLM_VOLATILE_NESTED_FIELDS,
         )
+        from reyn.core.plan.sub_loop_memo import compute_sub_loop_args_hash
 
         robust = [
             self._strip_volatile_frame_fields(

@@ -31,7 +31,7 @@ Helper:
 
 Consumers:
   - ``reyn.core.compiler.linter``     — ``ALL_OP_KINDS``
-  - ``reyn.dispatch.dispatcher`` — ``OP_PURITY`` (skip emission for ``pure``)
+  - ``reyn.core.dispatch.dispatcher`` — ``OP_PURITY`` (skip emission for ``pure``)
   - ``reyn.core.kernel.control_ir_executor`` — ``is_op_allowed`` for the
     ``allowed_ops`` filter
 

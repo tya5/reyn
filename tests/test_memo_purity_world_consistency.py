@@ -21,8 +21,8 @@ import asyncio
 from pathlib import Path
 from typing import Any
 
+from reyn.core.dispatch import DispatchContext, dispatch_tool
 from reyn.core.events.state_log import StateLog
-from reyn.dispatch import DispatchContext, dispatch_tool
 from reyn.skill.skill_resume_analyzer import (
     CommittedStep,
     ResumePlan,
@@ -119,7 +119,7 @@ def test_world_op_resume_skip_still_emits_step_completed(tmp_path: Path):
         return {"results": ["fresh_after_resume"]}
 
     async def go():
-        from reyn.dispatch.dispatcher import _compute_args_hash
+        from reyn.core.dispatch.dispatcher import _compute_args_hash
         args = {"url": "https://e.com"}
         plan = ResumePlan(
             run_id="run_consistency",

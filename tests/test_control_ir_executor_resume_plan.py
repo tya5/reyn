@@ -94,7 +94,7 @@ def test_resume_plan_is_propagated_to_dispatch_context(tmp_path, monkeypatch):
     resume_plan didn't propagate, the op would execute fresh and no
     memo marker would appear.
     """
-    from reyn.dispatch.dispatcher import _compute_args_hash
+    from reyn.core.dispatch.dispatcher import _compute_args_hash
 
     monkeypatch.chdir(tmp_path)
 

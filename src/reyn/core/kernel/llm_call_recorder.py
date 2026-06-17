@@ -31,7 +31,7 @@ import logging
 from typing import TYPE_CHECKING, Callable
 
 from reyn.budget.budget import BudgetExceeded, format_refusal_message
-from reyn.dispatch.dispatcher import _compute_llm_args_hash, _lookup_memoized_step
+from reyn.core.dispatch.dispatcher import _compute_llm_args_hash, _lookup_memoized_step
 from reyn.llm.llm import call_llm, call_llm_tools
 from reyn.llm.llm import proxy_kwargs as _proxy_kwargs
 from reyn.llm.pricing import TokenUsage, estimate_cost

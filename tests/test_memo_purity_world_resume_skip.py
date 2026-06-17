@@ -22,7 +22,7 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
-from reyn.dispatch import DispatchContext, dispatch_tool
+from reyn.core.dispatch import DispatchContext, dispatch_tool
 from reyn.skill.skill_resume_analyzer import (
     CommittedStep,
     ResumePlan,
@@ -100,7 +100,7 @@ def test_world_op_bypasses_memo_and_invokes_fresh():
         return {"results": ["fresh", "data"]}
 
     async def go():
-        from reyn.dispatch.dispatcher import _compute_args_hash
+        from reyn.core.dispatch.dispatcher import _compute_args_hash
         args = {"url": "https://example.com/search?q=foo"}
         args_hash = _compute_args_hash(args)
         plan = _plan_with([
@@ -140,7 +140,7 @@ def test_world_op_web_search_also_bypasses_memo():
         return {"hits": ["fresh"]}
 
     async def go():
-        from reyn.dispatch.dispatcher import _compute_args_hash
+        from reyn.core.dispatch.dispatcher import _compute_args_hash
         args = {"q": "reyn skill resume"}
         args_hash = _compute_args_hash(args)
         plan = _plan_with([
@@ -183,7 +183,7 @@ def test_side_effect_op_still_uses_memo():
         return {"freshly_written": True}
 
     async def go():
-        from reyn.dispatch.dispatcher import _compute_args_hash
+        from reyn.core.dispatch.dispatcher import _compute_args_hash
         args = {"op": "write", "path": "x.txt", "content": "y"}
         args_hash = _compute_args_hash(args)
         plan = _plan_with([
@@ -225,7 +225,7 @@ def test_external_op_mcp_still_uses_memo():
         return {"page_id": "fresh_id"}
 
     async def go():
-        from reyn.dispatch.dispatcher import _compute_args_hash
+        from reyn.core.dispatch.dispatcher import _compute_args_hash
         args = {"server": "notion", "name": "create_page",
                 "arguments": {"title": "hi"}}
         args_hash = _compute_args_hash(args)

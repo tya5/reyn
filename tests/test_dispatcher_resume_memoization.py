@@ -29,7 +29,7 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
-from reyn.dispatch import DispatchContext, dispatch_tool
+from reyn.core.dispatch import DispatchContext, dispatch_tool
 from reyn.skill.skill_resume_analyzer import (
     CommittedStep,
     ResumePlan,
@@ -132,7 +132,7 @@ def test_memoize_returns_recorded_result_without_invoking():
     async def go():
         # Pre-compute the args_hash dispatch_tool would generate so the
         # memo matches.
-        from reyn.dispatch.dispatcher import _compute_args_hash
+        from reyn.core.dispatch.dispatcher import _compute_args_hash
         args = {"op": "write", "path": "x.txt", "content": "y"}
         args_hash = _compute_args_hash(args)
         plan = _plan_with([
@@ -158,7 +158,7 @@ def test_memoize_failure_step_returns_error_shape():
         raise AssertionError("invoker must not be called")
 
     async def go():
-        from reyn.dispatch.dispatcher import _compute_args_hash
+        from reyn.core.dispatch.dispatcher import _compute_args_hash
         args = {"op": "write", "path": "x", "content": "y"}
         args_hash = _compute_args_hash(args)
         plan = _plan_with([
@@ -272,7 +272,7 @@ def test_memoized_call_emits_step_memoized_audit_event():
         raise AssertionError("invoker must not be called")
 
     async def go():
-        from reyn.dispatch.dispatcher import _compute_args_hash
+        from reyn.core.dispatch.dispatcher import _compute_args_hash
         args = {"op": "write", "path": "x", "content": "y"}
         args_hash = _compute_args_hash(args)
         plan = _plan_with([
@@ -309,7 +309,7 @@ def test_memoized_call_does_not_emit_wal_step_events(tmp_path):
         raise AssertionError("invoker must not be called")
 
     async def go():
-        from reyn.dispatch.dispatcher import _compute_args_hash
+        from reyn.core.dispatch.dispatcher import _compute_args_hash
         args = {"op": "write", "path": "x", "content": "y"}
         args_hash = _compute_args_hash(args)
         plan = _plan_with([
@@ -373,7 +373,7 @@ def test_committed_step_in_different_phase_does_not_match():
         return {"fresh": True}
 
     async def go():
-        from reyn.dispatch.dispatcher import _compute_args_hash
+        from reyn.core.dispatch.dispatcher import _compute_args_hash
         args = {"op": "write", "path": "x", "content": "y"}
         args_hash = _compute_args_hash(args)
         plan = _plan_with([
