@@ -29,7 +29,7 @@ Reyn routes your request to the right built-in skill automatically — you don't
 |---|---|
 | Ask questions | `"What's the capital of France?"` |
 | Summarize files | `"Summarize README.md"` |
-| Work on local files | `"What functions are in src/reyn/agent.py?"` |
+| Work on local files | `"What functions are in src/reyn/skill_runtime.py?"` |
 | Search the web | `"What's the latest release of Python?"` |
 | Run multi-step tasks | `"Research X and write a report"` |
 
