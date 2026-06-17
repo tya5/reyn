@@ -19,6 +19,11 @@ exclude_docs: |
   # Single subtree captures journal / research / spec / decisions /
   # contributing (= maintainer / design history).
   deep-dives/
+  # Cookbook: render the example READMEs (first-class Cookbook section), but
+  # exclude the runnable skill *source* dirs (skill.md + phases) — those are
+  # executable examples, not doc pages.
+  cookbook/improve-a-skill/sample_skill/
+  cookbook/translate-doc/translate_doc/
 
 theme:
   name: material
@@ -130,6 +135,17 @@ nav:
               - guide/for-reyn-developers/write-replay-tests.md
           - Benchmarking:
               - guide/for-reyn-developers/run-swe-bench.md
+  - Cookbook:
+      - cookbook/README.md
+      - Example skills:
+          - cookbook/eval-a-skill/README.md
+          - cookbook/improve-a-skill/README.md
+          - cookbook/multi-agent-research/README.md
+          - cookbook/research-topic/README.md
+          - cookbook/translate-doc/README.md
+          - cookbook/weekly-summary/README.md
+          - cookbook/write-readme/README.md
+      - Configs: cookbook/configs/README.md
   - Reference:
       - CLI:
           - Running Reyn:

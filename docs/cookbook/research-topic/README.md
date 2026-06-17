@@ -60,5 +60,5 @@ See `transcript.example.txt` for a sketch.
 
 ## See also
 
-- [stdlib/mcp_search](../../src/reyn/stdlib/skills/mcp_search/skill.md)
-- [How-to: compose skills with run_skill](../../docs/guide/for-skill-authors/compose-skills-with-run-skill.md)
+- [stdlib/mcp_search](https://github.com/tya5/reyn/blob/main/src/reyn/stdlib/skills/mcp_search/skill.md)
+- [How-to: compose skills with run_skill](../../guide/for-skill-authors/composition/compose-skills-with-run-skill.md)

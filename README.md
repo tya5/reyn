@@ -344,7 +344,7 @@ When `recall` is available against an indexed source whose description covers Re
 | `src/reyn/` | Python package (chat, kernel, op_runtime, permissions, schemas). |
 | `src/stdlib/skills/` | Bundled stdlib skills (eval, skill_builder, chat_compactor, index_docs, …). |
 | `docs/` | Diátaxis docs site source — concepts, how-to, reference, ADRs. |
-| `cookbook/` | Example skills and configurations. |
+| `docs/cookbook/` | Example skills and configurations (first-class docs section). |
 | `tests/` | Tier 1/2/3 tests. See `docs/deep-dives/contributing/testing.md`. |
 | `pyproject.toml` | Package metadata + tool config (ruff, pytest). |
 

@@ -70,5 +70,5 @@ A `translated_document` artifact:
 
 ## See also
 
-- [Tutorial: your first skill](../../docs/guide/getting-started/02-your-first-skill.md)
-- [How-to: localize output](../../docs/guide/for-skill-authors/localize-output.md)
+- [Tutorial: your first skill](../../guide/getting-started/03-your-first-skill.md)
+- [How-to: localize output](../../guide/for-skill-authors/ux-polish/localize-output.md)
