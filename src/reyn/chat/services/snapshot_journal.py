@@ -84,6 +84,23 @@ class SnapshotJournal:
         self._session_id = session_id
         self._snapshot.session_id = session_id
 
+    def set_snapshot_path(self, snapshot_path: Path) -> None:
+        """FP-0043 Stage 5: re-point the on-disk snapshot path post-construction.
+
+        spawn_session uses this so a spawned session persists to its OWN per-session
+        location (``<state>/sessions/<sid>/snapshot.json``) instead of colliding with
+        the agent's "main" snapshot. Pre-live (before any append/save), so no entry
+        is ever written to the wrong path."""
+        self._snapshot_path = Path(snapshot_path)
+
+    def set_generation_store(self, generation_store) -> None:
+        """FP-0043 Stage 5: re-point the PITR generation store post-construction.
+
+        spawn_session uses this so a spawned session's generations land in its own
+        per-session ``generations`` dir (paired with set_snapshot_path). None →
+        generation cuts become no-ops (unchanged from the no-store default)."""
+        self._generation_store = generation_store
+
     def set_workspace_store(self, workspace_store) -> None:
         """Attach the shared workspace shadow-git store (ADR-0038 Stage 1d).
 
