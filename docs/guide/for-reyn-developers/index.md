@@ -56,10 +56,10 @@ The OS (`kernel/runtime.py`) is the only thing that calls the LLM, executes Cont
 | `src/reyn/core/kernel/runtime.py` | Main OS loop — LLM call, validation, op execution, events |
 | `src/reyn/core/kernel/control_ir_executor.py` | Dispatches Control IR ops from the OS to op handlers |
 | `src/reyn/core/op_runtime/registry.py` | Single source of truth for op kinds, Pydantic models, purity classification |
-| `src/reyn/context_builder.py` | Builds the ContextFrame injected into every LLM call (P4 candidates here) |
+| `src/reyn/core/context_builder.py` | Builds the ContextFrame injected into every LLM call (P4 candidates here) |
 | `src/reyn/schemas/models.py` | All Pydantic models — Phase, Skill, SkillGraph, ControlIROp, CandidateOutput |
 | `src/reyn/core/events/events.py` | Append-only EventLog (P6) |
-| `src/reyn/workspace/workspace.py` | Workspace read/write with permission gating (P5) |
+| `src/reyn/data/workspace/workspace.py` | Workspace read/write with permission gating (P5) |
 | `src/reyn/core/compiler/linter.py` | Static validation — graph cycles, allowed_ops spelling, P7 checks |
 | `src/reyn/core/compiler/expander.py` | Loads and expands Skill + Phase from `.md` + `.yaml` files |
 

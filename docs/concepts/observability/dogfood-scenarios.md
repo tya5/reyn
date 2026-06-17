@@ -204,7 +204,7 @@ Replay-mode runs are tagged in `run_id` so reports distinguish them from live
 runs. Fixtures are re-recorded on every release tag; a schema mismatch forces
 re-recording automatically.
 
-Replay is built on `src/reyn/testing/replay.py` (`LLMReplay`); see
+Replay is built on `src/reyn/dev/testing/replay.py` (`LLMReplay`); see
 [Replay tests guide](../../guide/for-reyn-developers/write-replay-tests.md) for
 fixture recording mechanics.
 

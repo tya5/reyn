@@ -191,7 +191,7 @@ reyn dogfood run dogfood/scenarios/chat_router_smoke.yaml --replay dogfood/fixtu
 リプレイモードの実行は `run_id` にタグが付くため、レポートでライブ実行と区別できる。
 フィクスチャはリリースタグごとに再記録される。スキーマ不一致は自動的に再記録を強制する。
 
-リプレイは `src/reyn/testing/replay.py`（`LLMReplay`）上に構築されている。
+リプレイは `src/reyn/dev/testing/replay.py`（`LLMReplay`）上に構築されている。
 フィクスチャ記録の詳細は
 [リプレイテストガイド](../../guide/for-reyn-developers/write-replay-tests.md) を参照。
 
