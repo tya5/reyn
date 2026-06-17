@@ -30,7 +30,7 @@ from reyn.chat.profile import AgentProfile
 from reyn.chat.registry import AgentRegistry
 from reyn.chat.session import ChatSession
 from reyn.core.events.state_log import StateLog
-from reyn.mcp_server import send_to_agent_impl
+from reyn.mcp.server import send_to_agent_impl
 from reyn.runtime.budget.budget import BudgetTracker, CostConfig
 from reyn.user_intervention import InterventionAnswer, UserIntervention
 

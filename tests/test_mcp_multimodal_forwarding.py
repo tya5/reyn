@@ -23,7 +23,7 @@ from reyn.chat.router_loop import _build_media_followup_message
 
 
 class _FakeMCPClient:
-    """Stand-in for ``reyn.mcp_client.MCPClient`` — returns a canned
+    """Stand-in for ``reyn.mcp.client.MCPClient`` — returns a canned
     ``call_tool`` result without spawning a subprocess.
     """
 

@@ -99,7 +99,7 @@ def test_a2a_progress_bridge_tracks_three_lifecycle_events() -> None:
     abstraction has a stable contract to lift.
     """
     from reyn.interfaces.web.routers.a2a import _A2AProgressBridge
-    from reyn.mcp_server import _MCPProgressBridge
+    from reyn.mcp.server import _MCPProgressBridge
 
     assert _A2AProgressBridge.TRACKED_EVENTS == _MCPProgressBridge.TRACKED_EVENTS
     assert _A2AProgressBridge.TRACKED_EVENTS == frozenset({

@@ -1,13 +1,13 @@
 """MCP-over-SSE router — expose Reyn agents on the FastAPI gateway.
 
 This is the SSE-transport counterpart of the stdio MCP server in
-:mod:`reyn.interfaces.cli.commands.mcp` (and its core in :mod:`reyn.mcp_server`).
+:mod:`reyn.interfaces.cli.commands.mcp` (and its core in :mod:`reyn.mcp.server`).
 Outer LLM clients (Claude Desktop, Cursor, …) that support the MCP
 SSE transport can connect to ``GET /mcp/sse`` and post client→server
 JSON-RPC messages to ``POST /mcp/messages``.
 
 The two transports share the **same** backing server constructed by
-``reyn.mcp_server.build_server`` — so ``list_agents`` /
+``reyn.mcp.server.build_server`` — so ``list_agents`` /
 ``send_to_agent`` semantics, P7 invariants, and budget / permission
 gating are identical across both. Only the wire transport differs.
 

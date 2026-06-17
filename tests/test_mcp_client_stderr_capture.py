@@ -30,7 +30,7 @@ import tempfile
 
 import pytest
 
-from reyn.mcp_client import MCPClient, MCPError
+from reyn.mcp.client import MCPClient, MCPError
 
 
 def _client(transport_type: str = "stdio") -> MCPClient:

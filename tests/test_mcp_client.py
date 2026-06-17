@@ -15,7 +15,7 @@ from unittest import mock
 
 import pytest
 
-from reyn.mcp_client import MCPClient, MCPError, expand_env
+from reyn.mcp.client import MCPClient, MCPError, expand_env
 
 # ── fakes ────────────────────────────────────────────────────────────────────
 

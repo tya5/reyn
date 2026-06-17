@@ -1,6 +1,6 @@
 """MCP transport core (#1682).
 
-Consolidates the former top-level ``reyn.mcp_server`` + ``reyn.mcp_client`` and
+Consolidates the former top-level ``reyn.mcp.server`` + ``reyn.mcp.client`` and
 ``reyn.safe.mcp.registry`` into one package:
 
     reyn.mcp.server    <- mcp_server.py   (build/serve + agent send/list)

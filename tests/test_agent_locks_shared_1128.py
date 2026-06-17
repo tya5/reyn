@@ -77,7 +77,7 @@ def test_mcp_and_a2a_share_same_lock_registry() -> None:
     """
     # Import MCP's accessor — it is aliased as _get_agent_lock in mcp_server
     # but the underlying function is the same object from agent_locks.
-    from reyn.mcp_server import (
+    from reyn.mcp.server import (
         _get_agent_lock as mcp_get_lock,  # type: ignore[attr-defined]  # noqa: PLC0415
     )
 

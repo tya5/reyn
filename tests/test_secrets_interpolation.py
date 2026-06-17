@@ -118,6 +118,6 @@ def test_list_of_dicts_expanded(monkeypatch):
 
 def test_mcp_client_expand_env_is_same_function(monkeypatch):
     """Tier 2: mcp_client.expand_env is the shared implementation — backward-compat."""
-    from reyn.mcp_client import expand_env as mcp_expand
+    from reyn.mcp.client import expand_env as mcp_expand
     monkeypatch.setenv("REYN_MCP_COMPAT", "compat_value")
     assert mcp_expand("${REYN_MCP_COMPAT}") == "compat_value"

@@ -124,7 +124,7 @@ def test_event_log_agent_id_property_readable() -> None:
 
 def test_mcp_client_injects_x_reyn_agent_id_header(monkeypatch) -> None:
     """Tier 2: MCPClient(agent_id=...) adds X-Reyn-Agent-Id to HTTP headers."""
-    from reyn.mcp_client import MCPClient
+    from reyn.mcp.client import MCPClient
 
     captured: dict = {}
 
@@ -144,7 +144,7 @@ def test_mcp_client_injects_x_reyn_agent_id_header(monkeypatch) -> None:
 
 def test_mcp_client_no_agent_id_no_header(monkeypatch) -> None:
     """Tier 2: agent_id=None → no X-Reyn-Agent-Id header (= backwards compat)."""
-    from reyn.mcp_client import MCPClient
+    from reyn.mcp.client import MCPClient
 
     captured: dict = {}
 
@@ -165,7 +165,7 @@ def test_mcp_client_operator_header_wins(monkeypatch) -> None:
     Operators may need to spoof for tests or proxy in production; respect
     their explicit header.
     """
-    from reyn.mcp_client import MCPClient
+    from reyn.mcp.client import MCPClient
 
     captured: dict = {}
 

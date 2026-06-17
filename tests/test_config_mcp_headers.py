@@ -167,7 +167,7 @@ def test_mcp_headers_reach_http_transport(_patched_mcp_sdk):
     """
     captured = _patched_mcp_sdk
 
-    from reyn.mcp_client import MCPClient
+    from reyn.mcp.client import MCPClient
 
     cfg = {
         "type": "http",
@@ -199,7 +199,7 @@ def test_mcp_headers_default_empty_when_omitted(_patched_mcp_sdk):
     an empty header dict at the transport (no spurious headers injected)."""
     captured = _patched_mcp_sdk
 
-    from reyn.mcp_client import MCPClient
+    from reyn.mcp.client import MCPClient
 
     cfg = {"type": "http", "url": "http://x/mcp"}
 
