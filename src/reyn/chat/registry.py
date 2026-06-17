@@ -269,6 +269,12 @@ class AgentRegistry:
         single-session lookup)."""
         return self._peek_session(name, sid)
 
+    def session_ids(self, name: str) -> list[str]:
+        """FP-0043 Stage 4a: the loaded session-ids for an agent (for `/session
+        list`). Empty until the agent's default session loads; "main" + any
+        spawned ids thereafter."""
+        return list(self._sessions.get(name, {}).keys())
+
     def load_profile(self, name: str) -> AgentProfile:
         return AgentProfile.load(self._dir / name)
 
@@ -1531,6 +1537,35 @@ class AgentRegistry:
                 await new_session._announce_intervention(iv)
         return new_session
 
+    async def attach_session(self, name: str, sid: str) -> "object":
+        """FP-0043 Stage 4a: focus an EXISTING conversation Session ``(name, sid)``
+        — the session-level analogue of ``attach``. Unlike ``attach`` (which
+        get_or_loads the default session, BUILDING it if absent), this requires
+        the target session to already exist (= opened via ``spawn_session``) and
+        raises ``KeyError`` otherwise — no build, focus only. Mirrors ``attach``'s
+        run-loop/forwarder boot + the ``is_attached`` focus flip, so the focused
+        session's output routes to ``repl_outbox`` and the previously-focused
+        session stops forwarding (``is_attached=False``)."""
+        target = self._peek_session(name, sid)
+        if target is None:
+            raise KeyError(f"no session {sid!r} for agent {name!r}")
+        key = (name, sid)
+        old = self._attached
+        if old is not None and old != key:
+            old_session = self._peek_session(old[0], old[1])
+            if old_session is not None:
+                old_session.is_attached = False
+        target.is_attached = True
+        if key not in self._tasks or self._tasks[key].done():
+            self._tasks[key] = asyncio.create_task(target.run())
+        if key not in self._forward_tasks or self._forward_tasks[key].done():
+            self._forward_tasks[key] = asyncio.create_task(self._forwarder(name, sid))
+        self._attached = key
+        for iv in target._interventions.list_active():
+            if not iv.future.done():
+                await target._announce_intervention(iv)
+        return target
+
     async def _forwarder(self, name: str, sid: str = _DEFAULT_SID) -> None:
         """Pump one session's outbox into the registry-level repl_outbox.
 
@@ -1561,6 +1596,21 @@ class AgentRegistry:
                     # but TUI needs the same signal for render update.
                     await self.repl_outbox.put(msg)
                 continue
+            if msg.kind == "__session_switch_request__":
+                # FP-0043 Stage 4a: `/session switch <sid>` — focus another session
+                # of the CURRENT agent (msg.text = target sid). Routed through the
+                # forwarder (mirroring __attach_request__) so the focus flip +
+                # display re-wire are sequenced on the registry side, not raced by a
+                # direct call from the slash handler. Graceful on a bad sid: drop
+                # (the slash handler validated existence + replied before posting).
+                if msg.text:
+                    try:
+                        await self.attach_session(name, msg.text)
+                    except KeyError:
+                        pass  # session vanished between validate + switch — no-op
+                    else:
+                        await self.repl_outbox.put(msg)
+                continue
             if key == self._attached:
                 await self.repl_outbox.put(msg)
             # else: drop — session is detached, transient kinds were already
@@ -1578,9 +1628,15 @@ class AgentRegistry:
     @property
     def attached_name(self) -> str | None:
         # FP-0043 S3: _attached is (name, sid); the public accessor exposes the
-        # agent NAME (byte-identical to the prior str|None) — the focused sid is
-        # an internal detail until multi-session UI lands.
+        # agent NAME (byte-identical to the prior str|None).
         return self._attached[0] if self._attached is not None else None
+
+    @property
+    def attached_sid(self) -> str | None:
+        """FP-0043 Stage 4a: the focused session-id (or None) — the public
+        surface for `/session list`'s focus marker + tests, so callers don't
+        reach into `_attached`."""
+        return self._attached[1] if self._attached is not None else None
 
     def attached_session(self) -> "object | None":
         if self._attached is None:

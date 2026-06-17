@@ -10,6 +10,8 @@ Real AgentRegistry + real ChatSession (no mocks).
 """
 from __future__ import annotations
 
+import pytest
+
 from reyn.chat.profile import AgentProfile
 from reyn.chat.registry import _DEFAULT_SID, AgentRegistry
 from reyn.chat.session import ChatSession
@@ -74,3 +76,26 @@ def test_default_session_unaffected_by_spawn(tmp_path) -> None:
     reg.spawn_session("default")
     assert reg.get_or_load("default") is main
     assert reg.get_session("default") is main
+
+
+@pytest.mark.asyncio
+async def test_attach_session_focuses_existing_and_rejects_unknown(tmp_path) -> None:
+    """Tier 2: #1726 Stage 4a — attach_session focuses an EXISTING session of the
+    agent (public attached_name/attached_sid/attached_session reflect it) and
+    raises KeyError for an unknown sid (the graceful-error substrate the /session
+    handler + forwarder rely on). No build — the session must already exist."""
+    reg = _registry(tmp_path)
+    reg.get_or_load("default")
+    sid = reg.spawn_session("default")
+    try:
+        focused = await reg.attach_session("default", sid)
+        assert reg.attached_name == "default"
+        assert reg.attached_sid == sid
+        assert reg.attached_session() is focused
+        assert focused is reg.get_session("default", sid)
+
+        with pytest.raises(KeyError):
+            await reg.attach_session("default", "no-such-sid")
+    finally:
+        for task in reg.running_tasks():
+            task.cancel()
