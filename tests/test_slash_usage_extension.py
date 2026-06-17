@@ -58,7 +58,7 @@ _EXPECTED_USAGE: dict[str, str] = {
 
 def test_all_key_commands_have_usage_set() -> None:
     """Tier 2: every targeted key command has its expected usage string."""
-    from reyn.slash import REGISTRY
+    from reyn.interfaces.slash import REGISTRY
 
     for name, expected_usage in _EXPECTED_USAGE.items():
         cmd = REGISTRY.get(name)
@@ -78,7 +78,7 @@ def test_summary_does_not_re_embed_usage_in_parens() -> None:
     a parenthetical or colon-form copy of the usage string for
     the cleaned commands (= regression guard against revert).
     """
-    from reyn.slash import REGISTRY
+    from reyn.interfaces.slash import REGISTRY
 
     # Each entry: (cmd_name, must_not_appear_in_summary).
     # We only check commands whose old summary explicitly carried
@@ -108,7 +108,7 @@ def test_no_arg_commands_have_no_usage() -> None:
     Surfacing ``↳ usage: /list`` for a zero-arg command would be
     pure noise. Pin that these stay 1-line in the picker hint.
     """
-    from reyn.slash import REGISTRY
+    from reyn.interfaces.slash import REGISTRY
 
     no_arg_commands = [
         # "tasks" intentionally removed: /tasks has status/kill/list subcommands
@@ -126,7 +126,7 @@ def test_no_arg_commands_have_no_usage() -> None:
 
 def test_hidden_commands_have_no_usage() -> None:
     """Tier 2: hidden easter-egg commands don't surface usage either."""
-    from reyn.slash import REGISTRY
+    from reyn.interfaces.slash import REGISTRY
 
     for name in ("matrix", "donut", "zen"):
         cmd = REGISTRY.get(name)
@@ -141,7 +141,7 @@ def test_help_focus_panel_renders_usage_for_extended_commands() -> None:
     Reuses the focus-mode helper introduced in PR #554; this test
     pins the integration with the freshly-extended commands.
     """
-    from reyn.slash.help import _render_command_focus
+    from reyn.interfaces.slash.help import _render_command_focus
 
     # /plan is a representative subcommand-style command — pin it
     # to keep the test from rusting if the exact usage syntax

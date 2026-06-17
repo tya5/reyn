@@ -97,9 +97,9 @@ async def test_set_matches_clears_unknown_state() -> None:
     chars to ``/x`` (= multiple matches), the picker should swap to
     the match list. Pin that the unknown state doesn't leak.
     """
+    from reyn.interfaces.slash import SlashCommand
     from reyn.interfaces.tui.app import ReynTUIApp
     from reyn.interfaces.tui.widgets.slash_picker import SlashPicker
-    from reyn.slash import SlashCommand
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -160,7 +160,7 @@ async def test_input_bar_typing_unknown_command_shows_hint() -> None:
         # has something to suggest from. The app wires this up at
         # mount time via update_slash_commands; pull from the
         # registry directly to be safe.
-        from reyn.slash import REGISTRY
+        from reyn.interfaces.slash import REGISTRY
         input_bar.update_slash_commands(REGISTRY.all_commands())
         await pilot.pause()
 
@@ -185,7 +185,7 @@ async def test_input_bar_typing_known_prefix_does_not_show_unknown() -> None:
     async with app.run_test(headless=True) as pilot:
         await pilot.pause()
         input_bar = app.query_one("#inputbar", InputBar)
-        from reyn.slash import REGISTRY
+        from reyn.interfaces.slash import REGISTRY
         input_bar.update_slash_commands(REGISTRY.all_commands())
         await pilot.pause()
         # "/h" matches /help (and possibly others) — should be matches,
@@ -214,7 +214,7 @@ async def test_empty_slash_token_does_not_show_unknown() -> None:
     async with app.run_test(headless=True) as pilot:
         await pilot.pause()
         input_bar = app.query_one("#inputbar", InputBar)
-        from reyn.slash import REGISTRY
+        from reyn.interfaces.slash import REGISTRY
         input_bar.update_slash_commands(REGISTRY.all_commands())
         await pilot.pause()
         input_bar._update_picker("/")

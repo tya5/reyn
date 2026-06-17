@@ -3,7 +3,7 @@
 Chainlit's attachment button drops files onto disk + hands a
 ``Message.elements`` list to ``@cl.on_message``. The uploads module
 converts each supported image element into the same path-ref block
-shape ``reyn.slash.image`` writes to
+shape ``reyn.interfaces.slash.image`` writes to
 ``session._pending_user_images``. This test pins:
 
 1. Supported extensions are accepted (= same set as the slash

@@ -34,7 +34,7 @@ from textual.message import Message
 from textual.widget import Widget
 from textual.widgets import Label, TextArea
 
-from reyn.slash import SlashCommand
+from reyn.interfaces.slash import SlashCommand
 
 from .slash_picker import SlashPicker
 
@@ -728,7 +728,7 @@ class InputBar(Widget):
         # command". ``suggest_for_unknown`` already gives us up to 3
         # fuzzy matches + /help as the escape hatch.
         if token and not matches:
-            from reyn.slash import suggest_for_unknown
+            from reyn.interfaces.slash import suggest_for_unknown
             picker.set_unknown_hint(
                 token,
                 suggest_for_unknown(

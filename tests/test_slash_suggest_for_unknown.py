@@ -30,7 +30,7 @@ _SRC = Path(__file__).parent.parent / "src"
 if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
-from reyn.slash import suggest_for_unknown
+from reyn.interfaces.slash import suggest_for_unknown
 
 # Canonical names list used across tests so the assertions stay stable
 # even as new slash commands land in the real registry.

@@ -504,7 +504,7 @@ async def test_intervention_free_text_answer():
 @pytest.mark.asyncio
 async def test_slash_registry_populated():
     """Tier 2b: REGISTRY has the expected built-in slash commands."""
-    from reyn.slash import REGISTRY
+    from reyn.interfaces.slash import REGISTRY
     names = REGISTRY.names()
     expected = {"list", "cancel", "answer", "agents", "attach", "cost", "budget", "skills"}
     assert expected.issubset(set(names)), f"missing commands: {expected - set(names)}"
@@ -513,7 +513,7 @@ async def test_slash_registry_populated():
 @pytest.mark.asyncio
 async def test_slash_registry_has_summaries():
     """Tier 2b: Each registered command has a non-empty summary."""
-    from reyn.slash import REGISTRY
+    from reyn.interfaces.slash import REGISTRY
     for cmd in REGISTRY.all_commands():
         assert cmd.summary, f"/{cmd.name} has no summary"
 
@@ -974,8 +974,8 @@ async def test_slash_picker_wraps_around_at_boundaries():
     the last row. Pins the modular-navigation contract documented in the
     picker's design notes.
     """
+    from reyn.interfaces.slash import SlashCommand
     from reyn.interfaces.tui.widgets.slash_picker import SlashPicker
-    from reyn.slash import SlashCommand
 
     app = _make_app()
     async with app.run_test(headless=True) as pilot:
