@@ -1,10 +1,10 @@
 """Tier 1/2: per-scenario interpretation + transcripts publish path (FP-0036).
 
 Covers:
-- ``reyn.dogfood.interpretation.build_prompt`` payload shape (Tier 1).
-- ``reyn.dogfood.interpretation.generate_interpretation`` failure-mode
+- ``reyn.dev.dogfood.interpretation.build_prompt`` payload shape (Tier 1).
+- ``reyn.dev.dogfood.interpretation.generate_interpretation`` failure-mode
   fallback when litellm import fails (Tier 1).
-- ``reyn.dogfood.publish.build_transcripts_section`` rendering against
+- ``reyn.dev.dogfood.publish.build_transcripts_section`` rendering against
   on-disk run storage (Tier 2 — exercises file IO + outcome ordering).
 - ``publish_run(..., with_transcripts=True)`` appends the section to the
   rendered body (Tier 2).
@@ -26,12 +26,12 @@ from pathlib import Path
 
 import pytest
 
-from reyn.dogfood.interpretation import (
+from reyn.dev.dogfood.interpretation import (
     DEFAULT_MODEL,
     build_prompt,
     generate_interpretation,
 )
-from reyn.dogfood.publish import (
+from reyn.dev.dogfood.publish import (
     _DEFAULT_TEMPLATE_PATH,
     _GITHUB_DISCUSSION_BODY_LIMIT,
     DEFAULT_CATEGORY_SLUG,
@@ -40,8 +40,8 @@ from reyn.dogfood.publish import (
     build_transcripts_section,
     publish_run,
 )
-from reyn.dogfood.runner import ScenarioRunResult
-from reyn.dogfood.scenarios import (
+from reyn.dev.dogfood.runner import ScenarioRunResult
+from reyn.dev.dogfood.scenarios import (
     ExpectedReply,
     Scenario,
 )

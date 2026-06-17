@@ -284,8 +284,8 @@ def test_verifier_must_emit_any_passes_when_any_fires() -> None:
     """Tier 2: verify_events with must_emit_any passes when chat_turn_completed_inline
     fires (routing_decided absent), and also passes when routing_decided fires.
     """
-    from reyn.dogfood.scenarios import EventAssertion, ExpectedEvents
-    from reyn.dogfood.verifiers.events import verify_events
+    from reyn.dev.dogfood.scenarios import EventAssertion, ExpectedEvents
+    from reyn.dev.dogfood.verifiers.events import verify_events
 
     # Build expected with must_emit_any listing both event types
     expected = ExpectedEvents(
@@ -332,7 +332,7 @@ def test_scenario_loader_parses_must_emit_any(tmp_path: Path) -> None:
     """Tier 1: load_scenario_set() parses must_emit_any into ExpectedEvents.must_emit_any
     without error and exposes the correct EventAssertion objects.
     """
-    from reyn.dogfood.scenarios import load_scenario_set
+    from reyn.dev.dogfood.scenarios import load_scenario_set
 
     yaml_text = textwrap.dedent("""\
         type: dogfood_scenario_set

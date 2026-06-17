@@ -18,12 +18,12 @@ from pathlib import Path
 
 import pytest
 
-from reyn.dogfood.compare import (
+from reyn.dev.dogfood.compare import (
     CompareReport,
     ScenarioDelta,
     compare_runs,
 )
-from reyn.dogfood.runner import (
+from reyn.dev.dogfood.runner import (
     OUTCOME_ORDER,
     RunResult,
     ScenarioRunResult,
@@ -32,7 +32,7 @@ from reyn.dogfood.runner import (
     load_run_result_from_storage,
     run_scenario_set,
 )
-from reyn.dogfood.scenarios import (
+from reyn.dev.dogfood.scenarios import (
     Scenario,
     ScenarioSet,
 )
@@ -47,7 +47,7 @@ def _utc_now() -> datetime:
 
 def _make_scenario(sid: str, *, input_text: str = "test", outcome_prediction: dict | None = None) -> Scenario:
     """Build a minimal Scenario for testing."""
-    from reyn.dogfood.scenarios import OutcomePrediction
+    from reyn.dev.dogfood.scenarios import OutcomePrediction
     pred: OutcomePrediction | None = None
     if outcome_prediction:
         pred = OutcomePrediction(**outcome_prediction)
@@ -693,7 +693,7 @@ def test_cli_compare_regression_exits_1(tmp_path: Path) -> None:
 
 def test_outcome_prediction_attached_from_scenario(tmp_path: Path) -> None:
     """Tier 2: outcome_prediction from scenario is attached to ScenarioRunResult.detail and affects Brier."""
-    from reyn.dogfood.scenarios import OutcomePrediction
+    from reyn.dev.dogfood.scenarios import OutcomePrediction
 
     prediction = {"verified": 1.0, "inconclusive": 0.0, "refuted": 0.0, "blocked": 0.0}
     scenario = _make_scenario("pred_s1", outcome_prediction=prediction)
@@ -739,7 +739,7 @@ def test_verifier_triad_produces_real_reply_outcome_for_substring_match(tmp_path
       declares no expected_events or expected_artifacts.
     - overall_outcome = worst-case('verified', 'blocked', 'blocked') = 'blocked'.
     """
-    from reyn.dogfood.scenarios import ExpectedReply
+    from reyn.dev.dogfood.scenarios import ExpectedReply
 
     async def _reply_runner(scenario: Scenario) -> ScenarioRunResult:
         """Returns reply containing the expected substring; all outcomes at default."""

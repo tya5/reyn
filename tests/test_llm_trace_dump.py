@@ -46,8 +46,8 @@ class _ScriptedLLM:
 
 
 def _minimal_frame():
+    from reyn.dev.testing.replay import REPLAY_DATETIME
     from reyn.schemas.models import ContextFrame
-    from reyn.testing.replay import REPLAY_DATETIME
     return ContextFrame(
         current_phase="test",
         instructions="Reply with a minimal valid JSON decide turn.",

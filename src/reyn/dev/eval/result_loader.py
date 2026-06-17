@@ -1,4 +1,4 @@
-"""reyn.eval.result_loader — load eval result files written by ``reyn eval run``.
+"""reyn.dev.eval.result_loader — load eval result files written by ``reyn eval run``.
 
 Result files live at:
     ``.reyn/eval-results/<skill_name>/<YYYYMMDDTHHMMSSZ>.jsonl``

@@ -35,7 +35,7 @@ from reyn.chat.profile import AgentProfile
 from reyn.chat.registry import AgentRegistry
 from reyn.chat.session import ChatSession
 from reyn.core.events.state_log import StateLog
-from reyn.dogfood.scenarios import Scenario
+from reyn.dev.dogfood.scenarios import Scenario
 from reyn.llm.llm import LLMToolCallResult
 from reyn.llm.pricing import TokenUsage
 

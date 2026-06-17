@@ -8,7 +8,7 @@ directly must pass a fixed datetime to ``ContextFrame`` so the serialised
 user-turn message is identical to the recorded fixture.  Use the module-level
 constant ``REPLAY_DATETIME`` for this::
 
-    from reyn.testing.replay import REPLAY_DATETIME
+    from reyn.dev.testing.replay import REPLAY_DATETIME
     frame = ContextFrame(..., current_datetime=REPLAY_DATETIME)
 
 

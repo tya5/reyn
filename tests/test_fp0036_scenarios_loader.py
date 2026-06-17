@@ -18,7 +18,7 @@ from pathlib import Path
 
 import pytest
 
-from reyn.dogfood import (
+from reyn.dev.dogfood import (
     ArtifactAssertion,
     EventAssertion,
     ExpectedArtifacts,

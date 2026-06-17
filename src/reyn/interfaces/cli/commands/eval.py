@@ -499,8 +499,8 @@ def _register_compare(eval_sub) -> None:
 
 def _run_compare(args: argparse.Namespace) -> None:
     """Execute ``reyn eval compare``."""
-    from reyn.eval.compare import compute_diff
-    from reyn.eval.result_loader import load_run_by_id, load_runs_for_skill
+    from reyn.dev.eval.compare import compute_diff
+    from reyn.dev.eval.result_loader import load_run_by_id, load_runs_for_skill
 
     skill = args.skill_name
     threshold = args.threshold

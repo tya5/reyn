@@ -10,13 +10,13 @@ from pathlib import Path
 
 import pytest
 
-from reyn.dogfood.coverage import (
+from reyn.dev.dogfood.coverage import (
     CoverageMatrix,
     FeatureNode,
     compute_coverage,
     parse_feature_map,
 )
-from reyn.dogfood.scenarios import Scenario, ScenarioSet
+from reyn.dev.dogfood.scenarios import Scenario, ScenarioSet
 
 # ---------------------------------------------------------------------------
 # Fixtures

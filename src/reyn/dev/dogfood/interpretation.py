@@ -32,8 +32,8 @@ import json
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from reyn.dogfood.runner import ScenarioRunResult
-    from reyn.dogfood.scenarios import Scenario
+    from reyn.dev.dogfood.runner import ScenarioRunResult
+    from reyn.dev.dogfood.scenarios import Scenario
 
 
 DEFAULT_MODEL = "openai/gemini-2.5-flash-lite"

@@ -282,7 +282,7 @@ class OTLPExporter:
             from opentelemetry import trace
             from opentelemetry.trace import SpanKind
 
-            tracer = trace.get_tracer("reyn.eval.otlp")
+            tracer = trace.get_tracer("reyn.dev.eval.otlp")
             for ev in events:
                 ev_type = ev.get("type", "unknown")
                 ev_data = ev.get("data") or {}

@@ -24,14 +24,14 @@ from pathlib import Path
 import pytest
 
 from reyn.core.events.events import EventLog
-from reyn.eval.export import (
+from reyn.dev.eval.export import (
     FileExporter,
     IETFAuditExporter,
     LangfuseExporter,
     OTLPExporter,
     TraceExporter,
 )
-from reyn.eval.export_dispatcher import EventExportDispatcher
+from reyn.dev.eval.export_dispatcher import EventExportDispatcher
 
 # ── Shared test fixtures ─────────────────────────────────────────────────────
 
@@ -156,13 +156,13 @@ def test_langfuse_exporter_posts_to_api(tmp_path, monkeypatch):
     """
     import base64
 
-    import reyn.eval.export as export_mod
+    import reyn.dev.eval.export as export_mod
 
     fake_client = _FakeAsyncClient(_FakeHTTPResponse(200))
 
     # Monkeypatch httpx.AsyncClient in the export module's namespace
     monkeypatch.setattr(
-        "reyn.eval.export.httpx",
+        "reyn.dev.eval.export.httpx",
         type("FakeHTTPX", (), {"AsyncClient": lambda *a, **kw: fake_client})(),
         raising=False,
     )

@@ -1,6 +1,6 @@
 """Tier 2: eval compare regression diff (FP-0007 Component C).
 
-Tests for ``reyn.eval.compare.compute_diff`` (pure-function logic) and the
+Tests for ``reyn.dev.eval.compare.compute_diff`` (pure-function logic) and the
 ``reyn eval compare`` CLI subcommand.
 
 No mocks (``unittest.mock`` / ``AsyncMock`` / ``patch``). Uses real instances
@@ -73,7 +73,7 @@ def _seed_result_file(
 
 def test_compute_diff_basic() -> None:
     """Tier 2: 3-case results → per-case deltas computed correctly."""
-    from reyn.eval.compare import compute_diff
+    from reyn.dev.eval.compare import compute_diff
 
     baseline = _make_run_result(
         "run_baseline", "hash_a",
@@ -108,7 +108,7 @@ def test_compute_diff_basic() -> None:
 
 def test_compute_diff_regression_detection() -> None:
     """Tier 2: cases straddling the threshold → alert set correctly."""
-    from reyn.eval.compare import compute_diff
+    from reyn.dev.eval.compare import compute_diff
 
     # c1: delta = -0.06 (BELOW threshold -0.05 → regressing)
     # c2: delta = -0.04 (ABOVE threshold -0.05 → not regressing)
@@ -135,7 +135,7 @@ def test_compute_diff_regression_detection() -> None:
 
 def test_compute_diff_no_regressions() -> None:
     """Tier 2: all candidate scores >= baseline → alert=false."""
-    from reyn.eval.compare import compute_diff
+    from reyn.dev.eval.compare import compute_diff
 
     baseline = _make_run_result(
         "b", "h1",
@@ -158,7 +158,7 @@ def test_compute_diff_no_regressions() -> None:
 
 def test_compute_diff_missing_cases_in_candidate() -> None:
     """Tier 2: baseline has case 'x' missing from candidate → reported."""
-    from reyn.eval.compare import compute_diff
+    from reyn.dev.eval.compare import compute_diff
 
     baseline = _make_run_result(
         "b", "h1",
@@ -180,7 +180,7 @@ def test_compute_diff_missing_cases_in_candidate() -> None:
 
 def test_compute_diff_missing_cases_in_baseline() -> None:
     """Tier 2: candidate has case 'y' missing from baseline → reported."""
-    from reyn.eval.compare import compute_diff
+    from reyn.dev.eval.compare import compute_diff
 
     baseline = _make_run_result(
         "b", "h1",
@@ -202,7 +202,7 @@ def test_compute_diff_missing_cases_in_baseline() -> None:
 
 def test_compute_diff_identical_hashes_warns() -> None:
     """Tier 2: same skill_version_hash → warning field set."""
-    from reyn.eval.compare import compute_diff
+    from reyn.dev.eval.compare import compute_diff
 
     same_hash = "abc12345"
     baseline = _make_run_result("b", same_hash, [_make_case("c1", 0.8)])
@@ -400,7 +400,7 @@ def test_cli_compare_auto_baseline_picks_previous_version(
     """Tier 2: 3 runs (hash A, A, B); candidate=most-recent (hash B);
     baseline auto-picks the most recent hash-A run.
     """
-    from reyn.eval.result_loader import load_runs_for_skill
+    from reyn.dev.eval.result_loader import load_runs_for_skill
     from reyn.interfaces.cli.commands import eval as _eval_mod
 
     # Run 1 (oldest, hash A): c1=0.9

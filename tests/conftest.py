@@ -84,7 +84,7 @@ def _llm_replay(request: pytest.FixtureRequest):
     else:
         mode = "replay"
 
-    from reyn.testing.replay import LLMReplay
+    from reyn.dev.testing.replay import LLMReplay
 
     replay = LLMReplay(fixture_path, mode=mode)  # type: ignore[arg-type]
     replay.install()

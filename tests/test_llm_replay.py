@@ -10,7 +10,7 @@ No real LLM is called; all tests exercise key() directly.
 """
 from __future__ import annotations
 
-from reyn.testing.replay import LLMReplay
+from reyn.dev.testing.replay import LLMReplay
 
 # ── helpers ────────────────────────────────────────────────────────────────────
 

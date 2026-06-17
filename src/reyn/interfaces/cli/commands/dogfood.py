@@ -9,11 +9,11 @@ Subcommands:
   publish    Create a GitHub Discussion thread from a stored run's summary.json
 
 The CLI delegates to:
-  load_scenario_set  — F1 (reyn.dogfood.scenarios)
-  run_scenario_set   — F2 (reyn.dogfood.runner, this slice)
-  compute_coverage   — F4 (reyn.dogfood.coverage)
-  compare_runs       — F2 (reyn.dogfood.compare, this slice)
-  publish_run        — FP-0036 (reyn.dogfood.publish)
+  load_scenario_set  — F1 (reyn.dev.dogfood.scenarios)
+  run_scenario_set   — F2 (reyn.dev.dogfood.runner, this slice)
+  compute_coverage   — F4 (reyn.dev.dogfood.coverage)
+  compare_runs       — F2 (reyn.dev.dogfood.compare, this slice)
+  publish_run        — FP-0036 (reyn.dev.dogfood.publish)
 """
 from __future__ import annotations
 
@@ -168,7 +168,7 @@ def register(sub) -> None:
     bl_p.set_defaults(func=run_baseline)
 
     # --- publish ---
-    from reyn.dogfood.publish import (  # noqa: E402
+    from reyn.dev.dogfood.publish import (  # noqa: E402
         _DEFAULT_TEMPLATE_PATH,
         DEFAULT_CATEGORY_SLUG,
         DEFAULT_REPO,
@@ -290,10 +290,10 @@ def run_run(args: argparse.Namespace) -> None:
     storage_dir = Path(args.storage) if args.storage else None
 
     try:
-        from reyn.dogfood.scenarios import load_scenario_set  # type: ignore[import]
+        from reyn.dev.dogfood.scenarios import load_scenario_set  # type: ignore[import]
     except ImportError as exc:
         print(
-            f"Error: reyn.dogfood.scenarios is not available ({exc}).\n"
+            f"Error: reyn.dev.dogfood.scenarios is not available ({exc}).\n"
             "Ensure F1 (scenarios.py) is installed.",
             file=sys.stderr,
         )
@@ -318,7 +318,7 @@ def run_run(args: argparse.Namespace) -> None:
     )
 
     try:
-        from reyn.dogfood.runner import run_scenario_set
+        from reyn.dev.dogfood.runner import run_scenario_set
     except ImportError as exc:
         print(f"Error loading runner: {exc}", file=sys.stderr)
         sys.exit(2)
@@ -408,7 +408,7 @@ def _build_live_runner(agent_name: str, *, env_backend=None, ws_base_dir=None, w
     from reyn.chat.scoped_session_factory import build_scoped_chat_session
     from reyn.config import _find_project_root, load_config, load_project_context
     from reyn.core.events.event_store import EventStore
-    from reyn.dogfood.runner import ScenarioRunResult
+    from reyn.dev.dogfood.runner import ScenarioRunResult
     from reyn.llm.model_resolver import ModelResolver
     from reyn.mcp.server import send_to_agent_impl
     from reyn.security.permissions.permissions import PermissionResolver
@@ -645,8 +645,8 @@ def _build_live_runner(agent_name: str, *, env_backend=None, ws_base_dir=None, w
 def run_coverage(args: argparse.Namespace) -> None:
     """Show feature-map coverage across scenario sets."""
     try:
-        from reyn.dogfood.coverage import compute_coverage  # type: ignore[import]
-        from reyn.dogfood.scenarios import load_scenario_set  # type: ignore[import]
+        from reyn.dev.dogfood.coverage import compute_coverage  # type: ignore[import]
+        from reyn.dev.dogfood.scenarios import load_scenario_set  # type: ignore[import]
     except ImportError as exc:
         print(
             f"Error: coverage module is not available ({exc}).\n"
@@ -701,7 +701,7 @@ def run_report(args: argparse.Namespace) -> None:
     run_dir = _resolve_run_dir(args.run_id)
 
     try:
-        from reyn.dogfood.runner import load_run_result_from_storage
+        from reyn.dev.dogfood.runner import load_run_result_from_storage
     except ImportError as exc:
         print(f"Error loading runner: {exc}", file=sys.stderr)
         sys.exit(2)
@@ -765,8 +765,8 @@ def run_compare(args: argparse.Namespace) -> None:
     candidate_dir = _resolve_run_dir(args.candidate_run_id)
 
     try:
-        from reyn.dogfood.compare import compare_runs
-        from reyn.dogfood.runner import load_run_result_from_storage
+        from reyn.dev.dogfood.compare import compare_runs
+        from reyn.dev.dogfood.runner import load_run_result_from_storage
     except ImportError as exc:
         print(f"Error: {exc}", file=sys.stderr)
         sys.exit(2)
@@ -865,7 +865,7 @@ def run_baseline(args: argparse.Namespace) -> None:
 def run_publish(args: argparse.Namespace) -> None:
     """Create a GitHub Discussion thread from a stored run's summary.json."""
     try:
-        from reyn.dogfood.publish import (
+        from reyn.dev.dogfood.publish import (
             _DEFAULT_TEMPLATE_PATH,
             DEFAULT_CATEGORY_SLUG,
             DEFAULT_REPO,

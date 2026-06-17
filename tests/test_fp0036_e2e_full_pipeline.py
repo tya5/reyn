@@ -28,33 +28,33 @@ import pytest
 # ---------------------------------------------------------------------------
 
 try:
-    from reyn.dogfood.scenarios import (
+    from reyn.dev.dogfood.scenarios import (
         Scenario,
         ScenarioSet,
         load_scenario_set,
     )
 except ImportError as _e:
     pytest.skip(
-        f"F1 (reyn.dogfood.scenarios) not yet available: {_e}",
+        f"F1 (reyn.dev.dogfood.scenarios) not yet available: {_e}",
         allow_module_level=True,
     )
 
 try:
-    from reyn.dogfood.runner import (
+    from reyn.dev.dogfood.runner import (
         ScenarioRunResult,
         run_scenario_set,
     )
 except ImportError as _e:
     pytest.skip(
-        f"F2 (reyn.dogfood.runner) not yet available: {_e}",
+        f"F2 (reyn.dev.dogfood.runner) not yet available: {_e}",
         allow_module_level=True,
     )
 
 try:
-    from reyn.dogfood.compare import compare_runs
+    from reyn.dev.dogfood.compare import compare_runs
 except ImportError as _e:
     pytest.skip(
-        f"F2b (reyn.dogfood.compare) not yet available: {_e}",
+        f"F2b (reyn.dev.dogfood.compare) not yet available: {_e}",
         allow_module_level=True,
     )
 
@@ -332,9 +332,9 @@ async def test_compare_runs_detects_regression(tmp_path: Path):
 async def test_coverage_finds_covers_tags(tmp_path: Path):
     """Tier 2c: compute_coverage maps scenario covers: tags to feature-map paths."""
     try:
-        from reyn.dogfood.coverage import CoverageMatrix, compute_coverage
+        from reyn.dev.dogfood.coverage import CoverageMatrix, compute_coverage
     except ImportError as exc:
-        pytest.skip(f"F4 (reyn.dogfood.coverage) not yet available: {exc}")
+        pytest.skip(f"F4 (reyn.dev.dogfood.coverage) not yet available: {exc}")
 
     # Use a minimal synthetic feature-map.md so this test is self-contained
     feature_map_path = tmp_path / "feature-map.md"
@@ -390,14 +390,14 @@ async def test_replay_fixture_round_trip(tmp_path: Path):
     fixture by writing the file manually between the two context calls.
     """
     try:
-        from reyn.dogfood.replay import fixture_path_for, scenario_replay_context
+        from reyn.dev.dogfood.replay import fixture_path_for, scenario_replay_context
     except ImportError as exc:
-        pytest.skip(f"F5 (reyn.dogfood.replay) not yet available: {exc}")
+        pytest.skip(f"F5 (reyn.dev.dogfood.replay) not yet available: {exc}")
 
     try:
-        from reyn.testing.replay import LLMReplay
+        from reyn.dev.testing.replay import LLMReplay
     except ImportError as exc:
-        pytest.skip(f"reyn.testing.replay.LLMReplay not available: {exc}")
+        pytest.skip(f"reyn.dev.testing.replay.LLMReplay not available: {exc}")
 
     fixture_dir = tmp_path / "fixtures"
     set_name = "fp0036_e2e_test_set"
@@ -434,9 +434,9 @@ async def test_replay_run_via_runner_seam(tmp_path: Path):
     imports replay.replay_run instead of the injected runner_fn.
     """
     try:
-        from reyn.dogfood.replay import replay_run  # noqa: F401 — existence check
+        from reyn.dev.dogfood.replay import replay_run  # noqa: F401 — existence check
     except ImportError as exc:
-        pytest.skip(f"F5 (reyn.dogfood.replay) not yet available: {exc}")
+        pytest.skip(f"F5 (reyn.dev.dogfood.replay) not yet available: {exc}")
 
     yaml_path = tmp_path / "fp0036_e2e_test_set.yaml"
     yaml_path.write_text(_SCENARIO_SET_YAML, encoding="utf-8")

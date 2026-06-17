@@ -1,4 +1,4 @@
-"""reyn.testing — test utilities for Reyn Agent OS.
+"""reyn.dev.testing — test utilities for Reyn Agent OS.
 
 Public surface:
   LLMReplay   record / replay LLM responses at the litellm.acompletion boundary.

@@ -11,14 +11,14 @@ import json
 
 import pytest
 
-from reyn.dogfood.scenarios import (
+from reyn.dev.dogfood.scenarios import (
     ArtifactAssertion,
     EventAssertion,
     ExpectedArtifacts,
     ExpectedEvents,
     ExpectedReply,
 )
-from reyn.dogfood.verifiers import (
+from reyn.dev.dogfood.verifiers import (
     VerifierResult,
     verify_artifacts,
     verify_events,

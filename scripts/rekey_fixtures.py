@@ -41,7 +41,7 @@ def _capture_new_keys(test_pattern: str) -> list[dict]:
     patcher_code = textwrap.dedent("""\
         import sys
         from pathlib import Path
-        from reyn.testing.replay import LLMReplay, MissingFixture
+        from reyn.dev.testing.replay import LLMReplay, MissingFixture
 
         _orig_replay = LLMReplay._replay
 
