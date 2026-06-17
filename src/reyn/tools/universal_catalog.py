@@ -540,6 +540,52 @@ def _enumerate_static_category(category: str) -> list[dict[str, str]]:
     return out
 
 
+def _mcp_tool_qualified_name(server: str, tool: str) -> str:
+    """The first-class per-tool action name (#1647): ``mcp__<server>__<tool>``.
+
+    Single-sourced so enumeration + describe + the dispatch split all agree on
+    the ``<server>__<tool>`` identifier form (double-underscore boundary, the
+    same form ``mcp_call_tool`` splits on)."""
+    return build_qualified_name("mcp", f"{server}__{tool}")
+
+
+def _enumerate_mcp_tools(rs: Any) -> list[dict[str, str]]:
+    """Per-tool MCP actions ``mcp__<server>__<tool>`` from the cached snapshot.
+
+    #1647: reads ``rs.mcp_servers`` — shape ``[{name, description,
+    tools?: [{name, description, inputSchema}]}]`` — which RouterLoop fills from
+    the FP-0037 per-session ``_mcp_tools_cache`` (probed once on the first turn,
+    disk-warm-started). No live probe here: enumeration is a pure read of the
+    cached snapshot, so list_actions / hot-list / retrieval do not re-fetch
+    (FP-0034 caching req). ``tools`` is absent until the cache is warm → graceful
+    empty. Each cached tool ``name`` is the BARE server-side tool name; the
+    qualified action is ``mcp__<server>__<tool>``."""
+    if rs is None:
+        return []
+    servers = getattr(rs, "mcp_servers", None) or []
+    out: list[dict[str, str]] = []
+    for server in servers:
+        if not isinstance(server, Mapping):
+            continue
+        sname = server.get("name")
+        tools = server.get("tools")
+        if not sname or not tools:
+            continue
+        for t in tools:
+            if not isinstance(t, Mapping):
+                continue
+            tname = t.get("name")
+            if not tname:
+                continue
+            out.append({
+                "qualified_name": _mcp_tool_qualified_name(str(sname), str(tname)),
+                "short_description": _truncate_short_description(
+                    t.get("description", ""),
+                ),
+            })
+    return out
+
+
 def _enumerate_category(category: str, ctx: ToolContext) -> list[dict[str, str]]:
     """Enumerate qualified names for ``category`` consulting caller state.
 
@@ -577,9 +623,20 @@ def _enumerate_category(category: str, ctx: ToolContext) -> list[dict[str, str]]
 
     if category in (
         "file", "web", "memory_operation", "reyn_source", "rag_operation",
-        "mcp", "multi_agent", "validation",
+        "multi_agent", "validation",
     ):
         return _enumerate_static_category(category)
+
+    # #1647: the ``mcp`` category carries BOTH the static management verbs
+    # (mcp__call_tool / mcp__list_tools / mcp__install_* / …) AND first-class
+    # per-tool actions ``mcp__<server>__<tool>`` for every tool on a connected
+    # server (from the FP-0037 cached snapshot on router_state). The per-tool
+    # actions make each MCP tool selectable by name with its real inputSchema,
+    # superseding the generic call_mcp_tool double-args foot-gun (#1646).
+    if category == "mcp":
+        items = list(_enumerate_static_category("mcp"))
+        items.extend(_enumerate_mcp_tools(rs))
+        return items
 
     if category == "skill":
         if rs is None or not rs.available_skills:
@@ -1171,6 +1228,31 @@ def _drop_field_from_schema(params: Mapping[str, Any], field_name: str) -> dict:
     return out
 
 
+def _find_mcp_tool(entry_name: str, rs: Any) -> "Mapping | None":
+    """Find the cached MCP tool dict for a ``mcp__<server>__<tool>`` action's
+    entry_name (= ``"<server>__<tool>"``), or ``None``.
+
+    #1647: returns None for a static mcp verb (entry_name has no ``__``, e.g.
+    ``call_tool`` / ``list_tools``), for an unknown server/tool, or when the
+    FP-0037 snapshot (``rs.mcp_servers[*].tools``) isn't warm — so the describe
+    helpers fall back to the dispatcher target for verbs while surfacing the real
+    per-tool schema/description for tools. Splits on the FIRST ``__`` (server =
+    first segment; the same convention ``mcp_call_tool`` uses), so a tool name
+    may itself contain ``__``."""
+    if rs is None or "__" not in entry_name:
+        return None
+    server_name, tool_name = entry_name.split("__", 1)
+    if not server_name or not tool_name:
+        return None
+    for server in (getattr(rs, "mcp_servers", None) or []):
+        if not isinstance(server, Mapping) or server.get("name") != server_name:
+            continue
+        for t in (server.get("tools") or []):
+            if isinstance(t, Mapping) and t.get("name") == tool_name:
+                return t
+    return None
+
+
 def _resource_input_schema(
     qualified_name: str,
     ctx: ToolContext,
@@ -1187,9 +1269,9 @@ def _resource_input_schema(
       - ``mcp.server__<name>`` — empty object (``list_mcp_tools`` takes
         only the curried ``server`` arg).
       - ``rag_corpus__<name>`` — ``recall`` parameters minus ``sources``.
-      - ``mcp.tool__<server>.<tool>`` — scans
-        ``ctx.router_state.mcp_servers`` for the tool's declared
-        ``inputSchema`` (FP-0032 expanded shape).
+      - ``mcp__<server>__<tool>`` — scans ``ctx.router_state.mcp_servers``
+        for the tool's declared ``inputSchema`` (#1647 per-tool action; static
+        mcp verbs fall through to the verb's parameters).
 
     Returns ``None`` when the category isn't a resource category, or when
     the per-resource metadata isn't reachable (= test sites with stub
@@ -1222,6 +1304,17 @@ def _resource_input_schema(
             return None
         return _drop_field_from_schema(tool.parameters, "sources")
 
+    if category == "mcp":
+        # #1647: a per-tool action mcp__<server>__<tool> describes with the MCP
+        # tool's OWN declared inputSchema (so the LLM constructs args directly,
+        # one level — no generic call_mcp_tool {tool, tool_args} envelope). Static
+        # mcp verbs (entry_name w/o "__") → None → caller falls back to the verb's
+        # parameters.
+        t = _find_mcp_tool(entry_name, rs)
+        if t is not None and isinstance(t.get("inputSchema"), Mapping):
+            return dict(t["inputSchema"])
+        return None
+
     # memory_entry__X and any other category: pre-existing dispatch shape
     # mismatch (memory_entry's transform sends {name} but read_memory_body
     # wants {layer, slug}); fall back to target.parameters so the LLM at
@@ -1250,8 +1343,9 @@ def _resource_description(
         ``ctx.router_state.host.list_available_skills()``.
       - ``agent.peer__<name>`` — pulls ``description`` (or ``role``
         fallback) from ``ctx.router_state.host.list_available_agents()``.
-      - ``mcp.tool__<server>.<tool>`` — pulls ``description`` from the
-        tool's MCP-server entry (FP-0032 expanded shape).
+      - ``mcp__<server>__<tool>`` — pulls ``description`` from the tool's
+        MCP-server entry in ``ctx.router_state.mcp_servers`` (#1647 per-tool
+        action; static mcp verbs fall through to the verb's description).
       - ``mcp.server__<name>`` — pulls server-level ``description`` from
         ``ctx.router_state.mcp_servers``.
 
@@ -1295,6 +1389,15 @@ def _resource_description(
                     return str(desc) if desc else None
         except Exception:
             return None
+        return None
+
+    if category == "mcp":
+        # #1647: per-tool action mcp__<server>__<tool> — the MCP tool's own
+        # description. Static verbs → None → caller falls back to the verb's text.
+        t = _find_mcp_tool(entry_name, rs)
+        if t is not None:
+            desc = t.get("description")
+            return str(desc) if desc else None
         return None
 
     # rag_corpus / memory_entry / unknown — fall through to target.description

@@ -180,6 +180,23 @@ def _recall_single_source_args(
     return out
 
 
+def _mcp_tool_args(entry_name: str, args: Mapping[str, Any]) -> dict[str, Any]:
+    """``mcp__<server>__<tool>`` → ``mcp_call_tool({tool, tool_args})`` (#1647).
+
+    First-class per-tool MCP action. The LLM passes the target MCP tool's OWN
+    parameters as the top-level ``args`` (matching the tool's real inputSchema,
+    surfaced by describe_action) — ONE args level, no generic ``server`` /
+    ``mcp_tool_name`` / nested-args foot-gun (#1646). This shaper wraps them into
+    the EXISTING ``mcp_call_tool`` verb's shape: the ``<server>__<tool>``
+    identifier (= entry_name, already in that form) under ``tool``, the tool's
+    params under ``tool_args``. Dispatch then routes through the SAME
+    ``mcp_call_tool`` ToolDefinition that ``mcp__call_tool`` uses → identical
+    permission gate + MCPClient path (zero new dispatch/gate surface — the
+    per-tool action is purely a catalog/args ergonomics layer over call_mcp_tool).
+    """
+    return {"tool": entry_name, "tool_args": dict(args)}
+
+
 def _passthrough_args(
     entry_name: str, args: Mapping[str, Any],
 ) -> dict[str, Any]:
@@ -222,6 +239,13 @@ _RESOURCE_RULES: Final[dict[str, tuple[str, Callable[[str, Mapping[str, Any]], d
     "skill":         ("invoke_skill",        _invoke_skill_args),
     "memory_entry":  ("read_memory_body",    _read_memory_body_args),
     "rag_corpus":    ("recall",              _recall_single_source_args),
+    # #1647: per-tool MCP actions ``mcp__<server>__<tool>`` resolve here (the
+    # full name is NOT a static verb in _OPERATION_RULES, so it falls through to
+    # this per-category rule). entry_name = ``<server>__<tool>`` → wrapped into
+    # the existing mcp_call_tool verb (same gate). Static mcp__* verbs
+    # (mcp__call_tool / mcp__list_tools / …) match _OPERATION_RULES FIRST, so they
+    # are unaffected; only dynamic per-tool names reach this rule.
+    "mcp":           ("mcp_call_tool",       _mcp_tool_args),
 }
 
 
