@@ -12,7 +12,7 @@ The test pins:
   - ``discard`` decisions trigger ``skill_discarded`` in the WAL and
     do NOT launch a task.
   - ``resume`` / ``retry`` / ``skip`` decisions are passed to the
-    launcher (which production wires to a real Agent.run task).
+    launcher (which production wires to a real SkillRuntime.run task).
   - Empty active list is a no-op (no false launches).
 
 Reference: PR-resume-auto A2 in the active plan.

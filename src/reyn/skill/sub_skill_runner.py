@@ -71,9 +71,9 @@ async def invoke_sub_skill(
     require approvals to be in place beforehand via reyn.yaml / reyn.local.yaml
     or .reyn/approvals.yaml (per documented permission model).
     """
-    from reyn.agent import Agent
+    from reyn.skill_runtime import SkillRuntime
 
-    agent = Agent(
+    agent = SkillRuntime(
         model=model,
         strict=False,
         subscribers=subscribers,

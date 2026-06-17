@@ -55,7 +55,7 @@ class WorkflowAbortedError(Exception):
 
 @dataclass
 class RunResult:
-    """Typed return value of OSRuntime.run() and Agent.run().
+    """Typed return value of OSRuntime.run() and SkillRuntime.run().
 
     FP-0005: ``partial_data`` carries the last completed phase's
     artifact (= "what we have so far") when a safety limit aborts the

@@ -26,7 +26,7 @@ class CronJob:
         attributed turn from a scheduled trigger.
 
       - **Skill-based** (= legacy FP-0009): set ``skill`` (= skill name).
-        The scheduler runs the skill directly via ``Agent.run``. Kept
+        The scheduler runs the skill directly via ``SkillRuntime.run``. Kept
         for backward compatibility with existing ``reyn.yaml``
         configurations.
 
@@ -44,7 +44,7 @@ class CronJob:
     to: str | None = None       # target agent name
     message: str | None = None  # free-form text dispatched to agent.inbox
     # ── skill-based (FP-0009 legacy, backward compat) ──────────────
-    skill: str | None = None    # skill name to run via Agent.run
+    skill: str | None = None    # skill name to run via SkillRuntime.run
     input: dict = field(default_factory=dict)
     # ── shared ─────────────────────────────────────────────────────
     enabled: bool = True
@@ -98,7 +98,7 @@ class CronScheduler:
       - `runner_fn` (= async callable that runs the skill and returns
         a status string) is injectable. Production passes a function
         that resolves the skill via `load_dsl_skill` and runs through
-        `Agent.run`.
+        `SkillRuntime.run`.
       - If omitted, scheduler logs WARNING and marks status="error"
         with "no runner configured" so unconfigured deployments fail
         loudly rather than silently.

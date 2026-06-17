@@ -36,11 +36,11 @@ from reyn.core.events.events import EventLog
 from reyn.skill.skill_paths import SkillNotFoundError, resolve_skill_path, stdlib_root
 
 if TYPE_CHECKING:
-    from reyn.agent import Agent
     from reyn.core.events.state_log import StateLog
     from reyn.runtime.budget.budget import BudgetGateway
     from reyn.schemas.models import Skill
     from reyn.skill.skill_registry import SkillRegistry
+    from reyn.skill_runtime import SkillRuntime
 
 logger = logging.getLogger(__name__)
 
@@ -111,7 +111,7 @@ class SkillRunner:
         allowed_skills: list[str] | None,
         budget: BudgetGateway,
         state_log: StateLog | None,
-        build_agent_fn: Callable[..., Agent],
+        build_agent_fn: Callable[..., SkillRuntime],
         put_outbox: Callable[[OutboxMessage], Awaitable[None]],
         enqueue_skill_completed: Callable[..., Awaitable[None]],
         accumulate: Callable,
@@ -417,14 +417,14 @@ class SkillRunner:
                 }
 
         # tui-coder finding #1 fix (2026-05-28): use the OS-level canonical
-        # run_id form via Agent._make_run_id. Prior bespoke construction
+        # run_id form via SkillRuntime._make_run_id. Prior bespoke construction
         # here added a `_4-hex` suffix that the agent / events layer did
         # NOT use, leaving the same skill run with 2 run_id forms in
         # flight — TUI `remove_async_task(run_id)` then failed to find rows
         # by key. Funneling through the canonical eliminates the
         # cross-layer mismatch class.
-        from reyn.agent import Agent as _Agent
-        run_id = _Agent._make_run_id(skill_name)
+        from reyn.skill_runtime import SkillRuntime as _SkillRuntime
+        run_id = _SkillRuntime._make_run_id(skill_name)
         self._events.emit("skill_run_spawned", run_id=run_id, skill=skill_name)
         self.running_skills_started_at[run_id] = time.monotonic()
         self.running_skills_chain[run_id] = chain_id
@@ -592,10 +592,10 @@ class SkillRunner:
         self._budget.record_spawn(chain_id=chain_id, skill=skill_name)
 
         # tui-coder finding #1 fix (2026-05-28): canonical run_id form via
-        # Agent._make_run_id (see sibling spawn site above for full
+        # SkillRuntime._make_run_id (see sibling spawn site above for full
         # rationale).
-        from reyn.agent import Agent as _Agent
-        run_id = _Agent._make_run_id(skill_name)
+        from reyn.skill_runtime import SkillRuntime as _SkillRuntime
+        run_id = _SkillRuntime._make_run_id(skill_name)
         self._events.emit(
             "skill_run_spawned", run_id=run_id, skill=skill_name,
         )
@@ -687,7 +687,7 @@ class SkillRunner:
         """Default launcher used by ``AutoResumeHandler._resume_and_collect``.
 
         Loads the skill named by ``decision.plan.skill_name``, builds an
-        Agent, and spawns ``Agent.run`` as a tracked asyncio task with the
+        Agent, and spawns ``SkillRuntime.run`` as a tracked asyncio task with the
         resume_plan threaded in. Separate from :meth:`spawn` so the
         auto-resume hook can be tested with a stub launcher
         (see ``tests/test_session_auto_resume.py``).

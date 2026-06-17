@@ -274,7 +274,7 @@ class ModelResolver:
         existing model source when no override is set. The CompactionEngine sites
         need exactly this: their model source today is the chat session's model
         (``self.model``) / the plan router model, which can diverge from
-        ``default_class`` under an ``Agent(model=…)`` override — so feeding
+        ``default_class`` under an ``SkillRuntime(model=…)`` override — so feeding
         ``default_class`` would silently move compaction OFF the agent's chosen
         model. With ``default`` = the site's existing source, wiring is
         byte-identical until ``model_class_by_purpose.compaction`` is set, at which

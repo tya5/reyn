@@ -5,12 +5,12 @@ Commit 2b wired ``routerloop_convergence_enabled`` at the OSRuntime↔PhaseExecu
 seam, but a direct-kwarg test would reproduce the #1248 advertise/wire-path trap:
 it would pass with the production config→runtime PRODUCER missing. This pins the
 full path: a skill named in ``config.tool_calls_op_loop_skills``, run via
-``Agent.from_config(config)`` (the hub for swe_bench / run / cron / web / mcp /
+``SkillRuntime.from_config(config)`` (the hub for swe_bench / run / cron / web / mcp /
 eval), actually reaches ``PhaseExecutor._run_routerloop_op_loop`` (asserted via the
 ``phase_routerloop_op_loop_started`` event, the distinguishing marker vs the #1212
 phase-native ``_run_op_loop``). A skill NOT in the list never reaches it.
 
-Real ``Agent`` + real ``OSRuntime`` via the public ``Agent.from_config`` +
+Real ``Agent`` + real ``OSRuntime`` via the public ``SkillRuntime.from_config`` +
 ``agent.run``; the only scripted seam is the module-level ``call_llm`` /
 ``call_llm_tools`` provider boundary (the sanctioned pattern), not a collaborator
 mock.
@@ -20,11 +20,11 @@ from __future__ import annotations
 import asyncio
 
 import reyn.core.kernel.llm_call_recorder as lcr
-from reyn.agent import Agent
 from reyn.config import ReynConfig
 from reyn.llm.llm import LLMCallResult, LLMToolCallResult
 from reyn.llm.pricing import TokenUsage
 from reyn.schemas.models import Phase, Skill, SkillGraph
+from reyn.skill_runtime import SkillRuntime
 
 _SKILL_NAME = "converge_thread"
 
@@ -95,7 +95,7 @@ def _event_kinds(subscribers_sink: list) -> list[str]:
 
 def test_from_config_gate_reaches_converged_op_loop(tmp_path, monkeypatch) -> None:
     """Tier 2: a skill in config.tool_calls_op_loop_skills, run via
-    Agent.from_config, reaches the CONVERGED op-loop (RouterLoop.run_loop)."""
+    SkillRuntime.from_config, reaches the CONVERGED op-loop (RouterLoop.run_loop)."""
     monkeypatch.chdir(tmp_path)
     tools_calls: list[int] = []
     decide_calls: list[int] = []
@@ -103,14 +103,14 @@ def test_from_config_gate_reaches_converged_op_loop(tmp_path, monkeypatch) -> No
     sink: list = []
 
     config = ReynConfig(tool_calls_op_loop_skills=[_SKILL_NAME])
-    agent = Agent.from_config(
+    agent = SkillRuntime.from_config(
         config, model="stub/model", subscribers=[sink.append],
     )
     result = asyncio.run(agent.run(_skill(), {"type": "input", "data": {}}))
 
     assert result.ok, f"run must complete; got {result.status}"
     assert "phase_routerloop_op_loop_started" in _event_kinds(sink), (
-        "config.tool_calls_op_loop_skills must thread Agent.from_config → "
+        "config.tool_calls_op_loop_skills must thread SkillRuntime.from_config → "
         "OSRuntime → PhaseExecutor._run_routerloop_op_loop (the converged path), "
         "not stay on the #1212 phase-native path"
     )
@@ -130,7 +130,7 @@ def test_from_config_unlisted_skill_no_convergence(tmp_path, monkeypatch) -> Non
     sink: list = []
 
     config = ReynConfig(tool_calls_op_loop_skills=[])  # nothing opted in
-    agent = Agent.from_config(
+    agent = SkillRuntime.from_config(
         config, model="stub/model", subscribers=[sink.append],
     )
     result = asyncio.run(agent.run(_skill(), {"type": "input", "data": {}}))
@@ -194,7 +194,7 @@ def test_converged_op_loop_dispatches_phase_op_not_unknown_tool(tmp_path, monkey
         final_output_name="result",
     )
     config = ReynConfig(tool_calls_op_loop_skills=[_SKILL_NAME])
-    agent = Agent.from_config(
+    agent = SkillRuntime.from_config(
         config, model="stub/model", subscribers=[sink.append],
     )
     result = asyncio.run(agent.run(skill, {"type": "input", "data": {}}))
@@ -282,7 +282,7 @@ def test_converged_decide_frame_information_equivalent_to_json_op_loop(tmp_path,
         final_output_name="result",
     )
     config = ReynConfig(tool_calls_op_loop_skills=[_SKILL_NAME])
-    agent = Agent.from_config(config, model="stub/model")
+    agent = SkillRuntime.from_config(config, model="stub/model")
     result = asyncio.run(agent.run(skill, {"type": "input", "data": {}}))
 
     assert result.ok, f"run must complete; got {result.status}"

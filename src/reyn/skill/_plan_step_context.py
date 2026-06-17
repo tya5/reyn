@@ -4,7 +4,7 @@ When a plan step's sub-``RouterLoop`` calls ``invoke_skill``, the spawned
 skill's OSRuntime / EventLog needs to know which plan step it belongs to
 so the TUI's SkillActivityRow can render ``"plan N/M"`` detail. Threading
 that information through every intermediate layer (RouterLoop → tool
-dispatcher → SkillRunner → Agent.run) would touch many call sites for a
+dispatcher → SkillRunner → SkillRuntime.run) would touch many call sites for a
 single signal.
 
 A ``ContextVar`` is the right tool: planner sets it before each step's

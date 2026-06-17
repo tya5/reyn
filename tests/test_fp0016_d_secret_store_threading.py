@@ -4,8 +4,8 @@ Covers the plumbing layer: Agent → OSRuntime → ControlIRExecutor /
 PreprocessorExecutor → OpContext.secret_store.
 
 Contract pinned:
-  - Agent(secret_store=None) constructs without error (default = backward compat)
-  - Agent(secret_store=<store>) stores the reference (survives construction)
+  - SkillRuntime(secret_store=None) constructs without error (default = backward compat)
+  - SkillRuntime(secret_store=<store>) stores the reference (survives construction)
   - OSRuntime receives secret_store and stores it as _secret_store
   - ControlIRExecutor receives secret_store and stores it as _secret_store
   - ControlIRExecutor._build_ctx() propagates it to OpContext.secret_store
@@ -16,7 +16,7 @@ Contract pinned:
 No MagicMock / AsyncMock / patch of real collaborators.
 Uses real ScopedSecretStore, real EventLog, real Workspace, real
 ControlIRExecutor, real PreprocessorExecutor.
-Agent.run() is NOT called — we test the wiring layer without LLM.
+SkillRuntime.run() is NOT called — we test the wiring layer without LLM.
 """
 from __future__ import annotations
 
@@ -102,19 +102,19 @@ def _make_preprocessor_executor(
 
 
 def test_agent_default_secret_store_is_none() -> None:
-    """Tier 2: Agent(secret_store=None) is the default; _secret_store is None."""
-    from reyn.agent import Agent
+    """Tier 2: SkillRuntime(secret_store=None) is the default; _secret_store is None."""
+    from reyn.skill_runtime import SkillRuntime
 
-    agent = Agent(model="standard")
+    agent = SkillRuntime(model="standard")
     assert agent.secret_store is None
 
 
 def test_agent_explicit_secret_store_is_stored() -> None:
-    """Tier 2: Agent(secret_store=<store>) stores the reference on _secret_store."""
-    from reyn.agent import Agent
+    """Tier 2: SkillRuntime(secret_store=<store>) stores the reference on _secret_store."""
+    from reyn.skill_runtime import SkillRuntime
 
     store = _make_store(["API_KEY"])
-    agent = Agent(model="standard", secret_store=store)
+    agent = SkillRuntime(model="standard", secret_store=store)
     assert agent.secret_store is store
 
 
@@ -243,7 +243,7 @@ def test_threading_preserves_identity_not_copy(tmp_path: Path) -> None:
     """Tier 2: secret_store object identity is preserved end-to-end through the wiring.
 
     The wired object must be the exact same instance (is, not ==) at every
-    layer — Agent._secret_store, OSRuntime._secret_store,
+    layer — SkillRuntime._secret_store, OSRuntime._secret_store,
     ControlIRExecutor._secret_store, PreprocessorExecutor._secret_store,
     and the OpContext built by _build_ctx / _build_op_ctx.
     No copies or re-construction should occur.

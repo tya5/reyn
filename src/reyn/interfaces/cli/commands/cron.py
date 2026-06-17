@@ -6,7 +6,7 @@ Subcommands:
   status  Like `list` but shows last-run fields too (empty in standalone mode).
 
 The scheduler reads ``cron.jobs`` from reyn.yaml; each enabled job runs the
-named skill on its cron schedule via the headless Agent.run path.
+named skill on its cron schedule via the headless SkillRuntime.run path.
 
 v1 limitation: last-run state is in-memory only.  ``reyn cron status``
 shows empty last_run_* fields when invoked standalone (i.e. not while
@@ -272,13 +272,13 @@ def _build_runner():
     from reyn.runtime.cron.runners import build_default_runner
 
     async def _legacy_skill_runner(job) -> str:
-        from reyn.agent import Agent
         from reyn.config import _find_project_root, load_config, load_project_context
         from reyn.core.compiler import load_dsl_skill
         from reyn.interfaces.cli.commands.run import _build_permission_resolver
         from reyn.interfaces.cli.logger_factory import make_logger
         from reyn.interfaces.cli.skill_loader import resolve_skill_path
         from reyn.llm.model_resolver import ModelResolver
+        from reyn.skill_runtime import SkillRuntime
         from reyn.user_intervention import StdinInterventionBus
 
         config = load_config()
@@ -294,8 +294,8 @@ def _build_runner():
         logger = make_logger()
 
         # #997 dir2: config-derived permission/runtime bundle wired by
-        # Agent.from_config (cron jobs run unattended).
-        agent = Agent.from_config(
+        # SkillRuntime.from_config (cron jobs run unattended).
+        agent = SkillRuntime.from_config(
             config,
             model=resolved,
             resolver=resolver,

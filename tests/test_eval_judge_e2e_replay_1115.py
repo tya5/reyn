@@ -1,7 +1,7 @@
 """Tier 2: OS invariant — eval→judge cross-workspace artifact-handle boundary (e2e).
 
 End-to-end guard for the #1116→#1117 boundary: the `eval` skill resolves a phase
-artifact's state_dir handle to an absolute path (via Agent.phase_artifacts) and
+artifact's state_dir handle to an absolute path (via SkillRuntime.phase_artifacts) and
 hands it to the `judge_phase` sub-skill, which `file.read`s it to judge. #1116
 (state_dir-relative handles) silently broke that read across the workspace
 boundary; #1117 fixed it but the existing coverage stops at the Workspace
@@ -60,7 +60,7 @@ def test_eval_judge_cross_workspace_artifact_handle_e2e(tmp_path: Path, monkeypa
 
     # Producer stores a realistic, non-default artifact (unique marker) and we
     # resolve the REAL state_dir handle to absolute — exactly what eval's
-    # Agent.phase_artifacts hands to judge_phase.
+    # SkillRuntime.phase_artifacts hands to judge_phase.
     artifact = {"type": "draft_doc", "data": {"draft_text": f"{_MARKER} — the body", "word_count": 4}}
     producer = Workspace(events=EventLog(), base_dir=base)
     handle = producer.store_artifact("draft", artifact, skill_name="article_writer")

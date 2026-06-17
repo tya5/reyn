@@ -2,7 +2,7 @@
 
 PR-N9 (FP-0008): sandbox_2 13977 dogfood hung 4 hours at apply visit 6
 boundary because ``eval_benchmark.py:350`` wired an interactive
-``StdinInterventionBus`` into the Agent. When the safety limit
+``StdinInterventionBus`` into the SkillRuntime. When the safety limit
 checkpoint fired (apply phase max_phase_visits cap exceeded), the bus
 tried to read from tty raw_mode via ``prompt_toolkit.PromptSession``,
 blocking the asyncio event loop indefinitely in a non-interactive
@@ -51,7 +51,7 @@ def test_eval_benchmark_does_not_import_stdininterventionbus() -> None:
 
 
 def test_eval_benchmark_agent_call_passes_intervention_bus_none() -> None:
-    """Tier 2: the Agent(...) construction site in eval_benchmark passes
+    """Tier 2: the SkillRuntime(...) construction site in eval_benchmark passes
     ``intervention_bus=None`` so the safety_helper no_bus path fires at
     limit-checkpoint boundaries.
 

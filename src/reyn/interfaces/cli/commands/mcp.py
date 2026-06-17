@@ -669,13 +669,13 @@ def run_install(args: argparse.Namespace) -> None:
     # Forward to mcp_install skill via reyn run machinery.
     import json
 
-    from reyn.agent import Agent
     from reyn.config import load_config, load_project_context
     from reyn.llm.llm import run_async as _run_async
     from reyn.llm.model_resolver import ModelResolver
     from reyn.security.permissions.permissions import PermissionResolver
     from reyn.skill.skill_paths import SkillNotFoundError, is_stdlib_skill
     from reyn.skill.skill_paths import resolve_skill_path as _resolve_skill_path_raw
+    from reyn.skill_runtime import SkillRuntime
     from reyn.user_intervention import StdinInterventionBus
 
     from ..logger_factory import make_logger
@@ -734,7 +734,7 @@ def run_install(args: argparse.Namespace) -> None:
     )
     logger = make_logger()
     # #997 dir2: config-derived permission/runtime bundle wired by from_config.
-    agent = Agent.from_config(
+    agent = SkillRuntime.from_config(
         config,
         resolver=resolver,
         strict=False,

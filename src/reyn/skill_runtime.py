@@ -39,7 +39,7 @@ def _validate_caller(caller: str) -> str:
     return caller
 
 
-class Agent:
+class SkillRuntime:
     def __init__(
         self,
         model: str,
@@ -153,7 +153,7 @@ class Agent:
         run_id: str | None = None,
         environment_backend: "EnvironmentBackend | None" = None,
         sandbox_backend: "SandboxBackend | None" = None,
-    ) -> "Agent":
+    ) -> "SkillRuntime":
         """Construct a fully-wired Agent from a ReynConfig (#997 dir2).
 
         Construction-time prevention of the FP-0008 / #1133 wiring-gap class:
@@ -258,7 +258,7 @@ class Agent:
         #   3. fresh ``_make_run_id(skill.name)`` (= direct callers, resume)
         # The (2) layer is what PR-R adds: ChatSession's
         # ``_build_agent_for_skill_runner`` passes the skill_runner-
-        # generated canonical to Agent.__init__, so by the time
+        # generated canonical to SkillRuntime.__init__, so by the time
         # agent.run() runs, the instance already owns the canonical id.
         # Prior to PR-R, the instance had ``self.run_id = None`` so
         # agent.run() always generated a fresh id even when the caller

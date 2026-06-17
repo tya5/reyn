@@ -679,7 +679,7 @@ async def _run_single_task(
 
     ``unsafe_python`` is derived once at batch start (= from
     ``--allow-unsafe-python``) and threaded through every task;
-    ``Agent.from_config`` then derives the permission_resolver (and
+    ``SkillRuntime.from_config`` then derives the permission_resolver (and
     the rest of the runtime bundle) per task so the Agent's op_catalog exposes
     the shell op uniformly (#997 dir2 — the benchmark cannot omit the bundle).
     Without this, the LLM doesn't see ``shell`` in the catalog and hallucinates
@@ -694,8 +694,8 @@ async def _run_single_task(
     faithful verification environment, the result is marked verify_skipped
     instead of emitting a non-faithful PASS/FAIL.
     """
-    from reyn.agent import Agent
     from reyn.config import _find_project_root, load_project_context
+    from reyn.skill_runtime import SkillRuntime
 
     async with semaphore:
         # Build input artifact
@@ -763,7 +763,7 @@ async def _run_single_task(
                             "timeout_seconds": 600,
                         },
                     )
-                agent = Agent.from_config(
+                agent = SkillRuntime.from_config(
                     session.config,
                     model=model,
                     resolver=session.resolver,
@@ -918,7 +918,7 @@ async def _run_benchmark_async(args: argparse.Namespace) -> None:
     model = getattr(args, "model", None) or session.config.model
 
     # Derive unsafe_python once at batch start and thread it
-    # through every task; Agent.from_config derives the permission_resolver (+
+    # through every task; SkillRuntime.from_config derives the permission_resolver (+
     # the rest of the runtime bundle) per task (#997 dir2). Without the right
     # the Agent's OS runtime keeps undeclared ops out of the op_catalog
     # and the LLM hallucinates a fake schema on every retry — see

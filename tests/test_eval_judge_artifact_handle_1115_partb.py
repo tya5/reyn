@@ -10,7 +10,7 @@ the prompt.
 (``artifacts/...``) instead of a base_dir-relative path (``.reyn/artifacts/...``).
 A consumer in a different workspace that ``file.read``s the bare handle resolves
 it against ITS base_dir → the file is not found (the handle lacks the prefix to
-reach state_dir). Part B fixes this by having ``Agent.phase_artifacts`` resolve
+reach state_dir). Part B fixes this by having ``SkillRuntime.phase_artifacts`` resolve
 each handle to an absolute path (via the producing run's own workspace) before
 it crosses the boundary — so the judge can read it regardless of its base_dir.
 
@@ -19,7 +19,7 @@ This file pins, at the Workspace level (no LLM, no mocks):
       (= the Stage 0 break Part B fixes);
   (b) the OS-resolved absolute path IS readable across the boundary and
       round-trips the stored content (= the Part B mechanism that
-      ``Agent.phase_artifacts`` now applies).
+      ``SkillRuntime.phase_artifacts`` now applies).
 """
 from __future__ import annotations
 
@@ -60,7 +60,7 @@ def test_resolved_absolute_path_is_readable_across_workspace_boundary(
 ) -> None:
     """Tier 2: (b) the OS-resolved absolute path reads + round-trips cross-boundary.
 
-    Mirrors ``Agent.phase_artifacts`` (resolve the handle via the producing
+    Mirrors ``SkillRuntime.phase_artifacts`` (resolve the handle via the producing
     run's workspace) → eval hands the absolute path → judge file.reads it.
     """
     base = tmp_path / "repo"
@@ -72,7 +72,7 @@ def test_resolved_absolute_path_is_readable_across_workspace_boundary(
         "some_phase", artifact, skill_name="target_skill"
     )
 
-    # = what Agent.phase_artifacts now produces: resolve via the producing
+    # = what SkillRuntime.phase_artifacts now produces: resolve via the producing
     #   run's own workspace (sidesteps any sub-state-dir nesting).
     abs_path = str(producer.resolve_artifact_handle(handle))
     assert Path(abs_path).is_absolute()

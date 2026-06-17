@@ -20,7 +20,7 @@ Demonstrates the full mitigation path for the Confused Deputy threat:
 
 No mocks. Uses real ScopedSecretStore / CredentialScopeError from reyn.security.secrets.
 
-Note: the full invoke_sub_skill → Agent.run path requires a real LLM call and
+Note: the full invoke_sub_skill → SkillRuntime.run path requires a real LLM call and
 is exercised by integration-level dogfood scenarios (batch 23+). The scope
 construction and intersection logic is exercised here at the module boundary
 level — which is the meaningful invariant to pin (same pattern as

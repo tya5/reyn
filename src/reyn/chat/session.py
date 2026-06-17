@@ -14,7 +14,6 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
-from reyn.agent import Agent
 from reyn.chat.error_format import classify_router_error
 from reyn.chat.outbox import OutboxMessage
 from reyn.chat.services import (
@@ -66,6 +65,7 @@ from reyn.security.permissions.permissions import PermissionResolver
 from reyn.services.compaction.engine import CompactionEngine
 from reyn.skill.skill_paths import SkillNotFoundError, resolve_skill_path, stdlib_root
 from reyn.skill.skill_registry import SkillRegistry
+from reyn.skill_runtime import SkillRuntime
 from reyn.user_intervention import (
     InterventionAnswer,
     InterventionChoice,
@@ -363,7 +363,7 @@ class ChatInterventionBus:
     so the chat session can drop pending interventions when the spawn is
     cancelled. Interventions emitted by ops carry their own `skill_name` from
     `OpContext`; this bus only fills in `run_id` (which the OS layer doesn't
-    have, since chat tracks runs separately from `Agent.run_id`).
+    have, since chat tracks runs separately from `SkillRuntime.run_id`).
 
     Phase 2 (issue #254): the canonical method is ``deliver`` (= the
     Agent↔User contract).  ``request`` is retained as an alias so
@@ -1934,7 +1934,7 @@ class ChatSession:
                 # fail (dead-end-critical).
                 # #1679: honor a documented model_class_by_purpose.compaction
                 # override when set; otherwise keep self.model (byte-identical to
-                # the former hardcode, incl. an Agent(model=…) override).
+                # the former hardcode, incl. an SkillRuntime(model=…) override).
                 model=self._resolver.purpose_class_or("compaction", self.model),
                 events=self._chat_events,
                 system_prompt_provider=self._build_router_system_prompt,
@@ -2544,7 +2544,7 @@ class ChatSession:
         skill_name: str | None,
         *,
         subscribers: list | None = None,
-    ) -> "Agent":
+    ) -> "SkillRuntime":
         """Build an Agent wired with a per-spawn ChatInterventionBus.
 
         Supplied as ``build_agent_fn`` to SkillRunner so SkillRunner
@@ -3455,8 +3455,8 @@ class ChatSession:
         intervention_bus: RequestBus | None = None,
         mcp_servers: dict | None = None,
         subscribers: list | None = None,
-    ) -> Agent:
-        """Construct an Agent with this session's shared defaults applied.
+    ) -> SkillRuntime:
+        """Construct a SkillRuntime with this session's shared defaults applied.
 
         ``run_id`` (FP-0008 PR-R): when provided, the Agent instance
         carries this id from construction time. ``agent.run()`` honors
@@ -3465,7 +3465,7 @@ class ChatSession:
         and skill-side ids consistent. ``None`` (= default) preserves
         the prior behavior of agent-side id generation at run time.
         """
-        return Agent(
+        return SkillRuntime(
             model=self.model,
             resolver=self._resolver,
             permission_resolver=self._perm,
