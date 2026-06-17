@@ -30,6 +30,7 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
+from uuid import uuid4
 
 logger = logging.getLogger(__name__)
 
@@ -1427,6 +1428,14 @@ class AgentRegistry:
                 f"agent {name!r} not found; run `reyn agent new {name}` to create it"
             )
         profile = self.load_profile(name)
+        session = self._construct_session(profile)
+        self._store_session(name, session)
+        return session
+
+    def _construct_session(self, profile: AgentProfile) -> "object":
+        """Build a configured Session from a profile (factory + shared-store
+        attach), WITHOUT inserting it into the session map. Shared by get_or_load
+        (default session) and spawn_session (additional sessions) — FP-0043 S3."""
         session = self._factory(profile)
         # ADR-0038 Stage 1d: hand the session the single shared workspace
         # shadow-git store so cut_generation captures the workspace at each
@@ -1441,8 +1450,29 @@ class AgentRegistry:
         attach_anchor = getattr(session, "attach_anchor_store", None)
         if anchors is not None and callable(attach_anchor):
             attach_anchor(anchors)
-        self._store_session(name, session)
         return session
+
+    def spawn_session(self, name: str, sid: "str | None" = None) -> str:
+        """FP-0043 Stage 3: open a NEW conversation Session under an existing
+        Agent, SHARING the agent's identity object. Returns the new session-id.
+
+        Structure-only (lead-confirmed): this lets the Registry hold N sessions
+        per agent; INBOUND routing to a non-default session is Stage 4 — until
+        then the default "main" session receives all inbound traffic. The new
+        session shares ``self._identities[name]`` (the same Agent object, S2's
+        ``agent=`` seam) so identity is genuinely shared, not duplicated."""
+        self.get_or_load(name)  # ensure the default session + _identities[name] exist
+        shared = self._identities.get(name)
+        new_sid = sid or uuid4().hex[:8]
+        if self._has_session(name, new_sid):
+            raise ValueError(f"session {new_sid!r} already exists for agent {name!r}")
+        session = self._construct_session(self.load_profile(name))
+        if shared is not None:
+            # Share the SAME identity object (not the fresh one the factory built),
+            # so a future identity change propagates to all of the agent's sessions.
+            session._agent = shared
+        self._sessions.setdefault(name, {})[new_sid] = session
+        return new_sid
 
     async def ensure_running(self, name: str) -> "object":
         """Load + start session.run() + forwarder for `name` without
