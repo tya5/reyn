@@ -271,10 +271,10 @@ def _search_hn_ids(topic: str, max_results: int) -> list[str]:
     lists) can be filtered out, returning up to max_results unique item IDs.
     """
     try:
-        from reyn.search_backends.duckduckgo import DuckDuckGoBackend
+        from reyn.tools.search_backends.duckduckgo import DuckDuckGoBackend
     except ImportError as exc:
         print(
-            f"[error] could not import reyn.search_backends.duckduckgo: {exc}",
+            f"[error] could not import reyn.tools.search_backends.duckduckgo: {exc}",
             file=sys.stderr,
         )
         sys.exit(1)
