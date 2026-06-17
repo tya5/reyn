@@ -59,6 +59,7 @@ class SkillRegistry:
         agent_state_dir: Path,
         state_log: "StateLog | None" = None,
         truncate_eligible_hook: Callable[[], Awaitable[None]] | None = None,
+        session_id: str = "main",
     ) -> None:
         """
         truncate_eligible_hook: optional async callback fired *after* each
@@ -72,6 +73,12 @@ class SkillRegistry:
             WAL wiring.
         """
         self._agent_name = agent_name
+        # FP-0043 Stage 5: the conversation session these skill runs belong to.
+        # Tagged onto every WAL append (session_id=) so replay routes the
+        # agent-consumed skill_* kinds (skill_started/completed/discarded) to the
+        # right per-session AgentSnapshot. Default "main" = byte-identical single
+        # session; set post-construction by spawn_session (set_session_id).
+        self._session_id = session_id
         self._state_dir = Path(agent_state_dir)
         self._skills_dir = self._state_dir / "skills"
         self._state_log = state_log
@@ -79,6 +86,22 @@ class SkillRegistry:
         # In-memory cache: run_id → SkillSnapshot. Populated on start() /
         # load_active(); cleared on complete().
         self._snapshots: dict[str, SkillSnapshot] = {}
+
+    async def _wal_append(self, kind: str, **fields):
+        """FP-0043 Stage 5: the single WAL-append chokepoint for this registry.
+
+        Injects ``session_id=self._session_id`` into every entry so replay routes
+        the agent-consumed skill_* kinds to this session's snapshot (mirrors
+        SnapshotJournal._wal_append). No-op (returns None) when no WAL configured."""
+        if self._state_log is None:
+            return None
+        log = self._state_log  # local so the funnel replace doesn't recurse here
+        return await log.append(kind, session_id=self._session_id, **fields)
+
+    def set_session_id(self, session_id: str) -> None:
+        """FP-0043 Stage 5: set the conversation session id post-construction
+        (spawn_session, before the spawned session's run-loop goes live)."""
+        self._session_id = session_id
 
     @property
     def truncate_hook(self):
@@ -142,7 +165,7 @@ class SkillRegistry:
         snap = SkillSnapshot.empty(run_id, skill_name, skill_input)
         snap.parent_run_id = parent_run_id
         if self._state_log is not None:
-            seq = await self._state_log.append(
+            seq = await self._wal_append(
                 "skill_started",
                 target=self._agent_name,
                 agent=self._agent_name,
@@ -185,7 +208,7 @@ class SkillRegistry:
             )
             return
         if self._state_log is not None:
-            seq = await self._state_log.append(
+            seq = await self._wal_append(
                 "skill_phase_advanced",
                 target=self._agent_name,
                 agent=self._agent_name,
@@ -232,7 +255,7 @@ class SkillRegistry:
                 f"expected 'completed' or 'discarded'",
             )
         if self._state_log is not None:
-            await self._state_log.append(
+            await self._wal_append(
                 kind,
                 target=self._agent_name,
                 agent=self._agent_name,

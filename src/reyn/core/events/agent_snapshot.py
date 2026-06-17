@@ -40,6 +40,11 @@ class AgentSnapshot:
     """
 
     agent_name: str
+    # FP-0043 Stage 5: the conversation session this snapshot belongs to. Default
+    # "main" = the implicit single session (byte-identical pre-S5); spawned
+    # sessions get their sid. WAL replay routes each entry by (agent_name,
+    # session_id) so per-session snapshots stay isolated.
+    session_id: str = "main"
     applied_seq: int = 0
     # inbox messages: each is {"id": str, "kind": str, "payload": dict}
     inbox: list[dict] = field(default_factory=list)
@@ -73,19 +78,22 @@ class AgentSnapshot:
     # ── persistence ─────────────────────────────────────────────────────
 
     @classmethod
-    def empty(cls, agent_name: str) -> "AgentSnapshot":
-        return cls(agent_name=agent_name)
+    def empty(cls, agent_name: str, session_id: str = "main") -> "AgentSnapshot":
+        return cls(agent_name=agent_name, session_id=session_id)
 
     @classmethod
-    def load(cls, agent_name: str, path: Path) -> "AgentSnapshot":
+    def load(cls, agent_name: str, path: Path, session_id: str = "main") -> "AgentSnapshot":
+        # FP-0043 Stage 5: session_id defaults to "main" so a legacy caller (and a
+        # legacy agent_name-keyed snapshot at the pre-S5 path) loads as the agent's
+        # "main" session — the migration fallback, no recovery-state loss.
         try:
             data = json.loads(Path(path).read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
             # Corrupt / missing file → defensive empty (existing behavior;
             # there is no version info to compare anyway).
-            return cls.empty(agent_name)
+            return cls.empty(agent_name, session_id)
         if not isinstance(data, dict):
-            return cls.empty(agent_name)
+            return cls.empty(agent_name, session_id)
         # PR-resume-ux β U4: schema_version refuse. A missing version field
         # or a mismatch is treated as incompatible — operator must
         # explicitly --reset to wipe.
@@ -99,6 +107,9 @@ class AgentSnapshot:
             )
         return cls(
             agent_name=agent_name,
+            # FP-0043 S5: prefer the saved session_id; fall back to the caller's
+            # (which defaults "main") for legacy snapshots written pre-S5.
+            session_id=str(data.get("session_id", session_id)),
             applied_seq=int(data.get("applied_seq", 0)),
             inbox=list(data.get("inbox", []) or []),
             pending_chains=dict(data.get("pending_chains", {}) or {}),
@@ -122,6 +133,7 @@ class AgentSnapshot:
         tmp = path.with_suffix(path.suffix + ".tmp")
         payload = {
             "version": SNAPSHOT_VERSION,
+            "session_id": self.session_id,  # FP-0043 S5 (additive; legacy load → "main")
             "applied_seq": self.applied_seq,
             "inbox": self.inbox,
             "pending_chains": self.pending_chains,
@@ -155,11 +167,18 @@ class AgentSnapshot:
             self.applied_seq = seq
 
     def _matches_agent(self, event: dict) -> bool:
-        """Return True if `event` affects this agent."""
-        return (
+        """Return True if `event` affects THIS (agent, session).
+
+        FP-0043 Stage 5: routes by agent (target/agent) AND session. A WAL entry's
+        ``session_id`` defaults to "main" when absent (legacy entries written
+        pre-S5, and the default single session) — so legacy entries deterministically
+        replay into the agent's "main" session, and a spawned session only absorbs
+        its own entries. This is the per-session replay-determinism guarantee."""
+        agent_matches = (
             event.get("target") == self.agent_name
             or event.get("agent") == self.agent_name
         )
+        return agent_matches and event.get("session_id", "main") == self.session_id
 
     def _apply_one(self, event: dict) -> None:
         kind = event.get("kind")

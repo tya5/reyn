@@ -1477,6 +1477,19 @@ class AgentRegistry:
             # Share the SAME identity object (not the fresh one the factory built),
             # so a future identity change propagates to all of the agent's sessions.
             session._agent = shared
+        # FP-0043 Stage 5: stamp the new session's id so EVERY WAL append it makes
+        # carries new_sid (per-session snapshot routing). Done here — before the
+        # session's run-loop / forwarder go live (that is attach_session, S4a,
+        # strictly later) — so there is NO "main"-tagged append window for the
+        # spawned session. The journal is built eagerly in __init__ (set_session_id
+        # propagates to the in-memory snapshot too); the skill_registry is lazy and
+        # reads _session_id at construction, so setting the attribute covers a later
+        # build, and we also fix up an already-built one defensively.
+        session._session_id = new_sid
+        session._journal.set_session_id(new_sid)
+        existing_skill_registry = getattr(session, "_skill_registry", None)
+        if existing_skill_registry is not None:
+            existing_skill_registry.set_session_id(new_sid)
         self._sessions.setdefault(name, {})[new_sid] = session
         return new_sid
 
