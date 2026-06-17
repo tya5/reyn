@@ -205,7 +205,7 @@ ARCH_CTA_HEADING_HTML: "Go deeper in the <em>docs.</em>"
 ARCH_CTA_BODY: >-
   The concepts section covers each component in detail — with design
   rationale, edge cases, and links to the implementation.
-ARCH_CTA_DOCS_HREF: "docs/concepts/architecture/"
+ARCH_CTA_DOCS_HREF: "concepts/architecture/"
 
 # ── footer ───────────────────────────────────────────────────────────────────
 # Powered by AI is intentional double-meaning: Reyn (a) runs on LLMs at
