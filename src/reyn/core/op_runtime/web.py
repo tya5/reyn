@@ -418,7 +418,7 @@ async def handle_web_fetch(op: WebFetchIROp, ctx: OpContext, caller: Literal["pr
 
 
 async def handle_web_search(op: WebSearchIROp, ctx: OpContext, caller: Literal["preprocessor", "control_ir"]) -> dict:
-    from reyn.search_backends import get_backend
+    from reyn.tools.search_backends import get_backend
 
     # FP-0022: Tier 1 config deny path. web_search is read-only (no side effects),
     # so operator `deny` is the only sensible restriction — no interactive prompt needed.
