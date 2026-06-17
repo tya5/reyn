@@ -9,8 +9,8 @@ from __future__ import annotations
 import json
 import time
 
-from reyn.budget.budget import BudgetTracker, CostConfig
 from reyn.llm.pricing import TokenUsage
+from reyn.runtime.budget.budget import BudgetTracker, CostConfig
 
 
 def _tracker() -> BudgetTracker:

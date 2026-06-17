@@ -36,7 +36,7 @@ from reyn.core.kernel.runtime_types import (
 )
 from reyn.core.kernel.validation import ValidationError, validate_output
 from reyn.data.workspace.artifact_validator import validate_artifact_data
-from reyn.limits.limit_handler import LimitDecision, handle_limit_exceeded
+from reyn.runtime.limits.limit_handler import LimitDecision, handle_limit_exceeded
 from reyn.schemas.models import ActOutput, CandidateOutput, LLMOutput
 
 if TYPE_CHECKING:

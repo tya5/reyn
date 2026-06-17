@@ -95,7 +95,7 @@ def _jobs_to_cron_jobs(job_configs) -> list:
     (= ``skill``) shapes pass through; CronJob carries all three fields
     and the runner dispatches based on ``is_message_based()``.
     """
-    from reyn.cron import CronJob
+    from reyn.runtime.cron import CronJob
     return [
         CronJob(
             name=jc.name,
@@ -112,7 +112,7 @@ def _jobs_to_cron_jobs(job_configs) -> list:
 
 def _compute_next_run(job) -> str:
     """Return ISO-format next-run time or '-' on invalid expression."""
-    from reyn.cron import CronScheduler
+    from reyn.runtime.cron import CronScheduler
     scheduler = CronScheduler(jobs=[job])
     next_at = scheduler.compute_next_run(job)
     return next_at.isoformat() if next_at is not None else "-"
@@ -230,7 +230,7 @@ def run_run(args: argparse.Namespace) -> None:
 
 async def _run_scheduler() -> None:
     """Build scheduler, start jobs, block until Ctrl-C."""
-    from reyn.cron import CronJob, CronScheduler
+    from reyn.runtime.cron import CronJob, CronScheduler
 
     job_configs = _load_jobs()
     jobs = _jobs_to_cron_jobs(job_configs)
@@ -242,7 +242,7 @@ async def _run_scheduler() -> None:
 
     print(f"Started cron scheduler with {len(enabled)} enabled job(s):")
     for job in enabled:
-        from reyn.cron import CronScheduler as _CS
+        from reyn.runtime.cron import CronScheduler as _CS
         _sched = _CS(jobs=[job])
         next_at = _sched.compute_next_run(job)
         next_str = next_at.isoformat() if next_at is not None else "(invalid schedule)"
@@ -269,7 +269,7 @@ def _build_runner():
     is no AgentRegistry context in ``reyn cron run`` foreground). Use
     ``reyn web`` for message-based jobs.
     """
-    from reyn.cron.runners import build_default_runner
+    from reyn.runtime.cron.runners import build_default_runner
 
     async def _legacy_skill_runner(job) -> str:
         from reyn.agent import Agent

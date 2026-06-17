@@ -24,7 +24,7 @@ long as their class names follow common conventions.
 """
 from __future__ import annotations
 
-from reyn.budget.budget import BudgetExceeded
+from reyn.runtime.budget.budget import BudgetExceeded
 
 
 def classify_router_error(exc: BaseException) -> str:

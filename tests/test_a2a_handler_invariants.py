@@ -111,7 +111,7 @@ def _build_handler(
 
     async def _handle_chat_limit_checkpoint(**kwargs):  # type: ignore[no-untyped-def]
         # Always allow in tests — we're not testing FP-0005 path here
-        from reyn.limits.limit_handler import LimitDecision
+        from reyn.runtime.limits.limit_handler import LimitDecision
         return LimitDecision(allow_continue=True, extension=0.0, reason="test-allow")
 
     # Router stub: iterate through router_actions; default is a single no-op.

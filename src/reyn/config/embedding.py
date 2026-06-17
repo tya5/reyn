@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
 
-from reyn.budget.budget import CostConfig, CostLimitConfig
+from reyn.runtime.budget.budget import CostConfig, CostLimitConfig
 
 
 @dataclass

@@ -321,13 +321,13 @@ def register(sub) -> None:
 
 
 def run_serve(args: argparse.Namespace) -> None:
-    from reyn.budget.budget import BudgetTracker
     from reyn.chat.profile import AgentProfile
     from reyn.chat.registry import AgentRegistry
     from reyn.chat.scoped_session_factory import build_scoped_chat_session
     from reyn.config import _find_project_root, load_project_context
     from reyn.core.events.state_log import StateLog
     from reyn.mcp.server import serve_stdio
+    from reyn.runtime.budget.budget import BudgetTracker
     from reyn.security.permissions.permissions import PermissionResolver
 
     session_cfg = Session.from_args(args)

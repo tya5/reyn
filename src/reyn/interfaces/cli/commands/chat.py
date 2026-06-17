@@ -306,13 +306,13 @@ def run(args: argparse.Namespace) -> None:
         _run_connect_mode(args, connect_url)
         return
 
-    from reyn.budget.budget import BudgetTracker
     from reyn.chat.profile import AgentProfile
     from reyn.chat.registry import DEFAULT_AGENT_NAME, AgentRegistry
     from reyn.chat.repl import run_repl
     from reyn.chat.scoped_session_factory import build_scoped_chat_session
     from reyn.config import _find_project_root, load_project_context
     from reyn.core.events.state_log import StateLog
+    from reyn.runtime.budget.budget import BudgetTracker
     from reyn.security.permissions.permissions import PermissionResolver
 
     session_cfg = Session.from_args(args)

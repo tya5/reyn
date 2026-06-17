@@ -466,10 +466,10 @@ async def test_a2a_endpoint_uses_message_bus(tmp_path, monkeypatch):
 
     This pins the FP-0013 bypass-deletion contract for the A2A transport.
     """
-    from reyn.budget.budget import BudgetTracker, CostConfig
     from reyn.chat.profile import AgentProfile
     from reyn.chat.registry import AgentRegistry
     from reyn.mcp_server import send_to_agent_impl
+    from reyn.runtime.budget.budget import BudgetTracker, CostConfig
 
     state_log = StateLog(tmp_path / ".reyn" / "state" / "wal.jsonl")
 

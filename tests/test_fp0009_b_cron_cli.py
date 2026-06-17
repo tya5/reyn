@@ -12,7 +12,7 @@ Pins the contract for the `reyn cron` subcommands:
 Does NOT test `reyn cron run` foreground execution (= Tier 4 / e2e territory).
 Argparse wiring for `run` subcommand is covered by the help-text tests.
 
-Test strategy: uses the real CronJob / CronScheduler from reyn.cron; no
+Test strategy: uses the real CronJob / CronScheduler from reyn.runtime.cron; no
 MagicMock / AsyncMock / patch of collaborators.  Config is constructed
 directly via CronConfig + CronJobConfig dataclasses and monkeypatched at the
 reyn.config module attribute level (same pattern as test_fp0016_c_auth_cli.py).

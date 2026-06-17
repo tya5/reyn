@@ -29,7 +29,7 @@ from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from reyn.cron.scheduler import CronJob
+    from reyn.runtime.cron.scheduler import CronJob
 
 logger = logging.getLogger(__name__)
 

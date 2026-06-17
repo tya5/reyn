@@ -19,8 +19,8 @@ import pytest
 import yaml
 
 from reyn.config import CronConfig, CronJobConfig, _build_cron_config, load_config
-from reyn.cron import CronJob as CronJobRuntime
-from reyn.cron import CronScheduler
+from reyn.runtime.cron import CronJob as CronJobRuntime
+from reyn.runtime.cron import CronScheduler
 
 # ---------------------------------------------------------------------------
 # Recording runner — real async callable, no mocks

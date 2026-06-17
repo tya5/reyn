@@ -10,11 +10,11 @@ from reyn.core.kernel.run_state import RunState
 from reyn.schemas.models import CandidateOutput, ContextFrame, Skill
 
 if TYPE_CHECKING:
-    from reyn.budget.budget import BudgetTracker
     from reyn.config import MultimodalConfig, PhaseActResultsCompactionConfig, SandboxConfig
     from reyn.core.events.state_log import StateLog
     from reyn.data.workspace.media_store import MediaStore
     from reyn.environment.backend import EnvironmentBackend
+    from reyn.runtime.budget.budget import BudgetTracker
     from reyn.security.sandbox.backend import SandboxBackend
     from reyn.security.secrets.store import ScopedSecretStore
     from reyn.services.compaction.engine import CompactionEngine

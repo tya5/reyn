@@ -21,10 +21,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import reyn.llm.model_budget as _mb
-from reyn.budget.budget import BudgetTracker, CostConfig
 from reyn.chat.session import ChatMessage, ChatSession
 from reyn.config import CompactionConfig
 from reyn.core.events.state_log import StateLog
+from reyn.runtime.budget.budget import BudgetTracker, CostConfig
 
 
 def _now() -> str:

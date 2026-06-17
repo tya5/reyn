@@ -32,13 +32,13 @@ pytest.importorskip("fastapi", reason="fastapi not installed ([web] extra missin
 pytest.importorskip("httpx", reason="httpx not installed (needed by TestClient)")
 
 
-from reyn.budget.budget import BudgetTracker, CostConfig  # noqa: E402
 from reyn.chat.profile import AgentProfile  # noqa: E402
 from reyn.chat.registry import AgentRegistry  # noqa: E402
 from reyn.chat.session import ChatSession  # noqa: E402
 from reyn.core.events.state_log import StateLog  # noqa: E402
 from reyn.llm.llm import LLMToolCallResult  # noqa: E402
 from reyn.llm.pricing import TokenUsage  # noqa: E402
+from reyn.runtime.budget.budget import BudgetTracker, CostConfig  # noqa: E402
 
 _EMPTY_USAGE = TokenUsage(prompt_tokens=10, completion_tokens=5)
 

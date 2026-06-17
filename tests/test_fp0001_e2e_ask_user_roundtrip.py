@@ -184,9 +184,9 @@ def test_chat_session_intervention_override_is_used():
     """
     import tempfile
 
-    from reyn.budget.budget import BudgetTracker, CostConfig
     from reyn.chat.session import ChatSession, _new_chain_id
     from reyn.core.events.state_log import StateLog
+    from reyn.runtime.budget.budget import BudgetTracker, CostConfig
     from reyn.user_intervention import InterventionAnswer, InterventionBus, UserIntervention
     with tempfile.TemporaryDirectory() as td:
         tmp = Path(td)
@@ -269,11 +269,11 @@ def _build_registry_for_test(tmp_path: Path):
     via AgentProfile.new + .save (not registry.create) because AgentRegistry
     may auto-create 'default' on init in some configurations.
     """
-    from reyn.budget.budget import BudgetTracker, CostConfig
     from reyn.chat.profile import AgentProfile
     from reyn.chat.registry import AgentRegistry
     from reyn.chat.session import ChatSession
     from reyn.core.events.state_log import StateLog
+    from reyn.runtime.budget.budget import BudgetTracker, CostConfig
 
     state_log = StateLog(tmp_path / ".reyn" / "state" / "wal.jsonl")
 

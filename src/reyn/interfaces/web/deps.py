@@ -93,7 +93,7 @@ _budget_tracker = None
 def _get_budget_tracker():
     global _budget_tracker
     if _budget_tracker is None:
-        from reyn.budget.budget import BudgetTracker
+        from reyn.runtime.budget.budget import BudgetTracker
         config = _load_config()
         root = _get_project_root()
         tracker = BudgetTracker(config.cost, safety=config.safety)

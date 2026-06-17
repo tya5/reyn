@@ -11,7 +11,7 @@ from typing import List
 
 import pytest
 
-from reyn.cron import CronJob, CronScheduler
+from reyn.runtime.cron import CronJob, CronScheduler
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -151,7 +151,7 @@ def test_compute_next_run_invalid_disables_job_and_returns_none(caplog):
     scheduler = CronScheduler([], clock_fn=clock)
     job = _job(schedule="not-a-cron-expression")
 
-    with caplog.at_level(logging.WARNING, logger="reyn.cron.scheduler"):
+    with caplog.at_level(logging.WARNING, logger="reyn.runtime.cron.scheduler"):
         result = scheduler.compute_next_run(job)
 
     assert result is None
@@ -440,7 +440,7 @@ async def test_fire_without_runner_marks_error(caplog):
     job = _job(name="j")
     sched = CronScheduler([job])  # no runner
 
-    with caplog.at_level(logging.WARNING, logger="reyn.cron.scheduler"):
+    with caplog.at_level(logging.WARNING, logger="reyn.runtime.cron.scheduler"):
         await sched._fire(job)
 
     assert job.last_run_status == "error"

@@ -22,8 +22,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
 
-from reyn.budget.budget import CostConfig, CostLimitConfig
-
 # #1682 #3 (R1): ReynConfig references every section config via default_factory,
 # AND config_schema.walk_config_schema does get_type_hints(ReynConfig), resolving
 # the string forward-refs against THIS module's namespace — so these MUST be
@@ -63,6 +61,7 @@ from reyn.config.media import (
     VoiceConfig,
     WebConfig,
 )
+from reyn.runtime.budget.budget import CostConfig, CostLimitConfig
 
 
 def _empty_external_transports():

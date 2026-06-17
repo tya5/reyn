@@ -116,13 +116,13 @@ async def _get_or_build_registry() -> "AgentRegistry":
 
         import argparse
 
-        from reyn.budget.budget import BudgetTracker
         from reyn.chat.profile import AgentProfile
         from reyn.chat.registry import AgentRegistry
         from reyn.chat.scoped_session_factory import build_scoped_chat_session
         from reyn.config import _find_project_root, load_project_context
         from reyn.core.events.state_log import StateLog
         from reyn.interfaces.cli.session import Session
+        from reyn.runtime.budget.budget import BudgetTracker
         from reyn.security.permissions.permissions import PermissionResolver
 
         # Reuse the same yaml-loading path the CLI uses so reyn.yaml /

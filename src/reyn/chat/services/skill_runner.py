@@ -37,8 +37,8 @@ from reyn.skill.skill_paths import SkillNotFoundError, resolve_skill_path, stdli
 
 if TYPE_CHECKING:
     from reyn.agent import Agent
-    from reyn.budget.budget import BudgetGateway
     from reyn.core.events.state_log import StateLog
+    from reyn.runtime.budget.budget import BudgetGateway
     from reyn.schemas.models import Skill
     from reyn.skill.skill_registry import SkillRegistry
 
@@ -282,7 +282,7 @@ class SkillRunner:
                         chain_id=chain_id, skill=skill_name,
                     )
             if not check.allowed:
-                from reyn.budget.budget import format_refusal_message
+                from reyn.runtime.budget.budget import format_refusal_message
                 self._events.emit(
                     "budget_exceeded",
                     dimension=check.hard_dimension,
@@ -297,7 +297,7 @@ class SkillRunner:
                 ))
                 return None
             for dim in check.warn_dimensions:
-                from reyn.budget.budget import format_warn_message
+                from reyn.runtime.budget.budget import format_warn_message
                 self._events.emit(
                     "budget_warn",
                     dimension=dim, chain_id=chain_id, skill=skill_name,

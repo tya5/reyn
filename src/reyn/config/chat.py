@@ -7,10 +7,10 @@ from pathlib import Path
 from typing import Any, Literal
 
 # ── FP-0004: safety: section (user-facing unified schema) ──────────────────
-# PR22: CostConfig + CostLimitConfig live in `reyn.budget` (re-exported here
+# PR22: CostConfig + CostLimitConfig live in `reyn.runtime.budget` (re-exported here
 # for ReynConfig typing). They include domain logic (warn_threshold etc.)
 # that doesn't belong in the config-only module.
-from reyn.budget.budget import CostConfig, CostLimitConfig  # noqa: E402
+from reyn.runtime.budget.budget import CostConfig, CostLimitConfig  # noqa: E402
 
 
 @dataclass

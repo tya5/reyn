@@ -130,7 +130,7 @@ async def test_all_jobs_disabled_scheduler_is_none(tmp_path, monkeypatch):
 @pytest.mark.asyncio
 async def test_enabled_job_scheduler_is_cron_scheduler_instance(tmp_path, monkeypatch):
     """Tier 2: lifespan sets cron_scheduler to a CronScheduler when ≥1 enabled job exists."""
-    from reyn.cron import CronScheduler
+    from reyn.runtime.cron import CronScheduler
 
     _write_reyn_yaml(
         tmp_path,
