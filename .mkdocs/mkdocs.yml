@@ -1,7 +1,10 @@
 site_name: Reyn
 site_description: LLM workflow OS — phase transitions as a constrained decision graph
 site_url: https://tya5.github.io/reyn/docs/
-docs_dir: docs
+docs_dir: ../docs
+# Build output to repo-root site/ (config now lives in .mkdocs/, so make the
+# output dir explicit rather than relying on the default .mkdocs/site/).
+site_dir: ../site
 
 # Show a GitHub icon in the top-right of the docs header that links back
 # to the source repository. mkdocs-material renders this automatically

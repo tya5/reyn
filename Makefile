@@ -4,10 +4,10 @@ docs-install:
 	venv/bin/pip install -e '.[docs]'
 
 docs-serve:
-	venv/bin/mkdocs serve
+	venv/bin/mkdocs serve -f .mkdocs/mkdocs.yml
 
 docs-build:
-	venv/bin/mkdocs build --strict
+	venv/bin/mkdocs build --strict -f .mkdocs/mkdocs.yml
 
 docs-clean:
 	rm -rf site
