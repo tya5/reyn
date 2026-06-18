@@ -28,9 +28,10 @@ load ``session`` — that pulls in ``reyn.config`` and closes a
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from .session import ChatMessage, Session
+    from .chat_message import ChatMessage
+    from .session import Session
 
-_LAZY_ATTRS = {"Session": ".session", "ChatMessage": ".session"}
+_LAZY_ATTRS = {"Session": ".session", "ChatMessage": ".chat_message"}
 
 __all__ = ["ChatMessage", "Session"]
 

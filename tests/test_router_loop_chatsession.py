@@ -406,7 +406,7 @@ def test_list_available_skills_excludes_stdlib_router(tmp_path, monkeypatch):
 def test_build_history_for_router_shape(tmp_path, monkeypatch):
     """Tier 1: _build_history_for_router returns OpenAI-style dicts with correct role mapping and ordering from session history."""
     monkeypatch.chdir(tmp_path)
-    from reyn.runtime.session import ChatMessage
+    from reyn.runtime.chat_message import ChatMessage
     session = _make_session(tmp_path)
 
     # Inject some history (Issue #383: new content kwarg + assistant role)

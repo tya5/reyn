@@ -32,7 +32,7 @@ from reyn.services.compaction.engine import (
 )
 
 if TYPE_CHECKING:
-    from reyn.runtime.session import ChatMessage
+    from reyn.runtime.chat_message import ChatMessage
 
 logger = logging.getLogger(__name__)
 
@@ -95,7 +95,7 @@ class CompactionController:
         current chat history (``list[ChatMessage]``).
     latest_summary:
         Zero-argument callable that returns the most recent ``"summary"``
-        :class:`~reyn.runtime.session.ChatMessage`, or ``None``.
+        :class:`~reyn.runtime.chat_message.ChatMessage`, or ``None``.
     compaction_engine:
         :class:`~reyn.services.compaction.engine.CompactionEngine`
         that owns the single LLM call (PR-N3: OS-internal, no skill/phase).

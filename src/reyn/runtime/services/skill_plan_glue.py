@@ -82,7 +82,8 @@ class SkillPlanGlue:
         """
         import json as _json
 
-        from reyn.runtime.session import ChatMessage, RouterCapExceeded, _new_chain_id, _now_iso
+        from reyn.runtime.chat_message import ChatMessage, _now_iso
+        from reyn.runtime.session import RouterCapExceeded, _new_chain_id
 
         run_id = payload.get("run_id", "")
         skill_name = payload.get("skill", "")

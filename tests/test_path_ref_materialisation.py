@@ -17,12 +17,12 @@ import base64
 from pathlib import Path
 
 from reyn.data.workspace.media_store import MediaStore, MediaStoreConfig
+from reyn.runtime.chat_message import ChatMessage
 from reyn.runtime.router_loop import _build_media_followup_message
 from reyn.runtime.services.router_history_buffer import (
     _materialise_path_ref_content,
     _read_pathref_image,
 )
-from reyn.runtime.session import ChatMessage
 
 # ── helpers ────────────────────────────────────────────────────────────
 

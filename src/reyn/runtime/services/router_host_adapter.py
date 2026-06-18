@@ -847,7 +847,7 @@ class RouterHostAdapter:
         the gap so the next ``_build_history_for_router`` rebuild
         replays the full LLM message sequence.
         """
-        from reyn.runtime.session import ChatMessage, _now_iso
+        from reyn.runtime.chat_message import ChatMessage, _now_iso
         self._append_history_cb(ChatMessage(
             role=role,
             content=content,
@@ -859,8 +859,8 @@ class RouterHostAdapter:
         ))
 
     async def put_outbox(self, *, kind: str, text: str, meta: dict) -> None:
+        from reyn.runtime.chat_message import ChatMessage, _now_iso
         from reyn.runtime.outbox import OutboxMessage
-        from reyn.runtime.session import ChatMessage, _now_iso
         # #1652: centralised reasoning handling for agent replies. The router
         # passes the turn's reasoning as meta["reasoning"]; this single chokepoint
         # applies the two independent gates so every agent-reply site is covered

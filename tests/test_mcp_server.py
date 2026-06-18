@@ -323,7 +323,7 @@ def test_send_to_agent_waits_for_plan_terminal_text(tmp_path, monkeypatch):
     # Stub LLM: not invoked because we directly simulate plan dispatch
     # via a fake _handle_user_message that schedules a background task.
     async def _fake_handle_user_message(self, message, *, chain_id):
-        from reyn.runtime.session import ChatMessage
+        from reyn.runtime.chat_message import ChatMessage
         # Append the user message (= mirror real path)
         self._append_history(ChatMessage(
             role="user", content=message, ts="2026-05-08T00:00:00",
@@ -390,7 +390,7 @@ def test_send_to_agent_drains_skill_completed_inbox(tmp_path, monkeypatch):
     sentinel = "SKILL_COMPLETION_NARRATION_MARKER"
 
     async def _fake_handle_user_message(self, message, *, chain_id):
-        from reyn.runtime.session import ChatMessage
+        from reyn.runtime.chat_message import ChatMessage
         self._append_history(ChatMessage(
             role="user", content=message, ts="2026-05-11T00:00:00",
             meta={"chain_id": chain_id},
@@ -410,7 +410,7 @@ def test_send_to_agent_drains_skill_completed_inbox(tmp_path, monkeypatch):
         self.running_skills["fake_run_0001"] = task
 
     async def _fake_handle_skill_completed(self, payload):
-        from reyn.runtime.session import ChatMessage
+        from reyn.runtime.chat_message import ChatMessage
         self._append_history(ChatMessage(
             role="assistant",
             content=f"{sentinel}: {payload.get('skill')} {payload.get('status')}",

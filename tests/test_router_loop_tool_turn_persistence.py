@@ -85,7 +85,7 @@ def test_adapter_append_history_entry_creates_chatmessage():
     ``_append_history`` callback (= integration with the runtime
     persistence path).
     """
-    from reyn.runtime.session import ChatMessage
+    from reyn.runtime.chat_message import ChatMessage
 
     captured: list[ChatMessage] = []
 
@@ -99,7 +99,7 @@ def test_adapter_append_history_entry_creates_chatmessage():
             self, *, role, content, meta=None, tool_calls=None,
             tool_call_id=None, name=None,
         ) -> None:
-            from reyn.runtime.session import ChatMessage, _now_iso
+            from reyn.runtime.chat_message import ChatMessage, _now_iso
             self._append_history_cb(ChatMessage(
                 role=role, content=content, ts=_now_iso(),
                 meta=meta if meta is not None else {},
