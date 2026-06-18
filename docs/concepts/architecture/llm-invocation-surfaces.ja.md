@@ -20,7 +20,7 @@ Reyn は LLM を2つの異なる文脈で呼び出す。チャットルーター
 
 **仕組み:** litellm 経由の `call_llm_tools` によるネイティブ LLM function calling。ツール定義は OpenAI `tools` 配列形式に従い、モデルはアシスタントメッセージ内の `tool_calls` で応答する。OS は各呼び出しをディスパッチし、`tool_result` を追記して、モデルが通常テキストを返すまで LLM を再呼び出しする。
 
-**ツール surface:** `src/reyn/chat/router_tools.py` の `build_tools()` がツールリストを組み立てる。実際の数はオペレーター設定に依存する。
+**ツール surface:** `src/reyn/runtime/router_tools.py` の `build_tools()` がツールリストを組み立てる。実際の数はオペレーター設定に依存する。
 
 - **常時存在（14 tools）:** `list_skills`, `describe_skill`, `list_agents`, `describe_agent`, `list_memory`, `read_memory_body`, `delegate_to_agent`, `remember_shared`, `remember_agent`, `forget_memory`, `web_search`, `plan`, `reyn_src_list`, `reyn_src_read`
 - **条件付き（+0〜+9 tools）:** `invoke_skill`（Skill 登録時）、`list_directory` + `read_file`（file read スコープ設定時）、`write_file` + `delete_file`（file write スコープ設定時）、`web_fetch`（オペレーターのオプトイン）、`list_mcp_servers` + `list_mcp_tools` + `call_mcp_tool`（MCP servers 設定時）

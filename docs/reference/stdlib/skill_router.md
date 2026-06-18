@@ -17,7 +17,7 @@ Memory writes (persisting user / feedback / project / reference facts) happen in
 
 ## Source
 
-[`src/reyn/chat/router_loop.py`](https://github.com/tya5/reyn/blob/main/src/reyn/chat/router_loop.py) — implemented as a built-in system skill, not a regular skill directory
+[`src/reyn/runtime/router_loop.py`](https://github.com/tya5/reyn/blob/main/src/reyn/runtime/router_loop.py) — implemented as a built-in system skill, not a regular skill directory
 
 ## See also
 

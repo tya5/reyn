@@ -152,7 +152,7 @@ When the plugin's route receives a webhook, push to the target
 agent's inbox via the **stable plugin API** in ``reyn.plugins.api``::
 
 ```python
-from reyn.chat.transport import ExternalRef
+from reyn.runtime.transport import ExternalRef
 from reyn.plugins.api import push_to_agent
 
 await push_to_agent(
@@ -184,7 +184,7 @@ and uses the process-shared registry.
 
 ## Outbound replies via MCP
 
-The Reyn-side outbox interceptor (= ``reyn.chat.external_routing``)
+The Reyn-side outbox interceptor (= ``reyn.runtime.external_routing``)
 routes agent replies whose ``reply_to`` is an ``ExternalRef`` through
 an MCP tool. Operators configure transport → MCP tool mapping in
 ``reyn.yaml`` ``external_transports:``:
