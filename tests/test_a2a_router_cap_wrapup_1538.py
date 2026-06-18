@@ -35,9 +35,10 @@ import pytest
 from reyn.config import LoopConfig, OnLimitConfig, SafetyConfig
 from reyn.llm.llm import LLMToolCallResult
 from reyn.llm.pricing import TokenUsage
+from reyn.runtime.errors import RouterCapExceeded
 from reyn.runtime.services.a2a_handler import A2AHandler
 from reyn.runtime.services.chain_manager import ChainManager
-from reyn.runtime.session import RouterCapExceeded, Session
+from reyn.runtime.session import Session
 from tests.test_router_loop import FakeEventLog
 
 _EMPTY_USAGE = TokenUsage(prompt_tokens=10, completion_tokens=5)

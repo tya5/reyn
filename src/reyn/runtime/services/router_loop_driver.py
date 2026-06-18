@@ -141,7 +141,7 @@ class RouterLoopDriver:
         before re-raising. On approval the cap is extended by the configured
         amount and the run continues.
         """
-        from reyn.runtime.session import RouterCapExceeded
+        from reyn.runtime.errors import RouterCapExceeded
         try:
             self._budget.check_and_increment_router_cap(user_text)
         except RouterCapExceeded as exc:

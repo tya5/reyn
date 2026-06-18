@@ -46,6 +46,7 @@ from reyn.runtime.chat_message import (  # #312 C1: extracted VO + helpers
     _now_iso,
 )
 from reyn.runtime.error_format import classify_router_error
+from reyn.runtime.errors import RouterCapExceeded
 from reyn.runtime.limits.limit_handler import (
     LimitDecision,
     handle_limit_exceeded,
@@ -238,28 +239,6 @@ def _exec_gate_backend_name(sandbox_backend: Any, sandbox_config: Any) -> str | 
     if sandbox_config is not None:
         return sandbox_config.backend
     return None
-
-
-class RouterCapExceeded(Exception):
-    """Raised when a user turn (or top-level agent_request) drives more
-    skill_router invocations than the configured cap. Caught by handlers,
-    which surface a structured fallback reply to the user / requester.
-
-    FP-0004: ``hint_config_key`` is the user-facing config knob to raise
-    when an operator decides the cap is too tight for their workload.
-    """
-
-    hint_config_key: str = "safety.loop.max_router_calls_per_turn"
-
-    def __init__(self, count: int, cap: int, last_reason: str = "") -> None:
-        super().__init__(
-            f"Router exhausted retry budget ({count}/{cap}) for this turn. "
-            f"→ Raise {RouterCapExceeded.hint_config_key} to allow more "
-            f"router invocations per turn (0 = unlimited)."
-        )
-        self.count = count
-        self.cap = cap
-        self.last_reason = last_reason
 
 
 # issue #268 Phase 2 continuation: canonical channel identifier for
