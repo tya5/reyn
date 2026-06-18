@@ -22,6 +22,13 @@ so we pick the **first** cut deliberately.
 
 ## Primary-data finding: a forwarding-residue layer already exists
 
+> **Line numbers below are as-of `origin/main` @ `0dcf1823` (session.py 4825
+> LOC).** The stable anchors are the **method / section names** (all verified
+> present by a docs-maintainer drift-audit). `session.py` moves actively across
+> the C-series, so the bare line numbers WILL drift once the C6 cut lands —
+> read them as "where it was when this doc was written"; the names are
+> authoritative.
+
 Surveying `Session`'s 149 methods (body sizes + targets, then reading the
 block directly), the contiguous block **L4688–4825** is almost entirely
 **thin-forward shims to collaborators that already exist** — each docstring
