@@ -261,22 +261,6 @@ DEFAULT_CHAT_CHANNEL_ID = "tui"
 # cycle: router_loop imports from session).
 
 
-class _RouterUsageShim:
-    """Wrap a RouterLoop ``TokenUsage`` as ``.usage`` for ``retry_loop`` (#1125).
-
-    ``retry_loop``'s learner-feedback path reads ``response.usage.prompt_tokens``
-    (the litellm response convention). RouterLoop.run returns the bare
-    ``TokenUsage`` instead, so this shim exposes it under ``.usage`` — letting
-    the adaptive estimator observe the chat axis's actual prompt size. The
-    overflow-recovery caller reads ``.usage`` back out to credit session usage.
-    """
-
-    __slots__ = ("usage",)
-
-    def __init__(self, usage: object) -> None:
-        self.usage = usage
-
-
 def _ts_iso_to_epoch(ts: str | None) -> float | None:
     """Best-effort ISO-8601 → epoch-seconds conversion.
 

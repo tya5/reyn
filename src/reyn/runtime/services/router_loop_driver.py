@@ -257,7 +257,8 @@ class RouterLoopDriver:
         it ONLY when it actually gives up (cap reached / sub-viable model), so a
         recoverable handoff is not mislogged as a dead-end.
         """
-        from reyn.runtime.session import _render_summary_for_storage, _RouterUsageShim
+        from reyn.runtime.session import _render_summary_for_storage
+        from reyn.runtime.usage_shim import _RouterUsageShim
         from reyn.services.compaction.engine import (
             ContextOverflowError as _ContextOverflowError,
         )
