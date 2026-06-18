@@ -352,12 +352,37 @@ def make_outbox_interceptor(
     return _interceptor
 
 
+def make_session_mcp_dispatcher(session: Any) -> Callable[[str, dict], Awaitable[Any]]:
+    """Build an MCP dispatcher bound to ``session``'s router OpContext.
+
+    ``async (mcp_tool, args) -> result`` where ``mcp_tool`` is ``<server>__<tool>``.
+    Invokes the tool through the session's own OpContext so the permission gate,
+    workspace, and events log all come from the right session. Shared by the
+    external-transport outbox interceptor (FP-0041 PR-D2) and the cron failure
+    notifier (FP-0043 S4b-3b) so both relay through one consistent path."""
+    async def _mcp_dispatcher(mcp_tool: str, args: dict) -> Any:
+        if "__" not in mcp_tool:
+            raise ValueError(
+                f"external_transports mcp_tool must be '<server>__<tool>', "
+                f"got {mcp_tool!r}",
+            )
+        server, tool = mcp_tool.split("__", 1)
+        from reyn.core.op_runtime.mcp import handle as mcp_handle
+        from reyn.schemas.models import MCPIROp
+        op = MCPIROp(kind="mcp", server=server, tool=tool, args=dict(args))
+        ctx = session._make_router_op_context()
+        return await mcp_handle(op=op, ctx=ctx, caller="external_routing")
+
+    return _mcp_dispatcher
+
+
 __all__ = [
     "ExternalTransportEntry",
     "ExternalTransportRouting",
     "RouteResult",
     "build_mcp_args",
     "make_outbox_interceptor",
+    "make_session_mcp_dispatcher",
     "parse_external_transports",
     "route_to_mcp",
 ]

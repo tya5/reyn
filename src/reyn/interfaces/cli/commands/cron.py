@@ -102,6 +102,7 @@ def _jobs_to_cron_jobs(job_configs) -> list:
             schedule=jc.schedule,
             to=jc.to,
             message=jc.message,
+            notify=jc.notify,
             skill=jc.skill,
             input=dict(jc.input),
             enabled=jc.enabled,

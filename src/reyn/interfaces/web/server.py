@@ -94,12 +94,46 @@ def _make_cron_runner():
             session = resolve_cron_session(registry, to, native_id)
         except (FileNotFoundError, KeyError):
             return "error"
-        await session._put_inbox("user", dict(envelope))
+        payload = dict(envelope)
+        # FP-0043 S4b-3b: opt-in notify → tag the inbox with reply_to=ExternalRef so
+        # the agent's final reply is relayed to the channel by the (already
+        # factory-wired) external-transport outbox interceptor. No notify → no
+        # reply_to → interceptor falls through → event-log only (current behaviour).
+        notify = payload.pop("notify", None)
+        if notify:
+            from reyn.chat.transport import ExternalRef
+            payload["reply_to"] = ExternalRef(transport=notify, destination={})
+        await session._put_inbox("user", payload)
         return "ok"
+
+    async def _failure_notifier(job, reason: str) -> None:
+        """FP-0043 S4b-3b errors=(b): relay a job-execution FAILURE (a job that
+        never produced a reply) to its notify channel, via the SAME MCP route the
+        outbox interceptor uses (telegram→broker__post_message). Best-effort —
+        unconfigured channel / unresolvable session degrades to event-log."""
+        from reyn.chat.external_routing import make_session_mcp_dispatcher, route_to_mcp
+        from reyn.config import load_config
+        from reyn.interfaces.web.deps import _get_registry
+        from reyn.runtime.cron.routing import resolve_cron_session
+        routing = load_config().external_transports
+        if not routing.transports:
+            return
+        registry = _get_registry()
+        try:
+            session = resolve_cron_session(registry, job.to, job.name)
+        except (FileNotFoundError, KeyError):
+            return
+        await route_to_mcp(
+            job.notify, {},
+            f"⚠ cron job {job.name!r} failed: {reason}",
+            routing=routing,
+            mcp_dispatcher=make_session_mcp_dispatcher(session),
+        )
 
     return build_default_runner(
         legacy_skill_runner=_legacy_skill_runner,
         inbox_pusher=_inbox_pusher,
+        failure_notifier=_failure_notifier,
     )
 
 

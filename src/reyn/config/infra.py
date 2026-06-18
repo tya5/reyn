@@ -365,6 +365,7 @@ class CronJobConfig:
     schedule: str   # 5-field cron expression
     to: str | None = None        # message-based: target agent name
     message: str | None = None   # message-based: free-form text
+    notify: str | None = None    # FP-0043 S4b-3b: opt-in notify channel (e.g. "telegram"); None = event-log only
     skill: str | None = None     # skill-based legacy: skill name
     input: dict = field(default_factory=dict)
     enabled: bool = True
@@ -458,11 +459,16 @@ def _build_cron_config(raw: object) -> CronConfig:
         if not isinstance(raw_input, dict):
             raw_input = {}
         enabled = bool(entry.get("enabled", True))
+        # FP-0043 S4b-3b: opt-in notify channel (message-based only; a skill-based
+        # job is headless with no conversational reply to relay).
+        notify = entry.get("notify")
+        notify = notify if (has_message_shape and isinstance(notify, str) and notify) else None
         jobs.append(CronJobConfig(
             name=name,
             schedule=schedule,
             to=to if has_message_shape else None,
             message=message if has_message_shape else None,
+            notify=notify,
             skill=skill if has_skill else None,
             input=dict(raw_input),
             enabled=enabled,

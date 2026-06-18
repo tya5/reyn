@@ -43,6 +43,13 @@ class CronJob:
     # ── message-based (FP-0041 PR-B, recommended) ─────────────────
     to: str | None = None       # target agent name
     message: str | None = None  # free-form text dispatched to agent.inbox
+    # FP-0043 S4b-3b: opt-in unattended notification channel (e.g. "telegram").
+    # None = off (event-log only = current behaviour). When set, the fired cron
+    # turn's final reply is routed to the channel via the external-transport outbox
+    # interceptor (reply_to=ExternalRef), and a job-execution FAILURE is notified at
+    # the runner level. The channel name maps to an MCP tool via reyn.yaml
+    # external_transports (e.g. telegram→broker__post_message).
+    notify: str | None = None
     # ── skill-based (FP-0009 legacy, backward compat) ──────────────
     skill: str | None = None    # skill name to run via SkillRuntime.run
     input: dict = field(default_factory=dict)
@@ -64,6 +71,7 @@ class CronJob:
             "name": self.name,
             "to": self.to,
             "message": self.message,
+            "notify": self.notify,
             "skill": self.skill,
             "schedule": self.schedule,
             "input": self.input,

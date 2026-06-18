@@ -182,24 +182,14 @@ def _wire_external_outbox_interceptor(session, routing) -> None:
     allow); failures propagate as exceptions and are surfaced through
     ``RouteResult(status="error", ...)`` by the routing primitive.
     """
-    from reyn.chat.external_routing import make_outbox_interceptor
-
-    async def _mcp_dispatcher(mcp_tool: str, args: dict):
-        if "__" not in mcp_tool:
-            raise ValueError(
-                f"external_transports mcp_tool must be '<server>__<tool>', "
-                f"got {mcp_tool!r}",
-            )
-        server, tool = mcp_tool.split("__", 1)
-        from reyn.core.op_runtime.mcp import handle as mcp_handle
-        from reyn.schemas.models import MCPIROp
-        op = MCPIROp(kind="mcp", server=server, tool=tool, args=dict(args))
-        ctx = session._make_router_op_context()
-        return await mcp_handle(op=op, ctx=ctx, caller="external_routing")
+    from reyn.chat.external_routing import (
+        make_outbox_interceptor,
+        make_session_mcp_dispatcher,
+    )
 
     interceptor = make_outbox_interceptor(
         routing=routing,
-        mcp_dispatcher=_mcp_dispatcher,
+        mcp_dispatcher=make_session_mcp_dispatcher(session),
     )
     session._outbox_interceptor = interceptor
 
