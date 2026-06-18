@@ -154,6 +154,7 @@ nav:
       - CLI:
           - Running Reyn:
               - reference/cli/run.md
+              - reference/cli/run-once.md
               - reference/cli/chat.md
               - reference/cli/skill.md
               - reference/cli/skills.md
