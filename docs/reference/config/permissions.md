@@ -80,13 +80,13 @@ Per-(module, function) declarations for `python` preprocessor steps. See [`refer
 
 ### `http.get`
 
-Per-host HTTP allowlist for `reyn.safe.http.*` (skill-internal) AND for `web_fetch` (LLM-driven) — both surfaces share one axis.
+Per-host HTTP allowlist for `reyn.api.safe.http.*` (skill-internal) AND for `web_fetch` (LLM-driven) — both surfaces share one axis.
 
 - **Specific host** (`http.get: [{host: "api.github.com"}]`) — `startup_guard` prompts once per `<skill, host>`; runtime is silent after approval. Same model as `file.write` outside the default zone.
 - **Wildcard** (`http.get: [{host: "*"}]` or `["*"]`) — host set is unknown at write-time (= LLM picks at runtime); the 4-layer prompt fires inside `require_http_get` at the actual host gate; ALWAYS / NEVER persists per host.
 - **No declaration** — legacy `web.fetch` compat fallback with `DeprecationWarning` until the migration window closes.
 
-`reyn.safe.http` (subprocess path) accepts only specific hosts; wildcard requires the async `web_fetch` op route.
+`reyn.api.safe.http` (subprocess path) accepts only specific hosts; wildcard requires the async `web_fetch` op route.
 
 ### `secret.write`
 

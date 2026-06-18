@@ -199,7 +199,7 @@ export REYN_MCP_REGISTRY_URLS="https://mcp-registry.internal.acme.com,https://re
 
 両方 set されている場合 env var が勝つ (= explicit operator override が declarative config を override)。 legacy 単数形 `REYN_MCP_REGISTRY_URL` は単一要素 list として backward compat 維持。
 
-async op-handler client (`reyn.core.registry.client`) と safe-mode skill-internal lookup (`reyn.safe.mcp.registry`) の両方が list を順次 iterate:
+async op-handler client (`reyn.core.registry.client`) と safe-mode skill-internal lookup (`reyn.api.safe.mcp.registry`) の両方が list を順次 iterate:
 
 | Operation | 挙動 |
 |---|---|

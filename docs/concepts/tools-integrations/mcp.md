@@ -199,7 +199,7 @@ export REYN_MCP_REGISTRY_URLS="https://mcp-registry.internal.acme.com,https://re
 
 The env var wins when both are set (= explicit operator override beats declarative config). The legacy singular `REYN_MCP_REGISTRY_URL` is honored as a one-item list for backward compat.
 
-Both the async op-handler client (`reyn.core.registry.client`) and the safe-mode skill-internal lookup (`reyn.safe.mcp.registry`) iterate the list in order with the following fallback semantics:
+Both the async op-handler client (`reyn.core.registry.client`) and the safe-mode skill-internal lookup (`reyn.api.safe.mcp.registry`) iterate the list in order with the following fallback semantics:
 
 | Operation | Behavior |
 |---|---|

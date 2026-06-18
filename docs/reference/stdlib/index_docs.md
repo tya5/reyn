@@ -19,7 +19,7 @@ Build a searchable semantic index over a path glob.
 
 ## How it composes
 
-Two-stage execution. Phase `strategy` (LLM): a preprocessor runs `gather_samples` (up to 5 file excerpts) and `cost_preflight` (chunk count + estimated cost), then the LLM decides the chunking strategy (`boundary`, `max_chunk_size_tokens`, overlap, etc.) or aborts if `threshold_exceeded` is true. Skill.postprocessor (deterministic, no LLM): `extract_and_split` globs files and enumerates chunks, `write_chunks_with_lock` acquires a source advisory lock, reads each file, splits into chunks per strategy, and streams them into `reyn.safe.embed_index` for provider-direct embedding and indexing into `SqliteIndexBackend`. No intermediate file is written.
+Two-stage execution. Phase `strategy` (LLM): a preprocessor runs `gather_samples` (up to 5 file excerpts) and `cost_preflight` (chunk count + estimated cost), then the LLM decides the chunking strategy (`boundary`, `max_chunk_size_tokens`, overlap, etc.) or aborts if `threshold_exceeded` is true. Skill.postprocessor (deterministic, no LLM): `extract_and_split` globs files and enumerates chunks, `write_chunks_with_lock` acquires a source advisory lock, reads each file, splits into chunks per strategy, and streams them into `reyn.api.safe.embed_index` for provider-direct embedding and indexing into `SqliteIndexBackend`. No intermediate file is written.
 
 ## Caveats
 

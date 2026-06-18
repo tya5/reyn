@@ -217,7 +217,7 @@ This is the operating rule established by
 and enforced by `tests/test_fp0042_stdlib_safe_only.py`:
 
 - No file under `src/reyn/stdlib/` imports from `reyn.api.unsafe.*`.
-  Use the `reyn.safe.*` permission-gated surface instead (= `file`,
+  Use the `reyn.api.safe.*` permission-gated surface instead (= `file`,
   `process`, `mcp.registry`).
 - No new stdlib `skill.md` declares `mode: unsafe` python steps. The
   default mode for new stdlib code is `mode: safe`.
@@ -252,5 +252,5 @@ CI-silent change).
 - [Concept: preprocessor](../skills/preprocessor.md) — the deterministic-split story
 - [Concept: postprocessor](../skills/postprocessor.md) — finish-side mirror
 - [`src/reyn/core/kernel/_python_allowlist.py`](https://github.com/tya5/reyn/blob/main/src/reyn/core/kernel/_python_allowlist.py) — list of record
-- [FP-0042 proposal](../../deep-dives/proposals/0042-stdlib-safe-only-and-permission-gated-file-api.md) — stdlib safe-only + permission-gated `reyn.safe.file` API
+- [FP-0042 proposal](../../deep-dives/proposals/0042-stdlib-safe-only-and-permission-gated-file-api.md) — stdlib safe-only + permission-gated `reyn.api.safe.file` API
 - [`tests/test_fp0042_stdlib_safe_only.py`](https://github.com/tya5/reyn/blob/main/tests/test_fp0042_stdlib_safe_only.py) — CI enforcement for the doctrine above

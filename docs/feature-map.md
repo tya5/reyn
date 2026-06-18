@@ -359,7 +359,7 @@ The op kinds below mirror `OP_KIND_MODEL_MAP` in `op_runtime/registry.py` (20 ki
 | `skill_resolve` | Resolve a skill reference to its local / project / stdlib source |
 | `judge_output` | LLM scorer with rubric + threshold + `on_fail` policy |
 
-> The `embed` and `index_write` ops were removed in #1303 Stage I — embedding and index-writing now run provider-direct inside `reyn.safe.embed_index` and the `recall` op, not as standalone ops. See [Control IR](reference/runtime/control-ir.md).
+> The `embed` and `index_write` ops were removed in #1303 Stage I — embedding and index-writing now run provider-direct inside `reyn.api.safe.embed_index` and the `recall` op, not as standalone ops. See [Control IR](reference/runtime/control-ir.md).
 
 ---
 
