@@ -6,7 +6,7 @@ audience: [human, agent]
 
 # Multi-agent
 
-A reyn process can host any number of long-lived **agents**, each one a ChatSession with its own profile, history, memory layer, inbox, and skill catalogue view. Agents talk to humans (one at a time, via attach) and to each other (through a structured request-response channel).
+A reyn process can host any number of long-lived **agents** — each an *identity* with its own profile, memory layer, permissions, and skill catalogue view. Each agent runs one or more **Sessions**: independent conversations under that identity, each with its own history, inbox, and current task (see [Sessions](sessions.md) for the Agent / Session / SkillRuntime three-level model). Agents talk to humans (one at a time, via attach) and to each other (through a structured request-response channel).
 
 ## Four layers of multi-agent in Reyn
 
@@ -64,7 +64,7 @@ Reyn does not have a single multi-agent feature. It has four distinct compositio
 
 ## What is an agent?
 
-An agent is a directory at `.reyn/agents/<name>/` plus an in-memory ChatSession the runtime spins up on demand:
+An agent is a directory at `.reyn/agents/<name>/` (its persistent identity) plus one or more in-memory **Sessions** the runtime spins up on demand:
 
 - `profile.yaml` — name, role (system-prompt persona), `allowed_skills` (optional)
 - `history.jsonl` — append-only conversation log
@@ -76,7 +76,7 @@ The `default` agent is auto-created when needed; named agents come from `reyn ag
 
 ## AgentRegistry
 
-A single `AgentRegistry` instance per process owns all loaded agents. It handles:
+A single `AgentRegistry` instance per process owns all loaded agents and the Sessions under each — internally a `name → {sid → Session}` map with a shared `Agent` identity per name. It handles:
 
 - **Lazy load** — agents are instantiated on first attach or first inter-agent message, not at startup.
 - **Attach pointer** — exactly one agent is the REPL-attached one at a time. Detached agents keep running their inbox loop (background skill progress, intervention queues), but their transient outbox messages are dropped — only durable history persists.
@@ -89,7 +89,7 @@ A single `AgentRegistry` instance per process owns all loaded agents. It handles
 
 ## Agent-to-agent messaging
 
-When a router decision emits `messages_to_agents: [{to, request}, ...]`, ChatSession routes each entry to the target's inbox as an `agent_request` payload:
+When a router decision emits `messages_to_agents: [{to, request}, ...]`, the Session routes each entry to the target's inbox as an `agent_request` payload:
 
 ```
 {from_agent, request, depth, chain_id}
@@ -169,6 +169,7 @@ Cross-references:
 
 ## See also
 
+- [Concepts: Sessions](sessions.md) — the Agent / Session / SkillRuntime three-level model (one identity, many conversations)
 - [Reference: agent CLI](../../reference/cli/agent.md)
 - [Reference: profile-yaml](../../reference/dsl/profile-yaml.md)
 - [Reference: multi-agent config](../../reference/config/multi-agent.md)
