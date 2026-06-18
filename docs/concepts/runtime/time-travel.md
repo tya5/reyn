@@ -72,6 +72,8 @@ The WAL is a **synchronous-durability log** (fsync'd per append), separate from 
 
 All WAL events share a **global single sequence namespace**. A consistent-cut rewind at seq N is well-defined: "the state of every substrate at the moment before seq N+1 was written". The global seq makes the cut precise — there is no per-substrate clock to reconcile.
 
+The cut is also **process-global across Sessions and Agents**: because there is one WAL and one workspace SSoT, a single reset-record moves *every* loaded [Session](../multi-agent/sessions.md) and Agent to the target seq atomically — rewind is not scoped to one Session. Per-Session granularity lives in **persistence** (snapshots are re-keyed per Session) and crash-recovery replay, not in the rewind operation itself.
+
 ### Append-only reset-record and branch state
 
 When rewind commits, a **reset-record** is appended to the WAL at its own new seq **R** (distinct from the rewind target **N**). The record carries `target_n=N`. The open interval `(N, R)` — seqs that existed between the rewind target and the reset-record itself — is marked **abandoned** (dead-branch id=R). Active seqs are the complement: every seq not in any abandoned interval on the current branch chain. The branch registry derives branch state from the chain of reset-records: each record's `target_n` and `id=R` define one abandoned interval.
@@ -168,6 +170,7 @@ Runtime-only rewind needs no special code path. The two substrates are independe
 
 ## See also
 
+- [Sessions](../multi-agent/sessions.md) — the Agent / Session model that a rewind cuts across
 - [Crash Recovery / Skill Resume](../../concepts/skills/skill-resume.md)
 - [Events and the WAL](events.md)
 - [How to use rewind](../../guide/for-users/time-travel.md)
