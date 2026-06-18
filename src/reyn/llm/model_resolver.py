@@ -293,6 +293,13 @@ class ModelResolver:
         """
         return name in self._resolved
 
+    def known_classes(self) -> list[str]:
+        """Return a sorted list of all known model class names (user-configured +
+        built-ins). Use for user-facing display (e.g. ``/model`` no-arg) and for
+        validation error messages — single public surface, avoids callers reaching
+        into ``_resolved`` directly."""
+        return sorted(self._resolved)
+
     def resolve_class_or_fallback(
         self, requested: str | None, fallback: str | None, *, where: str = "",
     ) -> str:
