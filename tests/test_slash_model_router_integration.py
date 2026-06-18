@@ -5,15 +5,15 @@ RouterLoopDriver captured model at construction time and RouterLoop was
 constructed without router_model=, so the override never reached the LLM call.
 
 Two-direction falsification:
-- Override set   → RouterLoop receives the override class.
-- Override unset → RouterLoop receives None (→ router-purpose-class default).
+- Override set   → RouterLoop.router_model equals the override class.
+- Override unset → RouterLoop.router_model equals the config default class.
 
-Uses RouterLoopDriver._loop_factory seam to capture router_model without
-running a real LLM call. No MagicMock.
+Uses RouterLoopDriver._loop_observer seam: observer receives the constructed
+RouterLoop and captures loop.router_model before run_turn proceeds. Literal
+RouterLoop(...) construction is preserved so the #187 AST gate stays satisfied.
+No MagicMock.
 """
 from __future__ import annotations
-
-import asyncio
 
 import pytest
 
@@ -25,7 +25,7 @@ from reyn.llm.model_resolver import ModelResolver
 # ---------------------------------------------------------------------------
 
 class _BailOut(Exception):
-    """Raised by the capturing factory to exit run_turn immediately."""
+    """Raised by the observer to exit run_turn immediately after construction."""
 
 
 class _FakeRouterHost:
@@ -73,11 +73,11 @@ def _make_driver(
     resolver: ModelResolver,
     captured: list,
 ) -> RouterLoopDriver:
-    """Build a minimal RouterLoopDriver with a _loop_factory that captures
-    router_model and raises _BailOut so run_turn exits without a real LLM call."""
+    """Build a minimal RouterLoopDriver with a _loop_observer that captures
+    loop.router_model and raises _BailOut so run_turn exits before LLM call."""
 
-    def _capturing_factory(**kwargs):
-        captured.append(kwargs.get("router_model"))
+    def _capturing_observer(loop) -> None:
+        captured.append(loop.router_model)
         raise _BailOut("captured")
 
     host = _FakeRouterHost(resolver)
@@ -102,7 +102,7 @@ def _make_driver(
         limit_checkpoint_fn=_noop_limit_checkpoint,
         next_seq_fn=lambda: 0,
         append_history_fn=lambda msg: None,
-        _loop_factory=_capturing_factory,
+        _loop_observer=_capturing_observer,
     )
 
 
@@ -126,11 +126,11 @@ async def _noop_limit_checkpoint(**kwargs):
 
 @pytest.mark.asyncio
 async def test_model_override_set_reaches_router_loop():
-    """Tier 2: when _model_override="light", RouterLoop receives router_model="light".
+    """Tier 2: when _model_override="light", RouterLoop.router_model == "light".
 
     Falsification: without the fix (model_override_fn not read at run_turn),
-    RouterLoop would receive router_model=None (the construction-time default)
-    regardless of the override — this assertion would fail.
+    RouterLoop would be constructed without the override and router_model would
+    resolve to the config default ("standard") — the assertion would fail.
     """
     resolver = _make_resolver(default_class="standard")
     captured: list = []
@@ -150,15 +150,16 @@ async def test_model_override_set_reaches_router_loop():
 
 
 @pytest.mark.asyncio
-async def test_model_override_unset_passes_none_to_router_loop():
-    """Tier 2: when no override is set, RouterLoop receives router_model=None.
+async def test_model_override_unset_resolves_config_default():
+    """Tier 2: when no override is set, RouterLoop.router_model == config default.
 
-    None → RouterLoop.resolve_purpose_class(None, resolver, "router") = config
-    default — byte-identical to pre-/model behaviour, no regression.
+    model_override_fn returns None → RouterLoop receives router_model=None →
+    resolve_purpose_class(None, resolver, "router") → resolver.class_for_purpose("router")
+    → default_class = "standard". Byte-identical to pre-/model behaviour, no regression.
 
-    Falsification: if model_override_fn() were replaced with a lambda that
-    always returned session.model (= "standard"), this test would fail because
-    captured[0] would be "standard", not None.
+    Falsification: if RouterLoopDriver hardcoded router_model="light" for all
+    turns, loop.router_model would be "light" not "standard", and this assertion
+    would fail.
     """
     resolver = _make_resolver(default_class="standard")
     captured: list = []
@@ -172,8 +173,8 @@ async def test_model_override_unset_passes_none_to_router_loop():
     with pytest.raises(_BailOut):
         await driver.run_turn("hello", "chain1")
 
-    assert captured == [None], (
-        f"expected router_model=None (no override → RouterLoop resolves default), got {captured!r}"
+    assert captured == ["standard"], (
+        f"expected router_model='standard' (config default, no override), got {captured!r}"
     )
 
 

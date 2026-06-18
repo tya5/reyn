@@ -57,7 +57,7 @@ class RouterLoopDriver:
         next_seq_fn: Callable[[], int], # Session._next_seq reader
         append_history_fn: Callable,    # Session._append_history
         chat_scheme_name: "str | None" = None,  # #1593 PR-2: chat-layer ToolUseScheme name → RouterLoop(scheme_name=); None → universal default
-        _loop_factory: "Callable | None" = None,  # Tier-2 test seam: inject a RouterLoop replacement
+        _loop_observer: "Callable | None" = None,  # Tier-2 test seam: called with the constructed RouterLoop before run
     ) -> None:
         self._router_host = router_host
         self._safety = safety
@@ -73,7 +73,7 @@ class RouterLoopDriver:
         self._token_learner = token_learner
         self._events = events
         self._model_override_fn = model_override_fn
-        self._loop_factory = _loop_factory
+        self._loop_observer = _loop_observer
         self._history_buffer = history_buffer
         self._budget_advisor = budget_advisor
         self._limit_checkpoint_fn = limit_checkpoint_fn
@@ -336,12 +336,10 @@ class RouterLoopDriver:
 
         Raises RouterCapExceeded when the per-turn cap is reached.
         """
-        from reyn.chat.router_loop import EMPTY_STOP_RETRY_DIRECTIVE
-        from reyn.chat.router_loop import RouterLoop as _RouterLoop
+        from reyn.chat.router_loop import EMPTY_STOP_RETRY_DIRECTIVE, RouterLoop
         from reyn.services.compaction.engine import (
             ContextOverflowError as _ContextOverflowError,
         )
-        _loop_cls = self._loop_factory or _RouterLoop
 
         # #1468 / #1470: reset cancel flag + event at turn entry so an idle
         # cancel_inflight() call (Ctrl-C while no turn is running) is
@@ -365,7 +363,7 @@ class RouterLoopDriver:
             "max_tool_calls_per_turn",
             50,
         )
-        loop = _loop_cls(
+        loop = RouterLoop(
             host=self._router_host, chain_id=chain_id,
             # /model override wins when set; None → RouterLoop resolves router-purpose-class default.
             router_model=self._model_override_fn(),
@@ -391,6 +389,8 @@ class RouterLoopDriver:
             # through handle_limit_exceeded instead of flat-aborting.
             on_limit=getattr(self._safety, "on_limit", None),
         )
+        if self._loop_observer:
+            self._loop_observer(loop)
         # PR-N3: pre-frame context-overflow guard.
         await self._budget_advisor.maybe_force_compact(new_msg_text=user_text)
 
