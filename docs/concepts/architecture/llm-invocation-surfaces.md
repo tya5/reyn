@@ -20,7 +20,7 @@ Reyn invokes the LLM in two structurally distinct contexts: the chat router (and
 
 **Mechanism:** native LLM function calling via `call_llm_tools` (backed by litellm). Tool definitions follow the OpenAI `tools` array shape; the model replies with `tool_calls` in the assistant message. The OS dispatches each call, appends the `tool_result`, and re-invokes the LLM until it produces a plain text reply.
 
-**Tool surface:** `build_tools()` in `src/reyn/chat/router_tools.py` assembles the tool list. The actual count depends on operator configuration:
+**Tool surface:** `build_tools()` in `src/reyn/runtime/router_tools.py` assembles the tool list. The actual count depends on operator configuration:
 
 - **Always present (14 tools):** `list_skills`, `describe_skill`, `list_agents`, `describe_agent`, `list_memory`, `read_memory_body`, `delegate_to_agent`, `remember_shared`, `remember_agent`, `forget_memory`, `web_search`, `plan`, `reyn_src_list`, `reyn_src_read`.
 - **Conditional (+0 to +9 tools):** `invoke_skill` (when skills are registered), `list_directory` + `read_file` (when file read scope is configured), `write_file` + `delete_file` (when file write scope is configured), `web_fetch` (operator opt-in), `list_mcp_servers` + `list_mcp_tools` + `call_mcp_tool` (when MCP servers are configured).

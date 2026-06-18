@@ -1072,7 +1072,7 @@ external_transports:
 | `transports.<name>.mcp_tool` | 文字列 | リプライを配信する完全修飾 MCP ツール名 (`<server>__<tool>`)。 |
 | `transports.<name>.args_template` | マップ | MCP ツールに渡される shape。`${TRANSPORT_DEST}` はメッセージごとの宛先 ID（channel / user / room id）に解決、`${ROUTER_REPLY}` はルーターの最終テキストに解決。他の `${VAR}` 参照は標準 interpolation ルールに従って `os.environ` から解決。 |
 
-トランスポートごとの contract と利用可能なテンプレート変数の全集合は `src/reyn/chat/external_routing.py` を参照。
+トランスポートごとの contract と利用可能なテンプレート変数の全集合は `src/reyn/runtime/external_routing.py` を参照。
 
 ## 関連情報
 

@@ -1279,7 +1279,7 @@ external_transports:
 | `transports.<name>.mcp_tool` | string | Fully-qualified MCP tool name (`<server>__<tool>`) that delivers the reply. |
 | `transports.<name>.args_template` | map | Shape passed to the MCP tool. `${TRANSPORT_DEST}` resolves to the per-message destination identifier (channel / user / room id), `${ROUTER_REPLY}` to the router's final text. Other `${VAR}` references resolve from `os.environ` per the standard interpolation rules. |
 
-See `src/reyn/chat/external_routing.py` for the per-transport contract and the full set of available template variables.
+See `src/reyn/runtime/external_routing.py` for the per-transport contract and the full set of available template variables.
 
 ## See also
 

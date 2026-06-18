@@ -354,7 +354,7 @@ When `recall` is available against an indexed source whose description covers Re
 `docs/concepts/architecture/architecture.md`, `docs/concepts/architecture/principles.md` (P1–P8), `docs/concepts/architecture/phase-vs-skill-vs-os.md`, `docs/concepts/data-retrieval/rag.md`, `CLAUDE.md`.
 
 **Implementation questions** ("how does X work?"):
-`src/reyn/chat/router_loop.py`, `src/reyn/chat/router_system_prompt.py` (= recall vs reyn_src_read routing), `src/reyn/chat/session.py`, `src/reyn/kernel/runtime.py`, `src/reyn/kernel/control_ir_executor.py`, `src/reyn/op_runtime/` (file, web, mcp, ask_user, embed, index_*, recall, …), `src/reyn/permissions/permissions.py`.
+`src/reyn/runtime/router_loop.py`, `src/reyn/runtime/router_system_prompt.py` (= recall vs reyn_src_read routing), `src/reyn/runtime/session.py`, `src/reyn/kernel/runtime.py`, `src/reyn/kernel/control_ir_executor.py`, `src/reyn/op_runtime/` (file, web, mcp, ask_user, embed, index_*, recall, …), `src/reyn/permissions/permissions.py`.
 
 **Design rationale**: `docs/deep-dives/decisions/` — ADRs. Recent: ADR-0033 (RAG framework foundation), ADR-0030 (universal secret handling), ADR-0026 (unified tool registry). FP-0016 proposal: `docs/deep-dives/proposals/0016-agent-authentication.md` (all five components landed 2026-05-11 – 2026-05-16).
 

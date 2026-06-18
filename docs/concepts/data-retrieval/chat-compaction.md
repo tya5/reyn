@@ -162,6 +162,6 @@ emitted to the session event log (P6).
 ## See also
 
 - `src/reyn/services/compaction/engine.py` — `CompactionEngine` implementation
-- `src/reyn/chat/services/compaction_controller.py` — chat-axis wiring
+- `src/reyn/runtime/services/compaction_controller.py` — chat-axis wiring
 - [Control IR: compact](../../reference/runtime/control-ir.md#compact) — LLM-requested compact op
 - [Events](../../reference/runtime/events.md)

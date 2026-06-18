@@ -403,7 +403,7 @@ action_retrieval:
 
 - [`src/reyn/tools/universal_catalog.py`](https://github.com/anthropics/reyn) — `CATEGORIES`、 4 ToolDefinition、 qualified-name parser、 D14 helper、 real handler
 - [`src/reyn/tools/universal_dispatch.py`](https://github.com/anthropics/reyn) — routing table、 `ResolvedAction`、 `UnknownActionError`、 `suggest_similar_names`
-- [`src/reyn/chat/router_tools.py`](https://github.com/anthropics/reyn) — `build_tools` integration (flag-gate された wrapper)
-- [`src/reyn/chat/router_system_prompt.py`](https://github.com/anthropics/reyn) — `## Action categories` section
+- [`src/reyn/runtime/router_tools.py`](https://github.com/anthropics/reyn) — `build_tools` integration (flag-gate された wrapper)
+- [`src/reyn/runtime/router_system_prompt.py`](https://github.com/anthropics/reyn) — `## Action categories` section
 - [`src/reyn/config/embedding.py`](https://github.com/anthropics/reyn) — `ActionRetrievalConfig`
 - [`docs/reference/config/reyn-yaml.ja.md`](../../reference/config/reyn-yaml.ja.md#action_retrieval) — config reference
