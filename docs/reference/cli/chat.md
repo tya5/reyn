@@ -80,6 +80,7 @@ While a session is active, lines starting with `/` are intercepted and never rou
 | `/image <path>` | Attach an image to the next user message (multimodal input) |
 | `/list` | List running skills and pending interventions |
 | `/memory [list\|view <name>]` | Inspect project memory entries (see [concepts/memory](../../concepts/data-retrieval/memory.md)) |
+| `/model [<class>]` | Show the session's model class and any override, or set a per-session model-class override with `/model <class>` (validated against known classes; clears on restart) |
 | `/pending [list\|discard <id>\|claim <id>]` | List / discard / claim stalled cross-channel ops |
 | `/plan list` | Show active plan runs (combined view: in-flight tasks + pending-resume) |
 | `/plan discard <plan_id>` | Abort a specific plan run + cleanup; notifies waiting peer agents via R-D14 |
