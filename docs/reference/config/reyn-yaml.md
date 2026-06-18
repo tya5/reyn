@@ -53,9 +53,21 @@ models:
 | `permissions` | map | Default permission policy. See below. |
 | `plan_resume_raw` | map | Raw resume-policy dict for plan-mode runs. Parsed lazily by the plan coordinator. |
 | `prompt_cache_enabled` | bool | Attach Anthropic prompt-cache markers to system prompts. Default `true`. |
-| `project_context_path` | string | Markdown file injected into every phase system prompt. Default `REYN.md`. |
+| `project_context_path` | string | Markdown file injected into every phase system prompt. Unset (default): auto-resolves the cross-tool standard — `AGENTS.md` if present, else `REYN.md` (legacy fallback). Set an explicit path to pin one file; set `""` to disable. See note below. |
 | `api_base` | string | LiteLLM proxy base URL. Typically set in `reyn.local.yaml` (gitignored). |
 | `tool_calls_op_loop_skills` | list | **Transitional.** Skill names opted into the native-tools op-loop — the phase act-loop drives the shared `RouterLoop.run_loop` (the converged op-loop, #1092): ops are emitted as native `tool_calls`, run through the shared executor, and threaded as native tool-role message-history. Default empty = all skills use json-mode (unchanged). Removed once the op-loop becomes the default. (#1092 PR-C-3 merged the former separate `routerloop_convergence_skills` gate into this one — the converged path is now the op-loop's implementation.) |
+
+> **Project context file (`project_context_path`).** Left unset, Reyn reads
+> `AGENTS.md` — the cross-tool convention that Claude Code, Codex, opencode and
+> others also read — so a project shared with those tools works as-is, with no
+> Reyn-specific file. If `AGENTS.md` is absent, Reyn falls back to `REYN.md`
+> (legacy). The first existing file wins, and a present-but-empty `AGENTS.md` is
+> authoritative (it does not fall through to `REYN.md`).
+>
+> **Migration.** Existing `REYN.md` projects keep working unchanged; new projects
+> should prefer `AGENTS.md`. To pin a specific file regardless of the standard,
+> set `project_context_path` to that path; set it to `""` to inject no project
+> context at all.
 
 ## `models` block
 
