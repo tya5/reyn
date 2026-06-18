@@ -102,3 +102,23 @@ jobs:
             # entire test suite — invariant safety net, unchanged.
             python scripts/test_tier_audit.py --strict tests/
           fi
+
+      # scripts/verify_module_docstrings.py is stdlib-only. Scoped to the
+      # src/ files changed in a PR: blocks NEW moved-module refactor-narrative
+      # docstrings (the C-series discipline) without requiring a one-shot
+      # cleanup of pre-existing instances. main push: no-op (a full-tree gate
+      # awaits that cleanup — see PR introducing this step).
+      - name: Run module-docstring narrative check
+        if: github.event_name == 'pull_request'
+        run: |
+          CHANGED=$(git diff --name-only \
+            "${{ github.event.pull_request.base.sha }}"...HEAD \
+            -- 'src/**.py')
+          if [ -z "$CHANGED" ]; then
+            echo "No src files changed — docstring check skipped."
+            exit 0
+          fi
+          echo "Checking changed src files:"
+          echo "$CHANGED"
+          # shellcheck disable=SC2086
+          python scripts/verify_module_docstrings.py $CHANGED
