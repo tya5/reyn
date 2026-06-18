@@ -72,7 +72,7 @@ def _show_cost_calls(content_width: int) -> bool:
 
 def _new_bucket() -> dict:
     return {"p": 0, "c": 0, "cost": 0.0, "calls": 0,
-            "has_cost": False, "call_costs": []}
+            "has_cost": False, "call_costs": [], "cached": 0}
 
 
 def _cost_str(bucket: dict) -> str:
@@ -81,7 +81,7 @@ def _cost_str(bucket: dict) -> str:
     return f"[{_STATUS_SUCCESS}]${bucket['cost']:.4f}[/]"
 
 
-def _tok(p: int, c: int) -> str:
+def _tok(p: int, c: int, cached: int = 0) -> str:
     """Render token total + prompt/completion breakdown across two lines.
 
     At a 33%-width panel (~22 cells of content area), the previous
@@ -91,11 +91,19 @@ def _tok(p: int, c: int) -> str:
     Large totals (1M+ tokens) may still exceed the breakdown line at
     very narrow widths; accepted trade-off — the total is the
     load-bearing number and stays visible on line 1.
+
+    When ``cached > 0``, a third dim line shows cache-hit count and rate.
+    ``cached`` is a subset of ``p`` (prompt tokens served from cache), so
+    the hit rate is ``cached / p``. The total on line 1 is not affected.
     """
-    return (
+    base = (
         f"[{_TEXT_BRIGHT}]{p + c:,}[/]\n"
         f"[{_TEXT_DIM}]      ({p:,}p + {c:,}c)[/]"
     )
+    if cached > 0 and p > 0:
+        pct = int(cached / p * 100)
+        base += f"\n[{_TEXT_DIMMEST}]      ⚡{cached:,} cached ({pct}% hit)[/]"
+    return base
 
 
 def _sparkline(values: list[float], width: int = 32) -> str:
@@ -292,6 +300,10 @@ def render_cost(
                         continue
                     pt = int(d.get("prompt_tokens", 0) or 0)
                     ct = int(d.get("completion_tokens", 0) or 0)
+                    # cached_tokens is a subset of pt (prompt tokens served
+                    # from cache). Default 0 when field absent (pre-capture
+                    # events or providers that don't report it).
+                    cached = int(d.get("cached_tokens", 0) or 0)
                     raw_cost = d.get("cost_usd")
                     cost = float(raw_cost) if raw_cost is not None else 0.0
                     has_cost = raw_cost is not None
@@ -300,6 +312,7 @@ def render_cost(
                     for bucket in (total, by_agent[agent], by_agent_skill[agent][skill]):
                         bucket["p"] += pt; bucket["c"] += ct
                         bucket["cost"] += cost; bucket["calls"] += 1
+                        bucket["cached"] += cached
                         if has_cost:
                             bucket["has_cost"] = True
                         bucket["call_costs"].append(cost)
@@ -308,6 +321,7 @@ def render_cost(
                     mb = by_model[pending_model]
                     mb["p"] += pt; mb["c"] += ct
                     mb["cost"] += cost; mb["calls"] += 1
+                    mb["cached"] += cached
                     if has_cost:
                         mb["has_cost"] = True
                     mb["call_costs"].append(cost)
@@ -321,6 +335,7 @@ def render_cost(
                         ):
                             bucket["p"] += pt; bucket["c"] += ct
                             bucket["cost"] += cost; bucket["calls"] += 1
+                            bucket["cached"] += cached
                             if has_cost:
                                 bucket["has_cost"] = True
                             bucket["call_costs"].append(cost)
@@ -328,6 +343,7 @@ def render_cost(
                     if ts.startswith(today_str):
                         today["p"] += pt; today["c"] += ct
                         today["cost"] += cost; today["calls"] += 1
+                        today["cached"] += cached
                         if has_cost:
                             today["has_cost"] = True
                         today["call_costs"].append(cost)
@@ -360,7 +376,7 @@ def render_cost(
     if today["calls"] == 0:
         lines.append(f"[{_TEXT_DIM}]    (no calls today)[/]")
     else:
-        lines.append(f"[{_TEXT_DIM}]    tokens  [/]{_tok(today['p'], today['c'])}")
+        lines.append(f"[{_TEXT_DIM}]    tokens  [/]{_tok(today['p'], today['c'], today['cached'])}")
         lines.append(f"[{_TEXT_DIM}]    cost    [/]{_cost_str(today)}")
         lines.append(f"[{_TEXT_DIM}]    calls   [/][{_TEXT_BRIGHT}]{today['calls']}[/]")
         spark = _sparkline(today["call_costs"])
@@ -378,7 +394,7 @@ def render_cost(
     if total["calls"] == 0:
         lines.append(f"[{_TEXT_DIM}]    (no LLM calls)[/]")
     else:
-        lines.append(f"[{_TEXT_DIM}]    tokens  [/]{_tok(total['p'], total['c'])}")
+        lines.append(f"[{_TEXT_DIM}]    tokens  [/]{_tok(total['p'], total['c'], total['cached'])}")
         lines.append(f"[{_TEXT_DIM}]    cost    [/]{_cost_str(total)}")
         lines.append(f"[{_TEXT_DIM}]    calls   [/][{_TEXT_BRIGHT}]{total['calls']}[/]")
         spark = _sparkline(total["call_costs"])
