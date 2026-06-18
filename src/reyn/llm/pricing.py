@@ -17,6 +17,18 @@ from dataclasses import dataclass
 class TokenUsage:
     prompt_tokens: int = 0
     completion_tokens: int = 0
+    # Prompt-cache metrics (#1772). Both are SUBSETS / side-metrics of the
+    # billed tokens, NOT additive to total_tokens:
+    #   cached_tokens          — prompt tokens served from cache (cache READ /
+    #                            hit). A subset of prompt_tokens; cross-provider
+    #                            normalized (litellm surfaces this as both
+    #                            usage.cache_read_input_tokens and
+    #                            usage.prompt_tokens_details.cached_tokens).
+    #   cache_creation_tokens  — tokens written to the cache (Anthropic
+    #                            cache-write); 0 for providers without an
+    #                            explicit write metric (OpenAI / Gemini).
+    cached_tokens: int = 0
+    cache_creation_tokens: int = 0
 
     @property
     def total_tokens(self) -> int:
@@ -26,11 +38,15 @@ class TokenUsage:
         return TokenUsage(
             prompt_tokens=self.prompt_tokens + other.prompt_tokens,
             completion_tokens=self.completion_tokens + other.completion_tokens,
+            cached_tokens=self.cached_tokens + other.cached_tokens,
+            cache_creation_tokens=self.cache_creation_tokens + other.cache_creation_tokens,
         )
 
     def __iadd__(self, other: "TokenUsage") -> "TokenUsage":
         self.prompt_tokens += other.prompt_tokens
         self.completion_tokens += other.completion_tokens
+        self.cached_tokens += other.cached_tokens
+        self.cache_creation_tokens += other.cache_creation_tokens
         return self
 
     def to_dict(self) -> dict:
@@ -38,6 +54,8 @@ class TokenUsage:
             "prompt_tokens": self.prompt_tokens,
             "completion_tokens": self.completion_tokens,
             "total_tokens": self.total_tokens,
+            "cached_tokens": self.cached_tokens,
+            "cache_creation_tokens": self.cache_creation_tokens,
         }
 
     @classmethod
@@ -50,6 +68,8 @@ class TokenUsage:
         return cls(
             prompt_tokens=int(data.get("prompt_tokens", 0)),
             completion_tokens=int(data.get("completion_tokens", 0)),
+            cached_tokens=int(data.get("cached_tokens", 0)),
+            cache_creation_tokens=int(data.get("cache_creation_tokens", 0)),
         )
 
 
