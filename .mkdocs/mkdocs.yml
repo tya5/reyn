@@ -257,6 +257,7 @@ nav:
           - concepts/skills/postprocessor.md
           - concepts/skills/python-safe-mode.md
       - Multi-agent:
+          - concepts/multi-agent/sessions.md
           - concepts/multi-agent/multi-agent.md
           - concepts/multi-agent/a2a.md
           - concepts/multi-agent/topology.md
