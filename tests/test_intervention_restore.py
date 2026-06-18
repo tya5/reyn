@@ -176,14 +176,25 @@ async def test_restored_intervention_can_be_answered(tmp_path, monkeypatch):
 
     consumed = await session._maybe_answer_oldest_intervention("Bob")
     assert consumed is True
-    # Yield so the dispatch coroutine's finally clause fires
-    for _ in range(3):
-        await asyncio.sleep(0)
+    # Poll the WAL until the dispatch coroutine's finally clause has fired its
+    # intervention_resolved append. #1751: the append now fsyncs via
+    # ``asyncio.to_thread`` (a thread round-trip), so a fixed ``sleep(0)`` yield
+    # loop no longer covers it; poll the durable log until the event lands
+    # (bounded — it appears within a few ms once the fsync thread completes).
+    def _resolved_ids() -> list[str]:
+        log = StateLog(tmp_path / "state.wal")
+        return [
+            e["intervention_id"] for e in log.iter_from(0)
+            if e["kind"] == "intervention_resolved"
+        ]
+
+    for _ in range(200):
+        if "iv_to_answer" in _resolved_ids():
+            break
+        await asyncio.sleep(0.01)
 
     # WAL has the resolve event
-    log = StateLog(tmp_path / "state.wal")
-    events = [e for e in log.iter_from(0) if e["kind"] == "intervention_resolved"]
-    assert any(e["intervention_id"] == "iv_to_answer" for e in events)
+    assert "iv_to_answer" in _resolved_ids()
 
     # Snapshot pruned (path was the one passed to _make_session)
     snap_path = tmp_path / "alpha_snapshot.json"
