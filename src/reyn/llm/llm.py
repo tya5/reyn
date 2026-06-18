@@ -890,6 +890,37 @@ def proxy_kwargs() -> dict:
     return {"api_base": api_base, "custom_llm_provider": "openai", "api_key": api_key}
 
 
+def routing_for_spec(spec: "ModelSpec | None") -> dict | None:
+    """#309: per-class litellm routing (api_base / custom_llm_provider) for a
+    model class, or ``None`` to inherit the global ``proxy_kwargs()`` endpoint
+    (backward-compat — existing single-endpoint configs are byte-identical).
+
+    Enables simultaneous multi-provider use (e.g. router=light on a Gemini proxy
+    + skill=capable on Anthropic-direct):
+      - ``api_base`` set → route to that endpoint; ``custom_llm_provider`` =
+        ``spec.provider`` or ``"openai"`` (OpenAI-compatible proxy). api_key from
+        OPENAI_API_KEY (litellm standard — never a literal secret in config).
+      - ``provider`` set, no ``api_base`` → DIRECT to that provider (no api_base
+        override); litellm resolves the key from its standard env var
+        (ANTHROPIC_API_KEY / GEMINI_API_KEY / …). This opts the class OUT of the
+        global proxy.
+      - neither → ``None`` → caller falls back to ``proxy_kwargs()``.
+    """
+    if spec is None:
+        return None
+    api_base = getattr(spec, "api_base", None)
+    provider = getattr(spec, "provider", None)
+    if api_base:
+        return {
+            "api_base": api_base,
+            "custom_llm_provider": provider or "openai",
+            "api_key": os.environ.get("OPENAI_API_KEY", "dummy"),
+        }
+    if provider:
+        return {"custom_llm_provider": provider}
+    return None
+
+
 # #1190 cost-observability: the valid purpose (cost-attribution) buckets. Every
 # recorded_acompletion call must tag one so /cost can break spend down by where
 # the LLM call originated. ``dogfood`` covers test/trace sites (recorder=None).
@@ -1081,6 +1112,7 @@ async def recorded_acompletion(
     fallback_without_response_format: bool = False,
     extra_kwargs: dict | None = None,
     emit_cost_events: bool = False,  # #1683: chat path opts in (kernel emits via LLMCallRecorder)
+    routing: dict | None = None,  # #309: per-class api_base/provider; None → global proxy_kwargs()
 ) -> object:
     """Single cost-observability chokepoint for ALL ``litellm.acompletion`` calls (#1190).
 
@@ -1107,10 +1139,17 @@ async def recorded_acompletion(
             f"must be one of {LLM_PURPOSES}"
         )
 
-    extra = proxy_kwargs()
-    effective_model = model.split("/", 1)[1] if extra and "/" in model else model
+    # #309: per-class routing (api_base/provider) wins; None → global proxy_kwargs().
+    extra = routing if routing is not None else proxy_kwargs()
+    # Strip the provider prefix ONLY when routing to an api_base endpoint
+    # (OpenAI-compatible proxy expects a bare model + custom_llm_provider). A
+    # direct-provider route (provider set, no api_base) keeps the prefix so
+    # litellm resolves the provider from it.
+    effective_model = (
+        model.split("/", 1)[1] if extra.get("api_base") and "/" in model else model
+    )
     base_kwargs = dict(extra_kwargs or {})
-    base_kwargs.update(extra)  # Reyn proxy kwargs win over caller-supplied ones
+    base_kwargs.update(extra)  # Reyn routing/proxy kwargs win over caller-supplied ones
 
     # #1650: when an operator sets ``reasoning_effort`` on a model, the proxy
     # path forces ``custom_llm_provider=openai`` (proxy_kwargs), under which
@@ -1408,11 +1447,17 @@ async def call_llm(
             ]
 
         # response_format may not be supported by all models; pass it only when available
-        extra = proxy_kwargs()
-        # When routing via a local proxy, strip the provider prefix from the model
-        # name (e.g. "openai/gemini-2.5-flash-lite" → "gemini-2.5-flash-lite") so
-        # the proxy receives the bare model name it registered under.
-        effective_model = spec.model.split("/", 1)[1] if extra and "/" in spec.model else spec.model
+        # #309: per-class routing (api_base/provider) wins; None → global proxy.
+        _routing = routing_for_spec(spec)
+        extra = _routing if _routing is not None else proxy_kwargs()
+        # When routing via a proxy (api_base set), strip the provider prefix from
+        # the model name (e.g. "openai/gemini-2.5-flash-lite" → "gemini-2.5-flash-
+        # lite") so the proxy receives the bare model it registered under. A
+        # direct-provider route keeps the prefix (litellm resolves from it).
+        effective_model = (
+            spec.model.split("/", 1)[1]
+            if extra.get("api_base") and "/" in spec.model else spec.model
+        )
         common_kwargs = {"timeout": timeout, "num_retries": max_retries}
         # Merge operator-declared kwargs (spec.kwargs) with Reyn defaults.
         # Reyn-set options (common_kwargs, extra) take precedence over spec.kwargs
@@ -1447,6 +1492,7 @@ async def call_llm(
                 response_format={"type": "json_object"},
                 fallback_without_response_format=True,
                 extra_kwargs={**spec_kwargs, **common_kwargs},
+                routing=_routing,  # #309 per-class api_base/provider
             )
 
         response = await _llm_call_with_retry(_do_call, effective_model, event_log)
@@ -1571,9 +1617,15 @@ async def call_llm_tools(
                 format_refusal_message(check, agent=budget_agent),
             )
 
-    extra = proxy_kwargs()
-    # Strip provider prefix when routing via local proxy (same logic as call_llm)
-    effective_model = spec.model.split("/", 1)[1] if extra and "/" in spec.model else spec.model
+    # #309: per-class routing (api_base/provider) wins; None → global proxy.
+    _routing = routing_for_spec(spec)
+    extra = _routing if _routing is not None else proxy_kwargs()
+    # Strip provider prefix only when routing to an api_base proxy (same logic as
+    # call_llm); a direct-provider route keeps the prefix.
+    effective_model = (
+        spec.model.split("/", 1)[1]
+        if extra.get("api_base") and "/" in spec.model else spec.model
+    )
     # Operator-declared kwargs from ModelSpec; Gemini-safe forced settings override these.
     spec_kwargs = dict(spec.kwargs)
 
@@ -1688,6 +1740,7 @@ async def call_llm_tools(
             model=_model, messages=_messages, purpose=purpose,
             recorder=None, extra_kwargs=_kw,
             emit_cost_events=emit_cost_events,  # #1683: chat opts in
+            routing=_routing,  # #309 per-class api_base/provider (else global wins)
         )
 
     response = await _llm_call_with_retry(_tools_call, effective_model, event_log)

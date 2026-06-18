@@ -51,6 +51,17 @@ class ModelSpec:
 
     model: str
     kwargs: dict[str, Any] = field(default_factory=dict)
+    # #309 per-class routing (multi-provider). Explicit routing fields (NOT in
+    # ``kwargs``) so a class can target its own endpoint/provider while others
+    # use the global default — e.g. router=light on a Gemini proxy + skill=
+    # capable on Anthropic-direct, simultaneously. Mirrors EmbeddingClassSpec
+    # (which carries ``api_base``); ``provider`` is added for the direct-vs-proxy
+    # opt-out. NO per-class api_key field by design: a literal secret must never
+    # live in checked-in config — litellm resolves the key from the standard
+    # provider env (OPENAI_API_KEY for a proxy, ANTHROPIC_API_KEY/GEMINI_API_KEY
+    # for a direct provider). Both default None → inherit the global api_base.
+    api_base: str | None = None
+    provider: str | None = None  # litellm custom_llm_provider
 
     def __post_init__(self) -> None:
         # #1650: validate the operator-declared ``reasoning_effort`` at
@@ -127,8 +138,24 @@ class ModelSpec:
                 raise ValueError(
                     f"ModelSpec 'model' must be a string, got {type(model).__name__}"
                 )
-            kwargs = {k: v for k, v in value.items() if k not in ("model", "extends")}
-            return cls(model=model, kwargs=kwargs)
+            # #309: api_base / provider are explicit routing fields, not litellm
+            # passthrough kwargs. (No api_key: literal secrets never in config —
+            # litellm reads the key from the standard provider env.)
+            api_base = value.get("api_base")
+            provider = value.get("provider")
+            if api_base is not None and not isinstance(api_base, str):
+                raise ValueError(
+                    f"ModelSpec 'api_base' must be a string, got {type(api_base).__name__}"
+                )
+            if provider is not None and not isinstance(provider, str):
+                raise ValueError(
+                    f"ModelSpec 'provider' must be a string, got {type(provider).__name__}"
+                )
+            kwargs = {
+                k: v for k, v in value.items()
+                if k not in ("model", "extends", "api_base", "provider")
+            }
+            return cls(model=model, kwargs=kwargs, api_base=api_base, provider=provider)
         raise ValueError(
             f"ModelSpec.from_config expects str or dict, got {type(value).__name__}"
         )
