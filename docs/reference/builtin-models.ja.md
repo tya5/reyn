@@ -131,6 +131,43 @@ hard output cap が必要なときは常に `max_completion_tokens` を優先す
 実際の使用は少ないこともある。 複雑な task で `budget_tokens` を低く設定すると
 answer 品質が落ちる可能性あり。
 
+### ツールを伴う turn での reasoning（Responses-API bridge）
+
+**tools** を伴い、かつ reasoning-capable model に `reasoning_effort` が設定された
+turn は、litellm の Responses-API bridge（`responses/<model>`）を通ります。litellm
+の bridge は現状、model が返す `reasoning` output item を map できないため、call が
+次の error を raise します:
+
+```
+litellm.APIConnectionError: OpenAIException -
+Unknown items in responses API response: [GenericResponseOutputItem(type='reasoning', ...)]
+```
+
+reasoning テキストは response に含まれています — bridge parser がその `reasoning`
+item を chat-completions の形に map しないだけです。これは current と latest 両方の
+litellm release に存在し、released fix はありません。Reyn は provider 固有の回避を
+作りません。
+
+**発火する条件 — 狭い opt-in の組み合わせ。** 両方が成立する必要があります:
+
+1. **tool を伴う** purpose（例: router。その turn は常に tools を持つ）が
+   **reasoning-capable** model を指す — `model_class_by_purpose: router: strong`、
+   またはデフォルトの `model` class を capable model に設定。**かつ**
+2. その model に `reasoning_effort` が設定されている。
+
+**影響を受けないパス:**
+
+- **デフォルト構成。** `standard` class（Gemini Flash Lite）は `reasoning_effort`
+  なしで tool turn を捌くので、bridge でなく `/v1/chat/completions` を通り error
+  なし。（Flash Lite は tool turn で reasoning-dormant でもある。）
+- **tool なしの chat + reasoning。** reasoning-capable model を tools *なし* で使うと
+  `/v1/chat/completions` を通り、reasoning は survive して正常に round-trip します
+  （`reasoning_content` / `thinking_blocks` として現れる）。
+
+**回避するには**、tool を伴う turn を担う reasoning-capable model に
+`reasoning_effort` を設定しない — または tool を伴う purpose を non-reasoning model
+に置く。tool なしの chat パスの reasoning は影響を受けません。
+
 ## Namespace + override semantics
 
 built-in catalog は user entry の **前に** model namespace に merge されるので、
