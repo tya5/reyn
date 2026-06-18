@@ -1,21 +1,20 @@
 """RouterHistoryBuffer — history slicing and SP assembly for Session.
 
-Extracted from Session (session.py refactor PR-2).  Owns:
+Owns:
 
   - build_history              — slice history into OpenAI-style messages
   - decompose_history_for_retry — head/raw_middle/tail/summary for retry_loop
   - build_system_prompt        — assemble the router system prompt string
   - _serialise_turn            — materialise one ChatMessage to a wire dict
 
-Also owns the module-level helpers moved out of session.py:
+Also owns the module-level helpers:
 
   - _is_force_close_consolidation
   - _materialise_path_ref_content
   - _read_pathref_image
 
 history_fn dependency: a zero-arg callable that returns the raw history list
-(all ChatMessages including summaries).  Passed as ``lambda: self.history``
-during PR-2; future refactors can re-wire without touching this class.
+(all ChatMessages including summaries), passed as ``lambda: self.history``.
 """
 from __future__ import annotations
 

@@ -1,9 +1,7 @@
 """RollbackState — rollback-specific bookkeeping for one OSRuntime run.
 
-Extracted from runtime.py (FP-0020 Component A prerequisite).  All
-rollback machinery that previously lived as a nested dataclass inside
-runtime.py is now a standalone module so it can be imported by RunState
-without creating a circular dependency.
+A standalone module (rather than a nested dataclass) so it can be imported by
+RunState without creating a circular dependency.
 """
 
 from __future__ import annotations

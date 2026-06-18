@@ -1,13 +1,13 @@
 """RouterLoopDriver — per-turn router loop orchestration for Session.
 
-Extracted from Session (session.py refactor PR-3).  Owns:
+Owns:
 
-  - run_turn(user_text, chain_id)  — was _run_router_loop
-  - _run_with_shrink(loop, text)   — was _router_run_with_shrink
-  - _check_cap(user_text)          — was _check_and_increment_router_cap
-  - _force_close_handoff(loop, text) — was _force_close_handoff
-  - _force_close_wrap_up(loop, model) — was _force_close_wrap_up
-  - is_cancel_requested()          — was _is_turn_cancel_requested
+  - run_turn(user_text, chain_id)
+  - _run_with_shrink(loop, text)
+  - _check_cap(user_text)
+  - _force_close_handoff(loop, text)
+  - _force_close_wrap_up(loop, model)
+  - is_cancel_requested()
   - request_cancel()               — turn-cancel seam (called by cancel_inflight)
 
 Cancel lifecycle (#1468): the cooperative-cancel flag lives here.

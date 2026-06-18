@@ -1,13 +1,12 @@
 """Discovery-mandate tier policy for the universal-category tool-use scheme.
 
-Relocated from ``reyn.runtime.router_system_prompt`` (Stage 1, #1627) so the
-tier→discovery-mandate POLICY lives in the scheme layer, not the OS.  The OS
-(``router_loop``) still calls ``tier_wants_discovery_mandate`` for the
-enumerate / retrieval None-path ``build_system_prompt`` call until their own
-stages land; ``universal_category`` calls it to compute its own slot-map.
+The tier→discovery-mandate POLICY lives in the scheme layer, not the OS.  The OS
+(``router_loop``) calls ``tier_wants_discovery_mandate`` for the
+enumerate / retrieval None-path ``build_system_prompt`` call;
+``universal_category`` calls it to compute its own slot-map.
 
 See the full rationale in ``router_system_prompt`` (search for
-``#187 Stage C``).  Verbatim move — no logic change.
+``#187 Stage C``).
 """
 from __future__ import annotations
 
