@@ -1,6 +1,6 @@
 """Shared choice ids + factories for permission-style UserInterventions.
 
-Both `permissions.py` (producer) and `chat/renderer.py` (consumer) reference
+Both `permissions.py` (producer) and `interfaces/repl/renderer.py` (consumer) reference
 the same id strings — keep them in one module so a typo or rename surfaces
 in a single place.
 """

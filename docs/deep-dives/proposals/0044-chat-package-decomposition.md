@@ -17,7 +17,7 @@ then staged clean-break PRs (no shims, owner policy):
 
 1. **Rename** `reyn.chat` → a runtime-accurate namespace (candidates below).
 2. **Cluster split** the flat module list into concern subpackages.
-3. **Relocate UI** (`repl`/`renderer`/`error_format`) under `interfaces/`
+3. **Relocate UI** (`repl`/`renderer`) under `interfaces/`
    (the #1700 cli/tui/web/chainlit_app grouping left these behind).
 4. **Decompose the god-files** (`session.py`, `router_loop.py`) into
    collaborators — continuing the FP-0043 `Session`-slimming (the class FP-0043
@@ -30,7 +30,7 @@ cut them wrong.
 
 - **Name drift**: `chat` reads as UI. The package is the agent runtime — turn
   loop, session/agent lifecycle, routing/transport, planning. UI is a small
-  minority (`repl.py` 167, `renderer.py` 218, `error_format.py`).
+  minority (`repl.py` 167, `renderer.py` 218).
 - **God-files**: `session.py` (5214) and `router_loop.py` (4443) are the two
   largest modules in the package; both have a single ~4000-LOC class. They are
   hard to review, test in isolation, and reason about; FP-0043 began slimming
@@ -45,14 +45,20 @@ cut them wrong.
 | Cluster | Modules (current `chat/`) | Target |
 |---|---|---|
 | **(1) session / agent lifecycle** | `session.py`, `registry.py`, `agent.py`, `scoped_session_factory.py`, `agent_locks.py`, `channel_state.py`, `profile.py`, `lifecycle_forwarder.py` | `reyn.runtime.session` |
-| **(2) router / turn engine** | `router_loop.py`, `router_tools.py`, `router_system_prompt.py`, `router_op_context.py`, `planner.py`, `reasoning_continuity.py`, `reyn_src.py`, **`services/`** (21 collaborators) | `reyn.runtime.engine` |
+| **(2) router / turn engine** | `router_loop.py`, `router_tools.py`, `router_system_prompt.py`, `router_op_context.py`, `planner.py`, `reasoning_continuity.py`, `error_format.py`, `reyn_src.py`, **`services/`** (21 collaborators) | `reyn.runtime.engine` |
 | **(3) multi-agent routing + transport** | `routing.py`, `transport.py`, `topology.py`, `outbox.py`, `message_bus.py`, `a2a_routing.py`, `mcp_routing.py`, `external_routing.py`, `webhook_routing.py`, `forwarder.py` | `reyn.runtime.routing` |
-| **(4) UI / REPL** | `repl.py`, `renderer.py`, `error_format.py` | `reyn.interfaces.repl` |
+| **(4) UI / REPL** | `repl.py`, `renderer.py` | `reyn.interfaces.repl` |
 
+> **Correction (PR-A flow-trace)**: `error_format.py` is **runtime**, not UI — it
+> is router/LLM-failure **classification** (`classify_router_error`; imports
+> `reyn.runtime.budget.BudgetExceeded`; called by `session.py`'s router-loop
+> except handler). Moving it to `interfaces/` would invert the dependency
+> direction (runtime → interfaces). It belongs in cluster (2) and goes to
+> `reyn.runtime` in PR-B. The UI cluster is `repl` + `renderer` only.
+>
 > **Correction (design-review)**: `chat/tui/` and `chat/slash/` are **stale-empty
 > remnants** (only `__pycache__`, no tracked files) — the real TUI/slash live at
-> `interfaces/{tui,slash}` since #1700. So the UI cluster is just the 3 modules
-> above; the stale dirs get cleaned (pycache) in PR-A.
+> `interfaces/{tui,slash}` since #1700. The stale dirs get cleaned (pycache) in PR-A.
 >
 > **Deferred to a separate FP (lead decision, 2026-06-19)**: the engine
 > cluster's `services/{skill_runner, skill_plan_glue, skill_search}` are NOT
@@ -118,10 +124,10 @@ explicit collaborator steps. The two Protocols (`RouterLoopCore`,
 Following the #311 clean-break discipline (git mv → atomic importer repoint →
 no shim → byte-gate via rename-detection + 3-ref-class straggler grep):
 
-- **PR-A (UI relocate)**: `repl`/`renderer`/`error_format` → `reyn.interfaces.repl`
-  (+ clean the stale `chat/tui`/`chat/slash` pycache remnants). Small, isolated,
-  byte-identical move + repoint. (Closes the #1700 inconsistency; lowest risk,
-  lands first.)
+- **PR-A (UI relocate)**: `repl`/`renderer` → `reyn.interfaces.repl` (+ clean the
+  stale `chat/tui`/`chat/slash` pycache remnants). Small, isolated, byte-identical
+  move + repoint. (Closes the #1700 inconsistency; lowest risk, lands first.
+  `error_format` stays — it's runtime, see the cluster-table correction.)
 - **PR-B (namespace rename + cluster split, FOLDED)** — *recommended fold* (was
   PR-B rename + PR-C split). `reyn.chat` → `reyn.runtime.{session,engine,routing}`
   in **one** move + atomic repoint. Rationale: the repoint surface is large
