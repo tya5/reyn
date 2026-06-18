@@ -21,6 +21,7 @@ import json
 from pathlib import Path
 
 import pytest
+from _async_wait import wait_until  # noqa: E402 — shared #1751 test wait helper
 
 from reyn.chat.session import Session
 from reyn.core.events.state_log import StateLog
@@ -85,9 +86,11 @@ async def test_dispatch_intervention_appends_wal_before_await(tmp_path, monkeypa
 
     iv = _iv(run_id="rA", prompt="What's your name?")
     task = asyncio.ensure_future(session._dispatch_intervention(iv))
-    # Yield so the dispatch coroutine reaches `await iv.future`
-    await asyncio.sleep(0)
-    await asyncio.sleep(0)
+    # Wait until the dispatch durably appends intervention_dispatched. #1751: the
+    # append fsyncs via to_thread, so a fixed sleep(0) no longer covers it.
+    await wait_until(
+        lambda: any(e["kind"] == "intervention_dispatched" for e in _wal_events(tmp_path))
+    )
 
     events = _wal_events(tmp_path)
     dispatched = [e for e in events if e["kind"] == "intervention_dispatched"]
@@ -118,8 +121,9 @@ async def test_deliver_answer_appends_intervention_resolved(tmp_path, monkeypatc
 
     iv = _iv(prompt="Free text?")
     task = asyncio.ensure_future(session._dispatch_intervention(iv))
-    await asyncio.sleep(0)
-    await asyncio.sleep(0)
+    # Wait until the dispatch has registered the pending iv (#1751: its WAL append
+    # now fsyncs via to_thread; sleep(0) would answer before the iv is pending).
+    await wait_until(lambda: bool(session.interventions.list_active()))
 
     consumed = await session._maybe_answer_oldest_intervention("Alice")
     assert consumed is True
@@ -147,8 +151,9 @@ async def test_unknown_choice_does_not_emit_resolved(tmp_path, monkeypatch):
     ]
     iv = _iv(choices=choices, prompt="Confirm?")
     task = asyncio.ensure_future(session._dispatch_intervention(iv))
-    await asyncio.sleep(0)
-    await asyncio.sleep(0)
+    # Wait until the dispatch has registered the pending iv (#1751: its WAL append
+    # now fsyncs via to_thread; sleep(0) would answer before the iv is pending).
+    await wait_until(lambda: bool(session.interventions.list_active()))
 
     consumed = await session._maybe_answer_oldest_intervention("invalid")
     assert consumed is True  # consumed but not resolved
@@ -184,12 +189,18 @@ async def test_drop_for_run_emits_resolved_for_each_dropped(tmp_path, monkeypatc
     t1 = asyncio.ensure_future(session._dispatch_intervention(iv1))
     t2 = asyncio.ensure_future(session._dispatch_intervention(iv2))
     t3 = asyncio.ensure_future(session._dispatch_intervention(iv3))
-    for _ in range(4):
-        await asyncio.sleep(0)
+    # Wait until all three dispatches have registered (#1751: each fsyncs its
+    # intervention_dispatched append via to_thread, so a fixed sleep loop no
+    # longer covers them).
+    await wait_until(lambda: len(session.interventions.list_active()) >= 3)
 
     session._drop_interventions_for_run("rA")
-    await asyncio.sleep(0)
-    await asyncio.sleep(0)
+    # Wait until both drops' intervention_resolved appends are durable.
+    await wait_until(
+        lambda: len(
+            [e for e in _wal_events(tmp_path) if e["kind"] == "intervention_resolved"]
+        ) >= 2
+    )
 
     events = _wal_events(tmp_path)
     resolved = [e for e in events if e["kind"] == "intervention_resolved"]
@@ -216,11 +227,20 @@ async def test_outstanding_interventions_in_snapshot_after_dispatch(tmp_path, mo
 
     iv = _iv(run_id="rZ", prompt="Persisted?")
     task = asyncio.ensure_future(session._dispatch_intervention(iv))
-    await asyncio.sleep(0)
-    await asyncio.sleep(0)
-
     # Snapshot path is the one passed via the public kwarg in _make_session
     snap_path = tmp_path / "alpha_snapshot.json"
+
+    # Wait until the dispatch's snapshot save has persisted the iv to disk (#1751:
+    # the intervention_dispatched WAL append it follows now fsyncs via to_thread,
+    # so a fixed sleep(0) no longer covers it).
+    def _snapshot_has_iv() -> bool:
+        if not snap_path.is_file():
+            return False
+        raw = json.loads(snap_path.read_text())
+        return iv.id in raw.get("outstanding_interventions", {})
+
+    await wait_until(_snapshot_has_iv)
+
     assert snap_path.is_file(), "snapshot must be persisted to disk"
     raw = json.loads(snap_path.read_text())
     outstanding = raw.get("outstanding_interventions", {})

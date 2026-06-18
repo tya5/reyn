@@ -33,6 +33,7 @@ import asyncio
 from pathlib import Path
 
 import pytest
+from _async_wait import wait_until  # noqa: E402 — shared #1751 test wait helper
 
 from reyn.chat.session import ChatInterventionBus, Session
 from reyn.core.events.agent_snapshot import AgentSnapshot
@@ -108,12 +109,13 @@ async def test_bus_returns_buffered_answer_without_dispatching(tmp_path, monkeyp
         prompt="Prior question",
     )
     session.restore_state(snap)
-    for _ in range(3):
-        await asyncio.sleep(0)
+    # Wait until restore re-enqueued the pending iv (#1751: WAL append now fsyncs
+    # via to_thread; sleep(0) would answer before the iv is pending).
+    await wait_until(lambda: bool(session.interventions.list_active()))
     consumed = await session._maybe_answer_oldest_intervention("Charlie")
     assert consumed is True
-    for _ in range(3):
-        await asyncio.sleep(0)
+    # Wait until the watcher has buffered the answer durably (its WAL append).
+    await wait_until(lambda: bool(session.buffered_intervention_answers))
     # Drain outbox of restore-time intervention announces; we'll verify
     # the bus.request path makes NO new announcements below.
     while not session.outbox.empty():
@@ -148,8 +150,8 @@ async def test_bus_falls_through_to_dispatch_when_no_buffer(tmp_path, monkeypatc
 
     # Resolve the future via deliver path so dispatch returns
     task = asyncio.ensure_future(bus.request(iv))
-    await asyncio.sleep(0)
-    await asyncio.sleep(0)
+    # Wait until bus.request dispatched + registered the pending iv (#1751).
+    await wait_until(lambda: bool(session.interventions.list_active()))
 
     # Now answer it
     consumed = await session._maybe_answer_oldest_intervention("Bob")
@@ -171,11 +173,9 @@ async def test_buffer_is_single_use(tmp_path, monkeypatch):
         prompt="Prior question",
     )
     session.restore_state(snap)
-    for _ in range(3):
-        await asyncio.sleep(0)
+    await wait_until(lambda: bool(session.interventions.list_active()))
     await session._maybe_answer_oldest_intervention("first")
-    for _ in range(3):
-        await asyncio.sleep(0)
+    await wait_until(lambda: bool(session.buffered_intervention_answers))
 
     bus = ChatInterventionBus(session, run_id="rOnce", skill_name="demo")
     iv1 = UserIntervention(kind="ask_user", prompt="Q1?")
@@ -187,8 +187,8 @@ async def test_buffer_is_single_use(tmp_path, monkeypatch):
     iv2 = UserIntervention(kind="ask_user", prompt="Q2?")
     iv2.future = asyncio.get_running_loop().create_future()
     task = asyncio.ensure_future(bus.request(iv2))
-    await asyncio.sleep(0)
-    await asyncio.sleep(0)
+    # Wait until iv2's dispatch registered the pending iv (#1751).
+    await wait_until(lambda: bool(session.interventions.list_active()))
     await session._maybe_answer_oldest_intervention("second")
     a2 = await task
     assert a2.text == "second"
@@ -217,13 +217,11 @@ async def test_watcher_buffers_answer_when_restored_iv_resolves(tmp_path, monkey
         prompt="Restored Q?",
     )
     session.restore_state(snap)
-    for _ in range(3):
-        await asyncio.sleep(0)
+    await wait_until(lambda: bool(session.interventions.list_active()))
 
     consumed = await session._maybe_answer_oldest_intervention("hello world")
     assert consumed is True
-    for _ in range(3):
-        await asyncio.sleep(0)
+    await wait_until(lambda: bool(session.buffered_intervention_answers))
 
     # Bus.request reaches the answer without dispatching
     bus = ChatInterventionBus(session, run_id="rW", skill_name="demo")
@@ -254,14 +252,18 @@ async def test_e2e_skill_resume_picks_up_user_answer(tmp_path, monkeypatch):
         prompt="What's your name?",
     )
     session.restore_state(snap)
-    for _ in range(3):
-        await asyncio.sleep(0)
+    await wait_until(lambda: bool(session.interventions.list_active()))
 
     # Phase 2: user answers
     consumed = await session._maybe_answer_oldest_intervention("Reyn")
     assert consumed is True
-    for _ in range(3):
-        await asyncio.sleep(0)
+    # Wait until the answer's intervention_resolved append is durable (#1751).
+    await wait_until(
+        lambda: any(
+            e["kind"] == "intervention_resolved"
+            for e in StateLog(tmp_path / "state.wal").iter_from(0)
+        )
+    )
 
     # Verify intervention_resolved fired (snapshot pruned)
     log = StateLog(tmp_path / "state.wal")
