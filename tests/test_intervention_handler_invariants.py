@@ -24,6 +24,7 @@ import asyncio
 from pathlib import Path
 
 import pytest
+from _async_wait import wait_until  # noqa: E402 — shared #1751 test wait helper
 
 from reyn.chat.outbox import OutboxMessage
 from reyn.chat.services.intervention_handler import InterventionHandler
@@ -143,10 +144,11 @@ async def test_dispatch_emits_intervention_requested_event(tmp_path, monkeypatch
     # Start dispatch in background; it will block on iv.future.
     task = asyncio.ensure_future(handler.dispatch(iv))
 
-    # Yield twice so the coroutine runs up to the `await registry.dispatch(iv)`
-    # line (which internally awaits iv.future).
-    await asyncio.sleep(0)
-    await asyncio.sleep(0)
+    # Wait for the dispatch to durably append intervention_dispatched. #1751: the
+    # append fsyncs via to_thread, so a fixed sleep(0) no longer covers it.
+    await wait_until(
+        lambda: any(e["kind"] == "intervention_dispatched" for e in _wal_events(tmp_path))
+    )
 
     # At this point the future is still pending — read the WAL.
     events = _wal_events(tmp_path)
@@ -197,7 +199,7 @@ async def test_wait_for_answer_returns_intervention_answer(tmp_path, monkeypatch
     monkeypatch.chdir(tmp_path)
     outbox: list[OutboxMessage] = []
     history: list[dict] = []
-    handler, _registry = _build_handler(tmp_path, outbox_items=outbox, history_items=history)
+    handler, registry = _build_handler(tmp_path, outbox_items=outbox, history_items=history)
 
     iv = _make_iv(run_id="rY", prompt="What city?")
 
@@ -206,9 +208,11 @@ async def test_wait_for_answer_returns_intervention_answer(tmp_path, monkeypatch
         handler.dispatch(iv)
     )
 
-    # Let the dispatch coroutine reach its await point.
-    await asyncio.sleep(0)
-    await asyncio.sleep(0)
+    # Wait until the dispatch has registered the pending iv (it does so AFTER its
+    # intervention_dispatched WAL append). #1751: the append fsyncs via to_thread,
+    # so a fixed sleep(0) fires maybe_answer before the iv is pending → it would
+    # return False and the gather below would hang.
+    await wait_until(lambda: bool(registry.list_active()))
 
     # Deliver answer via maybe_answer (the user's text-input path).
     consumed = await handler.maybe_answer("Tokyo")

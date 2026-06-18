@@ -30,6 +30,7 @@ import json
 from pathlib import Path
 
 import pytest
+from _async_wait import wait_until  # noqa: E402 — shared #1751 test wait helper
 
 from reyn.chat.session import Session
 from reyn.config import OnLimitConfig, SafetyConfig, TimeoutConfig
@@ -646,9 +647,9 @@ async def test_intervention_drop_for_run_cancels_all_matching(tmp_path, monkeypa
     # Dispatch both without awaiting — each coroutine blocks on iv.future.
     t1 = asyncio.ensure_future(session._dispatch_intervention(iv1))
     t2 = asyncio.ensure_future(session._dispatch_intervention(iv2))
-    # Yield twice so both dispatch coros reach `await iv.future`.
-    await asyncio.sleep(0)
-    await asyncio.sleep(0)
+    # Wait until both dispatches have registered (#1751: each fsyncs its WAL
+    # append via to_thread, so a fixed sleep(0) no longer covers them).
+    await wait_until(lambda: len(session.interventions.list_active()) >= 2)
 
     session._drop_interventions_for_run("rA")
     await asyncio.sleep(0)
@@ -685,7 +686,9 @@ async def test_intervention_choices_no_match_emits_unknown_choice_hint(tmp_path,
     iv = _iv(choices=choices, prompt="Confirm?")
 
     dispatch_task = asyncio.ensure_future(session._dispatch_intervention(iv))
-    await asyncio.sleep(0)
+    # Wait until the dispatch registered the pending iv (#1751: WAL append now
+    # fsyncs via to_thread; sleep(0) would answer before the iv is pending).
+    await wait_until(lambda: bool(session.interventions.list_active()))
 
     consumed = await session._maybe_answer_oldest_intervention("invalid")
     assert consumed is True, (
@@ -734,7 +737,9 @@ async def test_intervention_queued_status_when_dispatched_while_pending(tmp_path
 
     # Dispatch iv1 — blocks on its future. The registry calls on_announce.
     t1 = asyncio.ensure_future(session._dispatch_intervention(iv1))
-    await asyncio.sleep(0)
+    # Wait until iv1 is registered/announced (#1751: WAL append now fsyncs via
+    # to_thread; sleep(0) would drain the outbox before the prompt is emitted).
+    await wait_until(lambda: bool(session.interventions.list_active()))
 
     msgs_after_iv1 = _drain_outbox(session)
     intervention_msgs = [m for m in msgs_after_iv1 if m.kind == "intervention"]
@@ -744,7 +749,9 @@ async def test_intervention_queued_status_when_dispatched_while_pending(tmp_path
 
     # Dispatch iv2 while iv1 is still pending — triggers the queued-status path.
     t2 = asyncio.ensure_future(session._dispatch_intervention(iv2))
-    await asyncio.sleep(0)
+    # Wait until iv2 is registered (both pending) so its queued-status announce
+    # has been emitted (#1751: WAL append now fsyncs via to_thread).
+    await wait_until(lambda: len(session.interventions.list_active()) >= 2)
 
     msgs_after_iv2 = _drain_outbox(session)
     queued_msgs = [
