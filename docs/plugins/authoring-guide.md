@@ -169,7 +169,7 @@ await push_to_agent(
 )
 ```
 
-**Do NOT call internal session methods directly.** ``ChatSession.
+**Do NOT call internal session methods directly.** ``Session.
 _put_inbox`` etc. are private API and may change between Reyn
 versions; ``reyn.plugins.api`` is the contract that stays stable.
 

@@ -17,7 +17,7 @@ There is no separate memory API in the OS — memory is just files plus the `fil
 | Shared | `.reyn/memory/` | All agents in the project | Project-wide facts: who the user is, project decisions, external references |
 | Agent | `.reyn/agents/<name>/memory/` | Only that agent | Agent-specific behavior: a researcher's preferred sources, a writer's voice |
 
-Both layers share the same shape: a `MEMORY.md` index plus one `<slug>.md` body file per entry. ChatSession reads both `MEMORY.md` files on every router turn, merges them into a single view, and embeds it in the routing artifact as `memory_index.content`. The merged view has two clearly-marked sections so the LLM can tell which layer an entry came from:
+Both layers share the same shape: a `MEMORY.md` index plus one `<slug>.md` body file per entry. Session reads both `MEMORY.md` files on every router turn, merges them into a single view, and embeds it in the routing artifact as `memory_index.content`. The merged view has two clearly-marked sections so the LLM can tell which layer an entry came from:
 
 ```markdown
 # Memory Index (shared)
@@ -46,13 +46,13 @@ When the LLM decides to save, it emits two ops in the same router turn:
 
 The runtime rebuilds `MEMORY.md` mechanically from every body file's frontmatter — the LLM never writes `MEMORY.md` directly. This makes index correctness independent of model capability: a cheap model that historically dropped entries while reconstructing the index by hand can no longer do so.
 
-Each layer has its own MEMORY.md on disk; the merged `(shared)` / `(agent)` headings only exist in the in-memory view ChatSession synthesizes for the LLM.
+Each layer has its own MEMORY.md on disk; the merged `(shared)` / `(agent)` headings only exist in the in-memory view Session synthesizes for the LLM.
 
 ## Read path
 
 ```
-ChatSession._invoke_router
-  └─ _merge_memory_indexes(shared_path, agent_path, agent_name)
+RouterHostAdapter.get_memory_index()   (chat/services/router_host_adapter.py)
+  └─ _merge_memory_indexes(shared_path, agent_path, agent_name)   (module fn in chat/session.py)
        ├─ reads .reyn/memory/MEMORY.md (if present)
        ├─ reads .reyn/agents/<name>/memory/MEMORY.md (if present)
        └─ returns {status, content}  ← embedded in chat_routing_request artifact

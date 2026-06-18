@@ -7,7 +7,7 @@ applies_to: [reyn agent]
 
 # `reyn agent`
 
-永続的な agent を管理します。それぞれ独自のプロファイル、履歴、Memory レイヤー、受信トレイを持つ長命な ChatSession インスタンスです。
+永続的な agent を管理します。それぞれ独自のプロファイル、履歴、Memory レイヤー、受信トレイを持つ長命な Session インスタンスです。
 
 自動作成された `default` agent は常に存在します。`reyn agent new` で追加の名前付き agent を作成します。モデルについては [コンセプト/multi-agent](../../concepts/multi-agent/multi-agent.md) を参照してください。
 

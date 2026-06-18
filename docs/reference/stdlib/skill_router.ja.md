@@ -13,7 +13,7 @@ applies_to: [skill_router]
 
 router はネイティブツールを用いた `RouterLoop` として実装されており（通常の skill ディレクトリと LLM Phase 遷移グラフではありません）、毎ターン会話履歴と利用可能なディスパッチパス（Skill 実行・agent デリゲーション・直接返答）を表すネイティブツールセットを受け取り、LLM がツールを選択してターンが解決されるまでループします。
 
-メモリ書き込み（ユーザー／フィードバック／プロジェクト／参照情報の永続化）はループ内で LLM が `file/write` op を発行したときに行われます。メモリの読み込みはループ実行前に ChatSession が事前にマージします（[concepts/memory](../../concepts/data-retrieval/memory.md) を参照）。
+メモリ書き込み（ユーザー／フィードバック／プロジェクト／参照情報の永続化）はループ内で LLM が `file/write` op を発行したときに行われます。メモリの読み込みはループ実行前に Session が事前にマージします（[concepts/memory](../../concepts/data-retrieval/memory.md) を参照）。
 
 ## ソース
 

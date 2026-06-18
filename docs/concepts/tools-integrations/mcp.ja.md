@@ -258,7 +258,7 @@ reyn mcp serve --project /path/to/your/project
 | `list_agents` | `()` | `reyn.yaml` に登録されたエージェントの `{name, role}` 配列を JSON で返します。 |
 | `send_to_agent` | `(agent_name, message)` | 指定したエージェントにユーザー形式のメッセージを 1 件送信し、最終の返答テキストを（`--timeout` 秒まで）ブロックして返します。`{reply, partial, agent}` を返します。`partial=true` の場合はエージェントがまだ作業中です。続きを受け取るには再度呼び出してください。 |
 
-マルチターンの継続性は自動で保たれます。各エージェントの `ChatSession` は呼び出し間も `history.jsonl` を保持するため、Claude Code で始めた会話を `reyn chat` で再開することも、その逆も可能です。
+マルチターンの継続性は自動で保たれます。各エージェントの `Session` は呼び出し間も `history.jsonl` を保持するため、Claude Code で始めた会話を `reyn chat` で再開することも、その逆も可能です。
 
 ### Skill から見た「MCP 経由」の意味
 

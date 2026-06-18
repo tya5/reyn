@@ -47,7 +47,7 @@ reyn embeddings status --json | jq '.[] | select(.indexed_actions > 0)'
 
 ### `rebuild [<class_name>]`
 
-Drop the on-disk action index SQLite + WAL sidecars + `.build.lock` marker so the next `reyn chat` session re-embeds. Does NOT itself trigger embedding; the next ChatSession that uses `search_actions` re-runs `ActionEmbeddingIndex.build()`.
+Drop the on-disk action index SQLite + WAL sidecars + `.build.lock` marker so the next `reyn chat` session re-embeds. Does NOT itself trigger embedding; the next Session that uses `search_actions` re-runs `ActionEmbeddingIndex.build()`.
 
 ```bash
 reyn embeddings rebuild
