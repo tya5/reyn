@@ -132,14 +132,15 @@ class StateLog:
                     f.write("\n")
                 f.write(payload)
                 f.flush()
-                # #1751: fsync OFF the event loop so a slow disk (cloud-sync /
-                # network-FS / APFS pressure) doesn't block every other coroutine
-                # (TUI repaint, concurrent sessions) for the fsync duration. Still
-                # AWAITED — the append does not return until the write is durable,
-                # so the fsync-per-append recovery contract is intact. Safe under
-                # the held ``self._lock``: the await yields the loop but no other
-                # append can interleave the write, so WAL integrity is preserved.
-                await asyncio.to_thread(os.fsync, f.fileno())
+                # fsync synchronously so the append is durable before it returns
+                # (the fsync-per-append recovery contract). Kept ON the event loop
+                # deliberately: a synchronous fsync does not yield, so each append
+                # is event-loop-atomic — there is no intra-append suspension point
+                # at which another coroutine could interleave. (#1751 briefly moved
+                # this off-loop via ``asyncio.to_thread`` to unblock TUI repaint,
+                # but that opened a new intra-append concurrency surface; reverted —
+                # the TUI latency is addressed in the UI layer instead.)
+                os.fsync(f.fileno())
         # Post-append observers fire AFTER the durable write and OUTSIDE the lock
         # (#1560): durability is already secured, so a slow/failing observer
         # neither weakens crash-recovery nor serializes other appends. Best-effort
