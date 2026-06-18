@@ -117,12 +117,12 @@ class PythonRunner:
 
         FP-0042: ``file_read_paths`` / ``file_write_paths`` forward the
         skill-declared file permission paths into the subprocess so
-        ``reyn.safe.file.*`` calls inside the step can gate against
+        ``reyn.api.safe.file.*`` calls inside the step can gate against
         them. Both default to empty (= no file access granted) — pass
         the absolute paths the parent has approved for this step.
 
         #571 collapse arc Phase 3: ``http_hosts`` mirrors the same wiring
-        for ``reyn.safe.http.*`` per-host gating. Empty = no HTTP via
+        for ``reyn.api.safe.http.*`` per-host gating. Empty = no HTTP via
         safe.http.
 
         #1352-B: when ``sandbox_backend`` is a real backend (available, not
@@ -130,7 +130,7 @@ class PythonRunner:
         executes under an OS sandbox (Seatbelt / Landlock / container) — the
         same model as ``sandboxed_exec``. The harness's Python-level
         restricted-builtins stay (defense-in-depth, both layers); any subprocess
-        the step spawns (incl. ``reyn.interfaces.api.unsafe.shell``) is transitively
+        the step spawns (incl. ``reyn.api.unsafe.shell``) is transitively
         contained. ``noop`` / ``None`` → today's direct (unsandboxed) subprocess.
         ``sandbox_policy`` (the agent/operator policy dict) supplies the OS caps;
         its ``timeout_seconds`` is overridden by this step's ``timeout``.
@@ -143,14 +143,14 @@ class PythonRunner:
             "mode": mode,
             "artifact": artifact,
             "allowed_modules": list(allowed_modules or []),
-            # FP-0042: file-permission paths for reyn.safe.file gating.
+            # FP-0042: file-permission paths for reyn.api.safe.file gating.
             "file_read_paths": list(file_read_paths or []),
             "file_write_paths": list(file_write_paths or []),
-            # #571 Phase 3: host allowlist for reyn.safe.http gating.
+            # #571 Phase 3: host allowlist for reyn.api.safe.http gating.
             "http_hosts": list(http_hosts or []),
         }
         # #1199 S3.4 Part1: forward the phase sandbox write_paths cap (only when
-        # set) so reyn.safe.embed_index's host-direct index write self-gates. None
+        # set) so reyn.api.safe.embed_index's host-direct index write self-gates. None
         # (no phase sandbox policy) → key omitted → harness leaves the cap unset.
         if sandbox_write_paths is not None:
             request["sandbox_write_paths"] = list(sandbox_write_paths)

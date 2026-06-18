@@ -300,7 +300,7 @@ def test_universal_dispatch_covers_all_stdlib_skill_real_op_kinds() -> None:
     _INTENTIONAL_CHAT_ROUTER_EXCLUSIONS = frozenset({
         "ask_user",       # control-flow (user-input request); not a dispatchable action
         # #1303 Stage I: "embed" / "index_write" run-ops removed from index_docs +
-        # index_events (chunkers now stream into reyn.safe.embed_index), so no
+        # index_events (chunkers now stream into reyn.api.safe.embed_index), so no
         # stdlib skill declares them any more — they drop out of the skill op-kind
         # scan entirely (the ops still exist in the OS registry until S-I.5).
         # #1240 Wave 2b: coarse "file" kind dropped from OP_KIND_MODEL_MAP and the
@@ -372,7 +372,7 @@ def test_skill_real_op_kind_scanner_finds_known_ops() -> None:
         # swe_bench skill was retired (the general agent solves SWE via run-once,
         # not a skill). No stdlib skill declares sandboxed_exec any more.
         # #1303 Stage I removed the "embed" / "index_write" run-ops from
-        # index_docs + index_events (chunkers stream into reyn.safe.embed_index),
+        # index_docs + index_events (chunkers stream into reyn.api.safe.embed_index),
         # so no stdlib skill declares them any more.
         "recall",        # ops_report + skill_improver, run_op preprocessor
         "skill_resolve", # eval_builder + skill_improver, run_op preprocessor

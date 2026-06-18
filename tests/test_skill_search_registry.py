@@ -6,7 +6,7 @@ GitHub), keyword-filters, and returns a candidate list.
 
 Per testing policy: no ``unittest.mock`` patches. HTTP I/O is replaced via
 ``monkeypatch.setattr`` with a real callable that returns scripted dicts
-shaped like the real ``reyn.interfaces.api.unsafe.http.get`` response.
+shaped like the real ``reyn.api.unsafe.http.get`` response.
 
 Invariants:
   - Keyword extraction is deterministic across language mixes.
@@ -301,7 +301,7 @@ def test_fetch_uses_hardcoded_registry_url_post_fp0042_phase3(
     """Tier 2: regression guard — FP-0042 Phase 3 drift-fix dropped the
     ``REYN_SKILL_REGISTRY_URL`` env var override. Even when the env var
     is set, the fetch hits the canonical anthropics/skills endpoint
-    (= same treatment as ``reyn.safe.mcp.registry`` per Issue #571).
+    (= same treatment as ``reyn.api.safe.mcp.registry`` per Issue #571).
     """
     monkeypatch.setenv(
         "REYN_SKILL_REGISTRY_URL",

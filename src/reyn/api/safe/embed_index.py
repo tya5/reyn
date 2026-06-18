@@ -1,7 +1,7 @@
 """Safe-mode provider-direct embed+index for stdlib RAG skills (#1303 Stage I).
 
 Folds the old ``embed`` + ``index_write`` run-op pair into a single
-``reyn.safe.*`` surface a safe-mode python step (the swappable chunker) can
+``reyn.api.safe.*`` surface a safe-mode python step (the swappable chunker) can
 import through the AST allowlist. The chunker streams its chunks straight into
 :func:`embed_and_index` — no intermediate ``<cwd>/artifacts/*.jsonl`` file —
 which embeds them provider-direct and writes the vectors to the per-source
@@ -48,7 +48,7 @@ Internal layering
 This module is reyn-package internal code (= not subject to the safe-mode AST
 validator). It freely imports the embedding provider / index backend; the
 validator only rejects *user-code* imports outside the allowlist, and
-``reyn.safe.*`` is admitted.
+``reyn.api.safe.*`` is admitted.
 """
 from __future__ import annotations
 
@@ -68,7 +68,7 @@ from reyn.data.index.source_manifest import SourceEntry, get_source_manifest
 # All ``None`` = use the self-sufficient defaults (cwd / env / lazy config).
 # :func:`_set_context` overrides any subset for tests; :func:`_reset_context`
 # restores the defaults. Mirrors the module-globals contract of
-# ``reyn.safe.file`` / ``reyn.safe.http``, but defaulting (not requiring) so
+# ``reyn.api.safe.file`` / ``reyn.api.safe.http``, but defaulting (not requiring) so
 # the harness needs no wiring (#1303 S-I.2 fork (B)).
 
 _workspace_root: Path | None = None

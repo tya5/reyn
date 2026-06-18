@@ -1,8 +1,8 @@
-"""Tier 2: safe-mode allowlist accepts reyn.safe.* and rejects reyn.unsafe.*.
+"""Tier 2: safe-mode allowlist accepts reyn.api.safe.* and rejects reyn.unsafe.*.
 
 OS invariant from FP-0014 / ADR-G Phase 1:
 
-  - Safe-mode python steps may import from the Reyn-vetted `reyn.safe`
+  - Safe-mode python steps may import from the Reyn-vetted `reyn.api.safe`
     package and its submodules (= helpers callable from sandboxed code).
   - Safe-mode python steps must NOT import from `reyn.unsafe.*` (=
     helpers reserved for unsafe-mode steps, explicit defence even though
@@ -17,14 +17,14 @@ from reyn.core.kernel._python_allowlist import module_is_allowed
 
 
 def test_reyn_safe_root_is_allowed():
-    """Tier 2: bare `reyn.safe` import allowed."""
-    assert module_is_allowed("reyn.safe", frozenset()) is True
+    """Tier 2: bare `reyn.api.safe` import allowed."""
+    assert module_is_allowed("reyn.api.safe", frozenset()) is True
 
 
 def test_reyn_safe_submodule_is_allowed():
-    """Tier 2: `reyn.safe.hash` (or any submodule) is allowed."""
-    assert module_is_allowed("reyn.safe.hash", frozenset()) is True
-    assert module_is_allowed("reyn.safe.json", frozenset()) is True
+    """Tier 2: `reyn.api.safe.hash` (or any submodule) is allowed."""
+    assert module_is_allowed("reyn.api.safe.hash", frozenset()) is True
+    assert module_is_allowed("reyn.api.safe.json", frozenset()) is True
 
 
 def test_reyn_unsafe_root_is_rejected():
@@ -39,9 +39,9 @@ def test_reyn_unsafe_submodule_is_rejected():
 
 
 def test_reyn_bare_remains_rejected():
-    """Tier 2: bare `reyn` import (not `reyn.safe.*`) still rejected.
+    """Tier 2: bare `reyn` import (not `reyn.api.safe.*`) still rejected.
 
-    Only `reyn.safe.*` is allowlisted — `reyn` itself or any other
+    Only `reyn.api.safe.*` is allowlisted — `reyn` itself or any other
     `reyn.X` is rejected (the implicit "top-level not in PURE_STDLIB_ALLOWLIST"
     path).
     """

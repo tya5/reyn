@@ -99,8 +99,8 @@ class _FakeProvider:
 def test_embed_index_forwards_cap_to_backend(tmp_path: Path) -> None:
     """Tier 2: the harness-set sandbox_write_paths context flows from embed_index
     into SqliteIndexBackend → a restrictive cap DENIES the streamed index write."""
+    from reyn.api.safe import embed_index as ei
     from reyn.data.embedding import register_provider
-    from reyn.safe import embed_index as ei
 
     register_provider("fake_s34", _FakeProvider)
     ei._reset_context()

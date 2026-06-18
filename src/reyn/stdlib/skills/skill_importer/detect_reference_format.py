@@ -32,7 +32,7 @@ Failure handling: any exception → ``is_reference_format=false`` +
 back to its existing LLM-driven decomposition discipline (= PR #583)
 in that case.
 
-I/O route: ``reyn.safe.http.get`` (= urllib, no extra deps),
+I/O route: ``reyn.api.safe.http.get`` (= urllib, no extra deps),
 same as ``mcp_search`` / ``skill_search`` preprocessors after the
 FP-0042 Phase 3 drift-fix migration.
 """
@@ -40,7 +40,7 @@ from __future__ import annotations
 
 import re
 
-from reyn.safe.http import get as http_get
+from reyn.api.safe.http import get as http_get
 
 _USER_AGENT = "reyn/1.0"
 

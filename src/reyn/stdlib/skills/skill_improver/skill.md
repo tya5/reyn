@@ -89,7 +89,7 @@ permissions:
       mode: safe
       timeout: 5
     # FP-0042 Phase 2.7 (2026-05-23): all skill_improver python steps now
-    # run mode: safe. File I/O goes through reyn.safe.file; the
+    # run mode: safe. File I/O goes through reyn.api.safe.file; the
     # .reyn/events/ + .reyn/skill-versions/ writes stay in the default
     # write zone so no explicit file.write declaration is needed.
     - module: ./trace_collector_pure.py
@@ -102,7 +102,7 @@ permissions:
       timeout: 30
     # FP-0006 B: version snapshot (finalize preprocessor). Reads original
     # skill.md, writes .reyn/skill-versions/<name>/v<N>.md, manages the
-    # `current` pointer file — all via reyn.safe.file as of FP-0042
+    # `current` pointer file — all via reyn.api.safe.file as of FP-0042
     # Phase 2.7. max_versions is read from data._on_propose_config which
     # the file_read + parse_on_propose_config_minimal chain populates.
     - module: ./version_snapshot.py

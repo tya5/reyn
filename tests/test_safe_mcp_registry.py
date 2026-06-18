@@ -1,4 +1,4 @@
-"""Tier 2 — reyn.safe.mcp.registry contract tests (FP-0042 Phase 2.4).
+"""Tier 2 — reyn.api.safe.mcp.registry contract tests (FP-0042 Phase 2.4).
 
 Tests the ``search`` and ``lookup`` public surface that safe-mode skills
 import. The HTTP boundary (``_http_get_json``) is the only mocked seam;
@@ -20,8 +20,8 @@ from unittest import mock
 
 import pytest
 
+import reyn.api.safe.mcp.registry as sr
 import reyn.core.registry.cache as cache_mod
-import reyn.safe.mcp.registry as sr
 
 # ── Fixtures ────────────────────────────────────────────────────────────────
 

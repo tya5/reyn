@@ -462,7 +462,7 @@ class ChunkMetadata(BaseModel):
 
 
 # #1303 Stage I: EmbedIROp + IndexWriteIROp deleted. The chunkers stream into
-# reyn.safe.embed_index (provider.embed + SqliteIndexBackend directly) and
+# reyn.api.safe.embed_index (provider.embed + SqliteIndexBackend directly) and
 # recall embeds the query provider-direct, so neither run-op has any caller.
 # EmbeddingProvider / SqliteIndexBackend / IndexQueryIROp / RecallIROp remain.
 

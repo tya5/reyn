@@ -5,8 +5,8 @@ This module is the safe-mode home for ``gather_samples`` and
 sample input files and estimate embedding cost so the LLM can choose
 a chunk strategy (or abort on cost). Before FP-0042 these lived in
 ``chunkers.py`` with ``mode: unsafe`` because they called
-``reyn.interfaces.api.unsafe.file``. After FP-0042 they read via
-``reyn.safe.file``, which goes through Reyn's permission resolver
+``reyn.api.unsafe.file``. After FP-0042 they read via
+``reyn.api.safe.file``, which goes through Reyn's permission resolver
 per call.
 
 Module split rationale (matches the existing ``chunkers_safe.py``
@@ -29,7 +29,7 @@ import glob as _glob_mod
 import re as _re
 from math import ceil
 
-from reyn.safe import file as _safe_file
+from reyn.api.safe import file as _safe_file
 
 # ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -46,7 +46,7 @@ def _is_regular_file(path: str) -> bool:
     """Return True iff ``path`` exists and is a regular file.
 
     Replaces the unsafe-mode ``os.path.isfile`` filter — ``os`` is not
-    in the safe-mode import allowlist. Uses ``reyn.safe.file.stat``
+    in the safe-mode import allowlist. Uses ``reyn.api.safe.file.stat``
     whose ``mode`` field is the underlying ``os.stat`` mode int. Any
     error (permission denied, missing file, broken symlink) returns
     False, matching ``os.path.isfile``'s suppress-all-errors behaviour.
@@ -126,7 +126,7 @@ def gather_samples(artifact: dict) -> dict:
     excerpts and a file summary for the LLM's strategy decision.
 
     FP-0042: file content reads + stat calls go through
-    ``reyn.safe.file``, which checks the path is under the skill's
+    ``reyn.api.safe.file``, which checks the path is under the skill's
     declared read paths (or the workspace default zone). Reads
     outside the declared set raise ``PermissionError`` which the
     loops below treat the same as ``OSError`` (= silent skip,
@@ -208,9 +208,9 @@ def cost_preflight(artifact: dict) -> dict:
     FP-0042 note: no file content I/O here — the file_count comes from
     re-globbing the same path the samples were drawn from. ``glob.glob``
     is metadata-only (admitted by the safe-mode allowlist as a
-    restricted ambient source); no ``reyn.safe.file`` calls happen, so
+    restricted ambient source); no ``reyn.api.safe.file`` calls happen, so
     the migration is purely about dropping the
-    ``import reyn.interfaces.api.unsafe.file`` dependency.
+    ``import reyn.api.unsafe.file`` dependency.
     """
     data = artifact.get("data") or {}
     path = str(data.get("path") or "")

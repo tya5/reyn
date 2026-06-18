@@ -36,7 +36,7 @@ permissions:
       - ".reyn/index/"
   python:
     # FP-0042 Phase 2.6 (2026-05-23): all 5 python steps run mode: safe.
-    # File reads + stat go through reyn.safe.file; ``glob.glob`` covers
+    # File reads + stat go through reyn.api.safe.file; ``glob.glob`` covers
     # path enumeration (= restricted ambient source per the 2026-05-15
     # R-PURE-MODE stdlib audit). ``.reyn/events/`` is inside the
     # default-read zone (CWD), so no skill.md file.read declaration is
@@ -46,7 +46,7 @@ permissions:
       mode: safe
       timeout: 10
 
-    # Fallback path: walks .reyn/events/*.jsonl via reyn.safe.file when
+    # Fallback path: walks .reyn/events/*.jsonl via reyn.api.safe.file when
     # upstream did not produce recall stats. No-ops on _path=recall.
     - module: ./aggregate.py
       function: collect_aggregate_fallback

@@ -146,28 +146,29 @@ def module_is_allowed(module_name: str, extra_allowed: frozenset[str] | set[str]
     Allows:
       - any top-level stdlib module in PURE_STDLIB_ALLOWLIST
       - any module in `extra_allowed` (passed in by the parent)
-      - the `reyn.safe` package and its submodules (= Reyn-vetted safe
+      - the `reyn.api.safe` package and its submodules (= Reyn-vetted safe
         helpers; explicit allow even though `reyn` is not in the stdlib
         allowlist)
 
-    Explicitly rejects:
-      - `reyn.unsafe` and its submodules (= reserved for unsafe-mode steps;
-        explicit defence so the import is rejected at parse time)
+    The safety boundary is **allow-of-one + vetting**, not import-blocking: only
+    `reyn.api.safe.*` is allowed (everything else, including `reyn.api.unsafe.*`,
+    is rejected by default-deny), and the safe helpers are vetted to not expose
+    unsafe operations. An explicit `reyn.api.unsafe` reject is NOT maintained —
+    it is shallow theater (blocking the import name does nothing if a `safe.*`
+    helper could reach an equivalent operation by another path; the real guard is
+    the vetted allow-of-one). #311 (owner): the boundary is the allow-list,
+    default-deny does the rejecting.
 
-    A submodule like `decimal.Decimal` is checked by its top-level package
-    name (`decimal`) because that's the import unit. `reyn.safe.X` / `reyn.unsafe.X`
-    are matched on the package prefix instead of the top-level so the
-    explicit allow / reject pair takes precedence over the implicit
-    "`reyn` not in stdlib allowlist" path.
+    A submodule like `decimal.Decimal` is checked by its top-level package name
+    (`decimal`) because that's the import unit. `reyn.api.safe.X` is matched on
+    the package prefix (not the top-level `reyn`) so the explicit allow takes
+    precedence over the implicit "`reyn` not in stdlib allowlist" path.
     """
-    # Explicit reject of reyn.unsafe.* — defence-in-depth even though `reyn`
-    # is not in PURE_STDLIB_ALLOWLIST (= the implicit path would already
-    # reject it; this branch makes the intent unambiguous).
-    if module_name == "reyn.unsafe" or module_name.startswith("reyn.unsafe."):
-        return False
-    # Explicit allow of reyn.safe.* — Reyn-vetted helpers callable from
-    # safe-mode python steps.
-    if module_name == "reyn.safe" or module_name.startswith("reyn.safe."):
+    # Explicit allow of the Reyn-vetted safe helpers (`reyn.api.safe.*`, #311).
+    # Everything else — including reyn.api.unsafe.* (and the removed pre-#311
+    # reyn.safe.* / reyn.unsafe.*) — falls through to default-deny; no explicit
+    # reject is needed (allow-of-one + vetting is the boundary).
+    if module_name == "reyn.api.safe" or module_name.startswith("reyn.api.safe."):
         return True
     top = module_name.split(".", 1)[0]
     return top in PURE_STDLIB_ALLOWLIST or top in extra_allowed

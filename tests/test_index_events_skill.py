@@ -11,7 +11,7 @@ Covers:
   - BUG-1 regression: resolve_scan_context output < ARTIFACT_REF_THRESHOLD
 
 FP-0042 Phase 2.3 (2026-05-23): chunkers.py migrated to mode: safe — file
-I/O goes through reyn.safe.file. The autouse ``_safe_file_context`` fixture
+I/O goes through reyn.api.safe.file. The autouse ``_safe_file_context`` fixture
 below grants reads + writes under ``tmp_path`` so the safe-mode helpers
 can run inside the test process (= mirrors what the production
 preprocessor_executor wires for the safe-mode subprocess).
@@ -24,11 +24,11 @@ from pathlib import Path
 
 import pytest
 
+from reyn.api.safe import embed_index as ei
+from reyn.api.safe import file as sf
 from reyn.core.context_builder import ARTIFACT_REF_THRESHOLD
 from reyn.data.embedding import register_provider
 from reyn.data.embedding.provider import EmbedBatchResult
-from reyn.safe import embed_index as ei
-from reyn.safe import file as sf
 from reyn.stdlib.skills.index_events.chunkers import (
     advance_cursor,
     collect_run_chunks,
@@ -61,7 +61,7 @@ class _FakeEmbedProvider:
 
 @pytest.fixture(autouse=True)
 def _safe_file_context(tmp_path: Path):
-    """Grant reyn.safe.file read+write over tmp_path for each test.
+    """Grant reyn.api.safe.file read+write over tmp_path for each test.
 
     Mirrors the production wiring (= CWD as default read zone, .reyn/ +
     reyn/ + explicit grants as write zones). Tests in this module
@@ -75,7 +75,7 @@ def _safe_file_context(tmp_path: Path):
         read_paths=[str(tmp_path)],
         write_paths=[str(tmp_path)],
     )
-    # #1303 Stage I: run_collect_chunks streams into reyn.safe.embed_index;
+    # #1303 Stage I: run_collect_chunks streams into reyn.api.safe.embed_index;
     # wire a deterministic fake provider (workspace_root defaults to cwd).
     register_provider("fake_ev", _FakeEmbedProvider)
     ei._reset_context()

@@ -330,7 +330,7 @@ def load_config(cwd: Path | None = None) -> ReynConfig:
 
     # #571 follow-up (post-collapse-arc): propagate ``mcp.registries: [...]``
     # config list into the ``REYN_MCP_REGISTRY_URLS`` env var so the
-    # subprocess-side ``reyn.safe.mcp.registry`` (= subprocess inherits
+    # subprocess-side ``reyn.api.safe.mcp.registry`` (= subprocess inherits
     # parent env) and the op-handler-side ``reyn.core.registry.client``
     # (= same process, reads same env var) see the same list. Explicit
     # operator-set env var wins over config (= the standard

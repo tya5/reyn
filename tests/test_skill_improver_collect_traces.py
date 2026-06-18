@@ -13,7 +13,7 @@ No mocks, no AsyncMock, no patch decorators — per CLAUDE.md testing policy.
 Real filesystem I/O via tmp_path; real Python function calls.
 
 FP-0042 Phase 2.7 (2026-05-23): ``trace_collector.py`` migrated from
-mode: unsafe to mode: safe; file I/O now goes through ``reyn.safe.file``.
+mode: unsafe to mode: safe; file I/O now goes through ``reyn.api.safe.file``.
 The autouse ``_safe_file_context`` fixture grants reads under
 ``tmp_path`` so the safe-mode helpers can run inside the test process.
 
@@ -31,7 +31,7 @@ from pathlib import Path
 
 import pytest
 
-from reyn.safe import file as sf
+from reyn.api.safe import file as sf
 from reyn.stdlib.skills.skill_improver.trace_collector import collect_traces_fallback
 from reyn.stdlib.skills.skill_improver.trace_collector_pure import dispatch_traces
 
@@ -53,7 +53,7 @@ def collect_traces(artifact: dict) -> dict:
 
 @pytest.fixture(autouse=True)
 def _safe_file_context(tmp_path: Path):
-    """Grant reyn.safe.file read access over tmp_path for each test."""
+    """Grant reyn.api.safe.file read access over tmp_path for each test."""
     sf._read_paths = ()
     sf._write_paths = ()
     sf._context_initialised = False

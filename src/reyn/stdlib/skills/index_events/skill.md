@@ -31,11 +31,11 @@ graph:
 permissions:
   python:
     # FP-0042 Phase 2.3 (2026-05-23): migrated from mode: unsafe to mode: safe.
-    # File reads / writes / stat / glob go through reyn.safe.file; the
-    # atomic cursor update uses reyn.safe.file.write_atomic. Event-file
+    # File reads / writes / stat / glob go through reyn.api.safe.file; the
+    # atomic cursor update uses reyn.api.safe.file.write_atomic. Event-file
     # reads under .reyn/events/ + cursor reads/writes under
     # .reyn/index/events_cursor are inside the default zones. #1303 Stage I:
-    # run_collect_chunks now streams chunks into reyn.safe.embed_index (which
+    # run_collect_chunks now streams chunks into reyn.api.safe.embed_index (which
     # writes under .reyn/index/, default zone) — no out-of-zone JSONL output,
     # so the old file.write:artifacts grant is dropped.
     - module: ./chunkers.py
@@ -54,7 +54,7 @@ postprocessor:
   output_schema: index_events_summary
   steps:
     # Step 1: safe — walk events_root, group by run, and stream the chunks
-    # into reyn.safe.embed_index (provider-direct embed+index to the "events"
+    # into reyn.api.safe.embed_index (provider-direct embed+index to the "events"
     # source; folds the old embed + index_write run-ops, no intermediate
     # file). #1303 Stage I.
     - type: python
@@ -97,7 +97,7 @@ required_credentials: []
 
 `index_events` indexes the P6 event log at run granularity (1 run = 1 chunk)
 into the existing RAG infrastructure (ADR-0033). The chunker streams runs into
-`reyn.safe.embed_index` (provider-direct embed+index; #1303 Stage I folded the
+`reyn.api.safe.embed_index` (provider-direct embed+index; #1303 Stage I folded the
 old `embed` / `index_write` run-ops) and `recall` reads it back. Incremental
 via `.reyn/index/events_cursor`.
 
@@ -112,7 +112,7 @@ via `.reyn/index/events_cursor`.
 2. **Skill.postprocessor** (deterministic, LLM not involved):
    - `run_collect_chunks` (python step, safe): walks `.reyn/events/` from the
      cursor, groups events by run boundary, and **streams** the chunks into
-     `reyn.safe.embed_index.embed_and_index` — which embeds them provider-direct
+     `reyn.api.safe.embed_index.embed_and_index` — which embeds them provider-direct
      and writes the vectors to the `events` index source
      (`.reyn/index/events/index.db`), tracking the max `completed_at`. No
      intermediate file (#1303 Stage I folds the old `embed` + `index_write`

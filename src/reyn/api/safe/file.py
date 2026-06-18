@@ -1,6 +1,6 @@
 """Permission-gated file I/O for safe-mode python preprocessor / postprocessor steps.
 
-FP-0042 — replaces ``reyn.interfaces.api.unsafe.file`` for stdlib (and any user skill
+FP-0042 — replaces ``reyn.api.unsafe.file`` for stdlib (and any user skill
 that wants to opt into the Reyn permission model). Every file operation
 goes through the path-declaration check that the calling skill's
 ``skill.md`` opted into; reads / writes outside the declared paths raise
@@ -9,7 +9,7 @@ goes through the path-declaration check that the calling skill's
 Public surface
 --------------
 
-High-level (drop-in replacement for ``reyn.interfaces.api.unsafe.file``):
+High-level (drop-in replacement for ``reyn.api.unsafe.file``):
 
 - :func:`read(path, *, encoding="utf-8")` → str
 - :func:`write(path, content, *, encoding="utf-8")` → None
@@ -154,7 +154,7 @@ def _is_under(path: str, allowed: tuple[str, ...]) -> bool:
 def _check_read(path: str) -> None:
     if not _context_initialised:
         raise PermissionError(
-            "reyn.safe.file: permission context not initialised. This "
+            "reyn.api.safe.file: permission context not initialised. This "
             "module must be invoked from a PythonRunner-managed safe-mode "
             "step; bare-process use requires calling "
             "_set_permission_context(read_paths=..., write_paths=...) "
@@ -162,7 +162,7 @@ def _check_read(path: str) -> None:
         )
     if not _is_under(path, _read_paths):
         raise PermissionError(
-            f"reyn.safe.file: read from {path!r} is not in the declared "
+            f"reyn.api.safe.file: read from {path!r} is not in the declared "
             f"read_paths {list(_read_paths)}. Declare it in skill.md "
             f"frontmatter:\n"
             f"  permissions:\n"
@@ -203,7 +203,7 @@ def _is_explicitly_listed(path: str, allowed: tuple[str, ...]) -> bool:
 def _check_write(path: str) -> None:
     if not _context_initialised:
         raise PermissionError(
-            "reyn.safe.file: permission context not initialised "
+            "reyn.api.safe.file: permission context not initialised "
             f"(write attempted: {path!r})."
         )
     # #571 collapse arc Phase 2: canonical protected paths require an
@@ -211,7 +211,7 @@ def _check_write(path: str) -> None:
     if _is_canonical_protected_write(path):
         if not _is_explicitly_listed(path, _write_paths):
             raise PermissionError(
-                f"reyn.safe.file: write to {path!r} requires an explicit "
+                f"reyn.api.safe.file: write to {path!r} requires an explicit "
                 f"declaration — this is a canonical protected path "
                 f"(#571) and is not covered by the broad ``.reyn/`` "
                 f"default write zone. Declare it directly:\n"
@@ -226,7 +226,7 @@ def _check_write(path: str) -> None:
         return
     if not _is_under(path, _write_paths):
         raise PermissionError(
-            f"reyn.safe.file: write to {path!r} is not in the declared "
+            f"reyn.api.safe.file: write to {path!r} is not in the declared "
             f"write_paths {list(_write_paths)}. Declare it in skill.md "
             f"frontmatter:\n"
             f"  permissions:\n"
@@ -236,7 +236,7 @@ def _check_write(path: str) -> None:
         )
 
 
-# ── High-level API (drop-in for reyn.interfaces.api.unsafe.file) ───────────────────────
+# ── High-level API (drop-in for reyn.api.unsafe.file) ───────────────────────
 
 
 def read(path: str, *, encoding: str = "utf-8") -> str:

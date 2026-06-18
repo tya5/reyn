@@ -12,7 +12,7 @@ caller was the test suite; the composition moved to
 ``tests/test_skill_improver_collect_traces.py`` as a local helper.
 
 FP-0042 Phase 2.7 (2026-05-23): migrated from mode: unsafe to mode: safe.
-File reads + stat go through ``reyn.safe.file``; the
+File reads + stat go through ``reyn.api.safe.file``; the
 ``.reyn/events/**/*.jsonl`` walk uses ``glob.glob`` (= restricted ambient
 source per the 2026-05-15 R-PURE-MODE stdlib audit). Path manipulation
 uses plain string operations because ``pathlib`` is not on the safe-mode
@@ -37,7 +37,7 @@ from collections import defaultdict
 from datetime import datetime, timezone
 from typing import Any
 
-from reyn.safe import file as _safe_file
+from reyn.api.safe import file as _safe_file
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -59,7 +59,7 @@ def collect_traces_fallback(artifact: dict) -> dict:
     dispatcher already produced stats.
 
     FP-0042 Phase 2.7: mode: safe. File reads + stat go through
-    :mod:`reyn.safe.file`.
+    :mod:`reyn.api.safe.file`.
 
     If ``data.traces_summary._path == "recall"``, the upstream
     ``dispatch_traces`` step already computed real stats. Strip the
@@ -201,7 +201,7 @@ def _collect_from_raw_events(
 def _path_exists_safe(path: str) -> bool:
     """Permission-aware existence check that does not raise.
 
-    ``reyn.safe.file.exists`` raises ``PermissionError`` when the path
+    ``reyn.api.safe.file.exists`` raises ``PermissionError`` when the path
     falls outside the declared read zone. For the events-root probe, we
     want a permission denial to count as "not present" so the step
     degrades to an empty summary.
@@ -216,7 +216,7 @@ def _is_regular_file(path: str) -> bool:
     """Return True iff ``path`` exists and is a regular file.
 
     Replacement for ``os.path.isfile`` (= ``os`` is not on the safe-mode
-    allowlist). Uses ``reyn.safe.file.stat`` and checks the POSIX mode
+    allowlist). Uses ``reyn.api.safe.file.stat`` and checks the POSIX mode
     bits. Any error (missing, permission denied, broken symlink) returns
     False — matches ``os.path.isfile``'s suppress-all-errors behaviour.
     """
@@ -243,7 +243,7 @@ def _discover_event_files(events_root: str) -> list[str]:
 def _group_events_by_run(event_files: list[str]) -> dict[str, list[dict]]:
     """Group raw events by run_id.
 
-    Reads each event file via :mod:`reyn.safe.file` (= permission-gated).
+    Reads each event file via :mod:`reyn.api.safe.file` (= permission-gated).
     Files outside the declared read zone, or that fail to parse, are
     silently skipped.
     """

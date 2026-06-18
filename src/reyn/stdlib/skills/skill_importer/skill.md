@@ -25,8 +25,8 @@ permissions:
       scope: recursive
   python:
     # FP-0042 Phase 3 drift-fix (2026-05-23): migrated from mode: unsafe
-    # to mode: safe via reyn.safe.http (= urllib-backed). #571 collapse
-    # arc Phase 3 (2026-05-23) added per-host gating on reyn.safe.http;
+    # to mode: safe via reyn.api.safe.http (= urllib-backed). #571 collapse
+    # arc Phase 3 (2026-05-23) added per-host gating on reyn.api.safe.http;
     # this skill explicitly declares the two GitHub hosts it fetches
     # from (raw.githubusercontent.com for skill source, api.github.com
     # for the Contents API sibling listing).

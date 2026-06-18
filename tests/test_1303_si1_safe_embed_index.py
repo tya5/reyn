@@ -1,4 +1,4 @@
-"""Tier 2: reyn.safe.embed_index provider-direct embed+index (#1303 Stage I).
+"""Tier 2: reyn.api.safe.embed_index provider-direct embed+index (#1303 Stage I).
 
 The safe-mode API folds the old embed + index_write run-ops into one streaming
 call. These pin the OS invariants: chunks are embedded + written to the SQLite
@@ -13,11 +13,11 @@ from pathlib import Path
 
 import pytest
 
+from reyn.api.safe import embed_index as ei
 from reyn.data.embedding import register_provider
 from reyn.data.embedding.provider import EmbedBatchResult
 from reyn.data.index import SqliteIndexBackend
 from reyn.data.index.source_manifest import get_source_manifest
-from reyn.safe import embed_index as ei
 
 
 class CountingFakeProvider:

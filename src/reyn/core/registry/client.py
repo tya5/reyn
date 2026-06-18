@@ -98,7 +98,7 @@ _DEFAULT_BASE_URL = "https://registry.modelcontextprotocol.io"
 def _base_urls() -> list[str]:
     """Resolve the ordered list of registry URLs to try.
 
-    Mirrors :func:`reyn.safe.mcp.registry._registry_urls` so both
+    Mirrors :func:`reyn.api.safe.mcp.registry._registry_urls` so both
     surfaces — the async op-handler client (this module) and the
     safe-mode skill-internal lookup — agree on which registries to
     try and in what order.

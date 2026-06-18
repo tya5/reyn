@@ -77,7 +77,7 @@ _REGISTRY_WIRED_KINDS: frozenset[str] = frozenset({
 # registry.lookup("mcp") / registry.lookup("run_skill") → None → execute_op.
 _LEGACY_ONLY_KINDS: frozenset[str] = frozenset({
     # #1303 Stage I: "embed" + "index_write" deleted from OP_KIND_MODEL_MAP
-    # (folded into reyn.safe.embed_index; recall embeds provider-direct).
+    # (folded into reyn.api.safe.embed_index; recall embeds provider-direct).
     "index_drop",
     "index_query",
     "judge_output",

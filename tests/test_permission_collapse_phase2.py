@@ -18,7 +18,7 @@ Verifies the OS-invariants introduced by Phase 2:
    state) are unaffected — the broad default zone still covers them.
 
 Tier policy: these are OS-invariant tests pinning the contract between
-the permission resolver and `reyn.safe.file`. They use real
+the permission resolver and `reyn.api.safe.file`. They use real
 PermissionResolver instances + the real safe.file module — no mocks.
 """
 from __future__ import annotations
@@ -162,13 +162,13 @@ def test_canonical_path_via_explicit_file_write_requires_startup_approval(tmp_pa
     assert ".reyn/index/sources.yaml" in prompt_paths
 
 
-# ── reyn.safe.file enforcement ────────────────────────────────────────────────
+# ── reyn.api.safe.file enforcement ────────────────────────────────────────────────
 
 
 def test_safe_file_check_write_rejects_canonical_via_parent_dir(tmp_path, monkeypatch):
     """Tier 2: safe.file._check_write rejects a canonical path covered only by parent dir."""
     monkeypatch.chdir(tmp_path)
-    from reyn.safe import file as safe_file
+    from reyn.api.safe import file as safe_file
 
     # Simulate the preprocessor_executor wiring: .reyn/ in write_paths via prefix.
     safe_file._set_permission_context(
@@ -182,7 +182,7 @@ def test_safe_file_check_write_rejects_canonical_via_parent_dir(tmp_path, monkey
 def test_safe_file_check_write_accepts_canonical_via_explicit_path(tmp_path, monkeypatch):
     """Tier 2: safe.file._check_write accepts canonical path when listed explicitly."""
     monkeypatch.chdir(tmp_path)
-    from reyn.safe import file as safe_file
+    from reyn.api.safe import file as safe_file
 
     safe_file._set_permission_context(
         read_paths=[str(tmp_path)],
@@ -199,7 +199,7 @@ def test_safe_file_check_write_accepts_canonical_via_explicit_path(tmp_path, mon
 def test_safe_file_check_write_still_allows_non_canonical_under_reyn(tmp_path, monkeypatch):
     """Tier 2: non-canonical .reyn/ paths still pass via the broad default zone."""
     monkeypatch.chdir(tmp_path)
-    from reyn.safe import file as safe_file
+    from reyn.api.safe import file as safe_file
 
     safe_file._set_permission_context(
         read_paths=[str(tmp_path)],
@@ -222,7 +222,7 @@ def test_safe_file_check_write_rejects_approvals_yaml(tmp_path, monkeypatch):
     in-zone — the denial is specific to the protected-path list.
     """
     monkeypatch.chdir(tmp_path)
-    from reyn.safe import file as safe_file
+    from reyn.api.safe import file as safe_file
 
     safe_file._set_permission_context(
         read_paths=[str(tmp_path)],
@@ -244,7 +244,7 @@ def test_canonical_protected_lists_stay_in_sync():
     copies. Closes the recurrence class behind the #1199 gap, where
     approvals.yaml was added to the parent list only.
     """
-    from reyn.safe.file import _CANONICAL_PROTECTED_WRITE_PATHS as safe_paths
+    from reyn.api.safe.file import _CANONICAL_PROTECTED_WRITE_PATHS as safe_paths
 
     assert _CANONICAL_PROTECTED_WRITE_PATHS == safe_paths
 
@@ -263,7 +263,7 @@ async def test_mcp_cron_now_allowed_after_carveout_removal(tmp_path, monkeypatch
     """
     monkeypatch.chdir(tmp_path)
     resolver = PermissionResolver(config_permissions={}, project_root=tmp_path)
-    from reyn.safe import file as safe_file
+    from reyn.api.safe import file as safe_file
 
     safe_file._set_permission_context(
         read_paths=[str(tmp_path)],

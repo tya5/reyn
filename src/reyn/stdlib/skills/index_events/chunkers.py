@@ -13,8 +13,8 @@ Postprocessor entry points (called by the skill harness with artifact dict):
   run_advance_cursor  — artifact wrapper around advance_cursor
 
 FP-0042 Phase 2.3 (2026-05-23): migrated from mode: unsafe to mode: safe.
-File reads / writes / stat / glob go through ``reyn.safe.file``; the atomic
-cursor update uses the new ``reyn.safe.file.write_atomic`` primitive. The
+File reads / writes / stat / glob go through ``reyn.api.safe.file``; the atomic
+cursor update uses the new ``reyn.api.safe.file.write_atomic`` primitive. The
 event-files glob covers ``.reyn/events/`` (= default-zone read), the chunks
 JSONL output goes to ``artifacts/event_chunks.jsonl`` (= granted via
 ``permissions.file.write: artifacts`` in skill.md), and the cursor file at
@@ -38,8 +38,8 @@ from collections import defaultdict
 from datetime import datetime, timezone
 from typing import Any, Iterator
 
-from reyn.safe import embed_index as _embed_index
-from reyn.safe import file as _safe_file
+from reyn.api.safe import embed_index as _embed_index
+from reyn.api.safe import file as _safe_file
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -207,7 +207,7 @@ def collect_run_chunks(events_root: str, since: str | None) -> list[dict]:
 def advance_cursor(cursor_path: str, new_ts: str) -> None:
     """Atomic write of new max ts to cursor file.
 
-    Creates parent directories as needed. Uses ``reyn.safe.file.write_atomic``
+    Creates parent directories as needed. Uses ``reyn.api.safe.file.write_atomic``
     (= tempfile + os.replace internally) for crash-safe update. Raises
     OSError / PermissionError on write failure.
     """
@@ -246,7 +246,7 @@ def run_collect_chunks(artifact: dict) -> dict:
     leading to hallucinated file paths and chunk_count=0). File discovery is
     purely deterministic and belongs in the postprocessor, not in LLM context.
 
-    Streams chunks straight into reyn.safe.embed_index (provider-direct
+    Streams chunks straight into reyn.api.safe.embed_index (provider-direct
     embed+index, #1303 Stage I — no intermediate event_chunks.jsonl, the old
     embed + index_write run-ops folded in). Tracks the max completed_at while
     streaming so run_advance_cursor can advance the cursor from data (it no
@@ -741,7 +741,7 @@ def _dirname(path: str) -> str:
 def _path_exists_safe(path: str) -> bool:
     """Permission-aware existence check that does not raise.
 
-    ``reyn.safe.file.exists`` raises ``PermissionError`` when the path
+    ``reyn.api.safe.file.exists`` raises ``PermissionError`` when the path
     falls outside the declared read zone; for the read-cursor / glob
     paths here, we want a permission denial to count as "not present"
     so the step degrades gracefully (= no cursor → reindex from epoch,
@@ -756,7 +756,7 @@ def _path_exists_safe(path: str) -> bool:
 def _is_regular_file(path: str) -> bool:
     """Return True iff ``path`` exists and is a regular file.
 
-    Replacement for ``os.path.isfile``. Uses ``reyn.safe.file.stat`` and
+    Replacement for ``os.path.isfile``. Uses ``reyn.api.safe.file.stat`` and
     checks the POSIX mode bits. Any error (missing, permission denied,
     broken symlink) returns False — matches ``os.path.isfile``'s
     suppress-all-errors behaviour.
