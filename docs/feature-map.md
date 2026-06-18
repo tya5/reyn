@@ -192,7 +192,7 @@ mindmap
       Three-level model
       Multiple Sessions per Agent
       Per-session persistence
-      Per-session time-travel
+      Global-cut rewind
       Transport routing-key
     🤝 Multi-Agent
       Agent registry
@@ -615,12 +615,12 @@ Cross-surface `ask_user` and permission routing — the same prompt reaches the 
 | Three-level model | `Agent` (identity) → `Session` (conversation) → `SkillRuntime` (per-skill OS-runtime host) | [Concepts: Sessions](concepts/multi-agent/sessions.md) |
 | Multiple Sessions per Agent | One identity, many parallel conversations; `AgentRegistry` maps name → {sid → Session} with a shared `Agent` identity | [Concepts: Sessions](concepts/multi-agent/sessions.md#multiple-sessions-vs-multiple-agents) |
 | Identity vs conversation scope | Memory / permissions / workspace / peer-addressing live on the Agent; history / inbox-outbox / current task stay per-Session | [Concepts: Sessions](concepts/multi-agent/sessions.md#what-a-session-owns) |
-| Per-session persistence | Each Session is snapshotted and restored independently (PR21 WAL) | [Concepts: Sessions](concepts/multi-agent/sessions.md#what-a-session-owns) |
-| Per-session time-travel | `rewind` / fork scoped to one Session; a sub-session fork *is* a time-travel branch of its parent | [Concepts: time-travel](concepts/runtime/time-travel.md) |
+| Per-session persistence | Each Session is snapshotted and restored independently (WAL-backed; snapshot re-keyed per Session) | [Concepts: Sessions](concepts/multi-agent/sessions.md#what-a-session-owns) |
+| Global-cut time-travel | `/rewind` moves *every* Session and Agent to the target checkpoint atomically (one global single-seq WAL) — per-Session granularity is in persistence, not the rewind | [Concepts: time-travel](concepts/runtime/time-travel.md) |
 | Multi-session crash recovery | On restart the full name → {sid → Session} structure is reconstructed from event log + snapshots, not just one conversation | [Concepts: time-travel](concepts/runtime/time-travel.md) |
 | Transport routing-key | Default: native conversation-id → Session (namespaced, auto-spawn/resume). Explicit: join an existing Session by id (non-existent = error). Scoped within one Agent | [Concepts: Sessions](concepts/multi-agent/sessions.md#transports-route-to-sessions) |
 
-> **Differentiation vs general agents:** the Agent / Session / runtime split is the mainstream agent-platform shape (cf. Assistant / Thread / Run); Reyn's distinction is what sits *beneath* it — every Session is event-sourced, permission-gated, and per-session time-travelable, so one identity can hold many isolated, independently rewindable conversations.
+> **Differentiation vs general agents:** the Agent / Session / runtime split is the mainstream agent-platform shape (cf. Assistant / Thread / Run); Reyn's distinction is what sits *beneath* it — every Session is event-sourced, permission-gated, and independently persisted, so one identity can hold many isolated conversations, with a single global consistent-cut rewind across them all.
 
 ---
 
