@@ -495,14 +495,22 @@ def build_server(
                 registry, agent_name, server,
             )
             try:
+                # FP-0043 S4b-6: run the invocation on the agent's SHARED mcp
+                # session (isolated from "main"); resolve-or-spawn it (no run-loop
+                # — driven inline by MessageBus.request). The single shared session
+                # preserves the request-response continuity (running_skills pumped
+                # on the next call).
+                from reyn.chat.mcp_routing import mcp_session_id, resolve_mcp_session
+                resolve_mcp_session(registry, agent_name)
                 result = await send_to_agent_impl(
                     registry,
                     agent_name=agent_name,
                     message=message,
                     timeout=timeout,
                     intervention_override=iv_bus,
+                    sid=mcp_session_id(),
                 )
-            except ValueError as e:
+            except (ValueError, FileNotFoundError) as e:
                 return [TextContent(type="text", text=f"error: {e}")]
             except asyncio.CancelledError:
                 # issue #271 M2: client sent CancelledNotification; the
@@ -544,7 +552,10 @@ def build_server(
                     }),
                 )]
             try:
-                session = await _get_session(registry, agent_name)
+                # FP-0043 S4b-6: the run lives on the shared mcp session — resolve
+                # it (not "main") so the pending iv is answered on the right session.
+                from reyn.chat.mcp_routing import resolve_mcp_session
+                session = resolve_mcp_session(registry, agent_name)
             except Exception as exc:  # noqa: BLE001 — defensive
                 return [TextContent(
                     type="text",
