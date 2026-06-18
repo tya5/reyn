@@ -297,6 +297,26 @@ def _run_connect_mode(args: argparse.Namespace, base_url: str) -> None:
     run_async(_main())
 
 
+def _setup_pre_tui_logging(project_root: Path) -> None:
+    """Route root-logger output to .reyn/logs/reyn.log before TUI launches.
+
+    Textual owns the terminal during a TUI session. Any log record that reaches
+    a StreamHandler(stderr) would be written directly to the raw terminal,
+    corrupting the Textual display. This is called once, before load_project_context
+    (which may emit WARNING-level records), so the file handler is in place before
+    the first log call.
+    """
+    import logging
+    log_dir = project_root / ".reyn" / "logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    logging.basicConfig(
+        filename=str(log_dir / "reyn.log"),
+        level=logging.WARNING,
+        format="%(asctime)s %(name)s %(levelname)s %(message)s",
+        force=True,  # safe: TUI path has no prior logging setup
+    )
+
+
 def run(args: argparse.Namespace) -> None:
     # Issue #276 Phase A — TUI thin client mode short-circuits before
     # any local session / state setup. Bifurcates at the top of run()
@@ -327,6 +347,11 @@ def run(args: argparse.Namespace) -> None:
     safety = session_cfg.safety_for(args)
 
     project_root = _find_project_root(Path.cwd()) or Path.cwd()
+
+    # Redirect root-logger to file before config load so pre-TUI log records
+    # (e.g. _reconcile_embedding_class warnings) don't leak to the raw terminal.
+    if not getattr(args, "cui", False) and sys.stdin.isatty():
+        _setup_pre_tui_logging(project_root)
 
     # PR-resume-ux β U3: handle --reset before constructing state_log so
     # we don't open a freshly-written WAL just to delete it.
