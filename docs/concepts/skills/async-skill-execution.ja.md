@@ -43,7 +43,7 @@ inline で必要)。
 ```
 User: 「skill_builder で string_length を作って」
   └─ RouterLoop: invoke_skill(name="skill_builder", input={...})
-       └─ _handle: spawn_skill_fn → ChatSession._spawn_skill_for_router
+       └─ _handle: spawn_skill_fn → Session._spawn_skill_for_router
             └─ asyncio.create_task(_run_one_skill(...))
             └─ 即時 return:
                  {status: "spawned", run_id, chain_id, skill, note}
@@ -121,7 +121,7 @@ land し、 この flash tier optimism bias に対応します。
 
 `reyn mcp serve` と FastAPI A2A endpoint (`reyn web`) は両方とも
 `mcp_server.send_to_agent_impl` 経由で agent に到達し、
-`ChatSession._handle_user_message` を **inline** で駆動します
+`Session._handle_user_message` を **inline** で駆動します
 (= `session.run()` を通らない)。 MCP SDK の stdio transport 下で
 `asyncio.create_task` で spawn した `session.run()` coroutine は
 request handler が await している間 starved になり、 内部の LLM

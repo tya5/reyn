@@ -166,8 +166,8 @@ safety:
 | `safety.loop.max_phase_visits` | `OSRuntime._enter_phase` | interactive / auto_extend |
 | `safety.timeout.phase_seconds` | `OSRuntime._check_phase_budget` | interactive / auto_extend |
 | `safety.loop.max_act_turns_per_phase` | OSRuntime act-loop | interactive / auto_extend |
-| `safety.loop.max_router_calls_per_turn` | `ChatSession._check_and_increment_router_cap` | interactive / auto_extend |
-| `safety.loop.max_agent_hops` | `ChatSession._send_to_agent` | interactive / auto_extend |
+| `safety.loop.max_router_calls_per_turn` | `Session._check_and_increment_router_cap` | interactive / auto_extend |
+| `safety.loop.max_agent_hops` | `Session._send_to_agent` | interactive / auto_extend |
 | `safety.timeout.chain_seconds` | chain timeout watchdog | interactive / auto_extend (再 arm) |
 | `safety.loop.skill_calls_per_chain` | spawn budget gate | interactive (= `ask_on_exceed`) |
 

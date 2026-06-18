@@ -7,7 +7,7 @@ applies_to: [reyn agent]
 
 # `reyn agent`
 
-Manage persistent agents — long-lived ChatSession instances each with their own profile, history, memory layer, and inbox.
+Manage persistent agents — long-lived Session instances each with their own profile, history, memory layer, and inbox.
 
 The auto-created `default` agent always exists; `reyn agent new` creates additional named agents. See [concepts/multi-agent](../../concepts/multi-agent/multi-agent.md) for the model.
 

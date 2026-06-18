@@ -46,7 +46,7 @@ User: "skill_builder で string_length を作って"
   └─ RouterLoop: invoke_action(action_name="skill__skill_builder",
                                args={"input": {...}})
        └─ universal_dispatch → invoke_skill handler
-       └─ _handle: spawn_skill_fn → ChatSession._spawn_skill_for_router
+       └─ _handle: spawn_skill_fn → Session._spawn_skill_for_router
             └─ asyncio.create_task(_run_one_skill(...))
             └─ returns IMMEDIATELY:
                  {status: "spawned", run_id, chain_id, skill, note}
@@ -127,7 +127,7 @@ Component B's strengthening to address that flash-tier optimism bias.
 
 `reyn mcp serve` and the FastAPI A2A endpoint (`reyn web`) both reach
 the agent through `mcp_server.send_to_agent_impl`, which drives
-`ChatSession._handle_user_message` **inline** rather than going
+`Session._handle_user_message` **inline** rather than going
 through `session.run()`. Under the MCP SDK's stdio transport an
 `asyncio.create_task`-spawned `session.run()` coroutine is starved
 while the request handler awaits — the LLM call never makes

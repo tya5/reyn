@@ -51,12 +51,12 @@ Agent Card に含まれる情報：
 | 実行中の `ask_user` 介入 | ✅ | タスクは `input-required` に遷移し、ピアは `task_id` 付き `message/send` で応答します。 |
 | プッシュ通知（`params.webhook_url`） | ✅ | 各ステータス遷移で Reyn が JSON を POST。 |
 | Agent Card discovery（`.well-known/agent-card.json`） | ✅ | agent ごとと multi-agent index の両エンドポイント。 |
-| マルチターン履歴の永続化 | ✅ | MCP と同じ backing。agent ごとに `ChatSession.history`。 |
+| マルチターン履歴の永続化 | ✅ | MCP と同じ backing。agent ごとに `Session.history`。 |
 | `message/stream`（単独 JSON-RPC メソッド） | ❌ | 代替として上記 `/events` SSE エンドポイントを使用。 |
 | 認証（bearer トークン / OAuth） | ❌ | v1 では対象外。ネットワーク層のアクセス制御に依存。 |
 | テキスト以外のパーツ（`file`、`data`） | ❌ | 現状はファイルを Reyn workspace 経由で交換。 |
 
-`message/send` が MVP の中心機能です。最も一般的な interop パターン（ピア agent が Reyn agent に質問し、最終返信テキストを受け取る）をカバーするためです。マルチターンの履歴は呼び出し間で保持されます。Reyn の `ChatSession.history` は agent ごとに永続化されており — MCP パスと同じ特性です。上に重ねた非同期タスクライフサイクル（FP-0001、下記詳細）により、ピアは長時間実行 skill を駆動し、実行中の `ask_user` に応答し、キャンセルできます。`message/send` のワイヤー形状は変わりません。
+`message/send` が MVP の中心機能です。最も一般的な interop パターン（ピア agent が Reyn agent に質問し、最終返信テキストを受け取る）をカバーするためです。マルチターンの履歴は呼び出し間で保持されます。Reyn の `Session.history` は agent ごとに永続化されており — MCP パスと同じ特性です。上に重ねた非同期タスクライフサイクル（FP-0001、下記詳細）により、ピアは長時間実行 skill を駆動し、実行中の `ask_user` に応答し、キャンセルできます。`message/send` のワイヤー形状は変わりません。
 
 ## MCP と A2A の両方を使う理由
 

@@ -12,9 +12,9 @@ Authoritative names for reyn concepts. Use these terms verbatim in skill DSL fil
 
 | English | 日本語 | Definition |
 |---------|--------|------------|
-| Agent | エージェント | A long-lived ChatSession with its own profile, history, memory layer, and inbox. The interpreter of user intent. Persisted under `.reyn/agents/<name>/`. |
+| Agent | エージェント | A long-lived Session with its own profile, history, memory layer, and inbox. The interpreter of user intent. Persisted under `.reyn/agents/<name>/`. |
 | Agent Profile | エージェントプロファイル | `.reyn/agents/<name>/profile.yaml` declaring `name`, `role`, `created_at`, optional `allowed_skills`. |
-| Agent Registry | エージェントレジストリ | Process-scoped owner of all loaded ChatSession instances. Routes attach/detach and inter-agent messaging. |
+| Agent Registry | エージェントレジストリ | Process-scoped owner of all loaded Session instances. Routes attach/detach and inter-agent messaging. |
 | Skill | スキル | A directory defining a phase graph and final output schema. |
 | Phase | フェーズ | A reusable processing unit declaring only its `input` and instructions. |
 | OS | OS | The runtime executor; sole owner of control flow. |

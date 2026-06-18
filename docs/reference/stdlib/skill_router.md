@@ -13,7 +13,7 @@ Route a single user (or peer-agent) utterance to an appropriate skill, agent, or
 
 The router is implemented as a native-tools `RouterLoop` (not a regular skill directory with LLM phase transitions). On each turn `RouterLoop` receives the conversation history and a set of native tools representing the available dispatch paths (skill execution, agent delegation, direct reply). The LLM picks one or more tools; the loop runs until the turn is resolved.
 
-Memory writes (persisting user / feedback / project / reference facts) happen inside the loop when the LLM emits `file/write` ops. Memory reads are pre-merged by ChatSession before the loop runs (see [concepts/memory](../../concepts/data-retrieval/memory.md)).
+Memory writes (persisting user / feedback / project / reference facts) happen inside the loop when the LLM emits `file/write` ops. Memory reads are pre-merged by Session before the loop runs (see [concepts/memory](../../concepts/data-retrieval/memory.md)).
 
 ## Source
 

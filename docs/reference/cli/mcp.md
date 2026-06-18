@@ -338,7 +338,7 @@ Returns:
 {"reply": "...", "partial": false, "agent": "default"}
 ```
 
-If `partial=true`, the timeout fired before the agent went idle — call again to receive more. Multi-turn continuity is preserved: each agent's `ChatSession` persists `history.jsonl` between calls.
+If `partial=true`, the timeout fired before the agent went idle — call again to receive more. Multi-turn continuity is preserved: each agent's `Session` persists `history.jsonl` between calls.
 
 ### `serve` examples
 

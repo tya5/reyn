@@ -403,7 +403,7 @@ Since **FP-0043 Phase 4**,
 that runs `pip install 'reyn[local-embed]'` — no `reyn.yaml` edits
 required.
 
-When the `local-embed` extras are NOT installed, `ChatSession.__init__`
+When the `local-embed` extras are NOT installed, `Session.__init__`
 detects the missing import via a cheap `importlib.util.find_spec`
 probe and silently treats the configured class as if it were `None`:
 no `ActionEmbeddingIndex` is built, `search_actions` stays hidden by

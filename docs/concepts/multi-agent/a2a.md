@@ -65,7 +65,7 @@ The Agent Card surfaces:
 | Mid-run `ask_user` injection | ✅ | Task transitions to `input-required`; reply with `message/send` + `task_id`. |
 | Push notifications (`params.webhook_url`) | ✅ | Reyn POSTs JSON payloads on each status transition. |
 | Agent Card discovery (`.well-known/agent-card.json`) | ✅ | Per-agent + multi-agent index endpoints. |
-| Multi-turn history persistence | ✅ | Same backing as MCP; per-agent `ChatSession.history`. |
+| Multi-turn history persistence | ✅ | Same backing as MCP; per-agent `Session.history`. |
 | `message/stream` (standalone JSON-RPC method) | ❌ | Use the `/events` SSE endpoint above instead. |
 | Authentication (bearer tokens / OAuth) | ❌ | Out of scope for v1; relies on network-level access control. |
 | Non-text message parts (`file`, `data`) | ❌ | Files exchanged via the Reyn workspace today. |
@@ -73,7 +73,7 @@ The Agent Card surfaces:
 `message/send` is the headline of the MVP because it covers the most
 common interop pattern: peer agent has a question for a Reyn agent,
 gets the final reply text. Multi-turn history is preserved across
-calls because Reyn's `ChatSession.history` is per-agent and
+calls because Reyn's `Session.history` is per-agent and
 persistent — exactly the same property the MCP path relies on. The
 async task lifecycle layered on top (FP-0001, detailed below) lets
 peers drive long-running skills, react to mid-run `ask_user`, and
