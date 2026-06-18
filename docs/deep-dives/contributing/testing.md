@@ -217,6 +217,31 @@ For LLM-dependent paths, prefer `LLMReplay` (Tier 3) — it preserves the
 full litellm boundary. Stub callables are appropriate for Tier 2c
 integration tests where the LLM is incidental rather than under test.
 
+#### A test seam must not weaken a construction-wiring gate
+
+When a class is guarded by a structural / AST invariant gate — say a gate that
+walks the AST for `node.func.id == "RouterLoop"` to prove every construction site
+wires a required keyword — a Tier-2 test seam for that class must **not** replace
+the construction. Avoid a *factory* seam (`RouterLoop(...)` redirected through an
+injected `_loop_factory(...)`): it deletes the literal constructor call from the
+AST, so the gate finds zero sites and fails, and it reopens the very hole the gate
+protects — the injected callable can omit the guarded kwargs. Use a
+**post-construction observer** instead — a spy callback handed the already-built
+instance:
+
+```python
+# the class still constructs itself the real way; the observer only inspects it
+loop = RouterLoop(..., resume_always_on=...)   # literal call stays in the AST
+if self._loop_observer is not None:
+    self._loop_observer(loop)                  # spy on the resolved instance
+```
+
+The observer keeps the literal construction in the AST (the gate still sees it)
+and lets the real constructor wire the guarded kwargs unconditionally; the test
+asserts on the resolved instance (`loop.router_model`, …) rather than raw
+constructor kwargs. It is the seam analogue of the rule above: adapt to the
+contract, don't bypass it.
+
 ### How
 
 ```python

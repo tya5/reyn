@@ -173,6 +173,29 @@ with patch("litellm.acompletion", return_value=hand_built_dict):
 
 Fake は実際の API サーフェスを通じてルーティングします。`LLMReplay` は `litellm.acompletion` をパッチしますが、記録済みデータから本物の `litellm.ModelResponse` を再構築します。シグネチャのドリフトは呼び出しサイト（TypeError、AttributeError）またはルックアップ時（`MissingFixture`）で検出されます。
 
+#### test seam は construction-wiring gate を弱めてはならない
+
+構造的 / AST 不変条件 gate で守られた class — たとえば `node.func.id == "RouterLoop"`
+を AST 走査して全 construction site が必須 keyword を wire していることを証明する
+gate — に Tier-2 test seam を足す時、その construction を**置換してはいけません**。
+*factory* seam（`RouterLoop(...)` を注入された `_loop_factory(...)` へ迂回させる）は
+避けてください: literal な constructor 呼び出しが AST から消え、gate が 0 site を見て
+fail し、さらに gate が守っている穴そのものを開けます（注入された callable が guarded
+kwargs を省略できてしまう）。代わりに **post-construction observer** — 構築済み
+instance を渡される spy callback — を使います:
+
+```python
+# class は実際の方法で自身を構築する; observer は inspect するだけ
+loop = RouterLoop(..., resume_always_on=...)   # literal call は AST に残る
+if self._loop_observer is not None:
+    self._loop_observer(loop)                  # 解決済み instance を spy
+```
+
+observer は literal な construction を AST に残し（gate は引き続き検出できる）、実際の
+constructor が guarded kwargs を無条件に wire させます; テストは生の constructor kwargs
+でなく解決済み instance（`loop.router_model` 等）を assert します。これは上のルールの
+seam 版です: コントラクトを bypass せず adapt する。
+
 ### 使い方
 
 ```python
