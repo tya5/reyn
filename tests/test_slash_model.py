@@ -103,7 +103,7 @@ class _FakeSession:
 # ===========================================================================
 
 def test_session_model_returns_override_when_set(tmp_path):
-    """Tier 2 (Group A): session.model returns override class when _model_override set.
+    """Tier 2: session.model returns override class when _model_override set.
 
     Falsification: if the property still returned self._agent.model, then after
     setting _model_override = "light", session.model would remain "standard"
@@ -117,7 +117,7 @@ def test_session_model_returns_override_when_set(tmp_path):
 
 
 def test_session_model_returns_agent_default_when_no_override(tmp_path):
-    """Tier 2 (Group A): session.model == agent default when _model_override is None.
+    """Tier 2: session.model == agent default when _model_override is None.
 
     Falsification: if _model_override were not initialised to None (e.g. defaulted
     to some class), session.model would not equal the construction-time model and
@@ -128,7 +128,7 @@ def test_session_model_returns_agent_default_when_no_override(tmp_path):
 
 
 def test_session_model_override_cleared_returns_agent_default(tmp_path):
-    """Tier 2 (Group A): clearing _model_override restores agent default.
+    """Tier 2: clearing _model_override restores agent default.
 
     Falsification: if clearing the override did not affect the property, the
     final assertion would still return "light" instead of "standard".
@@ -147,7 +147,7 @@ def test_session_model_override_cleared_returns_agent_default(tmp_path):
 
 @pytest.mark.asyncio
 async def test_model_cmd_no_arg_display_with_active_override(tmp_path):
-    """Tier 2 (Group B1): /model (no-arg) with active override shows transient note.
+    """Tier 2: /model (no-arg) with active override shows transient note.
 
     Uses real Session so session.model reads through the production property.
     Falsification: if the no-arg branch exited without posting, captured msgs
@@ -168,7 +168,7 @@ async def test_model_cmd_no_arg_display_with_active_override(tmp_path):
 
 @pytest.mark.asyncio
 async def test_model_cmd_no_arg_display_no_override(tmp_path):
-    """Tier 2 (Group B1): /model (no-arg) without override shows no transient note.
+    """Tier 2: /model (no-arg) without override shows no transient note.
 
     Falsification: if the no-arg branch exited early, msgs would be empty.
     """
@@ -191,7 +191,7 @@ async def test_model_cmd_no_arg_display_no_override(tmp_path):
 
 @pytest.mark.asyncio
 async def test_model_cmd_valid_class_replies_confirmation():
-    """Tier 2 (Group B2): /model <valid-class> posts confirmation reply.
+    """Tier 2: /model <valid-class> posts confirmation reply.
 
     Stub session has no model property; if the handler accidentally read
     session.model it would raise AttributeError.
@@ -212,7 +212,7 @@ async def test_model_cmd_valid_class_replies_confirmation():
 
 @pytest.mark.asyncio
 async def test_model_cmd_invalid_class_posts_error_with_class_list():
-    """Tier 2 (Group B2): /model <unknown> posts error listing available classes.
+    """Tier 2: /model <unknown> posts error listing available classes.
 
     Falsification: if is_known_class() always returned True, no error would be
     posted and error_text() would be empty — assertion would fail.
@@ -238,7 +238,7 @@ async def test_model_cmd_invalid_class_posts_error_with_class_list():
 # ===========================================================================
 
 def test_known_classes_includes_user_configured():
-    """Tier 2 (Group C): known_classes() returns sorted list including user-defined.
+    """Tier 2: known_classes() returns sorted list including user-defined.
 
     Falsification: if known_classes() only returned STANDARD_CLASSES and ignored
     user mapping, "fast" would not appear — assertion would fail.
