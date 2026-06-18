@@ -173,7 +173,8 @@ class RouterLoopDriver:
         overflowed.  ``user_text`` is unused here (the new message is re-applied
         by the loop's next ``_run_with_shrink``); kept for symmetry / future audit.
         """
-        from reyn.runtime.session import ChatMessage, _now_iso, _render_summary_for_storage
+        from reyn.runtime.chat_message import ChatMessage, _now_iso
+        from reyn.runtime.session import _render_summary_for_storage
 
         resolved_model = self._resolver.resolve(self._effective_router_model_class()).model
         consolidation = await self._force_close_wrap_up(loop, resolved_model)

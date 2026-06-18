@@ -304,7 +304,7 @@ class RouterHistoryBuffer:
         # path below, so normal chat stays byte-identical.
         _fc_summary = self._latest_summary()
         if _fc_summary is not None and _is_force_close_consolidation(_fc_summary):
-            from reyn.runtime.session import ChatMessage  # noqa: PLC0415
+            from reyn.runtime.chat_message import ChatMessage
             _idx = next(
                 (i for i, m in enumerate(history) if m is _fc_summary), -1
             )
@@ -349,7 +349,7 @@ class RouterHistoryBuffer:
                     summary.content if isinstance(summary.content, str)
                     else json.dumps(summary.content, ensure_ascii=False)
                 )
-                from reyn.runtime.session import ChatMessage  # noqa: PLC0415
+                from reyn.runtime.chat_message import ChatMessage
                 bridge = [ChatMessage(
                     role="assistant",
                     content=f"[summary of earlier conversation]\n{summary_text}",

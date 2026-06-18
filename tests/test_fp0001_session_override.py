@@ -400,7 +400,7 @@ def test_send_to_agent_impl_override_registered_and_cleaned_up(tmp_path, monkeyp
 
     # Stub _handle_user_message so the session produces a synthetic reply
     # without invoking a real LLM.
-    from reyn.runtime.session import ChatMessage
+    from reyn.runtime.chat_message import ChatMessage
 
     async def _fake_handle(self_inner, message, *, chain_id):
         self_inner._append_history(ChatMessage(
@@ -511,7 +511,7 @@ def test_concurrent_send_to_agent_impl_no_override_leak(tmp_path, monkeypatch):
     session.register_intervention_override = _spy_register  # type: ignore[method-assign]
     session.unregister_intervention_override = _spy_unregister  # type: ignore[method-assign]
 
-    from reyn.runtime.session import ChatMessage
+    from reyn.runtime.chat_message import ChatMessage
 
     call_count = 0
 

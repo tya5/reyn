@@ -503,7 +503,7 @@ async def test_a2a_endpoint_uses_message_bus(tmp_path, monkeypatch):
         return await original_put_inbox(self, kind, payload)
 
     async def _fake_handle_user_message(self, text, *, chain_id):
-        from reyn.runtime.session import ChatMessage
+        from reyn.runtime.chat_message import ChatMessage
         self._append_history(ChatMessage(
             role="user", content=text, ts="2026-05-14T00:00:00",
             meta={"chain_id": chain_id},

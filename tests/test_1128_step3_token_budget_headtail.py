@@ -137,7 +137,7 @@ def _make_session_with_t_max(tmp_path: Path, t_max: int):
 
 
 def _push(session, role: str, content: str) -> None:
-    from reyn.runtime.session import ChatMessage
+    from reyn.runtime.chat_message import ChatMessage
     if role == "agent":
         role = "assistant"
     session.history.append(ChatMessage(role=role, content=content, ts=_now()))

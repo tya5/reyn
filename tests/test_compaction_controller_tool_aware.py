@@ -15,10 +15,10 @@ PR-N3: the phase prompt is now a string constant in
 """
 from __future__ import annotations
 
+from reyn.runtime.chat_message import ChatMessage
 from reyn.runtime.services.compaction_controller import (
     _turn_to_compactor_input,
 )
-from reyn.runtime.session import ChatMessage
 
 # ── _turn_to_compactor_input ──────────────────────────────────────────
 

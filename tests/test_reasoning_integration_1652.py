@@ -22,8 +22,9 @@ from reyn.config import ReasoningConfig
 from reyn.core.events.events import EventLog
 from reyn.core.events.state_log import StateLog
 from reyn.llm.model_resolver import ModelResolver
+from reyn.runtime.chat_message import ChatMessage
 from reyn.runtime.services import MemoryService, RouterHostAdapter
-from reyn.runtime.session import ChatMessage, Session
+from reyn.runtime.session import Session
 
 _REASONING = "REYN_1652_THOUGHTS: 17*23 = 391."
 

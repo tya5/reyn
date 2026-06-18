@@ -25,7 +25,7 @@ import pytest
 
 from reyn.config import MultimodalConfig
 from reyn.interfaces.slash import REGISTRY
-from reyn.runtime.session import ChatMessage
+from reyn.runtime.chat_message import ChatMessage
 from reyn.security.permissions.permissions import PermissionResolver
 from reyn.user_intervention import InterventionAnswer, UserIntervention
 

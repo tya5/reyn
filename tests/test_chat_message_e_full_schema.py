@@ -19,7 +19,7 @@ import json
 from dataclasses import asdict
 from pathlib import Path
 
-from reyn.runtime.session import ChatMessage, _migrate_legacy_chat_message
+from reyn.runtime.chat_message import ChatMessage, _migrate_legacy_chat_message
 
 # ── Constructor: new shape ─────────────────────────────────────────────
 

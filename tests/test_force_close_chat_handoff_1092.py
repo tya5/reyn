@@ -22,7 +22,8 @@ import pytest
 
 from reyn.llm.llm import LLMToolCallResult
 from reyn.llm.pricing import TokenUsage
-from reyn.runtime.session import _MAX_FORCE_CLOSE_HANDOFFS, ChatMessage
+from reyn.runtime.chat_message import ChatMessage
+from reyn.runtime.session import _MAX_FORCE_CLOSE_HANDOFFS
 from reyn.services.compaction.engine import ContextOverflowError
 from tests.test_session_router_history_slicing import _make_session, _push
 

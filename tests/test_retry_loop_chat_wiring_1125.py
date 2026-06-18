@@ -32,7 +32,8 @@ from reyn.config import CompactionConfig
 from reyn.core.events.state_log import StateLog
 from reyn.llm.pricing import TokenUsage
 from reyn.runtime.budget.budget import BudgetTracker, CostConfig
-from reyn.runtime.session import ChatMessage, Session, _RouterUsageShim
+from reyn.runtime.chat_message import ChatMessage
+from reyn.runtime.session import Session, _RouterUsageShim
 from reyn.services.compaction.engine import retry_loop
 
 

@@ -43,7 +43,7 @@ from reyn.interfaces.web.run_registry import RunRegistry
 
 
 class _Msg:
-    """Minimal stand-in for ``reyn.runtime.session.ChatMessage`` used in
+    """Minimal stand-in for ``reyn.runtime.chat_message.ChatMessage`` used in
     history-harvesting tests. The real ChatMessage has many fields the
     harvester doesn't read; this isolates the contract: role + text + meta."""
 
