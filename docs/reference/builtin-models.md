@@ -155,6 +155,44 @@ Anthropic API via LiteLLM.  The `budget_tokens` value is the upper bound of reas
 tokens; actual usage may be less.  Setting `budget_tokens` too low can degrade answer
 quality on complex tasks.
 
+### Reasoning on tool-bearing turns (Responses-API bridge)
+
+A turn that carries **tools** *and* has `reasoning_effort` set on a
+reasoning-capable model is routed through litellm's Responses-API bridge
+(`responses/<model>`). litellm's bridge currently cannot map the `reasoning`
+output item the model returns, so the call raises:
+
+```
+litellm.APIConnectionError: OpenAIException -
+Unknown items in responses API response: [GenericResponseOutputItem(type='reasoning', ...)]
+```
+
+The reasoning text is present in the response — the bridge parser simply doesn't
+map the `reasoning` item onto the chat-completions shape. This is present in both
+the current and the latest litellm release, with no released fix; Reyn does not
+ship a provider-specific workaround for it.
+
+**When it bites — a narrow, opt-in combination.** Both must hold:
+
+1. a **tool-bearing** purpose (e.g. the router, whose turns always carry tools)
+   is pointed at a **reasoning-capable** model — `model_class_by_purpose: router:
+   strong`, or the default `model` class set to a capable model; **and**
+2. `reasoning_effort` is set on that model.
+
+**Unaffected paths:**
+
+- **The default setup.** The `standard` class (Gemini Flash Lite) handles
+  tool-bearing turns with no `reasoning_effort`, so they go through
+  `/v1/chat/completions`, not the bridge — no error. (Flash Lite is also
+  reasoning-dormant on tool turns.)
+- **Non-tool chat with reasoning.** A reasoning-capable model *without* tools goes
+  through `/v1/chat/completions`; reasoning survives and round-trips normally
+  (surfaced as `reasoning_content` / `thinking_blocks`).
+
+**To avoid it**, keep `reasoning_effort` off any reasoning-capable model that
+serves tool-bearing turns — or keep tool-bearing purposes on a non-reasoning
+model. Reasoning on the non-tool chat path is unaffected.
+
 ## Namespace and override semantics
 
 The built-in catalog is merged into the model namespace **before** user entries, so
