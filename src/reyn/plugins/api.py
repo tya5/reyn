@@ -96,7 +96,14 @@ async def push_to_agent(
     if registry is None:
         from reyn.interfaces.web.deps import _get_registry
         registry = _get_registry()
-    session = await registry.ensure_running(target_agent)
+    # FP-0043 S4b-5: route to the sender's OWN webhook session (parsed from the
+    # "<transport>:<external_id>" sender), not the agent's shared "main" — so an
+    # external user's conversation is stateful + isolated, and peer traffic doesn't
+    # pollute the user's REPL/web conversation. Fire-and-forget: ensure_session_running
+    # boots the run-loop (no forwarder); the reply routes via the factory-wired outbox
+    # interceptor from reply_to=ExternalRef below (output unchanged, reuse).
+    from reyn.chat.webhook_routing import resolve_webhook_session
+    session = resolve_webhook_session(registry, target_agent, sender)
     envelope: dict[str, Any] = {
         "text": text,
         "sender": sender,

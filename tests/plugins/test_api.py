@@ -54,6 +54,20 @@ class _StubRegistry:
             self._sessions[name] = _StubSession()
         return self._sessions[name]
 
+    # FP-0043 S4b-5: deliver_to_agent now routes to a per-sender webhook session via
+    # resolve_session + ensure_session_running. This single-agent stub collapses them
+    # onto the one per-agent session (the per-sender routing itself is pinned by
+    # test_webhook_routing); both return the SAME session the tests assert on.
+    def resolve_session(self, name, transport, native_id):
+        if name in self._missing:
+            raise FileNotFoundError(name)
+        if name not in self._sessions:
+            self._sessions[name] = _StubSession()
+        return self._sessions[name]
+
+    def ensure_session_running(self, name, sid):
+        return self._sessions.get(name)
+
 
 # ── tests ─────────────────────────────────────────────────────────────
 

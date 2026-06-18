@@ -123,6 +123,15 @@ def _slack_client(monkeypatch):
         async def ensure_running(self, name):
             return _StubSession()
 
+        # FP-0043 S4b-5: deliver_to_agent routes to a per-sender webhook session via
+        # resolve_session + ensure_session_running (every _StubSession shares the
+        # ``pushed`` capture list, so the routing detail is transparent here).
+        def resolve_session(self, name, transport, native_id):
+            return _StubSession()
+
+        def ensure_session_running(self, name, sid):
+            return None
+
         def list_names(self):
             return ["news_agent"]
 
