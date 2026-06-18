@@ -64,6 +64,15 @@ reyn init
 
 This creates `reyn.yaml` and `reyn.local.yaml.example` if they don't exist.
 
+## Project context (optional)
+
+Drop an `AGENTS.md` in your project root and Reyn injects it into every session as
+project-specific context (conventions, architecture notes, do's and don'ts).
+`AGENTS.md` is the cross-tool standard that Claude Code, Codex, and opencode also
+read, so a project you already share with those tools works as-is — no
+Reyn-specific file needed (a legacy `REYN.md` is still honored as a fallback). To
+pin a different file or turn it off, see [`project_context_path`](../../reference/config/reyn-yaml.md).
+
 ## Verify
 
 ```bash

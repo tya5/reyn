@@ -65,6 +65,16 @@ reyn init
 
 これで `reyn.yaml` と `reyn.local.yaml.example` が存在しない場合に作成されます。
 
+## プロジェクトコンテキスト（任意）
+
+プロジェクトルートに `AGENTS.md` を置くと、Reyn がそれを毎セッションに
+プロジェクト固有のコンテキスト（規約、アーキテクチャのメモ、やること / 避けること）
+として注入します。`AGENTS.md` は Claude Code・Codex・opencode 等も読む cross-tool
+標準なので、それらツールと既に共有しているプロジェクトが Reyn 専用ファイルなしで
+そのまま動きます（legacy の `REYN.md` も fallback として有効）。別ファイルに固定
+したり無効化するには [`project_context_path`](../../reference/config/reyn-yaml.md) を
+参照してください。
+
 ## 確認する
 
 ```bash
