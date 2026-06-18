@@ -252,7 +252,7 @@ is configured — there is no regression for environments that already use env v
 
 The permission system is part of the OS runtime, not a separate layer above it. Every side-effect performed by reyn — whether from skill code, op handler, or any other OS-internal path — goes through the same permission resolver against the calling skill's `PermissionDecl`. There is no inside/outside split: the OS uses the permission system as its core abstraction for all I/O.
 
-Concretely, `op_runtime/mcp_install.py` writing `.reyn/mcp.yaml` routes through `reyn.safe.file.write` — the same gate a skill-level safe-mode python step would use. The PermissionDecl in scope is the skill's; the OS honors it uniformly regardless of where the call originates. The older "OS gates its callers, not itself" framing is dissolved by this: a single uniform mechanism, no cyclic concern.
+Concretely, `op_runtime/mcp_install.py` writing `.reyn/mcp.yaml` routes through `reyn.api.safe.file.write` — the same gate a skill-level safe-mode python step would use. The PermissionDecl in scope is the skill's; the OS honors it uniformly regardless of where the call originates. The older "OS gates its callers, not itself" framing is dissolved by this: a single uniform mechanism, no cyclic concern.
 
 ## Declaration axis taxonomy
 
@@ -264,7 +264,7 @@ Each side-effect kind has a corresponding declarable axis. The axis vocabulary i
 |---|---|---|---|---|
 | `file.read` | `list[{path, scope}]` | per-path | `require_file_read()` | scope ∈ {`just_path`, `recursive`}. Default zone = CWD. Outside zone: JIT ask (bus≠None) or deny (bus=None). `file.read: deny` blocks even CWD. Mirrors `http.get` pattern. |
 | `file.write` | `list[{path, scope}]` | per-path | `require_file_write()` | covers write / edit / delete. Default zone = `.reyn/`. Outside zone: JIT ask (bus≠None) or deny (bus=None). `file.write: deny` blocks even `.reyn/`. Mirrors `http.get` pattern. |
-| `http.get` | `list[{host}]` | per-host | `require_http_get()` | specific host = startup prompt + silent runtime; `"*"` wildcard = per-host runtime prompt. Covers both `reyn.safe.http.*` (skill-internal, specific only) and `web_fetch` (LLM-driven, accepts wildcard) |
+| `http.get` | `list[{host}]` | per-host | `require_http_get()` | specific host = startup prompt + silent runtime; `"*"` wildcard = per-host runtime prompt. Covers both `reyn.api.safe.http.*` (skill-internal, specific only) and `web_fetch` (LLM-driven, accepts wildcard) |
 | `secret.write` | `list[<key>]` | per-key | `require_secret_write()` | per-key for `~/.reyn/secrets.env`; `"*"` wildcard for runtime-determined keys (= the per-value prompt is the actual gate) |
 | `mcp` | `list[str]` | per-server | implicit at MCP call | per-server-name allowlist |
 | `python` | `list[{module, function, mode, timeout}]` | per-step | `require_python_step()` | mode ∈ {`safe`, `unsafe`} |
@@ -304,29 +304,29 @@ Bool axes carried a per-instance approval surface (= `mcp_install:<server_id>` k
 The execution surfaces that perform side-effects, ordered by enforcement strength:
 
 ```
-┌──────────────────────────────────────────────────────────────┐  ← STRONGEST
-│  sandboxed_exec op (FP-0017)                                 │
-│    OS-kernel enforcement (Seatbelt / Landlock / Seccomp)     │
-│    argv-scoped, network-scoped, fs-scoped per-call           │
-├──────────────────────────────────────────────────────────────┤
-│  safe-mode python step (FP-0042)                             │
-│    AST validation (= rejects `import os` at compile-time)    │
-│    + reyn.safe.* honor-system path checks at function call   │
-│    NOT kernel-sandboxed; subprocess runs with full user UID  │
-├──────────────────────────────────────────────────────────────┤
-│  unsafe-mode python step                                     │
-│    No gate after the `--allow-unsafe-python` opt-in          │
-│    Trusted-by-declaration: author asserts the step is safe   │
-├──────────────────────────────────────────────────────────────┤
-│  reyn package internal code (op handlers, registry client)   │
-│    Uses the same `reyn.safe.*` primitives as skill code,     │
-│    against the calling skill's PermissionDecl                │
-└──────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────┐  ← STRONGEST
+│  sandboxed_exec op (FP-0017)                                     │
+│    OS-kernel enforcement (Seatbelt / Landlock / Seccomp)         │
+│    argv-scoped, network-scoped, fs-scoped per-call               │
+├──────────────────────────────────────────────────────────────────┤
+│  safe-mode python step (FP-0042)                                 │
+│    AST validation (= rejects `import os` at compile-time)        │
+│    + reyn.api.safe.* honor-system path checks at function call   │
+│    NOT kernel-sandboxed; subprocess runs with full user UID      │
+├──────────────────────────────────────────────────────────────────┤
+│  unsafe-mode python step                                         │
+│    No gate after the `--allow-unsafe-python` opt-in              │
+│    Trusted-by-declaration: author asserts the step is safe       │
+├──────────────────────────────────────────────────────────────────┤
+│  reyn package internal code (op handlers, registry client)       │
+│    Uses the same `reyn.api.safe.*` primitives as skill code,     │
+│    against the calling skill's PermissionDecl                    │
+└──────────────────────────────────────────────────────────────────┘
 ```
 
 - **Top (sandboxed_exec)** is the only layer with OS-kernel enforcement. argv / network / fs scope is declarative per call and enforced by the platform sandbox.
-- **Internal OS code** uses the same `reyn.safe.*` primitives as skill code, against the calling skill's PermissionDecl. There is no inside/outside split — the OS exercises its own permission mechanism uniformly.
-- **Safe-mode python** is honor-system: AST validation prevents `import os`, and `reyn.safe.*` checks declared paths / hosts / keys. A motivated user with `mode: unsafe` access can bypass; a non-motivated `mode: safe` author cannot accidentally bypass via normal coding patterns.
+- **Internal OS code** uses the same `reyn.api.safe.*` primitives as skill code, against the calling skill's PermissionDecl. There is no inside/outside split — the OS exercises its own permission mechanism uniformly.
+- **Safe-mode python** is honor-system: AST validation prevents `import os`, and `reyn.api.safe.*` checks declared paths / hosts / keys. A motivated user with `mode: unsafe` access can bypass; a non-motivated `mode: safe` author cannot accidentally bypass via normal coding patterns.
 - **Unsafe-mode python** is trust-by-declaration: the operator approves `--allow-unsafe-python` at runtime and accepts that the step has full host access.
 
 ### Sandbox scoping model (sandboxed_exec)
@@ -358,22 +358,22 @@ The `sandboxed_exec` policy (`SandboxPolicy`) is scoped **per axis**. The axes a
 | Web Permissions API | Per-feature query | Per-permission prompt | Origin-scoped (= per-domain capability) | Browser sandbox |
 | Anthropic Claude Code | Tool list (Bash / Edit / Read / Write) | None at default; sandbox-mode optional | Tool name (no path scope) | Seatbelt (sandbox-mode) or trust |
 | MCP servers | Server-side tool list exposed to client | Server owns its boundary | Per-tool, server-defined | Process boundary |
-| **Reyn** | `permissions:` block (list-axis dominant; one bool: `shell`) | startup_guard + interactive on first use | per-path / per-host / per-server (resource scope) | AST + `reyn.safe.*` honor-system for safe-mode; kernel for `sandboxed_exec` |
+| **Reyn** | `permissions:` block (list-axis dominant; one bool: `shell`) | startup_guard + interactive on first use | per-path / per-host / per-server (resource scope) | AST + `reyn.api.safe.*` honor-system for safe-mode; kernel for `sandboxed_exec` |
 
 Reyn deviates from the iOS / Android "capability + first-use prompt" pattern on two axes:
 
 1. **Granularity is finer than industry default** — list-axis path / host / server scope is closer to Web's origin-scope than to iOS / Android's capability axis. The justification is that Reyn skills are workflow code (= author knows the inventory), whereas iOS / Android apps are general-purpose.
-2. **Enforcement is honor-system for safe-mode python** — iOS / Android rely on kernel boundaries; Reyn relies on AST validation + path / host / key checks via the `reyn.safe.*` primitives. The trade-off is implementation simplicity (= no per-step seatbelt setup) for weaker enforcement.
+2. **Enforcement is honor-system for safe-mode python** — iOS / Android rely on kernel boundaries; Reyn relies on AST validation + path / host / key checks via the `reyn.api.safe.*` primitives. The trade-off is implementation simplicity (= no per-step seatbelt setup) for weaker enforcement.
 
 ## Collapse arc (#571)
 
-The axis taxonomy above is the target state. The permissions audit identified that the prior design carried four bool axes (`mcp_install`, `mcp_drop_server`, `cron_register`, `index_drop`) which were redundant with `file.write` — the side effects all reduced to a canonical `.reyn/*.yaml` write reachable through `reyn.safe.file.write`, so the bool axes were duplicating coverage rather than gating new capability. The collapse arc removes them in stages:
+The axis taxonomy above is the target state. The permissions audit identified that the prior design carried four bool axes (`mcp_install`, `mcp_drop_server`, `cron_register`, `index_drop`) which were redundant with `file.write` — the side effects all reduced to a canonical `.reyn/*.yaml` write reachable through `reyn.api.safe.file.write`, so the bool axes were duplicating coverage rather than gating new capability. The collapse arc removes them in stages:
 
 | Phase | Scope | Status |
 |---|---|---|
 | 1 | This doc — articulate "permission is an OS I/O primitive" and the collapse map | this PR |
-| 2 | Route `op_runtime` handlers (= `mcp_install` / `mcp_drop_server` / `cron_register` / `index_drop`) through `reyn.safe.file.write`; loader compat shim accepts both bool form and explicit list form | follow-up PR |
-| 3 | Introduce `http.get: [{host}]` axis (= gates `reyn.safe.http.*` per-host) and `secret.write: [<key>]` axis (= gates `~/.reyn/secrets.env` writes per-key) | follow-up |
+| 2 | Route `op_runtime` handlers (= `mcp_install` / `mcp_drop_server` / `cron_register` / `index_drop`) through `reyn.api.safe.file.write`; loader compat shim accepts both bool form and explicit list form | follow-up PR |
+| 3 | Introduce `http.get: [{host}]` axis (= gates `reyn.api.safe.http.*` per-host) and `secret.write: [<key>]` axis (= gates `~/.reyn/secrets.env` writes per-key) | follow-up |
 | 4 | Migrate stdlib skills to explicit list-axis form | follow-up |
 | 5 | Remove bool axes (`mcp_install` etc.) and `require_mcp_install` / `require_cron_register` / `require_index_drop` / `require_mcp_drop_server` from the OS surface | follow-up |
 
@@ -387,7 +387,7 @@ Phase 7 finishes the alignment by giving the `http.get` axis the same prompt mod
 - **Wildcard** (`http.get: [{host: "*"}]` or `["*"]`) — host set is unknown at write-time (= LLM picks at runtime, e.g. `web_fetch` follow-up of `web_search` results), so the prompt fires at the actual host gate inside `require_http_get`. Same `<skill>/http.get/<host>` persistence; ALWAYS / NEVER choices apply per host.
 - **No declaration** — legacy `web.fetch` compat path with a `DeprecationWarning` until the segmented-migration window closes; existing skills that relied on Tier-1 default-allow keep working.
 
-The `web_fetch` op handler routes through `require_http_get` instead of the legacy `require_web_fetch`; the chat router's PermissionDecl declares `http.get: [{host: "*"}]` so LLM-driven fetches go through the wildcard branch. The `reyn.safe.http` subprocess path strips wildcard entries at the preprocessor — sync subprocesses can't prompt, so wildcard-host fetches must go through the async `web_fetch` op route.
+The `web_fetch` op handler routes through `require_http_get` instead of the legacy `require_web_fetch`; the chat router's PermissionDecl declares `http.get: [{host: "*"}]` so LLM-driven fetches go through the wildcard branch. The `reyn.api.safe.http` subprocess path strips wildcard entries at the preprocessor — sync subprocesses can't prompt, so wildcard-host fetches must go through the async `web_fetch` op route.
 
 This unifies the two HTTP surfaces (`safe.http` skill-internal + `web_fetch` LLM-driven) under one axis with one prompt model. It matches the browser-extension `host_permissions` (= declared, install-time prompt) + Web Permissions API (= runtime per-feature prompt) hybrid — see the [Industry comparison](#industry-comparison) section.
 
