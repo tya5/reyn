@@ -1,7 +1,7 @@
 """Scheme-layer tool-use SP builder for the universal-category path (#1627 Stage 4).
 
 ``build_universal_tool_use_slots`` was relocated from
-``reyn.chat.router_system_prompt`` (OS layer) to here (scheme layer) as part of
+``reyn.runtime.router_system_prompt`` (OS layer) to here (scheme layer) as part of
 Stage 4 — the final step of making ``build_system_prompt`` a pure slot-injector
 with ZERO tool-use vocab. The OS builds the OS-frame; the scheme owns the
 tool-use SP content.

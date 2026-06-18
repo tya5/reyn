@@ -41,7 +41,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from reyn.chat.channel_state import ChannelState
+    from reyn.runtime.channel_state import ChannelState
 
 logger = logging.getLogger(__name__)
 
@@ -338,7 +338,7 @@ class RunRegistry:
         if entry is None or entry.webhook_url is None:
             return None
         if entry._webhook_channel_state is None:
-            from reyn.chat.channel_state import ChannelState  # noqa: PLC0415
+            from reyn.runtime.channel_state import ChannelState  # noqa: PLC0415
             entry._webhook_channel_state = ChannelState(
                 channel_id=f"webhook:{run_id}",
             )

@@ -38,9 +38,9 @@ import asyncio
 import json
 from pathlib import Path
 
-from reyn.chat.outbox import OutboxMessage
-from reyn.chat.services.intervention_handler import InterventionHandler
 from reyn.intervention_choices import generic_yn_choices
+from reyn.runtime.outbox import OutboxMessage
+from reyn.runtime.services.intervention_handler import InterventionHandler
 from reyn.user_intervention import UserIntervention
 
 

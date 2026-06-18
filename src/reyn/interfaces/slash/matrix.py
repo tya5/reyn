@@ -7,8 +7,8 @@ to a friendly inline message.
 """
 from __future__ import annotations
 
-from reyn.chat.outbox import OutboxMessage
 from reyn.interfaces.slash import slash
+from reyn.runtime.outbox import OutboxMessage
 
 
 @slash("matrix", summary="Wake up, Neo.", hidden=True)

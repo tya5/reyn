@@ -32,7 +32,7 @@ _SRC = Path(__file__).parent.parent / "src"
 if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
-from reyn.chat.lifecycle_forwarder import ChatLifecycleForwarder  # noqa: E402
+from reyn.runtime.lifecycle_forwarder import ChatLifecycleForwarder  # noqa: E402
 from reyn.schemas.models import Event  # noqa: E402
 
 

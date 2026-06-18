@@ -42,7 +42,7 @@ def test_catalog_filter_hides_web_keeps_others() -> None:
     no source-string): with web excluded, the catalog the LLM sees no longer
     contains web__search/web__fetch but still offers the repo-editing tools.
     """
-    from reyn.chat.router_loop import _apply_tool_exclusions
+    from reyn.runtime.router_loop import _apply_tool_exclusions
 
     catalog = [
         _tool("web__search"),

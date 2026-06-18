@@ -15,8 +15,8 @@ from typing import Any
 
 import pytest
 
-from reyn.chat.planner import Plan, PlanStep, dispatch_plan_tool
-from reyn.chat.router_tools import get_dispatch_kind
+from reyn.runtime.planner import Plan, PlanStep, dispatch_plan_tool
+from reyn.runtime.router_tools import get_dispatch_kind
 
 # ── basic registry checks ─────────────────────────────────────────────────
 
@@ -130,7 +130,7 @@ class _StubRouterLoop:
 
 @pytest.fixture(autouse=True)
 def _stub_router_loop(monkeypatch: Any):
-    import reyn.chat.planner as planner_mod
+    import reyn.runtime.planner as planner_mod
     monkeypatch.setattr(planner_mod, "RouterLoop", _StubRouterLoop)
     yield
 
@@ -388,7 +388,7 @@ async def test_plan_step_failure_emits_status_text() -> None:
     Observable contract: the failure status text contains the step's
     description preview and the string '失敗' (= failure marker).
     """
-    import reyn.chat.planner as planner_mod
+    import reyn.runtime.planner as planner_mod
 
     host = _LegacyHost()
 

@@ -74,10 +74,10 @@ async def test_on_find_no_matches_writes_error_status() -> None:
     """Tier 2: query with zero matches → error-kind sticky status."""
     from rich.text import Text
 
-    from reyn.chat.outbox import OutboxMessage
     from reyn.interfaces.tui.app import ReynTUIApp
     from reyn.interfaces.tui.app_outbox import OutboxRouter
     from reyn.interfaces.tui.widgets import ConversationView
+    from reyn.runtime.outbox import OutboxMessage
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -104,10 +104,10 @@ async def test_on_find_matches_writes_count_and_lines_in_status() -> None:
     """Tier 2: match list status reports total + first ≤5 line numbers."""
     from rich.text import Text
 
-    from reyn.chat.outbox import OutboxMessage
     from reyn.interfaces.tui.app import ReynTUIApp
     from reyn.interfaces.tui.app_outbox import OutboxRouter
     from reyn.interfaces.tui.widgets import ConversationView
+    from reyn.runtime.outbox import OutboxMessage
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -142,10 +142,10 @@ async def test_on_find_matches_writes_count_and_lines_in_status() -> None:
 @pytest.mark.asyncio
 async def test_on_find_empty_query_writes_usage_status() -> None:
     """Tier 2: empty query → usage hint via error-kind status."""
-    from reyn.chat.outbox import OutboxMessage
     from reyn.interfaces.tui.app import ReynTUIApp
     from reyn.interfaces.tui.app_outbox import OutboxRouter
     from reyn.interfaces.tui.widgets import ConversationView
+    from reyn.runtime.outbox import OutboxMessage
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:

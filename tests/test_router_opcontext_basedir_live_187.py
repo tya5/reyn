@@ -16,8 +16,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from reyn.chat.session import Session
 from reyn.environment.container_backend import DockerEnvironmentBackend
+from reyn.runtime.session import Session
 
 
 def test_live_op_context_roots_on_container_repo(tmp_path) -> None:

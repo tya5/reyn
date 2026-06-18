@@ -16,7 +16,7 @@ from __future__ import annotations
 import asyncio
 import logging
 
-from reyn.chat.router_loop import RouterLoop
+from reyn.runtime.router_loop import RouterLoop
 
 # ── Minimal RouterLoop subclass that makes _build_action_embedding_index_background
 # directly invokable without a full host/chain setup. ────────────────────────────
@@ -122,7 +122,7 @@ def test_warning_log_emitted_once_with_options(caplog) -> None:
     """Tier 2: #1458 — a decision-enabling warning log is emitted exactly once
     on failure; it mentions the three actionable options."""
     loop = _LoopWithFailingBuild()
-    with caplog.at_level(logging.WARNING, logger="reyn.chat.router_loop"):
+    with caplog.at_level(logging.WARNING, logger="reyn.runtime.router_loop"):
         _run_build(loop)
 
     warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
@@ -176,7 +176,7 @@ def test_helper_unsupported_param_points_to_proxy_drop_params() -> None:
     returns the PROXY-side drop_params guidance (not the misleading HF-download
     message). reyn cannot suppress a param the proxy injects, so the operator is
     pointed to the recommended `litellm_settings: drop_params: true` on the proxy."""
-    from reyn.chat.router_loop import _action_index_build_failure_warning
+    from reyn.runtime.router_loop import _action_index_build_failure_warning
 
     exc = _UnsupportedParamsError(
         "gemini-embedding-001 does not support parameter: encoding_format"
@@ -192,7 +192,7 @@ def test_helper_unsupported_param_points_to_proxy_drop_params() -> None:
 def test_helper_generic_failure_keeps_hf_guidance() -> None:
     """Tier 2: #1616 — a non-param failure (e.g. HF unreachable) still returns the
     pre-existing offline/cache guidance (regression pin for the #1458 branch)."""
-    from reyn.chat.router_loop import _action_index_build_failure_warning
+    from reyn.runtime.router_loop import _action_index_build_failure_warning
 
     exc = RuntimeError("Name or service not known (HF unreachable)")
     msg = _action_index_build_failure_warning(exc, "local-mini").lower()
@@ -207,7 +207,7 @@ def test_build_failure_unsupported_param_warns_proxy_fix(caplog) -> None:
     loop = _LoopWithFailingBuild()
     idx = _UnsupportedParamIndex()
     provider = _UnsupportedParamProvider()
-    with caplog.at_level(logging.WARNING, logger="reyn.chat.router_loop"):
+    with caplog.at_level(logging.WARNING, logger="reyn.runtime.router_loop"):
         asyncio.run(loop._build_action_embedding_index_background(idx, provider, "standard"))
 
     text = " ".join(

@@ -791,7 +791,7 @@ def test_force_compact_now_single_pass_no_race_recovery() -> None:
     floor. Verified via the public surface — compact() is invoked once and no
     race-unrecovered event is emitted.
     """
-    from reyn.chat.services.compaction_controller import CompactionController
+    from reyn.runtime.services.compaction_controller import CompactionController
 
     events = EventLog()
     engine = _CountingEngine()

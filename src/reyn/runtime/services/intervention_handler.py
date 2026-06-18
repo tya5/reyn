@@ -21,7 +21,7 @@ from contextvars import ContextVar
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Awaitable, Callable
 
-from reyn.chat.outbox import OutboxMessage
+from reyn.runtime.outbox import OutboxMessage
 from reyn.user_intervention import (
     InterventionAnswer,
     UserIntervention,
@@ -29,9 +29,9 @@ from reyn.user_intervention import (
 )
 
 if TYPE_CHECKING:
-    from reyn.chat.services.intervention_registry import InterventionRegistry
-    from reyn.chat.services.snapshot_journal import SnapshotJournal
     from reyn.core.events.events import EventLog
+    from reyn.runtime.services.intervention_registry import InterventionRegistry
+    from reyn.runtime.services.snapshot_journal import SnapshotJournal
 
 logger = logging.getLogger(__name__)
 
@@ -115,10 +115,10 @@ class InterventionHandler:
     Parameters
     ----------
     intervention_registry:
-        :class:`~reyn.chat.services.intervention_registry.InterventionRegistry`
+        :class:`~reyn.runtime.services.intervention_registry.InterventionRegistry`
         owning the active intervention queue.
     journal:
-        :class:`~reyn.chat.services.snapshot_journal.SnapshotJournal` for WAL
+        :class:`~reyn.runtime.services.snapshot_journal.SnapshotJournal` for WAL
         persistence (``intervention_dispatched`` / ``intervention_resolved``
         events — PR-intervention-link L3).
     event_log:

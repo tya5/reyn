@@ -28,9 +28,9 @@ from pathlib import Path
 
 import pytest
 
-from reyn.chat.services.mcp_cache_file import cache_file_path, write_cache
-from reyn.chat.session import Session
 from reyn.core.events.state_log import StateLog
+from reyn.runtime.services.mcp_cache_file import cache_file_path, write_cache
+from reyn.runtime.session import Session
 
 # ---------------------------------------------------------------------------
 # Minimal Session factory

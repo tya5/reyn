@@ -25,9 +25,9 @@ from pathlib import Path
 
 import pytest
 
-from reyn.chat.profile import AgentProfile
-from reyn.chat.registry import AgentRegistry
 from reyn.core.events.state_log import StateLog
+from reyn.runtime.profile import AgentProfile
+from reyn.runtime.registry import AgentRegistry
 from reyn.skill.skill_snapshot import SkillSnapshot
 
 # ---------------------------------------------------------------------------
@@ -139,7 +139,7 @@ def test_floor_includes_short_await_skill(tmp_path: Path, monkeypatch):
     )
 
     # monotonic at "now=200.0" → elapsed=100s, well under 300s threshold.
-    monkeypatch.setattr("reyn.chat.registry.time.monotonic", lambda: 200.0)
+    monkeypatch.setattr("reyn.runtime.registry.time.monotonic", lambda: 200.0)
 
     floor = registry.compute_truncate_floor()
     # min(agent=1000, skill=50) + 1 = 51
@@ -156,7 +156,7 @@ def test_floor_excludes_long_await_skill(tmp_path: Path, monkeypatch):
     )
 
     # now=500 → elapsed=400s > 300s threshold → skill excluded.
-    monkeypatch.setattr("reyn.chat.registry.time.monotonic", lambda: 500.0)
+    monkeypatch.setattr("reyn.runtime.registry.time.monotonic", lambda: 500.0)
 
     floor = registry.compute_truncate_floor()
     # Only the agent's applied_seq=1000 survives; floor = 1001 (not 51).
@@ -184,7 +184,7 @@ def test_floor_mixes_short_long_and_non_await(tmp_path: Path, monkeypatch):
         last_phase_applied_seq=70, awaiting_since=None,
     )
 
-    monkeypatch.setattr("reyn.chat.registry.time.monotonic", lambda: 500.0)
+    monkeypatch.setattr("reyn.runtime.registry.time.monotonic", lambda: 500.0)
 
     floor = registry.compute_truncate_floor()
     # min(agent=1000, short=80, active=70) + 1 = 71. Long is excluded.
@@ -209,7 +209,7 @@ def test_clearing_awaiting_since_restores_inclusion(tmp_path: Path, monkeypatch)
     shim = registry._sessions["alpha"]["main"]
 
     # First: long-await → excluded, floor=1001
-    monkeypatch.setattr("reyn.chat.registry.time.monotonic", lambda: 500.0)
+    monkeypatch.setattr("reyn.runtime.registry.time.monotonic", lambda: 500.0)
     assert registry.compute_truncate_floor() == 1001
 
     # User answered: clear awaiting_since in memory.
@@ -235,11 +235,11 @@ def test_threshold_is_300_seconds(tmp_path: Path, monkeypatch):
     )
 
     # Just under threshold (elapsed=299.9s) → still included → floor=51.
-    monkeypatch.setattr("reyn.chat.registry.time.monotonic", lambda: 399.9)
+    monkeypatch.setattr("reyn.runtime.registry.time.monotonic", lambda: 399.9)
     assert registry.compute_truncate_floor() == 51
 
     # At/over threshold (elapsed=300.0s) → excluded → floor=1001.
-    monkeypatch.setattr("reyn.chat.registry.time.monotonic", lambda: 400.0)
+    monkeypatch.setattr("reyn.runtime.registry.time.monotonic", lambda: 400.0)
     assert registry.compute_truncate_floor() == 1001
 
 
@@ -259,7 +259,7 @@ def test_long_await_alone_returns_zero(tmp_path: Path, monkeypatch):
         last_phase_applied_seq=50, awaiting_since=10.0,
     )
 
-    monkeypatch.setattr("reyn.chat.registry.time.monotonic", lambda: 500.0)
+    monkeypatch.setattr("reyn.runtime.registry.time.monotonic", lambda: 500.0)
     # All sources excluded → seqs empty → floor=0 (no truncation).
     assert registry.compute_truncate_floor() == 0
 
@@ -279,5 +279,5 @@ def test_unset_awaiting_since_treats_as_not_awaiting(tmp_path: Path, monkeypatch
 
     # Even at t=10**9 monotonic, awaiting_since=None means "not awaiting"
     # → skill stays in the floor.
-    monkeypatch.setattr("reyn.chat.registry.time.monotonic", lambda: 1_000_000_000.0)
+    monkeypatch.setattr("reyn.runtime.registry.time.monotonic", lambda: 1_000_000_000.0)
     assert registry.compute_truncate_floor() == 51

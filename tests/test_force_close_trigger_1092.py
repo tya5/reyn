@@ -23,9 +23,9 @@ from typing import Any
 
 import pytest
 
-from reyn.chat.router_loop import RouterLoop
 from reyn.llm.llm import LLMToolCallResult
 from reyn.llm.pricing import TokenUsage
+from reyn.runtime.router_loop import RouterLoop
 from tests.test_router_loop import FakeRouterHost
 
 

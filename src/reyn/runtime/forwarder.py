@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import asyncio
 
-from reyn.chat.outbox import OutboxMessage
+from reyn.runtime.outbox import OutboxMessage
 from reyn.schemas.models import Event
 
 

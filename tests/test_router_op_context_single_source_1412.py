@@ -5,7 +5,7 @@
 ``skill_name="chat_router"`` OpContext with ~95% identical code and drifted
 (#1410/#1411 threaded base_dir to one, lagged the other — the #187 wrong-FS
 class). The fix routes both through ``build_router_op_context``
-(reyn/chat/router_op_context.py).
+(reyn/runtime/router_op_context.py).
 
 Pinned invariants (src-wide AST, the #1402 sole-construction pattern):
 
@@ -24,7 +24,7 @@ import ast
 from pathlib import Path
 
 _SRC = Path(__file__).resolve().parents[1] / "src" / "reyn"
-_FACTORY_REL = "chat/router_op_context.py"
+_FACTORY_REL = "runtime/router_op_context.py"
 
 
 def _chat_router_opcontext_sites() -> list[str]:
@@ -78,7 +78,7 @@ def test_chat_router_opcontext_built_only_in_factory() -> None:
 def test_both_hosts_delegate_to_build_router_op_context() -> None:
     """Tier 2: #1412 — Session and RouterHostAdapter both call
     build_router_op_context (positive guard: the chokepoint is used)."""
-    for rel in ("chat/session.py", "chat/services/router_host_adapter.py"):
+    for rel in ("runtime/session.py", "runtime/services/router_host_adapter.py"):
         assert _calls_named(rel, "build_router_op_context") >= 1, (
             f"{rel} must delegate to build_router_op_context (#1412 single-source)"
         )

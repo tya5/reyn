@@ -186,7 +186,7 @@ def test_app_mention_dispatches_to_agent_inbox(_slack_client):
     assert payload["text"] == "<@U_BOT> hello"
     assert payload["sender"] == "slack:U456"
 
-    from reyn.chat.transport import ExternalRef
+    from reyn.runtime.transport import ExternalRef
     assert isinstance(payload["reply_to"], ExternalRef)
     assert payload["reply_to"].transport == "slack"
     assert payload["reply_to"].destination == {

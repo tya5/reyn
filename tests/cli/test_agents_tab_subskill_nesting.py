@@ -32,7 +32,7 @@ if str(_SRC) not in sys.path:
 
 
 def _make_registry(tmp_path):
-    from reyn.chat.registry import AgentRegistry
+    from reyn.runtime.registry import AgentRegistry
 
     def _factory(profile):
         return object()

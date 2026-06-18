@@ -1,6 +1,6 @@
 """Discovery-mandate tier policy for the universal-category tool-use scheme.
 
-Relocated from ``reyn.chat.router_system_prompt`` (Stage 1, #1627) so the
+Relocated from ``reyn.runtime.router_system_prompt`` (Stage 1, #1627) so the
 tier→discovery-mandate POLICY lives in the scheme layer, not the OS.  The OS
 (``router_loop``) still calls ``tier_wants_discovery_mandate`` for the
 enumerate / retrieval None-path ``build_system_prompt`` call until their own

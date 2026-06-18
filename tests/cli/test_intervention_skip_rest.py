@@ -43,7 +43,7 @@ def _make_app():
 
 def _make_registry():
     """Return an InterventionRegistry with a no-op announce callback."""
-    from reyn.chat.services.intervention_registry import InterventionRegistry
+    from reyn.runtime.services.intervention_registry import InterventionRegistry
 
     async def _noop(iv):  # type: ignore[no-untyped-def]  # noqa: ARG001
         pass
@@ -162,8 +162,8 @@ async def test_skip_rest_cancels_queued_ivs_not_head() -> None:
     ``session._interventions``.  Uses ``registry.list_active()`` (public
     surface) to assert post-cancel state.
     """
-    from reyn.chat.services.intervention_registry import InterventionRegistry
     from reyn.interfaces.tui.widgets import ConversationView
+    from reyn.runtime.services.intervention_registry import InterventionRegistry
 
     app = _make_app()
     async with app.run_test(headless=True) as pilot:
@@ -234,8 +234,8 @@ async def test_skip_rest_emits_breadcrumb() -> None:
     Uses ``ConversationView._log_lines()`` (the public read surface used
     by other Tier-2 tests) to assert the breadcrumb text.
     """
-    from reyn.chat.services.intervention_registry import InterventionRegistry
     from reyn.interfaces.tui.widgets import ConversationView
+    from reyn.runtime.services.intervention_registry import InterventionRegistry
 
     app = _make_app()
     async with app.run_test(headless=True) as pilot:

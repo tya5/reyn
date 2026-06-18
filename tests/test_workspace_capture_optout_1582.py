@@ -20,12 +20,12 @@ from pathlib import Path
 
 import pytest
 
-from reyn.chat.profile import AgentProfile
-from reyn.chat.registry import AgentRegistry
-from reyn.chat.session import Session
 from reyn.config import TimeTravelConfig, _build_time_travel_config
 from reyn.core.events.snapshot_generations import is_active_seq
 from reyn.core.events.state_log import StateLog
+from reyn.runtime.profile import AgentProfile
+from reyn.runtime.registry import AgentRegistry
+from reyn.runtime.session import Session
 
 _WS_FILE = "code.py"
 

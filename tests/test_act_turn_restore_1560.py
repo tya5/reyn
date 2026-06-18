@@ -22,10 +22,10 @@ from pathlib import Path
 
 import pytest
 
-from reyn.chat.profile import AgentProfile
-from reyn.chat.registry import AgentRegistry
 from reyn.core.events.snapshot_generations import is_active_seq, rewind
 from reyn.core.events.state_log import StateLog
+from reyn.runtime.profile import AgentProfile
+from reyn.runtime.registry import AgentRegistry
 from reyn.skill.skill_resume_coordinator import SkillResumeCoordinator
 from reyn.skill.skill_snapshot import SkillSnapshot
 

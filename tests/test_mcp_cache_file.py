@@ -16,7 +16,7 @@ from pathlib import Path
 
 import pytest
 
-from reyn.chat.services.mcp_cache_file import (
+from reyn.runtime.services.mcp_cache_file import (
     cache_file_path,
     file_mtime,
     read_cache,
@@ -97,7 +97,7 @@ def test_read_corrupt_returns_none_and_logs(tmp_path: Path, caplog) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("NOT VALID JSON }{", encoding="utf-8")
     import logging
-    with caplog.at_level(logging.WARNING, logger="reyn.chat.services.mcp_cache_file"):
+    with caplog.at_level(logging.WARNING, logger="reyn.runtime.services.mcp_cache_file"):
         result = read_cache(path)
     assert result is None
     assert any("mcp_cache_file" in r.name for r in caplog.records), (

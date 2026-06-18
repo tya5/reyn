@@ -27,8 +27,8 @@ from __future__ import annotations
 
 import pytest
 
-from reyn.chat.transport import ExternalRef
 from reyn.plugins.api import push_to_agent
+from reyn.runtime.transport import ExternalRef
 
 # ── stub registry / session ───────────────────────────────────────────
 

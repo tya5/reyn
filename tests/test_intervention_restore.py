@@ -22,9 +22,9 @@ from pathlib import Path
 
 import pytest
 
-from reyn.chat.session import Session
 from reyn.core.events.agent_snapshot import AgentSnapshot
 from reyn.core.events.state_log import StateLog
+from reyn.runtime.session import Session
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -84,8 +84,8 @@ async def test_registry_restore_all_includes_outstanding_interventions(tmp_path,
     """
     monkeypatch.chdir(tmp_path)
 
-    from reyn.chat.profile import AgentProfile
-    from reyn.chat.registry import AgentRegistry
+    from reyn.runtime.profile import AgentProfile
+    from reyn.runtime.registry import AgentRegistry
 
     agents_dir = tmp_path / ".reyn" / "agents"
     agents_dir.mkdir(parents=True)

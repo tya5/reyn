@@ -217,7 +217,7 @@ def test_build_agent_for_skill_runner_threads_run_id_to_build_agent() -> None:
     """
     from pathlib import Path
     source = (
-        Path(__file__).parent.parent / "src" / "reyn" / "chat" / "session.py"
+        Path(__file__).parent.parent / "src" / "reyn" / "runtime" / "session.py"
     ).read_text(encoding="utf-8")
     # Locate the _build_agent_for_skill_runner function body
     fn_marker = "def _build_agent_for_skill_runner"

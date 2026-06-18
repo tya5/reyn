@@ -26,7 +26,7 @@ import ast
 from pathlib import Path
 
 import reyn.tools.schemes.universal_category as uc_mod
-from reyn.chat.router_system_prompt import build_system_prompt
+from reyn.runtime.router_system_prompt import build_system_prompt
 from reyn.tools.schemes._discovery import tier_wants_discovery_mandate
 from reyn.tools.schemes._universal_sp import build_universal_tool_use_slots
 

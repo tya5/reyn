@@ -96,10 +96,10 @@ def test_preview_empty_or_whitespace_returns_empty() -> None:
 @pytest.mark.asyncio
 async def test_on_find_status_includes_matched_line_content() -> None:
     """Tier 2: initial /find status includes the matched line text in quotes."""
-    from reyn.chat.outbox import OutboxMessage
     from reyn.interfaces.tui.app import ReynTUIApp
     from reyn.interfaces.tui.app_outbox import OutboxRouter
     from reyn.interfaces.tui.widgets import ConversationView
+    from reyn.runtime.outbox import OutboxMessage
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -129,10 +129,10 @@ async def test_on_find_status_includes_matched_line_content() -> None:
 @pytest.mark.asyncio
 async def test_on_find_preview_truncates_long_match() -> None:
     """Tier 2: long matched lines get the ``…`` suffix in the preview."""
-    from reyn.chat.outbox import OutboxMessage
     from reyn.interfaces.tui.app import ReynTUIApp
     from reyn.interfaces.tui.app_outbox import OutboxRouter
     from reyn.interfaces.tui.widgets import ConversationView
+    from reyn.runtime.outbox import OutboxMessage
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     # Wider terminal so RichLog doesn't wrap the long line — we
@@ -170,10 +170,10 @@ async def test_cycle_find_status_updates_preview() -> None:
     cycling forward should swap the preview from the first
     match's content to the second's.
     """
-    from reyn.chat.outbox import OutboxMessage
     from reyn.interfaces.tui.app import ReynTUIApp
     from reyn.interfaces.tui.app_outbox import OutboxRouter
     from reyn.interfaces.tui.widgets import ConversationView
+    from reyn.runtime.outbox import OutboxMessage
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -224,10 +224,10 @@ async def test_cycle_find_preview_whitespace_only_line_omits_quotes() -> None:
     `` · ""`` (an empty pair of quotes); the gate `if snippet`
     suppresses the suffix.
     """
-    from reyn.chat.outbox import OutboxMessage
     from reyn.interfaces.tui.app import ReynTUIApp
     from reyn.interfaces.tui.app_outbox import OutboxRouter
     from reyn.interfaces.tui.widgets import ConversationView
+    from reyn.runtime.outbox import OutboxMessage
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:

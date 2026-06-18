@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from reyn.chat.session import _exec_gate_backend_name
+from reyn.runtime.session import _exec_gate_backend_name
 from reyn.tools.types import RouterCallerState, ToolContext
 from reyn.tools.universal_catalog import (
     _enumerate_category,

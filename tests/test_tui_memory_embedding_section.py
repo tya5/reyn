@@ -31,8 +31,8 @@ from typing import Any
 
 import pytest
 
-from reyn.chat.lifecycle_forwarder import ChatLifecycleForwarder
 from reyn.interfaces.tui.widgets.right_panel.memory_tab import render_memory
+from reyn.runtime.lifecycle_forwarder import ChatLifecycleForwarder
 from reyn.schemas.models import Event
 
 

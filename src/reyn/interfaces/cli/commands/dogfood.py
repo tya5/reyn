@@ -402,15 +402,15 @@ def _build_live_runner(agent_name: str, *, env_backend=None, ws_base_dir=None, w
     import shutil
     from pathlib import Path
 
-    from reyn.chat.profile import AgentProfile
-    from reyn.chat.registry import AgentRegistry
-    from reyn.chat.scoped_session_factory import build_scoped_chat_session
     from reyn.config import _find_project_root, load_config, load_project_context
     from reyn.core.events.event_store import EventStore
     from reyn.dev.dogfood.runner import ScenarioRunResult
     from reyn.llm.model_resolver import ModelResolver
     from reyn.mcp.server import send_to_agent_impl
     from reyn.runtime.budget.budget import BudgetTracker
+    from reyn.runtime.profile import AgentProfile
+    from reyn.runtime.registry import AgentRegistry
+    from reyn.runtime.scoped_session_factory import build_scoped_chat_session
     from reyn.security.permissions.permissions import PermissionResolver
 
     project_root = _find_project_root(Path.cwd()) or Path.cwd()

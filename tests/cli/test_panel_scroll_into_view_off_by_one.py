@@ -277,8 +277,8 @@ def test_agents_item_ys_cursor0_scroll_target_not_off_by_one(
     2. len(item_ys) == len(flat_items) (parallel lists)
     3. ``1 + item_ys[0] > item_ys[0]`` — the off-by-one is strictly greater
     """
-    from reyn.chat.registry import AgentRegistry
     from reyn.interfaces.tui.widgets.right_panel.agents_tab import render_agents
+    from reyn.runtime.registry import AgentRegistry
 
     def _factory(profile: object) -> object:
         return object()
@@ -312,8 +312,8 @@ def test_agents_item_ys_parallel_contract(tmp_path: Path) -> None:
     ``_scroll_agents_into_view`` reads ``_agents_item_ys[cursor]``.  Pin
     the parallel-list contract so cursor arithmetic is always valid.
     """
-    from reyn.chat.registry import AgentRegistry
     from reyn.interfaces.tui.widgets.right_panel.agents_tab import render_agents
+    from reyn.runtime.registry import AgentRegistry
 
     def _factory(profile: object) -> object:
         return object()

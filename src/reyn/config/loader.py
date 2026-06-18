@@ -426,12 +426,12 @@ def load_config(cwd: Path | None = None) -> ReynConfig:
 def _build_external_transports_config(raw: object):
     """Parse the ``external_transports:`` section (FP-0041 #489 PR-D2).
 
-    Defers to ``reyn.chat.external_routing.parse_external_transports``
+    Defers to ``reyn.runtime.external_routing.parse_external_transports``
     which handles defensive parsing (= malformed entries silently
     skipped). Lazy import to avoid the same circular dependency
     addressed by ``_empty_external_transports``.
     """
-    from reyn.chat.external_routing import parse_external_transports
+    from reyn.runtime.external_routing import parse_external_transports
     return parse_external_transports(raw)
 
 

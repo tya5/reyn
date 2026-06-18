@@ -42,13 +42,13 @@ from typing import Any
 
 import pytest
 
-from reyn.chat.router_loop import (
+from reyn.llm.llm import LLMToolCallResult
+from reyn.llm.pricing import TokenUsage
+from reyn.runtime.router_loop import (
     _SPAWN_ACK_MSG,
     _SPAWN_ACK_TOOL_DIRECTIVE,
     RouterLoop,
 )
-from reyn.llm.llm import LLMToolCallResult
-from reyn.llm.pricing import TokenUsage
 from tests.test_router_loop import (
     FakeRouterHost,
     _ScriptedLLM,

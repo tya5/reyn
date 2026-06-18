@@ -8,7 +8,7 @@ forced-sync pre-frame guard (`outcome="forced_sync"`)? If `triggering` ≈ 0 whi
 `forced_sync` carries the real work, the background path (axis-1) is redundant.
 
 Outcome → path map (verified against
-`src/reyn/chat/services/compaction_controller.py`, HEAD d71f544a):
+`src/reyn/runtime/services/compaction_controller.py`, HEAD d71f544a):
 
   BACKGROUND `_maybe_compact` (axis-1, removal candidate):
     too_few_turns / below_min_batch / below_threshold / triggering

@@ -27,13 +27,13 @@ if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
 import reyn.interfaces.tui.app as app_mod
-from reyn.chat.profile import AgentProfile
-from reyn.chat.registry import AgentRegistry
 from reyn.core.events.agent_snapshot import AgentSnapshot
 from reyn.core.events.state_log import StateLog
 from reyn.interfaces.tui.app import ReynTUIApp
 from reyn.interfaces.tui.widgets import ConversationView, InputBar
 from reyn.interfaces.tui.widgets.sticky_status import StickyStatus
+from reyn.runtime.profile import AgentProfile
+from reyn.runtime.registry import AgentRegistry
 
 
 def _no_factory(_profile):

@@ -13,8 +13,8 @@ Usage::
 """
 from __future__ import annotations
 
-from reyn.chat.outbox import OutboxMessage
 from reyn.interfaces.slash import slash
+from reyn.runtime.outbox import OutboxMessage
 
 
 def _normalise(args: str) -> str:

@@ -49,12 +49,12 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from reyn.chat.router_loop import (
+from reyn.llm.pricing import TokenUsage
+from reyn.runtime.router_loop import (
     EMPTY_STOP_RETRY_DIRECTIVE,
     RouterLoop,
     RouterLoopHost,
 )
-from reyn.llm.pricing import TokenUsage
 
 if TYPE_CHECKING:
     from reyn.config import PlannerStepCompactionConfig

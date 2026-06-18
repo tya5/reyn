@@ -17,7 +17,7 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
-from reyn.chat.router_loop import _build_media_followup_message
+from reyn.runtime.router_loop import _build_media_followup_message
 
 # ── op_runtime/mcp.py: media_blocks preservation ───────────────────────
 

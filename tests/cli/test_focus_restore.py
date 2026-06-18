@@ -133,9 +133,9 @@ async def test_intervention_resolved_handler_restores_input_focus() -> None:
     through ``_submit``), the resolved outbox message removes the widget
     and must hand focus back the same way.
     """
-    from reyn.chat.outbox import OutboxMessage
     from reyn.interfaces.tui.app_outbox import OutboxRouter
     from reyn.interfaces.tui.widgets import ReynHeader
+    from reyn.runtime.outbox import OutboxMessage
 
     app = _make_app()
     async with app.run_test(headless=True, size=(120, 30)) as pilot:

@@ -24,9 +24,9 @@ from __future__ import annotations
 
 import pytest
 
-from reyn.chat.router_loop import RouterLoop
-from reyn.chat.router_system_prompt import build_system_prompt
-from reyn.chat.router_tools import _DESCRIBE_SKILL_STRIP_FIELDS, MAX_DESC_LEN_FOR_LISTING
+from reyn.runtime.router_loop import RouterLoop
+from reyn.runtime.router_system_prompt import build_system_prompt
+from reyn.runtime.router_tools import _DESCRIBE_SKILL_STRIP_FIELDS, MAX_DESC_LEN_FOR_LISTING
 
 # ---------------------------------------------------------------------------
 # Helpers / fake host (mirrors test_router_list_skills_input_hint.py pattern)
@@ -352,7 +352,7 @@ def test_all_stdlib_skills_description_within_limit():
     skill.  Skips if the stdlib path cannot be resolved (CI isolation).
     """
     try:
-        from reyn.chat.session import enumerate_available_skills
+        from reyn.runtime.session import enumerate_available_skills
     except ImportError:
         pytest.skip("enumerate_available_skills not importable — skip stdlib test")
 

@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import pytest
 
-from reyn.chat.session import Session
+from reyn.runtime.session import Session
 
 
 @pytest.mark.asyncio

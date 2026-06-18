@@ -16,12 +16,12 @@ from pathlib import Path
 
 import pytest
 
-from reyn.chat.session import Session
 from reyn.core.events.state_log import StateLog
 from reyn.core.plan import (
     PlanRegistry,
     plan_snapshot_path,
 )
+from reyn.runtime.session import Session
 
 
 def _make_session(tmp_path: Path, *, agent_name: str = "alpha") -> Session:
@@ -206,7 +206,7 @@ class _StubRuntime:
 
     async def run(self):
         # Placeholder — never called in Component A tests.
-        from reyn.chat.planner import PlanExecutionResult
+        from reyn.runtime.planner import PlanExecutionResult
         return PlanExecutionResult(text="")
 
 
@@ -223,7 +223,7 @@ async def test_spawn_plan_task_emits_plan_summary_before_execution(
     """
     import asyncio
 
-    from reyn.chat.planner import Plan, PlanStep
+    from reyn.runtime.planner import Plan, PlanStep
 
     monkeypatch.chdir(tmp_path)
     session = _make_session(tmp_path)

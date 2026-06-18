@@ -219,13 +219,13 @@ def test_agent_card_shows_streaming_and_push_notifications_true(tmp_path) -> Non
     """
     from fastapi.testclient import TestClient
 
-    from reyn.chat.profile import AgentProfile
-    from reyn.chat.registry import AgentRegistry
-    from reyn.chat.session import Session
     from reyn.core.events.state_log import StateLog
     from reyn.interfaces.web.deps import get_registry
     from reyn.interfaces.web.server import app
     from reyn.runtime.budget.budget import BudgetTracker, CostConfig
+    from reyn.runtime.profile import AgentProfile
+    from reyn.runtime.registry import AgentRegistry
+    from reyn.runtime.session import Session
 
     state_log = StateLog(tmp_path / ".reyn" / "state" / "wal.jsonl")
 
@@ -290,13 +290,13 @@ def test_answer_injection_delivers_to_pending_intervention(tmp_path) -> None:
     """
     from fastapi.testclient import TestClient
 
-    from reyn.chat.profile import AgentProfile
-    from reyn.chat.registry import AgentRegistry
-    from reyn.chat.session import Session
     from reyn.core.events.state_log import StateLog
     from reyn.interfaces.web.deps import get_registry, get_run_registry
     from reyn.interfaces.web.server import app
     from reyn.runtime.budget.budget import BudgetTracker, CostConfig
+    from reyn.runtime.profile import AgentProfile
+    from reyn.runtime.registry import AgentRegistry
+    from reyn.runtime.session import Session
     from reyn.user_intervention import UserIntervention
 
     state_log = StateLog(tmp_path / ".reyn" / "state" / "wal.jsonl")
@@ -332,7 +332,7 @@ def test_answer_injection_delivers_to_pending_intervention(tmp_path) -> None:
         # FP-0043 S4b-4 (B): a2a delegations + answer-injection run on the agent's
         # shared a2a session, so seed the iv there (not "main") — the same session
         # the endpoint resolves.
-        from reyn.chat.a2a_routing import resolve_a2a_session
+        from reyn.runtime.a2a_routing import resolve_a2a_session
         session = resolve_a2a_session(registry, "demo")
         iv_future = loop.create_future()
         iv = UserIntervention(
@@ -390,13 +390,13 @@ def test_answer_injection_returns_answered_false_for_unknown_task(tmp_path) -> N
     doesn't exist returns {"answered": False, "reason": "not found"}."""
     from fastapi.testclient import TestClient
 
-    from reyn.chat.profile import AgentProfile
-    from reyn.chat.registry import AgentRegistry
-    from reyn.chat.session import Session
     from reyn.core.events.state_log import StateLog
     from reyn.interfaces.web.deps import get_registry, get_run_registry
     from reyn.interfaces.web.server import app
     from reyn.runtime.budget.budget import BudgetTracker, CostConfig
+    from reyn.runtime.profile import AgentProfile
+    from reyn.runtime.registry import AgentRegistry
+    from reyn.runtime.session import Session
 
     state_log = StateLog(tmp_path / ".reyn" / "state" / "wal.jsonl")
 

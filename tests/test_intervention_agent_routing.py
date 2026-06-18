@@ -28,7 +28,7 @@ from pathlib import Path
 
 import pytest
 
-from reyn.chat.session import AgentRequestBus, Session
+from reyn.runtime.session import AgentRequestBus, Session
 from reyn.user_intervention import InterventionAnswer, UserIntervention
 
 # ── 1. Hook methods exist with the canonical signatures ────────────────

@@ -24,8 +24,8 @@ from __future__ import annotations
 import logging
 from typing import Awaitable, Callable
 
-from reyn.chat.outbox import OutboxMessage
-from reyn.chat.transport import TransportRef, TuiRef
+from reyn.runtime.outbox import OutboxMessage
+from reyn.runtime.transport import TransportRef, TuiRef
 
 logger = logging.getLogger(__name__)
 

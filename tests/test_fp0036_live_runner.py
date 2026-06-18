@@ -30,14 +30,14 @@ from pathlib import Path
 
 import pytest
 
-from reyn.chat.profile import AgentProfile
-from reyn.chat.registry import AgentRegistry
-from reyn.chat.session import Session
 from reyn.core.events.state_log import StateLog
 from reyn.dev.dogfood.scenarios import Scenario
 from reyn.llm.llm import LLMToolCallResult
 from reyn.llm.pricing import TokenUsage
 from reyn.runtime.budget.budget import BudgetTracker, CostConfig
+from reyn.runtime.profile import AgentProfile
+from reyn.runtime.registry import AgentRegistry
+from reyn.runtime.session import Session
 
 # ---------------------------------------------------------------------------
 # Shared helpers
@@ -143,7 +143,7 @@ async def test_single_turn_scenario_returns_reply(tmp_path, monkeypatch):
     runner_fn = _make_live_runner_fn(tmp_path, agent_name="default")
     assert runner_fn is not None, "_build_live_runner must return a callable"
 
-    monkeypatch.setattr("reyn.chat.router_loop.call_llm_tools", fake_llm)
+    monkeypatch.setattr("reyn.runtime.router_loop.call_llm_tools", fake_llm)
     result = await runner_fn(scenario)
 
     assert result.scenario_id == "s1"
@@ -178,7 +178,7 @@ async def test_multi_turn_scenario_concatenates_replies(tmp_path, monkeypatch):
     runner_fn = _make_live_runner_fn(tmp_path, agent_name="default")
     assert runner_fn is not None
 
-    monkeypatch.setattr("reyn.chat.router_loop.call_llm_tools", fake_llm)
+    monkeypatch.setattr("reyn.runtime.router_loop.call_llm_tools", fake_llm)
     result = await runner_fn(scenario)
 
     assert result.scenario_id == "s2"
@@ -226,7 +226,7 @@ async def test_event_isolation_between_scenarios(tmp_path, monkeypatch):
     scenario_a = _make_scenario("iso-a", input_text="Turn A")
     scenario_b = _make_scenario("iso-b", input_text="Turn B")
 
-    monkeypatch.setattr("reyn.chat.router_loop.call_llm_tools", fake_llm)
+    monkeypatch.setattr("reyn.runtime.router_loop.call_llm_tools", fake_llm)
     result_a = await runner_fn(scenario_a)
 
     # The chat events dir should exist after scenario A.
@@ -359,7 +359,7 @@ async def test_history_jsonl_wiped_before_scenario(tmp_path, monkeypatch):
 
     scenario = _make_scenario("hist-s1", input_text="What is fresh?")
 
-    monkeypatch.setattr("reyn.chat.router_loop.call_llm_tools", capturing_llm)
+    monkeypatch.setattr("reyn.runtime.router_loop.call_llm_tools", capturing_llm)
     result = await runner_fn(scenario)
 
     # The LLM must NOT have seen any of the stale entries in any call.

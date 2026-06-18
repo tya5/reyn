@@ -21,8 +21,8 @@ from pathlib import Path
 
 import pytest
 
-from reyn.chat.services.memory_service import MemoryService
 from reyn.core.events.events import EventLog
+from reyn.runtime.services.memory_service import MemoryService
 
 # ---------------------------------------------------------------------------
 # Helpers — thin closure-based fakes for file callbacks

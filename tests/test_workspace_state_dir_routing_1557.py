@@ -17,8 +17,8 @@ from pathlib import Path
 
 import pytest
 
-from reyn.chat.registry import AgentRegistry
 from reyn.core.events.state_log import StateLog
+from reyn.runtime.registry import AgentRegistry
 
 pytestmark = pytest.mark.skipif(
     shutil.which("git") is None, reason="git required for the workspace substrate",

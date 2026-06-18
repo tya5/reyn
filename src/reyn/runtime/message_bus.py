@@ -28,11 +28,11 @@ import logging
 import uuid
 from typing import TYPE_CHECKING
 
-from reyn.chat.outbox import OutboxMessage
-from reyn.chat.transport import TransportRef
+from reyn.runtime.outbox import OutboxMessage
+from reyn.runtime.transport import TransportRef
 
 if TYPE_CHECKING:
-    from reyn.chat.session import Session
+    from reyn.runtime.session import Session
 
 logger = logging.getLogger(__name__)
 

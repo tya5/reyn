@@ -44,7 +44,7 @@ from pathlib import Path
 _REPO_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(_REPO_ROOT / "src"))
 
-from reyn.chat.router_system_prompt import build_system_prompt  # noqa: E402
+from reyn.runtime.router_system_prompt import build_system_prompt  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Legacy tool literal names — what --grep-legacy checks for.

@@ -128,20 +128,27 @@ no shim → byte-gate via rename-detection + 3-ref-class straggler grep):
   stale `chat/tui`/`chat/slash` pycache remnants). Small, isolated, byte-identical
   move + repoint. (Closes the #1700 inconsistency; lowest risk, lands first.
   `error_format` stays — it's runtime, see the cluster-table correction.)
-- **PR-B (namespace rename + cluster split, FOLDED)** — *recommended fold* (was
-  PR-B rename + PR-C split). `reyn.chat` → `reyn.runtime.{session,engine,routing}`
-  in **one** move + atomic repoint. Rationale: the repoint surface is large
-  (`reyn.chat.*` is imported far more widely than `reyn.api`); a separate rename
-  then split would repoint **every** importer twice (`chat`→`runtime`, then
-  `runtime.X`→`runtime.session.X`). Folding does it once. Byte-gate still holds
-  via git rename-detection (each module is a single rename to its final path) +
-  the 3-ref-class straggler grep. (If review prefers smaller PRs, the unfold is
-  rename-first then split — but pays the double repoint.)
+- **PR-B (FLAT rename only)** — `reyn.chat` → `reyn.runtime` (no subpackage
+  split; merges into the existing `reyn.runtime` alongside budget/cron/limits).
+  **Correction (PR-B flow-trace, lead decision 2026-06-19)**: the rename+split
+  fold is **NOT possible** — `session.py` ↔ `router_loop.py` are bidirectionally
+  dependent (session→router_loop→session), which crosses the proposed
+  session/engine cluster boundary. Splitting them into separate subpackages now
+  would create a **circular package dep** (violating the one-directional
+  dependency rule). A clean split requires **decoupling that cycle first** =
+  the C-series god-file decomposition. So: flat rename now (one 399-file
+  repoint), cluster-split AFTER C-series. ("Decouple before split.") Byte-gate
+  via git rename-detection (mostly 100%) + 3-ref-class straggler grep.
 - **PR-C… (god-file decomposition)**: extract `session.py` non-Session classes
-  (C1), then `Session` method-clusters into collaborators (C2…), then
-  `router_loop.py` turn-phase collaborators (C3…). Each PR = one seam, behavior-
+  (C1), then `Session` method-clusters into collaborators (C2…) — **breaking the
+  session ↔ router_loop cycle** — then `router_loop.py` turn-phase collaborators
+  (C3…). Each PR = one seam, behavior-
   preserving, with collaborator unit tests. **Per-PR seam review** (not a single
   mega-PR) — this is where wrong cuts cost the most.
+- **PR-D (cluster split)** — AFTER C-series: now that the session ↔ router_loop
+  cycle is broken, split `reyn.runtime` into `runtime.{session,engine,routing}`
+  subpackages with clean one-directional deps. The repoint here is small +
+  intra-`runtime` (not the global surface PR-B already paid).
 
 Each stage independently byte-gate-able; docs prose (path references) → a
 docs-maintainer follow-up after each path-changing stage lands (per #311).
@@ -149,8 +156,8 @@ docs-maintainer follow-up after each path-changing stage lands (per #311).
 ## Cost estimate
 
 **Total: HIGH** (≈ the #311 playbook × N stages + the god-file extraction).
-PR-A (UI) + PR-B (rename+split, folded) are mechanical-but-broad (the repoint
-surface is larger than #311 — `reyn.chat` is imported far more widely). PR-C+
+PR-A (UI) + PR-B (flat rename) are mechanical-but-broad (the repoint surface is
+larger than #311 — `reyn.chat` is imported far more widely, ~399 files). PR-C+
 (god-file) is the genuinely hard, high-value design work. Recommend landing
 A→B (de-risk, mechanical) before committing to the C-series schedule.
 

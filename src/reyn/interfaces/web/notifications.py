@@ -4,7 +4,7 @@ Pre-#269 the webhook was fire-and-forget: HTTP 2xx / 4xx / 5xx all
 logged but never returned to the caller. issue #269 upgrades the
 contract: ``post_webhook`` now returns a ``DeliveryResult`` so callers
 can track per-channel liveness (= ``ChannelState`` in
-``reyn.chat.channel_state``) + drive stall detection for #268's
+``reyn.runtime.channel_state``) + drive stall detection for #268's
 origin-pinned intervention routing.
 
 Backwards-compat: callers that ignore the return value see no change
@@ -21,7 +21,7 @@ import asyncio
 import logging
 from typing import TYPE_CHECKING
 
-from reyn.chat.channel_state import (
+from reyn.runtime.channel_state import (
     DEFAULT_RETRY_POLICY,
     DeliveryOutcome,
     DeliveryResult,

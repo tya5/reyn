@@ -20,8 +20,8 @@ import asyncio
 
 import pytest
 
-from reyn.chat.router_loop import RouterLoop
 from reyn.llm.llm import LLMToolCallResult
+from reyn.runtime.router_loop import RouterLoop
 from reyn.tools.scheme import (
     CodeBlock,
     ExecutionResult,
@@ -149,7 +149,7 @@ async def test_codeblock_arm_full_round_then_plaintext_exit(monkeypatch) -> None
     async def _fake_call_llm_tools(**kwargs) -> LLMToolCallResult:
         return turns.pop(0)
 
-    monkeypatch.setattr("reyn.chat.router_loop.call_llm_tools", _fake_call_llm_tools)
+    monkeypatch.setattr("reyn.runtime.router_loop.call_llm_tools", _fake_call_llm_tools)
     await loop.run("hello", [])
 
     # CodeBlock arm appended the [assistant: code] turn + the observation message

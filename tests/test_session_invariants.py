@@ -32,12 +32,12 @@ from pathlib import Path
 import pytest
 from _async_wait import wait_until  # noqa: E402 — shared #1751 test wait helper
 
-from reyn.chat.session import Session
 from reyn.config import OnLimitConfig, SafetyConfig, TimeoutConfig
 from reyn.core.events.agent_snapshot import AgentSnapshot
 from reyn.core.events.state_log import StateLog
 from reyn.llm.llm import LLMToolCallResult
 from reyn.llm.pricing import TokenUsage
+from reyn.runtime.session import Session
 from reyn.user_intervention import (
     InterventionAnswer,
     InterventionChoice,
@@ -235,7 +235,7 @@ async def test_chain_register_emits_wal_event(tmp_path, monkeypatch):
     # Round 1: router asks to delegate; round 2 is never reached in this test
     # because send_to_agent is async (loop exits after delegation).
     stub = _make_llm_stub(_delegate_result("peer_agent", "please help"))
-    monkeypatch.setattr("reyn.chat.router_loop.call_llm_tools", stub)
+    monkeypatch.setattr("reyn.runtime.router_loop.call_llm_tools", stub)
 
     await session._handle_agent_request({
         "from_agent": "origin_agent",
@@ -294,7 +294,7 @@ async def test_chain_resolve_clears_snapshot_and_emits_resolve(tmp_path, monkeyp
 
     # Phase 1: router delegates to peer_agent.
     stub_round1 = _make_llm_stub(_delegate_result("peer_agent", "help me"))
-    monkeypatch.setattr("reyn.chat.router_loop.call_llm_tools", stub_round1)
+    monkeypatch.setattr("reyn.runtime.router_loop.call_llm_tools", stub_round1)
     await session._handle_agent_request({
         "from_agent": "origin_agent",
         "request": "synthesize",
@@ -309,7 +309,7 @@ async def test_chain_resolve_clears_snapshot_and_emits_resolve(tmp_path, monkeyp
 
     # Phase 2: peer_agent responds → router re-runs and produces text reply.
     stub_round2 = _make_llm_stub(_text_result("synthesized answer"))
-    monkeypatch.setattr("reyn.chat.router_loop.call_llm_tools", stub_round2)
+    monkeypatch.setattr("reyn.runtime.router_loop.call_llm_tools", stub_round2)
     await session._handle_agent_response({
         "from_agent": "peer_agent",
         "response": "peer result",
@@ -384,7 +384,7 @@ async def test_chain_timeout_fires_upstream_error_and_emits_event(tmp_path, monk
 
     # Router delegates to slow_peer (which never responds).
     stub = _make_llm_stub(_delegate_result("slow_peer", "process this"))
-    monkeypatch.setattr("reyn.chat.router_loop.call_llm_tools", stub)
+    monkeypatch.setattr("reyn.runtime.router_loop.call_llm_tools", stub)
     await session._handle_agent_request({
         "from_agent": "upstream_agent",
         "request": "do slow work",
@@ -513,7 +513,7 @@ async def test_inbox_put_consume_emits_wal_events_with_monotonic_seq(tmp_path, m
     # Router stub: always returns text so the loop exits after 1 iteration.
     # Real async callable per Tier 2c policy (no unittest.mock.AsyncMock).
     stub = _make_llm_stub([_text_result(f"reply {i}") for i in range(3)])
-    monkeypatch.setattr("reyn.chat.router_loop.call_llm_tools", stub)
+    monkeypatch.setattr("reyn.runtime.router_loop.call_llm_tools", stub)
 
     async def _run_one_turn():
         """Process all three inbox messages then shutdown."""
@@ -903,7 +903,7 @@ async def test_agent_request_empty_router_reply_sends_marker_upstream(
     # Session's capture filter picks it up → agent_replies non-empty
     # → failure message forwarded upstream (not the no-reply marker).
     stub = _make_llm_stub(_text_result(""))
-    monkeypatch.setattr("reyn.chat.router_loop.call_llm_tools", stub)
+    monkeypatch.setattr("reyn.runtime.router_loop.call_llm_tools", stub)
 
     await session._handle_agent_request({
         "from_agent": "origin_agent",
@@ -964,7 +964,7 @@ async def test_agent_request_router_cap_exhausted_sends_marker_upstream(
     session.is_attached = True
 
     # Force RouterCapExceeded from the handler.
-    from reyn.chat.session import RouterCapExceeded
+    from reyn.runtime.session import RouterCapExceeded
 
     async def _raise_cap(*args, **kwargs):
         raise RouterCapExceeded(count=3, cap=3, last_reason="loop")
@@ -1011,7 +1011,7 @@ async def test_peer_no_reply_marker_surfaced_to_user_not_absorbed(
     branch (user-initiated chain, PR11 path).
     """
     monkeypatch.chdir(tmp_path)
-    from reyn.chat.session import _no_reply_marker
+    from reyn.runtime.session import _no_reply_marker
 
     session = _make_session(tmp_path, agent_name="default_agent")
     session.is_attached = True
@@ -1075,7 +1075,7 @@ async def test_peer_no_reply_marker_forwarded_upstream_in_pending_chain(
     branch → `_resolve_pending_chain`.
     """
     monkeypatch.chdir(tmp_path)
-    from reyn.chat.session import _no_reply_marker
+    from reyn.runtime.session import _no_reply_marker
 
     # Set up upstream origin agent to capture the forwarded response.
     origin_session = Session(agent_name="origin_agent")
@@ -1208,7 +1208,7 @@ async def test_run_skill_awaitable_returns_status_data_no_outbox(
     """
     monkeypatch.chdir(tmp_path)
 
-    import reyn.chat.session as session_mod
+    import reyn.runtime.session as session_mod
     from reyn.core.kernel.runtime import RunResult
 
     dummy_skill_dir = tmp_path / "dummy_skill"
@@ -1284,7 +1284,7 @@ async def test_spawn_skill_for_router_returns_spawn_ack(
     """
     monkeypatch.chdir(tmp_path)
 
-    import reyn.chat.session as session_mod
+    import reyn.runtime.session as session_mod
 
     dummy_skill_dir = tmp_path / "dummy_skill"
     dummy_skill_dir.mkdir()
@@ -1352,7 +1352,7 @@ async def test_skill_completed_inbox_enqueued_on_finish(tmp_path, monkeypatch):
     """
     monkeypatch.chdir(tmp_path)
 
-    import reyn.chat.services.skill_runner as skill_runner_mod
+    import reyn.runtime.services.skill_runner as skill_runner_mod
     from reyn.core.kernel.runtime import RunResult
 
     dummy_skill_dir = tmp_path / "dummy_skill"

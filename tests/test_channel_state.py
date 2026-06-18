@@ -32,7 +32,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from reyn.chat.channel_state import (
+from reyn.runtime.channel_state import (
     DEFAULT_RETRY_POLICY,
     NO_RETRY_POLICY,
     ChannelState,

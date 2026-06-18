@@ -33,7 +33,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from reyn.chat.transport import TransportRef
+from reyn.runtime.transport import TransportRef
 
 
 async def push_to_agent(
@@ -102,7 +102,7 @@ async def push_to_agent(
     # pollute the user's REPL/web conversation. Fire-and-forget: ensure_session_running
     # boots the run-loop (no forwarder); the reply routes via the factory-wired outbox
     # interceptor from reply_to=ExternalRef below (output unchanged, reuse).
-    from reyn.chat.webhook_routing import resolve_webhook_session
+    from reyn.runtime.webhook_routing import resolve_webhook_session
     session = resolve_webhook_session(registry, target_agent, sender)
     envelope: dict[str, Any] = {
         "text": text,
@@ -174,7 +174,7 @@ def make_sender(
     Reyn's dispatch attribution (= PR-A) emits a ``[context shift]``
     state_change history entry when the sender changes between turns.
     The format is ``<transport>[:<source_scope>]:<external_id>[:<display>]``
-    so ``_format_sender_label`` (= reyn.chat.session) renders a
+    so ``_format_sender_label`` (= reyn.runtime.session) renders a
     readable label for the LLM.
 
     Examples

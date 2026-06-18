@@ -28,11 +28,11 @@ from typing import Any
 
 import pytest
 
-from reyn.chat import router_loop as rl
-from reyn.chat.router_loop import EMPTY_STOP_RETRY_DIRECTIVE
-from reyn.chat.session import Session
 from reyn.llm.llm import LLMToolCallResult
 from reyn.llm.pricing import TokenUsage
+from reyn.runtime import router_loop as rl
+from reyn.runtime.router_loop import EMPTY_STOP_RETRY_DIRECTIVE
+from reyn.runtime.session import Session
 
 _EMPTY_USAGE = TokenUsage(prompt_tokens=10, completion_tokens=5)
 
@@ -92,7 +92,7 @@ async def test_chat_session_passes_shared_resume_directive_always_on(monkeypatch
     kwarg's presence AND its identity against the shared module-level constant,
     plus the always-on flag (env-gate retired)."""
     monkeypatch.chdir(tmp_path)
-    # session._handle_user_message does ``from reyn.chat.router_loop import
+    # session._handle_user_message does ``from reyn.runtime.router_loop import
     # RouterLoop`` inside the function, so the module-level patch is observed.
     monkeypatch.setattr(rl, "RouterLoop", _CapturingRouterLoop)
     scripted = _ScriptedLLM([_text_result("ok")])

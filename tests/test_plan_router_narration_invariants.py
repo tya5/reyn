@@ -22,10 +22,10 @@ from pathlib import Path
 
 import pytest
 
-from reyn.chat.planner import PlanExecutionResult
-from reyn.chat.session import Session
 from reyn.core.events.state_log import StateLog
 from reyn.core.plan import PlanRegistry
+from reyn.runtime.planner import PlanExecutionResult
+from reyn.runtime.session import Session
 
 
 def _make_session(tmp_path: Path, *, agent_name: str = "alpha") -> Session:

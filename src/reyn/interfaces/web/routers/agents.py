@@ -86,7 +86,7 @@ async def create_agent(
         )
     # Save allowed_skills if provided.
     if body.allowed_skills is not None:
-        from reyn.chat.profile import AgentProfile
+        from reyn.runtime.profile import AgentProfile
         updated = AgentProfile(
             name=profile.name,
             role=profile.role,

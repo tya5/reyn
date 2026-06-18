@@ -21,9 +21,9 @@ from typing import Any
 
 import pytest
 
-from reyn.chat.router_loop import _EMPTY_RESPONSE_MSG, RouterLoop, _is_empty_router_response
 from reyn.llm.llm import LLMToolCallResult
 from reyn.llm.pricing import TokenUsage
+from reyn.runtime.router_loop import _EMPTY_RESPONSE_MSG, RouterLoop, _is_empty_router_response
 
 # ---------------------------------------------------------------------------
 # Test doubles (copied from test_router_loop.py — shared infrastructure kept
@@ -258,7 +258,7 @@ async def test_empty_response_emits_audit_event(monkeypatch):
     host = FakeRouterHost()
     loop = make_loop(host)
     scripted = _ScriptedLLM([empty_stop_result()])
-    monkeypatch.setattr("reyn.chat.router_loop.call_llm_tools", scripted)
+    monkeypatch.setattr("reyn.runtime.router_loop.call_llm_tools", scripted)
 
     await loop.run("do something", [])
 
@@ -272,7 +272,7 @@ async def test_empty_response_event_payload_is_p7_clean(monkeypatch):
     host = FakeRouterHost()
     loop = make_loop(host)
     scripted = _ScriptedLLM([empty_stop_result()])
-    monkeypatch.setattr("reyn.chat.router_loop.call_llm_tools", scripted)
+    monkeypatch.setattr("reyn.runtime.router_loop.call_llm_tools", scripted)
 
     await loop.run("do something", [])
 
@@ -308,7 +308,7 @@ async def test_empty_response_event_has_expected_fields(monkeypatch):
     host = FakeRouterHost()
     loop = make_loop(host)
     scripted = _ScriptedLLM([empty_stop_result()])
-    monkeypatch.setattr("reyn.chat.router_loop.call_llm_tools", scripted)
+    monkeypatch.setattr("reyn.runtime.router_loop.call_llm_tools", scripted)
 
     await loop.run("do something", [])
 
@@ -329,7 +329,7 @@ async def test_empty_response_puts_failure_message_in_outbox(monkeypatch):
     host = FakeRouterHost()
     loop = make_loop(host)
     scripted = _ScriptedLLM([empty_stop_result()])
-    monkeypatch.setattr("reyn.chat.router_loop.call_llm_tools", scripted)
+    monkeypatch.setattr("reyn.runtime.router_loop.call_llm_tools", scripted)
 
     await loop.run("do something", [])
 
@@ -345,7 +345,7 @@ async def test_empty_response_failure_message_is_p7_clean(monkeypatch):
     host = FakeRouterHost()
     loop = make_loop(host)
     scripted = _ScriptedLLM([empty_stop_result()])
-    monkeypatch.setattr("reyn.chat.router_loop.call_llm_tools", scripted)
+    monkeypatch.setattr("reyn.runtime.router_loop.call_llm_tools", scripted)
 
     await loop.run("do something", [])
 
@@ -371,7 +371,7 @@ async def test_empty_response_no_retry(monkeypatch):
     host = FakeRouterHost()
     loop = make_loop(host, max_iterations=5)
     scripted = _ScriptedLLM([empty_stop_result()])
-    monkeypatch.setattr("reyn.chat.router_loop.call_llm_tools", scripted)
+    monkeypatch.setattr("reyn.runtime.router_loop.call_llm_tools", scripted)
 
     await loop.run("do something", [])
 
@@ -387,7 +387,7 @@ async def test_empty_response_ja_i18n(monkeypatch):
     host = FakeRouterHost(output_language="ja")
     loop = make_loop(host)
     scripted = _ScriptedLLM([empty_stop_result()])
-    monkeypatch.setattr("reyn.chat.router_loop.call_llm_tools", scripted)
+    monkeypatch.setattr("reyn.runtime.router_loop.call_llm_tools", scripted)
 
     await loop.run("何かしてください", [])
 
@@ -404,7 +404,7 @@ async def test_empty_response_en_i18n(monkeypatch):
     host = FakeRouterHost(output_language="en")
     loop = make_loop(host)
     scripted = _ScriptedLLM([empty_stop_result()])
-    monkeypatch.setattr("reyn.chat.router_loop.call_llm_tools", scripted)
+    monkeypatch.setattr("reyn.runtime.router_loop.call_llm_tools", scripted)
 
     await loop.run("do something", [])
 
@@ -419,7 +419,7 @@ async def test_empty_response_unknown_language_falls_back_to_en(monkeypatch):
     host = FakeRouterHost(output_language="zh")
     loop = make_loop(host)
     scripted = _ScriptedLLM([empty_stop_result()])
-    monkeypatch.setattr("reyn.chat.router_loop.call_llm_tools", scripted)
+    monkeypatch.setattr("reyn.runtime.router_loop.call_llm_tools", scripted)
 
     await loop.run("do something", [])
 
@@ -438,7 +438,7 @@ async def test_normal_text_reply_does_not_emit_empty_response_event(monkeypatch)
     host = FakeRouterHost()
     loop = make_loop(host)
     scripted = _ScriptedLLM([text_result("Hello, I can help with that.")])
-    monkeypatch.setattr("reyn.chat.router_loop.call_llm_tools", scripted)
+    monkeypatch.setattr("reyn.runtime.router_loop.call_llm_tools", scripted)
 
     await loop.run("hi", [])
 
@@ -464,7 +464,7 @@ async def test_tool_call_reply_does_not_emit_empty_response_event(monkeypatch):
         }}]),
         text_result("Done."),
     ])
-    monkeypatch.setattr("reyn.chat.router_loop.call_llm_tools", scripted)
+    monkeypatch.setattr("reyn.runtime.router_loop.call_llm_tools", scripted)
 
     await loop.run("run my skill", [])
 

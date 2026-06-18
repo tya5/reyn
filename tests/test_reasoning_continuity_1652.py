@@ -6,13 +6,13 @@ behavior lands with that wiring once the config schema locks.
 """
 from __future__ import annotations
 
-from reyn.chat.reasoning_continuity import (
+from reyn.config import ReasoningConfig, _build_chat_config
+from reyn.runtime.reasoning_continuity import (
     UNBOUNDED,
     bound_reasoning,
     render_reasoning_section,
 )
-from reyn.chat.router_system_prompt import build_system_prompt
-from reyn.config import ReasoningConfig, _build_chat_config
+from reyn.runtime.router_system_prompt import build_system_prompt
 
 _SP_BASE = dict(
     agent_name="chat",

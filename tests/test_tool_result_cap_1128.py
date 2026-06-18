@@ -25,12 +25,12 @@ from pathlib import Path
 
 import pytest
 
-from reyn.chat.services.tool_result_cap import (
+from reyn.data.workspace.media_store import MediaStore
+from reyn.runtime.services.tool_result_cap import (
     MAX_TOOL_RESULT_INLINE_BYTES,
     cap_tool_result_content,
     compute_cap_tokens,
 )
-from reyn.data.workspace.media_store import MediaStore
 from reyn.services.compaction.engine import estimate_tokens
 
 _MODEL = "gpt-4o"
@@ -182,8 +182,8 @@ def _retry_loop_with(raw_middle_turn: dict):
     import asyncio
     import tempfile
 
-    from reyn.chat.services.token_multiplier_learner import TokenMultiplierLearner
     from reyn.config import CompactionConfig
+    from reyn.runtime.services.token_multiplier_learner import TokenMultiplierLearner
     from reyn.services.compaction.engine import retry_loop
 
     learner = TokenMultiplierLearner(

@@ -41,11 +41,11 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-import reyn.chat.planner as planner_mod
-import reyn.chat.services.router_loop_driver as loop_driver_mod
-import reyn.chat.session as session_mod  # used for src-root path only
 import reyn.core.kernel.phase_executor as pe_mod
-from reyn.chat.router_loop import EMPTY_STOP_RETRY_DIRECTIVE
+import reyn.runtime.planner as planner_mod
+import reyn.runtime.services.router_loop_driver as loop_driver_mod
+import reyn.runtime.session as session_mod  # used for src-root path only
+from reyn.runtime.router_loop import EMPTY_STOP_RETRY_DIRECTIVE
 
 _DIRECTIVE_NAME = "EMPTY_STOP_RETRY_DIRECTIVE"
 # RouterLoop construction moved from session.py → router_loop_driver.py (PR-3).

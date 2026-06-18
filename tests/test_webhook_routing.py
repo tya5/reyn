@@ -17,11 +17,11 @@ from pathlib import Path
 
 import pytest
 
-from reyn.chat.profile import AgentProfile
-from reyn.chat.registry import AgentRegistry
-from reyn.chat.session import Session
-from reyn.chat.webhook_routing import parse_webhook_sender, resolve_webhook_session
 from reyn.core.events.state_log import StateLog
+from reyn.runtime.profile import AgentProfile
+from reyn.runtime.registry import AgentRegistry
+from reyn.runtime.session import Session
+from reyn.runtime.webhook_routing import parse_webhook_sender, resolve_webhook_session
 
 
 def _make_registry(tmp_path: Path) -> AgentRegistry:

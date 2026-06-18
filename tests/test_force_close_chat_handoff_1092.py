@@ -20,9 +20,9 @@ from typing import Any
 
 import pytest
 
-from reyn.chat.session import _MAX_FORCE_CLOSE_HANDOFFS, ChatMessage
 from reyn.llm.llm import LLMToolCallResult
 from reyn.llm.pricing import TokenUsage
+from reyn.runtime.session import _MAX_FORCE_CLOSE_HANDOFFS, ChatMessage
 from reyn.services.compaction.engine import ContextOverflowError
 from tests.test_session_router_history_slicing import _make_session, _push
 
@@ -71,7 +71,7 @@ class _FakeRouterLoop:
 
 def _install_fake_loop(monkeypatch, **kw) -> _FakeRouterLoop:
     fake = _FakeRouterLoop(**kw)
-    monkeypatch.setattr("reyn.chat.router_loop.RouterLoop", lambda *a, **k: fake)
+    monkeypatch.setattr("reyn.runtime.router_loop.RouterLoop", lambda *a, **k: fake)
     return fake
 
 

@@ -167,7 +167,7 @@ class A2AInterventionBus:
                 # converts exceptions into a DeliveryResult; a raise here
                 # means a defensive path failed. Record as retryable so
                 # the state machine accounts for the attempt.
-                from reyn.chat.channel_state import (  # noqa: PLC0415
+                from reyn.runtime.channel_state import (  # noqa: PLC0415
                     DeliveryOutcome,
                     DeliveryResult,
                 )

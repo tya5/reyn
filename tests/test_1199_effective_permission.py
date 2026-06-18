@@ -8,7 +8,7 @@ the ∩ re-grants a denied capability → over-grant).
 """
 from __future__ import annotations
 
-from reyn.chat.profile import AgentProfile
+from reyn.runtime.profile import AgentProfile
 from reyn.security.permissions.effective import (
     AgentLayer,
     CapabilityAxis,

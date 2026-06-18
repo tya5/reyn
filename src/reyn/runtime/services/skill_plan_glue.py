@@ -82,7 +82,7 @@ class SkillPlanGlue:
         """
         import json as _json
 
-        from reyn.chat.session import ChatMessage, RouterCapExceeded, _new_chain_id, _now_iso
+        from reyn.runtime.session import ChatMessage, RouterCapExceeded, _new_chain_id, _now_iso
 
         run_id = payload.get("run_id", "")
         skill_name = payload.get("skill", "")
@@ -125,7 +125,7 @@ class SkillPlanGlue:
             await self._emit_cap_exhausted(exc, chain_id=chain_id)
             return
         except Exception as exc:
-            from reyn.chat.session import OutboxMessage
+            from reyn.runtime.session import OutboxMessage
             await self._put_outbox(OutboxMessage(
                 kind="error",
                 text=f"router failed (skill_completed): {exc}",
@@ -196,7 +196,7 @@ class SkillPlanGlue:
         auto_extend), asks whether to re-arm with a fresh deadline before firing.
         ``unattended`` (= default) preserves the legacy fire-and-error behaviour.
         """
-        from reyn.chat.session import OutboxMessage
+        from reyn.runtime.session import OutboxMessage
 
         if self._on_limit.mode != "unattended":
             pending_peek = self._chains.get(chain_id)

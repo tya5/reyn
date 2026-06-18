@@ -16,7 +16,7 @@ subsumes (strictly stronger) the former per-config uniformity point-tests
 
 Pinned invariants:
 
-- ``Session(...)`` is constructed ONLY in ``chat/scoped_session_factory.py``
+- ``Session(...)`` is constructed ONLY in ``runtime/scoped_session_factory.py``
   anywhere in ``src/reyn`` — every other module routes through
   ``build_scoped_chat_session`` (falsifiable: a new/unmigrated/HIDDEN
   construction site anywhere in src/ fails this, naming file:line; this is what
@@ -35,12 +35,12 @@ import ast
 import inspect
 from pathlib import Path
 
-from reyn.chat.scoped_session_factory import build_scoped_chat_session
+from reyn.runtime.scoped_session_factory import build_scoped_chat_session
 
 _SRC = Path(__file__).resolve().parents[1] / "src" / "reyn"
 
 # The ONE module allowed to construct Session directly.
-_FACTORY_REL = "chat/scoped_session_factory.py"
+_FACTORY_REL = "runtime/scoped_session_factory.py"
 
 # The drift surface: scoped capability + per-session config params that MUST stay
 # required so no factory can silently omit one.
@@ -91,7 +91,7 @@ def test_chatsession_constructed_only_in_scoped_factory() -> None:
     src/ fails this, naming file:line."""
     offenders = [s for s in _chatsession_call_sites() if not s.startswith(_FACTORY_REL + ":")]
     assert not offenders, (
-        "Session(...) constructed outside chat/scoped_session_factory.py — "
+        "Session(...) constructed outside runtime/scoped_session_factory.py — "
         "re-opens the #1402 drift class; route through build_scoped_chat_session: "
         f"{offenders}"
     )

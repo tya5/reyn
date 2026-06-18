@@ -23,10 +23,10 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 
-from reyn.chat.profile import AgentProfile
-from reyn.chat.registry import AgentRegistry
-from reyn.chat.session import Session
 from reyn.core.events.state_log import StateLog
+from reyn.runtime.profile import AgentProfile
+from reyn.runtime.registry import AgentRegistry
+from reyn.runtime.session import Session
 
 # ---------------------------------------------------------------------------
 # Helpers

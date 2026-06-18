@@ -59,6 +59,6 @@ def test_allowlist_is_allow_of_one() -> None:
     assert not module_is_allowed("reyn.safe.file", e)
     assert not module_is_allowed("reyn.unsafe", e)
     # arbitrary non-stdlib reyn module — default-deny
-    assert not module_is_allowed("reyn.chat.session", e)
+    assert not module_is_allowed("reyn.runtime.session", e)
     # a pure-stdlib module still allowed (fall-through intact)
     assert module_is_allowed("json", e)

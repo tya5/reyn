@@ -14,24 +14,6 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
-from reyn.chat.agent import Agent
-from reyn.chat.error_format import classify_router_error
-from reyn.chat.outbox import OutboxMessage
-from reyn.chat.services import (
-    AutoResumeHandler,
-    BudgetGateway,
-    ChainManager,
-    CompactionController,
-    InterventionHandler,
-    InterventionRegistry,
-    MemoryService,
-    PlanRunner,
-    RouterHostAdapter,
-    SnapshotJournal,
-)
-from reyn.chat.services.a2a_handler import A2AHandler
-from reyn.chat.services.chain_manager import _PendingChain
-from reyn.chat.services.skill_runner import SkillRunner
 from reyn.config import (  # noqa: F401
     ActionRetrievalConfig,
     EmbeddingConfig,
@@ -50,6 +32,7 @@ from reyn.core.events.events import EventLog
 from reyn.core.events.snapshot_generations import SnapshotGenerationStore
 from reyn.core.events.state_log import StateLog
 from reyn.llm.model_resolver import ModelResolver
+from reyn.runtime.agent import Agent
 from reyn.runtime.budget.budget import (
     BudgetTracker,
     format_budget_full,
@@ -57,11 +40,28 @@ from reyn.runtime.budget.budget import (
     format_refusal_message,
     format_warn_message,
 )
+from reyn.runtime.error_format import classify_router_error
 from reyn.runtime.limits.limit_handler import (
     LimitDecision,
     handle_limit_exceeded,
     reset_run_extensions,
 )
+from reyn.runtime.outbox import OutboxMessage
+from reyn.runtime.services import (
+    AutoResumeHandler,
+    BudgetGateway,
+    ChainManager,
+    CompactionController,
+    InterventionHandler,
+    InterventionRegistry,
+    MemoryService,
+    PlanRunner,
+    RouterHostAdapter,
+    SnapshotJournal,
+)
+from reyn.runtime.services.a2a_handler import A2AHandler
+from reyn.runtime.services.chain_manager import _PendingChain
+from reyn.runtime.services.skill_runner import SkillRunner
 from reyn.security.permissions.permissions import PermissionResolver
 from reyn.services.compaction.engine import CompactionEngine
 from reyn.skill.skill_paths import SkillNotFoundError, resolve_skill_path, stdlib_root
@@ -917,7 +917,7 @@ def _strip_index_header(content: str) -> str:
     return "\n".join(lines).strip()
 
 
-# NOTE: `_PendingChain` lives in `reyn.chat.services.chain_manager` (PR-refactor-session-1
+# NOTE: `_PendingChain` lives in `reyn.runtime.services.chain_manager` (PR-refactor-session-1
 # wave 2). Kept import at top of file for backward-compat references.
 
 
@@ -956,7 +956,7 @@ def _iv_meta(iv: "UserIntervention") -> dict:
     # (``None``) so the meta shape stays identical to the non-delegated
     # path (Phase 2 ``test_outbox_intervention_meta_shape_is_stable``
     # contract).
-    from reyn.chat.services.intervention_handler import source_agent_var
+    from reyn.runtime.services.intervention_handler import source_agent_var
     src = source_agent_var.get()
     if src:
         out["source_agent"] = src
@@ -1641,7 +1641,7 @@ class Session:
         # conv pane via OutboxMessage(kind="system"). Sibling of the
         # per-skill ChatEventForwarder; both subscribe to event logs but
         # at different scopes.
-        from reyn.chat.lifecycle_forwarder import ChatLifecycleForwarder
+        from reyn.runtime.lifecycle_forwarder import ChatLifecycleForwarder
         self._chat_events.add_subscriber(ChatLifecycleForwarder(self.outbox))
         # #398 v4 emitter family — generic events-log subscriber that
         # converts known op-emitted events (= mcp_server_installed,
@@ -1933,7 +1933,7 @@ class Session:
                 pass
 
         # PR-N6: adaptive token estimation learner (per-user persistence).
-        from reyn.chat.services.token_multiplier_learner import TokenMultiplierLearner
+        from reyn.runtime.services.token_multiplier_learner import TokenMultiplierLearner
         self._token_learner: TokenMultiplierLearner = TokenMultiplierLearner(
             chars4_mode=self._compaction.use_chars4_estimate,
         )
@@ -1942,7 +1942,7 @@ class Session:
         # CompactionController so that system_prompt_provider (called during
         # CompactionEngine.recompute_budgets() at construction time) resolves.
         # compaction_controller=None here; patched below after construction.
-        from reyn.chat.services.router_history_buffer import RouterHistoryBuffer
+        from reyn.runtime.services.router_history_buffer import RouterHistoryBuffer
         self._history_buffer = RouterHistoryBuffer(
             history_fn=lambda: self.history,
             compaction=self._compaction,
@@ -2043,7 +2043,7 @@ class Session:
         # session.py refactor PR-1: ContextBudgetAdvisor owns the five
         # per-turn budget-arithmetic methods.  Session keeps forwarding
         # properties so RouterHostAdapter callbacks are unchanged.
-        from reyn.chat.services.context_budget_advisor import ContextBudgetAdvisor
+        from reyn.runtime.services.context_budget_advisor import ContextBudgetAdvisor
         self._budget_advisor = ContextBudgetAdvisor(
             compaction=self._compaction,
             compaction_controller=self._compaction_controller,
@@ -2055,7 +2055,7 @@ class Session:
 
         # session.py refactor PR-3: RouterLoopDriver owns the per-turn loop
         # orchestration (run_turn, shrink/overflow, cap enforcement, cancel).
-        from reyn.chat.services.router_loop_driver import RouterLoopDriver
+        from reyn.runtime.services.router_loop_driver import RouterLoopDriver
         self._loop_driver = RouterLoopDriver(
             router_host=self._router_host,
             safety=self._safety,
@@ -2081,7 +2081,7 @@ class Session:
 
         # session.py refactor PR-4 (FP-0019 series final): SkillPlanGlue owns
         # skill/plan completion routing and chain timeout lifecycle.
-        from reyn.chat.services.skill_plan_glue import SkillPlanGlue
+        from reyn.runtime.services.skill_plan_glue import SkillPlanGlue
         self._skill_plan_glue = SkillPlanGlue(
             append_history_fn=self._append_history,
             events=self._chat_events,
@@ -3439,7 +3439,7 @@ class Session:
         """Thin delegation wrapper → AutoResumeHandler._resume_and_collect.
 
         FP-0019 Wave 3: business logic extracted to
-        ``src/reyn/chat/services/auto_resume_handler.py``.  This wrapper
+        ``src/reyn/runtime/services/auto_resume_handler.py``.  This wrapper
         preserves the original call signature and list-return type so
         existing callers (tests + startup chain) continue to work unchanged.
 
@@ -3600,7 +3600,7 @@ class Session:
             msg = replace(msg, reply_to=self._last_reply_to)
         # PR-D2: external transport interceptor.
         if self._outbox_interceptor is not None:
-            from reyn.chat.transport import ExternalRef
+            from reyn.runtime.transport import ExternalRef
             if isinstance(msg.reply_to, ExternalRef):
                 try:
                     handled = await self._outbox_interceptor(msg)
@@ -3698,7 +3698,7 @@ class Session:
             chain_id=chain_id,
         )
         try:
-            from reyn.chat.router_loop import RouterLoop
+            from reyn.runtime.router_loop import RouterLoop
             history = self._history_buffer.build_history()
             messages: list[dict] = [
                 *history,
@@ -4214,7 +4214,7 @@ class Session:
             # chains overwrite the immediate parent on each hop, then
             # restore on return so the original caller's view is
             # unchanged).
-            from reyn.chat.services.intervention_handler import (
+            from reyn.runtime.services.intervention_handler import (
                 source_agent_var,
             )
             token = source_agent_var.set(self.agent_name)
@@ -4645,7 +4645,7 @@ class Session:
         return True
 
     # NOTE: the 7 ``_slash_*`` handlers (list / cancel / answer / agents /
-    # attach / cost / budget) live in ``src/reyn/chat/slash/`` per the
+    # attach / cost / budget) live in ``src/reyn/runtime/slash/`` per the
     # cli-redesign plan. ``_resolve_run_id`` / ``_resolve_intervention_id``
     # / ``_deliver_answer_to`` stay here as session-state helpers the slash
     # modules call back into.
@@ -4869,7 +4869,7 @@ class Session:
         that op_runtime layer permission checks actually gate access rather than
         silently allowing everything through an empty decl.
         """
-        from reyn.chat.router_op_context import build_router_op_context
+        from reyn.runtime.router_op_context import build_router_op_context
 
         # #1412: single-sourced via build_router_op_context (shared with
         # RouterHostAdapter). Session wires intervention_bus POST-HOC on the

@@ -15,11 +15,11 @@ from pathlib import Path
 
 import pytest
 
-from reyn.chat.profile import AgentProfile
-from reyn.chat.registry import AgentRegistry
-from reyn.chat.session import Session
 from reyn.core.events.state_log import StateLog
 from reyn.runtime.cron.routing import cron_session_id, resolve_cron_session
+from reyn.runtime.profile import AgentProfile
+from reyn.runtime.registry import AgentRegistry
+from reyn.runtime.session import Session
 
 
 def _make_registry(tmp_path: Path) -> AgentRegistry:

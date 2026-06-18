@@ -56,7 +56,7 @@ from .shells import (
 )
 
 if TYPE_CHECKING:
-    from reyn.chat.registry import AgentRegistry
+    from reyn.runtime.registry import AgentRegistry
 
 
 PANEL_TYPES: list[str] = [

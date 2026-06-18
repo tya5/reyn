@@ -11,7 +11,7 @@ Strategy
   response or records a new one on first run (REYN_LLM_RECORD=1 or missing fixture).
 
 - Pathology / structural tests (max_iterations, parallel dispatch, tools catalog
-  inspection) → direct monkeypatch on ``reyn.chat.router_loop.call_llm_tools``.
+  inspection) → direct monkeypatch on ``reyn.runtime.router_loop.call_llm_tools``.
   These tests verify RouterLoop structural invariants without needing a real LLM
   call, so they don't need fixtures.
 
@@ -24,11 +24,11 @@ import json
 
 import pytest
 
-from reyn.chat.router_loop import RouterLoop
-from reyn.chat.router_system_prompt import build_system_prompt
-from reyn.chat.router_tools import build_tools
 from reyn.llm.llm import LLMToolCallResult
 from reyn.llm.pricing import TokenUsage
+from reyn.runtime.router_loop import RouterLoop
+from reyn.runtime.router_system_prompt import build_system_prompt
+from reyn.runtime.router_tools import build_tools
 from reyn.tools.schemes._universal_sp import build_universal_tool_use_slots
 
 
@@ -375,7 +375,7 @@ async def test_delegate_to_agent(monkeypatch):
         call_count["n"] += 1
         return result
 
-    monkeypatch.setattr("reyn.chat.router_loop.call_llm_tools", fake_llm)
+    monkeypatch.setattr("reyn.runtime.router_loop.call_llm_tools", fake_llm)
     await loop.run(
         "Delegate to the researcher: find info on climate change.",
         [],
@@ -447,7 +447,7 @@ async def test_max_iterations_aborts_with_error(monkeypatch):
         call_count["n"] += 1
         return always_tool
 
-    monkeypatch.setattr("reyn.chat.router_loop.call_llm_tools", fake_llm)
+    monkeypatch.setattr("reyn.runtime.router_loop.call_llm_tools", fake_llm)
     await loop.run("do stuff forever", [])
 
     # 3 loop iterations + 1 force-close wrap-up call (#1496); wrap-up
@@ -487,7 +487,7 @@ async def test_parallel_tool_calls_in_one_round(monkeypatch):
         call_count["n"] += 1
         return result
 
-    monkeypatch.setattr("reyn.chat.router_loop.call_llm_tools", fake_llm)
+    monkeypatch.setattr("reyn.runtime.router_loop.call_llm_tools", fake_llm)
     await loop.run("run both skills", [])
 
     assert host.skill_calls == [
@@ -525,7 +525,7 @@ async def test_tools_param_includes_only_allowed_skills(monkeypatch):
             captured_system.append(messages[0]["content"])
         return _text_result("Done.")
 
-    monkeypatch.setattr("reyn.chat.router_loop.call_llm_tools", capturing_llm)
+    monkeypatch.setattr("reyn.runtime.router_loop.call_llm_tools", capturing_llm)
     await loop.run("hello", [])
 
     # The tool catalog must have been passed (non-empty)
@@ -642,7 +642,7 @@ async def test_invoke_skill_then_remember(monkeypatch):
         call_count["n"] += 1
         return result
 
-    monkeypatch.setattr("reyn.chat.router_loop.call_llm_tools", fake_llm)
+    monkeypatch.setattr("reyn.runtime.router_loop.call_llm_tools", fake_llm)
     await loop.run(
         "Summarise this and remember the project goal.", []
     )

@@ -33,10 +33,10 @@ from typing import Any
 
 import pytest
 
-from reyn.chat.forwarder import ChatEventForwarder
-from reyn.chat.outbox import OutboxMessage
 from reyn.core.events.events import EventLog
 from reyn.mcp.client import MCPClient
+from reyn.runtime.forwarder import ChatEventForwarder
+from reyn.runtime.outbox import OutboxMessage
 from reyn.schemas.models import MCPIROp
 
 # ── 1. MCPClient.call_tool signature accepts the new kwargs ────────────

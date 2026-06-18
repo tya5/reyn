@@ -32,7 +32,7 @@ from reyn.services.compaction.engine import (
 )
 
 if TYPE_CHECKING:
-    from reyn.chat.session import ChatMessage
+    from reyn.runtime.session import ChatMessage
 
 logger = logging.getLogger(__name__)
 
@@ -95,7 +95,7 @@ class CompactionController:
         current chat history (``list[ChatMessage]``).
     latest_summary:
         Zero-argument callable that returns the most recent ``"summary"``
-        :class:`~reyn.chat.session.ChatMessage`, or ``None``.
+        :class:`~reyn.runtime.session.ChatMessage`, or ``None``.
     compaction_engine:
         :class:`~reyn.services.compaction.engine.CompactionEngine`
         that owns the single LLM call (PR-N3: OS-internal, no skill/phase).
@@ -197,7 +197,7 @@ class CompactionController:
         single pass. That loop existed to re-run when another coroutine appended
         to history mid-compaction. Cross-driver turn serialization is now
         structural — every transport that drives ``run_one_iteration`` holds the
-        shared per-agent lock (PR-b, ``reyn.chat.agent_locks``), and within a
+        shared per-agent lock (PR-b, ``reyn.runtime.agent_locks``), and within a
         turn ``_append_history`` is synchronous — so no concurrent append can
         land during this method. If the single pass under-shoots (the guard's
         estimate under-counted), the ``retry_loop`` overflow backstop in

@@ -31,13 +31,13 @@ from typing import Any
 
 import pytest
 
-from reyn.chat.session import Session
 from reyn.core.events.state_log import StateLog
 from reyn.core.plan import (
     PlanRegistry,
     decomposition_dir,
     plan_snapshot_path,
 )
+from reyn.runtime.session import Session
 
 # ── stub RouterLoop (= mirror existing plan tests) ───────────────────────
 
@@ -71,7 +71,7 @@ class _StubRouterLoop:
 
 @pytest.fixture(autouse=True)
 def _stub_router_loop(monkeypatch):
-    import reyn.chat.planner as planner_mod
+    import reyn.runtime.planner as planner_mod
     monkeypatch.setattr(planner_mod, "RouterLoop", _StubRouterLoop)
     _StubRouterLoop._per_step_behavior = {}
     yield
@@ -117,7 +117,7 @@ async def test_two_plans_dispatched_concurrently_get_independent_snapshots(
     """Tier 2: two parallel dispatch_plan_tool calls yield two distinct
     plan_ids + per-plan snapshot files. The async-spawn path doesn't
     serialise dispatches."""
-    from reyn.chat.planner import dispatch_plan_tool
+    from reyn.runtime.planner import dispatch_plan_tool
 
     monkeypatch.chdir(tmp_path)
     session = _make_session(tmp_path)
@@ -166,7 +166,7 @@ async def test_concurrent_plans_record_distinct_step_results(
 ):
     """Tier 2: while two plans run concurrently, their step_results
     populate independently — no cross-plan write."""
-    from reyn.chat.planner import dispatch_plan_tool
+    from reyn.runtime.planner import dispatch_plan_tool
 
     monkeypatch.chdir(tmp_path)
     session = _make_session(tmp_path)
@@ -219,7 +219,7 @@ async def test_crash_mid_flight_two_plans_resume_both(tmp_path, monkeypatch):
 
     This is the multi-plan crash-recovery integration test.
     """
-    from reyn.chat.planner import dispatch_plan_tool
+    from reyn.runtime.planner import dispatch_plan_tool
 
     monkeypatch.chdir(tmp_path)
     session1 = _make_session(tmp_path)
@@ -324,7 +324,7 @@ async def test_concurrent_plans_wal_events_interleave_correctly(
     """Tier 2: concurrent plans' WAL events interleave by seq order;
     the analyzer can deterministically disambiguate by plan_id
     (= no event mis-attribution)."""
-    from reyn.chat.planner import dispatch_plan_tool
+    from reyn.runtime.planner import dispatch_plan_tool
 
     monkeypatch.chdir(tmp_path)
     session = _make_session(tmp_path)
@@ -380,7 +380,7 @@ async def test_per_plan_chain_id_propagates_to_step_events(tmp_path, monkeypatch
     """Tier 2: each plan's per-plan chain_id reaches the host's
     record_plan_started call (= R-D14 cross-agent notify can target
     the right waiter on /plan discard)."""
-    from reyn.chat.planner import dispatch_plan_tool
+    from reyn.runtime.planner import dispatch_plan_tool
 
     monkeypatch.chdir(tmp_path)
     session = _make_session(tmp_path)

@@ -11,10 +11,10 @@ from pathlib import Path
 
 import pytest
 
-from reyn.chat.router_loop import RouterLoopHost
-from reyn.chat.services import MemoryService, RouterHostAdapter
 from reyn.core.events.events import EventLog
 from reyn.llm.model_resolver import ModelResolver
+from reyn.runtime.router_loop import RouterLoopHost
+from reyn.runtime.services import MemoryService, RouterHostAdapter
 
 # ---------------------------------------------------------------------------
 # Minimal stubs and helpers
@@ -323,10 +323,10 @@ def test_adapter_exposes_permission_resolver_property(tmp_path):
         agent_workspace_dir=tmp_path / "agents" / "alpha",
     )
     # Re-build with the resolver argument set — _make_adapter doesn't take it.
-    from reyn.chat.services import MemoryService
-    from reyn.chat.services.router_host_adapter import RouterHostAdapter
     from reyn.core.events.events import EventLog
     from reyn.llm.model_resolver import ModelResolver
+    from reyn.runtime.services import MemoryService
+    from reyn.runtime.services.router_host_adapter import RouterHostAdapter
     workspace = tmp_path / "agents" / "alpha2"
     events = EventLog(subscribers=[])
     memory = MemoryService(
@@ -388,10 +388,10 @@ def test_make_router_op_context_wires_intervention_bus(tmp_path):
     when missing. Without this wiring, even a properly-resolved
     permission_resolver crashes the router path before it can deny.
     """
-    from reyn.chat.services import MemoryService
-    from reyn.chat.services.router_host_adapter import RouterHostAdapter
     from reyn.core.events.events import EventLog
     from reyn.llm.model_resolver import ModelResolver
+    from reyn.runtime.services import MemoryService
+    from reyn.runtime.services.router_host_adapter import RouterHostAdapter
     workspace = tmp_path / "agents" / "bus-test"
     events = EventLog(subscribers=[])
     memory = MemoryService(
@@ -454,10 +454,10 @@ def test_make_router_op_context_no_factory_leaves_bus_none(tmp_path):
     (None bus), so the config-deny path still works without forcing
     every adapter caller to wire a bus.
     """
-    from reyn.chat.services import MemoryService
-    from reyn.chat.services.router_host_adapter import RouterHostAdapter
     from reyn.core.events.events import EventLog
     from reyn.llm.model_resolver import ModelResolver
+    from reyn.runtime.services import MemoryService
+    from reyn.runtime.services.router_host_adapter import RouterHostAdapter
     workspace = tmp_path / "agents" / "nobus-test"
     events = EventLog(subscribers=[])
     memory = MemoryService(

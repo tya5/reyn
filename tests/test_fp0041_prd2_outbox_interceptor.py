@@ -35,15 +35,15 @@ from pathlib import Path
 
 import pytest
 
-from reyn.chat.external_routing import (
+from reyn.core.events.state_log import StateLog
+from reyn.runtime.external_routing import (
     ExternalTransportEntry,
     ExternalTransportRouting,
     make_outbox_interceptor,
 )
-from reyn.chat.outbox import OutboxMessage
-from reyn.chat.session import Session
-from reyn.chat.transport import ExternalRef, TuiRef
-from reyn.core.events.state_log import StateLog
+from reyn.runtime.outbox import OutboxMessage
+from reyn.runtime.session import Session
+from reyn.runtime.transport import ExternalRef, TuiRef
 
 
 def _make_session(tmp_path: Path, *, agent_name: str = "alpha") -> Session:

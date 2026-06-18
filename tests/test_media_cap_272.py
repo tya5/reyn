@@ -29,11 +29,11 @@ import base64
 import json
 from pathlib import Path
 
-from reyn.chat.router_loop import (
+from reyn.data.workspace.media_store import MediaStore, MediaStoreConfig
+from reyn.runtime.router_loop import (
     _MEDIA_IMAGE_TOKEN_COST,
     _build_media_followup_message,
 )
-from reyn.data.workspace.media_store import MediaStore, MediaStoreConfig
 from reyn.services.compaction.engine import _IMAGE_FIXED_TOKEN_COST, estimate_tokens
 from reyn.tools.types import RouterCallerState, ToolContext
 

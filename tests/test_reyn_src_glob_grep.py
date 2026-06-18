@@ -5,7 +5,7 @@ new ops mirror `file__glob` / `file__grep` in shape but resolve paths
 against Reyn's own repo root (via `resolve_reyn_root()`), not the
 operator's workspace.
 
-Tests use real `reyn.chat.reyn_src` helpers + real repo contents — no
+Tests use real `reyn.runtime.reyn_src` helpers + real repo contents — no
 mocks. Assertions target the public result shape (= `{pattern, matches,
 count, ...}`); private state is not asserted.
 """
@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from reyn.chat.reyn_src import glob_entries, grep_entries, resolve_reyn_root
+from reyn.runtime.reyn_src import glob_entries, grep_entries, resolve_reyn_root
 from reyn.tools.universal_dispatch import (
     _OPERATION_RULES,
     known_qualified_name_for_category,
@@ -194,7 +194,7 @@ def test_glob_skip_set_matches_list_entries_set() -> None:
     If they diverge, the LLM sees different visibility through different
     ops — confusing and error-prone. This pins the parity.
     """
-    from reyn.chat.reyn_src import _SKIP_DIR_NAMES
+    from reyn.runtime.reyn_src import _SKIP_DIR_NAMES
     # Sample dirs that must be skipped by both (= sanity)
     assert ".git" in _SKIP_DIR_NAMES
     assert "__pycache__" in _SKIP_DIR_NAMES

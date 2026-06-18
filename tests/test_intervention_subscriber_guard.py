@@ -32,10 +32,10 @@ from pathlib import Path
 
 import pytest
 
-from reyn.chat.services.intervention_registry import InterventionRegistry
-from reyn.chat.session import Session
 from reyn.config import LoopConfig, OnLimitConfig, SafetyConfig
 from reyn.runtime.budget.budget import BudgetTracker, CostConfig
+from reyn.runtime.services.intervention_registry import InterventionRegistry
+from reyn.runtime.session import Session
 from reyn.user_intervention import InterventionAnswer, UserIntervention
 
 # ── 1. Default (legacy) — no enforcement ────────────────────────────────

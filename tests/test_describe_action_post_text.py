@@ -91,7 +91,7 @@ def test_describe_action_other_fields_unchanged_by_post_text():
 def _construct_tool_message_content(r: dict) -> str:
     """Inline duplication of the router_loop tool-result serialisation step.
 
-    Mirrors the production code in src/reyn/chat/router_loop.py around the
+    Mirrors the production code in src/reyn/runtime/router_loop.py around the
     ``messages.append({"role": "tool", ...})`` block: strip ``_post_text``
     from the dict, JSON-serialise the remainder, then append the directive
     outside the JSON body separated by ``\\n\\n---\\n``.

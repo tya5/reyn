@@ -17,7 +17,7 @@ from prompt_toolkit.application.current import get_app_or_none
 from prompt_toolkit.history import FileHistory
 from prompt_toolkit.patch_stdout import patch_stdout
 
-from reyn.chat.registry import AgentRegistry  # #312 PR-A: registry stays in the runtime pkg
+from reyn.runtime.registry import AgentRegistry  # #312 PR-A: registry stays in the runtime pkg
 
 from .renderer import ChatRenderer
 

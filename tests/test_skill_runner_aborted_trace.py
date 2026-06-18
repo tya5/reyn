@@ -22,8 +22,8 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
-from reyn.chat.services.skill_runner import SkillRunner
 from reyn.core.events.events import EventLog
+from reyn.runtime.services.skill_runner import SkillRunner
 
 # ── Fakes (mirrors test_skill_runner_invariants.py style) ────────────────────
 
@@ -120,7 +120,7 @@ def test_unexpected_exception_emits_skill_done_aborted_trace(tmp_path, monkeypat
     both the error message AND the trace are present, in the same
     ``run_id`` meta.
     """
-    import reyn.chat.services.skill_runner as sr_mod
+    import reyn.runtime.services.skill_runner as sr_mod
 
     dummy_dir = tmp_path / "fake_skill"
     dummy_dir.mkdir()

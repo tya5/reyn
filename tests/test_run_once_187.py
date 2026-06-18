@@ -172,7 +172,7 @@ def test_docker_backend_routes_ops_in_container() -> None:
 def test_exclude_tools_filter_drops_web() -> None:
     """Tier 2: the real RouterLoop catalog filter (which the scoped session feeds
     via exclude_tools) drops web tools while keeping the repo-editing tools."""
-    from reyn.chat.router_loop import _apply_tool_exclusions
+    from reyn.runtime.router_loop import _apply_tool_exclusions
 
     catalog = [
         {"type": "function", "function": {"name": n}}
@@ -220,7 +220,7 @@ def test_fresh_one_shot_does_not_load_persisted_history(tmp_path, monkeypatch) -
     `load_history()` call below demonstrates (empty → 2)."""
     import json
 
-    from reyn.chat.session import Session
+    from reyn.runtime.session import Session
 
     monkeypatch.chdir(tmp_path)  # workspace_dir (.reyn/agents/<name>) is cwd-relative
     s = Session(agent_name="default")

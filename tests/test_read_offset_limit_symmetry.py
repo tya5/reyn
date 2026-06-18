@@ -30,7 +30,7 @@ from pathlib import Path
 
 import pytest
 
-from reyn.chat.reyn_src import read_text, resolve_reyn_root, safe_resolve_inside
+from reyn.runtime.reyn_src import read_text, resolve_reyn_root, safe_resolve_inside
 
 # ── reyn_src_read slice semantics ────────────────────────────────────────────
 

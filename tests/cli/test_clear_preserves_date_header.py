@@ -67,9 +67,9 @@ async def test_same_day_clear_does_not_emit_duplicate_date_separator() -> None:
     clear(). Render another user message → no new date separator
     (= the same day was already marked).
     """
-    from reyn.chat.outbox import OutboxMessage
     from reyn.interfaces.tui.app import ReynTUIApp
     from reyn.interfaces.tui.widgets import ConversationView
+    from reyn.runtime.outbox import OutboxMessage
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:

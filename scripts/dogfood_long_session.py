@@ -162,7 +162,7 @@ def _extract_reply(body: dict) -> tuple[str | None, str | None]:
 
 _SPAWN_ACK_MARKERS = (
     # Substring-level detection so minor OS wording tweaks don't break the
-    # match. See `_SPAWN_ACK_MSG` in src/reyn/chat/router_loop.py for the
+    # match. See `_SPAWN_ACK_MSG` in src/reyn/runtime/router_loop.py for the
     # canonical en/ja forms.
     "is running in the background",
     "バックグラウンドで実行しています",

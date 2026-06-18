@@ -19,9 +19,9 @@ import json
 
 import pytest
 
-from reyn.chat.router_loop import RouterLoop
 from reyn.llm.llm import LLMToolCallResult
 from reyn.llm.pricing import TokenUsage
+from reyn.runtime.router_loop import RouterLoop
 from reyn.tools.action_usage_tracker import ActionUsageTracker
 
 # ---------------------------------------------------------------------------
@@ -198,7 +198,7 @@ def _run_with_llm_sequence(
         return turns.pop(0)
 
     loop = RouterLoop(host=host, chain_id="chain-test", max_iterations=5, scheme_name="universal-category")  # #1657
-    monkeypatch.setattr("reyn.chat.router_loop.call_llm_tools", _fake_call_llm_tools)
+    monkeypatch.setattr("reyn.runtime.router_loop.call_llm_tools", _fake_call_llm_tools)
     asyncio.run(loop.run("hello", []))
 
 
@@ -461,7 +461,7 @@ def test_invoke_action_description_has_no_ars_block(monkeypatch: pytest.MonkeyPa
         return _text_result("ok")  # finish immediately
 
     loop = RouterLoop(host=host, chain_id="chain-test", max_iterations=5, scheme_name="universal-category")  # #1657
-    monkeypatch.setattr("reyn.chat.router_loop.call_llm_tools", _capture_tools)
+    monkeypatch.setattr("reyn.runtime.router_loop.call_llm_tools", _capture_tools)
     asyncio.run(loop.run("hello", []))
 
     tools = captured["tools"]

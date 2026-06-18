@@ -524,8 +524,8 @@ class PhaseExecutor:
         """
         import json as _json
 
-        from reyn.chat.router_loop import EMPTY_STOP_RETRY_DIRECTIVE, RouterLoop
         from reyn.core.kernel.phase_router_host import PhaseRouterLoopHost
+        from reyn.runtime.router_loop import EMPTY_STOP_RETRY_DIRECTIVE, RouterLoop
         from reyn.services.turn_budget import try_build_default_turn_budget_engine
 
         phase_def = self._skill.phases.get(phase)

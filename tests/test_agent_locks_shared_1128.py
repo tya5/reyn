@@ -10,7 +10,7 @@ Invariants exercised:
       identical lock object (``is`` identity).
   (b) Different agent names yield distinct lock objects.
   (c) MCP and A2A obtain the SAME lock object for the same agent_name —
-      both import from ``reyn.chat.agent_locks``; the module-level dict
+      both import from ``reyn.runtime.agent_locks``; the module-level dict
       ensures identity.
   (d) Concurrent coroutines acquiring the same lock are serialized:
       critical sections do not overlap (behavioral, not count-pin).
@@ -28,7 +28,7 @@ import asyncio
 
 import pytest
 
-from reyn.chat.agent_locks import get_agent_lock
+from reyn.runtime.agent_locks import get_agent_lock
 
 # ---------------------------------------------------------------------------
 # (a) Idempotency — same name → same lock object
@@ -70,7 +70,7 @@ def test_mcp_and_a2a_share_same_lock_registry() -> None:
 
     This is the central cross-transport guarantee of #1128 PR-b: both
     mcp_server and a2a import ``get_agent_lock`` (aliased as
-    ``_get_agent_lock`` in mcp_server) from ``reyn.chat.agent_locks``.
+    ``_get_agent_lock`` in mcp_server) from ``reyn.runtime.agent_locks``.
     Because Python module imports are singletons, the module-level
     ``_AGENT_LOCKS`` dict is shared, so the same agent_name yields the
     same ``asyncio.Lock`` object regardless of which transport calls it.
@@ -86,7 +86,7 @@ def test_mcp_and_a2a_share_same_lock_registry() -> None:
     lock_via_mcp = mcp_get_lock(agent)
 
     assert lock_via_agent_locks is lock_via_mcp, (
-        "MCP's _get_agent_lock and reyn.chat.agent_locks.get_agent_lock must "
+        "MCP's _get_agent_lock and reyn.runtime.agent_locks.get_agent_lock must "
         "return the SAME asyncio.Lock object for the same agent_name. "
         "If they differ, a concurrent MCP+A2A pair on the same agent bypasses "
         "the serialization guarantee."

@@ -28,11 +28,11 @@ import asyncio
 from datetime import datetime, timezone
 from pathlib import Path
 
-from reyn.chat.session import ChatMessage, Session, _RouterUsageShim
 from reyn.config import CompactionConfig
 from reyn.core.events.state_log import StateLog
 from reyn.llm.pricing import TokenUsage
 from reyn.runtime.budget.budget import BudgetTracker, CostConfig
+from reyn.runtime.session import ChatMessage, Session, _RouterUsageShim
 from reyn.services.compaction.engine import retry_loop
 
 
@@ -204,7 +204,7 @@ def test_recovery_summary_bridge_matches_normal_path(tmp_path) -> None:
     the persisted ``summary.content`` the normal path uses for its bridge.
     So the summary bridge is byte-identical across both paths.
     """
-    from reyn.chat.session import _render_summary_for_storage
+    from reyn.runtime.session import _render_summary_for_storage
 
     session = _make_session(tmp_path, t_max=2000)
     structured = {

@@ -63,7 +63,7 @@ def test_resolver_finds_all_builtins_without_naming_them() -> None:
     unknown name falls back to the default. Behaviour-invariant vs the old lazy loop."""
     result = _fresh_interpreter(
         """
-        from reyn.chat.router_loop import _resolve_tool_use_scheme
+        from reyn.runtime.router_loop import _resolve_tool_use_scheme
         for n in ("universal-category", "enumerate-all", "retrieval", "codeact"):
             s = _resolve_tool_use_scheme(n)
             assert s is not None and s.name == n, n

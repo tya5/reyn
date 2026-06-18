@@ -20,8 +20,8 @@ _SRC = Path(__file__).parent.parent.parent / "src"
 if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
-from reyn.chat.outbox import OutboxMessage
 from reyn.interfaces.slash import REGISTRY
+from reyn.runtime.outbox import OutboxMessage
 
 
 @dataclass

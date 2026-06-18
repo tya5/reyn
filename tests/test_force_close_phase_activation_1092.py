@@ -20,12 +20,12 @@ from typing import Any
 
 import pytest
 
-from reyn.chat.router_loop import RouterLoop
 from reyn.core.context_builder import MAX_OFFLOADED_INLINE_BYTES
 from reyn.core.kernel.phase_router_host import PhaseRouterLoopHost
 from reyn.llm.llm import LLMToolCallResult
 from reyn.llm.model_resolver import ModelResolver
 from reyn.llm.pricing import TokenUsage
+from reyn.runtime.router_loop import RouterLoop
 from reyn.services.compaction.engine import estimate_tokens, estimate_tokens_for_turn
 from reyn.services.turn_budget import (
     DEFAULT_WRAP_UP_OUTPUT_RESERVE_TOKENS,

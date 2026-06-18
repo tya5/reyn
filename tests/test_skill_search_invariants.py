@@ -13,8 +13,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from reyn.chat.router_loop import RouterLoop
 from reyn.config import SkillSearchConfig
+from reyn.runtime.router_loop import RouterLoop
 
 # ---------------------------------------------------------------------------
 # Minimal stubs (duplicated pattern from test_router_loop.py — no sharing

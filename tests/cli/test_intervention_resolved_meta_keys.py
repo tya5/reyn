@@ -40,7 +40,7 @@ async def _mount_intervention_widget(pilot, iv_id: str):
 
 def _resolved_msg(meta: dict):
     """Build a minimal intervention_resolved OutboxMessage."""
-    from reyn.chat.outbox import OutboxMessage
+    from reyn.runtime.outbox import OutboxMessage
     return OutboxMessage(kind="intervention_resolved", text="", meta=meta)
 
 

@@ -26,12 +26,12 @@ from pathlib import Path
 
 import pytest
 
-from reyn.chat.profile import AgentProfile
-from reyn.chat.registry import AgentRegistry
-from reyn.chat.session import Session
 from reyn.core.events.state_log import StateLog
 from reyn.mcp.server import send_to_agent_impl
 from reyn.runtime.budget.budget import BudgetTracker, CostConfig
+from reyn.runtime.profile import AgentProfile
+from reyn.runtime.registry import AgentRegistry
+from reyn.runtime.session import Session
 from reyn.user_intervention import InterventionAnswer, UserIntervention
 
 # ---------------------------------------------------------------------------
@@ -400,7 +400,7 @@ def test_send_to_agent_impl_override_registered_and_cleaned_up(tmp_path, monkeyp
 
     # Stub _handle_user_message so the session produces a synthetic reply
     # without invoking a real LLM.
-    from reyn.chat.session import ChatMessage
+    from reyn.runtime.session import ChatMessage
 
     async def _fake_handle(self_inner, message, *, chain_id):
         self_inner._append_history(ChatMessage(
@@ -449,7 +449,7 @@ def test_send_to_agent_impl_override_cleaned_up_on_exception(tmp_path, monkeypat
     override_bus = _CaptureBus()
 
     # Stub MessageBus.request to raise immediately.
-    from reyn.chat.message_bus import MessageBus
+    from reyn.runtime.message_bus import MessageBus
 
     async def _raising_request(self_bus, session_arg, *, kind, payload, reply_to, timeout):
         raise RuntimeError("simulated MessageBus failure")
@@ -511,7 +511,7 @@ def test_concurrent_send_to_agent_impl_no_override_leak(tmp_path, monkeypatch):
     session.register_intervention_override = _spy_register  # type: ignore[method-assign]
     session.unregister_intervention_override = _spy_unregister  # type: ignore[method-assign]
 
-    from reyn.chat.session import ChatMessage
+    from reyn.runtime.session import ChatMessage
 
     call_count = 0
 

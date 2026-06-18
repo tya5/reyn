@@ -1,10 +1,10 @@
-"""Unit tests for src/reyn/chat/router_tools.py (PR35 Wave 1 Task A).
+"""Unit tests for src/reyn/runtime/router_tools.py (PR35 Wave 1 Task A).
 
 No LLM needed — all tests are pure Python, < 1 second total.
 """
 
 
-from reyn.chat.router_tools import build_tools
+from reyn.runtime.router_tools import build_tools
 
 # ── Fixtures / helpers ────────────────────────────────────────────────────────
 
@@ -399,7 +399,7 @@ def test_recall_in_dispatch_registry():
     legacy if/elif tree and return {"error": "unhandled tool: recall"}.
     REGISTRY_DISPATCH_TOOLS is a class attribute on RouterLoop.
     """
-    from reyn.chat.router_loop import RouterLoop
+    from reyn.runtime.router_loop import RouterLoop
     assert "recall" in RouterLoop.REGISTRY_DISPATCH_TOOLS, (
         "'recall' missing from RouterLoop.REGISTRY_DISPATCH_TOOLS"
     )
@@ -412,7 +412,7 @@ def test_drop_source_in_dispatch_registry():
     legacy if/elif tree and return {"error": "unhandled tool: drop_source"}.
     REGISTRY_DISPATCH_TOOLS is a class attribute on RouterLoop.
     """
-    from reyn.chat.router_loop import RouterLoop
+    from reyn.runtime.router_loop import RouterLoop
     assert "drop_source" in RouterLoop.REGISTRY_DISPATCH_TOOLS, (
         "'drop_source' missing from RouterLoop.REGISTRY_DISPATCH_TOOLS"
     )

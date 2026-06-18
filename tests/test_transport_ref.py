@@ -15,11 +15,12 @@ from pathlib import Path
 
 import pytest
 
-from reyn.chat.message_bus import MessageBus
-from reyn.chat.outbox import OutboxMessage
-from reyn.chat.routing import RoutingLayer
-from reyn.chat.session import Session
-from reyn.chat.transport import (
+from reyn.core.events.state_log import StateLog
+from reyn.runtime.message_bus import MessageBus
+from reyn.runtime.outbox import OutboxMessage
+from reyn.runtime.routing import RoutingLayer
+from reyn.runtime.session import Session
+from reyn.runtime.transport import (
     A2aRef,
     AgentRef,
     McpRef,
@@ -27,7 +28,6 @@ from reyn.chat.transport import (
     TransportRef,
     TuiRef,
 )
-from reyn.core.events.state_log import StateLog
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -466,10 +466,10 @@ async def test_a2a_endpoint_uses_message_bus(tmp_path, monkeypatch):
 
     This pins the FP-0013 bypass-deletion contract for the A2A transport.
     """
-    from reyn.chat.profile import AgentProfile
-    from reyn.chat.registry import AgentRegistry
     from reyn.mcp.server import send_to_agent_impl
     from reyn.runtime.budget.budget import BudgetTracker, CostConfig
+    from reyn.runtime.profile import AgentProfile
+    from reyn.runtime.registry import AgentRegistry
 
     state_log = StateLog(tmp_path / ".reyn" / "state" / "wal.jsonl")
 
@@ -503,7 +503,7 @@ async def test_a2a_endpoint_uses_message_bus(tmp_path, monkeypatch):
         return await original_put_inbox(self, kind, payload)
 
     async def _fake_handle_user_message(self, text, *, chain_id):
-        from reyn.chat.session import ChatMessage
+        from reyn.runtime.session import ChatMessage
         self._append_history(ChatMessage(
             role="user", content=text, ts="2026-05-14T00:00:00",
             meta={"chain_id": chain_id},

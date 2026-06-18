@@ -25,7 +25,7 @@ from __future__ import annotations
 
 import pytest
 
-from reyn.chat.external_routing import (
+from reyn.runtime.external_routing import (
     ExternalTransportEntry,
     ExternalTransportRouting,
     RouteResult,
@@ -33,7 +33,7 @@ from reyn.chat.external_routing import (
     parse_external_transports,
     route_to_mcp,
 )
-from reyn.chat.transport import ExternalRef
+from reyn.runtime.transport import ExternalRef
 
 # ── ExternalRef variant ────────────────────────────────────────────────
 
@@ -55,7 +55,7 @@ def test_external_ref_is_transport_ref_union_member():
     """Tier 2: ``ExternalRef`` is part of the ``TransportRef`` union
     so existing reply_to typing accepts it.
     """
-    from reyn.chat.transport import TransportRef
+    from reyn.runtime.transport import TransportRef
 
     # The union check is structural at runtime; we verify that an
     # ExternalRef instance is recognised as one of the union variants

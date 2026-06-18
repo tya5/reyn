@@ -12,10 +12,10 @@ from __future__ import annotations
 
 import pytest
 
-from reyn.chat.profile import AgentProfile
-from reyn.chat.registry import _DEFAULT_SID, AgentRegistry
-from reyn.chat.session import Session
 from reyn.runtime.budget.budget import BudgetTracker, CostConfig
+from reyn.runtime.profile import AgentProfile
+from reyn.runtime.registry import _DEFAULT_SID, AgentRegistry
+from reyn.runtime.session import Session
 
 
 def _registry(tmp_path):

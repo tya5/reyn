@@ -40,7 +40,7 @@ def _make_high_severity_msg():
 
     Uses the ``[budget exceeded]`` text marker (one of the _HIGH_TEXT_MARKERS).
     """
-    from reyn.chat.outbox import OutboxMessage
+    from reyn.runtime.outbox import OutboxMessage
     return OutboxMessage(
         kind="error",
         text="[budget exceeded] daily token cap reached",
@@ -50,7 +50,7 @@ def _make_high_severity_msg():
 
 def _make_med_severity_msg():
     """Build a plain error OutboxMessage that rates 'med' severity."""
-    from reyn.chat.outbox import OutboxMessage
+    from reyn.runtime.outbox import OutboxMessage
     return OutboxMessage(
         kind="error",
         text="something went wrong (transient)",

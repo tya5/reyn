@@ -36,9 +36,6 @@ from typing import Any
 
 import pytest
 
-from reyn.chat.profile import AgentProfile
-from reyn.chat.registry import AgentRegistry
-from reyn.chat.session import Session
 from reyn.config import SafetyConfig, TimeoutConfig
 from reyn.core.events.state_log import StateLog
 from reyn.core.kernel.normalizer import NormalizationResult
@@ -46,6 +43,9 @@ from reyn.core.kernel.postprocessor_executor import _compute_step_hash
 from reyn.core.kernel.runtime import OSRuntime, RunResult
 from reyn.llm.llm import LLMCallResult
 from reyn.llm.pricing import TokenUsage
+from reyn.runtime.profile import AgentProfile
+from reyn.runtime.registry import AgentRegistry
+from reyn.runtime.session import Session
 from reyn.schemas.models import (
     ControlDecision,
     ControlReason,

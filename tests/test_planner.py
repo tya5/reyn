@@ -28,7 +28,7 @@ import json
 
 import pytest
 
-from reyn.chat.planner import (
+from reyn.runtime.planner import (
     _PLAN_RETRY_EXCLUDED,
     _PLAN_STEP_MAX_ITERATIONS,
     _PLAN_STEP_RETRY_LIMIT,
@@ -660,8 +660,8 @@ async def test_plan_step_retries_on_transient_error_within_limit():
     succeeds on attempt 2. Uses a shared call counter so retries that
     rebuild the sub-loop still share state with the counter.
     """
-    import reyn.chat.planner as planner_mod
-    from reyn.chat.planner import execute_plan
+    import reyn.runtime.planner as planner_mod
+    from reyn.runtime.planner import execute_plan
 
     # Shared mutable counter across all RouterLoop instances for this test.
     _total_calls = [0]
@@ -713,8 +713,8 @@ async def test_plan_step_does_not_retry_permission_error():
     Observable contract: a step sub-loop that raises PermissionError
     propagates out of execute_plan rather than being caught-and-retried.
     """
-    import reyn.chat.planner as planner_mod
-    from reyn.chat.planner import execute_plan
+    import reyn.runtime.planner as planner_mod
+    from reyn.runtime.planner import execute_plan
 
     class _PermErrorLoop:
         def __init__(self, *, host, **kwargs):
@@ -749,8 +749,8 @@ async def test_plan_step_does_not_retry_budget_exceeded():
     """Tier 2: FP-0031-C — BudgetExceeded is in _PLAN_RETRY_EXCLUDED,
     so execute_plan re-raises it immediately without retry.
     """
-    import reyn.chat.planner as planner_mod
-    from reyn.chat.planner import execute_plan
+    import reyn.runtime.planner as planner_mod
+    from reyn.runtime.planner import execute_plan
 
     try:
         from reyn.runtime.budget.budget import BudgetExceeded
@@ -804,9 +804,9 @@ async def test_plan_step_retry_limit_exhaustion_asks_user_via_limit_handler():
     Observable contract (approval path): the step succeeds after the
     user-approved extension grants additional retries.
     """
-    import reyn.chat.planner as planner_mod
-    from reyn.chat.planner import execute_plan
+    import reyn.runtime.planner as planner_mod
     from reyn.config import OnLimitConfig
+    from reyn.runtime.planner import execute_plan
 
     # ── Refusal path ─────────────────────────────────────────────────────
 
@@ -995,7 +995,7 @@ def test_plan_invalid_retry_directive_includes_error_message():
     """Tier 2: directive renders the parser error message verbatim
     (sanitised) so the LLM has the failure context for self-correction.
     """
-    from reyn.chat.planner import _build_plan_invalid_retry_directive
+    from reyn.runtime.planner import _build_plan_invalid_retry_directive
 
     out = _build_plan_invalid_retry_directive(
         "Expecting ',' delimiter at char 445"
@@ -1013,7 +1013,7 @@ def test_plan_invalid_retry_directive_strips_control_chars():
     smuggled directive. The builder strips ``\\x00-\\x1f\\x7f`` before
     embedding.
     """
-    from reyn.chat.planner import _build_plan_invalid_retry_directive
+    from reyn.runtime.planner import _build_plan_invalid_retry_directive
 
     out = _build_plan_invalid_retry_directive("foo\x00bar\x01baz\x7fend")
     assert "foobarbazend" in out
@@ -1029,7 +1029,7 @@ def test_plan_invalid_retry_directive_caps_length():
     """Tier 2: error message segment is capped at 500 chars so a verbose
     parser trace can't blow the LLM directive budget.
     """
-    from reyn.chat.planner import _build_plan_invalid_retry_directive
+    from reyn.runtime.planner import _build_plan_invalid_retry_directive
 
     long_err = "x" * 5000
     out = _build_plan_invalid_retry_directive(long_err)
@@ -1047,7 +1047,7 @@ def test_plan_invalid_retry_directive_handles_empty_input():
     """Tier 2: defensive — empty / None error message still renders a
     well-formed directive, just with an empty error segment.
     """
-    from reyn.chat.planner import _build_plan_invalid_retry_directive
+    from reyn.runtime.planner import _build_plan_invalid_retry_directive
 
     out_empty = _build_plan_invalid_retry_directive("")
     out_none = _build_plan_invalid_retry_directive(None)  # type: ignore[arg-type]
@@ -1067,8 +1067,8 @@ async def test_plan_step_force_close_reenters_same_step_and_converges():
     """Tier 2: #1285 PR2 — a step that force-closes once re-enters the SAME step
     from the bounded consolidation (continuation, NOT restart) and converges; the
     re-entry's user turn carries the consolidation text."""
-    import reyn.chat.planner as planner_mod
-    from reyn.chat.planner import execute_plan
+    import reyn.runtime.planner as planner_mod
+    from reyn.runtime.planner import execute_plan
 
     calls: list[str] = []
 
@@ -1114,8 +1114,8 @@ async def test_plan_step_force_close_reenters_same_step_and_converges():
 async def test_plan_step_force_close_reentry_bounded_by_cap():
     """Tier 2: #1285 PR2 — a step that force-closes EVERY turn re-enters up to the
     cap then terminates at the FLOOR (bounded, never infinite)."""
-    import reyn.chat.planner as planner_mod
-    from reyn.chat.planner import (
+    import reyn.runtime.planner as planner_mod
+    from reyn.runtime.planner import (
         _PLAN_STEP_MAX_FORCE_CLOSE_REENTRIES,
         execute_plan,
     )
@@ -1160,8 +1160,8 @@ async def test_plan_step_force_close_and_transient_compose():
     fails once on the re-entered turn-set still completes (attempt reset to 0 on
     the force-close re-entry, then the transient retry succeeds — the two triggers
     never conflate)."""
-    import reyn.chat.planner as planner_mod
-    from reyn.chat.planner import execute_plan
+    import reyn.runtime.planner as planner_mod
+    from reyn.runtime.planner import execute_plan
 
     calls: list[str] = []
 

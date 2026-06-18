@@ -188,7 +188,7 @@ def test_router_cap_exception_carries_hint_key() -> None:
     """Tier 2: ``RouterCapExceeded.hint_config_key`` names the loop knob
     and is embedded in the message.
     """
-    from reyn.chat.session import RouterCapExceeded
+    from reyn.runtime.session import RouterCapExceeded
 
     assert RouterCapExceeded.hint_config_key == "safety.loop.max_router_calls_per_turn"
     exc = RouterCapExceeded(count=4, cap=3, last_reason="")

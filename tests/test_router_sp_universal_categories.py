@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import re
 
-from reyn.chat.router_system_prompt import build_system_prompt
+from reyn.runtime.router_system_prompt import build_system_prompt
 from reyn.tools.schemes._universal_sp import build_universal_tool_use_slots
 from reyn.tools.universal_catalog import CATEGORIES
 

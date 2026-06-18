@@ -163,8 +163,8 @@ def test_default_chat_layer_resolves_to_enumerate_all() -> None:
     and the scheme's public ``.name`` — NOT a running router or private state. The
     config value is what each frontend threads (chat_tool_use_scheme) through the
     factory → Session → RouterLoopDriver → RouterLoop(scheme_name=)."""
-    from reyn.chat.router_loop import _resolve_tool_use_scheme
     from reyn.config import _build_tool_use_config
+    from reyn.runtime.router_loop import _resolve_tool_use_scheme
 
     # #1657: default chat → enumerate-all (resolves to EnumerateAllScheme);
     # step/phase remain universal-category (the H1 evidence is the chat path).

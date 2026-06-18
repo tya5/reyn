@@ -12,8 +12,8 @@ system-prompt builders expose the documented mitigation surface).
 
 from __future__ import annotations
 
-from reyn.chat.router_system_prompt import build_system_prompt
-from reyn.chat.router_tools import build_tools
+from reyn.runtime.router_system_prompt import build_system_prompt
+from reyn.runtime.router_tools import build_tools
 
 
 def _find_tool(tools: list[dict], name: str) -> dict:

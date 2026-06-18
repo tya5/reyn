@@ -13,21 +13,21 @@ import os
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
-from reyn.chat.router_system_prompt import (
+from reyn.core.dispatch import DispatchContext, dispatch_tool
+from reyn.data.index.source_manifest import get_source_manifest
+from reyn.llm.llm import call_llm_tools
+from reyn.llm.pricing import TokenUsage
+from reyn.runtime.router_system_prompt import (
     build_system_prompt,
 )
-from reyn.chat.router_tools import (
+from reyn.runtime.router_tools import (
     _DESCRIBE_SKILL_STRIP_FIELDS,
     MAX_DESC_LEN_FOR_LISTING,
     build_tools,
     get_dispatch_kind,
 )
-from reyn.chat.services.skill_search import BM25Backend
-from reyn.chat.session import _TOOL_FAILED_FALLBACK_MSG
-from reyn.core.dispatch import DispatchContext, dispatch_tool
-from reyn.data.index.source_manifest import get_source_manifest
-from reyn.llm.llm import call_llm_tools
-from reyn.llm.pricing import TokenUsage
+from reyn.runtime.services.skill_search import BM25Backend
+from reyn.runtime.session import _TOOL_FAILED_FALLBACK_MSG
 from reyn.services.compaction.engine import _IMAGE_FIXED_TOKEN_COST
 from reyn.services.turn_budget import wrap_up_system_prompt
 
@@ -593,7 +593,7 @@ class RouterLoopHost(RouterLoopCore, Protocol):
     """Abstract surface RouterLoop needs (chat-mode superset of RouterLoopCore).
 
     Implemented by RouterHostAdapter in
-    src/reyn/chat/services/router_host_adapter.py. Extends RouterLoopCore
+    src/reyn/runtime/services/router_host_adapter.py. Extends RouterLoopCore
     (#1092 PR-A) with the chat-only methods (discovery / tool-exec primitives /
     plan-record); the core members are inherited (the redundant re-declarations
     below are harmless Protocol overlap, pending a follow-up cleanup).
@@ -2680,7 +2680,7 @@ class RouterLoop:
                 # ``self._plan_invalid_max_retries`` (= safety.loop config).
                 # Imported lazily so the existing top-level import surface
                 # of router_loop stays stable.
-                from reyn.chat.planner import _build_plan_invalid_retry_directive
+                from reyn.runtime.planner import _build_plan_invalid_retry_directive
                 plan_invalid_idx = next(
                     (
                         i
@@ -3802,7 +3802,7 @@ class RouterLoop:
             _spawn_skill_bound = _spawn_skill_bound_impl
 
         async def _dispatch_plan_bound(*, args: dict) -> Any:
-            from reyn.chat.planner import dispatch_plan_tool
+            from reyn.runtime.planner import dispatch_plan_tool
             return await dispatch_plan_tool(
                 args=args,
                 parent_host=self.host,

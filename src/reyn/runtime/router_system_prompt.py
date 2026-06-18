@@ -14,7 +14,7 @@ from __future__ import annotations
 import re
 from collections import defaultdict
 
-from reyn.chat.router_tools import MAX_DESC_LEN_FOR_LISTING
+from reyn.runtime.router_tools import MAX_DESC_LEN_FOR_LISTING
 
 # ---------------------------------------------------------------------------
 # Public API

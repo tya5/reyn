@@ -19,7 +19,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from reyn.chat.router_system_prompt import build_system_prompt
+from reyn.runtime.router_system_prompt import build_system_prompt
 from tests.test_router_host_adapter_invariants import _make_adapter
 
 # ── Fake backends ─────────────────────────────────────────────────────────────

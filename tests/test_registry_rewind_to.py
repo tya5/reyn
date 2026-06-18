@@ -14,12 +14,12 @@ from pathlib import Path
 
 import pytest
 
-from reyn.chat.profile import AgentProfile
-from reyn.chat.registry import AgentRegistry
-from reyn.chat.session import Session
 from reyn.core.events.agent_snapshot import AgentSnapshot
 from reyn.core.events.snapshot_generations import RewindIntoAbandonedError, rewind
 from reyn.core.events.state_log import StateLog
+from reyn.runtime.profile import AgentProfile
+from reyn.runtime.registry import AgentRegistry
+from reyn.runtime.session import Session
 
 _needs_git = pytest.mark.skipif(shutil.which("git") is None, reason="git not on PATH")
 
@@ -312,8 +312,8 @@ class _WatermarkShim:
 @pytest.mark.asyncio
 async def test_compute_truncate_floor_clamped_by_retention(tmp_path):
     """Tier 2: a deeper retention policy clamps the truncate floor below the live floor."""
-    from reyn.chat.registry import AgentRegistry
     from reyn.core.events.retention import RetentionPolicy
+    from reyn.runtime.registry import AgentRegistry
 
     state_log = StateLog(tmp_path / ".reyn" / "wal.jsonl")
     reg = AgentRegistry(

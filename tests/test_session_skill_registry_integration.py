@@ -23,8 +23,8 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 
-from reyn.chat.session import Session
 from reyn.core.events.state_log import StateLog
+from reyn.runtime.session import Session
 from reyn.skill.skill_registry import SkillRegistry
 
 
@@ -34,7 +34,7 @@ def _make_session(tmp_path: Path, *, with_state_log: bool, with_registry: bool):
     registry = None
     if with_registry:
         # Minimal AgentRegistry — we only need .truncate_wal_if_eligible
-        from reyn.chat.registry import AgentRegistry
+        from reyn.runtime.registry import AgentRegistry
 
         def _no_factory(_profile):
             raise AssertionError("session factory must not be called")
@@ -141,7 +141,7 @@ def test_truncate_hook_wired_with_registry(tmp_path, monkeypatch):
     truncation pass. Observable signal is the throttle stamp, which is
     set only when truncation actually attempts a rewrite (floor > 0).
     """
-    from reyn.chat.profile import AgentProfile
+    from reyn.runtime.profile import AgentProfile
 
     monkeypatch.chdir(tmp_path)
     session = _make_session(tmp_path, with_state_log=True, with_registry=True)

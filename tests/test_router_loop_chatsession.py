@@ -10,9 +10,9 @@ import asyncio
 import json
 from pathlib import Path
 
-from reyn.chat.session import Session, _PendingChain
 from reyn.llm.llm import LLMToolCallResult
 from reyn.llm.pricing import TokenUsage
+from reyn.runtime.session import Session, _PendingChain
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -128,7 +128,7 @@ def test_user_message_chitchat_e2e(tmp_path, monkeypatch):
     async def fake_llm(*args, **kwargs):
         return _text_result("hi")
 
-    monkeypatch.setattr("reyn.chat.router_loop.call_llm_tools", fake_llm)
+    monkeypatch.setattr("reyn.runtime.router_loop.call_llm_tools", fake_llm)
 
     async def run():
         await session._handle_user_message("hello", chain_id="chain-001")
@@ -150,7 +150,7 @@ def test_user_message_chitchat_appended_to_history(tmp_path, monkeypatch):
     async def fake_llm(*args, **kwargs):
         return _text_result("hello back")
 
-    monkeypatch.setattr("reyn.chat.router_loop.call_llm_tools", fake_llm)
+    monkeypatch.setattr("reyn.runtime.router_loop.call_llm_tools", fake_llm)
 
     async def run():
         await session._handle_user_message("hello", chain_id="chain-002")
@@ -235,7 +235,7 @@ def test_user_message_invoke_skill_e2e(tmp_path, monkeypatch):
         call_count["n"] += 1
         return result
 
-    monkeypatch.setattr("reyn.chat.router_loop.call_llm_tools", fake_llm)
+    monkeypatch.setattr("reyn.runtime.router_loop.call_llm_tools", fake_llm)
     monkeypatch.setattr(session.router_host, "spawn_skill", fake_adapter_spawn_skill)
     monkeypatch.setattr(
         session.router_host,
@@ -312,7 +312,7 @@ def test_delegate_registers_pending_chain(tmp_path, monkeypatch):
         call_count["n"] += 1
         return result
 
-    monkeypatch.setattr("reyn.chat.router_loop.call_llm_tools", fake_llm)
+    monkeypatch.setattr("reyn.runtime.router_loop.call_llm_tools", fake_llm)
 
     async def run():
         await session._handle_agent_request({
@@ -406,7 +406,7 @@ def test_list_available_skills_excludes_stdlib_router(tmp_path, monkeypatch):
 def test_build_history_for_router_shape(tmp_path, monkeypatch):
     """Tier 1: _build_history_for_router returns OpenAI-style dicts with correct role mapping and ordering from session history."""
     monkeypatch.chdir(tmp_path)
-    from reyn.chat.session import ChatMessage
+    from reyn.runtime.session import ChatMessage
     session = _make_session(tmp_path)
 
     # Inject some history (Issue #383: new content kwarg + assistant role)

@@ -72,8 +72,8 @@ def build_router(*, target_agent: str) -> APIRouter:
     from slack_bolt.async_app import AsyncApp
     from slack_bolt.authorization import AuthorizeResult
 
-    from reyn.chat.transport import ExternalRef
     from reyn.plugins.api import make_sender, push_to_agent
+    from reyn.runtime.transport import ExternalRef
 
     signing_secret = os.environ.get("SLACK_SIGNING_SECRET", "")
     # Reyn dispatches outbound replies via the Slack MCP server, NOT

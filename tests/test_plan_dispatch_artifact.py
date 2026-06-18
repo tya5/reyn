@@ -19,7 +19,7 @@ from typing import Any
 
 import pytest
 
-from reyn.chat.planner import (
+from reyn.runtime.planner import (
     Plan,
     PlanStep,
     dispatch_plan_tool,
@@ -120,7 +120,7 @@ class _StubRouterLoop:
 
 @pytest.fixture(autouse=True)
 def _stub_router_loop(monkeypatch: Any):
-    import reyn.chat.planner as planner_mod
+    import reyn.runtime.planner as planner_mod
     monkeypatch.setattr(planner_mod, "RouterLoop", _StubRouterLoop)
     _StubRouterLoop._behavior = "noop"
     yield
@@ -251,7 +251,7 @@ async def test_dispatch_preserves_artifact_on_crash() -> None:
         async def run(self, *, user_text, history):
             raise asyncio.CancelledError("test cancel")
 
-    import reyn.chat.planner as planner_mod
+    import reyn.runtime.planner as planner_mod
     original = planner_mod.RouterLoop
     planner_mod.RouterLoop = _CancellingRouterLoop
     try:

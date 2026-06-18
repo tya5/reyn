@@ -534,7 +534,7 @@ async def test_execute_plan_compact_fires_when_engine_and_cfg_explicit() -> None
     every step after the first. The spy captures the call, confirming the
     PR-N4 hook is wired correctly through execute_plan.
     """
-    import reyn.chat.planner as planner_mod
+    import reyn.runtime.planner as planner_mod
 
     compact_calls: list[dict] = []
 
@@ -562,8 +562,8 @@ async def test_execute_plan_compact_fires_when_engine_and_cfg_explicit() -> None
     planner_mod.RouterLoop = _ImmediateRouterLoop  # type: ignore[assignment]
 
     try:
-        from reyn.chat.planner import Plan, PlanStep, execute_plan
         from reyn.config import CompactionConfig
+        from reyn.runtime.planner import Plan, PlanStep, execute_plan
 
         # Build an explicit engine with use_chars4 for determinism.
         cfg_compact = CompactionConfig(use_chars4_estimate=True)

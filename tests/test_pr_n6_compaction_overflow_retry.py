@@ -28,12 +28,12 @@ from pathlib import Path
 
 import pytest
 
-from reyn.chat.services.token_multiplier_learner import (
+from reyn.config import CompactionConfig
+from reyn.core.events.events import EventLog
+from reyn.runtime.services.token_multiplier_learner import (
     TokenMultiplierLearner,
     detect_content_type,
 )
-from reyn.config import CompactionConfig
-from reyn.core.events.events import EventLog
 from reyn.services.compaction.engine import (
     CompactionOverflowError,
     ContextOverflowError,

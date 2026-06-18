@@ -4,7 +4,7 @@ Router-only: gates.router="allow", gates.phase="deny".
 
 Async dispatch posture (ADR-0023 Phase 2.1):
   ``plan`` is fire-and-forget. The real dispatch logic lives in
-  ``reyn.chat.planner.dispatch_plan_tool``. The handler returns a spawn
+  ``reyn.runtime.planner.dispatch_plan_tool``. The handler returns a spawn
   ack dict; actual progress/result arrives via outbox in future
   RouterLoop turns.
 

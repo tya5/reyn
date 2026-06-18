@@ -87,7 +87,7 @@ def test_alias_builder_drops_wire_unsafe_names() -> None:
     collapsed/legacy category (agent.peer__* / mcp.tool__*) or a future dynamic
     prefix — can NEVER reach the wire as a function name, by construction at the
     boundary, independent of whether every upstream source pre-filtered it."""
-    from reyn.chat.router_loop import _build_hot_list_aliases
+    from reyn.runtime.router_loop import _build_hot_list_aliases
 
     out = _build_hot_list_aliases([
         "file__read",              # wire-safe → kept

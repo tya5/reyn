@@ -14,9 +14,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from reyn.chat.session import Session
 from reyn.core.events.state_log import StateLog
 from reyn.environment.host_backend import HostBackend
+from reyn.runtime.session import Session
 
 
 def _session(tmp_path: Path, *, environment_backend=None, sandbox_backend=None) -> Session:

@@ -25,7 +25,7 @@ _SRC = Path(__file__).parent.parent / "src"
 if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
-from reyn.chat.services.intervention_handler import (
+from reyn.runtime.services.intervention_handler import (
     _iv_meta,
     source_agent_var,
 )

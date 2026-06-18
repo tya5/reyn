@@ -11,8 +11,8 @@ import argparse
 import sys
 from pathlib import Path
 
-from reyn.chat.registry import _DEFAULT_TOPOLOGY_NAME, AgentRegistry
-from reyn.chat.topology import KINDS, Topology
+from reyn.runtime.registry import _DEFAULT_TOPOLOGY_NAME, AgentRegistry
+from reyn.runtime.topology import KINDS, Topology
 
 
 def register(sub) -> None:

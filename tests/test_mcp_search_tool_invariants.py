@@ -18,8 +18,8 @@ Policy compliance (docs/deep-dives/contributing/testing.ja.md):
 """
 from __future__ import annotations
 
-from reyn.chat.router_tools import MCP_SEARCH_THRESHOLD, build_mcp_search_tool, build_tools
 from reyn.core.events.event_schema import EVENT_AUDIT_REQUIREMENTS
+from reyn.runtime.router_tools import MCP_SEARCH_THRESHOLD, build_mcp_search_tool, build_tools
 
 # ── Shared fixtures ───────────────────────────────────────────────────────────
 

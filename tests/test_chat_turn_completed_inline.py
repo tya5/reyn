@@ -30,10 +30,10 @@ from pathlib import Path
 
 import pytest
 
-from reyn.chat.router_loop import RouterLoop
 from reyn.core.events.event_schema import EVENT_AUDIT_REQUIREMENTS
 from reyn.llm.llm import LLMToolCallResult
 from reyn.llm.pricing import TokenUsage
+from reyn.runtime.router_loop import RouterLoop
 
 # ---------------------------------------------------------------------------
 # Shared primitives (mirror test_router_loop_routing_decided.py pattern)
@@ -188,7 +188,7 @@ def _run_with_llm_sequence(
     async def _fake_call_llm_tools(**kwargs: object) -> LLMToolCallResult:
         return turns.pop(0)
 
-    monkeypatch.setattr("reyn.chat.router_loop.call_llm_tools", _fake_call_llm_tools)
+    monkeypatch.setattr("reyn.runtime.router_loop.call_llm_tools", _fake_call_llm_tools)
     loop = RouterLoop(host=host, chain_id="chain-b28q2", max_iterations=5)
     asyncio.run(loop.run("hello", []))
 

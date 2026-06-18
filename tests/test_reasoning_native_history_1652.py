@@ -17,12 +17,12 @@ from types import SimpleNamespace
 import litellm
 import pytest
 
-from reyn.chat.reasoning_continuity import (
+from reyn.llm.llm import _extract_reasoning_bundle, recorded_acompletion
+from reyn.runtime.reasoning_continuity import (
     as_reasoning_bundle,
     attach_reasoning,
     reasoning_text,
 )
-from reyn.llm.llm import _extract_reasoning_bundle, recorded_acompletion
 
 
 def test_extract_bundle_includes_reasoning_content_and_thinking_blocks() -> None:

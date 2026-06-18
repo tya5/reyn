@@ -20,7 +20,7 @@ from typing import TYPE_CHECKING
 from reyn.interfaces.slash import reply, reply_error, slash
 
 if TYPE_CHECKING:
-    from reyn.chat.session import Session
+    from reyn.runtime.session import Session
 
 
 _USAGE = (

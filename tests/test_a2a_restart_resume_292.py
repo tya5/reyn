@@ -50,14 +50,14 @@ from pathlib import Path
 
 import pytest
 
-from reyn.chat.session import (
+from reyn.core.events.agent_snapshot import AgentSnapshot
+from reyn.core.events.state_log import StateLog
+from reyn.interfaces.web.run_registry import RunRegistry
+from reyn.runtime.session import (
     DEFAULT_CHAT_CHANNEL_ID,
     ChatInterventionBus,
     Session,
 )
-from reyn.core.events.agent_snapshot import AgentSnapshot
-from reyn.core.events.state_log import StateLog
-from reyn.interfaces.web.run_registry import RunRegistry
 from reyn.user_intervention import (
     InterventionAnswer,
     InterventionChoice,

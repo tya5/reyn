@@ -14,7 +14,6 @@ from pathlib import Path
 
 import pytest
 
-from reyn.chat.planner import Plan, PlanStep
 from reyn.core.plan import (
     DECOMPOSITION_SCHEMA_VERSION,
     DecompositionCorruptError,
@@ -24,6 +23,7 @@ from reyn.core.plan import (
     read_decomposition,
     write_decomposition,
 )
+from reyn.runtime.planner import Plan, PlanStep
 
 
 def _sample_plan() -> Plan:

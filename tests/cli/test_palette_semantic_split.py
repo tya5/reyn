@@ -32,10 +32,10 @@ if str(_SRC) not in sys.path:
 
 from rich.color import Color as _RichColor
 
-from reyn.chat.outbox import OutboxMessage
 from reyn.interfaces.tui._palette import _AMBER, _CORAL
 from reyn.interfaces.tui.app import ReynTUIApp
 from reyn.interfaces.tui.widgets import ConversationView
+from reyn.runtime.outbox import OutboxMessage
 
 
 def _make_app() -> ReynTUIApp:

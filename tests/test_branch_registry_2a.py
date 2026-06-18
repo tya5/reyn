@@ -158,9 +158,9 @@ async def test_list_rewind_points_branch_id_and_include_abandoned(tmp_path):
     include_abandoned, dead-branch checkpoints appear, each carrying its branch_id
     so the UX groups by it (no range-intersection).
     """
-    from reyn.chat.profile import AgentProfile
-    from reyn.chat.registry import AgentRegistry
     from reyn.core.events.agent_snapshot import AgentSnapshot
+    from reyn.runtime.profile import AgentProfile
+    from reyn.runtime.registry import AgentRegistry
 
     state_log = StateLog(tmp_path / ".reyn" / "wal.jsonl")
     reg = AgentRegistry(

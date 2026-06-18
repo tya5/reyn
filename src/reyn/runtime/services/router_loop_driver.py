@@ -141,7 +141,7 @@ class RouterLoopDriver:
         before re-raising. On approval the cap is extended by the configured
         amount and the run continues.
         """
-        from reyn.chat.session import RouterCapExceeded
+        from reyn.runtime.session import RouterCapExceeded
         try:
             self._budget.check_and_increment_router_cap(user_text)
         except RouterCapExceeded as exc:
@@ -173,7 +173,7 @@ class RouterLoopDriver:
         overflowed.  ``user_text`` is unused here (the new message is re-applied
         by the loop's next ``_run_with_shrink``); kept for symmetry / future audit.
         """
-        from reyn.chat.session import ChatMessage, _now_iso, _render_summary_for_storage
+        from reyn.runtime.session import ChatMessage, _now_iso, _render_summary_for_storage
 
         resolved_model = self._resolver.resolve(self._effective_router_model_class()).model
         consolidation = await self._force_close_wrap_up(loop, resolved_model)
@@ -202,7 +202,7 @@ class RouterLoopDriver:
         If even summary-only overflows, the model is RUNTIME sub-viable → raise,
         surfaced as a genuine dead-end by the handoff loop.
         """
-        from reyn.chat.session import _render_summary_for_storage
+        from reyn.runtime.session import _render_summary_for_storage
         from reyn.services.compaction.engine import (
             ContextOverflowError as _ContextOverflowError,
         )
@@ -256,7 +256,7 @@ class RouterLoopDriver:
         it ONLY when it actually gives up (cap reached / sub-viable model), so a
         recoverable handoff is not mislogged as a dead-end.
         """
-        from reyn.chat.session import _render_summary_for_storage, _RouterUsageShim
+        from reyn.runtime.session import _render_summary_for_storage, _RouterUsageShim
         from reyn.services.compaction.engine import (
             ContextOverflowError as _ContextOverflowError,
         )
@@ -336,7 +336,7 @@ class RouterLoopDriver:
 
         Raises RouterCapExceeded when the per-turn cap is reached.
         """
-        from reyn.chat.router_loop import EMPTY_STOP_RETRY_DIRECTIVE, RouterLoop
+        from reyn.runtime.router_loop import EMPTY_STOP_RETRY_DIRECTIVE, RouterLoop
         from reyn.services.compaction.engine import (
             ContextOverflowError as _ContextOverflowError,
         )

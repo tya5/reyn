@@ -10,15 +10,15 @@ from pathlib import Path
 
 import pytest
 
-from reyn.chat.profile import AgentProfile
-from reyn.chat.registry import AgentRegistry
-from reyn.chat.services.snapshot_journal import SnapshotJournal
 from reyn.core.events.agent_snapshot import AgentSnapshot
 from reyn.core.events.anchor_store import AnchorStore, truncate_anchor
 from reyn.core.events.snapshot_generations import SnapshotGenerationStore
 from reyn.core.events.state_log import StateLog
 from reyn.interfaces.tui.widgets.branch_tree import build_branch_tree_rows
 from reyn.interfaces.tui.widgets.rewind_menu import RewindMenuWidget
+from reyn.runtime.profile import AgentProfile
+from reyn.runtime.registry import AgentRegistry
+from reyn.runtime.services.snapshot_journal import SnapshotJournal
 
 # ── truncate_anchor ──────────────────────────────────────────────────────────
 

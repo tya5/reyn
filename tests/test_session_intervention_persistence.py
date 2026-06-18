@@ -23,8 +23,8 @@ from pathlib import Path
 import pytest
 from _async_wait import wait_until  # noqa: E402 — shared #1751 test wait helper
 
-from reyn.chat.session import Session
 from reyn.core.events.state_log import StateLog
+from reyn.runtime.session import Session
 from reyn.user_intervention import (
     InterventionChoice,
     UserIntervention,

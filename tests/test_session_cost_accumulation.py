@@ -14,10 +14,10 @@ from __future__ import annotations
 
 import asyncio
 
-from reyn.chat.router_loop import RouterLoop
-from reyn.chat.session import Session
 from reyn.llm.llm import LLMToolCallResult
 from reyn.llm.pricing import TokenUsage, estimate_cost
+from reyn.runtime.router_loop import RouterLoop
+from reyn.runtime.session import Session
 
 # ---------------------------------------------------------------------------
 # Helpers shared with existing router tests
@@ -155,7 +155,7 @@ def test_router_loop_total_usage_propagates_to_session(tmp_path, monkeypatch):
     async def _stub_call_llm_tools(**kwargs):
         return _text_result("こんにちは")
 
-    monkeypatch.setattr("reyn.chat.router_loop.call_llm_tools", _stub_call_llm_tools)
+    monkeypatch.setattr("reyn.runtime.router_loop.call_llm_tools", _stub_call_llm_tools)
     _run(session._handle_user_message("hello", chain_id="c1"))
 
     assert session.total_usage.prompt_tokens > 0, (
@@ -228,7 +228,7 @@ def test_router_loop_run_accumulates_usage_across_iterations():
         return results_queue.pop(0)
 
     async def run_it():
-        import reyn.chat.router_loop as _rl_mod
+        import reyn.runtime.router_loop as _rl_mod
         original = _rl_mod.call_llm_tools
         _rl_mod.call_llm_tools = fake_call_llm_tools
         try:

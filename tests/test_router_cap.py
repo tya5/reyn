@@ -26,9 +26,9 @@ from pathlib import Path
 
 import pytest
 
-from reyn.chat.session import RouterCapExceeded, Session
 from reyn.config import LoopConfig, SafetyConfig
 from reyn.runtime.budget.budget import BudgetTracker, CostConfig
+from reyn.runtime.session import RouterCapExceeded, Session
 
 
 def _run(coro):
@@ -171,7 +171,7 @@ def test_router_succeeds_within_cap(tmp_path, monkeypatch):
             meta={"chain_id": self.chain_id},
         )
 
-    from reyn.chat.router_loop import RouterLoop
+    from reyn.runtime.router_loop import RouterLoop
     monkeypatch.setattr(RouterLoop, "run", fake_router_run)
 
     # First turn: one router call, counter at 1, no exception.

@@ -26,9 +26,9 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-import reyn.chat.planner as _planner_mod
-import reyn.chat.session as _session_mod
 import reyn.core.kernel.phase_executor as _phase_mod
+import reyn.runtime.planner as _planner_mod
+import reyn.runtime.session as _session_mod
 from reyn.services.turn_budget import (
     try_build_default_turn_budget_engine,
 )

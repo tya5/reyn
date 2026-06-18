@@ -17,9 +17,9 @@ import asyncio
 from pathlib import Path
 from typing import Any
 
-from reyn.chat.services import MemoryService, RouterHostAdapter
 from reyn.core.events.events import EventLog
 from reyn.llm.model_resolver import ModelResolver, ModelSpec
+from reyn.runtime.services import MemoryService, RouterHostAdapter
 
 _EFFORT = "high"     # non-default reasoning_effort
 _TEMP = 0.37         # non-default temperature

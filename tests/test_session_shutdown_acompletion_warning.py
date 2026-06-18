@@ -64,7 +64,7 @@ def _make_unawaited_coro() -> None:
 def _shutdown_warning_filter():
     """Mirror the filter installed by ``Session._drain_on_shutdown``.
 
-    Kept in lockstep with ``src/reyn/chat/session.py`` so a future tweak to
+    Kept in lockstep with ``src/reyn/runtime/session.py`` so a future tweak to
     the production filter is forced to update this test (= the assertion
     on filter scope below will start failing if the message regex drifts).
     """
@@ -180,8 +180,8 @@ def test_drain_on_shutdown_does_not_leak_warning(tmp_path, monkeypatch):
     (mirrors what the litellm executor race does inside cancel_all's await
     chain), and asserts no warning leaks out.
     """
-    from reyn.chat.session import Session
     from reyn.core.events.state_log import StateLog
+    from reyn.runtime.session import Session
 
     monkeypatch.chdir(tmp_path)
 

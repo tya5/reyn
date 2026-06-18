@@ -46,7 +46,7 @@ def _compact_ts(ts: str) -> str:
     return ts
 
 if TYPE_CHECKING:
-    from reyn.chat.registry import AgentRegistry
+    from reyn.runtime.registry import AgentRegistry
 
 
 # How many recent completed items to surface per agent. Bumped from 2

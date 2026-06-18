@@ -171,7 +171,7 @@ def _patch_localns(ns: dict[str, Any]) -> None:
     """Inject lazy-import types that appear as forward refs in config.py."""
     if "ExternalTransportRouting" not in ns:
         try:
-            from reyn.chat.external_routing import ExternalTransportRouting  # noqa: PLC0415
+            from reyn.runtime.external_routing import ExternalTransportRouting  # noqa: PLC0415
             ns["ExternalTransportRouting"] = ExternalTransportRouting
         except ImportError:
             pass

@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING
 from reyn.interfaces.slash import reply, slash
 
 if TYPE_CHECKING:
-    from reyn.chat.session import Session
+    from reyn.runtime.session import Session
 
 
 _TRACKER_DISABLED = (

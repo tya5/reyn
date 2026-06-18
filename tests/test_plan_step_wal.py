@@ -12,8 +12,8 @@ from pathlib import Path
 
 import pytest
 
-from reyn.chat.services.snapshot_journal import SnapshotJournal
 from reyn.core.events.state_log import WAL_EVENT_KINDS, StateLog
+from reyn.runtime.services.snapshot_journal import SnapshotJournal
 
 
 def _make_journal(tmp_path: Path) -> tuple[SnapshotJournal, StateLog]:

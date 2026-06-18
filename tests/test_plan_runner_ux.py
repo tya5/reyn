@@ -27,8 +27,8 @@ from typing import Any
 
 import pytest
 
-from reyn.chat.outbox import OutboxMessage
-from reyn.chat.services.plan_runner import PlanRunner
+from reyn.runtime.outbox import OutboxMessage
+from reyn.runtime.services.plan_runner import PlanRunner
 
 
 @dataclass

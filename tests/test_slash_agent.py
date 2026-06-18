@@ -17,8 +17,8 @@ _SRC = Path(__file__).parent.parent / "src"
 if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
-from reyn.chat.outbox import OutboxMessage
 from reyn.interfaces.slash import REGISTRY
+from reyn.runtime.outbox import OutboxMessage
 
 
 class _FakeSession:
@@ -52,7 +52,7 @@ class _FakeSession:
 
 def _build_real_registry(tmp_path: Path):
     """Construct a real ``AgentRegistry`` rooted at tmp_path."""
-    from reyn.chat.registry import AgentRegistry
+    from reyn.runtime.registry import AgentRegistry
 
     # Minimal session_factory — registry.create() doesn't invoke it,
     # it just persists the AgentProfile to disk. The factory is for
@@ -148,8 +148,8 @@ async def test_agent_new_rejects_invalid_name(tmp_path):
 async def test_agent_edit_role_persists_to_profile_and_session(tmp_path):
     """Tier 2: ``/agent edit role <text>`` writes the new role to disk
     and updates ``session.agent_role`` so the next turn sees it."""
-    from reyn.chat.profile import AgentProfile
     from reyn.interfaces.slash.agent import _edit_role
+    from reyn.runtime.profile import AgentProfile
 
     registry = _build_real_registry(tmp_path)
     registry.create("gamma", role="old role")
@@ -171,8 +171,8 @@ async def test_agent_edit_role_persists_to_profile_and_session(tmp_path):
 async def test_agent_edit_role_preserves_other_profile_fields(tmp_path):
     """Tier 2: role edit MUST NOT clobber name / created_at / allowed_skills /
     allowed_mcp."""
-    from reyn.chat.profile import PROFILE_FILENAME, AgentProfile
     from reyn.interfaces.slash.agent import _edit_role
+    from reyn.runtime.profile import PROFILE_FILENAME, AgentProfile
 
     registry = _build_real_registry(tmp_path)
     registry.create("delta", role="initial")
@@ -203,8 +203,8 @@ async def test_agent_edit_role_preserves_other_profile_fields(tmp_path):
 @pytest.mark.asyncio
 async def test_agent_edit_role_empty_value_errors(tmp_path):
     """Tier 2: empty / whitespace role → error message, no disk change."""
-    from reyn.chat.profile import AgentProfile
     from reyn.interfaces.slash.agent import _edit_role
+    from reyn.runtime.profile import AgentProfile
 
     registry = _build_real_registry(tmp_path)
     registry.create("eps", role="keep me")
@@ -256,8 +256,8 @@ async def test_agent_edit_no_args_errors(tmp_path):
 async def test_agent_dispatcher_routes_edit_to_handler(tmp_path):
     """Tier 2: the top-level ``agent_cmd`` dispatches ``edit role <text>``
     through to the leaf handler (= ``_edit_role``)."""
-    from reyn.chat.profile import AgentProfile
     from reyn.interfaces.slash.agent import agent_cmd
+    from reyn.runtime.profile import AgentProfile
 
     registry = _build_real_registry(tmp_path)
     registry.create("zeta", role="before")

@@ -15,10 +15,10 @@ PR-N3: the phase prompt is now a string constant in
 """
 from __future__ import annotations
 
-from reyn.chat.services.compaction_controller import (
+from reyn.runtime.services.compaction_controller import (
     _turn_to_compactor_input,
 )
-from reyn.chat.session import ChatMessage
+from reyn.runtime.session import ChatMessage
 
 # ── _turn_to_compactor_input ──────────────────────────────────────────
 
@@ -101,7 +101,7 @@ def test_compaction_filter_includes_tool_role() -> None:
     """
     import inspect
 
-    from reyn.chat.services import compaction_controller
+    from reyn.runtime.services import compaction_controller
     src = inspect.getsource(compaction_controller)
     assert '"user", "assistant", "tool", "agent"' in src, (
         "compaction candidate filter must include tool + assistant roles "

@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING
 from reyn.interfaces.slash import reply, reply_error, slash
 
 if TYPE_CHECKING:
-    from reyn.chat.session import Session
+    from reyn.runtime.session import Session
 
 
 _USAGE = (
@@ -226,7 +226,7 @@ async def _discard_plan_run(session: "Session", args: str) -> None:
     # before the journal record / chain notify so later steps
     # raising doesn't leave the bottom-strip stale (#536).
     try:
-        from reyn.chat.outbox import OutboxMessage
+        from reyn.runtime.outbox import OutboxMessage
         await session._put_outbox(OutboxMessage(
             kind="system",
             text=f"plan discarded · {plan_id}",
