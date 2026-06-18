@@ -1,15 +1,14 @@
 """SkillPlanGlue — skill/plan completion routing and chain timeout for Session.
 
-Extracted from Session (session.py refactor PR-4 — FP-0019 series final).
 Owns the cluster that routes completed skill/plan work back into the router
 loop and handles chain timeout lifecycle:
 
-  - handle_skill_completed(payload)        — was _handle_skill_completed
-  - drain_skill_completed_inbox(deadline)  — was drain_skill_completed_inbox
-  - on_chain_timeout_fire(chain_id)        — was _on_chain_timeout_fire
-  - spawn_skill_for_router(spec, chain_id) — was _spawn_skill_for_router
-  - spawn_skill(spec, chain_id)            — was _spawn_skill
-  - enqueue_plan_completed(**kw)           — was _enqueue_plan_completed
+  - handle_skill_completed(payload)
+  - drain_skill_completed_inbox(deadline)
+  - on_chain_timeout_fire(chain_id)
+  - spawn_skill_for_router(spec, chain_id)
+  - spawn_skill(spec, chain_id)
+  - enqueue_plan_completed(**kw)
 
 Public-surface note: ``drain_skill_completed_inbox`` is called from
 ``mcp_server.py`` (R-A2A-COMPLETION-DRAIN); Session keeps a forwarding

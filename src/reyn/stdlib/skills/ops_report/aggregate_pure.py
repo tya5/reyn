@@ -1,14 +1,14 @@
 """Pure (mode: safe) aggregation helpers for ops_report.
 
-Split out of ``aggregate.py`` so that ``aggregate_from_recall_chunks`` can be
-declared ``mode: safe`` — the AST validator rejects the whole-module load of
-``aggregate.py`` because of its ``import glob`` / ``import os`` at module top.
+A separate module from ``aggregate.py`` so that ``aggregate_from_recall_chunks``
+can be declared ``mode: safe`` — the AST validator rejects the whole-module load
+of ``aggregate.py`` because of its ``import glob`` / ``import os`` at module top.
 This sibling module imports only PURE_STDLIB_ALLOWLIST entries, so
 ``mode: safe`` (= "ambient sources only" contract) holds at parse time.
 
-The split is purely about syntactic reachability of unsafe modules:
-``aggregate_from_recall_chunks`` itself was already pure; the only blocker
-was that it lived alongside I/O-using siblings.
+The separation is purely about syntactic reachability of unsafe modules:
+``aggregate_from_recall_chunks`` itself is pure; the only blocker is that it
+would otherwise live alongside I/O-using siblings.
 
 Private helpers ``_ERROR_SAMPLE_MAX``, ``_ERROR_EXCERPT_MAX``, and
 ``_top_failing_skills`` are duplicated here (not imported from ``aggregate.py``)

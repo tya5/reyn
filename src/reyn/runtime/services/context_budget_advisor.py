@@ -1,27 +1,23 @@
 """ContextBudgetAdvisor — per-turn token budget computation for Session.
 
-Extracted from Session (session.py refactor PR-1).  Owns the five
-budget-arithmetic methods that were inline on Session:
+Owns the five budget-arithmetic methods:
 
   - cap_tool_result       — truncate oversized tool-result text (#1128 size axis)
   - per_turn_cap_tokens   — derive B_M-relative per-turn token ceiling
   - media_followup_budget — tokens left for media after capped text (#272)
   - context_window_status — {free_window, effective_trigger} for SP header
-  - maybe_force_compact   — pre-frame overflow guard (#1128 PR-N3)
+  - maybe_force_compact   — pre-frame overflow guard (#1128)
 
 Plus the shared helper:
 
   - _free_window_now      — (effective_trigger, estimated_history_tokens)
 
 All public methods are pure or only cause contained async side effects on
-the compaction controller.  Session holds an instance and forwards
-each method as a callback to RouterHostAdapter, keeping the external API
-byte-identical (no caller changes outside session.py).
+the compaction controller.  Session holds an instance and forwards each
+method as a callback to RouterHostAdapter.
 
 history_fn dependency: a zero-arg callable that returns the current
-router-view history (list of dicts).  Passed as ``self._build_history_for_router``
-during PR-1; when PR-2 relocates that method, session silently re-wires
-the dep without touching this class.
+router-view history (list of dicts).
 """
 from __future__ import annotations
 
