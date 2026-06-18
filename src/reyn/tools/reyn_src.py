@@ -23,7 +23,7 @@ _REYN_SRC_LIST_DESCRIPTION = (
     "this to discover Reyn's source/doc layout before "
     "reading specific files. Examples: list \"\" for the "
     "top-level layout, \"docs/en/concepts\" for concept "
-    "docs, \"src/reyn/chat\" for the chat layer source."
+    "docs, or any subdirectory path for its contents."
 )
 
 # Parameters JSON schema must be byte-identical to the current
@@ -51,7 +51,7 @@ _REYN_SRC_LIST_PARAMETERS: dict[str, Any] = {
 _REYN_SRC_READ_DESCRIPTION = (
     "Read a text file from Reyn's own repository by an exact "
     "repo-root-relative path. Use for: (a) reading a specific file the "
-    "user named (e.g. README.md, src/reyn/chat/...), or (b) navigating "
+    "user named (e.g. README.md), or (b) navigating "
     "Reyn's source / docs when NO indexed source covers the topic. "
     "If an indexed source description mentions concepts / design / "
     "docs / Reyn, use `recall` instead — guessing a file path is "
