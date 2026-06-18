@@ -8,8 +8,8 @@ audience: [human, agent]
 
 Reyn separates *who is acting*, *which conversation*, and *the machinery that runs
 a skill* into three distinct levels. Keeping them apart is what lets one agent hold
-many parallel conversations, each independently persisted and rewindable, without
-the conversations bleeding into each other.
+many parallel conversations, each independently persisted, without the
+conversations bleeding into each other.
 
 ## The three levels
 
@@ -66,8 +66,11 @@ Persistence and recovery key on the **Session**:
 
 - **Per-session persistence** — each Session's state is snapshotted independently,
   so the conversations under one Agent are saved and restored separately.
-- **Per-session time-travel** — rewind / fork apply to a single Session; a
-  sub-session fork *is* a time-travel branch of its parent. See
+- **Time-travel rewind is a global cut, not per-session** — `/rewind` moves
+  *every* Session and Agent to the target checkpoint atomically (one global
+  single-seq WAL), so a rewind is consistent across the whole process rather
+  than isolated to one Session. Per-session granularity lives in persistence and
+  replay (above), not in the rewind operation. See
   [time-travel](../runtime/time-travel.md).
 - **Crash recovery** — on restart the full multi-session structure is reconstructed
   from the event log and snapshots, not just a single conversation.
@@ -97,6 +100,7 @@ join. Additional transports route through the same model as they are added.
 - [Multi-agent](multi-agent.md) — the four compositional surfaces for *different*
   identities (delegation, topology, A2A, MCP-serve).
 - [Time-travel](../runtime/time-travel.md) — the rewind / fork / crash-recovery
-  machinery that operates per Session.
+  machinery (rewind is a global consistent-cut across all Sessions; persistence
+  and recovery are per-Session).
 - [Architecture](../architecture/architecture.md) — where the Agent / Session /
   runtime split sits in the component layers.
