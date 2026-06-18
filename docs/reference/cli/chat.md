@@ -69,6 +69,7 @@ While a session is active, lines starting with `/` are intercepted and never rou
 | `/budget [reset]` | Full budget breakdown; `/budget reset` clears per-process counters (see [config/budget](../config/budget.md)) |
 | `/cancel <id-prefix>` | Cancel a running skill (accepts any unique prefix of the run_id) |
 | `/clear-history` | Wipe chat history (**destructive**; clears in-memory + persistent history) |
+| `/compact` | Compact the conversation history now to free up the context window (see [chat-compaction](../../concepts/data-retrieval/chat-compaction.md)) |
 | `/concept <term>` | Inline glossary lookup (T1-3) |
 | `/copy [N\|list]` | Copy an agent reply to the clipboard (1 = newest, 2 = one turn back, …) |
 | `/cost` | Quick token + USD cost summary for this agent |
@@ -87,7 +88,9 @@ While a session is active, lines starting with `/` are intercepted and never rou
 | `/plan resume <plan_id> --from <step_id>` | Surgical operator escape hatch; clears step results from the target step onward and re-launches with a fresh resume_plan ; see [concepts/plan-mode](../../concepts/multi-agent/plan-mode.md) |
 | `/quit` | Exit the chat (alias: `/exit`, Ctrl+D) |
 | `/reset confirm` | Reset in-flight skill state (snapshots + WAL; audit logs preserved) |
+| `/rewind [seq]` | Time-travel to an earlier checkpoint — no arg opens the picker menu; `seq` jumps directly (see [Time-travel](../../concepts/runtime/time-travel.md) · [How-to](../../guide/for-users/time-travel.md)) |
 | `/save [path]` | Save the conv pane to a file (auto-names if path omitted) |
+| `/session new \| switch <sid> \| list` | Open / switch / list conversation sessions for the attached agent (see [Sessions](../../concepts/multi-agent/sessions.md)) |
 | `/skill list` | Show active skill runs (id, name, current phase + parent lineage) |
 | `/skill discard <run_id>` | Abort a specific skill run + cleanup |
 | `/skills` | List available skills (stdlib, project, local) |
