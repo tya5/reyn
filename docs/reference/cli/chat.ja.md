@@ -63,6 +63,7 @@ reyn chat researcher
 | `/answer <id> <text>` | 保留中の `ask_user` / Permission プロンプトに回答 |
 | `/agents` | 読み込まれた agent と現在アタッチされているものを一覧表示 |
 | `/attach <name>` | REPL ポインターを別の agent に切り替える（前の agent はバックグラウンドで実行し続ける） |
+| `/session new \| switch <sid> \| list` | アタッチ中 agent の会話セッションを開く / 切り替える / 一覧表示（[Sessions](../../concepts/multi-agent/sessions.md) 参照） |
 | `/skill list` | 実行中の Skill 実行を表示（id / 名前 / current_phase + 親子関係） |
 | `/skill discard <run_id>` | 特定の Skill 実行を中止して cleanup を実行 |
 | `/plan list` | 実行中の Plan を表示（動作中 task と resume 待ちを組み合わせて表示） |
