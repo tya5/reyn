@@ -30,6 +30,53 @@ UNBOUNDED = 0
 
 _REASONING_CONTINUITY_HEADER = "━━━ prior_reasoning ━━━"
 
+#: Wire fields a reasoning bundle may carry (the litellm cross-provider standard).
+#: Re-attached verbatim to the assistant message so litellm re-applies them per
+#: provider — Reyn writes NO provider-specific logic.
+_REASONING_BUNDLE_FIELDS = (
+    "reasoning_content",
+    "thinking_blocks",
+    "provider_specific_fields",
+)
+
+
+def as_reasoning_bundle(value: object) -> dict | None:
+    """Normalize a persisted reasoning value to the bundle dict shape (#1652/②).
+
+    Captured bundles are dicts ({reasoning_content?, thinking_blocks?, ...}).
+    LEGACY persisted entries are a plain ``str`` (the old text-only #1652 shape)
+    → absorbed as ``{"reasoning_content": str}``. Falsy / unrecognised → None.
+    """
+    if not value:
+        return None
+    if isinstance(value, str):
+        return {"reasoning_content": value}
+    if isinstance(value, dict):
+        return value or None
+    return None
+
+
+def reasoning_text(value: object) -> str:
+    """Extract the human-readable reasoning text from a bundle (or legacy str).
+
+    Used by the display path, which only ever wants the text. Empty string when
+    there is no text (e.g. a thinking_blocks-only bundle)."""
+    bundle = as_reasoning_bundle(value)
+    return (bundle or {}).get("reasoning_content", "") or ""
+
+
+def attach_reasoning(msg: dict, value: object) -> None:
+    """Attach a persisted reasoning bundle's fields onto a wire assistant dict
+    (#1652/②) so litellm re-attaches the model's prior reasoning natively. No-op
+    when there is no reasoning (omit-when-empty → byte-identical). Mutates ``msg``.
+    """
+    bundle = as_reasoning_bundle(value)
+    if not bundle:
+        return
+    for field in _REASONING_BUNDLE_FIELDS:
+        if bundle.get(field):
+            msg[field] = bundle[field]
+
 
 def bound_reasoning(items: list[str], keep_recent: int) -> list[str]:
     """Return the reasoning entries to replay, bounded to the most recent

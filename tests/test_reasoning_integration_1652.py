@@ -157,35 +157,45 @@ def _session(reasoning_config, tmp_path):
     )
 
 
-def test_replay_section_filters_assistant_reasoning_and_bounds(tmp_path):
-    """Tier 2: #1652 replay-into-next-turn — _reasoning_continuity_section reads
-    each assistant turn's persisted meta["reasoning"], bounds to recent_turns
-    (most recent), and renders the section the next SP injects."""
+def _assistant_reasoning(wire: list[dict]) -> list:
+    """The reasoning_content carried on each assistant wire message (None when
+    absent), in order — the #1652/② native re-attach observable."""
+    return [m.get("reasoning_content") for m in wire if m.get("role") == "assistant"]
+
+
+def test_wire_reattach_bounds_reasoning_to_recent_turns(tmp_path):
+    """Tier 2: #1652/② replay-into-next-turn — reasoning rides the wire assistant
+    messages (the SP text section is retired), bounded to recent_turns: the
+    oldest assistant turn's reasoning is stripped, the recent ones carried."""
     s = _session(ReasoningConfig(continuity=True, recent_turns=2), tmp_path)
     s.history.append(ChatMessage(role="user", content="q"))
     s.history.append(ChatMessage(role="assistant", content="a1", meta={"reasoning": "R1"}))
     s.history.append(ChatMessage(role="assistant", content="a2", meta={"reasoning": "R2"}))
     s.history.append(ChatMessage(role="assistant", content="a3", meta={"reasoning": "R3"}))
-    sec = s.reasoning_continuity_section()
-    # recent_turns=2 → only the last two reasonings; oldest dropped
-    assert "R2" in sec and "R3" in sec
-    assert "R1" not in sec
-    assert sec.index("R2") < sec.index("R3")  # most recent last
-
-
-def test_replay_section_empty_when_continuity_off(tmp_path):
-    """Tier 2: #1652 — continuity OFF → empty section even with persisted
-    reasoning in history (opt-out gates the replay)."""
-    s = _session(ReasoningConfig(continuity=False), tmp_path)
-    s.history.append(ChatMessage(role="assistant", content="a", meta={"reasoning": "R"}))
+    wire = s._history_buffer.build_history()
+    # recent_turns=2 → oldest (R1) stripped; R2/R3 carried natively on the wire
+    assert _assistant_reasoning(wire) == [None, "R2", "R3"]
+    # SP text section is retired → always empty
     assert s.reasoning_continuity_section() == ""
 
 
-def test_replay_section_unbounded_keeps_all(tmp_path):
-    """Tier 2: #1652 — recent_turns<=0 (unbounded) replays all persisted
-    reasoning (the 'always-send-all' option)."""
+def test_wire_reattach_off_when_continuity_disabled(tmp_path):
+    """Tier 2: #1652/② — continuity OFF → no reasoning on the wire (opt-out
+    gates the native re-attach) even with persisted reasoning in history."""
+    s = _session(ReasoningConfig(continuity=False), tmp_path)
+    s.history.append(ChatMessage(role="user", content="q"))
+    s.history.append(ChatMessage(role="assistant", content="a", meta={"reasoning": "R"}))
+    wire = s._history_buffer.build_history()
+    assert all("reasoning_content" not in m for m in wire)
+    assert s.reasoning_continuity_section() == ""
+
+
+def test_wire_reattach_unbounded_keeps_all(tmp_path):
+    """Tier 2: #1652/② — recent_turns<=0 (unbounded) → every assistant turn's
+    reasoning rides the wire (the 'always-send-all' option)."""
     s = _session(ReasoningConfig(continuity=True, recent_turns=0), tmp_path)
+    s.history.append(ChatMessage(role="user", content="q"))
     for i in range(5):
         s.history.append(ChatMessage(role="assistant", content=f"a{i}", meta={"reasoning": f"R{i}"}))
-    sec = s.reasoning_continuity_section()
-    assert all(f"R{i}" in sec for i in range(5))
+    wire = s._history_buffer.build_history()
+    assert _assistant_reasoning(wire) == [f"R{i}" for i in range(5)]

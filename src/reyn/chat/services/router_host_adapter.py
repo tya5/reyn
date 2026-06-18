@@ -873,13 +873,20 @@ class RouterHostAdapter:
         #     ChatMessage only when continuity is on (so replay can read it);
         #     the wire-shape (content+tool_calls) never carries it → no
         #     native double-inject on gemini.
+        # #1652/②: reasoning is now a captured BUNDLE
+        # ({reasoning_content?, thinking_blocks?, ...}) — extract the text for
+        # display (legacy str entries are absorbed by reasoning_text). The bundle
+        # itself is persisted (below) so the wire re-attach can replay it.
         _reasoning = meta.get("reasoning") if kind == "agent" else None
         if _reasoning and self.reasoning_display_enabled():
-            await self._put_outbox_cb(OutboxMessage(
-                kind="reasoning",
-                text=_reasoning,
-                meta={"chain_id": meta.get("chain_id"), "reasoning": _reasoning},
-            ))
+            from reyn.chat.reasoning_continuity import reasoning_text
+            _reasoning_display = reasoning_text(_reasoning)
+            if _reasoning_display:
+                await self._put_outbox_cb(OutboxMessage(
+                    kind="reasoning",
+                    text=_reasoning_display,
+                    meta={"chain_id": meta.get("chain_id"), "reasoning": _reasoning},
+                ))
         _outbox_meta = (
             {k: v for k, v in meta.items() if k != "reasoning"}
             if "reasoning" in meta else meta

@@ -42,8 +42,9 @@ class _StubLLM:
 
 @pytest.mark.asyncio
 async def test_reasoning_content_captured_onto_result(monkeypatch):
-    """Tier 2: #1652 — the provider reasoning_content is surfaced on
-    LLMToolCallResult.reasoning, distinct from the visible content."""
+    """Tier 2: #1652/② — provider reasoning is surfaced on
+    LLMToolCallResult.reasoning as a normalized BUNDLE (reasoning_content +
+    thinking_blocks), distinct from the visible content."""
     import litellm
 
     from reyn.llm.llm import call_llm_tools
@@ -55,7 +56,9 @@ async def test_reasoning_content_captured_onto_result(monkeypatch):
         tools=[],
         max_retries=0,
     )
-    assert r.reasoning == _REASONING
+    # #1652/②: a bundle dict (reasoning_content here; thinking_blocks would join
+    # when the provider returns them), not a bare string.
+    assert r.reasoning == {"reasoning_content": _REASONING}
     assert r.content == "391"  # visible content unchanged, kept separate
 
 

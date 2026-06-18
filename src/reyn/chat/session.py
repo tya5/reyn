@@ -1953,6 +1953,7 @@ class Session:
             router_host=self._router_host,
             action_retrieval=self._action_retrieval,
             non_interactive=self._non_interactive,
+            reasoning=self._reasoning,  # #1652/② native reasoning re-attach + bound
         )
 
         self._compaction_controller = CompactionController(
@@ -5174,35 +5175,17 @@ class Session:
         await self._budget_advisor.maybe_force_compact(new_msg_text=new_msg_text)
 
     def reasoning_continuity_section(self) -> str:
-        """#1652: render the bounded prior-reasoning text section for the next
-        router turn's system prompt — the (a) cross-user-turn continuity vehicle.
+        """#1652/②: RETIRED — always ``""``.
 
-        ``""`` when continuity is off or there is no prior reasoning
-        (omit-when-empty → byte-identical SP). Reads each assistant turn's
-        persisted reasoning from history (``meta["reasoning"]``, written by the
-        agent-reply put_outbox when continuity is on) and bounds to the most
-        recent ``recent_turns`` (``<=0`` = unbounded). The reasoning is replayed
-        as this text section, NOT via the wire assistant messages (those are
-        built from content+tool_calls only — no native double-inject on gemini).
+        Cross-turn reasoning continuity now rides the wire assistant messages
+        natively (RouterHistoryBuffer re-attaches the captured reasoning bundle
+        — reasoning_content / thinking_blocks — bounded to ``recent_turns``),
+        instead of a re-rendered text section at the router system-prompt tail.
+        Moving it off the SP makes the SP byte-stable turn-to-turn → the long
+        SP+tools prefix stays cacheable (the #1652/② cache win on capable-model
+        tiers). Returning ``""`` keeps the SP omit-when-empty shape unchanged.
         """
-        if not self._reasoning.continuity:
-            return ""
-        items = [
-            m.meta["reasoning"]
-            for m in self.history
-            if m.role == "assistant"
-            and isinstance(getattr(m, "meta", None), dict)
-            and m.meta.get("reasoning")
-        ]
-        if not items:
-            return ""
-        from reyn.chat.reasoning_continuity import (
-            bound_reasoning,
-            render_reasoning_section,
-        )
-        return render_reasoning_section(
-            bound_reasoning(items, self._reasoning.recent_turns)
-        )
+        return ""
 
     async def _run_router_loop(
         self,
