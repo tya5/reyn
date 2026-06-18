@@ -37,7 +37,8 @@ from _async_wait import wait_until  # noqa: E402 — shared #1751 test wait help
 
 from reyn.core.events.agent_snapshot import AgentSnapshot
 from reyn.core.events.state_log import StateLog
-from reyn.runtime.session import ChatInterventionBus, Session
+from reyn.runtime.session import Session
+from reyn.runtime.session_buses import ChatInterventionBus
 from reyn.user_intervention import (
     InterventionChoice,
     UserIntervention,

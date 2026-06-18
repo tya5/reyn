@@ -39,9 +39,9 @@ from pathlib import Path
 
 from reyn.runtime.session import (
     DEFAULT_CHAT_CHANNEL_ID,
-    ChatInterventionBus,
     Session,
 )
+from reyn.runtime.session_buses import ChatInterventionBus
 from reyn.user_intervention import (
     InterventionAnswer,
     UserIntervention,
