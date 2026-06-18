@@ -214,6 +214,10 @@ class LLMCallRecorder:
             raw=raw,
             prompt_tokens=llm_result.usage.prompt_tokens if llm_result.usage else None,
             completion_tokens=llm_result.usage.completion_tokens if llm_result.usage else None,
+            cached_tokens=llm_result.usage.cached_tokens if llm_result.usage else None,
+            cache_creation_tokens=(
+                llm_result.usage.cache_creation_tokens if llm_result.usage else None
+            ),
             cost_usd=cost_usd,
             pricing_snapshot=pricing_snapshot,
         )
@@ -410,6 +414,10 @@ class LLMCallRecorder:
             },
             prompt_tokens=result.usage.prompt_tokens if result.usage else None,
             completion_tokens=result.usage.completion_tokens if result.usage else None,
+            cached_tokens=result.usage.cached_tokens if result.usage else None,
+            cache_creation_tokens=(
+                result.usage.cache_creation_tokens if result.usage else None
+            ),
             cost_usd=cost_usd,
             pricing_snapshot=pricing_snapshot,
         )

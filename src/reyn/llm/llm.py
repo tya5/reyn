@@ -830,15 +830,47 @@ def _extract_json(text: str) -> str:
     return stripped
 
 
+def _extract_cache_tokens(u) -> tuple[int, int]:
+    """Extract (cached_tokens, cache_creation_tokens) from a litellm usage obj.
+
+    cached_tokens (cache READ / hit) is cross-provider normalized: litellm
+    surfaces it as both ``usage.cache_read_input_tokens`` (top-level, Anthropic
+    style) and ``usage.prompt_tokens_details.cached_tokens`` (OpenAI style) —
+    equal when both present. Prefer the top-level field, fall back to the
+    nested one. cache_creation (``cache_creation_input_tokens``, Anthropic
+    cache-write) has no OpenAI / Gemini equivalent → 0 there.
+    Best-effort: any missing / non-numeric field reads as 0.
+    """
+    def _as_int(v) -> int:
+        try:
+            return int(v or 0)
+        except (TypeError, ValueError):
+            return 0
+
+    cached = _as_int(getattr(u, "cache_read_input_tokens", None))
+    if cached == 0:
+        details = getattr(u, "prompt_tokens_details", None)
+        if details is not None:
+            getter = details.get if isinstance(details, dict) else (
+                lambda k, _d=details: getattr(_d, k, None)
+            )
+            cached = _as_int(getter("cached_tokens"))
+    creation = _as_int(getattr(u, "cache_creation_input_tokens", None))
+    return cached, creation
+
+
 def _extract_usage(response) -> TokenUsage | None:
     """Extract token usage from a litellm response object."""
     try:
         u = response.usage
         if u is None:
             return None
+        cached, creation = _extract_cache_tokens(u)
         return TokenUsage(
             prompt_tokens=int(u.prompt_tokens or 0),
             completion_tokens=int(u.completion_tokens or 0),
+            cached_tokens=cached,
+            cache_creation_tokens=creation,
         )
     except Exception:
         return None
@@ -1030,6 +1062,8 @@ def _emit_chat_cost_events(model: str, usage: "TokenUsage | None") -> None:
             "llm_response_received",
             prompt_tokens=usage.prompt_tokens,
             completion_tokens=usage.completion_tokens,
+            cached_tokens=usage.cached_tokens,
+            cache_creation_tokens=usage.cache_creation_tokens,
             cost_usd=cost_usd,
         )
     except Exception:  # noqa: BLE001 — observability emit must never break the call
