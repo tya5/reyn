@@ -50,8 +50,19 @@ models:
 | `permissions` | マップ | デフォルトの Permission ポリシー。以下参照。 |
 | `plan_resume_raw` | マップ | プランモードのレジューム ポリシーの raw dict。プランコーディネーターが遅延パース。 |
 | `prompt_cache_enabled` | bool | システムプロンプトに Anthropic プロンプトキャッシュマーカーを付与。デフォルト `true`。 |
-| `project_context_path` | 文字列 | すべての Phase システムプロンプトに注入する Markdown ファイル。デフォルト `REYN.md`。 |
+| `project_context_path` | 文字列 | すべての Phase システムプロンプトに注入する Markdown ファイル。未設定（デフォルト）: cross-tool 標準を auto-resolve — `AGENTS.md` があればそれ、なければ `REYN.md`（legacy fallback）。明示パスで 1 ファイルに固定、`""` で無効化。下記の注記参照。 |
 | `api_base` | 文字列 | LiteLLM プロキシベース URL。通常は `reyn.local.yaml`（gitignored）に設定。 |
+
+> **プロジェクトコンテキストファイル（`project_context_path`）。** 未設定のとき
+> Reyn は `AGENTS.md` を読みます — Claude Code・Codex・opencode 等も読む cross-tool
+> 標準です — ので、それらツールと共有するプロジェクトが Reyn 専用ファイルなしでその
+> まま動きます。`AGENTS.md` が無ければ `REYN.md`（legacy）に fallback。最初に存在する
+> ファイルが優先され、present-but-empty な `AGENTS.md` は authoritative（`REYN.md` へは
+> fall through しません）。
+>
+> **移行。** 既存の `REYN.md` プロジェクトは無変更で動作し続けます。新規は `AGENTS.md`
+> を推奨。標準に依らず特定ファイルに固定するには `project_context_path` にそのパスを
+> 設定、`""` でプロジェクトコンテキストを一切注入しない。
 
 ## `models` ブロック
 
