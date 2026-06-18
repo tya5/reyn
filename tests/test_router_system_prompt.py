@@ -74,6 +74,54 @@ class TestEmptyStateRenders:
         assert "## Behaviour" in prompt
 
 
+class TestIdentityPreambleScoped:
+    """Tier 2: #1765 — the identity rule is scoped to identity questions.
+
+    Owner bug report: every reply began with "I am a Reyn agent". Root cause was
+    the OS identity preamble pairing a positive self-description rule with an
+    "(always apply)" header, which the LLM over-applied as "open every answer
+    with the identity line". The fix scopes the positive rule to identity
+    questions (with an explicit no-prepend instruction) while keeping the two
+    negative rules genuinely always-apply.
+    """
+
+    def _prompt(self) -> str:
+        return build_system_prompt(
+            agent_name="chat",
+            agent_role="general assistant",
+            available_skills=[],
+            available_agents=[],
+            memory_index=_EMPTY_MEMORY,
+            tool_use_sp=_default_slots(),
+        )
+
+    def test_identity_rule_is_scoped_not_always_applied(self):
+        """Tier 2: the positive identity rule is gated to identity questions."""
+        prompt = self._prompt()
+        # The over-applying phrasing is gone: the header no longer hangs
+        # "(always apply)" over the positive self-description rule, and the
+        # "Lead self-descriptions with ..." imperative is removed.
+        assert "Identity rules (always apply):" not in prompt
+        assert "Lead self-descriptions with" not in prompt
+        # The positive rule is now explicitly scoped + carries a no-prepend guard.
+        assert "do NOT prepend it to answers on unrelated topics" in prompt
+        assert 'never with "I am a Reyn agent"' in prompt
+
+    def test_identity_behaviour_when_asked_is_preserved(self):
+        """Tier 2: 'identify as a Reyn agent when asked' is retained."""
+        prompt = self._prompt()
+        assert "When asked who or what you are" in prompt
+        assert '"a Reyn agent"' in prompt
+
+    def test_vendor_negatives_remain_always_apply(self):
+        """Tier 2: the two genuine always-apply negatives are unchanged."""
+        prompt = self._prompt()
+        assert "MUST NOT identify as Google, OpenAI, Anthropic, or any" in prompt
+        assert 'MUST NOT begin with "I am a large language model"' in prompt
+        # The always-apply qualifier now governs the negatives.
+        assert "Always apply: MUST NOT" in prompt
+
+
 class TestSizeIsConstantInItems:
     """Category-only retry (2026-05-07): SP size is **O(1)** in skill count.
 
