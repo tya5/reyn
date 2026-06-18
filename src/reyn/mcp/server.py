@@ -71,8 +71,17 @@ _IDLE_GRACE_SECONDS: float = 0.05
 # (baseline → MessageBus.request → history-read must be atomic per agent).
 
 
-async def _get_session(registry: "AgentRegistry", name: str) -> "object":
-    """Return a loaded Session for `name`.
+async def _get_session(
+    registry: "AgentRegistry", name: str, *, sid: "str | None" = None,
+) -> "object":
+    """Return a loaded Session for `name` (the agent's "main" session by default).
+
+    FP-0043 S4b-4: when ``sid`` is given (a per-delegation ``a2a:<id>`` session the
+    a2a router already spawned via resolve_session), return THAT session so the
+    delegation runs isolated from "main". The session needs no run-loop — the
+    caller drives the turn inline via ``MessageBus.request`` — so this is a plain
+    lookup, mirroring the no-background-task note below. Falls back to "main" when
+    the sid is absent or unknown.
 
     Note: unlike `reyn chat`, the MCP path does NOT spawn a long-lived
     ``session.run()`` task. The MCP SDK's stdio transport (under
@@ -84,6 +93,10 @@ async def _get_session(registry: "AgentRegistry", name: str) -> "object":
     event loop / task that the SDK is actively scheduling, and the
     LLM call awaits cleanly through to completion.
     """
+    if sid is not None and sid != "main":
+        existing = registry.get_session(name, sid)
+        if existing is not None:
+            return existing
     return registry.get_or_load(name)
 
 
@@ -173,6 +186,7 @@ async def send_to_agent_impl(
     message: str,
     timeout: float = DEFAULT_SEND_TIMEOUT_SECONDS,
     intervention_override: "RequestBus | None" = None,
+    sid: "str | None" = None,
 ) -> dict:
     """Backing implementation of the ``send_to_agent`` tool.
 
@@ -198,7 +212,7 @@ async def send_to_agent_impl(
             f"create it with `reyn agent new {agent_name}`"
         )
 
-    session = await _get_session(registry, agent_name)
+    session = await _get_session(registry, agent_name, sid=sid)
 
     from reyn.chat.message_bus import MessageBus  # noqa: PLC0415 — lazy import
     from reyn.chat.session import _new_chain_id  # noqa: PLC0415 — lazy import

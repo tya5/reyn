@@ -43,6 +43,7 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 
+from reyn.chat.a2a_routing import a2a_session_id, resolve_a2a_session
 from reyn.chat.agent_locks import get_agent_lock
 from reyn.interfaces.web.deps import get_registry, get_run_registry
 from reyn.mcp.server import DEFAULT_SEND_TIMEOUT_SECONDS, send_to_agent_impl
@@ -377,12 +378,21 @@ async def _handle_message_send(
         )
 
     # ── Mode 3: synchronous (default) ────────────────────────────────────
+    # FP-0043 S4b-4 (B): run the delegation on the agent's SHARED a2a session
+    # (isolated from "main" so peer traffic doesn't pollute the user's conversation)
+    # — resolve-or-spawn it (no run-loop; driven inline by MessageBus.request). The
+    # single shared session keeps the sync→Task escalation / continuation intact.
+    try:
+        resolve_a2a_session(registry, agent_name)
+    except (FileNotFoundError, KeyError):
+        pass  # unknown agent → send_to_agent_impl raises ValueError below
     try:
         result = await send_to_agent_impl(
             registry,
             agent_name=agent_name,
             message=text,
             timeout=DEFAULT_SEND_TIMEOUT_SECONDS,
+            sid=a2a_session_id(),
         )
     except ValueError as e:
         # Unknown agent: surface as JSON-RPC error rather than HTTP 404
@@ -538,10 +548,11 @@ async def _escalate_to_task(
 async def _get_session_for_monitor(registry, agent_name: str):
     """Resolve the Session instance for the monitor task.
 
-    Mirrors ``mcp_server._get_session`` but kept local so the import
-    surface of this router stays small.
-    """
-    return registry.get_or_load(agent_name)
+    FP-0043 S4b-4 (B): the a2a turn ran on the agent's shared a2a session, so the
+    monitor must pump THAT session (not "main") to detect the running skill's
+    completion. resolve_a2a_session is idempotent (returns the already-spawned
+    shared a2a session)."""
+    return resolve_a2a_session(registry, agent_name)
 
 
 async def _await_skill_completion(
@@ -688,7 +699,9 @@ async def _handle_answer_injection(
         })
 
     try:
-        session = registry.get_or_load(entry.agent_name)
+        # FP-0043 S4b-4 (B): the run lives on the shared a2a session — resolve it
+        # (not "main") so the pending ask_user is answered on the right session.
+        session = resolve_a2a_session(registry, entry.agent_name)
     except Exception:  # noqa: BLE001 — defensive (agent missing / load failure)
         logger.exception(
             "answer_injection: failed to load agent %r for task %r",
@@ -925,7 +938,8 @@ async def _handle_async_mode(
         # decoration; the answer is the contract).
         bridge: "_A2AProgressBridge | None" = None
         try:
-            session = registry.get_or_load(agent_name)
+            # FP-0043 S4b-4 (B): the async run also lives on the shared a2a session.
+            session = resolve_a2a_session(registry, agent_name)
             bridge = _A2AProgressBridge(
                 session=session,
                 run_id=run_id,
@@ -943,6 +957,7 @@ async def _handle_async_mode(
                 message=text,
                 timeout=DEFAULT_SEND_TIMEOUT_SECONDS,
                 intervention_override=bus,
+                sid=a2a_session_id(),
             )
             run_registry.update(
                 run_id,

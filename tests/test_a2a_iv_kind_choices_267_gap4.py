@@ -181,14 +181,18 @@ def test_webhook_payload_free_text_ask_user_has_empty_choices(monkeypatch) -> No
 
 
 class _FakeAgentRegistry:
-    """Minimal stub — ``_handle_answer_injection`` only calls
-    ``get_or_load(name)``. Returns a captured Session-shape stub.
+    """Minimal stub. ``_handle_answer_injection`` resolves the agent's a2a session
+    (FP-0043 S4b-4 (B)) — for a single-agent stub the a2a session IS the captured
+    Session-shape stub, so both ``get_or_load`` and ``resolve_session`` return it.
     """
 
     def __init__(self, session) -> None:
         self._session = session
 
     def get_or_load(self, name: str):  # noqa: ANN202
+        return self._session
+
+    def resolve_session(self, name: str, transport: str, native_id: str):  # noqa: ANN202
         return self._session
 
 
