@@ -54,24 +54,47 @@ def _load_yaml(path: Path) -> dict:
         return {}
 
 
-def load_project_context(config: ReynConfig, project_root: Path) -> str:
-    """Read the project context markdown file referenced by config.project_context_path.
+# Cross-tool default resolution order when project_context_path is unset
+# (None): AGENTS.md is the convention Claude Code / Codex / opencode / etc.
+# all read; REYN.md is the legacy fallback. First existing file wins (mirrors
+# opencode's "AGENTS.md beats CLAUDE.md when both exist").
+DEFAULT_PROJECT_CONTEXT_FILES: tuple[str, ...] = ("AGENTS.md", "REYN.md")
 
-    Returns the file content stripped, or "" when the path is unset, missing,
-    or unreadable. Empty / whitespace-only content also yields "" so callers
-    can short-circuit the system-prompt section.
+
+def load_project_context(config: ReynConfig, project_root: Path) -> str:
+    """Read the project context markdown file for the system prompt.
+
+    Resolution:
+      - ``project_context_path = None`` (default, unset): auto-resolve the
+        cross-tool standard — ``AGENTS.md`` if present, else ``REYN.md``
+        (``DEFAULT_PROJECT_CONTEXT_FILES``). First existing file wins.
+      - explicit non-empty path: pin exactly that file.
+      - explicit ``""``: disabled.
+
+    Returns the chosen file's content stripped, or "" when disabled, none of
+    the candidates exist, or the chosen file is unreadable. Empty /
+    whitespace-only content also yields "" so callers can short-circuit the
+    system-prompt section. The first EXISTING candidate is authoritative even
+    if empty (AGENTS.md present-but-empty does not fall through to REYN.md).
     """
-    rel = (config.project_context_path or "").strip()
-    if not rel or project_root is None:
+    if project_root is None:
         return ""
-    target = project_root / rel
-    if not target.is_file():
-        return ""
-    try:
-        content = target.read_text(encoding="utf-8").strip()
-    except OSError:
-        return ""
-    return content
+    rel = config.project_context_path
+    if rel is None:
+        candidates: tuple[str, ...] = DEFAULT_PROJECT_CONTEXT_FILES
+    else:
+        rel = rel.strip()
+        if not rel:
+            return ""
+        candidates = (rel,)
+    for name in candidates:
+        target = project_root / name
+        if target.is_file():
+            try:
+                return target.read_text(encoding="utf-8").strip()
+            except OSError:
+                return ""
+    return ""
 
 
 def _merge(base: dict, override: dict) -> dict:
@@ -357,7 +380,13 @@ def load_config(cwd: Path | None = None) -> ReynConfig:
         # silently ignored (always the dataclass default = a no-op set). Wire
         # them through merged so the operator-set value actually takes effect.
         prompt_cache_enabled=bool(merged.get("prompt_cache_enabled", True)),
-        project_context_path=str(merged.get("project_context_path", "REYN.md")),
+        # Absent → None (auto-resolve AGENTS.md → REYN.md in
+        # load_project_context). Present → pin that path ("" disables).
+        project_context_path=(
+            str(merged["project_context_path"])
+            if "project_context_path" in merged
+            else None
+        ),
         permissions=dict(merged.get("permissions") or {}),
         mcp=dict(merged.get("mcp") or {}),
         mcp_search_threshold=_parse_mcp_search_threshold(merged.get("mcp")),

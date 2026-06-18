@@ -228,10 +228,18 @@ class ReynConfig:
     # Path (relative to project root) of a markdown file whose content is
     # injected into the system prompt for every phase. Use this to put
     # project-wide background, conventions, or references somewhere all
-    # skills implicitly inherit. Set "" or point to a non-existent file to
-    # disable. Default "REYN.md"; users sharing the project with Claude Code
-    # may set this to "CLAUDE.md" to reuse the same source.
-    project_context_path: str = "REYN.md"
+    # skills implicitly inherit.
+    #
+    # Default (``None``) auto-resolves the cross-tool standard:
+    # ``AGENTS.md`` (the convention Claude Code / Codex / opencode / etc.
+    # all read) if present, else ``REYN.md`` (legacy fallback) — so a new
+    # project works with AGENTS.md out of the box, an existing REYN.md
+    # project keeps working, and a project shared with another tool shares
+    # the same AGENTS.md source.
+    #
+    # An explicit value pins one path (e.g. ``"CLAUDE.md"`` to reuse that
+    # source); ``""`` disables injection entirely.
+    project_context_path: str | None = None
     # RAG embedding settings (ADR-0033 Phase 1). Default-completed: usable
     # without any reyn.yaml edits after `pip install reyn` + OPENAI_API_KEY.
     embedding: EmbeddingConfig = field(default_factory=EmbeddingConfig)
