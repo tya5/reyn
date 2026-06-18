@@ -264,7 +264,9 @@ class _StubSendImpl:
     def __init__(self, result: dict):
         self._result = result
 
-    async def __call__(self, registry, *, agent_name, message, timeout):
+    async def __call__(self, registry, *, agent_name, message, timeout, **kwargs):
+        # **kwargs absorbs FP-0043 S4b-4's ``sid`` (the a2a session id) + any future
+        # keyword the real impl gains — this stub only cares about the result dict.
         return self._result
 
 
@@ -289,6 +291,9 @@ async def test_escalation_skipped_when_reply_text_nonempty(monkeypatch):
         "running_skill_run_ids": ["run-skill-builder-1"],
     })
     monkeypatch.setattr(a2a_mod, "send_to_agent_impl", stub)
+    # FP-0043 S4b-4 (B): the handler spawns the agent's shared a2a session before
+    # delegating; stub it (the stubbed send_to_agent_impl ignores the real session).
+    monkeypatch.setattr(a2a_mod, "resolve_a2a_session", lambda registry, agent_name: None)
 
     result = await _handle_message_send(
         req_id=1,
@@ -334,6 +339,9 @@ async def test_escalation_still_fires_when_reply_text_empty(monkeypatch):
         "running_skill_run_ids": ["run-skill-builder-2"],
     })
     monkeypatch.setattr(a2a_mod, "send_to_agent_impl", stub)
+    # FP-0043 S4b-4 (B): the handler spawns the agent's shared a2a session before
+    # delegating; stub it (the stubbed send_to_agent_impl ignores the real session).
+    monkeypatch.setattr(a2a_mod, "resolve_a2a_session", lambda registry, agent_name: None)
 
     # _escalate_to_task tries to fetch the session; patch _get_session_for_monitor
     # to return a minimal stand-in so the monitor task can be created.
@@ -378,6 +386,9 @@ async def test_escalation_skipped_when_whitespace_only_reply(monkeypatch):
         "running_skill_run_ids": ["run-1"],
     })
     monkeypatch.setattr(a2a_mod, "send_to_agent_impl", stub)
+    # FP-0043 S4b-4 (B): the handler spawns the agent's shared a2a session before
+    # delegating; stub it (the stubbed send_to_agent_impl ignores the real session).
+    monkeypatch.setattr(a2a_mod, "resolve_a2a_session", lambda registry, agent_name: None)
     monkeypatch.setattr(
         a2a_mod, "_get_session_for_monitor",
         lambda registry, agent_name: _Session(),

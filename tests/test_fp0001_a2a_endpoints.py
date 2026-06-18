@@ -329,7 +329,11 @@ def test_answer_injection_delivers_to_pending_intervention(tmp_path) -> None:
     # the TestClient will drive so the future is on the right loop.
     loop = asyncio.new_event_loop()
     try:
-        session = registry.get_or_load("demo")
+        # FP-0043 S4b-4 (B): a2a delegations + answer-injection run on the agent's
+        # shared a2a session, so seed the iv there (not "main") — the same session
+        # the endpoint resolves.
+        from reyn.chat.a2a_routing import resolve_a2a_session
+        session = resolve_a2a_session(registry, "demo")
         iv_future = loop.create_future()
         iv = UserIntervention(
             kind="ask_user",

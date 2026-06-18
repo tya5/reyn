@@ -350,9 +350,10 @@ def test_handle_answer_injection_routes_through_chat_session(
         "_handle_answer_injection must call "
         "Session.answer_pending_intervention (issue #292 α path)"
     )
-    assert "get_or_load" in src, (
-        "_handle_answer_injection must look up the owning agent via "
-        "AgentRegistry.get_or_load(entry.agent_name)"
+    assert "resolve_a2a_session" in src, (
+        "_handle_answer_injection must look up the owning agent's SESSION via the "
+        "registry (FP-0043 S4b-4 (B): resolve_a2a_session → the shared a2a session, "
+        "not run_registry.answer_intervention)"
     )
     # The pre-#292 path (= run_registry.answer_intervention call) MUST
     # be gone. Pin its absence so a refactor that re-adds it (=
