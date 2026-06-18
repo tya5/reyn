@@ -16,11 +16,11 @@ from pathlib import Path
 
 import pytest
 
-from reyn.chat.profile import AgentProfile
-from reyn.chat.registry import AgentRegistry
 from reyn.core.events.state_log import StateLog
 from reyn.core.events.workspace_op_content_log import WorkspaceOpContentLog
 from reyn.core.events.workspace_version_store import _OP_REF_PREFIX, WorkspaceVersionStore
+from reyn.runtime.profile import AgentProfile
+from reyn.runtime.registry import AgentRegistry
 
 pytestmark = pytest.mark.skipif(shutil.which("git") is None, reason="git required")
 

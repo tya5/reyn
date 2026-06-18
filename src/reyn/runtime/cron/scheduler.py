@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from reyn.chat.registry import AgentRegistry
+    from reyn.runtime.registry import AgentRegistry
 
 logger = logging.getLogger(__name__)
 

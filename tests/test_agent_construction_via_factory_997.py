@@ -17,7 +17,7 @@ already-wired parent context (NOT a fresh ReynConfig), so ``from_config`` does
 not apply — they forward the bundle they were given:
   - ``skill/sub_skill_runner.py``: a sub-skill inherits the parent OSRuntime's
     resolver + permission_resolver.
-  - ``chat/session.py``: Session's agent-spawn forwards the session's own
+  - ``runtime/session.py``: Session's agent-spawn forwards the session's own
     ``self._perm`` / ``self._resolver`` / ``self._mcp_servers``, all wired at
     session construction.
 """
@@ -33,7 +33,7 @@ _SRC = pathlib.Path(__file__).resolve().parents[1] / "src" / "reyn"
 # (config → bundle) does not apply to them.
 _EXEMPT = {
     "skill/sub_skill_runner.py",
-    "chat/session.py",
+    "runtime/session.py",
 }
 
 

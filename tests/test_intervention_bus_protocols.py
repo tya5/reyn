@@ -35,8 +35,8 @@ import asyncio
 import inspect
 from pathlib import Path
 
-from reyn.chat.session import ChatInterventionBus, Session
 from reyn.interfaces.web.a2a_intervention import A2AInterventionBus
+from reyn.runtime.session import ChatInterventionBus, Session
 from reyn.user_intervention import (
     InterventionAnswer,
     InterventionBus,
@@ -203,7 +203,7 @@ def test_outbox_intervention_meta_shape_is_stable() -> None:
     If a Phase 2+ refactor renames any of these keys, TUI's outbox
     consumer breaks — this test fails first.
     """
-    from reyn.chat.services.intervention_handler import _iv_meta
+    from reyn.runtime.services.intervention_handler import _iv_meta
 
     iv_minimal = UserIntervention(kind="ask_user", prompt="Q?")
     meta_minimal = _iv_meta(iv_minimal)

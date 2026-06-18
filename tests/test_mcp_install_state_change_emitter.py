@@ -33,12 +33,12 @@ from pathlib import Path
 
 import pytest
 
-from reyn.chat.session import (
+from reyn.core.events.state_log import StateLog
+from reyn.runtime.session import (
     _STATE_CHANGE_EVENT_MAPPINGS,
     ChatMessage,
     Session,
 )
-from reyn.core.events.state_log import StateLog
 
 
 def _make_session(tmp_path: Path, *, agent_name: str = "alpha") -> Session:

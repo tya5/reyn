@@ -17,15 +17,15 @@ from pathlib import Path
 
 import pytest
 
-from reyn.chat.profile import AgentProfile
-from reyn.chat.registry import AgentRegistry
-from reyn.chat.session import Session
 from reyn.core.events.state_log import StateLog
 from reyn.interfaces.chainlit_app.web_routing import (
     resolve_web_session,
     web_native_id,
     web_session_id,
 )
+from reyn.runtime.profile import AgentProfile
+from reyn.runtime.registry import AgentRegistry
+from reyn.runtime.session import Session
 
 
 def _make_registry(tmp_path: Path) -> AgentRegistry:

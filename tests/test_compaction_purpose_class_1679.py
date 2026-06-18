@@ -15,7 +15,7 @@ naive `resolve_purpose_class(None, …, "compaction")` would fall back to
 `default_class` and silently move compaction OFF the agent's explicit model — a
 behavior change masked as a wiring. `purpose_class_or` avoids that by construction.
 
-Production call sites (grep-verified, non-test): `chat/session.py` and
+Production call sites (grep-verified, non-test): `runtime/session.py` and
 `chat/planner.py` both call `purpose_class_or("compaction", <site fallback>)`.
 
 No mocks: real `ModelResolver` instances.

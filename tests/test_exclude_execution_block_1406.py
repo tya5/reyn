@@ -13,7 +13,7 @@ from __future__ import annotations
 import asyncio
 import json
 
-from reyn.chat.router_loop import RouterLoop
+from reyn.runtime.router_loop import RouterLoop
 
 
 class _Events:

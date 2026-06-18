@@ -157,7 +157,7 @@ def test_build_tools_includes_web_fetch_via_registry():
 
     FP-0022: web_fetch is now always in the catalog; the web_fetch_allowed
     parameter is kept for backward compat but is a no-op."""
-    from reyn.chat.router_tools import build_tools
+    from reyn.runtime.router_tools import build_tools
 
     tools = build_tools(
         available_skills=[],
@@ -190,7 +190,7 @@ def test_build_tools_web_fetch_not_duplicated():
     """Tier 2: web_fetch appears exactly once in build_tools() output.
     Guards against both the registry path and a residual ToolSpec literal
     being included simultaneously. FP-0022: web_fetch is always in catalog."""
-    from reyn.chat.router_tools import build_tools
+    from reyn.runtime.router_tools import build_tools
 
     tools = build_tools(
         available_skills=[],

@@ -24,12 +24,12 @@ from pathlib import Path
 
 import pytest
 
-from reyn.chat.outbox import OutboxMessage
-from reyn.chat.session import Session
 from reyn.config import SafetyConfig, TimeoutConfig
 from reyn.core.events.state_log import StateLog
 from reyn.interfaces.slash.model import model_cmd
 from reyn.llm.model_resolver import ModelResolver
+from reyn.runtime.outbox import OutboxMessage
+from reyn.runtime.session import Session
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -85,7 +85,7 @@ class _FakeSession:
     """
 
     def __init__(self, resolver: ModelResolver, *, agent_model: str = "standard"):
-        from reyn.chat.agent import Agent as _Agent
+        from reyn.runtime.agent import Agent as _Agent
         self._agent = _Agent(agent_name="test", model=agent_model)
         self._resolver = resolver
         self._model_override: str | None = None

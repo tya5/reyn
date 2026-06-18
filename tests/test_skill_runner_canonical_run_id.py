@@ -87,7 +87,7 @@ def test_skill_runner_does_not_construct_own_run_id() -> None:
     invariant against accidental reversal.
     """
     source = (
-        Path(__file__).parent.parent / "src" / "reyn" / "chat" / "services"
+        Path(__file__).parent.parent / "src" / "reyn" / "runtime" / "services"
         / "skill_runner.py"
     ).read_text(encoding="utf-8")
     # The old bespoke construction signature: a strftime call that
@@ -114,7 +114,7 @@ def test_skill_runner_references_canonical_constructor() -> None:
     aliased name like `_SkillRuntime`) appears in the file.
     """
     source = (
-        Path(__file__).parent.parent / "src" / "reyn" / "chat" / "services"
+        Path(__file__).parent.parent / "src" / "reyn" / "runtime" / "services"
         / "skill_runner.py"
     ).read_text(encoding="utf-8")
     references_canonical = (

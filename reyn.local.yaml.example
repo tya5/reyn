@@ -692,7 +692,7 @@
 # external_transports: map external transport names
 # (Slack / LINE / Discord / ...) to the MCP tool that delivers replies, plus
 # an ``args_template`` describing how router output is shaped into the tool's
-# arguments. Empty by default; see ``reyn.chat.external_routing`` for the
+# arguments. Empty by default; see ``reyn.runtime.external_routing`` for the
 # full shape and the per-transport contract.
 # -----------------------------------------------------------------------------
 # external_transports:

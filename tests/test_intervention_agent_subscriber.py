@@ -32,7 +32,7 @@ from pathlib import Path
 
 import pytest
 
-from reyn.chat.session import AgentRequestBus, Session
+from reyn.runtime.session import AgentRequestBus, Session
 from reyn.user_intervention import (
     InterventionAnswer,
     InterventionBus,
@@ -219,7 +219,7 @@ def test_session_interventions_attribute_path_is_stable_in_phase3() -> None:
     import / call site change. If a future phase moves the registry into
     a sub-component, ``session.interventions`` must remain a proxy.
     """
-    from reyn.chat.services.intervention_registry import InterventionRegistry
+    from reyn.runtime.services.intervention_registry import InterventionRegistry
 
     session = Session(agent_name="t")
     assert hasattr(session, "_interventions")

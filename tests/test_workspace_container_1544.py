@@ -109,8 +109,8 @@ async def test_registry_routes_container_backend_through_backend_run(tmp_path):
     workspace store issues git via the backend with the CONTAINER path context —
     proving the routing without asserting internal structure.
     """
-    from reyn.chat.registry import AgentRegistry
     from reyn.core.events.state_log import StateLog
+    from reyn.runtime.registry import AgentRegistry
 
     backend = _FakeBackend(returncode=0, stdout=b"")
     reg = AgentRegistry(

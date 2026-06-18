@@ -37,7 +37,7 @@ import asyncio
 import inspect
 from pathlib import Path
 
-from reyn.chat.session import (
+from reyn.runtime.session import (
     DEFAULT_CHAT_CHANNEL_ID,
     ChatInterventionBus,
     Session,
@@ -187,7 +187,7 @@ def test_tui_on_mount_registers_default_chat_channel_id_listener() -> None:
 
 def test_all_production_chat_bus_constructions_pass_channel_id() -> None:
     """Tier 2: every in-tree ``ChatInterventionBus(...)`` construction
-    in ``src/reyn/chat/session.py`` passes ``channel_id`` so the
+    in ``src/reyn/runtime/session.py`` passes ``channel_id`` so the
     stamping is engaged uniformly across:
 
       - chat router op bus factory
@@ -200,7 +200,7 @@ def test_all_production_chat_bus_constructions_pass_channel_id() -> None:
     """
     import ast
 
-    src_path = Path(__file__).parent.parent / "src" / "reyn" / "chat" / "session.py"
+    src_path = Path(__file__).parent.parent / "src" / "reyn" / "runtime" / "session.py"
     tree = ast.parse(src_path.read_text(encoding="utf-8"))
 
     chat_bus_calls = []

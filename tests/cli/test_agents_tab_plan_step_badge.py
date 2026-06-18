@@ -55,7 +55,7 @@ def _render_to_plain(renderable) -> str:
 
 
 def _make_registry(tmp_path):
-    from reyn.chat.registry import AgentRegistry
+    from reyn.runtime.registry import AgentRegistry
 
     def _factory(profile):
         return object()

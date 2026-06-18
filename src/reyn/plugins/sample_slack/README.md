@@ -18,7 +18,7 @@ showing how to:
 - Hand off to a Reyn agent's inbox
 
 The transport-agnostic primitives (= ``ExternalRef`` reply_to,
-outbox interceptor, MCP dispatcher) live in ``src/reyn/chat/`` and
+outbox interceptor, MCP dispatcher) live in ``src/reyn/runtime/`` and
 ``src/reyn/interfaces/web/`` and are reused by any future webhook plugin.
 
 ## Operator setup

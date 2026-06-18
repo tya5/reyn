@@ -21,8 +21,8 @@ first-class palette + ``/help`` visibility.
 """
 from __future__ import annotations
 
-from reyn.chat.outbox import OutboxMessage
 from reyn.interfaces.slash import slash
+from reyn.runtime.outbox import OutboxMessage
 
 
 async def _quit_handler(session: "object", args: str) -> None:

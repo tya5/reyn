@@ -54,7 +54,6 @@ from typing import TYPE_CHECKING, Any, Awaitable, Callable
 from reyn.llm.json_parse import loads_lenient
 
 if TYPE_CHECKING:
-    from reyn.chat.services.token_multiplier_learner import TokenMultiplierLearner
     from reyn.config import (
         CompactionConfig,
         PhaseActResultsCompactionConfig,
@@ -62,6 +61,7 @@ if TYPE_CHECKING:
     )
     from reyn.core.events.events import EventLog
     from reyn.llm.model_resolver import ModelResolver
+    from reyn.runtime.services.token_multiplier_learner import TokenMultiplierLearner
 
 logger = logging.getLogger(__name__)
 
@@ -484,7 +484,7 @@ Retention rules:
 - Do NOT transcribe raw quotes unless they are the verbatim text of a decision or pending item.
 
 VERBATIM PRESERVATION (do NOT paraphrase or omit):
-- File paths (e.g. src/reyn/chat/session.py)
+- File paths (e.g. src/reyn/runtime/session.py)
 - Line numbers (e.g. line 4916)
 - Commit hashes (e.g. a26c3e9c)
 - Decision identifiers (e.g. PR-N6, FP-0008, issue #1035)
@@ -1015,7 +1015,7 @@ async def retry_loop(
         Safety cap (default 8).  Finite-by-construction termination means
         this cap is rarely reached.
     """
-    from reyn.chat.services.token_multiplier_learner import detect_content_type
+    from reyn.runtime.services.token_multiplier_learner import detect_content_type
 
     bg = engine.budgets
     head_min_tokens = bg.head_budget
@@ -1122,7 +1122,7 @@ async def retry_loop(
 # Keep TokenMultiplierLearner importable from this module for convenience.
 # The actual implementation is in token_multiplier_learner.py.
 def _get_learner_class() -> type:
-    from reyn.chat.services.token_multiplier_learner import TokenMultiplierLearner
+    from reyn.runtime.services.token_multiplier_learner import TokenMultiplierLearner
     return TokenMultiplierLearner
 
 

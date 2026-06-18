@@ -28,12 +28,12 @@ import pytest
 
 pytest.importorskip("mcp", reason="MCP SDK not installed")
 
-from reyn.chat.profile import AgentProfile
-from reyn.chat.registry import AgentRegistry
-from reyn.chat.session import Session
 from reyn.core.events.state_log import StateLog
 from reyn.data.workspace.media_store import MediaStore, MediaStoreConfig
 from reyn.mcp.server import build_server
+from reyn.runtime.profile import AgentProfile
+from reyn.runtime.registry import AgentRegistry
+from reyn.runtime.session import Session
 
 
 def _build_registry_with_agent(tmp_path: Path, agent_name: str) -> AgentRegistry:

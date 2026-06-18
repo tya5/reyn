@@ -149,10 +149,10 @@ async def test_click_on_find_badge_invokes_action_find_next() -> None:
     from rich.text import Text
     from textual import events as textual_events
 
-    from reyn.chat.outbox import OutboxMessage
     from reyn.interfaces.tui.app import ReynTUIApp
     from reyn.interfaces.tui.app_outbox import OutboxRouter
     from reyn.interfaces.tui.widgets import ConversationView, ReynHeader
+    from reyn.runtime.outbox import OutboxMessage
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True, size=(120, 30)) as pilot:

@@ -22,10 +22,10 @@ from pathlib import Path
 
 import pytest
 
-from reyn.chat.services import MemoryService, RouterHostAdapter
-from reyn.chat.services.mcp_cache_file import cache_file_path, read_cache, write_cache
 from reyn.core.events.events import EventLog
 from reyn.llm.model_resolver import ModelResolver
+from reyn.runtime.services import MemoryService, RouterHostAdapter
+from reyn.runtime.services.mcp_cache_file import cache_file_path, read_cache, write_cache
 
 # ---------------------------------------------------------------------------
 # Null callbacks (same shape as test_mcp_cache_warm_start.py)
@@ -621,7 +621,7 @@ async def test_session_handle_user_message_calls_yaml_watch_before_reload(
 
 def test_yaml_scope_paths_includes_user_global_and_project(tmp_path: Path) -> None:
     """Tier 2: yaml_scope_paths returns all 3 tier paths when project_root is given."""
-    from reyn.chat.services.mcp_cache_file import yaml_scope_paths
+    from reyn.runtime.services.mcp_cache_file import yaml_scope_paths
 
     project_root = tmp_path / "my_project"
     paths = yaml_scope_paths(project_root)
@@ -639,7 +639,7 @@ def test_yaml_scope_paths_includes_user_global_and_project(tmp_path: Path) -> No
 
 def test_yaml_scope_paths_user_global_only_when_no_project_root() -> None:
     """Tier 2: yaml_scope_paths returns only user-global when project_root is None."""
-    from reyn.chat.services.mcp_cache_file import yaml_scope_paths
+    from reyn.runtime.services.mcp_cache_file import yaml_scope_paths
 
     paths = yaml_scope_paths(None)
 

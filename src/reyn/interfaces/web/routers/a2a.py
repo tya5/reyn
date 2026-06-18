@@ -43,10 +43,10 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 
-from reyn.chat.a2a_routing import a2a_session_id, resolve_a2a_session
-from reyn.chat.agent_locks import get_agent_lock
 from reyn.interfaces.web.deps import get_registry, get_run_registry
 from reyn.mcp.server import DEFAULT_SEND_TIMEOUT_SECONDS, send_to_agent_impl
+from reyn.runtime.a2a_routing import a2a_session_id, resolve_a2a_session
+from reyn.runtime.agent_locks import get_agent_lock
 
 logger = logging.getLogger(__name__)
 
@@ -463,7 +463,7 @@ async def _escalate_to_task(
     consume parts directly or follow up with ``tasks/get`` polling. This
     is the spec discriminator: peers MUST handle both shapes.
     """
-    from reyn.chat.session import _new_chain_id  # noqa: PLC0415
+    from reyn.runtime.session import _new_chain_id  # noqa: PLC0415
 
     # The skill's run_id is what the monitor uses internally to detect
     # completion (= it polls session.running_skills[skill_run_id]). When
@@ -575,7 +575,7 @@ async def _await_skill_completion(
     completion).
 
     ``agent_name`` is used to acquire the per-agent serialization lock
-    (shared with MCP via ``reyn.chat.agent_locks``) around each
+    (shared with MCP via ``reyn.runtime.agent_locks``) around each
     ``run_one_iteration`` call so A2A drain turns and MCP turns on the
     same session do not race on ``session.history``.  The lock is held
     only for the duration of a single iteration (NOT the entire polling
@@ -886,11 +886,11 @@ class _A2AProgressBridge:
                     channel_state = None
             if channel_state is not None and not channel_state.is_alive():
                 return
-            from reyn.chat.channel_state import (  # noqa: PLC0415
+            from reyn.interfaces.web.notifications import post_webhook  # noqa: PLC0415
+            from reyn.runtime.channel_state import (  # noqa: PLC0415
                 DeliveryOutcome,
                 DeliveryResult,
             )
-            from reyn.interfaces.web.notifications import post_webhook  # noqa: PLC0415
             try:
                 result = await post_webhook(self._webhook_url, payload)
             except Exception as exc:  # noqa: BLE001 — progress is best-effort
@@ -911,8 +911,8 @@ async def _handle_async_mode(
     webhook_url: str | None,
 ) -> dict:
     """Spawn a background asyncio task and return an A2A Task envelope."""
-    from reyn.chat.session import _new_chain_id  # noqa: PLC0415
     from reyn.interfaces.web.a2a_intervention import A2AInterventionBus  # noqa: PLC0415
+    from reyn.runtime.session import _new_chain_id  # noqa: PLC0415
 
     chain_id = _new_chain_id()
     entry = run_registry.create(

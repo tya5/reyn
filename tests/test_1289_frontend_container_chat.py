@@ -16,10 +16,10 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from reyn.chat.session import Session
 from reyn.core.events.state_log import StateLog
 from reyn.environment.host_backend import HostBackend
 from reyn.interfaces.cli.env_backend import build_environment_backend, register_env_backend_args
+from reyn.runtime.session import Session
 
 
 def test_register_env_backend_args_surface() -> None:

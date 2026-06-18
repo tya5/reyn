@@ -20,8 +20,8 @@ import asyncio
 import json
 from pathlib import Path
 
-from reyn.chat.services.snapshot_journal import SnapshotJournal
 from reyn.core.events.state_log import StateLog
+from reyn.runtime.services.snapshot_journal import SnapshotJournal
 
 # ---------------------------------------------------------------------------
 # Helpers

@@ -21,9 +21,9 @@ from pathlib import Path
 
 import pytest
 
-from reyn.chat.services import MemoryService, RouterHostAdapter
 from reyn.core.events.events import EventLog
 from reyn.llm.model_resolver import ModelResolver
+from reyn.runtime.services import MemoryService, RouterHostAdapter
 
 
 async def _null_file_read(path: str) -> dict:

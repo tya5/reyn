@@ -32,13 +32,13 @@ pytest.importorskip("fastapi", reason="fastapi not installed ([web] extra missin
 pytest.importorskip("httpx", reason="httpx not installed (needed by TestClient)")
 
 
-from reyn.chat.profile import AgentProfile  # noqa: E402
-from reyn.chat.registry import AgentRegistry  # noqa: E402
-from reyn.chat.session import Session  # noqa: E402
 from reyn.core.events.state_log import StateLog  # noqa: E402
 from reyn.llm.llm import LLMToolCallResult  # noqa: E402
 from reyn.llm.pricing import TokenUsage  # noqa: E402
 from reyn.runtime.budget.budget import BudgetTracker, CostConfig  # noqa: E402
+from reyn.runtime.profile import AgentProfile  # noqa: E402
+from reyn.runtime.registry import AgentRegistry  # noqa: E402
+from reyn.runtime.session import Session  # noqa: E402
 
 _EMPTY_USAGE = TokenUsage(prompt_tokens=10, completion_tokens=5)
 
@@ -236,7 +236,7 @@ def test_message_send_returns_a2a_message(tmp_path, monkeypatch):
     async def fake_llm_tools(**kw):
         return _text_result("Hi from Reyn via A2A!")
 
-    monkeypatch.setattr("reyn.chat.router_loop.call_llm_tools", fake_llm_tools)
+    monkeypatch.setattr("reyn.runtime.router_loop.call_llm_tools", fake_llm_tools)
     client, _ = _client_with_registry(tmp_path, [("default", "")])
     try:
         r = client.post(

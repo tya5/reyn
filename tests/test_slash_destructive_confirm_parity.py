@@ -29,8 +29,8 @@ _SRC = Path(__file__).parent.parent / "src"
 if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
-from reyn.chat.outbox import OutboxMessage
 from reyn.interfaces.slash import REGISTRY
+from reyn.runtime.outbox import OutboxMessage
 
 # ── /cancel stubs ─────────────────────────────────────────────────────────
 
@@ -133,8 +133,8 @@ async def test_cancel_with_confirm_cancels_task() -> None:
 async def test_plan_discard_no_confirm_shows_warning(tmp_path, monkeypatch):
     """Tier 2: /plan discard <id> (no confirm) → warning msg; plan not discarded."""
     monkeypatch.chdir(tmp_path)
-    from reyn.chat.session import Session
     from reyn.core.events.state_log import StateLog
+    from reyn.runtime.session import Session
 
     session = Session(
         agent_name="alpha",
@@ -167,8 +167,8 @@ async def test_plan_discard_no_confirm_shows_warning(tmp_path, monkeypatch):
 async def test_plan_discard_with_confirm_discards_plan(tmp_path, monkeypatch):
     """Tier 2: /plan discard <id> confirm discards the plan (clears active_plan_ids)."""
     monkeypatch.chdir(tmp_path)
-    from reyn.chat.session import Session
     from reyn.core.events.state_log import StateLog
+    from reyn.runtime.session import Session
 
     session = Session(
         agent_name="alpha",

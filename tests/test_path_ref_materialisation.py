@@ -16,13 +16,13 @@ from __future__ import annotations
 import base64
 from pathlib import Path
 
-from reyn.chat.router_loop import _build_media_followup_message
-from reyn.chat.services.router_history_buffer import (
+from reyn.data.workspace.media_store import MediaStore, MediaStoreConfig
+from reyn.runtime.router_loop import _build_media_followup_message
+from reyn.runtime.services.router_history_buffer import (
     _materialise_path_ref_content,
     _read_pathref_image,
 )
-from reyn.chat.session import ChatMessage
-from reyn.data.workspace.media_store import MediaStore, MediaStoreConfig
+from reyn.runtime.session import ChatMessage
 
 # ── helpers ────────────────────────────────────────────────────────────
 

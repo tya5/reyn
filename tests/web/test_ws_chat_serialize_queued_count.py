@@ -21,8 +21,8 @@ if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
 fastapi = pytest.importorskip("fastapi", reason="fastapi not installed")
-from reyn.chat.outbox import OutboxMessage  # noqa: E402
 from reyn.interfaces.web.ws.chat import _serialize  # noqa: E402
+from reyn.runtime.outbox import OutboxMessage  # noqa: E402
 
 
 class _StubRegistry:

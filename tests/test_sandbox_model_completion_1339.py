@@ -99,8 +99,8 @@ async def test_handler_event_shows_enforced_policy_network(tmp_path):
 def test_chat_session_factory_resolves_concrete_policy(tmp_path):
     """Tier 2: #1339 reproduce-first —the Session router OpContext carries a
     concrete default_sandbox_policy (was None → op-fields fallback = the gap)."""
-    from reyn.chat.session import Session
     from reyn.core.events.state_log import StateLog
+    from reyn.runtime.session import Session
 
     session = Session(
         agent_name="b",

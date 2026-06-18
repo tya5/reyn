@@ -145,7 +145,7 @@ def test_build_tools_includes_web_search_via_registry():
     """Tier 2: build_tools() includes web_search rendered from the unified
     registry. The rendered dict must match the legacy ToolSpec.to_openai_dict()
     output (byte-identity gate for LLMReplay fixtures)."""
-    from reyn.chat.router_tools import build_tools
+    from reyn.runtime.router_tools import build_tools
 
     tools = build_tools(
         available_skills=[],
@@ -176,7 +176,7 @@ def test_build_tools_web_search_not_duplicated():
     """Tier 2: web_search appears exactly once in build_tools() output.
     Guards against both the registry path and a residual ToolSpec literal
     being included simultaneously."""
-    from reyn.chat.router_tools import build_tools
+    from reyn.runtime.router_tools import build_tools
 
     tools = build_tools(
         available_skills=[],

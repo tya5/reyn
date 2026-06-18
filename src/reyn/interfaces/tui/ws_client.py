@@ -31,7 +31,7 @@ import logging
 import sys
 from urllib.parse import urljoin
 
-from reyn.chat.outbox import OutboxMessage
+from reyn.runtime.outbox import OutboxMessage
 
 logger = logging.getLogger(__name__)
 

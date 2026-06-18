@@ -68,8 +68,8 @@ def build_router(*, target_agent: str) -> APIRouter:
         UserSource,
     )
 
-    from reyn.chat.transport import ExternalRef
     from reyn.plugins.api import make_sender, push_to_agent
+    from reyn.runtime.transport import ExternalRef
 
     channel_secret = os.environ.get("LINE_CHANNEL_SECRET", "")
     parser = WebhookParser(channel_secret)

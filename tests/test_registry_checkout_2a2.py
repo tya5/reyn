@@ -21,11 +21,11 @@ from pathlib import Path
 
 import pytest
 
-from reyn.chat.profile import AgentProfile
-from reyn.chat.registry import AgentRegistry
 from reyn.core.events.agent_snapshot import AgentSnapshot
 from reyn.core.events.snapshot_generations import RewindIntoAbandonedError, rewind
 from reyn.core.events.state_log import StateLog
+from reyn.runtime.profile import AgentProfile
+from reyn.runtime.registry import AgentRegistry
 
 _needs_git = pytest.mark.skipif(shutil.which("git") is None, reason="git not on PATH")
 

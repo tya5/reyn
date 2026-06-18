@@ -20,7 +20,7 @@ from pathlib import Path
 
 import pytest
 
-from reyn.chat.services.mcp_cache_file import cache_file_path, read_cache
+from reyn.runtime.services.mcp_cache_file import cache_file_path, read_cache
 
 # ---------------------------------------------------------------------------
 # Helpers

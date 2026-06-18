@@ -26,7 +26,6 @@ if str(_SRC) not in sys.path:
 
 from textual.widgets import RichLog
 
-from reyn.chat.outbox import OutboxMessage
 from reyn.interfaces.tui.app import ReynTUIApp
 from reyn.interfaces.tui.widgets import ConversationView
 from reyn.interfaces.tui.widgets.conversation import (
@@ -36,6 +35,7 @@ from reyn.interfaces.tui.widgets.conversation import (
     _GLYPH_USER,
     _GROUP_WINDOW_S,
 )
+from reyn.runtime.outbox import OutboxMessage
 
 
 def _make_app() -> ReynTUIApp:

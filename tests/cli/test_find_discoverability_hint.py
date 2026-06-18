@@ -30,10 +30,10 @@ async def test_initial_find_status_includes_ctrl_g_hint_when_multi_match() -> No
     """Tier 2: status string includes ``Ctrl+G next`` when matches ≥ 2."""
     from rich.text import Text
 
-    from reyn.chat.outbox import OutboxMessage
     from reyn.interfaces.tui.app import ReynTUIApp
     from reyn.interfaces.tui.app_outbox import OutboxRouter
     from reyn.interfaces.tui.widgets import ConversationView
+    from reyn.runtime.outbox import OutboxMessage
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -69,10 +69,10 @@ async def test_initial_find_status_omits_hint_when_single_match() -> None:
     """
     from rich.text import Text
 
-    from reyn.chat.outbox import OutboxMessage
     from reyn.interfaces.tui.app import ReynTUIApp
     from reyn.interfaces.tui.app_outbox import OutboxRouter
     from reyn.interfaces.tui.widgets import ConversationView
+    from reyn.runtime.outbox import OutboxMessage
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:

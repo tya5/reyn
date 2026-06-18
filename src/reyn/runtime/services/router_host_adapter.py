@@ -486,7 +486,7 @@ class RouterHostAdapter:
 
     def get_memory_index(self) -> dict:
         """Return merged shared + agent memory index."""
-        from reyn.chat.session import _merge_memory_indexes
+        from reyn.runtime.session import _merge_memory_indexes
         return _merge_memory_indexes(
             shared_path=Path(".reyn") / "memory" / "MEMORY.md",
             agent_path=self._workspace_dir / "memory" / "MEMORY.md",
@@ -753,7 +753,7 @@ class RouterHostAdapter:
         Returns ``{path, entries: [{name, type}]}`` on success or
         ``{error}`` on failure.
         """
-        from reyn.chat.reyn_src import (
+        from reyn.runtime.reyn_src import (
             list_entries,
             resolve_reyn_root,
             safe_resolve_inside,
@@ -770,7 +770,7 @@ class RouterHostAdapter:
 
     async def reyn_src_read(self, *, path: str) -> dict:
         """Read text at ``<reyn_root>/path``."""
-        from reyn.chat.reyn_src import (
+        from reyn.runtime.reyn_src import (
             read_text,
             resolve_reyn_root,
             safe_resolve_inside,
@@ -847,7 +847,7 @@ class RouterHostAdapter:
         the gap so the next ``_build_history_for_router`` rebuild
         replays the full LLM message sequence.
         """
-        from reyn.chat.session import ChatMessage, _now_iso
+        from reyn.runtime.session import ChatMessage, _now_iso
         self._append_history_cb(ChatMessage(
             role=role,
             content=content,
@@ -859,8 +859,8 @@ class RouterHostAdapter:
         ))
 
     async def put_outbox(self, *, kind: str, text: str, meta: dict) -> None:
-        from reyn.chat.outbox import OutboxMessage
-        from reyn.chat.session import ChatMessage, _now_iso
+        from reyn.runtime.outbox import OutboxMessage
+        from reyn.runtime.session import ChatMessage, _now_iso
         # #1652: centralised reasoning handling for agent replies. The router
         # passes the turn's reasoning as meta["reasoning"]; this single chokepoint
         # applies the two independent gates so every agent-reply site is covered
@@ -879,7 +879,7 @@ class RouterHostAdapter:
         # itself is persisted (below) so the wire re-attach can replay it.
         _reasoning = meta.get("reasoning") if kind == "agent" else None
         if _reasoning and self.reasoning_display_enabled():
-            from reyn.chat.reasoning_continuity import reasoning_text
+            from reyn.runtime.reasoning_continuity import reasoning_text
             _reasoning_display = reasoning_text(_reasoning)
             if _reasoning_display:
                 await self._put_outbox_cb(OutboxMessage(
@@ -1286,7 +1286,7 @@ class RouterHostAdapter:
         """
         import asyncio
 
-        from reyn.chat.services.mcp_cache_file import (
+        from reyn.runtime.services.mcp_cache_file import (
             cache_file_path,
             file_mtime,
             read_cache,
@@ -1370,7 +1370,7 @@ class RouterHostAdapter:
         - File mtime advanced → replace in-memory cache + update mtime record.
         Never raises.
         """
-        from reyn.chat.services.mcp_cache_file import (
+        from reyn.runtime.services.mcp_cache_file import (
             cache_file_path,
             file_mtime,
             read_cache,
@@ -1438,7 +1438,7 @@ class RouterHostAdapter:
         """
         import asyncio
 
-        from reyn.chat.services.mcp_cache_file import (
+        from reyn.runtime.services.mcp_cache_file import (
             cache_file_path,
             write_cache,
             yaml_scope_paths,
@@ -1582,7 +1582,7 @@ class RouterHostAdapter:
         is populated from the agent's effective permissions so that op_runtime
         layer permission checks actually gate access.
         """
-        from reyn.chat.router_op_context import build_router_op_context
+        from reyn.runtime.router_op_context import build_router_op_context
 
         # #1412: single-sourced via build_router_op_context (shared with
         # Session). RouterHostAdapter wires intervention_bus inline (via the

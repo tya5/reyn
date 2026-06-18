@@ -12,7 +12,6 @@ from pathlib import Path
 
 import pytest
 
-from reyn.chat.planner import Plan, PlanStep
 from reyn.core.plan import (
     PlanRegistry,
     PlanResumeConfig,
@@ -23,6 +22,7 @@ from reyn.core.plan import (
     build_plan_resume_config,
     write_decomposition,
 )
+from reyn.runtime.planner import Plan, PlanStep
 
 
 def _decomp() -> Plan:

@@ -33,8 +33,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from reyn.chat.agent import Agent
-from reyn.chat.session import Session
+from reyn.runtime.agent import Agent
+from reyn.runtime.session import Session
 
 if TYPE_CHECKING:
     from pathlib import Path

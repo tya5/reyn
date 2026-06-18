@@ -23,15 +23,15 @@ from pathlib import Path
 
 import pytest
 
-from reyn.chat.profile import AgentProfile
-from reyn.chat.registry import AgentRegistry
-from reyn.chat.session import Session
 from reyn.core.events.snapshot_generations import is_active_seq
 from reyn.core.events.state_log import StateLog
 from reyn.interfaces.chainlit_app.rewind_actions import (
     handle_rewind_edit_submit,
     resolve_edit_target,
 )
+from reyn.runtime.profile import AgentProfile
+from reyn.runtime.registry import AgentRegistry
+from reyn.runtime.session import Session
 
 pytestmark = pytest.mark.skipif(
     shutil.which("git") is None, reason="git required for the workspace substrate",

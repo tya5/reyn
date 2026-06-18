@@ -9,7 +9,6 @@ from pathlib import Path
 
 import pytest
 
-from reyn.chat.planner import Plan, PlanStep
 from reyn.core.plan import (
     PlanRegistry,
     PlanSnapshot,
@@ -17,6 +16,7 @@ from reyn.core.plan import (
     plan_snapshot_path,
     write_decomposition,
 )
+from reyn.runtime.planner import Plan, PlanStep
 
 
 def _make_registry(tmp_path: Path) -> PlanRegistry:

@@ -36,7 +36,6 @@ from textual.binding import Binding
 from textual.containers import Horizontal
 from textual.theme import Theme
 
-from reyn.chat.outbox import OutboxMessage
 from reyn.interfaces.tui._palette import (
     _BORDER_DIM,
     _CORAL,
@@ -46,12 +45,13 @@ from reyn.interfaces.tui._palette import (
     _TEXT_DIM,
     css_variables,
 )
+from reyn.runtime.outbox import OutboxMessage
 
 from .widgets import ConversationView, InputBar, InterventionWidget, ReynHeader, RightPanel
 
 if TYPE_CHECKING:
-    from reyn.chat.registry import AgentRegistry
-    from reyn.chat.session import Session
+    from reyn.runtime.registry import AgentRegistry
+    from reyn.runtime.session import Session
 
 
 # Debounce window for the "nothing-in-flight cancel" line — repeat

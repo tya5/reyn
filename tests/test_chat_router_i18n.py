@@ -21,14 +21,14 @@ import asyncio
 import json
 from pathlib import Path
 
-from reyn.chat.router_system_prompt import build_system_prompt
-from reyn.chat.session import (
-    _ROUTER_RETRY_EXHAUSTED_MSG,
-    Session,
-)
 from reyn.llm.llm import LLMToolCallResult
 from reyn.llm.pricing import TokenUsage
 from reyn.runtime.budget.budget import BudgetTracker, CostConfig
+from reyn.runtime.router_system_prompt import build_system_prompt
+from reyn.runtime.session import (
+    _ROUTER_RETRY_EXHAUSTED_MSG,
+    Session,
+)
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -276,7 +276,7 @@ def test_router_loop_passes_output_language_to_system_prompt(tmp_path, monkeypat
                 captured_prompts.append(msg["content"])
         return _text_result("テスト応答")
 
-    monkeypatch.setattr("reyn.chat.router_loop.call_llm_tools", fake_llm_tools)
+    monkeypatch.setattr("reyn.runtime.router_loop.call_llm_tools", fake_llm_tools)
     _run(session._handle_user_message("こんにちは", chain_id="chain-prompt"))
 
     assert captured_prompts, "No system prompt was captured — LLM was never called"
@@ -368,7 +368,7 @@ def test_retry_exhausted_fallback_is_english_when_output_language_is_none(
 
     session._put_outbox = fake_put_outbox  # type: ignore[assignment]
 
-    from reyn.chat.session import RouterCapExceeded
+    from reyn.runtime.session import RouterCapExceeded
 
     async def run():
         await session._emit_router_cap_exhausted_user(
@@ -444,7 +444,7 @@ def _run_tool_failed_scenario(
 
     delivered: list = []
 
-    monkeypatch.setattr("reyn.chat.router_loop.call_llm_tools", fake_llm_tools)
+    monkeypatch.setattr("reyn.runtime.router_loop.call_llm_tools", fake_llm_tools)
 
     async def run():
         await session._handle_user_message("テスト", chain_id="chain-g10")

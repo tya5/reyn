@@ -829,7 +829,7 @@ _REYN_SOURCE_READ_DESCRIBE = (
     # carry the chain instead.
     "Read a text file from Reyn's own repository by an exact "
     "repo-root-relative path. Use for: (a) reading a specific file the "
-    "user named (e.g. README.md, src/reyn/chat/...), or (b) navigating "
+    "user named (e.g. README.md, src/reyn/runtime/...), or (b) navigating "
     "Reyn's source / docs when NO indexed source covers the topic. "
     "Fallback entry point: reyn_src_read(\"README.md\") for the overview + "
     "curated map of deep-dive paths."

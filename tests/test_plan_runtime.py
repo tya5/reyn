@@ -15,8 +15,8 @@ from typing import Any
 
 import pytest
 
-from reyn.chat.planner import Plan, PlanStep
 from reyn.core.plan import PlanResumePlan, PlanRuntime
+from reyn.runtime.planner import Plan, PlanStep
 
 # ── stub host (= mirror test_plan_lifecycle_crash._RecordingHost) ───────
 
@@ -66,7 +66,7 @@ class _StubRouterLoop:
 
 @pytest.fixture(autouse=True)
 def _stub_router_loop(monkeypatch: Any):
-    import reyn.chat.planner as planner_mod
+    import reyn.runtime.planner as planner_mod
 
     monkeypatch.setattr(planner_mod, "RouterLoop", _StubRouterLoop)
     _StubRouterLoop._behavior = "noop"

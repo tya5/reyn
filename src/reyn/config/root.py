@@ -67,11 +67,11 @@ from reyn.runtime.budget.budget import CostConfig, CostLimitConfig
 def _empty_external_transports():
     """Lazy import shim for the default ``ExternalTransportRouting``.
 
-    Avoids importing ``reyn.chat.external_routing`` at module-load time
+    Avoids importing ``reyn.runtime.external_routing`` at module-load time
     (= ``reyn.config`` is imported very early; the chat-side import
     would create a cycle).
     """
-    from reyn.chat.external_routing import ExternalTransportRouting
+    from reyn.runtime.external_routing import ExternalTransportRouting
     return ExternalTransportRouting()
 
 
@@ -278,7 +278,7 @@ class ReynConfig:
     # FP-0041 #489 PR-D2 — external chat transport routing (= Slack /
     # LINE / Discord etc.). Empty by default; operator declares
     # transport → MCP tool mapping in reyn.yaml ``external_transports``.
-    # See ``reyn.chat.external_routing.ExternalTransportRouting``.
+    # See ``reyn.runtime.external_routing.ExternalTransportRouting``.
     external_transports: "ExternalTransportRouting" = field(
         default_factory=lambda: _empty_external_transports(),
     )

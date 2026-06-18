@@ -26,13 +26,13 @@ from pathlib import Path
 import pytest
 from _async_wait import wait_until  # noqa: E402 — shared #1751 test wait helper
 
-from reyn.chat.outbox import OutboxMessage
-from reyn.chat.services.intervention_handler import InterventionHandler
-from reyn.chat.services.intervention_registry import InterventionRegistry
-from reyn.chat.services.snapshot_journal import SnapshotJournal
 from reyn.core.events.event_store import EventStore
 from reyn.core.events.events import EventLog
 from reyn.core.events.state_log import StateLog
+from reyn.runtime.outbox import OutboxMessage
+from reyn.runtime.services.intervention_handler import InterventionHandler
+from reyn.runtime.services.intervention_registry import InterventionRegistry
+from reyn.runtime.services.snapshot_journal import SnapshotJournal
 from reyn.user_intervention import (
     InterventionAnswer,
     InterventionChoice,

@@ -24,10 +24,10 @@ import asyncio
 from pathlib import Path
 from typing import Any
 
-from reyn.chat.session import Session
 from reyn.core.events.state_log import StateLog
 from reyn.core.kernel.normalizer import NormalizationResult
 from reyn.core.kernel.runtime import OSRuntime, RunResult
+from reyn.runtime.session import Session
 from reyn.schemas.models import (
     ControlDecision,
     ControlReason,

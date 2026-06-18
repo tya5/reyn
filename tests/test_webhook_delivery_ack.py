@@ -2,7 +2,7 @@
 
 Pins the upgraded contract: ``post_webhook`` returns
 ``DeliveryResult`` so callers can drive per-channel liveness state
-(= ``ChannelState`` in ``reyn.chat.channel_state``) instead of
+(= ``ChannelState`` in ``reyn.runtime.channel_state``) instead of
 inferring success from log noise.
 
 Pins:
@@ -29,12 +29,12 @@ pytest.importorskip("httpx", reason="httpx not installed (needed by webhook deli
 
 import httpx  # noqa: E402
 
-from reyn.chat.channel_state import (  # noqa: E402
+from reyn.interfaces.web.notifications import post_webhook  # noqa: E402
+from reyn.runtime.channel_state import (  # noqa: E402
     NO_RETRY_POLICY,
     DeliveryOutcome,
     RetryPolicy,
 )
-from reyn.interfaces.web.notifications import post_webhook  # noqa: E402
 
 
 def _client_with_responses(responses: list[httpx.Response]) -> httpx.AsyncClient:
@@ -271,7 +271,7 @@ async def test_post_webhook_default_policy_attempts_three_times() -> None:
     client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
     try:
         # Override the default 0.5s + 2s backoff to keep test fast.
-        from reyn.chat.channel_state import RetryPolicy as _RP
+        from reyn.runtime.channel_state import RetryPolicy as _RP
         fast_policy = _RP(max_attempts=3, backoff_seconds=(0.01, 0.01))
         result = await post_webhook(
             "http://peer.example/webhook",

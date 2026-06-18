@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import pytest
 
-from reyn.chat.session import enumerate_available_skills
+from reyn.runtime.session import enumerate_available_skills
 
 # ---------------------------------------------------------------------------
 # Helpers

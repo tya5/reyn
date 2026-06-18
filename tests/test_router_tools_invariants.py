@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import pytest
 
-from reyn.chat.router_tools import (
+from reyn.runtime.router_tools import (
     ToolSpec,
     build_tools,
     get_dispatch_kind,

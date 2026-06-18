@@ -4,7 +4,7 @@ Both capabilities are router-only dev-mode tools (gates.router="allow",
 gates.phase="deny"). Phase doesn't need this; dev-debug is an
 operator-side concern, not a skill-author concern.
 
-The existing resolver in src/reyn/chat/reyn_src.py is preserved and
+The existing resolver in src/reyn/runtime/reyn_src.py is preserved and
 called directly from each handler (no OpContext shim needed — these
 tools are pure filesystem reads with no workspace or events coupling).
 """
@@ -93,12 +93,12 @@ _REYN_SRC_READ_PARAMETERS: dict[str, Any] = {
 async def _handle_list(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
     """Handler for reyn_src_list.
 
-    Delegates to reyn.chat.reyn_src helpers which are the canonical
+    Delegates to reyn.runtime.reyn_src helpers which are the canonical
     implementation. No OpContext shim needed — these helpers are pure
     filesystem reads that don't access workspace or events.
     """
     # Lazy import to avoid circular dependency at registry-init time.
-    from reyn.chat.reyn_src import (
+    from reyn.runtime.reyn_src import (
         list_entries,
         resolve_reyn_root,
         safe_resolve_inside,
@@ -119,12 +119,12 @@ async def _handle_list(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
 async def _handle_read(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
     """Handler for reyn_src_read.
 
-    Delegates to reyn.chat.reyn_src helpers which are the canonical
+    Delegates to reyn.runtime.reyn_src helpers which are the canonical
     implementation. No OpContext shim needed — these helpers are pure
     filesystem reads that don't access workspace or events.
     """
     # Lazy import to avoid circular dependency at registry-init time.
-    from reyn.chat.reyn_src import (
+    from reyn.runtime.reyn_src import (
         read_text,
         resolve_reyn_root,
         safe_resolve_inside,
@@ -214,7 +214,7 @@ _REYN_SRC_GREP_PARAMETERS: dict[str, Any] = {
 
 async def _handle_glob(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
     """Handler for reyn_src_glob."""
-    from reyn.chat.reyn_src import glob_entries, resolve_reyn_root
+    from reyn.runtime.reyn_src import glob_entries, resolve_reyn_root
 
     pattern = args.get("pattern", "")
     try:
@@ -226,7 +226,7 @@ async def _handle_glob(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
 
 async def _handle_grep(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
     """Handler for reyn_src_grep."""
-    from reyn.chat.reyn_src import grep_entries, resolve_reyn_root
+    from reyn.runtime.reyn_src import grep_entries, resolve_reyn_root
 
     pattern = args.get("pattern", "")
     try:

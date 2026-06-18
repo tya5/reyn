@@ -49,10 +49,10 @@ def _seed_lines(conv, lines: list[str]) -> None:
 @pytest.mark.asyncio
 async def test_cycle_find_forward_steps_through_matches() -> None:
     """Tier 2: Ctrl+G after /find moves to the next match in order."""
-    from reyn.chat.outbox import OutboxMessage
     from reyn.interfaces.tui.app import ReynTUIApp
     from reyn.interfaces.tui.app_outbox import OutboxRouter
     from reyn.interfaces.tui.widgets import ConversationView
+    from reyn.runtime.outbox import OutboxMessage
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -99,10 +99,10 @@ async def test_cycle_find_forward_steps_through_matches() -> None:
 @pytest.mark.asyncio
 async def test_cycle_find_forward_wraps_to_first() -> None:
     """Tier 2: Ctrl+G past the last match wraps back to the first."""
-    from reyn.chat.outbox import OutboxMessage
     from reyn.interfaces.tui.app import ReynTUIApp
     from reyn.interfaces.tui.app_outbox import OutboxRouter
     from reyn.interfaces.tui.widgets import ConversationView
+    from reyn.runtime.outbox import OutboxMessage
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -138,10 +138,10 @@ async def test_cycle_find_forward_wraps_to_first() -> None:
 @pytest.mark.asyncio
 async def test_cycle_find_backward_steps_and_wraps() -> None:
     """Tier 2: Ctrl+Shift+G steps backward and wraps from first → last."""
-    from reyn.chat.outbox import OutboxMessage
     from reyn.interfaces.tui.app import ReynTUIApp
     from reyn.interfaces.tui.app_outbox import OutboxRouter
     from reyn.interfaces.tui.widgets import ConversationView
+    from reyn.runtime.outbox import OutboxMessage
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -212,10 +212,10 @@ async def test_cycle_find_handles_buffer_mutation_to_zero_matches() -> None:
     branch rather than NoneType-erroring or scrolling to a stale
     line. State is also cleared so a subsequent /find starts fresh.
     """
-    from reyn.chat.outbox import OutboxMessage
     from reyn.interfaces.tui.app import ReynTUIApp
     from reyn.interfaces.tui.app_outbox import OutboxRouter
     from reyn.interfaces.tui.widgets import ConversationView
+    from reyn.runtime.outbox import OutboxMessage
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -294,10 +294,10 @@ async def test_initial_find_seeds_cycle_state() -> None:
     through. This pins that the post-/find router state is
     ``(query, cursor_idx)`` where cursor_idx is the first match.
     """
-    from reyn.chat.outbox import OutboxMessage
     from reyn.interfaces.tui.app import ReynTUIApp
     from reyn.interfaces.tui.app_outbox import OutboxRouter
     from reyn.interfaces.tui.widgets import ConversationView
+    from reyn.runtime.outbox import OutboxMessage
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:

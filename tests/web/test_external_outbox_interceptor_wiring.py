@@ -50,15 +50,15 @@ from pathlib import Path
 
 import pytest
 
-from reyn.chat.external_routing import (
+from reyn.core.events.state_log import StateLog
+from reyn.interfaces.web.deps import _wire_external_outbox_interceptor
+from reyn.runtime.external_routing import (
     ExternalTransportEntry,
     ExternalTransportRouting,
 )
-from reyn.chat.outbox import OutboxMessage
-from reyn.chat.session import Session
-from reyn.chat.transport import ExternalRef
-from reyn.core.events.state_log import StateLog
-from reyn.interfaces.web.deps import _wire_external_outbox_interceptor
+from reyn.runtime.outbox import OutboxMessage
+from reyn.runtime.session import Session
+from reyn.runtime.transport import ExternalRef
 
 
 def _make_session(tmp_path: Path) -> Session:
@@ -132,7 +132,7 @@ async def test_tui_reply_still_queues_with_wiring_active(tmp_path):
     ExternalRef paths dispatch externally — local TUI chat path
     remains unaffected by the Slack wiring.
     """
-    from reyn.chat.transport import TuiRef
+    from reyn.runtime.transport import TuiRef
 
     session = _make_session(tmp_path)
     routing = ExternalTransportRouting(transports={

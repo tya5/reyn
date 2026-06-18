@@ -8,7 +8,7 @@ Covers the two tools exposed to outer LLM clients:
 The tests drive the backing implementations directly
 (``list_agents_impl`` / ``send_to_agent_impl``) rather than the full
 stdio JSON-RPC transport — that side is owned by the upstream ``mcp``
-SDK. We patch ``reyn.chat.router_loop.call_llm_tools`` so each turn
+SDK. We patch ``reyn.runtime.router_loop.call_llm_tools`` so each turn
 returns a deterministic fake reply (mirrors the pattern in
 ``test_chat_router_i18n.py``).
 """
@@ -19,14 +19,14 @@ from pathlib import Path
 
 import pytest
 
-from reyn.chat.profile import AgentProfile
-from reyn.chat.registry import AgentRegistry
-from reyn.chat.session import Session
 from reyn.core.events.state_log import StateLog
 from reyn.llm.llm import LLMToolCallResult
 from reyn.llm.pricing import TokenUsage
 from reyn.mcp.server import list_agents_impl, send_to_agent_impl
 from reyn.runtime.budget.budget import BudgetTracker, CostConfig
+from reyn.runtime.profile import AgentProfile
+from reyn.runtime.registry import AgentRegistry
+from reyn.runtime.session import Session
 
 _EMPTY_USAGE = TokenUsage(prompt_tokens=10, completion_tokens=5)
 
@@ -126,7 +126,7 @@ def test_send_to_agent_returns_reply_text(tmp_path, monkeypatch):
     async def fake_llm_tools(**kw):
         return _text_result("Hello from Reyn!")
 
-    monkeypatch.setattr("reyn.chat.router_loop.call_llm_tools", fake_llm_tools)
+    monkeypatch.setattr("reyn.runtime.router_loop.call_llm_tools", fake_llm_tools)
 
     async def go():
         return await send_to_agent_impl(
@@ -190,7 +190,7 @@ def test_send_to_agent_history_persists_across_calls(tmp_path, monkeypatch):
     async def fake_llm_tools(**kw):
         return _text_result(next(replies))
 
-    monkeypatch.setattr("reyn.chat.router_loop.call_llm_tools", fake_llm_tools)
+    monkeypatch.setattr("reyn.runtime.router_loop.call_llm_tools", fake_llm_tools)
 
     async def go() -> tuple[dict, dict, list]:
         r1 = await send_to_agent_impl(
@@ -261,7 +261,7 @@ def test_concurrent_send_to_same_agent_does_not_cross_talk(tmp_path, monkeypatch
                 break
         return _text_result(f"echo: {user_text[:40]}")
 
-    monkeypatch.setattr("reyn.chat.router_loop.call_llm_tools", echo_llm)
+    monkeypatch.setattr("reyn.runtime.router_loop.call_llm_tools", echo_llm)
 
     async def go() -> tuple[dict, dict]:
         r1, r2 = await asyncio.gather(
@@ -323,7 +323,7 @@ def test_send_to_agent_waits_for_plan_terminal_text(tmp_path, monkeypatch):
     # Stub LLM: not invoked because we directly simulate plan dispatch
     # via a fake _handle_user_message that schedules a background task.
     async def _fake_handle_user_message(self, message, *, chain_id):
-        from reyn.chat.session import ChatMessage
+        from reyn.runtime.session import ChatMessage
         # Append the user message (= mirror real path)
         self._append_history(ChatMessage(
             role="user", content=message, ts="2026-05-08T00:00:00",
@@ -342,7 +342,7 @@ def test_send_to_agent_waits_for_plan_terminal_text(tmp_path, monkeypatch):
         # Track in running_plans so send_to_agent_impl awaits it.
         self.running_plans["fake_plan_id"] = task
 
-    from reyn.chat.session import Session
+    from reyn.runtime.session import Session
     monkeypatch.setattr(
         Session, "_handle_user_message", _fake_handle_user_message,
     )
@@ -390,7 +390,7 @@ def test_send_to_agent_drains_skill_completed_inbox(tmp_path, monkeypatch):
     sentinel = "SKILL_COMPLETION_NARRATION_MARKER"
 
     async def _fake_handle_user_message(self, message, *, chain_id):
-        from reyn.chat.session import ChatMessage
+        from reyn.runtime.session import ChatMessage
         self._append_history(ChatMessage(
             role="user", content=message, ts="2026-05-11T00:00:00",
             meta={"chain_id": chain_id},
@@ -410,7 +410,7 @@ def test_send_to_agent_drains_skill_completed_inbox(tmp_path, monkeypatch):
         self.running_skills["fake_run_0001"] = task
 
     async def _fake_handle_skill_completed(self, payload):
-        from reyn.chat.session import ChatMessage
+        from reyn.runtime.session import ChatMessage
         self._append_history(ChatMessage(
             role="assistant",
             content=f"{sentinel}: {payload.get('skill')} {payload.get('status')}",

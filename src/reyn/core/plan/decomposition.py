@@ -39,7 +39,7 @@ import os
 import shutil
 from pathlib import Path
 
-from reyn.chat.planner import Plan, PlanStep
+from reyn.runtime.planner import Plan, PlanStep
 
 DECOMPOSITION_SCHEMA_VERSION = 1
 

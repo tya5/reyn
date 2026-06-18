@@ -182,7 +182,7 @@ def _wire_external_outbox_interceptor(session, routing) -> None:
     allow); failures propagate as exceptions and are surfaced through
     ``RouteResult(status="error", ...)`` by the routing primitive.
     """
-    from reyn.chat.external_routing import (
+    from reyn.runtime.external_routing import (
         make_outbox_interceptor,
         make_session_mcp_dispatcher,
     )
@@ -261,10 +261,10 @@ _registry = None
 def _get_registry():
     global _registry
     if _registry is None:
-        from reyn.chat.profile import AgentProfile
-        from reyn.chat.registry import AgentRegistry
-        from reyn.chat.scoped_session_factory import build_scoped_chat_session
         from reyn.config import load_project_context
+        from reyn.runtime.profile import AgentProfile
+        from reyn.runtime.registry import AgentRegistry
+        from reyn.runtime.scoped_session_factory import build_scoped_chat_session
 
         config = _load_config()
         root = _get_project_root()

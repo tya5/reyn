@@ -26,7 +26,7 @@ from typing import TYPE_CHECKING
 from reyn.interfaces.slash import reply, reply_error, slash
 
 if TYPE_CHECKING:
-    from reyn.chat.session import Session
+    from reyn.runtime.session import Session
 
 # Mirror op_runtime/file._IMAGE_EXTENSIONS so the slash command accepts
 # the same set #365 accepts via `file__read`.

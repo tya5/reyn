@@ -37,7 +37,7 @@ from reyn.security.permissions.permissions import (
 )
 
 if TYPE_CHECKING:
-    from reyn.chat.profile import AgentProfile
+    from reyn.runtime.profile import AgentProfile
     from reyn.security.permissions.permissions import PermissionDecl
     from reyn.security.sandbox.policy import SandboxPolicy
 

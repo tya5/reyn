@@ -101,7 +101,7 @@ def _make_cron_runner():
         # reply_to → interceptor falls through → event-log only (current behaviour).
         notify = payload.pop("notify", None)
         if notify:
-            from reyn.chat.transport import ExternalRef
+            from reyn.runtime.transport import ExternalRef
             payload["reply_to"] = ExternalRef(transport=notify, destination={})
         await session._put_inbox("user", payload)
         return "ok"
@@ -111,10 +111,10 @@ def _make_cron_runner():
         never produced a reply) to its notify channel, via the SAME MCP route the
         outbox interceptor uses (telegram→broker__post_message). Best-effort —
         unconfigured channel / unresolvable session degrades to event-log."""
-        from reyn.chat.external_routing import make_session_mcp_dispatcher, route_to_mcp
         from reyn.config import load_config
         from reyn.interfaces.web.deps import _get_registry
         from reyn.runtime.cron.routing import resolve_cron_session
+        from reyn.runtime.external_routing import make_session_mcp_dispatcher, route_to_mcp
         routing = load_config().external_transports
         if not routing.transports:
             return

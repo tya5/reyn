@@ -91,7 +91,7 @@ class ContextBudgetAdvisor:
 
         Derived from engine budgets; falls back to max_input_tokens.
         """
-        from reyn.chat.services.tool_result_cap import compute_cap_tokens
+        from reyn.runtime.services.tool_result_cap import compute_cap_tokens
         return compute_cap_tokens(self._get_effective_trigger())
 
     def cap_tool_result(self, content_str: str) -> str:
@@ -102,7 +102,7 @@ class ContextBudgetAdvisor:
         store = self._media_store
         if store is None:
             return content_str
-        from reyn.chat.services.tool_result_cap import cap_tool_result_content
+        from reyn.runtime.services.tool_result_cap import cap_tool_result_content
 
         use_chars4 = getattr(self._compaction, "use_chars4_estimate", False)
         return cap_tool_result_content(

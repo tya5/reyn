@@ -38,9 +38,9 @@ import pytest
 
 pytest.importorskip("fastapi", reason="fastapi not installed ([web] extra missing)")
 
-from reyn.chat.session import Session  # noqa: E402
 from reyn.interfaces.web.a2a_intervention import A2AInterventionBus  # noqa: E402
 from reyn.interfaces.web.run_registry import RunRegistry  # noqa: E402
+from reyn.runtime.session import Session  # noqa: E402
 from reyn.user_intervention import (  # noqa: E402
     InterventionAnswer,
     UserIntervention,
@@ -128,11 +128,11 @@ def test_send_to_agent_impl_registers_a2a_channel_id_as_listener(
     Verifies the agent layer's origin-pin check (= Phase 1 design)
     treats the A2A channel as alive while the task runs.
     """
-    from reyn.chat.profile import AgentProfile
-    from reyn.chat.registry import AgentRegistry
     from reyn.core.events.state_log import StateLog
     from reyn.mcp.server import send_to_agent_impl
     from reyn.runtime.budget.budget import BudgetTracker, CostConfig
+    from reyn.runtime.profile import AgentProfile
+    from reyn.runtime.registry import AgentRegistry
 
     state_log = StateLog(tmp_path / ".reyn" / "state" / "wal.jsonl")
 
@@ -218,11 +218,11 @@ def test_send_to_agent_impl_skips_listener_when_override_has_no_channel_id(
     Uses a minimal stub bus to verify the defensive
     ``getattr(intervention_override, "channel_id", None)`` path.
     """
-    from reyn.chat.profile import AgentProfile
-    from reyn.chat.registry import AgentRegistry
     from reyn.core.events.state_log import StateLog
     from reyn.mcp.server import send_to_agent_impl
     from reyn.runtime.budget.budget import BudgetTracker, CostConfig
+    from reyn.runtime.profile import AgentProfile
+    from reyn.runtime.registry import AgentRegistry
 
     class _StubBusNoChannelId:
         """RequestBus impl that does NOT expose channel_id."""
@@ -283,11 +283,11 @@ def test_send_to_agent_impl_without_override_does_not_register_listener(
     path), no listener registration happens. Pre-#268 callers see
     unchanged behaviour.
     """
-    from reyn.chat.profile import AgentProfile
-    from reyn.chat.registry import AgentRegistry
     from reyn.core.events.state_log import StateLog
     from reyn.mcp.server import send_to_agent_impl
     from reyn.runtime.budget.budget import BudgetTracker, CostConfig
+    from reyn.runtime.profile import AgentProfile
+    from reyn.runtime.registry import AgentRegistry
 
     state_log = StateLog(tmp_path / ".reyn" / "state" / "wal.jsonl")
 

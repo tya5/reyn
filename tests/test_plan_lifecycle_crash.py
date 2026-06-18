@@ -28,8 +28,8 @@ from typing import Any
 
 import pytest
 
-from reyn.chat.planner import Plan, PlanStep, execute_plan
 from reyn.core.events.agent_snapshot import SNAPSHOT_VERSION, AgentSnapshot
+from reyn.runtime.planner import Plan, PlanStep, execute_plan
 
 # ── Stub host that records lifecycle calls ──────────────────────────────────
 
@@ -144,7 +144,7 @@ class _StubRouterLoop:
 
 @pytest.fixture(autouse=True)
 def _stub_router_loop(monkeypatch):
-    import reyn.chat.planner as planner_mod
+    import reyn.runtime.planner as planner_mod
     monkeypatch.setattr(planner_mod, "RouterLoop", _StubRouterLoop)
     _StubRouterLoop._behavior = "noop"
     _StubRouterLoop._instances.clear()

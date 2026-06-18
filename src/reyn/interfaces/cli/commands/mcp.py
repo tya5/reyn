@@ -321,13 +321,13 @@ def register(sub) -> None:
 
 
 def run_serve(args: argparse.Namespace) -> None:
-    from reyn.chat.profile import AgentProfile
-    from reyn.chat.registry import AgentRegistry
-    from reyn.chat.scoped_session_factory import build_scoped_chat_session
     from reyn.config import _find_project_root, load_project_context
     from reyn.core.events.state_log import StateLog
     from reyn.mcp.server import serve_stdio
     from reyn.runtime.budget.budget import BudgetTracker
+    from reyn.runtime.profile import AgentProfile
+    from reyn.runtime.registry import AgentRegistry
+    from reyn.runtime.scoped_session_factory import build_scoped_chat_session
     from reyn.security.permissions.permissions import PermissionResolver
 
     session_cfg = InvocationContext.from_args(args)
@@ -1275,8 +1275,8 @@ def run_refresh(args: argparse.Namespace) -> None:
     """
     import asyncio
 
-    from reyn.chat.services.mcp_cache_file import cache_file_path, write_cache
     from reyn.config import _find_project_root
+    from reyn.runtime.services.mcp_cache_file import cache_file_path, write_cache
 
     if args.project:
         project_root: Path | None = Path(args.project).resolve()

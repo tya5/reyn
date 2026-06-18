@@ -205,7 +205,7 @@ async def test_build_presentation_omits_excluded_actions() -> None:
 def test_codeact_scheme_registered_and_selectable() -> None:
     """Tier 2: CodeActScheme is registered under 'codeact' and resolves by name
     (selectable via tool_use=codeact); universal stays the default (not codeact)."""
-    from reyn.chat.router_loop import _resolve_tool_use_scheme
+    from reyn.runtime.router_loop import _resolve_tool_use_scheme
 
     selected = _resolve_tool_use_scheme("codeact")
     assert selected.name == "codeact"

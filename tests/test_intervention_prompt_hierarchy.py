@@ -27,8 +27,8 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
-from reyn.chat.outbox import OutboxMessage
 from reyn.interfaces.tui.widgets.intervention import InterventionWidget
+from reyn.runtime.outbox import OutboxMessage
 from reyn.user_intervention import UserIntervention
 
 
@@ -41,7 +41,7 @@ def _drain(q: asyncio.Queue) -> list[OutboxMessage]:
 
 async def _announce(iv: UserIntervention) -> OutboxMessage:
     """Run InterventionHandler.announce against a real outbox + return the msg."""
-    from reyn.chat.services.intervention_handler import InterventionHandler
+    from reyn.runtime.services.intervention_handler import InterventionHandler
 
     q: asyncio.Queue = asyncio.Queue()
 
@@ -204,8 +204,8 @@ def test_iv_meta_helpers_emit_same_keys() -> None:
     here means OutboxMessage.meta from the two emit sites disagree and
     TUI consumers see inconsistent payloads.
     """
-    from reyn.chat.services.intervention_handler import _iv_meta as handler_meta
-    from reyn.chat.session import _iv_meta as session_meta
+    from reyn.runtime.services.intervention_handler import _iv_meta as handler_meta
+    from reyn.runtime.session import _iv_meta as session_meta
 
     iv = UserIntervention(
         id="iv1",

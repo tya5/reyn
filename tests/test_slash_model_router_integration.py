@@ -17,8 +17,8 @@ from __future__ import annotations
 
 import pytest
 
-from reyn.chat.services.router_loop_driver import RouterLoopDriver
 from reyn.llm.model_resolver import ModelResolver
+from reyn.runtime.services.router_loop_driver import RouterLoopDriver
 
 # ---------------------------------------------------------------------------
 # Helpers

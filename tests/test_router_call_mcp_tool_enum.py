@@ -20,7 +20,7 @@ import asyncio
 
 import pytest
 
-from reyn.chat.router_system_prompt import build_system_prompt
+from reyn.runtime.router_system_prompt import build_system_prompt
 from reyn.tools.schemes._universal_sp import build_universal_tool_use_slots
 
 
@@ -32,7 +32,7 @@ def _default_slots() -> "dict[str, str]":
         has_hot_list_aliases=False,
         non_interactive=False,
     )
-from reyn.chat.router_tools import MCP_SEARCH_THRESHOLD, build_tools
+from reyn.runtime.router_tools import MCP_SEARCH_THRESHOLD, build_tools
 from reyn.tools import get_default_registry
 from reyn.tools.mcp import (
     DESCRIBE_MCP_TOOL,

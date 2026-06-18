@@ -85,7 +85,7 @@ def test_adapter_append_history_entry_creates_chatmessage():
     ``_append_history`` callback (= integration with the runtime
     persistence path).
     """
-    from reyn.chat.session import ChatMessage
+    from reyn.runtime.session import ChatMessage
 
     captured: list[ChatMessage] = []
 
@@ -99,7 +99,7 @@ def test_adapter_append_history_entry_creates_chatmessage():
             self, *, role, content, meta=None, tool_calls=None,
             tool_call_id=None, name=None,
         ) -> None:
-            from reyn.chat.session import ChatMessage, _now_iso
+            from reyn.runtime.session import ChatMessage, _now_iso
             self._append_history_cb(ChatMessage(
                 role=role, content=content, ts=_now_iso(),
                 meta=meta if meta is not None else {},
@@ -142,8 +142,8 @@ def test_router_loop_call_site_uses_getattr_guard_for_legacy_hosts(monkeypatch):
     # so any host without the method is silently bypassed.
     import inspect
 
-    from reyn.chat import router_loop
-    from reyn.chat.router_loop import _build_media_followup_message
+    from reyn.runtime import router_loop
+    from reyn.runtime.router_loop import _build_media_followup_message
     src = inspect.getsource(router_loop)
     # The guard appears twice (= assistant turn + tool-result turn).
     assert src.count('getattr(host, "append_history_entry"') >= 1

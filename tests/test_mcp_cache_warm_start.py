@@ -22,10 +22,10 @@ from pathlib import Path
 
 import pytest
 
-from reyn.chat.services import MemoryService, RouterHostAdapter
-from reyn.chat.services.mcp_cache_file import cache_file_path, write_cache
 from reyn.core.events.events import EventLog
 from reyn.llm.model_resolver import ModelResolver
+from reyn.runtime.services import MemoryService, RouterHostAdapter
+from reyn.runtime.services.mcp_cache_file import cache_file_path, write_cache
 
 # ---------------------------------------------------------------------------
 # Null callbacks (same shape as in test_mcp_lazy_tools_cache.py)
@@ -223,7 +223,7 @@ async def test_ensure_mcp_tools_cached_writes_to_disk_after_live_probe(
     assert "srv" in probe.calls, "live probe must run when cache file is absent"
     assert cache_path.exists(), "cache file must be written after live probe"
 
-    from reyn.chat.services.mcp_cache_file import read_cache
+    from reyn.runtime.services.mcp_cache_file import read_cache
     on_disk = read_cache(cache_path)
     assert on_disk is not None
     assert on_disk.get("srv") == live_tools

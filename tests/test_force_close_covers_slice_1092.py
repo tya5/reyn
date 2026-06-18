@@ -17,8 +17,8 @@ No mocks: a real Session with a synthetic T_max.
 """
 from __future__ import annotations
 
-from reyn.chat.services.router_history_buffer import _is_force_close_consolidation
-from reyn.chat.session import (
+from reyn.runtime.services.router_history_buffer import _is_force_close_consolidation
+from reyn.runtime.session import (
     ChatMessage,
     _render_summary_for_storage,
 )

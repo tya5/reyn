@@ -44,8 +44,8 @@ if str(_SRC) not in sys.path:
 
 
 def _make_session(tmp_path: Path, *, agent_name: str = "t") -> "Session":
-    from reyn.chat.session import Session
     from reyn.core.events.state_log import StateLog
+    from reyn.runtime.session import Session
 
     return Session(
         agent_name=agent_name,
@@ -111,10 +111,10 @@ async def test_image_no_path_recall_hint_visible_in_sticky(
     ``StickyStatus.snapshot()`` that the sticky shows the recall text with
     ``kind="general"`` (= transient, not the persistent thinking kind).
     """
-    from reyn.chat.outbox import OutboxMessage
     from reyn.interfaces.tui.app import ReynTUIApp
     from reyn.interfaces.tui.app_outbox import OutboxRouter
     from reyn.interfaces.tui.widgets import ConversationView, ReynHeader
+    from reyn.runtime.outbox import OutboxMessage
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:

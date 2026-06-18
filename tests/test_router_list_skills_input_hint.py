@@ -20,8 +20,8 @@ from pathlib import Path
 
 import pytest
 
-from reyn.chat.router_loop import RouterLoop
-from reyn.chat.router_tools import build_tools
+from reyn.runtime.router_loop import RouterLoop
+from reyn.runtime.router_tools import build_tools
 
 # ---------------------------------------------------------------------------
 # Fake host / loop helpers (mirrors test_router_loop.py pattern)
@@ -294,7 +294,7 @@ def test_extract_skill_input_hint_reads_stdlib_eval_builder(tmp_path: Path):
     it asserts on the public shape (input_artifact present, input_fields non-empty)
     without pinning exact field count or order.
     """
-    from reyn.chat.session import _extract_skill_input_hint
+    from reyn.runtime.session import _extract_skill_input_hint
     from reyn.skill.skill_paths import stdlib_root
 
     eval_builder_dir = stdlib_root() / "skills" / "eval_builder"
@@ -333,7 +333,7 @@ def test_extract_skill_input_hint_missing_phase_returns_empty(tmp_path: Path):
     Robustness invariant: unusual skill layouts (no phases/ dir, missing entry
     phase file) must not raise — they return an empty dict.
     """
-    from reyn.chat.session import _extract_skill_input_hint
+    from reyn.runtime.session import _extract_skill_input_hint
 
     # skill_dir with no phases/ directory
     hint = _extract_skill_input_hint(tmp_path, "nonexistent_phase")

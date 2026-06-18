@@ -14,8 +14,8 @@ from __future__ import annotations
 
 import pytest
 
-from reyn.chat.router_system_prompt import build_system_prompt
 from reyn.data.index.source_manifest import SourceEntry, SourceManifest
+from reyn.runtime.router_system_prompt import build_system_prompt
 from reyn.tools.schemes._universal_sp import build_universal_tool_use_slots
 
 # ---------------------------------------------------------------------------

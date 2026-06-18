@@ -22,9 +22,9 @@ from typing import Any
 
 import pytest
 
-from reyn.chat.router_tools import build_tools
-from reyn.chat.services.router_host_adapter import RouterHostAdapter
 from reyn.config import ActionRetrievalConfig, ReynConfig, load_config
+from reyn.runtime.router_tools import build_tools
+from reyn.runtime.services.router_host_adapter import RouterHostAdapter
 
 
 def _noop_callable(*_args: Any, **_kwargs: Any) -> None:
@@ -133,7 +133,7 @@ def test_chat_session_accepts_action_retrieval_config() -> None:
     """
     import inspect
 
-    from reyn.chat.session import Session
+    from reyn.runtime.session import Session
 
     sig = inspect.signature(Session.__init__)
     assert "action_retrieval_config" in sig.parameters
@@ -182,6 +182,6 @@ def test_router_loop_host_protocol_declares_universal_wrappers_method() -> None:
     Verified via the Protocol class — the method must be declared so
     test doubles and the RouterLoop implementation can rely on it.
     """
-    from reyn.chat.router_loop import RouterLoopHost
+    from reyn.runtime.router_loop import RouterLoopHost
 
     assert hasattr(RouterLoopHost, "get_universal_wrappers_enabled")

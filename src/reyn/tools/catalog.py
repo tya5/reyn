@@ -24,7 +24,7 @@ Router-side dispatch (post-FP-0039 audit, 2026-05-18):
   single dispatch path.
 
 Description strings are byte-identical to the ToolSpec literals in
-src/reyn/chat/router_tools.py lines 250–324 (Wave 2 validation target).
+src/reyn/runtime/router_tools.py lines 250–324 (Wave 2 validation target).
 """
 from __future__ import annotations
 

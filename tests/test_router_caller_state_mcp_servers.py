@@ -60,7 +60,7 @@ class _FakeHost:
 
 
 def _build_router_loop(host: _FakeHost) -> Any:
-    from reyn.chat.router_loop import RouterLoop
+    from reyn.runtime.router_loop import RouterLoop
     return RouterLoop(host=host, chain_id="c1", router_model="standard")
 
 
@@ -127,7 +127,7 @@ def test_mcp_servers_missing_method_falls_back_to_none() -> None:
         def resolve_model(self, name): return "fake-model"
         # Deliberately NO get_mcp_servers method.
 
-    from reyn.chat.router_loop import RouterLoop
+    from reyn.runtime.router_loop import RouterLoop
     loop = RouterLoop(host=_Slim(), chain_id="c1", router_model="standard")
     rs = asyncio.run(loop._build_router_caller_state())
     assert rs.mcp_servers is None

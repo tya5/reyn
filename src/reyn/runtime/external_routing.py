@@ -324,7 +324,7 @@ def make_outbox_interceptor(
         trace / intervention / __end__ display markers that don't
         belong in an external chat surface.
     """
-    from reyn.chat.transport import ExternalRef
+    from reyn.runtime.transport import ExternalRef
 
     async def _interceptor(msg: Any) -> bool:
         reply_to = getattr(msg, "reply_to", None)

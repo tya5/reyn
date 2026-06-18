@@ -19,7 +19,7 @@ import json
 from dataclasses import asdict
 from pathlib import Path
 
-from reyn.chat.session import ChatMessage, _migrate_legacy_chat_message
+from reyn.runtime.session import ChatMessage, _migrate_legacy_chat_message
 
 # ── Constructor: new shape ─────────────────────────────────────────────
 
@@ -224,7 +224,7 @@ def test_load_history_migrates_legacy_lines(tmp_path: Path) -> None:
     """
     # Build a minimal Session-like object that exercises load_history's
     # file-reading code path without booting the full Session.
-    from reyn.chat.session import Session
+    from reyn.runtime.session import Session
 
     session = Session.__new__(Session)  # bypass __init__
     session.history_path = tmp_path / "history.jsonl"

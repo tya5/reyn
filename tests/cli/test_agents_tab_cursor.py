@@ -28,8 +28,8 @@ async def test_agents_tab_includes_agent_rows_in_flat_items(tmp_path):
     movement at all" because the only flat_items were skill rows and
     there were zero skills.
     """
-    from reyn.chat.registry import AgentRegistry
     from reyn.interfaces.tui.widgets.right_panel.agents_tab import render_agents
+    from reyn.runtime.registry import AgentRegistry
 
     def _factory(profile):
         return object()
@@ -63,8 +63,8 @@ async def test_agents_tab_includes_agent_rows_in_flat_items(tmp_path):
 async def test_agents_tab_agent_item_carries_attached_loaded_flags(tmp_path):
     """Tier 2: ``{kind:agent}`` items carry the ``attached``/``loaded`` flags
     so a future ``Space``/``Enter`` action can route by current state."""
-    from reyn.chat.registry import AgentRegistry
     from reyn.interfaces.tui.widgets.right_panel.agents_tab import render_agents
+    from reyn.runtime.registry import AgentRegistry
 
     def _factory(profile):
         return object()

@@ -18,7 +18,7 @@ import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Awaitable, Callable
 
-from reyn.chat.outbox import OutboxMessage
+from reyn.runtime.outbox import OutboxMessage
 
 if TYPE_CHECKING:
     pass
@@ -99,7 +99,7 @@ class PlanRunner:
                     )
 
         async def _run_plan_task() -> None:
-            from reyn.chat.planner import _is_workflow_abort
+            from reyn.runtime.planner import _is_workflow_abort
             clean_exit = False
             result: Any = None
             try:

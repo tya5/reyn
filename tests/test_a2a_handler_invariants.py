@@ -25,13 +25,13 @@ from typing import Any
 
 import pytest
 
-from reyn.chat.outbox import OutboxMessage
-from reyn.chat.services.a2a_handler import A2AHandler
-from reyn.chat.services.chain_manager import ChainManager
-from reyn.chat.services.snapshot_journal import SnapshotJournal
 from reyn.core.events.event_store import EventStore
 from reyn.core.events.events import EventLog
 from reyn.core.events.state_log import StateLog
+from reyn.runtime.outbox import OutboxMessage
+from reyn.runtime.services.a2a_handler import A2AHandler
+from reyn.runtime.services.chain_manager import ChainManager
+from reyn.runtime.services.snapshot_journal import SnapshotJournal
 
 # ---------------------------------------------------------------------------
 # Helpers

@@ -17,7 +17,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from reyn.chat.transport import TransportRef
+    from reyn.runtime.transport import TransportRef
 
 
 @dataclass(frozen=True)

@@ -34,13 +34,13 @@ from types import SimpleNamespace
 
 import pytest
 
-from reyn.chat.session import _embedding_class_needs_missing_extras
 from reyn.config import (
     ActionRetrievalConfig,
     EmbeddingClassSpec,
     EmbeddingConfig,
 )
 from reyn.data.embedding.sentence_transformers_provider import is_available
+from reyn.runtime.session import _embedding_class_needs_missing_extras
 
 # ── 1. Default config value ────────────────────────────────────────────────
 
@@ -216,6 +216,6 @@ def test_probe_is_referenced_in_session_init_source() -> None:
     """
     import inspect
 
-    import reyn.chat.session as session_mod
+    import reyn.runtime.session as session_mod
     src = inspect.getsource(session_mod.Session.__init__)
     assert "_embedding_class_needs_missing_extras" in src

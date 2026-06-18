@@ -42,8 +42,8 @@ from __future__ import annotations
 
 from collections import deque
 
-from reyn.chat.outbox import OutboxMessage
 from reyn.interfaces.slash import slash
+from reyn.runtime.outbox import OutboxMessage
 
 # Cap on the recall list. 5 matches the user mental model of "few
 # recent searches I might want to re-run" without overwhelming the

@@ -25,7 +25,7 @@ from pathlib import Path
 
 import pytest
 
-from reyn.chat.outbox import OutboxMessage
+from reyn.runtime.outbox import OutboxMessage
 
 
 class _FakeInterventions:
@@ -58,7 +58,7 @@ class _FakeSession:
 
 def _build_registry(tmp_path: Path):
     """Real ``AgentRegistry`` with a session factory returning _FakeSession."""
-    from reyn.chat.registry import AgentRegistry
+    from reyn.runtime.registry import AgentRegistry
 
     sessions: dict[str, _FakeSession] = {}
 

@@ -27,10 +27,10 @@ import asyncio
 
 import pytest
 
-from reyn.chat.session import Session
 from reyn.config import OnLimitConfig, SafetyConfig
 from reyn.interfaces.web.a2a_intervention import A2AInterventionBus
 from reyn.interfaces.web.run_registry import RunRegistry
+from reyn.runtime.session import Session
 from reyn.user_intervention import InterventionAnswer, UserIntervention
 
 

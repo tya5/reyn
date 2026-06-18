@@ -13,9 +13,9 @@ from __future__ import annotations
 
 import pytest
 
-from reyn.chat.outbox import OutboxMessage
 from reyn.interfaces.slash import REGISTRY
 from reyn.interfaces.slash.session import session_cmd
+from reyn.runtime.outbox import OutboxMessage
 
 
 class _StubRegistry:

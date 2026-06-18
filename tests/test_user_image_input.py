@@ -23,9 +23,9 @@ from pathlib import Path
 
 import pytest
 
-from reyn.chat.session import ChatMessage
 from reyn.config import MultimodalConfig
 from reyn.interfaces.slash import REGISTRY
+from reyn.runtime.session import ChatMessage
 from reyn.security.permissions.permissions import PermissionResolver
 from reyn.user_intervention import InterventionAnswer, UserIntervention
 
@@ -284,9 +284,9 @@ def _make_history_builder():
     (1-2 messages of a few tokens) are well below any realistic trigger, so
     all turns are returned raw — no elide, no duplication.
     """
-    from reyn.chat.services.router_history_buffer import RouterHistoryBuffer
-    from reyn.chat.session import Session
     from reyn.config import CompactionConfig
+    from reyn.runtime.services.router_history_buffer import RouterHistoryBuffer
+    from reyn.runtime.session import Session
 
     cs = Session.__new__(Session)  # bypass __init__
     cs.history = []  # set by tests

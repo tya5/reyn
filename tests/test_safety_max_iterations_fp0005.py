@@ -28,10 +28,10 @@ import json
 
 import pytest
 
-from reyn.chat.router_loop import RouterLoop
 from reyn.config import OnLimitConfig
 from reyn.llm.llm import LLMToolCallResult
 from reyn.llm.pricing import TokenUsage
+from reyn.runtime.router_loop import RouterLoop
 from reyn.user_intervention import InterventionAnswer, UserIntervention
 from tests.test_router_loop import FakeRouterHost, _ScriptedLLM, text_result
 
@@ -240,7 +240,7 @@ async def test_max_iterations_limit_deny_fires_force_close_wrap_up() -> None:
     # Script: 1 exhaust → limit fires → force-close LLM call returns text
     script = [_loop_exhauster(0), text_result("work done: X; remaining: Y; stopped by limit")]
     llm = _ScriptedLLM(script)
-    from reyn.chat.router_loop import RouterLoop
+    from reyn.runtime.router_loop import RouterLoop
     loop = RouterLoop(
         host=host,
         chain_id="chain-fc-test",

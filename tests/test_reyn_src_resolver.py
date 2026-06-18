@@ -20,7 +20,7 @@ from pathlib import Path
 
 import pytest
 
-from reyn.chat.reyn_src import (
+from reyn.runtime.reyn_src import (
     list_entries,
     read_text,
     resolve_reyn_root,
@@ -145,15 +145,15 @@ def test_list_entries_root_lists_top_level():
 
 
 def test_list_entries_subdir():
-    """Tier 2: listing ``"src/reyn/chat"`` returns the chat layer files
+    """Tier 2: listing ``"src/reyn/runtime"`` returns the chat layer files
     (= router_loop.py, session.py present)."""
     root = resolve_reyn_root()
-    target = safe_resolve_inside(root, "src/reyn/chat")
-    result = list_entries(root, target, "src/reyn/chat")
+    target = safe_resolve_inside(root, "src/reyn/runtime")
+    result = list_entries(root, target, "src/reyn/runtime")
     names = {e["name"] for e in result["entries"]}
     assert "router_loop.py" in names
     assert "session.py" in names
-    assert result["path"] == "src/reyn/chat"
+    assert result["path"] == "src/reyn/runtime"
 
 
 def test_list_entries_on_file_returns_error():

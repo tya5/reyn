@@ -111,10 +111,10 @@ def _make_session_with_t_max(tmp_path: Path, t_max: int):
     ``section_caps_spec_tokens=0`` keeps B_M positive for small T_max.
     ``use_chars4_estimate=True`` makes token counting deterministic.
     """
-    from reyn.chat.session import Session
     from reyn.config import CompactionConfig
     from reyn.core.events.state_log import StateLog
     from reyn.runtime.budget.budget import BudgetTracker, CostConfig
+    from reyn.runtime.session import Session
 
     original = _mb.get_max_input_tokens
     _mb.get_max_input_tokens = lambda model, **kw: t_max  # type: ignore[assignment]
@@ -137,7 +137,7 @@ def _make_session_with_t_max(tmp_path: Path, t_max: int):
 
 
 def _push(session, role: str, content: str) -> None:
-    from reyn.chat.session import ChatMessage
+    from reyn.runtime.session import ChatMessage
     if role == "agent":
         role = "assistant"
     session.history.append(ChatMessage(role=role, content=content, ts=_now()))

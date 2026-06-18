@@ -27,10 +27,10 @@ from typing import Any
 
 import pytest
 
-from reyn.chat.router_loop import RouterLoop
-from reyn.chat.router_tools import _DESCRIBE_SKILL_STRIP_FIELDS
 from reyn.llm.llm import LLMToolCallResult
 from reyn.llm.pricing import TokenUsage
+from reyn.runtime.router_loop import RouterLoop
+from reyn.runtime.router_tools import _DESCRIBE_SKILL_STRIP_FIELDS
 
 # ---------------------------------------------------------------------------
 # Shared test infrastructure (inline to keep test self-contained)
@@ -256,7 +256,7 @@ async def test_describe_skill_routing_absent_in_llm_context(monkeypatch):
         _text_result("Skill test_skill completed."),
     ])
 
-    monkeypatch.setattr("reyn.chat.router_loop.call_llm_tools", scripted)
+    monkeypatch.setattr("reyn.runtime.router_loop.call_llm_tools", scripted)
     await loop.run("run test_skill", [])
 
     # Verify describe_skill was actually called (call 3 in 0-indexed = call_count 3)
@@ -337,7 +337,7 @@ async def test_describe_skill_response_below_attractor_threshold(monkeypatch):
         _text_result("Skill invoked."),
     ])
 
-    monkeypatch.setattr("reyn.chat.router_loop.call_llm_tools", scripted)
+    monkeypatch.setattr("reyn.runtime.router_loop.call_llm_tools", scripted)
     await loop.run("run test_skill", [])
 
     # After describe_skill call, the 4th LLM call has the tool_response
@@ -388,7 +388,7 @@ def test_all_stdlib_skills_describe_below_attractor_threshold():
     safely fit within this budget.
     """
     try:
-        from reyn.chat.session import enumerate_available_skills
+        from reyn.runtime.session import enumerate_available_skills
     except ImportError:
         pytest.skip("enumerate_available_skills not importable")
 

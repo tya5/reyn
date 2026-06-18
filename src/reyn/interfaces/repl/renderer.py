@@ -6,8 +6,8 @@ from io import StringIO
 
 from prompt_toolkit.formatted_text import HTML, AnyFormattedText
 
-from reyn.chat.outbox import OutboxMessage
 from reyn.llm.pricing import TokenUsage
+from reyn.runtime.outbox import OutboxMessage
 
 
 def _meta_prefix(meta: dict) -> str:

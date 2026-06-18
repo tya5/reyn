@@ -34,8 +34,8 @@ from pathlib import Path
 
 import pytest
 
-from reyn.chat.session import ChatMessage, Session
 from reyn.core.events.state_log import StateLog
+from reyn.runtime.session import ChatMessage, Session
 from reyn.security.permissions.permissions import PermissionResolver
 
 

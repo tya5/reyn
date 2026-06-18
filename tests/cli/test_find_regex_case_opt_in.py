@@ -182,10 +182,10 @@ async def test_find_in_buffer_invalid_regex_raises() -> None:
 @pytest.mark.asyncio
 async def test_on_find_with_flags_seeds_router_state() -> None:
     """Tier 2: /find -r preserves the regex flag in router cycle state."""
-    from reyn.chat.outbox import OutboxMessage
     from reyn.interfaces.tui.app import ReynTUIApp
     from reyn.interfaces.tui.app_outbox import OutboxRouter
     from reyn.interfaces.tui.widgets import ConversationView
+    from reyn.runtime.outbox import OutboxMessage
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -210,10 +210,10 @@ async def test_on_find_with_flags_seeds_router_state() -> None:
 @pytest.mark.asyncio
 async def test_on_find_invalid_regex_emits_error_status() -> None:
     """Tier 2: malformed regex surfaces an error status, clears cycle state."""
-    from reyn.chat.outbox import OutboxMessage
     from reyn.interfaces.tui.app import ReynTUIApp
     from reyn.interfaces.tui.app_outbox import OutboxRouter
     from reyn.interfaces.tui.widgets import ConversationView
+    from reyn.runtime.outbox import OutboxMessage
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -239,10 +239,10 @@ async def test_on_find_invalid_regex_emits_error_status() -> None:
 @pytest.mark.asyncio
 async def test_cycle_find_preserves_flags() -> None:
     """Tier 2: Ctrl+G re-search uses the same flags as the initial /find."""
-    from reyn.chat.outbox import OutboxMessage
     from reyn.interfaces.tui.app import ReynTUIApp
     from reyn.interfaces.tui.app_outbox import OutboxRouter
     from reyn.interfaces.tui.widgets import ConversationView
+    from reyn.runtime.outbox import OutboxMessage
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -280,10 +280,10 @@ async def test_cycle_find_preserves_flags() -> None:
 @pytest.mark.asyncio
 async def test_flag_only_no_query_shows_usage_hint() -> None:
     """Tier 2: ``/find -r`` with no query falls through to the usage hint."""
-    from reyn.chat.outbox import OutboxMessage
     from reyn.interfaces.tui.app import ReynTUIApp
     from reyn.interfaces.tui.app_outbox import OutboxRouter
     from reyn.interfaces.tui.widgets import ConversationView
+    from reyn.runtime.outbox import OutboxMessage
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:

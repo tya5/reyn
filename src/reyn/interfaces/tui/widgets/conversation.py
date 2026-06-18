@@ -55,7 +55,6 @@ from textual.widgets import RichLog, Static
 # Textual-API-change warning in ``_richlog_start_line``.
 logger = logging.getLogger(__name__)
 
-from reyn.chat.outbox import OutboxMessage
 from reyn.interfaces.tui._palette import (
     _AMBER,
     _CORAL,
@@ -69,6 +68,7 @@ from reyn.interfaces.tui._palette import (
     _TEXT_MUTED,
     _TEXT_NEUTRAL,
 )
+from reyn.runtime.outbox import OutboxMessage
 
 from ._inline_row_manager import _InlineRowManager
 from .async_stack_panel import AsyncStackPanel

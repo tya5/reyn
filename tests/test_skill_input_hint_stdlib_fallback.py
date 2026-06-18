@@ -43,7 +43,7 @@ from pathlib import Path
 
 import yaml
 
-from reyn.chat.session import (
+from reyn.runtime.session import (
     _extract_skill_input_hint,
     enumerate_available_skills,
 )

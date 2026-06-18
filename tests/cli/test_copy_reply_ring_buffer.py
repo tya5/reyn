@@ -122,8 +122,8 @@ def test_slash_copy_forwards_arg_to_outbox_sentinel() -> None:
     """
     import asyncio
 
-    from reyn.chat.outbox import OutboxMessage
     from reyn.interfaces.slash.copy import copy_cmd
+    from reyn.runtime.outbox import OutboxMessage
 
     sent: list[OutboxMessage] = []
 

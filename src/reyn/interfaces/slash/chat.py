@@ -10,12 +10,12 @@ from __future__ import annotations
 import time
 from typing import TYPE_CHECKING
 
-from reyn.chat.outbox import OutboxMessage
-from reyn.chat.session import _run_meta, _run_short
 from reyn.interfaces.slash import reply, reply_error, slash
+from reyn.runtime.outbox import OutboxMessage
+from reyn.runtime.session import _run_meta, _run_short
 
 if TYPE_CHECKING:
-    from reyn.chat.session import Session
+    from reyn.runtime.session import Session
 
 
 @slash("list", summary="List running skills and pending interventions")

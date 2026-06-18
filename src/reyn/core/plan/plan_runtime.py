@@ -27,16 +27,16 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from reyn.chat.planner import (
+from reyn.core.plan.plan_resume_analyzer import PlanResumePlan
+from reyn.runtime.planner import (
     Plan,
     PlanExecutionResult,
     execute_plan,
 )
-from reyn.core.plan.plan_resume_analyzer import PlanResumePlan
 
 if TYPE_CHECKING:
-    from reyn.chat.router_loop import RouterLoopHost
     from reyn.config import PlannerStepCompactionConfig
+    from reyn.runtime.router_loop import RouterLoopHost
     from reyn.services.compaction.engine import CompactionEngine
 
 

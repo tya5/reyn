@@ -22,9 +22,9 @@ import asyncio
 
 import pytest
 
-from reyn.chat.router_loop import RouterLoop
 from reyn.llm.llm import LLMToolCallResult
 from reyn.llm.pricing import TokenUsage
+from reyn.runtime.router_loop import RouterLoop
 from tests.test_router_loop import (
     FakeRouterHost,
     _ScriptedLLM,
@@ -227,7 +227,7 @@ class _SessionWithCancelSeam:
         return self._loop_driver.is_cancel_requested()
 
     async def cancel_inflight(self) -> str:
-        from reyn.chat.session import Session
+        from reyn.runtime.session import Session
         # Call the real method (unbound, passing self)
         return await Session.cancel_inflight(self)  # type: ignore[arg-type]
 

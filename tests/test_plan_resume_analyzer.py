@@ -6,12 +6,12 @@ interrupted_with_child.
 """
 from __future__ import annotations
 
-from reyn.chat.planner import Plan, PlanStep
 from reyn.core.plan import (
     PlanResumeAnalyzer,
     PlanResumePlan,
     PlanSnapshot,
 )
+from reyn.runtime.planner import Plan, PlanStep
 
 
 def _decomp() -> Plan:

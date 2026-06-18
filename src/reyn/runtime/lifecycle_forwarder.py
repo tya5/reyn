@@ -1,6 +1,6 @@
 """ChatLifecycleForwarder — session-scoped event subscriber for non-skill events.
 
-Sibling of :class:`reyn.chat.forwarder.ChatEventForwarder`.  Where the
+Sibling of :class:`reyn.runtime.forwarder.ChatEventForwarder`.  Where the
 skill forwarder bridges per-skill events (``phase_*`` / ``workflow_*`` /
 ``llm_*`` / ``act_executed``) into the chat outbox, this forwarder
 bridges **session-level lifecycle events** that are not tied to a
@@ -15,14 +15,14 @@ Designed for growth — additional lifecycle handlers (attach / detach
 notifications, budget warnings, session-level errors) can land here
 without expanding the skill forwarder's per-skill contract.
 
-Wired up in :class:`reyn.chat.session.Session` via
+Wired up in :class:`reyn.runtime.session.Session` via
 ``self._chat_events.add_subscriber(ChatLifecycleForwarder(self.outbox))``.
 """
 from __future__ import annotations
 
 import asyncio
 
-from reyn.chat.outbox import OutboxMessage
+from reyn.runtime.outbox import OutboxMessage
 from reyn.schemas.models import Event
 
 

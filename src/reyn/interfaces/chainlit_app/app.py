@@ -63,7 +63,7 @@ from reyn.interfaces.chainlit_app.uploads import collect_image_blocks
 from reyn.interfaces.chainlit_app.web_routing import resolve_web_session
 
 if TYPE_CHECKING:
-    from reyn.chat.registry import AgentRegistry
+    from reyn.runtime.registry import AgentRegistry
 
 _DRAIN_KEY = "reyn_drain_task"
 # FP-0043 S4b-2: the per-browser web Session resolved at chat-start, stored on the
@@ -127,7 +127,7 @@ async def _get_or_build_registry() -> "AgentRegistry":
     The web (``reyn.interfaces.web.deps``) and chainlit gateways intentionally do
     not share their bootstrap helper today: web/deps imports fastapi at
     module level, so chainlit can't reach it without the ``[web]``
-    extra. A follow-on can extract a shared ``reyn.chat.bootstrap``
+    extra. A follow-on can extract a shared ``reyn.runtime.bootstrap``
     when there is a third surface (= when the duplication actually
     costs something).
     """
@@ -138,13 +138,13 @@ async def _get_or_build_registry() -> "AgentRegistry":
 
         import argparse
 
-        from reyn.chat.profile import AgentProfile
-        from reyn.chat.registry import AgentRegistry
-        from reyn.chat.scoped_session_factory import build_scoped_chat_session
         from reyn.config import _find_project_root, load_project_context
         from reyn.core.events.state_log import StateLog
         from reyn.interfaces.cli.invocation_context import InvocationContext
         from reyn.runtime.budget.budget import BudgetTracker
+        from reyn.runtime.profile import AgentProfile
+        from reyn.runtime.registry import AgentRegistry
+        from reyn.runtime.scoped_session_factory import build_scoped_chat_session
         from reyn.security.permissions.permissions import PermissionResolver
 
         # Reuse the same yaml-loading path the CLI uses so reyn.yaml /
@@ -618,7 +618,7 @@ async def _on_chat_start() -> None:
     # This is the same id the TUI surface registers under
     # (``tui/app.py``); only one of TUI / chainlit is attached
     # to a given process so there's no collision.
-    from reyn.chat.session import DEFAULT_CHAT_CHANNEL_ID
+    from reyn.runtime.session import DEFAULT_CHAT_CHANNEL_ID
     try:
         session.register_intervention_listener(DEFAULT_CHAT_CHANNEL_ID)
     except AttributeError:
@@ -774,7 +774,7 @@ async def _persist_agent_role(registry, session, new_role: str) -> None:
     """
     from dataclasses import replace
 
-    from reyn.chat.profile import AgentProfile
+    from reyn.runtime.profile import AgentProfile
 
     agent_name = getattr(session, "agent_name", None)
     if not agent_name:
@@ -1047,7 +1047,7 @@ async def _on_chat_end() -> None:
         registry = await _get_or_build_registry()
         session = _current_session()
         if session is not None:
-            from reyn.chat.session import DEFAULT_CHAT_CHANNEL_ID
+            from reyn.runtime.session import DEFAULT_CHAT_CHANNEL_ID
             session.unregister_intervention_listener(DEFAULT_CHAT_CHANNEL_ID)
     except Exception:
         pass

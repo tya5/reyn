@@ -20,7 +20,6 @@ from pathlib import Path
 
 import pytest
 
-from reyn.chat.planner import Plan, PlanStep
 from reyn.core.plan import (
     PlanRegistry,
     PlanResumeAnalyzer,
@@ -33,6 +32,7 @@ from reyn.core.plan import (
     step_result_file_path,
     write_decomposition,
 )
+from reyn.runtime.planner import Plan, PlanStep
 
 
 def _decomp() -> Plan:

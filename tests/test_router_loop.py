@@ -13,9 +13,9 @@ from typing import Any
 
 import pytest
 
-from reyn.chat.router_loop import _UNIVERSAL_WRAPPER_NAMES, RouterLoop, _build_hot_list_aliases
 from reyn.llm.llm import LLMToolCallResult
 from reyn.llm.pricing import TokenUsage
+from reyn.runtime.router_loop import _UNIVERSAL_WRAPPER_NAMES, RouterLoop, _build_hot_list_aliases
 
 # ---------------------------------------------------------------------------
 # Minimal EventLog stub for tests
@@ -253,7 +253,7 @@ async def test_chitchat_no_tools(monkeypatch):
 
     scripted = _ScriptedLLM([text_result("hello")])
 
-    monkeypatch.setattr("reyn.chat.router_loop.call_llm_tools", scripted)
+    monkeypatch.setattr("reyn.runtime.router_loop.call_llm_tools", scripted)
     await loop.run("hi", [])
 
     (msg,) = host.outbox
@@ -278,7 +278,7 @@ async def test_single_skill_round(monkeypatch):
     ]
     scripted = _ScriptedLLM(rounds)
 
-    monkeypatch.setattr("reyn.chat.router_loop.call_llm_tools", scripted)
+    monkeypatch.setattr("reyn.runtime.router_loop.call_llm_tools", scripted)
     await loop.run("run my skill", [])
 
     (skill_call,) = host.skill_calls
@@ -315,7 +315,7 @@ async def test_two_round_sequential(monkeypatch):
         messages_seen.append(list(messages))
         return rounds[len(messages_seen) - 1]
 
-    monkeypatch.setattr("reyn.chat.router_loop.call_llm_tools", mock_llm)
+    monkeypatch.setattr("reyn.runtime.router_loop.call_llm_tools", mock_llm)
     await loop.run("process the file", [])
 
     # Round 3 messages should include tool results from both prior rounds
@@ -348,7 +348,7 @@ async def test_parallel_tool_calls_executed(monkeypatch):
     ]
     scripted = _ScriptedLLM(rounds)
 
-    monkeypatch.setattr("reyn.chat.router_loop.call_llm_tools", scripted)
+    monkeypatch.setattr("reyn.runtime.router_loop.call_llm_tools", scripted)
     await loop.run("run both", [])
 
     called_skills = {c["skill"] for c in host.skill_calls}
@@ -366,7 +366,7 @@ async def test_max_iterations_exhausted(monkeypatch):
     always_tool = tool_result([{"name": "bogus_tool", "args": {}}])
     scripted = _ScriptedLLM([always_tool] * 3)
 
-    monkeypatch.setattr("reyn.chat.router_loop.call_llm_tools", scripted)
+    monkeypatch.setattr("reyn.runtime.router_loop.call_llm_tools", scripted)
     await loop.run("do stuff", [])
 
     assert scripted.call_count == 3
@@ -393,7 +393,7 @@ async def test_unknown_tool_returns_error_in_result(monkeypatch):
         messages_captured.append(list(messages))
         return rounds[len(messages_captured) - 1]
 
-    monkeypatch.setattr("reyn.chat.router_loop.call_llm_tools", mock_llm)
+    monkeypatch.setattr("reyn.runtime.router_loop.call_llm_tools", mock_llm)
     await loop.run("try bogus", [])
 
     # Find the tool result message from round 1
@@ -430,7 +430,7 @@ async def test_remember_shared_writes_file_and_regenerates_index(monkeypatch):
     ]
     scripted = _ScriptedLLM(rounds)
 
-    monkeypatch.setattr("reyn.chat.router_loop.call_llm_tools", scripted)
+    monkeypatch.setattr("reyn.runtime.router_loop.call_llm_tools", scripted)
     await loop.run("remember: I'm a developer", [])
 
     # file_write should have been called with the right path
@@ -532,7 +532,7 @@ async def test_delegate_to_agent(monkeypatch):
     ]
     scripted = _ScriptedLLM(rounds)
 
-    monkeypatch.setattr("reyn.chat.router_loop.call_llm_tools", scripted)
+    monkeypatch.setattr("reyn.runtime.router_loop.call_llm_tools", scripted)
     await loop.run("send to peer", [])
 
     (agent_send,) = host.agent_sends
@@ -571,7 +571,7 @@ async def test_delegate_does_not_re_delegate_in_same_turn(monkeypatch):
     }])
     scripted = _ScriptedLLM([delegate_round] * 5)
 
-    monkeypatch.setattr("reyn.chat.router_loop.call_llm_tools", scripted)
+    monkeypatch.setattr("reyn.runtime.router_loop.call_llm_tools", scripted)
     await loop.run("delegate", [])
 
     # Exactly one delegate dispatch; loop exited after the first iteration.
@@ -603,7 +603,7 @@ async def test_dedupe_duplicate_async_tool_calls_in_same_round(monkeypatch):
     ])
     scripted = _ScriptedLLM([duplicate_round])
 
-    monkeypatch.setattr("reyn.chat.router_loop.call_llm_tools", scripted)
+    monkeypatch.setattr("reyn.runtime.router_loop.call_llm_tools", scripted)
     await loop.run("send", [])
 
     # Only one send_to_agent — duplicate suppressed.
@@ -640,7 +640,7 @@ async def test_dedupe_does_not_collapse_distinct_async_args(monkeypatch):
     ])
     scripted = _ScriptedLLM([distinct_round])
 
-    monkeypatch.setattr("reyn.chat.router_loop.call_llm_tools", scripted)
+    monkeypatch.setattr("reyn.runtime.router_loop.call_llm_tools", scripted)
     await loop.run("send two tasks", [])
 
     # Both dispatch — different args.
@@ -679,7 +679,7 @@ async def test_dedupe_does_not_apply_to_non_invoke_sync_tool_calls(monkeypatch):
     ]
     scripted = _ScriptedLLM(rounds)
 
-    monkeypatch.setattr("reyn.chat.router_loop.call_llm_tools", scripted)
+    monkeypatch.setattr("reyn.runtime.router_loop.call_llm_tools", scripted)
     await loop.run("describe", [])
 
     # No dedupe events for non-invoke_skill sync tools.
@@ -721,7 +721,7 @@ async def test_dedupe_duplicate_invoke_skill_in_same_round(monkeypatch):
     ])
     scripted = _ScriptedLLM([duplicate_round, text_result("done")])
 
-    monkeypatch.setattr("reyn.chat.router_loop.call_llm_tools", scripted)
+    monkeypatch.setattr("reyn.runtime.router_loop.call_llm_tools", scripted)
     await loop.run("improve the skill", [])
 
     # Only one skill invocation — two duplicates suppressed.
@@ -762,7 +762,7 @@ async def test_dedupe_does_not_collapse_distinct_invoke_skill_args(monkeypatch):
     ])
     scripted = _ScriptedLLM([distinct_round, text_result("done")])
 
-    monkeypatch.setattr("reyn.chat.router_loop.call_llm_tools", scripted)
+    monkeypatch.setattr("reyn.runtime.router_loop.call_llm_tools", scripted)
     await loop.run("run two skills", [])
 
     # Both skills executed — different args, no collapse.
@@ -796,7 +796,7 @@ async def test_tool_call_deduped_event_emitted_for_invoke_skill(monkeypatch):
     ])
     scripted = _ScriptedLLM([duplicate_round, text_result("done")])
 
-    monkeypatch.setattr("reyn.chat.router_loop.call_llm_tools", scripted)
+    monkeypatch.setattr("reyn.runtime.router_loop.call_llm_tools", scripted)
     await loop.run("run skill", [])
 
     deduped_events = [
@@ -825,7 +825,7 @@ async def test_forget_memory_deletes_file_and_regenerates_index(monkeypatch):
     ]
     scripted = _ScriptedLLM(rounds)
 
-    monkeypatch.setattr("reyn.chat.router_loop.call_llm_tools", scripted)
+    monkeypatch.setattr("reyn.runtime.router_loop.call_llm_tools", scripted)
     await loop.run("forget my role", [])
 
     assert "/memory/shared/user_role.md" in host.file_deletes
@@ -850,7 +850,7 @@ async def test_history_appended_to_messages(monkeypatch):
         messages_seen.append(list(messages))
         return text_result("reply")
 
-    monkeypatch.setattr("reyn.chat.router_loop.call_llm_tools", mock_llm)
+    monkeypatch.setattr("reyn.runtime.router_loop.call_llm_tools", mock_llm)
     await loop.run("new message", history)
 
     first_call_messages = messages_seen[0]
@@ -889,7 +889,7 @@ async def test_unknown_tool_name_returns_error_not_dispatched(monkeypatch):
         messages_captured.append(list(messages))
         return rounds[len(messages_captured) - 1]
 
-    monkeypatch.setattr("reyn.chat.router_loop.call_llm_tools", mock_llm)
+    monkeypatch.setattr("reyn.runtime.router_loop.call_llm_tools", mock_llm)
     await loop.run("read README.md", [])
 
     # host.file_read must NOT have been called.
@@ -926,7 +926,7 @@ async def test_tool_names_populated_per_run(monkeypatch):
     loop = RouterLoop(host=host_no_file, chain_id="chain-test")
 
     scripted1 = _ScriptedLLM([text_result("ok")])
-    monkeypatch.setattr("reyn.chat.router_loop.call_llm_tools", scripted1)
+    monkeypatch.setattr("reyn.runtime.router_loop.call_llm_tools", scripted1)
     await loop.run("hello", [])
 
     names_no_file = frozenset(loop._tool_names)
@@ -949,7 +949,7 @@ async def test_tool_names_populated_per_run(monkeypatch):
     loop2 = RouterLoop(host=host_with_file, chain_id="chain-test-2")
 
     scripted2 = _ScriptedLLM([text_result("ok")])
-    monkeypatch.setattr("reyn.chat.router_loop.call_llm_tools", scripted2)
+    monkeypatch.setattr("reyn.runtime.router_loop.call_llm_tools", scripted2)
     await loop2.run("hello", [])
 
     names_with_file = frozenset(loop2._tool_names)
@@ -965,7 +965,7 @@ async def test_tool_names_populated_per_run(monkeypatch):
     loop3 = RouterLoop(host=host_with_write, chain_id="chain-test-3")
 
     scripted3 = _ScriptedLLM([text_result("ok")])
-    monkeypatch.setattr("reyn.chat.router_loop.call_llm_tools", scripted3)
+    monkeypatch.setattr("reyn.runtime.router_loop.call_llm_tools", scripted3)
     await loop3.run("hello", [])
 
     names_with_write = frozenset(loop3._tool_names)
@@ -992,7 +992,7 @@ async def test_known_tool_still_dispatches(monkeypatch):
         messages_captured.append(list(messages))
         return rounds[len(messages_captured) - 1]
 
-    monkeypatch.setattr("reyn.chat.router_loop.call_llm_tools", mock_llm)
+    monkeypatch.setattr("reyn.runtime.router_loop.call_llm_tools", mock_llm)
     await loop.run("what skills do you have?", [])
 
     # The tool result should not be an error
@@ -1026,7 +1026,7 @@ async def test_dispatch_tool_emits_tool_called_and_tool_returned_events(monkeypa
     ]
     scripted = _ScriptedLLM(rounds)
 
-    monkeypatch.setattr("reyn.chat.router_loop.call_llm_tools", scripted)
+    monkeypatch.setattr("reyn.runtime.router_loop.call_llm_tools", scripted)
     await loop.run("run skill", [])
 
     event_types = [e["type"] for e in host.events.emitted]
@@ -1051,7 +1051,7 @@ async def test_dispatch_tool_emits_tool_failed_on_unknown_tool(monkeypatch):
         messages_captured.append(list(messages))
         return rounds[len(messages_captured) - 1]
 
-    monkeypatch.setattr("reyn.chat.router_loop.call_llm_tools", mock_llm)
+    monkeypatch.setattr("reyn.runtime.router_loop.call_llm_tools", mock_llm)
     await loop.run("try bogus", [])
 
     event_types = [e["type"] for e in host.events.emitted]
@@ -1087,7 +1087,7 @@ async def test_invoke_skill_with_unknown_skill_name_rejected(monkeypatch):
         messages_captured.append(list(messages))
         return rounds[len(messages_captured) - 1]
 
-    monkeypatch.setattr("reyn.chat.router_loop.call_llm_tools", mock_llm)
+    monkeypatch.setattr("reyn.runtime.router_loop.call_llm_tools", mock_llm)
     await loop.run("run bogus skill", [])
 
     # No skill should have been spawned
@@ -1122,7 +1122,7 @@ async def test_invoke_skill_with_known_name_dispatches(monkeypatch):
     ]
     scripted = _ScriptedLLM(rounds)
 
-    monkeypatch.setattr("reyn.chat.router_loop.call_llm_tools", scripted)
+    monkeypatch.setattr("reyn.runtime.router_loop.call_llm_tools", scripted)
     await loop.run("run real skill", [])
 
     (skill_call,) = host.skill_calls
@@ -1140,7 +1140,7 @@ async def test_invoke_skill_layer_b_catches_bypass():
     loop = RouterLoop(host=host, chain_id="chain-test")
 
     # Prime the catalog (normally done in run())
-    from reyn.chat.router_tools import build_tools
+    from reyn.runtime.router_tools import build_tools
     tools = build_tools(host.list_available_skills(), host.list_available_agents())
     loop._catalog = {t["function"]["name"]: t for t in tools}
     loop._tool_names = frozenset(loop._catalog.keys())
@@ -1235,7 +1235,7 @@ async def test_no_events_attribute_needed_for_unknown_tool_path(monkeypatch):
         messages_captured.append(list(messages))
         return rounds[len(messages_captured) - 1]
 
-    monkeypatch.setattr("reyn.chat.router_loop.call_llm_tools", mock_llm)
+    monkeypatch.setattr("reyn.runtime.router_loop.call_llm_tools", mock_llm)
     await loop.run("try nonexistent", [])
 
     round2_messages = messages_captured[1]

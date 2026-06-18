@@ -67,8 +67,8 @@ async def test_empty_hint_names_side_panel_and_tabs() -> None:
 @pytest.mark.asyncio
 async def test_empty_hint_hides_after_first_message() -> None:
     """Tier 2b: hint hides after first message — empty-conv-pane subsystem contract."""
-    from reyn.chat.outbox import OutboxMessage
     from reyn.interfaces.tui.widgets import ConversationView
+    from reyn.runtime.outbox import OutboxMessage
 
     app = _make_app()
     async with app.run_test(headless=True, size=(120, 30)) as pilot:

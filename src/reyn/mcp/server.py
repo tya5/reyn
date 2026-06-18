@@ -36,12 +36,12 @@ import asyncio
 import logging
 from typing import TYPE_CHECKING
 
-from reyn.chat.agent_locks import get_agent_lock as _get_agent_lock
+from reyn.runtime.agent_locks import get_agent_lock as _get_agent_lock
 
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
-    from reyn.chat.registry import AgentRegistry
+    from reyn.runtime.registry import AgentRegistry
     from reyn.user_intervention import RequestBus
 
 
@@ -61,7 +61,7 @@ _IDLE_GRACE_SECONDS: float = 0.05
 
 
 # Per-agent serialization lock — shared across ALL transport layers (MCP +
-# A2A).  ``_get_agent_lock`` is imported from ``reyn.chat.agent_locks`` at the
+# A2A).  ``_get_agent_lock`` is imported from ``reyn.runtime.agent_locks`` at the
 # top of this file so MCP and A2A share the SAME lock object per agent name.
 # See that module for the full rationale.
 #
@@ -214,9 +214,9 @@ async def send_to_agent_impl(
 
     session = await _get_session(registry, agent_name, sid=sid)
 
-    from reyn.chat.message_bus import MessageBus  # noqa: PLC0415 — lazy import
-    from reyn.chat.session import _new_chain_id  # noqa: PLC0415 — lazy import
-    from reyn.chat.transport import McpRef  # noqa: PLC0415 — lazy import
+    from reyn.runtime.message_bus import MessageBus  # noqa: PLC0415 — lazy import
+    from reyn.runtime.session import _new_chain_id  # noqa: PLC0415 — lazy import
+    from reyn.runtime.transport import McpRef  # noqa: PLC0415 — lazy import
 
     chain_id = _new_chain_id()
     req_id = f"mcp-{chain_id}"
@@ -500,7 +500,7 @@ def build_server(
                 # — driven inline by MessageBus.request). The single shared session
                 # preserves the request-response continuity (running_skills pumped
                 # on the next call).
-                from reyn.chat.mcp_routing import mcp_session_id, resolve_mcp_session
+                from reyn.runtime.mcp_routing import mcp_session_id, resolve_mcp_session
                 resolve_mcp_session(registry, agent_name)
                 result = await send_to_agent_impl(
                     registry,
@@ -554,7 +554,7 @@ def build_server(
             try:
                 # FP-0043 S4b-6: the run lives on the shared mcp session — resolve
                 # it (not "main") so the pending iv is answered on the right session.
-                from reyn.chat.mcp_routing import resolve_mcp_session
+                from reyn.runtime.mcp_routing import resolve_mcp_session
                 session = resolve_mcp_session(registry, agent_name)
             except Exception as exc:  # noqa: BLE001 — defensive
                 return [TextContent(

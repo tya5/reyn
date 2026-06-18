@@ -14,8 +14,8 @@ Two forms:
 """
 from __future__ import annotations
 
-from reyn.chat.outbox import OutboxMessage
 from reyn.interfaces.slash import reply, reply_error, slash
+from reyn.runtime.outbox import OutboxMessage
 
 
 @slash(

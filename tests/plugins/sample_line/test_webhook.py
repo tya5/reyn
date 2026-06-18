@@ -175,7 +175,7 @@ def test_user_text_message_dispatches_to_agent(_line_client):
     assert payload["text"] == "hello LINE bot"
     assert payload["sender"] == "line:user:U456"
 
-    from reyn.chat.transport import ExternalRef
+    from reyn.runtime.transport import ExternalRef
     assert isinstance(payload["reply_to"], ExternalRef)
     assert payload["reply_to"].transport == "line"
     assert payload["reply_to"].destination["reply_token"] == "TOK1"

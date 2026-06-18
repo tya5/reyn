@@ -24,8 +24,8 @@ from typing import Any
 
 import pytest
 
-from reyn.chat.router_loop import RouterLoop
-from reyn.chat.router_tools import build_tools
+from reyn.runtime.router_loop import RouterLoop
+from reyn.runtime.router_tools import build_tools
 
 _SAMPLE_SKILLS = [{"name": "example_skill", "description": "An example skill"}]
 _SAMPLE_AGENTS = [{"name": "peer_agent", "role": "Peer"}]
@@ -208,7 +208,7 @@ def test_get_dispatch_kind_resolves_universal_wrappers() -> None:
     Wrappers ship with dispatch_kind='sync' (= default) in the
     ToolDefinition; the registry resolution must surface that.
     """
-    from reyn.chat.router_tools import get_dispatch_kind
+    from reyn.runtime.router_tools import get_dispatch_kind
     for w in ("list_actions", "describe_action", "invoke_action"):
         assert get_dispatch_kind(w) == "sync"
 
@@ -230,7 +230,7 @@ def test_wrappers_are_in_router_loop_dispatch_set() -> None:
     catalog also lands in the dispatch set, or the next maintainer
     sees this test fail immediately.
     """
-    from reyn.chat.router_loop import RouterLoop
+    from reyn.runtime.router_loop import RouterLoop
     for wrapper in (
         "list_actions", "search_actions",
         "describe_action", "invoke_action",

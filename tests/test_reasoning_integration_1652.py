@@ -18,12 +18,12 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 
-from reyn.chat.services import MemoryService, RouterHostAdapter
-from reyn.chat.session import ChatMessage, Session
 from reyn.config import ReasoningConfig
 from reyn.core.events.events import EventLog
 from reyn.core.events.state_log import StateLog
 from reyn.llm.model_resolver import ModelResolver
+from reyn.runtime.services import MemoryService, RouterHostAdapter
+from reyn.runtime.session import ChatMessage, Session
 
 _REASONING = "REYN_1652_THOUGHTS: 17*23 = 391."
 

@@ -42,8 +42,8 @@ from datetime import datetime
 
 import pytest
 
-from reyn.chat.services.intervention_registry import InterventionRegistry
-from reyn.chat.session import PendingOpView, Session
+from reyn.runtime.services.intervention_registry import InterventionRegistry
+from reyn.runtime.session import PendingOpView, Session
 from reyn.user_intervention import (
     InterventionAnswer,
     UserIntervention,

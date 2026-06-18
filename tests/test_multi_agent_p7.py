@@ -35,12 +35,12 @@ from pathlib import Path
 
 import pytest
 
-from reyn.chat.profile import AgentProfile
-from reyn.chat.registry import AgentRegistry
-from reyn.chat.services.chain_manager import ChainManager
-from reyn.chat.session import Session
-from reyn.chat.topology import Topology
 from reyn.core.events.state_log import StateLog
+from reyn.runtime.profile import AgentProfile
+from reyn.runtime.registry import AgentRegistry
+from reyn.runtime.services.chain_manager import ChainManager
+from reyn.runtime.session import Session
+from reyn.runtime.topology import Topology
 
 # ---------------------------------------------------------------------------
 # Helpers shared across tests
@@ -240,9 +240,9 @@ _PHASE_NAME_LITERAL_RE = re.compile(r'"[a-z][a-z_]*_phase"')
 # components the coverage audit identified: topology dispatch, agent
 # registry, and chain manager.
 _P7_AUDIT_MODULES: tuple[str, ...] = (
-    "src/reyn/chat/topology.py",
-    "src/reyn/chat/registry.py",
-    "src/reyn/chat/services/chain_manager.py",
+    "src/reyn/runtime/topology.py",
+    "src/reyn/runtime/registry.py",
+    "src/reyn/runtime/services/chain_manager.py",
 )
 
 
@@ -264,9 +264,9 @@ def test_os_topology_dispatch_has_no_skill_specific_strings():
     code it is a violation.  This test is a static grep regression net.
 
     Scope (three files):
-      - src/reyn/chat/topology.py  — topology dispatch (Topology.can_send)
-      - src/reyn/chat/registry.py  — AgentRegistry (topology permit, notify_chain_discarded)
-      - src/reyn/chat/services/chain_manager.py — chain lifecycle
+      - src/reyn/runtime/topology.py  — topology dispatch (Topology.can_send)
+      - src/reyn/runtime/registry.py  — AgentRegistry (topology permit, notify_chain_discarded)
+      - src/reyn/runtime/services/chain_manager.py — chain lifecycle
 
     Two checks are performed per file:
       1. No known skill name appears as a string literal.

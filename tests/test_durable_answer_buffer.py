@@ -26,10 +26,10 @@ import asyncio
 import json
 from pathlib import Path
 
-from reyn.chat.services.snapshot_journal import SnapshotJournal
-from reyn.chat.session import Session
 from reyn.core.events.agent_snapshot import AgentSnapshot
 from reyn.core.events.state_log import StateLog
+from reyn.runtime.services.snapshot_journal import SnapshotJournal
+from reyn.runtime.session import Session
 from reyn.user_intervention import InterventionAnswer
 
 # ---------------------------------------------------------------------------

@@ -6,8 +6,8 @@ pushes the modal screen. CUI mode silently ignores the unknown kind.
 """
 from __future__ import annotations
 
-from reyn.chat.outbox import OutboxMessage
 from reyn.interfaces.slash import slash
+from reyn.runtime.outbox import OutboxMessage
 
 
 @slash("donut", summary="Andy Sloane's spinning ASCII donut", hidden=True)

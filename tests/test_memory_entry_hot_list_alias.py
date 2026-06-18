@@ -27,7 +27,7 @@ from pathlib import Path
 
 import pytest
 
-from reyn.chat.router_loop import (
+from reyn.runtime.router_loop import (
     _enumerate_shared_memory_entries,
     _resource_alias_metadata,
 )

@@ -16,8 +16,8 @@ from pathlib import Path
 
 import pytest
 
-from reyn.chat.session import Session
 from reyn.core.events.state_log import StateLog
+from reyn.runtime.session import Session
 
 
 def _make_session(tmp_path: Path, *, agent_name: str = "alpha") -> Session:
@@ -184,11 +184,11 @@ async def test_plan_discard_deletes_decomposition_artifact(tmp_path, monkeypatch
     session.is_attached = True
 
     # Pre-create an artifact file at the production path.
-    from reyn.chat.planner import Plan, PlanStep
     from reyn.core.plan.decomposition import (
         decomposition_path,
         write_decomposition,
     )
+    from reyn.runtime.planner import Plan, PlanStep
     agent_state_dir = (
         Path(".reyn") / "agents" / session.agent_name / "state"
     )
@@ -327,8 +327,8 @@ async def test_plan_resume_unknown_step_reports_error(tmp_path, monkeypatch):
 
     from pathlib import Path
 
-    from reyn.chat.planner import Plan, PlanStep
     from reyn.core.plan import PlanRegistry, write_decomposition
+    from reyn.runtime.planner import Plan, PlanStep
     agent_state_dir = (
         Path(".reyn") / "agents" / session.agent_name / "state"
     )
@@ -359,8 +359,8 @@ async def test_plan_resume_clears_target_step_results(tmp_path, monkeypatch):
 
     from pathlib import Path
 
-    from reyn.chat.planner import Plan, PlanStep
     from reyn.core.plan import PlanRegistry, write_decomposition
+    from reyn.runtime.planner import Plan, PlanStep
     agent_state_dir = (
         Path(".reyn") / "agents" / session.agent_name / "state"
     )

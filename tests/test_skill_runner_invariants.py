@@ -13,8 +13,8 @@ from typing import Any
 
 import pytest
 
-from reyn.chat.services.skill_runner import SkillRunner
 from reyn.core.events.events import EventLog
+from reyn.runtime.services.skill_runner import SkillRunner
 
 # ---------------------------------------------------------------------------
 # Helpers — minimal fakes and SkillRunner factory
@@ -154,7 +154,7 @@ def test_dispatch_spawns_task_in_running_dict(tmp_path, monkeypatch):
     """
     # Patch resolve_skill_path and load_dsl_skill in skill_runner module so
     # the runner doesn't try to load a real skill file.
-    import reyn.chat.services.skill_runner as sr_mod
+    import reyn.runtime.services.skill_runner as sr_mod
 
     dummy_dir = tmp_path / "fake_skill"
     dummy_dir.mkdir()
@@ -207,7 +207,7 @@ def test_cancel_all_during_shutdown_graceful(tmp_path, monkeypatch):
     The done-callback (_drop_interventions_for_run) is exercised
     implicitly — if it raised, the gather would surface it.
     """
-    import reyn.chat.services.skill_runner as sr_mod
+    import reyn.runtime.services.skill_runner as sr_mod
 
     dummy_dir = tmp_path / "fake_skill"
     dummy_dir.mkdir()
@@ -251,7 +251,7 @@ def test_dispatch_emits_skill_run_spawned_event(tmp_path, monkeypatch):
     P6 invariant: every state change must produce an event. The spawn
     is the state change; the event must precede completion.
     """
-    import reyn.chat.services.skill_runner as sr_mod
+    import reyn.runtime.services.skill_runner as sr_mod
 
     dummy_dir = tmp_path / "fake_skill"
     dummy_dir.mkdir()
@@ -306,7 +306,7 @@ def test_wait_for_completion_emits_skill_run_completed(tmp_path, monkeypatch):
          ``skill_run_interrupted`` is NOT emitted.
       5. Asserting ``running_names()`` is empty after the wait.
     """
-    import reyn.chat.services.skill_runner as sr_mod
+    import reyn.runtime.services.skill_runner as sr_mod
 
     dummy_dir = tmp_path / "fake_skill"
     dummy_dir.mkdir()

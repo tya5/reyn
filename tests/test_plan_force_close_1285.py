@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import asyncio
 
-from reyn.chat.planner import Plan, PlanStep, _PlanStepHost
+from reyn.runtime.planner import Plan, PlanStep, _PlanStepHost
 from reyn.services.turn_budget import (
     assert_turn_budget_bounds,
     build_default_turn_budget_engine,

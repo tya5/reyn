@@ -69,7 +69,7 @@ async def create_topology(
     registry=Depends(get_registry),
 ) -> TopologySummary:
     """Create a new named topology."""
-    from reyn.chat.topology import KINDS, Topology
+    from reyn.runtime.topology import KINDS, Topology
     if body.kind not in KINDS:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,

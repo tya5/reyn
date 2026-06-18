@@ -20,12 +20,12 @@ from typing import Any
 
 import pytest
 
-from reyn.chat.router_loop import RouterLoop
 from reyn.core.events.events import EventLog
 from reyn.core.kernel.phase_executor import persist_force_close_checkpoint
 from reyn.data.workspace.workspace import Workspace
 from reyn.llm.llm import LLMToolCallResult
 from reyn.llm.pricing import TokenUsage
+from reyn.runtime.router_loop import RouterLoop
 from tests.test_router_loop import FakeRouterHost
 
 

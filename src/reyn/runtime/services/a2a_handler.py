@@ -25,12 +25,12 @@ import re
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Awaitable, Callable
 
-from reyn.chat.outbox import OutboxMessage
+from reyn.runtime.outbox import OutboxMessage
 
 if TYPE_CHECKING:
-    from reyn.chat.services.chain_manager import ChainManager, _PendingChain
     from reyn.core.events.events import EventLog
     from reyn.runtime.limits.limit_handler import LimitDecision
+    from reyn.runtime.services.chain_manager import ChainManager, _PendingChain
 
 logger = logging.getLogger(__name__)
 
@@ -109,7 +109,7 @@ class A2AHandler:
         Session-scoped :class:`~reyn.core.events.events.EventLog`.  All A2A
         lifecycle events are emitted here (P6).
     chain_manager:
-        :class:`~reyn.chat.services.chain_manager.ChainManager` owning
+        :class:`~reyn.runtime.services.chain_manager.ChainManager` owning
         pending-chain lifecycle and timeout watchdogs.
     agent_name:
         Name of the owning agent (used in event payloads + no-reply markers).
@@ -315,7 +315,7 @@ class A2AHandler:
         If no delegations are emitted, behavior matches PR11: send the
         router's reply_text (or empty) right back to the requester.
         """
-        from reyn.chat.session import RouterCapExceeded
+        from reyn.runtime.session import RouterCapExceeded
 
         from_agent = payload.get("from_agent", "")
         request = payload.get("request", "")
@@ -442,7 +442,7 @@ class A2AHandler:
           user-facing message (outbox + history); further delegations
           continue with depth+1 on the same chain_id.
         """
-        from reyn.chat.session import RouterCapExceeded
+        from reyn.runtime.session import RouterCapExceeded
 
         from_agent = payload.get("from_agent", "")
         response = payload.get("response", "")
@@ -541,7 +541,7 @@ class A2AHandler:
         to compose a synthesized answer (or decide on more delegations,
         which keeps the chain pending).
         """
-        from reyn.chat.session import RouterCapExceeded
+        from reyn.runtime.session import RouterCapExceeded
 
         chain_id = pending.chain_id
         pending.waiting_on.discard(from_agent)

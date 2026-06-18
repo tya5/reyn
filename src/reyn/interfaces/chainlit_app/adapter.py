@@ -41,7 +41,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from reyn.chat.outbox import OutboxMessage
+from reyn.runtime.outbox import OutboxMessage
 
 # Chainlit ``cl.Message.type`` literals we use. Reference:
 # .venv/lib/.../chainlit/message.py ``MessageStepType``.

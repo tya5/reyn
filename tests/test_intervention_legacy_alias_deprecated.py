@@ -18,7 +18,7 @@ The OS-layer migration completeness check is what lead-coder's Phase 5
 scope guard required (= "全 OS caller が新 ``RequestBus`` import を
 grep + Tier 2 で verify"). Phase 5 ships that verify.
 
-Channel-implementation modules (= ``chat/session.py`` /
+Channel-implementation modules (= ``runtime/session.py`` /
 ``web/a2a_intervention.py``) intentionally retain references in
 **docstrings** that explain the backwards-compat history. The AST
 walker ignores string literals, so docstring mentions don't trip the
@@ -109,7 +109,7 @@ def test_no_os_caller_uses_legacy_intervention_bus_name() -> None:
     Import identifier — except the alias-definition site itself.
 
     Docstring mentions of "InterventionBus" (= explanations of the
-    backwards-compat history in ``chat/session.py`` /
+    backwards-compat history in ``runtime/session.py`` /
     ``web/a2a_intervention.py``) are intentionally allowed because they
     live in string literals which the AST walker ignores. Only actual
     code-level references count.
@@ -147,7 +147,7 @@ def test_no_os_caller_uses_legacy_intervention_bus_name() -> None:
 
 
 def test_channel_impl_docstrings_can_still_reference_legacy_name() -> None:
-    """Tier 2: docstrings in ``chat/session.py`` and
+    """Tier 2: docstrings in ``runtime/session.py`` and
     ``web/a2a_intervention.py`` retain explanatory references to
     ``InterventionBus`` for backwards-compat history.
 
@@ -158,15 +158,15 @@ def test_channel_impl_docstrings_can_still_reference_legacy_name() -> None:
     docstrings, the AST-walker test in section 2 still passes but
     we'd lose useful migration context).
     """
-    import reyn.chat.session as chat_session
     import reyn.interfaces.web.a2a_intervention as a2a
+    import reyn.runtime.session as chat_session
 
     chat_src = inspect.getsource(chat_session)
     a2a_src = inspect.getsource(a2a)
 
     # Each should mention InterventionBus in some explanatory context.
     assert "InterventionBus" in chat_src, (
-        "chat/session.py docstrings should retain InterventionBus "
+        "runtime/session.py docstrings should retain InterventionBus "
         "backwards-compat history references"
     )
     assert "InterventionBus" in a2a_src, (
@@ -179,7 +179,7 @@ def test_channel_impl_docstrings_can_still_reference_legacy_name() -> None:
     chat_names = _names_used_in_source(chat_src)
     a2a_names = _names_used_in_source(a2a_src)
     assert "InterventionBus" not in chat_names, (
-        "chat/session.py must not reference InterventionBus as code "
+        "runtime/session.py must not reference InterventionBus as code "
         "(docstring-only is allowed)"
     )
     assert "InterventionBus" not in a2a_names, (

@@ -179,8 +179,8 @@ import asyncio
 import os
 os.chdir('{WORKSPACE}')
 from pathlib import Path
-from reyn.chat.router_system_prompt import build_system_prompt
-from reyn.chat.session import _merge_memory_indexes
+from reyn.runtime.router_system_prompt import build_system_prompt
+from reyn.runtime.session import _merge_memory_indexes
 from reyn.data.index.source_manifest import get_source_manifest
 
 async def main():

@@ -6,7 +6,7 @@ phase_no_progress abort path (WorkflowAbortedError) that B33 W6 observed
 skipping ``skill_completion_injected``.
 
 Root cause (B33 W6 analysis):
-    src/reyn/chat/services/skill_runner.py — the ``except Exception`` block
+    src/reyn/runtime/services/skill_runner.py — the ``except Exception`` block
     for the agent.run() call path placed ``_enqueue_skill_completed`` AFTER
     ``await _put_outbox(...)``. If ``_put_outbox`` raised (e.g. closed session,
     outbox queue issue), the enqueue was silently skipped.
@@ -38,10 +38,10 @@ from pathlib import Path
 
 import pytest
 
-from reyn.chat.session import Session
 from reyn.config import SafetyConfig, TimeoutConfig
 from reyn.core.events.state_log import StateLog
 from reyn.core.kernel.runtime_types import WorkflowAbortedError
+from reyn.runtime.session import Session
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -104,7 +104,7 @@ async def test_skill_completed_enqueued_on_workflow_aborted_phase_no_progress(
     """
     monkeypatch.chdir(tmp_path)
 
-    import reyn.chat.services.skill_runner as skill_runner_mod
+    import reyn.runtime.services.skill_runner as skill_runner_mod
 
     dummy_skill_dir = tmp_path / "dummy_skill"
     dummy_skill_dir.mkdir()
@@ -178,7 +178,7 @@ async def test_skill_completion_injected_fires_on_workflow_aborted(
     """
     monkeypatch.chdir(tmp_path)
 
-    import reyn.chat.services.skill_runner as skill_runner_mod
+    import reyn.runtime.services.skill_runner as skill_runner_mod
 
     dummy_skill_dir = tmp_path / "dummy_skill"
     dummy_skill_dir.mkdir()
@@ -264,7 +264,7 @@ async def test_skill_completed_enqueued_even_when_put_outbox_raises(
     """
     monkeypatch.chdir(tmp_path)
 
-    import reyn.chat.services.skill_runner as skill_runner_mod
+    import reyn.runtime.services.skill_runner as skill_runner_mod
 
     dummy_skill_dir = tmp_path / "dummy_skill"
     dummy_skill_dir.mkdir()

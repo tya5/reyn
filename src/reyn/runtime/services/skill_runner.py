@@ -30,9 +30,9 @@ import uuid
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Awaitable, Callable
 
-from reyn.chat.outbox import OutboxMessage
 from reyn.core.compiler import load_dsl_skill
 from reyn.core.events.events import EventLog
+from reyn.runtime.outbox import OutboxMessage
 from reyn.skill.skill_paths import SkillNotFoundError, resolve_skill_path, stdlib_root
 
 if TYPE_CHECKING:
@@ -73,7 +73,7 @@ class SkillRunner:
     allowed_skills:
         Optional allowlist. ``None`` = unrestricted.
     budget:
-        :class:`~reyn.chat.services.budget_gateway.BudgetGateway` for
+        :class:`~reyn.runtime.services.budget_gateway.BudgetGateway` for
         pre-spawn cap checks and budget extension.
     state_log:
         Forwarded to ``agent.run`` for WAL step recording. May be
@@ -520,7 +520,7 @@ class SkillRunner:
 
         subscribers = None
         if forward_events:
-            from reyn.chat.forwarder import ChatEventForwarder
+            from reyn.runtime.forwarder import ChatEventForwarder
             subscribers = [ChatEventForwarder(skill_name, self._outbox)]
 
         agent = self._build_agent_fn(
@@ -629,7 +629,7 @@ class SkillRunner:
                 "data": {"error": f"failed to load {skill_name}: {exc}"},
             }
 
-        from reyn.chat.forwarder import ChatEventForwarder
+        from reyn.runtime.forwarder import ChatEventForwarder
         agent = self._build_agent_fn(
             run_id=run_id, skill_name=skill_name,
             subscribers=[
@@ -711,7 +711,7 @@ class SkillRunner:
             ))
             return
 
-        from reyn.chat.forwarder import ChatEventForwarder
+        from reyn.runtime.forwarder import ChatEventForwarder
         agent = self._build_agent_fn(
             run_id=run_id, skill_name=skill_name,
             subscribers=[
@@ -822,7 +822,7 @@ class SkillRunner:
                 )
                 return
 
-        from reyn.chat.forwarder import ChatEventForwarder
+        from reyn.runtime.forwarder import ChatEventForwarder
         agent = self._build_agent_fn(
             run_id=run_id, skill_name=skill_name,
             subscribers=[ChatEventForwarder(skill_name, self._outbox, run_id=run_id)],

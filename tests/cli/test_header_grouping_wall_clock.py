@@ -71,9 +71,9 @@ async def test_last_speaker_at_is_wall_clock_after_header_write() -> None:
 @pytest.mark.asyncio
 async def test_same_speaker_within_window_groups_under_one_header() -> None:
     """Tier 2b: same-speaker burst within 60s shares header (regression guard)."""
-    from reyn.chat.outbox import OutboxMessage
     from reyn.interfaces.tui.app import ReynTUIApp
     from reyn.interfaces.tui.widgets import ConversationView
+    from reyn.runtime.outbox import OutboxMessage
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -99,9 +99,9 @@ async def test_same_speaker_past_window_emits_new_header() -> None:
 
     Simulated by back-dating ``_last_speaker_at``.
     """
-    from reyn.chat.outbox import OutboxMessage
     from reyn.interfaces.tui.app import ReynTUIApp
     from reyn.interfaces.tui.widgets import ConversationView
+    from reyn.runtime.outbox import OutboxMessage
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:

@@ -208,7 +208,7 @@ class RouterHistoryBuffer:
             and getattr(self._reasoning, "continuity", False)
             and isinstance(getattr(m, "meta", None), dict)
         ):
-            from reyn.chat.reasoning_continuity import attach_reasoning
+            from reyn.runtime.reasoning_continuity import attach_reasoning
             attach_reasoning(msg, m.meta.get("reasoning"))
         return msg
 
@@ -219,7 +219,7 @@ class RouterHistoryBuffer:
         reasoning fields from older assistant messages in-place. ``recent_turns
         <= 0`` (UNBOUNDED) keeps all. No-op when continuity is off / unconfigured.
         Returns ``messages`` for call-site chaining."""
-        from reyn.chat.reasoning_continuity import _REASONING_BUNDLE_FIELDS
+        from reyn.runtime.reasoning_continuity import _REASONING_BUNDLE_FIELDS
         keep = getattr(self._reasoning, "recent_turns", 0) if self._reasoning else 0
         if keep <= 0:
             return messages
@@ -304,7 +304,7 @@ class RouterHistoryBuffer:
         # path below, so normal chat stays byte-identical.
         _fc_summary = self._latest_summary()
         if _fc_summary is not None and _is_force_close_consolidation(_fc_summary):
-            from reyn.chat.session import ChatMessage  # noqa: PLC0415
+            from reyn.runtime.session import ChatMessage  # noqa: PLC0415
             _idx = next(
                 (i for i, m in enumerate(history) if m is _fc_summary), -1
             )
@@ -349,7 +349,7 @@ class RouterHistoryBuffer:
                     summary.content if isinstance(summary.content, str)
                     else json.dumps(summary.content, ensure_ascii=False)
                 )
-                from reyn.chat.session import ChatMessage  # noqa: PLC0415
+                from reyn.runtime.session import ChatMessage  # noqa: PLC0415
                 bridge = [ChatMessage(
                     role="assistant",
                     content=f"[summary of earlier conversation]\n{summary_text}",
@@ -449,7 +449,7 @@ class RouterHistoryBuffer:
         (= compaction triggers slightly more often than strictly necessary).
         The error is small relative to the total context window.
         """
-        from reyn.chat.router_system_prompt import build_system_prompt
+        from reyn.runtime.router_system_prompt import build_system_prompt
         from reyn.tools.schemes._discovery import tier_wants_discovery_mandate
         from reyn.tools.schemes._universal_sp import build_universal_tool_use_slots
         rh = self._router_host

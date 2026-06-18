@@ -18,9 +18,9 @@ from typing import Any
 
 import pytest
 
-from reyn.chat.router_loop import RouterLoop
 from reyn.llm.llm import LLMToolCallResult
 from reyn.llm.pricing import TokenUsage
+from reyn.runtime.router_loop import RouterLoop
 from tests.test_router_loop import FakeRouterHost, text_result, tool_result
 
 _USAGE = TokenUsage(prompt_tokens=10, completion_tokens=5)
@@ -61,7 +61,7 @@ async def test_execute_round_message_sequence_golden(monkeypatch):
         {"name": "file__write", "args": {"path": "b.txt", "content": "x"}, "id": "call_write"},
     ])
     scripted = _CapturingLLM([round1, text_result("done")])
-    monkeypatch.setattr("reyn.chat.router_loop.call_llm_tools", scripted)
+    monkeypatch.setattr("reyn.runtime.router_loop.call_llm_tools", scripted)
 
     await loop.run("read a then write b", [])
 

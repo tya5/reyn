@@ -20,7 +20,7 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
-from reyn.chat.lifecycle_forwarder import ChatLifecycleForwarder
+from reyn.runtime.lifecycle_forwarder import ChatLifecycleForwarder
 from reyn.schemas.models import Event
 
 

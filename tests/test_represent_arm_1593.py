@@ -22,9 +22,9 @@ from typing import Any
 
 import pytest
 
-from reyn.chat.router_loop import _MAX_REPRESENT_ROUNDS, _REPRESENT_ACK
 from reyn.llm.llm import LLMToolCallResult
 from reyn.llm.pricing import TokenUsage
+from reyn.runtime.router_loop import _MAX_REPRESENT_ROUNDS, _REPRESENT_ACK
 from reyn.tools.scheme import (
     Execute,
     ExecutionResult,
@@ -128,7 +128,7 @@ async def test_represent_round_appends_ack_swaps_tools_and_requeries(monkeypatch
         tool_result([{"name": "search", "id": "s1"}]),   # → RePresent
         text_result("here is your answer"),              # → PlainText → exit
     ])
-    monkeypatch.setattr("reyn.chat.router_loop.call_llm_tools", scripted)
+    monkeypatch.setattr("reyn.runtime.router_loop.call_llm_tools", scripted)
 
     messages = [{"role": "user", "content": "find a tool for me"}]
     await loop.run_loop(messages, [_search_tool()], False)
@@ -195,7 +195,7 @@ async def test_represent_without_tool_call_does_not_error(monkeypatch):
         text_result("I need different tools"),   # → RePresent (off text)
         text_result("done"),                     # → PlainText → exit
     ])
-    monkeypatch.setattr("reyn.chat.router_loop.call_llm_tools", scripted)
+    monkeypatch.setattr("reyn.runtime.router_loop.call_llm_tools", scripted)
 
     messages = [{"role": "user", "content": "go"}]
     await loop.run_loop(messages, [_search_tool()], False)   # no exception
@@ -221,7 +221,7 @@ async def test_represent_backstop_raises_on_nonconverging_scheme(monkeypatch):
 
     always_search = tool_result([{"name": "search", "id": "s1"}])
     scripted = _CapturingScriptedLLM([always_search] * (_MAX_REPRESENT_ROUNDS + 10))
-    monkeypatch.setattr("reyn.chat.router_loop.call_llm_tools", scripted)
+    monkeypatch.setattr("reyn.runtime.router_loop.call_llm_tools", scripted)
 
     messages = [{"role": "user", "content": "loop forever"}]
     with pytest.raises(RuntimeError, match="did not converge"):

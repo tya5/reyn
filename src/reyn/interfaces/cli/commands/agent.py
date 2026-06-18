@@ -11,8 +11,8 @@ import argparse
 import sys
 from pathlib import Path
 
-from reyn.chat.profile import AgentProfile
-from reyn.chat.registry import DEFAULT_AGENT_NAME, AgentRegistry, _validate_agent_name
+from reyn.runtime.profile import AgentProfile
+from reyn.runtime.registry import DEFAULT_AGENT_NAME, AgentRegistry, _validate_agent_name
 
 
 def register(sub) -> None:

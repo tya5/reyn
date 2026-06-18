@@ -219,7 +219,7 @@ async def reply(session: "object", text: str, *, kind: str = "system") -> None:
     for ephemeral one-line indicators that should overwrite. Use
     ``reply_error`` for errors.
     """
-    from reyn.chat.outbox import OutboxMessage
+    from reyn.runtime.outbox import OutboxMessage
     await session._put_outbox(OutboxMessage(kind=kind, text=text))
 
 

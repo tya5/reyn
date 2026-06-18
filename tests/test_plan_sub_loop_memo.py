@@ -289,8 +289,8 @@ def test_extract_records_skips_malformed_entries() -> None:
 def test_analyzer_forwards_step_llm_call_log_to_resume_plan(tmp_path: Path) -> None:
     """Tier 2: PlanResumeAnalyzer.analyze populates
     PlanResumePlan.step_llm_call_log from snapshot.step_llm_calls."""
-    from reyn.chat.planner import Plan, PlanStep
     from reyn.core.plan import PlanResumeAnalyzer
+    from reyn.runtime.planner import Plan, PlanStep
 
     snap = PlanSnapshot.empty(
         plan_id="p001", agent_name="default", chain_id="c0", goal="g",

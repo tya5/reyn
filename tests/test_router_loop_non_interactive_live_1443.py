@@ -23,9 +23,9 @@ import asyncio
 
 import pytest
 
-from reyn.chat.router_loop import RouterLoop
 from reyn.llm.llm import LLMToolCallResult
 from reyn.llm.pricing import TokenUsage
+from reyn.runtime.router_loop import RouterLoop
 
 _EMPTY_USAGE = TokenUsage(prompt_tokens=5, completion_tokens=2)
 _CLARIFY = "ask ONE"
@@ -114,7 +114,7 @@ def _live_system_prompt(*, non_interactive: bool, monkeypatch: pytest.MonkeyPatc
             content="done", tool_calls=[], finish_reason="stop", usage=_EMPTY_USAGE,
         )
 
-    monkeypatch.setattr("reyn.chat.router_loop.call_llm_tools", _recording_call_llm_tools)
+    monkeypatch.setattr("reyn.runtime.router_loop.call_llm_tools", _recording_call_llm_tools)
     loop = RouterLoop(
         host=_FakeRouterHost(), chain_id="chain-1443", non_interactive=non_interactive,
     )

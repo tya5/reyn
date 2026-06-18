@@ -44,7 +44,7 @@ def test_spawn_no_schema_proceeds(tmp_path, monkeypatch):
     """Tier 2: when the loaded skill has no entry_input_schema, spawn()
     skips validation and proceeds to create the asyncio task (= legacy
     behavior preserved for skills without declared schemas)."""
-    import reyn.chat.services.skill_runner as sr_mod
+    import reyn.runtime.services.skill_runner as sr_mod
 
     dummy_dir = tmp_path / "skill_no_schema"
     dummy_dir.mkdir()
@@ -76,7 +76,7 @@ def test_spawn_no_schema_proceeds(tmp_path, monkeypatch):
 def test_spawn_valid_input_proceeds(tmp_path, monkeypatch):
     """Tier 2: input that matches the entry_input_schema passes through
     pre-spawn validation; the asyncio task is created."""
-    import reyn.chat.services.skill_runner as sr_mod
+    import reyn.runtime.services.skill_runner as sr_mod
 
     dummy_dir = tmp_path / "skill_with_schema"
     dummy_dir.mkdir()
@@ -115,7 +115,7 @@ def test_spawn_invalid_input_returns_structured_error(tmp_path, monkeypatch):
     pre-spawn. spawn() returns a structured error dict carrying
     schema_hint, NO asyncio task is created, and the
     skill_spawn_refused event fires with reason=input_schema_violation."""
-    import reyn.chat.services.skill_runner as sr_mod
+    import reyn.runtime.services.skill_runner as sr_mod
 
     dummy_dir = tmp_path / "skill_strict"
     dummy_dir.mkdir()
@@ -165,7 +165,7 @@ def test_spawn_skill_not_found_returns_structured_error(tmp_path, monkeypatch):
     """Tier 2: SkillNotFoundError during pre-spawn skill load is
     converted to a structured error dict, NO task is created, and the
     skill_spawn_refused event fires with reason=skill_not_found."""
-    import reyn.chat.services.skill_runner as sr_mod
+    import reyn.runtime.services.skill_runner as sr_mod
 
     def _raise_not_found(name):
         raise sr_mod.SkillNotFoundError(name, [str(tmp_path)])
@@ -198,7 +198,7 @@ def test_spawn_for_router_propagates_pre_spawn_error(tmp_path, monkeypatch):
     sees the schema_hint in the same tool_result round-trip as its
     originating invoke_action call (= sync error path, no async
     [task_completed] correlation needed)."""
-    import reyn.chat.services.skill_runner as sr_mod
+    import reyn.runtime.services.skill_runner as sr_mod
 
     dummy_dir = tmp_path / "skill_strict"
     dummy_dir.mkdir()
@@ -243,7 +243,7 @@ def test_spawn_passes_pre_loaded_skill_no_second_load(tmp_path, monkeypatch):
     ``pre_loaded_skill``, so the async task body skips the duplicate
     resolve_skill_path + load_dsl_skill that happened pre-issue-#644.
     """
-    import reyn.chat.services.skill_runner as sr_mod
+    import reyn.runtime.services.skill_runner as sr_mod
 
     dummy_dir = tmp_path / "skill_reuse"
     dummy_dir.mkdir()
@@ -290,7 +290,7 @@ def test_run_one_skill_falls_back_to_load_when_pre_loaded_skill_absent(
     it still performs the resolve + load itself. Preserves backward
     compatibility for any non-spawn() entry path.
     """
-    import reyn.chat.services.skill_runner as sr_mod
+    import reyn.runtime.services.skill_runner as sr_mod
 
     dummy_dir = tmp_path / "skill_fallback"
     dummy_dir.mkdir()

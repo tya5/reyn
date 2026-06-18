@@ -9,9 +9,9 @@ import json
 
 import pytest
 
-from reyn.chat.services.snapshot_journal import SnapshotJournal
 from reyn.core.events.agent_snapshot import AgentSnapshot
 from reyn.core.events.state_log import StateLog
+from reyn.runtime.services.snapshot_journal import SnapshotJournal
 
 # ── helpers ──────────────────────────────────────────────────────────────────
 

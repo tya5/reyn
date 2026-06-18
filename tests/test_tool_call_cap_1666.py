@@ -17,9 +17,9 @@ config + driver threading + the notice-content assertions here).
 """
 from __future__ import annotations
 
-from reyn.chat.router_loop import RouterLoop
 from reyn.llm import TokenUsage
 from reyn.llm.llm import LLMToolCallResult
+from reyn.runtime.router_loop import RouterLoop
 
 
 class _RecordingEvents:

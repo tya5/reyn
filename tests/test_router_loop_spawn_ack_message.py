@@ -26,7 +26,7 @@ import pytest
 def _load_spawn_ack_template() -> dict[str, str]:
     """Import the live template from router_loop. Indirect so the
     test fails fast if the constant is renamed / moved."""
-    router_loop = importlib.import_module("reyn.chat.router_loop")
+    router_loop = importlib.import_module("reyn.runtime.router_loop")
     return getattr(router_loop, "_SPAWN_ACK_MSG")
 
 

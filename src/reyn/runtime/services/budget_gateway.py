@@ -127,7 +127,7 @@ class BudgetGateway:
         disables the check.
         """
         # Import here to avoid circular import at module load time.
-        from reyn.chat.session import RouterCapExceeded
+        from reyn.runtime.session import RouterCapExceeded
 
         if self._router_cap <= 0:
             return

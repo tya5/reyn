@@ -44,7 +44,7 @@ if str(_SRC) not in sys.path:
 
 def _make_disconnect_msg():
     """Build the error OutboxMessage that ws_client emits on WS drop."""
-    from reyn.chat.outbox import OutboxMessage
+    from reyn.runtime.outbox import OutboxMessage
     return OutboxMessage(
         kind="error",
         text="connection lost: ConnectionResetError()",
@@ -54,7 +54,7 @@ def _make_disconnect_msg():
 
 def _make_normal_error_msg():
     """Build a plain server-side error frame (no sentinel)."""
-    from reyn.chat.outbox import OutboxMessage
+    from reyn.runtime.outbox import OutboxMessage
     return OutboxMessage(
         kind="error",
         text="internal server error",

@@ -61,7 +61,7 @@ async def test_tool_turn_text_content_surfaced_to_conversation(monkeypatch):
         _text_and_tool("Let me run your skill first.", skill="my_skill"),  # Execute turn
         text_result("All done."),                                          # terminal turn
     ]
-    monkeypatch.setattr("reyn.chat.router_loop.call_llm_tools", _ScriptedLLM(script))
+    monkeypatch.setattr("reyn.runtime.router_loop.call_llm_tools", _ScriptedLLM(script))
     await loop.run("run my skill", [])
 
     agent = [m for m in host.outbox if m["kind"] == "agent"]
@@ -84,7 +84,7 @@ async def test_no_tool_calls_turn_emits_content_once(monkeypatch):
     host = FakeRouterHost()
     loop = make_loop(host)
     monkeypatch.setattr(
-        "reyn.chat.router_loop.call_llm_tools", _ScriptedLLM([text_result("just text")])
+        "reyn.runtime.router_loop.call_llm_tools", _ScriptedLLM([text_result("just text")])
     )
     await loop.run("hi", [])
 
@@ -103,7 +103,7 @@ async def test_tool_turn_empty_content_skipped(monkeypatch):
         _text_and_tool("   ", skill="my_skill"),  # whitespace-only content + tool_call
         text_result("done"),
     ]
-    monkeypatch.setattr("reyn.chat.router_loop.call_llm_tools", _ScriptedLLM(script))
+    monkeypatch.setattr("reyn.runtime.router_loop.call_llm_tools", _ScriptedLLM(script))
     await loop.run("go", [])
 
     agent = [m for m in host.outbox if m["kind"] == "agent"]

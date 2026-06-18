@@ -26,12 +26,12 @@ _SRC = Path(__file__).parent.parent.parent / "src"
 if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
-from reyn.chat.profile import AgentProfile
-from reyn.chat.registry import AgentRegistry
 from reyn.core.events.agent_snapshot import AgentSnapshot
 from reyn.core.events.state_log import StateLog
 from reyn.interfaces.tui.app import ReynTUIApp
 from reyn.interfaces.tui.widgets.branch_tree import ROW_HEADER
+from reyn.runtime.profile import AgentProfile
+from reyn.runtime.registry import AgentRegistry
 
 
 def _no_factory(_profile):

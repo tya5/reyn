@@ -16,12 +16,12 @@ from __future__ import annotations
 from dataclasses import replace
 from typing import TYPE_CHECKING
 
-from reyn.chat.outbox import OutboxMessage
-from reyn.chat.profile import AgentProfile
 from reyn.interfaces.slash import reply, reply_error, slash
+from reyn.runtime.outbox import OutboxMessage
+from reyn.runtime.profile import AgentProfile
 
 if TYPE_CHECKING:
-    from reyn.chat.session import Session
+    from reyn.runtime.session import Session
 
 
 _USAGE = (

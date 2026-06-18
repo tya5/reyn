@@ -11,13 +11,13 @@ from __future__ import annotations
 
 import pytest
 
-from reyn.chat.outbox import OutboxMessage
 from reyn.interfaces.chainlit_app.adapter import (
     MSG_TYPE_ASSISTANT,
     MSG_TYPE_SYSTEM,
     ChainlitPayload,
     outbox_to_chainlit,
 )
+from reyn.runtime.outbox import OutboxMessage
 
 
 @pytest.mark.parametrize(

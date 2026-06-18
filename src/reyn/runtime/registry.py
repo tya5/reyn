@@ -1176,7 +1176,7 @@ class AgentRegistry:
         )
 
         async def _on_outbox_notice(plan_id: str, message: str) -> None:
-            from reyn.chat.outbox import OutboxMessage
+            from reyn.runtime.outbox import OutboxMessage
             try:
                 await session._put_outbox(OutboxMessage(
                     kind="error", text=message,
@@ -1228,7 +1228,7 @@ class AgentRegistry:
                     agent_name, plan_id, exc,
                 )
             try:
-                from reyn.chat.outbox import OutboxMessage
+                from reyn.runtime.outbox import OutboxMessage
                 await session._put_outbox(OutboxMessage(
                     kind="error",
                     text=(

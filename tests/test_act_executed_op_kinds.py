@@ -25,7 +25,7 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
-from reyn.chat.forwarder import ChatEventForwarder
+from reyn.runtime.forwarder import ChatEventForwarder
 from reyn.schemas.models import Event
 
 

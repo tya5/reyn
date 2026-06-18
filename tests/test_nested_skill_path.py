@@ -21,8 +21,8 @@ import asyncio
 import json
 from pathlib import Path
 
-from reyn.chat.session import Session
 from reyn.core.events.state_log import StateLog
+from reyn.runtime.session import Session
 from reyn.skill.skill_registry import SkillRegistry
 from reyn.skill.skill_snapshot import SkillSnapshot
 

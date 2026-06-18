@@ -9,7 +9,7 @@ drift apart. This pins the invariant: re-hardcoding the literal in any consumer
 """
 from __future__ import annotations
 
-from reyn.chat.router_loop import _MEDIA_IMAGE_TOKEN_COST
+from reyn.runtime.router_loop import _MEDIA_IMAGE_TOKEN_COST
 from reyn.services.compaction.engine import _IMAGE_FIXED_TOKEN_COST
 
 
