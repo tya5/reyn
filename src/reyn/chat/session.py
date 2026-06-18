@@ -1235,6 +1235,10 @@ class Session:
             environment_backend=environment_backend,
         )
         self._resolver = resolver or ModelResolver({})
+        # Per-session runtime model override — set by ``/model <class>``.
+        # None = use Agent identity default (byte-identical to pre-override).
+        # In-memory only: cleared on session restart (not persisted to journal).
+        self._model_override: str | None = None
         # #398 v4 emitter wiring (= permission_manager → state_change).
         # Subscribe to ``_persist`` events on the shared PermissionResolver
         # so a permission grant / revoke mints a state_change history
@@ -2121,7 +2125,7 @@ class Session:
 
     @property
     def model(self) -> str:
-        return self._agent.model
+        return self._model_override if self._model_override is not None else self._agent.model
 
     @property
     def workspace_dir(self) -> "Path":
