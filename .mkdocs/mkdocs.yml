@@ -245,6 +245,7 @@ nav:
           - concepts/runtime/workspace.md
           - concepts/runtime/events.md
           - concepts/runtime/time-travel.md
+          - concepts/runtime/durability-scope.md
           - concepts/runtime/permission-model.md
           - concepts/runtime/sandbox.md
           - concepts/runtime/secret-handling.md
