@@ -44,7 +44,7 @@ Agent Card に含まれる情報：
 | メソッド / 機能 | 状態 | 備考 |
 |---|---|---|
 | `message/send`（同期返信） | ✅ | デフォルトモード。ピアは最終返信テキストまで待機します。 |
-| `message/send`（`async_mode: true` による非同期） | ✅ | A2A `Task` envelope を返し、ピアはポーリングまたは購読します。下記 [タスクライフサイクル](#タスクライフサイクルと非同期実行-fp-0001) 参照。 |
+| `message/send`（`async_mode: true` による非同期） | ✅ | A2A `Task` envelope を返し、ピアはポーリングまたは購読します。下記 [タスクライフサイクル](#タスクライフサイクルと非同期実行) 参照。 |
 | `GET /a2a/tasks/{run_id}`（ステータスポーリング） | ✅ | `running` / `input-required` / `completed` / `failed` / `cancelled` を返します。 |
 | `POST /a2a/tasks/{run_id}/cancel` | ✅ | 内部 `asyncio.Task` をキャンセル（idempotent）。 |
 | `GET /a2a/tasks/{run_id}/events`（SSE ストリーム） | ✅ | Reyn ネイティブのストリーミング窓口。終了状態でクローズ。 |
@@ -56,7 +56,7 @@ Agent Card に含まれる情報：
 | 認証（bearer トークン / OAuth） | ❌ | v1 では対象外。ネットワーク層のアクセス制御に依存。 |
 | テキスト以外のパーツ（`file`、`data`） | ❌ | 現状はファイルを Reyn workspace 経由で交換。 |
 
-`message/send` が MVP の中心機能です。最も一般的な interop パターン（ピア agent が Reyn agent に質問し、最終返信テキストを受け取る）をカバーするためです。マルチターンの履歴は呼び出し間で保持されます。Reyn の `Session.history` は agent ごとに永続化されており — MCP パスと同じ特性です。上に重ねた非同期タスクライフサイクル（FP-0001、下記詳細）により、ピアは長時間実行 skill を駆動し、実行中の `ask_user` に応答し、キャンセルできます。`message/send` のワイヤー形状は変わりません。
+`message/send` が MVP の中心機能です。最も一般的な interop パターン（ピア agent が Reyn agent に質問し、最終返信テキストを受け取る）をカバーするためです。マルチターンの履歴は呼び出し間で保持されます。Reyn の `Session.history` は agent ごとに永続化されており — MCP パスと同じ特性です。上に重ねた非同期タスクライフサイクル（下記詳細）により、ピアは長時間実行 skill を駆動し、実行中の `ask_user` に応答し、キャンセルできます。`message/send` のワイヤー形状は変わりません。
 
 ## MCP と A2A の両方を使う理由
 
@@ -67,7 +67,7 @@ MCP と A2A は、どちらも「外部 LLM が Reyn と通信する」という
 
 Reyn にとってこれは主にワイヤーフォーマットの選択であり、基盤となるエンジンは同じです。外部システムがツール呼び出しを持つ LLM であれば MCP を選択してください。外部システム自体が agent であれば A2A を選択してください。
 
-## タスクライフサイクルと非同期実行 (FP-0001)
+## タスクライフサイクルと非同期実行
 
 A2A ピアは実行中に `ask_user` を発する skill と対話できるようになりました。
 以前のバージョンは同期実行のみをサポートしており、`message/send` は

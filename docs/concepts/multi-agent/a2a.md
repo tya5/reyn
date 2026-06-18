@@ -58,7 +58,7 @@ The Agent Card surfaces:
 | Method / capability | Status | Notes |
 |---|---|---|
 | `message/send` (synchronous reply) | ✅ | Default mode — peer waits for the final reply text. |
-| `message/send` (async via `async_mode: true`) | ✅ | Returns an A2A `Task` envelope; peer polls or subscribes. See [Task lifecycle](#task-lifecycle-and-async-execution-fp-0001). |
+| `message/send` (async via `async_mode: true`) | ✅ | Returns an A2A `Task` envelope; peer polls or subscribes. See [Task lifecycle](#task-lifecycle-and-async-execution). |
 | `GET /a2a/tasks/{run_id}` (status polling) | ✅ | Reports `running` / `input-required` / `completed` / `failed` / `cancelled`. |
 | `POST /a2a/tasks/{run_id}/cancel` | ✅ | Cancels the underlying `asyncio.Task` (idempotent). |
 | `GET /a2a/tasks/{run_id}/events` (SSE stream) | ✅ | Reyn-native streaming surface; closes on terminal status. |
@@ -75,7 +75,7 @@ common interop pattern: peer agent has a question for a Reyn agent,
 gets the final reply text. Multi-turn history is preserved across
 calls because Reyn's `Session.history` is per-agent and
 persistent — exactly the same property the MCP path relies on. The
-async task lifecycle layered on top (FP-0001, detailed below) lets
+async task lifecycle layered on top (detailed below) lets
 peers drive long-running skills, react to mid-run `ask_user`, and
 cancel without changing the wire shape of the `message/send` call.
 
@@ -96,7 +96,7 @@ For Reyn this is mostly a wire-format choice; the underlying engine
 is the same. Pick MCP when the outer system is an LLM with tool
 calling. Pick A2A when the outer system is itself an agent.
 
-## Task lifecycle and async execution (FP-0001)
+## Task lifecycle and async execution
 
 A2A peers can now interact with skills that emit `ask_user` mid-execution.
 Earlier versions could only run synchronously — `message/send` returned
