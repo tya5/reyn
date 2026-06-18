@@ -315,7 +315,7 @@ class A2AHandler:
         If no delegations are emitted, behavior matches PR11: send the
         router's reply_text (or empty) right back to the requester.
         """
-        from reyn.runtime.session import RouterCapExceeded
+        from reyn.runtime.errors import RouterCapExceeded
 
         from_agent = payload.get("from_agent", "")
         request = payload.get("request", "")
@@ -442,7 +442,7 @@ class A2AHandler:
           user-facing message (outbox + history); further delegations
           continue with depth+1 on the same chain_id.
         """
-        from reyn.runtime.session import RouterCapExceeded
+        from reyn.runtime.errors import RouterCapExceeded
 
         from_agent = payload.get("from_agent", "")
         response = payload.get("response", "")
@@ -541,7 +541,7 @@ class A2AHandler:
         to compose a synthesized answer (or decide on more delegations,
         which keeps the chain pending).
         """
-        from reyn.runtime.session import RouterCapExceeded
+        from reyn.runtime.errors import RouterCapExceeded
 
         chain_id = pending.chain_id
         pending.waiting_on.discard(from_agent)

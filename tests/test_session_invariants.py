@@ -964,7 +964,7 @@ async def test_agent_request_router_cap_exhausted_sends_marker_upstream(
     session.is_attached = True
 
     # Force RouterCapExceeded from the handler.
-    from reyn.runtime.session import RouterCapExceeded
+    from reyn.runtime.errors import RouterCapExceeded
 
     async def _raise_cap(*args, **kwargs):
         raise RouterCapExceeded(count=3, cap=3, last_reason="loop")

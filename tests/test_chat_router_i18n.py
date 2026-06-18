@@ -368,7 +368,7 @@ def test_retry_exhausted_fallback_is_english_when_output_language_is_none(
 
     session._put_outbox = fake_put_outbox  # type: ignore[assignment]
 
-    from reyn.runtime.session import RouterCapExceeded
+    from reyn.runtime.errors import RouterCapExceeded
 
     async def run():
         await session._emit_router_cap_exhausted_user(

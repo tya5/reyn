@@ -27,8 +27,9 @@ from reyn.config import LoopConfig, OnLimitConfig, SafetyConfig
 from reyn.llm.llm import LLMToolCallResult
 from reyn.llm.pricing import TokenUsage
 from reyn.runtime.budget.budget import BudgetTracker, CostConfig
+from reyn.runtime.errors import RouterCapExceeded
 from reyn.runtime.outbox import OutboxMessage
-from reyn.runtime.session import RouterCapExceeded, Session
+from reyn.runtime.session import Session
 from tests.test_router_loop import _ScriptedLLM, text_result
 
 _USAGE = TokenUsage(prompt_tokens=10, completion_tokens=5)

@@ -28,7 +28,8 @@ import pytest
 
 from reyn.config import LoopConfig, SafetyConfig
 from reyn.runtime.budget.budget import BudgetTracker, CostConfig
-from reyn.runtime.session import RouterCapExceeded, Session
+from reyn.runtime.errors import RouterCapExceeded
+from reyn.runtime.session import Session
 
 
 def _run(coro):
