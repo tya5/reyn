@@ -19,7 +19,7 @@ Protocol (server → client):
         }
     }
 
-The `kind` taxonomy mirrors src/reyn/chat/renderer.py (OS-generic — not
+The `kind` taxonomy mirrors src/reyn/interfaces/repl/renderer.py (OS-generic — not
 skill-specific per P7). Clients switch on `msg.kind`.
 
 Lifecycle:

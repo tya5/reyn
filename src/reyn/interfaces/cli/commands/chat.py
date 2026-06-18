@@ -328,10 +328,10 @@ def run(args: argparse.Namespace) -> None:
 
     from reyn.chat.profile import AgentProfile
     from reyn.chat.registry import DEFAULT_AGENT_NAME, AgentRegistry
-    from reyn.chat.repl import run_repl
     from reyn.chat.scoped_session_factory import build_scoped_chat_session
     from reyn.config import _find_project_root, load_project_context
     from reyn.core.events.state_log import StateLog
+    from reyn.interfaces.repl.repl import run_repl
     from reyn.runtime.budget.budget import BudgetTracker
     from reyn.security.permissions.permissions import PermissionResolver
 
@@ -553,7 +553,7 @@ def run(args: argparse.Namespace) -> None:
 
         run_async(_main_tui())
     else:
-        from reyn.chat.repl import run_repl
+        from reyn.interfaces.repl.repl import run_repl
 
         from ..logger_factory import make_chat_renderer
 

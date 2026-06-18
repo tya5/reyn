@@ -14,5 +14,5 @@ def make_logger(**opts):
 
 def make_chat_renderer():
     """Return the plain console renderer used by --cui mode."""
-    from reyn.chat.renderer import ConsoleChatRenderer
+    from reyn.interfaces.repl.renderer import ConsoleChatRenderer
     return ConsoleChatRenderer()
