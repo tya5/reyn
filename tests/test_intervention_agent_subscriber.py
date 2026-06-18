@@ -32,7 +32,8 @@ from pathlib import Path
 
 import pytest
 
-from reyn.runtime.session import AgentRequestBus, Session
+from reyn.runtime.session import Session
+from reyn.runtime.session_buses import AgentRequestBus
 from reyn.user_intervention import (
     InterventionAnswer,
     InterventionBus,
