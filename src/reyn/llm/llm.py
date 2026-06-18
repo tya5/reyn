@@ -503,12 +503,16 @@ class LLMToolCallResult:
     usage: TokenUsage
     # raw message for debugging:
     raw_message: object | None = None
-    # #1652: the model's reasoning/thinking text (provider ``reasoning_content``),
-    # surfaced separately from the visible ``content``. None when the model emitted
-    # no thoughts (thinking off / weak model / first turn). Captured here at the
-    # boundary so the chat layer can persist + (optionally) replay it; display and
-    # cross-turn replay are gated above, capture is always-on.
-    reasoning: str | None = None
+    # #1652/②: the model's reasoning as a normalized BUNDLE
+    # ({reasoning_content?, thinking_blocks?, provider_specific_fields?}) — the
+    # litellm cross-provider standard, captured so the chat layer can persist it
+    # and re-attach it natively to the assistant history message next turn (not
+    # just as SP text). None when the model emitted no reasoning (thinking off /
+    # weak model / first turn). Captured at the boundary; display + cross-turn
+    # replay are gated in the chat layer, capture is always-on. (Legacy persisted
+    # entries may be a plain ``str`` = the old text-only shape; readers absorb it
+    # as ``{"reasoning_content": str}``.)
+    reasoning: dict | None = None
 
 # ---------------------------------------------------------------------------
 # Infrastructure retry — exponential backoff on transient LLM API errors
@@ -859,6 +863,49 @@ def _extract_cache_tokens(u) -> tuple[int, int]:
     return cached, creation
 
 
+def _dictify(v):
+    """Best-effort convert a litellm sub-object to a JSON-serialisable form
+    (so a reasoning bundle survives history persistence). ``model_dump`` for
+    pydantic, recurse lists, else pass through."""
+    if hasattr(v, "model_dump"):
+        try:
+            return v.model_dump()
+        except Exception:
+            return None
+    if isinstance(v, list):
+        return [_dictify(x) for x in v]
+    return v
+
+
+def _extract_reasoning_bundle(msg) -> dict | None:
+    """#1652/②: capture the model's reasoning as a normalized, persistable bundle.
+
+    litellm standardizes provider reasoning onto ``reasoning_content`` (text) +
+    ``thinking_blocks`` (structured) cross-provider — that is what Reyn's proxy
+    returns. We capture those (provider-agnostic: NO per-provider logic) plus a
+    generic ``provider_specific_fields`` catch-all when present, so the bundle
+    can be re-attached natively to the assistant history message next turn and
+    litellm re-applies it per provider.
+
+    Returns ``None`` when the model emitted no reasoning (all fields empty) — the
+    omit-when-empty discipline so an empty turn stays byte-identical. Each field
+    is dict-ified so the bundle JSON-persists in history.
+    """
+    bundle: dict = {}
+    text = getattr(msg, "reasoning_content", None) or None
+    if text:
+        bundle["reasoning_content"] = text
+    thinking = getattr(msg, "thinking_blocks", None)
+    if thinking:
+        bundle["thinking_blocks"] = _dictify(thinking)
+    psf = getattr(msg, "provider_specific_fields", None)
+    if isinstance(psf, dict) and psf:
+        _psf = _dictify(psf)
+        if _psf:
+            bundle["provider_specific_fields"] = _psf
+    return bundle or None
+
+
 def _extract_usage(response) -> TokenUsage | None:
     """Extract token usage from a litellm response object."""
     try:
@@ -1099,6 +1146,13 @@ async def recorded_acompletion(
     """
     import litellm
 
+    # #1652/②: canonical litellm mechanism for reasoning continuity across tool
+    # turns — when a thinking-enabled request carries an assistant turn whose
+    # thinking_blocks are absent, litellm drops the `thinking` param for that
+    # turn instead of erroring. Global, idempotent; the litellm-native handling
+    # (NOT a Reyn workaround) that lets native reasoning re-attach round-trip.
+    litellm.modify_params = True
+
     # #1190 stage (iii): typo guard — a purpose outside the known set would
     # silently land spend in an unattributed bucket in /cost.
     if purpose not in LLM_PURPOSES:
@@ -1142,6 +1196,11 @@ async def recorded_acompletion(
     )
     if _routed_to_responses:
         effective_model = _to_responses_model(effective_model)
+        # #1652/②: native reasoning continuity is a no-op on this
+        # capable+tools+reasoning ``/v1/responses`` bridge path due to an
+        # upstream litellm reasoning-item output-parse limitation (canonical
+        # write-up in builtin-models.md → "Vendor-specific quirks: Reasoning on
+        # tool-bearing turns"). It works on the chat path.
 
     # #1669: emit a P6 ``llm_request`` event (TUI-observable) carrying the
     # non-message call params, ONCE here — before the ``_once`` response_format
@@ -1746,8 +1805,10 @@ async def call_llm_tools(
         finish_reason=finish_reason,
         usage=usage,
         raw_message=msg,
-        # #1652: capture the provider reasoning text (litellm surfaces it on
-        # message.reasoning_content for thinking-enabled models; verified live
-        # for gemini-2.5-flash-lite via the proxy). `or None` normalises "" → None.
-        reasoning=getattr(msg, "reasoning_content", None) or None,
+        # #1652/②: capture the provider reasoning as a normalized BUNDLE
+        # (reasoning_content + thinking_blocks, the litellm cross-provider
+        # standard) so it can be re-attached natively to the assistant history
+        # message next turn — not just the text. None when the model emitted no
+        # reasoning (omit-when-empty). See _extract_reasoning_bundle.
+        reasoning=_extract_reasoning_bundle(msg),
     )

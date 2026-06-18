@@ -151,6 +151,7 @@ class RouterHistoryBuffer:
         router_host: Any,                 # RouterHostAdapter — for build_system_prompt
         action_retrieval: Any,            # ActionRetrievalConfig — .universal_wrappers_enabled
         non_interactive: bool,
+        reasoning: Any = None,            # ReasoningConfig — .continuity / .recent_turns (#1652/②)
     ) -> None:
         self._history_fn = history_fn
         self._compaction = compaction
@@ -161,6 +162,10 @@ class RouterHistoryBuffer:
         self._router_host = router_host
         self._action_retrieval = action_retrieval
         self._non_interactive = non_interactive
+        # #1652/②: cross-turn reasoning rides the wire assistant messages
+        # (native re-attach) instead of a router-SP text section. ReasoningConfig
+        # gates it (.continuity) and bounds it (.recent_turns). None → off.
+        self._reasoning = reasoning
 
     # ── Internal helpers ─────────────────────────────────────────────────────
 
@@ -192,7 +197,41 @@ class RouterHistoryBuffer:
             msg["tool_call_id"] = m.tool_call_id
         if m.name is not None:
             msg["name"] = m.name
+        # #1652/②: re-attach this assistant turn's captured reasoning natively
+        # (reasoning_content / thinking_blocks) so litellm carries the model's
+        # prior reasoning across turns — replacing the router-SP text section.
+        # Gated by continuity; no-op (byte-identical) when reasoning is empty.
+        # build_history applies the recent_turns bound after serialisation.
+        if (
+            role == "assistant"
+            and self._reasoning is not None
+            and getattr(self._reasoning, "continuity", False)
+            and isinstance(getattr(m, "meta", None), dict)
+        ):
+            from reyn.chat.reasoning_continuity import attach_reasoning
+            attach_reasoning(msg, m.meta.get("reasoning"))
         return msg
+
+    def _bound_wire_reasoning(self, messages: list[dict]) -> list[dict]:
+        """#1652/②: bound native reasoning to the most recent ``recent_turns``
+        assistant messages that carry it — mirrors the old text-section bound
+        (gemini accumulates + bills reasoning in full unless bounded). Strips the
+        reasoning fields from older assistant messages in-place. ``recent_turns
+        <= 0`` (UNBOUNDED) keeps all. No-op when continuity is off / unconfigured.
+        Returns ``messages`` for call-site chaining."""
+        from reyn.chat.reasoning_continuity import _REASONING_BUNDLE_FIELDS
+        keep = getattr(self._reasoning, "recent_turns", 0) if self._reasoning else 0
+        if keep <= 0:
+            return messages
+        carriers = [
+            i for i, mm in enumerate(messages)
+            if mm.get("role") == "assistant"
+            and any(f in mm for f in _REASONING_BUNDLE_FIELDS)
+        ]
+        for i in carriers[:-keep]:
+            for f in _REASONING_BUNDLE_FIELDS:
+                messages[i].pop(f, None)
+        return messages
 
     def _resolve_budgets(self) -> tuple[int, int, int]:
         """Return (effective_trigger, head_budget, tail_budget)."""
@@ -282,7 +321,9 @@ class RouterHistoryBuffer:
                 content=f"[summary of earlier conversation]\n{_summary_text}",
                 ts=_fc_summary.ts,
             )]
-            return [self._serialise_turn(m) for m in (_bridge + _post)]
+            return self._bound_wire_reasoning(
+                [self._serialise_turn(m) for m in (_bridge + _post)]
+            )
 
         effective_trigger, head_budget, tail_budget = self._resolve_budgets()
         use_chars4 = getattr(self._compaction, "use_chars4_estimate", False)
@@ -323,7 +364,9 @@ class RouterHistoryBuffer:
         # message dict. Path-ref content parts (= ``{"type":"image","path":...}``)
         # are materialised to data URLs **at this boundary** so storage
         # stays light and the LLM sees the inline form it expects.
-        return [self._serialise_turn(m) for m in selected]
+        return self._bound_wire_reasoning(
+            [self._serialise_turn(m) for m in selected]
+        )
 
     def decompose_history_for_retry(
         self,
@@ -387,6 +430,9 @@ class RouterHistoryBuffer:
         head = [self._serialise_turn(m) for m in head_msgs]
         raw_middle = [self._serialise_turn(m) for m in raw_middle_msgs]
         tail = [self._serialise_turn(m) for m in tail_msgs]
+        # #1652/②: bound native reasoning across the ordered carriers (the strip
+        # is in-place, so the shared dicts in head/raw_middle/tail are bounded).
+        self._bound_wire_reasoning(head + raw_middle + tail)
         return head, raw_middle, tail, summary_dict
 
     def build_system_prompt(self) -> str:
