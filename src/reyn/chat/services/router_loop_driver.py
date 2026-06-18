@@ -50,13 +50,14 @@ class RouterLoopDriver:
         compaction_controller: Any,   # CompactionController — retry_loop engine
         token_learner: Any,           # TokenMultiplierLearner — retry_loop learner
         events: Any,                  # EventLog — emit events
-        model: str,
+        model_override_fn: "Callable[[], str | None]",  # () -> _model_override (None = unset)
         history_buffer: Any,          # RouterHistoryBuffer — history + SP
         budget_advisor: Any,          # ContextBudgetAdvisor — maybe_force_compact
         limit_checkpoint_fn: Callable,  # async; Session._handle_chat_limit_checkpoint
         next_seq_fn: Callable[[], int], # Session._next_seq reader
         append_history_fn: Callable,    # Session._append_history
         chat_scheme_name: "str | None" = None,  # #1593 PR-2: chat-layer ToolUseScheme name → RouterLoop(scheme_name=); None → universal default
+        _loop_observer: "Callable | None" = None,  # Tier-2 test seam: called with the constructed RouterLoop before run
     ) -> None:
         self._router_host = router_host
         self._safety = safety
@@ -71,7 +72,8 @@ class RouterLoopDriver:
         self._compaction_controller = compaction_controller
         self._token_learner = token_learner
         self._events = events
-        self._model = model
+        self._model_override_fn = model_override_fn
+        self._loop_observer = _loop_observer
         self._history_buffer = history_buffer
         self._budget_advisor = budget_advisor
         self._limit_checkpoint_fn = limit_checkpoint_fn
@@ -109,6 +111,22 @@ class RouterLoopDriver:
         """Set the cooperative cancel flag and cancel_event. Called by cancel_inflight()."""
         self._turn_cancel_requested = True
         self._turn_cancel_event.set()
+
+    # ── Model resolution ──────────────────────────────────────────────────────
+
+    def _effective_router_model_class(self) -> str:
+        """Return the model class to use for router LLM calls this turn.
+
+        /model override wins when set; otherwise falls back to the router
+        purpose-class (class_for_purpose("router"), which honours the
+        operator's model_class_by_purpose config — byte-identical to the
+        pre-/model behaviour when no override is active).
+        """
+        override = self._model_override_fn()
+        if override:
+            return override
+        from reyn.llm.model_resolver import resolve_purpose_class
+        return resolve_purpose_class(None, self._resolver, "router")
 
     # ── Cap enforcement ───────────────────────────────────────────────────────
 
@@ -157,7 +175,7 @@ class RouterLoopDriver:
         """
         from reyn.chat.session import ChatMessage, _now_iso, _render_summary_for_storage
 
-        resolved_model = self._resolver.resolve(self._model).model
+        resolved_model = self._resolver.resolve(self._effective_router_model_class()).model
         consolidation = await self._force_close_wrap_up(loop, resolved_model)
         covers = max(self._next_seq_fn() - 1, 0)
         structured = {"consolidation": consolidation}
@@ -296,7 +314,7 @@ class RouterLoopDriver:
                     tail=_tail,
                     new_msg=_new_msg,
                     cfg=self._compaction,
-                    model=self._model,
+                    model=self._effective_router_model_class(),
                     engine=engine,
                     learner=self._token_learner,
                     main_call=_router_main_call,
@@ -347,6 +365,8 @@ class RouterLoopDriver:
         )
         loop = RouterLoop(
             host=self._router_host, chain_id=chain_id,
+            # /model override wins when set; None → RouterLoop resolves router-purpose-class default.
+            router_model=self._model_override_fn(),
             # #1593 PR-2: select the chat-layer tool-use scheme (None → universal).
             scheme_name=self._chat_scheme_name,
             max_iterations=self._router_max_iterations,
@@ -369,6 +389,8 @@ class RouterLoopDriver:
             # through handle_limit_exceeded instead of flat-aborting.
             on_limit=getattr(self._safety, "on_limit", None),
         )
+        if self._loop_observer:
+            self._loop_observer(loop)
         # PR-N3: pre-frame context-overflow guard.
         await self._budget_advisor.maybe_force_compact(new_msg_text=user_text)
 

@@ -2069,7 +2069,7 @@ class Session:
             compaction_controller=self._compaction_controller,
             token_learner=self._token_learner,
             events=self._chat_events,
-            model=self.model,
+            model_override_fn=lambda: self._model_override,
             history_buffer=self._history_buffer,
             budget_advisor=self._budget_advisor,
             limit_checkpoint_fn=self._handle_chat_limit_checkpoint,
