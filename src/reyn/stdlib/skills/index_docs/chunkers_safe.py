@@ -10,8 +10,8 @@ Phase 2.2 migrated ``write_chunks_with_lock`` from the pre-FP-0042
 ``chunkers.py`` (mode: unsafe) into this module. Phase 2.8
 (2026-05-23) retired the last unsafe holdout, ``apply_strategy``,
 and deleted ``chunkers.py`` entirely. File reads / writes / mkdir /
-delete go through :mod:`reyn.safe.file`; PID identity + liveness go
-through :mod:`reyn.safe.process`. Path manipulation uses plain string
+delete go through :mod:`reyn.api.safe.file`; PID identity + liveness go
+through :mod:`reyn.api.safe.process`. Path manipulation uses plain string
 operations because ``pathlib`` is not on the safe-mode import
 allowlist.
 
@@ -27,9 +27,9 @@ import json
 import re
 import time as _time
 
-from reyn.safe import embed_index as _embed_index
-from reyn.safe import file as _safe_file
-from reyn.safe import process as _safe_process
+from reyn.api.safe import embed_index as _embed_index
+from reyn.api.safe import file as _safe_file
+from reyn.api.safe import process as _safe_process
 
 # ─── extract_and_split ──────────────────────────────────────────────────────
 
@@ -80,14 +80,14 @@ def write_chunks_with_lock(artifact: dict) -> dict:
     ``.reyn/index/<source>/.lock`` (= default-zone write), reads each source
     file's content (= default-zone read, granted by ``preprocessor_executor``
     via CWD), splits into chunks per strategy, and **streams** the chunks
-    straight into :func:`reyn.safe.embed_index.embed_and_index` — which embeds
+    straight into :func:`reyn.api.safe.embed_index.embed_and_index` — which embeds
     them provider-direct and writes the vectors to
     ``.reyn/index/<source>/index.db`` (default-zone write) — then releases the
     lock. There is no intermediate ``<cwd>/artifacts/*.jsonl`` file: the old
     ``embed`` + ``index_write`` run-ops are folded into this one step.
 
     The lock is recovered as stale when the holder PID is no longer alive
-    (= ``reyn.safe.process.pid_alive`` returns False), matching the
+    (= ``reyn.api.safe.process.pid_alive`` returns False), matching the
     legacy unsafe-mode behaviour. The PID written is the safe-mode
     subprocess's own — when the subprocess exits without releasing
     (= SIGKILL, OOM, parent crash), the lock is reapable on the next run.
@@ -183,8 +183,8 @@ def write_chunks_with_lock(artifact: dict) -> dict:
 def _iter_chunks_from_paths(file_paths: list[str], strategy: dict):
     """Yield chunk dicts (``{text, metadata}``) from an ordered file list.
 
-    Reads source files via :mod:`reyn.safe.file` and streams the chunks
-    straight into :func:`reyn.safe.embed_index.embed_and_index` — no
+    Reads source files via :mod:`reyn.api.safe.file` and streams the chunks
+    straight into :func:`reyn.api.safe.embed_index.embed_and_index` — no
     intermediate JSONL file (#1303 Stage I). A generator so a bulk index
     holds only one embed batch in memory at a time. Pure regex + string ops,
     no external dependencies. Unreadable files are silently skipped (matches

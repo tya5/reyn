@@ -177,7 +177,7 @@ def test_index_docs_postprocessor_output_name():
 def test_index_docs_postprocessor_no_run_ops():
     """Tier 2: the postprocessor has no run_op steps — #1303 Stage I folded the
     embed + index_write run-ops into the write_chunks_with_lock python step,
-    which streams chunks into reyn.safe.embed_index.
+    which streams chunks into reyn.api.safe.embed_index.
     """
     skill = _load()
     steps = skill.postprocessor.steps
@@ -200,7 +200,7 @@ def test_index_docs_postprocessor_step0_is_extract_and_split():
 
 def test_index_docs_postprocessor_step1_is_write_chunks_with_lock():
     """Tier 2: postprocessor step[1] calls write_chunks_with_lock — the safe
-    step that now also embeds + indexes (streams to reyn.safe.embed_index)."""
+    step that now also embeds + indexes (streams to reyn.api.safe.embed_index)."""
     skill = _load()
     step = skill.postprocessor.steps[1]
     assert isinstance(step, PythonStep)

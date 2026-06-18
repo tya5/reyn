@@ -119,7 +119,7 @@ from . import compact as _compact  # noqa: F401, E402
 
 # ADR-0033: RAG-extensible OS — index_* / recall ops.
 # #1303 Stage I: embed + index_write run-ops deleted (folded into
-# reyn.safe.embed_index; recall embeds provider-direct). index_query +
+# reyn.api.safe.embed_index; recall embeds provider-direct). index_query +
 # index_drop + recall remain.
 from . import file as _file  # noqa: F401, E402
 from . import index_drop as _index_drop  # noqa: F401, E402

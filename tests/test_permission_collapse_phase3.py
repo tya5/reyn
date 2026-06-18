@@ -15,7 +15,7 @@ Verifies the OS-invariants introduced by Phase 3:
 4. `PermissionResolver.require_secret_write` raises for undeclared
    keys and passes for declared ones. (No callers in Phase 3 — wired
    in Phase 5 — but the resolver method exists and is invariant-pinned.)
-5. `reyn.safe.http._check_host` rejects an unauthorised host with a
+5. `reyn.api.safe.http._check_host` rejects an unauthorised host with a
    structured PermissionError that names the host and points to the
    skill.md declaration form.
 6. Unset permission context (= bare-process use without harness setup)
@@ -276,12 +276,12 @@ def test_require_secret_write_wildcard_alongside_specific_key(tmp_path):
     resolver.require_secret_write(decl, "OTHER_KEY")
 
 
-# ── reyn.safe.http enforcement ────────────────────────────────────────────────
+# ── reyn.api.safe.http enforcement ────────────────────────────────────────────────
 
 
 def test_safe_http_check_host_rejects_unauthorised():
     """Tier 2: safe.http rejects a request to an unauthorised host."""
-    from reyn.safe import http as safe_http
+    from reyn.api.safe import http as safe_http
     safe_http._set_permission_context(http_hosts=["api.github.com"])
     with pytest.raises(PermissionError, match="example.com"):
         safe_http._check_host("https://example.com/path")
@@ -289,14 +289,14 @@ def test_safe_http_check_host_rejects_unauthorised():
 
 def test_safe_http_check_host_accepts_authorised():
     """Tier 2: safe.http allows a request to an explicitly allowed host."""
-    from reyn.safe import http as safe_http
+    from reyn.api.safe import http as safe_http
     safe_http._set_permission_context(http_hosts=["api.github.com"])
     safe_http._check_host("https://api.github.com/repos/foo/bar")
 
 
 def test_safe_http_unset_context_raises():
     """Tier 2: bare-process use without harness setup raises with guidance."""
-    from reyn.safe import http as safe_http
+    from reyn.api.safe import http as safe_http
     # Reset to uninitialised by direct assignment (= mirrors safe.file pattern).
     safe_http._context_initialised = False
     safe_http._allowed_hosts = ()
@@ -306,7 +306,7 @@ def test_safe_http_unset_context_raises():
 
 def test_safe_http_all_verbs_gate_via_check_host(monkeypatch):
     """Tier 2: get/post/put/delete all go through _check_host."""
-    from reyn.safe import http as safe_http
+    from reyn.api.safe import http as safe_http
 
     safe_http._set_permission_context(http_hosts=["only.allowed.example"])
     for verb, args in (

@@ -13,7 +13,7 @@ suite. The composition lives there now (= ``_collect_aggregate`` helper
 in ``tests/test_ops_report_skill.py``).
 
 FP-0042 Phase 2.6 (2026-05-23): migrated from mode: unsafe to mode: safe.
-File reads go through ``reyn.safe.file``; the event-file glob covers
+File reads go through ``reyn.api.safe.file``; the event-file glob covers
 ``.reyn/events/`` (= default-zone read), no skill.md ``file.read``
 declaration needed. Path manipulation uses plain string operations
 because ``pathlib`` is not on the safe-mode import allowlist.
@@ -44,7 +44,7 @@ from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from reyn.safe import file as _safe_file
+from reyn.api.safe import file as _safe_file
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -65,7 +65,7 @@ def collect_aggregate_fallback(artifact: dict) -> dict:
     """Fallback raw-events aggregator. Runs unconditionally; no-ops if upstream
     dispatcher already produced stats.
 
-    FP-0042 Phase 2.6: mode: safe. Uses ``reyn.safe.file`` for event-file
+    FP-0042 Phase 2.6: mode: safe. Uses ``reyn.api.safe.file`` for event-file
     reads + stat checks; ``glob.glob`` covers path enumeration (= safe-mode
     allowlisted as a restricted ambient source per the 2026-05-15
     R-PURE-MODE stdlib audit).
@@ -110,7 +110,7 @@ def aggregate_from_raw_events(
     """Walk events under events_root, group by run, return aggregated stats.
 
     Scans all ``.jsonl`` files under ``events_root`` recursively. FP-0042
-    Phase 2.6: file content + stat go through ``reyn.safe.file``; missing
+    Phase 2.6: file content + stat go through ``reyn.api.safe.file``; missing
     directory or permission denial returns an empty aggregate.
 
     Args:
@@ -165,7 +165,7 @@ def _utc_now() -> datetime:
 def _path_exists_safe(path: str) -> bool:
     """Permission-aware existence check that does not raise.
 
-    ``reyn.safe.file.exists`` raises ``PermissionError`` when the path
+    ``reyn.api.safe.file.exists`` raises ``PermissionError`` when the path
     falls outside the declared read zone. For the events-root probe, we
     want a permission denial to count as "not present" so the step
     degrades to an empty aggregate.
@@ -180,7 +180,7 @@ def _is_regular_file(path: str) -> bool:
     """Return True iff ``path`` exists and is a regular file.
 
     Replacement for ``os.path.isfile`` (= ``os`` is not on the safe-mode
-    allowlist). Uses ``reyn.safe.file.stat`` and checks the POSIX mode
+    allowlist). Uses ``reyn.api.safe.file.stat`` and checks the POSIX mode
     bits. Any error (missing, permission denied, broken symlink)
     returns False — matches ``os.path.isfile``'s suppress-all-errors
     behaviour.
@@ -208,7 +208,7 @@ def _discover_event_files(events_root: str) -> list[str]:
 def _group_events_by_run(event_files: list[str]) -> dict[str, list[dict]]:
     """Group raw events by run_id.
 
-    Reads each event file via :mod:`reyn.safe.file` (= permission-gated).
+    Reads each event file via :mod:`reyn.api.safe.file` (= permission-gated).
     Files outside the declared read zone, or that fail to parse, are
     silently skipped — matches the legacy OSError-swallowing read loop.
     """

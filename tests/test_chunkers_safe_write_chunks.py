@@ -2,12 +2,12 @@
 
 Tests the safe-mode postprocessor step: advisory lock + provider-direct
 embed+index. #1303 Stage I folded the old `embed` + `index_write` run-ops
-into this step — it now streams chunks into `reyn.safe.embed_index` (no
+into this step — it now streams chunks into `reyn.api.safe.embed_index` (no
 intermediate `artifacts/chunks.jsonl`) which embeds them and writes the
 vectors to `.reyn/index/<source>/index.db`. Lock-discipline coverage is
 preserved across the cutover.
 
-The function reads source files via reyn.safe.file (granted under tmp_path)
+The function reads source files via reyn.api.safe.file (granted under tmp_path)
 and the embed+index writes go to `<cwd>/.reyn/index/` via SqliteIndexBackend.
 A deterministic fake embedding provider avoids any litellm API call.
 """
@@ -20,12 +20,12 @@ from pathlib import Path
 
 import pytest
 
+from reyn.api.safe import embed_index as ei
+from reyn.api.safe import file as sf
 from reyn.data.embedding import register_provider
 from reyn.data.embedding.provider import EmbedBatchResult
 from reyn.data.index import SqliteIndexBackend
 from reyn.data.index.source_manifest import get_source_manifest
-from reyn.safe import embed_index as ei
-from reyn.safe import file as sf
 
 
 class _FakeEmbedProvider:
@@ -72,7 +72,7 @@ _C = _load_chunkers_safe()
 
 @pytest.fixture(autouse=True)
 def _reset_contexts():
-    """Reset reyn.safe.file + reyn.safe.embed_index module-global contexts."""
+    """Reset reyn.api.safe.file + reyn.api.safe.embed_index module-global contexts."""
     register_provider("fake_cs", _FakeEmbedProvider)
     sf._read_paths = ()
     sf._write_paths = ()

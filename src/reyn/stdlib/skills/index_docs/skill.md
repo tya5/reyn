@@ -33,7 +33,7 @@ permissions:
   python:
     # FP-0042 Phase 2.1 (2026-05-22): preprocessor steps migrated from
     # chunkers.py (mode: unsafe) → chunkers_preproc_safe.py (mode: safe).
-    # File reads / stat calls go through reyn.safe.file, which gates
+    # File reads / stat calls go through reyn.api.safe.file, which gates
     # against the workspace default-read-zone (CWD) and any explicit
     # file.read entries below.
     - module: ./chunkers_preproc_safe.py
@@ -49,9 +49,9 @@ permissions:
       mode: safe
       timeout: 30
     # #1303 Stage I (2026-06-04): write_chunks_with_lock streams chunks
-    # straight into reyn.safe.embed_index (provider-direct embed+index) —
-    # no intermediate JSONL file. Source reads go through reyn.safe.file;
-    # PID identity + liveness through reyn.safe.process; embed+index writes
+    # straight into reyn.api.safe.embed_index (provider-direct embed+index) —
+    # no intermediate JSONL file. Source reads go through reyn.api.safe.file;
+    # PID identity + liveness through reyn.api.safe.process; embed+index writes
     # land under .reyn/index/<source>/ (default write zone). No out-of-zone
     # file.write grant is needed (the old `artifacts` grant is dropped).
     - module: ./chunkers_safe.py
@@ -75,7 +75,7 @@ postprocessor:
           properties:
             source_path: {type: string}
     # Step 2: safe — lock + file content read + provider-direct embed+index
-    # (streams chunks into reyn.safe.embed_index; folds the old embed +
+    # (streams chunks into reyn.api.safe.embed_index; folds the old embed +
     # index_write run-ops, no intermediate file). #1303 Stage I.
     - type: python
       module: ./chunkers_safe.py
@@ -115,9 +115,9 @@ the LLM has decided the chunking strategy.
    - `extract_and_split` (python step, safe): enumerates source files via
      glob; no file content read
    - `write_chunks_with_lock` (python step, safe): acquires the source-level
-     advisory lock (UX gap fix D), reads each source file via `reyn.safe.file`,
+     advisory lock (UX gap fix D), reads each source file via `reyn.api.safe.file`,
      splits into chunks per strategy, and **streams** the chunks into
-     `reyn.safe.embed_index.embed_and_index` — which embeds them provider-direct
+     `reyn.api.safe.embed_index.embed_and_index` — which embeds them provider-direct
      and writes the vectors to `SqliteIndexBackend`
      (`.reyn/index/<source>/index.db`), then updates `SourceManifest`. No
      intermediate file (#1303 Stage I folds the old `embed` + `index_write`
@@ -155,7 +155,7 @@ flag-form CLI wrapper is tracked as carry-over but not implemented in 1.0.
 
 Override the chunker modules for project-specific file formats by replacing
 the two-step chain. Both override steps should declare `mode: safe` and use
-the `reyn.safe.file` API for any file I/O (= the FP-0042 stdlib safe-only
+the `reyn.api.safe.file` API for any file I/O (= the FP-0042 stdlib safe-only
 doctrine applies to project chunkers too):
 
 ```yaml
@@ -182,11 +182,11 @@ postprocessor:
       mode: safe
       output_schema: ...
     # embed+index happen inside write_chunks_with_lock (it streams chunks
-    # into reyn.safe.embed_index) — no separate embed / index_write steps.
+    # into reyn.api.safe.embed_index) — no separate embed / index_write steps.
 ```
 
 A project chunker override should call
-`reyn.safe.embed_index.embed_and_index(chunks, source, "standard", mode=...,
+`reyn.api.safe.embed_index.embed_and_index(chunks, source, "standard", mode=...,
 description=..., path=...)` from its `write_chunks_with_lock` so the
 provider-direct embed+index, DB-checkpoint resume, and SourceManifest upsert
 are preserved. The pre-FP-0042 single-step `apply_strategy` override path was

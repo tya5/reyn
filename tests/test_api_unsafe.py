@@ -1,4 +1,4 @@
-"""Tier 2: reyn.interfaces.api.unsafe wrapper behaviour.
+"""Tier 2: reyn.api.unsafe wrapper behaviour.
 
 These tests run the wrappers as plain Python imports — they do not
 spin up the python step subprocess harness (= those would be
@@ -12,10 +12,10 @@ import sys
 
 import pytest
 
-from reyn.interfaces.api.unsafe import env as unsafe_env
-from reyn.interfaces.api.unsafe import file as unsafe_file
-from reyn.interfaces.api.unsafe import shell as unsafe_shell
-from reyn.interfaces.api.unsafe import workspace as unsafe_workspace
+from reyn.api.unsafe import env as unsafe_env
+from reyn.api.unsafe import file as unsafe_file
+from reyn.api.unsafe import shell as unsafe_shell
+from reyn.api.unsafe import workspace as unsafe_workspace
 
 # -- file --------------------------------------------------------------
 
@@ -71,7 +71,7 @@ def test_http_get_returns_envelope_on_invalid_url() -> None:
 
 
 def unsafe_http_get(url: str):
-    from reyn.interfaces.api.unsafe import http as unsafe_http
+    from reyn.api.unsafe import http as unsafe_http
 
     return unsafe_http.get(url, timeout=1)
 

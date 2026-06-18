@@ -11,7 +11,7 @@ Testing policy: Tier 2 (OS invariant — deterministic logic + real fs ops).
 No MagicMock / AsyncMock / patch. No private-state assertions.
 
 FP-0042 Phase 2.7 (2026-05-23): ``version_snapshot.py`` migrated from
-mode: unsafe to mode: safe; file I/O now goes through ``reyn.safe.file``.
+mode: unsafe to mode: safe; file I/O now goes through ``reyn.api.safe.file``.
 The autouse ``_safe_file_context`` fixture grants reads + writes under
 ``tmp_path`` so the safe-mode helpers can run inside the test process.
 """
@@ -22,12 +22,12 @@ from pathlib import Path
 
 import pytest
 
-from reyn.safe import file as sf
+from reyn.api.safe import file as sf
 
 
 @pytest.fixture(autouse=True)
 def _safe_file_context(tmp_path: Path):
-    """Grant reyn.safe.file read+write over tmp_path for each test.
+    """Grant reyn.api.safe.file read+write over tmp_path for each test.
 
     Mirrors the production wiring (= CWD as default read zone, .reyn/ as
     default write zone). Tests in this module operate exclusively under

@@ -53,7 +53,7 @@ Internal layering
 This module is reyn-package internal code (= not subject to the
 safe-mode AST validator). It is free to import urllib / reyn.core.registry
 helpers; the validator only rejects user-code imports outside the
-allowlist, and ``reyn.safe.*`` is admitted.
+allowlist, and ``reyn.api.safe.*`` is admitted.
 
 Public API (returned dict shape)
 --------------------------------

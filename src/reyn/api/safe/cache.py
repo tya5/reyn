@@ -2,12 +2,12 @@
 
 Re-exports the existing file-based 24h TTL cache (= the same
 ``~/.reyn/registry-cache/<encoded_key>.json`` store the MCP / skill
-registries already use) under the ``reyn.safe.*`` namespace so safe-mode
+registries already use) under the ``reyn.api.safe.*`` namespace so safe-mode
 python steps can import it through the AST allowlist.
 
 The underlying cache is unchanged — this module exists only to bridge
 the import-path gap. ``reyn.core.registry.cache`` continues to host the
-implementation; ``reyn.safe.cache`` is the safe-mode-visible alias.
+implementation; ``reyn.api.safe.cache`` is the safe-mode-visible alias.
 
 Public API
 ----------
@@ -18,7 +18,7 @@ Public API
 Threat-model note: the cache writes to ``~/.reyn/registry-cache/`` —
 outside the per-skill ``permissions.file.write`` declaration. This is
 intentional (= the cache is a cross-skill shared optimization, not
-per-skill data) and consistent with how ``reyn.safe.mcp.registry``
+per-skill data) and consistent with how ``reyn.api.safe.mcp.registry``
 already uses it internally.
 """
 from __future__ import annotations

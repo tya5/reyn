@@ -2,7 +2,7 @@
 
 Two enforcement axes:
 
-1. **`reyn.interfaces.api.unsafe.*` imports in stdlib MUST be zero.** This is the
+1. **`reyn.api.unsafe.*` imports in stdlib MUST be zero.** This is the
    strict success criterion from the FP-0042 proposal — stdlib code must
    not reach for raw I/O via the unsafe namespace.
 
@@ -15,7 +15,7 @@ Two enforcement axes:
    so a CI failure here lands as a documentation update too.
 
 If a new stdlib skill needs unsafe python, the right path is **not** to
-add it to the exemption set. Refactor through the `reyn.safe.*` surface
+add it to the exemption set. Refactor through the `reyn.api.safe.*` surface
 (= file / process / mcp.registry / write_atomic primitives the FP-0042
 phases added) or split the I/O out via a ``run_op``. See the FP-0042
 proposal at ``docs/deep-dives/proposals/0042-...`` for the migration
@@ -56,7 +56,7 @@ def _stdlib_root() -> Path:
 
 
 # ---------------------------------------------------------------------------
-# Test A: no reyn.interfaces.api.unsafe.* imports in stdlib
+# Test A: no reyn.api.unsafe.* imports in stdlib
 # ---------------------------------------------------------------------------
 
 
@@ -68,13 +68,13 @@ _UNSAFE_IMPORT_RE = re.compile(
 
 def test_no_unsafe_api_imports_in_stdlib() -> None:
     """Tier 2: no Python file under ``src/reyn/stdlib/`` imports from
-    ``reyn.interfaces.api.unsafe.*``.
+    ``reyn.api.unsafe.*``.
 
     The FP-0042 proposal's headline Phase 3 success criterion. Imports
     are detected by line-anchored regex over the actual python source —
     comment / docstring references that mention the path are not flagged.
 
-    If a new stdlib needs raw I/O, see ``reyn.safe.*`` (= the
+    If a new stdlib needs raw I/O, see ``reyn.api.safe.*`` (= the
     permission-gated surface added by FP-0042) or split the I/O out via
     ``type: run_op``. The proposal at
     ``docs/deep-dives/proposals/0042-stdlib-safe-only-and-permission-gated-file-api.md``
@@ -90,10 +90,10 @@ def test_no_unsafe_api_imports_in_stdlib() -> None:
             violations.append(str(py_file.relative_to(_stdlib_root())))
 
     assert violations == [], (
-        f"stdlib python files must not import reyn.interfaces.api.unsafe.*; "
+        f"stdlib python files must not import reyn.api.unsafe.*; "
         f"violations: {violations}. "
         "See FP-0042 (docs/deep-dives/proposals/0042-...) — use "
-        "reyn.safe.* instead, or split I/O out via a run_op."
+        "reyn.api.safe.* instead, or split I/O out via a run_op."
     )
 
 
@@ -150,7 +150,7 @@ def test_stdlib_mode_unsafe_only_in_exemption_set() -> None:
     Post-FP-0042 Phase 2.8 (2026-05-23) the exemption set is empty —
     stdlib is fully safe-mode. Adding any new ``mode: unsafe`` entry
     fails this test; the right path is to refactor through
-    ``reyn.safe.*`` primitives or split the I/O via a ``run_op``. If a
+    ``reyn.api.safe.*`` primitives or split the I/O via a ``run_op``. If a
     new exemption is genuinely required, both this test and
     ``docs/concepts/skills/python-safe-mode.md`` need to be updated together.
     """
@@ -159,7 +159,7 @@ def test_stdlib_mode_unsafe_only_in_exemption_set() -> None:
     assert unexpected == set(), (
         f"New stdlib mode: unsafe declaration(s) outside the documented "
         f"exemption set: {sorted(unexpected)}. "
-        "Either refactor to mode: safe (= preferred — use reyn.safe.* "
+        "Either refactor to mode: safe (= preferred — use reyn.api.safe.* "
         "primitives or split I/O via run_op), or, if genuinely required, "
         "extend GRANDFATHERED_UNSAFE in this test AND add the entry to "
         "docs/concepts/skills/python-safe-mode.md under the FP-0042 stdlib "

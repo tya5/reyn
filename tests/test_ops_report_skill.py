@@ -8,7 +8,7 @@ All tests use real filesystem I/O (tmp_path) and real Python functions.
 No mocks, no AsyncMock, no patch decorators — per CLAUDE.md testing policy.
 
 FP-0042 Phase 2.6 (2026-05-23): ``aggregate.py`` migrated from mode:
-unsafe to mode: safe; file I/O now goes through ``reyn.safe.file``.
+unsafe to mode: safe; file I/O now goes through ``reyn.api.safe.file``.
 The autouse ``_safe_file_context`` fixture below grants reads under
 ``tmp_path`` so the safe-mode helpers can run inside the test process
 (= mirrors how the production preprocessor_executor wires the
@@ -22,7 +22,7 @@ from pathlib import Path
 
 import pytest
 
-from reyn.safe import file as sf
+from reyn.api.safe import file as sf
 
 # Module under test
 from reyn.stdlib.skills.ops_report.aggregate import (
@@ -56,7 +56,7 @@ def collect_aggregate(artifact: dict) -> dict:
 
 @pytest.fixture(autouse=True)
 def _safe_file_context(tmp_path: Path):
-    """Grant reyn.safe.file read access over tmp_path for each test.
+    """Grant reyn.api.safe.file read access over tmp_path for each test.
 
     Mirrors the production wiring (= CWD as default read zone). Tests
     in this module operate exclusively under tmp_path, so a wide grant

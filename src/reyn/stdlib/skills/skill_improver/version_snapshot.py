@@ -6,7 +6,7 @@ Public functions:
   decide_on_propose_action(...)   → str    (pure config-to-action mapping)
 
 FP-0042 Phase 2.7 (2026-05-23): migrated from mode: unsafe to mode: safe.
-File reads / writes / mkdir / delete go through ``reyn.safe.file``;
+File reads / writes / mkdir / delete go through ``reyn.api.safe.file``;
 ``glob.glob`` covers directory enumeration for the max-versions cap.
 
 The legacy ``read_on_propose_config`` (which called
@@ -34,7 +34,7 @@ from __future__ import annotations
 
 import glob as _glob_mod
 
-from reyn.safe import file as _safe_file
+from reyn.api.safe import file as _safe_file
 
 # POSIX stat-mode constants (= stat.S_IFMT / S_IFREG). Hard-coded because
 # the ``stat`` module is not on the safe-mode import allowlist.
@@ -280,7 +280,7 @@ def _apply_max_versions_cap(versions_dir: str, current_n: int, max_versions: int
       - Repeats until count <= max_versions or no deletable files remain.
 
     FP-0042 Phase 2.7: replaces ``Path.iterdir`` + ``os.remove`` with
-    ``glob.glob`` + ``reyn.safe.file.delete``. Directory enumeration via
+    ``glob.glob`` + ``reyn.api.safe.file.delete``. Directory enumeration via
     glob covers what iterdir did; the regular-file filter is implicit
     because the pattern only matches ``v*.md``.
     """

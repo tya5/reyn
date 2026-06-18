@@ -512,7 +512,7 @@ class PreprocessorExecutor:
         )
 
         # FP-0042: forward the skill's declared file-read / file-write
-        # paths into the subprocess so ``reyn.safe.file.*`` calls inside
+        # paths into the subprocess so ``reyn.api.safe.file.*`` calls inside
         # the user step can gate against them. The subprocess-side check
         # is decl-membership, not the full 4-layer ask flow (= those
         # layers already fired at startup_guard time before this step
@@ -527,7 +527,7 @@ class PreprocessorExecutor:
         # Keeping the contract symmetric with the existing permission
         # model.
         #
-        # #571 collapse arc Phase 2: ``reyn.safe.file._check_write``
+        # #571 collapse arc Phase 2: ``reyn.api.safe.file._check_write``
         # additionally enforces a canonical-protected-paths denylist
         # (= ``.reyn/mcp.yaml`` / ``.reyn/cron.yaml`` /
         # ``.reyn/index/sources.yaml``). Those paths are allowed through
@@ -554,7 +554,7 @@ class PreprocessorExecutor:
         ]
         # #571 collapse arc Phase 3 / Phase 7: forward the skill's
         # declared http.get host allowlist into the subprocess so
-        # ``reyn.safe.http.*`` calls gate against it. Wildcard ``"*"``
+        # ``reyn.api.safe.http.*`` calls gate against it. Wildcard ``"*"``
         # entries are stripped here — the subprocess cannot prompt
         # the operator, so wildcard hosts can only be reached via the
         # ``web_fetch`` op handler (main-process async path). A skill
@@ -569,7 +569,7 @@ class PreprocessorExecutor:
         ]
 
         # #1199 S3.4 Part1: forward the sandbox write_paths cap so a safe-mode
-        # step's host-direct index write (reyn.safe.embed_index →
+        # step's host-direct index write (reyn.api.safe.embed_index →
         # SqliteIndexBackend) self-gates against it. None when no policy (or no
         # write_paths) → no cap (unchanged).
         # #1326: the source is the agent-level (operator) policy. The index write

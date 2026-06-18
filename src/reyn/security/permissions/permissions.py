@@ -207,7 +207,7 @@ class PermissionDecl:
     # normalized to None by the loader before constructing PermissionDecl.
     allowed_mcp: list[str] | None = None
     # #571 collapse arc Phase 3: per-host HTTP allowlist for
-    # ``reyn.safe.http.*`` calls from safe-mode python steps. Each
+    # ``reyn.api.safe.http.*`` calls from safe-mode python steps. Each
     # entry: {"host": str}. Empty list = no HTTP allowed via safe.http
     # (the ``web_fetch`` Tier-1 op route is unaffected — that's a
     # separate, LLM-callable surface with its own approval flow).

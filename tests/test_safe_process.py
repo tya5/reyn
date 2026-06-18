@@ -1,6 +1,6 @@
-"""Tier 2 — reyn.safe.process contract tests (FP-0042 Phase 2.2).
+"""Tier 2 — reyn.api.safe.process contract tests (FP-0042 Phase 2.2).
 
-The :mod:`reyn.safe.process` module exposes ``getpid`` + ``pid_alive``
+The :mod:`reyn.api.safe.process` module exposes ``getpid`` + ``pid_alive``
 to safe-mode python steps without a permission gate (process identity
 is ambient in the same sense as ``time`` / ``random``). These tests
 pin: getpid returns the same value as ``os.getpid``, pid_alive is
@@ -11,11 +11,11 @@ from __future__ import annotations
 
 import os
 
-from reyn.safe import process as sp
+from reyn.api.safe import process as sp
 
 
 def test_getpid_matches_os_getpid() -> None:
-    """Tier 2: reyn.safe.process.getpid() returns os.getpid() verbatim."""
+    """Tier 2: reyn.api.safe.process.getpid() returns os.getpid() verbatim."""
     assert sp.getpid() == os.getpid()
 
 

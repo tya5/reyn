@@ -5,7 +5,7 @@ description: |
   completes.
 
   #1303 Stage I: embedding + index writing are folded into the single
-  write_chunks_with_lock step (it streams chunks into reyn.safe.embed_index),
+  write_chunks_with_lock step (it streams chunks into reyn.api.safe.embed_index),
   so all run counts now live under one ``chunk_stats`` sub-dict — the separate
   ``embed_result`` (embed op) and ``index_result`` (index_write op) groups are
   gone with the run-ops.

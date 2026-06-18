@@ -18,7 +18,7 @@ from pathlib import Path
 
 import pytest
 
-from reyn.safe import file as sf
+from reyn.api.safe import file as sf
 
 
 def _load_chunkers_preproc_safe():
@@ -45,7 +45,7 @@ _C = _load_chunkers_preproc_safe()
 
 @pytest.fixture(autouse=True)
 def _reset_safe_file_context():
-    """Reset reyn.safe.file's module-global permission context per test."""
+    """Reset reyn.api.safe.file's module-global permission context per test."""
     sf._read_paths = ()
     sf._write_paths = ()
     sf._context_initialised = False
@@ -179,7 +179,7 @@ def test_gather_samples_summary_ext_dist(grant_tmp_read: Path):
 
 def test_gather_samples_filters_directories(grant_tmp_read: Path):
     """Tier 2: directories returned by glob are filtered out (= os.path.isfile
-    behaviour preserved via reyn.safe.file.stat mode check)."""
+    behaviour preserved via reyn.api.safe.file.stat mode check)."""
     (grant_tmp_read / "subdir").mkdir()
     (grant_tmp_read / "a.md").write_text("content", encoding="utf-8")
 

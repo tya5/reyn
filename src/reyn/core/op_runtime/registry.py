@@ -129,7 +129,7 @@ OP_KIND_MODEL_MAP: dict[str, type[BaseModel]] = {
     "mcp_install": MCPInstallIROp,
     # ADR-0033: RAG-extensible OS — index_* / recall ops.
     # #1303 Stage I: embed + index_write deleted (chunkers stream into
-    # reyn.safe.embed_index; recall embeds provider-direct).
+    # reyn.api.safe.embed_index; recall embeds provider-direct).
     "index_query": IndexQueryIROp,
     "recall":      RecallIROp,
     "index_drop":  IndexDropIROp,

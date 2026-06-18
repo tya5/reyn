@@ -1,6 +1,6 @@
-"""Tier 2 — reyn.safe.file permission-gated file API contract tests (FP-0042).
+"""Tier 2 — reyn.api.safe.file permission-gated file API contract tests (FP-0042).
 
-The :mod:`reyn.safe.file` module exposes read / write / glob / exists / stat
+The :mod:`reyn.api.safe.file` module exposes read / write / glob / exists / stat
 / open to safe-mode python steps with a path-list permission check. These
 tests pin the gate behaviour: declared-path-in → grant, declared-path-out
 → deny with :class:`PermissionError`, context-not-set → deny, ``open`` mode
@@ -18,12 +18,12 @@ from pathlib import Path
 
 import pytest
 
-from reyn.safe import file as sf
+from reyn.api.safe import file as sf
 
 
 @pytest.fixture(autouse=True)
 def _reset_context():
-    """Reset reyn.safe.file's module-global permission context.
+    """Reset reyn.api.safe.file's module-global permission context.
 
     Tests that need a permission context call ``sf._set_permission_context``
     explicitly. The reset ensures order-independent runs and matches the

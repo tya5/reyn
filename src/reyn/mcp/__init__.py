@@ -1,7 +1,7 @@
 """MCP transport core (#1682).
 
 Consolidates the former top-level ``reyn.mcp.server`` + ``reyn.mcp.client`` and
-``reyn.safe.mcp.registry`` into one package:
+``reyn.api.safe.mcp.registry`` into one package:
 
     reyn.mcp.server    <- mcp_server.py   (build/serve + agent send/list)
     reyn.mcp.client    <- mcp_client.py   (MCPClient transport)
@@ -10,7 +10,7 @@ Consolidates the former top-level ``reyn.mcp.server`` + ``reyn.mcp.client`` and
 This ``__init__`` re-exports the curated transport public surface so callers can
 ``from reyn.mcp import build_server`` / ``MCPClient`` etc. The former module paths
 remain as thin re-export shims for back-compat (incl test-private internals).
-``reyn.mcp.registry`` is a submodule (its public consumer is the ``reyn.safe.mcp``
+``reyn.mcp.registry`` is a submodule (its public consumer is the ``reyn.api.safe.mcp``
 allowlist shim).
 """
 from __future__ import annotations

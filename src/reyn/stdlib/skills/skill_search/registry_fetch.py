@@ -30,8 +30,8 @@ from __future__ import annotations
 
 import re
 
-from reyn.safe.http import get as http_get
-from reyn.safe.json import loads_strict
+from reyn.api.safe.http import get as http_get
+from reyn.api.safe.json import loads_strict
 
 _USER_AGENT = "reyn/1.0"
 _DEFAULT_LIST_URL = (
@@ -167,7 +167,7 @@ def _build_candidate(name: str) -> dict:
     description fetch happens at most once per 24h per skill — successive
     queries against the same registry reuse the result.
     """
-    import reyn.safe.cache as cache
+    import reyn.api.safe.cache as cache
 
     cache_key = f"skill_search:desc:{_raw_base()}:{name}"
     cached = cache.get(cache_key)
@@ -191,7 +191,7 @@ def fetch_registry_results(artifact: dict) -> dict:
     Receives the phase input artifact dict. Returns a dict placed at
     ``data.registry`` in the enriched artifact.
     """
-    import reyn.safe.cache as cache
+    import reyn.api.safe.cache as cache
 
     text: str = (artifact.get("data") or {}).get("text") or ""
     query = _extract_keyword(text) if text.strip() else ""

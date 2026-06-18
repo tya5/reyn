@@ -1,8 +1,8 @@
 """Safe-mode HTTP for stdlib skills.
 
 Exposes the same ``get`` / ``post`` / ``put`` / ``delete`` surface as
-``reyn.interfaces.api.unsafe.http`` (= ``urllib.request``-backed, no extra deps),
-but in the ``reyn.safe.*`` namespace so safe-mode python steps can
+``reyn.api.unsafe.http`` (= ``urllib.request``-backed, no extra deps),
+but in the ``reyn.api.safe.*`` namespace so safe-mode python steps can
 import it through the AST allowlist.
 
 Permission model (#571 Phase 3)
@@ -17,7 +17,7 @@ the MCP registry) auto-expand to the equivalent ``http.get`` entry via
 the ``PermissionDecl.from_dict`` compat shim, so existing bool-decl
 skills keep working without an explicit ``http.get`` declaration.
 
-Mirrors :mod:`reyn.safe.file`'s permission-context contract: the
+Mirrors :mod:`reyn.api.safe.file`'s permission-context contract: the
 parent process configures the allowlist via :func:`_set_permission_context`
 before the user step runs; the python harness wires that.
 
@@ -27,14 +27,14 @@ Internal layering
 This module is reyn-package internal code (= not subject to the
 safe-mode AST validator). It freely imports ``urllib.request`` /
 ``urllib.error``; the validator only rejects user-code imports outside
-the allowlist, and ``reyn.safe.*`` is admitted.
+the allowlist, and ``reyn.api.safe.*`` is admitted.
 
 Return envelope
 ---------------
 
 All four methods return ``{status: int, body: str, headers: dict}``.
 HTTP error statuses (4xx / 5xx) are NOT raised — callers inspect
-``status``. Mirrors ``reyn.interfaces.api.unsafe.http`` exactly.
+``status``. Mirrors ``reyn.api.unsafe.http`` exactly.
 """
 from __future__ import annotations
 
@@ -49,7 +49,7 @@ from urllib.request import urlopen as _urlopen
 #
 # Set once at python harness start-up via :func:`_set_permission_context`.
 # Used by :func:`_check_host` to gate every outbound call. Mirrors
-# ``reyn.safe.file``'s module-globals contract.
+# ``reyn.api.safe.file``'s module-globals contract.
 
 _allowed_hosts: tuple[str, ...] = ()
 _context_initialised: bool = False
@@ -78,7 +78,7 @@ def _check_host(url: str) -> None:
     """Raise PermissionError if ``url``'s host is not in the allowlist."""
     if not _context_initialised:
         raise PermissionError(
-            "reyn.safe.http: permission context not initialised. This "
+            "reyn.api.safe.http: permission context not initialised. This "
             "module must be invoked from a PythonRunner-managed safe-mode "
             "step; bare-process use requires calling "
             "_set_permission_context(http_hosts=[...]) first "
@@ -89,7 +89,7 @@ def _check_host(url: str) -> None:
     if host in _allowed_hosts:
         return
     raise PermissionError(
-        f"reyn.safe.http: request to host {host!r} (url={url!r}) is not "
+        f"reyn.api.safe.http: request to host {host!r} (url={url!r}) is not "
         f"in the declared http_hosts {list(_allowed_hosts)}. Declare it "
         f"in skill.md frontmatter:\n"
         f"  permissions:\n"
