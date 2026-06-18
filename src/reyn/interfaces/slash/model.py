@@ -21,7 +21,7 @@ from typing import TYPE_CHECKING
 from reyn.interfaces.slash import reply, reply_error, slash
 
 if TYPE_CHECKING:
-    from reyn.chat.session import ChatSession
+    from reyn.chat.session import Session
 
 
 @slash(
@@ -29,7 +29,7 @@ if TYPE_CHECKING:
     summary="Show or override the model class for this session",
     usage="/model [<class>]",
 )
-async def model_cmd(session: "ChatSession", args: str) -> None:
+async def model_cmd(session: "Session", args: str) -> None:
     """/model [<class>] — show current model or set a per-session override."""
     resolver = session._resolver
     requested = args.strip()
