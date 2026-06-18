@@ -14,11 +14,11 @@ running a real LLM call. No MagicMock.
 from __future__ import annotations
 
 import asyncio
+
 import pytest
 
 from reyn.chat.services.router_loop_driver import RouterLoopDriver
 from reyn.llm.model_resolver import ModelResolver
-
 
 # ---------------------------------------------------------------------------
 # Helpers

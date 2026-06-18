@@ -336,7 +336,8 @@ class RouterLoopDriver:
 
         Raises RouterCapExceeded when the per-turn cap is reached.
         """
-        from reyn.chat.router_loop import EMPTY_STOP_RETRY_DIRECTIVE, RouterLoop as _RouterLoop
+        from reyn.chat.router_loop import EMPTY_STOP_RETRY_DIRECTIVE
+        from reyn.chat.router_loop import RouterLoop as _RouterLoop
         from reyn.services.compaction.engine import (
             ContextOverflowError as _ContextOverflowError,
         )
