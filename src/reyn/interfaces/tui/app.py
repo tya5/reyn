@@ -1077,6 +1077,11 @@ class ReynTUIApp(App):
         conv = self.query_one("#conversation", ConversationView)
         # B1: render with grouped header
         conv.render_user_message(text)
+        # Yield one event-loop tick so Textual repaints the user echo
+        # before the WAL append (which blocks on fsync). Without this
+        # yield, the render is queued but never fires until after the
+        # blocking fsync window completes.
+        await asyncio.sleep(0)
         # A4: snapshot cost/tokens/time at turn start
         self._record_turn_start()
         # Out-of-band: a fresh user submit clears any prior "awaiting
