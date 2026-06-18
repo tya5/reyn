@@ -192,6 +192,19 @@ class RouterHistoryBuffer:
             msg["tool_call_id"] = m.tool_call_id
         if m.name is not None:
             msg["name"] = m.name
+        # ── #1652-②-AB PROTOTYPE (THROWAWAY) ──────────────────────────────────
+        # Native-history reasoning carry: attach the assistant turn's captured
+        # reasoning as ``reasoning_content`` on the wire message so litellm
+        # round-trips it natively (vs the text-in-SP section). Gated by an env
+        # flag so sandbox_2 can flip A (off=text-SP) vs B (on=native-history)
+        # for the gemini-proxy continuity A/B. NOT for merge — production goes
+        # through the reviewed ② PR after the A/B gates it.
+        import os as _os
+        if _os.environ.get("REYN_REASONING_NATIVE_HISTORY") == "1" and role == "assistant":
+            _meta = getattr(m, "meta", None)
+            _reasoning = _meta.get("reasoning") if isinstance(_meta, dict) else None
+            if _reasoning:
+                msg["reasoning_content"] = _reasoning
         return msg
 
     def _resolve_budgets(self) -> tuple[int, int, int]:

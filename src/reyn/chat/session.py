@@ -5187,6 +5187,13 @@ class Session:
         """
         if not self._reasoning.continuity:
             return ""
+        # #1652-②-AB PROTOTYPE (THROWAWAY): in native-history mode the reasoning
+        # rides the wire assistant messages (see _serialise_turn), so suppress
+        # the SP text section → the router SP becomes byte-stable (the cache win
+        # under A/B). NOT for merge — production lands via the reviewed ② PR.
+        import os as _os
+        if _os.environ.get("REYN_REASONING_NATIVE_HISTORY") == "1":
+            return ""
         items = [
             m.meta["reasoning"]
             for m in self.history
