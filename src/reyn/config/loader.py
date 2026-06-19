@@ -9,6 +9,7 @@ from typing import Any, Literal
 from reyn.config.chat import (  # #1682 #3 cross-section
     _build_chat_config,
     _build_cost_config,  # #1682 #3: cost builder lives in chat
+    _build_cost_warn_config,
     _build_safety_config,
 )
 from reyn.config.embedding import (  # #1682 #3 cross-section
@@ -360,6 +361,7 @@ def load_config(cwd: Path | None = None) -> ReynConfig:
     safety_raw = merged.get("safety") if isinstance(merged.get("safety"), dict) else {}
     safety = _build_safety_config(safety_raw)
     cost = _build_cost_config(merged.get("cost"))
+    cost_warn = _build_cost_warn_config(merged.get("cost_warn"))
     _cfg = ReynConfig(
         model=str(merged.get("model", "standard")),
         output_language=output_language,
@@ -406,6 +408,7 @@ def load_config(cwd: Path | None = None) -> ReynConfig:
         voice=_build_voice_config(merged.get("voice")),
         embedding=_build_embedding_config(merged.get("embedding")),
         safety=safety,
+        cost_warn=cost_warn,
         web=_build_web_config(merged.get("web")),
         multimodal=_build_multimodal_config(merged.get("multimodal")),
         skill_search=_build_skill_search_config(merged.get("skill_search")),

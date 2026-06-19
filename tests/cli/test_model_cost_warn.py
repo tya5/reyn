@@ -1,0 +1,175 @@
+"""Tier 2: high-cost model pre-confirmation (#1830 / FP-0052).
+
+Covers three contracts:
+A. model_cost_rate utility (pure functions — no session needed).
+B. CostWarnConfig parsing from raw YAML dict.
+C. lifecycle_forwarder.on_model_cost_warn → conv-pane marker.
+
+Non-duplication axis: these tests are NOT about BudgetTracker (cumulative
+spend) or ContextBudgetAdvisor (token ceiling). They test the pre-selection
+per-token-rate awareness layer, which is orthogonal to both.
+
+Falsification:
+- get_input_cost_per_1m_usd: returns None for unknown model (not 0).
+- is_high_cost_model: returns False (not True) when rate is unknown.
+- CostWarnConfig: missing key → default (not crash).
+- on_model_cost_warn: non-float cost data → safe fallback (not crash).
+"""
+from __future__ import annotations
+
+import asyncio
+
+import pytest
+
+from reyn.config.chat import CostWarnConfig, _build_cost_warn_config
+from reyn.llm.model_cost_rate import get_input_cost_per_1m_usd, is_high_cost_model
+from reyn.runtime.lifecycle_forwarder import ChatLifecycleForwarder
+
+# ---------------------------------------------------------------------------
+# A. model_cost_rate utility
+# ---------------------------------------------------------------------------
+
+def test_get_input_cost_returns_none_for_unknown_model() -> None:
+    """Tier 2: unknown model → None (not 0.0, not an exception).
+
+    Falsification: if the function returned 0.0 for unknown models, callers
+    would treat all unknown models as free — is_high_cost_model would always
+    return False for them even if cost data appears later.
+    """
+    result = get_input_cost_per_1m_usd("__definitely_not_a_real_model_xyz__")
+    assert result is None, f"expected None for unknown model, got {result!r}"
+
+
+def test_get_input_cost_returns_positive_for_known_model() -> None:
+    """Tier 2: a model in litellm.model_cost returns a positive float.
+
+    Falsification: if the lookup key were wrong (e.g. off-by-one in the
+    per_token → per_1m scaling), the result would be tiny (<0.01) or negative.
+    """
+    # gpt-4o is in litellm's pricing DB at ~$2.50/1M input tokens.
+    result = get_input_cost_per_1m_usd("gpt-4o")
+    if result is None:
+        pytest.skip("gpt-4o not found in this litellm version's pricing DB")
+    assert isinstance(result, float), f"expected float, got {type(result).__name__}"
+    assert result > 0, f"expected positive cost, got {result}"
+
+
+def test_is_high_cost_returns_false_for_unknown_model() -> None:
+    """Tier 2: unknown model → False (unknown cost ≠ high cost).
+
+    Falsification: without the ``cost is not None`` guard, unknown models
+    would cause a TypeError when comparing None > threshold.
+    """
+    result = is_high_cost_model("__definitely_not_a_real_model_xyz__", 5.0)
+    assert result is False, "expected False for unknown model"
+
+
+def test_is_high_cost_returns_false_for_cheap_model() -> None:
+    """Tier 2: a below-threshold model returns False.
+
+    Uses an absurdly high threshold (10000) so any real model is below it.
+    Falsification: without the > check, threshold=10000 would still warn.
+    """
+    result = is_high_cost_model("gpt-4o", threshold_per_1m_usd=10_000.0)
+    assert result is False
+
+
+def test_is_high_cost_returns_true_for_low_threshold() -> None:
+    """Tier 2: a very low threshold triggers the warning for a known model.
+
+    Uses threshold=0.0 so any model with known cost fires.
+    Falsification: without the > check (using >=), a model at exactly 0.0
+    would also fire — but 0.0 threshold means "warn about everything known".
+    """
+    result = is_high_cost_model("gpt-4o", threshold_per_1m_usd=0.0)
+    if get_input_cost_per_1m_usd("gpt-4o") is None:
+        pytest.skip("gpt-4o not found in this litellm version's pricing DB")
+    assert result is True, "expected True when threshold=0.0 for a known model"
+
+
+# ---------------------------------------------------------------------------
+# B. CostWarnConfig parsing
+# ---------------------------------------------------------------------------
+
+def test_build_cost_warn_config_defaults_when_missing() -> None:
+    """Tier 2: missing / None raw → full defaults (enabled=True, threshold=5.0)."""
+    cfg = _build_cost_warn_config(None)
+    assert cfg.enabled is True
+    assert cfg.model_threshold_per_1m_input_usd == 5.0
+
+
+def test_build_cost_warn_config_parses_enabled_false() -> None:
+    """Tier 2: enabled: false in YAML disables the feature."""
+    cfg = _build_cost_warn_config({"enabled": False})
+    assert cfg.enabled is False
+
+
+def test_build_cost_warn_config_parses_custom_threshold() -> None:
+    """Tier 2: custom threshold is parsed as float."""
+    cfg = _build_cost_warn_config({"model_threshold_per_1m_input_usd": 15.0})
+    assert cfg.model_threshold_per_1m_input_usd == 15.0
+
+
+def test_build_cost_warn_config_bad_threshold_falls_back() -> None:
+    """Tier 2: non-numeric threshold falls back to default (5.0), not a crash.
+
+    Falsification: without the try/except around float(threshold), a YAML
+    string like "not_a_number" would propagate as a ValueError.
+    """
+    cfg = _build_cost_warn_config({"model_threshold_per_1m_input_usd": "not_a_number"})
+    assert cfg.model_threshold_per_1m_input_usd == CostWarnConfig().model_threshold_per_1m_input_usd
+
+
+# ---------------------------------------------------------------------------
+# C. lifecycle_forwarder.on_model_cost_warn
+# ---------------------------------------------------------------------------
+
+def _make_forwarder() -> tuple[ChatLifecycleForwarder, asyncio.Queue]:
+    """Create a forwarder with a real asyncio.Queue (no mocks per policy)."""
+    q: asyncio.Queue = asyncio.Queue(maxsize=100)
+    return ChatLifecycleForwarder(q), q
+
+
+def test_on_model_cost_warn_enqueues_system_message() -> None:
+    """Tier 2: on_model_cost_warn enqueues a system-kind outbox message."""
+    fwd, q = _make_forwarder()
+    fwd.on_model_cost_warn({
+        "model": "anthropic/claude-opus-4-8",
+        "cost_per_1m_input_usd": 15.0,
+        "threshold_per_1m_input_usd": 5.0,
+    })
+    assert not q.empty(), "expected a message to be enqueued"
+    msg = q.get_nowait()
+    assert msg.kind == "system"
+    assert "high-cost model" in msg.text
+    assert "claude-opus-4-8" in msg.text
+
+
+def test_on_model_cost_warn_includes_cost_in_message() -> None:
+    """Tier 2: the enqueued message includes the cost figure.
+
+    Falsification: without the cost formatting, users would see the warning
+    but not know how expensive the model actually is.
+    """
+    fwd, q = _make_forwarder()
+    fwd.on_model_cost_warn({
+        "model": "anthropic/claude-opus-4-8",
+        "cost_per_1m_input_usd": 15.0,
+        "threshold_per_1m_input_usd": 5.0,
+    })
+    msg = q.get_nowait()
+    assert "15.00" in msg.text or "$15" in msg.text, (
+        f"expected cost figure in message, got: {msg.text!r}"
+    )
+
+
+def test_on_model_cost_warn_safe_on_missing_cost_field() -> None:
+    """Tier 2: missing cost_per_1m_input_usd does not crash the forwarder.
+
+    Falsification: without the try/except around float(cost), a missing field
+    would propagate as TypeError and prevent the warn from being enqueued.
+    """
+    fwd, q = _make_forwarder()
+    # no cost_per_1m_input_usd key
+    fwd.on_model_cost_warn({"model": "some-model"})
+    assert not q.empty(), "expected a message even when cost field is missing"

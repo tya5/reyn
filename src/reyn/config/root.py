@@ -29,6 +29,7 @@ from typing import Any, Literal
 from reyn.config.chat import (
     ChatConfig,
     CompactionConfig,
+    CostWarnConfig,
     LoopConfig,
     OnLimitConfig,
     ReasoningConfig,
@@ -248,6 +249,8 @@ class ReynConfig:
     # multi_agent: / cost.router_invocations_per_turn keys that were
     # removed in this refactor. safety: is the single source of truth.
     safety: SafetyConfig = field(default_factory=SafetyConfig)
+    # #1830 / FP-0052: high-cost model pre-selection awareness.
+    cost_warn: CostWarnConfig = field(default_factory=CostWarnConfig)
     # FP-0022 follow-up: declarative SSL config for web_fetch + MCP registry.
     # Priority: web.fetch.ca_bundle → web.fetch.verify_ssl → SSL_VERIFY env →
     # litellm.ssl_verify → SSL_CERT_FILE → True (default).
