@@ -39,16 +39,24 @@ class ContextBudgetAdvisor:
         compaction: Any,             # CompactionConfig — use_chars4_estimate
         compaction_controller: Any,  # for engine.budgets + force_compact_now
         media_store: Any,            # MediaStore | None — for cap_tool_result
-        model: str,
+        model_fn: Callable[[], str],  # zero-arg → CURRENT resolved model (#1752)
         events: Any,                 # EventLog — for fallback budget + emit
         history_fn: Callable[[], list],  # zero-arg → current router-view history
     ) -> None:
         self._compaction = compaction
         self._compaction_controller = compaction_controller
         self._media_store = media_store
-        self._model = model
+        self._model_fn = model_fn
         self._events = events
         self._history_fn = history_fn
+
+    @property
+    def _model(self) -> str:
+        # #1752: resolve the model live each call so a /model override (which can
+        # change the context window) is reflected in budgeting. The session-side
+        # fn resolves the class → litellm string; without this the advisor would
+        # budget against the construction-time model after a /model switch.
+        return self._model_fn()
 
     # ── Internal helpers ─────────────────────────────────────────────────────
 

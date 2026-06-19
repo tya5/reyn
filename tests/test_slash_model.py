@@ -94,6 +94,11 @@ class _FakeSession:
     async def _put_outbox(self, msg: OutboxMessage) -> None:
         self.outbox.append(msg)
 
+    def _rebuild_turn_budget_engine_for_model(self) -> None:
+        # #1752: no-op on the stub — it has no turn_budget engine / router host.
+        # The real rebuild is exercised in Group D against a real Session.
+        pass
+
     def error_text(self) -> str:
         return "\n".join(m.text for m in self.outbox if m.kind == "error" and m.text)
 
@@ -250,3 +255,28 @@ def test_known_classes_includes_user_configured():
     assert "strong" in classes
     assert "fast" in classes
     assert classes == sorted(classes)
+
+
+# ===========================================================================
+# Group D: #1752 — per-turn budget consumers track the live /model override
+# ===========================================================================
+
+@pytest.mark.asyncio
+async def test_turn_budget_engine_rebuilt_on_model_switch(tmp_path):
+    """Tier 2: /model switch rebuilds the chat turn_budget engine for the new
+    model (rebuild-on-switch; the engine bakes derived headroom at construction).
+
+    Falsification: if model_cmd did not call
+    ``session._rebuild_turn_budget_engine_for_model()``, the RouterHostAdapter
+    would keep the construction-time engine object and the identity assertion
+    below would fail (after is before).
+    """
+    session = _make_session(tmp_path, model="standard")
+    session._resolver = _make_resolver()
+    before = session._router_host._turn_budget_engine
+    assert before is not None  # baseline engine built (gpt-4o has a usable window)
+
+    await model_cmd(session, "strong")
+
+    after = session._router_host._turn_budget_engine
+    assert after is not before  # engine rebuilt for the new model

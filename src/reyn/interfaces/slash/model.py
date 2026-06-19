@@ -57,4 +57,9 @@ async def model_cmd(session: "Session", args: str) -> None:
         return
 
     session._model_override = requested
+    # #1752: the per-turn budget consumers (history buffer / context budget
+    # advisor) read the live resolved model via their model_fn, but the
+    # turn_budget engine bakes derived headroom at construction, so rebuild it
+    # for the new model's context window.
+    session._rebuild_turn_budget_engine_for_model()
     await reply(session, f"model → {requested} (this session — clears on restart)")

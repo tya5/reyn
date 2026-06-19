@@ -1573,7 +1573,10 @@ class Session:
             history_fn=lambda: self.history,
             compaction=self._compaction,
             compaction_controller=None,  # patched after CompactionController below
-            model=self.model,
+            # #1752: live resolved model — a /model override changes the context
+            # window, so resolve the active class → litellm string each call
+            # instead of caching the construction-time model.
+            model_fn=lambda: self._resolver.resolve(self.model).model,
             events=self._chat_events,
             media_store=self._media_store,
             router_host=self._router_host,
@@ -1669,7 +1672,8 @@ class Session:
             compaction=self._compaction,
             compaction_controller=self._compaction_controller,
             media_store=self._media_store,
-            model=self.model,
+            # #1752: live resolved model (see RouterHistoryBuffer above).
+            model_fn=lambda: self._resolver.resolve(self.model).model,
             events=self._chat_events,
             history_fn=self._history_buffer.build_history,
         )
@@ -1748,6 +1752,25 @@ class Session:
     @property
     def model(self) -> str:
         return self._model_override if self._model_override is not None else self._agent.model
+
+    def _rebuild_turn_budget_engine_for_model(self) -> None:
+        """#1752: rebuild the chat turn_budget engine for the active model.
+
+        The engine bakes derived headroom (max_input + wrap-up-SP token cost)
+        for one resolved (model, config) at construction (a deliberate
+        compute-once invariant, mirroring CompactionEngine). A ``/model``
+        override changes the context window, so on switch we rebuild the engine
+        for the new resolved model and rewire it into the RouterHostAdapter —
+        rather than recomputing per turn for a rare event. ``try_build_*``
+        returns ``None`` for a small-context model (force-close stays inert),
+        matching the original construction at ``__init__``.
+        """
+        from reyn.services.turn_budget import try_build_default_turn_budget_engine
+        engine = try_build_default_turn_budget_engine(
+            self._resolver.resolve(self.model).model,
+            use_chars4=getattr(self._compaction, "use_chars4_estimate", False),
+        )
+        self._router_host.set_turn_budget_engine(engine)
 
     @property
     def workspace_dir(self) -> "Path":

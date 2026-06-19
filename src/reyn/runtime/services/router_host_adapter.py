@@ -394,6 +394,18 @@ class RouterHostAdapter:
         engine = self._turn_budget_engine
         return engine.budget.output_reserve if engine is not None else None
 
+    def set_turn_budget_engine(self, engine: Any) -> None:
+        """#1752: swap the chat turn_budget engine (rebuild-on-/model-switch).
+
+        The engine bakes derived headroom (max_input + wrap-up-SP cost) for one
+        (model, config) at construction. A /model override changes the context
+        window, so the session rebuilds the engine for the new resolved model
+        and rewires it here; ``wrap_up_output_reserve`` reads it fresh each turn,
+        so the swap takes effect on the next turn. ``None`` (small-context model
+        that cannot satisfy the force-close floor) keeps force-close inert.
+        """
+        self._turn_budget_engine = engine
+
     def _is_turn_cancel_requested(self) -> bool:
         """#1468: True when the session has requested a cooperative turn cancel.
 
