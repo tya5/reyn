@@ -66,50 +66,7 @@ async def model_cmd(session: "Session", args: str) -> None:
     # #1830 / FP-0052: emit model_cost_warn event if the chosen model exceeds
     # the configured cost threshold (pre-selection awareness). De-duped per
     # session: same model warned at most once.
-    _maybe_emit_model_cost_warn(session, requested)
+    from reyn.runtime.model_cost_warn import maybe_emit_model_cost_warn
+    maybe_emit_model_cost_warn(session, requested, action="model_override")
 
     await reply(session, f"model → {requested} (this session — clears on restart)")
-
-
-def _maybe_emit_model_cost_warn(session: "Session", model_class: str) -> None:
-    """Emit a ``model_cost_warn`` event if the resolved model is above threshold.
-
-    #1830 / FP-0052: pre-selection cost awareness. Pure warn — does not block
-    the model switch. Session-scoped de-dup: same model class is warned at most
-    once per session (``session._cost_warned_models`` set).
-
-    Resolves the model class → litellm model string before the cost lookup so
-    the pricing DB can find the canonical entry (e.g. "strong" → litellm key).
-    Falls back silently on any error so the model switch always completes.
-    """
-    try:
-        cost_warn_cfg = session._config.cost_warn
-        if not cost_warn_cfg.enabled:
-            return
-
-        warned: set = getattr(session, "_cost_warned_models", None)
-        if warned is None:
-            session._cost_warned_models: set[str] = set()
-            warned = session._cost_warned_models
-        if model_class in warned:
-            return  # already warned this session
-
-        resolved = session._resolver.resolve(model_class)
-
-        from reyn.llm.model_cost_rate import get_input_cost_per_1m_usd, is_high_cost_model
-        threshold = cost_warn_cfg.model_threshold_per_1m_input_usd
-        if not is_high_cost_model(resolved, threshold):
-            return
-
-        warned.add(model_class)
-        cost = get_input_cost_per_1m_usd(resolved)
-        session._chat_events.emit(
-            "model_cost_warn",
-            model=resolved,
-            model_class=model_class,
-            cost_per_1m_input_usd=cost,
-            threshold_per_1m_input_usd=threshold,
-            action="model_override",
-        )
-    except Exception:
-        pass  # cost warn is advisory; never break the model switch

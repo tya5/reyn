@@ -1,9 +1,10 @@
 """Tier 2: high-cost model pre-confirmation (#1830 / FP-0052).
 
-Covers three contracts:
+Covers four contracts:
 A. model_cost_rate utility (pure functions — no session needed).
 B. CostWarnConfig parsing from raw YAML dict.
 C. lifecycle_forwarder.on_model_cost_warn → conv-pane marker.
+D. maybe_emit_model_cost_warn shared helper — de-dup + action field.
 
 Non-duplication axis: these tests are NOT about BudgetTracker (cumulative
 spend) or ContextBudgetAdvisor (token ceiling). They test the pre-selection
@@ -14,6 +15,7 @@ Falsification:
 - is_high_cost_model: returns False (not True) when rate is unknown.
 - CostWarnConfig: missing key → default (not crash).
 - on_model_cost_warn: non-float cost data → safe fallback (not crash).
+- maybe_emit_model_cost_warn: same model class warned only once per session.
 """
 from __future__ import annotations
 
@@ -173,3 +175,115 @@ def test_on_model_cost_warn_safe_on_missing_cost_field() -> None:
     # no cost_per_1m_input_usd key
     fwd.on_model_cost_warn({"model": "some-model"})
     assert not q.empty(), "expected a message even when cost field is missing"
+
+
+# ---------------------------------------------------------------------------
+# D. maybe_emit_model_cost_warn shared helper (S3 — de-dup + action field)
+# ---------------------------------------------------------------------------
+
+class _FakeEventLog:
+    """Minimal event log stub — records (type, data) pairs."""
+    def __init__(self) -> None:
+        self.emitted: list[tuple[str, dict]] = []
+
+    def emit(self, event_type: str, **data: object) -> None:
+        self.emitted.append((event_type, dict(data)))
+
+
+class _FakeResolver:
+    """Resolver stub that passes the model name through as the litellm key."""
+    def resolve(self, name: str) -> object:
+        class _Spec:
+            model = name
+        return _Spec()
+
+
+class _FakeSession:
+    """Minimal session duck-type for maybe_emit_model_cost_warn."""
+    def __init__(self, *, enabled: bool = True, threshold: float = 0.0) -> None:
+        from reyn.config.chat import CostWarnConfig
+        self._config = type("Cfg", (), {
+            "cost_warn": CostWarnConfig(
+                enabled=enabled,
+                model_threshold_per_1m_input_usd=threshold,
+            ),
+        })()
+        self._resolver = _FakeResolver()
+        self._chat_events = _FakeEventLog()
+
+
+def test_maybe_emit_model_cost_warn_emits_for_known_high_cost_model() -> None:
+    """Tier 2: known model above threshold=0.0 → model_cost_warn emitted.
+
+    Uses threshold=0.0 so any model with a known litellm price fires.
+    Falsification: if resolved.model were not passed (bug: ModelSpec passed
+    directly), litellm.model_cost lookup fails silently → no emit.
+    """
+    from reyn.llm.model_cost_rate import get_input_cost_per_1m_usd
+    from reyn.runtime.model_cost_warn import maybe_emit_model_cost_warn
+
+    if get_input_cost_per_1m_usd("gpt-4o") is None:
+        pytest.skip("gpt-4o not in litellm pricing DB")
+
+    session = _FakeSession(threshold=0.0)
+    maybe_emit_model_cost_warn(session, "gpt-4o", action="session_start")
+    assert session._chat_events.emitted, "expected model_cost_warn to be emitted"
+    evt_type, evt_data = session._chat_events.emitted[0]
+    assert evt_type == "model_cost_warn"
+    assert evt_data["action"] == "session_start"
+    assert evt_data["model_class"] == "gpt-4o"
+
+
+def test_maybe_emit_model_cost_warn_dedup_within_session() -> None:
+    """Tier 2: same model class warned at most once per session.
+
+    Falsification: without the _cost_warned_models set check, two calls
+    for the same model_class would emit two events (duplicate warn).
+    """
+    from reyn.llm.model_cost_rate import get_input_cost_per_1m_usd
+    from reyn.runtime.model_cost_warn import maybe_emit_model_cost_warn
+
+    if get_input_cost_per_1m_usd("gpt-4o") is None:
+        pytest.skip("gpt-4o not in litellm pricing DB")
+
+    session = _FakeSession(threshold=0.0)
+    maybe_emit_model_cost_warn(session, "gpt-4o", action="session_start")
+    maybe_emit_model_cost_warn(session, "gpt-4o", action="model_override")
+    assert len(session._chat_events.emitted) == 1, (
+        "expected exactly one emit despite two calls for same model class"
+    )
+
+
+def test_maybe_emit_model_cost_warn_disabled_suppresses() -> None:
+    """Tier 2: enabled=False suppresses all emission regardless of cost.
+
+    Falsification: without the enabled check, users who set cost_warn.enabled:
+    false would still receive warnings.
+    """
+    from reyn.llm.model_cost_rate import get_input_cost_per_1m_usd
+    from reyn.runtime.model_cost_warn import maybe_emit_model_cost_warn
+
+    if get_input_cost_per_1m_usd("gpt-4o") is None:
+        pytest.skip("gpt-4o not in litellm pricing DB")
+
+    session = _FakeSession(enabled=False, threshold=0.0)
+    maybe_emit_model_cost_warn(session, "gpt-4o", action="session_start")
+    assert not session._chat_events.emitted, "expected no emit when disabled"
+
+
+def test_maybe_emit_model_cost_warn_action_field_propagated() -> None:
+    """Tier 2: the action kwarg reaches the event data field.
+
+    Falsification: if the action parameter were hardcoded ('model_override'
+    only), the session_start context would be misreported.
+    """
+    from reyn.llm.model_cost_rate import get_input_cost_per_1m_usd
+    from reyn.runtime.model_cost_warn import maybe_emit_model_cost_warn
+
+    if get_input_cost_per_1m_usd("gpt-4o") is None:
+        pytest.skip("gpt-4o not in litellm pricing DB")
+
+    session = _FakeSession(threshold=0.0)
+    maybe_emit_model_cost_warn(session, "gpt-4o", action="session_start")
+    _, evt_data = session._chat_events.emitted[0]
+    assert evt_data.get("action") == "session_start"
