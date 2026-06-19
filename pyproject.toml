@@ -139,8 +139,8 @@ reyn = "reyn._cli:main"
 # FP-0041 #489 plugin framework: sample webhook plugins bundled with reyn.
 # External plugins register the same way via their own pyproject.toml.
 [project.entry-points."reyn.webhooks"]
-sample_slack = "reyn.plugins.sample_slack:register_router"
-sample_line = "reyn.plugins.sample_line:register_router"
+sample_slack = "reyn.gateway.sample_slack:register_router"
+sample_line = "reyn.gateway.sample_line:register_router"
 
 # FP-0041 #489 plugins-api PR-2: sample plugins now use OSS SDKs for
 # transport-specific protocol (= slack-bolt / line-bot-sdk). Installed
