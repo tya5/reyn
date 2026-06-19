@@ -95,6 +95,7 @@ class ControlIRExecutor:
         resume_plan: Any = None,
         run_id: str | None = None,
         sandbox_config: "SandboxConfig | None" = None,
+        threat_scan: Any = None,  # FP-0050/#1822 S5 (EP4): exec command-scan config
         sandbox_backend: "SandboxBackend | None" = None,
         multimodal_config: "MultimodalConfig | None" = None,
         media_store: "MediaStore | None" = None,
@@ -137,6 +138,7 @@ class ControlIRExecutor:
         # policy. ``None`` means the factory falls through to platform
         # auto-detection (= unchanged behavior pre-wiring).
         self._sandbox_config = sandbox_config
+        self._threat_scan = threat_scan
         # FP-0008 #1115 Stage 2: per-run injected exec backend instance. When
         # set (a dual-Protocol container backend), it takes precedence over
         # name-based platform selection in the sandboxed_exec handler
@@ -393,6 +395,8 @@ class ControlIRExecutor:
             agent_id=getattr(self.events, "agent_id", None),
             # FP-0017 follow-up: declarative sandbox config (reyn.yaml).
             sandbox_config=self._sandbox_config,
+            # FP-0050/#1822 S5 (EP4): exec command-scan config.
+            threat_scan=self._threat_scan,
             # FP-0008 #1115 Stage 2: per-run injected exec backend instance
             # (dual-Protocol container backend); None → platform auto-detect.
             sandbox_backend=self._sandbox_backend,

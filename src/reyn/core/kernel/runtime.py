@@ -77,6 +77,7 @@ class OSRuntime:
         resume_plan: Any = None,
         parent_run_id: str | None = None,
         sandbox_config: "SandboxConfig | None" = None,
+        threat_scan: "object | None" = None,  # FP-0050/#1822 S5 (EP4)
         environment_backend: "EnvironmentBackend | None" = None,
         sandbox_backend: "SandboxBackend | None" = None,
         multimodal_config: "MultimodalConfig | None" = None,
@@ -208,6 +209,7 @@ class OSRuntime:
             resume_plan=resume_plan,
             run_id=run_id,
             sandbox_config=sandbox_config,
+            threat_scan=threat_scan,
             sandbox_backend=sandbox_backend,
             multimodal_config=multimodal_config,
             media_store=media_store,
@@ -230,6 +232,7 @@ class OSRuntime:
             secret_store=secret_store,
             sandbox_backend=sandbox_backend,
             agent_sandbox_policy=self._agent_sandbox_policy,
+            threat_scan=threat_scan,  # FP-0050/#1822 S5 (EP4)
         )
         # FP-0020 Component A: all mutable run-scope state encapsulated in RunState.
         self._state = RunState()

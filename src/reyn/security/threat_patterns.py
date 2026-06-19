@@ -93,8 +93,24 @@ _RAW_PATTERNS: tuple[tuple[str, str, str, str], ...] = (
     # reyn-adapted (was Hermes ``.hermes/config.yaml|SOUL.md``): reyn's config + skill specs.
     (r"(update|modify|edit|write|change|append\s+to|add\s+to)\s+.*(?:reyn\.yaml|\.reyn/[^\s]*\.yaml|skill\.md)", "reyn_config_mod", "strict", SEVERITY_BLOCK),
     (r"(?:api[_-]?key|token|secret|password)\s*[=:]\s*[\"'][A-Za-z0-9+/=_-]{20,}", "hardcoded_secret", "strict", SEVERITY_BLOCK),
-    # ── scope="exec" — command-string threats. Populated in S6 (Part 2, Q2:
-    #    own impl of homograph / pipe-to-interpreter / terminal-escape). ───────
+    # ── scope="exec" — command-string threats (FP-0050 S5 / Q2: own impl, since
+    #    tirith is a closed Rust binary). Scanned on the joined argv at the
+    #    sandboxed_exec seam (EP4). The `all` exfil patterns above also apply
+    #    (cumulative), so exfil commands are caught here too. ───────────────────
+    # pipe-to-interpreter: fetch a remote payload and pipe it straight into a shell
+    # / interpreter (the classic `curl … | sh` install-script RCE).
+    (r"(?:curl|wget|fetch)\b[^|]*\|\s*(?:(?:ba|z)?sh|python[0-9.]*|perl|ruby|node|php)\b", "pipe_to_interpreter", "exec", SEVERITY_BLOCK),
+    # reverse shell via bash's /dev/tcp.
+    (r"/dev/tcp/|/dev/udp/", "reverse_shell_devtcp", "exec", SEVERITY_BLOCK),
+    (r"\b(?:ba)?sh\s+-i\b[^\n]*(?:>&|>|<)\s*/dev/", "reverse_shell_interactive", "exec", SEVERITY_BLOCK),
+    # terminal-escape injection: raw ESC control sequences (CSI `ESC[` / OSC `ESC]`)
+    # embedded in a command can rewrite the user's terminal / spoof output.
+    (r"\x1b[\[\]]", "terminal_escape", "exec", SEVERITY_BLOCK),
+    # download-then-execute: fetch + (chmod +x | run) chained.
+    (r"(?:curl|wget)\b[^&;|]*(?:&&|;)\s*(?:chmod\s+\+x|\./|bash\s|sh\s)", "download_then_exec", "exec", SEVERITY_BLOCK),
+    # homograph / non-ASCII in a URL host — possible lookalike-domain exfil/fetch.
+    # WARN (legitimate IDN domains exist; this is a heuristic, not a hard block).
+    (r"https?://[^\s/]*[^\x00-\x7f][^\s/]*", "homograph_url", "exec", SEVERITY_WARN),
 )
 
 # scope → which pattern scopes are checked (cumulative).

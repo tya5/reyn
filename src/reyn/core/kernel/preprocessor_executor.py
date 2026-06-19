@@ -112,6 +112,7 @@ class PreprocessorExecutor:
         secret_store: "ScopedSecretStore | None" = None,
         sandbox_backend: "SandboxBackend | None" = None,
         agent_sandbox_policy: dict | None = None,
+        threat_scan: "object | None" = None,  # FP-0050/#1822 S5 (EP4)
     ) -> None:
         self._skill = skill
         self._workspace = workspace
@@ -141,6 +142,7 @@ class PreprocessorExecutor:
         # (whose _PostprocessorScope is skill-level, not a phase), which is what
         # makes the index write-gate fire there (#1321). None → no agent policy.
         self._agent_sandbox_policy = agent_sandbox_policy
+        self._threat_scan = threat_scan
 
     @property
     def secret_store(self):
@@ -185,6 +187,7 @@ class PreprocessorExecutor:
             # #1326: the agent-level (operator) sandbox policy governs a
             # preprocessor sandboxed_exec (deterministic; WINS over op fields).
             default_sandbox_policy=self._agent_sandbox_policy,
+            threat_scan=self._threat_scan,  # FP-0050/#1822 S5 (EP4)
         )
 
     async def run(

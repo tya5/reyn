@@ -59,6 +59,7 @@ def build_router_op_context(
     compact_now: Any = None,  # #272/#1128
     run_id: str | None = None,  # chat router is outside run scope (#FP-0021)
     cancel_event: Any = None,  # #1470: asyncio.Event for mid-subprocess cancel
+    threat_scan: Any = None,  # FP-0050/#1822 S5 (EP4): exec command-scan config
 ) -> Any:
     """Build the chat-router OpContext (the single source for both hosts).
 
@@ -132,4 +133,5 @@ def build_router_op_context(
             write_paths=[str(workspace.base_dir)],
         ),
         cancel_event=cancel_event,
+        threat_scan=threat_scan,
     )

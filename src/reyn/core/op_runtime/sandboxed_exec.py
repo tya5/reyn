@@ -23,6 +23,30 @@ async def handle(
     ctx: OpContext,
     caller: Literal["preprocessor", "control_ir"],
 ) -> dict:
+    # FP-0050/#1822 S5 (EP4): exec-scope scan of the command (joined argv) BEFORE
+    # any exec. A block-severity hit denies via the permission-deny channel
+    # (PermissionError → execute_op status="denied", decision-enabling); a warn
+    # emits + proceeds. Orthogonal to the sandbox (which confines exec EFFECTS) —
+    # both fire (§4 non-duplication). No-op when threat_scan is absent/disabled.
+    _ts = getattr(ctx, "threat_scan", None)
+    if _ts is not None and getattr(_ts, "enabled", False):
+        from reyn.security.content_guard import first_blocking_match, scan_for_threats
+        _matches = scan_for_threats(" ".join(op.argv), _ts, scope="exec")
+        for _m in _matches:
+            ctx.events.emit(
+                "exec_threat_match", pattern_id=_m.pattern_id, severity=_m.severity, scope=_m.scope,
+            )
+        _block = first_blocking_match(_matches, getattr(_ts, "block_severity", "block"))
+        if _block is not None:
+            ctx.events.emit(
+                "exec_threat_blocked", pattern_id=_block.pattern_id, severity=_block.severity,
+            )
+            raise PermissionError(
+                f"command blocked: matched threat pattern '{_block.pattern_id}' "
+                f"(exec/{_block.severity}). Revise the command (avoid pipe-to-shell / "
+                f"reverse-shell / homograph URL / terminal-escape) and retry."
+            )
+
     # A runtime backend instance injected on the OpContext takes precedence over
     # name-based platform auto-selection (FP-0008 C7 #2). This lets a caller
     # route exec into a stateful backend (e.g. a Docker container) that the
