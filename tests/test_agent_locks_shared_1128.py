@@ -5,20 +5,24 @@ issue #1128: MCP and A2A must acquire the SAME ``asyncio.Lock`` for a
 given agent name so concurrent MCP+A2A calls to the same session serialize
 rather than racing on ``session.history``.
 
-Invariants exercised:
-  (a) ``get_agent_lock("x")`` is idempotent: repeated calls return the
-      identical lock object (``is`` identity).
+Invariants exercised (identity invariants hold WITHIN a running loop — the
+registry is loop-aware since #1762, see ``agent_locks`` docstring):
+  (a) ``get_agent_lock("x")`` is idempotent: repeated calls on the same loop
+      return the identical lock object (``is`` identity).
   (b) Different agent names yield distinct lock objects.
-  (c) MCP and A2A obtain the SAME lock object for the same agent_name —
-      both import from ``reyn.runtime.agent_locks``; the module-level dict
-      ensures identity.
+  (c) MCP and A2A obtain the SAME lock object for the same agent_name on the
+      same loop — both import from ``reyn.runtime.agent_locks``; the per-loop
+      registry ensures identity.
   (d) Concurrent coroutines acquiring the same lock are serialized:
       critical sections do not overlap (behavioral, not count-pin).
+  (e) #1762 regression: a contended lock used across distinct event loops
+      (= pytest-asyncio's per-test fresh loops) must NOT raise "bound to a
+      different event loop" — loop-aware keying gives each loop its own lock.
 
 Policy compliance (docs/deep-dives/contributing/testing.ja.md):
 - No unittest.mock / MagicMock / AsyncMock / patch.
 - Real ``asyncio.Lock`` instances via the public ``get_agent_lock`` surface.
-- No private-state assertions (``_AGENT_LOCKS`` internals not touched).
+- No private-state assertions (``_LOCKS_BY_LOOP`` internals not touched).
 - No ``len(x) == N`` count pins; behavioral / identity assertions only.
 - Each test docstring first line is exactly ``Tier 2: ...``.
 """
@@ -35,8 +39,9 @@ from reyn.runtime.agent_locks import get_agent_lock
 # ---------------------------------------------------------------------------
 
 
-def test_same_name_returns_same_lock() -> None:
-    """Tier 2: get_agent_lock returns the identical lock object on repeated calls."""
+@pytest.mark.asyncio
+async def test_same_name_returns_same_lock() -> None:
+    """Tier 2: get_agent_lock returns the identical lock object on repeated calls (same loop)."""
     lock_first = get_agent_lock("agent-alpha")
     lock_second = get_agent_lock("agent-alpha")
     assert lock_first is lock_second, (
@@ -50,7 +55,8 @@ def test_same_name_returns_same_lock() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_different_names_return_distinct_locks() -> None:
+@pytest.mark.asyncio
+async def test_different_names_return_distinct_locks() -> None:
     """Tier 2: get_agent_lock returns distinct lock objects for different agent names."""
     lock_a = get_agent_lock("agent-one")
     lock_b = get_agent_lock("agent-two")
@@ -65,8 +71,9 @@ def test_different_names_return_distinct_locks() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_mcp_and_a2a_share_same_lock_registry() -> None:
-    """Tier 2: MCP and A2A obtain the same lock object for the same agent_name.
+@pytest.mark.asyncio
+async def test_mcp_and_a2a_share_same_lock_registry() -> None:
+    """Tier 2: MCP and A2A obtain the same lock object for the same agent_name (same loop).
 
     This is the central cross-transport guarantee of #1128 PR-b: both
     mcp_server and a2a import ``get_agent_lock`` (aliased as
@@ -137,3 +144,47 @@ async def test_concurrent_lock_acquirers_are_serialized() -> None:
         "second_waiter entered the critical section before first_holder released "
         "the lock — the per-agent lock is not serializing concurrent coroutines"
     )
+
+
+# ---------------------------------------------------------------------------
+# (e) #1762 regression: a contended lock is reusable across distinct loops
+# ---------------------------------------------------------------------------
+
+
+def test_agent_lock_reusable_across_event_loops() -> None:
+    """Tier 2: a contended agent lock survives distinct event loops (#1762).
+
+    Before #1762 the registry keyed locks by name only, so a lock created under
+    one event loop was cached and reused under the next. An ``asyncio.Lock``
+    binds to the loop a *waiter* registers on, so the second loop's waiter raised
+    ``"... is bound to a different event loop"``. This is exactly pytest-asyncio's
+    pattern (a fresh loop per test) → an order-dependent flake.
+
+    This test drives the SAME agent name through two separate ``asyncio.run``
+    loops, each with a contended acquire (a holder + a waiter, so the lock's
+    loop-binding path is exercised). Loop-aware keying must make both runs pass.
+    Run sync (two real loops via ``asyncio.run``) since the bug is precisely a
+    cross-loop one — a single ``@pytest.mark.asyncio`` loop could not surface it.
+    """
+    agent = "cross-loop-regression-agent-1762"
+
+    async def contended_once() -> None:
+        lock = get_agent_lock(agent)
+        first_in = asyncio.Event()
+
+        async def holder() -> None:
+            async with lock:
+                first_in.set()
+                await asyncio.sleep(0.01)
+
+        async def waiter() -> None:
+            await first_in.wait()  # ensure holder holds → this acquire must WAIT
+            async with lock:       # the waiting path is what binds the lock to the loop
+                pass
+
+        await asyncio.gather(holder(), waiter())
+
+    # Two separate event loops, same agent name. Pre-#1762 the second run raised
+    # RuntimeError("... bound to a different event loop"); loop-aware keying passes.
+    asyncio.run(contended_once())
+    asyncio.run(contended_once())
