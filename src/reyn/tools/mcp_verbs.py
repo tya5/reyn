@@ -466,9 +466,14 @@ async def _handle_mcp_install_local(
 
 
 _MCP_CALL_TOOL_DESCRIPTION = (
-    "Call a tool on an installed MCP server. Pass the tool identifier "
-    "in <server>__<tool> form (e.g. 'time__get_current_time') as "
-    "returned by mcp__list_tools, plus the tool's own args dict."
+    "Call a tool on an installed MCP server — GENERIC FALLBACK. "
+    "PREFER the per-tool 'mcp__<server>__<tool>' actions (e.g. "
+    "'mcp__time__get_current_time') when one is listed: they take the target "
+    "tool's own parameters directly (authoritative input_schema via "
+    "describe_action), with no generic envelope. Use this generic verb only as "
+    "a fallback when no per-tool action is available. Pass the tool identifier "
+    "in <server>__<tool> form (e.g. 'time__get_current_time') as returned by "
+    "mcp__list_tools, plus the tool's own args dict."
 )
 
 _MCP_CALL_TOOL_PARAMETERS: dict[str, Any] = {
