@@ -372,7 +372,7 @@ _DESCRIBE_ACTION_PARAMETERS: dict[str, Any] = {
             "type": "string",
             "description": (
                 "Qualified name of the action/resource to describe "
-                "(e.g. 'skill__code_review', 'mcp.tool__brave.search', "
+                "(e.g. 'skill__code_review', 'mcp__brave__search', "
                 "'rag_corpus__meetings')."
             ),
         },
@@ -429,7 +429,7 @@ _INVOKE_ACTION_PARAMETERS: dict[str, Any] = {
             "type": "string",
             "description": (
                 "Qualified name of the action/resource to invoke "
-                "(e.g. 'skill__code_review', 'mcp.tool__brave.search')."
+                "(e.g. 'skill__code_review', 'mcp__brave__search')."
             ),
         },
         "args": {
