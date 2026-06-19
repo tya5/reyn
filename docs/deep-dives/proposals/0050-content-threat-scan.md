@@ -145,12 +145,13 @@ Lead dispatched the §5 questions to broker competitor research (Hermes/OpenClaw
 
 ### Deferred-scope tracking (#1822 close-gate — owner directive)
 
-Before #1822 is closed, the original ticket (prompt-injection scan + pre-exec command scan + the #1820/#1821 folds) must be cross-checked full-text and **every deferred vector must be covered or have a follow-up tracking issue** ([[feedback_track_deferred_work_before_close]]). Two defers stand:
+Before #1822 is closed, the original ticket (prompt-injection scan + pre-exec command scan + **Part 3 static audit** + the #1820/#1821 folds) must be cross-checked full-text and **every deferred vector must be covered or have a follow-up tracking issue** ([[feedback_track_deferred_work_before_close]]). **Original-#1822 cross-check (full-text):** Part 1 prompt-injection = S1 (lib) + S2 (tool-result, incl memory output + #1820 strip via S3 + EP6 MCP) + S4b (context-file) + S4a (memory-write block, #1821) ✅; Part 2 pre-exec command scan = S5 ✅; **Part 3 static audit (`reyn audit`) = NOT implemented** (FP-0050 explicitly scoped it as a separate later FP). Three residuals stand:
 
-| Deferred | Correct seam | Residual vector (until follow-up) | Covered by S5 (exec)? |
+| Deferred | Correct seam | Residual vector (until follow-up) | Covered by S1–S5? |
 |---|---|---|---|
 | **BP2** skill/MCP-install block | scan the fetched `server.json` metadata at `mcp_install` before config-write | a malicious *command* in an installed MCP server's config (run via the MCP stdio transport: npx/uvx/docker) | **No** — S5 scans `sandboxed_exec` command strings, not the MCP-transport launch command → **needs a follow-up issue** |
 | **EP7** webhook/A2A peer-answer fence | the answer→history injection point (NOT the delivery boundary, which corrupts buffered-answer + choice-id) | a peer's *free-text* answer carrying injection, surfaced as the intervention response into context | **No** — distinct from exec → **needs a follow-up issue** |
+| **Part 3** `reyn audit` static-scan | a `reyn audit` CLI: static code/config safety scan of installed skills/plugins (OpenClaw `audit-*` analog) | unaudited external skill/plugin code at install (OSS-publication-phase concern) | **No** — out of the S1–S5 content/exec-scan scope (separate FP) → **needs a follow-up FP/issue** |
 
 Mitigations active today: BP2's installed-server descriptions/results are read-time fenced (S2/EP6); EP7's known-pattern injection is caught by scan-all at the tool-result chokepoint when the answer re-enters via a tool path (but the direct intervention-response path is the gap). **Lead gates #1822 close on filing these follow-ups.**
 
