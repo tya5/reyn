@@ -545,6 +545,15 @@ _LLM_RETRY_BASE_S: float = _env_num("REYN_LLM_RETRY_BASE_S", 2.0, 0.1, 30.0, flo
 _LLM_RETRY_MAX_BACKOFF_S: float = 16.0
 
 
+def _use_llm_router() -> bool:
+    """#1829 S1: gate for routing acompletion through a litellm.Router (default OFF
+    → byte-equivalent to the current direct litellm.acompletion call). S1 is a
+    single-deployment, no-fallback/no-extra-retry equivalence step; fallbacks /
+    cooldown / retry_policy (folding #1835) land in later stages. Env-gated for now
+    (REYN_LLM_USE_ROUTER); a reyn.yaml config field can supersede this in S2."""
+    return os.environ.get("REYN_LLM_USE_ROUTER", "").strip().lower() in ("1", "true", "yes")
+
+
 class EmptyLLMResponseError(Exception):
     """The LLM returned a 200 response with an empty ``choices`` list.
 
@@ -937,6 +946,28 @@ def proxy_kwargs() -> dict:
     return {"api_base": api_base, "custom_llm_provider": "openai", "api_key": api_key}
 
 
+def _single_deployment_router(model: str):
+    """#1829 S1: build a minimal single-deployment ``litellm.Router`` for *model*
+    with NO extra retry/fallback/cooldown (``num_retries=0``). The per-call
+    routing params (api_base / provider / api_key / response_format / …) are passed
+    through on the ``router.acompletion`` call (not baked into the deployment), so
+    the underlying ``litellm.acompletion`` — which Router invokes internally
+    (replay-compat verified, #1829 probe) — receives the SAME (model, messages,
+    kwargs) as a direct call → byte-equivalent + LLMReplay/cost-recording-compatible.
+
+    Built per-call (no cache) for S1: a cached Router would bind to the event loop
+    of its first await (the #1762 asyncio-loop-binding class), unsafe under
+    pytest-asyncio's per-test loops. Loop-aware caching + a multi-deployment
+    model_list (from ModelResolver) land in S2; fallbacks/cooldown/retry_policy
+    (folding #1835) in S3.
+    """
+    import litellm as _ll
+    return _ll.Router(
+        model_list=[{"model_name": model, "litellm_params": {"model": model}}],
+        num_retries=0,
+    )
+
+
 def routing_for_spec(spec: "ModelSpec | None") -> dict | None:
     """#309: per-class litellm routing (api_base / custom_llm_provider) for a
     model class, or ``None`` to inherit the global ``proxy_kwargs()`` endpoint
@@ -1266,6 +1297,15 @@ async def recorded_acompletion(
         call_kwargs = dict(base_kwargs)
         if rf is not None:
             call_kwargs["response_format"] = rf
+        if _use_llm_router():
+            # #1829 S1: route through a single-deployment litellm.Router (gated OFF
+            # by default → this branch is inert in production). Router.acompletion
+            # invokes litellm.acompletion internally (replay-compat verified), so the
+            # LLMReplay monkeypatch + this cost-recording chokepoint both still apply
+            # and the call is byte-equivalent to the direct path.
+            return await _single_deployment_router(effective_model).acompletion(
+                model=effective_model, messages=messages, **call_kwargs
+            )
         return await litellm.acompletion(model=effective_model, messages=messages, **call_kwargs)
 
     # response_format fallback (predates #1212): on a provider that rejects
