@@ -575,8 +575,19 @@ class RouterHostAdapter:
 
         Threaded into the router's system prompt so casual chat queries see
         the operator's project context. Empty string when not configured.
+
+        FP-0050/#1822 S4b (EP3, Class A): the operator-editable REYN.md/AGENTS.md
+        content is fenced (structurally marked untrusted data) + scanned before
+        it reaches the SP §6. behavior-neutral (legit content stays readable;
+        injection is neutralized). Empty stays empty (no markers) so §6's
+        skip-when-empty render is byte-identical.
         """
-        return self._project_context or ""
+        pc = self._project_context or ""
+        if not pc:
+            return pc
+        from reyn.security.content_guard import fence_if_enabled
+        self.scan_tool_result(pc)  # detection telemetry (scan-all parity)
+        return fence_if_enabled(pc, self._threat_scan)
 
     def get_cwd(self) -> str:
         """Agent-visible working directory for the SP Environment section.

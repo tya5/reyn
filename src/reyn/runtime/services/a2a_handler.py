@@ -173,6 +173,9 @@ class A2AHandler:
         set_router_loop_delegations: "Callable[[list[dict] | None], None]",
         get_router_loop_agent_replies: "Callable[[], list[str] | None]",
         set_router_loop_agent_replies: "Callable[[list[str] | None], None]",
+        # FP-0050/#1822 S4b (EP5, Class A): content-threat scan + fence config.
+        # Inbound peer text (request/response) is fenced before entering history.
+        threat_scan: "object | None" = None,
     ) -> None:
         self._events = event_log
         self._chains = chain_manager
@@ -180,6 +183,7 @@ class A2AHandler:
         self._max_hop_depth = max_hop_depth
         self._safety_extensions = safety_extensions
         self._output_language = output_language
+        self._threat_scan = threat_scan
 
         self._append_history = append_history
         self._put_outbox = put_outbox
@@ -302,6 +306,23 @@ class A2AHandler:
             to, self.agent_name, response, depth, chain_id,
         )
 
+    def _fence_inbound(self, text: str) -> str:
+        """FP-0050/#1822 S4b (EP5): fence + scan untrusted inbound peer text.
+
+        A remote peer agent is outside the trust boundary; its message text is
+        structurally fenced (marked as data) + scanned (detection telemetry)
+        before entering history. No-op on empty / when disabled.
+        """
+        if not text:
+            return text
+        from reyn.security.content_guard import fence_if_enabled, scan_for_threats
+        cfg = self._threat_scan
+        for m in scan_for_threats(text, cfg):
+            self._events.emit(
+                "threat_scan_match", pattern_id=m.pattern_id, severity=m.severity, scope=m.scope,
+            )
+        return fence_if_enabled(text, cfg)
+
     async def handle_agent_request(self, payload: dict) -> None:
         """Process an incoming ``agent_request``.
 
@@ -318,7 +339,10 @@ class A2AHandler:
         from reyn.runtime.errors import RouterCapExceeded
 
         from_agent = payload.get("from_agent", "")
-        request = payload.get("request", "")
+        # FP-0050/#1822 S4b (EP5, Class A): fence + scan the untrusted peer
+        # request before it enters history (a remote agent is outside the trust
+        # boundary; delegate-reply-via-EP5 closes here per the S2 review).
+        request = self._fence_inbound(payload.get("request", ""))
         depth = int(payload.get("depth", 1))
         chain_id = payload.get("chain_id") or _new_chain_id()
 
@@ -456,10 +480,13 @@ class A2AHandler:
         # too. Prior behaviour appended the raw reply text alone,
         # which the LLM read as a plain user message — no task
         # lifecycle anchor + no parity with skill / plan paths.
+        # FP-0050/#1822 S4b (EP5, Class A): fence + scan the untrusted peer reply
+        # before it enters history. Only the history-bound copy is fenced; the
+        # raw ``response`` stays for chain-resolution routing below.
         injected_text = (
             f"[task_completed] kind=agent "
             f"from={from_agent or '<unknown>'} chain_id={chain_id}\n"
-            f"reply: {response}"
+            f"reply: {self._fence_inbound(response)}"
         )
         self._append_history(
             "user", injected_text, _now_iso(),

@@ -1653,6 +1653,8 @@ class Session:
             max_hop_depth=self._max_hop_depth,
             safety_extensions=self._safety_extensions,
             output_language=self.output_language,
+            # FP-0050/#1822 S4b (EP5): fence untrusted inbound peer text.
+            threat_scan=self._safety.threat_scan,
             append_history=self._append_history_for_a2a_handler,
             put_outbox=self._put_outbox,
             handle_chat_limit_checkpoint=self._handle_chat_limit_checkpoint,
