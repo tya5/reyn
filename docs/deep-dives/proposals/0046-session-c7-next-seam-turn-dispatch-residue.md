@@ -46,7 +46,7 @@ Session's residue-collapse across all three.**
 | Session forwarder | Disposition |
 |---|---|
 | `_router_run_with_shrink` → `RouterLoopDriver._run_with_shrink` | **delete** — zero callers (dead) |
-| `_force_close_handoff` → `RouterLoopDriver._force_close_handoff` | **delete** — zero Session-external callers (the driver calls its own; tests assert the event, not the method) |
+| `_force_close_handoff` → `RouterLoopDriver._force_close_handoff` | **delete** — rewire 1 test call-site (`test_force_close_chat_handoff_1092:191`) to `session._loop_driver._force_close_handoff`; the driver calls its own |
 | `_force_close_wrap_up` → `RouterLoopDriver._force_close_wrap_up` | **delete** — rewire the 2 test call-sites (`test_force_close_chat_handoff_1092`) to `session._loop_driver._force_close_wrap_up` |
 
 **Retained** (NOT in this cut): `_run_router_loop` — forwards to
@@ -74,8 +74,9 @@ the identical collaborator method. The LLM-facing SP/tools are untouched.
 
 Full CI + **replay green (no re-record** — SP/tools unchanged) + old-forwarder
 call-residue grep = 0 (`scripts/verify_package_move.py` / `._<method>()` grep) +
-dead-method safety re-confirm (`_router_run_with_shrink` / `_force_close_handoff`
-zero live callers). Session ≈ −12 LOC, −3 methods.
+dead-method safety re-confirm (`_router_run_with_shrink` zero live callers).
+Session ≈ −12 LOC, −3 methods (3 test call-sites rewired: 1 for
+`_force_close_handoff`, 2 for `_force_close_wrap_up`).
 
 ## Roadmap: the remaining clusters (for owner sequencing)
 
