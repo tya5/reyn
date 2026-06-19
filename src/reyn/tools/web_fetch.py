@@ -117,4 +117,5 @@ WEB_FETCH = ToolDefinition(
     handler=_handle,
     category="discovery",
     purity="read_only",   # web fetch reads a URL, no workspace side effect
+    returns_external_content=True,  # FP-0050/#1822: internet content
 )

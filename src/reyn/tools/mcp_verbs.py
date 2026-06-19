@@ -552,6 +552,7 @@ MCP_SEARCH_REGISTRY = ToolDefinition(
     handler=_handle_mcp_search_registry,
     category="discovery",
     purity="read_only",
+    returns_external_content=True,  # FP-0050/#1822: external registry listing
 )
 
 
@@ -596,6 +597,7 @@ MCP_CALL_TOOL = ToolDefinition(
     handler=_handle_mcp_call_tool,
     category="io",
     purity="side_effect",
+    returns_external_content=True,  # FP-0050/#1822: external MCP server result
 )
 
 

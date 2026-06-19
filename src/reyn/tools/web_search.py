@@ -117,4 +117,5 @@ WEB_SEARCH = ToolDefinition(
     handler=_handle,
     category="discovery",
     purity="read_only",   # web search has no side effect on workspace
+    returns_external_content=True,  # FP-0050/#1822: internet content
 )

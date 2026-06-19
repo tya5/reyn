@@ -473,6 +473,7 @@ LIST_MCP_TOOLS = ToolDefinition(
     handler=_handle_list_mcp_tools,
     category="discovery",
     purity="read_only",
+    returns_external_content=True,  # FP-0050/#1822: external server-authored tool descriptions
 )
 
 CALL_MCP_TOOL = ToolDefinition(
@@ -483,6 +484,7 @@ CALL_MCP_TOOL = ToolDefinition(
     handler=_handle_call_mcp_tool,
     category="discovery",
     purity="side_effect",  # call_mcp_tool has arbitrary side effects
+    returns_external_content=True,  # FP-0050/#1822: external MCP server result
     schema_enricher=_enrich_router_schema,
 )
 
@@ -494,6 +496,7 @@ DESCRIBE_MCP_TOOL = ToolDefinition(
     handler=_handle_describe_mcp_tool,
     category="discovery",
     purity="read_only",
+    returns_external_content=True,  # FP-0050/#1822: external server-authored schema/description
     schema_enricher=_enrich_router_schema,
 )
 

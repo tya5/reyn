@@ -619,6 +619,7 @@ LIST_MEMORY = ToolDefinition(
     handler=_handle_list_memory,
     category="memory",
     purity="read_only",
+    returns_external_content=True,  # FP-0050/#1822: user/agent-written .md descriptions
 )
 
 READ_MEMORY_BODY = ToolDefinition(
@@ -629,6 +630,7 @@ READ_MEMORY_BODY = ToolDefinition(
     handler=_handle_read_memory_body,
     category="memory",
     purity="read_only",
+    returns_external_content=True,  # FP-0050/#1822: user/agent-written .md body
 )
 
 REMEMBER_SHARED = ToolDefinition(

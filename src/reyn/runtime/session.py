@@ -1418,6 +1418,8 @@ class Session:
         self._router_host = RouterHostAdapter(
             # #1092 PR-F1: the chat turn_budget engine (resolved-model, asserted).
             turn_budget_engine=_chat_turn_budget_engine,
+            # FP-0050 / #1822 S2: content-threat scan + fence config.
+            threat_scan=self._safety.threat_scan,
             agent_name=self.agent_name,
             agent_role=self._agent_role,
             output_language=self.output_language,
