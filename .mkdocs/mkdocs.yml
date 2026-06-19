@@ -240,6 +240,7 @@ nav:
           - concepts/architecture/care-boundary.md
           - concepts/architecture/phase-vs-skill-vs-os.md
           - concepts/architecture/llm-invocation-surfaces.md
+          - concepts/architecture/interaction-layers.md
           - concepts/architecture/llm-as-decision-engine.md
           - concepts/architecture/sandbox-vs-permission.md
       - Runtime:
