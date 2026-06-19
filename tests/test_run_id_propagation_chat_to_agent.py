@@ -36,7 +36,7 @@ import asyncio
 
 import pytest
 
-from reyn.skill_runtime import SkillRuntime
+from reyn.skill.skill_runtime import SkillRuntime
 
 # ── 1. SkillRuntime.__init__ accepts run_id ─────────────────────────────────────
 
@@ -92,7 +92,7 @@ async def test_agent_run_honors_constructor_run_id() -> None:
     # so we capture run_id immediately after the resolution step but
     # before any heavy work. (= no mocks; we're injecting a known-stop
     # callable via the module's import path.)
-    import reyn.skill_runtime as agent_mod
+    import reyn.skill.skill_runtime as agent_mod
     real_event_store = agent_mod.EventStore
     agent_mod.EventStore = _capture_and_stop  # type: ignore[assignment]
 
@@ -138,7 +138,7 @@ async def test_agent_run_kwarg_overrides_constructor_run_id() -> None:
         captured["run_id"] = agent.run_id
         raise _StopSentinel
 
-    import reyn.skill_runtime as agent_mod
+    import reyn.skill.skill_runtime as agent_mod
     real_event_store = agent_mod.EventStore
     agent_mod.EventStore = _capture_and_stop  # type: ignore[assignment]
 
@@ -180,7 +180,7 @@ async def test_agent_run_falls_back_to_make_run_id_when_none() -> None:
         captured["run_id"] = agent.run_id
         raise _StopSentinel
 
-    import reyn.skill_runtime as agent_mod
+    import reyn.skill.skill_runtime as agent_mod
     real_event_store = agent_mod.EventStore
     agent_mod.EventStore = _capture_and_stop  # type: ignore[assignment]
 

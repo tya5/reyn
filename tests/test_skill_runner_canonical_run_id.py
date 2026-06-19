@@ -30,7 +30,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from reyn.skill_runtime import SkillRuntime
+from reyn.skill.skill_runtime import SkillRuntime
 
 # Canonical run_id form: YYYYMMDDTHHMMSSffffffZ_<skill_name>_<4hex>
 # - timestamp: 14 base digits + 6 microsecond digits + Z = 21 chars

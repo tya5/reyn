@@ -254,7 +254,7 @@ def _run_case(
     """Run a single eval case; return a result record."""
     from reyn.config import _find_project_root, load_project_context
     from reyn.llm.llm import run_async
-    from reyn.skill_runtime import SkillRuntime
+    from reyn.skill.skill_runtime import SkillRuntime
     from reyn.user_intervention import StdinInterventionBus
 
     case_id = _make_case_id(case)
@@ -812,7 +812,7 @@ def _run_spec_case(
 ) -> tuple[dict, object, float | None]:
     from reyn.config import _find_project_root, load_project_context
     from reyn.llm.llm import run_async
-    from reyn.skill_runtime import SkillRuntime
+    from reyn.skill.skill_runtime import SkillRuntime
     from reyn.user_intervention import StdinInterventionBus
 
     print(f"━━━ case: {case.name} ━━━")

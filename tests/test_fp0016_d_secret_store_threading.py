@@ -103,7 +103,7 @@ def _make_preprocessor_executor(
 
 def test_agent_default_secret_store_is_none() -> None:
     """Tier 2: SkillRuntime(secret_store=None) is the default; _secret_store is None."""
-    from reyn.skill_runtime import SkillRuntime
+    from reyn.skill.skill_runtime import SkillRuntime
 
     agent = SkillRuntime(model="standard")
     assert agent.secret_store is None
@@ -111,7 +111,7 @@ def test_agent_default_secret_store_is_none() -> None:
 
 def test_agent_explicit_secret_store_is_stored() -> None:
     """Tier 2: SkillRuntime(secret_store=<store>) stores the reference on _secret_store."""
-    from reyn.skill_runtime import SkillRuntime
+    from reyn.skill.skill_runtime import SkillRuntime
 
     store = _make_store(["API_KEY"])
     agent = SkillRuntime(model="standard", secret_store=store)

@@ -695,7 +695,7 @@ async def _run_single_task(
     instead of emitting a non-faithful PASS/FAIL.
     """
     from reyn.config import _find_project_root, load_project_context
-    from reyn.skill_runtime import SkillRuntime
+    from reyn.skill.skill_runtime import SkillRuntime
 
     async with semaphore:
         # Build input artifact

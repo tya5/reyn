@@ -24,7 +24,7 @@ from reyn.config import ReynConfig
 from reyn.llm.llm import LLMCallResult, LLMToolCallResult
 from reyn.llm.pricing import TokenUsage
 from reyn.schemas.models import Phase, Skill, SkillGraph
-from reyn.skill_runtime import SkillRuntime
+from reyn.skill.skill_runtime import SkillRuntime
 
 _SKILL_NAME = "converge_thread"
 
