@@ -431,6 +431,29 @@ class RouterHostAdapter:
         from reyn.security.content_guard import fence_if_enabled
         return fence_if_enabled(content, self._threat_scan)
 
+    def scan_for_block(self, content: str, *, scope: str = "strict"):
+        """FP-0050/#1822 S4a (Class B): return the first block-severity threat
+        match in ``content`` at ``scope``, or None. Used at agent-write seams
+        (memory write) to REJECT a poisoned write before it persists. Emits a
+        ``threat_block`` event on a hit. No-op (None) when disabled; fail-open.
+        """
+        cfg = self._threat_scan
+        if cfg is None or not getattr(cfg, "enabled", False):
+            return None
+        from reyn.security.content_guard import first_blocking_match, scan_for_threats
+        try:
+            matches = scan_for_threats(content, cfg, scope=scope)
+        except Exception:  # noqa: BLE001 — fail-open
+            if getattr(cfg, "fail_open", True):
+                return None
+            raise
+        hit = first_blocking_match(matches, getattr(cfg, "block_severity", "block"))
+        if hit is not None:
+            self._events.emit(
+                "threat_block", pattern_id=hit.pattern_id, severity=hit.severity, scope=hit.scope,
+            )
+        return hit
+
     def _is_turn_cancel_requested(self) -> bool:
         """#1468: True when the session has requested a cooperative turn cancel.
 

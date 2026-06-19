@@ -4450,6 +4450,28 @@ class RouterLoop:
         body: str,
     ) -> dict:
         """Write a memory entry and regenerate the index."""
+        # FP-0050/#1822 S4a (BP1, Class B): scan the LLM-written memory content
+        # (strict scope) BEFORE persisting. A poisoned entry (prompt injection /
+        # exfil / agent-config-mod) would re-enter the SP every session, so we
+        # REJECT the write rather than fence it. Reuses the deny channel: a
+        # decision-enabling error result (what matched + how to fix), no write.
+        _blocker = getattr(self.host, "scan_for_block", None)
+        if _blocker is not None:
+            _hit = _blocker(f"{name}\n{description}\n{body}", scope="strict")
+            if _hit is not None:
+                return {
+                    "status": "error",
+                    "error": {
+                        "kind": "threat_blocked",
+                        "message": (
+                            f"memory write blocked: content matched threat pattern "
+                            f"'{_hit.pattern_id}' ({_hit.scope}/{_hit.severity}). Remove the "
+                            f"flagged content (injection / exfiltration / config-mod phrasing) "
+                            f"from the entry and retry."
+                        ),
+                        "pattern_id": _hit.pattern_id,
+                    },
+                }
         # Defensive: strip trailing .md if LLM emitted it in slug despite
         # the tool description saying "Filename stem".
         if slug.endswith(".md"):

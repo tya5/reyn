@@ -40,6 +40,26 @@ def scan_for_threats(
         raise
 
 
+_SEVERITY_RANK = {"warn": 1, "block": 2}
+
+
+def severity_blocks(severity: str, threshold: str = "block") -> bool:
+    """True if a match of ``severity`` should BLOCK given the config threshold.
+
+    ``threshold="block"`` (default) blocks only ``block``-severity matches;
+    ``threshold="warn"`` also blocks ``warn``-severity (stricter).
+    """
+    return _SEVERITY_RANK.get(severity, 2) >= _SEVERITY_RANK.get(threshold, 2)
+
+
+def first_blocking_match(matches: "list[ThreatMatch]", threshold: str = "block") -> "ThreatMatch | None":
+    """Return the first match at/above the block threshold, or None."""
+    for m in matches:
+        if severity_blocks(m.severity, threshold):
+            return m
+    return None
+
+
 def fence_if_enabled(content: str, config: "ThreatScanConfig | Any") -> str:
     """Structurally fence ``content`` when enabled + fence_enabled; else unchanged.
 
