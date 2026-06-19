@@ -5,6 +5,7 @@ import os
 import re
 import sys
 import uuid
+import weakref
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Coroutine, TypeVar, Union
@@ -946,26 +947,45 @@ def proxy_kwargs() -> dict:
     return {"api_base": api_base, "custom_llm_provider": "openai", "api_key": api_key}
 
 
-def _single_deployment_router(model: str):
-    """#1829 S1: build a minimal single-deployment ``litellm.Router`` for *model*
-    with NO extra retry/fallback/cooldown (``num_retries=0``). The per-call
-    routing params (api_base / provider / api_key / response_format / …) are passed
-    through on the ``router.acompletion`` call (not baked into the deployment), so
-    the underlying ``litellm.acompletion`` — which Router invokes internally
-    (replay-compat verified, #1829 probe) — receives the SAME (model, messages,
-    kwargs) as a direct call → byte-equivalent + LLMReplay/cost-recording-compatible.
+# #1829 S2: loop-aware single-deployment Router cache. A ``litellm.Router`` binds
+# to the event loop it first awaits on, so a process-global cache would trip
+# "bound to a different event loop" under pytest-asyncio's per-test loops (the
+# reason S1 built per-call). Keying by the RUNNING loop gives each loop its own
+# Router — the same loop-aware-registry pattern as the #1762 agent-lock fix.
+# WeakKeyDictionary → a finished loop's Routers are GC'd with the loop.
+_ROUTERS_BY_LOOP: "weakref.WeakKeyDictionary[object, dict[str, object]]" = (
+    weakref.WeakKeyDictionary()
+)
 
-    Built per-call (no cache) for S1: a cached Router would bind to the event loop
-    of its first await (the #1762 asyncio-loop-binding class), unsafe under
-    pytest-asyncio's per-test loops. Loop-aware caching + a multi-deployment
-    model_list (from ModelResolver) land in S2; fallbacks/cooldown/retry_policy
-    (folding #1835) in S3.
+
+def _single_deployment_router(model: str):
+    """#1829 S1→S2: return a single-deployment ``litellm.Router`` for *model*, now
+    cached per running event loop (#1829 S2). NO extra retry/fallback/cooldown
+    (``num_retries=0``) — fallbacks/cooldown/retry_policy (folding #1835) and a
+    multi-deployment model_list (where fallbacks need it) land in S3.
+
+    Per-call routing params (api_base / provider / api_key / response_format / …)
+    are passed through on the ``router.acompletion`` call (not baked into the
+    deployment), so the underlying ``litellm.acompletion`` — which Router invokes
+    internally (replay-compat verified, #1829 probe) — receives the SAME
+    (model, messages, kwargs) as a direct call → byte-equivalent +
+    LLMReplay/cost-recording-compatible. The cache is keyed per running loop so
+    the cached Router is never reused across event loops (the #1762 binding class).
     """
     import litellm as _ll
-    return _ll.Router(
-        model_list=[{"model_name": model, "litellm_params": {"model": model}}],
-        num_retries=0,
-    )
+    loop = asyncio.get_running_loop()
+    per_loop = _ROUTERS_BY_LOOP.get(loop)
+    if per_loop is None:
+        per_loop = {}
+        _ROUTERS_BY_LOOP[loop] = per_loop
+    router = per_loop.get(model)
+    if router is None:
+        router = _ll.Router(
+            model_list=[{"model_name": model, "litellm_params": {"model": model}}],
+            num_retries=0,
+        )
+        per_loop[model] = router
+    return router
 
 
 def routing_for_spec(spec: "ModelSpec | None") -> dict | None:
