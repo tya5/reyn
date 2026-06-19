@@ -4,14 +4,14 @@
 
 Demonstrates Reyn's plugin framework for chat-transport webhook
 integrations via ``slack-bolt`` (= Slack's official SDK) + the
-``reyn.plugins.api`` stable contract. Reyn maintainers do NOT
+``reyn.gateway.api`` stable contract. Reyn maintainers do NOT
 commit to keeping this code working against Slack API drift. See
 ``README.md`` for the production guidance.
 
 Plugin contract:
   - Entry point in ``pyproject.toml``:
     ``[project.entry-points."reyn.webhooks"]
-       sample_slack = "reyn.plugins.sample_slack:register_router"``
+       sample_slack = "reyn.gateway.sample_slack:register_router"``
   - ``register_router(config: dict) -> APIRouter | None``
     receives the per-instance dict from ``webhooks.yaml``, returns
     the router to mount or None to skip (= missing dep / config).

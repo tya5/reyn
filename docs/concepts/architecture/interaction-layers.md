@@ -48,7 +48,7 @@ server. Three connection kinds, all **implemented**:
 |---|---|---|
 | **MCP server** (SSE / stdio) — `src/reyn/mcp/server.py` | AI clients (Claude Code, Cursor) | Synchronous — the caller blocks for the reply |
 | **A2A server** (HTTP JSON-RPC) — `src/reyn/interfaces/web/routers/a2a.py` | Peer AI agents (LangGraph, CrewAI, …) | Synchronous, or async to a caller-supplied `webhook_url` |
-| **Gateway** (Slack / LINE / …) — `src/reyn/plugins/` | Humans, via a chat platform | Asynchronous — Reyn must call the platform API to deliver |
+| **Gateway** (Slack / LINE / …) — `src/reyn/gateway/` | Humans, via a chat platform | Asynchronous — Reyn must call the platform API to deliver |
 
 **The outbound asymmetry.** MCP and A2A can **delegate the outbound reply to the
 caller**: the response either returns synchronously or is POSTed to a callback URL

@@ -40,7 +40,7 @@ def _sign(body: bytes, secret: str) -> str:
 
 def test_register_router_returns_none_when_target_agent_missing(monkeypatch):
     """Tier 2: register_router skips when target_agent absent."""
-    from reyn.plugins.sample_line import register_router
+    from reyn.gateway.sample_line import register_router
     monkeypatch.setenv("LINE_CHANNEL_SECRET", "x")
     assert register_router({}) is None
     assert register_router({"target_agent": ""}) is None
@@ -48,7 +48,7 @@ def test_register_router_returns_none_when_target_agent_missing(monkeypatch):
 
 def test_register_router_returns_none_when_channel_secret_missing(monkeypatch):
     """Tier 2: register_router skips when channel secret env unset."""
-    from reyn.plugins.sample_line import register_router
+    from reyn.gateway.sample_line import register_router
     monkeypatch.delenv("LINE_CHANNEL_SECRET", raising=False)
     assert register_router({"target_agent": "x"}) is None
 
@@ -57,7 +57,7 @@ def test_register_router_returns_apirouter_when_configured(monkeypatch):
     """Tier 2: with both present, returns an APIRouter."""
     from fastapi import APIRouter
 
-    from reyn.plugins.sample_line import register_router
+    from reyn.gateway.sample_line import register_router
     monkeypatch.setenv("LINE_CHANNEL_SECRET", "x")
     router = register_router({"target_agent": "line_agent"})
     assert isinstance(router, APIRouter)
@@ -70,7 +70,7 @@ def test_build_router_mounts_webhook_line_path(monkeypatch):
     """Tier 2: the router exposes POST ``/webhook/line``."""
     from fastapi import FastAPI
 
-    from reyn.plugins.sample_line.webhook import build_router
+    from reyn.gateway.sample_line.webhook import build_router
     monkeypatch.setenv("LINE_CHANNEL_SECRET", "x")
     app = FastAPI()
     app.include_router(build_router(target_agent="line_agent"))
@@ -118,7 +118,7 @@ def _line_client(monkeypatch):
     monkeypatch.setattr(deps, "_registry", None, raising=False)
     monkeypatch.setenv("LINE_CHANNEL_SECRET", "channel-secret")
 
-    from reyn.plugins.sample_line.webhook import build_router
+    from reyn.gateway.sample_line.webhook import build_router
     app = FastAPI()
     app.include_router(build_router(target_agent="line_agent"))
 

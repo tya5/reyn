@@ -5,7 +5,7 @@ matches against the operator's ``webhooks.yaml`` activation list, and
 mounts each plugin's router on the FastAPI app.
 
 Reyn core stays Slack/LINE/Discord-free; plugin code lives either in
-``src/reyn/plugins/<name>/`` (= sample plugins shipped with reyn) or
+``src/reyn/gateway/<name>/`` (= sample plugins shipped with reyn) or
 in separate pip-installable packages.
 
 ## Dedicated config file (= ``webhooks.yaml`` at project root)

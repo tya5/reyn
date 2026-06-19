@@ -19,7 +19,7 @@ worth it because:
 - Operators run only the plugins they need
 - Community can ship plugins independent of Reyn's release cycle
 
-The bundled ``sample_*`` plugins under ``src/reyn/plugins/`` exist as
+The bundled ``sample_*`` plugins under ``src/reyn/gateway/`` exist as
 reference implementations + quick-start fixtures. Production
 integrations should fork or replace them.
 
@@ -118,7 +118,7 @@ plugin author defines this schema.
 Secrets (= API keys, signing secrets) belong in **environment
 variables**, never in webhooks.yaml.
 
-## Stable plugin API — ``reyn.plugins.api``
+## Stable plugin API — ``reyn.gateway.api``
 
 The module exposes the **stable contract** plugin authors consume.
 Internal session methods (= ``_put_inbox`` etc.) may change between
@@ -149,11 +149,11 @@ Reyn versions; this API stays stable.
 ## Inbound envelope shape + stable plugin API
 
 When the plugin's route receives a webhook, push to the target
-agent's inbox via the **stable plugin API** in ``reyn.plugins.api``::
+agent's inbox via the **stable plugin API** in ``reyn.gateway.api``::
 
 ```python
 from reyn.runtime.transport import ExternalRef
-from reyn.plugins.api import push_to_agent
+from reyn.gateway.api import push_to_agent
 
 await push_to_agent(
     target_agent=target_agent,
@@ -171,7 +171,7 @@ await push_to_agent(
 
 **Do NOT call internal session methods directly.** ``Session.
 _put_inbox`` etc. are private API and may change between Reyn
-versions; ``reyn.plugins.api`` is the contract that stays stable.
+versions; ``reyn.gateway.api`` is the contract that stays stable.
 
 Reyn's session dispatch automatically:
 - Surfaces ``sender`` as a state_change history entry (= PR-A

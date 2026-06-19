@@ -3,14 +3,14 @@
 ⚠️  **SAMPLE / EXAMPLE ONLY** ⚠️
 
 Mirror of ``sample_slack`` for LINE Messaging API, wired through
-``line-bot-sdk`` v3 + ``reyn.plugins.api``. Reyn maintainers do NOT
+``line-bot-sdk`` v3 + ``reyn.gateway.api``. Reyn maintainers do NOT
 commit to keeping this code working against LINE API drift. See
 ``README.md`` for the production guidance.
 
 Plugin contract:
   - Entry point in ``pyproject.toml``:
     ``[project.entry-points."reyn.webhooks"]
-       sample_line = "reyn.plugins.sample_line:register_router"``
+       sample_line = "reyn.gateway.sample_line:register_router"``
   - ``register_router(config: dict) -> APIRouter | None``
 """
 from __future__ import annotations

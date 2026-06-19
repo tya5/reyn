@@ -5,7 +5,7 @@
 Inbound chat-transport for the LINE Messaging API, wired through
 ``line-bot-sdk`` v3 (= LINE's official SDK). Mirror of the
 ``sample_slack`` refactor: OSS SDK handles transport-specific
-protocol; ``reyn.plugins.api`` handles Reyn-side dispatch. The
+protocol; ``reyn.gateway.api`` handles Reyn-side dispatch. The
 plugin's own glue is intentionally minimal (= ~50 lines).
 
 ## LINE Messaging API integration
@@ -53,7 +53,7 @@ def build_router(*, target_agent: str) -> APIRouter:
 
     Wires ``line-bot-sdk``'s ``WebhookParser`` for signature
     verification + typed event parsing; routes message events to
-    Reyn's agent inbox via ``reyn.plugins.api.push_to_agent``.
+    Reyn's agent inbox via ``reyn.gateway.api.push_to_agent``.
 
     Raises ``ImportError`` if ``line-bot-sdk`` isn't installed;
     ``register_router`` handles this by returning ``None``.
@@ -68,7 +68,7 @@ def build_router(*, target_agent: str) -> APIRouter:
         UserSource,
     )
 
-    from reyn.plugins.api import make_sender, push_to_agent
+    from reyn.gateway.api import make_sender, push_to_agent
     from reyn.runtime.transport import ExternalRef
 
     channel_secret = os.environ.get("LINE_CHANNEL_SECRET", "")
