@@ -61,9 +61,7 @@ In the current code the gateway delivers **inbound only** (the `sample_line` /
 through a separate MCP tool (e.g. a Slack MCP server) rather than the gateway
 itself. Making a gateway own both inbound *and* outbound — register its own
 outbound MCP tool so a self-contained gateway handles send and receive — is a
-**proposed** completion of this layer. (A **proposed** rename of the `plugins/`
-package to `gateway/` reflects this bidirectional-bridge role; the package is
-`plugins/` today.)
+**proposed** completion of this layer.
 
 See also: [A2A](../multi-agent/a2a.md), [MCP](../tools-integrations/mcp.md).
 
@@ -104,7 +102,7 @@ as the rest of the OS.
 
 | Layer | Implemented | Proposed |
 |---|---|---|
-| 1 — External connection | MCP, A2A, gateway (inbound) | gateway outbound completion; `plugins/`→`gateway/` rename |
+| 1 — External connection | MCP, A2A, gateway (inbound) | gateway outbound completion |
 | 2 — Internal trigger | cron | `inject_message` |
 | 3 — In-turn intervention | — | lifecycle hooks (whole layer) |
 
