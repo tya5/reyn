@@ -168,7 +168,7 @@ def _merge(base: dict, override: dict) -> dict:
                 existing = {}
             merged_safety = dict(existing)
             for sub_key, sub_val in val.items():
-                if sub_key in ("loop", "timeout", "on_limit") and isinstance(sub_val, dict):
+                if sub_key in ("loop", "timeout", "on_limit", "threat_scan") and isinstance(sub_val, dict):
                     merged_safety[sub_key] = {**existing.get(sub_key, {}), **sub_val}
                 else:
                     merged_safety[sub_key] = sub_val

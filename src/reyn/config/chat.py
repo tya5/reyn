@@ -167,6 +167,31 @@ class OnLimitConfig:
 
 
 @dataclass
+class ThreatScanConfig:
+    """`safety.threat_scan:` — content-layer threat scan + fence (FP-0050 / #1822).
+
+    Complements the execution layer (permissions / sandbox): inspects untrusted
+    content for prompt-injection before it enters the SP/context, and is the
+    config surface for the fence + scan defense-in-depth.
+
+    - ``enabled`` — master switch. Default-on: Class-A detect is non-blocking,
+      low-risk telemetry; Class-B write seams block.
+    - ``fail_open`` — scanner error → allow (a false-negative is tolerated over a
+      false-positive that wedges a turn).
+    - ``fence_enabled`` — Class-A structural fencing of untrusted content.
+    - ``block_severity`` — minimum severity that BLOCKS at write seams (Class B).
+      ``"block"`` (default) blocks only ``severity="block"`` patterns; ``"warn"``
+      makes warn-severity block too (stricter).
+    - ``custom_patterns`` — operator ``(regex, id, scope, severity)`` extension.
+    """
+    enabled: bool = True
+    fail_open: bool = True
+    fence_enabled: bool = True
+    block_severity: str = "block"
+    custom_patterns: list = field(default_factory=list)
+
+
+@dataclass
 class SafetyConfig:
     """`safety:` — unified, user-facing namespace for stop conditions.
 
@@ -195,6 +220,7 @@ class SafetyConfig:
     loop: LoopConfig = field(default_factory=LoopConfig)
     timeout: TimeoutConfig = field(default_factory=TimeoutConfig)
     on_limit: OnLimitConfig = field(default_factory=OnLimitConfig)
+    threat_scan: ThreatScanConfig = field(default_factory=ThreatScanConfig)
 
 
 @dataclass
@@ -664,7 +690,21 @@ def _build_safety_config(raw: object) -> SafetyConfig:
         auto_extend_times=auto_extend_times,
         ask_timeout_seconds=ask_timeout_seconds,
     )
-    return SafetyConfig(loop=loop, timeout=timeout, on_limit=on_limit)
+    threat_scan_raw = raw.get("threat_scan") or {}
+    if not isinstance(threat_scan_raw, dict):
+        threat_scan_raw = {}
+    ts_defaults = ThreatScanConfig()
+    custom_patterns_raw = threat_scan_raw.get("custom_patterns", ts_defaults.custom_patterns)
+    threat_scan = ThreatScanConfig(
+        enabled=bool(threat_scan_raw.get("enabled", ts_defaults.enabled)),
+        fail_open=bool(threat_scan_raw.get("fail_open", ts_defaults.fail_open)),
+        fence_enabled=bool(threat_scan_raw.get("fence_enabled", ts_defaults.fence_enabled)),
+        block_severity=str(threat_scan_raw.get("block_severity", ts_defaults.block_severity)),
+        custom_patterns=list(custom_patterns_raw) if isinstance(custom_patterns_raw, list) else list(ts_defaults.custom_patterns),
+    )
+    return SafetyConfig(
+        loop=loop, timeout=timeout, on_limit=on_limit, threat_scan=threat_scan,
+    )
 
 
 def _build_cost_limit(raw: object) -> CostLimitConfig:

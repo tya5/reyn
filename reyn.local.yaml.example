@@ -521,6 +521,12 @@
 #     mode: interactive             # interactive | unattended | auto_extend
 #     auto_extend_times: 1          # used when mode = auto_extend
 #     ask_timeout_seconds: 0.0      # 0 = wait forever for user response
+#   threat_scan:                    # content-layer prompt-injection scan + fence (#1822)
+#     enabled: true                 # master switch (default-on)
+#     fail_open: true               # scanner error → allow (FN tolerated over FP)
+#     fence_enabled: true           # structurally fence untrusted content as data
+#     block_severity: block         # min severity that blocks at write seams: block | warn
+#     custom_patterns: []           # operator [regex, id, scope, severity] extensions
 
 
 # -----------------------------------------------------------------------------
