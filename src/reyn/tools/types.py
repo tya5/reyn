@@ -311,6 +311,12 @@ class ToolDefinition:
     dispatch_kind: Literal["sync", "async"] = "sync"  # async = result via deferred channel
                                                      # (= delegate_to_agent / plan;
                                                      # router-side only consideration)
+    # FP-0050 / #1822: tool self-declares that its result carries content from
+    # OUTSIDE the trust boundary (external server / internet / user-written disk).
+    # The content-threat guard fences (structurally marks as data) such results
+    # at the tool-result chokepoint; trusted-internal results are scan-only.
+    # P7: a generic OS-level bool the tool sets — not a hardcoded tool-name list.
+    returns_external_content: bool = False
 
     # Per-call schema enrichment hook (= ADR-0026 M4 Phase 3).
     # When set, callers (= build_tools / phase catalog builder) invoke

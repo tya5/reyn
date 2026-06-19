@@ -3354,9 +3354,23 @@ class RouterLoop:
         """SchemeOps.dispatch: run the resolved (exclude-cleared) actions in parallel
         via the OS dispatch substrate (the former gather of _execute_tool's dispatch
         half)."""
-        return await asyncio.gather(*[
+        results = await asyncio.gather(*[
             self._dispatch_resolved(a["name"], a["args"]) for a in actions
         ])
+        # FP-0050/#1822 S2: tag untrusted-source results by the EFFECTIVE resolved
+        # name (``a["name"]``). feedback() iterates the raw tool_calls whose name
+        # may be the ``invoke_action`` wrapper, so classifying there would miss
+        # wrapped MCP/web/memory calls; tagging here (post-resolve) is
+        # scheme-agnostic. The fence at feedback() gates on this tag; scan-all
+        # runs regardless of the tag.
+        from reyn.tools import get_default_registry
+        _reg = get_default_registry()
+        for a, r in zip(actions, results):
+            if isinstance(r, dict):
+                _td = _reg.lookup(a["name"])
+                if _td is not None and getattr(_td, "returns_external_content", False):
+                    r["_external_source"] = True
+        return results
 
     def feedback(self, result: "ExecutionResult") -> list[dict]:
         """SchemeOps.feedback (#1608): build the **appendable message sequence** for
@@ -3396,13 +3410,30 @@ class RouterLoop:
             if isinstance(r, dict) and isinstance(r.get("media_blocks"), list):
                 media_blocks = list(r["media_blocks"])
                 r = {k: v for k, v in r.items() if k != "media_blocks"}
+            # FP-0050/#1822 S2: untrusted-source tag set by dispatch() (effective
+            # name). Pop before serialising so it never reaches the LLM body.
+            external_source = False
+            if isinstance(r, dict) and r.get("_external_source"):
+                external_source = True
+                r = {k: v for k, v in r.items() if k != "_external_source"}
             content_str = json.dumps(r, default=str)
             if post_text:
                 content_str = f"{content_str}\n\n---\n{post_text}"
+            # FP-0050/#1822 S2: scan-all on the FULL content BEFORE cap truncates
+            # (so injection can't hide past the size cap). Detection completeness.
+            _scan = getattr(host, "scan_tool_result", None)
+            if _scan is not None:
+                _scan(content_str)
             # #1128: cap oversized tool results once at this chokepoint.
             _cap = getattr(host, "cap_tool_result", None)
             if _cap is not None:
                 content_str = _cap(content_str)
+            # FP-0050/#1822 S2: fence untrusted-source content AFTER cap (so
+            # truncation can't sever the end marker). Trusted-internal = scan-only.
+            if external_source:
+                _fence = getattr(host, "fence_tool_result", None)
+                if _fence is not None:
+                    content_str = _fence(content_str)
             out.append({
                 "role": "tool",
                 "tool_call_id": tc["id"],

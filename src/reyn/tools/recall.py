@@ -198,4 +198,5 @@ RECALL = ToolDefinition(
     handler=_handle_recall,
     category="discovery",
     purity="read_only",
+    returns_external_content=True,  # FP-0050/#1822: RAG over user content (memory/docs/chat)
 )

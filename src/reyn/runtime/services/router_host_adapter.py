@@ -266,7 +266,11 @@ class RouterHostAdapter:
         # self._is_turn_cancel_requested; test hosts pass None (= never cancel).
         # run_loop polls via getattr(host, "_is_turn_cancel_requested", None).
         turn_cancel_fn: "Callable[[], bool] | None" = None,
+        # FP-0050 / #1822: content-threat scan + fence config. None (test hosts)
+        # → defaults (disabled-safe via the methods' guards).
+        threat_scan: Any = None,
     ) -> None:
+        self._threat_scan = threat_scan
         self._turn_budget_engine = turn_budget_engine
         self._turn_cancel_fn = turn_cancel_fn  # #1468
         self._agent_name = agent_name
@@ -405,6 +409,27 @@ class RouterHostAdapter:
         that cannot satisfy the force-close floor) keeps force-close inert.
         """
         self._turn_budget_engine = engine
+
+    # FP-0050 / #1822 S2: content-threat guard at the tool-result chokepoint.
+    # scan_tool_result runs on the FULL content (before cap_tool_result truncates,
+    # so injection can't hide past the size cap); fence_tool_result wraps the
+    # (capped) content AFTER cap (so truncation can't sever the end marker), and
+    # only for untrusted-source results (the feedback() caller gates on the
+    # dispatch-set _external_source tag). Both are no-ops when threat_scan is
+    # absent/disabled, and fail-open on scanner error.
+    def scan_tool_result(self, content: str) -> None:
+        from reyn.security.content_guard import scan_for_threats
+        for m in scan_for_threats(content, self._threat_scan):
+            self._events.emit(
+                "threat_scan_match",
+                pattern_id=m.pattern_id,
+                severity=m.severity,
+                scope=m.scope,
+            )
+
+    def fence_tool_result(self, content: str) -> str:
+        from reyn.security.content_guard import fence_if_enabled
+        return fence_if_enabled(content, self._threat_scan)
 
     def _is_turn_cancel_requested(self) -> bool:
         """#1468: True when the session has requested a cooperative turn cancel.
