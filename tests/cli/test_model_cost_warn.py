@@ -182,12 +182,21 @@ def test_on_model_cost_warn_safe_on_missing_cost_field() -> None:
 # ---------------------------------------------------------------------------
 
 class _FakeEventLog:
-    """Minimal event log stub — records (type, data) pairs."""
+    """Minimal event log stub — records (type, data) pairs.
+
+    ``snapshot()`` is the public read surface (mirrors the snapshot() idiom
+    from testing policy — never assert on private fields like `.emitted`
+    directly from test code; use this method instead).
+    """
     def __init__(self) -> None:
-        self.emitted: list[tuple[str, dict]] = []
+        self._emitted: list[tuple[str, dict]] = []
 
     def emit(self, event_type: str, **data: object) -> None:
-        self.emitted.append((event_type, dict(data)))
+        self._emitted.append((event_type, dict(data)))
+
+    def snapshot(self) -> list[tuple[str, dict]]:
+        """Public read — returns a copy of all (event_type, data) pairs so far."""
+        return list(self._emitted)
 
 
 class _FakeResolver:
@@ -211,6 +220,10 @@ class _FakeSession:
         self._resolver = _FakeResolver()
         self._chat_events = _FakeEventLog()
 
+    def event_snapshot(self) -> list[tuple[str, dict]]:
+        """Public surface: returns recorded (event_type, data) pairs."""
+        return self._chat_events.snapshot()
+
 
 def test_maybe_emit_model_cost_warn_emits_for_known_high_cost_model() -> None:
     """Tier 2: known model above threshold=0.0 → model_cost_warn emitted.
@@ -227,8 +240,10 @@ def test_maybe_emit_model_cost_warn_emits_for_known_high_cost_model() -> None:
 
     session = _FakeSession(threshold=0.0)
     maybe_emit_model_cost_warn(session, "gpt-4o", action="session_start")
-    assert session._chat_events.emitted, "expected model_cost_warn to be emitted"
-    evt_type, evt_data = session._chat_events.emitted[0]
+
+    events = session.event_snapshot()
+    assert events, "expected model_cost_warn to be emitted"
+    evt_type, evt_data = events[0]
     assert evt_type == "model_cost_warn"
     assert evt_data["action"] == "session_start"
     assert evt_data["model_class"] == "gpt-4o"
@@ -236,6 +251,9 @@ def test_maybe_emit_model_cost_warn_emits_for_known_high_cost_model() -> None:
 
 def test_maybe_emit_model_cost_warn_dedup_within_session() -> None:
     """Tier 2: same model class warned at most once per session.
+
+    Behavioral check: first call fires; second call for the same model leaves
+    the snapshot unchanged (= no new event added).
 
     Falsification: without the _cost_warned_models set check, two calls
     for the same model_class would emit two events (duplicate warn).
@@ -248,9 +266,12 @@ def test_maybe_emit_model_cost_warn_dedup_within_session() -> None:
 
     session = _FakeSession(threshold=0.0)
     maybe_emit_model_cost_warn(session, "gpt-4o", action="session_start")
+    after_first = session.event_snapshot()
+    assert after_first, "expected first call to emit"
+
     maybe_emit_model_cost_warn(session, "gpt-4o", action="model_override")
-    assert len(session._chat_events.emitted) == 1, (
-        "expected exactly one emit despite two calls for same model class"
+    assert session.event_snapshot() == after_first, (
+        "second call for same model class should not emit a new event"
     )
 
 
@@ -268,7 +289,7 @@ def test_maybe_emit_model_cost_warn_disabled_suppresses() -> None:
 
     session = _FakeSession(enabled=False, threshold=0.0)
     maybe_emit_model_cost_warn(session, "gpt-4o", action="session_start")
-    assert not session._chat_events.emitted, "expected no emit when disabled"
+    assert not session.event_snapshot(), "expected no emit when disabled"
 
 
 def test_maybe_emit_model_cost_warn_action_field_propagated() -> None:
@@ -285,5 +306,7 @@ def test_maybe_emit_model_cost_warn_action_field_propagated() -> None:
 
     session = _FakeSession(threshold=0.0)
     maybe_emit_model_cost_warn(session, "gpt-4o", action="session_start")
-    _, evt_data = session._chat_events.emitted[0]
+    events = session.event_snapshot()
+    assert events, "expected an event to be emitted"
+    _, evt_data = events[0]
     assert evt_data.get("action") == "session_start"

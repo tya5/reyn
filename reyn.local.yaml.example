@@ -346,6 +346,19 @@
 
 
 # -----------------------------------------------------------------------------
+# cost_warn: high-cost model pre-selection awareness (#1830 / FP-0052).
+# Surfaces a [⚠ high-cost model: …] marker in the conv pane when the
+# resolved model's input cost per 1M tokens exceeds the threshold.
+# Fires at /model switch and at session startup (once per model per session).
+# Orthogonal to `cost:` budget caps (= cumulative spend) and
+# ContextBudgetAdvisor (= token ceiling).
+# -----------------------------------------------------------------------------
+# cost_warn:
+#   enabled: true
+#   model_threshold_per_1m_input_usd: 5.0  # warn above $5/1M input tokens
+
+
+# -----------------------------------------------------------------------------
 # skill_resume: policy for handling steps that have a
 # ``step_started`` WAL event but no matching ``step_completed`` / ``step_failed``
 # (= the op may have committed externally and only the operator can decide).
