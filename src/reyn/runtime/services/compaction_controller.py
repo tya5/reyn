@@ -42,7 +42,9 @@ def _estimate_tokens(text: str) -> int:
     return max(1, len(text or "") // 4)
 
 
-def _turn_to_compactor_input(t: "ChatMessage") -> dict:
+def _turn_to_compactor_input(
+    t: "ChatMessage", *, redact: "Callable[[str], str] | None" = None,
+) -> dict:
     """Serialise a ChatMessage into the compactor's ``new_turns`` shape.
 
     Post-PR-E1 (issue #383) the history may contain ``assistant`` entries
@@ -57,8 +59,15 @@ def _turn_to_compactor_input(t: "ChatMessage") -> dict:
     ``text`` is the derived text view (= str content or first text part
     from a list content). Tool fields are only included on the entries
     where they're set.
+
+    FP-0050/#1822 S3 (#1820): when ``redact`` is given, the turn text is run
+    through it so credential/token VALUES are stripped before they enter the
+    summarizer input (and the persisted summary). ``None`` = byte-identical.
     """
-    out: dict = {"role": t.role, "text": t.text, "seq": t.seq}
+    text = t.text
+    if redact is not None and isinstance(text, str):
+        text = redact(text)
+    out: dict = {"role": t.role, "text": text, "seq": t.seq}
     if getattr(t, "tool_calls", None):
         # Compact representation: function names + arg-string lengths.
         # Avoid sending raw arg JSON since it can be large and the
@@ -133,9 +142,14 @@ class CompactionController:
         make_summary_message: Callable[..., ChatMessage],
         render_summary: Callable[[dict], str],
         merge_action_usage: Callable[[list[ChatMessage]], None] | None = None,
+        # FP-0050/#1822 S3 (#1820): content-threat scan config. When enabled,
+        # turn text is secret-redacted before entering the summarizer input.
+        # None (test paths) → no redaction (byte-identical).
+        threat_scan: "object | None" = None,
     ) -> None:
         self._events = event_log
         self._config = config
+        self._threat_scan = threat_scan
         self._history_access = history_access
         self._latest_summary = latest_summary
         self._engine = compaction_engine
@@ -259,9 +273,17 @@ class CompactionController:
                         "covers_through_seq": meta.get("covers_through_seq", 0),
                     }
 
+        # FP-0050/#1822 S3 (#1820): strip credential/token values from turn text
+        # before it enters the summarizer input (so secrets aren't baked into the
+        # persisted summary). Gated by threat_scan.enabled; None/disabled → no-op.
+        _ts = self._threat_scan
+        _redact = None
+        if _ts is not None and getattr(_ts, "enabled", False):
+            from reyn.security.secret_redaction import redact_secrets
+            _redact = redact_secrets
         input_chunk = HistoryChunkToCompact(
             previous_summary=prev_structured,
-            new_turns=[_turn_to_compactor_input(t) for t in candidates],
+            new_turns=[_turn_to_compactor_input(t, redact=_redact) for t in candidates],
             section_token_caps={
                 "topic_arc": cfg.section_token_caps.topic_arc,
                 "decisions": cfg.section_token_caps.decisions,

@@ -1590,6 +1590,8 @@ class Session:
         self._compaction_controller = CompactionController(
             event_log=self._chat_events,
             config=self._compaction,
+            # FP-0050/#1822 S3 (#1820): secret-redact turn text before summary.
+            threat_scan=self._safety.threat_scan,
             history_access=lambda: self.history,
             latest_summary=self._latest_summary,
             compaction_engine=CompactionEngine(
