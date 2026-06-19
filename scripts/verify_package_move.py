@@ -12,7 +12,13 @@ Two modes:
     verify_package_move.py reyn.runtime.session RouterCapExceeded
 
     # package move: a whole module/package path was renamed/relocated.
-    verify_package_move.py reyn.chat
+    verify_package_move.py reyn.plugins
+    verify_package_move.py reyn.plugins --new reyn.gateway   # explicit + clearer
+
+The positional ``symbol`` is for symbol moves only. For a PACKAGE rename pass
+the old path alone (or, clearer, ``--new <new-pkg>``); passing the new package
+as a second positional would read it as a *symbol*, so a dotted second
+positional is rejected with a hint to use ``--new``.
 
 Ref-classes checked:
 
@@ -135,6 +141,14 @@ def main(argv: list[str] | None = None) -> int:
         help="moved symbol name (symbol-move mode); omit for a package move",
     )
     ap.add_argument(
+        "--new",
+        default=None,
+        metavar="NEW_PKG",
+        help="new package path for a package rename (e.g. reyn.gateway). Makes "
+             "package-move mode explicit; the positional symbol is ignored. The "
+             "check asserts the OLD path has 0 residual references.",
+    )
+    ap.add_argument(
         "--roots",
         nargs="+",
         default=list(DEFAULT_ROOTS),
@@ -142,17 +156,28 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = ap.parse_args(argv)
 
+    # Guard the common trap: `verify_package_move.py <old> <new>` where the 2nd
+    # positional is actually a package path (dotted) — it would be read as a
+    # symbol. For a package rename, use --new.
+    if args.new is None and args.symbol is not None and "." in args.symbol:
+        ap.error(
+            f"symbol '{args.symbol}' looks like a dotted module path. "
+            f"For a package rename use: --new {args.symbol}"
+        )
+    # --new makes package-move mode explicit (the positional symbol is ignored).
+    symbol = None if args.new is not None else args.symbol
+
     py_files = _py_files(args.roots)
     text_files = _all_text_files(args.roots)
     self_path = "scripts/verify_package_move.py"
 
     sections: list[tuple[str, list[str]]] = []
     sections.append(("dotted-import (AST, multi-line safe)",
-                     _import_hits(py_files, args.old_module, args.symbol)))
+                     _import_hits(py_files, args.old_module, symbol)))
 
-    if args.symbol is not None:
-        sections.append((f"dotted-literal ({args.old_module}.{args.symbol})",
-                         _literal_hits(text_files, f"{args.old_module}.{args.symbol}", self_path)))
+    if symbol is not None:
+        sections.append((f"dotted-literal ({args.old_module}.{symbol})",
+                         _literal_hits(text_files, f"{args.old_module}.{symbol}", self_path)))
     else:
         sections.append((f"dotted-literal ({args.old_module})",
                          _literal_hits(text_files, args.old_module, self_path)))
@@ -161,7 +186,9 @@ def main(argv: list[str] | None = None) -> int:
                          _path_hits(text_files, seg)))
 
     total = sum(len(h) for _, h in sections)
-    target = args.old_module + (f".{args.symbol}" if args.symbol else "")
+    target = args.old_module + (f".{symbol}" if symbol else "")
+    if args.new is not None:
+        target = f"{args.old_module} (renamed → {args.new})"
     if total == 0:
         print(f"OK: 0 residual references to {target} (ref-classes clean).")
         return 0
