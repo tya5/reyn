@@ -179,6 +179,24 @@ def _deep_merge(base: dict, override: dict) -> dict:
     return result
 
 
+def model_family(model: str) -> str:
+    """#1791 A2: coarse model-family classifier for SP gating (the SINGLE place
+    family is classified — do NOT scatter ``"gemini" in x`` across SP builders).
+    Model names are not skill-specific strings, so this is P7-OK. Operates on the
+    resolved LiteLLM model string (e.g. ``"openai/gemini-2.5-flash-lite"`` →
+    ``"gemini"`` — the family is in the name regardless of the proxy prefix).
+    Returns one of ``"claude" | "gemini" | "gpt" | "other"``.
+    """
+    m = (model or "").lower()
+    if "claude" in m or "anthropic" in m:
+        return "claude"
+    if "gemini" in m or "gemma" in m:
+        return "gemini"
+    if "gpt" in m or "codex" in m or "/o1" in m or "/o3" in m:
+        return "gpt"
+    return "other"
+
+
 def _spec_to_dict(spec: ModelSpec) -> dict[str, Any]:
     """Convert a ModelSpec back to a flat dict for merging."""
     result: dict[str, Any] = {"model": spec.model}

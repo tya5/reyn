@@ -75,6 +75,9 @@ class UniversalCategoryScheme:
         dm: bool = tier_wants_discovery_mandate(layer_ctx.get("router_model"))
         hl: bool = bool((available or {}).get("hot_list_aliases"))
         ni: bool = bool(layer_ctx.get("non_interactive", False))
+        # #1791 A2: non-Claude operational-steering policy from the raw family fact
+        # (Claude excluded — it doesn't need the hygiene reminders).
+        nc: bool = layer_ctx.get("router_model_family") != "claude"
 
         slots = build_universal_tool_use_slots(
             universal_wrappers_enabled=univ,
@@ -82,6 +85,7 @@ class UniversalCategoryScheme:
             discovery_mandate=dm,
             has_hot_list_aliases=hl,
             non_interactive=ni,
+            non_claude=nc,
         )
         # #1627 Stage 4: sp_params removed from build_presentation (build_system_prompt
         # no longer reads it). tool_use_sp is now the sole SP channel.

@@ -23,6 +23,7 @@ def build_universal_tool_use_slots(
     discovery_mandate: bool,
     has_hot_list_aliases: bool,
     non_interactive: bool = False,
+    non_claude: bool = False,  # #1791 A2: non-Claude operational-steering hygiene in slot_in_behaviour
 ) -> "dict[str, str]":
     """Build the four positional tool-use SP slots for the universal-category path.
 
@@ -211,6 +212,20 @@ def build_universal_tool_use_slots(
         " call `invoke_action` immediately. NO clarifying questions. NO text replies.",
         "",
     ])
+    if non_claude:
+        # #1791 A2 (adopted by design judgment, non-Claude gated): operational
+        # hygiene for non-Claude models. abs-path + non-interactive dropped (Reyn's
+        # tool layer handles them structurally — see #1791 rejects); keep-going
+        # dropped (subsumed by the OS Behaviour TASK_COMPLETION rule, A1).
+        _r3.extend([
+            "  - Verify before acting: read/inspect file contents and project"
+            " structure before changing them; never guess at file contents.",
+            "  - Check dependencies: do not assume a library is available — confirm"
+            " it is declared (manifest / imports) before relying on it.",
+            "  - Be concise: keep explanatory text brief — a few sentences, not"
+            " paragraphs; favor actions and results over narration.",
+            "",
+        ])
     slots["slot_in_behaviour"] = "\n".join(_r3)
 
     # ── R4: cwd-idiom file-discovery HOW clause (slot_in_environment) ────────
