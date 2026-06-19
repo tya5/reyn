@@ -17,7 +17,11 @@ Design (lead-ratified #1154 Phase 1–3):
   - Phase 3 (S1): inline if/elif replaced with a pluggable ``_ViewerEntry``
     registry; ``register_viewer()`` lets callers add new viewers without
     touching the dispatch core. Byte-behavior identical to Phase 2c.
-  - Phase 3 (S2–S4, deferred): LLM-generated viewer templates for novel
+  - Phase 3 (S2): ``TemplateSchema`` dataclass + ``_apply_template`` (label
+    AND value escaped; both are untrusted content). ``_SHAPE_TEMPLATE_CACHE``
+    for per-session shape fingerprint → schema caching. Not yet reachable
+    (S3 adds LLM generation; S4 wires the async path at the call site).
+  - Phase 3 (S3–S4, deferred): LLM-generated viewer templates for novel
     types; email-card deferred until a real in-repo email result producer
     exists.
 
@@ -27,7 +31,7 @@ is testable in isolation without the Textual app.
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, Callable
 
 from rich.console import RenderableType
@@ -256,6 +260,58 @@ register_viewer(_pred_csv, _viewer_csv, name="csv")
 register_viewer(_pred_json, _viewer_json, name="json")
 register_viewer(_pred_image, _viewer_image, name="image")
 register_viewer(_looks_like_web_summary, _viewer_web_summary, name="web_summary")
+
+
+# ---------------------------------------------------------------------------
+# Phase 3 S2: TemplateSchema + safe _apply_template
+# (S3 will add async LLM generation; S4 will wire it at the call site)
+# ---------------------------------------------------------------------------
+
+@dataclass
+class TemplateSchema:
+    """Display schema produced by the LLM (S3) and applied by _apply_template.
+
+    ``rows`` is a list of (escaped_label, field_key) pairs. Labels are escaped
+    at schema construction time (S3). ``caption`` is also pre-escaped.
+    Field keys are validated against the result dict at construction.
+    """
+    rows: list[tuple[str, str]]
+    caption: str = ""
+
+
+# Per-session in-memory cache: shape fingerprint → TemplateSchema | None.
+# None means "LLM generation was attempted and failed; do not retry."
+_SHAPE_TEMPLATE_CACHE: dict[frozenset[str], TemplateSchema | None] = {}
+
+
+def _shape_fingerprint(result: dict) -> frozenset[str]:
+    """Stable cache key for a result — the frozenset of its top-level keys."""
+    return frozenset(result.keys())
+
+
+def _apply_template(result: dict, schema: TemplateSchema) -> RenderableType:
+    """Render a result dict using a TemplateSchema as a Rich Table.
+
+    Safety contract:
+    - ``label`` values are pre-escaped at schema construction (S3).
+    - ``field_key`` values are validated against ``result.keys()`` at schema
+      construction; missing fields are silently skipped here.
+    - ``result`` values are untrusted external content (#1822 threat surface).
+      ``escape(str(val)[:500])`` strips any Rich markup before display.
+    """
+    from rich.markup import escape
+
+    table = Table(show_header=False, box=None, expand=False)
+    table.add_column("field", style="bold")
+    table.add_column("value")
+    for label, field_key in schema.rows:
+        val = result.get(field_key)
+        if val is None:
+            continue
+        table.add_row(label, escape(str(val)[:500]))
+    if schema.caption:
+        table.caption = schema.caption
+    return table
 
 
 # ---------------------------------------------------------------------------
