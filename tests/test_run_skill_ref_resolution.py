@@ -22,7 +22,7 @@ from pathlib import Path
 
 import pytest
 
-from reyn.core.op_runtime.run_skill import _resolve_skill_ref
+from reyn.skill.run_skill import _resolve_skill_ref
 from reyn.skill.skill_paths import SkillNotFoundError, stdlib_root
 
 # ---------------------------------------------------------------------------
