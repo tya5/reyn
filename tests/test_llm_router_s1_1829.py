@@ -23,6 +23,21 @@ import pytest
 from reyn.llm.llm import _single_deployment_router, _use_llm_router
 
 
+@pytest.fixture(autouse=True)
+def _isolate_litellm_model_cost():
+    """Test-isolation (#1829 S1, same class as #1762 global-state pollution):
+    constructing a ``litellm.Router(model_list=[...])`` registers each deployment's
+    model into the GLOBAL ``litellm.model_cost`` map. Without restoration that leaks
+    across tests — e.g. test_session_cost_accumulation expects the proxy-prefixed
+    model to be ABSENT (→ (None,None)); a leaked registration makes it resolve to
+    cost 0.0 (the observed pytest-3.11 test-ordering failure). Snapshot + restore the
+    map in place (mutate, don't rebind — other code holds the reference)."""
+    before = dict(litellm.model_cost)
+    yield
+    litellm.model_cost.clear()
+    litellm.model_cost.update(before)
+
+
 def test_router_gate_off_by_default(monkeypatch) -> None:
     """Tier 2: the Router gate is OFF by default (production behavior unchanged)."""
     monkeypatch.delenv("REYN_LLM_USE_ROUTER", raising=False)
