@@ -49,7 +49,7 @@ def test_force_close_consolidation_drops_covered_head_tail(tmp_path) -> None:
         _push(session, "user" if t.startswith("U") else "assistant", t)
     _append_force_close_summary(session, "CONSOLIDATED-ESSENCE")
 
-    msgs = session._build_history_for_router()
+    msgs = session._history_buffer.build_history()
     blob = "\n".join(m["content"] for m in msgs if isinstance(m.get("content"), str))
     assert "CONSOLIDATED-ESSENCE" in blob          # consolidation reaches the slice
     for covered in ("U1-covered", "A1-covered", "U2-covered", "A2-covered"):
@@ -67,7 +67,7 @@ def test_post_consolidation_turns_retained_including_assistant(tmp_path) -> None
     _push(session, "user", "U2-after")
     _push(session, "assistant", "A2-after-assistant")  # seq=0
 
-    msgs = session._build_history_for_router()
+    msgs = session._history_buffer.build_history()
     blob = "\n".join(m["content"] for m in msgs if isinstance(m.get("content"), str))
     assert "CONSOL" in blob
     assert "U2-after" in blob
@@ -92,7 +92,7 @@ def test_normal_compaction_summary_does_not_trigger_reset(tmp_path) -> None:
         meta={"structured": {"topic_arc": "x"}, "covers_through_seq": 0},
     ))
 
-    msgs = session._build_history_for_router()
+    msgs = session._history_buffer.build_history()
     blob = "\n".join(m["content"] for m in msgs if isinstance(m.get("content"), str))
     assert "U1-raw" in blob and "A1-raw" in blob    # raw turns NOT dropped
 

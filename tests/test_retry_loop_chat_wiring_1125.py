@@ -113,7 +113,7 @@ def test_decompose_slices_head_raw_middle_tail(tmp_path) -> None:
     for i in range(msgs_pushed):
         _push(session, "user" if i % 2 == 0 else "assistant", _TURN_80TOK)
 
-    head, raw_middle, tail, summary = session._decompose_history_for_retry()
+    head, raw_middle, tail, summary = session._history_buffer.decompose_history_for_retry()
 
     assert head, "head must be non-empty after elide"
     assert tail, "tail must be non-empty after elide"
@@ -142,7 +142,7 @@ def test_decompose_no_elide_when_history_fits_window(tmp_path) -> None:
     for i in range(3):
         _push(session, "user", f"q-{i}")
 
-    head, raw_middle, tail, summary = session._decompose_history_for_retry()
+    head, raw_middle, tail, summary = session._history_buffer.decompose_history_for_retry()
 
     assert [m["content"] for m in head] == ["q-0", "q-1", "q-2"]
     assert raw_middle == []
@@ -163,7 +163,7 @@ def test_decompose_extracts_structured_summary(tmp_path) -> None:
     for i in range(6):
         _push(session, "user", f"m-{i}")
 
-    _head, _raw_middle, _tail, summary = session._decompose_history_for_retry()
+    _head, _raw_middle, _tail, summary = session._history_buffer.decompose_history_for_retry()
     assert summary == structured
 
 
@@ -182,8 +182,8 @@ def test_decompose_wire_shape_matches_build_history(tmp_path) -> None:
     for i in range(8):
         _push(session, "user" if i % 2 == 0 else "assistant", _TURN_80TOK)
 
-    head, raw_middle, tail, _summary = session._decompose_history_for_retry()
-    via_build = session._build_history_for_router()
+    head, raw_middle, tail, _summary = session._history_buffer.decompose_history_for_retry()
+    via_build = session._history_buffer.build_history()
 
     # Both paths must return the same non-bridge turns in the same order.
     # _build_history_for_router: head + [bridge?] + tail (no summary → no bridge).
@@ -229,13 +229,13 @@ def test_recovery_summary_bridge_matches_normal_path(tmp_path) -> None:
         _push(session, "user" if i % 2 == 0 else "assistant", _TURN_80TOK)
 
     # Normal path bridge content.
-    normal = session._build_history_for_router()
+    normal = session._history_buffer.build_history()
     normal_bridge = next(
         m["content"] for m in normal
         if isinstance(m["content"], str) and m["content"].startswith("[summary")
     )
     # Recovery path renders the structured dict the same way.
-    _h, _rm, _t, summary_dict = session._decompose_history_for_retry()
+    _h, _rm, _t, summary_dict = session._history_buffer.decompose_history_for_retry()
     recovery_bridge = (
         "[summary of earlier conversation]\n" + _render_summary_for_storage(summary_dict)
     )
@@ -259,7 +259,7 @@ def test_session_decomposition_feeds_retry_loop(tmp_path) -> None:
     for i in range(3):
         _push(session, "user", f"hi-{i}")
 
-    head, raw_middle, tail, summary = session._decompose_history_for_retry()
+    head, raw_middle, tail, summary = session._history_buffer.decompose_history_for_retry()
     engine = session._compaction_controller._engine
     new_msg = {"role": "user", "content": "latest"}
 
@@ -270,7 +270,7 @@ def test_session_decomposition_feeds_retry_loop(tmp_path) -> None:
         return _RouterUsageShim(TokenUsage(prompt_tokens=123))
 
     shim = asyncio.run(retry_loop(
-        SP=session._build_router_system_prompt(),
+        SP=session._history_buffer.build_system_prompt(),
         head=head,
         summary=summary,
         raw_middle=raw_middle,

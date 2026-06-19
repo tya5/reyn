@@ -7,7 +7,7 @@ Extracted from Session (FP-0019 Wave 1).  Drives OS-internal compaction
 #1128 PR-a: the background fire-and-forget path (``spawn_maybe`` →
 ``_maybe_compact``, the 30K-absolute ``trigger_total_tokens`` trigger) was
 removed. Auto-compaction is now driven solely by the synchronous pre-frame
-guard (``Session._maybe_force_compact_for_router`` → :meth:`force_compact_now`,
+guard (``ContextBudgetAdvisor.maybe_force_compact`` → :meth:`force_compact_now`,
 window-relative ``effective_trigger``, token-budget candidate selection per
 step 3), plus on-demand (the ``compact`` op / ``/compact``) and the
 ``retry_loop`` overflow backstop. With no background task, compaction always
@@ -188,7 +188,7 @@ class CompactionController:
     async def force_compact_now(self) -> None:
         """Synchronous force-trigger — single pass (#1128 PR-c).
 
-        Used by the pre-frame guard in ``_maybe_force_compact_for_router`` when
+        Used by the pre-frame guard in ``ContextBudgetAdvisor.maybe_force_compact`` when
         the projected prompt would exceed the model's max_input_tokens.  Emits
         ``compaction_check`` with ``outcome="forced_sync"``.
 

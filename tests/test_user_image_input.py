@@ -315,7 +315,7 @@ def test_history_text_only_emits_string_content():
         ChatMessage(role="user", content="hi", ts="t1"),
         ChatMessage(role="assistant", content="hello", ts="t2"),
     ]
-    msgs = cs._build_history_for_router()
+    msgs = cs._history_buffer.build_history()
 
     assert msgs[0] == {"role": "user", "content": "hi"}
     assert msgs[1] == {"role": "assistant", "content": "hello"}
@@ -334,7 +334,7 @@ def test_history_message_with_media_emits_content_list():
             ts="t1",
         ),
     ]
-    msgs = cs._build_history_for_router()
+    msgs = cs._history_buffer.build_history()
 
     assert msgs[0]["role"] == "user"
     content = msgs[0]["content"]
@@ -350,6 +350,6 @@ def test_history_message_with_media_and_no_text_emits_only_image() -> None:
     cs = _make_history_builder()
     block = {"type": "image_url", "image_url": {"url": "data:image/png;base64,AAA"}}
     cs.history = [ChatMessage(role="user", content=[block], ts="t1")]
-    msgs = cs._build_history_for_router()
+    msgs = cs._history_buffer.build_history()
 
     assert msgs[0]["content"] == [block]

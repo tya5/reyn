@@ -1583,7 +1583,7 @@ class Session:
                 # the former hardcode, incl. an SkillRuntime(model=…) override).
                 model=self._resolver.purpose_class_or("compaction", self.model),
                 events=self._chat_events,
-                system_prompt_provider=self._build_router_system_prompt,
+                system_prompt_provider=self._history_buffer.build_system_prompt,
                 resolver=self._resolver,
                 # #1190 stage (ii): record chat compaction LLM spend (purpose=compaction).
                 recorder=self._budget_tracker,
@@ -3034,7 +3034,7 @@ class Session:
         # #1128 PR-a: the post-reply fire-and-forget compaction check
         # (spawn_maybe → _maybe_compact, 30K-absolute trigger) was removed.
         # Auto-compaction is driven synchronously by the pre-frame guard
-        # (_maybe_force_compact_for_router → force_compact_now, window-relative
+        # (ContextBudgetAdvisor.maybe_force_compact → force_compact_now, window-relative
         # effective_trigger) before each router call, plus on-demand (/compact,
         # compact op) and the retry_loop overflow backstop.
 
@@ -4685,38 +4685,13 @@ class Session:
 
     # --- RouterLoop orchestration ---
 
-    def _build_history_for_router(self) -> list[dict]:
-        """Forwarding → RouterHistoryBuffer.build_history (PR-2)."""
-        return self._history_buffer.build_history()
-
-    def _decompose_history_for_retry(
-        self,
-    ) -> "tuple[list[dict], list[dict], list[dict], dict | None]":
-        """Forwarding → RouterHistoryBuffer.decompose_history_for_retry (PR-2)."""
-        return self._history_buffer.decompose_history_for_retry()
-
-    def _build_router_system_prompt(self) -> str:
-        """Forwarding → RouterHistoryBuffer.build_system_prompt (PR-2)."""
-        return self._history_buffer.build_system_prompt()
-
     def _cap_tool_result(self, content_str: str) -> str:
         """Forwarding → ContextBudgetAdvisor.cap_tool_result (PR-1)."""
         return self._budget_advisor.cap_tool_result(content_str)
 
-    def _per_turn_cap_tokens(self) -> int:
-        """Forwarding → ContextBudgetAdvisor.per_turn_cap_tokens (PR-1)."""
-        return self._budget_advisor.per_turn_cap_tokens()
-
     def _media_followup_budget(self, tool_content: str) -> int:
         """Forwarding → ContextBudgetAdvisor.media_followup_budget (PR-1)."""
         return self._budget_advisor.media_followup_budget(tool_content)
-
-    def _free_window_now(self) -> "tuple[int, int]":
-        """Forwarding → ContextBudgetAdvisor._free_window_now (PR-1).
-
-        Kept for _compact_now_for_op which calls self._free_window_now().
-        """
-        return self._budget_advisor._free_window_now()
 
     def _context_window_status(self) -> dict:
         """Forwarding → ContextBudgetAdvisor.context_window_status (PR-1)."""
@@ -4753,10 +4728,10 @@ class Session:
             except Exception:  # noqa: BLE001 — estimation best-effort
                 return 0
 
-        effective_trigger, before = self._free_window_now()
+        effective_trigger, before = self._budget_advisor._free_window_now()
         prev_cover = _cover()
         await self._compaction_controller.force_compact_now()
-        _, after = self._free_window_now()
+        _, after = self._budget_advisor._free_window_now()
         new_cover = _cover()
 
         # Chat middle-compression: the conversational turns newly covered by the
@@ -4777,13 +4752,6 @@ class Session:
             "compressed_tokens": sum(_est(m.text) for m in middle),
             "bridge_tokens": _est(bridge_text) if summary is not None else 0,
         }
-
-    async def _maybe_force_compact_for_router(
-        self,
-        new_msg_text: "str | None" = None,
-    ) -> None:
-        """Forwarding → ContextBudgetAdvisor.maybe_force_compact (PR-1)."""
-        await self._budget_advisor.maybe_force_compact(new_msg_text=new_msg_text)
 
     def reasoning_continuity_section(self) -> str:
         """#1652/②: RETIRED — always ``""``.

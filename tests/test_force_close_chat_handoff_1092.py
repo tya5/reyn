@@ -97,7 +97,7 @@ async def test_handoff_fires_installs_consolidation_and_converges(
     # The P6 event log (audit truth) shows EXACTLY ONE handoff → converged
     # in one (the by-construction backstop (a)); the run returned (no raise).
     assert events.count("router_force_close_handoff") == 1
-    slice_msgs = session._build_history_for_router()
+    slice_msgs = session._history_buffer.build_history()
     assert _has_consolidation(slice_msgs)              # reaches-LLM
 
 
@@ -191,7 +191,7 @@ async def test_force_close_handoff_installs_covering_consolidation(tmp_path) -> 
     await session._force_close_handoff(loop=_FakeRouterLoop(), user_text="x")
 
     slice_blob = "\n".join(
-        str(m.get("content", "")) for m in session._build_history_for_router()
+        str(m.get("content", "")) for m in session._history_buffer.build_history()
     )
     assert _CONSOL in slice_blob                # consolidation reaches the slice
     assert "U1-covered" not in slice_blob        # covered raw turns dropped
