@@ -7,7 +7,7 @@ Inbound chat-transport for the Slack Events API, wired through
 the canonical pattern for a Reyn webhook plugin:
 
   OSS SDK (= slack-bolt)  for transport-specific protocol
-  reyn.plugins.api        for Reyn-side envelope dispatch
+  reyn.gateway.api        for Reyn-side envelope dispatch
 
 The plugin's own glue is intentionally minimal (= ~50 lines) so
 plugin authors see exactly what "API-to-API" looks like.
@@ -33,8 +33,8 @@ Reyn's Slack App is configured at api.slack.com:
 ## What we glue (= the ~30 lines)
 
 - Map ``app_mention`` / ``message`` event → Reyn envelope
-- Use ``reyn.plugins.api.make_sender`` for the attribution string
-- Use ``reyn.plugins.api.push_to_agent`` for inbox dispatch
+- Use ``reyn.gateway.api.make_sender`` for the attribution string
+- Use ``reyn.gateway.api.push_to_agent`` for inbox dispatch
 
 ## Reference
 
@@ -57,7 +57,7 @@ def build_router(*, target_agent: str) -> APIRouter:
     Wires ``slack-bolt``'s ``AsyncApp`` to a FastAPI router via the
     ``AsyncSlackRequestHandler``. The bot's incoming events (=
     ``app_mention`` + ``message``) are dispatched to Reyn's agent
-    inbox via ``reyn.plugins.api.push_to_agent``.
+    inbox via ``reyn.gateway.api.push_to_agent``.
 
     Raises ``RuntimeError`` if ``slack-bolt`` isn't installed; the
     ``register_router`` entry point handles this by returning ``None``
@@ -72,7 +72,7 @@ def build_router(*, target_agent: str) -> APIRouter:
     from slack_bolt.async_app import AsyncApp
     from slack_bolt.authorization import AuthorizeResult
 
-    from reyn.plugins.api import make_sender, push_to_agent
+    from reyn.gateway.api import make_sender, push_to_agent
     from reyn.runtime.transport import ExternalRef
 
     signing_secret = os.environ.get("SLACK_SIGNING_SECRET", "")

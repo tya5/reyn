@@ -53,7 +53,7 @@ def test_register_router_returns_none_when_target_agent_missing(monkeypatch):
     """Tier 2: register_router returns None if config has no
     ``target_agent`` — loader warns + skips mount.
     """
-    from reyn.plugins.sample_slack import register_router
+    from reyn.gateway.sample_slack import register_router
     monkeypatch.setenv("SLACK_SIGNING_SECRET", "x")
     assert register_router({}) is None
     assert register_router({"target_agent": ""}) is None
@@ -63,7 +63,7 @@ def test_register_router_returns_none_when_signing_secret_missing(monkeypatch):
     """Tier 2: register_router returns None if SLACK_SIGNING_SECRET
     env var is unset.
     """
-    from reyn.plugins.sample_slack import register_router
+    from reyn.gateway.sample_slack import register_router
     monkeypatch.delenv("SLACK_SIGNING_SECRET", raising=False)
     assert register_router({"target_agent": "x"}) is None
 
@@ -74,7 +74,7 @@ def test_register_router_returns_apirouter_when_configured(monkeypatch):
     """
     from fastapi import APIRouter
 
-    from reyn.plugins.sample_slack import register_router
+    from reyn.gateway.sample_slack import register_router
     monkeypatch.setenv("SLACK_SIGNING_SECRET", "x")
     router = register_router({"target_agent": "news_agent"})
     assert isinstance(router, APIRouter)
@@ -90,7 +90,7 @@ def test_build_router_mounts_webhook_slack_path(monkeypatch):
     """
     from fastapi import FastAPI
 
-    from reyn.plugins.sample_slack.webhook import build_router
+    from reyn.gateway.sample_slack.webhook import build_router
     monkeypatch.setenv("SLACK_SIGNING_SECRET", "x")
 
     app = FastAPI()
@@ -106,7 +106,7 @@ def test_build_router_mounts_webhook_slack_path(monkeypatch):
 def _slack_client(monkeypatch):
     """FastAPI TestClient with a stubbed AgentRegistry.
 
-    Patches the reyn.plugins.api module so push_to_agent dispatches
+    Patches the reyn.gateway.api module so push_to_agent dispatches
     to the stub registry; captures pushed envelopes for assertions.
     """
     from fastapi import FastAPI
@@ -143,7 +143,7 @@ def _slack_client(monkeypatch):
     monkeypatch.setattr(deps, "_registry", None, raising=False)
     monkeypatch.setenv("SLACK_SIGNING_SECRET", "test-secret")
 
-    from reyn.plugins.sample_slack.webhook import build_router
+    from reyn.gateway.sample_slack.webhook import build_router
     app = FastAPI()
     app.include_router(build_router(target_agent="news_agent"))
 

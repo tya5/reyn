@@ -2705,7 +2705,7 @@ class Session:
         as `_msg_id` so the consumer can look it up).
 
         **Internal API — plugin authors should NOT call directly**
-        (FP-0041 plugins-api). Use ``reyn.plugins.api.push_to_agent``
+        (FP-0041 plugins-api). Use ``reyn.gateway.api.push_to_agent``
         instead; this signature may change between Reyn versions.
         Other internal Reyn modules (= A2AHandler, MCP handler,
         InterventionHandler, ChatLifecycleForwarder) keep calling

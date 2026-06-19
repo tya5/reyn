@@ -45,7 +45,7 @@ autonomy-first なフレームワーク（OpenClaw / Hermes 系の self-hosted a
 |---|---|---|
 | **MCP server**（SSE / stdio）— `src/reyn/mcp/server.py` | AI クライアント（Claude Code, Cursor） | 同期 — caller がブロックして待つ |
 | **A2A server**（HTTP JSON-RPC）— `src/reyn/interfaces/web/routers/a2a.py` | peer AI エージェント（LangGraph, CrewAI 等） | 同期、または caller 指定の `webhook_url` へ非同期 |
-| **gateway**（Slack / LINE 等）— `src/reyn/plugins/` | 人間（チャットプラットフォーム経由） | 非同期 — Reyn が platform API を呼んで配送 |
+| **gateway**（Slack / LINE 等）— `src/reyn/gateway/` | 人間（チャットプラットフォーム経由） | 非同期 — Reyn が platform API を呼んで配送 |
 
 **outbound の非対称性。** MCP と A2A は **outbound 返答を caller に委ねられます**:
 返答は同期で返るか、caller が提供した callback URL へ POST されるため、Reyn 側に

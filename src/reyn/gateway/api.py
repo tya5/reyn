@@ -1,6 +1,6 @@
 """Reyn plugin public API — stable surface for plugin authors.
 
-Plugins (= webhook handlers under ``reyn.plugins.*`` or external pip
+Plugins (= webhook handlers under ``reyn.gateway.*`` or external pip
 packages registered via the ``reyn.webhooks`` entry-point group)
 SHOULD use the helpers in this module to interact with Reyn agents,
 NOT call internal ``Session`` methods (= ``_put_inbox``,
