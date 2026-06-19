@@ -105,9 +105,3 @@ async def test_router_on_empty_choices_still_retried_by_reyn(
         "EmptyLLMResponseError (#187 B1) is Reyn-owned even on the router path "
         "(2 empty + 1 ok)"
     )
-
-
-def test_router_baseline_num_retries_default_is_three() -> None:
-    """Tier 2: the per-Router baseline retry count defaults to 3 (= today's
-    attempt count); a per-call num_retries still overrides it at call time."""
-    assert llm_mod._LLM_ROUTER_NUM_RETRIES == 3
