@@ -4779,15 +4779,3 @@ class Session:
         await self._journal.cut_generation(
             anchor=_truncate_anchor(user_text), full_message=user_text,
         )
-
-    async def _router_run_with_shrink(self, loop, user_text: str) -> "Any":
-        """Forwarding → RouterLoopDriver._run_with_shrink (PR-3)."""
-        return await self._loop_driver._run_with_shrink(loop, user_text)
-
-    async def _force_close_handoff(self, loop, user_text: str) -> None:
-        """Forwarding → RouterLoopDriver._force_close_handoff (PR-3)."""
-        await self._loop_driver._force_close_handoff(loop, user_text)
-
-    async def _force_close_wrap_up(self, loop, resolved_model: str) -> str:
-        """Forwarding → RouterLoopDriver._force_close_wrap_up (PR-3)."""
-        return await self._loop_driver._force_close_wrap_up(loop, resolved_model)

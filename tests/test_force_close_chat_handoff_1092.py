@@ -154,7 +154,7 @@ async def test_wrap_up_bounded_fallback_fits(tmp_path) -> None:
     for t in ("U1", "A1", "U2", "A2"):
         _push(session, "user" if t.startswith("U") else "assistant", t)
     loop = _FailFirstLoop(fail_first=2)
-    out = await session._force_close_wrap_up(loop, resolved_model="m")
+    out = await session._loop_driver._force_close_wrap_up(loop, resolved_model="m")
     assert out == _CONSOL
     assert loop.attempts == 3  # 2 over-large candidates fell back, 3rd fit
 
@@ -171,7 +171,7 @@ async def test_wrap_up_sub_viable_raises(tmp_path) -> None:
     session = _make_session(tmp_path, t_max=2000)
     _push(session, "user", "U1")
     with pytest.raises(ContextOverflowError):
-        await session._force_close_wrap_up(_AlwaysOverflowWrapUp(), resolved_model="m")
+        await session._loop_driver._force_close_wrap_up(_AlwaysOverflowWrapUp(), resolved_model="m")
 
 
 # ── install: covering consolidation + covered turns dropped (reaches-LLM) ─────
@@ -188,7 +188,7 @@ async def test_force_close_handoff_installs_covering_consolidation(tmp_path) -> 
     session._append_history(_msg("assistant", "A1-covered"))
     events = _capture_events(session)
 
-    await session._force_close_handoff(loop=_FakeRouterLoop(), user_text="x")
+    await session._loop_driver._force_close_handoff(loop=_FakeRouterLoop(), user_text="x")
 
     slice_blob = "\n".join(
         str(m.get("content", "")) for m in session._history_buffer.build_history()
