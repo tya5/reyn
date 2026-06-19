@@ -1,7 +1,7 @@
 # FP-0050 — Content-layer threat scan (prompt-injection / pre-exec command)
 
 **Issue:** #1822 (umbrella) — aggregates #1820 (tool-output strip) + #1821 (memory injection scan).
-**Author:** e2e-coder. **Status:** REVISED (post broker competitor-research + lead per-seam steer) — steers resolved, awaiting lead merge-verdict → S1.
+**Author:** e2e-coder. **Status:** S1 MERGED (#1844). §2 **seam-taxonomy corrected** (all seams wired-verified; EP1 was dead; unified tool-result chokepoint found) — awaiting lead re-review → S2.
 **Scope of THIS FP:** #1822 **Part 1 (prompt-injection scan, highest priority)** + the integration seam for Part 2 (pre-exec command scan). Part 3 (`reyn audit` static audit) is a separate later FP.
 
 ---
@@ -12,38 +12,51 @@ Reyn's **execution layer** (Docker + OS-native syscall: Landlock/Seatbelt/Seccom
 
 The execution layer restricts *what the agent can do*; it does not stop *poison entering the LLM context* or *a dangerous command string being run within the sandbox*. These are orthogonal concerns — the content scan **complements**, and must not **duplicate**, the existing layers (see §4).
 
-## 2. Untrusted-content entry points (flow-trace — file:line, verified on main)
+## 2. Untrusted-content entry points (flow-trace — **wired-verified**, on main)
 
-Three seam classes (the Hermes design insight, refined by lead's per-seam steer §5): **fence+scan where untrusted content enters the SP/context, scan+block where the agent writes, scan-only before exec.**
+> **Correction (lead-endorsed):** the original §2 cited defined-but-uncalled symbols (EP1 `_render_memory` is **dead** — no call site; the inline `## Memory` SP section was dropped in B23-PRE-1). Every seam below now carries its **wired-status** (verified by grepping the call site, not just the definition — existence ≠ wired). EP1's memory-poison intent is served by the unified tool-result chokepoint (A1); EP6 (MCP) converges there too.
 
-### Class A — content → SP/context (fence primary + scan backstop)
-Untrusted content that risks being read as *authoritative SP instruction*. Cannot un-receive → not blocked; instead **structurally fenced** ("this is untrusted data, not instruction") with **scan as a detection backstop** (see §3 for the weak-model rationale).
+Five seam classes. **Defenses:** fence+scan where untrusted content enters context, scan+block where the agent writes, scan before exec.
 
-| # | Path | Seam (file:line) | Source / trust |
-|---|---|---|---|
-| EP1 | memory → SP | `router_system_prompt._render_memory` (router_system_prompt.py:451), via `build_system_prompt(memory_index=)` | `host.get_memory_index()` (router_loop.py:1819; router_history_buffer.py:480) |
-| EP2 | tool result → compaction | `_turn_to_compactor_input` (compaction_controller.py:45, called :264) | candidate ChatMessages (tool turns) |
-| EP3 | context file → SP | `build_system_prompt` §6 "Project context" (router_system_prompt.py:227) | `self._project_context` (session.py:1100; AGENTS.md default / REYN.md legacy per #1771) |
-| EP5 | A2A peer message → history | `a2a_handler.handle_agent_request` / `handle_agent_response` (a2a_handler.py:305/431) → `_append_history` (:326/:464) | remote peer agent (untrusted) |
-| EP6 | MCP tool result → context | `mcp._handle_call_mcp_tool` (mcp.py:245) | external MCP server (untrusted) |
-| EP7 | webhook answer injection → IV | `Session.answer_pending_intervention` (session.py:3541), via webhook_routing / mcp_routing | remote peer answer (untrusted) |
+### Class A1 — tool result → context (**UNIFIED chokepoint** — fence primary + scan backstop)
+**The key finding.** Every router tool result becomes a `{role:tool}` context message at a **single chokepoint**: `SchemeOps.feedback()` (router_loop.py:3387–3410), the per-result zip where `cap_tool_result` already applies (#1128 — comment at :3402 "cap oversized tool results once at this chokepoint"). Fence+scan belongs here.
 
-EP5–EP7 are the **inbound-message completeness** additions (lead §2 flag): A2A peer text, MCP server results, and webhook-injected answers are all external-untrusted content reaching the context — same threat class as EP1–EP3, fenced at the inbound boundary.
+| Source | Reaches context via | Wired? |
+|---|---|---|
+| **memory tools** (`list_memory` desc, `read_memory_body` body) | `_handle_list_memory` (memory.py:302) / `_handle_read_memory_body` (:401) → tool result → **feedback() chokepoint** | ✅ (EP1 SP-render is **dead**; this is the live vector) |
+| **MCP** (`call_mcp_tool`) | `_handle_call_mcp_tool` (mcp.py:245) → tool result → **feedback() chokepoint** | ✅ (EP6 is a tool → converges here, not separate) |
+| **general tools** (file read, web fetch, …) + **future sources** | `invoke_tool` (dispatch.py:28) → `_normalise_router_tool_result` (router_loop.py:3961) → **feedback() chokepoint** | ✅ |
+
+→ **One seam at `feedback()` covers memory + MCP + general + future tool sources complete-by-construction** — strictly stronger than per-source seams (which need a new EP per source and can silently die like EP1). Precedent: `cap_tool_result` is already a chokepoint transform here.
+
+### Class A2 — SP-build content → SP (fence + scan)
+| # | Seam (file:line) | Wired? |
+|---|---|---|
+| EP3 | `build_system_prompt` §6 project_context render (router_system_prompt.py:235, `if project_context.strip()`) | ✅ LIVE (renders REYN.md/AGENTS.md content; `self._project_context` session.py:1100; AGENTS.md default / REYN.md legacy per #1771) |
+
+### Class A3 — inbound peer message → history / IV (fence + scan) — separate from tool-result
+| # | Seam (file:line) | Wired? |
+|---|---|---|
+| EP5 | `a2a_handler.handle_agent_request`/`handle_agent_response` (a2a_handler.py:305/431) → `_append_history`; called via `Session._handle_agent_request` (session.py:4066←2872) | ✅ LIVE |
+| EP7 | `Session.answer_pending_intervention` (session.py:3541), via the MCP `answer_intervention` tool (mcp/server.py:406) | ✅ LIVE |
 
 ### Class B — agent writes (scan + BLOCK, `strict` scope)
-Intervenable → block on detection to prevent **persistent** store poisoning.
-
-| # | Path | Seam (file:line) |
+| # | Seam (file:line) | Wired? |
 |---|---|---|
-| BP1 | memory write | `runtime/services/memory_service.py` write path (`.reyn/memory/<slug>.md`, layer shared/agent — memory_service.py:79) |
-| BP2 | skill / MCP install | `op_runtime/mcp_install.py` (+ any skill-install path) |
+| BP1 | memory write — `_handle_remember` (memory.py:451) → `remember_fn` → memory_service write (`.reyn/memory/<slug>.md`, memory_service.py:79) | ✅ LIVE |
+| BP2 | skill / MCP install — `register("mcp_install", handle)` (mcp_install.py:456) | ✅ LIVE |
 
-### Class C — command string → exec (scan-only, `exec` scope)
-| # | Path | Seam (file:line) | Source |
-|---|---|---|---|
-| EP4 | command → exec | `op_runtime/sandboxed_exec.handle` (sandboxed_exec.py:21) + bash exec | LLM-emitted `op.command` |
+### Class C — command string → exec (scan-only, `exec` scope, Part 2)
+| # | Seam (file:line) | Wired? |
+|---|---|---|
+| EP4 | `register("sandboxed_exec", handle)` (sandboxed_exec.py:116) | ✅ LIVE |
 
-EP3's context file is loaded *upstream* of Session (constructor, session.py:1100), so the OS-level seam is the §6 render, not the file read.
+### Secondary — compaction-input strip (#1820), distinct concern
+| # | Seam (file:line) | Wired? |
+|---|---|---|
+| EP2 | `_turn_to_compactor_input` (compaction_controller.py:45, called :264) — strip secrets from tool results **before summary persistence** (redaction, not live-context fence) | ✅ LIVE |
+
+**Open consideration for A1 (replay + scope):** fencing *every* tool result changes the context on every tool-using turn → broad replay-fixture impact (vs the memory-only seam), and SP bloat (markers per result). Options: (a) re-record fixtures; (b) keep replay runs at `threat_scan` defaults that the fixtures capture; (c) scan-all (cheap) but fence only untrusted-source results. Flagged for the S2 plan — see §6.
 
 ## 3. Proposed design — per-seam architecture
 
@@ -51,9 +64,11 @@ The architecture is **per-seam** (lead steer §5), not one-size-fits-all:
 
 | Seam class | Primary defense | Backstop | Scope | Enforcement |
 |---|---|---|---|---|
-| **A** (content→SP/context: EP1–3, EP5–7) | **fence** (structural) | **scan** | `context` | non-blocking detect + telemetry; fence neutralizes |
-| **B** (writes: BP1/BP2) | **scan** | — | `strict` | **BLOCK** (permission-deny channel) |
-| **C** (exec: EP4) | **scan** | — | `exec` | warn/block per severity (Part 2) |
+| **A1** tool result→context (UNIFIED `feedback()` chokepoint: memory+MCP+general) | **fence** (structural) | **scan** | `context` | non-blocking detect + telemetry; fence neutralizes |
+| **A2** SP-build→SP (EP3 project_context) | **fence** | **scan** | `context` | non-blocking detect; fence neutralizes |
+| **A3** inbound peer msg→history/IV (EP5/EP7) | **fence** | **scan** | `context` | non-blocking detect; fence neutralizes |
+| **B** agent writes (BP1/BP2) | **scan** | — | `strict` | **BLOCK** (permission-deny channel) |
+| **C** exec (EP4) | **scan** | — | `exec` | warn/block per severity (Part 2) |
 
 ### 3.1 Pattern library — `src/reyn/security/threat_patterns.py` (new) — the scan engine
 Port of the Hermes `_PATTERNS` catalog (Q1, §5): a single `(regex, pattern_id, scope, severity)` list + `scan(text, scope) -> list[ThreatMatch]`, all `re.IGNORECASE`, with the `(?:\w+\s+)*` multi-word-bypass guard. Counts: `all` 11, `context` 16, `strict` 8, + 16 invisible-unicode codepoints (all scopes), + a new `exec` set (Part 2, Q2 — own impl since tirith is a closed Rust binary; cover its categories: homograph / pipe-to-interpreter / terminal-escape). Pure: no I/O, no skill knowledge.
@@ -112,15 +127,15 @@ Lead dispatched the §5 questions to broker competitor research (Hermes/OpenClaw
 
 ## 6. Staging (clean-break stages, #1794 discipline — each gate-verified)
 
-- **S1 (UNBLOCKED — Q1 catalog in hand):** `threat_patterns.py` (catalog + `scan()` + `severity`) + `content_fence.py` (fence primitives) + `safety.threat_scan` config skeleton. **No integration.** Pure unit tests (pattern hit/miss, scope filter, multi-word bypass, invisible-unicode, fence wrap/spoof-sanitize, config round-trip).
-- **S2:** EP1 memory **fence + scan** at the render seam — unifies #1821.
-- **S3:** EP2 compaction tool-result scan + #1820 **strip** (reuses `scan()` + redaction) — unifies #1820.
-- **S4:** EP3 context-file + **EP5–EP7 inbound** (A2A / MCP / webhook) fence + scan — completes Class A. Folds in the `router_system_prompt.py:227` §6 `REYN.md`→`AGENTS.md` comment refresh (docs-maintainer bonus flag, #1771).
-- **S5:** BP1/BP2 memory-write / skill-install **scan + BLOCK** (`strict`, via permission-deny channel) — Class B.
-- **S6 (Part 2):** EP4 pre-exec command scan (`exec` scope, own impl per Q2) — Class C.
+- **S1 ✅ MERGED (#1844):** `threat_patterns.py` (catalog + `scan()` + `severity`) + `content_fence.py` (fence primitives) + `safety.threat_scan` config. Pure lib, no integration. Falsify-verified.
+- **S2 (re-targeted):** **Class A1 — fence + scan at the unified tool-result chokepoint** `feedback()` (router_loop.py:3399–3410), alongside the existing `cap_tool_result`. One seam covers **memory** (replaces dead EP1, serves #1821) + **MCP** (EP6) + **general tools** + future sources. Replay: re-record affected fixtures OR keep fixtures at `threat_scan` defaults; resolve the fence-all-vs-fence-untrusted-source question (§2 open consideration) in the S2 PR.
+- **S3:** EP2 compaction-input **strip** (#1820) — `_turn_to_compactor_input`, reuses `scan()` + redaction (distinct from A1's live-context fence: redaction before summary persistence).
+- **S4:** **Class A2** (EP3 SP-build project_context) + **Class A3** (EP5 A2A / EP7 webhook inbound) fence + scan. Folds in the `router_system_prompt.py` §6 `REYN.md`→`AGENTS.md` comment refresh (docs-maintainer flag, #1771).
+- **S5:** **Class B** (BP1 memory-write / BP2 skill-install) **scan + BLOCK** (`strict`, via permission-deny channel).
+- **S6 (Part 2):** **Class C** (EP4 exec) command scan (`exec` scope, own impl per Q2).
 - *(Part 3 `reyn audit` = separate FP, OSS-publication phase.)*
 
 Gate per stage: scan/fence fires at the seam (positive + negative content); **fence-respecting verified on a capable model AND scan-backstop verified independently** (the weak-model defense-in-depth claim, §3.3); no duplication with permission/sandbox (existing tests green); P7 (no skill strings in OS); config round-trip (non-default value). Block stages (S5) falsify-tested (poisoned write rejected; clean write passes).
 
 ## 7. Decision requested
-Research done (§5), steers A/B/C + Q2 resolved (lead-confirmed). Final lead #311-rigor verdict to **merge** + start S1, on: (a) entry-point completeness incl. inbound EP5–EP7 (§2), (b) per-seam architecture (§3 — fence+scan / scan+block / scan), (c) the weak-model defense-in-depth rationale (§3.3), (d) non-duplication map (§4), (e) P7 placement (§3.1/§3.2). S1 is unblocked (Q1 catalog in hand).
+S1 merged (#1844). This revision **corrects the §2 seam taxonomy** after a wired-verification of every seam (EP1 was dead — defined-but-uncalled). Lead re-review on: (a) the **unified tool-result chokepoint** A1 (`feedback()`, router_loop.py:3399) as the primary memory+MCP+general seam vs per-source seams, (b) the wired-status of every seam (§2 tables), (c) the A1 **replay + fence-all-vs-untrusted-source** open consideration (§2 / §6 S2), (d) the restructured staging (§6). Then S2 impl at the corrected A1 seam.
