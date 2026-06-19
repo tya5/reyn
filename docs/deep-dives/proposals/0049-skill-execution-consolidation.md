@@ -26,12 +26,21 @@ depends on, not vice versa. So the consolidation's load-bearing question is:
 **moving execution modules that import `reyn.runtime` into `reyn.skill` would
 invert that layer dependency.** Two of the six targets cross the line:
 
-- `skill_runtime.py` → `reyn.runtime.budget` (function-local).
+- `skill_runtime.py` → `reyn.runtime.budget.BudgetTracker` (module-level import,
+  but **annotation-only** — used solely in type hints, and `from __future__
+  import annotations` makes them lazy; it never calls a `BudgetTracker` method,
+  only holds + forwards). So this is **TYPE_CHECKING-gatable**: moving the
+  import under `if TYPE_CHECKING:` makes `skill_runtime` runtime-independent with
+  **no inversion** — the cheapest path (lead-confirmed; docs-maintainer audit
+  corrected the original "(fn-local)" note). This makes S2 the lowest-risk cut.
 - `skill_runner.py` → `reyn.runtime.outbox.OutboxMessage` (module-level, used as
-  the *type* of a DI'd `put_outbox` callback).
+  the *type* of a DI'd `put_outbox` callback) — plus a few function-local
+  runtime deps (forwarder, budget-format). This is the genuine inversion case.
 
-These deps must be resolved (not just moved) for the consolidation to keep
-`reyn.skill` a clean lower layer — see "Dependency-inversion options" below.
+So: `skill_runtime`'s edge is **annotation-only → TYPE_CHECKING-gate** (trivial);
+`skill_runner`'s `OutboxMessage` is the one that needs a real decision — see
+"Dependency-inversion options". The invariant in both: the resulting
+`reyn.skill` must have **zero** `reyn.runtime` imports (asserted per stage).
 
 ## Per-module disposition (seam map)
 
@@ -40,8 +49,8 @@ These deps must be resolved (not just moved) for the consolidation to keep
 | `core/op_runtime/skill_resolve.py` (93) | op_runtime | none (deps `reyn.skill.skill_paths`) | **→ `reyn.skill`** — clean, already skill-facing |
 | `runtime/services/skill_search.py` (114) | runtime/services | none (BM25, pure) | **→ `reyn.skill`** — clean, runtime-independent |
 | `core/op_runtime/run_skill.py` (270) | op_runtime (Control IR op **backend**) | none at module level | **stays an op backend** in `op_runtime`; **delegates** its skill-running logic to `reyn.skill`. It is registered `"run_skill": RunSkillIROp` in `op_runtime/registry.py` (op-kind → model → purity → backend). Moving the op dispatch out of `op_runtime` would split the Control IR registry from its backends — keep the thin op, move the logic. |
-| `skill_runtime.py` (386, `SkillRuntime`, **22 consumers**) | top-level | `reyn.runtime.budget` (fn-local) | **→ `reyn.skill`** — the substantive cut; requires the budget dep be inverted (see options). 22 importers repoint. |
-| `runtime/services/skill_runner.py` (919) | runtime/services | `reyn.runtime.outbox.OutboxMessage` (type) | **→ `reyn.skill`** — the largest cut; requires the OutboxMessage-type dep be inverted (see options). |
+| `skill_runtime.py` (386, `SkillRuntime`, **22 consumers**) | top-level | `reyn.runtime.budget.BudgetTracker` (module-level, **annotation-only**) | **→ `reyn.skill`** — the budget edge is annotation-only → **TYPE_CHECKING-gate** (no inversion). 22 importers repoint. **Lowest-risk substantive cut (S2).** |
+| `runtime/services/skill_runner.py` (919) | runtime/services | `reyn.runtime.outbox.OutboxMessage` (type) + fn-local forwarder/budget-format | **→ `reyn.skill`** — the largest cut. `OutboxMessage` needs a real decision in **S3** on the actual diff: it has **~32 importers** (repoint blast radius) and is a Session/presentation VO (a lower `reyn.skill` importing a presentation VO is a layering smell), so (a) relocate-to-`reyn.schemas` vs (b'') skill-local record + a runtime-boundary adapter is decided then, not locked now. |
 | `runtime/services/skill_plan_glue.py` (304, `SkillPlanGlue`) | runtime/services | **`reyn.runtime.session` / `chat_message` / `errors`** | **STAYS in `runtime/services`** — refinement: despite being in the dispatch list, the flow-trace shows this is a **Session collaborator** ("skill/plan completion routing + chain timeout *for Session*", extracted from session.py in FP-0019). It is runtime/Session glue, not skill-package logic; moving it would deeply invert (`reyn.skill → reyn.runtime.session`). (Same kind of pre-impl scope refinement as the C6 9→6 / C7 dead-vs-live cuts.) |
 
 **Net: 4 modules consolidate into `reyn.skill`** (skill_resolve, skill_search,
@@ -91,14 +100,20 @@ full CI per stage):
   moves, no inversion, smallest blast radius — de-risks the pattern. (skill_resolve
   is an op_runtime module but runtime-independent; confirm its op callers in S1.)
 - **S2 (`SkillRuntime`)**: `skill_runtime.py` → `reyn.skill.skill_runtime`, with
-  the budget dep inverted (option a/b). 22 importers repoint. Behavior-preserving.
-- **S3 (`skill_runner`)**: the 919-LOC move, with the OutboxMessage-type dep
-  inverted. Largest; its own stage + review.
+  the budget dep **TYPE_CHECKING-gated** (annotation-only — no inversion). 22
+  importers repoint. Behavior-preserving. Lowest-risk substantive cut.
+- **S3 (`skill_runner`)**: the 919-LOC move. `OutboxMessage` decision (a vs b'')
+  made here on the actual diff (~32 importers; presentation-VO layering smell).
+  Largest; its own stage + design-confirm + review.
 - **S4 (run_skill delegation)**: thin the `run_skill` op backend to delegate to
   the consolidated `reyn.skill` entry (behavior-preserving rewire, not a move).
 
-Each stage independently byte-gate-able; each verified to keep `reyn.skill`
-runtime-import-free (the layer invariant).
+**Per-stage layer-direction gate (lead's add):** `verify_package_move` checks
+stragglers but not import direction, so each stage additionally **asserts
+`reyn.skill` has zero `reyn.runtime` imports** — a CI/grep check enumerating all
+import forms (`from reyn.runtime…`, `import reyn.runtime…`, dotted-literal). This
+makes the layer invariant a mechanical gate, not a review nicety. Each stage is
+independently byte-gate-able.
 
 ## Open questions for lead + owner
 
