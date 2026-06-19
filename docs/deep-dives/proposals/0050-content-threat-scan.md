@@ -58,6 +58,8 @@ Five seam classes. **Defenses:** fence+scan where untrusted content enters conte
 
 **Open consideration for A1 (replay + scope):** fencing *every* tool result changes the context on every tool-using turn → broad replay-fixture impact (vs the memory-only seam), and SP bloat (markers per result). Options: (a) re-record fixtures; (b) keep replay runs at `threat_scan` defaults that the fixtures capture; (c) scan-all (cheap) but fence only untrusted-source results. Flagged for the S2 plan — see §6.
 
+**Flag-set completeness (the security gate):** the authoritative per-tool `returns_external_content` classification is `tests/test_returns_external_content_flagset_1822.py`, which is **exhaustive** — every registered `ToolDefinition` must be in exactly-one of {fenced, documented-not-external}, so a new/missed tool fails the test rather than defaulting to silently-unfenced (completeness-by-construction). Notably classified not-external (lead review): `ask_user` (the user is the trust ROOT — their input is the instruction channel, not untrusted-data) and `delegate_to_agent` (async ACK; the peer reply arrives via the A3 inbound seam, fenced there in S4).
+
 ## 3. Proposed design — per-seam architecture
 
 The architecture is **per-seam** (lead steer §5), not one-size-fits-all:
