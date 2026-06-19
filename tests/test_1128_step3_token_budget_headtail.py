@@ -164,7 +164,7 @@ def test_build_history_small_chat_returns_all_turns_raw(tmp_path) -> None:
     for text in ["alpha", "beta", "gamma"]:
         _push(session, "user", text)
 
-    msgs = session._build_history_for_router()
+    msgs = session._history_buffer.build_history()
     contents = [m["content"] for m in msgs]
 
     assert contents == ["alpha", "beta", "gamma"], (
@@ -190,7 +190,7 @@ def test_build_history_large_chat_elides_middle(tmp_path) -> None:
     for i, text in enumerate(texts):
         _push(session, "user" if i % 2 == 0 else "assistant", text)
 
-    msgs = session._build_history_for_router()
+    msgs = session._history_buffer.build_history()
     contents = [m["content"] for m in msgs]
     present = set(contents)
 

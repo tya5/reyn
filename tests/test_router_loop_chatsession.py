@@ -417,7 +417,7 @@ def test_build_history_for_router_shape(tmp_path, monkeypatch):
         ChatMessage(role="assistant", content="sure!", ts="t4"),
     ]
 
-    history = session._build_history_for_router()
+    history = session._history_buffer.build_history()
 
     assert isinstance(history, list)
     for msg in history:

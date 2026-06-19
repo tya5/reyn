@@ -103,7 +103,7 @@ def test_history_fits_in_window_returns_all_turns(tmp_path):
     for text in pushed:
         _push(session, "user", text)
 
-    msgs = session._build_history_for_router()
+    msgs = session._history_buffer.build_history()
     contents = [m["content"] for m in msgs]
     # All pushed turns returned — no drops, no duplicates.
     assert set(contents) == set(pushed), (
@@ -117,7 +117,7 @@ def test_history_fits_in_window_returns_all_turns(tmp_path):
 def test_empty_history_returns_empty_messages(tmp_path):
     """Tier 2: empty history → empty result."""
     session = _make_session(tmp_path)
-    msgs = session._build_history_for_router()
+    msgs = session._history_buffer.build_history()
     assert msgs == [], f"expected empty result for empty history, got {msgs!r}"
 
 
@@ -125,7 +125,7 @@ def test_single_turn_returns_single_message(tmp_path):
     """Tier 2: single turn → exactly one message, no duplication."""
     session = _make_session(tmp_path)
     _push(session, "user", "hello")
-    msgs = session._build_history_for_router()
+    msgs = session._history_buffer.build_history()
     assert msgs == [{"role": "user", "content": "hello"}]
 
 
@@ -153,7 +153,7 @@ def test_history_exceeds_trigger_elides_middle(tmp_path):
     for i, text in enumerate(texts):
         _push(session, "user" if i % 2 == 0 else "assistant", text)
 
-    msgs = session._build_history_for_router()
+    msgs = session._history_buffer.build_history()
     contents = [m["content"] for m in msgs]
 
     # The middle turn(s) must be absent.
@@ -192,7 +192,7 @@ def test_elide_inserts_summary_bridge_when_summary_present(tmp_path):
     for i, text in enumerate(texts):
         _push(session, "user" if i % 2 == 0 else "assistant", text)
 
-    msgs = session._build_history_for_router()
+    msgs = session._history_buffer.build_history()
     bridge_msgs = [m for m in msgs if isinstance(m.get("content"), str)
                    and m["content"].startswith("[summary")]
     assert bridge_msgs, (

@@ -702,7 +702,7 @@ def test_new_msg_exceeds_budget_error_fields_and_raises() -> None:
     """Tier 2: NewMsgExceedsBudgetError has correct new_msg_tokens and new_msg_budget
     fields, and its token count exceeds its budget.
 
-    Exercises the public contract for the error that _maybe_force_compact_for_router
+    Exercises the public contract for the error that ContextBudgetAdvisor.maybe_force_compact
     raises (ISSUE #5) when new_msg_text exceeds new_msg_budget.  Uses a deliberately
     huge text (10 million chars = 2.5M tokens via chars//4) against a small budget.
     """

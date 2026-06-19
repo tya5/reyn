@@ -83,12 +83,49 @@ forwards and are **out of scope** for the first cut:
 - `reasoning_continuity_section` (L4788) — a **retired stub** (always `""`,
   #1652/②); a separate trivial cleanup, not part of this seam.
 
+## Implementation finding (flow-trace before the cut): 9 → 6
+
+A pre-implementation flow-trace refined the count. Of the candidate forwarders,
+**6 are genuine residue and collapse cleanly; 3 are not residue and are
+retained** (see the construction-cycle note below). The first cut is **6**:
+
+- **4 pure-residue forwarders → rewire callers to the collaborator directly,
+  delete the `Session` method**: `_build_history_for_router`,
+  `_decompose_history_for_retry`, `_build_router_system_prompt`
+  (→ `RouterHistoryBuffer`), `_free_window_now` (→ `ContextBudgetAdvisor`; its
+  only caller is the retained `_compact_now_for_op`, rewired to
+  `self._budget_advisor._free_window_now()`).
+- **2 dead forwarders → delete** (zero live callers, verified):
+  `_per_turn_cap_tokens`, `_maybe_force_compact_for_router`.
+
+### Retained: 3 cycle-bound late-binding shims (NOT residue)
+
+`_cap_tool_result`, `_media_followup_budget`, `_context_window_status` are
+injected as **callbacks into `RouterHostAdapter` at its construction**
+(`session.py:1403`), which runs **before** `ContextBudgetAdvisor` is built
+(`:1658`). And `RouterHistoryBuffer` (`:1557`, which the advisor's `history_fn`
+depends on) takes `router_host=self._router_host` — so there is a real
+construction cycle: `host_adapter → (callback) budget_advisor →
+history_buffer → host_adapter`. Injecting `self._budget_advisor.<m>` at
+`:1498/1501/1507` would `AttributeError` (advisor not built yet). These three
+are therefore **legitimate late-binding wiring, not forwarding residue** — they
+exist precisely to bridge the construction-order gap, and are kept.
+
+- A lambda-wrap at the injection site was **rejected**: it removes the named
+  method but keeps the same runtime hop (cosmetic surface change, worse
+  readability).
+- Truly collapsing these three requires **breaking the construction cycle**
+  (e.g. two-phase init: build `host_adapter` with placeholder callbacks, build
+  the collaborators, then set the callbacks). That is a construction-order
+  refactor — a *different, higher-care* change than residue-collapse, and is
+  **owner-gated**; deferred to a possible follow-up cut, not done here.
+
 ## Recommended first cut
 
-**Collapse the ContextBudgetAdvisor + RouterHistoryBuffer forwarding residue
-(the 9 pure forwarders to those two collaborators) by rewiring their callers —
-internal calls and callback injections — to the collaborator directly, then
-deleting the `Session` forwarders.**
+**Collapse the 6 ContextBudgetAdvisor + RouterHistoryBuffer forwarders that are
+genuine residue/dead by rewiring their callers — internal calls and the
+`system_prompt_provider` injection — to the collaborator directly, then
+deleting the `Session` forwarders. The 3 cycle-bound shims are retained.**
 
 Rationale (why this is the cleanest possible *first* cut):
 
@@ -100,11 +137,12 @@ Rationale (why this is the cleanest possible *first* cut):
 2. **Dependency direction is already correct** — `Session → advisor/buffer`;
    collapsing only *removes* an indirection hop, it cannot introduce a cycle.
 3. **It directly advances the FP-0043/0044 goal** — every removed forwarder
-   makes `Session` measurably thinner (≈ -60 LOC + 9 methods off the public
-   surface) and removes `Session` from a call path it has no reason to be on.
-4. **Smallest blast radius** — the callers are `router_host_adapter`
-   (callback kwargs) + `context_budget_advisor` (one callback) + a handful of
-   internal `self._...` calls. No cross-process / wire-format surface.
+   makes `Session` measurably thinner (≈ -45 LOC + 6 methods off the surface)
+   and removes `Session` from a call path it has no reason to be on.
+4. **Smallest blast radius** — the callers are the `system_prompt_provider`
+   injection into `CompactionEngine`, the retained `_compact_now_for_op`'s
+   internal `_free_window_now` call, and test call-sites. No cross-process /
+   wire-format surface.
 
 `Session` ends this cut still holding the collaborators (it constructs them),
 but no longer *forwarding* to them — it wires `host_adapter` to them directly.
