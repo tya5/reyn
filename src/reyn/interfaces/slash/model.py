@@ -62,4 +62,11 @@ async def model_cmd(session: "Session", args: str) -> None:
     # turn_budget engine bakes derived headroom at construction, so rebuild it
     # for the new model's context window.
     session._rebuild_turn_budget_engine_for_model()
+
+    # #1830 / FP-0052: emit model_cost_warn event if the chosen model exceeds
+    # the configured cost threshold (pre-selection awareness). De-duped per
+    # session: same model warned at most once.
+    from reyn.runtime.model_cost_warn import maybe_emit_model_cost_warn
+    maybe_emit_model_cost_warn(session, requested, action="model_override")
+
     await reply(session, f"model → {requested} (this session — clears on restart)")

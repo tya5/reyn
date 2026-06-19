@@ -2895,6 +2895,11 @@ class Session:
     async def run(self) -> None:
         self._chat_events.emit("chat_started", agent_name=self.agent_name, model=self.model)
 
+        # #1830 / FP-0052: warn if the startup model is above the cost threshold.
+        # Fires once per session per model class (de-duped in maybe_emit_model_cost_warn).
+        from reyn.runtime.model_cost_warn import maybe_emit_model_cost_warn
+        maybe_emit_model_cost_warn(self, self.model, action="session_start")
+
         try:
             while await self.run_one_iteration():
                 pass

@@ -97,6 +97,28 @@ class ChatLifecycleForwarder:
             pct_part = ""
         self._enqueue(f"[↑ budget warn: {dim}{pct_part}]")
 
+    # ── High-cost model pre-selection warn (#1830 / FP-0052) ─────────────
+
+    def on_model_cost_warn(self, data: dict) -> None:
+        """Surface a ``[⚠ high-cost model: …]`` marker in the conv pane.
+
+        Mirrors ``on_budget_warn``: the Events tab surfaces ``model_cost_warn``
+        in yellow automatically, but the conv pane needs an explicit marker so
+        the user sees the warning without having the side panel open.
+
+        ``data["model"]`` is the resolved litellm model string.
+        ``data["cost_per_1m_input_usd"]`` is the per-1M-token input rate.
+        ``data["threshold_per_1m_input_usd"]`` is the configured threshold.
+        """
+        model = str(data.get("model") or data.get("model_class") or "unknown")
+        cost = data.get("cost_per_1m_input_usd")
+        try:
+            cost_str = f"${float(cost):.2f}/1M input tokens" if cost is not None else ""
+        except (TypeError, ValueError):
+            cost_str = ""
+        suffix = f" — {cost_str}" if cost_str else ""
+        self._enqueue(f"[⚠ high-cost model: {model}{suffix}]")
+
     # ── Embedding model load lifecycle (FP-0043 C.3 → C.4) ───────────────
     #
     # C.3 added three ``embedding_*`` events on the chat_events bus

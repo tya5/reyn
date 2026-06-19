@@ -192,6 +192,27 @@ class ThreatScanConfig:
 
 
 @dataclass
+class CostWarnConfig:
+    """`cost_warn:` — high-cost model pre-selection awareness (#1830 / FP-0052).
+
+    Surfaces a ``model_cost_warn`` event (and inline conv-pane marker) when the
+    user selects a model whose input cost per 1M tokens exceeds the threshold.
+    Fires at ``/model`` switch and at session startup — one warn per model per
+    session (de-duped via the session's ``_cost_warned_models`` set).
+
+    This is a *pre-selection awareness* layer, orthogonal to BudgetTracker
+    (cumulative spend) and ContextBudgetAdvisor (token ceiling).
+
+    - ``enabled`` — master switch; default True.
+    - ``model_threshold_per_1m_input_usd`` — warn if input rate exceeds this
+      value in USD per 1M tokens. Default 5.0: catches Opus-class (~$15/1M)
+      without triggering on Sonnet-class (~$3/1M). User-overridable in reyn.yaml.
+    """
+    enabled: bool = True
+    model_threshold_per_1m_input_usd: float = 5.0
+
+
+@dataclass
 class SafetyConfig:
     """`safety:` — unified, user-facing namespace for stop conditions.
 
@@ -704,6 +725,29 @@ def _build_safety_config(raw: object) -> SafetyConfig:
     )
     return SafetyConfig(
         loop=loop, timeout=timeout, on_limit=on_limit, threat_scan=threat_scan,
+    )
+
+
+def _build_cost_warn_config(raw: object) -> "CostWarnConfig":
+    """Parse the ``cost_warn:`` section (#1830 / FP-0052).
+
+    Missing or malformed → full defaults (enabled=True, threshold=$5/1M).
+    """
+    if not isinstance(raw, dict):
+        return CostWarnConfig()
+    defaults = CostWarnConfig()
+    enabled = raw.get("enabled", defaults.enabled)
+    threshold = raw.get(
+        "model_threshold_per_1m_input_usd",
+        defaults.model_threshold_per_1m_input_usd,
+    )
+    try:
+        threshold = float(threshold)
+    except (TypeError, ValueError):
+        threshold = defaults.model_threshold_per_1m_input_usd
+    return CostWarnConfig(
+        enabled=bool(enabled),
+        model_threshold_per_1m_input_usd=threshold,
     )
 
 
