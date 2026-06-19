@@ -83,7 +83,14 @@ async def handle_sse(request: Request, registry=Depends(get_registry)) -> Respon
     expectation of a return value; it is not transmitted.
     """
     transport = _get_sse_transport()
-    server = build_server(registry, timeout=DEFAULT_SEND_TIMEOUT_SECONDS)
+    # #1805: include gateway plugins' outbound tools collected at app startup
+    # so a complete plugin's send tool (e.g. slack_send) is served in-process.
+    gateway_tools = getattr(request.app.state, "gateway_tools", None)
+    server = build_server(
+        registry,
+        timeout=DEFAULT_SEND_TIMEOUT_SECONDS,
+        extra_tools=gateway_tools,
+    )
     init_options = server.create_initialization_options()
 
     # Note: request._send is private but is the canonical way to
