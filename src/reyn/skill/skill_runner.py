@@ -1,10 +1,9 @@
 """SkillRunner — skill task lifecycle (launch / track / cancel).
 
-Extracted from Session (FP-0019 Wave 1b). Owns the running_skills
-dict and stdlib skill invocation path. Required as foundation for
-InterventionHandler (Wave 2) and AutoResumeHandler (Wave 3).
+Owns the running_skills dict and the stdlib skill invocation path; the Session
+delegates skill spawns to it.
 
-Intervention coupling audit (FP-0019 Wave 1b):
+Intervention coupling:
     _run_stdlib_skill and _spawn_skill/_run_one_skill both pass a
     ChatInterventionBus to _build_agent. The bus holds a reference to
     Session (for _dispatch_intervention and
@@ -32,7 +31,7 @@ from typing import TYPE_CHECKING, Awaitable, Callable
 
 from reyn.core.compiler import load_dsl_skill
 from reyn.core.events.events import EventLog
-from reyn.runtime.outbox import OutboxMessage
+from reyn.skill.skill_outbound import SkillOutboundMessage
 from reyn.skill.skill_paths import SkillNotFoundError, resolve_skill_path, stdlib_root
 
 if TYPE_CHECKING:
@@ -46,7 +45,7 @@ logger = logging.getLogger(__name__)
 
 
 def _run_meta(run_id: str | None, skill_name: str | None) -> dict:
-    """Standard ``meta`` payload for OutboxMessage produced inside a skill spawn."""
+    """Standard ``meta`` payload for SkillOutboundMessage produced inside a skill spawn."""
     if run_id is None:
         return {"skill_name": skill_name} if skill_name else {}
     return {
@@ -85,7 +84,7 @@ class SkillRunner:
         session wrapper). The session supplies this callback so
         SkillRunner never references ``ChatInterventionBus`` directly.
     put_outbox:
-        Async callable ``(OutboxMessage) -> None``.
+        Async callable ``(SkillOutboundMessage) -> None``.
     enqueue_skill_completed:
         Async callable with keyword args ``run_id``, ``skill``,
         ``chain_id``, ``status``, ``data``.
@@ -97,8 +96,15 @@ class SkillRunner:
         Zero-arg callable returning ``SkillRegistry | None``.
     ask_budget_extension:
         Async callable ``(chain_id, skill_name, check) -> bool``.
-    outbox:
-        Raw ``asyncio.Queue`` for :meth:`run_stdlib` subscriber wiring.
+    make_subscribers:
+        ``(skill_name, run_id=None) -> list`` — builds the chat-event
+        subscribers for a spawn (the session supplies a factory that
+        constructs the runtime ``ChatEventForwarder``, so SkillRunner never
+        imports it — #1794 layer direction).
+    format_refusal / format_warn:
+        Budget message formatters (``(check) -> str`` / ``(dim, context) ->
+        str``); the session supplies the runtime ``reyn.runtime.budget``
+        formatters so SkillRunner stays free of that import.
     """
 
     def __init__(
@@ -112,13 +118,15 @@ class SkillRunner:
         budget: BudgetGateway,
         state_log: StateLog | None,
         build_agent_fn: Callable[..., SkillRuntime],
-        put_outbox: Callable[[OutboxMessage], Awaitable[None]],
+        put_outbox: Callable[[SkillOutboundMessage], Awaitable[None]],
         enqueue_skill_completed: Callable[..., Awaitable[None]],
         accumulate: Callable,
         drop_interventions_for_run: Callable[[str | None], None],
         get_skill_registry: Callable[[], SkillRegistry | None],
         ask_budget_extension: Callable[..., Awaitable[bool]],
-        outbox: asyncio.Queue,
+        make_subscribers: Callable[..., list],
+        format_refusal: Callable[..., str],
+        format_warn: Callable[..., str],
     ) -> None:
         self._events = event_log
         self._agent_name = agent_name
@@ -134,7 +142,15 @@ class SkillRunner:
         self._drop_interventions_for_run = drop_interventions_for_run
         self._get_skill_registry = get_skill_registry
         self._ask_budget_extension = ask_budget_extension
-        self._outbox = outbox
+        # #1794 S3: DI'd runtime-boundary seams so reyn.skill.skill_runner takes
+        # no executed reyn.runtime dependency (the layer invariant):
+        #   make_subscribers → ChatEventForwarder construction (forwarder is a
+        #     runtime object; Session supplies the factory).
+        #   format_refusal / format_warn → budget message formatters (take a
+        #     runtime BudgetCheck; kept type-opaque here via the callbacks).
+        self._make_subscribers = make_subscribers
+        self._format_refusal = format_refusal
+        self._format_warn = format_warn
 
         # Public dicts — slash commands (slash/skill.py, slash/tasks.py)
         # access these via ``session._skill_runner.*`` forwarding properties.
@@ -224,7 +240,7 @@ class SkillRunner:
         skill_name = spec.get("skill")
         input_artifact = spec.get("input")
         if not skill_name or not isinstance(input_artifact, dict):
-            await self._put_outbox(OutboxMessage(
+            await self._put_outbox(SkillOutboundMessage(
                 kind="error", text=f"invalid skill spec: {spec}",
             ))
             return None
@@ -234,7 +250,7 @@ class SkillRunner:
             self._allowed_skills is not None
             and skill_name not in self._allowed_skills
         ):
-            await self._put_outbox(OutboxMessage(
+            await self._put_outbox(SkillOutboundMessage(
                 kind="error",
                 text=(
                     f"skill {skill_name!r} is not in allowed_skills for agent "
@@ -282,7 +298,6 @@ class SkillRunner:
                         chain_id=chain_id, skill=skill_name,
                     )
             if not check.allowed:
-                from reyn.runtime.budget.budget import format_refusal_message
                 self._events.emit(
                     "budget_exceeded",
                     dimension=check.hard_dimension,
@@ -290,22 +305,21 @@ class SkillRunner:
                     skill=skill_name,
                     chain_id=chain_id,
                 )
-                await self._put_outbox(OutboxMessage(
+                await self._put_outbox(SkillOutboundMessage(
                     kind="error",
-                    text=format_refusal_message(check),
+                    text=self._format_refusal(check),
                     meta={"chain_id": chain_id, "skill": skill_name},
                 ))
                 return None
             for dim in check.warn_dimensions:
-                from reyn.runtime.budget.budget import format_warn_message
                 self._events.emit(
                     "budget_warn",
                     dimension=dim, chain_id=chain_id, skill=skill_name,
                     **check.context,
                 )
-                await self._put_outbox(OutboxMessage(
+                await self._put_outbox(SkillOutboundMessage(
                     kind="status",
-                    text=format_warn_message(dim, check.context),
+                    text=self._format_warn(dim, check.context),
                     meta={"chain_id": chain_id, "skill": skill_name},
                 ))
             self._budget.record_spawn(chain_id=chain_id, skill=skill_name)
@@ -336,7 +350,7 @@ class SkillRunner:
                 skill=skill_name,
                 detail=str(exc),
             )
-            await self._put_outbox(OutboxMessage(
+            await self._put_outbox(SkillOutboundMessage(
                 kind="error",
                 text=f"skill not found: {skill_name}",
                 meta={"chain_id": chain_id, "skill": skill_name},
@@ -360,7 +374,7 @@ class SkillRunner:
                 skill=skill_name,
                 detail=str(exc),
             )
-            await self._put_outbox(OutboxMessage(
+            await self._put_outbox(SkillOutboundMessage(
                 kind="error",
                 text=f"failed to load {skill_name}: {exc}",
                 meta={"chain_id": chain_id, "skill": skill_name},
@@ -397,7 +411,7 @@ class SkillRunner:
                     skill=skill_name,
                     detail=exc.message,
                 )
-                await self._put_outbox(OutboxMessage(
+                await self._put_outbox(SkillOutboundMessage(
                     kind="error",
                     text=(
                         f"input validation failed for skill "
@@ -428,7 +442,7 @@ class SkillRunner:
         self._events.emit("skill_run_spawned", run_id=run_id, skill=skill_name)
         self.running_skills_started_at[run_id] = time.monotonic()
         self.running_skills_chain[run_id] = chain_id
-        await self._put_outbox(OutboxMessage(
+        await self._put_outbox(SkillOutboundMessage(
             kind="status", text="starting…",
             meta=_run_meta(run_id, skill_name),
         ))
@@ -520,8 +534,7 @@ class SkillRunner:
 
         subscribers = None
         if forward_events:
-            from reyn.runtime.forwarder import ChatEventForwarder
-            subscribers = [ChatEventForwarder(skill_name, self._outbox)]
+            subscribers = self._make_subscribers(skill_name)
 
         agent = self._build_agent_fn(
             run_id=None, skill_name=skill_name, subscribers=subscribers,
@@ -629,12 +642,9 @@ class SkillRunner:
                 "data": {"error": f"failed to load {skill_name}: {exc}"},
             }
 
-        from reyn.runtime.forwarder import ChatEventForwarder
         agent = self._build_agent_fn(
             run_id=run_id, skill_name=skill_name,
-            subscribers=[
-                ChatEventForwarder(skill_name, self._outbox, run_id=run_id),
-            ],
+            subscribers=self._make_subscribers(skill_name, run_id),
         )
 
         # Issue #214: forward the plan_step ContextVar so a blocking
@@ -706,17 +716,14 @@ class SkillRunner:
                 "skill_run_failed", run_id=run_id, skill=skill_name,
                 error=f"resume failed to load: {exc}",
             )
-            await self._put_outbox(OutboxMessage(
+            await self._put_outbox(SkillOutboundMessage(
                 kind="error", text=f"resume failed: {exc}", meta=meta,
             ))
             return
 
-        from reyn.runtime.forwarder import ChatEventForwarder
         agent = self._build_agent_fn(
             run_id=run_id, skill_name=skill_name,
-            subscribers=[
-                ChatEventForwarder(skill_name, self._outbox, run_id=run_id),
-            ],
+            subscribers=self._make_subscribers(skill_name, run_id),
         )
 
         async def _runner():
@@ -730,7 +737,7 @@ class SkillRunner:
                     run_id=run_id,
                 )
             except asyncio.CancelledError:
-                await self._put_outbox(OutboxMessage(
+                await self._put_outbox(SkillOutboundMessage(
                     kind="status", text="cancelled", meta=meta,
                 ))
                 raise
@@ -739,7 +746,7 @@ class SkillRunner:
                     "skill_run_failed", run_id=run_id, skill=skill_name,
                     error=str(exc),
                 )
-                await self._put_outbox(OutboxMessage(
+                await self._put_outbox(SkillOutboundMessage(
                     kind="error", text=f"resume failed: {exc}", meta=meta,
                 ))
 
@@ -749,7 +756,7 @@ class SkillRunner:
         # by the timeout watchdog). If a future re-issue path needs to
         # carry chain_id across resume, plumb it through ``decision``.
         self.running_skills_chain[run_id] = None
-        await self._put_outbox(OutboxMessage(
+        await self._put_outbox(SkillOutboundMessage(
             kind="status", text="resuming…", meta=meta,
         ))
         task = asyncio.create_task(_runner())
@@ -798,7 +805,7 @@ class SkillRunner:
                     "skill_run_failed", run_id=run_id, skill=skill_name,
                     error=f"skill not found: {skill_name}",
                 )
-                await self._put_outbox(OutboxMessage(
+                await self._put_outbox(SkillOutboundMessage(
                     kind="error", text=f"skill not found: {skill_name}", meta=meta,
                 ))
                 await self._enqueue_skill_completed(
@@ -813,7 +820,7 @@ class SkillRunner:
                     "skill_run_failed", run_id=run_id, skill=skill_name,
                     error=f"failed to load: {exc}",
                 )
-                await self._put_outbox(OutboxMessage(
+                await self._put_outbox(SkillOutboundMessage(
                     kind="error", text=f"failed to load {skill_name}: {exc}", meta=meta,
                 ))
                 await self._enqueue_skill_completed(
@@ -822,10 +829,9 @@ class SkillRunner:
                 )
                 return
 
-        from reyn.runtime.forwarder import ChatEventForwarder
         agent = self._build_agent_fn(
             run_id=run_id, skill_name=skill_name,
-            subscribers=[ChatEventForwarder(skill_name, self._outbox, run_id=run_id)],
+            subscribers=self._make_subscribers(skill_name, run_id),
         )
         # B33 W6 NEW-1 fix: track the terminal (status, data) pair so
         # _enqueue_skill_completed fires even when an intermediate await
@@ -853,7 +859,7 @@ class SkillRunner:
                 plan_step=_plan_step,
             )
         except asyncio.CancelledError:
-            await self._put_outbox(OutboxMessage(
+            await self._put_outbox(SkillOutboundMessage(
                 kind="status", text="cancelled", meta=meta,
             ))
             raise  # CancelledError: no completion enqueue (task was discarded)
@@ -864,7 +870,7 @@ class SkillRunner:
             _terminal_data = {"error": str(exc)}
             self._events.emit("skill_run_failed", run_id=run_id, skill=skill_name, error=str(exc))
             try:
-                await self._put_outbox(OutboxMessage(
+                await self._put_outbox(SkillOutboundMessage(
                     kind="error", text=f"failed: {exc}", meta=meta,
                 ))
             except Exception:  # noqa: BLE001 — outbox failure must not suppress enqueue
@@ -875,7 +881,7 @@ class SkillRunner:
             # SkillActivityRow spinning forever. Enqueue the trace
             # directly so the TUI finishes the row.
             try:
-                await self._put_outbox(OutboxMessage(
+                await self._put_outbox(SkillOutboundMessage(
                     kind="trace", text="skill done: aborted", meta=meta,
                 ))
             except Exception:  # noqa: BLE001 — same defense as above
@@ -890,7 +896,7 @@ class SkillRunner:
                     error="budget_exceeded",
                 )
                 try:
-                    await self._put_outbox(OutboxMessage(
+                    await self._put_outbox(SkillOutboundMessage(
                         kind="error",
                         text=result.error or "budget exceeded",
                         meta=meta,

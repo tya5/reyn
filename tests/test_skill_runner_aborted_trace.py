@@ -23,7 +23,8 @@ import asyncio
 from typing import Any
 
 from reyn.core.events.events import EventLog
-from reyn.runtime.services.skill_runner import SkillRunner
+from reyn.runtime.forwarder import ChatEventForwarder
+from reyn.skill.skill_runner import SkillRunner
 
 # ── Fakes (mirrors test_skill_runner_invariants.py style) ────────────────────
 
@@ -103,7 +104,11 @@ def _make_runner_with_raising_agent(exc: Exception):
         drop_interventions_for_run=_drop_interventions,
         get_skill_registry=_get_skill_registry,
         ask_budget_extension=_ask_budget_extension,
-        outbox=outbox,
+        make_subscribers=lambda skill_name, run_id=None: [
+            ChatEventForwarder(skill_name, outbox, run_id=run_id),
+        ],
+        format_refusal=lambda check: "refused",
+        format_warn=lambda dim, ctx: "warn",
     )
     return runner, outbox, completed_payloads
 
@@ -120,7 +125,7 @@ def test_unexpected_exception_emits_skill_done_aborted_trace(tmp_path, monkeypat
     both the error message AND the trace are present, in the same
     ``run_id`` meta.
     """
-    import reyn.runtime.services.skill_runner as sr_mod
+    import reyn.skill.skill_runner as sr_mod
 
     dummy_dir = tmp_path / "fake_skill"
     dummy_dir.mkdir()
