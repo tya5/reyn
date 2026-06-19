@@ -47,7 +47,7 @@ from reyn.stdlib.skills.eval_builder.analyze_skill_resolver_pure import (
 
 
 def _categorize_source(skill_dir: Path) -> str | None:
-    """Mirror of ``op_runtime.skill_resolve._categorize_source``.
+    """Mirror of ``reyn.skill.skill_resolve._categorize_source``.
 
     Replicated here so the test helper can build a synthetic op output
     without standing up an OpContext. The categorisation logic itself is
