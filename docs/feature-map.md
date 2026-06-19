@@ -162,6 +162,11 @@ mindmap
       Force-close wrap-up
       limit_denied event
       On-limit modes
+    🧪 Content-layer defense
+      Threat-pattern scan
+      Content fence
+      Tool-result guard
+      Compaction content-scan
     💰 Budget and Cost
       Per-agent caps
       Per-chain caps
@@ -315,6 +320,17 @@ User-facing point-in-time rewind with branching. Phase 1 and Phase 2 (2a/2b/2c/2
 | Compaction lock | Async mutex prevents concurrent turn appends from racing with an in-flight compaction call | [Chat Compaction](concepts/data-retrieval/chat-compaction.md) |
 
 > **Differentiation vs general agents:** instead of naive truncation or an unbounded growing memory, Reyn budgets context as head + tail + LLM summary with a monotonic overflow-shrink retry, adaptive per-model token estimation, and multimodal estimation — predictable context management under a hard model limit.
+
+#### Router system prompt
+
+| Feature | Description | Documentation |
+|---------|-------------|---------------|
+| Static / dynamic SP split | The router system prompt separates a stable, cache-prefix-friendly head from per-turn dynamic sections | [LLM invocation surfaces](concepts/architecture/llm-invocation-surfaces.md) |
+| Task-completion guidance | Anti-fabrication guidance steering the model to finish and verify rather than claim completion prematurely | [SP-improvements study](deep-dives/research/competitive/sp-improvements-measured-1791.md) |
+| Model-family-gated steering | A coarse model-family classifier gates non-Claude operational-steering hygiene — added only when the router model is non-Claude, kept off the Claude path | [SP-improvements study](deep-dives/research/competitive/sp-improvements-measured-1791.md) |
+| Memory-quality guidance (gated) | Guidance on what makes a good memory entry, rendered only when memory is in scope | [SP-improvements study](deep-dives/research/competitive/sp-improvements-measured-1791.md) |
+
+> **Differentiation vs general agents:** these SP improvements are adopted by **design-judgment** (sound + low-cost + non-harmful), not gated on a limited-environment A/B — a measured null on one environment cannot prove a universal negative, so structurally-sound guidance is adopted while genuinely measurable wins are verified separately.
 
 #### Plan Mode
 
@@ -506,6 +522,25 @@ Bounded-operation checkpoints that stop the agent gracefully rather than hard-fa
 | Decision-enabling fallback | When the wrap-up fails or is empty, a structured error states the limit hit, the config key to change, and partial-data availability | [Safety framework](concepts/runtime/safety.md) |
 
 > **Differentiation vs general agents:** where free-running agents hard-stop or run away at a limit, Reyn's force-close turns a denied limit into a graceful LLM wrap-up plus an operator decision — it reports what it accomplished instead of vanishing or looping unbounded.
+
+---
+
+### Content-layer defense — ⚗ in-progress
+
+Scanning untrusted content (memory, tool results, context files) for
+prompt-injection / exfiltration / role-hijack patterns at the seams where it
+enters the prompt — a security transform at a content boundary, not OS decision
+logic. **In progress**: the core scan + fences have landed; enforcement tuning
+and the dogfood done-gate remain. Canonical design: [content-threat scan proposal](deep-dives/proposals/0050-content-threat-scan.md).
+
+| Feature | Description | Documentation |
+|---------|-------------|---------------|
+| Threat-pattern scan (⚗) | Security-domain regexes (injection / exfiltration / role-hijack) applied to untrusted content — `security/threat_patterns.py` | [Design](deep-dives/proposals/0050-content-threat-scan.md) |
+| Content fence (⚗) | Wraps untrusted content in explicit delimiters so model-visible boundaries are unambiguous — `security/content_fence.py` | [Design](deep-dives/proposals/0050-content-threat-scan.md) |
+| Unified tool-result guard (⚗) | One seam scans tool-result content before it reaches the prompt — `security/content_guard.py` | [Design](deep-dives/proposals/0050-content-threat-scan.md) |
+| Compaction content-scan (⚗) | Threat-scan applied to compaction summaries before they persist (gated) | [Design](deep-dives/proposals/0050-content-threat-scan.md) |
+
+> **Differentiation vs general agents:** Reyn places content-layer scanning at the OS seams — the same content boundaries where secret interpolation already sits — as a security-domain transform that keeps OS decision logic free of skill strings (P7). Structural redundancy means checks already enforced by the sandbox / permission layer (e.g. absolute-path or pipe-to-shell writes) are not re-implemented as ad-hoc per-call scans. (⚗ in-progress — not yet the dogfood-gated default.)
 
 ---
 
