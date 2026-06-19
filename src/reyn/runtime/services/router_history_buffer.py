@@ -144,7 +144,7 @@ class RouterHistoryBuffer:
         history_fn: Callable[[], list],   # zero-arg → raw history (all roles)
         compaction: Any,                  # CompactionConfig — use_chars4_estimate
         compaction_controller: Any,       # for engine.budgets
-        model: str,
+        model_fn: Callable[[], str],      # zero-arg → CURRENT resolved model (#1752)
         events: Any,                      # EventLog — for fallback tokens
         media_store: Any,                 # MediaStore | None — for _serialise_turn
         router_host: Any,                 # RouterHostAdapter — for build_system_prompt
@@ -155,7 +155,7 @@ class RouterHistoryBuffer:
         self._history_fn = history_fn
         self._compaction = compaction
         self._compaction_controller = compaction_controller
-        self._model = model
+        self._model_fn = model_fn
         self._events = events
         self._media_store = media_store
         self._router_host = router_host
@@ -165,6 +165,14 @@ class RouterHistoryBuffer:
         # (native re-attach) instead of a router-SP text section. ReasoningConfig
         # gates it (.continuity) and bounds it (.recent_turns). None → off.
         self._reasoning = reasoning
+
+    @property
+    def _model(self) -> str:
+        # #1752: resolve the model live each call so a /model override (which can
+        # change the context window) is reflected in token counting / trimming.
+        # The session-side fn resolves the class → litellm string; without this
+        # the buffer would count against the construction-time model.
+        return self._model_fn()
 
     # ── Internal helpers ─────────────────────────────────────────────────────
 

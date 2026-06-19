@@ -296,7 +296,7 @@ def _make_history_builder():
         history_fn=lambda: cs.history,
         compaction=cs._compaction,
         compaction_controller=None,
-        model="",
+        model_fn=lambda: "",
         events=None,
         media_store=None,
         router_host=None,
