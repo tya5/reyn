@@ -40,7 +40,7 @@ if TYPE_CHECKING:
     from reyn.runtime.budget.budget import BudgetGateway
     from reyn.schemas.models import Skill
     from reyn.skill.skill_registry import SkillRegistry
-    from reyn.skill_runtime import SkillRuntime
+    from reyn.skill.skill_runtime import SkillRuntime
 
 logger = logging.getLogger(__name__)
 
@@ -423,7 +423,7 @@ class SkillRunner:
         # flight — TUI `remove_async_task(run_id)` then failed to find rows
         # by key. Funneling through the canonical eliminates the
         # cross-layer mismatch class.
-        from reyn.skill_runtime import SkillRuntime as _SkillRuntime
+        from reyn.skill.skill_runtime import SkillRuntime as _SkillRuntime
         run_id = _SkillRuntime._make_run_id(skill_name)
         self._events.emit("skill_run_spawned", run_id=run_id, skill=skill_name)
         self.running_skills_started_at[run_id] = time.monotonic()
@@ -594,7 +594,7 @@ class SkillRunner:
         # tui-coder finding #1 fix (2026-05-28): canonical run_id form via
         # SkillRuntime._make_run_id (see sibling spawn site above for full
         # rationale).
-        from reyn.skill_runtime import SkillRuntime as _SkillRuntime
+        from reyn.skill.skill_runtime import SkillRuntime as _SkillRuntime
         run_id = _SkillRuntime._make_run_id(skill_name)
         self._events.emit(
             "skill_run_spawned", run_id=run_id, skill=skill_name,

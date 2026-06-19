@@ -20,12 +20,12 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:  # import-cost-free hints for type checkers / IDEs
     from reyn.core.kernel.runtime import RunResult
     from reyn.schemas.models import Phase, Skill, SkillGraph
-    from reyn.skill_runtime import SkillRuntime
+    from reyn.skill.skill_runtime import SkillRuntime
 
 __all__ = ["Skill", "Phase", "SkillGraph", "SkillRuntime", "RunResult"]
 
 _LAZY_ATTRS = {
-    "SkillRuntime": "reyn.skill_runtime",
+    "SkillRuntime": "reyn.skill.skill_runtime",
     "RunResult": "reyn.core.kernel.runtime",
     "Phase": "reyn.schemas.models",
     "Skill": "reyn.schemas.models",

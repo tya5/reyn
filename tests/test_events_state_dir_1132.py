@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from reyn.skill_runtime import SkillRuntime
+from reyn.skill.skill_runtime import SkillRuntime
 
 
 def test_state_dir_honors_workspace_state_dir(tmp_path: Path) -> None:

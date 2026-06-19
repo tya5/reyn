@@ -59,7 +59,7 @@ import reyn.schemas.models as _models
 from reyn.config import ReynConfig
 from reyn.dev.testing.replay import REPLAY_DATETIME
 from reyn.schemas.models import Phase, Skill, SkillGraph
-from reyn.skill_runtime import SkillRuntime
+from reyn.skill.skill_runtime import SkillRuntime
 
 _SKILL_NAME = "converge_replay"
 # Direct-to-Google standard model (GOOGLE_API_KEY), the free dogfood workhorse.

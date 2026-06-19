@@ -675,7 +675,7 @@ def run_install(args: argparse.Namespace) -> None:
     from reyn.security.permissions.permissions import PermissionResolver
     from reyn.skill.skill_paths import SkillNotFoundError, is_stdlib_skill
     from reyn.skill.skill_paths import resolve_skill_path as _resolve_skill_path_raw
-    from reyn.skill_runtime import SkillRuntime
+    from reyn.skill.skill_runtime import SkillRuntime
     from reyn.user_intervention import StdinInterventionBus
 
     from ..logger_factory import make_logger

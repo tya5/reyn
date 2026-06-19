@@ -21,7 +21,7 @@ No mocks — real ReynConfig + real SkillRuntime.
 from __future__ import annotations
 
 from reyn.config import ReynConfig
-from reyn.skill_runtime import SkillRuntime
+from reyn.skill.skill_runtime import SkillRuntime
 
 
 def test_from_config_model_defaults_to_config() -> None:

@@ -7,12 +7,16 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable
 
 from reyn.config import OnLimitConfig, SafetyConfig
-from reyn.runtime.budget.budget import BudgetTracker
 
 if TYPE_CHECKING:
     from reyn.config import MultimodalConfig, SandboxConfig
     from reyn.data.workspace.media_store import MediaStore
     from reyn.environment.backend import EnvironmentBackend
+
+    # #1794 S2: annotation-only (budget_tracker is held + forwarded, never
+    # called) → TYPE_CHECKING-gated so reyn.skill takes no runtime dependency
+    # on reyn.runtime (the layer-direction invariant).
+    from reyn.runtime.budget.budget import BudgetTracker
     from reyn.security.sandbox.backend import SandboxBackend
     from reyn.security.secrets.store import ScopedSecretStore
 from reyn.core.events.event_store import EventStore

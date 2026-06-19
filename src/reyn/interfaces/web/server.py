@@ -48,7 +48,7 @@ def _make_cron_runner():
         from reyn.core.compiler import load_dsl_skill
         from reyn.security.permissions.permissions import PermissionResolver
         from reyn.skill.skill_paths import resolve_skill_path
-        from reyn.skill_runtime import SkillRuntime
+        from reyn.skill.skill_runtime import SkillRuntime
 
         cfg = load_config()
         project_root = _find_project_root(_Path.cwd())

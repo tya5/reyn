@@ -279,7 +279,7 @@ def _build_runner():
         from reyn.interfaces.cli.logger_factory import make_logger
         from reyn.interfaces.cli.skill_loader import resolve_skill_path
         from reyn.llm.model_resolver import ModelResolver
-        from reyn.skill_runtime import SkillRuntime
+        from reyn.skill.skill_runtime import SkillRuntime
         from reyn.user_intervention import StdinInterventionBus
 
         config = load_config()

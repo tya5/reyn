@@ -46,12 +46,12 @@ def test_harness_import_does_not_load_agent_llm_chain():
     ``Agent -> llm -> httpx`` (~0.5s), which under the in-container venv path on
     an emulated host inflated past the ~5s step timeout. The package __init__s
     are now PEP 562-lazy, so importing the harness must NOT transitively load
-    ``reyn.skill_runtime`` / ``reyn.llm`` / ``httpx``. This is the structural invariant
+    ``reyn.skill.skill_runtime`` / ``reyn.llm`` / ``httpx``. This is the structural invariant
     (robust to host speed); the timing guard below is a coarse backstop.
     """
     code = (
         "import reyn.core.kernel._python_harness; import sys; "
-        "leaked = [m for m in ('reyn.skill_runtime', 'reyn.llm', 'reyn.llm.llm', 'httpx') "
+        "leaked = [m for m in ('reyn.skill.skill_runtime', 'reyn.llm', 'reyn.llm.llm', 'httpx') "
         "          if m in sys.modules]; "
         "assert not leaked, 'harness import eagerly loaded heavy chain: ' + str(leaked)"
     )
