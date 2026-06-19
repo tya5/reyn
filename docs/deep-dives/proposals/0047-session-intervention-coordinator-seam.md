@@ -25,7 +25,7 @@ higher care, and the first time ownership of state moves.
 - **State**: `self._intervention_overrides: dict[str, RequestBus]` — the only
   intervention state not already in a collaborator (the registry owns the
   active/stalled/listener queues; the handler owns delivery).
-- **Override accessors** (6, thin over the dict): `register_intervention_override`,
+- **Override accessors** (5, thin over the dict): `register_intervention_override`,
   `unregister_intervention_override`, `has_intervention_override`,
   `get_intervention_override`, `intervention_override_count`.
 - **`_dispatch_intervention`** — the orchestration: (1) override-observer
@@ -70,7 +70,7 @@ This is the coupling to resolve. Two options:
 A new `reyn.runtime.services.intervention_coordinator.InterventionCoordinator`
 that **owns**:
 
-- `_intervention_overrides` (the dict moves here) + the 6 override accessors.
+- `_intervention_overrides` (the dict moves here) + the 5 override accessors.
 - `is_override_active(run_id) -> bool` — the override-active predicate. Today this
   logic is **duplicated**: in `_dispatch_intervention` AND in
   `ChatInterventionBus.deliver` (`session_buses.py`, which reads
