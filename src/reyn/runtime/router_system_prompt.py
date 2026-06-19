@@ -248,9 +248,10 @@ def build_system_prompt(
     # + dynamic Behaviour conditionals (output_language).
     # ==========================================================================
 
-    # ── 6. Project context (REYN.md) ────────────────────────────────────────
+    # ── 6. Project context (AGENTS.md / REYN.md) ────────────────────────────
     #
-    # `project_context` carries the operator's REYN.md content (or whatever
+    # `project_context` carries the operator's AGENTS.md content (#1771 default;
+    # REYN.md is the legacy fallback — or whatever
     # `project_context_path` points to). This is operator-editable
     # surface — do NOT use it to inject Reyn's own identity (that's the
     # preamble above). Inject only when non-empty so an unset / empty
