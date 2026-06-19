@@ -5,6 +5,7 @@ from reyn.runtime.services.budget_gateway import BudgetGateway
 from reyn.runtime.services.chain_manager import ChainManager, _PendingChain
 from reyn.runtime.services.compaction_controller import CompactionController
 from reyn.runtime.services.context_budget_advisor import ContextBudgetAdvisor
+from reyn.runtime.services.intervention_coordinator import InterventionCoordinator
 from reyn.runtime.services.intervention_handler import InterventionHandler
 from reyn.runtime.services.intervention_registry import InterventionRegistry
 from reyn.runtime.services.memory_service import MemoryService
@@ -31,6 +32,7 @@ __all__ = [
     "CompactionController",
     "CompactionEngine",
     "HistoryChunkToCompact",
+    "InterventionCoordinator",
     "InterventionHandler",
     "InterventionRegistry",
     "MemoryService",

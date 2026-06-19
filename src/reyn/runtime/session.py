@@ -59,6 +59,7 @@ from reyn.runtime.services import (
     BudgetGateway,
     ChainManager,
     CompactionController,
+    InterventionCoordinator,
     InterventionHandler,
     InterventionRegistry,
     MemoryService,
@@ -1329,6 +1330,15 @@ class Session:
             put_outbox=self._put_outbox,
             append_history=self._append_history_for_handler,
         )
+        # Owns the chain-override state + the per-intervention dispatch
+        # orchestration. running_skills_chain (run→chain map) lives on the
+        # SkillRunner built below; read it live via the lambda.
+        self._intervention_coordinator = InterventionCoordinator(
+            registry=self._interventions,
+            handler=self._intervention_handler,
+            events=self._chat_events,
+            running_skills_chain_fn=lambda: self.running_skills_chain,
+        )
 
         # FP-0019 Wave 1b: SkillRunner — skill task lifecycle service.
         # Owns running_skills / running_skills_started_at / running_skills_chain.
@@ -1623,11 +1633,6 @@ class Session:
         # Hybrid design (案 C): A2AHandler owns agent-side logic; transport-side
         # routing handled by FP-0013 RoutingLayer via send_request_callback /
         # send_response_callback injection.
-        # FP-0001: chain_id-scoped intervention bus overrides.
-        # Allows A2A async-mode tasks to redirect ask_user prompts to
-        # their RunRegistry-backed A2AInterventionBus while the agent's
-        # default ChatInterventionBus continues to serve chat-mode interactions.
-        self._intervention_overrides: dict[str, "RequestBus"] = {}
 
         self._a2a_handler = A2AHandler(
             event_log=self._chat_events,
@@ -3542,30 +3547,30 @@ class Session:
         Protocol, but the type hint now reflects the OS↔Agent contract
         layer the override participates in.
         """
-        self._intervention_overrides[chain_id] = bus
+        self._intervention_coordinator.register_override(chain_id, bus)
 
     def unregister_intervention_override(self, chain_id: str) -> None:
         """Remove an override. Idempotent."""
-        self._intervention_overrides.pop(chain_id, None)
+        self._intervention_coordinator.unregister_override(chain_id)
 
     def has_intervention_override(self, chain_id: str) -> bool:
         """Return True iff *chain_id* currently has a registered override
         ``RequestBus``. Public read-side counterpart to
         ``register_intervention_override`` / ``unregister_intervention_override``.
         """
-        return chain_id in self._intervention_overrides
+        return self._intervention_coordinator.has_override(chain_id)
 
     def get_intervention_override(self, chain_id: str) -> "RequestBus | None":
         """Return the override bus for *chain_id* or None if absent. Read-only
         accessor for callers (= primarily tests) that need to confirm the
         registered bus identity without consuming the override."""
-        return self._intervention_overrides.get(chain_id)
+        return self._intervention_coordinator.get_override(chain_id)
 
     def intervention_override_count(self) -> int:
         """Return the number of currently-registered overrides. Public
         emptiness probe for cleanup-leak tests (= prefer over reading the
         private mapping directly)."""
-        return len(self._intervention_overrides)
+        return self._intervention_coordinator.override_count()
 
     # ── Listener registration (issue #254 Phase 1) ──────────────────────────
 
@@ -3688,76 +3693,15 @@ class Session:
         return PendingOpView.from_intervention(iv)
 
     async def _dispatch_intervention(self, iv: UserIntervention) -> InterventionAnswer:
-        """Thin wrapper → InterventionHandler.dispatch.
+        """Dispatch one intervention via the InterventionCoordinator.
 
-        ChatInterventionBus, _handle_chat_limit_checkpoint, and
-        _ask_budget_extension all call this method directly; keeping it
-        as a session-level entry keeps those call sites stable.
-
-        issue #268 Phase 2 continuation: the origin-pin check (= stall
-        when iv.origin_channel_id is set but the listener has gone)
-        lives here so it fires for ALL iv flows, not just the
-        handle_intervention path. The check sits AFTER the chain-override
-        notification so A2A peers still see the iv's input-required
-        signal even if the local TUI listener is absent.
-
-        issue #292 (α): chain overrides now run as **side-effect
-        observers** (= notify A2A peer surfaces, write history, post
-        webhook) BEFORE the regular dispatch path, instead of replacing
-        it. The iv always flows through ``InterventionHandler.dispatch``
-        so it lands in ``_interventions._active`` + WAL +
-        ``outstanding_interventions`` + becomes eligible for R-D12's
-        persistent answer buffer. Pre-#292, the override replaced
-        dispatch and A2A ivs were invisible to Session's iv
-        machinery — fixed structurally here, not patched.
+        Kept as a Session-level entry so existing call sites
+        (ChatInterventionBus, _handle_chat_limit_checkpoint,
+        _ask_budget_extension, tests) stay stable; the override-observe /
+        origin-pin-stall / handler-dispatch orchestration lives in
+        ``InterventionCoordinator.dispatch``.
         """
-        # FP-0001 / issue #292: chain_id-scoped override notification
-        # (A2A async tasks). The override is now an OBSERVER that runs
-        # side effects (= webhook / SSE / RunRegistry status mirror)
-        # alongside the normal dispatch — NOT a bypass replacement.
-        # Notify before dispatch so the peer learns input-required
-        # before the awaiter (= handler.dispatch) blocks the iv future.
-        if iv.run_id is not None and self._intervention_overrides:
-            chain_id = self.running_skills_chain.get(iv.run_id)
-            if chain_id is not None:
-                override = self._intervention_overrides.get(chain_id)
-                if override is not None:
-                    try:
-                        await override.on_dispatch(iv)
-                    except Exception:  # noqa: BLE001 — side effects are best-effort
-                        # Override notification must NOT block dispatch.
-                        # A failed webhook / SSE append / status mirror
-                        # is logged elsewhere; dispatch proceeds.
-                        logger.exception(
-                            "intervention override on_dispatch raised "
-                            "(chain_id=%s iv_id=%s)", chain_id, iv.id,
-                        )
-        # issue #268 Phase 2 continuation: origin-pin stall check.
-        # When the iv carries an explicit ``origin_channel_id`` whose
-        # listener is no longer present (= the origin channel closed
-        # mid-call), park the iv in the stalled queue instead of
-        # delivering to a fall-through listener. Other channels
-        # observe / claim / discard via the cross-channel API. ivs
-        # without ``origin_channel_id`` (= legacy default or
-        # override-active spawn) skip this check.
-        if (
-            iv.origin_channel_id is not None
-            and iv.origin_channel_id not in self._interventions._listeners
-        ):
-            self._chat_events.emit(
-                "intervention_routed",
-                route="user_channel_stalled",
-                iv_kind=iv.kind,
-                iv_id=iv.id,
-                origin_channel_id=iv.origin_channel_id,
-            )
-            self._interventions._stalled[iv.id] = iv
-            try:
-                return await iv.future
-            except asyncio.CancelledError:
-                return InterventionAnswer(text="")
-        # Default: route through the regular InterventionHandler.
-        return await self._intervention_handler.dispatch(iv)
+        return await self._intervention_coordinator.dispatch(iv)
 
     # ── Agent-layer intervention entry point (issue #254 Phase 3) ───────────
 

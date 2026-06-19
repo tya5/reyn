@@ -135,6 +135,10 @@ class InterventionRegistry:
         """Return True iff at least one listener is currently registered."""
         return bool(self._listeners)
 
+    def has_listener(self, listener_id: str) -> bool:
+        """Return True iff *listener_id* is a currently-registered listener."""
+        return listener_id in self._listeners
+
     def listener_count(self) -> int:
         """Return the number of currently-registered listeners."""
         return len(self._listeners)
@@ -183,6 +187,17 @@ class InterventionRegistry:
             pass
         self._stalled[iv_id] = iv
         return True
+
+    def park_stalled(self, iv: UserIntervention) -> None:
+        """Park a never-active iv directly into the stalled queue.
+
+        Unlike ``mark_stalled`` (which transitions an *active* iv out of
+        ``_active``), this records an iv that arrived already pinned to an
+        absent origin channel — it never entered ``_active`` / ``_order``, so
+        it goes straight into ``_stalled`` for cross-channel observe / discard
+        / claim. The iv's future stays unresolved.
+        """
+        self._stalled[iv.id] = iv
 
     def list_stalled(self) -> list[UserIntervention]:
         """Return all stalled interventions (= origin channel closed).

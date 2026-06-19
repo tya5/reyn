@@ -124,19 +124,10 @@ class ChatInterventionBus:
         # captured ``_run_id`` for the override lookup since
         # ``iv.run_id`` isn't filled in until below.
         if self._channel_id is not None and iv.origin_channel_id is None:
-            override_active = False
             run_id_for_lookup = iv.run_id or self._run_id
-            if (
-                run_id_for_lookup is not None
-                and self._session._intervention_overrides
-            ):
-                chain_id = self._session.running_skills_chain.get(
-                    run_id_for_lookup,
-                )
-                if chain_id is not None:
-                    override_active = (
-                        chain_id in self._session._intervention_overrides
-                    )
+            override_active = self._session._intervention_coordinator.is_override_active(
+                run_id_for_lookup,
+            )
             if not override_active:
                 iv.origin_channel_id = self._channel_id
         if iv.run_id is None:
