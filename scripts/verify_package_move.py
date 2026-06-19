@@ -44,6 +44,11 @@ from pathlib import Path
 
 DEFAULT_ROOTS = ("src", "tests")
 SKIP_DIRS = {".git", "__pycache__", ".venv", "node_modules"}
+# Repo-root config that carries package references outside src/tests — entry
+# points (dotted literals) + package-data / find paths. A package move that
+# repoints only src/tests/docs misses these (the #1807 webhooks entry-point
+# regression), so they are always scanned for the dotted-literal / path checks.
+ROOT_CONFIG_FILES = ("pyproject.toml", "setup.cfg", "setup.py", "MANIFEST.in")
 
 
 def _py_files(roots: list[str]) -> list[Path]:
@@ -169,6 +174,9 @@ def main(argv: list[str] | None = None) -> int:
 
     py_files = _py_files(args.roots)
     text_files = _all_text_files(args.roots)
+    # Always include repo-root config (entry points / package-data live here,
+    # outside the src/tests roots) for the dotted-literal + path-hit checks.
+    text_files += [Path(f) for f in ROOT_CONFIG_FILES if Path(f).is_file()]
     self_path = "scripts/verify_package_move.py"
 
     sections: list[tuple[str, list[str]]] = []
