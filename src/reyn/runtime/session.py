@@ -69,12 +69,13 @@ from reyn.runtime.services import (
 )
 from reyn.runtime.services.a2a_handler import A2AHandler
 from reyn.runtime.services.chain_manager import _PendingChain
-from reyn.runtime.services.skill_runner import SkillRunner
 from reyn.runtime.session_buses import AgentRequestBus, ChatInterventionBus
 from reyn.security.permissions.permissions import PermissionResolver
 from reyn.services.compaction.engine import CompactionEngine
+from reyn.skill.skill_outbound import SkillOutboundMessage
 from reyn.skill.skill_paths import SkillNotFoundError, resolve_skill_path, stdlib_root
 from reyn.skill.skill_registry import SkillRegistry
+from reyn.skill.skill_runner import SkillRunner
 from reyn.skill.skill_runtime import SkillRuntime
 from reyn.user_intervention import (
     InterventionAnswer,
@@ -1353,13 +1354,17 @@ class Session:
             budget=self._budget,
             state_log=self._state_log,
             build_agent_fn=self._build_agent_for_skill_runner,
-            put_outbox=self._put_outbox,
             enqueue_skill_completed=self._enqueue_skill_completed,
             accumulate=self._accumulate,
             drop_interventions_for_run=self._drop_interventions_for_run,
             get_skill_registry=self.get_skill_registry,
             ask_budget_extension=self._ask_budget_extension,
-            outbox=self.outbox,
+            # #1794 S3: runtime-boundary seams — SkillRunner (now in reyn.skill)
+            # stays free of reyn.runtime; the session supplies the runtime objects.
+            put_outbox=self._skill_outbox_adapter,
+            make_subscribers=self._make_skill_subscribers,
+            format_refusal=format_refusal_message,
+            format_warn=format_warn_message,
         )
 
         # F2: Delegation tracking for RouterLoop runs. Set to a list before
@@ -3184,6 +3189,25 @@ class Session:
             run_id=run_id,
             tool_calls_op_loop_skills=self._tool_calls_op_loop_skills,
         )
+
+    async def _skill_outbox_adapter(self, msg: "SkillOutboundMessage") -> None:
+        """#1794 S3: adapt a skill's transport-neutral ``SkillOutboundMessage``
+        to the runtime ``OutboxMessage`` and enqueue. Skills emit kind/text/meta
+        only and never set ``reply_to``, so the adapter passes ``reply_to=None`` —
+        behavior-identical to the prior direct ``OutboxMessage`` constructs that
+        lived inside SkillRunner before it moved to ``reyn.skill``."""
+        await self._put_outbox(
+            OutboxMessage(kind=msg.kind, text=msg.text, meta=msg.meta),
+        )
+
+    def _make_skill_subscribers(
+        self, skill_name: str, run_id: "str | None" = None,
+    ) -> list:
+        """#1794 S3: build the chat-event subscribers for a skill spawn — the
+        ``ChatEventForwarder`` construction that ``SkillRunner`` (now in
+        ``reyn.skill``) DI's so it takes no ``reyn.runtime`` dependency."""
+        from reyn.runtime.forwarder import ChatEventForwarder
+        return [ChatEventForwarder(skill_name, self.outbox, run_id=run_id)]
 
     async def _put_outbox(self, msg: OutboxMessage) -> None:
         """Drop transient kinds while detached; durable kinds are queued.

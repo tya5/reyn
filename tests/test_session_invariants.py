@@ -1352,7 +1352,7 @@ async def test_skill_completed_inbox_enqueued_on_finish(tmp_path, monkeypatch):
     """
     monkeypatch.chdir(tmp_path)
 
-    import reyn.runtime.services.skill_runner as skill_runner_mod
+    import reyn.skill.skill_runner as skill_runner_mod
     from reyn.core.kernel.runtime import RunResult
 
     dummy_skill_dir = tmp_path / "dummy_skill"
