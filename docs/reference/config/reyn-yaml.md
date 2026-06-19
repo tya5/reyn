@@ -350,6 +350,12 @@ safety:
     mode: interactive          # interactive | unattended | auto_extend
     auto_extend_times: 1       # (auto_extend mode) number of auto-extensions
     ask_timeout_seconds: 0     # (interactive mode) user-prompt timeout; 0 = wait forever
+  threat_scan:
+    enabled: true              # content-layer prompt-injection scan + fence (#1822)
+    fail_open: true            # scanner error → allow (FN tolerated over FP)
+    fence_enabled: true        # structurally fence untrusted content as data
+    block_severity: block      # min severity that blocks at write seams: block | warn
+    custom_patterns: []        # operator [regex, id, scope, severity] extensions
 ```
 
 ### `safety.loop` fields
@@ -382,6 +388,18 @@ safety:
 | `safety.on_limit.mode` | string | `interactive` | What happens when a loop/timeout cap fires. `interactive` (default) — prompt the user via `ask_user` for permission to extend; headless paths short-circuit cleanly to abort. `unattended` — abort immediately on hit (opt-in for CI / cron / scripted runs that cannot pause). `auto_extend` — auto-extend `auto_extend_times` times then abort. |
 | `safety.on_limit.auto_extend_times` | int | `1` | Number of auto-extensions before falling through to abort. Used only when `mode: auto_extend`. |
 | `safety.on_limit.ask_timeout_seconds` | float (s) | `0` | How long `interactive` mode waits for a user response. `0` (default) = wait forever; positive = abort with partial data after the window elapses. |
+
+### `safety.threat_scan` fields
+
+Content-layer threat defense (FP-0050 / #1822): inspects untrusted content for prompt-injection before it enters the system prompt / context, complementing the execution layer (permissions / sandbox). Defense-in-depth = a structural **fence** (mark untrusted content as data) plus a pattern **scan** backstop.
+
+| Path | Type | Default | Description |
+|------|------|---------|-------------|
+| `safety.threat_scan.enabled` | bool | `true` | Master switch. Default-on: content→context (read) seams detect non-blocking + emit telemetry; agent-write seams block. |
+| `safety.threat_scan.fail_open` | bool | `true` | Scanner error → allow (a false-negative is tolerated over a false-positive that would wedge a turn). |
+| `safety.threat_scan.fence_enabled` | bool | `true` | Structurally fence untrusted content (random-id markers + control-token strip + unicode normalization) so the LLM treats it as data, not instructions. |
+| `safety.threat_scan.block_severity` | string | `block` | Minimum severity that BLOCKS at agent-write seams (memory write / skill install). `block` = only `block`-severity patterns; `warn` = warn-severity also blocks (stricter). |
+| `safety.threat_scan.custom_patterns` | list | `[]` | Operator pattern extensions, each `[regex, id, scope, severity]`. Merged into the built-in catalog for scans. |
 
 ## `plan` block
 
