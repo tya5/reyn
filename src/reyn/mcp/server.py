@@ -41,6 +41,7 @@ from reyn.runtime.agent_locks import get_agent_lock as _get_agent_lock
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
+    from reyn.mcp.extra_tool import ExtraTool
     from reyn.runtime.registry import AgentRegistry
     from reyn.user_intervention import RequestBus
 
@@ -338,6 +339,7 @@ def build_server(
     registry: "AgentRegistry",
     *,
     timeout: float = DEFAULT_SEND_TIMEOUT_SECONDS,
+    extra_tools: "list[ExtraTool] | None" = None,
 ):
     """Construct an ``mcp.server.Server`` wired to the given registry.
 
@@ -345,9 +347,16 @@ def build_server(
     imported in test environments where ``mcp`` is not installed (the
     tests of this module install it via the ``mcp`` extra; the rest of
     the suite doesn't touch this surface).
+
+    ``extra_tools`` are plugin-supplied tools (e.g. a gateway plugin's outbound
+    send tool, #1805): each is exposed in ``list_tools`` and dispatched in
+    ``call_tool`` after the built-in tools (built-ins take precedence on a name
+    clash).
     """
     from mcp.server import Server
     from mcp.types import TextContent, Tool
+
+    _extra_tools = list(extra_tools or [])
 
     server = Server("reyn")
 
@@ -451,6 +460,14 @@ def build_server(
                     "additionalProperties": False,
                 },
             ),
+            *[
+                Tool(
+                    name=et.name,
+                    description=et.description,
+                    inputSchema=et.input_schema,
+                )
+                for et in _extra_tools
+            ],
         ]
 
     @server.call_tool()
@@ -576,6 +593,13 @@ def build_server(
                     ),
                 }),
             )]
+
+        # Plugin-supplied tools (#1805) — dispatched after the built-ins, so a
+        # built-in name always wins on a clash.
+        for et in _extra_tools:
+            if name == et.name:
+                result = await et.handler(arguments or {})
+                return [TextContent(type="text", text=result)]
 
         return [TextContent(type="text", text=f"error: unknown tool {name!r}")]
 
@@ -967,6 +991,11 @@ async def serve_stdio(
     """
     from mcp.server.stdio import stdio_server
 
+    # No extra_tools here: the stdio MCP server hosts no gateway outbound tools
+    # (#1805) — those are reyn-web-scoped (webhook plugins mount in the FastAPI
+    # app + register_tools is collected onto app.state). A stdio CLI has no app,
+    # so there is nothing to host. The SSE path (web/routers/mcp.py) passes
+    # extra_tools; this asymmetry is by design, not an oversight.
     server = build_server(registry, timeout=timeout)
     # issue #271 M3: capability advertising. Declare what this server
     # actually emits + handles so MCP clients can negotiate features

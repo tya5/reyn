@@ -45,10 +45,75 @@ from __future__ import annotations
 
 import logging
 import os
+from typing import TYPE_CHECKING
 
 from fastapi import APIRouter, Request
 
+if TYPE_CHECKING:
+    from reyn.mcp.extra_tool import ExtraTool
+
 logger = logging.getLogger(__name__)
+
+
+def build_send_tool() -> "ExtraTool":
+    """Build the Slack outbound MCP tool (in-process send, #1805).
+
+    The tool the agent invokes — via ``external_transports`` → ``route_to_mcp``
+    → reyn-web's in-process MCP server — to deliver a reply to Slack. It calls
+    ``chat.postMessage`` through ``slack_sdk``'s async client **in this reyn-web
+    process**, so a complete plugin needs no separate Slack MCP server. A failed
+    send returns a surfaced ``{"ok": false, "error": ...}`` result rather than a
+    silent drop — the crash-vanish fix #1805 is about.
+    """
+    from reyn.mcp.extra_tool import ExtraTool
+
+    async def _handler(args: dict) -> str:
+        import json
+
+        channel = (args or {}).get("channel")
+        text = (args or {}).get("text", "")
+        thread_ts = (args or {}).get("thread_ts")
+        if not channel:
+            return json.dumps({"ok": False, "error": "channel is required"})
+        token = os.environ.get("SLACK_BOT_TOKEN", "")
+        if not token:
+            return json.dumps({"ok": False, "error": "SLACK_BOT_TOKEN not set"})
+        try:
+            from slack_sdk.web.async_client import AsyncWebClient
+        except ImportError as exc:
+            return json.dumps(
+                {"ok": False, "error": f"slack_sdk not installed: {exc}"},
+            )
+        client = AsyncWebClient(token=token)
+        try:
+            resp = await client.chat_postMessage(
+                channel=channel, text=text, thread_ts=thread_ts,
+            )
+            return json.dumps({"ok": True, "ts": resp.get("ts")})
+        except Exception as exc:  # noqa: BLE001 — surface the send failure
+            return json.dumps({"ok": False, "error": str(exc)})
+
+    return ExtraTool(
+        name="slack_send",
+        description=(
+            "Send a message to a Slack channel or thread (outbound reply "
+            "delivery for the sample_slack gateway plugin)."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "channel": {"type": "string", "description": "Slack channel ID."},
+                "text": {"type": "string", "description": "Message text to post."},
+                "thread_ts": {
+                    "type": "string",
+                    "description": "Optional thread ts to reply in-thread.",
+                },
+            },
+            "required": ["channel", "text"],
+            "additionalProperties": False,
+        },
+        handler=_handler,
+    )
 
 
 def build_router(*, target_agent: str) -> APIRouter:

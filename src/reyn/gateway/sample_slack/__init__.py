@@ -20,8 +20,12 @@ from __future__ import annotations
 
 import logging
 import os
+from typing import TYPE_CHECKING
 
 from fastapi import APIRouter
+
+if TYPE_CHECKING:
+    from reyn.mcp.extra_tool import ExtraTool
 
 logger = logging.getLogger(__name__)
 
@@ -57,3 +61,18 @@ def register_router(config: dict) -> APIRouter | None:
         )
         return None
     return build_router(target_agent=target_agent)
+
+
+def register_tools(config: dict) -> "list[ExtraTool]":
+    """Plugin entry point — return the plugin's outbound MCP tools (#1805).
+
+    Sibling of ``register_router``: ``register_router`` provides the inbound
+    webhook; ``register_tools`` provides the outbound ``slack_send`` tool,
+    hosted in-process by reyn web's MCP server so a complete plugin needs no
+    separate Slack MCP server. The tool's handler defers the ``slack_sdk``
+    import and checks ``SLACK_BOT_TOKEN`` at call time, so registration itself
+    is dependency-free.
+    """
+    from .webhook import build_send_tool
+
+    return [build_send_tool()]

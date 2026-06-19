@@ -267,12 +267,21 @@ app.include_router(_web_data_router.router, prefix="/api")
 # project root, separate from reyn.yaml to keep core config lean) and
 # mounted by the plugin loader at app startup. Reyn core stays SDK-free;
 # per-transport protocol code lives in plugins.
+app.state.gateway_tools = []
 try:
     from reyn.config import _find_project_root as _find_root_for_plugins
-    from reyn.interfaces.web.plugin_loader import load_webhook_plugins, load_webhooks_yaml
+    from reyn.interfaces.web.plugin_loader import (
+        load_webhook_plugins,
+        load_webhook_tools,
+        load_webhooks_yaml,
+    )
     _project_root_for_plugins = _find_root_for_plugins(Path.cwd()) or Path.cwd()
     _webhooks_cfg = load_webhooks_yaml(_project_root_for_plugins)
     load_webhook_plugins(app=app, webhooks_config=_webhooks_cfg)
+    # #1805: collect each plugin's outbound MCP tools (register_tools) so the
+    # in-process MCP server (handle_sse → build_server) hosts them — a complete
+    # gateway plugin = inbound webhook + outbound tool in one process.
+    app.state.gateway_tools = load_webhook_tools(webhooks_config=_webhooks_cfg)
 except Exception as _exc:  # noqa: BLE001 — defensive boot
     logger.warning("webhook plugin loading failed: %s", _exc)
 

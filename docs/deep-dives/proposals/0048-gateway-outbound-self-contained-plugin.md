@@ -28,9 +28,27 @@ self-contained unit — the way Hermes' single-file `telegram.py` does inbound
 
 ## Recommended design (案B + 案C, lead-endorsed)
 
+> **Implementation update (flow-trace before the cut, #1805 — lead-endorsed):
+> 案C is DROPPED, 案B is the whole feature.** Tracing the outbound path during
+> implementation showed the **agent's outbound is already complete**:
+> `deps.py` wires `make_outbox_interceptor(routing, mcp_dispatcher=
+> make_session_mcp_dispatcher(session))` → `route_to_mcp` → `mcp_handle`. The
+> 案B in-process tool **reuses that existing path** to close crash-vanish — the
+> agent reply → outbox → interceptor → `route_to_mcp` → in-process tool flows
+> with no new code. So `send_to_transport` (案C) would only **duplicate** the
+> existing outbound, its issue-signature `send_to_transport(transport,
+> destination, text)` can't be built cleanly (it needs `session` for
+> routing+dispatcher), and its caller is ambiguous (the agent uses the
+> interceptor; the plugin's tool handler does the Bot-API call). 案C = YAGNI,
+> **deferred**. This doc's remaining 案C subsections (the `gateway.api`
+> helper, open question 2) are superseded by this note — same "shrink the
+> design correctly via pre-impl flow-trace" discipline as the C6 9→6 and C7
+> dead-vs-live cuts.
+
 **案B (spine): the plugin's outbound tool is hosted in-process by `reyn web`,
-not a separate process.** **案C (authoring surface): a `gateway.api` outbound
-helper** so plugin authors never touch MCP directly.
+not a separate process.** ~~案C (authoring surface): a `gateway.api` outbound
+helper~~ — **dropped (see the update note above); the existing
+`route_to_mcp` path already serves it.**
 
 ### Why B over A / C-alone
 

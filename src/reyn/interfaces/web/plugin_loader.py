@@ -54,9 +54,12 @@ from __future__ import annotations
 import importlib.metadata
 import logging
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from fastapi import APIRouter, FastAPI
+
+if TYPE_CHECKING:
+    from reyn.mcp.extra_tool import ExtraTool
 
 logger = logging.getLogger(__name__)
 
@@ -225,3 +228,72 @@ def load_webhook_plugins(*, app: FastAPI, webhooks_config: dict) -> int:
         )
 
     return mounted
+
+
+def load_webhook_tools(*, webhooks_config: dict) -> "list[ExtraTool]":
+    """Collect each activated webhook plugin's outbound MCP tools (#1805).
+
+    Sibling of ``load_webhook_plugins``: for every enabled plugin whose module
+    defines ``register_tools(config) -> list[ExtraTool]`` (alongside its
+    ``register_router`` entry point), call it and gather the returned tools.
+    These merge into reyn-web's in-process MCP server (``build_server``'s
+    ``extra_tools``) so a complete gateway plugin hosts inbound webhook +
+    outbound tool in one process. Plugins with no ``register_tools`` are
+    inbound-only (skipped, not an error).
+    """
+    tools: list[ExtraTool] = []
+    if not isinstance(webhooks_config, dict) or not webhooks_config:
+        return tools
+
+    for plugin_name, ref in webhooks_config.items():
+        if not isinstance(plugin_name, str) or not plugin_name:
+            continue
+        if ref is None:
+            ref_dict: dict = {}
+        elif isinstance(ref, dict):
+            ref_dict = ref
+        else:
+            continue
+        if not ref_dict.get("enabled", True):
+            continue
+
+        package = ref_dict.get("package")
+        if package is not None and not isinstance(package, str):
+            package = None
+
+        ep = _find_entry_point(plugin_name, package=package)
+        if ep is None:
+            continue
+        try:
+            module = importlib.import_module(ep.module)
+        except Exception as exc:  # noqa: BLE001 — defensive, like router load
+            logger.warning(
+                "webhook plugin %r: module import failed for tools: %s",
+                plugin_name, exc,
+            )
+            continue
+
+        register_tools_fn = getattr(module, "register_tools", None)
+        if register_tools_fn is None:
+            continue  # inbound-only plugin
+
+        plugin_options = {
+            k: v for k, v in ref_dict.items() if k not in _REYN_RESERVED_KEYS
+        }
+        try:
+            plugin_tools = register_tools_fn(plugin_options)
+        except Exception as exc:  # noqa: BLE001 — one plugin must not break boot
+            logger.exception(
+                "webhook plugin %r register_tools raised: %s", plugin_name, exc,
+            )
+            continue
+
+        plugin_tools = list(plugin_tools or [])
+        tools.extend(plugin_tools)
+        if plugin_tools:
+            logger.info(
+                "webhook plugin %r registered %d outbound tool(s)",
+                plugin_name, len(plugin_tools),
+            )
+
+    return tools
