@@ -26,10 +26,10 @@ from reyn.runtime.router_tools import (
     build_tools,
     get_dispatch_kind,
 )
-from reyn.runtime.services.skill_search import BM25Backend
 from reyn.runtime.session import _TOOL_FAILED_FALLBACK_MSG
 from reyn.services.compaction.engine import _IMAGE_FIXED_TOKEN_COST
 from reyn.services.turn_budget import wrap_up_system_prompt
+from reyn.skill.skill_search import BM25Backend
 
 if TYPE_CHECKING:
     from reyn.config import SkillSearchConfig
