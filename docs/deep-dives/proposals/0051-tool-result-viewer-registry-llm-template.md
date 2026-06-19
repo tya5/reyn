@@ -99,6 +99,7 @@ def _shape_fingerprint(result: dict) -> frozenset[str]:
     return frozenset(result.keys())
 
 def _apply_template(result: dict, schema: TemplateSchema) -> RenderableType:
+    from rich.markup import escape
     from rich.table import Table
     table = Table(show_header=False, box=None, expand=False)
     table.add_column("field", style="bold")
@@ -107,7 +108,11 @@ def _apply_template(result: dict, schema: TemplateSchema) -> RenderableType:
         val = result.get(field_key)
         if val is None:
             continue
-        table.add_row(label, str(val)[:500])   # hard cap: no blob dump
+        # Both label (escaped at schema construction) and value (escaped here)
+        # must be markup-safe. Tool-result values are untrusted external content
+        # (#1822 threat surface); a value containing "[bold]" would otherwise
+        # inject Rich markup into the TUI.
+        table.add_row(label, escape(str(val)[:500]))
     if schema.caption:
         table.caption = schema.caption
     return table
@@ -117,7 +122,9 @@ Safety note on `_apply_template`:
 - `label` is stored pre-escaped (escaped at schema construction time, see S3).
 - `field_key` is validated against `result.keys()` at schema construction; applied here
   via `result.get(field_key)` — dict lookup only, no eval.
-- `str(val)[:500]` caps displayed value length (prevents base64 blobs).
+- `str(val)[:500]` caps displayed value length (prevents base64 blobs), then
+  `escape()` strips any Rich markup the tool-result value might contain. Both
+  label AND value are escaped — tool-result values are untrusted external content.
 
 ## S3 — Async LLM template generation
 
@@ -188,7 +195,8 @@ def _parse_template_response(
 
 | Attack surface | Mitigation |
 |---|---|
-| LLM injects Rich markup in `label` | `rich.markup.escape()` at parse time |
+| LLM injects Rich markup in `label` | `rich.markup.escape()` at parse time in `_parse_template_response` |
+| **Tool-result value contains Rich markup** | **`rich.markup.escape()` in `_apply_template` — values are untrusted external content (#1822 threat surface)** |
 | LLM names a non-existent field | `if field not in valid_keys: continue` — strict allowlist |
 | LLM produces code (Python, JS, etc.) | JSON-only response; no eval/exec anywhere in the path |
 | LLM produces giant label/caption | label: escape is applied before truncation is needed (Rich ignores markup tags, display length is bounded by terminal width); caption: `[:40]` hard cap before escape |
@@ -260,24 +268,18 @@ path, return `render_tool_result(result)` only.
 S1 is a safe standalone merge. S2–S3 add code that is unreachable until S4 wires it.
 S4 is the only step that changes user-visible behavior.
 
-## Open questions for lead review
+## Open questions — answered (lead review 2026-06-19)
 
-1. **llm_client surface**: which client type / call signature should `_generate_template`
-   use? The TUI right panel doesn't currently hold a reference to the session's LLM
-   surface. Best path: the app passes it at construction? Or we use a lightweight
-   "generate display hint" OS op that doesn't require a full session?
+1. **llm_client surface** → use the session's existing LLM surface, threaded from app
+   at construction. `None` → skip async path (guard already in `render_tool_result_async`).
 
-2. **Cache persistence**: in-memory cache is lost on TUI restart. Persisting to
-   `.reyn/viewer_templates/<fingerprint>.json` would make learned templates durable.
-   Worth it in Phase 3, or deferred?
+2. **Cache persistence** → in-memory per-session only. Disk persistence deferred.
 
-3. **Re-select UX**: first encounter → YAML (cache miss, async generate in background).
-   Second encounter (user re-selects the same event) → rich view. Is this UX
-   acceptable, or do we want a spinner + inline refresh?
+3. **Re-select UX** → deferred. Ship auto-gen first (first look = YAML, re-select =
+   rich view is acceptable for Phase 3).
 
-4. **LLM model choice**: which model for template generation? A light/fast model is
-   sufficient (the task is trivial — pick fields, write labels). Should the model be
-   configurable, or hardcoded to `light`?
+4. **LLM model choice** → cheap/fast tier (haiku/flash). Task is structured-JSON
+   only; strong model not needed. 256-token cap sufficient.
 
 ## Files
 
@@ -302,6 +304,9 @@ S4 is the only step that changes user-visible behavior.
   produces a Rich Table with the right label/value pairs.
 - `test_apply_template_skips_missing_fields` — a field named in schema but absent in
   result is silently skipped (no KeyError).
+- `test_apply_template_escapes_value_markup` — a result value containing Rich markup
+  (`"[bold]injected[/bold]"`) renders as literal text; the plain output does not
+  contain unescaped Rich tags. Pins the value-escape path against #1822 threat surface.
 - `test_parse_template_response_valid` — valid LLM JSON → TemplateSchema with correct
   rows.
 - `test_parse_template_response_rejects_unknown_field` — a row whose `field` is not in
