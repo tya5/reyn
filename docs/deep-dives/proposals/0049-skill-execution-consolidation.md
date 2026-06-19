@@ -46,16 +46,17 @@ So: `skill_runtime`'s edge is **annotation-only → TYPE_CHECKING-gate** (trivia
 
 | Module (LOC) | Today | reyn.runtime dep? | Disposition |
 |---|---|---|---|
-| `core/op_runtime/skill_resolve.py` (93) | op_runtime | none (deps `reyn.skill.skill_paths`) | **→ `reyn.skill`** — clean, already skill-facing |
+| `core/op_runtime/skill_resolve.py` (93) | op_runtime (Control IR op **backend**) | none (deps `reyn.skill.skill_paths`) | **op-backend group (S4), NOT a clean leaf** — correction (verified at S1): `skill_resolve.py:93 register("skill_resolve", handle)` makes it a Control IR op handler (side-effect-imported by `op_runtime/__init__` alongside run_skill/mcp). Same treatment as `run_skill`: the **op registration stays in `op_runtime`**, the **logic (`_categorize_source` …) delegates to `reyn.skill`**. |
 | `runtime/services/skill_search.py` (114) | runtime/services | none (BM25, pure) | **→ `reyn.skill`** — clean, runtime-independent |
 | `core/op_runtime/run_skill.py` (270) | op_runtime (Control IR op **backend**) | none at module level | **stays an op backend** in `op_runtime`; **delegates** its skill-running logic to `reyn.skill`. It is registered `"run_skill": RunSkillIROp` in `op_runtime/registry.py` (op-kind → model → purity → backend). Moving the op dispatch out of `op_runtime` would split the Control IR registry from its backends — keep the thin op, move the logic. |
 | `skill_runtime.py` (386, `SkillRuntime`, **22 consumers**) | top-level | `reyn.runtime.budget.BudgetTracker` (module-level, **annotation-only**) | **→ `reyn.skill`** — the budget edge is annotation-only → **TYPE_CHECKING-gate** (no inversion). 22 importers repoint. **Lowest-risk substantive cut (S2).** |
 | `runtime/services/skill_runner.py` (919) | runtime/services | `reyn.runtime.outbox.OutboxMessage` (type) + fn-local forwarder/budget-format | **→ `reyn.skill`** — the largest cut. `OutboxMessage` needs a real decision in **S3** on the actual diff: it has **~32 importers** (repoint blast radius) and is a Session/presentation VO (a lower `reyn.skill` importing a presentation VO is a layering smell), so (a) relocate-to-`reyn.schemas` vs (b'') skill-local record + a runtime-boundary adapter is decided then, not locked now. |
 | `runtime/services/skill_plan_glue.py` (304, `SkillPlanGlue`) | runtime/services | **`reyn.runtime.session` / `chat_message` / `errors`** | **STAYS in `runtime/services`** — refinement: despite being in the dispatch list, the flow-trace shows this is a **Session collaborator** ("skill/plan completion routing + chain timeout *for Session*", extracted from session.py in FP-0019). It is runtime/Session glue, not skill-package logic; moving it would deeply invert (`reyn.skill → reyn.runtime.session`). (Same kind of pre-impl scope refinement as the C6 9→6 / C7 dead-vs-live cuts.) |
 
-**Net: 4 modules consolidate into `reyn.skill`** (skill_resolve, skill_search,
-skill_runtime, skill_runner), **run_skill stays a thin op backend delegating to
-`reyn.skill`**, **skill_plan_glue stays in `runtime/services`**.
+**Net (corrected at S1): 3 modules consolidate into `reyn.skill`**
+(skill_search, skill_runtime, skill_runner); **`run_skill` AND `skill_resolve`
+stay as thin op backends in `op_runtime`, delegating logic to `reyn.skill`**;
+**skill_plan_glue stays in `runtime/services`**.
 
 ## Dependency-inversion options (for review — the key decision)
 
@@ -96,17 +97,21 @@ Following the #311 / C-series playbook (git mv byte-identical → atomic importe
 repoint → no shim → `verify_package_move.py` straggler 0 incl repo-root config →
 full CI per stage):
 
-- **S1 (clean leaves)**: `skill_search` + `skill_resolve` → `reyn.skill`. Pure
-  moves, no inversion, smallest blast radius — de-risks the pattern. (skill_resolve
-  is an op_runtime module but runtime-independent; confirm its op callers in S1.)
+- **S1 (clean leaf)**: `skill_search` → `reyn.skill.skill_search`. Pure
+  byte-identical move, no inversion, smallest blast radius (one real importer:
+  `router_loop.py:29` — distinct from the unrelated `reyn.stdlib.skills.skill_search`
+  *skill*). De-risks the pattern + first-wires the layer-direction gate.
+  (`skill_resolve` was originally bundled here; the S1 op-caller check found it is
+  an op handler → moved to S4. See the disposition table.)
 - **S2 (`SkillRuntime`)**: `skill_runtime.py` → `reyn.skill.skill_runtime`, with
   the budget dep **TYPE_CHECKING-gated** (annotation-only — no inversion). 22
   importers repoint. Behavior-preserving. Lowest-risk substantive cut.
 - **S3 (`skill_runner`)**: the 919-LOC move. `OutboxMessage` decision (a vs b'')
   made here on the actual diff (~32 importers; presentation-VO layering smell).
   Largest; its own stage + design-confirm + review.
-- **S4 (run_skill delegation)**: thin the `run_skill` op backend to delegate to
-  the consolidated `reyn.skill` entry (behavior-preserving rewire, not a move).
+- **S4 (op-backend delegation)**: thin the `run_skill` **and `skill_resolve`** op
+  backends to delegate their logic to the consolidated `reyn.skill` entries
+  (op registration stays in `op_runtime`; behavior-preserving rewire, not a move).
 
 **Per-stage layer-direction gate (lead's add):** `verify_package_move` checks
 stragglers but not import direction, so each stage additionally **asserts
