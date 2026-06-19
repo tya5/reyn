@@ -207,7 +207,31 @@ def build_system_prompt(
         "  - Errors MUST surface verbatim. Never narrate an error as success.",
         "    Optimism bias on errors is the single largest router-narration"
         " failure mode.",
+        # #1791 A1 (adopted by design judgment): TASK_COMPLETION — anti-fabrication
+        # + finish-the-task + honest-blocker. Static-core, all-model, cached.
+        "  - Finishing the job: when asked to build, run, or verify something, the"
+        " deliverable is a working result backed by REAL tool output — not a"
+        " description of one. Do not stop after a stub, a plan, or a single command;"
+        " keep working until you have actually produced the requested result, then"
+        " report what real execution returned.",
+        "  - NEVER substitute fabricated output (invented data, file contents, or"
+        " tool/command results) for results you could not actually produce. If a tool"
+        " or call fails and blocks the real path, say so directly and try an"
+        " alternative — reporting a blocker honestly is always better than inventing"
+        " a result.",
     ])
+
+    # #1791 #3 (adopted by design judgment, GATED): memory-quality guidance, rendered
+    # ONLY when the memory tool is active (memory_index present) — mirrors Hermes
+    # MEMORY_GUIDANCE; gating keeps the cost off non-memory agents (SP-minimize-compatible).
+    if memory_index.get("status") == "ok":
+        parts.append(
+            "  - Memory guidance: save durable facts only (user preferences, recurring"
+            " corrections, environment quirks, stable conventions). Do NOT save PR or"
+            " issue numbers, commit SHAs, completed-task logs, or anything that will be"
+            " stale within a week. Write memories as declarative facts, not instructions"
+            " to yourself."
+        )
 
     # ── FP-0025 D — Plan decomposition Behaviour rule ─────────────────────────
     # B23-PRE-1 SP role-separation: ## Plan decomposition subsection (detail)

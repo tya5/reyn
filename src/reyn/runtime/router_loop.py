@@ -1762,6 +1762,22 @@ class RouterLoop:
             # RePresent re-present keeps it.
             "exclude_tools": self._exclude_tools,
         }
+        # #1791 A2: resolve the router model class → coarse family (raw FACT; the
+        # scheme derives the non-Claude operational-steering policy from it, P7-clean).
+        # Single classifier (model_resolver.model_family); resolved string carries the
+        # family regardless of proxy prefix.
+        _rm_family = "other"
+        try:
+            from reyn.llm.model_resolver import model_family as _model_family
+            _rsv = getattr(self.host, "resolver", None)
+            _resolved = (
+                _rsv.resolve(self.router_model).model
+                if _rsv is not None and hasattr(_rsv, "resolve")
+                else self.router_model
+            )
+            _rm_family = _model_family(_resolved)
+        except Exception:
+            _rm_family = "other"
         _scheme_layer_ctx = {
             "phase_op_catalog": _phase_op_catalog,
             "univ_enabled": _univ_enabled,
@@ -1771,6 +1787,7 @@ class RouterLoop:
             # (not the OS) derives discovery_mandate + non_interactive idiom from
             # these. OS does NOT pre-compute discovery_mandate here (P7-clean).
             "router_model": self.router_model,
+            "router_model_family": _rm_family,  # #1791 A2: raw family fact; scheme gates non-Claude
             "non_interactive": self._non_interactive,
         }
         self._scheme_available = _scheme_available
