@@ -21,9 +21,13 @@ Design (lead-ratified #1154 Phase 1–3):
     AND value escaped; both are untrusted content). ``_SHAPE_TEMPLATE_CACHE``
     for per-session shape fingerprint → schema caching. Not yet reachable
     (S3 adds LLM generation; S4 wires the async path at the call site).
-  - Phase 3 (S3–S4, deferred): LLM-generated viewer templates for novel
-    types; email-card deferred until a real in-repo email result producer
-    exists.
+  - Phase 3 (S3): ``_parse_template_response`` (JSON-only, label escape,
+    field allowlist, row+caption caps) + ``_generate_template`` (async LLM
+    call, cheap/fast model, 256-token cap, None on any failure) +
+    ``render_tool_result_async`` (sync registry first, then LLM fallback with
+    cache). Not yet wired at the call site (S4).
+  - Phase 3 (S4, deferred): wire ``render_tool_result_async`` at
+    ``right_panel/__init__.py:_show_event_in_preview``.
 
 This module is intentionally pure (dict in → Rich renderable | None) so it
 is testable in isolation without the Textual app.
@@ -315,6 +319,100 @@ def _apply_template(result: dict, schema: TemplateSchema) -> RenderableType:
 
 
 # ---------------------------------------------------------------------------
+# Phase 3 S3: async LLM template generation + safety fence
+# ---------------------------------------------------------------------------
+
+_LLM_PROMPT_TEMPLATE = """\
+You are a TUI display formatter. Given a tool result dict with these keys:
+{keys}
+
+Respond with ONLY valid JSON — no prose, no markdown fences:
+{{"rows": [{{"label": "Human label", "field": "dict_key"}}], "caption": "short type description"}}
+
+Rules:
+- Each "field" value must be exactly one of the listed keys above
+- Omit fields that contain large blobs, base64 data, or internal IDs
+- Maximum 8 rows
+- caption must be 40 characters or fewer
+"""
+
+_MAX_TEMPLATE_ROWS = 8
+_MAX_CAPTION_CHARS = 40
+
+
+def _parse_template_response(
+    raw: str,
+    valid_keys: frozenset[str],
+) -> TemplateSchema | None:
+    """Parse and safety-fence the LLM JSON output → TemplateSchema or None.
+
+    Security contract (all enforced here; None returned on any violation):
+    - JSON-only parsing (``json.loads``); no ``eval`` or ``exec`` anywhere.
+    - ``label`` escaped via ``rich.markup.escape()`` at construction time.
+    - ``field`` must be a member of ``valid_keys`` (strict allowlist); any
+      field not present in the result dict is silently dropped.
+    - Row count capped at ``_MAX_TEMPLATE_ROWS`` (8).
+    - Caption hard-capped at ``_MAX_CAPTION_CHARS`` chars before escape.
+    - Any parse error, type mismatch, or empty result → ``None``.
+    """
+    import json as _json
+
+    from rich.markup import escape
+
+    try:
+        data = _json.loads(raw.strip())
+    except (ValueError, _json.JSONDecodeError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    rows_raw = data.get("rows")
+    if not isinstance(rows_raw, list):
+        return None
+    rows: list[tuple[str, str]] = []
+    for item in rows_raw[: _MAX_TEMPLATE_ROWS]:
+        if not isinstance(item, dict):
+            continue
+        label = item.get("label", "")
+        field_key = item.get("field", "")
+        if not isinstance(label, str) or not isinstance(field_key, str):
+            continue
+        if field_key not in valid_keys:
+            continue  # strict allowlist: only known keys survive
+        rows.append((escape(label), field_key))
+    if not rows:
+        return None
+    caption_raw = data.get("caption", "")
+    caption = (
+        escape(str(caption_raw)[: _MAX_CAPTION_CHARS])
+        if isinstance(caption_raw, str)
+        else ""
+    )
+    return TemplateSchema(rows=rows, caption=caption)
+
+
+async def _generate_template(
+    result: dict,
+    llm_client: Any,
+) -> TemplateSchema | None:
+    """Call the LLM once to produce a display schema for this result shape.
+
+    Returns ``None`` on any failure — parse error, validation error, LLM
+    error, or timeout. Callers must treat ``None`` as "fall back to YAML and
+    do not retry this shape" (stored as ``None`` in ``_SHAPE_TEMPLATE_CACHE``).
+
+    The LLM only sees the top-level key names (not values), so it cannot
+    leak sensitive data from the result dict.
+    """
+    keys = sorted(result.keys())
+    prompt = _LLM_PROMPT_TEMPLATE.format(keys=keys)
+    try:
+        raw = await llm_client.complete(prompt, max_tokens=256)
+        return _parse_template_response(raw, valid_keys=frozenset(keys))
+    except Exception:
+        return None
+
+
+# ---------------------------------------------------------------------------
 # Public dispatch entry point (API unchanged from Phase 1–2c)
 # ---------------------------------------------------------------------------
 
@@ -332,3 +430,33 @@ def render_tool_result(result: Any) -> RenderableType | None:
         if entry.predicate(result):
             return entry.viewer(result)
     return None
+
+
+async def render_tool_result_async(
+    result: Any,
+    llm_client: Any,
+) -> RenderableType | None:
+    """Async variant: sync registry first, then LLM-generated template fallback.
+
+    Falls back to ``None`` (caller uses YAML) if both paths produce nothing.
+    The sync ``render_tool_result()`` API is unchanged.
+
+    ``llm_client=None`` disables LLM generation (no session active); only
+    the sync registry path runs.
+
+    Cache behaviour: on a cache miss, ``_generate_template`` is awaited and
+    the result (schema or ``None``) is stored to avoid retrying the same shape.
+    A ``None`` cache entry means "generation failed; skip LLM for this shape."
+    """
+    viewed = render_tool_result(result)
+    if viewed is not None:
+        return viewed
+    if not isinstance(result, dict) or not result or llm_client is None:
+        return None
+    fp = _shape_fingerprint(result)
+    if fp in _SHAPE_TEMPLATE_CACHE:
+        schema = _SHAPE_TEMPLATE_CACHE[fp]
+        return _apply_template(result, schema) if schema is not None else None
+    schema = await _generate_template(result, llm_client)
+    _SHAPE_TEMPLATE_CACHE[fp] = schema
+    return _apply_template(result, schema) if schema is not None else None
