@@ -545,6 +545,15 @@ _LLM_RETRY_MAX_ATTEMPTS: int = _env_num("REYN_LLM_RETRY_MAX_ATTEMPTS", 3, 1, 10,
 _LLM_RETRY_BASE_S: float = _env_num("REYN_LLM_RETRY_BASE_S", 2.0, 0.1, 30.0, float)
 _LLM_RETRY_MAX_BACKOFF_S: float = 16.0
 
+# #1829 S3a (#1835 fold): per-Router baseline exception-retry count when routing
+# through a litellm.Router. The Router does infra-exception retry WITH native
+# Retry-After respect (and cooldown/fallbacks once S3b adds a multi-deployment
+# model_list), so on the router path Reyn's _llm_call_with_retry drops to
+# empty-choices-only (Router never retries a non-exception 200 → #187 B1 stays
+# Reyn-owned). A per-call num_retries (the callsite's max_retries) still overrides
+# this baseline (probe-verified: per-call wins). Default 3 = today's attempt count.
+_LLM_ROUTER_NUM_RETRIES: int = _env_num("REYN_LLM_ROUTER_NUM_RETRIES", 3, 0, 10, int)
+
 
 def _use_llm_router() -> bool:
     """#1829 S1: gate for routing acompletion through a litellm.Router (default OFF
@@ -671,6 +680,15 @@ async def _llm_call_with_retry(
             return response
         except BaseException as exc:
             if not _is_retryable_exc(exc):
+                raise
+            # #1829 S3a (#1835 fold): on the router path the litellm.Router has
+            # ALREADY retried infra exceptions (5xx / timeout / connect) with
+            # native Retry-After respect, so re-retrying them here would double
+            # (Router N × Reyn N). Only EmptyLLMResponseError (200 + empty choices,
+            # #187 B1) stays Reyn-owned — the Router does not retry a non-exception
+            # 200. Router OFF → unchanged (full exponential-backoff retry of all
+            # _is_retryable_exc kinds; byte-identical to pre-#1829).
+            if _use_llm_router() and not isinstance(exc, EmptyLLMResponseError):
                 raise
             last_exc = exc
             retries_remaining = _LLM_RETRY_MAX_ATTEMPTS - attempt - 1
@@ -959,10 +977,14 @@ _ROUTERS_BY_LOOP: "weakref.WeakKeyDictionary[object, dict[str, object]]" = (
 
 
 def _single_deployment_router(model: str):
-    """#1829 S1→S2: return a single-deployment ``litellm.Router`` for *model*, now
-    cached per running event loop (#1829 S2). NO extra retry/fallback/cooldown
-    (``num_retries=0``) — fallbacks/cooldown/retry_policy (folding #1835) and a
-    multi-deployment model_list (where fallbacks need it) land in S3.
+    """#1829 S1→S3a: return a single-deployment ``litellm.Router`` for *model*,
+    cached per running event loop (#1829 S2). The Router owns exception-retry with
+    native Retry-After respect (``num_retries=_LLM_ROUTER_NUM_RETRIES`` baseline; a
+    per-call ``num_retries`` from the callsite's ``max_retries`` overrides it —
+    probe-verified). On this router path Reyn's ``_llm_call_with_retry`` is
+    empty-choices-only (#1835 fold, S3a). A multi-deployment ``model_list`` +
+    ``fallbacks``/``cooldown_time`` (cross-model chain — where multiple deployments
+    are needed) land in S3b.
 
     Per-call routing params (api_base / provider / api_key / response_format / …)
     are passed through on the ``router.acompletion`` call (not baked into the
@@ -982,7 +1004,7 @@ def _single_deployment_router(model: str):
     if router is None:
         router = _ll.Router(
             model_list=[{"model_name": model, "litellm_params": {"model": model}}],
-            num_retries=0,
+            num_retries=_LLM_ROUTER_NUM_RETRIES,
         )
         per_loop[model] = router
     return router
