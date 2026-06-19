@@ -59,6 +59,30 @@ if TYPE_CHECKING:
     from reyn.runtime.registry import AgentRegistry
 
 
+class _ViewerTemplateLLMClient:
+    """Thin adapter for viewer-template LLM calls (#1154 Phase 3 S4).
+
+    Wraps ``recorded_acompletion`` (cost chokepoint) with the "claude-haiku"
+    built-in model (cheap/fast tier per FP-0051, 256-token cap) and
+    purpose="dogfood" (= auxiliary TUI surface, recorder=None).
+
+    Exposes only ``complete(prompt, max_tokens) -> str`` — the interface
+    expected by ``render_tool_result_async`` / ``_generate_template``.
+    Never raises: callers treat any exception as "skip LLM path."
+    """
+
+    async def complete(self, prompt: str, max_tokens: int = 256) -> str:
+        from reyn.llm.llm import recorded_acompletion
+        response = await recorded_acompletion(
+            model="claude-haiku",
+            messages=[{"role": "user", "content": prompt}],
+            purpose="dogfood",
+            recorder=None,
+            extra_kwargs={"max_tokens": max_tokens, "timeout": 10.0, "num_retries": 0},
+        )
+        return (response.choices[0].message.content or "").strip()
+
+
 PANEL_TYPES: list[str] = [
     "keys", "events", "agents", "memory", "cost", "docs", "pending",
 ]
@@ -1184,21 +1208,47 @@ class RightPanel(Widget):
         idx = max(0, min(len(self._events_visible) - 1, self._events_cursor))
         ev = self._events_visible[idx]
         title = f"event #{idx} · {ev.get('type', '?')}"
-        # #1154 Phase 1: content-type-aware viewer for tool-result events.
-        # When a tool_returned / tool_executed result carries a recognized
-        # content-type (markdown / CSV), render it via the dedicated viewer;
-        # otherwise fall back to the generic YAML preview (degrade, never
-        # hide content).
+        # #1154 Phase 1–3: content-type-aware viewer for tool-result events.
+        # Sync registry runs first (instant). On a miss, show YAML immediately
+        # (never hide content), then spawn an async task to attempt an
+        # LLM-generated template (Phase 3 S3/S4). If the async path produces a
+        # richer view it replaces the YAML in-place.
         if ev.get("type") in ("tool_returned", "tool_executed"):
             from .tool_result_viewers import render_tool_result
             # Event emit kwargs are nested under ``data`` (events.py
             # ``Event(type=, data=)``), so the op result dict lives at
             # ``data["result"]`` — not the event's top level.
-            viewed = render_tool_result((ev.get("data") or {}).get("result"))
+            result = (ev.get("data") or {}).get("result")
+            viewed = render_tool_result(result)
             if viewed is not None:
                 pane.show_text(title, viewed)
                 return
+            # Sync registry miss: show YAML now, try LLM template async.
+            pane.show_text(title, self._render_as_yaml(ev))
+            import asyncio
+            asyncio.create_task(
+                self._show_event_llm_fallback(pane, result, title)
+            )
+            return
         pane.show_text(title, self._render_as_yaml(ev))
+
+    async def _show_event_llm_fallback(
+        self,
+        pane: _PreviewPane,
+        result: object,
+        title: str,
+    ) -> None:
+        """Async LLM viewer-template fallback for tool-result preview (#1154 S4).
+
+        Runs after the sync registry returned None. Calls render_tool_result_async
+        with a cheap LLM client; if a template is generated it replaces the YAML
+        that _show_event_in_preview showed. Uses the per-session in-memory cache,
+        so repeated navigation to the same result shape incurs no LLM call.
+        """
+        from .tool_result_viewers import render_tool_result_async
+        viewed = await render_tool_result_async(result, _ViewerTemplateLLMClient())
+        if viewed is not None:
+            pane.show_text(title, viewed)
 
     def _memory_move(self, delta: int) -> None:
         """Move the memory tab cursor; sync preview if open.
