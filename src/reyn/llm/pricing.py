@@ -91,6 +91,18 @@ def estimate_cost(
     try:
         import litellm
 
+        # #1829 S2 (option 3): a ``litellm.model_cost`` entry can EXIST with None
+        # prices — a price-less PLACEHOLDER (e.g. a ``litellm.Router`` deployment
+        # registration adds one). ``cost_per_token`` then returns 0.0 for it,
+        # conflating "cost unknown" with "free". An unpriced model means cost
+        # UNKNOWN → return (None, None), not 0.0. (unknown ≠ free — None is the
+        # explicit unknown sentinel; 0.0 would wrongly read as a real free call.)
+        _entry = litellm.model_cost.get(model)
+        if (not _entry
+                or _entry.get("input_cost_per_token") is None
+                or _entry.get("output_cost_per_token") is None):
+            return None, None
+
         prompt_cost, completion_cost = litellm.cost_per_token(
             model=model,
             prompt_tokens=usage.prompt_tokens,
