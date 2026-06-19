@@ -143,6 +143,17 @@ Lead dispatched the §5 questions to broker competitor research (Hermes/OpenClaw
 - **S6 (Part 2):** **Class C** (EP4 exec) command scan (`exec` scope, own impl per Q2).
 - *(Part 3 `reyn audit` = separate FP, OSS-publication phase.)*
 
+### Deferred-scope tracking (#1822 close-gate — owner directive)
+
+Before #1822 is closed, the original ticket (prompt-injection scan + pre-exec command scan + the #1820/#1821 folds) must be cross-checked full-text and **every deferred vector must be covered or have a follow-up tracking issue** ([[feedback_track_deferred_work_before_close]]). Two defers stand:
+
+| Deferred | Correct seam | Residual vector (until follow-up) | Covered by S5 (exec)? |
+|---|---|---|---|
+| **BP2** skill/MCP-install block | scan the fetched `server.json` metadata at `mcp_install` before config-write | a malicious *command* in an installed MCP server's config (run via the MCP stdio transport: npx/uvx/docker) | **No** — S5 scans `sandboxed_exec` command strings, not the MCP-transport launch command → **needs a follow-up issue** |
+| **EP7** webhook/A2A peer-answer fence | the answer→history injection point (NOT the delivery boundary, which corrupts buffered-answer + choice-id) | a peer's *free-text* answer carrying injection, surfaced as the intervention response into context | **No** — distinct from exec → **needs a follow-up issue** |
+
+Mitigations active today: BP2's installed-server descriptions/results are read-time fenced (S2/EP6); EP7's known-pattern injection is caught by scan-all at the tool-result chokepoint when the answer re-enters via a tool path (but the direct intervention-response path is the gap). **Lead gates #1822 close on filing these follow-ups.**
+
 Gate per stage: scan/fence fires at the seam (positive + negative content); **fence-respecting verified on a capable model AND scan-backstop verified independently** (the weak-model defense-in-depth claim, §3.3); no duplication with permission/sandbox (existing tests green); P7 (no skill strings in OS); config round-trip (non-default value). Block stages (S5) falsify-tested (poisoned write rejected; clean write passes).
 
 ## 7. Decision requested
