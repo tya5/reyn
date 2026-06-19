@@ -1,9 +1,9 @@
-# Reyn plugin authoring guide
+# Reyn gateway authoring guide
 
-> FP-0041 #489 follow-up — plugin framework spec for Reyn integrations
+> Gateway framework spec for Reyn integrations
 > (= webhook handlers for Slack / LINE / Discord / GitHub etc.).
 
-This guide is for **plugin authors** who want to add inbound webhook
+This guide is for **gateway authors** who want to add inbound webhook
 integrations to Reyn (= e.g. a chat-transport adapter for a service
 not covered by the bundled samples).
 
@@ -11,21 +11,21 @@ not covered by the bundled samples).
 
 Reyn core stays free of transport-specific protocol code: signing
 schemes, event payload schemas, and SDK dependencies all live in
-plugins. The trade-off — operator installs an extra package — is
+gateways. The trade-off — operator installs an extra package — is
 worth it because:
 
 - Reyn maintainers don't track Slack / LINE / Discord / etc. API drift
-- Each transport's SDK choices stay local to its plugin
-- Operators run only the plugins they need
-- Community can ship plugins independent of Reyn's release cycle
+- Each transport's SDK choices stay local to its gateway
+- Operators run only the gateways they need
+- Community can ship gateways independent of Reyn's release cycle
 
-The bundled ``sample_*`` plugins under ``src/reyn/gateway/`` exist as
+The bundled ``sample_*`` gateways under ``src/reyn/gateway/`` exist as
 reference implementations + quick-start fixtures. Production
 integrations should fork or replace them.
 
-## Plugin shape
+## Gateway shape
 
-A webhook plugin is a Python package that exposes a single callable
+A webhook gateway is a Python package that exposes a single callable
 named ``register_router`` (= conventional) via the ``reyn.webhooks``
 entry point group.
 
@@ -53,7 +53,7 @@ line = "my_reyn_webhook_line:register_router"
 ```
 
 The entry point name (= ``line``) is what operators put in their
-``webhooks.yaml`` to activate this plugin.
+``webhooks.yaml`` to activate this gateway.
 
 ### register_router contract
 
@@ -61,10 +61,10 @@ The entry point name (= ``line``) is what operators put in their
 from fastapi import APIRouter
 
 def register_router(config: dict) -> APIRouter | None:
-    """Build the plugin's webhook router.
+    """Build the gateway's webhook router.
 
     config: per-instance dict from webhooks.yaml, minus reyn-reserved
-            keys (package, enabled). Plugin-defined fields only.
+            keys (package, enabled). Gateway-defined fields only.
     returns: an APIRouter to mount, or None to skip (= e.g. required
              option missing). When returning None, log a warning so
              the operator can see why.
@@ -73,27 +73,27 @@ def register_router(config: dict) -> APIRouter | None:
 ```
 
 The returned ``APIRouter`` is mounted on the Reyn web app at the path
-the plugin chooses. By convention webhook plugins use
+the gateway chooses. By convention webhook gateways use
 ``/webhook/<service>`` as the route path so operators paste a
 predictable URL into their service's webhook config UI.
 
 ## webhooks.yaml schema
 
-Operators activate plugins in ``webhooks.yaml`` (= sibling of
+Operators activate gateways in ``webhooks.yaml`` (= sibling of
 ``reyn.yaml`` at the project root):
 
 ```yaml
 # webhooks.yaml
 
-# Short form: just the plugin name (= empty value)
+# Short form: just the gateway name (= empty value)
 sample_slack:
-  target_agent: news_agent      # plugin-defined field
+  target_agent: news_agent      # gateway-defined field
 
-# Long form: explicit reyn-reserved fields + plugin fields
-my_other_plugin:
-  package: reyn-plugin-line     # optional: disambiguates same-name plugins
+# Long form: explicit reyn-reserved fields + gateway fields
+my_other_gateway:
+  package: reyn-gateway-line     # optional: disambiguates same-name gateways
   enabled: false                # optional, default true
-  some_option: value            # plugin-defined
+  some_option: value            # gateway-defined
 ```
 
 ### Reyn-reserved keys
@@ -103,24 +103,24 @@ The loader interprets these and removes them from what's passed to
 
 | Key | Default | Purpose |
 |-----|---------|---------|
-| ``package`` | unset | Disambiguates when multiple packages register the same plugin name. Match against the Python distribution name. |
+| ``package`` | unset | Disambiguates when multiple packages register the same gateway name. Match against the Python distribution name. |
 | ``enabled`` | ``true`` | Set ``false`` to deactivate without removing config. |
 
-Plugin authors must avoid using these names in their plugin-defined
+Gateway authors must avoid using these names in their gateway-defined
 fields.
 
-### Per-plugin options
+### Per-gateway options
 
-Everything in the per-plugin dict except the reyn-reserved keys is
+Everything in the per-gateway dict except the reyn-reserved keys is
 forwarded to ``register_router`` as the ``config`` argument. The
-plugin author defines this schema.
+gateway author defines this schema.
 
 Secrets (= API keys, signing secrets) belong in **environment
 variables**, never in webhooks.yaml.
 
-## Stable plugin API — ``reyn.gateway.api``
+## Stable gateway API — ``reyn.gateway.api``
 
-The module exposes the **stable contract** plugin authors consume.
+The module exposes the **stable contract** gateway authors consume.
 Internal session methods (= ``_put_inbox`` etc.) may change between
 Reyn versions; this API stays stable.
 
@@ -129,7 +129,7 @@ Reyn versions; this API stays stable.
   push_to_agent(*, target_agent, text, sender, reply_to=None,
                 kind="user", extra_meta=None, registry=None)
     Deliver a message to a Reyn agent's inbox. Default for webhook
-    plugins.
+    gateways.
 
   list_agents(*, registry=None) -> list[str]
     All agent names known to the project (= sorted disk view).
@@ -146,10 +146,10 @@ Reyn versions; this API stays stable.
     raw f-strings so dispatch attribution label rendering follows
     the standard format. See examples in the docstring.
 
-## Inbound envelope shape + stable plugin API
+## Inbound envelope shape + stable gateway API
 
-When the plugin's route receives a webhook, push to the target
-agent's inbox via the **stable plugin API** in ``reyn.gateway.api``::
+When the gateway's route receives a webhook, push to the target
+agent's inbox via the **stable gateway API** in ``reyn.gateway.api``::
 
 ```python
 from reyn.runtime.transport import ExternalRef
@@ -178,7 +178,7 @@ Reyn's session dispatch automatically:
   attribution)
 - Captures ``reply_to`` for outbound reply routing (= PR-D2)
 
-The plugin API receives an optional ``registry`` kwarg for tests
+The gateway API receives an optional ``registry`` kwarg for tests
 (= inject an ``AgentRegistry`` stub). Production code omits it
 and uses the process-shared registry.
 
@@ -200,38 +200,38 @@ external_transports:
           text: "{text}"
 ```
 
-The webhook plugin doesn't need to handle outbound — Reyn dispatches
+The webhook gateway doesn't need to handle outbound — Reyn dispatches
 via the configured MCP server. Operators install the appropriate
 MCP server (= e.g. ``@modelcontextprotocol/server-line``) and
 declare the transport mapping.
 
 ## Testing
 
-Unit-test the plugin's helpers (= signing verify, envelope mint)
+Unit-test the gateway's helpers (= signing verify, envelope mint)
 directly. Integration-test the route via FastAPI's ``TestClient``
 + a stubbed ``AgentRegistry`` (= see
-``tests/plugins/sample_slack/test_webhook.py`` for the pattern).
+``tests/gateway/sample_slack/test_webhook.py`` for the pattern).
 
-Avoid loading the full ``reyn.web.server.app`` in plugin tests; mount
-the plugin's router on a fresh ``FastAPI()`` so tests stay
+Avoid loading the full ``reyn.web.server.app`` in gateway tests; mount
+the gateway's router on a fresh ``FastAPI()`` so tests stay
 hermetic.
 
 ## Conflict resolution
 
-When two installed packages both register the same plugin name (= e.g.
-two ``slack`` plugins), the loader logs a warning and uses the first
+When two installed packages both register the same gateway name (= e.g.
+two ``slack`` gateways), the loader logs a warning and uses the first
 match. Operators should pin ``package:`` in ``webhooks.yaml`` to
 disambiguate.
 
 ## Versioning compatibility
 
-Plugins pin their Reyn version range in ``pyproject.toml``:
+Gateways pin their Reyn version range in ``pyproject.toml``:
 
 ```toml
 dependencies = ["reyn >= 0.1, < 0.2"]
 ```
 
-The plugin contract (= ``register_router(config) -> APIRouter | None``,
+The gateway contract (= ``register_router(config) -> APIRouter | None``,
 envelope shape, ``ExternalRef`` routing) is intended to stay stable
 across minor Reyn versions; breaking changes will be flagged in the
 changelog.
