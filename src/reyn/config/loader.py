@@ -99,6 +99,28 @@ def load_project_context(config: ReynConfig, project_root: Path) -> str:
     return ""
 
 
+def _as_config_dict(val: object, key: str) -> dict:
+    """Coerce a top-level config value to a dict, defaulting on a malformed type.
+
+    A ``models:`` / ``permissions:`` written as a scalar or list in reyn.yaml
+    (a user typo) would otherwise crash the loader with an uncaught
+    ``AttributeError`` (``.items()`` on a str) / ``ValueError`` (``dict()`` on a
+    non-pair list). Default to ``{}`` instead, with a decision-enabling warning
+    so the operator learns their config block was ignored rather than silently
+    eaten — matches the lenient-default pattern the section builders use.
+    """
+    if val is None:
+        return {}
+    if not isinstance(val, dict):
+        import logging
+        logging.getLogger(__name__).warning(
+            "config key %r must be a mapping; got %s — ignoring it.",
+            key, type(val).__name__,
+        )
+        return {}
+    return val
+
+
 def _merge(base: dict, override: dict) -> dict:
     """Merge override into base. models and permissions dicts are shallow-merged; all other keys override."""
     result = dict(base)
@@ -379,7 +401,7 @@ def load_config(cwd: Path | None = None) -> ReynConfig:
         output_language=output_language,
         models={
             str(k): (v if isinstance(v, dict) else str(v))
-            for k, v in (merged.get("models") or {}).items()
+            for k, v in _as_config_dict(merged.get("models"), "models").items()
         },
         model_class_by_purpose=_build_model_class_by_purpose(
             merged.get("model_class_by_purpose"),
@@ -402,7 +424,7 @@ def load_config(cwd: Path | None = None) -> ReynConfig:
             if "project_context_path" in merged
             else None
         ),
-        permissions=dict(merged.get("permissions") or {}),
+        permissions=_as_config_dict(merged.get("permissions"), "permissions"),
         mcp=dict(merged.get("mcp") or {}),
         mcp_search_threshold=_parse_mcp_search_threshold(merged.get("mcp")),
         python=_build_python_config(merged.get("python")),
