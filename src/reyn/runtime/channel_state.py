@@ -32,7 +32,6 @@ import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from enum import Enum
-from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -211,50 +210,6 @@ class ChannelState:
             if current - self.last_ack_at > self.stale_after:
                 return False
         return True
-
-    def to_dict(self) -> dict[str, Any]:
-        """JSON-safe serialization for persistence (= RunRegistry Phase 1
-        snapshot integration)."""
-        return {
-            "channel_id": self.channel_id,
-            "is_open": self.is_open,
-            "last_ack_at": (
-                self.last_ack_at.isoformat()
-                if self.last_ack_at is not None
-                else None
-            ),
-            "delivery_failures": self.delivery_failures,
-            "delivery_attempts_total": self.delivery_attempts_total,
-            "failure_threshold": self.failure_threshold,
-            "stale_after_seconds": self.stale_after.total_seconds(),
-        }
-
-    @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "ChannelState":
-        """Inverse of ``to_dict``. Resilient to missing optional fields."""
-        last_ack_raw = data.get("last_ack_at")
-        last_ack: datetime | None = None
-        if isinstance(last_ack_raw, str):
-            try:
-                last_ack = datetime.fromisoformat(last_ack_raw)
-            except ValueError:
-                last_ack = None
-        stale_seconds = data.get("stale_after_seconds")
-        try:
-            stale_after = timedelta(seconds=float(stale_seconds))
-        except (TypeError, ValueError):
-            stale_after = timedelta(minutes=5)
-        return cls(
-            channel_id=str(data.get("channel_id", "")),
-            is_open=bool(data.get("is_open", True)),
-            last_ack_at=last_ack,
-            delivery_failures=int(data.get("delivery_failures", 0) or 0),
-            delivery_attempts_total=int(
-                data.get("delivery_attempts_total", 0) or 0,
-            ),
-            failure_threshold=int(data.get("failure_threshold", 3) or 3),
-            stale_after=stale_after,
-        )
 
 
 __all__ = [

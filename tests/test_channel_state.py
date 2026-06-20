@@ -19,9 +19,7 @@ Pins:
   4. ``ChannelState.is_alive`` 3-way inference: explicit ``is_open=False``,
      ``delivery_failures >= failure_threshold``, stale ``last_ack_at``
      all return False; otherwise True.
-  5. JSON round-trip preserves shape (= persistence into RunRegistry
-     snapshot Phase 2 follow-up).
-  6. Default values (= DEFAULT_RETRY_POLICY, NO_RETRY_POLICY) are the
+  5. Default values (= DEFAULT_RETRY_POLICY, NO_RETRY_POLICY) are the
      expected shapes.
 
 No mocks. Pure data-model tests.
@@ -218,53 +216,3 @@ def test_channel_state_is_alive_true_when_last_ack_is_recent() -> None:
     state = ChannelState(channel_id="a2a:test", last_ack_at=ts)
     assert state.is_alive(now=slightly_later) is True
 
-
-# ── 5. JSON round-trip ──────────────────────────────────────────────
-
-
-def test_channel_state_to_dict_from_dict_round_trip() -> None:
-    """Tier 2: ``to_dict`` + ``from_dict`` preserves shape verbatim.
-
-    Used by RunRegistry Phase 2 follow-up to persist channel state
-    alongside RunEntry; this round-trip pin guards the contract.
-    """
-    ts = datetime(2026, 5, 20, 12, 30, 0, tzinfo=timezone.utc)
-    state = ChannelState(
-        channel_id="a2a:run-abc123",
-        is_open=True,
-        last_ack_at=ts,
-        delivery_failures=1,
-        delivery_attempts_total=5,
-        failure_threshold=5,
-        stale_after=timedelta(minutes=10),
-    )
-    restored = ChannelState.from_dict(state.to_dict())
-    assert restored.channel_id == state.channel_id
-    assert restored.is_open == state.is_open
-    assert restored.last_ack_at == state.last_ack_at
-    assert restored.delivery_failures == state.delivery_failures
-    assert restored.delivery_attempts_total == state.delivery_attempts_total
-    assert restored.failure_threshold == state.failure_threshold
-    assert restored.stale_after == state.stale_after
-
-
-def test_channel_state_from_dict_tolerates_missing_fields() -> None:
-    """Tier 2: ``from_dict`` with a minimal payload returns a usable
-    state (= defaults applied for missing optional fields).
-    """
-    state = ChannelState.from_dict({"channel_id": "a2a:test"})
-    assert state.channel_id == "a2a:test"
-    assert state.is_open is True
-    assert state.last_ack_at is None
-    assert state.delivery_failures == 0
-
-
-def test_channel_state_from_dict_tolerates_malformed_timestamp() -> None:
-    """Tier 2: a malformed ``last_ack_at`` ISO string yields ``None``
-    rather than crashing on restore.
-    """
-    state = ChannelState.from_dict({
-        "channel_id": "a2a:test",
-        "last_ack_at": "not a real timestamp",
-    })
-    assert state.last_ack_at is None
