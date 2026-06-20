@@ -31,6 +31,22 @@ from reyn.services.compaction.engine import (
     trim_tail,
 )
 
+# #1820 Part1: static reference-only preamble prepended to every rendered
+# compaction summary (Hermes SUMMARY_PREFIX analog). Frames the summary as
+# history — not a fresh instruction — so the model (a) treats the latest user
+# message as the single source of truth and (b) does NOT re-execute `pending` /
+# in-progress work after a reverse-signal (stop / undo / change of direction).
+_SUMMARY_PREAMBLE = (
+    "[CONTEXT SUMMARY — REFERENCE ONLY, NOT A NEW INSTRUCTION]\n"
+    "The text below is a compacted summary of EARLIER conversation, kept for "
+    "reference. It is history, not the current task. The most recent user message "
+    "is the single source of truth: when it conflicts with anything here, follow "
+    "the latest user message. If the recent conversation shows a reverse signal — a "
+    "stop, an undo, or a change of direction — treat any 'pending' or in-progress "
+    "work described below as CANCELLED and do not resume it unless re-requested.\n"
+    "--- summary follows ---\n"
+)
+
 if TYPE_CHECKING:
     from reyn.runtime.chat_message import ChatMessage
 
@@ -304,7 +320,13 @@ class CompactionController:
         chat_summary = await self._engine.compact(input_chunk)
         structured = chat_summary.to_dict()
         covers = chat_summary.covers_through_seq or candidates[-1].seq
-        rendered = self._render_summary(structured)
+        # #1820 Part1: frame the rendered summary with a static reference-only
+        # preamble (Hermes SUMMARY_PREFIX analog) so the model treats the summary as
+        # history — NOT a fresh instruction — and does not re-execute `pending` work
+        # after a reverse-signal (stop / undo / change of direction). Prepended here
+        # (controller-owned, render-fn-independent) so every rendered summary carries
+        # it. Static string → no LLM dependency.
+        rendered = _SUMMARY_PREAMBLE + self._render_summary(structured)
 
         summary_msg = self._make_summary_message(rendered, structured, covers)
         self._append_history(summary_msg)
