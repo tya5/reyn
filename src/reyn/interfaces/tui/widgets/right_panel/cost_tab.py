@@ -7,6 +7,8 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
+from rich.cells import cell_len
+
 from reyn.interfaces.tui._palette import _TEXT_DIMMEST
 
 from .base import (
@@ -44,6 +46,32 @@ _BAR_WIDTH = 24
 _WIDE_THRESHOLD   = 54  # full layout: name :<24 / :<22 / :<28
 _MEDIUM_THRESHOLD = 42  # narrow name: :<18 / :<16 / :<22; still show cost
 _BAR_THRESHOLD    = 44  # bar suppressed below this; pct label kept
+
+
+def _fit(s: str, w: int) -> str:
+    """Truncate ``s`` to at most ``w`` display cells, appending '…' when cut.
+
+    Guards the BY-AGENT/SKILL/MODEL/PLAN name columns: these are rendered as
+    ``{name:<{width}}{tokens:>7,} tok``, where the left-justify pads SHORT
+    names so the padding separates the two columns. A name AT-OR-OVER the
+    column width gets no padding and collides with the token count (observed
+    "word_stats_demo107,166 tok" at narrow panel widths). Callers pass
+    ``width - 1`` so the subsequent ``:<{width}}`` always leaves ≥1 trailing
+    space. Cell-aware so wide-char names truncate by display width, not len.
+    """
+    if w <= 0:
+        return ""
+    if cell_len(s) <= w:
+        return s
+    out: list[str] = []
+    used = 0
+    for ch in s:
+        cw = cell_len(ch)
+        if used + cw > w - 1:  # reserve 1 cell for the ellipsis
+            break
+        out.append(ch)
+        used += cw
+    return "".join(out) + "…"
 
 
 def _col_widths(content_width: int) -> tuple[int, int, int, int]:
@@ -418,7 +446,7 @@ def render_cost(
             )
             # name col width adapts to content_width (see _col_widths)
             lines.append(
-                f"[bold {_TEXT_BRIGHT}]  {_esc(agent):<{agent_name_w}}[/]"
+                f"[bold {_TEXT_BRIGHT}]  {_esc(_fit(agent, agent_name_w - 1)):<{agent_name_w}}[/]"
                 f"[{_TEXT_BODY}]{ag_tok:>7,} tok[/]"
                 f"{ag_cost}"
                 f"{ag_calls}"
@@ -437,7 +465,7 @@ def render_cost(
                     if show_extra else ""
                 )
                 lines.append(
-                    f"[{_TEXT_DIM}]    {_esc(skill):<{skill_name_w}}[/]"
+                    f"[{_TEXT_DIM}]    {_esc(_fit(skill, skill_name_w - 1)):<{skill_name_w}}[/]"
                     f"[{_TEXT_DIM}]{tok_total:>7,} tok[/]"
                     f"{cost_part}"
                     f"{calls_part}"
@@ -492,7 +520,7 @@ def render_cost(
                     if show_extra else ""
                 )
                 lines.append(
-                    f"[{_TEXT_DIM}]    {_esc(step_id):<{skill_name_w}}[/]"
+                    f"[{_TEXT_DIM}]    {_esc(_fit(step_id, skill_name_w - 1)):<{skill_name_w}}[/]"
                     f"[{_TEXT_DIM}]{step_tok:>7,} tok[/]"
                     f"{step_cost_part}"
                     f"{step_calls_part}"
@@ -517,7 +545,7 @@ def render_cost(
                 f"  [{_TEXT_MID}]{mb['calls']}c[/]"                if show_extra else ""
             )
             lines.append(
-                f"[{_TEXT_BODY}]  {_esc(model_name):<{model_name_w}}[/]"
+                f"[{_TEXT_BODY}]  {_esc(_fit(model_name, model_name_w - 1)):<{model_name_w}}[/]"
                 f"[{_TEXT_DIM}]{tok_total:>7,} tok[/]"
                 f"{cost_part}"
                 f"{calls_part}"
