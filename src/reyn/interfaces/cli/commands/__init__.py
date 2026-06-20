@@ -27,8 +27,9 @@ from . import secret as secret
 from . import skill as skill
 from . import skills as skills
 from . import source as source
+from . import support_bundle as support_bundle
 from . import topology as topology
 from . import web as web
 
 # Order is the order shown in `reyn --help`.
-ALL = [init, config, skills, skill, run, run_once, chat, agent, topology, eval, lint, memory, permissions, auth, events, web, chainlit, mcp, secret, source, cron, dogfood, embeddings]
+ALL = [init, config, skills, skill, run, run_once, chat, agent, topology, eval, lint, memory, permissions, auth, events, web, chainlit, mcp, secret, source, cron, dogfood, embeddings, support_bundle]
