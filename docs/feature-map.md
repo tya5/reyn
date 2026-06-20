@@ -168,16 +168,21 @@ mindmap
       Retry-After aware retry
       Per-deployment cooldown
       Default OFF byte-identical
+      Credential rotation
     🧪 Content-layer defense
-      Threat-pattern scan
+      Threat-pattern library
       Content fence
       Tool-result guard
-      Compaction content-scan
+      Memory-write block
+      Exec command scan
+      Inbound peer fence
+      Compaction secret redact
     💰 Budget and Cost
       Per-agent caps
       Per-chain caps
       Rate limits
       Daily/monthly quotas
+      High-cost model warn
     🧠 Memory and RAG
       Embedding
       SQLite index
@@ -215,6 +220,7 @@ mindmap
       Right Panel tabs
       tool-result viewers
         Viewer registry seam
+        Content-type shorthand
         LLM template fallback
         Email viewer
         Diff viewer
@@ -371,8 +377,9 @@ Config-gated `litellm.Router` slot-in for provider-resilience. Default OFF (`llm
 | Per-deployment cooldown | `llm.router.cooldown_time` + `allowed_fails` cools a deployment after repeated failures; subsequent calls route to the fallback chain until recovery | [Config: llm block](reference/config/reyn-yaml.md#llm-block) |
 | Accurate cost on fallback | On fallback the actual responding model is recorded from `response.model` so cost attribution reflects which deployment served the call | [Budget & Cost](concepts/agent-engineering/cost-management.md) |
 | Config-fingerprint Router cache | Router is cached per event-loop with a `(model, config-fingerprint)` key; a changed `llm.router.*` rebuilds the Router rather than silently reusing a stale instance | [Config: llm block](reference/config/reyn-yaml.md#llm-block) |
+| `llm.router.credentials` rotation | Per-model list of API-key env-var names; the Router cycles through active keys; a declared model with zero resolvable keys fails loudly — never a silent keyless deployment | [Config: llm block](reference/config/reyn-yaml.md#llm-block) |
 
-> **Differentiation vs general agents:** provider-resilience is delegated entirely to litellm.Router (Retry-After, jitter, cooldown, cross-model fallback chain) rather than re-implemented — the on/off gate keeps the direct path byte-identical, so replay and cost-recording work unchanged whether or not the Router is active.
+> **Differentiation vs general agents:** provider-resilience is delegated entirely to litellm.Router (Retry-After, jitter, cooldown, cross-model fallback chain, credential rotation) rather than re-implemented — the on/off gate keeps the direct path byte-identical, so replay and cost-recording work unchanged whether or not the Router is active.
 
 ---
 
@@ -542,8 +549,9 @@ Bounded-operation checkpoints that stop the agent gracefully rather than hard-fa
 
 | Feature | Description | Documentation |
 |---------|-------------|---------------|
-| On-limit modes | `interactive` (ask) / `auto_extend` (budgeted) / `unattended` (abort) via `safety.on_limit.mode` | [Safety framework](concepts/runtime/safety.md) |
-| Force-close wrap-up (#1496) | On a denied limit the LLM gets one final tool-less turn to summarise what was accomplished; delivered as a `kind="agent"` message with `meta.limit_stopped` | [Safety framework](concepts/runtime/safety.md) |
+| `handle_limit_exceeded` unified checkpoint | Single shared function `runtime/limits/limit_handler.py` that all seven loop / timeout / budget checkpoints call; owns the 3-mode dispatch, bus interaction, extension bookkeeping, and audit event — callers only decide what limit fired | [Safety framework](concepts/runtime/safety.md) |
+| On-limit modes (`OnLimitConfig`) | `interactive` (ask) / `auto_extend` (budgeted N times) / `unattended` (abort) via `safety.on_limit.mode`; applies uniformly to loop caps, timeout caps, and budget exceed paths | [Safety framework](concepts/runtime/safety.md) · [reyn.yaml § safety](reference/config/reyn-yaml.md#safety-block) |
+| Force-close wrap-up | On a denied limit the LLM gets one final tool-less turn to summarise what was accomplished; delivered as a `kind="agent"` message with `meta.limit_stopped` | [Safety framework](concepts/runtime/safety.md) |
 | `limit_denied` event | P6 audit event on every deny path (`max_iterations` / `router_cap`) | [Events reference](reference/runtime/events.md) |
 | Decision-enabling fallback | When the wrap-up fails or is empty, a structured error states the limit hit, the config key to change, and partial-data availability | [Safety framework](concepts/runtime/safety.md) |
 
@@ -551,22 +559,24 @@ Bounded-operation checkpoints that stop the agent gracefully rather than hard-fa
 
 ---
 
-### Content-layer defense — ⚗ in-progress
+### Content-layer defense
 
-Scanning untrusted content (memory, tool results, context files) for
+Scanning untrusted content (memory, tool results, context files, inbound peer messages) for
 prompt-injection / exfiltration / role-hijack patterns at the seams where it
 enters the prompt — a security transform at a content boundary, not OS decision
-logic. **In progress**: the core scan + fences have landed; enforcement tuning
-and the dogfood done-gate remain. Canonical design: [content-threat scan proposal](deep-dives/proposals/0050-content-threat-scan.md).
+logic. Design: [content-threat scan proposal](deep-dives/proposals/0050-content-threat-scan.md).
 
 | Feature | Description | Documentation |
 |---------|-------------|---------------|
-| Threat-pattern scan (⚗) | Security-domain regexes (injection / exfiltration / role-hijack) applied to untrusted content — `security/threat_patterns.py` | [Design](deep-dives/proposals/0050-content-threat-scan.md) |
-| Content fence (⚗) | Wraps untrusted content in explicit delimiters so model-visible boundaries are unambiguous — `security/content_fence.py` | [Design](deep-dives/proposals/0050-content-threat-scan.md) |
-| Unified tool-result guard (⚗) | One seam scans tool-result content before it reaches the prompt — `security/content_guard.py` | [Design](deep-dives/proposals/0050-content-threat-scan.md) |
-| Compaction content-scan (⚗) | Threat-scan applied to compaction summaries before they persist (gated) | [Design](deep-dives/proposals/0050-content-threat-scan.md) |
+| Threat-pattern library ✅ | Security-domain regexes (injection / exfiltration / role-hijack / exec) applied to untrusted content across all scopes — `security/threat_patterns.py` | [Design](deep-dives/proposals/0050-content-threat-scan.md) |
+| Content fence ✅ | Wraps untrusted content in explicit delimiters so model-visible boundaries are unambiguous — `security/content_fence.py` | [Design](deep-dives/proposals/0050-content-threat-scan.md) |
+| Unified tool-result guard ✅ | One seam scans + fences tool-result content before it reaches the prompt — `security/content_guard.py` | [Design](deep-dives/proposals/0050-content-threat-scan.md) |
+| Memory-write BLOCK ✅ | Memory writes that match threat patterns are blocked before reaching the agent's memory store — `runtime/router_loop.py` | [Design](deep-dives/proposals/0050-content-threat-scan.md) |
+| Pre-exec command scan ✅ | `sandboxed_exec` scans the full joined argv against exec-scope threat patterns before any shell is launched; blocked commands emit `exec_threat_blocked` — `core/op_runtime/sandboxed_exec.py` | [Design](deep-dives/proposals/0050-content-threat-scan.md) |
+| Context-file + A2A-inbound fence ✅ | Operator-editable context files (REYN.md/AGENTS.md) and untrusted inbound A2A peer messages are fenced + scanned on arrival — `router_host_adapter.py` (EP3) / `a2a_handler.py` (S4b) | [Design](deep-dives/proposals/0050-content-threat-scan.md) |
+| Compaction secret redaction ✅ | Secret-looking content is stripped from compaction input before summaries are persisted — `security/secret_redaction.py` | [Design](deep-dives/proposals/0050-content-threat-scan.md) |
 
-> **Differentiation vs general agents:** Reyn places content-layer scanning at the OS seams — the same content boundaries where secret interpolation already sits — as a security-domain transform that keeps OS decision logic free of skill strings (P7). Structural redundancy means checks already enforced by the sandbox / permission layer (e.g. absolute-path or pipe-to-shell writes) are not re-implemented as ad-hoc per-call scans. (⚗ in-progress — not yet the dogfood-gated default.)
+> **Differentiation vs general agents:** Reyn places content-layer scanning at the OS seams — the same content boundaries where secret interpolation already sits — as a security-domain transform that keeps OS decision logic free of skill strings (P7). Structural redundancy means checks already enforced by the sandbox / permission layer (e.g. absolute-path or pipe-to-shell writes) are not re-implemented as ad-hoc per-call scans.
 
 ---
 
@@ -580,8 +590,9 @@ and the dogfood done-gate remain. Canonical design: [content-threat scan proposa
 | Daily quotas | Persistent JSONL ledger, resets at local midnight | [Budget config](reference/config/budget.md) |
 | Monthly quotas | Persistent JSONL ledger, resets at month boundary | [Budget config](reference/config/budget.md) |
 | `extension_calls` (+ `safety.on_limit.mode`) | Budget-extension flow on hard cap hit; `extension_calls > 0` opts the dimension into the unified `safety.on_limit` policy (ask / auto-extend / deny). The per-dimension `ask_on_exceed` bool was removed in #1877. | [Budget config](reference/config/budget.md) |
+| High-cost model warn (`cost_warn`) | `cost_warn.enabled` (default `true`) emits a `model_cost_warn` event + inline conv-pane marker when the resolved model's input cost per 1M tokens exceeds `model_threshold_per_1m_input_usd` (default `5.0`); fires at `/model` switch and session startup, de-duped once per model per session | [reyn.yaml § cost_warn](reference/config/reyn-yaml.md#cost_warn-block) |
 
-> **Differentiation vs general agents:** token + USD caps per agent / chain / model with refuse-on-exceed and a `safety.on_limit`-driven extension flow — runaway spend is structurally bounded, not merely observed after the fact.
+> **Differentiation vs general agents:** token + USD caps per agent / chain / model with refuse-on-exceed and a `safety.on_limit`-driven extension flow, plus a pre-selection high-cost model warning — runaway spend is structurally bounded, not merely observed after the fact.
 
 ---
 
@@ -646,7 +657,7 @@ The Textual terminal interface for `reyn chat` (`src/reyn/interfaces/tui/`).
 |---------|-------------|---------------|
 | Conversation view | Streaming conversation with inline thinking rows and tool-call rendering | — |
 | Right Panel tabs | Live side panels: Agents / Cost / Docs / Events / Keys / Memory / Pending | — |
-| Tool-result viewer registry ✅ | `register_viewer` seam replaces inline content-type dispatch; viewers registered as `_ViewerEntry` list with content-type + sync renderer | [Tool-result viewers reference](reference/tui/tool-result-viewers.md) |
+| Tool-result viewer registry ✅ | `register_viewer` seam replaces inline content-type dispatch; `register_content_type_viewer(content_types, viewer, *, match="exact"\|"prefix"\|"substring")` provides the ergonomic MIME shorthand — delegates to `register_viewer` so name/position behave identically | [Tool-result viewers reference](reference/tui/tool-result-viewers.md) |
 | LLM-generated template fallback ✅ | On registry miss, `_generate_template` async-generates a `TemplateSchema` (label/value rows + caption) via LLM call; `_apply_template` renders it with label escape and row/caption caps (`_MAX_TEMPLATE_ROWS=8`, `_MAX_CAPTION_CHARS=40`) | [Tool-result viewers reference](reference/tui/tool-result-viewers.md) · [FP-0051 proposal](deep-dives/proposals/0051-tool-result-viewer-registry-llm-template.md) |
 | Email-diff viewer ✅ | Concrete viewers for `message/rfc822` (email from/subject card) and `text/x-diff` / `text/x-patch` (syntax-highlighted patch); registered before the generic JSON viewer so declared content-type takes priority | [Tool-result viewers reference](reference/tui/tool-result-viewers.md) |
 | Input + command palette | Input bar with slash commands (`/plan`, `/compact`, `/find`, `/help`, `/clear`) via a command palette | — |
