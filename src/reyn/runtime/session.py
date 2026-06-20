@@ -883,6 +883,10 @@ class Session:
         # resolved from the agent's topology role. Threaded to the live tool gate
         # (RouterLoop) + control-IR OpContext. None = no narrowing (byte-identical).
         self._contextual_permission = contextual_permission
+        # #1827 S4b (context-auto): lazily-resolved minimal _untrusted profile
+        # ContextualPermission, composed into the per-turn narrowing while
+        # untrusted external content is live in context. None until first needed.
+        self._untrusted_contextual_cache = None
         # #1667: catalog categories hidden at the universal-catalog source (e.g.
         # reyn_source on the external-repo eval path so it doesn't compete with
         # file__* for the weak model); interactive default empty = reyn_source kept.
@@ -1733,6 +1737,7 @@ class Session:
             non_interactive=self._non_interactive,
             exclude_tools=self._exclude_tools,
             contextual_permission=self._contextual_permission,  # #1827 S3 → RouterLoop live gate
+            contextual_for_turn_fn=self._effective_contextual_for_turn,  # #1827 S4b context-auto
             excluded_categories=self._excluded_categories,
             budget=self._budget,
             resolver=self._resolver,
@@ -2309,6 +2314,38 @@ class Session:
             "interrupted_plans": interrupted_plans,
             "stuck_skills": stuck_skills,
         }
+
+    def _effective_contextual_for_turn(self) -> "object | None":
+        """#1827 S4b (context-auto): the per-session contextual narrowing for THIS
+        turn.
+
+        When untrusted external content is live in the active context (a history
+        entry carrying the #1862 ``external_source`` marker), compose the minimal
+        ``_untrusted`` profile with the static (topology) narrowing —
+        most-restrictive (union-of-excludes) — so a partial prompt-injection has
+        no dangerous tools to reach. The taint is derived from the active history,
+        so it **self-clears** once the untrusted entry compacts out
+        (until-compaction scope). Untrusted absent → the static contextual
+        (byte-identical to pre-S4b).
+        """
+        from reyn.security.permissions.capability_profile import metas_have_untrusted
+
+        if not metas_have_untrusted(m.meta for m in self.history):
+            return self._contextual_permission
+        from reyn.security.permissions.capability_profile import (
+            compose_resolved,
+            load_untrusted_profile,
+            resolve_profile,
+        )
+        if self._untrusted_contextual_cache is None:
+            root = getattr(self._perm, "_project_root", None) or Path.cwd()
+            self._untrusted_contextual_cache = resolve_profile(
+                load_untrusted_profile(root)
+            )[0]
+        resolved = [(self._untrusted_contextual_cache, frozenset())]
+        if self._contextual_permission is not None:
+            resolved.insert(0, (self._contextual_permission, frozenset()))
+        return compose_resolved(resolved)[0]
 
     def _build_agent_for_skill_runner(
         self,
