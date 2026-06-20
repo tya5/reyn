@@ -269,8 +269,10 @@ class RouterHostAdapter:
         # FP-0050 / #1822: content-threat scan + fence config. None (test hosts)
         # → defaults (disabled-safe via the methods' guards).
         threat_scan: Any = None,
+        contextual_permission: Any = None,  # #1827 S3: per-session capability narrowing → control-IR OpContext
     ) -> None:
         self._threat_scan = threat_scan
+        self._contextual_permission = contextual_permission
         self._turn_budget_engine = turn_budget_engine
         self._turn_cancel_fn = turn_cancel_fn  # #1468
         self._agent_name = agent_name
@@ -1684,6 +1686,7 @@ class RouterHostAdapter:
             compact_now=self._compact_now,
             cancel_event=self._cancel_event,
             threat_scan=self._threat_scan,
+            contextual_permission=self._contextual_permission,  # #1827 S3
         )
 
     def _set_cancel_event(self, event: asyncio.Event) -> None:
