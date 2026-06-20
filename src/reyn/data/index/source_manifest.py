@@ -48,14 +48,27 @@ class SourceEntry:
 
     @classmethod
     def from_dict(cls, name: str, data: dict[str, Any]) -> "SourceEntry":
-        """Deserialise from on-disk YAML structure."""
+        """Deserialise from on-disk YAML structure.
+
+        Resilient to a malformed ``chunk_count`` (defaults to 0). ``.get(k, 0)``
+        only defaults a *missing* key, so an operator-edited ``sources.yaml`` with
+        ``chunk_count: null`` or a non-numeric value would otherwise crash the
+        whole manifest reload (``int(None)`` → TypeError, ``int("x")`` → ValueError);
+        ``_coerce_int`` closes that gap. Mirrors the #1906 TokenUsage fix.
+        """
+        def _coerce_int(v: object) -> int:
+            try:
+                return int(v)  # type: ignore[arg-type]
+            except (TypeError, ValueError):
+                return 0
+
         return cls(
             name=name,
             description=data.get("description", ""),
             path=data.get("path", ""),
             backend=data.get("backend", "sqlite"),
             last_indexed=data.get("last_indexed"),
-            chunk_count=int(data.get("chunk_count", 0)),
+            chunk_count=_coerce_int(data.get("chunk_count", 0)),
             embedding_model=data.get("embedding_model"),
         )
 
