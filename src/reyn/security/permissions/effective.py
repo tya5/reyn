@@ -28,6 +28,7 @@ context, not in any resolver `__init__`.
 """
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 from enum import Enum
 from typing import TYPE_CHECKING, Any, Protocol
 
@@ -221,6 +222,49 @@ class ProfileLayer:
         if axis is CapabilityAxis.MCP:
             return pr.allowed_mcp is None or value in pr.allowed_mcp
         return True  # profile constrains only skill / mcp
+
+
+@dataclass(frozen=True)
+class ContextualPermission:
+    """Per-session contextual narrowing (#1827) — a restrict-only ∩ term layered
+    on top of the static authority (``permission.tool`` etc.). Sourced per-session
+    from a delegation / topology role / ephemeral profile (later slices wire those
+    sources) and carried on ``OpContext.contextual_permission``.
+
+    S1 covers the TOOL axis: ``tool_allow`` (None = unconstrained) ∩ ``¬tool_deny``.
+    Further axes are added as later slices wire them — until then this term is ⊤
+    on those axes (never narrows).
+    """
+
+    tool_allow: "frozenset[str] | None" = None
+    tool_deny: "frozenset[str]" = field(default_factory=frozenset)
+
+
+class ContextualLayer:
+    """The CONTEXTUAL ∩ layer (#1827): per-session narrowing from a delegation /
+    topology / ephemeral context.
+
+    never-elevate is **structural**, not a runtime check: a ``ContextualLayer`` is
+    just one more conjunct in :meth:`EffectivePermission.allows` (``all(...)``), so
+    it can only contribute ``False`` (narrow) and **no other layer's ``True`` can
+    re-grant what it denies, nor can it re-grant a lower layer's ``False``**. A
+    ``None`` context is ⊤ (the layer is inert → byte-identical to the pre-#1827
+    stack)."""
+
+    def __init__(self, contextual: "ContextualPermission | None") -> None:
+        self._ctx = contextual
+
+    def allows(self, axis: CapabilityAxis, value: Any) -> bool:
+        c = self._ctx
+        if c is None:
+            return True
+        if axis is CapabilityAxis.TOOL:
+            in_allow = c.tool_allow is None or value in c.tool_allow
+            not_denied = value not in c.tool_deny
+            return in_allow and not_denied
+        # S1: only TOOL is constrained; other axes are ⊤ until later slices wire
+        # them (so the ∩ never narrows an axis the context does not yet cover).
+        return True
 
 
 def _path_under(path_str: str, root: str) -> bool:
