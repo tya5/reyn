@@ -93,6 +93,7 @@ nav:
               - guide/for-users/manage-permissions.md
               - guide/for-users/configure-sandbox.md
               - guide/for-users/ask-user-mid-phase.md
+              - guide/for-users/cap-spending.md
           - Files & integrations:
               - guide/for-users/work-with-files.md
               - guide/for-users/enable-semantic-search.md
