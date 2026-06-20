@@ -72,6 +72,25 @@ _COST_SUFFIX_DEFER_MAX_ATTEMPTS = 30
 _ESC_ESC_WINDOW_S = 0.6
 
 
+def _resolve_screenshot_dir(project_root: "Path | None") -> "Path":
+    """Directory for ``Ctrl+\\`` screenshots — the gitignored ``.reyn/`` artifact
+    dir, NEVER the cwd.
+
+    A screenshot saved into the current working directory drops an untracked
+    ``reyn_*.svg`` into whatever repo the operator launched ``reyn chat`` from
+    (git-status clutter / accidental ``git add .``). Route it into
+    ``<project_root>/.reyn/screenshots/`` when the project root is known (``.reyn/``
+    is already gitignored), else ``~/.reyn/screenshots/`` — both keep the user's
+    working tree clean.
+    """
+    reyn_dir = (
+        Path(project_root) / ".reyn"
+        if project_root is not None
+        else Path.home() / ".reyn"
+    )
+    return reyn_dir / "screenshots"
+
+
 class ReynTUIApp(App):
     """Main Textual application for `reyn chat`."""
 
@@ -1194,12 +1213,24 @@ class ReynTUIApp(App):
         conv.clear()
 
     def action_screenshot(self) -> None:
-        """Ctrl+\\ — save an SVG screenshot, open it, and log the path."""
-        filename = self.save_screenshot()
+        """Ctrl+\\ — save an SVG screenshot, open it, and log the path.
+
+        Saved into the gitignored ``.reyn/screenshots/`` artifact dir (never the
+        cwd) so the screenshot can't pollute the operator's working tree — see
+        ``_resolve_screenshot_dir``.
+        """
+        screenshots_dir = _resolve_screenshot_dir(self._project_root_path())
+        try:
+            screenshots_dir.mkdir(parents=True, exist_ok=True)
+            filename = self.save_screenshot(path=str(screenshots_dir))
+        except Exception:
+            # Last-resort fallback that still avoids the cwd: ~/.reyn/screenshots.
+            home_dir = Path.home() / ".reyn" / "screenshots"
+            home_dir.mkdir(parents=True, exist_ok=True)
+            filename = self.save_screenshot(path=str(home_dir))
         try:
             import subprocess
             import sys
-            from pathlib import Path
 
             from rich.text import Text
             abs_path = Path(filename).resolve()
