@@ -83,6 +83,25 @@ def test_since_filter_drops_old_records(tmp_path, monkeypatch):
     assert "NEWMARKER" in blob and "OLDMARKER" not in blob
 
 
+def test_bundle_collects_trace_wal_events_three_classes(tmp_path, monkeypatch):
+    """Tier 2: the bundle collects all THREE artifact classes — trace + WAL
+    (.reyn/state/*.jsonl, separate from events) + events (.reyn/events/)."""
+    monkeypatch.delenv("REYN_LLM_TRACE_REDACT", raising=False)
+    reyn = tmp_path / ".reyn"
+    (reyn / "state").mkdir(parents=True)
+    (reyn / "events").mkdir(parents=True)
+    (reyn / "state" / "wal.jsonl").write_text(json.dumps({"wal": "WALMARK"}) + "\n")
+    (reyn / "events" / "e.jsonl").write_text(json.dumps({"ev": "EVTMARK"}) + "\n")
+    _seed_trace(tmp_path, monkeypatch, [{"msg": "TRACEMARK"}])  # also chdir(tmp_path)
+    out = tmp_path / "b.zip"
+    support_bundle.run(_args(out))
+    with zipfile.ZipFile(out) as zf:
+        names = zf.namelist()
+    assert any(n.startswith("trace/") for n in names), "trace class missing"
+    assert any(n.startswith("wal/") for n in names), "WAL class missing (.reyn/state/)"
+    assert any(n.startswith("events/") for n in names), "events class missing"
+
+
 def test_bundle_has_meta_with_version(tmp_path, monkeypatch):
     """Tier 2: the bundle always contains a meta.json carrying the reyn version."""
     monkeypatch.delenv("REYN_LLM_TRACE_REDACT", raising=False)

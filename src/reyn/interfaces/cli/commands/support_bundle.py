@@ -111,8 +111,10 @@ def _redact_text(line: str) -> str:
 
 
 def _collect_files(reyn_dir: Path | None) -> list[tuple[str, Path]]:
-    """(arcname, source path) for every artifact to bundle: the trace file +
-    all ``.reyn/events/**/*.jsonl``."""
+    """(arcname, source path) for the THREE artifact classes (#1833): the LLM
+    trace, the WAL (StateLog ``.reyn/state/*.jsonl``), and the event logs
+    (``.reyn/events/**/*.jsonl``). The WAL lives under ``.reyn/state/``, NOT
+    ``.reyn/events/`` — collect it distinctly so the bundle is complete."""
     import os
     out: list[tuple[str, Path]] = []
     trace = os.environ.get("REYN_LLM_TRACE_DUMP")
@@ -121,6 +123,12 @@ def _collect_files(reyn_dir: Path | None) -> list[tuple[str, Path]]:
         if tp.is_file():
             out.append((f"trace/{tp.name}", tp))
     if reyn_dir is not None:
+        # WAL — StateLog crash-recovery log at .reyn/state/wal.jsonl (PR21).
+        state_dir = reyn_dir / "state"
+        if state_dir.is_dir():
+            for wp in sorted(state_dir.rglob("*.jsonl")):
+                out.append((f"wal/{wp.relative_to(state_dir)}", wp))
+        # events — the P6 audit logs.
         events_dir = reyn_dir / "events"
         if events_dir.is_dir():
             for jp in sorted(events_dir.rglob("*.jsonl")):
