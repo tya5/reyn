@@ -753,18 +753,33 @@ class BudgetTracker:
             return
         if not isinstance(data, dict):
             return
+        # Persisted state has no version-validation (reads "version" but does not
+        # gate on it), so a version-skewed / hand-edited file may carry a null /
+        # non-numeric counter. Coerce-with-default rather than crash load_state.
+        def _coerce_int(v: object) -> int:
+            try:
+                return int(v)  # type: ignore[arg-type]
+            except (TypeError, ValueError):
+                return 0
+
+        def _coerce_float(v: object) -> float:
+            try:
+                return float(v)  # type: ignore[arg-type]
+            except (TypeError, ValueError):
+                return 0.0
+
         # agent counters
         for k, v in (data.get("agent_tokens") or {}).items():
-            self._agent_tokens[str(k)] = int(v)
+            self._agent_tokens[str(k)] = _coerce_int(v)
         for k, v in (data.get("agent_cost_usd") or {}).items():
-            self._agent_cost_usd[str(k)] = float(v)
+            self._agent_cost_usd[str(k)] = _coerce_float(v)
         # chain_skill counters (list of [cid, sk, v] entries)
         for entry in (data.get("chain_skill_calls") or []):
             if isinstance(entry, list) and len(entry) >= 3:
-                self._chain_skill_calls[(str(entry[0]), str(entry[1]))] = int(entry[2])
+                self._chain_skill_calls[(str(entry[0]), str(entry[1]))] = _coerce_int(entry[2])
         for entry in (data.get("chain_skill_tokens") or []):
             if isinstance(entry, list) and len(entry) >= 3:
-                self._chain_skill_tokens[(str(entry[0]), str(entry[1]))] = int(entry[2])
+                self._chain_skill_tokens[(str(entry[0]), str(entry[1]))] = _coerce_int(entry[2])
 
     def snapshot(self) -> dict:
         """Return a structured view used by `/cost` / `/budget` formatters."""

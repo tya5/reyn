@@ -646,9 +646,25 @@ async def device_grant_flow(
         verification_uri_complete: str | None = auth_resp.get(
             "verification_uri_complete"
         )
-        expires_in: int = int(auth_resp.get("expires_in", _DEVICE_EXPIRES_IN_DEFAULT))
-        server_interval: float = float(
-            auth_resp.get("interval", _DEVICE_POLL_INTERVAL_DEFAULT)
+        # A non-RFC-compliant device-authorization response may carry a null /
+        # non-numeric / non-finite ``expires_in`` or ``interval``; ``.get(k, default)``
+        # only covers a *missing* key, so coerce-with-default to avoid an opaque
+        # TypeError/ValueError (or OverflowError on ``inf``) mid-login. These are
+        # timing knobs, not a grant — the token grant is gated on ``access_token``
+        # in the poll loop.
+        def _coerce_num(v: object, default: float) -> float:
+            import math
+            try:
+                f = float(v)  # type: ignore[arg-type]
+            except (TypeError, ValueError):
+                return default
+            return f if math.isfinite(f) else default
+
+        expires_in: int = int(
+            _coerce_num(auth_resp.get("expires_in"), _DEVICE_EXPIRES_IN_DEFAULT)
+        )
+        server_interval: float = _coerce_num(
+            auth_resp.get("interval"), _DEVICE_POLL_INTERVAL_DEFAULT
         )
         poll_interval: float = (
             poll_interval_override

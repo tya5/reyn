@@ -105,12 +105,21 @@ class AgentSnapshot:
                 "Run `reyn chat --reset` to wipe in-flight skill state "
                 "(audit logs in .reyn/events/ are preserved)."
             )
+        def _coerce_int(v: object) -> int:
+            # A version-matched but hand-edited / corrupted snapshot may carry a
+            # null / non-numeric applied_seq; .get(k, 0) only defaults a *missing*
+            # key. Mirrors the #1906 TokenUsage fix.
+            try:
+                return int(v)  # type: ignore[arg-type]
+            except (TypeError, ValueError):
+                return 0
+
         return cls(
             agent_name=agent_name,
             # FP-0043 S5: prefer the saved session_id; fall back to the caller's
             # (which defaults "main") for legacy snapshots written pre-S5.
             session_id=str(data.get("session_id", session_id)),
-            applied_seq=int(data.get("applied_seq", 0)),
+            applied_seq=_coerce_int(data.get("applied_seq", 0)),
             inbox=list(data.get("inbox", []) or []),
             pending_chains=dict(data.get("pending_chains", {}) or {}),
             active_skill_run_ids=list(
