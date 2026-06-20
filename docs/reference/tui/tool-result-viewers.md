@@ -83,6 +83,34 @@ First match wins, so **order = priority**. The default population follows the
 module convention: *explicit content-type viewers first, shape-sniff viewers
 last.*
 
+### `register_content_type_viewer(content_types, viewer, *, name, position=-1, match="exact")`
+
+The ergonomic shortcut for the common case — *"this MIME maps to this viewer."*
+It builds the `_content_type_of` predicate for you and delegates to
+`register_viewer`, so `name` / `position` / first-match semantics are identical.
+
+```python
+from reyn.interfaces.tui.widgets.right_panel.tool_result_viewers import (
+    register_content_type_viewer,
+)
+
+register_content_type_viewer("application/pdf", _viewer_pdf, name="pdf")            # exact
+register_content_type_viewer("image/", _viewer_image, name="image", match="prefix")  # any image/*
+register_content_type_viewer(("csv", "tab-separated"), _viewer_csv, name="csv",
+                             match="substring")                                       # either, anywhere
+```
+
+| Param | Type | Meaning |
+|---|---|---|
+| `content_types` | `str \| Sequence[str]` | One MIME value, or several — a result matches if **any** matches. Case-insensitive. |
+| `match` | `"exact" \| "prefix" \| "substring"` | How each value is tested against `_content_type_of(result)`. Default `"exact"`. |
+| `name` / `position` | — | Same as `register_viewer`. |
+
+Use this for a pure content-type check. Reach for `register_viewer` with a
+hand-written predicate when you need more — a **suffix** test (the built-in
+`markdown` viewer matches a `/md` suffix), a **shape-sniff** over dict keys
+(`email` / `diff` / `web_summary`), or any multi-field heuristic.
+
 ### The predicate: detecting content type
 
 Use `_content_type_of(result)` to read an explicit type. It checks, in order,
