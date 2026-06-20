@@ -99,6 +99,7 @@ nav:
               - guide/for-users/work-with-files.md
               - guide/for-users/enable-semantic-search.md
               - guide/for-users/popular-mcp-servers.md
+              - guide/for-users/oauth-login.md
       - For skill authors:
           - guide/for-skill-authors/index.md
           - Foundation:
