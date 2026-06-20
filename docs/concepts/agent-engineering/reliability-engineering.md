@@ -43,6 +43,20 @@ This protects against:
 
 Each LLM HTTP call carries a per-call timeout (`limits.llm.timeout`, default `60`s) passed through to LiteLLM, plus LiteLLM's built-in exponential-backoff retry (`limits.llm.max_retries`, default `3`) for transient failures (`429`, `5xx`, network resets). Application-level rejection (validation, normalization) is handled separately by the re-prompt loop above — these are different failure modes and don't share a budget.
 
+### LLM router resilience (`llm.router.*`)
+
+An opt-in `litellm.Router` slot-in for provider-level resilience. Default OFF (`llm.router.use: false`) — with the switch off the call path is the direct `litellm.acompletion`, byte-identical to behaviour before this feature existed. When `use: true`, the Router owns infra-exception retry, `Retry-After` header handling, per-deployment cooldown, and a cross-model fallback chain; Reyn does not re-implement any of these.
+
+**Retry-After aware retry.** `llm.router.num_retries` (default `3`) caps infra retries (`429`, `5xx`, network resets). Unlike a plain exponential backoff, the Router natively honours provider `Retry-After` response headers, so retry timing respects rate-limit windows rather than a fixed backoff schedule.
+
+**Cross-model fallback chain.** `llm.router.fallbacks` maps each primary deployment to an ordered list of fallback models. On primary failure (after retries exhaust) the Router tries each fallback in order. `llm.router.cooldown_time` + `allowed_fails` cools a deployment after repeated failures so it is bypassed for subsequent calls until recovery.
+
+**Cost accuracy on fallback.** The actual responding model is recorded from `response.model` so cost attribution reflects which deployment served the call, not the originally requested model.
+
+**Replay compatibility.** The Router routes through the same `litellm.acompletion` chokepoint that LLMReplay monkeypatches — a realized fallback still exercises the replay machinery unchanged. The Router is cached per event loop with a `(model, config-fingerprint)` key so a changed `llm.router.*` rebuilds the instance rather than silently reusing a stale one.
+
+See [Config: llm block](../../reference/config/reyn-yaml.md#llm-block) for the full field reference.
+
 ### Python preprocessor timeout
 
 Per `python` preprocessor step, a wall-clock `timeout` (default `30`s) is enforced via subprocess. On timeout the parent SIGKILLs the child and the step fails — the failure surfaces to the LLM as a step result it can react to. The timeout protects against accidentally compute-heavy preprocessor functions (regex catastrophic backtracking, infinite loops in user code).
@@ -67,7 +81,7 @@ Every reliability event lands in the JSONL log:
 
 A few reliability primitives are intentionally simple today and on the roadmap to deepen:
 
-**Retry policy splits cleanly but isn't deep.** Application-level rejections re-prompt up to `max_phase_retries` (default `2`) with the validation error injected as feedback — no jitter, no per-failure-kind strategy. Transient HTTP errors get LiteLLM's built-in exponential backoff via `limits.llm.max_retries`. The two paths don't share state, which is the right shape, but neither path lets the user customize backoff or per-error policy yet.
+**Retry policy splits cleanly but isn't deep.** Application-level rejections re-prompt up to `max_phase_retries` (default `2`) with the validation error injected as feedback — no jitter, no per-failure-kind strategy. Transient HTTP errors are handled by two separate mechanisms that don't share state (which is the right shape): the built-in `litellm.acompletion` retry on the direct path, and the `litellm.Router` on the router-enabled path (see [LLM router resilience](#llm-router-resilience-llmrouter)). The Router path adds Retry-After awareness and per-deployment cooldown, closing the jitter/Retry-After gap for operators who opt in.
 
 **Phase budget is soft, not a hard cancel.** `limits.phase.max_wall_seconds` checks at retry/turn boundaries — a single very long LLM call or preprocessor step can overshoot the budget by one operation. This trades "hard guarantees" for "consistent workspace state," and is the right default for most workflows; mid-call cancellation is on the roadmap as an opt-in mode.
 
@@ -80,7 +94,7 @@ A few reliability primitives are intentionally simple today and on the roadmap t
 - [Reference: events](../../reference/runtime/events.md) — full event taxonomy
 - [Reference: llm-output-contract](../../reference/runtime/llm-output-contract.md)
 - [Reference: common-flags](../../reference/cli/common-flags.md) — `--max-phase-visits`, `--phase-budget`, `--llm-timeout`, `--llm-max-retries`
-- [Reference: reyn.yaml](../../reference/config/reyn-yaml.md) — `limits` block
+- [Reference: reyn.yaml](../../reference/config/reyn-yaml.md) — `limits` block · [llm.router.*](../../reference/config/reyn-yaml.md#llm-block)
 - [How-to: debug with events](../../guide/for-skill-authors/operations/debug-with-events.md)
 - [evaluation-and-observability.md](evaluation-and-observability.md) — measuring failure rates
 - [tool-contract-design.md](tool-contract-design.md) — what gets validated

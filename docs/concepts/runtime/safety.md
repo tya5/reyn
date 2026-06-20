@@ -10,6 +10,8 @@ or a clean partial/degrade** — every checkpoint either asks the operator for
 permission to continue, auto-extends within a configured budget, or stops
 with a decision-enabling message that explains what to change.
 
+**Parallel gate design.** The [permission system](permission-model.md) (JIT operator ask for tier-2/3 ops) and this limit framework are intentionally parallel: both share the `RequestBus` interface for their interactive paths, both offer the same three-state gate (`allow` / `deny` / ask), and both degrade to deny when no bus is wired. An operator who understands one gate understands the other.
+
 ---
 
 ## Modes (`safety.on_limit.mode`)
