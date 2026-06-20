@@ -385,9 +385,9 @@ def test_get_task_returns_run_entry(tmp_path, monkeypatch):
         r = client.get(f"/a2a/tasks/{entry.run_id}")
         assert r.status_code == 200, r.text
         body = r.json()
-        assert body["run_id"] == entry.run_id
-        assert body["status"] == "input-required"
-        assert "question" not in body  # α: field removed
-        assert body["agent_name"] == "default"
+        # #1811: GetTask returns a spec A2A Task envelope (id + nested status).
+        assert body["id"] == entry.run_id
+        assert body["status"]["state"] == "input-required"
+        assert "question" not in body  # α: field removed (the core contract here)
     finally:
         app.dependency_overrides.clear()
