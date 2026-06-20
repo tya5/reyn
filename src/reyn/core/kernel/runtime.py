@@ -159,6 +159,12 @@ class OSRuntime:
         self._intervention_bus = intervention_bus
         # FP-0005: per-run safety-limit checkpoint policy.
         self._on_limit = _safety.on_limit
+        # #1868: publish the budget-exceed policy context (reuses safety.on_limit —
+        # one unified limit policy covers budget too) so the per-LLM-call cost gate
+        # (LLMCallRecorder) routes through the 3-mode framework. NOT guarded: bus /
+        # run_id are per-run, so a child runtime correctly re-binds its own context.
+        from reyn.llm.llm import set_budget_limit_context
+        set_budget_limit_context(self._intervention_bus, self._on_limit, run_id, False)
         self._state_log = state_log
         self._skill_registry = skill_registry
         # PR-skill-resume D3b-3: optional ResumePlan for forward-replay

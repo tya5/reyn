@@ -1261,6 +1261,23 @@ class Session:
         if router_config is not None:
             from reyn.llm.llm import set_router_config
             set_router_config(router_config)
+        # #1868: publish the budget-exceed policy context for the chat path's
+        # per-LLM-call cost gate (call_llm / call_llm_tools). Reuses safety.on_limit
+        # (one unified limit policy) + the SAME intervention path the chat-side
+        # limit checkpoint uses (a bus wrapping _dispatch_intervention, which records
+        # the WAL intervention events). run_id falls back to agent_name (session
+        # scope, mirroring _handle_limit_checkpoint); non_interactive flows so a
+        # non-tty run fails closed (bounded). UNSET → fail-closed deny.
+        _session_dispatch = self._dispatch_intervention
+
+        class _ChatBudgetBus:
+            async def request(self, iv):  # type: ignore[no-untyped-def]
+                return await _session_dispatch(iv)
+
+        from reyn.llm.llm import set_budget_limit_context
+        set_budget_limit_context(
+            _ChatBudgetBus(), self._on_limit, self.agent_name, self._non_interactive,
+        )
         # Issue #162: surface session-level lifecycle events (compaction
         # today; attach/detach + budget warnings as growth) into the
         # conv pane via OutboxMessage(kind="system"). Sibling of the

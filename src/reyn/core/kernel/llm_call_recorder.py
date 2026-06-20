@@ -170,7 +170,7 @@ class LLMCallRecorder:
                 # else: corrupt memo result → fall through to fresh call
 
         # Normal call path
-        self._check_budget_pre_llm(resolved_model)
+        await self._check_budget_pre_llm(resolved_model)
         self._events.emit(
             "llm_called",
             run_id=self._run_id,
@@ -369,7 +369,7 @@ class LLMCallRecorder:
         the memo-MISS path ONLY — resume-HIT skips the LLM call and replays
         events from the log (ADR-0002), so no double cost/emit.
         """
-        self._check_budget_pre_llm(resolved_model)
+        await self._check_budget_pre_llm(resolved_model)
         self._events.emit(
             "llm_called",
             run_id=self._run_id,
@@ -669,7 +669,7 @@ class LLMCallRecorder:
             return self._caller.split("/", 1)[1]
         return None
 
-    def _check_budget_pre_llm(self, model: str) -> None:
+    async def _check_budget_pre_llm(self, model: str) -> None:
         if self._budget_tracker is None:
             return
         agent = self._budget_agent_name()
@@ -682,10 +682,16 @@ class LLMCallRecorder:
                 agent=agent,
                 chain_id=self._chain_id,
             )
-            raise BudgetExceeded(
-                check.hard_dimension or "budget",
-                format_refusal_message(check, agent=agent),
-            )
+            # #1868: route the exceed through the 3-mode limit policy (deny /
+            # auto-allow / ask-user). Denied — or no policy context (fail-closed)
+            # — raises (today's behavior); approved / auto-extended → proceed past
+            # the cap (the call is still recorded; accounting unchanged).
+            from reyn.llm.llm import _budget_exceed_allows_continue
+            if not await _budget_exceed_allows_continue(check, agent):
+                raise BudgetExceeded(
+                    check.hard_dimension or "budget",
+                    format_refusal_message(check, agent=agent),
+                )
         for dim in check.warn_dimensions:
             self._events.emit(
                 "budget_warn",
