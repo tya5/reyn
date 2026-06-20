@@ -26,7 +26,8 @@ from reyn.llm.llm import LLMToolCallResult
 from reyn.llm.pricing import TokenUsage
 from reyn.runtime.planner import Plan, PlanStep, _PlanStepHost
 from reyn.runtime.router_loop import RouterLoop
-from tests.test_router_loop import FakeEventLog, FakeRouterHost, _ScriptedLLM, text_result
+from tests._support.router_loop import FakeEventLog, FakeRouterHost, text_result
+from tests._support.router_loop import ScriptedLLM as _ScriptedLLM
 
 _USAGE = TokenUsage(prompt_tokens=10, completion_tokens=5)
 

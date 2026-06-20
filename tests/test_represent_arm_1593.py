@@ -32,7 +32,7 @@ from reyn.tools.scheme import (
     Presentation,
     RePresent,
 )
-from tests.test_router_loop import FakeRouterHost, make_loop, text_result, tool_result
+from tests._support.router_loop import FakeRouterHost, make_loop, text_result, tool_result
 
 _USAGE = TokenUsage(prompt_tokens=10, completion_tokens=5)
 

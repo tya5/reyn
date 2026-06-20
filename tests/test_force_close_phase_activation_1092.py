@@ -32,7 +32,7 @@ from reyn.services.turn_budget import (
     TurnBudgetEngine,
     build_default_turn_budget_engine,
 )
-from tests.test_router_loop import FakeEventLog, FakeRouterHost
+from tests._support.router_loop import FakeEventLog, FakeRouterHost
 
 _MODEL = "gpt-4o-mini"
 

@@ -14,7 +14,7 @@ from pathlib import Path
 import pytest
 
 from reyn.security.permissions.permissions import PermissionDecl
-from tests.test_permissions import _make_resolver
+from tests._support.permissions import make_resolver as _make_resolver
 
 # #1199 S3.1c-1: the require_file_read/write decl-full auto-grant was removed —
 # both gates are now decl-less (zone OR approved). The tests that pinned the old

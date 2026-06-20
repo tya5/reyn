@@ -26,7 +26,7 @@ from reyn.services.turn_budget import (
     build_default_turn_budget_engine,
     try_build_default_turn_budget_engine,
 )
-from tests.test_router_host_adapter_invariants import _make_adapter
+from tests._support.router_host_adapter import make_adapter as _make_adapter
 
 # ── adapter property ─────────────────────────────────────────────────────────
 

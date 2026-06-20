@@ -21,9 +21,25 @@ Record mode is also activated automatically when a fixture file is missing
 from __future__ import annotations
 
 import os
+import sys
 from pathlib import Path
 
 import pytest
+
+# ── Repo-root on sys.path (stable ``tests`` package imports) ───────────────────
+#
+# ``tests/`` has no ``__init__.py`` (it is collected from the rootdir as an
+# implicit namespace package). That makes ``from tests._support... import X``
+# resolve only when the repo root happens to be on ``sys.path`` — true under
+# ``python -m pytest`` from the repo root, but NOT under bare ``pytest`` or when
+# invoked from another cwd / an IDE runner, where it fails with
+# ``ModuleNotFoundError: No module named 'tests'``. Inserting the repo root here
+# (this conftest loads for any collected test, including a single isolated file)
+# makes ``tests`` and ``tests._support`` importable in every invocation style,
+# so shared helpers do not depend on how pytest was started.
+_REPO_ROOT = str(Path(__file__).resolve().parent.parent)
+if _REPO_ROOT not in sys.path:
+    sys.path.insert(0, _REPO_ROOT)
 
 # ── Secret store isolation ─────────────────────────────────────────────────────
 

@@ -30,7 +30,8 @@ from reyn.runtime.budget.budget import BudgetTracker, CostConfig
 from reyn.runtime.errors import RouterCapExceeded
 from reyn.runtime.outbox import OutboxMessage
 from reyn.runtime.session import Session
-from tests.test_router_loop import _ScriptedLLM, text_result
+from tests._support.router_loop import ScriptedLLM as _ScriptedLLM
+from tests._support.router_loop import text_result
 
 _USAGE = TokenUsage(prompt_tokens=10, completion_tokens=5)
 

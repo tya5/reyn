@@ -12,7 +12,7 @@ from pathlib import Path
 
 from reyn.security.permissions.effective import AgentLayer, CapabilityAxis, EffectivePermission
 from reyn.security.permissions.permissions import PermissionDecl
-from tests.test_permissions import _make_resolver
+from tests._support.permissions import make_resolver as _make_resolver
 
 AX = CapabilityAxis
 

@@ -49,11 +49,13 @@ from reyn.runtime.router_loop import (
     _SPAWN_ACK_TOOL_DIRECTIVE,
     RouterLoop,
 )
-from tests.test_router_loop import (
+from tests._support.router_loop import (
     FakeRouterHost,
-    _ScriptedLLM,
     text_result,
     tool_result,
+)
+from tests._support.router_loop import (
+    ScriptedLLM as _ScriptedLLM,
 )
 
 _EMPTY_USAGE = TokenUsage(prompt_tokens=10, completion_tokens=5)

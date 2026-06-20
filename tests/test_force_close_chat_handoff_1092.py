@@ -25,7 +25,8 @@ from reyn.llm.pricing import TokenUsage
 from reyn.runtime.chat_message import ChatMessage
 from reyn.runtime.session import _MAX_FORCE_CLOSE_HANDOFFS
 from reyn.services.compaction.engine import ContextOverflowError
-from tests.test_session_router_history_slicing import _make_session, _push
+from tests._support.session import make_session as _make_session
+from tests._support.session import push as _push
 
 _CONSOL = "CONSOLIDATION-MARK-XYZ"
 

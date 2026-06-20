@@ -26,7 +26,7 @@ from reyn.data.workspace.workspace import Workspace
 from reyn.llm.llm import LLMToolCallResult
 from reyn.llm.pricing import TokenUsage
 from reyn.runtime.router_loop import RouterLoop
-from tests.test_router_loop import FakeRouterHost
+from tests._support.router_loop import FakeRouterHost
 
 
 def _finish(text: str = "consolidated handoff") -> LLMToolCallResult:
@@ -127,7 +127,7 @@ def test_phase_host_record_force_close_stores_result() -> None:
     """Tier 2: PhaseRouterLoopHost.record_force_close stores the consolidation on
     forced_close_result (initially None)."""
     from reyn.core.kernel.phase_router_host import PhaseRouterLoopHost
-    from tests.test_router_loop import FakeEventLog
+    from tests._support.router_loop import FakeEventLog
 
     host = PhaseRouterLoopHost(
         control_ir_executor=None, events=FakeEventLog(), phase="p", decl=None,

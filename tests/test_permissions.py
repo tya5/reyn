@@ -13,17 +13,9 @@ import pytest
 
 from reyn.security.permissions.permissions import PermissionDecl, PermissionResolver
 from reyn.user_intervention import InterventionAnswer, InterventionBus, UserIntervention
+from tests._support.permissions import make_resolver as _make_resolver
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
-
-
-def _make_resolver(tmp_path: Path, *, config: dict | None = None) -> PermissionResolver:
-    """Build a non-interactive PermissionResolver backed by tmp_path."""
-    return PermissionResolver(
-        config_permissions=config or {},
-        project_root=tmp_path,
-        interactive=False,
-    )
 
 
 class _AutoDenyInterventionBus:
