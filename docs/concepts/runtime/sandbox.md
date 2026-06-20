@@ -20,7 +20,7 @@ Defined in `src/reyn/security/sandbox/policy.py`. Passed as fields on a `sandbox
 | `write_paths` | `list[str]` | `[]` | Filesystem paths the subprocess may write (tight guard). |
 | `read_deny_paths` | `list[str]` | [OS credential paths] | Sensitive paths denied from the broad read surface (defense-in-depth). Enforced only on backends that support deny-after-allow (Seatbelt). Default: `~/.ssh`, `~/.aws`, `~/.gnupg`, `~/.config/gcloud`, `~/.kube`, `~/.docker/config.json`, `~/.netrc`. |
 | `read_paths` | `list[str]` | `[]` | **Legacy** — formerly the read allowlist. Under the current broad-read model reads are not restricted to this list; retained for backward compatibility and as documentation of intended read targets. |
-| `allow_subprocess` | `bool` | `false` | Allow the subprocess to spawn child processes. Advisory under Seatbelt (process-fork always permitted for binary bootstrap). |
+| `allow_subprocess` | `bool` | `false` | Allow the sandboxed process to spawn child processes. Enforced on Linux (seccomp) and macOS (Seatbelt: `process-fork` denied when off; the target's own exec still works via `process-exec*`). |
 | `env_passthrough` | `list[str]` | `[]` | Environment variable names passed through to the subprocess (all others are stripped). `PATH` is always passed. |
 | `timeout_seconds` | `int` | `60` | Wall-clock limit; process is killed on expiry. |
 

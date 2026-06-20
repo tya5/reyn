@@ -68,7 +68,7 @@ restriction: op-level fields govern, and the SandboxLayer is unrestricted.
 | `write_paths` | list of paths | `[]` | Paths the process may write (tight guard). Write implies read. |
 | `read_deny_paths` | list of paths | `[]` | Sensitive paths to deny from the broad read surface (defense-in-depth). Enforced only on backends that support deny-after-allow (Seatbelt); not enforceable on Landlock. |
 | `read_paths` | list of paths | `[]` | Legacy — formerly the strict read allowlist. Reads are broad by default; this field now documents intended read targets only. |
-| `allow_subprocess` | bool | `false` | Allow child-process spawning. Advisory under Seatbelt. |
+| `allow_subprocess` | bool | `false` | Allow child-process spawning. Enforced on Linux (seccomp) and macOS (Seatbelt). |
 | `env_passthrough` | list of strings | `[]` | Env vars passed through to the process. `PATH` is always passed. |
 | `timeout_seconds` | int | `60` | Wall-clock limit; process is killed on expiry. |
 
@@ -96,7 +96,7 @@ on macOS.
 | `write_paths` | Enforced |
 | `network` | Enforced |
 | `read_deny_paths` | **Enforced** — SBPL deny-after-allow |
-| `allow_subprocess` | Advisory — process-fork always permitted for binary bootstrap |
+| `allow_subprocess` | **Enforced** — denies `process-fork` when off; the target's own exec still works via `process-exec*` (#1914) |
 | `timeout_seconds` | Enforced |
 
 ### Landlock (Linux)

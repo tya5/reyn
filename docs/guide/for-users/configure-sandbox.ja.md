@@ -62,7 +62,7 @@ sandbox:
 | `write_paths` | パスのリスト | `[]` | プロセスが書き込めるパス（厳密なガード）。書き込みは読み取りを含む。 |
 | `read_deny_paths` | パスのリスト | `[]` | 広読み込みサーフェスから拒否する機密パス（多層防御）。deny-after-allow をサポートするバックエンド（Seatbelt）のみ適用。Landlock では非対応。 |
 | `read_paths` | パスのリスト | `[]` | レガシー — かつての厳密な読み込み許可リスト。現在、読み込みはデフォルトで広許可のためこのフィールドは意図した読み込み対象のドキュメントとしてのみ機能します。 |
-| `allow_subprocess` | bool | `false` | 子プロセスの生成を許可。Seatbelt では advisory 扱い。 |
+| `allow_subprocess` | bool | `false` | 子プロセスの生成を許可。Linux (seccomp) / macOS (Seatbelt) ともに適用。 |
 | `env_passthrough` | 文字列のリスト | `[]` | プロセスに引き渡す環境変数名。`PATH` は常に引き渡されます。 |
 | `timeout_seconds` | int | `60` | ウォールクロック制限。期限超過でプロセスを終了。 |
 
@@ -86,7 +86,7 @@ SBPL deny-default プロファイルを使った `sandbox-exec` を使用。macO
 | `write_paths` | 適用 |
 | `network` | 適用 |
 | `read_deny_paths` | **適用** — SBPL deny-after-allow |
-| `allow_subprocess` | Advisory — バイナリブートストラップには process-fork が常時許可 |
+| `allow_subprocess` | **適用** — off の時 `process-fork` を deny（対象自身の exec は `process-exec*` で動作、#1914） |
 | `timeout_seconds` | 適用 |
 
 ### Landlock（Linux）
