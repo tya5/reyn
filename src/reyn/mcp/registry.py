@@ -84,6 +84,7 @@ from typing import Any
 # (= dedup is a list transform; server_info_from_raw is a dict reshape)
 # or scoped to reyn-internal disk cache. None of them are reachable from
 # user code through this safe namespace surface.
+from reyn._http_limits import read_capped
 from reyn.core.registry import cache as _cache
 from reyn.core.registry.client import _dedup_by_latest
 from reyn.core.registry.models import server_info_from_raw
@@ -140,7 +141,7 @@ def _http_get_json(url: str) -> dict:
     req = urllib.request.Request(url, headers={"User-Agent": _USER_AGENT})
     try:
         with urllib.request.urlopen(req, timeout=_HTTP_TIMEOUT) as resp:
-            raw = resp.read()
+            raw = read_capped(resp)  # bounded read — DoS guard (#1913 class)
             status = getattr(resp, "status", None) or resp.getcode()
     except urllib.error.HTTPError as exc:
         raise RegistryError(
