@@ -127,7 +127,21 @@ Details: [architecture](docs/concepts/architecture/architecture.md) · [principl
 
 ## How it compares
 
-Reyn enforces the agent loop at the OS level instead of exposing it as a programmable surface. The practical differences against workflow frameworks:
+Reyn overlaps with three families of agent tooling but makes a different bet — **the loop itself as an OS-enforced contract**, not connectivity reach or programmable flexibility. Each peer below is described by what it's *great at*, not by what it lacks.
+
+**General & coding agents** — the closest peers:
+
+| Tool | Category | Primary bet — what it's great at |
+|---|---|---|
+| **OpenClaw** | Self-hosted general agent | Multi-channel reach — answers you on the channels you already use (WhatsApp / Telegram / Slack …), on your own devices |
+| **Hermes** | Self-hosted general agent | A built-in self-improving loop — creates and refines skills from experience, curates its own memory (Nous Research) |
+| **Claude Code** | Terminal coding agent | Autonomous multi-file coding that lives in your terminal |
+| **Codex** | Terminal coding agent (OpenAI) | A local coding agent with IDE / desktop / cloud variants |
+| **Reyn** | Self-hosted agent **OS** | The loop as an OS-enforced contract — bounded decisions, a replayable audit log, and per-agent cost caps |
+
+Reyn connects too (MCP + A2A) and runs open-ended tasks, but optimizes for **integrity of the loop** rather than connectivity breadth or a turnkey coding workflow.
+
+**Workflow frameworks** — if you'd rather wire the loop yourself:
 
 | Framework | Loop enforcement | State & replay | Strength |
 |---|---|---|---|
