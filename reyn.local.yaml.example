@@ -380,6 +380,11 @@
 # cost_warn:
 #   enabled: true
 #   model_threshold_per_1m_input_usd: 5.0  # warn above $5/1M input tokens
+#   block_on_high_cost: false  # #1867: when true, a /model switch to a high-cost
+#                              # model is held for an interactive confirm (unified
+#                              # safety framework) and applies only on approval; a
+#                              # non-interactive session fail-closes (switch denied).
+#                              # Session startup stays warn-only regardless.
 
 
 # -----------------------------------------------------------------------------
