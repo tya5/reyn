@@ -127,24 +127,33 @@ async def test_create_then_get_via_handlers():
 
 
 @pytest.mark.asyncio
-async def test_update_status_threads_run_id_as_writer_token():
-    """Tier 2: update_status threads the caller's run_id as the single-writer
-    claim token (audit C2) — the backend records it on first write."""
+async def test_update_status_single_writer_is_assignee_session():
+    """Tier 2: update_status keys the single-writer on the caller's session_id ==
+    the (immutable) assignee — the assignee session writes, a non-assignee is
+    rejected (settled #1953 model; run_id/current_run_id retired)."""
     created = await taskmod._create(
-        SimpleNamespace(name="n", assignee="bob", requester="alice",
+        SimpleNamespace(name="n", assignee="sess-A", requester="alice",
                         origin="self", description=None, budget_cap=None, deps=[]),
-        _ctx(run_id="run-XYZ"), "control_ir",
+        _ctx(), "control_ir",
     )
     task_id = created["task"]["task_id"]
 
+    # the assignee session (session_id == assignee) may write.
     updated = await taskmod._update_status(
         SimpleNamespace(task_id=task_id, status="in_progress", reason=None),
-        _ctx(run_id="run-XYZ"), "control_ir",
+        SimpleNamespace(session_id="sess-A", agent_id="a", events=None),
+        "control_ir",
     )
     assert updated["status"] == "ok"
-    # RED if update_status stops threading run_id as the claim token (C2 fix gone).
-    assert updated["task"]["current_run_id"] == "run-XYZ"
     assert updated["task"]["status"] == "in_progress"
+
+    # RED if the single-writer CAS is dropped: a non-assignee session is rejected.
+    with pytest.raises(PermissionError):
+        await taskmod._update_status(
+            SimpleNamespace(task_id=task_id, status="failed", reason=None),
+            SimpleNamespace(session_id="sess-B", agent_id="b", events=None),
+            "control_ir",
+        )
 
 
 @pytest.mark.asyncio

@@ -79,9 +79,11 @@ async def _create(op, ctx: OpContext, caller) -> dict:
 
 
 async def _update_status(op, ctx: OpContext, caller) -> dict:
-    # writer_token = caller's run_id (single-writer claim token, audit C2); slice 3
-    # CAS-rejects on current_run_id mismatch.
-    task = await _backend(ctx).update_status(op.task_id, op.status, writer_token=ctx.run_id)
+    # Single-writer key = the caller's session identity (OpContext.session_id, the
+    # #1814 routing-key). The backend CAS-rejects when it != the immutable assignee.
+    task = await _backend(ctx).update_status(
+        op.task_id, op.status, caller_session_id=getattr(ctx, "session_id", None)
+    )
     if task is None:
         return _not_found("task.update_status", op.task_id)
     _audit(ctx, "task.update_status", op.task_id, status=op.status)

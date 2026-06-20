@@ -57,12 +57,14 @@ class TaskOrigin(str, Enum):
 class Task:
     """One trackable work-unit.
 
-    ``assignee`` is the single-writer of ``status`` and is immutable for the
-    Task's life (no handoff — delegation is sub-task decomposition, §12).
-    ``requester`` is the notify-target on disposition (§16). ``current_run_id``
-    + ``version`` back the single-writer CAS (enforced in slice 3). ``deps`` are
-    depends-on edges (the dependency DAG, §13) — kept here for the in-memory
-    backend; the sqlite backend stores them in a ``task_links`` table.
+    ``assignee`` is the **session identity** (#1814 routing-key) that owns the
+    Task — the single-writer of ``status``, immutable for the Task's life (no
+    handoff — delegation is sub-task decomposition, §12). Because ``assignee`` is
+    immutable, the single-writer CAS is a fixed equality ``assignee ==
+    caller_session_id`` (no claim token / version needed). ``requester`` is the
+    notify-target on disposition (§16). ``deps`` are depends-on edges (the
+    dependency DAG, §13) — kept here for the in-memory backend; the sqlite backend
+    stores them in a ``task_links`` table.
     """
 
     task_id: str
@@ -77,8 +79,6 @@ class Task:
     budget_cap: float | None = None  # per-task budget (§8)
     cost_accum: float = 0.0
     awaiting_since: float | None = None  # R-D16 WAL-floor exclusion (set while blocked)
-    current_run_id: str | None = None  # CAS token (slice 3)
-    version: int = 0  # CAS generalization (slice 3)
     deps: list[str] = field(default_factory=list)  # depends-on task_ids (DAG, §13)
     created_at: str = field(default_factory=_now_iso)
     updated_at: str = field(default_factory=_now_iso)
@@ -98,8 +98,6 @@ class Task:
             "budget_cap": self.budget_cap,
             "cost_accum": self.cost_accum,
             "awaiting_since": self.awaiting_since,
-            "current_run_id": self.current_run_id,
-            "version": self.version,
             "deps": list(self.deps),
             "created_at": self.created_at,
             "updated_at": self.updated_at,

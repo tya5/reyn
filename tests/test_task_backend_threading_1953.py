@@ -34,32 +34,37 @@ def _events_workspace():
 # ── completeness gate: BOTH ctx-build seams thread task_backend ──────────────
 
 
-def test_control_ir_executor_threads_task_backend_to_opcontext():
-    """Tier 2: ControlIRExecutor._build_ctx propagates task_backend to OpContext."""
+def test_control_ir_executor_threads_task_backend_and_session_to_opcontext():
+    """Tier 2: ControlIRExecutor._build_ctx propagates task_backend AND session_id
+    to OpContext (the single-writer key rides the same chain)."""
     events, ws = _events_workspace()
     sentinel = object()
     ex = ControlIRExecutor(
         workspace=ws, events=events, permission_resolver=None,
-        skill_name="s", chain_id="c", task_backend=sentinel,
+        skill_name="s", chain_id="c", task_backend=sentinel, session_id="sess-1",
     )
     ctx = ex._build_ctx(PermissionDecl(), "phase-1")
-    # RED if the control-IR leg drops task_backend (ops would hit the fallback).
+    # RED if the control-IR leg drops task_backend (ops would hit the fallback)
+    # or session_id (the single-writer CAS would mis-key).
     assert ctx.task_backend is sentinel
+    assert ctx.session_id == "sess-1"
 
 
-def test_preprocessor_executor_threads_task_backend_to_opcontext():
-    """Tier 2: PreprocessorExecutor._build_op_ctx propagates task_backend (the
-    parallel ctx-build seam — the completeness gate's second half)."""
+def test_preprocessor_executor_threads_task_backend_and_session_to_opcontext():
+    """Tier 2: PreprocessorExecutor._build_op_ctx propagates task_backend AND
+    session_id (the parallel ctx-build seam — the completeness gate's second half)."""
     events, ws = _events_workspace()
     sentinel = object()
     skill = SimpleNamespace(name="s", permissions=PermissionDecl())
     ex = PreprocessorExecutor(
         skill=skill, workspace=ws, model="standard", events=events,
         subscribers=[], resolver=SimpleNamespace(), task_backend=sentinel,
+        session_id="sess-1",
     )
     ctx = ex._build_op_ctx(SimpleNamespace(name="phase-1"), 0)
-    # RED if the preprocessor leg drops task_backend.
+    # RED if the preprocessor leg drops task_backend or session_id.
     assert ctx.task_backend is sentinel
+    assert ctx.session_id == "sess-1"
 
 
 # ── handler consumes ctx.task_backend (real sqlite, not the fallback) ────────
@@ -90,26 +95,27 @@ async def test_handler_uses_threaded_sqlite_backend(tmp_path: Path):
 
 @pytest.mark.asyncio
 async def test_cas_reject_end_to_end_through_op_layer(tmp_path: Path):
-    """Tier 2: the single-writer CAS holds through the op handler — a second
-    caller (different run_id) cannot write the task."""
+    """Tier 2: the single-writer CAS holds through the op handler — only the
+    assignee session (ctx.session_id == assignee) can write."""
     backend = SqliteTaskBackend(str(tmp_path / "tasks.db"))
-    ctx_a = SimpleNamespace(task_backend=backend, run_id="run-A", agent_id="a", events=None)
-    ctx_b = SimpleNamespace(task_backend=backend, run_id="run-B", agent_id="b", events=None)
+    # ctx_a's session is the assignee; ctx_b is a different session.
+    ctx_a = SimpleNamespace(task_backend=backend, session_id="sess-A", agent_id="a", events=None)
+    ctx_b = SimpleNamespace(task_backend=backend, session_id="sess-B", agent_id="b", events=None)
 
     created = await taskmod._create(
-        SimpleNamespace(name="n", assignee="bob", requester="r",
+        SimpleNamespace(name="n", assignee="sess-A", requester="r",
                         origin="self", description=None, budget_cap=None, deps=[]),
         ctx_a, "control_ir",
     )
     task_id = created["task"]["task_id"]
 
-    # run-A claims the task.
+    # the assignee session writes.
     ok = await taskmod._update_status(
         SimpleNamespace(task_id=task_id, status="in_progress", reason=None), ctx_a, "control_ir")
     assert ok["status"] == "ok"
 
-    # run-B is rejected by the CAS (PermissionError → execute_op surfaces "denied";
-    # the handler raises, mirroring the backend contract).
+    # a non-assignee session is rejected by the CAS (the handler raises, mirroring
+    # the backend contract; execute_op surfaces this as a "denied" result).
     with pytest.raises(PermissionError):
         await taskmod._update_status(
             SimpleNamespace(task_id=task_id, status="failed", reason=None), ctx_b, "control_ir")

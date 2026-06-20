@@ -3,13 +3,14 @@
 Real sqlite (no fake/mock backend — a fake misses construction bugs, the test
 mandate for this slice). Covers: non-default round-trip across a reload from
 disk, a blocked task with ``awaiting_since`` persisting, the single-writer CAS
-on ``current_run_id`` (audit C2), and the own ``task_events`` projection.
+(``assignee == caller_session_id`` fixed equality), and the own ``task_events``
+projection.
 
 Falsification:
 - the reload test reds if any non-default field is dropped on write or read
   (a real construction bug a fake backend would hide).
-- the CAS test reds if a second writer's ``update_status`` is allowed through
-  (single-writer broken).
+- the CAS test reds if a non-assignee session's ``update_status`` is allowed
+  through (single-writer broken).
 """
 from __future__ import annotations
 
@@ -71,25 +72,22 @@ async def test_list_filters_persist(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_update_status_cas_claims_then_rejects_other_writer(tmp_path):
-    """Tier 2: the first writer claims via current_run_id; a second writer with
-    a different token is rejected (single-writer CAS, audit C2)."""
+async def test_update_status_single_writer_is_assignee_session(tmp_path):
+    """Tier 2: only the assignee session may write status (fixed-equality CAS on
+    the immutable assignee == caller_session_id); a non-assignee is rejected."""
     backend = SqliteTaskBackend(_db(tmp_path))
-    await backend.create(Task(task_id="t", name="n", assignee="bob", requester="r"))
+    # assignee IS the owning session identity (#1814 routing-key).
+    await backend.create(Task(task_id="t", name="n", assignee="sess-A", requester="r"))
 
-    # First writer claims the task.
-    claimed = await backend.update_status("t", "in_progress", writer_token="run-A")
-    assert claimed is not None
-    assert claimed.current_run_id == "run-A"
-    assert claimed.status is TaskState.IN_PROGRESS
+    # The assignee session writes freely (any number of turns — no claim/version).
+    s1 = await backend.update_status("t", "in_progress", caller_session_id="sess-A")
+    assert s1 is not None and s1.status is TaskState.IN_PROGRESS
+    s2 = await backend.update_status("t", "completed", caller_session_id="sess-A")
+    assert s2 is not None and s2.status is TaskState.COMPLETED
 
-    # Same writer may continue.
-    again = await backend.update_status("t", "completed", writer_token="run-A")
-    assert again is not None and again.status is TaskState.COMPLETED
-
-    # A different writer is rejected — single-writer CAS holds.
+    # A non-assignee session is rejected — single-writer CAS holds.
     with pytest.raises(PermissionError):
-        await backend.update_status("t", "failed", writer_token="run-B")
+        await backend.update_status("t", "failed", caller_session_id="sess-B")
 
     # State is unchanged by the rejected write.
     after = await backend.get("t")
@@ -101,7 +99,7 @@ async def test_update_status_cas_claims_then_rejects_other_writer(tmp_path):
 async def test_update_status_unknown_task_returns_none(tmp_path):
     """Tier 2: update on a missing task returns None (not a CAS reject)."""
     backend = SqliteTaskBackend(_db(tmp_path))
-    assert await backend.update_status("nope", "in_progress", writer_token="x") is None
+    assert await backend.update_status("nope", "in_progress", caller_session_id="x") is None
     backend.close()
 
 

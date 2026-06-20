@@ -193,6 +193,15 @@ class OpContext:
     # across BOTH the control-IR and preprocessor ctx-build seams.
     task_backend: "object | None" = None
 
+    # #1953 slice 3 (rework): the caller's session identity (#1814 per-contextId
+    # routing-key ``Session._session_id``), threaded down the same chain. This is
+    # the single-writer key for Task ``update_status`` — the backend CAS-rejects
+    # when ``task.assignee != ctx.session_id`` (assignee is immutable, so a fixed
+    # equality suffices — no claim/version). agent_id (= agent_name) is too coarse
+    # because one agent can own many per-contextId sessions (#1814). None = no
+    # session identity (direct construction / OS-internal callers).
+    session_id: "str | None" = None
+
 
 def sandbox_policy_from_ctx(ctx: "OpContext") -> "SandboxPolicy | None":
     """Build the ``SandboxPolicy`` from ``ctx.default_sandbox_policy`` (the

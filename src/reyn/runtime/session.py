@@ -3294,6 +3294,7 @@ class Session:
             safety=self._safety,
             contextual_permission=self._contextual_permission,  # #1912: narrow skill execution too
             task_backend=self._task_backend,  # #1953 slice 3a: session-scoped Task backend
+            task_session_id=self._session_id,  # #1953 slice 3: caller session identity (single-writer key)
             mcp_servers=mcp_servers,
             intervention_bus=intervention_bus,
             subscribers=subscribers,
