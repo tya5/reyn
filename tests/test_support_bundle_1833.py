@@ -112,3 +112,45 @@ def test_bundle_has_meta_with_version(tmp_path, monkeypatch):
         assert "meta.json" in zf.namelist()
         meta = json.loads(zf.read("meta.json"))
     assert "reyn_version" in meta and "redaction" in meta
+
+
+# ── _parse_since edge handling ──────────────────────────────────────────────
+
+
+def test_parse_since_relative_window_parses() -> None:
+    """Tier 2: a normal relative window (Nd/Nh/Nm) returns a past datetime."""
+    now = datetime.now(UTC)
+    result = support_bundle._parse_since("3h")
+    assert result is not None
+    delta = now - result
+    # ~3 hours ago (allow a wide margin for execution time)
+    assert timedelta(hours=2, minutes=59) <= delta <= timedelta(hours=3, minutes=1)
+
+
+def test_parse_since_huge_relative_window_is_graceful() -> None:
+    """Tier 2: an over-large relative window exits gracefully, not with a traceback.
+
+    ``timedelta(days=N)`` raises OverflowError for N beyond its C-int range. The
+    relative path used to leave that uncaught (the try/except wrapped only the
+    ISO path) — a typo'd giant ``--since`` crashed the CLI with a traceback
+    instead of the clean ``SystemExit`` every other invalid value gets.
+
+    Falsification: without the guard around ``timedelta``, this raises
+    OverflowError (not SystemExit) and the assertion below fails.
+    """
+    with pytest.raises(SystemExit) as exc:
+        support_bundle._parse_since("99999999999999999999d")
+    assert "invalid --since" in str(exc.value)
+
+
+def test_parse_since_invalid_iso_is_graceful() -> None:
+    """Tier 2: a non-relative, non-ISO value exits gracefully (regression guard)."""
+    with pytest.raises(SystemExit) as exc:
+        support_bundle._parse_since("not-a-time")
+    assert "invalid --since" in str(exc.value)
+
+
+def test_parse_since_none_returns_none() -> None:
+    """Tier 2: no --since (None / empty) returns None (no filter)."""
+    assert support_bundle._parse_since(None) is None
+    assert support_bundle._parse_since("") is None
