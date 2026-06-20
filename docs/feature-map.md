@@ -216,7 +216,8 @@ mindmap
       tool-result viewers
         Viewer registry seam
         LLM template fallback
-        Email-diff viewer
+        Email viewer
+        Diff viewer
       Input + command palette
     🐳 Environment
       EnvironmentBackend
@@ -645,9 +646,9 @@ The Textual terminal interface for `reyn chat` (`src/reyn/interfaces/tui/`).
 |---------|-------------|---------------|
 | Conversation view | Streaming conversation with inline thinking rows and tool-call rendering | — |
 | Right Panel tabs | Live side panels: Agents / Cost / Docs / Events / Keys / Memory / Pending | — |
-| Tool-result viewer registry ✅ | `register_viewer` seam replaces inline content-type dispatch; viewers registered as `_ViewerEntry` list with content-type + sync renderer | — |
-| LLM-generated template fallback ✅ | On registry miss, `_generate_template` async-generates a `TemplateSchema` (label/value rows + caption) via LLM call; `_apply_template` renders it with label escape and row/caption caps | [FP-0051 proposal](deep-dives/proposals/0051-tool-result-viewer-registry-llm-template.md) |
-| Email-diff viewer ⚗ | In-progress specialized viewer for email / diff result types; authoring doc to follow in `docs/reference/` once landed | — |
+| Tool-result viewer registry ✅ | `register_viewer` seam replaces inline content-type dispatch; viewers registered as `_ViewerEntry` list with content-type + sync renderer | [Tool-result viewers reference](reference/tui/tool-result-viewers.md) |
+| LLM-generated template fallback ✅ | On registry miss, `_generate_template` async-generates a `TemplateSchema` (label/value rows + caption) via LLM call; `_apply_template` renders it with label escape and row/caption caps (`_MAX_TEMPLATE_ROWS=8`, `_MAX_CAPTION_CHARS=40`) | [Tool-result viewers reference](reference/tui/tool-result-viewers.md) · [FP-0051 proposal](deep-dives/proposals/0051-tool-result-viewer-registry-llm-template.md) |
+| Email-diff viewer ✅ | Concrete viewers for `message/rfc822` (email from/subject card) and `text/x-diff` / `text/x-patch` (syntax-highlighted patch); registered before the generic JSON viewer so declared content-type takes priority | [Tool-result viewers reference](reference/tui/tool-result-viewers.md) |
 | Input + command palette | Input bar with slash commands (`/plan`, `/compact`, `/find`, `/help`, `/clear`) via a command palette | — |
 | Intervention widget | In-TUI `ask_user` prompt rendering | — |
 | Chainlit web chat (⚗ PoC) | Alternative browser chat UI sharing the same agent — `reyn chainlit` + `chainlit_app/` (agent picker, settings, uploads, slash routing); coexists with the TUI | — |
