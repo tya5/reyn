@@ -99,6 +99,19 @@ def test_mcp_command_server_flagged_and_exit_nonzero(tmp_path, monkeypatch):
     assert ei.value.code == 1, "a HIGH finding must make reyn audit exit non-zero"
 
 
+def test_benign_mcp_server_not_high(tmp_path, monkeypatch):
+    """Tier 2: (falsification) a benign MCP server (url-only — no command, no secret
+    env) is enumerated but produces NO HIGH finding — the gateway rule does not
+    over-flag a network-only plugin."""
+    (tmp_path / "reyn.yaml").write_text(
+        "mcp:\n  servers:\n    docs:\n      url: https://example.com/mcp\n", encoding="utf-8",
+    )
+    monkeypatch.chdir(tmp_path)
+    findings = audit._gateway_mcp()
+    assert findings, "the server should still be enumerated (INFO)"
+    assert not any(f.severity == "HIGH" for f in findings), "a url-only MCP server must not be HIGH"
+
+
 def test_clean_project_exits_zero(tmp_path, monkeypatch):
     """Tier 2: a project with no skills / no HIGH findings → run() does not exit non-zero."""
     monkeypatch.setenv("HOME", str(tmp_path))  # no secrets.env
