@@ -821,6 +821,7 @@ class Session:
         exclude_tools: "frozenset[str] | set[str] | None" = None,  # #187: tool names hidden from the LLM catalog (e.g. web for faithful eval)
         excluded_categories: "frozenset[str] | set[str] | None" = None,  # #1667: catalog categories hidden at source (e.g. reyn_source for external-repo eval)
         contextual_permission: "object | None" = None,  # #1827 S3: per-session capability_profile narrowing (ContextualPermission); from registry.resolved_profile_for; None = byte-identical
+        task_backend: "object | None" = None,  # #1953 slice 3a: session-scoped Task backend instance (injected by the session factory); None → op-runtime in-memory fallback
         router_max_iterations: int = 5,  # #187: per-message tool-call budget for the MAIN chat loop (interactive=5; one-shot autonomous SWE sets higher)
         non_interactive: bool = False,  # #1439 Fix #1: run-once (piped, no TTY) — no user to ask, so the SP directs proceed-with-assumption instead of clarifying
         # FP-0043 Stage 5: the conversation session id this Session records WAL
@@ -883,6 +884,12 @@ class Session:
         # resolved from the agent's topology role. Threaded to the live tool gate
         # (RouterLoop) + control-IR OpContext. None = no narrowing (byte-identical).
         self._contextual_permission = contextual_permission
+        # #1953 slice 3a: session-scoped Task backend instance, threaded down to the
+        # task.* op handlers via SkillRuntime → OSRuntime → executors → OpContext
+        # (mirrors contextual_permission). Injected by the session factory (the
+        # session-scoped sqlite db path is finalized with §24); None → the op-runtime
+        # falls back to its in-memory backend (tests / direct construction).
+        self._task_backend = task_backend
         # #1827 S4b (context-auto): lazily-resolved minimal _untrusted profile
         # ContextualPermission, composed into the per-turn narrowing while
         # untrusted external content is live in context. None until first needed.
@@ -3286,6 +3293,8 @@ class Session:
             permission_resolver=self._perm,
             safety=self._safety,
             contextual_permission=self._contextual_permission,  # #1912: narrow skill execution too
+            task_backend=self._task_backend,  # #1953 slice 3a: session-scoped Task backend
+            task_session_id=self._session_id,  # #1953 slice 3: caller session identity (single-writer key)
             mcp_servers=mcp_servers,
             intervention_bus=intervention_bus,
             subscribers=subscribers,

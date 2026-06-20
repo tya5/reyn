@@ -1,28 +1,23 @@
 """Task backend contract + in-memory implementation (#1953 slice 1).
 
 ``TaskBackend`` is the **tracker-agnostic core contract** every backend must
-implement (id / status / assignee / requester / links / fields). Slice 1 ships
-``InMemoryTaskBackend`` (the stub the design calls for); slice 2 adds the sqlite
-backend (single-writer CAS via ``BEGIN IMMEDIATE`` + ``current_run_id``), and
-later slices layer P6 events, cascades, cycle-checks, and budget on top.
+implement (id / status / assignee / requester / links / fields). ``InMemoryTaskBackend``
+is the test / ephemeral backend; the durable sqlite backend lives in
+``sqlite_backend.py``. Later slices layer cascades, cycle-checks, and budget on top.
 
-Scope note (slice 1): these methods provide the *contract surface* — basic
-persistence + retrieval. Enforcement that the design assigns to later slices is
-intentionally NOT here yet:
-  - **single-writer CAS reject** → slice 3. NOTE (part-3 audit C2): this is a
-    **backend-CAS on ``current_run_id``**, NOT a permission gate — the permission
-    system has no caller/session identity at op-exec time, so "caller≠assignee →
-    reject via P5" is unimplementable. The writer-token is the caller's durable
-    skill-run ``run_id`` (threaded from ``OpContext.run_id``, never an LLM param
-    → unforgeable); ``update_status`` carries it now so slice 3 can CAS on
-    ``current_run_id == writer_token`` (Hermes ``current_run_id`` CAS, same form).
-  - **abort** → slice 3. NOTE (audit C1): abort is *cooperative*, not SIGKILL —
-    ``cancel_inflight()`` only takes effect at the next tool-boundary, so an
-    in-flight write can still land. The contract is the 3-step
-    ``cancel_inflight → await_quiescent → terminal`` (+ seq-fence) so no write
-    lands after the terminal transition. The stub here just sets the terminal
-    state; the quiescence step needs Session access (slice 3).
-  - deletion cascade (DOWN-abort children / UP-notify requester) → slice 3.
+Single-writer (settled model, #1953): a Task is owned by its **assignee session**
+(the #1814 per-contextId routing-key), and ``assignee`` is immutable — so the
+single-writer CAS is a **fixed equality** ``assignee == caller_session_id``, NOT
+a permission gate (the permission system is resource-scoped, no caller identity
+at op-exec) and NOT a skill-run claim (a multi-turn Task spans many skill-runs,
+so no one run owns it). ``caller_session_id`` is ``OpContext.session_id``,
+threaded down the runtime chain. No claim token / version is needed (the key is
+fixed at create). A non-assignee write raises ``PermissionError``.
+
+Enforcement deferred to later slices:
+  - abort 3-step (``cancel_inflight → await_quiescent → terminal`` + seq-fence,
+    needs Session access) + abort=delete unification → PR-2 / later.
+  - deletion cascade (DOWN-abort children / UP-notify requester) → later.
   - dependency cycle-check + readiness propagation → slice 6.
   - unblock-predicate evaluation → slice 7.
 """
@@ -51,11 +46,11 @@ class TaskBackend(Protocol):
     ) -> list[Task]: ...
 
     async def update_status(
-        self, task_id: str, status: str, *, writer_token: str | None = None
+        self, task_id: str, status: str, *, caller_session_id: str | None = None
     ) -> Task | None:
-        """Transition status. ``writer_token`` is the caller's durable skill-run
-        run_id (the single-writer claim token, audit C2). Slice 3 CAS-rejects when
-        ``current_run_id`` is set and ``!= writer_token``; slice 1 accepts it."""
+        """Transition status. Single-writer CAS: succeeds only when ``caller_session_id
+        == task.assignee`` (immutable assignee, fixed equality); a non-assignee
+        caller raises ``PermissionError``. Returns None for an unknown task."""
         ...
 
     async def add_dependency(self, task_id: str, depends_on: str) -> Task | None: ...
@@ -111,15 +106,18 @@ class InMemoryTaskBackend:
         return out
 
     async def update_status(
-        self, task_id: str, status: str, *, writer_token: str | None = None
+        self, task_id: str, status: str, *, caller_session_id: str | None = None
     ) -> Task | None:
         task = self._tasks.get(task_id)
         if task is None:
             return None
-        # slice 3 adds the CAS reject on current_run_id != writer_token (audit C2);
-        # slice 1 records the claim token (first writer claims) without rejecting.
-        if writer_token is not None and task.current_run_id is None:
-            task.current_run_id = writer_token
+        # Single-writer CAS: only the assignee session may write (fixed equality).
+        if task.assignee != caller_session_id:
+            raise PermissionError(
+                f"task {task_id!r} status-write rejected: caller "
+                f"{caller_session_id!r} is not the assignee {task.assignee!r} "
+                f"(single-writer)"
+            )
         task.status = TaskState(status)
         task.updated_at = _now_iso()
         return task

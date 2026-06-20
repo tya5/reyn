@@ -12,11 +12,13 @@ Concurrency (part-4 Option A, lead-confirmed):
   - writes open an explicit ``BEGIN IMMEDIATE`` transaction (WAL writer-upgrade
     deadlock avoidance — reyn's first use, so explicit).
 
-Single-writer is a **compare-and-swap on ``current_run_id``** (the caller's
-skill-run run_id, audit C2): ``update_status`` succeeds only when the row's
-``current_run_id`` is NULL (first writer claims) or equals the writer token;
-otherwise ``rowcount == 0`` → the write is rejected (a different session holds
-the task). This is the durable analogue of the in-memory stub's claim.
+Single-writer is a **fixed-equality CAS on ``assignee``** (the settled model,
+#1953): a Task is owned by its **assignee session** (the #1814 per-contextId
+routing-key) and ``assignee`` is immutable, so ``update_status`` succeeds only
+when ``assignee == caller_session_id`` (``OpContext.session_id``); otherwise
+``rowcount == 0`` → the write is rejected. No claim token / version is needed
+(the key is fixed at create) — the backend ``asyncio.Lock`` serialises writers
+and the immutable assignee key makes a single writer structural.
 
 We deliberately do NOT copy ``SqliteIndexBackend``'s per-op fresh-connection +
 unguarded blocking ``conn.execute`` (PR-N7 on-loop-blocking hazard); only its
@@ -49,9 +51,7 @@ CREATE TABLE IF NOT EXISTS tasks(
   budget_cap REAL,
   cost_accum REAL NOT NULL DEFAULT 0,
   awaiting_since REAL,
-  current_run_id TEXT,
   unblock_predicate TEXT,
-  version INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
@@ -88,8 +88,7 @@ CREATE TABLE IF NOT EXISTS task_comments(
 
 _TASK_COLUMNS = (
     "task_id, name, assignee, requester, origin, status, description, created_by, "
-    "parent_id, budget_cap, cost_accum, awaiting_since, current_run_id, version, "
-    "created_at, updated_at"
+    "parent_id, budget_cap, cost_accum, awaiting_since, created_at, updated_at"
 )
 
 
@@ -140,8 +139,6 @@ class SqliteTaskBackend:
             budget_cap=row["budget_cap"],
             cost_accum=row["cost_accum"],
             awaiting_since=row["awaiting_since"],
-            current_run_id=row["current_run_id"],
-            version=row["version"],
             deps=self._deps(row["task_id"]),
             created_at=row["created_at"],
             updated_at=row["updated_at"],
@@ -160,13 +157,13 @@ class SqliteTaskBackend:
             self._conn.execute("BEGIN IMMEDIATE")
             self._conn.execute(
                 f"INSERT INTO tasks({_TASK_COLUMNS}) "
-                f"VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                f"VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (
                     task.task_id, task.name, task.assignee, task.requester,
                     task.origin.value, task.status.value, task.description,
                     task.created_by, task.parent_id, task.budget_cap,
-                    task.cost_accum, task.awaiting_since, task.current_run_id,
-                    task.version, task.created_at, task.updated_at,
+                    task.cost_accum, task.awaiting_since,
+                    task.created_at, task.updated_at,
                 ),
             )
             for dep in task.deps:
@@ -208,20 +205,19 @@ class SqliteTaskBackend:
             return [self._row_to_task(r) for r in rows]
 
     async def update_status(
-        self, task_id: str, status: str, *, writer_token: str | None = None
+        self, task_id: str, status: str, *, caller_session_id: str | None = None
     ) -> Task | None:
         async with self._lock:
             self._conn.execute("BEGIN IMMEDIATE")
-            # CAS (audit C2): claim if unclaimed, else require the same writer.
-            # rowcount == 0 → a different session holds the task → reject.
+            # Single-writer CAS: only the assignee session may write (fixed
+            # equality — assignee is immutable). rowcount == 0 → either no such
+            # task or a non-assignee caller; distinguish for the caller.
             cur = self._conn.execute(
-                "UPDATE tasks SET status=?, current_run_id=COALESCE(current_run_id, ?), "
-                "version=version+1, updated_at=? "
-                "WHERE task_id=? AND (current_run_id IS NULL OR current_run_id=?)",
-                (status, writer_token, _now_iso(), task_id, writer_token),
+                "UPDATE tasks SET status=?, updated_at=? "
+                "WHERE task_id=? AND assignee=?",
+                (status, _now_iso(), task_id, caller_session_id),
             )
             if cur.rowcount == 0:
-                # Either no such task, or a CAS loss. Distinguish for the caller.
                 self._conn.rollback()
                 exists = self._conn.execute(
                     "SELECT 1 FROM tasks WHERE task_id=?", (task_id,)
@@ -229,10 +225,10 @@ class SqliteTaskBackend:
                 if exists is None:
                     return None
                 raise PermissionError(
-                    f"task {task_id!r} status-write rejected: held by another writer "
-                    f"(single-writer CAS on current_run_id)"
+                    f"task {task_id!r} status-write rejected: caller "
+                    f"{caller_session_id!r} is not the assignee (single-writer)"
                 )
-            self._emit(task_id, "status_changed", status=status, writer_token=writer_token)
+            self._emit(task_id, "status_changed", status=status, by=caller_session_id)
             self._conn.commit()
             return self._fetch(task_id)
 

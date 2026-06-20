@@ -184,6 +184,24 @@ class OpContext:
     # non-interactive callers, pre-#1470 tests).
     cancel_event: "asyncio.Event | None" = None
 
+    # #1953 slice 3a: the config-selected, session-scoped Task backend instance.
+    # Threaded from the Session (which owns the session-scoped db path) down
+    # through SkillRuntime → OSRuntime → executors, exactly like sandbox_backend.
+    # The task.* op handlers use this when set; None → the op-runtime falls back
+    # to its process-local in-memory backend (slice-1 stub for tests / direct
+    # OpContext construction). Mirrors the contextual_permission (#1912) chain
+    # across BOTH the control-IR and preprocessor ctx-build seams.
+    task_backend: "object | None" = None
+
+    # #1953 slice 3 (rework): the caller's session identity (#1814 per-contextId
+    # routing-key ``Session._session_id``), threaded down the same chain. This is
+    # the single-writer key for Task ``update_status`` — the backend CAS-rejects
+    # when ``task.assignee != ctx.session_id`` (assignee is immutable, so a fixed
+    # equality suffices — no claim/version). agent_id (= agent_name) is too coarse
+    # because one agent can own many per-contextId sessions (#1814). None = no
+    # session identity (direct construction / OS-internal callers).
+    session_id: "str | None" = None
+
 
 def sandbox_policy_from_ctx(ctx: "OpContext") -> "SandboxPolicy | None":
     """Build the ``SandboxPolicy`` from ``ctx.default_sandbox_policy`` (the
