@@ -45,6 +45,7 @@ class RouterLoopDriver:
         exclude_tools: Any,           # set — for RouterLoop
         excluded_categories: Any = frozenset(),  # #1667 set — catalog categories for RouterLoop
         contextual_permission: Any = None,  # #1827 S3 ContextualPermission — for RouterLoop live tool gate; None = no narrowing
+        contextual_for_turn_fn: Any = None,  # #1827 S4b: () -> ContextualPermission|None — per-turn effective contextual (context-auto); None → static contextual_permission (byte-identical)
         budget: Any,                  # BudgetGateway — cap + usage accounting
         resolver: Any,                # LLMResolver — model resolution
         compaction: Any,              # CompactionConfig — retry_loop cfg
@@ -68,6 +69,7 @@ class RouterLoopDriver:
         self._exclude_tools = exclude_tools
         self._excluded_categories = excluded_categories  # #1667
         self._contextual_permission = contextual_permission  # #1827 S3
+        self._contextual_for_turn_fn = contextual_for_turn_fn  # #1827 S4b
         self._budget = budget
         self._resolver = resolver
         self._compaction = compaction
@@ -382,7 +384,15 @@ class RouterLoopDriver:
             # catalog.
             exclude_tools=self._exclude_tools,
             excluded_categories=self._excluded_categories,  # #1667
-            contextual_permission=self._contextual_permission,  # #1827 S3 live tool gate
+            # #1827 S4b: per-turn effective contextual — when untrusted external
+            # content is live in context (context-auto), the static narrowing is
+            # composed with the minimal _untrusted profile; otherwise the static
+            # S3 contextual (byte-identical). The fn is provided by Session.
+            contextual_permission=(
+                self._contextual_for_turn_fn()
+                if self._contextual_for_turn_fn is not None
+                else self._contextual_permission
+            ),
             # B43-NF-W6-1 / #187: chat router empty-stop retry — always-on +
             # uniform "resume" directive.
             empty_stop_retry_directive=EMPTY_STOP_RETRY_DIRECTIVE,
