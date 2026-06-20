@@ -23,7 +23,8 @@ unlimited for that dimension.
 
 ```yaml
 cost:
-  # Per-agent caps — in-memory, reset on restart or /budget reset
+  # Per-agent caps — ledger-backed (survive restart + crash); cleared in
+  # memory by /budget reset
   per_agent_tokens:
     hard_limit: 50000    # refuse after this many tokens for one agent
     warn_ratio: 0.8      # warn at 80% of hard_limit (default: 0.8)
@@ -56,8 +57,8 @@ cost:
 
 | Field | Scope | Persists | Resets |
 |---|---|---|---|
-| `per_agent_tokens` | per agent | in-memory | `/budget reset` or restart |
-| `per_agent_cost_usd` | per agent | in-memory | `/budget reset` or restart |
+| `per_agent_tokens` | per agent | ledger file | `/budget reset` |
+| `per_agent_cost_usd` | per agent | ledger file | `/budget reset` |
 | `rate_limit_per_minute` | per model | in-memory (60s window) | automatic sliding window |
 | `rate_limit_warn_ratio` | global | — | — |
 | `daily_tokens` | process-global | ledger file | midnight (local time) |
@@ -98,8 +99,9 @@ Example output:
 alice: 12,450 tokens, $0.0187  (this session)
 ```
 
-Reports the in-memory counters for this agent since last restart (or last
-`/budget reset`). Returns nothing when no `cost:` block is configured
+Reports the per-agent counters for this agent. These are restored from the
+ledger on startup (so they accumulate across restarts) and cleared in memory
+by `/budget reset`. Returns nothing when no `cost:` block is configured
 (unlimited mode).
 
 ### `/budget`
@@ -201,7 +203,8 @@ Counters update after each LLM call completes successfully:
    per-chain accumulators.
 2. USD cost is estimated via LiteLLM pricing and added to the USD accumulators.
 3. A record is appended to `.reyn/state/budget_ledger.jsonl` (fsync'd for
-   durability) for the daily / monthly dimensions.
+   durability). The daily / monthly / per-agent counters are reconstructed
+   from these records on the next startup.
 4. The updated counters are checked against warn thresholds; any newly crossed
    threshold emits a warning outbox message (once per dimension per session).
 
@@ -210,32 +213,66 @@ call is refused at that point — no tokens are consumed.
 
 ## Ledger file
 
-Daily and monthly counters persist across process restarts via
-`.reyn/state/budget_ledger.jsonl`. One record per LLM call:
+Budget counters persist across process restarts — and crashes — via the
+fsync-per-append `.reyn/state/budget_ledger.jsonl`. It holds two record kinds,
+distinguished by an optional `kind` field.
+
+One record per LLM call (no `kind` field):
 
 ```json
 {"ts": "2026-05-09T10:23:00+09:00", "agent": "alice", "model": "openai/gpt-4o", "tokens": 312, "cost_usd": 0.00234}
 ```
 
-Records are fsync'd on append. On startup, Reyn re-aggregates today's and
-this month's totals from the ledger. The file is append-only and grows at
-roughly a few MB per month; it can be manually archived if needed (stop the
-process first, or wait for the period rollover).
+One record per skill spawn (`kind: "spawn"`), which durably backs the
+per-chain spawn-count cap:
+
+```json
+{"ts": "2026-05-09T10:23:01+09:00", "kind": "spawn", "chain_id": "ab12…", "skill": "eval"}
+```
+
+Records are fsync'd on append. On startup, Reyn re-aggregates from the ledger:
+today's and this month's daily / monthly totals (period-filtered), the
+cumulative per-agent token + USD totals, and per-chain skill spawn counts. The
+ledger is the cap-critical source of truth; `.reyn/state/budget_state.json` is
+a throttled best-effort cache layered on top (it can lag the ledger by up to a
+second, so the ledger value always wins on recovery). The ledger is
+append-only and grows at roughly a few MB per month; it can be manually
+archived if needed (stop the process first, or wait for the period rollover).
+
+## Per-agent and per-chain cap recovery semantics
+
+`per_agent_tokens`, `per_agent_cost_usd`, and per-chain skill spawn caps are
+**lifetime/persistent** — they are reconstructed from the all-time durable
+ledger on every startup and survive crash and restart unchanged.
+
+**They do not reset per-conversation.** The counters accumulate continuously
+and are only cleared explicitly by `/budget reset` (in-memory clear) or by
+archiving the ledger file.
+
+Contrast with daily / monthly caps, which auto-reset at their period boundary
+(midnight or 1st of month, local time) regardless of process restarts or
+crashes.
+
+**Crash-recovery guarantee**: a crash cannot lower a per-agent or per-chain
+cap counter below its durable ledger value. On recovery, `load_state` (the
+throttled best-effort cache) is merged with `hydrate` (the ledger) using
+`max()` — so a stale or garbage-corrupted state file can never cause the cap
+to under-count spending and permit an over-budget call. Rationale: crash
+recovery must be complete; a crash that resets a lifetime cap would allow
+unbounded over-spend in the window before a human notices.
 
 ## What is not yet implemented
 
 Be aware of the following limitations:
 
-- **Persistent per-agent / per-chain counters across restarts** — `per_agent_tokens`,
-  `per_agent_cost_usd`, `safety.loop.skill_calls_per_chain`, and `safety.loop.skill_tokens_per_chain` are
-  in-memory only. A process restart or `/budget reset` zeroes them out. Only the
-  daily / monthly quotas survive restarts via the ledger.
 - **Auto-throttle** — when a rate limit is hit, Reyn refuses the call rather than
   sleeping until the window opens. The caller must retry.
 - **Cross-process / multi-tenant budgets** — each `reyn chat` or `reyn web`
-  process maintains its own in-memory counters. If multiple processes share one
-  project, the ledger aggregates correctly for daily / monthly quotas, but
-  in-memory caps (per-agent, per-chain) are enforced independently per process.
+  process maintains its own in-memory counters and only picks up another live
+  process's ledger records on its next startup (hydrate). Concurrently running
+  processes therefore enforce every cap independently in real time; the shared
+  ledger reconciles daily / monthly / per-agent totals and per-chain spawn
+  counts only when a process restarts.
 
 ## See also
 
