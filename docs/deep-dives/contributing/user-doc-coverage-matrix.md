@@ -175,11 +175,18 @@ the for-users hub's *Things Reyn handles for you* section, cross-linking
 ### JA parity
 
 A ✅ in this matrix means an **EN** how-to exists. Japanese parity is a separate
-axis tracked outside this matrix. As of the last full sweep, several
-`for-users/` pages still lacked `.ja.md` (e.g. chat-and-web-ui,
-enable-semantic-search, time-travel, work-with-files, popular-mcp-servers). New
-how-tos in the 2026-06-20 wave shipped EN+JA together; the backlog of
-pre-existing EN-only user pages is the remaining JA gap.
+axis tracked outside this matrix. The 2026-06-20 docs wave shipped its new
+how-tos EN+JA together, and the **five pre-existing EN-only `for-users` how-tos
+were backfilled with `.ja.md` in the same wave** (chat-and-web-ui,
+enable-semantic-search, time-travel, work-with-files, popular-mcp-servers).
+
+Remaining JA gap on `for-users/`:
+
+- `for-users/index.md` (the landing page) is still EN-only — deferred pending a
+  decision on whether the landing hub needs a JA version.
+
+All `for-users` **how-to** pages now have JA; only the landing page is
+outstanding.
 
 ---
 
