@@ -63,6 +63,17 @@ from reyn.schemas.models import (
     RunSkillIROp,
     SandboxedExecIROp,
     SkillResolveIROp,
+    TaskAbortIROp,
+    TaskAddDependencyIROp,
+    TaskArchiveIROp,
+    TaskCommentIROp,
+    TaskCreateIROp,
+    TaskCreateSubtaskIROp,
+    TaskGetIROp,
+    TaskHeartbeatIROp,
+    TaskListIROp,
+    TaskRegisterUnblockPredicateIROp,
+    TaskUpdateStatusIROp,
     WebFetchIROp,
     WebSearchIROp,
     WriteFileIROp,
@@ -142,6 +153,18 @@ OP_KIND_MODEL_MAP: dict[str, type[BaseModel]] = {
     # #272/#1128: LLM-emittable voluntary compaction (advisory; the mandatory
     # retry_loop backstop is independent).
     "compact": CompactIROp,
+    # #1953 slice 1: Task ops (first-class trackable work-units).
+    "task.create": TaskCreateIROp,
+    "task.update_status": TaskUpdateStatusIROp,
+    "task.get": TaskGetIROp,
+    "task.list": TaskListIROp,
+    "task.create_subtask": TaskCreateSubtaskIROp,
+    "task.add_dependency": TaskAddDependencyIROp,
+    "task.abort": TaskAbortIROp,
+    "task.archive": TaskArchiveIROp,
+    "task.heartbeat": TaskHeartbeatIROp,
+    "task.register_unblock_predicate": TaskRegisterUnblockPredicateIROp,
+    "task.comment": TaskCommentIROp,
 }
 
 # ---------------------------------------------------------------------------
@@ -200,6 +223,20 @@ OP_PURITY: dict[str, OpPurity] = {
     # emits its own events. external = emit both started+completed so a crash
     # mid-compaction surfaces as ambiguous on resume.
     "compact": OpPurity.external,
+    # #1953 slice 1: Task ops. Reads = world (backend state); mutations =
+    # side_effect (backend write). Conservative; finer attempt-vs-task purity
+    # is not needed for resume since the Task backend is its own source of truth.
+    "task.get": OpPurity.world,
+    "task.list": OpPurity.world,
+    "task.create": OpPurity.side_effect,
+    "task.update_status": OpPurity.side_effect,
+    "task.create_subtask": OpPurity.side_effect,
+    "task.add_dependency": OpPurity.side_effect,
+    "task.abort": OpPurity.side_effect,
+    "task.archive": OpPurity.side_effect,
+    "task.heartbeat": OpPurity.side_effect,
+    "task.register_unblock_predicate": OpPurity.side_effect,
+    "task.comment": OpPurity.side_effect,
 }
 
 
@@ -248,6 +285,14 @@ COARSE_TO_FINE: dict[str, frozenset[str]] = {
     # longer includes "file") and should migrate to fine kinds.
     "mcp":       frozenset({"call_mcp_tool", "list_mcp_servers", "list_mcp_tools"}),
     "run_skill": frozenset({"invoke_skill"}),
+    # #1953 slice 1: coarse "task" → all task.* fine kinds, so a skill can
+    # declare allowed_ops: [task] to permit the whole Task op family.
+    "task": frozenset({
+        "task.create", "task.update_status", "task.get", "task.list",
+        "task.create_subtask", "task.add_dependency", "task.abort",
+        "task.archive", "task.heartbeat", "task.register_unblock_predicate",
+        "task.comment",
+    }),
 }
 
 

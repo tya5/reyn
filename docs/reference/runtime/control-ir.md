@@ -33,6 +33,17 @@ Control IR is the list of side-effect operations the LLM may emit alongside its 
 | `judge_output` | LLM scorer: rubric + threshold + `on_fail` policy | none (LLM cost) |
 | `skill_resolve` | Resolve a skill name to its on-disk path (read-only) | none |
 | `compact` | Voluntarily compact the conversation/phase history (advisory) | none (LLM cost; the mandatory `retry_loop` backstop is independent) |
+| `task.create` | Create a trackable Task (born with its assignee) | none (gated by `allowed_ops`) |
+| `task.update_status` | Declare a status transition (assignee only) | none (single-writer = backend-CAS on caller run_id, not P5) |
+| `task.get` | Read one Task record | none |
+| `task.list` | List Tasks (filter by assignee / requester / status / parent) | none |
+| `task.create_subtask` | Decompose into a child Task assigned to another worker | none |
+| `task.add_dependency` | Add a depends-on edge (dependency DAG) | none |
+| `task.abort` | OS-authority terminal cancel (→ aborted) | none |
+| `task.archive` | Soft-delete a Task (→ archived) | none |
+| `task.heartbeat` | Liveness / unblock-predicate trigger for a blocked Task | none |
+| `task.register_unblock_predicate` | Register a deterministic unblock predicate | none |
+| `task.comment` | Append a comment to a Task's thread | none |
 
 ## Common envelope
 
@@ -457,6 +468,45 @@ Returns:
 **Visibility**: advertised to the LLM (tool / `available_control_ops`) only when the window is filling — paired with the context-size signal — so it is not offered when there is nothing to compact (mirrors the `search_actions` visibility gate). The permission gate stays "allow"; only *when surfaced* is gated.
 
 **Axis scope (chat vs phase)**: the `compact` op is available on **both** axes. On the **chat** axis, it routes to `force_compact_now`; on the **phase** axis, it routes to the `compact_control_ir_results` on-demand seam wired by the phase runtime (in addition to the automatic per-frame compaction that fires regardless). In both cases the OS wires `ctx.compact_now`; the op handler itself is axis-agnostic. Both axes also inject the paired context-size signal so the model knows when to emit `compact`.
+
+## Task ops (#1953)
+
+First-class trackable work-units. A Task is **opt-in and additive** — the
+session model (concurrent / interleaved) is unchanged; a Task is a discrete
+handle whose lifecycle is tracked independently. **Completion is an explicit
+declaration** (the assignee emits `task.update_status`), never inferred from
+session state.
+
+These ops are **term-neutral (P7)**: names + fields are generic; A2A vocabulary
+(`contextId`, `TaskState`) maps only at the A2A layer. The op family is gated by
+`allowed_ops` (declare `task` for the whole family, or individual `task.*`
+kinds); like any op, each is also subject to the per-session contextual gate.
+
+```json
+{ "kind": "task.create", "name": "ship-feature", "assignee": "bob",
+  "requester": "alice", "origin": "self" }
+{ "kind": "task.update_status", "task_id": "<id>", "status": "in_progress" }
+{ "kind": "task.create_subtask", "parent_id": "<id>", "name": "sub", "assignee": "carol" }
+{ "kind": "task.add_dependency", "task_id": "<id>", "depends_on": "<other-id>" }
+{ "kind": "task.archive", "task_id": "<id>" }
+```
+
+**Roles & invariants.** `assignee` is the **single-writer** of `status` and is
+**immutable** for the Task's life — there is no handoff; delegation is
+`task.create_subtask` (decomposition). `requester` is the disposition
+notify-target. `origin` (`self` | `external`) decides delete-coupling.
+
+**Single-writer enforcement** is a **backend compare-and-swap on the caller's
+skill-run `run_id`** (threaded by the OS from the op context — *not* an op
+field, so it cannot be forged), **not** a permission gate: the permission system
+is resource-scoped and carries no caller identity at op-exec time. The CAS
+reject, the cooperative `abort` contract (`cancel_inflight → await_quiescent →
+terminal` + seq-fence), the deletion cascade (DOWN-abort children / UP-notify
+requester), dependency cycle-checking, and unblock-predicate evaluation land in
+later slices; slice 1 ships the op shapes + an in-memory backend.
+
+**States:** `pending` / `ready` / `in_progress` / `blocked` / `completed` /
+`failed` / `aborted` / `archived`.
 
 ---
 
