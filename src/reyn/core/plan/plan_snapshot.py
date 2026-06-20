@@ -162,13 +162,22 @@ class PlanSnapshot:
                 "Run `reyn chat --reset` to wipe in-flight plan state "
                 "(audit logs in .reyn/events/ are preserved)."
             )
+        def _coerce_int(v: object) -> int:
+            # A version-matched but hand-edited / corrupted snapshot may carry a
+            # null / non-numeric seq; .get(k, 0) only defaults a *missing* key.
+            # Mirrors the #1906 TokenUsage fix.
+            try:
+                return int(v)  # type: ignore[arg-type]
+            except (TypeError, ValueError):
+                return 0
+
         return cls(
             plan_id=str(data.get("plan_id", plan_id)),
             agent_name=str(data.get("agent_name", "")),
             chain_id=str(data.get("chain_id", "")),
             goal=str(data.get("goal", "")),
-            applied_seq=int(data.get("applied_seq", 0)),
-            last_step_applied_seq=int(data.get("last_step_applied_seq", 0)),
+            applied_seq=_coerce_int(data.get("applied_seq", 0)),
+            last_step_applied_seq=_coerce_int(data.get("last_step_applied_seq", 0)),
             decomposition_artifact_path=data.get("decomposition_artifact_path"),
             steps_serialized=list(data.get("steps_serialized", []) or []),
             step_results=dict(data.get("step_results", {}) or {}),
