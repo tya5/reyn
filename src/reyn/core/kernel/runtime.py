@@ -78,6 +78,7 @@ class OSRuntime:
         parent_run_id: str | None = None,
         sandbox_config: "SandboxConfig | None" = None,
         threat_scan: "object | None" = None,  # FP-0050/#1822 S5 (EP4)
+        contextual_permission: "object | None" = None,  # #1912: per-session capability narrowing → phase RouterLoop + control-IR gates
         router_config: "object | None" = None,  # #1829 S3b: reyn.yaml llm.router.*
         environment_backend: "EnvironmentBackend | None" = None,
         sandbox_backend: "SandboxBackend | None" = None,
@@ -332,6 +333,7 @@ class OSRuntime:
             # (#1092) iff its name is listed. Default empty = json-mode (zero change).
             op_loop_enabled=skill.name in (tool_calls_op_loop_skills or ()),
             agent_sandbox_policy=self._agent_sandbox_policy,  # #1326
+            contextual_permission=contextual_permission,  # #1912 → phase RouterLoop live gate
         )
         # FP-0020 Component D: phase sequence + transitions + rollback + skill-node
         # dispatch + resume + SkillRegistry lifecycle extracted to RunOrchestrator.

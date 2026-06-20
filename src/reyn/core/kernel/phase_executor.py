@@ -193,8 +193,14 @@ class PhaseExecutor:
         phase_compaction_cfg: "PhaseActResultsCompactionConfig | None" = None,
         op_loop_enabled: bool = False,
         agent_sandbox_policy: dict | None = None,
+        contextual_permission: "object | None" = None,  # #1912: per-session capability narrowing → phase RouterLoop live gate
     ) -> None:
         self._llm_caller = llm_caller
+        # #1912: per-session contextual narrowing (inherited from the spawning
+        # session via SkillRuntime→OSRuntime). Threaded to the phase RouterLoop so
+        # the phase act-turn tool gate (``_excluded_result``) enforces it — closing
+        # the phase-path bypass. None = no narrowing (byte-identical).
+        self._contextual_permission = contextual_permission
         # #1267: WAL-memo seam for the phase compaction summary call (shared by all
         # compact_control_ir_results sites — json-mode / converged / on-demand). Built
         # from the recorder's WAL primitives; getattr-guarded for non-recorder fakes.
@@ -619,6 +625,10 @@ class PhaseExecutor:
         routerloop = RouterLoop(
             host=host,
             chain_id=self._run_id or phase,
+            # #1912: thread the per-session contextual narrowing so the phase
+            # act-turn tool gate (RouterLoop._excluded_result) enforces it —
+            # the same shared gate as the chat path (no phase bypass).
+            contextual_permission=self._contextual_permission,
             # #1092 PR-C-5 (4): use the EFFECTIVE act-turn cap (resume-adjusted), not
             # the raw max_act_turns, so the converged op-loop force-closes
             # json-mode-equally (mirrors _run_act_loop's state.effective_act_turn_cap).

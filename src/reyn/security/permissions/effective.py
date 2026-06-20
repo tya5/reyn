@@ -267,6 +267,27 @@ class ContextualLayer:
         return True
 
 
+def tool_contextually_denied(
+    contextual: "ContextualPermission | None", effective_name: str
+) -> bool:
+    """The single contextual TOOL-axis gate check (#1912).
+
+    True iff a per-session contextual narrowing is present AND denies
+    ``effective_name``. **Every** tool-dispatch path calls this one function —
+    chat ``RouterLoop._excluded_result``, the phase ``RouterLoop`` (same code),
+    and control-IR op dispatch — so contextual enforcement is a single seam,
+    bypass-impossible by construction. ``contextual is None`` → not denied (⊤),
+    so an un-narrowed path is byte-identical to pre-#1827.
+
+    Callers pass the **effective resolved name** (``invoke_action`` already
+    unwrapped to ``action_name``; a control-IR op mapped to its tool-name) so the
+    same name vocabulary reaches the deny-set on every path.
+    """
+    if contextual is None:
+        return False
+    return not ContextualLayer(contextual).allows(CapabilityAxis.TOOL, effective_name)
+
+
 def _path_under(path_str: str, root: str) -> bool:
     """True if ``path_str`` is ``root`` or a descendant (resolved). Used for the
     sandbox path caps (mirrors the recursive-scope match shape)."""
