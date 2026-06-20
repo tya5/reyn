@@ -14,10 +14,12 @@ verified"*.
 It is **not** published to the public site (it lives under `deep-dives/`,
 which is excluded from the mkdocs build). It is a docs-maintainer tool.
 
-- **Last full sweep:** 2026-06-20
+- **Last coverage sweep:** 2026-06-20
+- **Last quality review:** 2026-06-20
 - **Owner:** docs-maintainer (see memory pin `project_feature_map_ownership`)
-- **Granularity:** one row per `feature-map.md` group. Audience classification
-  is per-group; mixed groups note specific user-facing sub-features in Notes.
+- **Granularity:** the coverage matrix is one row per `feature-map.md` group
+  (audience is per-group); the quality review (below) is one row per end-user
+  how-to, since usage-quality is a property of each doc, not the group.
 
 ## How to read it
 
@@ -37,9 +39,15 @@ which is excluded from the mkdocs build). It is a docs-maintainer tool.
 2. **A new `end-user` feature with no `guide/for-users/` how-to** is a coverage
    gap — open a how-to (EN + JA) before marking the row ✅.
 3. **Periodic full sweep:** re-verify every row against current code, bump
-   *Last full sweep* at the top. Cadence: alongside each feature-map drift
+   *Last coverage sweep* at the top. Cadence: alongside each feature-map drift
    sweep.
-4. **JA parity is tracked separately** — see the [JA-parity note](#ja-parity)
+4. **Coverage vs quality are two passes.** *Coverage* (does a how-to exist) is
+   cheap — verify file existence. *Quality* (does it teach usage well + match
+   current CLI) needs a content read. The [Quality review](#quality-review)
+   below is the deeper pass; re-read a how-to and bump its quality-row date
+   when its feature's CLI/behaviour changes, and bump *Last quality review* on
+   a full re-read.
+5. **JA parity is tracked separately** — see the [JA-parity note](#ja-parity)
    below; a ✅ here means an EN how-to exists, not that JA exists.
 
 ---
@@ -104,7 +112,56 @@ tracked here explicitly because each needed its own how-to:
 
 ---
 
+## Quality review
+
+One row per end-user how-to. **Quality** = does it teach usage (steps +
+examples + troubleshooting) and match current CLI/behaviour. **Drift** = how
+the CLI/impl alignment was checked.
+
+| How-to | Quality | Drift check | Verified |
+|--------|---------|-------------|----------|
+| `for-users/cap-spending` | ✅ strong | impl-verified (slash cmds / cost config / ledger) | 2026-06-20 |
+| `for-users/schedule-skills` | ✅ strong | impl-verified (cron CLI + CronJobConfig) | 2026-06-20 |
+| `for-users/oauth-login` | ✅ strong | impl-verified (auth CLI + provider fields) | 2026-06-20 |
+| `for-users/manage-memory` | ✅ strong | impl-verified (memory CLI subcommands) | 2026-06-20 |
+| `for-users/time-travel` | ✅ strong | content read; no drift seen | 2026-06-20 |
+| `for-users/manage-permissions` | ✅ strong | content read; no drift seen | 2026-06-20 |
+| `for-users/chat-and-web-ui` | ✅ strong | content read; shortcuts/commands current | 2026-06-20 |
+| `for-users/enable-semantic-search` | ✅ strong | content read; `reyn embeddings` current | 2026-06-20 |
+| `for-users/work-with-files` | ✅ strong | content read; no drift seen | 2026-06-20 |
+| `for-users/configure-sandbox` | ✅ strong | content read; per-backend tables current | 2026-06-20 |
+| `for-users/popular-mcp-servers` | ✅ strong | content read (per-server catalog) | 2026-06-20 |
+| `for-skill-authors/operations/use-an-mcp-server` | ⚠ note | content read; **stale TODO comment** (see Open items) | 2026-06-20 |
+| `for-skill-authors/composition/use-plan-mode` | ✅ strong content / ⚠ discoverability | content read; `/plan` cmds current | 2026-06-20 |
+| `for-skill-authors/operations/understand-why-reyn-stops` | ✅ strong | content read; reflects #1877 `ask_on_exceed` removal | 2026-06-20 |
+| `for-users/ask-user-mid-phase` | ⚠ scope | content read (see Open items) | 2026-06-20 |
+
+**Headline:** every end-user how-to is a genuine usage doc (steps + examples +
+troubleshooting), not a stub. No CLI drift found in the 2026-06-20 read. Two
+minor quality notes + one discoverability note are tracked below.
+
+---
+
 ## Open items
+
+### `use-an-mcp-server` stale TODO comment (⚠ quality)
+
+`docs/guide/for-skill-authors/operations/use-an-mcp-server.md` carries an
+inline authoring TODO: `<!-- TODO: confirm extra name ([mcp]) once PR32 lands
+… -->`. The `[mcp]` extra is in fact confirmed correct (CI installs
+`.[dev,mcp,web]`), so the TODO is stale and should be dropped. Low-risk
+one-line cleanup.
+
+### `ask-user-mid-phase` audience/scope mismatch (⚠ quality)
+
+The for-users hub links this as *"Respond mid-task — answer questions Reyn
+asks."* But the doc's content teaches a **skill author** how to emit an
+`ask_user` op from a phase — author-facing material under a user-facing
+framing. The genuine end-user action (typing an answer at a prompt) is trivial
+and may not need a doc. **Candidate:** re-home this under for-skill-authors, or
+re-scope a short user-facing "answering prompts" note. Flagged for owner/lead.
+
+### Plan Mode end-user discoverability (⚠)
 
 ### Plan Mode end-user discoverability (⚠)
 
@@ -125,10 +182,18 @@ pre-existing EN-only user pages is the remaining JA gap.
 
 ---
 
-## Result of the 2026-06-20 full sweep
+## Result of the 2026-06-20 sweep
 
-Every `end-user` feature group has an EN usage how-to (✅), with one partial:
-plan-mode discoverability from the user hub (⚠, above). All non-end-user groups
-are correctly served by concept / reference / author docs (N/A). The earlier
-gaps (budget / cron / auth / memory how-tos, and time-travel /
-semantic-search discoverability) were closed in the 2026-06-20 docs wave.
+**Coverage:** every `end-user` feature group has an EN usage how-to (✅). All
+non-end-user groups are correctly served by concept / reference / author docs
+(N/A). The earlier gaps (budget / cron / auth / memory how-tos, and time-travel
+/ semantic-search discoverability) were closed in the 2026-06-20 docs wave.
+
+**Quality:** every end-user how-to was read and is a genuine usage doc (steps +
+examples + troubleshooting), not a stub; no CLI drift found. Three follow-ups,
+all minor and tracked in Open items: plan-mode discoverability (⚠),
+`use-an-mcp-server` stale TODO (⚠), `ask-user-mid-phase` audience mismatch (⚠).
+
+**Net:** the answer to "is every end-user feature documented for users?" is
+**yes for coverage, yes for quality**, with three minor follow-ups (none a
+missing-doc gap) and JA parity tracked as a separate axis.
