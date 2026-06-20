@@ -1265,9 +1265,23 @@ class OutboxRouter:
         # in the common case — but if the user clicked into the panel or
         # tabbed away while waiting for confirmation, the widget removal
         # would otherwise leak focus to a non-editable peer.
+        #
+        # Only pull focus back to the main input when NO OTHER intervention
+        # widget remains. With a queued intervention the registry announces
+        # + mounts the next one (whose free-input the user may already be
+        # typing into) as this one resolves; an unconditional ``focus_input``
+        # would yank focus off that still-active intervention. The just-
+        # removed widget (``widget_id``) is excluded so its async removal does
+        # not falsely count as "still pending".
         try:
             from .widgets import InputBar
-            self._app.query_one("#inputbar", InputBar).focus_input()
+            from .widgets.intervention import InterventionWidget
+            remaining = [
+                w for w in self._app.query(InterventionWidget)
+                if w.id != widget_id
+            ]
+            if not remaining:
+                self._app.query_one("#inputbar", InputBar).focus_input()
         except Exception:
             pass
 
