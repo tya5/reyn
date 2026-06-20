@@ -236,6 +236,28 @@ async def handle_web_fetch(op: WebFetchIROp, ctx: OpContext, caller: Literal["pr
         )
 
     ctx.events.emit("web_fetch_started", url=op.url)
+    # #1913: hard ceiling on the downloaded body to prevent an unbounded-memory
+    # DoS. ``client.get`` materializes the ENTIRE response into memory before
+    # ``max_length`` (an extracted-TEXT cap) ever applies, so a hostile URL —
+    # including a benign one that redirects to a huge payload — could exhaust
+    # memory. Stream instead, rejecting on a declared Content-Length over the
+    # cap and on the running byte total exceeding it (covers chunked / no-CL).
+    _max_dl = (
+        ctx.web_config.fetch.max_download_bytes
+        if ctx.web_config is not None
+        else 10 * 1024 * 1024
+    )
+
+    def _too_large(n: int) -> dict:
+        ctx.events.emit("web_fetch_too_large", url=op.url, downloaded=n, limit=_max_dl)
+        return {
+            "kind": "web_fetch", "url": op.url, "status": "too_large",
+            "error": (
+                f"response body ({n} bytes) exceeds the {_max_dl}-byte download "
+                f"cap (web.fetch.max_download_bytes)"
+            ),
+        }
+
     try:
         # SSL verification — priority: reyn.yaml web.fetch config → env-var chain.
         # See _resolve_ssl_verify() docstring for the full priority order.
@@ -245,7 +267,18 @@ async def handle_web_fetch(op: WebFetchIROp, ctx: OpContext, caller: Literal["pr
             headers={"User-Agent": "reyn/1.0"},
             verify=_resolve_ssl_verify(ctx),
         ) as client:
-            response = await client.get(op.url)
+            async with client.stream("GET", op.url) as response:
+                _cl = response.headers.get("content-length")
+                if _cl is not None and _cl.isdigit() and int(_cl) > _max_dl:
+                    return _too_large(int(_cl))
+                _chunks: list[bytes] = []
+                _total = 0
+                async for _chunk in response.aiter_bytes():
+                    _total += len(_chunk)
+                    if _total > _max_dl:
+                        return _too_large(_total)
+                    _chunks.append(_chunk)
+                body = b"".join(_chunks)
     except httpx.TimeoutException:
         return {"kind": "web_fetch", "url": op.url, "status": "timeout",
                 "error": f"request timed out after {op.timeout}s"}
@@ -262,7 +295,7 @@ async def handle_web_fetch(op: WebFetchIROp, ctx: OpContext, caller: Literal["pr
     # path's errors="replace" behaviour, which preserves the pre-#364
     # output for non-image binary.
     if content_type.startswith("image/"):
-        image_bytes = response.content
+        image_bytes = body  # #1913: the streamed, size-capped bytes
         if ctx.permission_resolver is not None and ctx.multimodal_config is not None:
             if ctx.intervention_bus is None:
                 raise RuntimeError(
@@ -322,7 +355,11 @@ async def handle_web_fetch(op: WebFetchIROp, ctx: OpContext, caller: Literal["pr
             "media_blocks": [media_block],
         }
 
-    raw = response.text
+    # #1913: decode the streamed bytes ourselves (the stream is consumed, so
+    # ``response.text`` is unavailable). Use the header-declared charset
+    # (``charset_encoding`` needs no body) with the same errors="replace"
+    # tolerance the old ``.text`` path relied on for malformed bytes.
+    raw = body.decode(response.charset_encoding or "utf-8", errors="replace")
 
     if "text/html" in content_type:
         content, extractor_name = _extract_html_text(raw)

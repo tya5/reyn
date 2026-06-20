@@ -212,6 +212,10 @@ class _CapturingImageClient:
     async def get(self, url: str) -> httpx.Response:
         return self._response
 
+    def stream(self, method: str, url: str) -> "_ResponseStreamCtx":
+        # #1913: production streams (client.stream) instead of client.get.
+        return _ResponseStreamCtx(self._response)
+
 
 def _make_ctx(tmp_path: Path, *, multimodal: MultimodalConfig, bus_answer: str = "yes") -> Any:
     from reyn.core.events.events import EventLog
@@ -354,6 +358,8 @@ def test_html_response_unchanged_when_image_gate_present(tmp_path, monkeypatch) 
             return self
         async def __aexit__(self, *args: object) -> None: pass
         async def get(self, url: str) -> httpx.Response: return self._response
+        def stream(self, method: str, url: str) -> "_ResponseStreamCtx":  # #1913
+            return _ResponseStreamCtx(self._response)
 
     monkeypatch.setattr(httpx, "AsyncClient", _HTMLClient)
 
@@ -369,3 +375,18 @@ def test_html_response_unchanged_when_image_gate_present(tmp_path, monkeypatch) 
     assert result["media_blocks"] == []
     assert "hello world" in result["content"]
     assert result["extractor"] in {"trafilatura", "stdlib"}
+
+
+class _ResponseStreamCtx:
+    """Async-CM mirroring ``client.stream(...)``. A canned ``httpx.Response``
+    built with ``content=`` already supports ``aiter_bytes`` / ``headers`` /
+    ``charset_encoding`` / ``status_code``, so it is yielded as-is (#1913)."""
+
+    def __init__(self, response: "httpx.Response") -> None:
+        self._response = response
+
+    async def __aenter__(self) -> "httpx.Response":
+        return self._response
+
+    async def __aexit__(self, *args: object) -> None:
+        return None
