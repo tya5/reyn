@@ -84,6 +84,13 @@ class RouterConfig:
     cooldown_time: float | None = None
     # failures before a deployment is cooled down (None → litellm default).
     allowed_fails: int | None = None
+    # #1829 S4: credential rotation. model_name → list of credential refs, each
+    # ``{"api_key_env": "<ENV_VAR_NAME>"}``. Each usable ref becomes a Router
+    # deployment with the SAME model_name + that key, so the Router rotates / fails
+    # over across keys. Keys are referenced by ENV-VAR NAME only — NEVER inline a
+    # key value here (the value is read from os.environ at build time and is never
+    # logged / fingerprinted; only the NAME is).
+    credentials: dict = field(default_factory=dict)
 
 
 @dataclass
@@ -106,6 +113,12 @@ def _build_router_config(raw: object) -> RouterConfig:
             "llm.router.fallbacks must be a mapping (model → [fallbacks]), "
             f"got {type(fb).__name__}"
         )
+    cred = raw.get("credentials", d.credentials)
+    if cred and not isinstance(cred, dict):
+        raise ValueError(
+            "llm.router.credentials must be a mapping (model → [{api_key_env: NAME}]), "
+            f"got {type(cred).__name__}"
+        )
     return RouterConfig(
         use=bool(raw.get("use", d.use)),
         num_retries=int(raw.get("num_retries", d.num_retries)),
@@ -118,6 +131,16 @@ def _build_router_config(raw: object) -> RouterConfig:
         allowed_fails=(
             int(raw["allowed_fails"]) if raw.get("allowed_fails") is not None else None
         ),
+        # ENV-VAR NAMES only (never key values). A non-dict entry / missing
+        # api_key_env is dropped here; an all-unusable model is caught at build.
+        credentials={
+            str(m): [
+                {"api_key_env": str(c["api_key_env"])}
+                for c in (lst or [])
+                if isinstance(c, dict) and c.get("api_key_env")
+            ]
+            for m, lst in (cred or {}).items()
+        },
     )
 
 

@@ -317,6 +317,10 @@ llm:
         - openai/gpt-3.5-turbo
     cooldown_time: 60      # seconds a deployment is cooled down after failures
     allowed_fails: 2       # failures before a deployment is cooled down
+    credentials:           # credential rotation — multiple keys per model
+      openai/gpt-4o-mini:  # ENV-VAR NAMES only; NEVER inline a key value
+        - api_key_env: OPENAI_API_KEY_1
+        - api_key_env: OPENAI_API_KEY_2
 ```
 
 ### `llm.router` fields
@@ -328,6 +332,7 @@ llm:
 | `fallbacks` | map | `{}` | `primary_model → [fallback_model, …]`. Empty → single-deployment Router (no chain). |
 | `cooldown_time` | float\|null | `null` | Seconds a deployment is cooled down after `allowed_fails` failures. Only meaningful with a fallback chain. |
 | `allowed_fails` | int\|null | `null` | Failures before a deployment is cooled down. |
+| `credentials` | map | `{}` | Credential rotation: `model → [{api_key_env: ENV_VAR_NAME}]`. Each usable key → one Router deployment (same model) → the Router rotates / fails over across keys. **Reference env-var NAMES only — never inline a key value**; values are read from `os.environ` at build time and are never logged or cache-fingerprinted. A declared model whose env vars all resolve to nothing is a load error (no silent keyless deployment). |
 
 On the Router path, retry count is **config-only**: `num_retries` is taken from
 `llm.router.num_retries` (a per-call `max_retries` is not applied), so the retry

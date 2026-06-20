@@ -89,6 +89,10 @@
 #         - openai/gpt-3.5-turbo
 #     cooldown_time: 60      # seconds a deployment is cooled down after failures
 #     allowed_fails: 2       # failures before a deployment is cooled down
+#     credentials:           # credential rotation — multiple keys per model.
+#       openai/gpt-4o-mini:  # Reference ENV-VAR NAMES only; NEVER inline a key.
+#         - api_key_env: OPENAI_API_KEY_1   # each usable key → one deployment;
+#         - api_key_env: OPENAI_API_KEY_2   # the Router rotates / fails over.
 
 
 # -----------------------------------------------------------------------------

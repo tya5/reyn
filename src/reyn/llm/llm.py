@@ -1014,21 +1014,66 @@ def _router_cache_fingerprint(rcfg) -> tuple:
     instead of silently reusing a stale one — the cache is correct WITHOUT relying
     on a "config is loop-uniform" assumption (today config is process-global, so
     this is constant; the key just makes that robust against a future per-session
-    override). ``use`` is excluded — it gates entry to this path, not the build."""
+    override). ``use`` is excluded — it gates entry to this path, not the build.
+
+    #1829 S4: includes the credential ENV-VAR NAMES — **never the key VALUES** (the
+    value is read from os.environ at build, never stored/fingerprinted; secret-safe
+    by construction)."""
     return (
         rcfg.num_retries,
         rcfg.cooldown_time,
         rcfg.allowed_fails,
         tuple(sorted((k, tuple(v)) for k, v in rcfg.fallbacks.items())),
+        tuple(sorted(
+            (m, tuple(c.get("api_key_env") for c in (creds or [])))
+            for m, creds in getattr(rcfg, "credentials", {}).items()
+        )),
     )
 
 
+def _deployments_for_model(model: str, rcfg) -> list:
+    """#1829 S4: the litellm deployment(s) for *model*. With ``llm.router.credentials``
+    configured, one deployment per USABLE key (same ``model_name``, ``api_key``
+    resolved from ``os.environ[api_key_env]``) so the Router rotates / fails over
+    across keys; a missing env var is skipped with a warning. A DECLARED
+    ``credentials[model]`` that resolves to ZERO usable keys raises (fail-loud —
+    never a silent keyless deployment, lead decision 2). No credentials → a single
+    plain deployment (S3b behavior). The key VALUE lives only inside the Router
+    deployment — never in per-call kwargs / events / the cache fingerprint."""
+    creds = getattr(rcfg, "credentials", {}).get(model) or []
+    if not creds:
+        return [{"model_name": model, "litellm_params": {"model": model}}]
+    deployments: list = []
+    for c in creds:
+        env_name = c.get("api_key_env")
+        key = os.environ.get(env_name) if env_name else None
+        if not key:
+            logging.getLogger(__name__).warning(
+                "llm.router.credentials[%s]: env var %r is unset — skipping that key",
+                model, env_name,
+            )
+            continue
+        deployments.append(
+            {"model_name": model, "litellm_params": {"model": model, "api_key": key}}
+        )
+    if not deployments:
+        raise RuntimeError(
+            f"llm.router.credentials[{model!r}] is declared but none of its "
+            f"api_key_env vars resolved to a value "
+            f"({[c.get('api_key_env') for c in creds]}) — set one or remove the block"
+        )
+    return deployments
+
+
 def _single_deployment_router(model: str):
-    """#1829 S1→S3b: return a per-running-loop-cached ``litellm.Router`` for
+    """#1829 S1→S4: return a per-running-loop-cached ``litellm.Router`` for
     *model*. Single deployment by default; when reyn.yaml ``llm.router.fallbacks``
     declares a chain for *model*, a **multi-deployment** Router (primary + each
     fallback target as its own deployment) wired with ``fallbacks`` +
-    ``cooldown_time`` + ``allowed_fails`` — the #1835 fold (Router owns
+    ``cooldown_time`` + ``allowed_fails``; and when ``llm.router.credentials``
+    declares keys for a model, that model expands to one deployment per usable key
+    (same model_name) so the Router rotates / fails over across keys (S4) — the
+    #1835 fold (Router owns
     infra-exception retry w/ native Retry-After + cooldown + cross-model fallback;
     replay-compat probe-verified: a realized fallback still routes through the
     monkeypatched ``litellm.acompletion``). ``num_retries`` comes from the
@@ -1055,14 +1100,16 @@ def _single_deployment_router(model: str):
     cache_key = (model, _router_cache_fingerprint(rcfg))
     router = per_loop.get(cache_key)
     if router is None:
-        fb_targets = [t for t in (rcfg.fallbacks.get(model) or []) if t and t != model]
-        # model_list: primary + each DISTINCT fallback target as its own deployment.
-        seen = {model}
-        model_list = [{"model_name": model, "litellm_params": {"model": model}}]
-        for t in fb_targets:
-            if t not in seen:
-                seen.add(t)
-                model_list.append({"model_name": t, "litellm_params": {"model": t}})
+        fb_targets = list(dict.fromkeys(
+            t for t in (rcfg.fallbacks.get(model) or []) if t and t != model
+        ))
+        # model_list: the primary + each DISTINCT fallback target, each EXPANDED to
+        # one deployment per usable credential (S4 rotation) or a single plain
+        # deployment (S3b). Same model_name across a model's credential deployments
+        # → the Router rotates / fails over across keys.
+        model_list: list = []
+        for m in [model, *fb_targets]:
+            model_list.extend(_deployments_for_model(m, rcfg))
         kwargs: dict = {"model_list": model_list, "num_retries": rcfg.num_retries}
         if fb_targets:
             kwargs["fallbacks"] = [{model: fb_targets}]
