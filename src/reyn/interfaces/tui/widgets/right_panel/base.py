@@ -36,7 +36,7 @@ from reyn.interfaces.tui._palette import (
     _TEXT_MUTED,
     _TEXT_NEUTRAL,
 )
-from reyn.interfaces.tui._text_util import _esc
+from reyn.interfaces.tui._text_util import _esc, truncate_to_cells
 
 logger = logging.getLogger(__name__)
 
@@ -68,4 +68,5 @@ __all__ = [
     "_TEXT_NEUTRAL",
     "_esc",
     "logger",
+    "truncate_to_cells",
 ]
