@@ -311,6 +311,7 @@ class SkillRuntime:
             resume_plan=resume_plan,
             parent_run_id=parent_run_id,
             sandbox_config=self._sandbox_config,
+            threat_scan=self._safety.threat_scan,  # FP-0050/#1822 S5 (EP4)
             environment_backend=self._environment_backend,
             sandbox_backend=self._sandbox_backend,
             multimodal_config=self._multimodal_config,

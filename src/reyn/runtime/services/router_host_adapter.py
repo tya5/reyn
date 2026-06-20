@@ -1683,6 +1683,7 @@ class RouterHostAdapter:
             media_store=self._media_store,
             compact_now=self._compact_now,
             cancel_event=self._cancel_event,
+            threat_scan=self._threat_scan,
         )
 
     def _set_cancel_event(self, event: asyncio.Event) -> None:

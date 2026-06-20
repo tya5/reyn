@@ -118,6 +118,11 @@ class OpContext:
     # (= same as no-config-loaded behavior).
     sandbox_config: "SandboxConfig | None" = None
 
+    # FP-0050/#1822 S5 (EP4): content-threat scan config. When enabled, the
+    # sandboxed_exec command (argv) is exec-scope scanned before exec — a
+    # block-severity hit denies; warn emits + proceeds. None = no scan.
+    threat_scan: "object | None" = None
+
     # FP-0008 C7 #2: runtime backend-instance override for sandboxed_exec.
     # When set, the sandboxed_exec handler uses this backend INSTANCE verbatim
     # instead of resolving one by name from sandbox_config. This is the seam for
