@@ -20,10 +20,12 @@ from urllib.error import HTTPError as _HTTPError
 from urllib.request import Request as _Request
 from urllib.request import urlopen as _urlopen
 
+from reyn._http_limits import read_capped
+
 
 def _response_dict(resp: Any) -> dict:
     headers = dict(resp.headers.items()) if hasattr(resp, "headers") else {}
-    raw = resp.read()
+    raw = read_capped(resp)  # bounded read — unbounded-body DoS guard (#1913 class)
     try:
         body = raw.decode("utf-8")
     except UnicodeDecodeError:
