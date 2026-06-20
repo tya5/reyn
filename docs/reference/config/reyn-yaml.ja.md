@@ -327,6 +327,7 @@ web:
   fetch:
     verify_ssl: true     # true | false | 省略（デフォルト: 環境変数チェーン）
     ca_bundle: /path/to/ca-bundle.pem   # 省略可; カスタム CA バンドル
+  ws_max_size: 16777216  # WebSocket インバウンドフレーム上限（デフォルト 16MB）
 ```
 
 優先度チェーン（高い順）:
@@ -339,6 +340,8 @@ web:
 | 4 | 両方省略 | フォールスルー: `SSL_VERIFY` 環境変数 → `litellm.ssl_verify` → `SSL_CERT_FILE` → `True` |
 
 `verify_ssl` と `ca_bundle` は MCP レジストリの HTTP 呼び出し（パッケージインストール）にも適用されます。
+
+`web.ws_max_size`（int, デフォルト `16777216` = 16MB）は `reyn web` ゲートウェイが受け付ける単一 WebSocket インバウンドフレームの最大バイト数。サーバーライブラリの暗黙デフォルトに依存せず上限を明示的に固定するため、ライブラリアップグレード後も bound が維持されます。operator は tighten / loosen 可能。`<= 0` / 非整数はデフォルトにフォールバック。
 
 ## `eval` ブロック
 
