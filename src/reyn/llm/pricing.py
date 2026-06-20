@@ -62,14 +62,24 @@ class TokenUsage:
     def from_dict(cls, data: dict) -> "TokenUsage":
         """Reconstruct from a dict produced by ``to_dict``.
 
-        Resilient to missing fields (defaults to 0) — useful for
-        backward-compat reading of older WAL records.
+        Resilient to missing fields AND to a malformed value (defaults to 0) —
+        useful for backward-compat reading of older / hand-edited / corrupted
+        WAL records. ``.get(key, 0)`` only defaults a *missing* key, so a key
+        present with ``null`` or a non-numeric value would otherwise crash
+        (``int(None)`` → TypeError, ``int("abc")`` → ValueError); ``_coerce_int``
+        closes that gap to honour the stated resilience contract.
         """
+        def _coerce_int(v: object) -> int:
+            try:
+                return int(v)  # type: ignore[arg-type]
+            except (TypeError, ValueError):
+                return 0
+
         return cls(
-            prompt_tokens=int(data.get("prompt_tokens", 0)),
-            completion_tokens=int(data.get("completion_tokens", 0)),
-            cached_tokens=int(data.get("cached_tokens", 0)),
-            cache_creation_tokens=int(data.get("cache_creation_tokens", 0)),
+            prompt_tokens=_coerce_int(data.get("prompt_tokens", 0)),
+            completion_tokens=_coerce_int(data.get("completion_tokens", 0)),
+            cached_tokens=_coerce_int(data.get("cached_tokens", 0)),
+            cache_creation_tokens=_coerce_int(data.get("cache_creation_tokens", 0)),
         )
 
 
