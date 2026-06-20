@@ -327,6 +327,7 @@ web:
   fetch:
     verify_ssl: true     # true | false | 省略（デフォルト: 環境変数チェーン）
     ca_bundle: /path/to/ca-bundle.pem   # 省略可; カスタム CA バンドル
+    max_download_bytes: 10485760        # ワイヤバイト上限（デフォルト 10MB）
   ws_max_size: 16777216  # WebSocket インバウンドフレーム上限（デフォルト 16MB）
 ```
 
@@ -340,6 +341,8 @@ web:
 | 4 | 両方省略 | フォールスルー: `SSL_VERIFY` 環境変数 → `litellm.ssl_verify` → `SSL_CERT_FILE` → `True` |
 
 `verify_ssl` と `ca_bundle` は MCP レジストリの HTTP 呼び出し（パッケージインストール）にも適用されます。
+
+`web.fetch.max_download_bytes`（int, デフォルト `10485760` = 10MB）は `web_fetch` がワイヤから読み取るレスポンスの最大バイト数。`Content-Length` がこの値を超えるレスポンスは本文ダウンロード前に拒否され、chunked / 長さ不明の本文はストリームが上限を超えた時点で中断されます（ステータス `too_large`）。悪意ある / 暴走 URL による無制限な本文のメモリ枯渇を防ぎます。`<= 0` / 非整数はデフォルトにフォールバック。
 
 `web.ws_max_size`（int, デフォルト `16777216` = 16MB）は `reyn web` ゲートウェイが受け付ける単一 WebSocket インバウンドフレームの最大バイト数。サーバーライブラリの暗黙デフォルトに依存せず上限を明示的に固定するため、ライブラリアップグレード後も bound が維持されます。operator は tighten / loosen 可能。`<= 0` / 非整数はデフォルトにフォールバック。
 
