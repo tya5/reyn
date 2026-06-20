@@ -224,6 +224,7 @@ class OSRuntime:
             run_id=run_id,
             sandbox_config=sandbox_config,
             threat_scan=threat_scan,
+            contextual_permission=contextual_permission,  # #1912b: control-IR op gate
             sandbox_backend=sandbox_backend,
             multimodal_config=multimodal_config,
             media_store=media_store,
