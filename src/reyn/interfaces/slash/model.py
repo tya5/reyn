@@ -56,6 +56,22 @@ async def model_cmd(session: "Session", args: str) -> None:
         )
         return
 
+    # #1867 / FP-0052 S4: optional blocking confirm BEFORE the switch is applied.
+    # When ``cost_warn.block_on_high_cost`` is on and the target is high-cost, the
+    # switch is held for an interactive confirm via the unified safety framework;
+    # a decline (or a non-interactive session — fail-closed) leaves the current
+    # model unchanged. No-op (returns True) under the default warn-only config.
+    from reyn.runtime.model_cost_warn import (
+        maybe_block_high_cost_model,
+        maybe_emit_model_cost_warn,
+    )
+    if not await maybe_block_high_cost_model(session, requested, action="model_override"):
+        await reply(
+            session,
+            f"model switch to {requested} cancelled (high-cost model not confirmed).",
+        )
+        return
+
     session._model_override = requested
     # #1752: the per-turn budget consumers (history buffer / context budget
     # advisor) read the live resolved model via their model_fn, but the
@@ -66,7 +82,6 @@ async def model_cmd(session: "Session", args: str) -> None:
     # #1830 / FP-0052: emit model_cost_warn event if the chosen model exceeds
     # the configured cost threshold (pre-selection awareness). De-duped per
     # session: same model warned at most once.
-    from reyn.runtime.model_cost_warn import maybe_emit_model_cost_warn
     maybe_emit_model_cost_warn(session, requested, action="model_override")
 
     await reply(session, f"model → {requested} (this session — clears on restart)")

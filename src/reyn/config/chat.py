@@ -207,9 +207,16 @@ class CostWarnConfig:
     - ``model_threshold_per_1m_input_usd`` — warn if input rate exceeds this
       value in USD per 1M tokens. Default 5.0: catches Opus-class (~$15/1M)
       without triggering on Sonnet-class (~$3/1M). User-overridable in reyn.yaml.
+    - ``block_on_high_cost`` — #1867 (S4) opt-in: when True, a ``/model`` switch
+      to a high-cost model is held for an interactive confirm via the unified
+      safety framework (``handle_limit_exceeded``); the switch applies only on
+      approval. Default False (warn-only — S1–S3 behaviour). A non-interactive
+      session (no TTY) fail-closes (the switch is denied) since it cannot
+      confirm. Session-startup stays warn-only regardless of this flag.
     """
     enabled: bool = True
     model_threshold_per_1m_input_usd: float = 5.0
+    block_on_high_cost: bool = False
 
 
 @dataclass
@@ -745,9 +752,11 @@ def _build_cost_warn_config(raw: object) -> "CostWarnConfig":
         threshold = float(threshold)
     except (TypeError, ValueError):
         threshold = defaults.model_threshold_per_1m_input_usd
+    block_on_high_cost = raw.get("block_on_high_cost", defaults.block_on_high_cost)
     return CostWarnConfig(
         enabled=bool(enabled),
         model_threshold_per_1m_input_usd=threshold,
+        block_on_high_cost=bool(block_on_high_cost),
     )
 
 
