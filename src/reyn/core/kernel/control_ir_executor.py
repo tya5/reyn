@@ -98,6 +98,7 @@ class ControlIRExecutor:
         threat_scan: Any = None,  # FP-0050/#1822 S5 (EP4): exec command-scan config
         contextual_permission: Any = None,  # #1912b: per-session capability narrowing → control-IR op gate
         sandbox_backend: "SandboxBackend | None" = None,
+        task_backend: Any = None,  # #1953 slice 3a: session-scoped Task backend instance
         multimodal_config: "MultimodalConfig | None" = None,
         media_store: "MediaStore | None" = None,
         secret_store: "ScopedSecretStore | None" = None,
@@ -141,6 +142,7 @@ class ControlIRExecutor:
         self._sandbox_config = sandbox_config
         self._threat_scan = threat_scan
         self._contextual_permission = contextual_permission  # #1912b
+        self._task_backend = task_backend  # #1953 slice 3a
         # FP-0008 #1115 Stage 2: per-run injected exec backend instance. When
         # set (a dual-Protocol container backend), it takes precedence over
         # name-based platform selection in the sandboxed_exec handler
@@ -403,6 +405,8 @@ class ControlIRExecutor:
             # FP-0008 #1115 Stage 2: per-run injected exec backend instance
             # (dual-Protocol container backend); None → platform auto-detect.
             sandbox_backend=self._sandbox_backend,
+            # #1953 slice 3a: session-scoped Task backend (task.* op handlers).
+            task_backend=self._task_backend,
             # FP-0008 #1115 Stage 2 (D): phase-level default SandboxPolicy
             # (frontmatter); sandboxed_exec applies it phase-default-wins.
             default_sandbox_policy=default_sandbox_policy,

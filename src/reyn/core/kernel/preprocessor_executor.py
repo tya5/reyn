@@ -114,6 +114,7 @@ class PreprocessorExecutor:
         agent_sandbox_policy: dict | None = None,
         threat_scan: "object | None" = None,  # FP-0050/#1822 S5 (EP4)
         contextual_permission: "object | None" = None,  # #1912b: per-session capability narrowing → run_op/iterate gate
+        task_backend: "object | None" = None,  # #1953 slice 3a: session-scoped Task backend
     ) -> None:
         self._skill = skill
         self._workspace = workspace
@@ -145,6 +146,7 @@ class PreprocessorExecutor:
         self._agent_sandbox_policy = agent_sandbox_policy
         self._threat_scan = threat_scan
         self._contextual_permission = contextual_permission  # #1912b
+        self._task_backend = task_backend  # #1953 slice 3a
 
     @property
     def secret_store(self):
@@ -191,6 +193,7 @@ class PreprocessorExecutor:
             default_sandbox_policy=self._agent_sandbox_policy,
             threat_scan=self._threat_scan,  # FP-0050/#1822 S5 (EP4)
             contextual_permission=self._contextual_permission,  # #1912b
+            task_backend=self._task_backend,  # #1953 slice 3a
         )
 
     async def run(

@@ -184,6 +184,15 @@ class OpContext:
     # non-interactive callers, pre-#1470 tests).
     cancel_event: "asyncio.Event | None" = None
 
+    # #1953 slice 3a: the config-selected, session-scoped Task backend instance.
+    # Threaded from the Session (which owns the session-scoped db path) down
+    # through SkillRuntime → OSRuntime → executors, exactly like sandbox_backend.
+    # The task.* op handlers use this when set; None → the op-runtime falls back
+    # to its process-local in-memory backend (slice-1 stub for tests / direct
+    # OpContext construction). Mirrors the contextual_permission (#1912) chain
+    # across BOTH the control-IR and preprocessor ctx-build seams.
+    task_backend: "object | None" = None
+
 
 def sandbox_policy_from_ctx(ctx: "OpContext") -> "SandboxPolicy | None":
     """Build the ``SandboxPolicy`` from ``ctx.default_sandbox_policy`` (the
