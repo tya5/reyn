@@ -59,6 +59,78 @@ def _build_agent_config(raw: object) -> AgentConfig:
 
 
 @dataclass
+class RouterConfig:
+    """``llm.router:`` — litellm.Router resilience config (#1829).
+
+    The Router gives provider-resilience (infra-exception retry with native
+    Retry-After respect, per-deployment cooldown, cross-model fallback chain)
+    without Reyn re-implementing it. **Default OFF** — ``use=False`` keeps the
+    direct ``litellm.acompletion`` path (byte-identical to pre-#1829).
+
+    Single config surface: ``use`` / ``num_retries`` supersede the legacy
+    ``REYN_LLM_USE_ROUTER`` / ``REYN_LLM_ROUTER_NUM_RETRIES`` env vars, which
+    remain a back-compat fallback when no reyn.yaml router config is loaded
+    (the ``ssl_verify`` → env → default idiom).
+    """
+
+    use: bool = False
+    num_retries: int = 3
+    # model_name → [fallback model_names]. Converted to litellm's
+    # ``[{primary: [fallbacks]}]`` form when the Router is built. Empty → no
+    # chain (single-deployment Router).
+    fallbacks: dict = field(default_factory=dict)
+    # seconds a deployment is cooled down after ``allowed_fails`` failures
+    # (None → litellm default). Only meaningful with a fallback chain.
+    cooldown_time: float | None = None
+    # failures before a deployment is cooled down (None → litellm default).
+    allowed_fails: int | None = None
+
+
+@dataclass
+class LLMConfig:
+    """``llm:`` — LLM-layer config. Currently the litellm.Router surface (#1829)."""
+
+    router: RouterConfig = field(default_factory=RouterConfig)
+
+
+def _build_router_config(raw: object) -> RouterConfig:
+    """Parse ``llm.router:`` from reyn.yaml. None/missing → defaults (router OFF)."""
+    if raw is None:
+        return RouterConfig()
+    if not isinstance(raw, dict):
+        raise ValueError(f"llm.router must be a mapping, got {type(raw).__name__}")
+    d = RouterConfig()
+    fb = raw.get("fallbacks", d.fallbacks)
+    if fb and not isinstance(fb, dict):
+        raise ValueError(
+            "llm.router.fallbacks must be a mapping (model → [fallbacks]), "
+            f"got {type(fb).__name__}"
+        )
+    return RouterConfig(
+        use=bool(raw.get("use", d.use)),
+        num_retries=int(raw.get("num_retries", d.num_retries)),
+        fallbacks={
+            str(k): [str(x) for x in (v or [])] for k, v in (fb or {}).items()
+        },
+        cooldown_time=(
+            float(raw["cooldown_time"]) if raw.get("cooldown_time") is not None else None
+        ),
+        allowed_fails=(
+            int(raw["allowed_fails"]) if raw.get("allowed_fails") is not None else None
+        ),
+    )
+
+
+def _build_llm_config(raw: object) -> LLMConfig:
+    """Parse ``llm:`` from reyn.yaml. None/missing → defaults."""
+    if raw is None:
+        return LLMConfig()
+    if not isinstance(raw, dict):
+        raise ValueError(f"llm must be a mapping, got {type(raw).__name__}")
+    return LLMConfig(router=_build_router_config(raw.get("router")))
+
+
+@dataclass
 class AuthConfig:
     """``auth:`` — OAuth provider configurations for `reyn auth login`.
 

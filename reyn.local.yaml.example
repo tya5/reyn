@@ -72,6 +72,26 @@
 
 
 # -----------------------------------------------------------------------------
+# llm.router: litellm.Router provider-resilience (#1829). DEFAULT OFF
+# (use=false → direct litellm.acompletion, byte-identical to no-Router).
+# When on, the Router owns infra-exception retry (with native Retry-After
+# respect), per-deployment cooldown, and a cross-model fallback chain — no
+# self-implemented retry/cooldown/fallback. `use` / `num_retries` supersede the
+# legacy REYN_LLM_USE_ROUTER / REYN_LLM_ROUTER_NUM_RETRIES env vars (which remain
+# a back-compat fallback when this block is absent).
+# -----------------------------------------------------------------------------
+# llm:
+#   router:
+#     use: false             # master switch (REYN_LLM_USE_ROUTER fallback)
+#     num_retries: 3         # infra-exception retries (Retry-After aware)
+#     fallbacks:             # primary model → ordered fallback model list
+#       openai/gpt-4o-mini:
+#         - openai/gpt-3.5-turbo
+#     cooldown_time: 60      # seconds a deployment is cooled down after failures
+#     allowed_fails: 2       # failures before a deployment is cooled down
+
+
+# -----------------------------------------------------------------------------
 # api_base: LiteLLM proxy / direct provider base URL.
 # Empty (default) → providers' own endpoints. A local proxy is the most
 # common override:

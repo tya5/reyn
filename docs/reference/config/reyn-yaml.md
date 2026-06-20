@@ -295,6 +295,40 @@ than a hidden default. Explicit per-call selections (a skill's `op.model`, a
 phase's frontmatter `model_class`) still win over this fallback. Unknown purpose
 keys are warned (not fatal) at load time.
 
+## `llm` block
+
+LLM-layer config. Currently the **`llm.router`** surface — opt-in
+[litellm.Router](https://docs.litellm.ai/docs/routing) provider-resilience
+(#1829). **Default OFF**: with `use: false` the LLM call path is the direct
+`litellm.acompletion` (byte-identical to no-Router). When enabled, the Router owns
+infra-exception retry (with native `Retry-After` respect), per-deployment
+cooldown, and a cross-model fallback chain — Reyn does not re-implement any of
+these. The single config surface supersedes the legacy `REYN_LLM_USE_ROUTER` /
+`REYN_LLM_ROUTER_NUM_RETRIES` env vars, which remain a back-compat fallback when
+this block is absent (the `ssl_verify` → env → default idiom).
+
+```yaml
+llm:
+  router:
+    use: false             # master switch (env REYN_LLM_USE_ROUTER is the fallback)
+    num_retries: 3         # infra-exception retries (litellm Retry-After aware)
+    fallbacks:             # primary model → ordered list of fallback models
+      openai/gpt-4o-mini:
+        - openai/gpt-3.5-turbo
+    cooldown_time: 60      # seconds a deployment is cooled down after failures
+    allowed_fails: 2       # failures before a deployment is cooled down
+```
+
+### `llm.router` fields
+
+| Field | Type | Default | Meaning |
+|---|---|---|---|
+| `use` | bool | `false` | Master switch. `false` → direct `litellm.acompletion`. Supersedes `REYN_LLM_USE_ROUTER`. |
+| `num_retries` | int | `3` | Infra-exception retry count (Retry-After aware). Supersedes `REYN_LLM_ROUTER_NUM_RETRIES`. |
+| `fallbacks` | map | `{}` | `primary_model → [fallback_model, …]`. Empty → single-deployment Router (no chain). |
+| `cooldown_time` | float\|null | `null` | Seconds a deployment is cooled down after `allowed_fails` failures. Only meaningful with a fallback chain. |
+| `allowed_fails` | int\|null | `null` | Failures before a deployment is cooled down. |
+
 ## `chat` block
 
 Chat-session runtime knobs. `chat.compaction` controls chat-history compaction

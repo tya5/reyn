@@ -54,6 +54,7 @@ from reyn.config.infra import (
     CronConfig,
     EvalConfig,
     EventsConfig,
+    LLMConfig,
     PythonConfig,
     SandboxConfig,
 )
@@ -96,6 +97,13 @@ class ReynConfig:
     models: dict[str, str | dict] = field(
         default_factory=dict,
         metadata={"desc": "Map of model class names to LiteLLM model strings."},
+    )
+    # #1829: LLM-layer config — the litellm.Router resilience surface
+    # (llm.router.*: use / num_retries / fallbacks / cooldown_time /
+    # allowed_fails). Default OFF (router.use=False → direct litellm.acompletion).
+    llm: LLMConfig = field(
+        default_factory=LLMConfig,
+        metadata={"desc": "LLM-layer config (litellm.Router resilience: llm.router.*)."},
     )
     # #1672: per-purpose model-class override. The mapping from a logical call
     # purpose (router / control_ir / tool / compaction / judge) to a model CLASS
