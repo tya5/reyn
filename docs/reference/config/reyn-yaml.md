@@ -329,6 +329,11 @@ llm:
 | `cooldown_time` | float\|null | `null` | Seconds a deployment is cooled down after `allowed_fails` failures. Only meaningful with a fallback chain. |
 | `allowed_fails` | int\|null | `null` | Failures before a deployment is cooled down. |
 
+On the Router path, retry count is **config-only**: `num_retries` is taken from
+`llm.router.num_retries` (a per-call `max_retries` is not applied), so the retry
+budget has a single source. (On the direct, non-Router path the per-call
+`max_retries` is unchanged.)
+
 ## `chat` block
 
 Chat-session runtime knobs. `chat.compaction` controls chat-history compaction

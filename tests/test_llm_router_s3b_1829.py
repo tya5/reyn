@@ -126,6 +126,20 @@ async def test_fallback_chain_built_and_fires() -> None:
 # ── (c) cost-records-actual-model (+ OFF byte-identical) ──────────────────────
 
 @pytest.mark.asyncio
+async def test_router_cache_rebuilds_on_config_change() -> None:
+    """Tier 2: (F1) the per-loop Router cache key includes a config fingerprint —
+    a changed llm.router.* rebuilds the Router (no silent stale reuse), while the
+    same config still hits the cache (the #1762 loop-cache efficiency is kept)."""
+    set_router_config(RouterConfig(use=True, num_retries=2))
+    r1 = _single_deployment_router(_PRIMARY)
+    assert _single_deployment_router(_PRIMARY) is r1, "same config must hit the cache"
+    set_router_config(RouterConfig(use=True, num_retries=5))  # config changed
+    assert _single_deployment_router(_PRIMARY) is not r1, (
+        "a changed config must rebuild the Router, not reuse a stale-config one"
+    )
+
+
+@pytest.mark.asyncio
 async def test_cost_records_actual_model_on_fallback() -> None:
     """Tier 2: when a router fallback serves the call, cost is attributed to the
     ACTUAL deployment (response.model), not the requested model."""

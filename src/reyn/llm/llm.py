@@ -1002,9 +1002,25 @@ def proxy_kwargs() -> dict:
 # reason S1 built per-call). Keying by the RUNNING loop gives each loop its own
 # Router — the same loop-aware-registry pattern as the #1762 agent-lock fix.
 # WeakKeyDictionary → a finished loop's Routers are GC'd with the loop.
-_ROUTERS_BY_LOOP: "weakref.WeakKeyDictionary[object, dict[str, object]]" = (
+_ROUTERS_BY_LOOP: "weakref.WeakKeyDictionary[object, dict[object, object]]" = (
     weakref.WeakKeyDictionary()
 )
+
+
+def _router_cache_fingerprint(rcfg) -> tuple:
+    """#1829 S3b (F1): a hashable signature of the Router-build-affecting config
+    (``num_retries`` / ``cooldown_time`` / ``allowed_fails`` / ``fallbacks``). Part
+    of the per-loop cache key so a changed ``llm.router.*`` rebuilds the Router
+    instead of silently reusing a stale one — the cache is correct WITHOUT relying
+    on a "config is loop-uniform" assumption (today config is process-global, so
+    this is constant; the key just makes that robust against a future per-session
+    override). ``use`` is excluded — it gates entry to this path, not the build."""
+    return (
+        rcfg.num_retries,
+        rcfg.cooldown_time,
+        rcfg.allowed_fails,
+        tuple(sorted((k, tuple(v)) for k, v in rcfg.fallbacks.items())),
+    )
 
 
 def _single_deployment_router(model: str):
@@ -1025,8 +1041,9 @@ def _single_deployment_router(model: str):
     internally — receives the SAME (model, messages, kwargs) as a direct call →
     LLMReplay/cost-recording-compatible. Cached per running loop so the cached
     Router is never reused across event loops (the #1762 binding class). The cache
-    key is the loop+model; the resolved config is session-stable (set once at
-    construction) so a cached Router does not go stale within a loop.
+    key is ``(model, config-fingerprint)`` (#1829 S3b F1) — a changed
+    ``llm.router.*`` rebuilds rather than silently reusing a stale Router, so the
+    cache is correct without assuming config is loop-uniform.
     """
     import litellm as _ll
     rcfg = _resolved_router_config()
@@ -1035,7 +1052,8 @@ def _single_deployment_router(model: str):
     if per_loop is None:
         per_loop = {}
         _ROUTERS_BY_LOOP[loop] = per_loop
-    router = per_loop.get(model)
+    cache_key = (model, _router_cache_fingerprint(rcfg))
+    router = per_loop.get(cache_key)
     if router is None:
         fb_targets = [t for t in (rcfg.fallbacks.get(model) or []) if t and t != model]
         # model_list: primary + each DISTINCT fallback target as its own deployment.
@@ -1053,7 +1071,7 @@ def _single_deployment_router(model: str):
         if rcfg.allowed_fails is not None:
             kwargs["allowed_fails"] = rcfg.allowed_fails
         router = _ll.Router(**kwargs)
-        per_loop[model] = router
+        per_loop[cache_key] = router
     return router
 
 
