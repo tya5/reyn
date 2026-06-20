@@ -1,0 +1,66 @@
+name: index_chat_summary
+description: |
+  Caller-facing summary of a completed index_chat run. Returned by the
+  skill postprocessor after the chunk → provider-direct embed+index pipeline
+  completes.
+
+  Fields reflect the incremental processing results: how many user turns
+  were indexed, skipped (no user_message_received event), plus the new cursor
+  timestamp written to .reyn/index/chat_cursor.
+schema:
+  type: object
+  required: [chat_cursor_result]
+  properties:
+    chat_cursor_result:
+      type: object
+      description: Cursor advance result — primary caller-facing summary fields.
+      required: [indexed_turns, skipped_turns, new_cursor, sources_updated]
+      properties:
+        indexed_turns:
+          type: integer
+          minimum: 0
+          description: Number of user turns indexed in this invocation.
+        skipped_turns:
+          type: integer
+          minimum: 0
+          description: |
+            Turns skipped (chain_ids with no user_message_received event,
+            e.g. cron / a2a chains).
+        new_cursor:
+          type: string
+          description: |
+            ISO-8601 timestamp written to .reyn/index/chat_cursor after
+            this run. Equals the maximum turn_ts of all indexed turns, or
+            the previous cursor value if no new turns were indexed.
+        sources_updated:
+          type: array
+          items:
+            type: string
+          description: |
+            Logical source names updated in the index backend. Always ["chat"].
+    chat_chunk_stats:
+      type: object
+      description: |
+        Result of the run_collect_chat_chunks step.
+      properties:
+        chunk_count:
+          type: integer
+          minimum: 0
+        skipped_turns:
+          type: integer
+          minimum: 0
+        embedded:
+          type: integer
+          minimum: 0
+        skipped_embed:
+          type: integer
+          minimum: 0
+        written:
+          type: integer
+          minimum: 0
+        skipped_write:
+          type: integer
+          minimum: 0
+        max_turn_ts:
+          type: string
+          description: Max turn_ts of the indexed batch (fed to run_advance_chat_cursor).

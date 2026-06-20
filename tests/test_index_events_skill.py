@@ -15,6 +15,9 @@ I/O goes through reyn.api.safe.file. The autouse ``_safe_file_context`` fixture
 below grants reads + writes under ``tmp_path`` so the safe-mode helpers
 can run inside the test process (= mirrors what the production
 preprocessor_executor wires for the safe-mode subprocess).
+
+Chat-turn chunker tests live in tests/test_index_chat_skill.py (canonical
+home: index_chat skill, src/reyn/stdlib/skills/index_chat/chunkers.py).
 """
 from __future__ import annotations
 
@@ -612,6 +615,7 @@ def test_run_advance_cursor_uses_chunk_stats_max(tmp_path, monkeypatch):
     assert result["new_cursor"] == "2026-05-15T10:00:00Z"
     assert result["indexed_runs"] == 2
     assert read_cursor(".reyn/index/events_cursor") == "2026-05-15T10:00:00Z"
+
 
 
 # ── TODO(fp-0009): Tier 3 e2e ─────────────────────────────────────────────────

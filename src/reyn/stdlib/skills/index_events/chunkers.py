@@ -1,9 +1,9 @@
 """chunkers.py — safe-mode python steps for the index_events stdlib skill (FP-0009 A).
 
 Public pure functions (Tier 2 testable — no artifact dict, no global state):
-  collect_run_chunks  — walk events_root, group by run boundary, return chunks
-  advance_cursor      — atomic write of new max ts to cursor file
-  read_cursor         — read cursor file; return None if missing
+  collect_run_chunks — walk events_root, group by run boundary, return chunks
+  advance_cursor     — atomic write of new max ts to cursor file
+  read_cursor        — read cursor file; return None if missing
 
 Preprocessor entry point (called by the skill harness before LLM call):
   resolve_scan_context — read cursor + summarise event file inventory
@@ -28,6 +28,9 @@ platforms for stdlib skills.
 P7 note: this module is skill-local and may freely reference event-domain
 concepts (run boundaries, skill names, tool_executed, etc.). OS code does
 NOT import from here.
+
+Chat-turn chunking lives in the dedicated ``index_chat`` skill
+(``src/reyn/stdlib/skills/index_chat/chunkers.py``).
 """
 from __future__ import annotations
 
