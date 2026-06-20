@@ -296,9 +296,14 @@ def _event_hint(ev: dict) -> str:
         at = d.get("artifact_type", "")
         return f"{at} ✗ {len(errors)} err" if errors else f"{at} ✓"
     if t == "validation_error":
-        return f"{d.get('phase', '')}: {str(d.get('error', ''))[:35]}"
+        err, was_trunc = _truncate_to_cells(str(d.get("error", "")), 35)
+        return f"{d.get('phase', '')}: {err}" + ("…" if was_trunc else "")
     if t == "phase_retry":
-        return f"attempt {d.get('attempt', '?')}/{d.get('max_retries', '?')}: {str(d.get('error', ''))[:25]}"
+        err, was_trunc = _truncate_to_cells(str(d.get("error", "")), 25)
+        return (
+            f"attempt {d.get('attempt', '?')}/{d.get('max_retries', '?')}: {err}"
+            + ("…" if was_trunc else "")
+        )
     if t == "permission_denied":
         return f"{d.get('kind', '')} {d.get('path', '')}"
     if t in ("tool_called", "tool_returned"):
@@ -310,8 +315,8 @@ def _event_hint(ev: dict) -> str:
         suffix = " ✗" if d.get("is_error") else ""
         return f"{d.get('server', '')}.{d.get('tool', '')}{suffix}"
     if t == "mcp_failed":
-        err = str(d.get("error", ""))[:25]
-        return f"{d.get('server', '')}.{d.get('tool', '')}: {err}"
+        err, was_trunc = _truncate_to_cells(str(d.get("error", "")), 25)
+        return f"{d.get('server', '')}.{d.get('tool', '')}: {err}" + ("…" if was_trunc else "")
     if t == "mcp_server_installed":
         scope = d.get("scope", "")
         scope_part = f" ({scope})" if scope else ""
@@ -365,7 +370,8 @@ def _event_hint(ev: dict) -> str:
         rc_part = f" rc={rc}" if rc is not None else ""
         return f"[{backend}] {cmd}{suffix}{rc_part}"
     if t == "web_fetch_started":
-        return str(d.get("url", ""))[:45]
+        url, was_trunc = _truncate_to_cells(str(d.get("url", "")), 45)
+        return url + ("…" if was_trunc else "")
     if t == "web_fetch_completed":
         return f"HTTP {d.get('status_code', '')} {d.get('content_length', '')}b"
     if t == "web_search_started":

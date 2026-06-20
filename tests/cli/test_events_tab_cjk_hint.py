@@ -123,6 +123,58 @@ def test_tool_failed_cjk_does_not_overflow_message() -> None:
     )
 
 
+def test_validation_error_cjk_fits_cell_budget() -> None:
+    """Tier 2b: CJK validation_error error (35-cell cap) truncates cell-awarely.
+
+    Sibling-completeness for the Wave-13 fix: this branch was missed and still
+    used codepoint slicing (`error[:35]`), so 35 CJK codepoints = 70 cells.
+    """
+    ev = {"type": "validation_error",
+          "data": {"phase": "review", "error": "検証エラー" * 10}}
+    hint = _event_hint(ev)
+    # "review: " (8) + error ≤35 cells + "…" (1) = ≤44; codepoint slice ≈78.
+    assert cell_len(hint) <= 44, (
+        f"validation_error CJK hint cell_width={cell_len(hint)} > 44: {hint!r}"
+    )
+    assert "…" in hint
+
+
+def test_phase_retry_cjk_fits_cell_budget() -> None:
+    """Tier 2b: CJK phase_retry error (25-cell cap) truncates cell-awarely."""
+    ev = {"type": "phase_retry",
+          "data": {"attempt": 1, "max_retries": 3, "error": "失敗理由" * 10}}
+    hint = _event_hint(ev)
+    # "attempt 1/3: " (13) + error ≤25 + "…" = ≤39; codepoint slice ≈63.
+    assert cell_len(hint) <= 40, (
+        f"phase_retry CJK hint cell_width={cell_len(hint)} > 40: {hint!r}"
+    )
+    assert "…" in hint
+
+
+def test_mcp_failed_cjk_fits_cell_budget() -> None:
+    """Tier 2b: CJK mcp_failed error (25-cell cap) truncates cell-awarely."""
+    ev = {"type": "mcp_failed",
+          "data": {"server": "fs", "tool": "read", "error": "エラー内容" * 10}}
+    hint = _event_hint(ev)
+    # "fs.read: " (9) + error ≤25 + "…" = ≤35; codepoint slice ≈59.
+    assert cell_len(hint) <= 36, (
+        f"mcp_failed CJK hint cell_width={cell_len(hint)} > 36: {hint!r}"
+    )
+    assert "…" in hint
+
+
+def test_web_fetch_started_cjk_fits_cell_budget() -> None:
+    """Tier 2b: CJK web_fetch_started url (45-cell cap) truncates cell-awarely."""
+    ev = {"type": "web_fetch_started",
+          "data": {"url": "https://例え.テスト/" + "あ" * 40}}
+    hint = _event_hint(ev)
+    # url ≤45 cells + "…" = ≤46; codepoint slice [:45] of CJK ≈80.
+    assert cell_len(hint) <= 46, (
+        f"web_fetch_started CJK hint cell_width={cell_len(hint)} > 46: {hint!r}"
+    )
+    assert "…" in hint
+
+
 def test_event_hint_ellipsis_present_on_cjk_truncation() -> None:
     """Tier 2b: truncated CJK hints end with the ellipsis character '…'."""
     ev = {"type": "user_message_received", "data": {"text": "今日はどうですか？" * 5}}
