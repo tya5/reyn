@@ -190,6 +190,46 @@ def test_narrow_width_suppresses_cost_calls(tmp_path: Path) -> None:
     )
 
 
+def test_long_name_does_not_collide_with_token_count(tmp_path: Path) -> None:
+    """Tier 2: a name longer than its adaptive column must not collide with
+    the token-count column (#cost-tab name overflow).
+
+    The rows are ``{name:<{width}}{tokens:>7,} tok``; a name at-or-over the
+    column width gets no left-justify padding and glues to the token count
+    (observed "word_stats_demo107,166 tok"). The collision only shows when the
+    token count is ≥7 chars (≥100,000), since ``:>7,`` accidentally pads
+    shorter counts. The fix truncates the name (cell-aware, ellipsis) so the
+    ``:<{width}}`` always leaves ≥1 separating space.
+    """
+    long_agent = "word-stats-demonstration-agent"  # 30 cells, >> narrow width 14
+    # 107,166 total → 7-char token count → no :>7 leading pad → exposes collision.
+    _make_events(tmp_path, agent=long_agent,
+                 prompt_tokens=107000, completion_tokens=166)
+    narrow_width = _MEDIUM_THRESHOLD - 4  # = 38 → narrow agent_name_w = 14
+
+    plain = _render_plain(tmp_path, narrow_width)
+
+    # Locate the BY-AGENT row carrying the token total.
+    token_str = "107,166"
+    rows = [ln for ln in plain.split("\n") if token_str in ln]
+    # The agent row is the one that also carries (a prefix of) the name.
+    agent_row = next(
+        (ln for ln in rows if "word-stats" in ln or "…" in ln), None
+    )
+    assert agent_row is not None, (
+        f"agent row with token total not found. Rendered:\n{plain}"
+    )
+    idx = agent_row.index(token_str)
+    assert agent_row[idx - 1] == " ", (
+        "token count is glued to the agent name (column collision) — expected a "
+        f"separating space. Row: {agent_row!r}"
+    )
+    # The over-long name must have been truncated (ellipsis present).
+    assert "…" in agent_row, (
+        f"long name should be truncated with an ellipsis. Row: {agent_row!r}"
+    )
+
+
 def test_zero_width_does_not_crash(tmp_path: Path) -> None:
     """Tier 2: content_width=0 (unknown / pre-layout) falls back to wide layout.
 
