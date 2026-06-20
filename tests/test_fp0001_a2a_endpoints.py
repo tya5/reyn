@@ -321,8 +321,14 @@ def test_answer_injection_delivers_to_pending_intervention(tmp_path) -> None:
     )
     registry.create("demo", role="demo agent")
 
+    from reyn.runtime.a2a_routing import a2a_session_id
     run_registry = RunRegistry()
-    entry = run_registry.create(agent_name="demo", chain_id="chain-iv")
+    # #1814: the run carries its core session routing-key so answer-injection
+    # re-resolves the SAME per-contextId session.
+    entry = run_registry.create(
+        agent_name="demo", chain_id="chain-iv",
+        session_id=a2a_session_id("ctx-iv"),
+    )
 
     # Seed the iv directly into the agent's outstanding intervention
     # queue (= post-α: Session owns iv state). Use the same loop
@@ -333,7 +339,7 @@ def test_answer_injection_delivers_to_pending_intervention(tmp_path) -> None:
         # shared a2a session, so seed the iv there (not "main") — the same session
         # the endpoint resolves.
         from reyn.runtime.a2a_routing import resolve_a2a_session
-        session = resolve_a2a_session(registry, "demo")
+        session = resolve_a2a_session(registry, "demo", "ctx-iv")
         iv_future = loop.create_future()
         iv = UserIntervention(
             kind="ask_user",

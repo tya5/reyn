@@ -245,6 +245,63 @@ def test_run_registry_update_failure_path_sets_error():
     assert fresh.error == "something exploded"
 
 
+def test_run_entry_session_id_persist_round_trip():
+    """Tier 2: #1814 — RunEntry.session_id survives a persist round-trip with a
+    NON-DEFAULT value (so a silently-dropped field can't pass), and pre-#1814
+    snapshots without the key load gracefully (None)."""
+    from reyn.interfaces.web.run_registry import RunEntry
+
+    reg = RunRegistry()
+    entry = reg.create(agent_name="a", chain_id="c", session_id="a2a:ctx-7")
+    restored = RunEntry.from_persist_dict(entry.to_persist_dict())
+    assert restored.session_id == "a2a:ctx-7"  # non-default preserved
+    legacy = RunEntry.from_persist_dict(
+        {"run_id": "r", "agent_name": "a", "chain_id": "c"}
+    )
+    assert legacy.session_id is None  # graceful for pre-#1814 snapshots
+
+
+@pytest.mark.asyncio
+async def test_escalation_carries_contextid_to_entry_session(monkeypatch):
+    """Tier 2: #1814 — an escalated task records the originating contextId's core
+    session_id, so the monitor pumps the SAME per-contextId session.
+
+    Falsify: without carrying it, ``entry.session_id`` would be None and the
+    monitor would resolve a DIFFERENT session — the completion narration would
+    drain on the wrong conversation.
+    """
+    import reyn.interfaces.web.routers.a2a as a2a_mod
+    from reyn.runtime.a2a_routing import a2a_session_id
+
+    stub = _StubSendImpl({
+        "reply": "", "partial": True, "agent": "alice",
+        "running_skill_run_ids": ["run-1"],
+    })
+    monkeypatch.setattr(a2a_mod, "send_to_agent_impl", stub)
+    monkeypatch.setattr(
+        a2a_mod, "resolve_a2a_session",
+        lambda registry, agent_name, context_id=None: None,
+    )
+    monkeypatch.setattr(
+        a2a_mod, "_get_session_for_monitor",
+        lambda registry, agent_name, context_id=None: _Session(),
+    )
+
+    rr = RunRegistry()
+    result = await _handle_message_send(
+        req_id=9,
+        params={
+            "message": {"parts": [{"kind": "text", "text": "go"}]},
+            "contextId": "ctx-X",
+        },
+        agent_name="alice", registry=object(), run_registry=rr,
+    )
+    task_id = result["result"]["id"]
+    entry = rr.get(task_id)
+    assert entry is not None
+    assert entry.session_id == a2a_session_id("ctx-X")  # the per-contextId routing-key
+
+
 # ---------------------------------------------------------------------------
 # Task envelope shape (= A2A spec v0.2.0 discriminator)
 # ---------------------------------------------------------------------------
@@ -293,7 +350,7 @@ async def test_escalation_skipped_when_reply_text_nonempty(monkeypatch):
     monkeypatch.setattr(a2a_mod, "send_to_agent_impl", stub)
     # FP-0043 S4b-4 (B): the handler spawns the agent's shared a2a session before
     # delegating; stub it (the stubbed send_to_agent_impl ignores the real session).
-    monkeypatch.setattr(a2a_mod, "resolve_a2a_session", lambda registry, agent_name: None)
+    monkeypatch.setattr(a2a_mod, "resolve_a2a_session", lambda registry, agent_name, context_id=None: None)
 
     result = await _handle_message_send(
         req_id=1,
@@ -341,13 +398,13 @@ async def test_escalation_still_fires_when_reply_text_empty(monkeypatch):
     monkeypatch.setattr(a2a_mod, "send_to_agent_impl", stub)
     # FP-0043 S4b-4 (B): the handler spawns the agent's shared a2a session before
     # delegating; stub it (the stubbed send_to_agent_impl ignores the real session).
-    monkeypatch.setattr(a2a_mod, "resolve_a2a_session", lambda registry, agent_name: None)
+    monkeypatch.setattr(a2a_mod, "resolve_a2a_session", lambda registry, agent_name, context_id=None: None)
 
     # _escalate_to_task tries to fetch the session; patch _get_session_for_monitor
     # to return a minimal stand-in so the monitor task can be created.
     monkeypatch.setattr(
         a2a_mod, "_get_session_for_monitor",
-        lambda registry, agent_name: _Session(),
+        lambda registry, agent_name, context_id=None: _Session(),
     )
 
     result = await _handle_message_send(
@@ -388,10 +445,10 @@ async def test_escalation_skipped_when_whitespace_only_reply(monkeypatch):
     monkeypatch.setattr(a2a_mod, "send_to_agent_impl", stub)
     # FP-0043 S4b-4 (B): the handler spawns the agent's shared a2a session before
     # delegating; stub it (the stubbed send_to_agent_impl ignores the real session).
-    monkeypatch.setattr(a2a_mod, "resolve_a2a_session", lambda registry, agent_name: None)
+    monkeypatch.setattr(a2a_mod, "resolve_a2a_session", lambda registry, agent_name, context_id=None: None)
     monkeypatch.setattr(
         a2a_mod, "_get_session_for_monitor",
-        lambda registry, agent_name: _Session(),
+        lambda registry, agent_name, context_id=None: _Session(),
     )
 
     result = await _handle_message_send(

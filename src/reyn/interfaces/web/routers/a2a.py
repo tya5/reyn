@@ -45,7 +45,11 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 
 from reyn.interfaces.web.deps import get_registry, get_run_registry
 from reyn.mcp.server import DEFAULT_SEND_TIMEOUT_SECONDS, send_to_agent_impl
-from reyn.runtime.a2a_routing import a2a_session_id, resolve_a2a_session
+from reyn.runtime.a2a_routing import (
+    a2a_context_id,
+    a2a_session_id,
+    resolve_a2a_session,
+)
 from reyn.runtime.agent_locks import get_agent_lock
 
 logger = logging.getLogger(__name__)
@@ -181,7 +185,9 @@ def _extract_text_from_parts(parts: list) -> str:
     return "\n".join(chunks)
 
 
-def _build_message_response(reply_text: str, partial: bool) -> dict:
+def _build_message_response(
+    reply_text: str, partial: bool, context_id: str | None = None,
+) -> dict:
     """Wrap the agent's reply in an A2A Message envelope.
 
     A2A's ``message/send`` returns either a Task (= async, polled later)
@@ -192,15 +198,22 @@ def _build_message_response(reply_text: str, partial: bool) -> dict:
     carries a metadata flag the peer can surface to its own user; the
     message text itself is whatever ``send_to_agent_impl`` produced
     (typically a "still working" placeholder).
+
+    #1814: ``context_id`` (the per-conversation routing key) is echoed back so a
+    caller that did not supply one can continue the conversation by reusing the
+    server-assigned id.
     """
     parts = [{"kind": "text", "text": reply_text}]
-    return {
+    msg: dict = {
         "kind": "message",
         "role": "agent",
         "parts": parts,
         "messageId": uuid.uuid4().hex,
         "metadata": {"partial": partial} if partial else {},
     }
+    if context_id is not None:
+        msg["contextId"] = context_id
+    return msg
 
 
 # ── GET /a2a/agents — server-level discovery ────────────────────────────────
@@ -369,21 +382,31 @@ async def _handle_message_send(
             "(Non-text parts are not yet supported by this Reyn endpoint.)",
         )
 
+    # #1814: per-contextId session routing. The caller's ``contextId`` identifies
+    # the conversation; a request without one is assigned a fresh server-side id
+    # (A2A-spec) and it is RETURNED in the response so the caller continues by
+    # echoing it. Every downstream resolve/session-id uses this exact value, so
+    # the sync / async / escalation / answer-injection paths act on the SAME
+    # per-contextId session — different contextIds never interfere.
+    import uuid as _uuid  # noqa: PLC0415
+    context_id = params.get("contextId") or _uuid.uuid4().hex
+
     # ── Mode 2: async mode ────────────────────────────────────────────────
     async_mode = params.get("async_mode")
     webhook_url = params.get("webhook_url") or None
     if async_mode is True or webhook_url:
         return await _handle_async_mode(
             req_id, text, agent_name, registry, run_registry, webhook_url,
+            context_id=context_id,
         )
 
     # ── Mode 3: synchronous (default) ────────────────────────────────────
-    # FP-0043 S4b-4 (B): run the delegation on the agent's SHARED a2a session
-    # (isolated from "main" so peer traffic doesn't pollute the user's conversation)
-    # — resolve-or-spawn it (no run-loop; driven inline by MessageBus.request). The
-    # single shared session keeps the sync→Task escalation / continuation intact.
+    # #1814: run the delegation on the agent's PER-CONTEXTID a2a session
+    # (isolated from "main" + from other callers' contextIds) — resolve-or-spawn
+    # it (no run-loop; driven inline by MessageBus.request). The per-contextId
+    # session keeps the sync→Task escalation / continuation intact per conversation.
     try:
-        resolve_a2a_session(registry, agent_name)
+        resolve_a2a_session(registry, agent_name, context_id)
     except (FileNotFoundError, KeyError):
         pass  # unknown agent → send_to_agent_impl raises ValueError below
     try:
@@ -392,7 +415,7 @@ async def _handle_message_send(
             agent_name=agent_name,
             message=text,
             timeout=DEFAULT_SEND_TIMEOUT_SECONDS,
-            sid=a2a_session_id(),
+            sid=a2a_session_id(context_id),
         )
     except ValueError as e:
         # Unknown agent: surface as JSON-RPC error rather than HTTP 404
@@ -433,11 +456,13 @@ async def _handle_message_send(
     ):
         return await _escalate_to_task(
             req_id, agent_name, running_ids, registry, run_registry,
+            context_id=context_id,
         )
 
     reply_msg = _build_message_response(
         reply_text=reply_text,
         partial=bool(result.get("partial", False)),
+        context_id=context_id,
     )
     return _jsonrpc_result(req_id, reply_msg)
 
@@ -448,6 +473,8 @@ async def _escalate_to_task(
     running_skill_run_ids: list[str],
     registry,
     run_registry,
+    *,
+    context_id: str | None = None,  # #1814: the originating conversation
 ) -> dict:
     """Auto-escalate a sync ``message/send`` that timed out with a still-
     running skill into an A2A Task envelope.
@@ -483,6 +510,9 @@ async def _escalate_to_task(
     entry = run_registry.create(
         agent_name=agent_name,
         chain_id=chain_id,
+        # #1814: store the core session routing-key so the monitor / answer-injection
+        # re-resolve the SAME per-contextId session. The A2A layer maps contextId→session_id.
+        session_id=a2a_session_id(context_id),
     )
     monitor_task_id = entry.run_id
 
@@ -505,7 +535,7 @@ async def _escalate_to_task(
             # Wait until the running skill's asyncio task is done, plus a
             # final pump pass to consume the skill_completion_injected
             # inbox message and surface the narration.
-            session = await _get_session_for_monitor(registry, agent_name)
+            session = await _get_session_for_monitor(registry, agent_name, context_id)
             completed = await _await_skill_completion(
                 session, skill_run_id, deadline_s=600.0,
                 agent_name=agent_name,
@@ -545,14 +575,14 @@ async def _escalate_to_task(
     )
 
 
-async def _get_session_for_monitor(registry, agent_name: str):
+async def _get_session_for_monitor(registry, agent_name: str, context_id: str | None = None):
     """Resolve the Session instance for the monitor task.
 
-    FP-0043 S4b-4 (B): the a2a turn ran on the agent's shared a2a session, so the
-    monitor must pump THAT session (not "main") to detect the running skill's
-    completion. resolve_a2a_session is idempotent (returns the already-spawned
-    shared a2a session)."""
-    return resolve_a2a_session(registry, agent_name)
+    #1814: the a2a turn ran on the agent's PER-CONTEXTID a2a session, so the
+    monitor must pump THAT session (not "main", not a different contextId) to
+    detect the running skill's completion. resolve_a2a_session is idempotent
+    (returns the already-spawned per-contextId session)."""
+    return resolve_a2a_session(registry, agent_name, context_id)
 
 
 async def _await_skill_completion(
@@ -699,9 +729,12 @@ async def _handle_answer_injection(
         })
 
     try:
-        # FP-0043 S4b-4 (B): the run lives on the shared a2a session — resolve it
-        # (not "main") so the pending ask_user is answered on the right session.
-        session = resolve_a2a_session(registry, entry.agent_name)
+        # #1814: the run lives on its per-contextId a2a session — resolve THAT
+        # (the contextId recovered from the stored core session_id) so the pending
+        # ask_user is answered on the right session, not a different contextId's.
+        session = resolve_a2a_session(
+            registry, entry.agent_name, a2a_context_id(entry.session_id),
+        )
     except Exception:  # noqa: BLE001 — defensive (agent missing / load failure)
         logger.exception(
             "answer_injection: failed to load agent %r for task %r",
@@ -909,6 +942,8 @@ async def _handle_async_mode(
     registry,
     run_registry,
     webhook_url: str | None,
+    *,
+    context_id: str | None = None,  # #1814: per-contextId session
 ) -> dict:
     """Spawn a background asyncio task and return an A2A Task envelope."""
     from reyn.interfaces.web.a2a_intervention import A2AInterventionBus  # noqa: PLC0415
@@ -919,6 +954,7 @@ async def _handle_async_mode(
         agent_name=agent_name,
         chain_id=chain_id,
         webhook_url=webhook_url,
+        session_id=a2a_session_id(context_id),  # #1814 core routing-key
     )
     run_id = entry.run_id
 
@@ -939,7 +975,7 @@ async def _handle_async_mode(
         bridge: "_A2AProgressBridge | None" = None
         try:
             # FP-0043 S4b-4 (B): the async run also lives on the shared a2a session.
-            session = resolve_a2a_session(registry, agent_name)
+            session = resolve_a2a_session(registry, agent_name, context_id)
             bridge = _A2AProgressBridge(
                 session=session,
                 run_id=run_id,
