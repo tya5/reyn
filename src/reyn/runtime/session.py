@@ -820,6 +820,7 @@ class Session:
         agent_id: str | None = None,
         exclude_tools: "frozenset[str] | set[str] | None" = None,  # #187: tool names hidden from the LLM catalog (e.g. web for faithful eval)
         excluded_categories: "frozenset[str] | set[str] | None" = None,  # #1667: catalog categories hidden at source (e.g. reyn_source for external-repo eval)
+        contextual_permission: "object | None" = None,  # #1827 S3: per-session capability_profile narrowing (ContextualPermission); from registry.resolved_profile_for; None = byte-identical
         router_max_iterations: int = 5,  # #187: per-message tool-call budget for the MAIN chat loop (interactive=5; one-shot autonomous SWE sets higher)
         non_interactive: bool = False,  # #1439 Fix #1: run-once (piped, no TTY) — no user to ask, so the SP directs proceed-with-assumption instead of clarifying
         # FP-0043 Stage 5: the conversation session id this Session records WAL
@@ -878,6 +879,10 @@ class Session:
         # SWE-eval excludes web__search/web__fetch so the agent solves from the
         # repo + issue, not a web lookup of the gold solution.
         self._exclude_tools = frozenset(exclude_tools or ())
+        # #1827 S3: per-session capability_profile narrowing (ContextualPermission)
+        # resolved from the agent's topology role. Threaded to the live tool gate
+        # (RouterLoop) + control-IR OpContext. None = no narrowing (byte-identical).
+        self._contextual_permission = contextual_permission
         # #1667: catalog categories hidden at the universal-catalog source (e.g.
         # reyn_source on the external-repo eval path so it doesn't compete with
         # file__* for the weak model); interactive default empty = reyn_source kept.
@@ -1452,6 +1457,7 @@ class Session:
             turn_budget_engine=_chat_turn_budget_engine,
             # FP-0050 / #1822 S2: content-threat scan + fence config.
             threat_scan=self._safety.threat_scan,
+            contextual_permission=self._contextual_permission,  # #1827 S3 → control-IR OpContext
             agent_name=self.agent_name,
             agent_role=self._agent_role,
             output_language=self.output_language,
@@ -1726,6 +1732,7 @@ class Session:
             budget_tracker=self._budget_tracker,
             non_interactive=self._non_interactive,
             exclude_tools=self._exclude_tools,
+            contextual_permission=self._contextual_permission,  # #1827 S3 → RouterLoop live gate
             excluded_categories=self._excluded_categories,
             budget=self._budget,
             resolver=self._resolver,
@@ -4549,6 +4556,7 @@ class Session:
                 else None
             ),
             agent_id=self._agent_id,
+            contextual_permission=self._contextual_permission,  # #1827 S3 → control-IR OpContext
         )
 
     async def _file_op(self, op_dict: dict) -> dict:

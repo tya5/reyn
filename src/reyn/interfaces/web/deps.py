@@ -303,6 +303,8 @@ def _get_registry():
         def _session_factory(profile: AgentProfile) -> Session:
             registry = registry_ref[0]
             _scoped = get_cli_scoped_overrides()  # #1401 CLI-scoped capabilities
+            # #1827 S3: resolve the agent's topology capability_profile (None/∅ unbound).
+            _ctx_perm, _profile_excluded = registry.resolved_profile_for(profile.name)
             s = build_scoped_chat_session(
                 agent_name=profile.name,
                 model=model,
@@ -346,7 +348,8 @@ def _get_registry():
                 allowed_mcp=None,
                 agent_id=None,
                 exclude_tools=_scoped.exclude_tools,
-                excluded_categories=frozenset(),  # #1667: web/A2A is interactive — keep all categories (a `reyn web` category opt-out would extend _scoped separately)
+                excluded_categories=_profile_excluded,  # #1667 (none here) + #1827 S3 profile view
+                contextual_permission=_ctx_perm,  # #1827 S3: capability_profile enforcement → live tool gate
                 router_max_iterations=config.safety.loop.max_router_iterations,
                 non_interactive=False,  # #1439 Fix #1: A2A byte-identical (run-once-only fix). A2A-non-interactive = documented follow-up (cf factory module doc)
                 environment_backend=_scoped.environment_backend,

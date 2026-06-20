@@ -429,6 +429,9 @@ def run(args: argparse.Namespace) -> None:
 
     def _session_factory(profile: AgentProfile):
         # Captured CLI defaults — registry doesn't need to know them.
+        # #1827 S3: resolve the agent's topology capability_profile → contextual
+        # narrowing (enforcement) + view exclusion. (None, ∅) when unbound = byte-identical.
+        _ctx_perm, _profile_excluded = registry.resolved_profile_for(profile.name)
         s = build_scoped_chat_session(
             agent_name=profile.name,
             model=model,
@@ -458,7 +461,8 @@ def run(args: argparse.Namespace) -> None:
             eager_embedding_build=getattr(args, "eager_embedding_build", False),
             agent_id=session_cfg.config.agent.id,  # FP-0016 E
             exclude_tools=_exclude_tools,  # #187: hide tools (e.g. web) from the LLM catalog
-            excluded_categories=_excluded_categories,  # #1667: hide categories (e.g. reyn_source) at the catalog source
+            excluded_categories=frozenset(_excluded_categories or ()) | _profile_excluded,  # #1667 + #1827 S3 profile view
+            contextual_permission=_ctx_perm,  # #1827 S3: capability_profile enforcement → live tool gate
             # #187: per-message tool-call budget. Interactive chat uses
             # safety.loop.max_router_iterations (default 5); the one-shot
             # autonomous path raises it via --max-iterations (CLI wins).

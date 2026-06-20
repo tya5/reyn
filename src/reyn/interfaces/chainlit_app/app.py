@@ -192,6 +192,8 @@ async def _get_or_build_registry() -> "AgentRegistry":
         registry_ref: list = []
 
         def _session_factory(profile: AgentProfile) -> Session:
+            # #1827 S3: resolve the agent's topology capability_profile (None/∅ unbound).
+            _ctx_perm, _profile_excluded = registry_ref[0].resolved_profile_for(profile.name)
             s = build_scoped_chat_session(
                 agent_name=profile.name,
                 model=model,
@@ -225,7 +227,8 @@ async def _get_or_build_registry() -> "AgentRegistry":
                 # container-rooting. Fill = 1-line follow-up when a consumer needs it.
                 eager_embedding_build=False,
                 exclude_tools=None,
-                excluded_categories=frozenset(),  # #1667: interactive — keep all categories (incl reyn_source self-help)
+                excluded_categories=_profile_excluded,  # #1667 (none here) + #1827 S3 profile view
+                contextual_permission=_ctx_perm,  # #1827 S3: capability_profile enforcement → live tool gate
                 router_max_iterations=session_cfg.config.safety.loop.max_router_iterations,
                 non_interactive=False,  # #1439 Fix #1: interactive UI = byte-identical
                 environment_backend=None,

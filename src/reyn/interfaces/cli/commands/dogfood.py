@@ -446,6 +446,12 @@ def _build_live_runner(agent_name: str, *, env_backend=None, ws_base_dir=None, w
         _reg_cell: list = []
 
         def _session_factory(profile: AgentProfile) -> Session:
+            # #1827 S3: resolve the agent's topology capability_profile. The registry
+            # cell may be empty during bootstrap → (None, ∅) = byte-identical.
+            _reg = _reg_cell[0] if _reg_cell else None
+            _ctx_perm, _profile_excluded = (
+                _reg.resolved_profile_for(profile.name) if _reg else (None, frozenset())
+            )
             s = build_scoped_chat_session(
                 agent_name=profile.name,
                 model=model,
@@ -485,7 +491,8 @@ def _build_live_runner(agent_name: str, *, env_backend=None, ws_base_dir=None, w
                 eager_embedding_build=False,
                 agent_id=None,
                 exclude_tools=None,
-                excluded_categories=frozenset(),  # #1667: dogfood — keep all categories
+                excluded_categories=_profile_excluded,  # #1667 (none here) + #1827 S3 profile view
+                contextual_permission=_ctx_perm,  # #1827 S3: capability_profile enforcement → live tool gate
                 router_max_iterations=config.safety.loop.max_router_iterations,
                 non_interactive=False,  # #1439 Fix #1: dogfood driver = byte-identical (run-once-only fix)
                 workspace_base_dir=ws_base_dir,

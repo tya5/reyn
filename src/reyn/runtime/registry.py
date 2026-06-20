@@ -140,6 +140,9 @@ class AgentRegistry:
         self._dir = project_root / ".reyn" / "agents"
         self._dir.mkdir(parents=True, exist_ok=True)
         self._topology_dir = project_root / ".reyn" / TOPOLOGY_DIRNAME
+        # #1827 S3: capability_profile bindings (.reyn/capability_profiles/<name>.yaml)
+        # resolved per-agent from its topology role bindings (Topology.profiles).
+        self._capability_profile_dir = project_root / ".reyn" / "capability_profiles"
         self._factory = session_factory
         self._state_log = state_log
         self._project_root = project_root
@@ -1969,6 +1972,55 @@ class AgentRegistry:
     def topologies_for_agent(self, agent: str) -> list[Topology]:
         """All topologies the agent currently belongs to (including `_default`)."""
         return [t for t in self.list_topologies() if agent in t.members]
+
+    def resolved_profile_for(self, agent: str) -> "tuple[object | None, frozenset[str]]":
+        """#1827 S3: the agent's effective contextual narrowing from its topology
+        capability_profile bindings.
+
+        Returns ``(ContextualPermission | None, excluded_categories)`` — the
+        composition (most-restrictive: ∪ deny, ∩ allow, ∪ excluded) of every
+        profile bound to ``agent`` across its topologies. **No binding →
+        ``(None, frozenset())``** = byte-identical to pre-#1827 (the ``_default``
+        network has no profiles, so unaffiliated agents resolve to None).
+
+        A bound-but-missing or malformed profile file is surfaced (stderr) and
+        skipped — a typo must not silently widen capability, but it also must not
+        crash session construction.
+        """
+        from reyn.security.permissions.capability_profile import (
+            compose_resolved,
+            load_capability_profile,
+            resolve_profile,
+        )
+
+        resolved: list = []
+        for topo in self.topologies_for_agent(agent):
+            name = topo.profile_for(agent)
+            if not name:
+                continue
+            path = self._capability_profile_dir / f"{name}.yaml"
+            if not path.is_file():
+                import sys
+                print(
+                    f"warning: capability_profile {name!r} (bound in topology "
+                    f"{topo.name!r}) not found at {path}",
+                    file=sys.stderr,
+                )
+                continue
+            try:
+                prof = load_capability_profile(path)
+            except Exception as e:  # noqa: BLE001 — hand-edited yaml, surface not crash
+                import sys
+                print(
+                    f"warning: skipping malformed capability_profile {path.name}: {e}",
+                    file=sys.stderr,
+                )
+                continue
+            resolved.append(resolve_profile(prof))
+
+        if not resolved:
+            return None, frozenset()
+        return compose_resolved(resolved)
 
     def permit(self, from_agent: str, to_agent: str) -> bool:
         """Return True iff some shared topology permits from→to.
