@@ -36,7 +36,8 @@ class LoopConfig:
         max_agent_hops:
             Maximum delegation depth (= user → A → B → C is 3 hops).
         skill_calls_per_chain:
-            Per-(chain, skill) spawn cap with warn + ask_on_exceed semantics.
+            Per-(chain, skill) spawn cap with warn semantics; the exceed
+            flow is driven by ``safety.on_limit.mode`` (#1877).
             ``hard_limit=None`` = unlimited (default).
         skill_tokens_per_chain:
             Per-(chain, skill) token cap with warn semantics.
@@ -233,8 +234,8 @@ class SafetyConfig:
     ``safety.loop.skill_tokens_per_chain`` are hybrid caps: they live
     under ``safety.loop`` because they gate repeated skill spawns
     (loop-detection), but carry ``CostLimitConfig`` semantics (warn_ratio,
-    ask_on_exceed, extension_calls) because the operator may want the
-    user-approval flow on hit rather than an immediate abort.
+    extension_calls); the exceed flow follows the unified
+    ``safety.on_limit.mode`` policy (#1877) rather than a dedicated knob.
 
     See ``docs/guide/for-skill-authors/understand-why-reyn-stops.md`` for
     the operator's mental model.
@@ -774,8 +775,19 @@ def _build_cost_limit(raw: object) -> CostLimitConfig:
         warn_ratio = float(warn_ratio)
     except (TypeError, ValueError):
         warn_ratio = 0.8
-    # FP-0003: opt-in user-approval flow on hard-limit hit.
-    ask_on_exceed = bool(raw.get("ask_on_exceed", False))
+    # FP-0005 (#1877): ``ask_on_exceed`` was subsumed into the unified
+    # ``safety.on_limit`` 3-mode policy (clean-break, no shim). Warn an
+    # operator who still sets the removed key so they migrate to
+    # ``safety.on_limit.mode`` — safety config, so a silent drop is worse.
+    if "ask_on_exceed" in raw:
+        import warnings
+        warnings.warn(
+            "cost.*.ask_on_exceed is deprecated and ignored — removed in #1877. "
+            "The per_chain_skill_calls exceed flow is now driven by "
+            "safety.on_limit.mode (interactive / auto_extend / unattended). "
+            "Remove this key; set safety.on_limit.mode instead.",
+            DeprecationWarning, stacklevel=2,
+        )
     extension_calls_raw = raw.get("extension_calls", 0)
     try:
         extension_calls = int(extension_calls_raw)
@@ -786,7 +798,6 @@ def _build_cost_limit(raw: object) -> CostLimitConfig:
     return CostLimitConfig(
         hard_limit=hard,
         warn_ratio=warn_ratio,
-        ask_on_exceed=ask_on_exceed,
         extension_calls=extension_calls,
     )
 def _build_cost_config(raw: object) -> CostConfig:

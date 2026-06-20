@@ -118,13 +118,18 @@ safety:
   loop:
     skill_calls_per_chain:
       hard_limit: 5
-      ask_on_exceed: true       # ask_user 経由で問い合わせる
-      extension_calls: 3        # 承認時に +3 回付与
+      extension_calls: 3        # 拡張 1 回あたり +3 回。 > 0 で
+                                # この dimension が safety.on_limit フローに参加
+  on_limit:
+    mode: interactive           # 到達時に問い合わせ(default)。 他に
+                                # auto_extend(bounded) / unattended(deny)
 ```
 
-上限到達時に Reyn が *「Skill `X` が上限 5 回に達しました。+3 回追加で
-継続しますか?」* と問います。承認は何度でも可能で、毎回 `extension_calls`
-分だけキャップが拡張されます。
+`on_limit.mode: interactive` で上限到達時に Reyn が *「Skill `X` が上限 5 回に
+達しました。+3 回追加で継続しますか?」* と問います。承認は何度でも可能で、
+毎回 `extension_calls` 分だけキャップが拡張されます。 (per-dimension の
+`ask_on_exceed` bool は #1877 で撤去 — 超過時の挙動は unified な
+`safety.on_limit.mode` に従います。)
 
 ---
 
@@ -169,7 +174,7 @@ safety:
 | `safety.loop.max_router_calls_per_turn` | `Session._check_and_increment_router_cap` | interactive / auto_extend |
 | `safety.loop.max_agent_hops` | `Session._send_to_agent` | interactive / auto_extend |
 | `safety.timeout.chain_seconds` | chain timeout watchdog | interactive / auto_extend (再 arm) |
-| `safety.loop.skill_calls_per_chain` | spawn budget gate | interactive (= `ask_on_exceed`) |
+| `safety.loop.skill_calls_per_chain` | spawn budget gate | interactive / auto_extend / unattended (`safety.on_limit.mode` 経由; `extension_calls > 0` が必要) |
 
 `safety.timeout.llm_call_seconds` は設計上対象外です — litellm が
 `safety.timeout.llm_max_retries` 内で自動再試行するため、 追加の

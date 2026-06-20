@@ -921,7 +921,7 @@ Layers 5 and 6 are scoped: each carries only its own section (`mcp.servers` / `c
 
 Budget caps and rate limits. All fields are optional; omitting a field (or setting its `hard_limit` to `null`) means **unlimited**.
 
-Each token / cost cap (`per_agent_tokens`, `per_agent_cost_usd`, `daily_*`, `monthly_*`) is a `CostLimitConfig` with four sub-fields: `hard_limit` (the cap; `null` = unlimited), `warn_ratio` (warn threshold as a fraction of `hard_limit`, default `0.8`), `ask_on_exceed` (when `true`, prompt for approval to extend the cap on hit instead of aborting), and `extension_calls` (how many approved extensions to grant before the cap is enforced hard). The examples below set only the commonly-tuned `hard_limit` / `warn_ratio`; the other two default to `false` / `0`.
+Each token / cost cap (`per_agent_tokens`, `per_agent_cost_usd`, `daily_*`, `monthly_*`) is a `CostLimitConfig` with three sub-fields: `hard_limit` (the cap; `null` = unlimited), `warn_ratio` (warn threshold as a fraction of `hard_limit`, default `0.8`), and `extension_calls` (per-grant extension amount; `> 0` opts the dimension into the unified `safety.on_limit` flow — on a `per_chain_skill_calls` hit the ask-vs-auto-extend-vs-deny behaviour follows `safety.on_limit.mode`). The examples below set only the commonly-tuned `hard_limit` / `warn_ratio`; `extension_calls` defaults to `0` (hard-refuse on hit). The per-dimension `ask_on_exceed` bool was removed in #1877 (subsumed into `safety.on_limit.mode`).
 
 ```yaml
 cost:

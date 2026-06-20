@@ -338,9 +338,10 @@
 # -----------------------------------------------------------------------------
 # cost: budget / rate-limit policy. Each ``CostLimitConfig`` has a
 # ``hard_limit`` (null = unlimited), ``warn_ratio`` (= warn when usage hits
-# this fraction), ``ask_on_exceed`` (= prompt the user via intervention bus),
-# and ``extension_calls`` (= how many one-shot extensions are granted before
-# the next ask).
+# this fraction), and ``extension_calls`` (= per-grant extension amount;
+# ``> 0`` opts the dimension into the unified ``safety.on_limit`` flow — the
+# exceed behaviour, ask vs auto-extend vs deny, follows ``safety.on_limit.mode``
+# since #1877; the old per-dimension ``ask_on_exceed`` bool was removed).
 #
 # ``rate_limit_per_minute`` maps model-class → cap on calls per rolling minute.
 # ``rate_limit_warn_ratio`` (default 0.8) controls when the warning fires.
@@ -349,13 +350,11 @@
 #   per_agent_tokens:
 #     hard_limit: null
 #     warn_ratio: 0.8
-#     ask_on_exceed: false
 #     extension_calls: 0
 #   per_agent_cost_usd:
 #     hard_limit: null
 #   daily_tokens:
 #     hard_limit: 2000000
-#     ask_on_exceed: true
 #     extension_calls: 1
 #   daily_cost_usd:
 #     hard_limit: 25.0
@@ -550,7 +549,7 @@
 #     skill_calls_per_chain:
 #       hard_limit: null
 #       warn_ratio: 0.8
-#       ask_on_exceed: false
+#       # extension_calls > 0 → exceed follows safety.on_limit.mode (#1877)
 #       extension_calls: 0
 #     skill_tokens_per_chain:
 #       hard_limit: null

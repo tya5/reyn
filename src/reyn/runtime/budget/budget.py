@@ -50,21 +50,19 @@ class BudgetExceeded(Exception):
 class CostLimitConfig:
     """A single hybrid-cap dimension. None hard_limit = unlimited.
 
-    FP-0003: ``ask_on_exceed`` opts a dimension into the user-approval
-    flow on hard-limit hit. When True, instead of refusing immediately,
-    the budget gateway prompts the user via ``InterventionBus.ask`` and
-    extends the chain's effective cap by ``extension_calls`` (or
-    ``extension_tokens`` for token-axis dimensions) on approval.
-    Default False preserves the pre-FP-0003 hard-refuse behaviour.
+    FP-0003 → FP-0005 (#1877): the per_chain_skill_calls exceed flow is now
+    driven by the unified ``safety.on_limit`` 3-mode policy. ``extension_calls``
+    is the per-grant extension amount; ``> 0`` opts the dimension into the
+    on_limit flow (``interactive`` = ask the user, ``auto_extend`` = bounded
+    auto-grant, ``unattended`` = deny). ``0`` (default) keeps the hard-refuse
+    behaviour regardless of mode (nothing to grant).
     """
 
     hard_limit: float | None = None
     warn_ratio: float = 0.8
-    # FP-0003: opt-in user-approval flow on hard-limit hit.
-    ask_on_exceed: bool = False
-    # FP-0003: how much to extend the chain cap by on approval (only
-    # consulted when ``ask_on_exceed`` is True). For per_chain_skill_calls
-    # this is a count; for per_chain_skill_tokens it is a token count.
+    # FP-0005 (#1877): per-grant extension amount. ``> 0`` makes the
+    # dimension participate in the ``safety.on_limit`` flow; for
+    # per_chain_skill_calls this is a spawn count.
     extension_calls: int = 0
 
     @property
@@ -326,8 +324,8 @@ class BudgetTracker:
         self._purpose_cost_usd: dict[str, float] = defaultdict(float)
         self._chain_skill_calls: dict[tuple[str, str], int] = defaultdict(int)
         self._chain_skill_tokens: dict[tuple[str, str], int] = defaultdict(int)
-        # FP-0003: per-(chain_id, skill) extensions granted via the
-        # ``ask_on_exceed`` user-approval flow. The effective hard limit
+        # FP-0005 (#1877): per-(chain_id, skill) extensions granted via the
+        # ``safety.on_limit`` flow. The effective hard limit
         # for a (chain, skill) pair is ``cap.hard_limit + extensions[key]``.
         # Tracked separately from ``_chain_skill_calls`` so the counter
         # itself remains a simple monotonic spawn count, and so the
@@ -454,11 +452,11 @@ class BudgetTracker:
     def check_pre_spawn(self, *, chain_id: str, skill: str) -> BudgetCheck:
         """Run before spawning a skill from chat. Refuses on per-chain cap.
 
-        FP-0003: the effective hard limit is the configured ``cap.hard_limit``
-        plus any per-(chain, skill) extensions granted via the
-        ``ask_on_exceed`` user-approval flow (see ``extend_chain_calls``).
-        ``BudgetCheck.context['ask_on_exceed']`` tells the caller whether
-        a refusal is eligible for the user-approval flow.
+        FP-0005 (#1877): the effective hard limit is the configured
+        ``cap.hard_limit`` plus any per-(chain, skill) extensions granted via
+        the ``safety.on_limit`` flow (see ``extend_chain_calls``).
+        ``BudgetCheck.context['extension_calls'] > 0`` tells the caller the
+        dimension participates in that flow (else the refusal is hard).
         """
         cap = self._skill_calls_cap
         if not cap.is_active:
@@ -481,7 +479,6 @@ class BudgetTracker:
                     "hard": effective_hard,
                     "base_hard": int(cap.hard_limit),
                     "extensions_granted": extension,
-                    "ask_on_exceed": cap.ask_on_exceed,
                     "extension_calls": int(cap.extension_calls),
                 },
             )
