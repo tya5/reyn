@@ -29,6 +29,7 @@ import subprocess
 import tempfile
 from pathlib import Path
 
+from reyn.security.sandbox._subprocess_io import communicate_capped
 from reyn.security.sandbox.backend import SandboxResult
 from reyn.security.sandbox.policy import SandboxPolicy
 
@@ -214,22 +215,34 @@ class SeatbeltBackend:
                 # No cancel support: original blocking path (byte-identical).
                 def _run_blocking() -> SandboxResult:
                     try:
-                        completed = subprocess.run(
+                        proc = subprocess.Popen(
                             full_argv,
-                            input=stdin,
-                            capture_output=True,
+                            stdin=subprocess.PIPE if stdin is not None else subprocess.DEVNULL,
+                            stdout=subprocess.PIPE,
+                            stderr=subprocess.PIPE,
                             env=env,
                             cwd=cwd,
+                        )
+                    except OSError as exc:
+                        return SandboxResult(
+                            returncode=-1, stdout=b"", stderr=str(exc).encode()
+                        )
+                    try:
+                        stdout_b, stderr_b, truncated = communicate_capped(
+                            proc,
+                            input=stdin,
+                            max_bytes=policy.max_output_bytes,
                             timeout=policy.timeout_seconds,
-                            check=False,
                         )
                         return SandboxResult(
-                            returncode=completed.returncode,
-                            stdout=completed.stdout or b"",
-                            stderr=completed.stderr or b"",
-                            truncated=False,
+                            returncode=proc.returncode,
+                            stdout=stdout_b,
+                            stderr=stderr_b,
+                            truncated=truncated,
                         )
                     except subprocess.TimeoutExpired as exc:
+                        proc.kill()
+                        proc.wait()
                         stdout_b = exc.stdout if isinstance(exc.stdout, bytes) else b""
                         stderr_b = exc.stderr if isinstance(exc.stderr, bytes) else b""
                         return SandboxResult(
@@ -237,14 +250,6 @@ class SeatbeltBackend:
                             stdout=stdout_b,
                             stderr=stderr_b
                             + f"\nCommand timed out after {policy.timeout_seconds}s".encode(),
-                            truncated=False,
-                        )
-                    except OSError as exc:
-                        return SandboxResult(
-                            returncode=-1,
-                            stdout=b"",
-                            stderr=str(exc).encode(),
-                            truncated=False,
                         )
 
                 return await loop.run_in_executor(None, _run_blocking)
@@ -270,7 +275,9 @@ class SeatbeltBackend:
                 except OSError:
                     pass
 
-            comm_future: asyncio.Future = loop.run_in_executor(None, proc.communicate)
+            comm_future: asyncio.Future = loop.run_in_executor(
+                None, lambda: communicate_capped(proc, max_bytes=policy.max_output_bytes)
+            )
             cancel_task = asyncio.create_task(cancel_event.wait())
 
             done, _ = await asyncio.wait(
@@ -283,39 +290,42 @@ class SeatbeltBackend:
                 await _kill_proc_group(proc, loop)
                 cancel_task.cancel()
                 try:
-                    stdout_b, stderr_b = await asyncio.wait_for(
+                    stdout_b, stderr_b, _trunc = await asyncio.wait_for(
                         asyncio.shield(comm_future), timeout=3.0,
                     )
                 except (asyncio.TimeoutError, Exception):
-                    stdout_b, stderr_b = b"", b""
+                    stdout_b, stderr_b, _trunc = b"", b"", False
                 return SandboxResult(
                     returncode=-int(signal.SIGTERM),
                     stdout=stdout_b or b"",
                     stderr=stderr_b or b"",
+                    truncated=_trunc,
                     cancelled=True,
                 )
             elif not done:
                 cancel_task.cancel()
                 await _kill_proc_group(proc, loop)
                 try:
-                    stdout_b, stderr_b = await asyncio.wait_for(
+                    stdout_b, stderr_b, _trunc = await asyncio.wait_for(
                         asyncio.shield(comm_future), timeout=3.0,
                     )
                 except (asyncio.TimeoutError, Exception):
-                    stdout_b, stderr_b = b"", b""
+                    stdout_b, stderr_b, _trunc = b"", b"", False
                 return SandboxResult(
                     returncode=-1,
                     stdout=stdout_b or b"",
                     stderr=(stderr_b or b"")
                     + f"\nCommand timed out after {policy.timeout_seconds}s".encode(),
+                    truncated=_trunc,
                 )
             else:
                 cancel_task.cancel()
-                stdout_b, stderr_b = await comm_future
+                stdout_b, stderr_b, _trunc = await comm_future
                 return SandboxResult(
                     returncode=proc.returncode,
                     stdout=stdout_b or b"",
                     stderr=stderr_b or b"",
+                    truncated=_trunc,
                 )
         finally:
             if profile_path is not None:

@@ -106,3 +106,37 @@ def test_default_cap_is_10_mib():
     """Tier 2: the single-source default subprocess-output ceiling is 10 MiB."""
     expected = 10 * 1024 * 1024
     assert MAX_SUBPROCESS_OUTPUT_BYTES == expected
+
+
+def test_max_output_bytes_dict_threaded_config_overridable():
+    """Tier 2: SandboxPolicy(**dict) threads a NON-DEFAULT max_output_bytes — the
+    config-overridable path the backends use via SandboxPolicy(**ctx.default_sandbox_policy)
+    / SandboxPolicy(**policy_dict). A non-default value proves real threading (a
+    default would pass even if unwired); absent → the 10 MiB default."""
+    from reyn.security.sandbox.policy import SandboxPolicy
+
+    pol = SandboxPolicy(**{"max_output_bytes": 4242})
+    assert pol.max_output_bytes == 4242
+    assert pol.max_output_bytes != MAX_SUBPROCESS_OUTPUT_BYTES
+    assert SandboxPolicy().max_output_bytes == MAX_SUBPROCESS_OUTPUT_BYTES
+
+
+@pytest.mark.asyncio
+async def test_backend_bounds_huge_output_end_to_end():
+    """Tier 2: end-to-end through a real backend — a sandboxed process emitting
+    far more than the cap → the backend returns truncated=True with stdout bounded
+    to <= max_output_bytes (the memory-DoS fix; pre-C2 the full body was captured).
+    Uses NoopBackend so this runs on every platform (all backends share the
+    communicate_capped seam)."""
+    from reyn.security.sandbox.noop_backend import NoopBackend
+    from reyn.security.sandbox.policy import SandboxPolicy
+
+    backend = NoopBackend()
+    policy = SandboxPolicy(max_output_bytes=_CAP, timeout_seconds=10)
+    result = await backend.run(
+        [PY, "-c", "import sys;sys.stdout.write('x'*5_000_000)"], policy
+    )
+    out_len = len(result.stdout)
+    assert out_len <= _CAP
+    assert result.truncated is True
+    assert result.returncode == 0

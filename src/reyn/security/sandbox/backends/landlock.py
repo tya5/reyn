@@ -27,6 +27,7 @@ import platform
 import signal
 import subprocess
 
+from .._subprocess_io import communicate_capped
 from ..backend import SandboxResult
 from ..policy import SandboxPolicy
 
@@ -265,25 +266,29 @@ class LandlockBackend:
                         preexec_fn=lambda: _build_preexec(ruleset),
                     )
                     try:
-                        stdout_b, stderr_b = proc.communicate(
+                        stdout_b, stderr_b, truncated = communicate_capped(
+                            proc,
                             input=stdin,
+                            max_bytes=policy.max_output_bytes,
                             timeout=policy.timeout_seconds,
                         )
                     except subprocess.TimeoutExpired:
                         proc.kill()
-                        stdout_b, stderr_b = proc.communicate()
+                        stdout_b, stderr_b, _trunc = communicate_capped(
+                            proc, max_bytes=policy.max_output_bytes
+                        )
                         return SandboxResult(
                             returncode=-1,
                             stdout=stdout_b or b"",
                             stderr=(stderr_b or b"")
                             + f"\nCommand timed out after {policy.timeout_seconds}s".encode(),
-                            truncated=False,
+                            truncated=_trunc,
                         )
                     return SandboxResult(
                         returncode=proc.returncode,
                         stdout=stdout_b or b"",
                         stderr=stderr_b or b"",
-                        truncated=False,
+                        truncated=truncated,
                     )
                 except OSError as exc:
                     return SandboxResult(
@@ -328,7 +333,9 @@ class LandlockBackend:
             except OSError:
                 pass
 
-        comm_future: asyncio.Future = loop.run_in_executor(None, proc.communicate)
+        comm_future: asyncio.Future = loop.run_in_executor(
+            None, lambda: communicate_capped(proc, max_bytes=policy.max_output_bytes)
+        )
         cancel_task = asyncio.create_task(cancel_event.wait())
 
         done, _ = await asyncio.wait(
@@ -341,39 +348,42 @@ class LandlockBackend:
             await _kill_proc_group(proc, loop)
             cancel_task.cancel()
             try:
-                stdout_b, stderr_b = await asyncio.wait_for(
+                stdout_b, stderr_b, _trunc = await asyncio.wait_for(
                     asyncio.shield(comm_future), timeout=3.0,
                 )
             except (asyncio.TimeoutError, Exception):
-                stdout_b, stderr_b = b"", b""
+                stdout_b, stderr_b, _trunc = b"", b"", False
             return SandboxResult(
                 returncode=-int(signal.SIGTERM),
                 stdout=stdout_b or b"",
                 stderr=stderr_b or b"",
+                truncated=_trunc,
                 cancelled=True,
             )
         elif not done:
             cancel_task.cancel()
             await _kill_proc_group(proc, loop)
             try:
-                stdout_b, stderr_b = await asyncio.wait_for(
+                stdout_b, stderr_b, _trunc = await asyncio.wait_for(
                     asyncio.shield(comm_future), timeout=3.0,
                 )
             except (asyncio.TimeoutError, Exception):
-                stdout_b, stderr_b = b"", b""
+                stdout_b, stderr_b, _trunc = b"", b"", False
             return SandboxResult(
                 returncode=-1,
                 stdout=stdout_b or b"",
                 stderr=(stderr_b or b"")
                 + f"\nCommand timed out after {policy.timeout_seconds}s".encode(),
+                truncated=_trunc,
             )
         else:
             cancel_task.cancel()
-            stdout_b, stderr_b = await comm_future
+            stdout_b, stderr_b, _trunc = await comm_future
             return SandboxResult(
                 returncode=proc.returncode,
                 stdout=stdout_b or b"",
                 stderr=stderr_b or b"",
+                truncated=_trunc,
             )
 
 
