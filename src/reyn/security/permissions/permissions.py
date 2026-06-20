@@ -320,7 +320,15 @@ class PermissionDecl:
 
     @classmethod
     def from_dict(cls, d: dict | None) -> "PermissionDecl":
-        if not d:
+        # Fail-secure on a missing OR malformed (non-dict) permissions block. A
+        # skill.md with ``permissions: <string|list>`` (an authoring typo) is not
+        # coerced by the parser (parser.py ``or {}`` keeps a truthy non-dict) and
+        # reaches the compiler via ``expander.py`` unguarded — ``d.get(...)`` on a
+        # str/list would then crash with an unclear AttributeError. Default to an
+        # EMPTY decl (no grants): crash-safe AND the secure default for a
+        # permissions primitive. (The skill validator surfaces the malformed
+        # block separately with a clear message.)
+        if not isinstance(d, dict):
             return cls()
         # #571 collapse arc Phase 5: warn on legacy bool-axis keys so
         # user-side skills get a visible migration prompt. The values
