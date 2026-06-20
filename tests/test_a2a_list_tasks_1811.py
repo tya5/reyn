@@ -3,9 +3,9 @@
 ``tasks/list`` returns one agent's tasks, narrowable by ``contextId`` (→ the
 core-neutral ``session_id`` routing-key, #1814) and ``status``, with a stable
 keyset cursor (sort key ``(created_at, run_id)``; opaque base64 ``pageToken``;
-``nextPageToken`` MUST always be present, ``''`` at end). Per-task shape reuses
-``RunEntry.to_public_dict()`` (consistent with GetTask; STATUS_MAP normalization
-is a separate #1811 slice). Real RunRegistry, no mocks.
+``nextPageToken`` MUST always be present, ``''`` at end). Per-task shape is the
+spec A2A Task envelope (``_to_a2a_task`` — ``id`` not ``run_id``), consistent
+with GetTask. Real RunRegistry, no mocks.
 
 Falsification:
 - contextId filter test reds if the session_id filter is dropped (returns both
@@ -53,7 +53,7 @@ async def test_tasks_list_filters_by_contextid():
     _seed(reg, "alice", a2a_session_id(ctx_b), 2)  # other context — must be excluded
 
     result = await _list(reg, "alice", contextId=ctx_a)
-    returned = {t["run_id"] for t in result["tasks"]}
+    returned = {t["id"] for t in result["tasks"]}
 
     # RED if the session_id filter is dropped: returned would also contain ctx_b.
     assert returned == a_ids
@@ -78,7 +78,7 @@ async def test_tasks_list_pagination_keyset_covers_all_once():
             params["pageToken"] = token
         result = await _list(reg, "alice", **params)
         page_lens.append(len(result["tasks"]))
-        seen.extend(t["run_id"] for t in result["tasks"])
+        seen.extend(t["id"] for t in result["tasks"])
         token = result["nextPageToken"]
         pages += 1
         assert pages <= 10, "pagination did not terminate"
@@ -102,7 +102,7 @@ async def test_tasks_list_filters_by_status():
     _seed(reg, "alice", sid, 3, status="running")
 
     result = await _list(reg, "alice", contextId="ctx-st", status="completed")
-    returned = {t["run_id"] for t in result["tasks"]}
+    returned = {t["id"] for t in result["tasks"]}
 
     assert returned == done
     assert result["totalSize"] == 2
@@ -120,7 +120,7 @@ async def test_tasks_list_next_page_token_always_present_on_short_page():
     assert "nextPageToken" in result
     assert result["nextPageToken"] == ""
     # the single seeded task is the only one returned (no extra page expected).
-    returned = {t["run_id"] for t in result["tasks"]}
+    returned = {t["id"] for t in result["tasks"]}
     assert returned == {seeded[0].run_id}
 
 

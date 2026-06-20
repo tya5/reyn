@@ -343,6 +343,82 @@ async def a2a_jsonrpc(
     )
 
 
+# ── A2A Task envelope + state mapping (#1811) ───────────────────────────────
+
+# Valid A2A TaskState values (JSON-RPC short-form binding — consistent with the
+# slash-form ``message/send`` Reyn ships; the spec's protobuf ``TASK_STATE_*``
+# enum is the separate gRPC binding). Documents the legal targets so the
+# completeness test can assert every ``_STATUS_MAP`` value lands on a real state.
+_A2A_TASK_STATES = frozenset({
+    "submitted", "working", "completed", "failed",
+    "canceled", "input-required", "rejected", "auth-required",
+})
+
+# Reyn's own free-form run-status vocabulary → A2A TaskState. Reyn statuses are
+# not a closed enum, so ``_a2a_task_state`` passes unmapped values through (+ a
+# debug log) rather than crashing — a never-hit safety net for drift.
+_STATUS_MAP = {
+    "running": "working",
+    "in-progress": "working",
+    "completed": "completed",
+    "failed": "failed",
+    "cancelled": "canceled",       # reyn double-l → spec single-l
+    "input-required": "input-required",
+    "timeout": "failed",           # reyn-specific (spec-external) → nearest terminal-error
+}
+
+
+def _a2a_task_state(reyn_status: str) -> str:
+    """Map a Reyn run status to an A2A TaskState (short-form). Unknown statuses
+    pass through verbatim (+ debug log) — never crash on an unmapped value."""
+    mapped = _STATUS_MAP.get(reyn_status)
+    if mapped is None:
+        logger.debug("a2a: unmapped run status %r — passing through", reyn_status)
+        return reyn_status
+    return mapped
+
+
+def _to_a2a_task(entry) -> dict:
+    """Build a spec-shaped A2A Task object (§4.1.1) from a RunEntry (#1811).
+
+    ``id`` + ``status`` (TaskStatus) are required; ``contextId`` / ``artifacts``
+    optional. RunEntry's flat ``result`` has no home in a spec Task → it becomes
+    an output Artifact; ``error`` becomes the TaskStatus.message note. ``kind``
+    is kept as the JSON-RPC response discriminator (spec §4.1.1 omits it, but the
+    existing ``message/send`` responses + clients rely on it).
+
+    ``contextId`` is recovered from the core-neutral ``session_id`` via the A2A
+    layer's reverse map (``a2a_context_id``) — the contextId term stays in the
+    A2A layer; core (RunEntry) only stores ``session_id`` (#1814).
+    """
+    status_obj: dict = {
+        "state": _a2a_task_state(entry.status),
+        "timestamp": entry.updated_at.isoformat(),
+    }
+    if entry.error:
+        status_obj["message"] = {
+            "kind": "message",
+            "role": "agent",
+            "parts": [{"kind": "text", "text": entry.error}],
+        }
+
+    task: dict = {
+        "kind": "task",
+        "id": entry.run_id,
+        "status": status_obj,
+    }
+    if entry.session_id:
+        task["contextId"] = a2a_context_id(entry.session_id)
+    if entry.result:
+        task["artifacts"] = [
+            {
+                "artifactId": entry.run_id,
+                "parts": [{"kind": "text", "text": entry.result}],
+            }
+        ]
+    return task
+
+
 # ── tasks/list — A2A ListTasks (#1811) ──────────────────────────────────────
 
 _LIST_TASKS_DEFAULT_PAGE_SIZE = 50
@@ -434,7 +510,7 @@ async def _handle_tasks_list(
     return _jsonrpc_result(
         req_id,
         {
-            "tasks": [e.to_public_dict() for e in page],
+            "tasks": [_to_a2a_task(e) for e in page],
             "nextPageToken": next_token,
             "pageSize": page_size,
             "totalSize": total_size,
@@ -1152,11 +1228,11 @@ async def get_task(
     run_id: str,
     run_registry=Depends(get_run_registry),
 ) -> dict:
-    """Poll a task's status. Returns RunEntry.to_public_dict()."""
+    """Poll a task's status. Returns a spec-shaped A2A Task object (#1811)."""
     entry = run_registry.get(run_id)
     if entry is None:
         raise HTTPException(404, f"Task {run_id!r} not found")
-    return entry.to_public_dict()
+    return _to_a2a_task(entry)
 
 
 # ── POST /a2a/tasks/{run_id}/cancel — cancel a running task ─────────────────

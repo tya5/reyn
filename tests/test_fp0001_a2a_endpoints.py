@@ -63,9 +63,10 @@ def _restore_overrides() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_get_task_returns_public_dict_for_existing_run() -> None:
-    """Tier 2: GET /a2a/tasks/{run_id} returns 200 with RunEntry.to_public_dict()
-    shape when the run exists in the registry."""
+def test_get_task_returns_a2a_task_envelope_for_existing_run() -> None:
+    """Tier 2: GET /a2a/tasks/{run_id} returns 200 with a spec-shaped A2A Task
+    envelope (#1811) — kind=task, id=run_id, and a nested TaskStatus whose state
+    is the run status mapped to an A2A TaskState (running→working)."""
     registry = RunRegistry()
     entry = registry.create(agent_name="demo", chain_id="chain-abc")
     client = _make_client_with_registry(registry)
@@ -73,11 +74,14 @@ def test_get_task_returns_public_dict_for_existing_run() -> None:
         r = client.get(f"/a2a/tasks/{entry.run_id}")
         assert r.status_code == 200, r.text
         body = r.json()
-        assert body["run_id"] == entry.run_id
-        assert body["agent_name"] == "demo"
-        assert body["chain_id"] == "chain-abc"
-        assert body["status"] == "running"
-        # to_public_dict must not leak internal-only fields.
+        assert body["kind"] == "task"
+        assert body["id"] == entry.run_id
+        # nested TaskStatus with the run status mapped to a spec TaskState.
+        assert body["status"]["state"] == "working"
+        # the flat reyn shape is gone: id replaces run_id, status is an object.
+        assert "run_id" not in body
+        assert not isinstance(body["status"], str)
+        # internal-only fields never leak.
         assert "task" not in body
         assert "pending_intervention" not in body
     finally:
