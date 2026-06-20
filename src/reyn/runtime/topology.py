@@ -54,6 +54,11 @@ class Topology:
     members: tuple[str, ...] = field(default_factory=tuple)
     leader: str | None = None
     created_at: str = ""
+    # #1827 S2b: per-member capability_profile binding (member name → profile
+    # name). A bound member's session is narrowed by the resolved profile (S3
+    # wires registry → resolver → the #1402 factory → the live gate). Excluded
+    # from __hash__ (dict is unhashable; Topology is keyed by other fields).
+    profiles: dict[str, str] = field(default_factory=dict, hash=False)
 
     def __post_init__(self) -> None:
         if self.kind not in KINDS:
@@ -62,6 +67,12 @@ class Topology:
             )
         if len(set(self.members)) != len(self.members):
             raise ValueError(f"topology {self.name!r}: duplicate members in {self.members}")
+        # #1827 S2b: a profile may only bind a member of this topology.
+        unknown = set(self.profiles) - set(self.members)
+        if unknown:
+            raise ValueError(
+                f"topology {self.name!r}: profiles bind non-members {sorted(unknown)}"
+            )
         if self.kind == "team":
             if self.leader is None:
                 raise ValueError(f"topology {self.name!r}: kind=team requires a leader")
@@ -96,6 +107,13 @@ class Topology:
             return j == i + 1
         return False
 
+    def profile_for(self, member: str) -> "str | None":
+        """Return the capability_profile name bound to ``member``, or None.
+
+        #1827 S2b. S3 resolves the name → a ``CapabilityProfile`` → the
+        ``(ContextualPermission, excluded_categories)`` threaded at session build."""
+        return self.profiles.get(member)
+
     def edges(self) -> list[tuple[str, str]]:
         """All directed edges this topology permits — used by `topology show`."""
         out: list[tuple[str, str]] = []
@@ -115,6 +133,7 @@ class Topology:
         kind: str,
         members: list[str],
         leader: str | None = None,
+        profiles: "dict[str, str] | None" = None,
     ) -> "Topology":
         _validate_topology_name(name)
         return cls(
@@ -123,18 +142,26 @@ class Topology:
             members=tuple(members),
             leader=leader,
             created_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            profiles=dict(profiles or {}),
         )
 
     @classmethod
     def load(cls, path: Path) -> "Topology":
         data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
         members = data.get("members", []) or []
+        profiles_raw = data.get("profiles") or {}
+        profiles = (
+            {str(k): str(v) for k, v in profiles_raw.items()}
+            if isinstance(profiles_raw, dict)
+            else {}
+        )
         return cls(
             name=str(data.get("name", path.stem)),
             kind=str(data.get("kind", "network")),
             members=tuple(str(m) for m in members),
             leader=(str(data["leader"]) if data.get("leader") else None),
             created_at=str(data.get("created_at", "") or ""),
+            profiles=profiles,
         )
 
     def save(self, path: Path) -> None:
@@ -148,6 +175,8 @@ class Topology:
             payload["leader"] = self.leader
         if self.created_at:
             payload["created_at"] = self.created_at
+        if self.profiles:
+            payload["profiles"] = dict(self.profiles)
         path.write_text(
             yaml.safe_dump(payload, allow_unicode=True, sort_keys=False),
             encoding="utf-8",
@@ -164,6 +193,7 @@ class Topology:
             members=self.members + (agent,),
             leader=self.leader,
             created_at=self.created_at,
+            profiles=dict(self.profiles),
         )
 
     def with_member_removed(self, agent: str) -> "Topology":
@@ -179,6 +209,8 @@ class Topology:
             members=tuple(m for m in self.members if m != agent),
             leader=self.leader,
             created_at=self.created_at,
+            # #1827 S2b: drop the removed member's profile binding (no orphan).
+            profiles={m: p for m, p in self.profiles.items() if m != agent},
         )
 
 
