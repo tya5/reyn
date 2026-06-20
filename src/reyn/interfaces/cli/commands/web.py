@@ -192,10 +192,18 @@ def run(args: argparse.Namespace) -> None:
     # uvicorn.run so the lazy session factory / perm resolver read them).
     _apply_cli_scoped_overrides(args)
 
+    # Explicit WebSocket frame ceiling: previously this relied on uvicorn's
+    # implicit ~16 MiB default, which a uvicorn version bump or operator server
+    # override could silently drop. Pin it from config (operator-tunable via
+    # web.ws_max_size) so the inbound-frame bound is explicit + version-independent.
+    from reyn.config import load_config
+    _ws_max_size = load_config().web.ws_max_size
+
     uvicorn.run(
         "reyn.interfaces.web.server:app",
         host=args.host,
         port=args.port,
         reload=args.reload,
         log_level=args.log_level,
+        ws_max_size=_ws_max_size,
     )

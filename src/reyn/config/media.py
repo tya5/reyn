@@ -76,14 +76,23 @@ class WebFetchConfig:
     max_download_bytes: int = MAX_DOWNLOAD_BYTES  # single-source (#1913 class)
 
 
+# Default WebSocket max frame size (bytes) for the `reyn web` gateway. Pins
+# uvicorn/websockets' implicit 16 MiB default EXPLICITLY so a uvicorn version
+# bump or an operator server override can't silently drop the bound. Operator-
+# tunable via ``web.ws_max_size``.
+DEFAULT_WS_MAX_SIZE = 16 * 1024 * 1024
+
+
 @dataclass
 class WebConfig:
-    """`web:` — web operation settings.
+    """`web:` — web settings.
 
-    Aggregates ``web.fetch`` sub-section. Extend here when ``web.search``
-    gets its own knobs.
+    Aggregates the ``web.fetch`` sub-section (web_fetch operation knobs) and
+    ``ws_max_size`` (the gateway WebSocket inbound-frame ceiling). Extend here
+    when ``web.search`` gets its own knobs.
     """
     fetch: WebFetchConfig = field(default_factory=WebFetchConfig)
+    ws_max_size: int = DEFAULT_WS_MAX_SIZE
 
 
 def _build_web_fetch_config(raw: object) -> WebFetchConfig:
@@ -116,7 +125,13 @@ def _build_web_config(raw: object) -> WebConfig:
     if not isinstance(raw, dict):
         return WebConfig()
     fetch_raw = raw.get("fetch")
-    return WebConfig(fetch=_build_web_fetch_config(fetch_raw))
+    try:
+        ws_max_size = int(raw.get("ws_max_size", DEFAULT_WS_MAX_SIZE))
+        if ws_max_size <= 0:
+            ws_max_size = DEFAULT_WS_MAX_SIZE
+    except (TypeError, ValueError):
+        ws_max_size = DEFAULT_WS_MAX_SIZE
+    return WebConfig(fetch=_build_web_fetch_config(fetch_raw), ws_max_size=ws_max_size)
 
 
 # ── multimodal: media-size gate for image/audio/etc. (#364 cluster) ─────────

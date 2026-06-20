@@ -590,6 +590,7 @@
 #     verify_ssl: null              # null = delegate to env / litellm fallback
 #     ca_bundle: null               # absolute / cwd-relative PEM path
 #     max_download_bytes: 10485760  # 10MB wire-byte ceiling (DoS guard)
+#   ws_max_size: 16777216           # 16MB WebSocket inbound-frame ceiling (reyn web gateway)
 
 
 # -----------------------------------------------------------------------------
