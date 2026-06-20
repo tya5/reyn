@@ -184,6 +184,17 @@ class RightPanel(Widget):
         margin: 0 1 0 0;
     }}
 
+    /* The 7 tab labels (37 cells) + 7 right-margins = 44 cells, but the
+       panel's min-width 44 minus the Tabs border-left (1) leaves only 43 —
+       so Textual's Tabs scrolls-to-active and clips the leftmost label's
+       first char ("Keys" → "eys") whenever a non-first tab is active. The
+       last tab's right-margin is pure waste (nothing sits to its right), so
+       dropping it brings the row to 43 cells = an exact fit, no scroll, no
+       clip. No panel-width change → conv pane unaffected. */
+    RightPanel Tab#pending {{
+        margin: 0 0 0 0;
+    }}
+
     RightPanel Tab.-active {{
         color: $primary;
         text-style: bold;
