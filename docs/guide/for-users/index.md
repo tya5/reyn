@@ -54,7 +54,6 @@ No configuration required for any of these. Reyn has the skills for them out of 
 ### Control and safety
 
 - **[Manage permissions](manage-permissions.md)** — approve or deny what Reyn is allowed to do.
-- **[Respond mid-task](ask-user-mid-phase.md)** — answer questions Reyn asks while a skill is running.
 - **[Rewind a session](time-travel.md)** — jump back to an earlier point with `/rewind` and branch from there.
 - **[Cap your spending](cap-spending.md)** — set token / dollar limits so a run can't overspend.
 - **[Run a skill on a schedule](schedule-skills.md)** — fire a skill on a cron schedule with `reyn cron`.
@@ -64,6 +63,8 @@ No configuration required for any of these. Reyn has the skills for them out of 
 ## Things Reyn handles for you
 
 **Memory** — Reyn remembers facts across sessions automatically. No setup needed. To review or curate what it has stored, see [Inspect and manage memory](manage-memory.md).
+
+**Plan mode** — for a multi-step request, Reyn automatically decomposes the work into ordered background steps you can watch, inspect, or redirect mid-run. It's not a command you type — Reyn decides based on how the task breaks down. See [Use plan mode for multi-step tasks](../for-skill-authors/composition/use-plan-mode.md).
 
 **Crash recovery** — if a long task is interrupted, re-run `reyn chat` and it resumes from where it left off.
 

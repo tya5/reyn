@@ -82,7 +82,7 @@ MCP support ships as an optional dependency to keep the minimum install lean.
 pip install -e ".[mcp]"
 ```
 
-This pulls in the official `mcp` Python SDK, which reyn uses internally for transport. <!-- TODO: confirm extra name (`[mcp]`) once PR32 lands; pyproject.toml may bundle it differently. -->
+This pulls in the official `mcp` Python SDK, which reyn uses internally for transport.
 
 ## 4. Run the example skill
 
