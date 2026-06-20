@@ -196,6 +196,26 @@ budget カウンターは fsync-per-append の `.reyn/state/budget_ledger.jsonl`
 
 レコードは追記のみ（append-only）で fsync されます。起動時に Reyn は ledger から次を再集計します：本日・今月の daily / monthly 合計（期間フィルタ済み）、累積の per-agent token + USD 合計、per-chain skill spawn count。ledger が cap の信頼源（source of truth）であり、`.reyn/state/budget_state.json` はその上に重ねた throttle 付きベストエフォートのキャッシュです（ledger に対して最大 1 秒遅れることがあるため、復旧時は ledger の値が常に優先されます）。ファイルは月数 MB 程度ずつ増加します。手動でアーカイブする場合はプロセスを停止してから行うか、期間ロールオーバーを待ってください。
 
+## Per-agent・per-chain cap の復旧セマンティクス
+
+`per_agent_tokens`・`per_agent_cost_usd` および per-chain skill スポーン cap は
+**ライフタイム永続**です。起動のたびに all-time の durable ledger から再構築され、
+クラッシュや再起動をまたいでも値が失われません。
+
+**会話（conversation）ごとにリセットされるわけではありません。** カウンターは継続的に
+累積され、`/budget reset`（in-memory クリア）または ledger ファイルのアーカイブによって
+のみクリアされます。
+
+daily / monthly cap との対比：こちらは期間境界（ローカル時刻の深夜または月初 1 日）で
+自動リセットされます。プロセスの再起動・クラッシュにかかわらず、境界を越えれば必ずリセットされます。
+
+**クラッシュリカバリ保証**: クラッシュによって per-agent・per-chain のカウンターが
+durable ledger の値を下回ることはありません。復旧時に `load_state`（throttle 付きベストエフォートキャッシュ）は
+`hydrate`（ledger）と `max()` でマージされます。そのため、古いまたはガベージが混入した
+state ファイルによって cap のカウントが減少し、予算超過の呼び出しが許可されることはありません。
+設計の根拠：クラッシュリカバリは完全性が必要であり、クラッシュによってライフタイム cap が
+リセットされてしまうと、人間が気づくまでの間に無制限の過剰消費が発生しうるためです。
+
 ## 未実装の機能
 
 以下の制限事項があります。

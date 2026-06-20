@@ -239,6 +239,28 @@ second, so the ledger value always wins on recovery). The ledger is
 append-only and grows at roughly a few MB per month; it can be manually
 archived if needed (stop the process first, or wait for the period rollover).
 
+## Per-agent and per-chain cap recovery semantics
+
+`per_agent_tokens`, `per_agent_cost_usd`, and per-chain skill spawn caps are
+**lifetime/persistent** — they are reconstructed from the all-time durable
+ledger on every startup and survive crash and restart unchanged.
+
+**They do not reset per-conversation.** The counters accumulate continuously
+and are only cleared explicitly by `/budget reset` (in-memory clear) or by
+archiving the ledger file.
+
+Contrast with daily / monthly caps, which auto-reset at their period boundary
+(midnight or 1st of month, local time) regardless of process restarts or
+crashes.
+
+**Crash-recovery guarantee**: a crash cannot lower a per-agent or per-chain
+cap counter below its durable ledger value. On recovery, `load_state` (the
+throttled best-effort cache) is merged with `hydrate` (the ledger) using
+`max()` — so a stale or garbage-corrupted state file can never cause the cap
+to under-count spending and permit an over-budget call. Rationale: crash
+recovery must be complete; a crash that resets a lifetime cap would allow
+unbounded over-spend in the window before a human notices.
+
 ## What is not yet implemented
 
 Be aware of the following limitations:
