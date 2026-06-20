@@ -104,27 +104,50 @@ async def test_update_status_unknown_task_returns_none(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_awaiting_and_archive_persist_and_emit_events(tmp_path):
-    """Tier 2: set_awaiting + archive persist, and the own task_events projection
-    records each state change (the backend is the source of truth)."""
+async def test_awaiting_and_abort_persist_and_emit_events(tmp_path):
+    """Tier 2: set_awaiting + abort(=archive) persist, and the own task_events
+    projection records each state change (the backend is the source of truth)."""
     path = _db(tmp_path)
     backend = SqliteTaskBackend(path)
     await backend.create(Task(task_id="t", name="n", assignee="b", requester="r",
                               status=TaskState.BLOCKED))
     await backend.set_awaiting("t", 999.0)
-    await backend.archive("t")
+    await backend.abort("t")
     backend.close()
 
     reopened = SqliteTaskBackend(path)
     got = await reopened.get("t")
     assert got is not None
     assert got.awaiting_since == 999.0
-    assert got.status is TaskState.ARCHIVED
+    assert got.status is TaskState.ARCHIVED  # abort = delete → archived
 
     kinds = [e["kind"] for e in await reopened.events("t")]
-    # created + awaiting_set + archived recorded in the backend's own projection.
-    assert kinds == ["created", "awaiting_set", "archived"]
+    assert kinds == ["created", "awaiting_set", "aborted"]
     reopened.close()
+
+
+@pytest.mark.asyncio
+async def test_abort_down_cascade_and_sibling_intact(tmp_path):
+    """Tier 2: aborting a parent archives its whole sub-tree (DOWN-cascade,
+    Option B), while an unrelated sibling task is untouched (proof there is no
+    whole-session cancel)."""
+    backend = SqliteTaskBackend(_db(tmp_path))
+    await backend.create(Task(task_id="p", name="p", assignee="A", requester="R"))
+    await backend.create(Task(task_id="c1", name="c1", assignee="A", requester="R", parent_id="p"))
+    await backend.create(Task(task_id="c2", name="c2", assignee="A", requester="R", parent_id="c1"))
+    # an unrelated task owned by the SAME assignee session A (1:N) — must survive.
+    await backend.create(Task(task_id="sib", name="sib", assignee="A", requester="R"))
+
+    await backend.abort("p")
+
+    # whole sub-tree archived (recursive, leaf-terminal).
+    for tid in ("p", "c1", "c2"):
+        t = await backend.get(tid)
+        assert t is not None and t.status is TaskState.ARCHIVED, tid
+    # RED if abort whole-session-cancelled: the sibling task A also owns is intact.
+    sib = await backend.get("sib")
+    assert sib is not None and sib.status is TaskState.PENDING
+    backend.close()
 
 
 @pytest.mark.asyncio

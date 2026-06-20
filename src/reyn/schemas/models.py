@@ -635,16 +635,6 @@ class TaskAbortIROp(BaseModel):
     reason: str | None = None
 
 
-class TaskArchiveIROp(BaseModel):
-    """Soft-delete (→ archived; the "delete" verb). Triggers the deletion matrix
-    in slice 3: DOWN-abort children + UP-notify persistent requester (§18/19).
-    Archived tasks are time-travel-recoverable within the retention window (§24)."""
-
-    kind: Literal["task.archive"]
-    task_id: str
-    reason: str | None = None
-
-
 class TaskHeartbeatIROp(BaseModel):
     """Liveness + (slice 7) unblock-predicate evaluation trigger for a blocked
     task. Returns the current state; predicate-eval / liveness-timeout land in
@@ -694,7 +684,7 @@ ControlIROp = Annotated[
         # #1953: Task ops.
         TaskCreateIROp, TaskUpdateStatusIROp, TaskGetIROp, TaskListIROp,
         TaskAddDependencyIROp, TaskAbortIROp,
-        TaskArchiveIROp, TaskHeartbeatIROp, TaskRegisterUnblockPredicateIROp,
+        TaskHeartbeatIROp, TaskRegisterUnblockPredicateIROp,
         TaskCommentIROp,
     ],
     Field(discriminator="kind"),

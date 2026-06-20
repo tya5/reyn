@@ -1,15 +1,20 @@
 """Task op handlers (#1953) — route ``task.*`` Control IR ops to the Task backend.
 
 The backend is resolved from ``OpContext.task_backend`` (the session-scoped,
-config-selected backend threaded in slice 3a) with an in-memory fallback for
-tests / direct construction. The single-writer claim token is the caller's
-``run_id`` from ``OpContext`` (audit C2) — never an op field, so the LLM cannot
-forge it; the sqlite backend CAS-rejects on a mismatch (slice 2). Each mutating
-handler also emits a generic P6 audit event (``task_op``); the backend's own
-``task_events`` is the source of truth (the WAL closed vocab is not expanded, P7).
+config-selected backend) with an in-memory fallback for tests / direct
+construction. Role-based authority (P5) gates each op on the caller's
+``OpContext.session_id``: *assignee-gated* (``update_status`` / ``heartbeat`` /
+``register_unblock_predicate``) vs *requester-gated* (``create`` /
+``add_dependency`` / ``get`` / ``abort``). The single-writer is a fixed-equality
+CAS ``assignee == caller session_id`` in the backend; ``abort`` is the
+cooperative-terminal remove-op (archives the task + sub-tree; the assignee's
+in-flight work is rejected by the terminal state at its next write — no forced
+cancel). Each mutating handler emits a generic P6 audit event (``task_op``); the
+backend's own ``task_events`` is the source of truth (the WAL closed vocab is not
+expanded, P7).
 
-Still deferred: abort quiescence 3-step (slice 3b), cascade, cycle-check,
-predicate-eval (later slices).
+Still deferred: abort UP-notify (2b-2), cycle-check (slice 6), predicate-eval
+(slice 7).
 """
 from __future__ import annotations
 
@@ -169,23 +174,16 @@ async def _add_dependency(op, ctx: OpContext, caller) -> dict:
 
 
 async def _abort(op, ctx: OpContext, caller) -> dict:
-    # requester-gated remove-op (§model abort=delete; full cancel/cascade in 2b).
+    # requester-gated remove-op (§model abort=delete). Cooperative-terminal
+    # (Option B): the backend archives the task + its sub-tree (DOWN-cascade);
+    # the assignee's in-flight work is rejected by the terminal state at its next
+    # status-write (no forced cancel, no sibling-kill). task.archive is folded in.
     _task, denied = await _authorize("task.abort", ctx, _backend(ctx), op.task_id, "requester")
     if denied is not None:
         return denied
     task = await _backend(ctx).abort(op.task_id, reason=op.reason)
     _audit(ctx, "task.abort", op.task_id, status=task.status.value)
     return _ok("task.abort", task=task.to_dict())
-
-
-async def _archive(op, ctx: OpContext, caller) -> dict:
-    # requester-gated (transient — folded into abort in 2b).
-    _task, denied = await _authorize("task.archive", ctx, _backend(ctx), op.task_id, "requester")
-    if denied is not None:
-        return denied
-    task = await _backend(ctx).archive(op.task_id)
-    _audit(ctx, "task.archive", op.task_id, status=task.status.value)
-    return _ok("task.archive", task=task.to_dict())
 
 
 async def _heartbeat(op, ctx: OpContext, caller) -> dict:
@@ -220,7 +218,6 @@ register("task.get", _get)
 register("task.list", _list)
 register("task.add_dependency", _add_dependency)
 register("task.abort", _abort)
-register("task.archive", _archive)
 register("task.heartbeat", _heartbeat)
 register("task.register_unblock_predicate", _register_unblock_predicate)
 register("task.comment", _comment)

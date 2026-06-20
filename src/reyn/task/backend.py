@@ -25,7 +25,7 @@ from __future__ import annotations
 
 from typing import Protocol
 
-from reyn.task.model import Task, TaskState, _now_iso
+from reyn.task.model import TERMINAL_STATES, Task, TaskState, _now_iso
 
 
 class TaskBackend(Protocol):
@@ -54,8 +54,6 @@ class TaskBackend(Protocol):
         ...
 
     async def add_dependency(self, task_id: str, depends_on: str) -> Task | None: ...
-
-    async def archive(self, task_id: str) -> Task | None: ...
 
     async def abort(self, task_id: str, reason: str | None = None) -> Task | None: ...
 
@@ -118,6 +116,14 @@ class InMemoryTaskBackend:
                 f"{caller_session_id!r} is not the assignee {task.assignee!r} "
                 f"(single-writer)"
             )
+        # Terminal-guard: a terminal task takes no further transitions — this is
+        # the abort straggler-reject (Option B, #1953): an assignee write after
+        # the requester aborts the task is rejected, so no straggler lands.
+        if task.status in TERMINAL_STATES:
+            raise PermissionError(
+                f"task {task_id!r} status-write rejected: task is terminal "
+                f"({task.status.value}) — no further transitions (e.g. post-abort straggler)"
+            )
         task.status = TaskState(status)
         task.updated_at = _now_iso()
         return task
@@ -132,24 +138,24 @@ class InMemoryTaskBackend:
         task.updated_at = _now_iso()
         return task
 
-    async def archive(self, task_id: str) -> Task | None:
-        task = self._tasks.get(task_id)
-        if task is None:
-            return None
-        task.status = TaskState.ARCHIVED
-        task.updated_at = _now_iso()
-        return task
-
     async def abort(self, task_id: str, reason: str | None = None) -> Task | None:
-        task = self._tasks.get(task_id)
-        if task is None:
+        # abort = delete (cooperative-terminal, Option B): archive this task + its
+        # whole sub-tree (DOWN-cascade, §18). No forced cancel — the assignee's
+        # in-flight work is rejected by the terminal state at its next status-write.
+        if task_id not in self._tasks:
             return None
-        # audit C1: the real abort is cancel_inflight → await_quiescent → terminal
-        # (+ seq-fence), so no in-flight write lands after the terminal transition.
-        # That needs Session access (slice 3); the stub sets the terminal state only.
-        task.status = TaskState.ABORTED
-        task.updated_at = _now_iso()
-        return task
+        subtree: list[str] = [task_id]
+        frontier = [task_id]
+        while frontier:
+            pid = frontier.pop()
+            for tid, t in self._tasks.items():
+                if t.parent_id == pid and tid not in subtree:
+                    subtree.append(tid)
+                    frontier.append(tid)
+        for tid in subtree:
+            self._tasks[tid].status = TaskState.ARCHIVED
+            self._tasks[tid].updated_at = _now_iso()
+        return self._tasks[task_id]
 
     async def set_awaiting(self, task_id: str, awaiting_since: float | None) -> Task | None:
         task = self._tasks.get(task_id)

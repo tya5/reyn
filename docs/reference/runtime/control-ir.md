@@ -38,8 +38,7 @@ Control IR is the list of side-effect operations the LLM may emit alongside its 
 | `task.get` | Read one Task record | requester-gated |
 | `task.list` | List Tasks (filter by assignee / requester / status / parent) | none (filtered read) |
 | `task.add_dependency` | Add a depends-on edge (dependency DAG) | requester-gated |
-| `task.abort` | Remove-op: cancel → terminal (→ delete, full cascade in 2b) | requester-gated |
-| `task.archive` | Soft-delete a Task (→ archived; folds into abort in 2b) | requester-gated |
+| `task.abort` | Remove-op (= delete): archive the task + sub-tree (cooperative-terminal) | requester-gated |
 | `task.heartbeat` | Liveness / unblock-predicate trigger for a blocked Task | assignee-gated |
 | `task.register_unblock_predicate` | Register a deterministic unblock predicate | assignee-gated |
 | `task.comment` | Append a comment to a Task's thread | none |
@@ -509,12 +508,19 @@ permission system is resource-scoped, no caller identity at op-exec).
 *requester-gated* — `create` / `add_dependency` / `get` / `abort`. A violation
 returns a `role_denied` result.
 
+**`abort` = delete (cooperative-terminal).** `task.abort` is the requester's
+remove-op (it absorbs the former `task.archive`): it archives the task **and its
+whole sub-tree** (DOWN-cascade, §18). There is **no forced cancel** — the
+assignee's in-flight work is rejected by the **terminal-state guard** on
+`update_status` at its next write (so no straggler lands, and a sibling task's
+work is untouched). This is correct under 1:N (a session owns many tasks) and
+needs no cross-session machinery.
+
 **States:** `pending` / `ready` / `in_progress` / `blocked` / `completed` /
 `failed` / `aborted` / `archived`.
 
-Still landing in later slices: `abort = delete` unification (cancel 3-step →
-archive → DOWN-cascade + UP-notify, folding `task.archive` into `task.abort`),
-dependency cycle-check + readiness, unblock-predicate evaluation.
+Still landing in later slices: `abort` UP-notify to the persistent requester
+(§16), dependency cycle-check + readiness, unblock-predicate evaluation.
 
 ---
 
