@@ -138,14 +138,24 @@ def _current_period_key(kind: str) -> tuple[str, str]:
 
 
 class BudgetLedger:
-    """Append-only JSONL ledger for per-LLM-call budget records (PR25).
+    """Append-only JSONL ledger for durable budget records (PR25 + #1911).
 
-    One record per line:
-        {"ts": "2026-05-02T10:23:00+09:00", "agent": "alice",
-         "model": "...", "tokens": 300, "cost_usd": 0.0023}
+    Two record kinds, discriminated by the optional ``kind`` field:
+
+      - LLM call (default kind; ``kind`` omitted for byte-compatibility with
+        pre-#1911 lines)::
+
+            {"ts": "2026-05-02T10:23:00+09:00", "agent": "alice",
+             "model": "...", "tokens": 300, "cost_usd": 0.0023}
+
+      - skill spawn (#1911 — durable backing for the per-chain spawn cap)::
+
+            {"ts": "...", "kind": "spawn", "chain_id": "c1", "skill": "eval"}
 
     Records are fsync'd on append so a process crash cannot roll back a
-    completed LLM call and under-count quota usage.
+    completed LLM call / spawn and under-count quota usage. This is the
+    cap-critical durability layer; the throttled ``budget_state.json`` is a
+    best-effort cache on top of it (see ``BudgetTracker.hydrate``).
 
     This class is synchronous and not asyncio-aware — all writes are tiny
     and complete in microseconds.  The asyncio event loop is never blocked
@@ -169,26 +179,14 @@ class BudgetLedger:
         cost_usd: float,
         purpose: str | None = None,
     ) -> None:
-        """Append one record and fsync.
+        """Append one LLM-call record and fsync.
 
         ``purpose`` (#1190) is the cost-attribution bucket
         (main/phase/compaction/judge/skill_node_adapt/dogfood). Omitted from the
         record when None so pre-#1190 ledger lines stay byte-identical.
         """
-        # Build ISO-8601 timestamp with local UTC offset.
-        now = time.time()
-        lt = time.localtime(now)
-        offset_sec = lt.tm_gmtoff  # seconds east of UTC
-        sign = "+" if offset_sec >= 0 else "-"
-        offset_abs = abs(offset_sec)
-        offset_str = f"{sign}{offset_abs // 3600:02d}:{(offset_abs % 3600) // 60:02d}"
-        ts_str = (
-            f"{lt.tm_year:04d}-{lt.tm_mon:02d}-{lt.tm_mday:02d}"
-            f"T{lt.tm_hour:02d}:{lt.tm_min:02d}:{lt.tm_sec:02d}"
-            f"{offset_str}"
-        )
         record: dict = {
-            "ts": ts_str,
+            "ts": self._now_iso(),
             "agent": agent,
             "model": model,
             "tokens": tokens,
@@ -196,6 +194,41 @@ class BudgetLedger:
         }
         if purpose is not None:
             record["purpose"] = purpose
+        self._write_record(record)
+
+    def append_spawn(self, *, chain_id: str, skill: str) -> None:
+        """Append one durable skill-spawn record and fsync (#1911).
+
+        Gives the per-chain spawn-count cap the same fsync-per-append
+        durability the daily / monthly / per-agent counters already enjoy,
+        rather than relying on the throttled best-effort state save (which
+        loses unsaved increments to a crash inside the throttle window). The
+        ``kind`` discriminator keeps spawn records out of the LLM-call
+        token/cost aggregation in ``hydrate``.
+        """
+        self._write_record({
+            "ts": self._now_iso(),
+            "kind": "spawn",
+            "chain_id": chain_id,
+            "skill": skill,
+        })
+
+    @staticmethod
+    def _now_iso() -> str:
+        """Current local time as an ISO-8601 string with UTC offset."""
+        lt = time.localtime(time.time())
+        offset_sec = lt.tm_gmtoff  # seconds east of UTC
+        sign = "+" if offset_sec >= 0 else "-"
+        offset_abs = abs(offset_sec)
+        offset_str = f"{sign}{offset_abs // 3600:02d}:{(offset_abs % 3600) // 60:02d}"
+        return (
+            f"{lt.tm_year:04d}-{lt.tm_mon:02d}-{lt.tm_mday:02d}"
+            f"T{lt.tm_hour:02d}:{lt.tm_min:02d}:{lt.tm_sec:02d}"
+            f"{offset_str}"
+        )
+
+    def _write_record(self, record: dict) -> None:
+        """Serialize *record* as one JSONL line, append, flush, fsync."""
         line = json.dumps(record, ensure_ascii=False) + "\n"
         # Guard against partial writes from a previous crash (no trailing newline).
         need_lead = self._needs_lead_newline()
@@ -359,11 +392,25 @@ class BudgetTracker:
     # ── PR25: persistent ledger hydration ───────────────────────────────
 
     def hydrate(self, ledger_path: Path) -> None:
-        """Load today's / this month's counters from the persistent ledger.
+        """Reconstruct durable counters from the persistent ledger.
 
         Call once at startup after constructing the tracker. No-op if the
         ledger file does not exist yet. Broken JSON lines are silently skipped
         (same pattern as StateLog.iter_from).
+
+        Reconstructed from the fsync-per-append ledger (the cap-critical
+        source of truth):
+          - daily / monthly token + cost (period-filtered to today / this month)
+          - per-agent tokens + cost (#1911 — all-time cumulative, summed per
+            ``agent`` field; mirrors what ``load_state`` restores)
+          - per-chain skill spawn counts (#1911 — counted from ``kind="spawn"``
+            records, keyed by ``(chain_id, skill)``)
+
+        The throttled ``budget_state.json`` (``load_state``) is a best-effort
+        cache only; a crash inside the 1s throttle window can leave it stale.
+        Because every counted increment is fsync'd to the ledger *before* the
+        throttled save runs, the ledger is always at least as complete — so
+        ledger hydration is the authoritative restore for cap enforcement.
         """
         self._ledger = BudgetLedger(ledger_path)
         now = time.time()
@@ -374,6 +421,9 @@ class BudgetTracker:
         daily_cost = 0.0
         monthly_tokens = 0
         monthly_cost = 0.0
+        agent_tokens: dict[str, int] = defaultdict(int)
+        agent_cost: dict[str, float] = defaultdict(float)
+        chain_skill_calls: dict[tuple[str, str], int] = defaultdict(int)
 
         for record in self._ledger.iter_records():
             ts_str = record.get("ts")
@@ -383,6 +433,17 @@ class BudgetTracker:
                 ts = _parse_iso_ts(ts_str)
             except (ValueError, OSError):
                 continue
+
+            # #1911: spawn records back the per-chain spawn cap. They carry no
+            # tokens/cost, so they are counted separately and skipped by the
+            # LLM-call aggregation below.
+            if record.get("kind") == "spawn":
+                chain_id = record.get("chain_id")
+                skill = record.get("skill")
+                if isinstance(chain_id, str) and isinstance(skill, str):
+                    chain_skill_calls[(chain_id, skill)] += 1
+                continue
+
             tokens = record.get("tokens", 0)
             cost = record.get("cost_usd", 0.0)
             if not isinstance(tokens, (int, float)):
@@ -391,6 +452,13 @@ class BudgetTracker:
                 cost = 0.0
             tokens = int(tokens)
             cost = float(cost)
+
+            # #1911: per-agent counters are all-time cumulative (not
+            # period-filtered) — same semantics as save_state/load_state.
+            agent = record.get("agent")
+            if isinstance(agent, str):
+                agent_tokens[agent] += tokens
+                agent_cost[agent] += cost
 
             rec_day = _period_key(ts, "day")
             rec_month = _period_key(ts, "month")
@@ -407,6 +475,11 @@ class BudgetTracker:
         self._monthly_cost_usd = monthly_cost
         self._day_key = day_key
         self._month_key = month_key
+        # #1911: durable per-agent / per-chain restore. defaultdict so later
+        # record_llm / record_spawn keep their increment semantics.
+        self._agent_tokens = agent_tokens
+        self._agent_cost_usd = agent_cost
+        self._chain_skill_calls = chain_skill_calls
 
     # ── pre-call checks ─────────────────────────────────────────────────
 
@@ -606,6 +679,13 @@ class BudgetTracker:
 
     def record_spawn(self, *, chain_id: str, skill: str) -> None:
         self._chain_skill_calls[(chain_id, skill)] += 1
+        # #1911: durably back the per-chain spawn cap. The fsync'd ledger
+        # record is the cap-critical source of truth across a crash; the
+        # throttled state save below is a best-effort cache only (a crash
+        # inside the throttle window would otherwise lose this increment and
+        # let the cap under-count after recovery).
+        if self._ledger is not None:
+            self._ledger.append_spawn(chain_id=chain_id, skill=skill)
         self._maybe_auto_save()
 
     # ── reset / introspect ──────────────────────────────────────────────
@@ -734,6 +814,16 @@ class BudgetTracker:
         Defensive on failure: missing file → silent no-op (fresh start);
         corrupt JSON → silent no-op + log warning. Operator can use
         ``reyn chat --reset`` if state is unrecoverable.
+
+        #1911: live startup runs ``hydrate`` (durable ledger) *before*
+        ``load_state``. For the ledger-backed counters (per-agent tokens/cost,
+        per-chain spawn calls) the value already restored from the ledger is
+        the source of truth and is always at least as complete as this
+        throttled best-effort state file (the ledger is fsync'd before each
+        throttled save). So those counters are merged with ``max`` rather than
+        overwritten — a stale state file can never under-count a cap below the
+        durable ledger value. ``chain_skill_tokens`` has no ledger backing yet,
+        so ``max`` against the post-hydrate zero is a plain restore.
         """
         path = Path(path)
         # Mark loaded regardless of file presence — the caller's intent
@@ -768,18 +858,27 @@ class BudgetTracker:
             except (TypeError, ValueError):
                 return 0.0
 
-        # agent counters
+        # agent counters — never drop below the durable ledger value (#1911);
+        # coerce first so a null/garbage persisted value → 0 → max() keeps ledger.
         for k, v in (data.get("agent_tokens") or {}).items():
-            self._agent_tokens[str(k)] = _coerce_int(v)
+            key = str(k)
+            self._agent_tokens[key] = max(self._agent_tokens.get(key, 0), _coerce_int(v))
         for k, v in (data.get("agent_cost_usd") or {}).items():
-            self._agent_cost_usd[str(k)] = _coerce_float(v)
+            key = str(k)
+            self._agent_cost_usd[key] = max(self._agent_cost_usd.get(key, 0.0), _coerce_float(v))
         # chain_skill counters (list of [cid, sk, v] entries)
         for entry in (data.get("chain_skill_calls") or []):
             if isinstance(entry, list) and len(entry) >= 3:
-                self._chain_skill_calls[(str(entry[0]), str(entry[1]))] = _coerce_int(entry[2])
+                key = (str(entry[0]), str(entry[1]))
+                self._chain_skill_calls[key] = max(
+                    self._chain_skill_calls.get(key, 0), _coerce_int(entry[2])
+                )
         for entry in (data.get("chain_skill_tokens") or []):
             if isinstance(entry, list) and len(entry) >= 3:
-                self._chain_skill_tokens[(str(entry[0]), str(entry[1]))] = _coerce_int(entry[2])
+                key = (str(entry[0]), str(entry[1]))
+                self._chain_skill_tokens[key] = max(
+                    self._chain_skill_tokens.get(key, 0), _coerce_int(entry[2])
+                )
 
     def snapshot(self) -> dict:
         """Return a structured view used by `/cost` / `/budget` formatters."""

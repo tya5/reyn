@@ -36,7 +36,8 @@ Per-project state. Location: `<project_root>/.reyn/` — fixed. (There is no `st
 ├── eval-results/<skill>/                   # `reyn eval run` result files
 │   └── <timestamp>.jsonl
 ├── state/                                  # process-global persistent state
-│   └── budget_ledger.jsonl                 # daily/monthly token + USD ledger
+│   ├── budget_ledger.jsonl                 # durable budget ledger (daily/monthly/per-agent + spawn caps)
+│   └── budget_state.json                   # throttled best-effort cache over the ledger
 └── memory/                                 # project-scope memory
     ├── MEMORY.md
     └── <name>.md
@@ -87,7 +88,11 @@ One JSONL file per `reyn eval run` execution. Each line records a single case re
 
 ### `state/budget_ledger.jsonl`
 
-Persistent daily and monthly token + USD usage records. Append-only with fsync. Reset automatically at midnight (daily) or the 1st of the month (monthly). Inspect with `/budget` in `reyn chat`. Not affected by `/budget reset` (which only clears in-memory counters).
+Durable, append-only budget record log (fsync per append). Holds one record per LLM call (token + USD usage) and one record per skill spawn (`kind: "spawn"`). On startup Reyn re-aggregates the daily / monthly totals (auto-reset at midnight / the 1st of the month), the cumulative per-agent token + USD totals, and the per-chain spawn counts — so every budget cap survives a process restart or crash. This is the cap-critical source of truth. Inspect with `/budget` in `reyn chat`. Not affected by `/budget reset` (which only clears in-memory counters).
+
+### `state/budget_state.json`
+
+A throttled, best-effort snapshot of the in-memory budget counters, written on a short interval as a convenience cache on top of the ledger. It can lag the ledger by up to a second, so on recovery the ledger value always wins. Safe to delete; the ledger is the authoritative store.
 
 ### `memory/`
 
