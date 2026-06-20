@@ -20,6 +20,7 @@ from reyn.task.model import (
     TaskOrigin,
     TaskState,
 )
+from reyn.task.sqlite_backend import SqliteTaskBackend
 
 __all__ = [
     "Task",
@@ -28,4 +29,5 @@ __all__ = [
     "TERMINAL_STATES",
     "TaskBackend",
     "InMemoryTaskBackend",
+    "SqliteTaskBackend",
 ]
