@@ -1,7 +1,8 @@
 """`reyn support-bundle` — assemble a redacted diagnostic bundle (#1833).
 
 Collects the observability artifacts Reyn already writes — the LLM payload trace
-(``$REYN_LLM_TRACE_DUMP`` JSONL), the WAL + event logs under ``.reyn/events/`` —
+(``$REYN_LLM_TRACE_DUMP`` JSONL), the WAL (``.reyn/state/``), and the event logs
+(``.reyn/events/``) —
 filters them by session / time window, runs **every** collected line through the
 EXISTING secret-redaction layer (``reyn.llm.llm._redact_secrets``; reused, not
 reinvented — default ON, disabled only by ``REYN_LLM_TRACE_REDACT=off``), and packs
