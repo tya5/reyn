@@ -166,3 +166,89 @@ def test_none_context_layer_is_top():
     layer = ContextualLayer(None)
     assert layer.allows(CapabilityAxis.TOOL, "anything") is True
     assert layer.allows(CapabilityAxis.MCP, "anything") is True
+
+
+# ── live gate: _excluded_result is now effective.py-backed (#1827 S1.5) ──────
+#
+# The LIVE tool-enforcement gate (router_loop._excluded_result, the #1406/#187
+# pre-dispatch block) now consults the ∩-model (ContextualLayer) — the single
+# enforcement gate. These pin that an explicit ContextualPermission blocks via
+# every bypass shape (native / salvaged / direct invoke_action), and that the
+# gate is load-bearing (no narrowing → the tool executes).
+import asyncio
+import json
+
+from reyn.runtime.router_loop import RouterLoop
+
+
+class _Events:
+    def emit(self, *a, **k) -> None:
+        pass
+
+
+class _MiniHost:
+    agent_name = "t"
+
+    def __init__(self) -> None:
+        self.events = _Events()
+        self.web_search_calls: list[dict] = []
+
+    async def web_search(self, **kw) -> dict:  # runs IFF the tool executes
+        self.web_search_calls.append(kw)
+        return {"kind": "web_search", "results": ["LEAKED GOLD"]}
+
+
+def _exec(loop: RouterLoop, name: str, args: dict) -> dict:
+    return asyncio.run(
+        loop._execute_tool({"function": {"name": name, "arguments": json.dumps(args)}})
+    )
+
+
+def test_live_gate_blocks_via_explicit_contextual_all_paths():
+    """Tier 2: an explicit ContextualPermission.tool_deny blocks the live gate via
+    every bypass shape, and the excluded tool's handler never runs (#187)."""
+    host = _MiniHost()
+    loop = RouterLoop(
+        host=host, chain_id="t", max_iterations=5,
+        contextual_permission=ContextualPermission(tool_deny=frozenset({"web__search"})),
+    )
+    # (a) native, (b) salvaged (= native by name), (c) direct invoke_action.
+    r_native = _exec(loop, "web__search", {"query": "gold?"})
+    r_invoke = _exec(loop, "invoke_action", {"action_name": "web__search", "query": "gold?"})
+    assert r_native.get("error", {}).get("kind") == "tool_excluded"
+    assert r_invoke.get("error", {}).get("kind") == "tool_excluded"
+    assert host.web_search_calls == [], "excluded handler must never run (no leak)"
+
+
+def test_live_gate_is_load_bearing_gated_not_unconditional():
+    """Tier 2: the live gate blocks ONLY when narrowing is present (falsify gate).
+
+    With a tool_deny the dispatch returns the tool_excluded block; with no
+    narrowing the same call is NOT blocked (it proceeds past the gate). Proves
+    the block is gated, not unconditional. (Breaking the gate makes the all-paths
+    block test above go CLEAN RED.)
+    """
+    deny_loop = RouterLoop(
+        host=_MiniHost(), chain_id="t", max_iterations=5,
+        contextual_permission=ContextualPermission(tool_deny=frozenset({"web__search"})),
+    )
+    assert _exec(deny_loop, "web__search", {}).get("error", {}).get("kind") == "tool_excluded"
+
+    open_loop = RouterLoop(host=_MiniHost(), chain_id="t", max_iterations=5)
+    assert _exec(open_loop, "web__search", {}).get("error", {}).get("kind") != "tool_excluded"
+
+
+def test_live_gate_exclude_tools_bridge_preserves_block():
+    """Tier 2: the legacy exclude_tools input bridges to the contextual gate.
+
+    An existing caller passing exclude_tools (no explicit contextual) gets the
+    SAME execution block through the new effective.py path — an unchanged result,
+    so the #1406 / #187 callers keep their behaviour.
+    """
+    loop = RouterLoop(
+        host=_MiniHost(), chain_id="t", max_iterations=5,
+        exclude_tools={"web__search"},
+    )
+    blocked = _exec(loop, "invoke_action", {"action_name": "web__search"})
+    assert blocked.get("error", {}).get("kind") == "tool_excluded"
+    assert _exec(loop, "file__read", {}).get("error", {}).get("kind") != "tool_excluded"

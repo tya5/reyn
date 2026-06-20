@@ -1389,6 +1389,7 @@ class RouterLoop:
         non_interactive: bool = False,  # #1440 followup: run-once (no TTY) → live router SP proceeds instead of asking a clarifying question (13398). Threaded from Session.
         exclude_tools: set[str] | None = None,
         excluded_categories: set[str] | None = None,  # #1667 catalog categories skipped at source
+        contextual_permission: "object | None" = None,  # #1827 S1: per-session ContextualPermission (TOOL-axis enforcement); None → bridged from exclude_tools
         memo_provider: Any = None,  # SubLoopMemoProvider | None (ADR-0025)
         skill_search_config: "SkillSearchConfig | None" = None,  # FP-0024-A BM25 pre-filter
         empty_stop_retry_directive: str | None = None,  # B42-NF-W6-1 opt-in retry
@@ -1443,6 +1444,23 @@ class RouterLoop:
         # #1667: catalog categories skipped at the source (_enumerate_category),
         # threaded onto RouterCallerState so the universal catalog drops them.
         self._excluded_categories: frozenset[str] = frozenset(excluded_categories or set())
+        # #1827 S1 (live-gate): the TOOL-axis ENFORCEMENT now flows through the
+        # unified ∩-model (effective.py ContextualLayer) at the single live gate
+        # ``_excluded_result`` — NOT a standalone ``exclude_tools`` membership.
+        # ``_exclude_tools`` is retained as the axis-B VISIBILITY input only
+        # (``_apply_tool_exclusions``). Bridge: when no explicit contextual is
+        # given, derive one from ``exclude_tools`` so existing callers keep their
+        # execution-block byte-identically; topology / delegate / ephemeral
+        # sources (S2+) pass a ``ContextualPermission`` directly.
+        from reyn.security.permissions.effective import ContextualPermission
+        if contextual_permission is not None:
+            self._contextual_permission: "object | None" = contextual_permission
+        elif self._exclude_tools:
+            self._contextual_permission = ContextualPermission(
+                tool_deny=self._exclude_tools
+            )
+        else:
+            self._contextual_permission = None
         # FP-0034 Phase 2 step 1: action embedding index background
         # build task handle.  None until the first turn that finds the
         # index configured + not ready, then asyncio.Task while
@@ -3160,10 +3178,25 @@ class RouterLoop:
         effective resolved action — unwrap ``invoke_action`` — and reject if excluded.
         Covers all three bypass paths (native direct / salvaged / direct
         invoke_action). The ``tool_excluded`` kind + decision-enabling message lets
-        the model adjust ([[deny-message-decision-enabling]])."""
-        if self._exclude_tools:
+        the model adjust ([[deny-message-decision-enabling]]).
+
+        #1827 S1 (live-gate): the decision now flows through the unified ∩-model
+        (effective.py ``ContextualLayer``) — the single live TOOL-axis enforcement
+        gate. ``never-elevate`` is the structural ``all()`` in
+        ``EffectivePermission`` (a contextual deny can't be re-granted). The
+        standalone ``exclude_tools`` *enforcement* membership is retired; the
+        per-session contextual is bridged from ``exclude_tools`` for callers that
+        have not yet migrated (byte-identical), and S2+ feed a real contextual
+        from topology / delegate / ephemeral narrowing."""
+        if self._contextual_permission is not None:
+            from reyn.security.permissions.effective import (
+                CapabilityAxis,
+                ContextualLayer,
+            )
             effective = args.get("action_name") if name == "invoke_action" else name
-            if effective in self._exclude_tools:
+            if not ContextualLayer(self._contextual_permission).allows(
+                CapabilityAxis.TOOL, effective
+            ):
                 return {
                     "status": "error",
                     "error": {
