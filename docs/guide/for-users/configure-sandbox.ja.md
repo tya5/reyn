@@ -86,7 +86,7 @@ SBPL deny-default プロファイルを使った `sandbox-exec` を使用。macO
 | `write_paths` | 適用 |
 | `network` | 適用 |
 | `read_deny_paths` | **適用** — SBPL deny-after-allow |
-| `allow_subprocess` | **適用** — off の時 `process-fork` を deny（対象自身の exec は `process-exec*` で動作、#1914） |
+| `allow_subprocess` | **適用** — off の時 `process-fork` を deny（対象自身の exec は `process-exec*` で動作） |
 | `timeout_seconds` | 適用 |
 
 ### Landlock（Linux）

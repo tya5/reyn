@@ -96,7 +96,7 @@ on macOS.
 | `write_paths` | Enforced |
 | `network` | Enforced |
 | `read_deny_paths` | **Enforced** — SBPL deny-after-allow |
-| `allow_subprocess` | **Enforced** — denies `process-fork` when off; the target's own exec still works via `process-exec*` (#1914) |
+| `allow_subprocess` | **Enforced** — denies `process-fork` when off; the target's own exec still works via `process-exec*` |
 | `timeout_seconds` | Enforced |
 
 ### Landlock (Linux)
