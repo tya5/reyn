@@ -128,21 +128,23 @@ def _set_permission_context(
 def _is_under(path: str, allowed: tuple[str, ...]) -> bool:
     """Return True if ``path`` resolves under any of ``allowed`` paths.
 
-    Each ``allowed`` entry is normalised via ``os.path.abspath`` and
-    treated as a directory-or-file prefix. ``path`` is normalised the
-    same way, so ``../foo`` style escapes are caught by abspath
-    expansion.
+    Each ``allowed`` entry and ``path`` are normalised via
+    ``os.path.realpath`` (resolves symlinks AND ``..``), so BOTH a
+    symlink-traversal escape (a symlink inside an allowed dir pointing
+    outside, incl. via a parent-dir symlink) and a ``../foo`` escape are
+    caught before the prefix check. (``abspath`` resolved ``..`` only and
+    let symlinks through — the safe-file sandbox escape this guards.)
 
     Behaviour notes:
       - ``""`` (= empty string) in ``allowed`` matches nothing.
       - An exact-match prefix at a directory boundary counts (= the
         ``+ os.sep`` guard prevents ``/foo/bar`` matching ``/foo/barbaz``).
     """
-    abs_path = _os.path.abspath(path)
+    abs_path = _os.path.realpath(path)
     for entry in allowed:
         if not entry:
             continue
-        abs_entry = _os.path.abspath(entry)
+        abs_entry = _os.path.realpath(entry)
         if abs_path == abs_entry:
             return True
         # Treat allowed entries as prefixes only at directory boundaries.
@@ -179,10 +181,10 @@ def _is_canonical_protected_write(path: str) -> bool:
     zone, but the collapse-arc Phase 2 carve-out requires they be listed
     explicitly in ``_write_paths`` (not via a parent-directory prefix).
     """
-    abs_path = _os.path.abspath(path)
+    abs_path = _os.path.realpath(path)
     cwd = _os.getcwd()
     for rel in _CANONICAL_PROTECTED_WRITE_PATHS:
-        if abs_path == _os.path.abspath(_os.path.join(cwd, rel)):
+        if abs_path == _os.path.realpath(_os.path.join(cwd, rel)):
             return True
     return False
 
@@ -193,9 +195,9 @@ def _is_explicitly_listed(path: str, allowed: tuple[str, ...]) -> bool:
     Stricter than :func:`_is_under` — does not accept parent-directory
     prefix matches. Used to enforce the #571 protected-paths exception.
     """
-    abs_path = _os.path.abspath(path)
+    abs_path = _os.path.realpath(path)
     for entry in allowed:
-        if entry and abs_path == _os.path.abspath(entry):
+        if entry and abs_path == _os.path.realpath(entry):
             return True
     return False
 
@@ -239,6 +241,15 @@ def _check_write(path: str) -> None:
 # ── High-level API (drop-in for reyn.api.unsafe.file) ───────────────────────
 
 
+def _nofollow_opener(path: str, flags: int) -> int:
+    """``opener`` for ``builtins.open`` that adds ``O_NOFOLLOW`` — the open
+    refuses to follow a symlink in the FINAL path component (an atomic TOCTOU
+    guard complementing the realpath gate, which covers parent-dir symlinks +
+    the full-path escape at check time). Degrades to a plain open on a platform
+    without ``O_NOFOLLOW`` (the realpath gate still applies)."""
+    return _os.open(path, flags | getattr(_os, "O_NOFOLLOW", 0))
+
+
 def read(path: str, *, encoding: str = "utf-8") -> str:
     """Read and return the text contents of ``path``.
 
@@ -246,7 +257,7 @@ def read(path: str, *, encoding: str = "utf-8") -> str:
     declared ``read_paths``. Raises :class:`PermissionError` otherwise.
     """
     _check_read(path)
-    with _builtins.open(path, encoding=encoding) as f:
+    with _builtins.open(path, encoding=encoding, opener=_nofollow_opener) as f:
         return f.read()
 
 
@@ -257,7 +268,7 @@ def write(path: str, content: str, *, encoding: str = "utf-8") -> None:
     declared ``write_paths``. Raises :class:`PermissionError` otherwise.
     """
     _check_write(path)
-    with _builtins.open(path, "w", encoding=encoding) as f:
+    with _builtins.open(path, "w", encoding=encoding, opener=_nofollow_opener) as f:
         f.write(content)
 
 
@@ -274,7 +285,7 @@ def write_atomic(path: str, content: str, *, encoding: str = "utf-8") -> None:
     files, and other small-file writes where crash-safety matters.
     """
     _check_write(path)
-    dir_path = _os.path.dirname(_os.path.abspath(path)) or "."
+    dir_path = _os.path.dirname(_os.path.realpath(path)) or "."
     fd, tmp = _tempfile.mkstemp(prefix=".reyn_safe_atomic_", dir=dir_path)
     try:
         with _os.fdopen(fd, "w", encoding=encoding) as f:
@@ -401,4 +412,4 @@ def open(  # noqa: A001 — intentional shadowing of builtin in this module's su
     else:
         # Default to read for empty / read-only modes ("r", "rb", "rt", ...).
         _check_read(path)
-    return _builtins.open(path, mode, encoding=encoding, **kwargs)
+    return _builtins.open(path, mode, encoding=encoding, opener=_nofollow_opener, **kwargs)
