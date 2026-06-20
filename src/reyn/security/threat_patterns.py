@@ -49,27 +49,33 @@ INVISIBLE_UNICODE: frozenset[str] = frozenset(
 )
 
 # (pattern_str, pattern_id, scope, severity). Compiled below (IGNORECASE).
-# The ``(?:\w+\s+)*`` filler between key tokens defeats multi-word bypass
-# (e.g. "ignore the previous silly instructions").
+# The ``(?:\w+\s+){0,8}`` filler between key tokens defeats multi-word bypass
+# (e.g. "ignore the previous silly instructions"). The repetition is BOUNDED
+# ({0,8}, not ``*``) on purpose: an unbounded ``(?:\w+\s+)*`` adjacent to a
+# literal that can also appear in the filler (e.g. ``...){0,8}you\s+(?:...``)
+# catastrophically backtracks on a crafted near-match — "act as if " + "you "×N
+# took ~25s at 80KB. This scanner runs on UNTRUSTED content (tool results, web,
+# MCP, memory writes), so unbounded repetition is a ReDoS DoS. 8 filler words
+# covers any realistic injection phrasing while keeping the match linear.
 _RAW_PATTERNS: tuple[tuple[str, str, str, str], ...] = (
     # ── scope="all" — classic injection + exfil (checked everywhere) ──────────
-    (r"ignore\s+(?:\w+\s+)*(previous|all|above|prior)\s+(?:\w+\s+)*instructions", "prompt_injection", "all", SEVERITY_BLOCK),
+    (r"ignore\s+(?:\w+\s+){0,8}(previous|all|above|prior)\s+(?:\w+\s+){0,8}instructions", "prompt_injection", "all", SEVERITY_BLOCK),
     (r"system\s+prompt\s+override", "sys_prompt_override", "all", SEVERITY_BLOCK),
-    (r"disregard\s+(?:\w+\s+)*(your|all|any)\s+(?:\w+\s+)*(instructions|rules|guidelines)", "disregard_rules", "all", SEVERITY_BLOCK),
-    (r"act\s+as\s+(if|though)\s+(?:\w+\s+)*you\s+(?:\w+\s+)*(have\s+no|don't\s+have)\s+(?:\w+\s+)*(restrictions|limits|rules)", "bypass_restrictions", "all", SEVERITY_BLOCK),
+    (r"disregard\s+(?:\w+\s+){0,8}(your|all|any)\s+(?:\w+\s+){0,8}(instructions|rules|guidelines)", "disregard_rules", "all", SEVERITY_BLOCK),
+    (r"act\s+as\s+(if|though)\s+(?:\w+\s+){0,8}you\s+(?:\w+\s+){0,8}(have\s+no|don't\s+have)\s+(?:\w+\s+){0,8}(restrictions|limits|rules)", "bypass_restrictions", "all", SEVERITY_BLOCK),
     (r"<!--[^>]*(?:ignore|override|system|secret|hidden)[^>]*-->", "html_comment_injection", "all", SEVERITY_BLOCK),
     (r"<\s*div\s+style\s*=\s*[\"'][\s\S]*?display\s*:\s*none", "hidden_div", "all", SEVERITY_BLOCK),
     (r"translate\s+.*\s+into\s+.*\s+and\s+(execute|run|eval)", "translate_execute", "all", SEVERITY_BLOCK),
-    (r"do\s+not\s+(?:\w+\s+)*tell\s+(?:\w+\s+)*the\s+user", "deception_hide", "all", SEVERITY_BLOCK),
+    (r"do\s+not\s+(?:\w+\s+){0,8}tell\s+(?:\w+\s+){0,8}the\s+user", "deception_hide", "all", SEVERITY_BLOCK),
     (r"curl\s+[^\n]*\$\{?\w*(KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL|API)", "exfil_curl", "all", SEVERITY_BLOCK),
     (r"wget\s+[^\n]*\$\{?\w*(KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL|API)", "exfil_wget", "all", SEVERITY_BLOCK),
     (r"cat\s+[^\n]*(\.env|credentials|\.netrc|\.pgpass|\.npmrc|\.pypirc)", "read_secrets", "all", SEVERITY_BLOCK),
     # ── scope="context" — role-play / C2 / promptware ─────────────────────────
-    (r"you\s+are\s+(?:\w+\s+)*now\s+(?:a|an|the)\s+", "role_hijack", "context", SEVERITY_WARN),
-    (r"pretend\s+(?:\w+\s+)*(you\s+are|to\s+be)\s+", "role_pretend", "context", SEVERITY_WARN),
-    (r"output\s+(?:\w+\s+)*(system|initial)\s+prompt", "leak_system_prompt", "context", SEVERITY_BLOCK),
-    (r"(respond|answer|reply)\s+without\s+(?:\w+\s+)*(restrictions|limitations|filters|safety)", "remove_filters", "context", SEVERITY_BLOCK),
-    (r"you\s+have\s+been\s+(?:\w+\s+)*(updated|upgraded|patched)\s+to", "fake_update", "context", SEVERITY_WARN),
+    (r"you\s+are\s+(?:\w+\s+){0,8}now\s+(?:a|an|the)\s+", "role_hijack", "context", SEVERITY_WARN),
+    (r"pretend\s+(?:\w+\s+){0,8}(you\s+are|to\s+be)\s+", "role_pretend", "context", SEVERITY_WARN),
+    (r"output\s+(?:\w+\s+){0,8}(system|initial)\s+prompt", "leak_system_prompt", "context", SEVERITY_BLOCK),
+    (r"(respond|answer|reply)\s+without\s+(?:\w+\s+){0,8}(restrictions|limitations|filters|safety)", "remove_filters", "context", SEVERITY_BLOCK),
+    (r"you\s+have\s+been\s+(?:\w+\s+){0,8}(updated|upgraded|patched)\s+to", "fake_update", "context", SEVERITY_WARN),
     (r"\bname\s+yourself\s+\w+", "identity_override", "context", SEVERITY_WARN),
     (r"register\s+(as\s+)?a?\s*node", "c2_node_registration", "context", SEVERITY_WARN),
     (r"(heartbeat|beacon|check[\s\-]?in)\s+(to|with)\s+", "c2_heartbeat", "context", SEVERITY_WARN),
@@ -77,14 +83,14 @@ _RAW_PATTERNS: tuple[tuple[str, str, str, str], ...] = (
     (r"connect\s+to\s+the\s+network\b", "c2_network_connect", "context", SEVERITY_WARN),
     (r"you\s+must\s+(?:\w+\s+){0,3}(register|connect|report|beacon)\b", "forced_action", "context", SEVERITY_WARN),
     (r"only\s+use\s+one[\s\-]?liners?\b", "anti_forensic_oneliner", "context", SEVERITY_WARN),
-    (r"never\s+(?:\w+\s+)*(?:create|write)\s+(?:\w+\s+)*(?:script|file)\s+(?:\w+\s+)*disk", "anti_forensic_disk", "context", SEVERITY_WARN),
+    (r"never\s+(?:\w+\s+){0,8}(?:create|write)\s+(?:\w+\s+){0,8}(?:script|file)\s+(?:\w+\s+){0,8}disk", "anti_forensic_disk", "context", SEVERITY_WARN),
     (r"unset\s+\w*(?:CLAUDE|CODEX|HERMES|AGENT|OPENAI|ANTHROPIC)\w*", "env_var_unset_agent", "context", SEVERITY_BLOCK),
     (r"\b(?:praxis|cobalt\s*strike|sliver|havoc|mythic|metasploit|brainworm)\b", "known_c2_framework", "context", SEVERITY_BLOCK),
     (r"\bc2\s+(?:server|channel|infrastructure|beacon)\b", "c2_explicit", "context", SEVERITY_BLOCK),
     (r"\bcommand\s+and\s+control\b", "c2_explicit_long", "context", SEVERITY_BLOCK),
     # ── scope="strict" — agent-write seams (memory write / skill install) ─────
     (r"(send|post|upload|transmit)\s+.*\s+(to|at)\s+https?://", "send_to_url", "strict", SEVERITY_BLOCK),
-    (r"(include|output|print|share)\s+(?:\w+\s+)*(conversation|chat\s+history|previous\s+messages|full\s+context|entire\s+context)", "context_exfil", "strict", SEVERITY_BLOCK),
+    (r"(include|output|print|share)\s+(?:\w+\s+){0,8}(conversation|chat\s+history|previous\s+messages|full\s+context|entire\s+context)", "context_exfil", "strict", SEVERITY_BLOCK),
     (r"authorized_keys", "ssh_backdoor", "strict", SEVERITY_BLOCK),
     (r"\$HOME/\.ssh|~/\.ssh", "ssh_access", "strict", SEVERITY_BLOCK),
     # reyn-adapted (was Hermes ``.hermes/.env``): reyn's per-user secret/config dir.
