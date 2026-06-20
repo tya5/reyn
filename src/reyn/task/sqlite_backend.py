@@ -35,7 +35,12 @@ import json
 import sqlite3
 from pathlib import Path
 
-from reyn.task.model import Task, TaskOrigin, TaskState, _now_iso
+from reyn.task.model import TERMINAL_STATES, Task, TaskOrigin, TaskState, _now_iso
+
+# Terminal status values (no further transitions) — used by the update_status
+# terminal-guard (the abort straggler-reject, #1953 Option B).
+_TERMINAL_VALUES: tuple[str, ...] = tuple(s.value for s in TERMINAL_STATES)
+_TERMINAL_PLACEHOLDERS = ",".join("?" * len(_TERMINAL_VALUES))
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS tasks(
@@ -209,21 +214,27 @@ class SqliteTaskBackend:
     ) -> Task | None:
         async with self._lock:
             self._conn.execute("BEGIN IMMEDIATE")
-            # Single-writer CAS: only the assignee session may write (fixed
-            # equality — assignee is immutable). rowcount == 0 → either no such
-            # task or a non-assignee caller; distinguish for the caller.
+            # Single-writer CAS + terminal-guard: only the assignee may write, and
+            # only to a non-terminal task. rowcount == 0 → no such task, a
+            # non-assignee caller, or a terminal task (incl. the abort straggler-
+            # reject — Option B, #1953). Distinguish for a decision-enabling error.
             cur = self._conn.execute(
                 "UPDATE tasks SET status=?, updated_at=? "
-                "WHERE task_id=? AND assignee=?",
-                (status, _now_iso(), task_id, caller_session_id),
+                f"WHERE task_id=? AND assignee=? AND status NOT IN ({_TERMINAL_PLACEHOLDERS})",
+                (status, _now_iso(), task_id, caller_session_id, *_TERMINAL_VALUES),
             )
             if cur.rowcount == 0:
                 self._conn.rollback()
-                exists = self._conn.execute(
-                    "SELECT 1 FROM tasks WHERE task_id=?", (task_id,)
+                row = self._conn.execute(
+                    "SELECT assignee, status FROM tasks WHERE task_id=?", (task_id,)
                 ).fetchone()
-                if exists is None:
+                if row is None:
                     return None
+                if row["status"] in _TERMINAL_VALUES:
+                    raise PermissionError(
+                        f"task {task_id!r} status-write rejected: task is terminal "
+                        f"({row['status']}) — no further transitions (e.g. post-abort straggler)"
+                    )
                 raise PermissionError(
                     f"task {task_id!r} status-write rejected: caller "
                     f"{caller_session_id!r} is not the assignee (single-writer)"
@@ -250,25 +261,40 @@ class SqliteTaskBackend:
             self._conn.commit()
             return self._fetch(task_id)
 
-    async def _terminal(self, task_id: str, state: TaskState, kind: str) -> Task | None:
+    async def abort(self, task_id: str, reason: str | None = None) -> Task | None:
+        """abort = delete (cooperative-terminal, #1953 Option B): set this task +
+        its whole sub-tree to ``archived`` (DOWN-cascade, §18). There is no forced
+        cancel — the assignee's in-flight work discovers the abort at its next
+        status-write, which the terminal state rejects (so no straggler lands;
+        and a sibling task's work is untouched). Returns the now-archived task, or
+        None if it doesn't exist."""
         async with self._lock:
-            self._conn.execute("BEGIN IMMEDIATE")
-            cur = self._conn.execute(
-                "UPDATE tasks SET status=?, updated_at=? WHERE task_id=?",
-                (state.value, _now_iso(), task_id),
-            )
-            if cur.rowcount == 0:
-                self._conn.rollback()
+            if self._conn.execute(
+                "SELECT 1 FROM tasks WHERE task_id=?", (task_id,)
+            ).fetchone() is None:
                 return None
-            self._emit(task_id, kind, status=state.value)
+            # BFS the sub-tree (this task + all descendants via parent_id;
+            # acyclic by construction, with a guard).
+            subtree: list[str] = [task_id]
+            frontier = [task_id]
+            while frontier:
+                pid = frontier.pop()
+                for row in self._conn.execute(
+                    "SELECT task_id FROM tasks WHERE parent_id=?", (pid,)
+                ).fetchall():
+                    child = row["task_id"]
+                    if child not in subtree:
+                        subtree.append(child)
+                        frontier.append(child)
+            self._conn.execute("BEGIN IMMEDIATE")
+            for tid in subtree:
+                self._conn.execute(
+                    "UPDATE tasks SET status=?, updated_at=? WHERE task_id=?",
+                    (TaskState.ARCHIVED.value, _now_iso(), tid),
+                )
+                self._emit(tid, "aborted", root=task_id)
             self._conn.commit()
             return self._fetch(task_id)
-
-    async def archive(self, task_id: str) -> Task | None:
-        return await self._terminal(task_id, TaskState.ARCHIVED, "archived")
-
-    async def abort(self, task_id: str, reason: str | None = None) -> Task | None:
-        return await self._terminal(task_id, TaskState.ABORTED, "aborted")
 
     async def set_awaiting(self, task_id: str, awaiting_since: float | None) -> Task | None:
         async with self._lock:

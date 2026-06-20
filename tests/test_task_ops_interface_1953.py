@@ -72,7 +72,6 @@ def test_union_validates_every_task_kind():
         "task.list": {"kind": "task.list"},
         "task.add_dependency": {"kind": "task.add_dependency", "task_id": "t", "depends_on": "u"},
         "task.abort": {"kind": "task.abort", "task_id": "t"},
-        "task.archive": {"kind": "task.archive", "task_id": "t"},
         "task.heartbeat": {"kind": "task.heartbeat", "task_id": "t"},
         "task.register_unblock_predicate": {"kind": "task.register_unblock_predicate", "task_id": "t", "predicate": "x"},
         "task.comment": {"kind": "task.comment", "task_id": "t", "body": "hi"},
@@ -157,22 +156,27 @@ async def test_update_status_single_writer_is_assignee_session():
 
 
 @pytest.mark.asyncio
-async def test_archive_and_abort_reach_terminal_states():
-    """Tier 2: archive → archived, abort → aborted (terminal contract surface)."""
-    async def _mk(name):
-        c = await taskmod._create(
-            SimpleNamespace(name=name, assignee="b", requester="a",
-                            origin="self", description=None, budget_cap=None, deps=[]),
-            _ctx(), "control_ir",
-        )
-        return c["task"]["task_id"]
+async def test_abort_archives_and_rejects_assignee_straggler():
+    """Tier 2: abort = delete → archived (Option B); a post-abort straggler
+    update_status by the assignee is rejected by the terminal state, so nothing
+    lands (RED if the terminal-guard is dropped)."""
+    created = await taskmod._create(
+        SimpleNamespace(name="t", assignee="A", description=None, budget_cap=None,
+                        deps=[], parent_id=None),
+        SimpleNamespace(session_id="R", agent_id="r", events=None), "control_ir")
+    task_id = created["task"]["task_id"]
 
-    a_id = await _mk("a")
-    b_id = await _mk("b")
-    arch = await taskmod._archive(SimpleNamespace(task_id=a_id, reason=None), _ctx(), "control_ir")
-    abrt = await taskmod._abort(SimpleNamespace(task_id=b_id, reason="cancel"), _ctx(), "control_ir")
-    assert arch["task"]["status"] == "archived"
-    assert abrt["task"]["status"] == "aborted"
+    # requester R aborts (= delete) → archived.
+    aborted = await taskmod._abort(
+        SimpleNamespace(task_id=task_id, reason="don't need it"),
+        SimpleNamespace(session_id="R", agent_id="r", events=None), "control_ir")
+    assert aborted["task"]["status"] == "archived"
+
+    # the assignee's straggler write is rejected by the terminal state.
+    with pytest.raises(PermissionError):
+        await taskmod._update_status(
+            SimpleNamespace(task_id=task_id, status="completed", reason=None),
+            SimpleNamespace(session_id="A", agent_id="a", events=None), "control_ir")
 
 
 @pytest.mark.asyncio
