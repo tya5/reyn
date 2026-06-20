@@ -76,7 +76,7 @@ async def test_handler_uses_threaded_sqlite_backend(tmp_path: Path):
     in-memory fallback."""
     taskmod.reset_backend_for_test()  # ensure the fallback is empty
     backend = SqliteTaskBackend(str(tmp_path / "tasks.db"))
-    ctx = SimpleNamespace(task_backend=backend, run_id="run-1", agent_id="alice", events=None)
+    ctx = SimpleNamespace(task_backend=backend, session_id="sess-1", agent_id="alice", events=None)
 
     created = await taskmod._create(
         SimpleNamespace(name="n", assignee="bob", requester="alice",
