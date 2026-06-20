@@ -20,7 +20,7 @@ import os
 from pathlib import Path
 
 from reyn.runtime.router_system_prompt import build_system_prompt
-from tests.test_router_host_adapter_invariants import _make_adapter
+from tests._support.router_host_adapter import make_adapter as _make_adapter
 
 # ── Fake backends ─────────────────────────────────────────────────────────────
 

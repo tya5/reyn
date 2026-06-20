@@ -30,7 +30,7 @@ from reyn.services.turn_budget import (
     assert_turn_budget_bounds,
     build_default_turn_budget_engine,
 )
-from tests.test_router_loop import FakeRouterHost
+from tests._support.router_loop import FakeRouterHost
 
 # ── by-construction assert + progress_margin ─────────────────────────────────
 

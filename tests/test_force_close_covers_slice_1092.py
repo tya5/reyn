@@ -22,7 +22,9 @@ from reyn.runtime.session import (
     ChatMessage,
     _render_summary_for_storage,
 )
-from tests.test_session_router_history_slicing import _make_session, _now, _push
+from tests._support.session import make_session as _make_session
+from tests._support.session import now as _now
+from tests._support.session import push as _push
 
 
 def _append_force_close_summary(session, consolidation: str) -> ChatMessage:

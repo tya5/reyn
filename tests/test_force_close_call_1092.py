@@ -25,7 +25,7 @@ from reyn.llm.llm import LLMToolCallResult
 from reyn.llm.pricing import TokenUsage
 from reyn.runtime.router_loop import RouterLoop
 from reyn.services.turn_budget import wrap_up_system_prompt
-from tests.test_router_loop import FakeRouterHost
+from tests._support.router_loop import FakeRouterHost
 
 
 class _CapturingLLM:

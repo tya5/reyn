@@ -18,7 +18,7 @@ import pytest
 
 from reyn.security.permissions.permissions import PermissionDecl, PermissionResolver
 from reyn.security.sandbox.policy import SandboxPolicy
-from tests.test_permissions import _make_resolver
+from tests._support.permissions import make_resolver as _make_resolver
 
 # ── file gates: SandboxLayer ∩ (path caps) ───────────────────────────────────
 

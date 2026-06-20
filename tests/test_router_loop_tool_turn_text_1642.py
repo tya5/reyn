@@ -20,11 +20,13 @@ import pytest
 
 from reyn.llm.llm import LLMToolCallResult
 from reyn.llm.pricing import TokenUsage
-from tests.test_router_loop import (
+from tests._support.router_loop import (
     FakeRouterHost,
-    _ScriptedLLM,
     make_loop,
     text_result,
+)
+from tests._support.router_loop import (
+    ScriptedLLM as _ScriptedLLM,
 )
 
 _USAGE = TokenUsage(prompt_tokens=10, completion_tokens=5)
