@@ -337,7 +337,7 @@ The `sandboxed_exec` policy (`SandboxPolicy`) is scoped **per axis**. The axes a
 |---|---|---|
 | write | tight workspace-allowlist (`write_paths`) | The hard guard — bounds what a process can persist. |
 | network | tight (off by default / allowlist) | The exfiltration gate — a process may read widely but cannot send anything out. |
-| exec | controlled (`allow_subprocess`) | Bounds child-process spawning (advisory under Seatbelt). |
+| exec | controlled (`allow_subprocess`) | Bounds child-process spawning (enforced on Linux via seccomp, macOS via Seatbelt). |
 | read | **broad-allow by default** + optional sensitive deny-list | The strict read-allowlist was abolished (#1199 realignment). |
 
 **Why broad read is safe.** The network gate, not the read surface, is the exfiltration control. With network off by default a process may read widely but cannot send data out. A broad read surface also removes the system-path enumeration (`/usr`, `/lib`, dyld cache, …) that every binary needs just to load — enumeration that, when missing, broke the Landlock backend on Linux. This matches industry practice: Codex defaults to broad read + network-off on Linux; Claude Code treats read-restriction as secondary ("affects functionality") behind its write / network guards.
