@@ -594,6 +594,35 @@ class SkillRunner:
 
         # PR22: budget cap pre-check.
         check = self._budget.check_pre_spawn(chain_id=chain_id, skill=skill_name)
+        # FP-0005 (#1880): unify with the chat-spawn path (:268, #1877) — a hard hit
+        # on a dimension with a configured extension participates in the unified
+        # ``safety.on_limit`` flow (interactive=ask / auto_extend=bounded /
+        # unattended=deny — decided inside ``_ask_budget_extension``). Programmatic
+        # spawns have no TTY → the bus is None → the interactive branch falls to a
+        # ``no_bus`` deny (the existing fail-closed); auto_extend is bus-independent.
+        # ``extension_calls == 0`` (default) → nothing to grant → the refusal stays
+        # hard regardless of mode (default-config behavior is byte-identical).
+        if (
+            not check.allowed
+            and int(check.context.get("extension_calls") or 0) > 0
+        ):
+            approved = await self._ask_budget_extension(
+                chain_id=chain_id, skill_name=skill_name, check=check,
+            )
+            if approved:
+                extension = int(check.context["extension_calls"])
+                new_total = self._budget.extend_chain_calls(
+                    chain_id=chain_id, skill=skill_name, additional=extension,
+                )
+                self._events.emit(
+                    "budget_extended",
+                    dimension=check.hard_dimension,
+                    skill=skill_name,
+                    chain_id=chain_id,
+                    granted=extension,
+                    total_extension=new_total,
+                )
+                check = self._budget.check_pre_spawn(chain_id=chain_id, skill=skill_name)
         if not check.allowed:
             self._events.emit(
                 "budget_exceeded",
