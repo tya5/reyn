@@ -291,10 +291,18 @@ class AsyncStackPanel(RenderableCacheMixin, Widget):
         """Mount or update a running entry for ``agent_id``."""
         if not agent_id:
             return
+        # An ``agent_id`` re-added during its interrupt/abort flash window
+        # (= the async restarts, or a plan resumes under the same id) must
+        # return to a clean running state. Cancel the pending flash timer —
+        # otherwise it fires ~1.5 s later and yanks this LIVE row — and reset
+        # the flashing state so the row renders as ⟳ running, not ✗ interrupted.
+        self._cancel_flash_timer(agent_id)
         existing = self._entries.get(agent_id)
         if existing is not None:
             existing.summary = summary
             existing.pending_count = 0  # back to running on summary update
+            existing.flashing = False
+            existing.frozen_elapsed_s = None
         else:
             self._entries[agent_id] = _Entry(
                 summary=summary,
