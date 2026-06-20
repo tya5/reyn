@@ -68,6 +68,10 @@ class _CapturingTextClient:
     async def get(self, url: str) -> httpx.Response:
         return self._response
 
+    def stream(self, method: str, url: str) -> "_ResponseStreamCtx":
+        # #1913: production streams (client.stream) instead of client.get.
+        return _ResponseStreamCtx(self._response)
+
 
 # ── default behaviour preserved (no start_index supplied) ──────────────
 
@@ -200,3 +204,18 @@ def test_two_call_pagination_covers_whole_document(monkeypatch: pytest.MonkeyPat
     assert r2["next_start"] is None
 
     assert r1["content"] + r2["content"] == _CapturingTextClient.body
+
+
+class _ResponseStreamCtx:
+    """Async-CM mirroring ``client.stream(...)``. A canned ``httpx.Response``
+    built with ``content=`` already supports ``aiter_bytes`` / ``headers`` /
+    ``charset_encoding`` / ``status_code``, so it is yielded as-is (#1913)."""
+
+    def __init__(self, response: "httpx.Response") -> None:
+        self._response = response
+
+    async def __aenter__(self) -> "httpx.Response":
+        return self._response
+
+    async def __aexit__(self, *args: object) -> None:
+        return None

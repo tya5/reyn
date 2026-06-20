@@ -69,6 +69,10 @@ class _CapturingHTMLClient:
     async def get(self, url: str) -> httpx.Response:
         return self._response
 
+    def stream(self, method: str, url: str) -> "_ResponseStreamCtx":
+        # #1913: production streams (client.stream) instead of client.get.
+        return _ResponseStreamCtx(self._response)
+
 
 class _CapturingTextClient:
     """httpx.AsyncClient drop-in that returns text/plain (= no extractor)."""
@@ -89,6 +93,10 @@ class _CapturingTextClient:
 
     async def get(self, url: str) -> httpx.Response:
         return self._response
+
+    def stream(self, method: str, url: str) -> "_ResponseStreamCtx":
+        # #1913: production streams (client.stream) instead of client.get.
+        return _ResponseStreamCtx(self._response)
 
 
 # ── _extract_html_text unit tests ──────────────────────────────────────
@@ -217,3 +225,18 @@ def test_result_envelope_uses_stdlib_when_trafilatura_unavailable(
     assert result["status"] == "ok"
     assert result["extractor"] == "stdlib"
     assert "hello world" in result["content"]
+
+
+class _ResponseStreamCtx:
+    """Async-CM mirroring ``client.stream(...)``. A canned ``httpx.Response``
+    built with ``content=`` already supports ``aiter_bytes`` / ``headers`` /
+    ``charset_encoding`` / ``status_code``, so it is yielded as-is (#1913)."""
+
+    def __init__(self, response: "httpx.Response") -> None:
+        self._response = response
+
+    async def __aenter__(self) -> "httpx.Response":
+        return self._response
+
+    async def __aexit__(self, *args: object) -> None:
+        return None

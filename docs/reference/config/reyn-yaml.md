@@ -544,6 +544,7 @@ web:
   fetch:
     verify_ssl: true     # true | false | omit (default: env-var chain)
     ca_bundle: /path/to/ca-bundle.pem   # optional custom CA bundle
+    max_download_bytes: 10485760        # wire-byte ceiling (default 10MB)
 ```
 
 Priority chain (highest first):
@@ -556,6 +557,10 @@ Priority chain (highest first):
 | 4 | Both unset | Fall through: `SSL_VERIFY` env var → `litellm.ssl_verify` → `SSL_CERT_FILE` → `True` |
 
 `verify_ssl` and `ca_bundle` also apply to MCP registry HTTP calls (package install).
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `web.fetch.max_download_bytes` | int | `10485760` (10MB) | Maximum response bytes `web_fetch` reads off the wire. A response whose `Content-Length` exceeds this is rejected before any body is downloaded; a chunked / unknown-length body is aborted once the stream passes the ceiling (status `too_large`). Guards against an unbounded-body memory blow-up from a hostile or runaway URL. `<= 0` or non-integer falls back to the default. |
 
 ## `eval` block
 

@@ -60,9 +60,19 @@ class WebFetchConfig:
         ca_bundle:
             Absolute path (or path relative to cwd) of a CA bundle PEM file.
             When set, takes priority over ``verify_ssl`` and env vars.
+        max_download_bytes:
+            #1913: hard ceiling on the HTTP response body downloaded by
+            ``web_fetch``, BEFORE the body is materialized into memory. A
+            response whose ``Content-Length`` exceeds this — or that streams past
+            it without one — is rejected (``status="too_large"``), preventing an
+            unbounded-memory DoS from a hostile URL (including a benign URL that
+            redirects to a huge payload). Distinct from ``WebFetchIROp.max_length``
+            (which caps the *extracted text* only AFTER the full body is loaded).
+            Default 10 MiB.
     """
     verify_ssl: bool | None = None
     ca_bundle: str | None = None
+    max_download_bytes: int = 10 * 1024 * 1024
 
 
 @dataclass
@@ -86,7 +96,18 @@ def _build_web_fetch_config(raw: object) -> WebFetchConfig:
         verify_ssl: bool | None = None
     else:
         verify_ssl = bool(verify_ssl_raw)
-    return WebFetchConfig(verify_ssl=verify_ssl, ca_bundle=ca_bundle)
+    defaults = WebFetchConfig()
+    try:
+        max_download_bytes = int(raw.get("max_download_bytes", defaults.max_download_bytes))
+        if max_download_bytes <= 0:
+            max_download_bytes = defaults.max_download_bytes
+    except (TypeError, ValueError):
+        max_download_bytes = defaults.max_download_bytes
+    return WebFetchConfig(
+        verify_ssl=verify_ssl,
+        ca_bundle=ca_bundle,
+        max_download_bytes=max_download_bytes,
+    )
 
 
 def _build_web_config(raw: object) -> WebConfig:

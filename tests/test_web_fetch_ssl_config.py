@@ -89,6 +89,25 @@ class _CaptureAsyncClient:
     async def get(self, url: str) -> httpx.Response:
         return self._response
 
+    def stream(self, method: str, url: str) -> "_ResponseStreamCtx":
+        # #1913: production now streams (client.stream) instead of client.get.
+        return _ResponseStreamCtx(self._response)
+
+
+class _ResponseStreamCtx:
+    """Async-CM mirroring ``client.stream(...)``. A canned ``httpx.Response``
+    built with ``content=`` already supports ``aiter_bytes()`` / ``headers`` /
+    ``charset_encoding`` / ``status_code``, so it is yielded as-is."""
+
+    def __init__(self, response: httpx.Response) -> None:
+        self._response = response
+
+    async def __aenter__(self) -> httpx.Response:
+        return self._response
+
+    async def __aexit__(self, *args: object) -> None:
+        return None
+
 
 # ---------------------------------------------------------------------------
 # 1. ca_bundle config → verify=<path>
