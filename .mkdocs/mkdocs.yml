@@ -94,6 +94,7 @@ nav:
               - guide/for-users/configure-sandbox.md
               - guide/for-users/ask-user-mid-phase.md
               - guide/for-users/cap-spending.md
+              - guide/for-users/schedule-skills.md
           - Files & integrations:
               - guide/for-users/work-with-files.md
               - guide/for-users/enable-semantic-search.md
