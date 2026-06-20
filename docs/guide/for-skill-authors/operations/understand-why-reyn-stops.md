@@ -120,13 +120,18 @@ safety:
   loop:
     skill_calls_per_chain:
       hard_limit: 5
-      ask_on_exceed: true       # prompt the user via ask_user
-      extension_calls: 3        # +3 spawns granted on approval
+      extension_calls: 3        # +3 spawns granted per extension; > 0 opts
+                                # this dimension into the safety.on_limit flow
+  on_limit:
+    mode: interactive           # ask the user on hit (default); also
+                                # auto_extend (bounded) / unattended (deny)
 ```
 
-When the cap is hit, Reyn asks: *"Skill `X` has reached its cap of 5
-spawns. Allow 3 more?"* — the user can approve repeatedly; each
-approval extends the cap further.
+When the cap is hit under `on_limit.mode: interactive`, Reyn asks: *"Skill
+`X` has reached its cap of 5 spawns. Allow 3 more?"* — the user can approve
+repeatedly; each approval extends the cap further. (The per-dimension
+`ask_on_exceed` bool was removed in #1877 — the exceed behaviour now follows
+the unified `safety.on_limit.mode`.)
 
 ---
 
@@ -170,7 +175,7 @@ safety:
 | `safety.loop.max_router_calls_per_turn` | `Session._check_and_increment_router_cap` | interactive / auto_extend |
 | `safety.loop.max_agent_hops` | `Session._send_to_agent` | interactive / auto_extend |
 | `safety.timeout.chain_seconds` | chain timeout watchdog | interactive / auto_extend (re-arm) |
-| `safety.loop.skill_calls_per_chain` | spawn budget gate | interactive (= `ask_on_exceed`) |
+| `safety.loop.skill_calls_per_chain` | spawn budget gate | interactive / auto_extend / unattended (via `safety.on_limit.mode`; needs `extension_calls > 0`) |
 
 `safety.timeout.llm_call_seconds` is excluded by design — litellm
 already auto-retries within `safety.timeout.llm_max_retries`, so an

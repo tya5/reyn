@@ -268,10 +268,14 @@ class SkillRunner:
             check = self._budget.check_pre_spawn(
                 chain_id=chain_id, skill=skill_name,
             )
-            # FP-0003: opt-in user-approval flow on hard-limit hit.
+            # FP-0005 (#1877): on a hard-limit hit, a dimension with a
+            # configured extension amount participates in the unified
+            # ``safety.on_limit`` flow (interactive=ask / auto_extend=bounded
+            # / unattended=deny — decided inside ``_ask_budget_extension``).
+            # ``extension_calls == 0`` (default) = nothing to grant → the
+            # refusal stays hard regardless of mode.
             if (
                 not check.allowed
-                and check.context.get("ask_on_exceed")
                 and int(check.context.get("extension_calls") or 0) > 0
             ):
                 approved = await self._ask_budget_extension(

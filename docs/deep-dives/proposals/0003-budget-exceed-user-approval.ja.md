@@ -1,6 +1,13 @@
 # FP-0003: budget 超過時のユーザー許諾・再開フロー
 
-**Status**: done (landed 2026-05-10、 commit `2ec46c0`)
+> **一部 superseded (#1877, 2026-06-20):** 以下で説明する per-dimension の
+> `CostLimitConfig.ask_on_exceed` bool は撤去され、 unified な `safety.on_limit`
+> 3-mode policy (FP-0005) に subsume された。 `per_chain_skill_calls` の超過フローは
+> `safety.on_limit.mode` (interactive / auto_extend / unattended) で駆動され、
+> `extension_calls > 0` が per-dimension の opt-in シグナル。 `extend_chain_calls`
+> と extension の bookkeeping は不変。 以下の `ask_on_exceed` は歴史的文脈として読むこと。
+
+**Status**: done (landed 2026-05-10、 commit `2ec46c0`); `ask_on_exceed` は `safety.on_limit` に subsume (#1877)
 **Proposed**: 2026-05-10
 **Author**: Research session (eager-shaw-389d9d)
 **Implemented**: 2026-05-10 — `CostLimitConfig.ask_on_exceed` + `extension_calls` フィールド + `BudgetTracker.extend_chain_calls()` + `ChatSession._ask_budget_extension()` ask_user dispatch + 8 Tier 2 invariants (`tests/test_budget_extend_chain.py`)。 後続: FP-0005 Phase 2 で shared `handle_limit_exceeded` helper に統合 (`dad53f4`)、 `cost.per_chain_skill_calls` キー自体は legacy 撤去 (`0b464ab`) で `safety.loop.skill_calls_per_chain` に移動。

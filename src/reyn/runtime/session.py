@@ -3988,17 +3988,14 @@ class Session:
             f"chain={chain_id} dimension={check.hard_dimension} "
             f"detail={check.detail}"
         )
-        # FP-0005: per_chain_skill_calls.ask_on_exceed implies
-        # interactive intent regardless of the global on_limit.mode
-        # — the user explicitly opted into prompting via
-        # ``cost.per_chain_skill_calls.ask_on_exceed: true``. Build a
-        # local OnLimitConfig that reflects this so the helper
-        # dispatches the prompt rather than falling through.
-        from reyn.config import OnLimitConfig as _OnLimitConfig
-        local_on_limit = _OnLimitConfig(
-            mode="interactive",
-            ask_timeout_seconds=self._on_limit.ask_timeout_seconds,
-        )
+        # FP-0005 (#1877): the per_chain_skill_calls seam is driven by the
+        # unified ``safety.on_limit`` policy (the ``ask_on_exceed`` bool was
+        # subsumed — clean-break). ``self._on_limit.mode`` decides:
+        # interactive → ask the user; auto_extend → bounded auto-grant;
+        # unattended → deny. This also fixes the prior bug where a hardcoded
+        # ``mode="interactive"`` over-prompted even under on_limit=unattended
+        # (CI / cron). The ``extension_calls > 0`` precondition in the caller
+        # guards the default hard-refuse.
         # Reuse the chat-side bus adapter from _handle_chat_limit_checkpoint.
         session_dispatch = self._dispatch_intervention
 
@@ -4008,7 +4005,7 @@ class Session:
 
         decision = await handle_limit_exceeded(
             bus=_ChatLimitBus(),
-            on_limit=local_on_limit,
+            on_limit=self._on_limit,
             kind=f"per_chain_skill_calls:{chain_id}:{skill_name}",
             run_id=chain_id,
             prompt=prompt,

@@ -579,9 +579,9 @@ and the dogfood done-gate remain. Canonical design: [content-threat scan proposa
 | Rate limits | Per-model calls-per-minute sliding window | [Budget config](reference/config/budget.md) |
 | Daily quotas | Persistent JSONL ledger, resets at local midnight | [Budget config](reference/config/budget.md) |
 | Monthly quotas | Persistent JSONL ledger, resets at month boundary | [Budget config](reference/config/budget.md) |
-| `ask_on_exceed` | User-approval extension flow on hard cap hit | [Budget config](reference/config/budget.md) |
+| `extension_calls` (+ `safety.on_limit.mode`) | Budget-extension flow on hard cap hit; `extension_calls > 0` opts the dimension into the unified `safety.on_limit` policy (ask / auto-extend / deny). The per-dimension `ask_on_exceed` bool was removed in #1877. | [Budget config](reference/config/budget.md) |
 
-> **Differentiation vs general agents:** token + USD caps per agent / chain / model with refuse-on-exceed and an `ask_on_exceed` extension flow — runaway spend is structurally bounded, not merely observed after the fact.
+> **Differentiation vs general agents:** token + USD caps per agent / chain / model with refuse-on-exceed and a `safety.on_limit`-driven extension flow — runaway spend is structurally bounded, not merely observed after the fact.
 
 ---
 

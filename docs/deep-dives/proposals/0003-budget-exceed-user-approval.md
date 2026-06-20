@@ -1,6 +1,14 @@
 # FP-0003: User approval and resume flow on budget exceed
 
-**Status**: done (landed 2026-05-10, commit pending)
+> **Superseded in part (#1877, 2026-06-20):** the per-dimension
+> `CostLimitConfig.ask_on_exceed` bool described below was removed and subsumed
+> into the unified `safety.on_limit` 3-mode policy (FP-0005). The exceed flow
+> for `per_chain_skill_calls` is now driven by `safety.on_limit.mode`
+> (interactive / auto_extend / unattended); `extension_calls > 0` is the
+> per-dimension opt-in signal. `extend_chain_calls` + the extension bookkeeping
+> are unchanged. Read `ask_on_exceed` below as historical context.
+
+**Status**: done (landed 2026-05-10); `ask_on_exceed` subsumed into `safety.on_limit` (#1877)
 **Proposed**: 2026-05-10
 **Author**: Research session (eager-shaw-389d9d)
 **Implemented**: 2026-05-10 — `CostLimitConfig.ask_on_exceed` + `extension_calls` fields + `BudgetTracker.extend_chain_calls()` + `ChatSession._ask_budget_extension()` ask_user dispatch + 8 Tier 2 invariants (`tests/test_budget_extend_chain.py`). Backward-compatible: `ask_on_exceed: false` (default) preserves prior hard-refuse behaviour.

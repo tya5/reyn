@@ -139,9 +139,9 @@ safety:
 def test_skill_calls_per_chain_preserves_other_fields(
     isolated_project: Path,
 ) -> None:
-    """Tier 2: ``safety.loop.skill_calls_per_chain`` carries all
-    ``CostLimitConfig`` sub-fields (warn_ratio, ask_on_exceed,
-    extension_calls).
+    """Tier 2: ``safety.loop.skill_calls_per_chain`` carries the
+    ``CostLimitConfig`` sub-fields (warn_ratio, extension_calls). The
+    ``ask_on_exceed`` bool was removed in #1877 (subsumed into on_limit.mode).
     """
     _write_yaml(isolated_project / "reyn.yaml", """
 safety:
@@ -149,15 +149,37 @@ safety:
     skill_calls_per_chain:
       hard_limit: 20
       warn_ratio: 0.5
-      ask_on_exceed: true
       extension_calls: 7
 """.lstrip())
     cfg = load_config(cwd=isolated_project)
     cap = cfg.safety.loop.skill_calls_per_chain
     assert cap.hard_limit == 20.0
     assert cap.warn_ratio == 0.5
-    assert cap.ask_on_exceed is True
     assert cap.extension_calls == 7
+    assert not hasattr(cap, "ask_on_exceed")
+
+
+def test_removed_ask_on_exceed_key_warns_and_is_ignored(
+    isolated_project: Path,
+) -> None:
+    """Tier 2: a stale ``ask_on_exceed`` key emits a DeprecationWarning and is
+    ignored — clean-break, no shim (#1877). The rest of the dimension still
+    parses (``extension_calls`` honoured), so config load does not crash.
+    """
+    _write_yaml(isolated_project / "reyn.yaml", """
+safety:
+  loop:
+    skill_calls_per_chain:
+      hard_limit: 20
+      ask_on_exceed: true
+      extension_calls: 4
+""".lstrip())
+    with pytest.warns(DeprecationWarning, match="ask_on_exceed"):
+        cfg = load_config(cwd=isolated_project)
+    cap = cfg.safety.loop.skill_calls_per_chain
+    assert cap.hard_limit == 20.0
+    assert cap.extension_calls == 4
+    assert not hasattr(cap, "ask_on_exceed")
 
 
 # ─── 4. Exception hint_config_key surfaces correctly ──────────────────
