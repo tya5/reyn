@@ -152,5 +152,7 @@ def test_parse_since_invalid_iso_is_graceful() -> None:
 
 def test_parse_since_none_returns_none() -> None:
     """Tier 2: no --since (None / empty) returns None (no filter)."""
-    assert support_bundle._parse_since(None) is None
-    assert support_bundle._parse_since("") is None
+    none_result = support_bundle._parse_since(None)
+    empty_result = support_bundle._parse_since("")
+    assert none_result is None
+    assert empty_result is None
