@@ -93,7 +93,7 @@ which is excluded from the mkdocs build). It is a docs-maintainer tool.
 | Memory & RAG | **end-user** | `for-users/manage-memory` + `for-users/enable-semantic-search` | ✅ | 2026-06-20 |
 | MCP | **end-user** | `for-skill-authors/operations/use-an-mcp-server` + `for-users/popular-mcp-servers` | ✅ | 2026-06-20 |
 | Web & Protocol | end-user (web UI) + reyn-developer (A2A/REST) | `for-users/chat-and-web-ui` | ✅ (web UI; A2A/REST are developer reference) | 2026-06-20 |
-| Intervention | **end-user** | `for-users/ask-user-mid-phase` | ✅ | 2026-06-20 |
+| Intervention | skill-author | `for-skill-authors/phase-mechanics/ask-user-mid-phase` | N/A (author; end-user answering a prompt is trivial — no doc needed) | 2026-06-20 |
 | Sessions and identity | OS-internal / concept | `concepts/multi-agent/sessions` | N/A | 2026-06-20 |
 | Multi-Agent | skill-author | `for-skill-authors/composition/*` | N/A (author) | 2026-06-20 |
 | TUI | **end-user** | `for-users/chat-and-web-ui` | ✅ (chat UI; panel details largely self-evident) | 2026-06-20 |
@@ -131,45 +131,46 @@ the CLI/impl alignment was checked.
 | `for-users/work-with-files` | ✅ strong | content read; no drift seen | 2026-06-20 |
 | `for-users/configure-sandbox` | ✅ strong | content read; per-backend tables current | 2026-06-20 |
 | `for-users/popular-mcp-servers` | ✅ strong | content read (per-server catalog) | 2026-06-20 |
-| `for-skill-authors/operations/use-an-mcp-server` | ⚠ note | content read; **stale TODO comment** (see Open items) | 2026-06-20 |
-| `for-skill-authors/composition/use-plan-mode` | ✅ strong content / ⚠ discoverability | content read; `/plan` cmds current | 2026-06-20 |
+| `for-skill-authors/operations/use-an-mcp-server` | ✅ strong | content read; stale TODO dropped (resolved) | 2026-06-20 |
+| `for-skill-authors/composition/use-plan-mode` | ✅ strong | content read; auto-triggered (not a slash cmd); end-user discoverability resolved via for-users hub cross-link | 2026-06-20 |
 | `for-skill-authors/operations/understand-why-reyn-stops` | ✅ strong | content read; reflects #1877 `ask_on_exceed` removal | 2026-06-20 |
-| `for-users/ask-user-mid-phase` | ⚠ scope | content read (see Open items) | 2026-06-20 |
+| `for-skill-authors/phase-mechanics/ask-user-mid-phase` | ✅ strong | content read; re-homed to phase-mechanics (author-facing) — resolved | 2026-06-20 |
 
 **Headline:** every end-user how-to is a genuine usage doc (steps + examples +
-troubleshooting), not a stub. No CLI drift found in the 2026-06-20 read. Two
-minor quality notes + one discoverability note are tracked below.
+troubleshooting), not a stub. No CLI drift found in the 2026-06-20 read. The two
+minor quality notes + one discoverability note flagged in the initial sweep were
+all resolved on 2026-06-20 (see Open items).
 
 ---
 
 ## Open items
 
-### `use-an-mcp-server` stale TODO comment (⚠ quality)
+### `use-an-mcp-server` stale TODO comment (⚠ quality) — ✅ RESOLVED 2026-06-20
 
-`docs/guide/for-skill-authors/operations/use-an-mcp-server.md` carries an
+`docs/guide/for-skill-authors/operations/use-an-mcp-server.md` carried an
 inline authoring TODO: `<!-- TODO: confirm extra name ([mcp]) once PR32 lands
-… -->`. The `[mcp]` extra is in fact confirmed correct (CI installs
-`.[dev,mcp,web]`), so the TODO is stale and should be dropped. Low-risk
-one-line cleanup.
+… -->`. The `[mcp]` extra is confirmed correct (CI installs `.[dev,mcp,web]`),
+so the stale TODO was dropped.
 
-### `ask-user-mid-phase` audience/scope mismatch (⚠ quality)
+### `ask-user-mid-phase` audience/scope mismatch (⚠ quality) — ✅ RESOLVED 2026-06-20
 
-The for-users hub links this as *"Respond mid-task — answer questions Reyn
+The for-users hub had linked this as *"Respond mid-task — answer questions Reyn
 asks."* But the doc's content teaches a **skill author** how to emit an
-`ask_user` op from a phase — author-facing material under a user-facing
-framing. The genuine end-user action (typing an answer at a prompt) is trivial
-and may not need a doc. **Candidate:** re-home this under for-skill-authors, or
-re-scope a short user-facing "answering prompts" note. Flagged for owner/lead.
+`ask_user` op from a phase — author-facing material under a user-facing framing.
+**Resolution:** the doc (EN + JA) was re-homed to
+`for-skill-authors/phase-mechanics/ask-user-mid-phase`, the for-users hub bullet
+removed, and nav updated. The genuine end-user action (typing an answer at a
+prompt) is trivial and intentionally has no standalone user doc.
 
-### Plan Mode end-user discoverability (⚠)
+### Plan Mode end-user discoverability (⚠) — ✅ RESOLVED 2026-06-20
 
-### Plan Mode end-user discoverability (⚠)
-
-`/plan` is invokable by end users inside `reyn chat`, but the only how-to
-(`use-plan-mode`) lives under **for-skill-authors** and is framed for authors.
-An end user browsing `for-users/` will not find plan-mode usage. **Candidate:**
-either a short `for-users` plan-mode how-to, or a cross-link from the user hub.
-Not yet actioned — flagged for owner/lead prioritization.
+Plan mode is **auto-triggered** by the router (not a `/plan` slash command —
+the agent decides based on task complexity), so an end user benefits from it
+without invoking it. The only how-to (`use-plan-mode`) lives under
+**for-skill-authors** and is framed for authors, so a user browsing `for-users/`
+would not discover the behaviour. **Resolution:** added a "Plan mode" entry to
+the for-users hub's *Things Reyn handles for you* section, cross-linking
+`use-plan-mode` and stating plainly that it's automatic, not a command.
 
 ### JA parity
 
@@ -190,10 +191,12 @@ non-end-user groups are correctly served by concept / reference / author docs
 / semantic-search discoverability) were closed in the 2026-06-20 docs wave.
 
 **Quality:** every end-user how-to was read and is a genuine usage doc (steps +
-examples + troubleshooting), not a stub; no CLI drift found. Three follow-ups,
-all minor and tracked in Open items: plan-mode discoverability (⚠),
-`use-an-mcp-server` stale TODO (⚠), `ask-user-mid-phase` audience mismatch (⚠).
+examples + troubleshooting), not a stub; no CLI drift found. The three minor
+follow-ups raised by the sweep were all resolved on 2026-06-20 (see Open items):
+plan-mode discoverability (cross-link added), `use-an-mcp-server` stale TODO
+(dropped), `ask-user-mid-phase` audience mismatch (re-homed to
+for-skill-authors).
 
 **Net:** the answer to "is every end-user feature documented for users?" is
-**yes for coverage, yes for quality**, with three minor follow-ups (none a
-missing-doc gap) and JA parity tracked as a separate axis.
+**yes for coverage, yes for quality**, with the three minor follow-ups now
+closed (none was a missing-doc gap) and JA parity tracked as a separate axis.

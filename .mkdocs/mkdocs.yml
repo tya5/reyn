@@ -92,7 +92,6 @@ nav:
               - guide/for-users/time-travel.md
               - guide/for-users/manage-permissions.md
               - guide/for-users/configure-sandbox.md
-              - guide/for-users/ask-user-mid-phase.md
               - guide/for-users/cap-spending.md
               - guide/for-users/schedule-skills.md
           - Files & integrations:
@@ -117,6 +116,7 @@ nav:
               - guide/for-skill-authors/phase-mechanics/add-a-python-preprocessor.md
               - guide/for-skill-authors/phase-mechanics/validate-artifacts.md
               - guide/for-skill-authors/phase-mechanics/persist-state.md
+              - guide/for-skill-authors/phase-mechanics/ask-user-mid-phase.md
           - Operations:
               - guide/for-skill-authors/operations/debug-with-events.md
               - guide/for-skill-authors/operations/use-an-mcp-server.md
