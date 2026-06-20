@@ -353,8 +353,14 @@ class OutboxRouter:
         into the agent's run.
         """
         self._cancel_transient_timer()
-        conv.show_status(text, kind=kind)
-        self._transient_status_timer = self._app.set_timer(duration, conv.hide_status)
+        # Only arm the auto-hide timer when the status actually displayed.
+        # A priority-suppressed transient (= a higher-priority error / mode
+        # sticky is active) must NOT arm a hide — it would later dismiss the
+        # incumbent the suppression just protected.
+        if conv.show_status(text, kind=kind):
+            self._transient_status_timer = self._app.set_timer(
+                duration, conv.hide_status,
+            )
 
     # ── main loop ─────────────────────────────────────────────────────────────
 

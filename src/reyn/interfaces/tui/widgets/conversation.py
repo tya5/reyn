@@ -361,10 +361,12 @@ class _StatusSpinnerController:
     def __init__(self, parent: "ConversationView") -> None:
         self._parent = parent
 
-    def show_status(self, text: str, kind: str = "general", *, terminal: bool = False) -> None:
+    def show_status(self, text: str, kind: str = "general", *, terminal: bool = False) -> bool:
+        """Return True when the sticky displayed, False when priority-suppressed."""
         s = self._parent._sticky()
-        if s is not None:
-            s.show(text, kind=kind, terminal=terminal)
+        if s is None:
+            return False
+        return s.show(text, kind=kind, terminal=terminal)
 
     def update_status(self, text: str) -> None:
         s = self._parent._sticky()
@@ -2225,8 +2227,9 @@ class ConversationView(Widget):
 
     # ── sticky status (A3) ────────────────────────────────────────────────────
 
-    def show_status(self, text: str, kind: str = "general", *, terminal: bool = False) -> None:
-        self._status_ctrl.show_status(text, kind=kind, terminal=terminal)
+    def show_status(self, text: str, kind: str = "general", *, terminal: bool = False) -> bool:
+        """Return True when the sticky displayed, False when priority-suppressed."""
+        return self._status_ctrl.show_status(text, kind=kind, terminal=terminal)
 
     def update_status(self, text: str) -> None:
         self._status_ctrl.update_status(text)
