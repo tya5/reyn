@@ -241,17 +241,20 @@ class InterventionHandler:
         if external_source and self._threat_scan is not None:
             from reyn.security.content_guard import fence_if_enabled
             history_text = fence_if_enabled(text, self._threat_scan)
-        self._append_history(
-            "user",
-            history_text,
-            _now_iso(),
-            {
-                "answered_skill": iv.skill_name or "",
-                "answered_run_id": iv.run_id or "",
-                "intervention_id": iv.id,
-                "intervention_kind": iv.kind,
-            },
-        )
+        meta = {
+            "answered_skill": iv.skill_name or "",
+            "answered_run_id": iv.run_id or "",
+            "intervention_id": iv.id,
+            "intervention_kind": iv.kind,
+        }
+        if external_source:
+            # #1827 S4: seam-agnostic untrusted-source taint marker. While this
+            # external (A2A / webhook peer) answer is live in context, the agent
+            # is capability-narrowed (context-auto) — defense-in-depth with the
+            # fence above. The key is the convention in
+            # reyn.security.permissions.capability_profile.UNTRUSTED_META_KEY.
+            meta["external_source"] = True
+        self._append_history("user", history_text, _now_iso(), meta)
         self._events.emit(
             "user_answered_intervention",
             intervention_id=iv.id,
