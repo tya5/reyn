@@ -936,11 +936,40 @@ class SkillRunner:
                     ))
                 except Exception:  # noqa: BLE001
                     pass
+                # #1944: like the abort branch (#106) and the success branch,
+                # enqueue a "skill done:" trace so the background skill's
+                # AsyncStackPanel row is removed (terminal="aborted" path:
+                # the strip flashes the ✗ shape before unmounting). Without
+                # this the budget-exceeded background skill ghosts too — the
+                # sibling gap to the success-path ghost.
+                try:
+                    await self._put_outbox(SkillOutboundMessage(
+                        kind="trace", text="skill done: aborted: budget exceeded",
+                        meta=meta,
+                    ))
+                except Exception:  # noqa: BLE001
+                    pass
             else:
                 self._accumulate(result)
                 self._events.emit(
                     "skill_run_completed", run_id=run_id, skill=skill_name, status=result.status,
                 )
+                # #1944: a spawned (background) skill's bottom-strip
+                # AsyncStackPanel row is removed by the TUI on the
+                # "skill done:" trace. The abort branch above already
+                # enqueues one directly (#106); the success branch must do
+                # the same — otherwise a successfully-completing background
+                # skill leaves a ghost row with its elapsed counter ticking
+                # forever. Explicit enqueue = completeness-by-construction
+                # (every terminal branch emits "skill done:"); the TUI's
+                # remove is idempotent, so this is safe even if any forwarder
+                # path also delivers one.
+                try:
+                    await self._put_outbox(SkillOutboundMessage(
+                        kind="trace", text="skill done: finished", meta=meta,
+                    ))
+                except Exception:  # noqa: BLE001 — same defense as the abort path
+                    pass
                 _terminal_status = result.status or "finished"
                 _terminal_data = result.data or {}
         finally:
