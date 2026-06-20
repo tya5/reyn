@@ -53,12 +53,14 @@ The trade-off is explicit: **predictability and auditability over maximum autono
 
 <div align="center">
 
-<!-- hero demo — replace with reyn-chat.gif once the vhs tape is recorded -->
-![reyn chat demo](https://placehold.co/820x440/1f2937/ffffff?text=reyn+chat+%E2%80%94+demo+GIF+(vhs,+coming))
+<!-- hero: static chat shot for now; replace with docs/assets/demo/reyn-chat.gif once the vhs tape is recorded -->
+<img src="docs/assets/screenshots/tui-chat.png" alt="reyn chat — a question and the agent's streamed reply" width="820">
 
-| Chat session | Right panel — events / cost / memory | Time-travel (`/rewind`) |
-|---|---|---|
-| ![chat](https://placehold.co/300x200/263238/ffffff?text=tui-chat) | ![panel](https://placehold.co/300x200/263238/ffffff?text=tui-right-panel) | ![rewind](https://placehold.co/300x200/263238/ffffff?text=tui-rewind) |
+<sub><code>reyn chat</code> — ask, get a streamed reply. (Animated walkthrough via vhs coming.)</sub>
+
+| Cost &amp; token transparency (`Ctrl+B`) | Time-travel (`/rewind`) |
+|---|---|
+| <img src="docs/assets/screenshots/tui-right-panel.png" alt="Cost panel: today / all-time tokens and dollar cost, broken down by agent and model" width="400"> | <img src="docs/assets/screenshots/tui-rewind.png" alt="Rewind picker: checkpoint timeline with a branch tree to jump back and fork" width="400"> |
 
 </div>
 
