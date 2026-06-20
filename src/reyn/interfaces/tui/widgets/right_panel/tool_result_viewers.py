@@ -40,6 +40,7 @@ is testable in isolation without the Textual app.
 from __future__ import annotations
 
 import json
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any, Callable
 
@@ -84,6 +85,49 @@ def register_viewer(
         _VIEWERS.append(entry)
     else:
         _VIEWERS.insert(position, entry)
+
+
+def register_content_type_viewer(
+    content_types: "str | Sequence[str]",
+    viewer: Callable[[dict], RenderableType | None],
+    *,
+    name: str = "",
+    position: int = -1,
+    match: str = "exact",
+) -> None:
+    """Register a viewer keyed by content-type / MIME — the ergonomic path for
+    the common "this MIME maps to this viewer" case.
+
+    Builds a ``_content_type_of``-based predicate so callers don't hand-write
+    one. ``content_types`` is a single string or a sequence; a result matches
+    when ``_content_type_of(result)`` matches ANY listed value under ``match``:
+
+    - ``"exact"`` (default) — equal to a listed type (e.g. ``"message/rfc822"``).
+    - ``"prefix"``          — starts with a listed value (e.g. ``"image/"``).
+    - ``"substring"``       — contains a listed value (e.g. ``"json"``).
+
+    Delegates to :func:`register_viewer`, so ``name`` / ``position`` behave
+    identically (first match wins; ``position`` orders priority). For anything
+    beyond a content-type check — shape-sniff, multi-field heuristics, a suffix
+    test — use :func:`register_viewer` with a custom predicate instead.
+    """
+    patterns = (
+        (content_types.lower(),)
+        if isinstance(content_types, str)
+        else tuple(c.lower() for c in content_types)
+    )
+
+    def _predicate(result: dict) -> bool:
+        ct = _content_type_of(result)
+        if not ct:
+            return False
+        if match == "prefix":
+            return any(ct.startswith(p) for p in patterns)
+        if match == "substring":
+            return any(p in ct for p in patterns)
+        return ct in patterns  # exact (default)
+
+    register_viewer(_predicate, viewer, name=name, position=position)
 
 
 # ---------------------------------------------------------------------------
@@ -356,27 +400,21 @@ def _viewer_web_summary(result: dict) -> RenderableType | None:
 # inline chain: explicit content-type first, shape-sniff last)
 # ---------------------------------------------------------------------------
 
+# ``markdown`` keeps a hand-written predicate: it matches a "/md" SUFFIX in
+# addition to the "markdown" substring, which is more than a content-type
+# membership test. The pure content-type viewers (csv / json / image) use the
+# content-type-keyed helper.
 def _pred_markdown(r: dict) -> bool:
     ct = _content_type_of(r)
     return bool(ct) and ("markdown" in ct or ct.endswith("/md"))
 
-def _pred_csv(r: dict) -> bool:
-    ct = _content_type_of(r)
-    return bool(ct) and ("csv" in ct or "tab-separated" in ct)
-
-def _pred_json(r: dict) -> bool:
-    ct = _content_type_of(r)
-    return bool(ct) and "json" in ct
-
-def _pred_image(r: dict) -> bool:
-    ct = _content_type_of(r)
-    return bool(ct) and ct.startswith("image/")
-
 
 register_viewer(_pred_markdown, _viewer_markdown, name="markdown")
-register_viewer(_pred_csv, _viewer_csv, name="csv")
-register_viewer(_pred_json, _viewer_json, name="json")
-register_viewer(_pred_image, _viewer_image, name="image")
+register_content_type_viewer(
+    ("csv", "tab-separated"), _viewer_csv, name="csv", match="substring",
+)
+register_content_type_viewer("json", _viewer_json, name="json", match="substring")
+register_content_type_viewer("image/", _viewer_image, name="image", match="prefix")
 register_viewer(_looks_like_web_summary, _viewer_web_summary, name="web_summary")
 
 # Concrete email + diff viewers fire AFTER explicit markdown/csv content-types
