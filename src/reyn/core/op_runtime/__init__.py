@@ -133,6 +133,9 @@ from . import recall as _recall  # noqa: F401, E402
 from . import run_skill as _run_skill  # noqa: F401, E402
 from . import sandboxed_exec as _sandboxed_exec  # noqa: F401, E402
 from . import skill_resolve as _skill_resolve  # noqa: F401, E402
+
+# #1953 slice 1: Task ops (first-class trackable work-units).
+from . import task as _task  # noqa: F401, E402
 from . import web as _web  # noqa: F401, E402
 
 __all__ = [

@@ -84,6 +84,19 @@ _LEGACY_ONLY_KINDS: frozenset[str] = frozenset({
     "mcp",
     "run_skill",
     "skill_resolve",
+    # #1953 slice 1: Task ops dispatch via op_runtime handlers (op_runtime/task.py
+    # register()), not phase=allow ToolDefinitions — legacy-only by this taxonomy.
+    "task.create",
+    "task.update_status",
+    "task.get",
+    "task.list",
+    "task.create_subtask",
+    "task.add_dependency",
+    "task.abort",
+    "task.archive",
+    "task.heartbeat",
+    "task.register_unblock_predicate",
+    "task.comment",
 })
 
 

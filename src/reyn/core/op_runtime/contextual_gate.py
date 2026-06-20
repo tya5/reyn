@@ -53,6 +53,19 @@ _OP_KIND_ALIASES: "dict[str, frozenset[str]]" = {
     "judge_output": frozenset(),
     "compact": frozenset(),
     "ask_user": frozenset(),
+    # #1953 slice 1: Task ops have no distinct chat-tool qualified name → each
+    # is gated on its own kind name (no silent bypass).
+    "task.create": frozenset(),
+    "task.update_status": frozenset(),
+    "task.get": frozenset(),
+    "task.list": frozenset(),
+    "task.create_subtask": frozenset(),
+    "task.add_dependency": frozenset(),
+    "task.abort": frozenset(),
+    "task.archive": frozenset(),
+    "task.heartbeat": frozenset(),
+    "task.register_unblock_predicate": frozenset(),
+    "task.comment": frozenset(),
 }
 
 

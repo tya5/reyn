@@ -557,11 +557,137 @@ class CompactIROp(BaseModel):
     reason: str | None = None   # optional model-supplied rationale (audit only)
 
 
+# ---------------------------------------------------------------------------
+# Task ops (#1953 slice 1) — first-class trackable work-units.
+# ---------------------------------------------------------------------------
+# Agent-facing Task operations as Control IR ops (P4). P7 term-neutral: op
+# names + fields are generic; A2A vocabulary (contextId / TaskState) maps only
+# at the A2A layer. Single-writer is a backend-CAS on the caller's skill-run
+# run_id (threaded from OpContext, NOT an op field → unforgeable; audit C2),
+# NOT a permission gate. Enforcement (CAS reject, abort quiescence, cascade,
+# cycle-check, predicate-eval) lands in later slices; these are the shapes.
+
+
+class TaskCreateIROp(BaseModel):
+    """Create a Task born with its assignee (immutable; no handoff — §12).
+
+    ``origin`` decides delete-coupling (§17): ``self`` couples to the agent,
+    ``external`` persists with an external requester. ``requester`` is the
+    disposition notify-target (§16)."""
+
+    kind: Literal["task.create"]
+    name: str
+    assignee: str
+    requester: str
+    origin: Literal["self", "external"] = "self"
+    description: str | None = None
+    budget_cap: float | None = None
+    deps: list[str] = Field(default_factory=list)  # depends-on task_ids (DAG, §13)
+
+
+class TaskUpdateStatusIROp(BaseModel):
+    """Declare a status transition. Writer = the task's assignee; the gate is a
+    backend-CAS on the caller's skill-run run_id (threaded from OpContext, not a
+    field here — audit C2), enforced in slice 3."""
+
+    kind: Literal["task.update_status"]
+    task_id: str
+    status: str
+    reason: str | None = None
+
+
+class TaskGetIROp(BaseModel):
+    """Read one Task record."""
+
+    kind: Literal["task.get"]
+    task_id: str
+
+
+class TaskListIROp(BaseModel):
+    """List Tasks, optionally narrowed by assignee / requester / status / parent."""
+
+    kind: Literal["task.list"]
+    assignee: str | None = None
+    requester: str | None = None
+    status: str | None = None
+    parent_id: str | None = None
+
+
+class TaskCreateSubtaskIROp(BaseModel):
+    """Decompose work into a child Task assigned to another worker (§12). The
+    parent is the child's requester; lineage = ``parent_id`` (no handoff-log)."""
+
+    kind: Literal["task.create_subtask"]
+    parent_id: str
+    name: str
+    assignee: str
+    description: str | None = None
+    deps: list[str] = Field(default_factory=list)
+
+
+class TaskAddDependencyIROp(BaseModel):
+    """Add a depends-on edge (dependency DAG, §13). Topology owned by the
+    decomposing parent; readiness is derived read-only (no write to the dep).
+    Cycle-check lands in slice 6."""
+
+    kind: Literal["task.add_dependency"]
+    task_id: str
+    depends_on: str
+
+
+class TaskAbortIROp(BaseModel):
+    """OS-authority terminal cancel (→ aborted; A2A canceled). The enforced
+    contract is cooperative: ``cancel_inflight → await_quiescent → terminal``
+    (+ seq-fence) so no write lands after terminal (audit C1, slice 3)."""
+
+    kind: Literal["task.abort"]
+    task_id: str
+    reason: str | None = None
+
+
+class TaskArchiveIROp(BaseModel):
+    """Soft-delete (→ archived; the "delete" verb). Triggers the deletion matrix
+    in slice 3: DOWN-abort children + UP-notify persistent requester (§18/19).
+    Archived tasks are time-travel-recoverable within the retention window (§24)."""
+
+    kind: Literal["task.archive"]
+    task_id: str
+    reason: str | None = None
+
+
+class TaskHeartbeatIROp(BaseModel):
+    """Liveness + (slice 7) unblock-predicate evaluation trigger for a blocked
+    task. Returns the current state; predicate-eval / liveness-timeout land in
+    slice 7."""
+
+    kind: Literal["task.heartbeat"]
+    task_id: str
+
+
+class TaskRegisterUnblockPredicateIROp(BaseModel):
+    """Register a deterministic unblock predicate (code, no LLM) evaluated at
+    heartbeat (§22 tier B'); true → unblock → LLM only then. Predicate-eval is
+    slice 7; this records it."""
+
+    kind: Literal["task.register_unblock_predicate"]
+    task_id: str
+    predicate: str
+
+
+class TaskCommentIROp(BaseModel):
+    """Append a comment to a Task's thread (durable inter-agent/HITL protocol —
+    Hermes gap7). Core-contract field; richer thread semantics deferred."""
+
+    kind: Literal["task.comment"]
+    task_id: str
+    body: str
+
+
 # Discriminated union — Pydantic selects the variant via the "kind" field.
 # All variants below are implemented in `op_runtime/`:
 #   file, mcp, ask_user, shell, lint, run_skill, web_fetch, web_search,
 #   mcp_install, embed, index_write, index_query, recall, index_drop,
-#   sandboxed_exec, judge_output, skill_resolve, compact.
+#   sandboxed_exec, judge_output, skill_resolve, compact, task.* (#1953).
 # Fine-grained file ops (#1240 Wave 1+1.5): read_file, write_file, edit_file,
 #   delete_file, glob_files, grep_files (phase=allow registry entries).
 ControlIROp = Annotated[
@@ -575,6 +701,11 @@ ControlIROp = Annotated[
         RunSkillIROp, WebFetchIROp, WebSearchIROp, MCPInstallIROp,
         IndexQueryIROp, RecallIROp, IndexDropIROp,
         SandboxedExecIROp, JudgeOutputIROp, SkillResolveIROp, CompactIROp,
+        # #1953 slice 1: Task ops.
+        TaskCreateIROp, TaskUpdateStatusIROp, TaskGetIROp, TaskListIROp,
+        TaskCreateSubtaskIROp, TaskAddDependencyIROp, TaskAbortIROp,
+        TaskArchiveIROp, TaskHeartbeatIROp, TaskRegisterUnblockPredicateIROp,
+        TaskCommentIROp,
     ],
     Field(discriminator="kind"),
 ]
