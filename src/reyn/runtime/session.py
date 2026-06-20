@@ -3248,6 +3248,7 @@ class Session:
             resolver=self._resolver,
             permission_resolver=self._perm,
             safety=self._safety,
+            contextual_permission=self._contextual_permission,  # #1912: narrow skill execution too
             mcp_servers=mcp_servers,
             intervention_bus=intervention_bus,
             subscribers=subscribers,

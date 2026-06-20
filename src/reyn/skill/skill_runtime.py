@@ -53,6 +53,7 @@ class SkillRuntime:
         resolver: ModelResolver | None = None,
         permission_resolver: PermissionResolver | None = None,
         safety: "SafetyConfig | None" = None,
+        contextual_permission: "object | None" = None,  # #1912: per-session capability narrowing → phase/control-IR gates (None = byte-identical)
         mcp_servers: dict | None = None,
         python_allowed_modules: list[str] | None = None,
         prompt_cache_enabled: bool = True,
@@ -89,6 +90,10 @@ class SkillRuntime:
         # #1092 PR-B: skills opted into the converged op-loop (config-driven gate,
         # threaded to OSRuntime so the converged path is reachable on the real run).
         self._safety = safety or SafetyConfig()
+        # #1912: per-session contextual narrowing inherited from the spawning
+        # session — threaded to the phase RouterLoop + control-IR OpContext so a
+        # narrowed agent's skill execution is enforced on every tool path.
+        self._contextual_permission = contextual_permission
         self._resolver = resolver or ModelResolver({})
         self._permission_resolver = permission_resolver
         self._mcp_servers = mcp_servers
@@ -312,6 +317,8 @@ class SkillRuntime:
             parent_run_id=parent_run_id,
             sandbox_config=self._sandbox_config,
             threat_scan=self._safety.threat_scan,  # FP-0050/#1822 S5 (EP4)
+            contextual_permission=self._contextual_permission,  # #1912
+
             environment_backend=self._environment_backend,
             sandbox_backend=self._sandbox_backend,
             multimodal_config=self._multimodal_config,

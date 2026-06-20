@@ -3189,14 +3189,11 @@ class RouterLoop:
         have not yet migrated (byte-identical), and S2+ feed a real contextual
         from topology / delegate / ephemeral narrowing."""
         if self._contextual_permission is not None:
-            from reyn.security.permissions.effective import (
-                CapabilityAxis,
-                ContextualLayer,
-            )
+            # #1912: the single shared contextual gate — identical check across
+            # chat / phase RouterLoop + control-IR op dispatch (no path bypass).
+            from reyn.security.permissions.effective import tool_contextually_denied
             effective = args.get("action_name") if name == "invoke_action" else name
-            if not ContextualLayer(self._contextual_permission).allows(
-                CapabilityAxis.TOOL, effective
-            ):
+            if tool_contextually_denied(self._contextual_permission, effective):
                 return {
                     "status": "error",
                     "error": {
