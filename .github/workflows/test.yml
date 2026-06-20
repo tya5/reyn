@@ -55,6 +55,30 @@ jobs:
       - name: Run ruff
         run: ruff check .
 
+  docs:
+    name: docs build (strict)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install docs dependencies
+        run: pip install -e ".[docs]"
+
+      # Mirrors the "Build documentation" step in pages.yml so broken links
+      # and missing nav targets fail at PR time, not post-merge on the Pages
+      # deploy — which was previously the only place --strict ran (a broken
+      # link could pass PR review and then turn the main Pages job red).
+      - name: Build docs (strict)
+        run: mkdocs build --strict -f .mkdocs/mkdocs.yml
+
   audit:
     name: test-tier audit
     runs-on: ubuntu-latest
