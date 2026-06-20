@@ -121,6 +121,26 @@ def _as_config_dict(val: object, key: str) -> dict:
     return val
 
 
+def _as_config_list(val: object, key: str) -> list:
+    """Coerce a top-level config value to a list, defaulting on a malformed type.
+
+    Sibling of :func:`_as_config_dict` for list-valued keys (e.g.
+    ``tool_calls_op_loop_skills``). A non-list value would otherwise either crash
+    (``for s in 42`` → TypeError) or, worse, silently iterate a string into
+    garbage per-character entries. Default to ``[]`` with a warning instead.
+    """
+    if val is None:
+        return []
+    if not isinstance(val, list):
+        import logging
+        logging.getLogger(__name__).warning(
+            "config key %r must be a list; got %s — ignoring it.",
+            key, type(val).__name__,
+        )
+        return []
+    return val
+
+
 def _merge(base: dict, override: dict) -> dict:
     """Merge override into base. models and permissions dicts are shallow-merged; all other keys override."""
     result = dict(base)
@@ -408,7 +428,9 @@ def load_config(cwd: Path | None = None) -> ReynConfig:
         ),
         llm=_build_llm_config(merged.get("llm")),
         tool_calls_op_loop_skills=[
-            str(s) for s in (merged.get("tool_calls_op_loop_skills") or [])
+            str(s) for s in _as_config_list(
+                merged.get("tool_calls_op_loop_skills"), "tool_calls_op_loop_skills",
+            )
         ],
         api_base=str(merged.get("api_base") or ""),
         # prompt_cache_enabled / project_context_path were declared as
@@ -425,7 +447,7 @@ def load_config(cwd: Path | None = None) -> ReynConfig:
             else None
         ),
         permissions=_as_config_dict(merged.get("permissions"), "permissions"),
-        mcp=dict(merged.get("mcp") or {}),
+        mcp=_as_config_dict(merged.get("mcp"), "mcp"),
         mcp_search_threshold=_parse_mcp_search_threshold(merged.get("mcp")),
         python=_build_python_config(merged.get("python")),
         agent=_build_agent_config(merged.get("agent")),
