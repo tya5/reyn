@@ -90,7 +90,6 @@ _LEGACY_ONLY_KINDS: frozenset[str] = frozenset({
     "task.update_status",
     "task.get",
     "task.list",
-    "task.create_subtask",
     "task.add_dependency",
     "task.abort",
     "task.archive",

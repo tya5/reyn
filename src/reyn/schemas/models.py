@@ -569,20 +569,22 @@ class CompactIROp(BaseModel):
 
 
 class TaskCreateIROp(BaseModel):
-    """Create a Task born with its assignee (immutable; no handoff — §12).
+    """Create a Task. The **requester** is the caller's session (set by the OS,
+    not an op field — §model "requester=self"); the **assignee** is the worker
+    session, immutable for the Task's life (no handoff — §12). ``assignee``
+    defaults to the caller (a self-task); a different value delegates cross-session.
 
-    ``origin`` decides delete-coupling (§17): ``self`` couples to the agent,
-    ``external`` persists with an external requester. ``requester`` is the
-    disposition notify-target (§16)."""
+    Optional ``parent_id`` makes this a sub-task of a task the caller owns as
+    requester (tree decomposition, §12 — absorbs the former ``create_subtask``);
+    ``deps`` are depends-on edges (dependency DAG, §13)."""
 
     kind: Literal["task.create"]
     name: str
-    assignee: str
-    requester: str
-    origin: Literal["self", "external"] = "self"
+    assignee: str | None = None  # default: the caller's own session (self-task)
     description: str | None = None
     budget_cap: float | None = None
     deps: list[str] = Field(default_factory=list)  # depends-on task_ids (DAG, §13)
+    parent_id: str | None = None  # optional tree parent (must be requester-owned)
 
 
 class TaskUpdateStatusIROp(BaseModel):
@@ -611,18 +613,6 @@ class TaskListIROp(BaseModel):
     requester: str | None = None
     status: str | None = None
     parent_id: str | None = None
-
-
-class TaskCreateSubtaskIROp(BaseModel):
-    """Decompose work into a child Task assigned to another worker (§12). The
-    parent is the child's requester; lineage = ``parent_id`` (no handoff-log)."""
-
-    kind: Literal["task.create_subtask"]
-    parent_id: str
-    name: str
-    assignee: str
-    description: str | None = None
-    deps: list[str] = Field(default_factory=list)
 
 
 class TaskAddDependencyIROp(BaseModel):
@@ -701,9 +691,9 @@ ControlIROp = Annotated[
         RunSkillIROp, WebFetchIROp, WebSearchIROp, MCPInstallIROp,
         IndexQueryIROp, RecallIROp, IndexDropIROp,
         SandboxedExecIROp, JudgeOutputIROp, SkillResolveIROp, CompactIROp,
-        # #1953 slice 1: Task ops.
+        # #1953: Task ops.
         TaskCreateIROp, TaskUpdateStatusIROp, TaskGetIROp, TaskListIROp,
-        TaskCreateSubtaskIROp, TaskAddDependencyIROp, TaskAbortIROp,
+        TaskAddDependencyIROp, TaskAbortIROp,
         TaskArchiveIROp, TaskHeartbeatIROp, TaskRegisterUnblockPredicateIROp,
         TaskCommentIROp,
     ],

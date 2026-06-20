@@ -33,16 +33,15 @@ Control IR is the list of side-effect operations the LLM may emit alongside its 
 | `judge_output` | LLM scorer: rubric + threshold + `on_fail` policy | none (LLM cost) |
 | `skill_resolve` | Resolve a skill name to its on-disk path (read-only) | none |
 | `compact` | Voluntarily compact the conversation/phase history (advisory) | none (LLM cost; the mandatory `retry_loop` backstop is independent) |
-| `task.create` | Create a trackable Task (born with its assignee) | none (gated by `allowed_ops`) |
-| `task.update_status` | Declare a status transition (assignee only) | none (single-writer = backend-CAS on caller run_id, not P5) |
-| `task.get` | Read one Task record | none |
-| `task.list` | List Tasks (filter by assignee / requester / status / parent) | none |
-| `task.create_subtask` | Decompose into a child Task assigned to another worker | none |
-| `task.add_dependency` | Add a depends-on edge (dependency DAG) | none |
-| `task.abort` | OS-authority terminal cancel (→ aborted) | none |
-| `task.archive` | Soft-delete a Task (→ archived) | none |
-| `task.heartbeat` | Liveness / unblock-predicate trigger for a blocked Task | none |
-| `task.register_unblock_predicate` | Register a deterministic unblock predicate | none |
+| `task.create` | Create a Task (optional `parent_id` sub-task / `deps`) | requester-gated (caller becomes requester) |
+| `task.update_status` | Declare a status transition | assignee-gated (single-writer CAS on `assignee == caller session_id`) |
+| `task.get` | Read one Task record | requester-gated |
+| `task.list` | List Tasks (filter by assignee / requester / status / parent) | none (filtered read) |
+| `task.add_dependency` | Add a depends-on edge (dependency DAG) | requester-gated |
+| `task.abort` | Remove-op: cancel → terminal (→ delete, full cascade in 2b) | requester-gated |
+| `task.archive` | Soft-delete a Task (→ archived; folds into abort in 2b) | requester-gated |
+| `task.heartbeat` | Liveness / unblock-predicate trigger for a blocked Task | assignee-gated |
+| `task.register_unblock_predicate` | Register a deterministic unblock predicate | assignee-gated |
 | `task.comment` | Append a comment to a Task's thread | none |
 
 ## Common envelope
@@ -483,30 +482,39 @@ These ops are **term-neutral (P7)**: names + fields are generic; A2A vocabulary
 kinds); like any op, each is also subject to the per-session contextual gate.
 
 ```json
-{ "kind": "task.create", "name": "ship-feature", "assignee": "bob",
-  "requester": "alice", "origin": "self" }
+{ "kind": "task.create", "name": "ship-feature" }
+{ "kind": "task.create", "name": "sub", "parent_id": "<id>", "deps": ["<other-id>"] }
 { "kind": "task.update_status", "task_id": "<id>", "status": "in_progress" }
-{ "kind": "task.create_subtask", "parent_id": "<id>", "name": "sub", "assignee": "carol" }
 { "kind": "task.add_dependency", "task_id": "<id>", "depends_on": "<other-id>" }
-{ "kind": "task.archive", "task_id": "<id>" }
+{ "kind": "task.abort", "task_id": "<id>" }
 ```
 
-**Roles & invariants.** `assignee` is the **single-writer** of `status` and is
-**immutable** for the Task's life — there is no handoff; delegation is
-`task.create_subtask` (decomposition). `requester` is the disposition
-notify-target. `origin` (`self` | `external`) decides delete-coupling.
+**Roles.** A Task is owned by two session identities (the #1814 per-contextId
+routing-key): the **requester** (origin / assigner / disposition notify-target —
+the caller of `task.create`, set by the OS, not an op field) and the **assignee**
+(the worker session, the single-writer of `status`, **immutable** — no handoff;
+delegation is sub-task decomposition via `task.create` with `parent_id`).
+`assignee` defaults to the caller (a self-task); a different value delegates
+cross-session (requester=A → assignee=B). One session can be the assignee of many
+Tasks (1 : N).
 
-**Single-writer enforcement** is a **backend compare-and-swap on the caller's
-skill-run `run_id`** (threaded by the OS from the op context — *not* an op
-field, so it cannot be forged), **not** a permission gate: the permission system
-is resource-scoped and carries no caller identity at op-exec time. The CAS
-reject, the cooperative `abort` contract (`cancel_inflight → await_quiescent →
-terminal` + seq-fence), the deletion cascade (DOWN-abort children / UP-notify
-requester), dependency cycle-checking, and unblock-predicate evaluation land in
-later slices; slice 1 ships the op shapes + an in-memory backend.
+**Single-writer** is a backend **fixed-equality CAS** `assignee == caller
+session_id` (`OpContext.session_id`, threaded by the OS — not an op field, so it
+cannot be forged). The assignee is immutable, so no claim token / version is
+needed; a non-assignee write is rejected. This is **not** a permission gate (the
+permission system is resource-scoped, no caller identity at op-exec).
+
+**Role-based op authority (P5).** Each op is gated on the caller's `session_id`:
+*assignee-gated* — `update_status` / `heartbeat` / `register_unblock_predicate`;
+*requester-gated* — `create` / `add_dependency` / `get` / `abort`. A violation
+returns a `role_denied` result.
 
 **States:** `pending` / `ready` / `in_progress` / `blocked` / `completed` /
 `failed` / `aborted` / `archived`.
+
+Still landing in later slices: `abort = delete` unification (cancel 3-step →
+archive → DOWN-cascade + UP-notify, folding `task.archive` into `task.abort`),
+dependency cycle-check + readiness, unblock-predicate evaluation.
 
 ---
 

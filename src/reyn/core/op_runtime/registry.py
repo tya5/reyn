@@ -68,7 +68,6 @@ from reyn.schemas.models import (
     TaskArchiveIROp,
     TaskCommentIROp,
     TaskCreateIROp,
-    TaskCreateSubtaskIROp,
     TaskGetIROp,
     TaskHeartbeatIROp,
     TaskListIROp,
@@ -158,7 +157,6 @@ OP_KIND_MODEL_MAP: dict[str, type[BaseModel]] = {
     "task.update_status": TaskUpdateStatusIROp,
     "task.get": TaskGetIROp,
     "task.list": TaskListIROp,
-    "task.create_subtask": TaskCreateSubtaskIROp,
     "task.add_dependency": TaskAddDependencyIROp,
     "task.abort": TaskAbortIROp,
     "task.archive": TaskArchiveIROp,
@@ -230,7 +228,6 @@ OP_PURITY: dict[str, OpPurity] = {
     "task.list": OpPurity.world,
     "task.create": OpPurity.side_effect,
     "task.update_status": OpPurity.side_effect,
-    "task.create_subtask": OpPurity.side_effect,
     "task.add_dependency": OpPurity.side_effect,
     "task.abort": OpPurity.side_effect,
     "task.archive": OpPurity.side_effect,
@@ -289,7 +286,6 @@ COARSE_TO_FINE: dict[str, frozenset[str]] = {
     # declare allowed_ops: [task] to permit the whole Task op family.
     "task": frozenset({
         "task.create", "task.update_status", "task.get", "task.list",
-        "task.create_subtask", "task.add_dependency", "task.abort",
         "task.archive", "task.heartbeat", "task.register_unblock_predicate",
         "task.comment",
     }),

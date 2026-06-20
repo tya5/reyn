@@ -28,9 +28,10 @@ from reyn.task import InMemoryTaskBackend, Task, TaskState
 _TASK_KINDS = frozenset(k for k in ALL_OP_KINDS if k.startswith("task."))
 
 
-def _ctx(run_id: str = "run-1", agent_id: str = "alice"):
-    """Minimal OpContext stand-in — the task handlers read only run_id + agent_id."""
-    return SimpleNamespace(run_id=run_id, agent_id=agent_id)
+def _ctx(session_id: str = "sess-1", agent_id: str = "alice"):
+    """Minimal OpContext stand-in. session_id is the caller identity (requester on
+    create + the role-gate key); the handlers also read agent_id (audit) + events."""
+    return SimpleNamespace(session_id=session_id, agent_id=agent_id, events=None)
 
 
 @pytest.fixture(autouse=True)
@@ -65,11 +66,10 @@ def test_union_validates_every_task_kind():
     """Tier 1: each task op kind round-trips through the ControlIROp union."""
     adapter = TypeAdapter(ControlIROp)
     samples = {
-        "task.create": {"kind": "task.create", "name": "n", "assignee": "a", "requester": "r"},
+        "task.create": {"kind": "task.create", "name": "n"},
         "task.update_status": {"kind": "task.update_status", "task_id": "t", "status": "in_progress"},
         "task.get": {"kind": "task.get", "task_id": "t"},
         "task.list": {"kind": "task.list"},
-        "task.create_subtask": {"kind": "task.create_subtask", "parent_id": "p", "name": "n", "assignee": "b"},
         "task.add_dependency": {"kind": "task.add_dependency", "task_id": "t", "depends_on": "u"},
         "task.abort": {"kind": "task.abort", "task_id": "t"},
         "task.archive": {"kind": "task.archive", "task_id": "t"},
@@ -181,3 +181,88 @@ async def test_handlers_return_error_for_unknown_task():
     got = await taskmod._get(SimpleNamespace(task_id="nope"), _ctx(), "control_ir")
     assert got["status"] == "error"
     assert "not found" in got["error"]
+
+
+# ── role-based op authority (P5) ────────────────────────────────────────────
+
+
+async def _make_cross_session_task(requester="R", assignee="A"):
+    """Create a task with requester=R (the caller) and assignee=A (cross-session)."""
+    created = await taskmod._create(
+        SimpleNamespace(name="n", assignee=assignee, description=None,
+                        budget_cap=None, deps=[], parent_id=None),
+        SimpleNamespace(session_id=requester, agent_id="x", events=None), "control_ir",
+    )
+    assert created["task"]["requester"] == requester
+    assert created["task"]["assignee"] == assignee
+    return created["task"]["task_id"]
+
+
+@pytest.mark.asyncio
+async def test_requester_gated_ops_reject_non_requester():
+    """Tier 2: get / add_dependency / abort are requester-gated — the assignee
+    (non-requester) is denied (role_denied). RED if the gate is dropped."""
+    task_id = await _make_cross_session_task(requester="R", assignee="A")
+    assignee_ctx = SimpleNamespace(session_id="A", agent_id="a", events=None)
+
+    for handler, op in (
+        (taskmod._get, SimpleNamespace(task_id=task_id)),
+        (taskmod._add_dependency, SimpleNamespace(task_id=task_id, depends_on="u")),
+        (taskmod._abort, SimpleNamespace(task_id=task_id, reason=None)),
+    ):
+        res = await handler(op, assignee_ctx, "control_ir")
+        assert res["status"] == "denied", (handler.__name__, res)
+        assert res["error"]["kind"] == "role_denied"
+
+    # the requester itself is allowed.
+    req_ctx = SimpleNamespace(session_id="R", agent_id="r", events=None)
+    allowed = await taskmod._get(SimpleNamespace(task_id=task_id), req_ctx, "control_ir")
+    assert allowed["status"] == "ok"
+
+
+@pytest.mark.asyncio
+async def test_assignee_gated_ops_reject_non_assignee():
+    """Tier 2: update_status / heartbeat / register_unblock_predicate are
+    assignee-gated — the requester (non-assignee) is denied. RED if the gate drops."""
+    task_id = await _make_cross_session_task(requester="R", assignee="A")
+    req_ctx = SimpleNamespace(session_id="R", agent_id="r", events=None)
+    assignee_ctx = SimpleNamespace(session_id="A", agent_id="a", events=None)
+
+    # update_status: backend CAS raises PermissionError for the non-assignee.
+    with pytest.raises(PermissionError):
+        await taskmod._update_status(
+            SimpleNamespace(task_id=task_id, status="failed", reason=None), req_ctx, "control_ir")
+    # heartbeat / register: handler role-gate → denied for the non-assignee.
+    for handler, op in (
+        (taskmod._heartbeat, SimpleNamespace(task_id=task_id)),
+        (taskmod._register_unblock_predicate, SimpleNamespace(task_id=task_id, predicate="x")),
+    ):
+        res = await handler(op, req_ctx, "control_ir")
+        assert res["status"] == "denied", (handler.__name__, res)
+
+    # the assignee itself is allowed.
+    allowed = await taskmod._heartbeat(SimpleNamespace(task_id=task_id), assignee_ctx, "control_ir")
+    assert allowed["status"] == "ok"
+
+
+@pytest.mark.asyncio
+async def test_create_parent_id_must_be_requester_owned():
+    """Tier 2: create with parent_id validates the parent is owned by the caller
+    as requester (tree decomposition §12) — another session's parent is denied."""
+    parent_id = await _make_cross_session_task(requester="R", assignee="A")
+
+    # a different session cannot make a sub-task under R's parent.
+    other_ctx = SimpleNamespace(session_id="OTHER", agent_id="o", events=None)
+    res = await taskmod._create(
+        SimpleNamespace(name="sub", assignee=None, description=None, budget_cap=None,
+                        deps=[], parent_id=parent_id), other_ctx, "control_ir")
+    assert res["status"] == "denied"
+    assert res["error"]["kind"] == "role_denied"
+
+    # R (the parent's requester) can.
+    req_ctx = SimpleNamespace(session_id="R", agent_id="r", events=None)
+    ok = await taskmod._create(
+        SimpleNamespace(name="sub", assignee=None, description=None, budget_cap=None,
+                        deps=[], parent_id=parent_id), req_ctx, "control_ir")
+    assert ok["status"] == "ok"
+    assert ok["task"]["parent_id"] == parent_id
