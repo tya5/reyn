@@ -70,13 +70,26 @@ def _build_sbpl_profile(policy: SandboxPolicy) -> str:
         '(import "bsd.sb")',
     ]
 
-    # Always-allowed process-exec: without this, sandbox-exec cannot even
+    # process-exec* is always allowed: without it sandbox-exec cannot even
     # execvp() the target binary under (deny default) (macOS 26+ is strict).
-    # process-fork is similarly needed by virtually every interpreter / runtime
-    # bootstrap (e.g. CRT init); policy.allow_subprocess remains advisory.
+    # This permits only the INITIAL exec of the target, NOT child spawning —
+    # spawning a child additionally needs process-fork, gated below.
     lines.append("")
     lines.append("(allow process-exec*)")
-    lines.append("(allow process-fork)")
+    # process-fork gates child spawning (#1914). IMPORTANT: the (import "bsd.sb")
+    # base above GRANTS process-fork, so merely omitting our own (allow ...) is
+    # NOT sufficient — emit an explicit (deny process-fork) (SBPL is
+    # last-match-wins) to override the base grant when subprocess is disallowed.
+    # A child spawn (subprocess / os.posix_spawn / os.system / multiprocessing /
+    # shell pipeline) needs fork() and is then denied, while the interpreter
+    # itself, threading, and a single exec-replacement still run (those need only
+    # process-exec*). Linux-parity with the seccomp gate; verified via sandbox-exec
+    # (py3.9/3.12 + sh pipeline). The prior "fork needed for runtime bootstrap"
+    # rationale was incorrect.
+    if policy.allow_subprocess:
+        lines.append("(allow process-fork)")
+    else:
+        lines.append("(deny process-fork)")
 
     # #1199 realignment — broad read surface. The strict read-allowlist was
     # abolished: reads are broad by default (this subsumes the old system-path
@@ -114,11 +127,10 @@ def _build_sbpl_profile(policy: SandboxPolicy) -> str:
         lines.append("; — network —")
         lines.append("(allow network*)")
 
-    # Note: process-fork is allowed unconditionally above. policy.allow_subprocess
-    # is currently advisory under Seatbelt — distinguishing "the invoked binary
-    # may fork (interpreter bootstrap)" from "and may spawn arbitrary children"
-    # requires per-pid rules SBPL doesn't cleanly express. Recorded in P6
-    # events for audit.
+    # process-fork is gated on policy.allow_subprocess above (#1914), so
+    # allow_subprocess=False is ENFORCED, not advisory: spawning a child needs
+    # fork(); the interpreter is exec'd by sandbox-exec via process-exec* and
+    # does not itself need fork to run. Matches the Linux seccomp enforcement.
 
     return "\n".join(lines) + "\n"
 
