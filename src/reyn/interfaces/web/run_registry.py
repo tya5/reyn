@@ -65,6 +65,13 @@ class RunEntry:
     result: str | None = None
     error: str | None = None
     webhook_url: str | None = None
+    # #1814: the core session routing-key (``<transport>:<native_id>``, e.g.
+    # ``a2a:<contextId>``) this run belongs to — the same neutral session identity
+    # ``registry.resolve_session`` produces for every transport. Carried so the
+    # escalation monitor / answer-injection / completion-narration drain resolve
+    # the SAME session as the originating request. None for pre-#1814 entries. The
+    # A2A layer owns the ``contextId ↔ session_id`` mapping — core stays term-neutral.
+    session_id: str | None = None
     task: asyncio.Task | None = None
     history_events: list[dict] = field(default_factory=list)
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
@@ -109,6 +116,7 @@ class RunEntry:
             "result": self.result,
             "error": self.error,
             "webhook_url": self.webhook_url,
+            "session_id": self.session_id,  # #1814
             "history_events": list(self.history_events),
             "created_at": self.created_at.isoformat(),
             "updated_at": self.updated_at.isoformat(),
@@ -140,6 +148,7 @@ class RunEntry:
             result=data.get("result"),
             error=data.get("error"),
             webhook_url=data.get("webhook_url"),
+            session_id=data.get("session_id"),  # #1814 — None for pre-#1814 entries (graceful)
             task=None,
             history_events=list(data.get("history_events") or []),
             created_at=_parse_ts(data.get("created_at")),
@@ -241,6 +250,7 @@ class RunRegistry:
         agent_name: str,
         chain_id: str,
         webhook_url: str | None = None,
+        session_id: str | None = None,
     ) -> RunEntry:
         """Allocate a new run_id and entry with status='running'."""
         run_id = uuid.uuid4().hex
@@ -249,6 +259,7 @@ class RunRegistry:
             agent_name=agent_name,
             chain_id=chain_id,
             webhook_url=webhook_url,
+            session_id=session_id,  # #1814
         )
         self._runs[run_id] = entry
         self._persist()
