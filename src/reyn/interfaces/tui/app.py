@@ -269,6 +269,12 @@ class ReynTUIApp(App):
         # outbox loop (= Ctrl+G / Ctrl+Shift+G ``/find`` cycle navigation)
         # can reach the find-cycle state living on the router.
         self._outbox_router = None  # type: ignore[assignment]
+        # Pre-drain fallback handle for action-hint auto-hide. Once the
+        # OutboxRouter exists, action hints share ITS single transient handle
+        # (so a live-status / stream-start takeover cancels them too); this
+        # app-local handle only carries the no-registry / pre-drain case where
+        # no router (hence no cross-source transient) exists yet.
+        self._action_hint_timer = None  # type: ignore[assignment]
         self._panel_visible = False
         # ADR-0038 1f: the mounted RewindMenuWidget while the /rewind picker is
         # open, else None. Navigation (↑/↓/Enter) + Esc dismiss are gated on
@@ -1685,6 +1691,46 @@ class ReynTUIApp(App):
             return
         router.cycle_find(-1)
 
+    def _show_action_hint(
+        self,
+        conv: "ConversationView",
+        text: str,
+        *,
+        kind: str = "general",
+        duration: float = 2.0,
+    ) -> None:
+        """Show a transient F-key status hint that auto-hides after ``duration`` s.
+
+        Routes through the OutboxRouter's single transient handle
+        (``_show_transient_status``) so the hint shares ONE auto-hide timer
+        with the outbox transients (``/copy``, ``/cost-inline``, …). That is
+        what lets a load-bearing takeover — a live ``thinking…`` status
+        (``_on_status``), a stream start, or an ``/attach`` — cancel a pending
+        hint timer before it can fire and hide the live indicator. Using a
+        private ``set_timer(hide_status)`` per keypress (the prior behaviour)
+        left those hints invisible to that cancellation, so a stale hint
+        auto-hide could kill the ``⟳ thinking…`` spinner or a newer error.
+
+        When the router does not exist yet (no registry / pre-drain), fall
+        back to an app-owned single cancellable handle — there are no outbox
+        transients in that state, so a single app-local handle is sufficient.
+        """
+        router = self._outbox_router
+        if router is not None:
+            router._show_transient_status(conv, text, kind=kind, duration=duration)
+            return
+        if self._action_hint_timer is not None:
+            try:
+                self._action_hint_timer.stop()
+            except Exception:
+                pass
+            self._action_hint_timer = None
+        try:
+            conv.show_status(text, kind=kind)
+            self._action_hint_timer = self.set_timer(duration, conv.hide_status)
+        except Exception:
+            pass
+
     def _maybe_emit_f3_tip(
         self,
         show_status_fn: "Callable[[str], None]",
@@ -1751,26 +1797,25 @@ class ReynTUIApp(App):
         except Exception:
             return
         # First-use tip fires regardless of whether any rows are
-        # in flight — teaching what F3 does is useful either way.
+        # in flight — teaching what F3 does is useful either way. The tip is
+        # shown (and auto-hidden after ~4 s) through the shared transient
+        # handle so a turn starting mid-tip cancels it instead of killing the
+        # live indicator.
         tip_shown = self._maybe_emit_f3_tip(
-            lambda msg: conv.show_status(msg, kind="general"),
+            lambda msg: self._show_action_hint(
+                conv, msg, kind="general", duration=4.0,
+            ),
         )
         skill_rows = conv.in_flight_skill_rows()
         tool_rows = conv.in_flight_tool_call_rows()
         rows: list = list(skill_rows) + list(tool_rows)
         if not rows:
-            if tip_shown:
-                # Tip replaces the "no rows" hint for this first press only;
-                # auto-hide after ~4 s.
-                self.set_timer(4.0, conv.hide_status)
-            else:
-                try:
-                    conv.show_status(
-                        "no active rows to expand", kind="general",
-                    )
-                    self.set_timer(2.0, conv.hide_status)
-                except Exception:
-                    pass
+            # Tip (already shown + auto-hiding) replaces the "no rows" hint for
+            # the first press only; otherwise show the transient "no rows" hint.
+            if not tip_shown:
+                self._show_action_hint(
+                    conv, "no active rows to expand", duration=2.0,
+                )
             return
         # Pick a single target state for THIS keypress so the set
         # converges. Without this, F3 on a mixed set (one expanded,
@@ -1780,9 +1825,8 @@ class ReynTUIApp(App):
         for row in rows:
             if row.is_expanded != target_expand:
                 row.toggle_expand()
-        if tip_shown:
-            # Auto-hide the tip after ~4 s once expand has been applied.
-            self.set_timer(4.0, conv.hide_status)
+        # The tip (if shown) was already armed to auto-hide via the shared
+        # transient handle by the callback above — no separate timer needed.
 
     def action_focus_async_stack(self) -> None:
         """F4 — focus the bottom AsyncStackPanel for keyboard navigation.
@@ -1801,10 +1845,9 @@ class ReynTUIApp(App):
         if not panel.snapshot():
             try:
                 conv = self.query_one("#conversation", ConversationView)
-                conv.show_status(
-                    "no active tasks in async strip", kind="general",
+                self._show_action_hint(
+                    conv, "no active tasks in async strip", duration=2.0,
                 )
-                self.set_timer(2.0, conv.hide_status)
             except Exception:
                 pass
             return
@@ -1837,8 +1880,9 @@ class ReynTUIApp(App):
         row = conv.latest_failed_tool_row()
         if row is None:
             try:
-                conv.show_status("no recent tool failure", kind="general")
-                self.set_timer(2.0, conv.hide_status)
+                self._show_action_hint(
+                    conv, "no recent tool failure", duration=2.0,
+                )
             except Exception:
                 pass
             return
@@ -1854,11 +1898,11 @@ class ReynTUIApp(App):
         if not still_mounted:
             # Row already in scroll history -- point at events for full trace.
             try:
-                conv.show_status(
+                self._show_action_hint(
+                    conv,
                     "tool row flushed — Ctrl+B → Events tab for full trace",
-                    kind="general",
+                    duration=3.0,
                 )
-                self.set_timer(3.0, conv.hide_status)
             except Exception:
                 pass
             return
@@ -1882,8 +1926,7 @@ class ReynTUIApp(App):
         new_state = conv.toggle_timestamps()
         label = "on" if new_state else "off"
         try:
-            conv.show_status(f"timestamps: {label}", kind="general")
-            self.set_timer(2.0, conv.hide_status)
+            self._show_action_hint(conv, f"timestamps: {label}", duration=2.0)
         except Exception:
             pass
 
