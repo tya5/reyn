@@ -20,7 +20,13 @@ permissions:
     - module: ./stats.py
       function: compute_text_stats
       mode: safe
-      timeout: 5
+      # 15s budgets the sandboxed python HARNESS subprocess (interpreter spawn +
+      # reyn import cold-start), not just compute_text_stats (which runs in
+      # microseconds — see Overview). 5s was under-budgeted: on a cold/loaded
+      # machine the harness cold-start alone can exceed it, causing intermittent
+      # spurious `kind=Timeout` PreprocessorErrors (the run retries via
+      # will_resume but surfaces a confusing "stuck" — word_stats hang triage).
+      timeout: 15
 # FP-0016 D: this skill needs no static secrets / OAuth tokens.
 required_credentials: []
 ---
