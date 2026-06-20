@@ -419,6 +419,14 @@ class PermissionResolver:
 
     # ── Public read helpers (= Tier-C1 cleanup wave 27) ───────────────────
 
+    @property
+    def project_root(self) -> Path:
+        """The host-side approvals/config base (where ``.reyn`` lives). Public
+        read accessor — callers (e.g. #1827 S4b's ``_untrusted`` profile load)
+        resolve project paths from here instead of reaching into the private
+        ``_project_root``."""
+        return self._project_root
+
     def saved_get(self, key: str) -> bool | None:
         """Read accessor for the persisted approvals map. Returns the
         stored boolean (or None when not yet recorded)."""

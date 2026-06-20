@@ -2338,7 +2338,7 @@ class Session:
             resolve_profile,
         )
         if self._untrusted_contextual_cache is None:
-            root = getattr(self._perm, "_project_root", None) or Path.cwd()
+            root = self._perm.project_root if self._perm is not None else Path.cwd()
             self._untrusted_contextual_cache = resolve_profile(
                 load_untrusted_profile(root)
             )[0]
