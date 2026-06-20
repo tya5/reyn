@@ -217,6 +217,7 @@ async def _get_or_build_registry() -> "AgentRegistry":
                 action_retrieval_config=session_cfg.config.action_retrieval,
                 chat_tool_use_scheme=session_cfg.config.tool_use.chat,  # #1593 PR-2
                 embedding_config=session_cfg.config.embedding,
+                router_config=session_cfg.config.llm.router,  # #1829 S3b
                 agent_id=session_cfg.config.agent.id,
                 # #1402: scoped surface passed EXPLICITLY (required by
                 # build_scoped_chat_session). chainlit's current behaviour

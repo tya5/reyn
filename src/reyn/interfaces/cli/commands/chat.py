@@ -454,6 +454,7 @@ def run(args: argparse.Namespace) -> None:
             action_retrieval_config=session_cfg.config.action_retrieval,
             chat_tool_use_scheme=session_cfg.config.tool_use.chat,  # #1593 PR-2
             embedding_config=session_cfg.config.embedding,
+            router_config=session_cfg.config.llm.router,  # #1829 S3b
             eager_embedding_build=getattr(args, "eager_embedding_build", False),
             agent_id=session_cfg.config.agent.id,  # FP-0016 E
             exclude_tools=_exclude_tools,  # #187: hide tools (e.g. web) from the LLM catalog

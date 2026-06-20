@@ -335,6 +335,7 @@ def _get_registry():
                 action_retrieval_config=config.action_retrieval,
                 chat_tool_use_scheme=config.tool_use.chat,  # #1593 PR-2
                 embedding_config=config.embedding,
+                router_config=config.llm.router,  # #1829 S3b
                 eager_embedding_build=_eager_embedding_build,
                 # #1401: the 3 scoped capabilities, filled from the CLI override
                 # holder (env-backend INSTANCE → both FS+exec seams = single-shared

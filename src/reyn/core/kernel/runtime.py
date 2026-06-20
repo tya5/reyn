@@ -78,6 +78,7 @@ class OSRuntime:
         parent_run_id: str | None = None,
         sandbox_config: "SandboxConfig | None" = None,
         threat_scan: "object | None" = None,  # FP-0050/#1822 S5 (EP4)
+        router_config: "object | None" = None,  # #1829 S3b: reyn.yaml llm.router.*
         environment_backend: "EnvironmentBackend | None" = None,
         sandbox_backend: "SandboxBackend | None" = None,
         multimodal_config: "MultimodalConfig | None" = None,
@@ -113,6 +114,12 @@ class OSRuntime:
         # the call stack. Set at creation → propagates into the op-loop's tasks.
         from reyn.core.events.events import set_llm_request_event_log
         set_llm_request_event_log(self.events)
+        # #1829 S3b: publish reyn.yaml llm.router.* for the LLM chokepoint. Guarded
+        # — only set when provided, so a sub-runtime spawned within a session does
+        # not clobber the session's inherited ContextVar with None.
+        if router_config is not None:
+            from reyn.llm.llm import set_router_config
+            set_router_config(router_config)
         self.workspace = Workspace(
             self.events,
             permission_resolver=permission_resolver,

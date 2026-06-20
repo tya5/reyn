@@ -62,6 +62,7 @@ _REQUIRED_SCOPED = frozenset({
     "multimodal_config",
     "action_retrieval_config",
     "embedding_config",
+    "router_config",  # #1829 S3b reyn.yaml llm.router.* (per-session, UNIFORM)
     "tool_calls_op_loop_skills",
     "chat_tool_use_scheme",  # #1593 PR-2 per-layer chat scheme selector
 })
