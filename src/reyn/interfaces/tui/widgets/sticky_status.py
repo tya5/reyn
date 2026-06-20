@@ -140,8 +140,14 @@ class StickyStatus(Static):
 
     # ── public API ────────────────────────────────────────────────────────────
 
-    def show(self, text: str, kind: str = "general", *, terminal: bool = False) -> None:
+    def show(self, text: str, kind: str = "general", *, terminal: bool = False) -> bool:
         """Activate the status bar with the given body text and glyph kind.
+
+        Returns True when the status was displayed, False when the call was
+        suppressed by the priority hierarchy (= a higher-priority sticky is
+        active). Callers that arm an auto-hide timer MUST check this — arming
+        a hide on a suppressed show would later dismiss the higher-priority
+        incumbent the suppression just protected.
 
         Wave-10 G-F8 + I-F8: when the sticky is already active with a
         higher-priority ``kind``, a lower-priority ``show()`` is
@@ -169,13 +175,14 @@ class StickyStatus(Static):
             new_priority = _KIND_PRIORITY.get(new_kind, 0)
         if self._active:
             if new_priority < self._current_priority:
-                return
+                return False
         self._kind = new_kind
         self._glyph = _GLYPHS[self._kind]
         self._active = True
         self._current_priority = new_priority
         self.add_class("active")
         self.update_text(text)
+        return True
 
     def update_text(self, text: str) -> None:
         """Update the body text without resetting the elapsed timer."""

@@ -1726,8 +1726,11 @@ class ReynTUIApp(App):
                 pass
             self._action_hint_timer = None
         try:
-            conv.show_status(text, kind=kind)
-            self._action_hint_timer = self.set_timer(duration, conv.hide_status)
+            # Only arm the auto-hide when the hint actually displayed — a
+            # priority-suppressed hint must not arm a timer that would later
+            # dismiss the higher-priority incumbent.
+            if conv.show_status(text, kind=kind):
+                self._action_hint_timer = self.set_timer(duration, conv.hide_status)
         except Exception:
             pass
 
