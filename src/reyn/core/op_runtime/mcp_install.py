@@ -170,6 +170,47 @@ def _write_yaml_config(path: Path, data: dict) -> None:
     )
 
 
+def _scan_install_metadata(
+    command: str,
+    args: list[str],
+    desc: str,
+    threat_scan: object | None,
+) -> list:
+    """Scan prospective MCP-install metadata for threats (#1863 / FP-0050 BP2).
+
+    Pure: returns the de-duplicated list of ``ThreatMatch`` over the joined
+    ``command + args + desc`` text, scanned under BOTH the ``exec`` and
+    ``strict`` scopes. No events, no I/O — the caller emits telemetry and
+    decides the block (via ``content_guard.first_blocking_match``).
+
+    ``exec`` and ``strict`` are mutually non-subsuming scopes
+    (``threat_patterns._SCOPE_INCLUDES``: exec=(all,exec),
+    strict=(all,context,strict)); both are scanned and de-duplicated by
+    ``pattern_id`` so the shared ``all`` patterns are not double-counted. The
+    command/args carry exec-scope threats (pipe-to-shell / reverse-shell /
+    download-then-exec); the description can hide strict-scope threats
+    (ssh/secret access, config mutation in prose).
+
+    Returns ``[]`` when ``threat_scan`` is absent/disabled or there is nothing
+    to scan — making the whole feature a no-op unless the operator enabled it.
+    """
+    if threat_scan is None or not getattr(threat_scan, "enabled", False):
+        return []
+    scan_text = " ".join([command, *[str(a) for a in args], desc or ""]).strip()
+    if not scan_text:
+        return []
+    from reyn.security.content_guard import scan_for_threats
+
+    seen: set[str] = set()
+    matches: list = []
+    for scope in ("exec", "strict"):
+        for m in scan_for_threats(scan_text, threat_scan, scope=scope):
+            if m.pattern_id not in seen:
+                seen.add(m.pattern_id)
+                matches.append(m)
+    return matches
+
+
 # ---------------------------------------------------------------------------
 # Main handler
 # ---------------------------------------------------------------------------
@@ -209,6 +250,9 @@ async def handle(
         runtime = resolution.runtime_hint
         # Use resolved server_name for the config key; fall back to server_id short name.
         resolved_server_name = resolution.server_name or _short_name(op.server_id or op.source)
+        # #1863: description for the install-time threat scan (SourceResolution
+        # carries none today → empty; robust via getattr).
+        install_desc = getattr(resolution, "description", "") or ""
 
     else:
         # Registry path (existing behaviour).
@@ -240,6 +284,8 @@ async def handle(
         remotes_raw = server_json.raw.get("remotes", [])
         runtime = server_json.runtime_hint
         resolved_server_name = _short_name(op.server_id)
+        # #1863: fetched server.json description for the install-time threat scan.
+        install_desc = server_json.description or ""
 
     # ── 2. runtimeHint check ──────────────────────────────────────────────────
     if runtime and runtime in _RUNTIME_CMD:
@@ -251,6 +297,54 @@ async def handle(
                 "status": "error",
                 "server_id": op.server_id,
                 "error": f"必要なランタイムが見つかりません: '{cmd}'. {hint}",
+            }
+
+    # ── 2.5 Install-time threat scan (#1863 / FP-0050 BP2) ────────────────────
+    # Scan the prospective launch command + args + fetched description BEFORE any
+    # side effect (permission prompt, secret save, config write). A block-severity
+    # hit denies the install via a structured ``status="blocked"`` result. The
+    # scan logic lives in the pure ``_scan_install_metadata`` helper; here we wire
+    # the command/args preview, emit telemetry, and short-circuit on a block.
+    _ts = getattr(ctx, "threat_scan", None)
+    _scan_command = ""
+    _scan_args: list[str] = []
+    if packages_raw:
+        _preview_entry = _build_server_entry(packages_raw[0], [])
+        _scan_command = str(_preview_entry.get("command", ""))
+        _scan_args = [str(a) for a in (_preview_entry.get("args") or [])]
+    _matches = _scan_install_metadata(_scan_command, _scan_args, install_desc, _ts)
+    if _matches:
+        from reyn.security.content_guard import first_blocking_match
+
+        for _m in _matches:
+            ctx.events.emit(
+                "mcp_install_threat_match",
+                pattern_id=_m.pattern_id,
+                severity=_m.severity,
+                scope=_m.scope,
+            )
+        _block = first_blocking_match(
+            _matches, getattr(_ts, "block_severity", "block")
+        )
+        if _block is not None:
+            ctx.events.emit(
+                "mcp_install_threat_blocked",
+                pattern_id=_block.pattern_id,
+                severity=_block.severity,
+                server_id=op.server_id,
+            )
+            return {
+                "kind": "mcp_install",
+                "status": "blocked",
+                "server_id": op.server_id,
+                "error": (
+                    f"install blocked: fetched server metadata matched threat "
+                    f"pattern '{_block.pattern_id}' "
+                    f"({_block.scope}/{_block.severity}). The launch command or "
+                    f"description contains a prohibited pattern (e.g. "
+                    f"pipe-to-shell, reverse-shell, ssh/secret access, config "
+                    f"mutation). Do not install this server."
+                ),
             }
 
     # ── 3. Permission gate (#571 collapse arc Phase 5) ────────────────────────
