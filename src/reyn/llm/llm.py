@@ -595,6 +595,54 @@ def _use_llm_router() -> bool:
     return bool(_resolved_router_config().use)
 
 
+# #1868: ambient budget-limit policy context for the per-LLM-call cost gate. The
+# runtime/session sets (bus, on_limit, run_id, non_interactive) here at the same
+# place it binds the limit framework (mirrors set_llm_request_event_log /
+# set_router_config). UNSET → the budget gate FAILS CLOSED (deny / unattended) — no
+# policy context means no silent allow (owner + safety-critical requirement).
+_budget_limit_context_var: "contextvars.ContextVar[tuple | None]" = contextvars.ContextVar(
+    "reyn_budget_limit_context", default=None,
+)
+
+
+def set_budget_limit_context(
+    bus: object, on_limit: object, run_id: object, non_interactive: bool = False,
+) -> "contextvars.Token":
+    """#1868: publish the budget-exceed policy context (bus / on_limit / run_id /
+    non_interactive) the per-LLM-call cost gate routes through. Set by the runtime
+    at construction; propagates into the run's tasks. Returns the token so a caller
+    MAY reset for a nested scope."""
+    return _budget_limit_context_var.set((bus, on_limit, run_id, non_interactive))
+
+
+async def _budget_exceed_allows_continue(check: object, budget_agent: object) -> bool:
+    """#1868: route a ``check_pre_llm`` refusal through the limit framework's 3-mode
+    policy (``handle_limit_exceeded``). Returns True if the over-budget call may
+    proceed (interactive-approved or bounded auto-extend), False to deny (the caller
+    then raises ``BudgetExceeded`` — today's behavior). The ambient policy context
+    is set by ``set_budget_limit_context``; **UNSET → fail-closed deny** (no policy
+    = no silent allow). BudgetLedger accounting is unchanged — only the exceed→
+    response path is unified; an allowed call is still recorded by construction."""
+    ctx = _budget_limit_context_var.get()
+    if ctx is None:
+        return False  # fail-closed: no policy context → deny (= unattended)
+    bus, on_limit, run_id, non_interactive = ctx
+    from reyn.runtime.budget.budget import format_refusal_message
+    from reyn.runtime.limits.limit_handler import handle_limit_exceeded
+    dimension = getattr(check, "hard_dimension", None) or "budget"
+    decision = await handle_limit_exceeded(
+        bus=bus,
+        on_limit=on_limit,
+        kind=f"cost.{dimension}",  # dimension-in-kind (#1868 Q4): own auto_extend counter + audit
+        run_id=str(run_id or ""),
+        prompt=format_refusal_message(check, agent=budget_agent),
+        detail=(f"agent={budget_agent}" if budget_agent else ""),
+        extension_amount=1.0,  # allow ONE over-cap call past the gate (bounded by auto_extend_times)
+        non_interactive=bool(non_interactive),
+    )
+    return bool(decision.allow_continue)
+
+
 class EmptyLLMResponseError(Exception):
     """The LLM returned a 200 response with an empty ``choices`` list.
 
@@ -1653,10 +1701,15 @@ async def call_llm(
         from reyn.runtime.budget.budget import BudgetExceeded, format_refusal_message
         check = budget.check_pre_llm(model=spec.model, agent=budget_agent)
         if not check.allowed:
-            raise BudgetExceeded(
-                check.hard_dimension or "budget",
-                format_refusal_message(check, agent=budget_agent),
-            )
+            # #1868: route the exceed through the 3-mode limit policy (deny /
+            # auto-allow / ask-user). Denied — or NO policy context (fail-closed)
+            # — raises (today's behavior); approved / auto-extended → proceed past
+            # the cap (the call is still recorded; BudgetLedger accounting unchanged).
+            if not await _budget_exceed_allows_continue(check, budget_agent):
+                raise BudgetExceeded(
+                    check.hard_dimension or "budget",
+                    format_refusal_message(check, agent=budget_agent),
+                )
 
     messages: list[dict] = build_phase_messages(
         frame,
@@ -1881,10 +1934,15 @@ async def call_llm_tools(
         from reyn.runtime.budget.budget import BudgetExceeded, format_refusal_message
         check = budget.check_pre_llm(model=spec.model, agent=budget_agent)
         if not check.allowed:
-            raise BudgetExceeded(
-                check.hard_dimension or "budget",
-                format_refusal_message(check, agent=budget_agent),
-            )
+            # #1868: route the exceed through the 3-mode limit policy (deny /
+            # auto-allow / ask-user). Denied — or NO policy context (fail-closed)
+            # — raises (today's behavior); approved / auto-extended → proceed past
+            # the cap (the call is still recorded; BudgetLedger accounting unchanged).
+            if not await _budget_exceed_allows_continue(check, budget_agent):
+                raise BudgetExceeded(
+                    check.hard_dimension or "budget",
+                    format_refusal_message(check, agent=budget_agent),
+                )
 
     # #309: per-class routing (api_base/provider) wins; None → global proxy.
     _routing = routing_for_spec(spec)
