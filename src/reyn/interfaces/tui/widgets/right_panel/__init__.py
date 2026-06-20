@@ -236,6 +236,12 @@ class RightPanel(Widget):
         self._events_filelist_cache: list = []
         self._events_cursor: int = 0
         self._events_visible: list[dict] = []
+        # Monotonic token bumped on every ``_update_preview`` (= any tab
+        # switch / cursor move / refresh that replaces the preview content).
+        # The events-tab async LLM viewer fallback captures this at spawn and
+        # re-checks it before writing, so a result that arrives after the user
+        # has navigated away cannot clobber the now-current preview.
+        self._preview_token: int = 0
         # y-coord (0-indexed line) of each event's headline row in the
         # rendered output. Populated by `render_events`; used by
         # `_scroll_events_into_view` so chain-switch blank lines + the
@@ -1083,6 +1089,10 @@ class RightPanel(Widget):
         return False
 
     def _update_preview(self) -> None:
+        # Advance the preview token: any in-flight async events-tab LLM
+        # fallback (spawned by a PRIOR preview) is now stale and must not
+        # write over the content we are about to render.
+        self._preview_token += 1
         try:
             pane = self.query_one("#preview-pane", _PreviewPane)
             if self._panel_type == "docs" and self._docs_files:
@@ -1226,17 +1236,39 @@ class RightPanel(Widget):
             # Sync registry miss: show YAML now, try LLM template async.
             pane.show_text(title, self._render_as_yaml(ev))
             import asyncio
+            # Capture the current preview token so the async result is dropped
+            # if the user navigates away (= a newer _update_preview bumps it)
+            # before the LLM call returns. Otherwise A's late result would
+            # clobber B's preview.
             asyncio.create_task(
-                self._show_event_llm_fallback(pane, result, title)
+                self._show_event_llm_fallback(
+                    pane, result, title, token=self._preview_token,
+                )
             )
             return
         pane.show_text(title, self._render_as_yaml(ev))
+
+    def _write_preview_if_current(
+        self, pane: "_PreviewPane", title: str, renderable: object, token: int,
+    ) -> bool:
+        """Write ``renderable`` to ``pane`` only if ``token`` is still current.
+
+        Returns True when the write happened, False when it was suppressed as
+        stale (= a newer ``_update_preview`` advanced ``_preview_token`` while
+        an async preview producer was awaiting). The single guarded-write seam
+        for deferred preview producers.
+        """
+        if token != self._preview_token:
+            return False
+        pane.show_text(title, renderable)
+        return True
 
     async def _show_event_llm_fallback(
         self,
         pane: _PreviewPane,
         result: object,
         title: str,
+        token: int,
     ) -> None:
         """Async LLM viewer-template fallback for tool-result preview (#1154 S4).
 
@@ -1244,11 +1276,16 @@ class RightPanel(Widget):
         with a cheap LLM client; if a template is generated it replaces the YAML
         that _show_event_in_preview showed. Uses the per-session in-memory cache,
         so repeated navigation to the same result shape incurs no LLM call.
+
+        ``token`` is the preview token captured at spawn: if the user navigated
+        to a different event (or tab) during the LLM call, ``_update_preview``
+        has bumped the token and this stale result is dropped rather than
+        overwriting the now-current preview.
         """
         from .tool_result_viewers import render_tool_result_async
         viewed = await render_tool_result_async(result, _ViewerTemplateLLMClient())
         if viewed is not None:
-            pane.show_text(title, viewed)
+            self._write_preview_if_current(pane, title, viewed, token)
 
     def _memory_move(self, delta: int) -> None:
         """Move the memory tab cursor; sync preview if open.
