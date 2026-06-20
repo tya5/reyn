@@ -92,6 +92,22 @@ def _serialize(msg, *, session=None) -> str:
 
 
 @router.websocket("/ws/chat/{agent_name}")
+def _decode_inbound_frame(raw: str) -> dict | None:
+    """Decode an untrusted client text frame into a JSON object.
+
+    Returns the parsed dict, or ``None`` if *raw* is not valid JSON OR is valid
+    JSON that is not an object (e.g. ``123`` / ``[]`` / ``"x"`` / ``null``).
+    Centralising the parse here keeps a malformed frame from reaching
+    ``payload.get(...)`` downstream (→ ``AttributeError`` on a non-dict) — the
+    untrusted A2A/WS inbound boundary.
+    """
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError:
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
 async def ws_chat(websocket: WebSocket, agent_name: str) -> None:
     """WebSocket endpoint for a chat session with the named agent."""
     registry = get_registry()
@@ -172,12 +188,14 @@ async def ws_chat(websocket: WebSocket, agent_name: str) -> None:
         # Receive loop: forward client messages to the session.
         while True:
             raw = await websocket.receive_text()
-            try:
-                payload = json.loads(raw)
-            except json.JSONDecodeError:
+            payload = _decode_inbound_frame(raw)
+            if payload is None:
+                # Untrusted inbound: not valid JSON, OR valid JSON that is not an
+                # object (``123`` / ``[]`` / ``null``) — the latter would otherwise
+                # reach ``payload.get(...)`` → AttributeError. Reject either way.
                 await websocket.send_text(json.dumps({
                     "kind": "error",
-                    "text": "Invalid JSON in client message.",
+                    "text": "Client message must be a valid JSON object.",
                     "meta": {},
                 }))
                 continue
