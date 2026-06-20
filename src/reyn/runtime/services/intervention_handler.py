@@ -133,6 +133,16 @@ class InterventionHandler:
         callable receives the same positional kwargs as Session's
         internal ``_append_history`` helper, except it is simplified to
         only the fields InterventionHandler needs.
+    threat_scan:
+        Optional ``ThreatScanConfig`` (FP-0050 / #1862, EP7).  When an
+        answer is delivered from an *external* peer (A2A POST / webhook,
+        ``external_source=True``), the **history-bound copy** of the
+        answer text is structurally fenced via
+        :func:`~reyn.security.content_guard.fence_if_enabled` before it
+        reaches conversation context.  The future-resolved / buffered /
+        choice-matched answer and the audit event stay **raw** — only the
+        context sink is fenced, so the A2A round-trip (buffer + choice-id)
+        is unaffected.  ``None`` disables fencing entirely.
     """
 
     def __init__(
@@ -143,12 +153,14 @@ class InterventionHandler:
         event_log: "EventLog",
         put_outbox: "Callable[[OutboxMessage], Awaitable[None]]",
         append_history: "Callable[[str, str, str, dict], None]",
+        threat_scan: "Any | None" = None,
     ) -> None:
         self._registry = intervention_registry
         self._journal = journal
         self._events = event_log
         self._put_outbox = put_outbox
         self._append_history = append_history
+        self._threat_scan = threat_scan
 
     # ── Public API (mirrors former session._<name> methods) ──────────────────
 
@@ -169,6 +181,7 @@ class InterventionHandler:
         text: str,
         *,
         choice_id_override: str | None = None,
+        external_source: bool = False,
     ) -> bool:
         """Resolve ``iv`` with ``text``, append a user-history entry, emit the
         ``user_answered_intervention`` event.
@@ -177,6 +190,16 @@ class InterventionHandler:
         side effects (history + audit event + unknown-choice hint).  Returns
         True when the user input was consumed (answer set OR unrecognized
         choice hint emitted — both suppress a fresh router turn).
+
+        ``external_source`` (FP-0050 / #1862, EP7): True iff the answer came
+        from an untrusted peer (A2A POST / webhook — set only by
+        ``Session.answer_pending_intervention``). When True and a
+        ``threat_scan`` config is present, **only** the history-bound copy
+        of ``text`` is structurally fenced; the future resolution, buffered
+        answer, choice match, and audit event all stay raw so the A2A
+        round-trip (buffer + choice-id matching) is unchanged. Local UI
+        callers (TUI / slash / chainlit) leave the default ``False`` →
+        unfenced.
 
         Corresponds to session._deliver_answer_to.
         """
@@ -208,9 +231,19 @@ class InterventionHandler:
             )
         else:
             choice = match_choice(text, iv.choices) if iv.choices else None
+        # FP-0050 / #1862 (EP7): fence ONLY the history-bound copy of an
+        # external peer answer — the context sink. The raw `text` above
+        # already drove future resolution / buffer / choice match; the
+        # audit event below keeps raw text (P6 audit truth). Fencing here
+        # is the single point that touches LLM context, so the A2A
+        # round-trip (buffer + choice-id) is unaffected.
+        history_text = text
+        if external_source and self._threat_scan is not None:
+            from reyn.security.content_guard import fence_if_enabled
+            history_text = fence_if_enabled(text, self._threat_scan)
         self._append_history(
             "user",
-            text,
+            history_text,
             _now_iso(),
             {
                 "answered_skill": iv.skill_name or "",

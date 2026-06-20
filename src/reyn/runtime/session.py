@@ -1342,6 +1342,9 @@ class Session:
             event_log=self._chat_events,
             put_outbox=self._put_outbox,
             append_history=self._append_history_for_handler,
+            # FP-0050 / #1862 (EP7): fences external peer-answer copies
+            # bound for conversation context (history sink only).
+            threat_scan=self._safety.threat_scan,
         )
         # Owns the chain-override state + the per-intervention dispatch
         # orchestration. running_skills_chain (run→chain map) lives on the
@@ -3550,15 +3553,24 @@ class Session:
         text: str,
         *,
         choice_id_override: str | None = None,
+        external_source: bool = False,
     ) -> bool:
         """Thin wrapper → InterventionHandler.deliver_answer_to.
 
         ``choice_id_override`` is forwarded so peer-side callers (= A2A
         POST answer with explicit choice_id per PR #285 Gap 4) can bypass
         the TUI's text-based match_choice. issue #292 (α).
+
+        ``external_source`` (FP-0050 / #1862, EP7) marks an untrusted peer
+        answer so its history-bound copy is fenced. Set only by
+        ``answer_pending_intervention`` (the A2A / webhook entry); the
+        default ``False`` keeps all local UI callers (TUI / slash /
+        chainlit) unfenced.
         """
         return await self._intervention_handler.deliver_answer_to(
-            iv, text, choice_id_override=choice_id_override,
+            iv, text,
+            choice_id_override=choice_id_override,
+            external_source=external_source,
         )
 
     async def answer_pending_intervention(
@@ -3599,6 +3611,11 @@ class Session:
                 iv,
                 answer.text,
                 choice_id_override=answer.choice_id,
+                # FP-0050 / #1862 (EP7): this is the single authoritative
+                # peer-answer entry (A2A POST / webhook). Mark the answer
+                # external so its history-bound copy is fenced before it
+                # reaches conversation context.
+                external_source=True,
             )
         return False
 
