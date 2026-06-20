@@ -26,8 +26,13 @@ Design (lead-ratified #1154 Phase 1–3):
     call, cheap/fast model, 256-token cap, None on any failure) +
     ``render_tool_result_async`` (sync registry first, then LLM fallback with
     cache). Not yet wired at the call site (S4).
-  - Phase 3 (S4, deferred): wire ``render_tool_result_async`` at
+  - Phase 3 (S4): wire ``render_tool_result_async`` at
     ``right_panel/__init__.py:_show_event_in_preview``.
+  - Concrete email + diff viewers (owner-approved slice, 2026-06-20): two
+    hand-built viewers for the stable, high-frequency ``email`` (from/subject
+    card) and ``diff`` (syntax-highlighted patch) shapes — deterministic, no
+    LLM cost/latency. Registered before the generic JSON viewer. table/CSV,
+    image, markdown stay on the LLM-template fallback.
 
 This module is intentionally pure (dict in → Rich renderable | None) so it
 is testable in isolation without the Textual app.
@@ -197,6 +202,115 @@ def _viewer_image(result: dict) -> RenderableType | None:
     return table
 
 
+# ---------------------------------------------------------------------------
+# Concrete email + diff viewers (#1154 owner-approved slice, 2026-06-20)
+#
+# These are the two "stable, high-frequency structured types" the owner GO'd
+# for deterministic hand-built rendering (zero LLM cost/latency) on top of the
+# Phase 3 registry seam. Detection is explicit-content-type-first then a
+# shape-sniff pass (mirrors the module's overall design). They are registered
+# *before* the generic JSON viewer so an email/diff result delivered with a
+# ``application/json`` content-type still renders as an email/diff card rather
+# than a raw JSON dump. table/CSV, image, markdown stay on the existing
+# LLM-template fallback — not concrete-ised.
+# ---------------------------------------------------------------------------
+
+# Standard MIME type for an RFC 822 message.
+_EMAIL_CONTENT_TYPES = ("message/rfc822",)
+# Ordered (label, dict-key) header rows for the email card.
+_EMAIL_HEADER_FIELDS = (
+    ("From", "from"),
+    ("To", "to"),
+    ("Cc", "cc"),
+    ("Date", "date"),
+    ("Subject", "subject"),
+)
+_EMAIL_BODY_KEYS = ("body", "text")
+_MAX_EMAIL_FIELD_CHARS = 500
+_MAX_EMAIL_BODY_CHARS = 2000
+
+
+def _looks_like_email(result: dict) -> bool:
+    """True for an explicit message/rfc822 type or a from+subject+(to|body) shape."""
+    if _content_type_of(result) in _EMAIL_CONTENT_TYPES:
+        return True
+    has_envelope = "from" in result and "subject" in result
+    has_recipient_or_body = "to" in result or "body" in result
+    return has_envelope and has_recipient_or_body
+
+
+def _viewer_email(result: dict) -> RenderableType | None:
+    """From/To/Cc/Date/Subject header card + body (Phase-3 concrete viewer).
+
+    All header values are ``escape()``-d (untrusted external content, #1822);
+    the body is wrapped in ``rich.text.Text`` which treats its input as literal
+    (no console-markup parsing), so it is markup-injection-safe by construction.
+    Returns ``None`` when neither a header field nor a body is present, so an
+    empty/ambiguous match falls through to the YAML / LLM-template fallback.
+    """
+    from rich.console import Group
+    from rich.markup import escape
+    from rich.text import Text
+
+    table = Table(show_header=False, box=None, expand=False)
+    table.add_column("field", style="bold")
+    table.add_column("value")
+    rendered_header = False
+    for label, key in _EMAIL_HEADER_FIELDS:
+        val = result.get(key)
+        if isinstance(val, str) and val.strip():
+            table.add_row(label, escape(val[:_MAX_EMAIL_FIELD_CHARS]))
+            rendered_header = True
+
+    body = ""
+    for key in _EMAIL_BODY_KEYS:
+        v = result.get(key)
+        if isinstance(v, str) and v.strip():
+            body = v
+            break
+
+    if not rendered_header and not body:
+        return None
+
+    table.caption = "✉  email"
+    if body:
+        return Group(table, Text(""), Text(body[:_MAX_EMAIL_BODY_CHARS]))
+    return table
+
+
+# Standard MIME types for a unified diff / patch.
+_DIFF_CONTENT_TYPES = ("text/x-diff", "text/x-patch")
+
+
+def _looks_like_diff(result: dict) -> bool:
+    """True for an explicit diff/patch type or unified-diff shape markers."""
+    if _content_type_of(result) in _DIFF_CONTENT_TYPES:
+        return True
+    text = _result_text(result)
+    if not text:
+        return False
+    if text.lstrip().startswith("diff --git"):
+        return True
+    if "--- " in text and "+++ " in text:
+        return True
+    return "\n@@ " in text or text.startswith("@@ ")
+
+
+def _viewer_diff(result: dict) -> RenderableType | None:
+    """Syntax-highlighted unified diff (Phase-3 concrete viewer).
+
+    ``rich.syntax.Syntax`` renders the raw text through a pygments lexer and
+    does NOT interpret console markup, so the (untrusted, #1822) diff text is
+    markup-injection-safe without an explicit escape pass.
+    """
+    text = _result_text(result)
+    if not text.strip():
+        return None
+    from rich.syntax import Syntax
+
+    return Syntax(text, "diff", theme="ansi_dark", word_wrap=False, background_color="default")
+
+
 _WEB_SUMMARY_KEYS = ("title", "outline", "first_paragraph", "link_count")
 _MAX_OUTLINE_ROWS = 12
 
@@ -264,6 +378,16 @@ register_viewer(_pred_csv, _viewer_csv, name="csv")
 register_viewer(_pred_json, _viewer_json, name="json")
 register_viewer(_pred_image, _viewer_image, name="image")
 register_viewer(_looks_like_web_summary, _viewer_web_summary, name="web_summary")
+
+# Concrete email + diff viewers fire AFTER explicit markdown/csv content-types
+# but BEFORE the generic JSON viewer (owner-approved slice). Insert at the json
+# entry's current index rather than a hardcoded position so this stays correct
+# if the default population order changes.
+def _index_of(name: str) -> int:
+    return next((i for i, e in enumerate(_VIEWERS) if e.name == name), len(_VIEWERS))
+
+register_viewer(_looks_like_email, _viewer_email, name="email", position=_index_of("json"))
+register_viewer(_looks_like_diff, _viewer_diff, name="diff", position=_index_of("json"))
 
 
 # ---------------------------------------------------------------------------
