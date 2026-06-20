@@ -49,6 +49,7 @@ No configuration required for any of these. Reyn has the skills for them out of 
 - **[Use an MCP server](../for-skill-authors/operations/use-an-mcp-server.md)** — add GitHub, Slack, a database, or any MCP-compatible tool.
 - **[Enable semantic search](enable-semantic-search.md)** — index your own docs so Reyn can search them by meaning.
 - **[Log in to an OAuth provider](oauth-login.md)** — authorize GitHub / Google / etc. via the browser device flow.
+- **[Inspect and manage memory](manage-memory.md)** — review, edit, back up, or restore what Reyn remembers.
 
 ### Control and safety
 
@@ -62,7 +63,7 @@ No configuration required for any of these. Reyn has the skills for them out of 
 
 ## Things Reyn handles for you
 
-**Memory** — Reyn remembers facts across sessions automatically. No setup needed.
+**Memory** — Reyn remembers facts across sessions automatically. No setup needed. To review or curate what it has stored, see [Inspect and manage memory](manage-memory.md).
 
 **Crash recovery** — if a long task is interrupted, re-run `reyn chat` and it resumes from where it left off.
 

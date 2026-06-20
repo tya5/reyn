@@ -100,6 +100,7 @@ nav:
               - guide/for-users/enable-semantic-search.md
               - guide/for-users/popular-mcp-servers.md
               - guide/for-users/oauth-login.md
+              - guide/for-users/manage-memory.md
       - For skill authors:
           - guide/for-skill-authors/index.md
           - Foundation:
