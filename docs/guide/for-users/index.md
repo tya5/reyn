@@ -55,6 +55,7 @@ No configuration required for any of these. Reyn has the skills for them out of 
 - **[Respond mid-task](ask-user-mid-phase.md)** — answer questions Reyn asks while a skill is running.
 - **[Rewind a session](time-travel.md)** — jump back to an earlier point with `/rewind` and branch from there.
 - **[Cap your spending](cap-spending.md)** — set token / dollar limits so a run can't overspend.
+- **[Run a skill on a schedule](schedule-skills.md)** — fire a skill on a cron schedule with `reyn cron`.
 
 ---
 
