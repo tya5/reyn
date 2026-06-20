@@ -28,6 +28,7 @@ from .base import (
     _TEXT_DIM,
     _TEXT_MUTED,
     _TEXT_NEUTRAL,
+    truncate_to_cells,
 )
 
 # ── kind-specific row renderers ──────────────────────────────────────────────
@@ -70,9 +71,9 @@ def _render_kind_intervention(
     )
     lines = [head]
     if summary:
-        lines.append(f"    [{_TEXT_NEUTRAL}]↳[/] [{_TEXT_BODY}]{summary[:60]}[/]")
+        lines.append(f"    [{_TEXT_NEUTRAL}]↳[/] [{_TEXT_BODY}]{truncate_to_cells(summary, 60)}[/]")
     if detail:
-        lines.append(f"      [{_TEXT_DIM}]{detail[:60]}[/]")
+        lines.append(f"      [{_TEXT_DIM}]{truncate_to_cells(detail, 60)}[/]")
     return lines
 
 
@@ -95,7 +96,7 @@ def _render_kind_unknown(
     summary = str(view.get("summary", ""))
     return [
         f"{pfx}[{name_style}]{kind}[/]  [{_TEXT_MUTED}]{iv_id_short}[/]  "
-        f"[{_TEXT_BODY}]{summary[:60]}[/]",
+        f"[{_TEXT_BODY}]{truncate_to_cells(summary, 60)}[/]",
     ]
 
 

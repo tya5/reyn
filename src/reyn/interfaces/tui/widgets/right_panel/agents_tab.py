@@ -23,6 +23,7 @@ from .base import (
     _TEXT_DIM,
     _TEXT_MUTED,
     logger,
+    truncate_to_cells,
 )
 
 
@@ -715,7 +716,7 @@ def render_agents(
                 item_ys.append(y_counter)
                 y_counter += 1
                 if p["goal"]:
-                    goal = p["goal"][:60] + ("…" if len(p["goal"]) > 60 else "")
+                    goal = truncate_to_cells(p["goal"], 60)
                     plan_node.add(RichText(goal, style=_TEXT_DIM))
                     y_counter += 1
                 flat_items.append({
@@ -829,7 +830,7 @@ def render_agents(
                 item_ys.append(y_counter)
                 y_counter += 1
                 if p["goal"]:
-                    goal = p["goal"][:60] + ("…" if len(p["goal"]) > 60 else "")
+                    goal = truncate_to_cells(p["goal"], 60)
                     node.add(RichText(goal, style=_TEXT_DIM))
                     y_counter += 1
                 flat_items.append({
