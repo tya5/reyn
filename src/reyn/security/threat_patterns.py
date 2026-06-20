@@ -63,9 +63,17 @@ _RAW_PATTERNS: tuple[tuple[str, str, str, str], ...] = (
     (r"system\s+prompt\s+override", "sys_prompt_override", "all", SEVERITY_BLOCK),
     (r"disregard\s+(?:\w+\s+){0,8}(your|all|any)\s+(?:\w+\s+){0,8}(instructions|rules|guidelines)", "disregard_rules", "all", SEVERITY_BLOCK),
     (r"act\s+as\s+(if|though)\s+(?:\w+\s+){0,8}you\s+(?:\w+\s+){0,8}(have\s+no|don't\s+have)\s+(?:\w+\s+){0,8}(restrictions|limits|rules)", "bypass_restrictions", "all", SEVERITY_BLOCK),
-    (r"<!--[^>]*(?:ignore|override|system|secret|hidden)[^>]*-->", "html_comment_injection", "all", SEVERITY_BLOCK),
+    # #1903 ReDoS: the two greedy `[^>]*` around an alternation that the filler can
+    # also match backtracked catastrophically on `"<!--" + "ignore"×N` (O(n²): 134ms
+    # @48KB and climbing). Bounded `{0,200}` → linear; an injected comment marker is
+    # well under 200 chars per side, so detection is unchanged.
+    (r"<!--[^>]{0,200}(?:ignore|override|system|secret|hidden)[^>]{0,200}-->", "html_comment_injection", "all", SEVERITY_BLOCK),
     (r"<\s*div\s+style\s*=\s*[\"'][\s\S]*?display\s*:\s*none", "hidden_div", "all", SEVERITY_BLOCK),
-    (r"translate\s+.*\s+into\s+.*\s+and\s+(execute|run|eval)", "translate_execute", "all", SEVERITY_BLOCK),
+    # #1903 ReDoS: the two greedy `.*` around literals the filler also matches
+    # backtracked catastrophically on `"translate " + "into and "×N` (O(n²): 5.85s
+    # @72KB). Bounded `{0,200}` → linear; a real "translate <x> into <y> and
+    # execute" phrase fits well under 200 chars per side, so detection is unchanged.
+    (r"translate\s+.{0,200}\s+into\s+.{0,200}\s+and\s+(execute|run|eval)", "translate_execute", "all", SEVERITY_BLOCK),
     (r"do\s+not\s+(?:\w+\s+){0,8}tell\s+(?:\w+\s+){0,8}the\s+user", "deception_hide", "all", SEVERITY_BLOCK),
     (r"curl\s+[^\n]*\$\{?\w*(KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL|API)", "exfil_curl", "all", SEVERITY_BLOCK),
     (r"wget\s+[^\n]*\$\{?\w*(KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL|API)", "exfil_wget", "all", SEVERITY_BLOCK),
