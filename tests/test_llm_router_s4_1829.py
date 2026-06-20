@@ -113,10 +113,24 @@ def test_redact_strips_api_key_value() -> None:
 
 # ── rotation through the (real) Router → litellm.acompletion ──────────────────
 
+def _deployment_api_key(d) -> str | None:
+    """api_key from a get_model_list() entry (dict or object, across litellm versions)."""
+    lp = d.get("litellm_params", {}) if isinstance(d, dict) else getattr(d, "litellm_params", {})
+    return lp.get("api_key") if isinstance(lp, dict) else getattr(lp, "api_key", None)
+
+
 @pytest.mark.asyncio
-async def test_rotation_routes_each_key_through_litellm_acompletion(monkeypatch) -> None:
-    """Tier 2: a 2-key credentials chain builds a Router that threads BOTH keys to
-    litellm.acompletion across calls (rotation, replay-compatible boundary)."""
+async def test_rotation_wires_both_keys_and_routes_through_litellm_acompletion(monkeypatch) -> None:
+    """Tier 2: a 2-key credentials chain builds a Router that wires BOTH keys as
+    deployments and routes through the (monkeypatched) litellm.acompletion boundary.
+
+    Bounded-by-construction (#1888 de-flake): the asserted rotation invariant is the
+    DETERMINISTIC one — both keys are present as Router deployments (read from
+    get_model_list()). The runtime load-balance DISTRIBUTION across them is litellm's
+    `simple-shuffle` (weighted-random), so the prior "both keys appear in 6 calls"
+    assertion was probabilistic and flaked (~3% of 6-call runs land entirely on one
+    deployment → got {'val-2'}, which blocked #1885). Wiring + the acompletion
+    boundary are timing/probability-independent."""
     monkeypatch.setenv("K1", "val-1")
     monkeypatch.setenv("K2", "val-2")
     set_router_config(_cfg(credentials={_M: [{"api_key_env": "K1"}, {"api_key_env": "K2"}]}))
@@ -133,8 +147,11 @@ async def test_rotation_routes_each_key_through_litellm_acompletion(monkeypatch)
 
     with mock.patch.object(litellm, "acompletion", side_effect=_fake):
         router = _single_deployment_router(_M)
-        for _ in range(6):
-            await router.acompletion(model=_M, messages=[{"role": "user", "content": "x"}])
-    assert {"val-1", "val-2"} <= set(seen), (
-        f"both rotated keys must reach litellm.acompletion (got {set(seen)!r})"
-    )
+        # deterministic: BOTH rotated keys are wired as Router deployments.
+        wired = {_deployment_api_key(d) for d in (router.get_model_list() or [])}
+        assert {"val-1", "val-2"} <= wired, (
+            f"both rotated keys must be wired as Router deployments (got {wired!r})"
+        )
+        # behavioral: a call routes through the (monkeypatched) litellm.acompletion.
+        await router.acompletion(model=_M, messages=[{"role": "user", "content": "x"}])
+    assert seen, "the Router must route through the monkeypatched litellm.acompletion"
