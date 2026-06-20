@@ -135,3 +135,85 @@ def compose_resolved(
         ContextualPermission(tool_allow=combined_allow, tool_deny=frozenset(deny)),
         frozenset(excluded),
     )
+
+
+# ── #1827 S4: context-auto untrusted-source narrowing ───────────────────────
+#
+# Defense-in-depth with the #1862 content-fence: while untrusted external content
+# is live in the agent's active context, the agent is also CAPABILITY-narrowed —
+# so even a partial prompt-injection has no dangerous tools to reach. This is
+# **seam-agnostic**: any untrusted-content seam stamps ``UNTRUSTED_META_KEY`` on
+# its history/context entry meta (the external peer answer in S4 v1; external
+# tool-results in the #1909 follow-up), and the tainted-derivation is marker-
+# driven, not seam-specific.
+
+# The marker key a seam stamps on a history-entry meta to mark untrusted content.
+UNTRUSTED_META_KEY: "str" = "external_source"
+
+# The well-known auto-applied profile name. An operator
+# ``.reyn/capability_profiles/_untrusted.yaml`` overrides the built-in secure
+# default — an override is a *deliberate loosening*, never a tightening of the
+# floor below what the operator opts into.
+UNTRUSTED_PROFILE_NAME: "str" = "_untrusted"
+
+# The built-in secure default: deny the side-effecting / persistence /
+# re-delegation / execution / install surfaces so untrusted content can be read
+# and reasoned about but cannot drive irreversible actions. Both the qualified
+# catalog names and their unwrapped aliases are denied (the live gate matches the
+# effective resolved name, which differs by scheme / invoke_action unwrap).
+_BUILTIN_UNTRUSTED_DENY: "frozenset[str]" = frozenset({
+    # memory writes / deletes — no persistence from untrusted content
+    "memory_operation__remember_shared",
+    "memory_operation__remember_agent",
+    "memory_operation__forget",
+    # re-delegation — no spawning peers from untrusted content
+    "multi_agent__delegate", "delegate_to_agent",
+    # code execution
+    "exec__sandboxed_exec", "sandboxed_exec",
+    # MCP install — no installing servers from untrusted content
+    "mcp__install_registry", "mcp__install_package", "mcp__install_local",
+})
+
+
+def builtin_untrusted_profile() -> CapabilityProfile:
+    """The built-in secure default auto-applied while untrusted content is live."""
+    return CapabilityProfile(
+        name=UNTRUSTED_PROFILE_NAME,
+        description="auto-applied while untrusted external content is in context (#1827 S4)",
+        tool_deny=tuple(sorted(_BUILTIN_UNTRUSTED_DENY)),
+    )
+
+
+def load_untrusted_profile(project_root: "str | Path") -> CapabilityProfile:
+    """The minimal profile auto-applied while untrusted external content is live.
+
+    An operator ``.reyn/capability_profiles/_untrusted.yaml`` overrides the
+    built-in secure default (a deliberate loosening). A malformed override falls
+    back to the built-in (surfaced on stderr) — a typo must not silently drop the
+    untrusted floor.
+    """
+    path = Path(project_root) / ".reyn" / "capability_profiles" / f"{UNTRUSTED_PROFILE_NAME}.yaml"
+    if path.is_file():
+        try:
+            return load_capability_profile(path)
+        except Exception as e:  # noqa: BLE001 — fall back to the secure default
+            import sys
+            print(
+                f"warning: malformed {path.name}: {e} — using the built-in "
+                "untrusted default",
+                file=sys.stderr,
+            )
+    return builtin_untrusted_profile()
+
+
+def metas_have_untrusted(metas: "object") -> bool:
+    """Seam-agnostic taint check: True iff any entry meta carries the untrusted
+    marker. Derived from the **active** context (the caller passes the live,
+    un-compacted entries), which gives the until-compaction scope for free —
+    a compacted-out untrusted entry is simply not present."""
+    try:
+        return any(
+            isinstance(m, dict) and m.get(UNTRUSTED_META_KEY) for m in metas  # type: ignore[union-attr]
+        )
+    except TypeError:
+        return False
