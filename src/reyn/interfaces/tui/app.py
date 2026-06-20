@@ -1445,8 +1445,10 @@ class ReynTUIApp(App):
 
         # Seal any orphan streaming rows. The router cancel above stops the
         # producer but no `__stream_end__` is emitted, so the StreamingRow's
-        # blinking cursor would otherwise persist forever. Snapshot first —
-        # end_stream() mutates conv._stream_rows.
+        # blinking cursor would otherwise persist forever. ``conv.stream_rows``
+        # (the public delegate over the extracted ``_StreamController``, tui-pr4)
+        # returns a snapshot copy, so iterating it while ``end_stream_cancelled``
+        # mutates the underlying registry is safe.
         cancelled_streams = 0
         if conv is not None:
             # Wave-9 F-F7: route through ``end_stream_cancelled`` so the
@@ -1456,7 +1458,7 @@ class ReynTUIApp(App):
             # a small dim suffix that's easy to miss when the partial
             # fills the viewport). The summary line emitted below still
             # reports ``cancelled_streams``.
-            for msg_id in list(conv._stream_rows.keys()):
+            for msg_id in list(conv.stream_rows.keys()):
                 try:
                     conv.end_stream_cancelled(msg_id)
                     cancelled_streams += 1
