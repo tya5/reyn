@@ -1523,18 +1523,41 @@ class PermissionResolver:
 
     async def require_tool(
         self, decl: PermissionDecl, tool: str, bus: RequestBus,
+        *, contextual: "object | None" = None,
     ) -> None:
         # #1199 S3.1b-2c: the static tool authority (decl.tool) flows through the
         # unified model (TOOL axis). Byte-identical; the _approve prompt remains.
+        #
+        # #1827 S1: an optional per-session ``contextual`` (a ``ContextualPermission``)
+        # is added as one more restrict-only ∩ layer (``ContextualLayer``). The
+        # decision is the structural ``all()`` over the layer stack — a contextual
+        # deny cannot be re-granted, and the contextual layer cannot re-grant the
+        # static authority's deny (never-elevate). ``contextual=None`` → the stack
+        # is exactly ``[AgentLayer(decl)]`` = byte-identical to the pre-#1827 gate.
         from reyn.security.permissions.effective import (
             AgentLayer,
             CapabilityAxis,
+            ContextualLayer,
             EffectivePermission,
         )
 
-        if not EffectivePermission([AgentLayer(decl)]).allows(
-            CapabilityAxis.TOOL, tool
-        ):
+        layers: list = [AgentLayer(decl)]
+        if contextual is not None:
+            layers.append(ContextualLayer(contextual))
+        if not EffectivePermission(layers).allows(CapabilityAxis.TOOL, tool):
+            # Decision-enabling deny: distinguish "static authority never granted
+            # it" (declare it) from "the active capability context narrowed it
+            # away" (the tool IS declared, but delegation/topology/ephemeral
+            # narrowing blocks it) — without ever re-granting either.
+            static_ok = EffectivePermission([AgentLayer(decl)]).allows(
+                CapabilityAxis.TOOL, tool
+            )
+            if static_ok:
+                raise PermissionError(
+                    f"tool {tool!r} is blocked by the active capability context "
+                    f"(delegation / topology / ephemeral narrowing). It is declared "
+                    f"in skill permissions but removed by the current context."
+                )
             raise PermissionError(
                 f"tool {tool!r} not declared in skill permissions. "
                 f"Add `permissions:\\n  tool: [{tool}]` to the skill.md frontmatter."

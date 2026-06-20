@@ -123,6 +123,14 @@ class OpContext:
     # block-severity hit denies; warn emits + proceeds. None = no scan.
     threat_scan: "object | None" = None
 
+    # #1827 S1: per-session contextual capability narrowing (a
+    # ``ContextualPermission``). When set, permission gates add it as one more
+    # restrict-only ∩ layer (ContextualLayer) on top of the static authority —
+    # never-elevate is the structural ``all()`` in EffectivePermission. None =
+    # no contextual narrowing (byte-identical to the pre-#1827 gate). Sourced
+    # per-session from delegation / topology / ephemeral context (later slices).
+    contextual_permission: "object | None" = None
+
     # FP-0008 C7 #2: runtime backend-instance override for sandboxed_exec.
     # When set, the sandboxed_exec handler uses this backend INSTANCE verbatim
     # instead of resolving one by name from sandbox_config. This is the seam for
