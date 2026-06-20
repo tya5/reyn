@@ -268,10 +268,26 @@ class RunRegistry:
     def get(self, run_id: str) -> RunEntry | None:
         return self._runs.get(run_id)
 
-    def list(self, agent_name: str | None = None) -> list[RunEntry]:
-        if agent_name is None:
-            return list(self._runs.values())
-        return [e for e in self._runs.values() if e.agent_name == agent_name]
+    def list(
+        self,
+        agent_name: str | None = None,
+        *,
+        session_id: str | None = None,
+    ) -> list[RunEntry]:
+        """Return runs, optionally narrowed by ``agent_name`` and/or
+        ``session_id``.
+
+        ``session_id`` is the core-neutral routing-key (#1814,
+        ``<transport>:<native_id>``) — filtering by it is how the A2A
+        layer scopes ListTasks to one ``contextId`` (the A2A layer owns
+        the ``contextId ↔ session_id`` map; core stays term-neutral).
+        """
+        entries = self._runs.values()
+        if agent_name is not None:
+            entries = [e for e in entries if e.agent_name == agent_name]
+        if session_id is not None:
+            entries = [e for e in entries if e.session_id == session_id]
+        return list(entries)
 
     def update(
         self,

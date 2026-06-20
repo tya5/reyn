@@ -37,6 +37,8 @@ Spec reference: https://google.github.io/A2A/
 from __future__ import annotations
 
 import asyncio
+import base64
+import json
 import logging
 import uuid
 from typing import Any
@@ -288,7 +290,9 @@ async def a2a_jsonrpc(
 ) -> dict:
     """JSON-RPC 2.0 endpoint for one Reyn agent.
 
-    Supported method: ``message/send``. Three modes:
+    Supported methods: ``message/send`` and ``tasks/list``.
+
+    ``message/send`` has three modes:
 
     1. **Answer injection** (``params.task_id`` present): deliver an
        answer to a pending ask_user intervention on a running async task.
@@ -327,11 +331,114 @@ async def a2a_jsonrpc(
         return await _handle_message_send(
             req_id, body.get("params") or {}, agent_name, registry, run_registry,
         )
+    if method == "tasks/list":
+        return await _handle_tasks_list(
+            req_id, body.get("params") or {}, agent_name, run_registry,
+        )
 
     return _jsonrpc_error(
         req_id,
         _METHOD_NOT_FOUND,
-        f"Method not found: {method!r}. Supported: message/send.",
+        f"Method not found: {method!r}. Supported: message/send, tasks/list.",
+    )
+
+
+# ── tasks/list — A2A ListTasks (#1811) ──────────────────────────────────────
+
+_LIST_TASKS_DEFAULT_PAGE_SIZE = 50
+_LIST_TASKS_MAX_PAGE_SIZE = 100  # A2A spec cap
+
+
+def _task_sort_key(entry) -> tuple[str, str]:
+    """Stable keyset order: (created_at, run_id). ISO-8601 timestamps sort
+    lexicographically = chronologically (all entries are UTC), and run_id
+    breaks ties — so the order is total and insertion-stable, which is what
+    makes the opaque page token a correct keyset cursor."""
+    return (entry.created_at.isoformat(), entry.run_id)
+
+
+def _encode_page_token(entry) -> str:
+    raw = json.dumps(
+        {"created_at": entry.created_at.isoformat(), "run_id": entry.run_id},
+        separators=(",", ":"),
+    )
+    return base64.urlsafe_b64encode(raw.encode()).decode()
+
+
+def _decode_page_token(token: str) -> tuple[str, str] | None:
+    """Inverse of :func:`_encode_page_token`. Returns None for any malformed
+    token (→ caller responds -32602 invalid params)."""
+    try:
+        raw = base64.urlsafe_b64decode(token.encode()).decode()
+        data = json.loads(raw)
+        return (str(data["created_at"]), str(data["run_id"]))
+    except Exception:
+        return None
+
+
+async def _handle_tasks_list(
+    req_id: Any,
+    params: dict,
+    agent_name: str,
+    run_registry,
+) -> dict:
+    """A2A ``tasks/list`` — this agent's tasks, optionally filtered by
+    ``contextId`` (→ core session_id) and ``status``, keyset-paginated.
+
+    The A2A spec names this ``ListTasks`` (PascalCase); it is bound here as
+    slash-form ``tasks/list`` to stay consistent with the existing
+    ``message/send`` JSON-RPC binding Reyn ships (#1811). ``status`` is matched
+    against Reyn's own status names (the spec→Reyn STATUS_MAP normalization is a
+    separate cross-cutting #1811 slice that will normalize both ``tasks/list``
+    output and ``GetTask`` together — deferred here to avoid coupling).
+    """
+    # contextId (A2A term) → core-neutral session_id at the layer boundary; the
+    # A2A layer owns this map so core (RunRegistry) stays term-neutral (#1814).
+    context_id = params.get("contextId")
+    session_id = a2a_session_id(context_id) if context_id else None
+
+    entries = run_registry.list(agent_name, session_id=session_id)
+
+    status_filter = params.get("status")
+    if status_filter is not None:
+        entries = [e for e in entries if e.status == status_filter]
+
+    entries.sort(key=_task_sort_key)
+    total_size = len(entries)  # full filtered set, before pagination
+
+    raw_page_size = params.get("pageSize")
+    if raw_page_size is None:
+        page_size = _LIST_TASKS_DEFAULT_PAGE_SIZE
+    else:
+        try:
+            page_size = int(raw_page_size)
+        except (TypeError, ValueError):
+            return _jsonrpc_error(req_id, _INVALID_PARAMS, "pageSize must be an integer")
+        if page_size < 1:
+            return _jsonrpc_error(req_id, _INVALID_PARAMS, "pageSize must be >= 1")
+        page_size = min(page_size, _LIST_TASKS_MAX_PAGE_SIZE)
+
+    page_token = params.get("pageToken")
+    if page_token:
+        cursor = _decode_page_token(page_token)
+        if cursor is None:
+            return _jsonrpc_error(req_id, _INVALID_PARAMS, "invalid pageToken")
+        # Keyset: keep only entries strictly after the cursor's sort key.
+        entries = [e for e in entries if _task_sort_key(e) > cursor]
+
+    page = entries[:page_size]
+    # nextPageToken MUST always be present; '' when there are no more results.
+    has_more = len(entries) > page_size
+    next_token = _encode_page_token(page[-1]) if (has_more and page) else ""
+
+    return _jsonrpc_result(
+        req_id,
+        {
+            "tasks": [e.to_public_dict() for e in page],
+            "nextPageToken": next_token,
+            "pageSize": page_size,
+            "totalSize": total_size,
+        },
     )
 
 
