@@ -170,8 +170,19 @@ def _redact_secrets(payload: dict) -> dict:
         if isinstance(obj, str):
             return _mask(obj)
         if isinstance(obj, dict):
-            return {k: _walk(v) for k, v in obj.items()}
-        if isinstance(obj, list):
+            # Mask string KEYS too — a secret used as a dict key leaks just as
+            # much as one in a value. The result is a redacted copy destined for
+            # json.dumps, so changing keys is safe (no caller re-reads it by key).
+            return {
+                (_mask(k) if isinstance(k, str) else k): _walk(v)
+                for k, v in obj.items()
+            }
+        # tuple / set are walked too (not just list) — a secret inside one would
+        # otherwise pass through untouched. The redacted copy is json-serialized
+        # by every caller, where tuples/sets already become arrays, so emitting a
+        # list here changes nothing downstream (and a set, which json can't even
+        # serialize, now survives as a redacted list).
+        if isinstance(obj, (list, tuple, set)):
             return [_walk(v) for v in obj]
         return obj
 
