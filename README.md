@@ -133,8 +133,8 @@ Reyn overlaps with three families of agent tooling but makes a different bet —
 
 | Tool | Category | Primary bet — what it's great at |
 |---|---|---|
-| **OpenClaw** | Self-hosted general agent | Multi-channel reach — answers you on the channels you already use (WhatsApp / Telegram / Slack …), on your own devices |
-| **Hermes** | Self-hosted general agent | A built-in self-improving loop — creates and refines skills from experience, curates its own memory (Nous Research) |
+| **OpenClaw** | Self-hosted personal assistant | Multi-channel reach — answers you on the channels you already use (WhatsApp / Telegram / Slack …), on your own devices |
+| **Hermes** | Self-hosted AI agent | A built-in self-improving loop — creates and refines skills from experience, curates its own memory (Nous Research) |
 | **Claude Code** | Terminal coding agent | Autonomous multi-file coding that lives in your terminal |
 | **Codex** | Terminal coding agent (OpenAI) | A local coding agent with IDE / desktop / cloud variants |
 | **Reyn** | Self-hosted agent **OS** | The loop as an OS-enforced contract — bounded decisions, a replayable audit log, and per-agent cost caps |
