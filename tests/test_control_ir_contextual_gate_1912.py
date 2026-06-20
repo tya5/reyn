@@ -44,6 +44,19 @@ def test_op_kind_always_self_named():
         assert kind in op_kind_tool_names(kind)
 
 
+def test_alias_values_are_valid_qualified_names():
+    """Tier 2: every alias VALUE is a real qualified name (a key in the dispatch
+    map) — so a future rename of a qualified name breaks THIS test, keeping the
+    alias map drift-proof. Without this, a stale alias would silently let a
+    qualified-named deny leak past the control-IR gate (the keys-only completeness
+    test cannot catch a value drift)."""
+    from reyn.tools.universal_dispatch import _OPERATION_RULES, _RESOURCE_RULES
+    valid = set(_OPERATION_RULES) | set(_RESOURCE_RULES)
+    for kind, aliases in _OP_KIND_ALIASES.items():
+        for alias in aliases:
+            assert alias in valid, f"{kind}: alias {alias!r} is not a current qualified name"
+
+
 def test_dangerous_deny_entries_reach_their_ops():
     """Tier 2: the built-in untrusted deny-set entries that map to ops do block
     them — via BOTH the qualified and the unwrapped form."""
