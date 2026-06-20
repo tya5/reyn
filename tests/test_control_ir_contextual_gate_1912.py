@@ -153,3 +153,44 @@ def test_osruntime_threads_contextual_to_control_ir(tmp_path, monkeypatch):
     )
     assert results[0]["status"] == "denied"
     assert results[0]["error"]["kind"] == "tool_excluded"
+
+
+# ── completeness: the 4th dispatch site — preprocessor run_op (#1912b) ───────
+
+
+class _NeverRunBackend:
+    """Sandbox backend that fails if reached — a denied op must never get here."""
+
+    async def run(self, *a, **k):
+        raise AssertionError("a contextually-denied op must NOT reach the sandbox backend")
+
+
+def test_preprocessor_run_op_is_gated(tmp_path):
+    """Tier 2: a narrowed agent's run_op preprocessor step cannot dispatch a
+    denied op — the gate fires before execute_op, so the sandbox backend is never
+    reached (built-in CLEAN RED: an un-gated path would raise AssertionError)."""
+    from reyn.core.kernel.preprocessor_executor import PreprocessorExecutor
+    from reyn.schemas.models import Phase, RunOpStep
+
+    events = EventLog()
+    phase = Phase(
+        name="pp", instructions="d", input_schema={"type": "object", "properties": {}},
+        allowed_ops=["sandboxed_exec"],
+        preprocessor=[RunOpStep(
+            type="run_op",
+            op=SandboxedExecIROp(kind="sandboxed_exec", argv=["/bin/echo", "x"]),
+            into="data._exec", on_error="skip",
+        )],
+    )
+    pe = PreprocessorExecutor(
+        skill=_one_phase_skill(),
+        workspace=Workspace(events=events, base_dir=tmp_path),
+        model="standard", events=events, subscribers=[], resolver=None,
+        permission_resolver=PermissionResolver(
+            config_permissions={}, project_root=tmp_path, interactive=False),
+        sandbox_backend=_NeverRunBackend(),
+        contextual_permission=ContextualPermission(tool_deny=frozenset({"sandboxed_exec"})),
+    )
+    # No AssertionError = the denied op never reached the backend (gated).
+    asyncio.run(pe.run(phase, {"type": "x", "data": {}}, None))
+    assert any(e.type == "preprocessor_contextually_denied" for e in events.all())

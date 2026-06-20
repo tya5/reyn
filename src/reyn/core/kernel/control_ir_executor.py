@@ -488,7 +488,10 @@ class ControlIRExecutor:
         _registry = get_default_registry()
 
         # Lazy import to avoid module-init cycles.
-        from reyn.core.op_runtime.contextual_gate import op_contextually_denied
+        from reyn.core.op_runtime.contextual_gate import (
+            contextual_denied_result,
+            op_contextually_denied,
+        )
         from reyn.core.op_runtime.registry import is_op_instance_allowed
 
         for op_idx, op in enumerate(ops):
@@ -509,17 +512,7 @@ class ControlIRExecutor:
             # ``contextual_permission is None`` → no narrowing (byte-identical).
             if op_contextually_denied(ctx.contextual_permission, op.kind):
                 self.events.emit("control_ir_contextually_denied", kind=op.kind)
-                results.append({
-                    "kind": op.kind,
-                    "status": "denied",
-                    "error": {
-                        "kind": "tool_excluded",
-                        "message": (
-                            f"op {op.kind!r} is excluded this session by the active "
-                            "capability profile; it is not available."
-                        ),
-                    },
-                })
+                results.append(contextual_denied_result(op.kind))
                 continue
 
             # Exclude None so unset optional fields are OMITTED rather than sent

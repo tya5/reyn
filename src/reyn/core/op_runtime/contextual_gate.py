@@ -70,3 +70,20 @@ def op_contextually_denied(contextual: "object | None", op_kind: str) -> bool:
         tool_contextually_denied(contextual, name)
         for name in op_kind_tool_names(op_kind)
     )
+
+
+def contextual_denied_result(op_kind: str) -> dict:
+    """The decision-enabling denied result for an op blocked by the contextual
+    gate — one shared shape across every op-dispatch site (control-IR execute +
+    preprocessor run_op / iterate), so a narrowed agent sees the same signal."""
+    return {
+        "kind": op_kind,
+        "status": "denied",
+        "error": {
+            "kind": "tool_excluded",
+            "message": (
+                f"op {op_kind!r} is excluded this session by the active "
+                "capability profile; it is not available."
+            ),
+        },
+    }

@@ -248,6 +248,7 @@ class OSRuntime:
             sandbox_backend=sandbox_backend,
             agent_sandbox_policy=self._agent_sandbox_policy,
             threat_scan=threat_scan,  # FP-0050/#1822 S5 (EP4)
+            contextual_permission=contextual_permission,  # #1912b: preprocessor run_op/iterate gate
         )
         # FP-0020 Component A: all mutable run-scope state encapsulated in RunState.
         self._state = RunState()
