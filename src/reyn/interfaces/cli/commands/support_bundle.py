@@ -55,7 +55,15 @@ def _parse_since(raw: str | None) -> datetime | None:
     if raw and raw[-1] in ("d", "h", "m") and raw[:-1].isdigit():
         n = int(raw[:-1])
         unit = {"d": "days", "h": "hours", "m": "minutes"}[raw[-1]]
-        return datetime.now(UTC) - timedelta(**{unit: n})
+        try:
+            return datetime.now(UTC) - timedelta(**{unit: n})
+        except (OverflowError, ValueError) as exc:
+            # A huge relative window (e.g. ``99999999999999999999d``) overflows
+            # timedelta's C-int range — surface the same graceful SystemExit the
+            # ISO path gives, not an uncaught traceback.
+            raise SystemExit(
+                f"support-bundle: invalid --since {raw!r}: {exc}"
+            ) from exc
     try:
         dt = datetime.fromisoformat(raw)
         return dt if dt.tzinfo else dt.replace(tzinfo=UTC)
