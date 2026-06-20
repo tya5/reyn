@@ -162,6 +162,12 @@ mindmap
       Force-close wrap-up
       limit_denied event
       On-limit modes
+    🔄 LLM Provider Resilience
+      litellm.Router delegation
+      Cross-model fallback chain
+      Retry-After aware retry
+      Per-deployment cooldown
+      Default OFF byte-identical
     🧪 Content-layer defense
       Threat-pattern scan
       Content fence
@@ -208,6 +214,9 @@ mindmap
       Conversation view
       Right Panel tabs
       tool-result viewers
+        Viewer registry seam
+        LLM template fallback
+        Email-diff viewer
       Input + command palette
     🐳 Environment
       EnvironmentBackend
@@ -347,6 +356,22 @@ User-facing point-in-time rewind with branching. Phase 1 and Phase 2 (2a/2b/2c/2
 | Operator slash commands | `/plan list` / `/plan discard` / `/plan resume --from <step>` for plan lifecycle management | [Plan Mode](concepts/multi-agent/plan-mode.md) |
 
 > **Differentiation vs general agents:** plan decomposition is OS-governed — persisted, resumable per-step (completed steps replay without LLM cost), with per-step compaction and multi-plan concurrency — not an ad-hoc in-prompt task loop.
+
+#### LLM router resilience
+
+Config-gated `litellm.Router` slot-in for provider-resilience. Default OFF (`llm.router.use: false`) — the direct `litellm.acompletion` path is byte-identical. When enabled the Router owns infra retry, Retry-After handling, cooldown, and cross-model fallback; Reyn does not re-implement any of these.
+
+| Feature | Description | Documentation |
+|---------|-------------|---------------|
+| litellm.Router delegation | When `llm.router.use: true`, LLM calls route through a `litellm.Router`; Reyn delegates infra-exception retry / Retry-After / cooldown / fallback entirely to the Router | [Config: llm block](reference/config/reyn-yaml.md#llm-block) · [Reliability](concepts/agent-engineering/reliability-engineering.md) |
+| Default OFF — byte-identical | `use: false` (default) keeps the direct `litellm.acompletion` path with no routing overhead; the on/off switch is the only code-path change | [Config: llm block](reference/config/reyn-yaml.md#llm-block) |
+| Cross-model fallback chain | `llm.router.fallbacks` maps primary deployments to an ordered fallback list; on primary failure the Router tries each fallback model in order | [Config: llm block](reference/config/reyn-yaml.md#llm-block) |
+| Retry-After aware retry | `llm.router.num_retries` caps infra retries; the Router natively honours provider `Retry-After` headers (fold of retry-engineering gap) | [Reliability](concepts/agent-engineering/reliability-engineering.md) |
+| Per-deployment cooldown | `llm.router.cooldown_time` + `allowed_fails` cools a deployment after repeated failures; subsequent calls route to the fallback chain until recovery | [Config: llm block](reference/config/reyn-yaml.md#llm-block) |
+| Accurate cost on fallback | On fallback the actual responding model is recorded from `response.model` so cost attribution reflects which deployment served the call | [Budget & Cost](concepts/agent-engineering/cost-management.md) |
+| Config-fingerprint Router cache | Router is cached per event-loop with a `(model, config-fingerprint)` key; a changed `llm.router.*` rebuilds the Router rather than silently reusing a stale instance | [Config: llm block](reference/config/reyn-yaml.md#llm-block) |
+
+> **Differentiation vs general agents:** provider-resilience is delegated entirely to litellm.Router (Retry-After, jitter, cooldown, cross-model fallback chain) rather than re-implemented — the on/off gate keeps the direct path byte-identical, so replay and cost-recording work unchanged whether or not the Router is active.
 
 ---
 
@@ -620,7 +645,9 @@ The Textual terminal interface for `reyn chat` (`src/reyn/interfaces/tui/`).
 |---------|-------------|---------------|
 | Conversation view | Streaming conversation with inline thinking rows and tool-call rendering | — |
 | Right Panel tabs | Live side panels: Agents / Cost / Docs / Events / Keys / Memory / Pending | — |
-| Tool-result viewers | Content-type-aware result cards — text / image / web-page summary (#1154) | — |
+| Tool-result viewer registry ✅ | `register_viewer` seam replaces inline content-type dispatch; viewers registered as `_ViewerEntry` list with content-type + sync renderer | — |
+| LLM-generated template fallback ✅ | On registry miss, `_generate_template` async-generates a `TemplateSchema` (label/value rows + caption) via LLM call; `_apply_template` renders it with label escape and row/caption caps | [FP-0051 proposal](deep-dives/proposals/0051-tool-result-viewer-registry-llm-template.md) |
+| Email-diff viewer ⚗ | In-progress specialized viewer for email / diff result types; authoring doc to follow in `docs/reference/` once landed | — |
 | Input + command palette | Input bar with slash commands (`/plan`, `/compact`, `/find`, `/help`, `/clear`) via a command palette | — |
 | Intervention widget | In-TUI `ask_user` prompt rendering | — |
 | Chainlit web chat (⚗ PoC) | Alternative browser chat UI sharing the same agent — `reyn chainlit` + `chainlit_app/` (agent picker, settings, uploads, slash routing); coexists with the TUI | — |
