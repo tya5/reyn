@@ -47,11 +47,13 @@ No configuration required for any of these. Reyn has the skills for them out of 
 
 - **[Work with local files](work-with-files.md)** — reference files and directories in your requests.
 - **[Use an MCP server](../for-skill-authors/operations/use-an-mcp-server.md)** — add GitHub, Slack, a database, or any MCP-compatible tool.
+- **[Enable semantic search](enable-semantic-search.md)** — index your own docs so Reyn can search them by meaning.
 
 ### Control and safety
 
 - **[Manage permissions](manage-permissions.md)** — approve or deny what Reyn is allowed to do.
 - **[Respond mid-task](ask-user-mid-phase.md)** — answer questions Reyn asks while a skill is running.
+- **[Rewind a session](time-travel.md)** — jump back to an earlier point with `/rewind` and branch from there.
 
 ---
 
