@@ -1,4 +1,5 @@
 import asyncio
+import contextvars
 import json
 import logging
 import os
@@ -545,23 +546,53 @@ _LLM_RETRY_MAX_ATTEMPTS: int = _env_num("REYN_LLM_RETRY_MAX_ATTEMPTS", 3, 1, 10,
 _LLM_RETRY_BASE_S: float = _env_num("REYN_LLM_RETRY_BASE_S", 2.0, 0.1, 30.0, float)
 _LLM_RETRY_MAX_BACKOFF_S: float = 16.0
 
-# #1829 S3a (#1835 fold): per-Router baseline exception-retry count when routing
-# through a litellm.Router. The Router does infra-exception retry WITH native
-# Retry-After respect (and cooldown/fallbacks once S3b adds a multi-deployment
-# model_list), so on the router path Reyn's _llm_call_with_retry drops to
-# empty-choices-only (Router never retries a non-exception 200 → #187 B1 stays
-# Reyn-owned). A per-call num_retries (the callsite's max_retries) still overrides
-# this baseline (probe-verified: per-call wins). Default 3 = today's attempt count.
-_LLM_ROUTER_NUM_RETRIES: int = _env_num("REYN_LLM_ROUTER_NUM_RETRIES", 3, 0, 10, int)
+# #1829 S3b: SINGLE-SOURCE router config resolution. The chokepoint funcs
+# (_use_llm_router / the Router builder) must NOT each read env independently
+# (double-source). They all resolve through ``_resolved_router_config()``:
+# reyn.yaml ``llm.router.*`` (set on this ContextVar by the runtime/session at
+# construction — same pattern as ``set_llm_request_event_log``) is authoritative;
+# when absent (tests / CLI / pre-#1829 configs) it falls back to the legacy env
+# vars + defaults (the ``ssl_verify`` → env → default idiom). One resolution site.
+_router_config_var: "contextvars.ContextVar[object | None]" = contextvars.ContextVar(
+    "reyn_llm_router_config", default=None,
+)
+
+
+def set_router_config(cfg: object) -> "contextvars.Token":
+    """#1829 S3b: set the ambient ``RouterConfig`` (reyn.yaml ``llm.router.*``)
+    the LLM chokepoint resolves against. The runtime/session sets this at
+    construction (mirrors ``set_llm_request_event_log``). Returns the token so a
+    caller MAY reset for a nested scope. ``None`` → env+default fallback."""
+    return _router_config_var.set(cfg)
+
+
+def _env_router_config():
+    """Back-compat ``RouterConfig`` from the legacy env vars + defaults, used when
+    no reyn.yaml router config is in context (tests / CLI / pre-#1829). This is the
+    ``env → default`` tail of the single-source idiom."""
+    from reyn.config.infra import RouterConfig
+    return RouterConfig(
+        use=os.environ.get("REYN_LLM_USE_ROUTER", "").strip().lower()
+        in ("1", "true", "yes"),
+        num_retries=_env_num("REYN_LLM_ROUTER_NUM_RETRIES", 3, 0, 10, int),
+    )
+
+
+def _resolved_router_config():
+    """#1829 S3b single-source: the effective ``RouterConfig``. reyn.yaml (via the
+    ContextVar) is authoritative; absent → env+default. The ONLY place router
+    config is resolved — ``_use_llm_router`` and the Router builder both read this,
+    so there is never a double source (PR-review axis #3)."""
+    cfg = _router_config_var.get()
+    return cfg if cfg is not None else _env_router_config()
 
 
 def _use_llm_router() -> bool:
-    """#1829 S1: gate for routing acompletion through a litellm.Router (default OFF
-    → byte-equivalent to the current direct litellm.acompletion call). S1 is a
-    single-deployment, no-fallback/no-extra-retry equivalence step; fallbacks /
-    cooldown / retry_policy (folding #1835) land in later stages. Env-gated for now
-    (REYN_LLM_USE_ROUTER); a reyn.yaml config field can supersede this in S2."""
-    return os.environ.get("REYN_LLM_USE_ROUTER", "").strip().lower() in ("1", "true", "yes")
+    """#1829: True when the LLM call routes through a litellm.Router. Default OFF
+    → byte-equivalent to the direct ``litellm.acompletion`` call. Resolved
+    single-source from reyn.yaml ``llm.router.use`` (authoritative) or the legacy
+    ``REYN_LLM_USE_ROUTER`` env var (fallback)."""
+    return bool(_resolved_router_config().use)
 
 
 class EmptyLLMResponseError(Exception):
@@ -971,42 +1002,76 @@ def proxy_kwargs() -> dict:
 # reason S1 built per-call). Keying by the RUNNING loop gives each loop its own
 # Router — the same loop-aware-registry pattern as the #1762 agent-lock fix.
 # WeakKeyDictionary → a finished loop's Routers are GC'd with the loop.
-_ROUTERS_BY_LOOP: "weakref.WeakKeyDictionary[object, dict[str, object]]" = (
+_ROUTERS_BY_LOOP: "weakref.WeakKeyDictionary[object, dict[object, object]]" = (
     weakref.WeakKeyDictionary()
 )
 
 
+def _router_cache_fingerprint(rcfg) -> tuple:
+    """#1829 S3b (F1): a hashable signature of the Router-build-affecting config
+    (``num_retries`` / ``cooldown_time`` / ``allowed_fails`` / ``fallbacks``). Part
+    of the per-loop cache key so a changed ``llm.router.*`` rebuilds the Router
+    instead of silently reusing a stale one — the cache is correct WITHOUT relying
+    on a "config is loop-uniform" assumption (today config is process-global, so
+    this is constant; the key just makes that robust against a future per-session
+    override). ``use`` is excluded — it gates entry to this path, not the build."""
+    return (
+        rcfg.num_retries,
+        rcfg.cooldown_time,
+        rcfg.allowed_fails,
+        tuple(sorted((k, tuple(v)) for k, v in rcfg.fallbacks.items())),
+    )
+
+
 def _single_deployment_router(model: str):
-    """#1829 S1→S3a: return a single-deployment ``litellm.Router`` for *model*,
-    cached per running event loop (#1829 S2). The Router owns exception-retry with
-    native Retry-After respect (``num_retries=_LLM_ROUTER_NUM_RETRIES`` baseline; a
-    per-call ``num_retries`` from the callsite's ``max_retries`` overrides it —
-    probe-verified). On this router path Reyn's ``_llm_call_with_retry`` is
-    empty-choices-only (#1835 fold, S3a). A multi-deployment ``model_list`` +
-    ``fallbacks``/``cooldown_time`` (cross-model chain — where multiple deployments
-    are needed) land in S3b.
+    """#1829 S1→S3b: return a per-running-loop-cached ``litellm.Router`` for
+    *model*. Single deployment by default; when reyn.yaml ``llm.router.fallbacks``
+    declares a chain for *model*, a **multi-deployment** Router (primary + each
+    fallback target as its own deployment) wired with ``fallbacks`` +
+    ``cooldown_time`` + ``allowed_fails`` — the #1835 fold (Router owns
+    infra-exception retry w/ native Retry-After + cooldown + cross-model fallback;
+    replay-compat probe-verified: a realized fallback still routes through the
+    monkeypatched ``litellm.acompletion``). ``num_retries`` comes from the
+    single-source resolved config (``_resolved_router_config`` — reyn.yaml
+    authoritative, env fallback), NOT a module constant (no double source).
 
     Per-call routing params (api_base / provider / api_key / response_format / …)
     are passed through on the ``router.acompletion`` call (not baked into the
     deployment), so the underlying ``litellm.acompletion`` — which Router invokes
-    internally (replay-compat verified, #1829 probe) — receives the SAME
-    (model, messages, kwargs) as a direct call → byte-equivalent +
-    LLMReplay/cost-recording-compatible. The cache is keyed per running loop so
-    the cached Router is never reused across event loops (the #1762 binding class).
+    internally — receives the SAME (model, messages, kwargs) as a direct call →
+    LLMReplay/cost-recording-compatible. Cached per running loop so the cached
+    Router is never reused across event loops (the #1762 binding class). The cache
+    key is ``(model, config-fingerprint)`` (#1829 S3b F1) — a changed
+    ``llm.router.*`` rebuilds rather than silently reusing a stale Router, so the
+    cache is correct without assuming config is loop-uniform.
     """
     import litellm as _ll
+    rcfg = _resolved_router_config()
     loop = asyncio.get_running_loop()
     per_loop = _ROUTERS_BY_LOOP.get(loop)
     if per_loop is None:
         per_loop = {}
         _ROUTERS_BY_LOOP[loop] = per_loop
-    router = per_loop.get(model)
+    cache_key = (model, _router_cache_fingerprint(rcfg))
+    router = per_loop.get(cache_key)
     if router is None:
-        router = _ll.Router(
-            model_list=[{"model_name": model, "litellm_params": {"model": model}}],
-            num_retries=_LLM_ROUTER_NUM_RETRIES,
-        )
-        per_loop[model] = router
+        fb_targets = [t for t in (rcfg.fallbacks.get(model) or []) if t and t != model]
+        # model_list: primary + each DISTINCT fallback target as its own deployment.
+        seen = {model}
+        model_list = [{"model_name": model, "litellm_params": {"model": model}}]
+        for t in fb_targets:
+            if t not in seen:
+                seen.add(t)
+                model_list.append({"model_name": t, "litellm_params": {"model": t}})
+        kwargs: dict = {"model_list": model_list, "num_retries": rcfg.num_retries}
+        if fb_targets:
+            kwargs["fallbacks"] = [{model: fb_targets}]
+        if rcfg.cooldown_time is not None:
+            kwargs["cooldown_time"] = rcfg.cooldown_time
+        if rcfg.allowed_fails is not None:
+            kwargs["allowed_fails"] = rcfg.allowed_fails
+        router = _ll.Router(**kwargs)
+        per_loop[cache_key] = router
     return router
 
 
@@ -1340,13 +1405,18 @@ async def recorded_acompletion(
         if rf is not None:
             call_kwargs["response_format"] = rf
         if _use_llm_router():
-            # #1829 S1: route through a single-deployment litellm.Router (gated OFF
-            # by default → this branch is inert in production). Router.acompletion
-            # invokes litellm.acompletion internally (replay-compat verified), so the
-            # LLMReplay monkeypatch + this cost-recording chokepoint both still apply
-            # and the call is byte-equivalent to the direct path.
+            # #1829: route through a litellm.Router (gated OFF by default → this
+            # branch is inert in production). Router.acompletion invokes
+            # litellm.acompletion internally (replay-compat verified, incl. a
+            # realized fallback), so the LLMReplay monkeypatch + this
+            # cost-recording chokepoint both still apply.
+            # S3b single-source num_retries: the Router's retry count comes from
+            # the resolved config (baked at construction), so STRIP the per-call
+            # num_retries (the callsite's max_retries) — else it would override the
+            # config-set value (probe: per-call wins). Config is the one source.
+            router_kwargs = {k: v for k, v in call_kwargs.items() if k != "num_retries"}
             return await _single_deployment_router(effective_model).acompletion(
-                model=effective_model, messages=messages, **call_kwargs
+                model=effective_model, messages=messages, **router_kwargs
             )
         return await litellm.acompletion(model=effective_model, messages=messages, **call_kwargs)
 
@@ -1388,9 +1458,20 @@ async def recorded_acompletion(
         raise
 
     usage = _extract_usage(response)
+    # #1829 S3b (cost-records-actual-model): when routing through the Router, a
+    # FALLBACK may have served the call with a different model than requested —
+    # attribute cost to the model that ACTUALLY ran (``response.model``), not the
+    # requested one. Gated on router-ON + a genuine difference, so the OFF path
+    # (and router-ON without a realized fallback) records ``effective_model``
+    # exactly as before (byte-identical).
+    _cost_model = effective_model
+    if _use_llm_router():
+        _actual = getattr(response, "model", None)
+        if isinstance(_actual, str) and _actual and _actual != effective_model:
+            _cost_model = _actual
     if recorder is not None and usage is not None:
         recorder.record_llm(
-            model=effective_model, agent=agent, usage=usage, purpose=purpose,
+            model=_cost_model, agent=agent, usage=usage, purpose=purpose,
         )
     # #1683: the interactive chat path records cost to the in-memory recorder
     # (→ header) but emits NO usage event, so the TUI cost tab (which reads
@@ -1401,7 +1482,7 @@ async def recorded_acompletion(
     # (Interim: a future cleanup could centralize the kernel's emission into this
     # chokepoint and drop the flag — out of scope here.)
     if emit_cost_events:
-        _emit_chat_cost_events(effective_model, usage)
+        _emit_chat_cost_events(_cost_model, usage)
     return response
 
 

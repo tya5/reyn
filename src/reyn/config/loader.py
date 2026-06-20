@@ -31,6 +31,7 @@ from reyn.config.infra import (  # #1682 #3 cross-section
     _build_cron_config,
     _build_eval_config,
     _build_events_config,
+    _build_llm_config,
     _build_python_config,
     _build_sandbox_config,
 )
@@ -174,6 +175,17 @@ def _merge(base: dict, override: dict) -> dict:
                 else:
                     merged_safety[sub_key] = sub_val
             result["safety"] = merged_safety
+        elif key == "llm" and isinstance(val, dict):
+            existing = result.get("llm", {})
+            if not isinstance(existing, dict):
+                existing = {}
+            merged_llm = dict(existing)
+            for sub_key, sub_val in val.items():
+                if sub_key == "router" and isinstance(sub_val, dict):
+                    merged_llm["router"] = {**existing.get("router", {}), **sub_val}
+                else:
+                    merged_llm[sub_key] = sub_val
+            result["llm"] = merged_llm
         else:
             result[key] = val
     return result
@@ -372,6 +384,7 @@ def load_config(cwd: Path | None = None) -> ReynConfig:
         model_class_by_purpose=_build_model_class_by_purpose(
             merged.get("model_class_by_purpose"),
         ),
+        llm=_build_llm_config(merged.get("llm")),
         tool_calls_op_loop_skills=[
             str(s) for s in (merged.get("tool_calls_op_loop_skills") or [])
         ],

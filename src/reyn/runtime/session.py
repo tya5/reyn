@@ -20,6 +20,7 @@ from reyn.config import (  # noqa: F401
     EventsConfig,
     MultimodalConfig,
     OnLimitConfig,
+    RouterConfig,
     SafetyConfig,
     SandboxConfig,
 )
@@ -810,6 +811,11 @@ class Session:
         chat_tool_use_scheme: str = "enumerate-all",
         embedding_config: "EmbeddingConfig | None" = None,
         eager_embedding_build: bool = False,
+        # #1829 S3b: reyn.yaml llm.router.* — set on the LLM chokepoint's
+        # ContextVar at construction (mirrors set_llm_request_event_log). None →
+        # the chokepoint's env+default fallback (back-compat). Skill OSRuntimes
+        # spawned within this session inherit the ContextVar (propagation).
+        router_config: "RouterConfig | None" = None,
         tool_calls_op_loop_skills: list[str] | None = None,  # #1212: op-loop gate for chat-run skills
         agent_id: str | None = None,
         exclude_tools: "frozenset[str] | set[str] | None" = None,  # #187: tool names hidden from the LLM catalog (e.g. web for faithful eval)
@@ -1249,6 +1255,12 @@ class Session:
         # the call stack. Set at creation → propagates into the run loop's tasks.
         from reyn.core.events.events import set_llm_request_event_log
         set_llm_request_event_log(self._chat_events)
+        # #1829 S3b: publish reyn.yaml llm.router.* as the ambient router config
+        # for the LLM chokepoint. Guarded — only set when provided, so a nested
+        # construction never clobbers an inherited ContextVar with None.
+        if router_config is not None:
+            from reyn.llm.llm import set_router_config
+            set_router_config(router_config)
         # Issue #162: surface session-level lifecycle events (compaction
         # today; attach/detach + budget warnings as growth) into the
         # conv pane via OutboxMessage(kind="system"). Sibling of the
