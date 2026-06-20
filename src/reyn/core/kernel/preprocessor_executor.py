@@ -113,6 +113,7 @@ class PreprocessorExecutor:
         sandbox_backend: "SandboxBackend | None" = None,
         agent_sandbox_policy: dict | None = None,
         threat_scan: "object | None" = None,  # FP-0050/#1822 S5 (EP4)
+        contextual_permission: "object | None" = None,  # #1912b: per-session capability narrowing → run_op/iterate gate
     ) -> None:
         self._skill = skill
         self._workspace = workspace
@@ -143,6 +144,7 @@ class PreprocessorExecutor:
         # makes the index write-gate fire there (#1321). None → no agent policy.
         self._agent_sandbox_policy = agent_sandbox_policy
         self._threat_scan = threat_scan
+        self._contextual_permission = contextual_permission  # #1912b
 
     @property
     def secret_store(self):
@@ -188,6 +190,7 @@ class PreprocessorExecutor:
             # preprocessor sandboxed_exec (deterministic; WINS over op fields).
             default_sandbox_policy=self._agent_sandbox_policy,
             threat_scan=self._threat_scan,  # FP-0050/#1822 S5 (EP4)
+            contextual_permission=self._contextual_permission,  # #1912b
         )
 
     async def run(
@@ -319,7 +322,18 @@ class PreprocessorExecutor:
                 _set_at_path(enriched, step.into, None)
                 return enriched, TokenUsage()
             return artifact, TokenUsage()
-        result = await execute_op(op, ctx, caller="preprocessor")
+        # #1912b: the same contextual gate as control-IR / RouterLoop — a narrowed
+        # agent's run_op preprocessor step cannot dispatch a denied op (the denied
+        # result flows through the on_error handling below). None → byte-identical.
+        from reyn.core.op_runtime.contextual_gate import (
+            contextual_denied_result,
+            op_contextually_denied,
+        )
+        if op_contextually_denied(ctx.contextual_permission, op.kind):
+            self._events.emit("preprocessor_contextually_denied", kind=op.kind)
+            result = contextual_denied_result(op.kind)
+        else:
+            result = await execute_op(op, ctx, caller="preprocessor")
 
         status = result.get("status")
         if status in ("error", "denied"):
@@ -408,7 +422,16 @@ class PreprocessorExecutor:
                 "preprocessor_iterate_item_started",
                 phase=phase_name, step_index=index, item_index=j,
             )
-            result = await execute_op(op_inst, ctx, caller="preprocessor")
+            # #1912b: contextual gate on each iterated op (same shared check).
+            from reyn.core.op_runtime.contextual_gate import (
+                contextual_denied_result,
+                op_contextually_denied,
+            )
+            if op_contextually_denied(ctx.contextual_permission, op_inst.kind):
+                self._events.emit("preprocessor_contextually_denied", kind=op_inst.kind)
+                result = contextual_denied_result(op_inst.kind)
+            else:
+                result = await execute_op(op_inst, ctx, caller="preprocessor")
             ctx.sub_state_dir_override = None
 
             status = result.get("status")

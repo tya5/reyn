@@ -96,6 +96,7 @@ class ControlIRExecutor:
         run_id: str | None = None,
         sandbox_config: "SandboxConfig | None" = None,
         threat_scan: Any = None,  # FP-0050/#1822 S5 (EP4): exec command-scan config
+        contextual_permission: Any = None,  # #1912b: per-session capability narrowing → control-IR op gate
         sandbox_backend: "SandboxBackend | None" = None,
         multimodal_config: "MultimodalConfig | None" = None,
         media_store: "MediaStore | None" = None,
@@ -139,6 +140,7 @@ class ControlIRExecutor:
         # auto-detection (= unchanged behavior pre-wiring).
         self._sandbox_config = sandbox_config
         self._threat_scan = threat_scan
+        self._contextual_permission = contextual_permission  # #1912b
         # FP-0008 #1115 Stage 2: per-run injected exec backend instance. When
         # set (a dual-Protocol container backend), it takes precedence over
         # name-based platform selection in the sandboxed_exec handler
@@ -397,6 +399,7 @@ class ControlIRExecutor:
             sandbox_config=self._sandbox_config,
             # FP-0050/#1822 S5 (EP4): exec command-scan config.
             threat_scan=self._threat_scan,
+            contextual_permission=self._contextual_permission,  # #1912b
             # FP-0008 #1115 Stage 2: per-run injected exec backend instance
             # (dual-Protocol container backend); None → platform auto-detect.
             sandbox_backend=self._sandbox_backend,
@@ -485,6 +488,10 @@ class ControlIRExecutor:
         _registry = get_default_registry()
 
         # Lazy import to avoid module-init cycles.
+        from reyn.core.op_runtime.contextual_gate import (
+            contextual_denied_result,
+            op_contextually_denied,
+        )
         from reyn.core.op_runtime.registry import is_op_instance_allowed
 
         for op_idx, op in enumerate(ops):
@@ -498,6 +505,14 @@ class ControlIRExecutor:
                     "status": "skipped",
                     "reason": "not_allowed_in_phase",
                 })
+                continue
+
+            # #1912b: the control-IR contextual gate — the SAME check as the chat /
+            # phase RouterLoop path (a narrowed agent's skill ops are enforced too).
+            # ``contextual_permission is None`` → no narrowing (byte-identical).
+            if op_contextually_denied(ctx.contextual_permission, op.kind):
+                self.events.emit("control_ir_contextually_denied", kind=op.kind)
+                results.append(contextual_denied_result(op.kind))
                 continue
 
             # Exclude None so unset optional fields are OMITTED rather than sent
