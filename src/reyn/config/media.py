@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
 
+from reyn._http_limits import MAX_DOWNLOAD_BYTES
 from reyn.runtime.budget.budget import CostConfig, CostLimitConfig
 
 
@@ -72,7 +73,7 @@ class WebFetchConfig:
     """
     verify_ssl: bool | None = None
     ca_bundle: str | None = None
-    max_download_bytes: int = 10 * 1024 * 1024
+    max_download_bytes: int = MAX_DOWNLOAD_BYTES  # single-source (#1913 class)
 
 
 @dataclass
