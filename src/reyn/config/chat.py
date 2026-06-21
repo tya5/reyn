@@ -334,43 +334,9 @@ class ChatConfig:
 
 
 @dataclass
-class PlannerStepCompactionConfig:
-    """`plan.step_compaction:` — Plan step_results compaction policy (PR-N4).
-
-    Mirrors CompactionConfig's ratio-based approach but scoped to the
-    prior-step output accumulation that feeds each plan step's sub-loop
-    system prompt.  When accumulated step_results would balloon the next
-    step's sys_prompt, older entries are summarised using
-    CompactionEngine and replaced with a single
-    ``__compacted_step_summary__`` entry.
-
-    Fields
-    ------
-    recent_step_results_raw:
-        Keep the last N step_results verbatim; compact older ones.
-    summarize_older_threshold_tokens:
-        Total token threshold above which older step_results are compacted.
-        ``None`` uses the CompactionEngine's ``effective_trigger`` from
-        ``ComputedBudgets`` (= derived from the router model context window).
-    step_results_ratio:
-        Fraction of ``main_pool`` (= T_max - T_SP) allocated for the
-        step_results portion of the next step's sys_prompt.  Sibling to
-        CompactionConfig.component_weights["body"].
-    use_chars4_estimate:
-        When True, use len(text)//4 for token estimation instead of
-        litellm.token_counter (latency opt-out, mirrors CompactionConfig).
-    """
-    recent_step_results_raw: int = 3
-    summarize_older_threshold_tokens: int | None = None
-    step_results_ratio: float = 0.50
-    use_chars4_estimate: bool = False
-
-
-@dataclass
 class PhaseActResultsCompactionConfig:
     """`phase.act_results_compaction:` — phase act-loop control_ir_results
-    compaction policy. Sibling to CompactionConfig (chat) and
-    PlannerStepCompactionConfig (planner step).
+    compaction policy. Sibling to CompactionConfig (chat).
 
     When accumulated ``control_ir_results`` in a phase's act loop would push
     the next prompt over the model's effective context budget, older results
@@ -382,9 +348,8 @@ class PhaseActResultsCompactionConfig:
     ------
     recent_act_turns_raw:
         Keep the last N act-turn results verbatim; compact older ones.
-        Higher than PlannerStepCompactionConfig.recent_step_results_raw (= 3)
-        because phase ops carry specific data the LLM needs to plan next ops.
-        Default 5.
+        Default 5 (a wider raw window than chat compaction because phase ops
+        carry specific data the LLM needs to plan next ops).
     control_ir_results_ratio:
         Fraction of ``main_pool`` (= T_max - T_SP) allocated for the
         control_ir_results portion of the act-loop context. Sibling to
@@ -553,51 +518,6 @@ def _build_phase_act_results_compaction_config(
     )
 
 
-def _build_plan_step_compaction_config(raw: object) -> "PlannerStepCompactionConfig":
-    """Parse ``plan.step_compaction:`` sub-block.
-
-    Missing / non-dict block returns defaults.  Unknown keys are ignored
-    (forward-compat).
-    """
-    defaults = PlannerStepCompactionConfig()
-    if not isinstance(raw, dict):
-        return defaults
-
-    recent_raw = raw.get("recent_step_results_raw")
-    try:
-        recent = int(recent_raw) if recent_raw is not None else defaults.recent_step_results_raw
-    except (TypeError, ValueError):
-        recent = defaults.recent_step_results_raw
-    if recent < 0:
-        recent = defaults.recent_step_results_raw
-
-    threshold_raw = raw.get("summarize_older_threshold_tokens")
-    if threshold_raw is None:
-        threshold: int | None = None
-    else:
-        try:
-            threshold = int(threshold_raw)
-            if threshold <= 0:
-                threshold = None
-        except (TypeError, ValueError):
-            threshold = None
-
-    ratio_raw = raw.get("step_results_ratio")
-    try:
-        ratio = float(ratio_raw) if ratio_raw is not None else defaults.step_results_ratio
-    except (TypeError, ValueError):
-        ratio = defaults.step_results_ratio
-    if not (0.0 < ratio <= 1.0):
-        ratio = defaults.step_results_ratio
-
-    use_chars4 = bool(raw.get("use_chars4_estimate", defaults.use_chars4_estimate))
-
-    return PlannerStepCompactionConfig(
-        recent_step_results_raw=recent,
-        summarize_older_threshold_tokens=threshold,
-        step_results_ratio=ratio,
-        use_chars4_estimate=use_chars4,
-    )
 
 
 # ── FP-0004: safety: section parsers ───────────────────────────────────────
