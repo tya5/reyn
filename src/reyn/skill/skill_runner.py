@@ -683,8 +683,7 @@ class SkillRunner:
         # Issue #214: forward the plan_step ContextVar so a blocking
         # router invoke_skill inside a plan step's sub-loop stamps the
         # spawned skill's events with the originating step.
-        from reyn.skill._plan_step_context import current_plan_step
-        _plan_step = current_plan_step()
+        _plan_step = None  # plan-step context removed with plan (#1953)
         try:
             result = await agent.run(
                 skill, input_artifact,
@@ -880,8 +879,7 @@ class SkillRunner:
         # any asyncio.Task created within the scope, so this spawn site
         # sees the planner-set value when the skill was invoked inside a
         # plan step. None = top-level invocation (not in a plan).
-        from reyn.skill._plan_step_context import current_plan_step
-        _plan_step = current_plan_step()
+        _plan_step = None  # plan-step context removed with plan (#1953)
         try:
             result = await agent.run(
                 skill, input_artifact,
