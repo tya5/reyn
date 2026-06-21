@@ -1,7 +1,13 @@
 """/tasks slash command — unified async-task view (FP-0012 Component D).
 
+Spans both async-task families in one view (#2035, restoring the FP-0012
+"unified" intent after the planner deletion #2018):
+  - **skill runs** — long-running ``@sub_skill`` / ``run_skill`` executions
+  - **dynamic tasks** — the Tasks the chat LLM creates via ``task__create``
+    (#2026/#2028/#2034), tracked in the session-scoped Task backend.
+
 Sub-commands:
-  /tasks                          — list all running tasks (skill runs)
+  /tasks                          — list running skill runs + dynamic tasks
   /tasks list                     — same as `/tasks`
   /tasks status <run_id_prefix>   — show current phase + elapsed time + last event
   /tasks kill   <run_id_prefix>   — cancel a specific task
@@ -10,6 +16,8 @@ Reads from existing infrastructure (= no new state required):
   - ``session.running_skills`` / ``running_skills_started_at`` /
     ``running_skills_chain`` for skill runs (PR22)
   - SkillRegistry per-skill snapshot for current_phase
+  - ``session.task_backend`` for dynamic tasks (#1953 slice R); ``None`` when
+    the session carries no backend, in which case the dynamic section is empty.
   - The P6 events log via ``self._chat_events`` is NOT consulted here (= keeping
     the slash cheap and synchronous; users wanting raw events run ``reyn events``).
 
@@ -31,7 +39,7 @@ if TYPE_CHECKING:
 
 _USAGE = (
     "Usage: /tasks [list|status <run_id>|kill <run_id>]\n"
-    "  list              — show all running tasks (skill runs). Default.\n"
+    "  list              — show running skill runs + dynamic tasks. Default.\n"
     "  status <prefix>   — show current phase + elapsed for a specific task\n"
     "  kill   <prefix>   — cancel a specific task"
 )
@@ -39,7 +47,7 @@ _USAGE = (
 
 @slash(
     "tasks",
-    summary="Unified view of running async tasks (skill runs)",
+    summary="Unified view of running async tasks (skill runs + dynamic tasks)",
     usage="/tasks [list|status <run_id>|kill <run_id>]",
 )
 async def tasks_cmd(session: "Session", args: str) -> None:
@@ -98,14 +106,19 @@ def _resolve_task(
 
 async def _list_tasks(session: "Session") -> None:
     skill_lines = _list_skill_lines(session)
-    if not skill_lines:
+    task_lines = await _list_dynamic_task_lines(session)
+    if not skill_lines and not task_lines:
         await reply(session, "(no running tasks)")
         return
 
-    out: list[str] = []
-    out.append(f"{len(skill_lines)} running task(s):")
-    out.append("  Skills:")
-    out.extend(f"    {ln}" for ln in skill_lines)
+    total = len(skill_lines) + len(task_lines)
+    out: list[str] = [f"{total} running task(s):"]
+    if skill_lines:
+        out.append("  Skills:")
+        out.extend(f"    {ln}" for ln in skill_lines)
+    if task_lines:
+        out.append("  Tasks:")
+        out.extend(f"    {ln}" for ln in task_lines)
     await reply(session, "\n".join(out))
 
 
@@ -129,6 +142,43 @@ def _list_skill_lines(session: "Session") -> list[str]:
         lines.append(
             f"{skill_label}  [{run_id}]  {_format_elapsed(elapsed)}  "
             f"phase: {phase}"
+        )
+    return lines
+
+
+# Terminal Task states never transition further; a "running view" of /tasks
+# hides them so the list stays focused on the live work-units (mirrors the
+# skill-runs section, which only ever holds in-flight runs).
+_TERMINAL_TASK_STATUSES = frozenset(
+    {"completed", "failed", "aborted", "archived"}
+)
+
+
+async def _list_dynamic_task_lines(session: "Session") -> list[str]:
+    """Render the dynamic Tasks (``task__create`` work-units) for /tasks.
+
+    Reads ``session.task_backend`` (#1953 slice R). Returns ``[]`` when the
+    session carries no backend. Terminal tasks are filtered out so the view
+    mirrors the skill-runs section (in-flight only); each surviving task is
+    formatted in the same idiom as ``_list_skill_lines``.
+    """
+    backend = getattr(session, "task_backend", None)
+    if backend is None:
+        return []
+    tasks = await backend.list()
+    lines: list[str] = []
+    for task in tasks:
+        status = getattr(task.status, "value", task.status)
+        if status in _TERMINAL_TASK_STATUSES:
+            continue
+        deps = list(getattr(task, "deps", []) or [])
+        if deps:
+            deps_summary = ", ".join(d[:8] for d in deps)
+        else:
+            deps_summary = "(none)"
+        lines.append(
+            f"{task.name}  [{task.task_id[:8]}]  status: {status}  "
+            f"deps: {deps_summary}"
         )
     return lines
 
