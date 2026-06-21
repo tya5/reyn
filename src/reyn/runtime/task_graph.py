@@ -333,14 +333,27 @@ async def dispatch_task_tool(
         await _taskmod.record_task_cost(_cost_ctx, task_id, cost)
 
     async def _run_and_post() -> None:
-        # Mirror execute_plan's start + terminal outbox emits (event/TUI parity).
-        await _safe_outbox(parent_host, kind="agent",
-                           text=f"Decomposed into {len(steps)} sub-tasks; running…",
-                           meta={"source": "decompose", "parent_task_id": parent_id})
+        # Mirror the plan path's outbox surface (TUI parity, agreed with tui-coder):
+        #   start  → kind="system" source="task_summary"  (AsyncStackPanel row add)
+        #   reply  → kind="agent"                          (the user-facing answer)
+        #   end    → kind="system" source="task_complete"  (progress row remove)
+        # The TUI's _on_system treats {plan_summary, task_summary}→add /
+        # {plan_complete, task_complete}→remove, keyed on parent_task_id, reusing the
+        # plan render path. (plan_runner.py:91 emits the analogous plan_summary.)
+        summary = "\n".join(
+            f"{i + 1}. {s['description']}" for i, s in enumerate(steps))
+        await _safe_outbox(
+            parent_host, kind="system",
+            text=f"Decomposing into {len(steps)} sub-tasks:\n{summary}",
+            meta={"parent_task_id": parent_id, "source": "task_summary"})
         final = await run_task_graph(
             task_backend, parent_id, run_unit=run_unit, on_unit_cost=_on_unit_cost)
-        await _safe_outbox(parent_host, kind="agent", text=final,
-                           meta={"source": "decompose", "parent_task_id": parent_id})
+        await _safe_outbox(
+            parent_host, kind="agent", text=final,
+            meta={"parent_task_id": parent_id, "source": "decompose"})
+        await _safe_outbox(
+            parent_host, kind="system", text="Decompose complete",
+            meta={"parent_task_id": parent_id, "source": "task_complete"})
 
     if hasattr(parent_host, "spawn_task_graph"):
         await parent_host.spawn_task_graph(

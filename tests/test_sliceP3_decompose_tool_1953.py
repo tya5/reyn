@@ -78,6 +78,39 @@ async def test_dispatch_task_tool_builds_runs_and_posts(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_dispatch_task_tool_emits_tui_parity_surface(monkeypatch):
+    """Tier 2: the dispatch emits the plan-mirroring outbox surface (TUI parity,
+    agreed with tui-coder): a kind="system" source="task_summary" start marker, the
+    synthesized reply as kind="agent", and a kind="system" source="task_complete"
+    end marker — all carrying parent_task_id so the TUI's _on_system reuses the plan
+    progress-row render path."""
+    monkeypatch.setattr("reyn.runtime.router_loop.call_llm_tools", _scripted_llm())
+    taskmod.reset_backend_for_test()
+    host = FakeRouterHost()
+    backend = InMemoryTaskBackend()
+    args = {"goal": "summarize", "steps_json": _steps_json([
+        {"id": "s1", "description": "read the file", "tools": [], "depends_on": []},
+        {"id": "s2", "description": "report findings", "tools": [], "depends_on": ["s1"]},
+    ])}
+    result = await dispatch_task_tool(
+        args=args, parent_host=host, chain_id="c", task_backend=backend,
+        assignee="a2a:s", requester="a2a:s", available_tool_names={"file_read"})
+    pid = result["parent_task_id"]
+
+    # every emitted message carries the parent_task_id; the markers are kind=system,
+    # the reply is kind=agent (= plan's aggregator-reply shape).
+    assert all(o["meta"].get("parent_task_id") == pid for o in host.outbox)
+    by_source = {o["meta"].get("source"): o for o in host.outbox}
+    assert by_source["task_summary"]["kind"] == "system"
+    assert by_source["task_complete"]["kind"] == "system"
+    assert by_source["decompose"]["kind"] == "agent"
+    assert by_source["decompose"]["text"] == "REPORT-RESULT"   # the synthesized reply
+    # ordering: summary start → reply → complete end.
+    sources = [o["meta"].get("source") for o in host.outbox]
+    assert sources.index("task_summary") < sources.index("decompose") < sources.index("task_complete")
+
+
+@pytest.mark.asyncio
 async def test_dispatch_task_tool_invalid_returns_error():
     """Tier 2: a structurally-invalid decomposition (1 step < min) returns a
     decompose_invalid error instead of creating any Task."""
