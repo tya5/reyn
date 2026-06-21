@@ -514,13 +514,17 @@ whole sub-tree** (DOWN-cascade, §18). There is **no forced cancel** — the
 assignee's in-flight work is rejected by the **terminal-state guard** on
 `update_status` at its next write (so no straggler lands, and a sibling task's
 work is untouched). This is correct under 1:N (a session owns many tasks) and
-needs no cross-session machinery.
+needs no cross-session machinery. **UP-notify** (§16): abort emits a generic P6
+`task_disposition` event per aborted task (carrying `task_id` / `requester` /
+`origin` / `disposition`); the A2A layer routes `origin=external` tasks to their
+external (webhook) channel — internal requesters need no notify (they own the
+tree, and the assignee discovers the abort via the terminal guard).
 
 **States:** `pending` / `ready` / `in_progress` / `blocked` / `completed` /
 `failed` / `aborted` / `archived`.
 
-Still landing in later slices: `abort` UP-notify to the persistent requester
-(§16), dependency cycle-check + readiness, unblock-predicate evaluation.
+Still landing in later slices: dependency cycle-check + readiness,
+unblock-predicate evaluation.
 
 ---
 

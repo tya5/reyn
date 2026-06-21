@@ -55,7 +55,7 @@ class TaskBackend(Protocol):
 
     async def add_dependency(self, task_id: str, depends_on: str) -> Task | None: ...
 
-    async def abort(self, task_id: str, reason: str | None = None) -> Task | None: ...
+    async def abort(self, task_id: str, reason: str | None = None) -> list[Task]: ...
 
     async def set_awaiting(self, task_id: str, awaiting_since: float | None) -> Task | None: ...
 
@@ -138,12 +138,14 @@ class InMemoryTaskBackend:
         task.updated_at = _now_iso()
         return task
 
-    async def abort(self, task_id: str, reason: str | None = None) -> Task | None:
+    async def abort(self, task_id: str, reason: str | None = None) -> list[Task]:
         # abort = delete (cooperative-terminal, Option B): archive this task + its
         # whole sub-tree (DOWN-cascade, §18). No forced cancel — the assignee's
         # in-flight work is rejected by the terminal state at its next status-write.
+        # Returns the aborted tasks (root first) so the caller can emit a
+        # disposition event per task (UP-notify, 2b-2); [] if no such task.
         if task_id not in self._tasks:
-            return None
+            return []
         subtree: list[str] = [task_id]
         frontier = [task_id]
         while frontier:
@@ -152,10 +154,12 @@ class InMemoryTaskBackend:
                 if t.parent_id == pid and tid not in subtree:
                     subtree.append(tid)
                     frontier.append(tid)
+        aborted: list[Task] = []
         for tid in subtree:
             self._tasks[tid].status = TaskState.ARCHIVED
             self._tasks[tid].updated_at = _now_iso()
-        return self._tasks[task_id]
+            aborted.append(self._tasks[tid])
+        return aborted
 
     async def set_awaiting(self, task_id: str, awaiting_since: float | None) -> Task | None:
         task = self._tasks.get(task_id)
