@@ -1399,10 +1399,12 @@ class RouterLoop:
         on_limit: "Any | None" = None,  # OnLimitConfig | None — FP-0005 max_iterations checkpoint
         llm_caller: "Any | None" = None,  # Tier 2 test seam: real-fake injection
         scheme_name: "str | None" = None,  # #1593 PR-2: per-layer tool-use scheme (None → universal default; the construction site resolves config.tool_use.<layer>)
+        task_id: "str | None" = None,  # #1953 slice P2: when this loop runs a Task's exec engine, every LLM call is cost-attributed to this Task (injected at construction, never a global handle)
     ):
         self.host = host
         self.chain_id = chain_id
         self.max_iterations = max_iterations
+        self._task_id = task_id
         # #1672: an UNSET router_model follows the configured model (no hidden
         # "light" tier) — resolve the "router" purpose class via the host's
         # config-aware ModelResolver. Explicit router_model still wins. The plan
@@ -2096,6 +2098,10 @@ class RouterLoop:
                     # falls through to the module-level ``call_llm_tools`` so
                     # production callers don't have to know about the seam.
                     _llm = self._llm_caller or call_llm_tools
+                    # #1953 slice P2: attribute this call to the Task only when this
+                    # loop is a Task exec engine; omitted otherwise so the test-fake
+                    # seam (llm_caller) keeps its existing signature.
+                    _task_kw = {"task_id": self._task_id} if self._task_id is not None else {}
                     result = await _llm(
                         # #1654: pass the FULL ModelSpec (not the bare string) so
                         # per-model kwargs (reasoning_effort/temperature/…) reach
@@ -2111,6 +2117,7 @@ class RouterLoop:
                         # #1683: chat path emits llm_called + llm_response_received
                         # so the TUI cost tab updates (kernel emits via LLMCallRecorder).
                         emit_cost_events=True,
+                        **_task_kw,
                     )
                 # Record the fresh result for future resume hit. Defensive:
                 # never let recording failure break the loop. NOT for a
@@ -3060,6 +3067,7 @@ class RouterLoop:
         if _reserve is not None:
             from reyn.llm.model_resolver import ModelSpec
             _model = ModelSpec(model=resolved_model, kwargs={"max_tokens": int(_reserve)})
+        _task_kw = {"task_id": self._task_id} if self._task_id is not None else {}
         return await _llm(
             model=_model,
             messages=wrap_messages,
@@ -3071,6 +3079,7 @@ class RouterLoop:
             trace_caller="router_force_close",
             # #1683: chat path emits cost events for the TUI cost tab.
             emit_cost_events=True,
+            **_task_kw,
         )
 
     async def _force_close_call_with_retry(

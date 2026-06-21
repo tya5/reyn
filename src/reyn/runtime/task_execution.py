@@ -36,6 +36,25 @@ class TaskExecutionHost:
     the step's system prompt or tool schema.
     """
 
+    @classmethod
+    def for_task(
+        cls,
+        task: Any,
+        *,
+        parent: RouterLoopHost,
+        prior_results: "dict[str, str] | None" = None,
+        turn_budget_engine: Any = None,
+    ) -> "TaskExecutionHost":
+        """Task-driven construction (#1953 slice P2): narrow to the **Task**'s
+        ``tools``. The engine is unit-agnostic — it reads only ``.tools`` (a Task
+        and a plan-step both carry it) + captures the reply text — so this is an
+        additive entry that leaves the plan-step path byte-identical.
+        ``prior_results`` is the dep-results map the caller assembled from the
+        backend (the result-channel; which dep feeds the unit is the caller's /
+        LLM's concern, not a graph property — I-2)."""
+        return cls(plan=None, step=task, prior_results=prior_results or {},
+                   parent=parent, turn_budget_engine=turn_budget_engine)
+
     def __init__(
         self,
         *,
@@ -49,6 +68,8 @@ class TaskExecutionHost:
         self._step = step
         self._prior_results = prior_results
         self._parent = parent
+        # The narrowed tool set — read off the UNIT (a plan-step or a Task; both
+        # carry ``.tools``). The engine is otherwise unit-agnostic.
         self._tool_set: frozenset[str] = frozenset(step.tools)
         # Captured by put_outbox; the executor reads this after RouterLoop
         # finishes to collect this step's text contribution.
