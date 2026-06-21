@@ -200,8 +200,8 @@ async def _update_status(op, ctx: OpContext, caller) -> dict:
     elif task.status is TaskState.FAILED:
         # slice 6-ext §C: a non-completed terminal (the assignee declared `failed`)
         # doesn't satisfy a dependency edge → route the disposition to the parent's
-        # session to decide recovery (the OQ-7/H5 gap-close; wake stubbed → slice 7).
-        await _route_terminal_to_parent(ctx, _backend(ctx), task)
+        # session to decide recovery (the OQ-7/H5 gap-close).
+        await _route_terminal_to_parent(ctx, _backend(ctx), task, disposition="failed")
     return _ok("task.update_status", task=task.to_dict())
 
 
@@ -261,13 +261,25 @@ async def _emit_readiness_if_changed(ctx: OpContext, task, before_status, trigge
             await waker.wake_ready_dependent(task)
 
 
-async def _route_terminal_to_parent(ctx: OpContext, backend, terminal_task) -> None:
+async def _route_terminal_to_parent(
+    ctx: OpContext, backend, terminal_task, *, disposition: str | None = None,
+) -> None:
     """slice 6-ext §C: when a task reaches a non-completed terminal (aborted /
-    failed) and has STILL-ALIVE dependents, notify its parent's session to decide
-    recovery (the parent re-wires via ordinary ops — NOT a `decision=` vocabulary,
-    P7). The wake is via ``OpContext.task_waker`` (slice 7 real driver; None here =
-    no-op stub — only the P6 audit fires). Guards: a root task (no parent) and a
-    parent that is itself terminal (its own cascade handles it) route nothing."""
+    failed / cap_exceeded) and has STILL-ALIVE dependents, notify its parent's
+    session to decide recovery (the parent re-wires via ordinary ops — NOT a
+    `decision=` vocabulary, P7).
+
+    ``disposition`` is the **first-class** terminal reason carried in BOTH the P6
+    event and the parent payload (#1953 slice 8 no-conflation invariant): a
+    budget ``cap_exceeded`` must be distinguishable from a genuine error
+    ``failed`` — the parent's recovery differs, and a downstream reader must not
+    misread a cap-hit as an error. Defaults to the task's status value (the abort
+    path) when not given explicitly.
+
+    The wake is via ``OpContext.task_waker`` (slice 7 real driver; None = no-op
+    stub — only the P6 audit fires). Guards: a root task (no parent) and a parent
+    that is itself terminal (its own cascade handles it) route nothing."""
+    disp = disposition or terminal_task.status.value
     parent_id = getattr(terminal_task, "parent_id", None)
     if not parent_id:
         return
@@ -283,14 +295,56 @@ async def _route_terminal_to_parent(ctx: OpContext, backend, terminal_task) -> N
         # Generic P6 (P7); NOT a WAL closed-vocab kind (WAL-vs-P6 separation).
         events.emit(
             "task_dependency_aborted", task_id=terminal_task.task_id,
-            disposition=terminal_task.status.value, parent_id=parent_id,
+            disposition=disp, parent_id=parent_id,
             parent_session=parent.assignee, dependents=[d.task_id for d in stuck],
         )
     waker = getattr(ctx, "task_waker", None)
     if waker is not None:
         await waker.notify_parent_decide(
-            parent_session=parent.assignee, terminal_task=terminal_task, dependents=stuck,
+            parent_session=parent.assignee, terminal_task=terminal_task,
+            dependents=stuck, disposition=disp,
         )
+
+
+async def record_task_cost(ctx: OpContext, task_id: str, delta: float):
+    """OS-internal per-Task cost attribution + cap enforcement (#1953 slice 8).
+
+    Accumulates ``delta`` onto the task's ``cost_accum``; on a **cap-hit**
+    (``cost_accum >= budget_cap``, when a per-Task ``budget_cap`` is set) the task
+    is force-terminated (abort-like — the work can't continue out of budget, so the
+    sub-tree is archived) and a first-class ``cap_exceeded`` disposition is routed
+    to the parent via the SAME parent-LLM seam as abort/failed — the "one decision
+    resolves OQ-7 + cap-hit" property. The ``cap_exceeded`` disposition is carried
+    first-class in both the P6 ``task_disposition`` event and the parent payload
+    (the no-conflation invariant: a budget cap-hit is NOT a genuine error
+    ``failed``). Per-Task is an INDEPENDENT cap dimension (§I-3 (A)): the existing
+    session / daily caps stay enforced separately (tighter-hits-first).
+
+    This is the **tested primitive**. The production cost-path attribution — wiring
+    the LLM-call cost recorder to call this with the right ``task_id`` — is a
+    DELIBERATE, TRACKED defer that co-lands with the task-execution engine
+    (slice P); there is no implicit active-task handle to thread it from today
+    (§I-3 (B)). Returns the (possibly terminated) task, or None for an unknown id."""
+    backend = _backend(ctx)
+    task = await backend.record_cost(task_id, delta)
+    if task is None:
+        return None
+    if task.budget_cap is None or task.cost_accum < task.budget_cap:
+        return task  # under cap (or uncapped) — nothing to enforce
+    # Cap-hit: force-terminate (archive the sub-tree, like abort) + route the
+    # cap_exceeded disposition to the parent for a recovery decision.
+    aborted = await backend.abort(task_id, reason="budget cap exceeded")
+    events = getattr(ctx, "events", None)
+    if events is not None:
+        for t in aborted:
+            events.emit(
+                "task_disposition", task_id=t.task_id, disposition="cap_exceeded",
+                requester=t.requester, origin=t.origin.value, root=task_id,
+            )
+    if aborted:
+        await _route_terminal_to_parent(
+            ctx, backend, aborted[0], disposition="cap_exceeded")
+    return await backend.get(task_id)
 
 
 async def _remove_dependency(op, ctx: OpContext, caller) -> dict:
@@ -356,7 +410,7 @@ async def _abort(op, ctx: OpContext, caller) -> dict:
     # slice 6-ext §C: route the aborted root to its parent so a stuck sibling
     # dependent gets a recovery decision (the OQ-7/H5 gap-close). The cascade's
     # descendants have an in-subtree (now terminal) parent → the guard skips them.
-    await _route_terminal_to_parent(ctx, _backend(ctx), root)
+    await _route_terminal_to_parent(ctx, _backend(ctx), root, disposition="aborted")
     return _ok("task.abort", task=root.to_dict())
 
 

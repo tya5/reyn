@@ -216,11 +216,13 @@ class _RecordingWaker:
     def __init__(self) -> None:
         self.calls: list[dict] = []
 
-    async def notify_parent_decide(self, *, parent_session, terminal_task, dependents):
+    async def notify_parent_decide(self, *, parent_session, terminal_task, dependents,
+                                   disposition=None):
         self.calls.append({
             "parent_session": parent_session,
             "terminal_task": terminal_task.task_id,
             "dependents": [d.task_id for d in dependents],
+            "disposition": disposition,
         })
 
 
@@ -283,9 +285,11 @@ async def test_op_abort_routes_disposition_to_parent():
     await taskmod._abort(SimpleNamespace(task_id="B", reason=None),
                          _opctx(b, events=rec, waker=waker, session_id="req"), "control_ir")
 
-    assert waker.calls == [{"parent_session": "sP", "terminal_task": "B", "dependents": ["A"]}]
+    assert waker.calls == [{"parent_session": "sP", "terminal_task": "B",
+                            "dependents": ["A"], "disposition": "aborted"}]
     routed = [f for k, f in rec.events if k == "task_dependency_aborted"]
     assert routed and routed[0]["parent_session"] == "sP" and routed[0]["dependents"] == ["A"]
+    assert routed[0]["disposition"] == "aborted"
 
 
 @pytest.mark.asyncio
@@ -301,7 +305,8 @@ async def test_op_failed_routes_disposition_to_parent():
     # failed is assignee-gated → caller must be B's assignee.
     await taskmod._update_status(SimpleNamespace(task_id="B", status="failed"),
                                  _opctx(b, waker=waker, session_id="sB"), "control_ir")
-    assert waker.calls == [{"parent_session": "sP", "terminal_task": "B", "dependents": ["A"]}]
+    assert waker.calls == [{"parent_session": "sP", "terminal_task": "B",
+                            "dependents": ["A"], "disposition": "failed"}]
 
 
 @pytest.mark.asyncio

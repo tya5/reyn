@@ -478,6 +478,20 @@ class SqliteTaskBackend:
             self._conn.commit()
             return [t for t in (self._fetch(tid) for tid in subtree) if t is not None]
 
+    async def record_cost(self, task_id: str, delta: float) -> Task | None:
+        async with self._lock:
+            self._conn.execute("BEGIN IMMEDIATE")
+            cur = self._conn.execute(
+                "UPDATE tasks SET cost_accum=cost_accum+?, updated_at=? WHERE task_id=?",
+                (delta, _now_iso(), task_id),
+            )
+            if cur.rowcount == 0:
+                self._conn.rollback()
+                return None
+            self._emit(task_id, "cost_recorded", delta=delta)
+            self._conn.commit()
+            return self._fetch(task_id)
+
     async def set_awaiting(self, task_id: str, awaiting_since: float | None) -> Task | None:
         async with self._lock:
             self._conn.execute("BEGIN IMMEDIATE")
