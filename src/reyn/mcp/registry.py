@@ -84,6 +84,7 @@ from typing import Any
 # (= dedup is a list transform; server_info_from_raw is a dict reshape)
 # or scoped to reyn-internal disk cache. None of them are reachable from
 # user code through this safe namespace surface.
+from reyn import _ssrf_guard
 from reyn._http_limits import read_capped
 from reyn.core.registry import cache as _cache
 from reyn.core.registry.client import _dedup_by_latest
@@ -135,12 +136,33 @@ class RegistryError(RuntimeError):
     """Raised when the registry response is non-2xx or cannot be parsed."""
 
 
+class _SSRFRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """#1956 SSRF: re-validate the host (IP-deny) on each redirect hop. Registry
+    URLs are operator-configured, but a malicious / compromised registry could
+    redirect to an internal IP — Layer 2 stops that reach. No allowlist here
+    (operator URL, not a per-skill http.get axis)."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        _ssrf_guard.assert_fetch_host_allowed(
+            urllib.parse.urlparse(newurl).hostname or "",
+            allow_private=_ssrf_guard.resolve_allow_private(),
+        )
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
 def _http_get_json(url: str) -> dict:
     """GET ``url`` and JSON-parse the body. Raises :class:`RegistryError` on
     any failure (HTTP non-2xx, transport error, JSON parse error)."""
     req = urllib.request.Request(url, headers={"User-Agent": _USER_AGENT})
+    # #1956 SSRF: gate the initial host + (via the opener's redirect handler)
+    # each redirect hop against the IP-deny guard. Both surface as RegistryError.
+    opener = urllib.request.build_opener(_SSRFRedirectHandler())
     try:
-        with urllib.request.urlopen(req, timeout=_HTTP_TIMEOUT) as resp:
+        _ssrf_guard.assert_fetch_host_allowed(
+            urllib.parse.urlparse(url).hostname or "",
+            allow_private=_ssrf_guard.resolve_allow_private(),
+        )
+        with opener.open(req, timeout=_HTTP_TIMEOUT) as resp:  # noqa: S310
             raw = read_capped(resp)  # bounded read — DoS guard (#1913 class)
             status = getattr(resp, "status", None) or resp.getcode()
     except urllib.error.HTTPError as exc:

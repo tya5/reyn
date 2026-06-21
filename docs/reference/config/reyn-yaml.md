@@ -545,6 +545,7 @@ web:
     verify_ssl: true     # true | false | omit (default: env-var chain)
     ca_bundle: /path/to/ca-bundle.pem   # optional custom CA bundle
     max_download_bytes: 10485760        # wire-byte ceiling (default 10MB)
+    allow_private_ips: false            # #1956 SSRF: opt-in to private IPs (default deny)
   ws_max_size: 16777216                 # WS inbound-frame ceiling (default 16MB)
 ```
 
@@ -562,6 +563,7 @@ Priority chain (highest first):
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `web.fetch.max_download_bytes` | int | `10485760` (10MB) | Maximum response bytes `web_fetch` reads off the wire. A response whose `Content-Length` exceeds this is rejected before any body is downloaded; a chunked / unknown-length body is aborted once the stream passes the ceiling (status `too_large`). Guards against an unbounded-body memory blow-up from a hostile or runaway URL. `<= 0` or non-integer falls back to the default. |
+| `web.fetch.allow_private_ips` | bool | `false` | SSRF opt-in. When `true`, `web_fetch` / `safe.http` may fetch **private** RFC1918/ULA addresses (enterprise internal-fetch). Link-local, cloud-metadata (`169.254.169.254`), and loopback are **always** denied regardless of this flag. HTTP redirects are re-validated per hop (both the host allowlist and the IP-deny), so an allowlisted host cannot redirect to an internal target. Also exported to the `REYN_FETCH_ALLOW_PRIVATE_IPS` env var so the safe.http subprocess and registry clients honor the same opt-in. |
 | `web.ws_max_size` | int | `16777216` (16MB) | Maximum size (bytes) of a single inbound WebSocket frame the `reyn web` gateway accepts; a larger frame is rejected by the server before delivery. Pins the WebSocket frame ceiling explicitly instead of relying on the server library's implicit default, so the bound stays in place across server-library upgrades. Operators may tighten or loosen it. `<= 0` or non-integer falls back to the default. |
 
 ## `eval` block

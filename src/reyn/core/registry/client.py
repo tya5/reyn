@@ -21,12 +21,27 @@ by the search response (e.g. ``"io.github.foo/bar-mcp"``).
 """
 from __future__ import annotations
 
+import asyncio
 import os
 import urllib.parse
 from typing import TYPE_CHECKING
 
+from reyn import _ssrf_guard
+
 if TYPE_CHECKING:
     pass
+
+
+async def _ssrf_request_hook(request) -> None:
+    """#1956 SSRF: gate EVERY httpx request — the initial AND each redirect hop
+    (httpx request event-hooks fire per-hop, verified) — against the IP-deny
+    guard, so a malicious / compromised registry that redirects to an internal
+    IP is blocked. ``allow_private`` is the operator opt-in (env-exported)."""
+    await asyncio.to_thread(
+        _ssrf_guard.assert_fetch_host_allowed,
+        request.url.host or "",
+        allow_private=_ssrf_guard.resolve_allow_private(),
+    )
 
 
 class RegistryError(Exception):
@@ -164,6 +179,8 @@ class RegistryClient:
             follow_redirects=True,
             headers={"User-Agent": "reyn/1.0"},
             verify=verify,
+            # #1956 SSRF: re-gate every hop (incl. redirects) via the IP-deny guard.
+            event_hooks={"request": [_ssrf_request_hook]},
         )
         return self
 
