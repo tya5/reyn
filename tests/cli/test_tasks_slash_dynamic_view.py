@@ -137,6 +137,35 @@ async def test_tasks_list_no_backend_falls_back_to_skill_only():
 
 
 @pytest.mark.asyncio
+async def test_tasks_list_shows_completed_hides_only_archived():
+    """Tier 2: the Tasks section shows the full plan WITH status (#2036) — a
+    COMPLETED task is SHOWN (so the user sees "done" progress + deps to it stay
+    intact); only an ARCHIVED (user-dismissed) task is hidden. The split is
+    intentional vs the skill-runs section's running-only filter."""
+    backend = InMemoryTaskBackend()
+    # deps-less tasks → the backend honors the given status (no readiness derive).
+    await backend.create(Task(
+        task_id="done-cccccccc-0003", name="done-step", assignee="sess-1",
+        requester="req", status=TaskState.COMPLETED,
+    ))
+    await backend.create(Task(
+        task_id="arch-dddddddd-0004", name="archived-step", assignee="sess-1",
+        requester="req", status=TaskState.ARCHIVED,
+    ))
+    session = _CaptureSession(task_backend=backend)
+
+    await _list_tasks(session)
+
+    out = session.replies[-1]
+    # COMPLETED task surfaces WITH its status (progress visibility).
+    assert "done-step" in out
+    assert "status: completed" in out
+    # ARCHIVED task is hidden.
+    assert "archived-step" not in out
+    assert "arch-ddd" not in out
+
+
+@pytest.mark.asyncio
 async def test_tasks_list_empty_when_nothing_running():
     """Tier 2: no skill runs and no dynamic tasks → existing empty message."""
     session = _CaptureSession(task_backend=InMemoryTaskBackend())

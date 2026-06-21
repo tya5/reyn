@@ -111,8 +111,11 @@ async def _list_tasks(session: "Session") -> None:
         await reply(session, "(no running tasks)")
         return
 
+    # "task(s)" not "running task(s)": the Tasks section now shows the full plan
+    # incl completed (#2036), so the count spans running skill runs + persistent
+    # tasks of any non-archived status.
     total = len(skill_lines) + len(task_lines)
-    out: list[str] = [f"{total} running task(s):"]
+    out: list[str] = [f"{total} task(s):"]
     if skill_lines:
         out.append("  Skills:")
         out.extend(f"    {ln}" for ln in skill_lines)
@@ -146,21 +149,24 @@ def _list_skill_lines(session: "Session") -> list[str]:
     return lines
 
 
-# Terminal Task states never transition further; a "running view" of /tasks
-# hides them so the list stays focused on the live work-units (mirrors the
-# skill-runs section, which only ever holds in-flight runs).
-_TERMINAL_TASK_STATUSES = frozenset(
-    {"completed", "failed", "aborted", "archived"}
-)
+# Dynamic Tasks are PERSISTENT trackable work-units (the point of the
+# dynamic-task model), so the Tasks section shows the FULL plan WITH status —
+# active + completed + failed + aborted — so the user sees progress ("3/6 done")
+# and deps referencing completed tasks stay intact. Only ``archived`` (the
+# user-dismissed state) is hidden. NB the skill-runs section keeps its own
+# running-only filter (ephemeral runs, not trackable plans = different
+# semantics); the split is intentional (#2036 review).
+_HIDDEN_TASK_STATUSES = frozenset({"archived"})
 
 
 async def _list_dynamic_task_lines(session: "Session") -> list[str]:
     """Render the dynamic Tasks (``task__create`` work-units) for /tasks.
 
     Reads ``session.task_backend`` (#1953 slice R). Returns ``[]`` when the
-    session carries no backend. Terminal tasks are filtered out so the view
-    mirrors the skill-runs section (in-flight only); each surviving task is
-    formatted in the same idiom as ``_list_skill_lines``.
+    session carries no backend. Shows the full plan WITH status (active +
+    completed + failed + aborted) so the user sees progress + intact deps; only
+    ``archived`` tasks are hidden. Each task is formatted in the same idiom as
+    ``_list_skill_lines``.
     """
     backend = getattr(session, "task_backend", None)
     if backend is None:
@@ -169,7 +175,7 @@ async def _list_dynamic_task_lines(session: "Session") -> list[str]:
     lines: list[str] = []
     for task in tasks:
         status = getattr(task.status, "value", task.status)
-        if status in _TERMINAL_TASK_STATUSES:
+        if status in _HIDDEN_TASK_STATUSES:
             continue
         deps = list(getattr(task, "deps", []) or [])
         if deps:
