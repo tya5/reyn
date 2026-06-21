@@ -42,7 +42,6 @@ from reyn.config.embedding import (
     SkillSearchConfig,
 )
 from reyn.config.execution import (
-    PlanConfig,
     SelfImprovementConfig,
     SkillResumeConfig,
     TimeTravelConfig,
@@ -261,8 +260,6 @@ class ReynConfig:
     # Issue #364 — multi-modal cluster: cap binary media size (= images from
     # web__fetch / file__read / MCP) + iv-gated user permission when exceeded.
     multimodal: MultimodalConfig = field(default_factory=MultimodalConfig)
-    # FP-0029: plan-mode execution tuning (step iteration budget, etc.)
-    plan: PlanConfig = field(default_factory=PlanConfig)
     # FP-0007 Component A: trace export adapter config.
     # Empty exporters list (default) = no export; full backward compat.
     eval: EvalConfig = field(default_factory=EvalConfig)

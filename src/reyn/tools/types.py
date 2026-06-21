@@ -111,7 +111,7 @@ class RouterCallerState:
     # op_runtime caller="control_ir" would not carry chain_id and PR14
     # pending_chain semantics would break for sub-skill delegations.
     #
-    # FP-0012: blocking call — used by plan-mode steps that need the
+    # FP-0012: blocking call — used by blocking phase sub-loop steps that need the
     # nested skill's result inline to feed the next step. Chat-mode now
     # prefers ``spawn_skill_fn`` (below) for non-blocking dispatch.
     run_skill_fn: Callable[..., Awaitable[Any]] | None = None
@@ -123,8 +123,8 @@ class RouterCallerState:
     # the background; completion is delivered to the chat router via
     # the ``"skill_completed"`` inbox kind which injects a user-role
     # message into the existing conversation thread for narration.
-    # Plan-mode RouterLoops bind this to None so plan steps keep
-    # their blocking semantics via ``run_skill_fn``.
+    # Blocking phase sub-loop RouterLoops bind this to None so their
+    # steps keep blocking semantics via ``run_skill_fn``.
     spawn_skill_fn: Callable[..., Awaitable[Any]] | None = None
 
     # RouterLoopHost reference for handlers that need duck-typed access

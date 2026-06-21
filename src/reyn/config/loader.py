@@ -19,7 +19,6 @@ from reyn.config.embedding import (  # #1682 #3 cross-section
     _build_skill_search_config,
 )
 from reyn.config.execution import (  # #1682 #3 cross-section
-    _build_plan_config,
     _build_self_improvement_config,
     _build_skill_resume_config,
     _build_time_travel_config,
@@ -480,7 +479,6 @@ def load_config(cwd: Path | None = None) -> ReynConfig:
         web=_build_web_config(merged.get("web")),
         multimodal=_build_multimodal_config(merged.get("multimodal")),
         skill_search=_build_skill_search_config(merged.get("skill_search")),
-        plan=_build_plan_config(merged.get("plan")),
         eval=_build_eval_config(merged.get("eval")),
         sandbox=_build_sandbox_config(merged.get("sandbox")),
         self_improvement=_build_self_improvement_config(merged.get("self_improvement")),
