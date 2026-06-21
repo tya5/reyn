@@ -33,9 +33,15 @@ from reyn.tools.schemes._universal_sp import build_universal_tool_use_slots
 
 
 def _default_slots() -> "dict[str, str]":
-    """Default universal slot-map for tests that need tool-use content in the SP."""
+    """Universal-category slot-map (wrappers ON) for SP-content tests that assert
+    invoke_action routing (e.g. test_validator_anchor_unchanged). #1977: build
+    with wrappers ON to match that intent — pre-#1977 the wrappers-off SP leaked
+    the wrapper vocab, masking this flag. ON output is byte-identical; the
+    wrappers-off (no-wrapper-vocab) path is covered by
+    test_plan_tool_surface_scheme_consistency_1977. (Replay-fixture tests use
+    _make_loop, independent of this helper.)"""
     return build_universal_tool_use_slots(
-        universal_wrappers_enabled=False,
+        universal_wrappers_enabled=True,
         search_actions_enabled=True,
         discovery_mandate=False,
         has_hot_list_aliases=False,
