@@ -26,7 +26,10 @@ from reyn.tools.schemes._universal_sp import build_universal_tool_use_slots
 
 def _default_slots() -> "dict[str, str]":
     return build_universal_tool_use_slots(
-        universal_wrappers_enabled=False,
+        # #1977: these tests assert the WRAPPER-SP (invoke_action routing) — build
+        # with wrappers ON to match that intent (pre-#1977 the wrappers-off SP
+        # leaked the vocab, masking this flag). ON output is byte-identical.
+        universal_wrappers_enabled=True,
         search_actions_enabled=True,
         discovery_mandate=False,
         has_hot_list_aliases=False,

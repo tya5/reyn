@@ -52,23 +52,54 @@ def build_universal_tool_use_slots(
     slots: dict[str, str] = {}
 
     # ── R1: ## Capabilities (routing guide) ──────────────────────────────────
-    _wrapper_names_slot = ["`list_actions`"]
-    if search_actions_enabled:
-        _wrapper_names_slot.append("`search_actions`")
-    _wrapper_names_slot.extend(["`describe_action`", "`invoke_action`"])
-    _wrapper_chain_slot = " → ".join(_wrapper_names_slot)
+    # #1977: the wrapper vocab (`list_actions` / `search_actions` /
+    # `describe_action` / `invoke_action`) is universal-scheme-only. Gate it on
+    # ``universal_wrappers_enabled`` so a wrappers-off scheme (enumerate-all,
+    # the default) gets flat-call phrasing instead — it advertises the actions
+    # directly (no wrappers), and instructing wrapper vocab it cannot call
+    # produced ``plan_invalid`` (the model wrote `invoke_action` into plan steps
+    # the enumerate catalog rejects). The ON branch is byte-identical (the prior
+    # behaviour for universal-category).
+    if universal_wrappers_enabled:
+        _wrapper_names_slot = ["`list_actions`"]
+        if search_actions_enabled:
+            _wrapper_names_slot.append("`search_actions`")
+        _wrapper_names_slot.extend(["`describe_action`", "`invoke_action`"])
+        _wrapper_chain_slot = " → ".join(_wrapper_names_slot)
 
-    if discovery_mandate:
-        _otherwise_slot = (
-            "Otherwise — i.e. for any action that is NOT obvious or a named "
-            "skill above — your FIRST tool call MUST be `list_actions` before "
-            "reading, writing, or editing anything (the visible tools are "
-            "universal wrappers, not the full catalog; do NOT skip it, refuse, "
-            f"or guess). Then {_wrapper_chain_slot}. To edit a file you MUST use "
-            "`file__edit`, found via `list_actions`."
+        if discovery_mandate:
+            _otherwise_slot = (
+                "Otherwise — i.e. for any action that is NOT obvious or a named "
+                "skill above — your FIRST tool call MUST be `list_actions` before "
+                "reading, writing, or editing anything (the visible tools are "
+                "universal wrappers, not the full catalog; do NOT skip it, refuse, "
+                f"or guess). Then {_wrapper_chain_slot}. To edit a file you MUST use "
+                "`file__edit`, found via `list_actions`."
+            )
+        else:
+            _otherwise_slot = f"Otherwise {_wrapper_chain_slot}."
+        _reyn_self_call = (
+            " `invoke_action(action_name=\"reyn_source__read\","
+            " args={\"path\": \"README.md\"})`"
         )
+        _named_skill_call = "`invoke_action`(`skill__X`)"
     else:
-        _otherwise_slot = f"Otherwise {_wrapper_chain_slot}."
+        # wrappers-off (enumerate-all): the full action set is advertised flat;
+        # the model calls actions DIRECTLY by qualified name — no wrapper vocab.
+        if discovery_mandate:
+            _otherwise_slot = (
+                "Otherwise — i.e. for any action that is NOT obvious or a named "
+                "skill above — call the matching action DIRECTLY by its qualified "
+                "`<category>__<entry>` name from your available tools (do NOT "
+                "refuse or guess). To edit a file you MUST use `file__edit`."
+            )
+        else:
+            _otherwise_slot = (
+                "Otherwise call the matching action directly by its qualified "
+                "`<category>__<entry>` name from your available tools."
+            )
+        _reyn_self_call = " `reyn_source__read(path=\"README.md\")`"
+        _named_skill_call = "`skill__X`"
 
     _r1: list[str] = []
     _r1.append("## Capabilities (routing guide)")
@@ -84,8 +115,8 @@ def build_universal_tool_use_slots(
         " answer lives:",
         "- About Reyn itself (how Reyn works, Reyn's CLI / runtime /"
         " protocols / project conventions):"
-        " `invoke_action(action_name=\"reyn_source__read\","
-        " args={\"path\": \"README.md\"})` → synthesize from README."
+        + _reyn_self_call
+        + " → synthesize from README."
         " (README has the overview + curated map of deep-dive paths;"
         " chain to a specific doc if README points there.)",
         "- About external / current information: `web__search` or"
@@ -96,7 +127,9 @@ def build_universal_tool_use_slots(
         "- Single-target action (= one file, one URL, one skill, one"
         " item): if the action is obvious (`file__read` for \"read this"
         " file\", `reyn_source__read` for \"open Reyn doc X\", `web__fetch`"
-        " for a specific URL, `invoke_action`(`skill__X`) for an explicit"
+        " for a specific URL, "
+        + _named_skill_call
+        + " for an explicit"
         " named skill), invoke directly. " + _otherwise_slot,
         "- Multi-target / iteration (= \"do X for each Y\", \"process N"
         " files\", \"run X on every Y\"): decompose with plan into"
@@ -177,7 +210,11 @@ def build_universal_tool_use_slots(
                 "missing often exists."
             )
             _r2.append("")
-    if discovery_mandate:
+    # #1977: the list_actions discovery-mandate is universal-wrapper-only — under
+    # enumerate-all the full action set is already advertised flat (nothing to
+    # discover). Gate on universal_wrappers_enabled so wrappers-off emits no
+    # wrapper vocab. ON branch is unchanged (True ⇒ same condition as before).
+    if discovery_mandate and universal_wrappers_enabled:
         _r2.append(
             "When no visible tool obviously matches the action you need, "
             "calling list_actions is MANDATORY and comes FIRST — before any "
@@ -190,28 +227,45 @@ def build_universal_tool_use_slots(
 
     # ── R3: never-invent / search guidance + ROUTING RULE ────────────────────
     _r3: list[str] = []
-    if search_actions_enabled:
-        _r3.extend([
-            "  - Never invent action names; only use those returned by",
-            "    `list_actions` or `search_actions`.",
-            "  - For semantic / natural-language / keyword queries (= 「探し"
-            "たい」 「関連」 「something for X」 「similar to」 「'http' を含む」),",
-            "    USE `search_actions(query=...)`. For category enumeration,",
-            "    USE `list_actions(category=[...])`.",
-        ])
+    if universal_wrappers_enabled:
+        if search_actions_enabled:
+            _r3.extend([
+                "  - Never invent action names; only use those returned by",
+                "    `list_actions` or `search_actions`.",
+                "  - For semantic / natural-language / keyword queries (= 「探し"
+                "たい」 「関連」 「something for X」 「similar to」 「'http' を含む」),",
+                "    USE `search_actions(query=...)`. For category enumeration,",
+                "    USE `list_actions(category=[...])`.",
+            ])
+        else:
+            _r3.extend([
+                "  - Never invent action names; only use those returned by",
+                "    `list_actions`.",
+                "  - For category enumeration, USE `list_actions(category=[...])`.",
+            ])
     else:
+        # #1977 wrappers-off (enumerate-all): actions are advertised directly;
+        # "available list" = the visible tools the validator checks. No wrapper vocab.
         _r3.extend([
-            "  - Never invent action names; only use those returned by",
-            "    `list_actions`.",
-            "  - For category enumeration, USE `list_actions(category=[...])`.",
+            "  - Never invent action names; only call tools that appear in your",
+            "    available tools list (the names shown to you).",
         ])
     _r3.append("")
-    _r3.extend([
-        "  ROUTING RULE (ABSOLUTE): When the user message contains an action"
-        " name (= valid `invoke_action` action_name, e.g. `skill__code_review`),"
-        " call `invoke_action` immediately. NO clarifying questions. NO text replies.",
-        "",
-    ])
+    if universal_wrappers_enabled:
+        _r3.extend([
+            "  ROUTING RULE (ABSOLUTE): When the user message contains an action"
+            " name (= valid `invoke_action` action_name, e.g. `skill__code_review`),"
+            " call `invoke_action` immediately. NO clarifying questions. NO text replies.",
+            "",
+        ])
+    else:
+        # #1977 wrappers-off: call the action directly (no invoke_action wrapper).
+        _r3.extend([
+            "  ROUTING RULE (ABSOLUTE): When the user message contains an action"
+            " name (e.g. `skill__code_review`), call that action directly by its"
+            " name immediately. NO clarifying questions. NO text replies.",
+            "",
+        ])
     if non_claude:
         # #1791 A2 (adopted by design judgment, non-Claude gated): operational
         # hygiene for non-Claude models. abs-path + non-interactive dropped (Reyn's
@@ -230,9 +284,17 @@ def build_universal_tool_use_slots(
 
     # ── R4: cwd-idiom file-discovery HOW clause (slot_in_environment) ────────
     slots["slot_in_environment"] = (
-        "discover the contents with `list_actions(category=['file'])` →"
-        " `invoke_action(file__list, ...)` → `invoke_action(file__read, ...)`"
-        " within the cwd's read scope."
+        (
+            "discover the contents with `list_actions(category=['file'])` →"
+            " `invoke_action(file__list, ...)` → `invoke_action(file__read, ...)`"
+            " within the cwd's read scope."
+        )
+        if universal_wrappers_enabled else
+        # #1977 wrappers-off: flat file actions, no wrapper vocab.
+        (
+            "discover the contents with `file__list(...)` → `file__read(...)`"
+            " within the cwd's read scope."
+        )
     )
 
     return slots
