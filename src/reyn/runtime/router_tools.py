@@ -639,26 +639,29 @@ def build_tools(
                             "\"tools\": [str, ...], \"depends_on\": [str, ...]}. "
                             "id: short unique identifier. description: what "
                             "this step does. "
-                            # 2026-05-07 dogfood fix: clarify step.tools field —
-                            # LLM was confusing skill names (= invoke_skill enum
-                            # values like \"direct_llm\") with top-level tool
-                            # names. Be explicit about both the source of truth
-                            # AND the empty-list semantics for synthesis steps.
-                            "tools: list of TOP-LEVEL tool names this step "
-                            "calls (e.g. \"reyn_src_read\", \"web_search\", "
-                            "\"invoke_skill\"). Use [] for steps that only "
-                            "need prior step outputs as context — the step "
-                            "LLM reasons from those natively. To run a skill, "
-                            "use [\"invoke_skill\"], NOT the skill's name. "
-                            "depends_on: ids of prior steps whose output this "
-                            "step needs (default []). Each step should "
-                            "summarise what it found; the router synthesises "
-                            "the final reply after all steps complete. Example: "
-                            "[{\"id\": \"s1\", \"description\": \"read README\", "
-                            "\"tools\": [\"reyn_src_read\"], \"depends_on\": []}, "
-                            "{\"id\": \"s2\", \"description\": \"compare and "
-                            "summarise findings\", "
-                            "\"tools\": [], \"depends_on\": [\"s1\"]}]"
+                            # #1977: scheme-neutral — name tools EXACTLY as they
+                            # appear in the available tools list (= what the plan
+                            # validator checks). Do NOT hard-code a scheme wrapper
+                            # (e.g. invoke_action): under enumerate-all that tool
+                            # is absent → plan_invalid. Kept byte-identical to
+                            # tools/plan.py:_PLAN_PARAMETERS (fallback mirror).
+                            "tools: list of TOP-LEVEL router-tool names this "
+                            "step calls — use the names EXACTLY as they appear "
+                            "in your available tools list (do not invent names, "
+                            "and do not use a skill's or action's bare name). "
+                            "Use [] for steps that only need prior step outputs "
+                            "as context — the step LLM reasons from those "
+                            "natively. depends_on: ids of prior steps whose "
+                            "output this step needs (default []). Each step "
+                            "should report concrete evidence (code snippets, "
+                            "line numbers, specific facts); the router "
+                            "synthesises the final reply. Example: "
+                            "[{\"id\": \"s1\", \"description\": \"read the "
+                            "project README\", \"tools\": [\"<one of your "
+                            "available tool names>\"], \"depends_on\": []}, "
+                            "{\"id\": \"s2\", \"description\": \"report "
+                            "differences between s1 findings\", \"tools\": [], "
+                            "\"depends_on\": [\"s1\"]}]"
                         ),
                     },
                 },
