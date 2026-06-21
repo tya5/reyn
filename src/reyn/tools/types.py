@@ -43,7 +43,7 @@ class RouterCallerState:
     Populated by RouterLoop / dispatch_tool when invoking a
     ToolDefinition handler in router context. Handlers that need
     session-scoped resources (skill registry, agent registry, etc.)
-    or async-dispatch callbacks (send_to_agent, dispatch_plan_tool)
+    or async-dispatch callbacks (send_to_agent)
     consume them via this object.
 
     All fields are Optional to allow:
@@ -64,9 +64,6 @@ class RouterCallerState:
     # Async dispatch callbacks (= for delegate_to_agent / plan
     # handlers that need to interact with chain / task lifecycle)
     send_to_agent: Callable[..., Awaitable[Any]] | None = None
-    dispatch_plan_tool: Callable[..., Awaitable[Any]] | None = None
-    # #1953 slice P3: task-driven decomposition entry (parallel with plan).
-    dispatch_task_tool: Callable[..., Awaitable[Any]] | None = None
 
     # Session-scoped chain identity (= for plan tool, delegate
     # tool, etc.)

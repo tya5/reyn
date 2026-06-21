@@ -81,9 +81,6 @@ from tests._support.router_host_adapter import (
     null_send_to_agent as _null_send_to_agent,
 )
 from tests._support.router_host_adapter import (
-    null_spawn_plan_task as _null_spawn_plan_task,
-)
-from tests._support.router_host_adapter import (
     null_spawn_skill as _null_spawn_skill,
 )
 
@@ -192,7 +189,6 @@ def test_delegation_tracker_appended_on_send_to_agent(tmp_path):
         agent_registry=None,
         skill_enumerate_fn=lambda exclude: [],
         agent_workspace_dir=tmp_path / "agents" / "alpha",
-        plan_registry_getter=lambda: None,
         file_read=_null_file_read,
         file_write=_null_file_write,
         file_delete=_null_file_delete,
@@ -206,7 +202,6 @@ def test_delegation_tracker_appended_on_send_to_agent(tmp_path):
         send_to_agent=fake_send,
         put_outbox=_null_put_outbox,
         append_history=_null_append_history,
-        spawn_plan_task=_null_spawn_plan_task,
         delegation_tracker=lambda: tracker,
         agent_replies_tracker=lambda: None,
     )
@@ -271,7 +266,6 @@ def test_adapter_exposes_permission_resolver_property(tmp_path):
         agent_registry=None,
         skill_enumerate_fn=lambda exclude: [],
         agent_workspace_dir=workspace,
-        plan_registry_getter=lambda: None,
         file_read=_null_file_read,
         file_write=_null_file_write,
         file_delete=_null_file_delete,
@@ -285,7 +279,6 @@ def test_adapter_exposes_permission_resolver_property(tmp_path):
         send_to_agent=_null_send_to_agent,
         put_outbox=_null_put_outbox,
         append_history=_null_append_history,
-        spawn_plan_task=_null_spawn_plan_task,
         delegation_tracker=lambda: None,
         agent_replies_tracker=lambda: None,
     )
@@ -337,7 +330,6 @@ def test_make_router_op_context_wires_intervention_bus(tmp_path):
         agent_registry=None,
         skill_enumerate_fn=lambda exclude: [],
         agent_workspace_dir=workspace,
-        plan_registry_getter=lambda: None,
         file_read=_null_file_read,
         file_write=_null_file_write,
         file_delete=_null_file_delete,
@@ -351,7 +343,6 @@ def test_make_router_op_context_wires_intervention_bus(tmp_path):
         send_to_agent=_null_send_to_agent,
         put_outbox=_null_put_outbox,
         append_history=_null_append_history,
-        spawn_plan_task=_null_spawn_plan_task,
         delegation_tracker=lambda: None,
         agent_replies_tracker=lambda: None,
         intervention_bus_factory=lambda: sentinel_bus,
@@ -402,7 +393,6 @@ def test_make_router_op_context_no_factory_leaves_bus_none(tmp_path):
         agent_registry=None,
         skill_enumerate_fn=lambda exclude: [],
         agent_workspace_dir=workspace,
-        plan_registry_getter=lambda: None,
         file_read=_null_file_read,
         file_write=_null_file_write,
         file_delete=_null_file_delete,
@@ -416,7 +406,6 @@ def test_make_router_op_context_no_factory_leaves_bus_none(tmp_path):
         send_to_agent=_null_send_to_agent,
         put_outbox=_null_put_outbox,
         append_history=_null_append_history,
-        spawn_plan_task=_null_spawn_plan_task,
         delegation_tracker=lambda: None,
         agent_replies_tracker=lambda: None,
     )

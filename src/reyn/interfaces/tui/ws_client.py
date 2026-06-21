@@ -82,7 +82,6 @@ class _WSSessionProxy:
         # "limited / remote" placeholder downstream.
         self._interventions = None
         self.running_skills: dict = {}
-        self.running_plans: dict = {}
 
     @property
     def interventions(self):
@@ -177,7 +176,7 @@ class _WSSessionProxy:
     async def cancel_inflight(self) -> None:
         """Issue #276 Phase B: send a ``cancel_inflight`` WS frame.
 
-        The proxy holds no real ``running_skills`` / ``running_plans``
+        The proxy holds no real ``running_skills``
         — that state lives on the server. The TUI delegates Ctrl+C to
         this method when ``--connect`` mode is detected, and the
         server-side endpoint (= ``src/reyn/web/ws/chat.py``) iterates

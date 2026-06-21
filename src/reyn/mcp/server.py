@@ -20,7 +20,6 @@ via ``MessageBus.request`` rather than calling ``_handle_user_message``
 inline.  Pumping from the same task eliminates the anyio stdio-starvation
 failure mode (FP-0013 §ADR-A) and subsumes the previous tactical patches:
   - ``drain_skill_completed_inbox`` (R-A2A-COMPLETION-DRAIN)
-  - ``running_plans`` manual gather (ADR-0023 §2.1.1)
   - ``running_skills`` manual gather (FP-0012)
 These methods and attributes are retained for now (non-destructive migration)
 and will be deleted in a future cleanup wave after ADR-A residual
@@ -203,8 +202,8 @@ async def send_to_agent_impl(
 
     FP-0013: uses ``MessageBus.request`` to pump ``session.run_one_iteration``
     from this task, eliminating the inline ``_handle_user_message`` bypass and
-    the tactical drains (``drain_skill_completed_inbox``, ``running_plans``
-    gather, ``running_skills`` gather).  The inbox is now the single intake
+    the tactical drains (``drain_skill_completed_inbox``,
+    ``running_skills`` gather).  The inbox is now the single intake
     channel for every transport surface.
     """
     if not registry.exists(agent_name):
@@ -325,9 +324,6 @@ def _is_quiescent_after_bus(session) -> bool:
         return False
     running_skills: dict = getattr(session, "running_skills", {})
     if any(not t.done() for t in running_skills.values()):
-        return False
-    running_plans: dict = getattr(session, "running_plans", {})
-    if any(not t.done() for t in running_plans.values()):
         return False
     return True
 

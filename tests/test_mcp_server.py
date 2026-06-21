@@ -329,18 +329,18 @@ def test_send_to_agent_waits_for_plan_terminal_text(tmp_path, monkeypatch):
             role="user", content=message, ts="2026-05-08T00:00:00",
             meta={"chain_id": chain_id},
         ))
-        # Schedule a background "plan task" that appends terminal
-        # text after a tiny delay (= simulates async plan dispatch).
-        async def _plan_task():
+        # Schedule a background skill task that appends terminal
+        # text after a tiny delay (= simulates async dispatch).
+        async def _bg_task():
             await asyncio.sleep(0.05)
             self._append_history(ChatMessage(
                 role="assistant", content=f"PLAN_RESULT_FOR:{message[:20]}",
                 ts="2026-05-08T00:00:01",
-                meta={"chain_id": chain_id, "source": "plan"},
+                meta={"chain_id": chain_id, "source": "skill"},
             ))
-        task = asyncio.create_task(_plan_task())
-        # Track in running_plans so send_to_agent_impl awaits it.
-        self.running_plans["fake_plan_id"] = task
+        task = asyncio.create_task(_bg_task())
+        # Track in running_skills so send_to_agent_impl awaits it.
+        self.running_skills["fake_skill_id"] = task
 
     from reyn.runtime.session import Session
     monkeypatch.setattr(

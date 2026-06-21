@@ -38,13 +38,8 @@ def _format_currently_line(session: "object") -> str:
     except Exception:  # noqa: BLE001 — best-effort
         return ""
     n_skills = s.get("running_skills", 0)
-    n_plans = s.get("running_plans", 0)
     skill_word = "skill" if n_skills == 1 else "skills"
-    plan_word = "plan" if n_plans == 1 else "plans"
-    return (
-        f"Currently: {n_skills} {skill_word} running, "
-        f"{n_plans} {plan_word}."
-    )
+    return f"Currently: {n_skills} {skill_word} running."
 
 
 @slash(

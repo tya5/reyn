@@ -72,10 +72,6 @@ def null_append_history(msg) -> None:
     pass
 
 
-async def null_spawn_plan_task(*, plan_id, runtime, chain_id, parent_chain_id=None) -> None:
-    pass
-
-
 def make_adapter(
     agent_name: str = "test-agent",
     agent_workspace_dir: Path | None = None,
@@ -122,7 +118,6 @@ def make_adapter(
         agent_registry=None,
         skill_enumerate_fn=lambda exclude: [],
         agent_workspace_dir=workspace,
-        plan_registry_getter=lambda: None,
         file_read=null_file_read,
         file_write=null_file_write,
         file_delete=null_file_delete,
@@ -136,7 +131,6 @@ def make_adapter(
         send_to_agent=null_send_to_agent,
         put_outbox=null_put_outbox,
         append_history=null_append_history,
-        spawn_plan_task=null_spawn_plan_task,
         delegation_tracker=lambda: _delegations,
         agent_replies_tracker=lambda: _replies,
         turn_budget_engine=turn_budget_engine,

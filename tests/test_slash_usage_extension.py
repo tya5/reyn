@@ -40,7 +40,6 @@ if str(_SRC) not in sys.path:
 _EXPECTED_USAGE: dict[str, str] = {
     "cancel":      "/cancel <id-prefix> [confirm]",
     "answer":      "/answer <id-prefix> <text>",
-    "plan":        "/plan [list|discard <id>|resume <id>]",
     "memory":      "/memory [list|view <name>]",
     "docs-filter": "/docs-filter [<substring>]",
     "skill":       "/skill [list|discard <id>]",
@@ -86,7 +85,6 @@ def test_summary_does_not_re_embed_usage_in_parens() -> None:
     cleaned: list[tuple[str, list[str]]] = [
         ("cancel",  ["/cancel <id-prefix>", ": /cancel"]),
         ("answer",  ["/answer <id-prefix>", ": /answer"]),
-        ("plan",    ["(list / discard / resume)"]),
         ("memory",  ["(list / view <name>)"]),
         ("skill",   ["(list / discard)"]),
         ("agent",   ["(subcommands: new <name>)"]),
@@ -143,14 +141,14 @@ def test_help_focus_panel_renders_usage_for_extended_commands() -> None:
     """
     from reyn.interfaces.slash.help import _render_command_focus
 
-    # /plan is a representative subcommand-style command — pin it
+    # /tasks is a representative subcommand-style command — pin it
     # to keep the test from rusting if the exact usage syntax
     # gets tweaked. We only assert the usage *substring* appears,
     # not the full string, so trivial wording shifts don't break.
-    panel = _render_command_focus("plan")
-    assert "/plan" in panel
+    panel = _render_command_focus("tasks")
+    assert "/tasks" in panel
     assert "usage:" in panel
-    assert "discard" in panel or "resume" in panel or "list" in panel
+    assert "kill" in panel or "status" in panel or "list" in panel
 
     panel = _render_command_focus("cancel")
     assert "/cancel <id-prefix>" in panel

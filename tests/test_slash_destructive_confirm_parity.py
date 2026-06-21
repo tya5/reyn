@@ -1,20 +1,18 @@
 """Tier 2: destructive slash commands require 2-step confirm (Wave-13 B#2).
 
-/cancel, /plan discard, and /pending discard now mirror /reset's pattern:
+/cancel and /pending discard now mirror /reset's pattern:
   - First invocation (no "confirm" suffix) → warning + hint; action NOT taken.
   - Second invocation (same args + " confirm") → action proceeds.
 
 This prevents a misclick on a Tab-completed prefix from immediately
-aborting a skill, plan, or intervention.
+aborting a skill or intervention.
 
 Pinned per task spec:
   1. /cancel <id> (no confirm) → outbox carries warning + "confirm" hint;
      task.cancel() NOT called.
   2. /cancel <id> confirm → task.cancel() called.
-  3. /plan discard <id> (no confirm) → warning; plan NOT discarded.
-  4. /plan discard <id> confirm → plan IS discarded.
-  5. /pending discard <id> (no confirm) → warning; API NOT called.
-  6. /pending discard <id> confirm → API called.
+  3. /pending discard <id> (no confirm) → warning; API NOT called.
+  4. /pending discard <id> confirm → API called.
 """
 from __future__ import annotations
 
@@ -124,80 +122,6 @@ async def test_cancel_with_confirm_cancels_task() -> None:
     assert any("cancel" in m.text.lower() for m in system_msgs), (
         f"expected 'cancel' in system outbox, got: {[m.text for m in system_msgs]}"
     )
-
-
-# ── /plan discard stubs and tests ─────────────────────────────────────────
-
-
-@pytest.mark.asyncio
-async def test_plan_discard_no_confirm_shows_warning(tmp_path, monkeypatch):
-    """Tier 2: /plan discard <id> (no confirm) → warning msg; plan not discarded."""
-    monkeypatch.chdir(tmp_path)
-    from reyn.core.events.state_log import StateLog
-    from reyn.runtime.session import Session
-
-    session = Session(
-        agent_name="alpha",
-        state_log=StateLog(tmp_path / "state.wal"),
-        snapshot_path=tmp_path / "alpha_snapshot.json",
-    )
-    session.is_attached = True
-
-    await session.journal.record_plan_started(
-        plan_id="p_warn", goal="g", n_steps=2,
-    )
-    assert "p_warn" in session.journal.snapshot.active_plan_ids
-
-    await session._maybe_handle_slash("/plan discard p_warn")
-
-    # Plan must still be active.
-    assert "p_warn" in session.journal.snapshot.active_plan_ids
-
-    # Outbox must carry a warning with "confirm" hint.
-    msgs = []
-    while not session.outbox.empty():
-        msgs.append(session.outbox.get_nowait())
-    warn_msgs = [m for m in msgs if m.kind == "system"]
-    assert warn_msgs, f"expected system warning, got: {[(m.kind, m.text) for m in msgs]}"
-    assert "confirm" in warn_msgs[0].text
-    assert "p_warn" in warn_msgs[0].text
-
-
-@pytest.mark.asyncio
-async def test_plan_discard_with_confirm_discards_plan(tmp_path, monkeypatch):
-    """Tier 2: /plan discard <id> confirm discards the plan (clears active_plan_ids)."""
-    monkeypatch.chdir(tmp_path)
-    from reyn.core.events.state_log import StateLog
-    from reyn.runtime.session import Session
-
-    session = Session(
-        agent_name="alpha",
-        state_log=StateLog(tmp_path / "state.wal"),
-        snapshot_path=tmp_path / "alpha_snapshot.json",
-    )
-    session.is_attached = True
-
-    await session.journal.record_plan_started(
-        plan_id="p_confirm", goal="g", n_steps=2,
-    )
-
-    consumed = await session._maybe_handle_slash(
-        "/plan discard p_confirm confirm",
-    )
-    assert consumed is True
-
-    # Plan must be cleared.
-    assert "p_confirm" not in session.journal.snapshot.active_plan_ids
-
-    # Outbox must carry the "discarded plan run" confirmation.
-    msgs = []
-    while not session.outbox.empty():
-        msgs.append(session.outbox.get_nowait())
-    status_texts = [m.text for m in msgs if m.kind == "system"]
-    assert any("discarded plan run" in t for t in status_texts), (
-        f"expected 'discarded plan run' in system msgs, got: {status_texts}"
-    )
-
 
 # ── /pending discard stubs and tests ─────────────────────────────────────
 

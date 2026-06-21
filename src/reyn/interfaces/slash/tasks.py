@@ -9,8 +9,6 @@ Sub-commands:
 Reads from existing infrastructure (= no new state required):
   - ``session.running_skills`` / ``running_skills_started_at`` /
     ``running_skills_chain`` for skill runs (PR22)
-  - ``session.running_plans`` + ``active_plan_ids`` for plan tasks (ADR-0023
-    Phase 2.1)
   - SkillRegistry per-skill snapshot for current_phase
   - The P6 events log via ``self._chat_events`` is NOT consulted here (= keeping
     the slash cheap and synchronous; users wanting raw events run ``reyn events``).
@@ -88,19 +86,10 @@ def _resolve_task(
     if not prefix:
         return None, "", []
     skill_ids = list(getattr(session, "running_skills", {}).keys())
-    plan_ids: list[str] = []
-    plans_dict = getattr(session, "running_plans", None)
-    if plans_dict is not None:
-        plan_ids = list(plans_dict.keys())
     skill_matches = [r for r in skill_ids if prefix in r]
-    plan_matches = [p for p in plan_ids if prefix in p]
-    candidates = [f"skill:{r}" for r in skill_matches] + [
-        f"plan:{p}" for p in plan_matches
-    ]
+    candidates = [f"skill:{r}" for r in skill_matches]
     if len(candidates) == 1:
-        if skill_matches:
-            return skill_matches[0], "skill", candidates
-        return plan_matches[0], "plan", candidates
+        return skill_matches[0], "skill", candidates
     return None, "", candidates
 
 
@@ -109,20 +98,14 @@ def _resolve_task(
 
 async def _list_tasks(session: "Session") -> None:
     skill_lines = _list_skill_lines(session)
-    plan_lines = _list_plan_lines(session)
-    if not skill_lines and not plan_lines:
+    if not skill_lines:
         await reply(session, "(no running tasks)")
         return
 
     out: list[str] = []
-    total = len(skill_lines) + len(plan_lines)
-    out.append(f"{total} running task(s):")
-    if skill_lines:
-        out.append("  Skills:")
-        out.extend(f"    {ln}" for ln in skill_lines)
-    if plan_lines:
-        out.append("  Plans:")
-        out.extend(f"    {ln}" for ln in plan_lines)
+    out.append(f"{len(skill_lines)} running task(s):")
+    out.append("  Skills:")
+    out.extend(f"    {ln}" for ln in skill_lines)
     await reply(session, "\n".join(out))
 
 
@@ -150,20 +133,6 @@ def _list_skill_lines(session: "Session") -> list[str]:
     return lines
 
 
-def _list_plan_lines(session: "Session") -> list[str]:
-    running = getattr(session, "running_plans", None)
-    if not running:
-        return []
-    lines: list[str] = []
-    for plan_id, task in running.items():
-        if task.done():
-            # Skip plans whose task has finished but whose entry hasn't been
-            # cleaned up yet (= terminal state, no longer "running").
-            continue
-        lines.append(f"plan  [{plan_id}]")
-    return lines
-
-
 # ── /tasks status ────────────────────────────────────────────────────────────
 
 
@@ -185,8 +154,6 @@ async def _task_status(session: "Session", args: str) -> None:
 
     if kind == "skill":
         await _skill_status(session, resolved)
-    elif kind == "plan":
-        await _plan_status(session, resolved)
     else:
         await reply_error(session, f"unknown task kind for {resolved}")
 
@@ -210,11 +177,6 @@ async def _skill_status(session: "Session", run_id: str) -> None:
     chain_id = (getattr(session, "running_skills_chain", {}) or {}).get(run_id)
     if chain_id:
         out.append(f"  chain_id: {chain_id}")
-    await reply(session, "\n".join(out))
-
-
-async def _plan_status(session: "Session", plan_id: str) -> None:
-    out = [f"plan {plan_id}", "  (use `/plan list` for the running plan view)"]
     await reply(session, "\n".join(out))
 
 
@@ -243,19 +205,5 @@ async def _kill_task(session: "Session", args: str) -> None:
         # circular imports at module load time.
         from reyn.interfaces.slash.skill import _discard_skill_run
         await _discard_skill_run(session, resolved)
-    elif kind == "plan":
-        # Mirror /plan discard semantics — cancel the task; the plan's
-        # registered handler clears active_plan_ids on cleanup.
-        running_plans = getattr(session, "running_plans", {}) or {}
-        task = running_plans.get(resolved)
-        if task is None or task.done():
-            await reply_error(session, f"plan {resolved} is not running")
-            return
-        task.cancel()
-        try:
-            await task
-        except (asyncio.CancelledError, Exception):  # noqa: BLE001
-            pass
-        await reply(session, f"killed plan: {resolved}")
     else:
         await reply_error(session, f"unknown task kind for {resolved}")

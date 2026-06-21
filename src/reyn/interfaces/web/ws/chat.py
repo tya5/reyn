@@ -210,7 +210,7 @@ async def ws_chat(websocket: WebSocket, agent_name: str) -> None:
                 # Issue #276 Phase B: remote Ctrl+C.
                 # #1468: single seam — delegate to session.cancel_inflight()
                 # which sets the cooperative turn-cancel flag AND cancels
-                # running_skills / running_plans tasks. This deduplicates
+                # running_skills tasks. This deduplicates
                 # the logic that was previously inline here (mirroring
                 # app.action_cancel_inflight's local path).
                 _cancel_fn = getattr(session, "cancel_inflight", None)

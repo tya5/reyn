@@ -24,7 +24,6 @@ from reyn.config import OnLimitConfig
 from reyn.core.kernel.phase_router_host import PhaseRouterLoopHost
 from reyn.llm.llm import LLMToolCallResult
 from reyn.llm.pricing import TokenUsage
-from reyn.runtime.planner import Plan, PlanStep, _PlanStepHost
 from reyn.runtime.router_loop import RouterLoop
 from tests._support.router_loop import FakeEventLog, FakeRouterHost, text_result
 from tests._support.router_loop import ScriptedLLM as _ScriptedLLM
@@ -42,75 +41,6 @@ def _tool_exhauster(n: int) -> LLMToolCallResult:
         finish_reason="tool_calls",
         usage=_USAGE,
     )
-
-
-# ── Plan axis ─────────────────────────────────────────────────────────────────
-
-
-def _plan_host(parent: FakeRouterHost) -> _PlanStepHost:
-    step = PlanStep(id="s1", description="test step", tools=())
-    plan = Plan(goal="g", steps=(step,))
-    return _PlanStepHost(
-        plan=plan, step=step, prior_results={}, parent=parent,
-        turn_budget_engine=None,  # no cumulative force-close; limit-deny only
-    )
-
-
-@pytest.mark.asyncio
-async def test_plan_step_limit_deny_sets_forced_close_result() -> None:
-    """Tier 2: #1496 plan axis — limit-deny force-close sets forced_close_result
-    on _PlanStepHost so the planner can use the consolidation as step output."""
-    parent = FakeRouterHost()
-    host = _plan_host(parent)
-    on_limit = OnLimitConfig(mode="unattended")
-
-    # exhaust + wrap-up text on the force-close call
-    llm = _ScriptedLLM([_tool_exhauster(0), text_result("plan step done; files at /out")])
-    loop = RouterLoop(
-        host=host, chain_id="chain-plan", max_iterations=1,
-        llm_caller=llm, on_limit=on_limit,
-    )
-    await loop.run_loop(
-        messages=[{"role": "user", "content": "execute step"}],
-        tools=[], _univ_enabled=False,
-    )
-
-    # forced_close_result set with wrap-up content
-    fc = host.forced_close_result
-    assert fc is not None, "forced_close_result must be set after limit-deny wrap-up"
-    assert getattr(fc, "content", None) == "plan step done; files at /out"
-
-    # _PlanStepHost captures agent text in captured_text (not outbox list)
-    assert host.captured_text == "plan step done; files at /out"
-
-    # limit_denied event on parent.events (plan step delegates to parent)
-    limit_ev = [e for e in parent.events.emitted if e.get("type") == "limit_denied"]
-    (ev,) = limit_ev
-    assert ev["kind"] == "max_iterations"
-
-
-@pytest.mark.asyncio
-async def test_plan_step_limit_deny_no_fc_result_when_wrap_up_empty() -> None:
-    """Tier 2: #1496 plan axis — forced_close_result NOT set when wrap-up
-    returns no text (empty-checkpoint guard prevents spurious re-entry)."""
-    parent = FakeRouterHost()
-    host = _plan_host(parent)
-    on_limit = OnLimitConfig(mode="unattended")
-
-    # exhaust only; scripted LLM returns tool call on wrap-up → content=None
-    llm = _ScriptedLLM([_tool_exhauster(0)])
-    loop = RouterLoop(
-        host=host, chain_id="chain-plan-empty", max_iterations=1,
-        llm_caller=llm, on_limit=on_limit,
-    )
-    await loop.run_loop(
-        messages=[{"role": "user", "content": "execute step"}],
-        tools=[], _univ_enabled=False,
-    )
-
-    # forced_close_result NOT set — would trigger empty checkpoint re-entry
-    assert host.forced_close_result is None
-    assert host.captured_text == ""  # no agent text captured
 
 
 # ── Phase axis ────────────────────────────────────────────────────────────────

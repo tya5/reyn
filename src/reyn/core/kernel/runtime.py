@@ -290,7 +290,7 @@ class OSRuntime:
         )
         # PR-N8: phase axis compaction wiring.  Engine + cfg are optional kwargs
         # so tests can inject real instances; production constructs them lazily
-        # here (= Path b, same pattern as planner.execute_plan).  When no
+        # here (= Path b, lazy production construction).  When no
         # injection is provided, a default CompactionEngine is constructed
         # using this OSRuntime's model + events.  T_SP=0 is the conservative
         # non-chat default (= no session SP measured; main_pool = T_max, same

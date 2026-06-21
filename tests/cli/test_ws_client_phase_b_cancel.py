@@ -27,7 +27,7 @@ async def test_session_proxy_cancel_inflight_sends_wire_frame() -> None:
     """Tier 2: ``cancel_inflight`` sends ``{"type": "cancel_inflight"}``.
 
     No text payload — the server-side handler iterates its session's
-    running_skills + running_plans and emits the result as a status
+    running_skills and emits the result as a status
     outbox; the client doesn't need to enumerate anything.
     """
     sent: list[dict] = []

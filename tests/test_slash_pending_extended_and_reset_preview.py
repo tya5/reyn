@@ -39,16 +39,12 @@ class _StubSession:
     def __init__(
         self,
         *,
-        interrupted_plans: list[dict] | None = None,
         stuck_skills: list[dict] | None = None,
         running_skills: int = 0,
-        running_plans: int = 0,
         pending_ops: list | None = None,
     ) -> None:
-        self._interrupted_plans = interrupted_plans or []
         self._stuck_skills = stuck_skills or []
         self._running_skills = running_skills
-        self._running_plans = running_plans
         self._pending_ops = pending_ops or []
         self.outbox_messages: list[OutboxMessage] = []
 
@@ -61,8 +57,6 @@ class _StubSession:
     def current_state_summary(self) -> dict:
         return {
             "running_skills": self._running_skills,
-            "running_plans": self._running_plans,
-            "interrupted_plans": list(self._interrupted_plans),
             "stuck_skills": list(self._stuck_skills),
         }
 
@@ -80,7 +74,6 @@ def test_pending_list_no_attention_when_clean() -> None:
     from reyn.interfaces.slash.pending import pending_cmd
 
     session = _StubSession(
-        interrupted_plans=[],
         stuck_skills=[],
     )
     asyncio.run(pending_cmd(session, "list"))
@@ -88,31 +81,6 @@ def test_pending_list_no_attention_when_clean() -> None:
     text = session.captured_text()
     assert "needs attention" not in text, (
         f"Expected no 'needs attention' section, got: {text!r}"
-    )
-
-
-def test_pending_list_shows_interrupted_plan() -> None:
-    """Tier 2: /pending list with 1 interrupted plan → output contains 'interrupted'."""
-    from reyn.interfaces.slash import REGISTRY  # noqa: F401
-    from reyn.interfaces.slash.pending import pending_cmd
-
-    session = _StubSession(
-        interrupted_plans=[{
-            "plan_id": "abc12345",
-            "goal": "write tests",
-            "exc_type": "KeyboardInterrupt",
-            "n_completed": 2,
-            "n_total": 5,
-        }],
-    )
-    asyncio.run(pending_cmd(session, "list"))
-
-    text = session.captured_text()
-    assert "needs attention" in text, (
-        f"Expected 'needs attention' in output, got: {text!r}"
-    )
-    assert "interrupted" in text, (
-        f"Expected 'interrupted' in output, got: {text!r}"
     )
 
 
@@ -149,7 +117,6 @@ def test_reset_no_arg_no_state_shows_currently_zero() -> None:
 
     session = _StubSession(
         running_skills=0,
-        running_plans=0,
     )
     asyncio.run(reset_cmd(session, ""))
 
@@ -160,26 +127,19 @@ def test_reset_no_arg_no_state_shows_currently_zero() -> None:
     assert "0 skills" in text, (
         f"Expected '0 skills' in /reset prompt, got: {text!r}"
     )
-    assert "0 plans" in text, (
-        f"Expected '0 plans' in /reset prompt, got: {text!r}"
-    )
 
 
 def test_reset_no_arg_with_state_shows_counts() -> None:
-    """Tier 2: /reset (no arg, 2 skills, 1 plan) → output contains counts."""
+    """Tier 2: /reset (no arg, 2 skills) → output contains counts."""
     from reyn.interfaces.slash import REGISTRY  # noqa: F401
     from reyn.interfaces.slash.reset import reset_cmd
 
     session = _StubSession(
         running_skills=2,
-        running_plans=1,
     )
     asyncio.run(reset_cmd(session, ""))
 
     text = session.captured_text()
     assert "2 skills" in text, (
         f"Expected '2 skills' in /reset prompt, got: {text!r}"
-    )
-    assert "1 plan" in text, (
-        f"Expected '1 plan' in /reset prompt, got: {text!r}"
     )

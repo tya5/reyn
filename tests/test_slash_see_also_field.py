@@ -93,10 +93,10 @@ def test_render_command_focus_omits_see_also_line_when_empty() -> None:
     )
 
 
-def test_plan_command_has_expected_see_also_at_import() -> None:
-    """Tier 2: /plan has see_also=('docs/concepts/multi-agent/plan-mode.md',) at import time."""
+def test_memory_command_has_expected_see_also_at_import() -> None:
+    """Tier 2: a populated command has its see_also at import time (registration)."""
     from reyn.interfaces.slash import REGISTRY  # noqa: F401 — triggers registration
 
-    cmd = REGISTRY.get("plan")
+    cmd = REGISTRY.get("memory")
     assert cmd is not None
-    assert "docs/concepts/multi-agent/plan-mode.md" in cmd.see_also
+    assert cmd.see_also  # populated (non-empty tuple)

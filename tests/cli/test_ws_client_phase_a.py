@@ -195,5 +195,4 @@ def test_session_proxy_exposes_attrs_tui_reads_defensively() -> None:
     proxy = _WSSessionProxy(agent_name="default", send_fn=lambda _: None)
     assert proxy.agent_name == "default"
     assert proxy.running_skills == {}
-    assert proxy.running_plans == {}
     assert proxy.interventions is None

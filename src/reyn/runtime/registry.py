@@ -603,31 +603,6 @@ class AgentRegistry:
                 if session is not None:
                     session.restore_state(snap)
 
-        # 6. ADR-0023 Phase 2: orphan plan recovery via PlanResumeCoordinator.
-        # Plans whose decomposition artifact survived (= post-Step-6 plans)
-        # are analyzed for memo replay; pre-Phase-2 plans without an
-        # artifact get the same Phase 1 outcome (= forced discard +
-        # outbox notice + plan_aborted) via the coordinator's missing-
-        # artifact fallback.
-        # FP-0043 S5 boundary: this iterates the MAIN session only. The recovery
-        # coordinator drives an agent-level PlanRegistry (a separate consumer from
-        # AgentSnapshot), so per-session plan recovery belongs with the deferred
-        # plan/step consumer-scoping line (#1737), not S5's AgentSnapshot re-key. A
-        # spawned session's active_plan_ids is still restored into its snapshot
-        # above; only the orphan-cleanup coordinator stays main-scoped here.
-        for name, snap in snapshots.items():
-            if not snap.active_plan_ids:
-                continue
-            session = self._peek_session(name)
-            if session is None:
-                continue
-            try:
-                await self._recover_plans_for_agent(name, session)
-            except Exception as exc:  # noqa: BLE001 — defensive
-                logger.warning(
-                    "plan recovery failed for agent=%s: %r", name, exc,
-                )
-
         return snapshots
 
     # ── Global rewind (ADR-0038 Stage 1c-2, D2 consistent-cut) ──────────────
@@ -837,8 +812,8 @@ class AgentRegistry:
 
         The 2c edit flow re-runs an edited turn from the state before it: checkout
         this predecessor, then submit the edit (a new fork). The result is the
-        immediately-prior checkpoint that is a **turn** (plan-step / phase cuts are
-        skipped — ``record_plan_step_completed`` cuts intra-turn checkpoints, but an
+        immediately-prior checkpoint that is a **turn** (phase cuts are
+        skipped — they cut intra-turn checkpoints, but an
         edit must return to the prior *turn*) AND on ``seq``'s **lineage** (its branch
         + ancestors back to the fork-point — so a forked branch's first turn resolves
         to the parent's fork-point turn, not a same-branch-only miss).
@@ -1121,162 +1096,6 @@ class AgentRegistry:
             reconstruct_seq=head, workspace_at_or_below=head,
         )
         return {"recovered_target_n": target, "head": head, "agents": agents}
-
-    # ── Plan resume recovery (ADR-0023 Phase 2 step 7d) ─────────────────────
-
-    async def _recover_plans_for_agent(
-        self, agent_name: str, session: "Any",
-    ) -> None:
-        """Rehydrate per-agent PlanRegistry, run coordinator, spawn launchable.
-
-        Called once per agent during ``restore_all`` cleanup, after
-        snapshots have been replayed onto AgentSnapshot. Steps:
-
-          1. Build a per-agent PlanRegistry and load any surviving plan
-             snapshot files (= populated by Step 6's PlanRegistry).
-          2. Build a PlanResumeCoordinator with policy from reyn.yaml.
-          3. Call coordinator.discover_and_decide → analyze each active
-             plan against WAL events.
-          4. Call coordinator.apply_decisions → cancel children flagged,
-             discard non-resumable plans (= surfaces outbox notice).
-          5. For each launchable decision, call
-             ``session._plan_runner.spawn_resumed_plan`` → PlanRuntime
-             task starts.
-
-        Errors at any step degrade gracefully: a bad config falls back
-        to defaults; an unloadable artifact yields forced discard with
-        outbox notice (= ADR-0023 §3.5 corruption fallback).
-        """
-        from reyn.core.plan import (
-            PlanRegistry,
-            PlanResumeCoordinator,
-            build_plan_resume_config,
-            read_decomposition,
-        )
-
-        agent_state_dir = (
-            Path(".reyn") / "agents" / agent_name / "state"
-        )
-        plan_registry = PlanRegistry(
-            agent_name=agent_name, agent_state_dir=agent_state_dir,
-        )
-        plan_registry.load_active()
-        if not plan_registry.list_active():
-            # No surviving plan snapshots — every active_plan_ids entry
-            # is a Phase-1-era plan with no artifact. Fall back to the
-            # legacy discard path (= outbox notice + plan_aborted).
-            await self._legacy_discard_orphan_plans(agent_name, session)
-            return
-
-        # Resolve config (= reyn.yaml plan_resume:). Tolerant on errors.
-        config = None
-        try:
-            from reyn.config import load_config
-            cfg = load_config(Path.cwd())
-            config = build_plan_resume_config(cfg.plan_resume_raw)
-        except Exception as exc:  # noqa: BLE001 — defensive
-            logger.warning("plan_resume config load failed: %r", exc)
-            config = build_plan_resume_config(None)
-
-        coordinator = PlanResumeCoordinator(config=config)
-
-        # Materialize WAL events once for the coordinator.
-        wal_events: list[dict] = []
-        if self._state_log is not None:
-            wal_events = list(self._state_log.iter_from(0))
-
-        def _decomposition_loader(plan_id: str):
-            return read_decomposition(agent_state_dir, plan_id)
-
-        def _child_skill_lookup(child_run_id: str) -> str | None:
-            # Best-effort: query the agent's SkillRegistry if available.
-            sk_reg = getattr(session, "_skill_registry", None)
-            if sk_reg is None:
-                return "unknown"
-            snap = sk_reg.get(child_run_id)
-            if snap is None:
-                return "unknown"
-            return "in_flight"
-
-        # ADR-0024: thread agent_state_dir so analyzer's get_step_result
-        # path can resolve spilled-to-file step results. Coordinator
-        # forwards to PlanResumeAnalyzer.analyze.
-        decisions = coordinator.discover_and_decide(
-            plan_registry=plan_registry,
-            wal_events=wal_events,
-            decomposition_loader=_decomposition_loader,
-            child_skill_lookup=_child_skill_lookup,
-            agent_state_dir=agent_state_dir,
-        )
-
-        async def _on_outbox_notice(plan_id: str, message: str) -> None:
-            from reyn.runtime.outbox import OutboxMessage
-            try:
-                await session._put_outbox(OutboxMessage(
-                    kind="error", text=message,
-                    meta={"plan_id": plan_id, "reason": "resume_discard"},
-                ))
-            except Exception as exc:  # noqa: BLE001
-                logger.warning("plan resume outbox notice failed: %r", exc)
-            # Apply Phase 1 sibling: emit plan_aborted on agent snapshot
-            # so active_plan_ids is cleared.
-            try:
-                await session._journal.record_plan_aborted(
-                    plan_id=plan_id, reason="resume_discard",
-                )
-            except Exception as exc:  # noqa: BLE001
-                logger.warning("plan_aborted on discard failed: %r", exc)
-
-        skill_registry = getattr(session, "_skill_registry", None)
-        launchable = await coordinator.apply_decisions(
-            decisions,
-            plan_registry=plan_registry,
-            skill_registry=skill_registry,
-            on_outbox_notice=_on_outbox_notice,
-        )
-        for decision in launchable:
-            try:
-                await session._plan_runner.spawn_resumed_plan(
-                    decision=decision,
-                )
-            except Exception as exc:  # noqa: BLE001
-                logger.warning(
-                    "spawn_resumed_plan failed for %s: %r",
-                    decision.plan.plan_id, exc,
-                )
-
-    async def _legacy_discard_orphan_plans(
-        self, agent_name: str, session: "Any",
-    ) -> None:
-        """Phase 1 fallback: no decomposition artifact (pre-Phase-2 plans)
-        → emit plan_aborted + outbox notice."""
-        snap = session._journal.snapshot
-        for plan_id in list(snap.active_plan_ids):
-            try:
-                await session._journal.record_plan_aborted(
-                    plan_id=plan_id, reason="restart_cleanup",
-                )
-            except Exception as exc:  # noqa: BLE001
-                logger.warning(
-                    "plan_aborted (legacy) failed for %s/%s: %r",
-                    agent_name, plan_id, exc,
-                )
-            try:
-                from reyn.runtime.outbox import OutboxMessage
-                await session._put_outbox(OutboxMessage(
-                    kind="error",
-                    text=(
-                        "A plan-mode reply was interrupted by a previous "
-                        "session crash. The partial work could not be "
-                        "preserved — please re-issue your request."
-                    ),
-                    meta={"plan_id": plan_id, "reason": "restart_cleanup"},
-                ))
-            except Exception as exc:  # noqa: BLE001
-                logger.warning(
-                    "outbox notice (legacy) failed for %s/%s: %r",
-                    agent_name, plan_id, exc,
-                )
 
     # ── WAL truncation (skill resume design) ────────────────────────────────
     #

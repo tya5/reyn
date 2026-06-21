@@ -191,10 +191,8 @@ async def test_single_agent_inflight_skill_plan_intervention_drained_by_rewind(t
         )
 
     skill_t = asyncio.create_task(_parked_then_append("skill-straggler"))
-    plan_t = asyncio.create_task(_parked_then_append("plan-straggler"))
     iv_t = asyncio.create_task(_parked_then_append("iv-straggler"))
     alpha.running_skills["s1"] = skill_t          # in-flight skill
-    alpha.running_plans["p1"] = plan_t            # in-flight plan
     alpha._track_wal_task(iv_t)                    # fire-and-forget intervention task
     for _ in range(5):                            # let each reach `await release.wait()`
         await asyncio.sleep(0)
@@ -204,7 +202,7 @@ async def test_single_agent_inflight_skill_plan_intervention_drained_by_rewind(t
     reset_seq = res["reset_seq"]
 
     # every in-flight append-capable task settled (cancelled + joined → done).
-    assert skill_t.done() and plan_t.done() and iv_t.done()
+    assert skill_t.done() and iv_t.done()
     # the reset-record is the head — no straggler append crossed it.
     assert state_log.current_seq == reset_seq
 
@@ -214,4 +212,4 @@ async def test_single_agent_inflight_skill_plan_intervention_drained_by_rewind(t
         await asyncio.sleep(0)
     assert state_log.current_seq == reset_seq
     appended = {e.get("msg_id") for e in state_log.iter_from(1)}
-    assert appended.isdisjoint({"skill-straggler", "plan-straggler", "iv-straggler"})
+    assert appended.isdisjoint({"skill-straggler", "iv-straggler"})

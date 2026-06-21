@@ -272,33 +272,3 @@ class SkillPlanGlue:
     async def spawn_skill(self, spec: dict, *, chain_id: str | None = None) -> None:
         """Thin delegation to SkillRunner.spawn (FP-0019 Wave 1b)."""
         await self._skill_runner.spawn(spec, chain_id=chain_id)
-
-    # ── Plan completion enqueue (FP-0025 C) ───────────────────────────────────
-
-    async def enqueue_plan_completed(
-        self,
-        *,
-        plan_id: str,
-        chain_id: str,
-        goal: str,
-        step_results: dict[str, str],
-        step_failures: dict[str, str],
-        n_steps: int,
-    ) -> None:
-        """FP-0025 C: enqueue plan_completed inbox for router narration."""
-        try:
-            await self._put_inbox(
-                "plan_completed",
-                {
-                    "plan_id": plan_id,
-                    "chain_id": chain_id,
-                    "goal": goal,
-                    "step_results": step_results,
-                    "step_failures": step_failures,
-                    "n_steps": n_steps,
-                },
-            )
-        except Exception as exc:  # noqa: BLE001
-            logger.warning(
-                "_enqueue_plan_completed failed for %s: %r", plan_id, exc,
-            )

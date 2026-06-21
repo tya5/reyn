@@ -128,17 +128,6 @@ def _render_needs_attention(summary: dict) -> str:
     can skip appending entirely (= no blank "needs attention:" header).
     """
     lines: list[str] = []
-    for p in summary.get("interrupted_plans", []):
-        pid = p.get("plan_id", "?")
-        goal = p.get("goal", "")
-        label = f"plan {pid}"
-        if goal:
-            label += f" ({goal[:32]})"
-        exc = p.get("exc_type", "")
-        n_completed = p.get("n_completed", "?")
-        n_total = p.get("n_total", "?")
-        detail = f"interrupted ({n_completed}/{n_total})" if exc else "interrupted"
-        lines.append(f"  ⊘ {label} {detail}")
     for s in summary.get("stuck_skills", []):
         skill = s.get("skill_name", "?")
         rid = s.get("run_id", "?")

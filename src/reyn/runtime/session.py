@@ -64,7 +64,6 @@ from reyn.runtime.services import (
     InterventionHandler,
     InterventionRegistry,
     MemoryService,
-    PlanRunner,
     RouterHostAdapter,
     SnapshotJournal,
 )
@@ -782,8 +781,7 @@ class Session:
         sandbox_config: "SandboxConfig | None" = None,
         # #1200 PR-F1 (agent-level-uniform backend, FS seam): the agent's
         # EnvironmentBackend INSTANCE, threaded to the chat Workspace so chat's
-        # file ops run on the SAME backend as the OSRuntime path (and plan, which
-        # delegates tool exec to chat via _PlanStepHost). None → HostBackend (the
+        # file ops run on the SAME backend as the OSRuntime path. None → HostBackend (the
         # workspace's own default) → unchanged behaviour. The sibling exec seam
         # (sandbox_backend string via sandbox_config) already flows agent-level.
         environment_backend: "EnvironmentBackend | None" = None,
@@ -1222,11 +1220,6 @@ class Session:
         # when an AgentRegistry back-reference is wired (production path);
         # tests with registry=None see no truncation triggers (acceptable).
         self._skill_registry: SkillRegistry | None = None
-        # ADR-0023 Phase 2 + ADR-0025: lazy per-agent PlanRegistry. Created
-        # on first plan-mode invocation so per-plan snapshots persist
-        # alongside SnapshotJournal's WAL-side bookkeeping. Mirrors the
-        # SkillRegistry lazy-init pattern.
-        self._plan_registry: "Any" = None
 
         # PR22: budget / rate-limit tracker (process-shared). When None,
         # checks are noops and counters are not maintained.
@@ -1353,11 +1346,6 @@ class Session:
         # access them directly (slash/skill.py, slash/tasks.py).
         # SkillRunner is constructed below after _interventions is ready.
 
-        # ADR-0023 Phase 2 step 7d: per-plan resume task tracking is now
-        # owned by PlanRunner (constructed below). ``self.running_plans``
-        # remains accessible via a forwarding property — slash commands
-        # and mcp_server.py read it directly.
-
         # PR-refactor-session-1 wave 2: pending-chain lifecycle and intervention
         # queue ownership extracted into services. The session orchestrates the
         # callbacks (_announce_intervention, _on_chain_timeout_fire) but holds
@@ -1441,20 +1429,6 @@ class Session:
         # forward the reply upstream. None = not capturing (user-turn context).
         self._router_loop_agent_replies: list[str] | None = None
 
-        # RunSpawner wave: PlanRunner — plan task lifecycle (spawn / resume).
-        # Owns ``running_plans``; session exposes a forwarding property.
-        # Constructed BEFORE RouterHostAdapter because the adapter binds
-        # ``spawn_plan_task=self._plan_runner.spawn_plan_task`` as one of
-        # its callbacks. PlanRunner needs ``_router_host`` for plan
-        # artifact cleanup, resolved lazily via ``get_router_host``.
-        self._plan_runner = PlanRunner(
-            agent_name=self.agent_name,
-            put_outbox=self._put_outbox,
-            enqueue_plan_completed=self._enqueue_plan_completed,
-            journal=self._journal,
-            get_router_host=lambda: self._router_host,
-        )
-
         # #1092 PR-F1 (chat activation): build the chat axis's turn_budget engine
         # off the RESOLVED model (#1172-safe — resolve self.model exactly as the
         # CompactionEngine does; never hand the cosmetic class to the budget).
@@ -1498,7 +1472,6 @@ class Session:
             agent_registry=self._registry,
             skill_enumerate_fn=enumerate_available_skills,
             agent_workspace_dir=self.workspace_dir,
-            plan_registry_getter=self.get_plan_registry,
             file_read=self._file_read,
             file_write=self._file_write,
             file_delete=self._file_delete,
@@ -1512,7 +1485,6 @@ class Session:
             send_to_agent=self._send_to_agent,
             put_outbox=self._put_outbox,
             append_history=self._append_history,
-            spawn_plan_task=self._plan_runner.spawn_plan_task,
             delegation_tracker=lambda: self._router_loop_delegations,
             agent_replies_tracker=lambda: self._router_loop_agent_replies,
             universal_wrappers_enabled=self._action_retrieval.universal_wrappers_enabled,
@@ -2013,15 +1985,6 @@ class Session:
         """Forwarding property → SkillRunner.running_skills_chain."""
         return self._skill_runner.running_skills_chain
 
-    @property
-    def running_plans(self) -> dict:
-        """Forwarding property → PlanRunner.running_plans.
-
-        Slash commands (slash/plan.py), mcp_server.py shutdown gather,
-        and the TUI app read this directly; the dict itself is owned by
-        PlanRunner.
-        """
-        return self._plan_runner.running_plans
 
     def _is_turn_cancel_requested(self) -> bool:
         """Forwarding → RouterLoopDriver.is_cancel_requested (PR-3)."""
@@ -2045,11 +2008,6 @@ class Session:
             if not task.done():
                 task.cancel()
                 cancelled_skills += 1
-        cancelled_plans = 0
-        for task in list(self.running_plans.values()):
-            if not task.done():
-                task.cancel()
-                cancelled_plans += 1
         parts: list[str] = []
         # Turn cancel is always "requested" when this method is called, but
         # only fires if a turn is actually running. We include it in the
@@ -2057,8 +2015,6 @@ class Session:
         parts.append("turn")
         if cancelled_skills:
             parts.append(f"{cancelled_skills} skill{'s' if cancelled_skills != 1 else ''}")
-        if cancelled_plans:
-            parts.append(f"{cancelled_plans} plan{'s' if cancelled_plans != 1 else ''}")
         return f"✗ cancelled {' + '.join(parts)}"
 
     async def await_quiescent(self) -> None:
@@ -2075,7 +2031,7 @@ class Session:
 
         Coverage (the exhaustive set of append-capable spawned tasks in this
         surface — see #1533 source→gated-by table): the current turn (``_turn_idle``),
-        in-flight skills / plans (``running_skills`` / ``running_plans``), chain-timeout
+        in-flight skills (``running_skills``), chain-timeout
         watchdogs (``_chains`` timers, cancel+join), and fire-and-forget WAL-append
         tasks — intervention dispatch + intervention_answer_consumed (``_inflight_wal_tasks``).
         """
@@ -2101,7 +2057,6 @@ class Session:
         pending = [
             t for t in (
                 *self.running_skills.values(),
-                *self.running_plans.values(),
                 *self._inflight_wal_tasks,
             )
             if not t.done()
@@ -2175,7 +2130,6 @@ class Session:
                                              + self._restore_intervention_tasks
             buffered_intervention_answers  → self._buffered_intervention_answers
             active_skill_run_ids           → self.running_skills (+ started_at / chain)
-            active_plan_ids                → self.running_plans
 
         The running_*/_inflight_wal_tasks task handles are already settled by
         await_quiescent; this drops the (now-done) handles so the rewound
@@ -2199,11 +2153,10 @@ class Session:
             self._restore_intervention_tasks = []
         # buffered_intervention_answers
         self._buffered_intervention_answers.clear()
-        # active_skill_run_ids / active_plan_ids live mirrors (handles settled)
+        # active_skill_run_ids live mirrors (handles settled)
         self.running_skills.clear()
         self.running_skills_started_at.clear()
         self.running_skills_chain.clear()
-        self.running_plans.clear()
         self._inflight_wal_tasks.clear()
 
     @property
@@ -2222,8 +2175,7 @@ class Session:
     def journal(self) -> "SnapshotJournal":
         """Read-only accessor for the session's SnapshotJournal.
 
-        The journal carries rich public API (``record_plan_started`` /
-        ``record_plan_aborted`` / ``append_inbox`` / ``consume_inbox`` /
+        The journal carries rich public API (``append_inbox`` / ``consume_inbox`` /
         ``snapshot``); exposing the holder via a public name keeps slash
         commands and tests off the underscore field. The journal
         instance is set once in ``__init__`` and never re-bound.
@@ -2274,9 +2226,6 @@ class Session:
                     long_await_threshold=long_await_threshold,
                 )
             )
-        plan_reg = self.get_plan_registry()
-        if plan_reg is not None:
-            out.extend(plan_reg.iter_step_applied_seqs())
         return out
 
     def current_state_summary(self) -> dict:
@@ -2286,10 +2235,6 @@ class Session:
         ``/reset`` (confirm preview line).  Keys:
 
         - ``running_skills``: count of currently running skill runs.
-        - ``running_plans``: count of currently running plan tasks.
-        - ``interrupted_plans``: list of ``{plan_id, goal, exc_type}``
-          dicts for recently-interrupted plans (event-store scan; empty
-          when project_root is unavailable).
         - ``stuck_skills``: list of ``{skill_name, run_id, stuck_at}``
           dicts for skill runs that ended on a non-terminal event.
 
@@ -2297,12 +2242,10 @@ class Session:
         return zero / empty rather than raising.
         """
         n_skills = len(self.running_skills) if hasattr(self, "_skill_runner") else 0
-        n_plans = len(self.running_plans) if hasattr(self, "_plan_runner") else 0
 
-        # Interrupted plans + stuck skills require the event-store scan
-        # implemented in the agents-tab helper functions.  We import lazily
-        # (avoids pulling TUI widgets at session-bootstrap time).
-        interrupted_plans: list[dict] = []
+        # Stuck skills require the event-store scan implemented in the agents-tab
+        # helper functions.  We import lazily (avoids pulling TUI widgets at
+        # session-bootstrap time).
         stuck_skills: list[dict] = []
         try:
             project_root: "Path | None" = None
@@ -2312,21 +2255,9 @@ class Session:
 
             if project_root is not None:
                 from reyn.interfaces.tui.widgets.right_panel.agents_tab import (
-                    _recent_plans_for_agent,
                     _recent_skill_runs_for_agent,
                 )
-                running_plan_ids = set(self.running_plans.keys())
                 running_run_ids = set(self.running_skills.keys())
-                plans = _recent_plans_for_agent(
-                    project_root, self.agent_name, running_plan_ids,
-                )
-                for p in plans:
-                    if p.get("status") == "interrupted":
-                        interrupted_plans.append({
-                            "plan_id": p.get("plan_id", "?"),
-                            "goal": p.get("goal", ""),
-                            "exc_type": p.get("exc_type", ""),
-                        })
                 skills = _recent_skill_runs_for_agent(
                     project_root, self.agent_name, running_run_ids,
                 )
@@ -2342,8 +2273,6 @@ class Session:
 
         return {
             "running_skills": n_skills,
-            "running_plans": n_plans,
-            "interrupted_plans": interrupted_plans,
             "stuck_skills": stuck_skills,
         }
 
@@ -2991,11 +2920,6 @@ class Session:
                 # user-role completion message into the existing thread
                 # and run one router LLM turn for narration.
                 await self._handle_skill_completed(payload)
-            elif kind == "plan_completed":
-                # FP-0025 C: a background plan finished. Inject a
-                # user-role message with step_results and run one
-                # router LLM turn for synthesis narration.
-                await self._handle_plan_completed(payload)
             elif kind in ("task_ready", "task_dependency_aborted"):
                 # #1953 slice 7: the TaskWaker delivered a dep-graph disposition
                 # (a dependent became ready, or a parent must decide recovery). Both
@@ -3273,42 +3197,6 @@ class Session:
                 session_id=self._session_id,  # FP-0043 S5: per-session WAL routing
             )
         return self._skill_registry
-
-    def get_plan_registry(self) -> "Any":
-        """Return the per-agent PlanRegistry, lazily constructed on first call.
-
-        ADR-0023 Phase 2 + ADR-0025: per-plan snapshots persist
-        alongside SnapshotJournal's WAL-side bookkeeping. Without this
-        registry hook, ADR-0023 forward replay has nothing to read on
-        resume (PlanRegistry.load_active() returns empty), and ADR-0025
-        sub-loop LLM memoization has nowhere to record.
-
-        Returns None when no state_log is wired — test / standalone
-        mode without persistence.
-
-        Truncate hook mirrors get_skill_registry: fires
-        AgentRegistry.truncate_wal_if_eligible after every durable
-        per-plan mutation (= last_step_applied_seq bump).
-        """
-        if self._state_log is None:
-            return None
-        if self._plan_registry is None:
-            from reyn.core.plan import PlanRegistry
-            agent_state_dir = (
-                Path(".reyn") / "agents" / self.agent_name / "state"
-            )
-            hook = None
-            if self._registry is not None:
-                async def _truncate_hook() -> None:
-                    if self._registry is not None:
-                        await self._registry.truncate_wal_if_eligible()
-                hook = _truncate_hook
-            self._plan_registry = PlanRegistry(
-                agent_name=self.agent_name,
-                agent_state_dir=agent_state_dir,
-                truncate_eligible_hook=hook,
-            )
-        return self._plan_registry
 
     def _build_agent(
         self,
@@ -4450,88 +4338,6 @@ class Session:
                 run_id, skill, exc,
             )
 
-    async def _enqueue_plan_completed(
-        self,
-        *,
-        plan_id: str,
-        chain_id: str,
-        goal: str,
-        step_results: "dict[str, str]",
-        step_failures: "dict[str, str]",
-        n_steps: int,
-    ) -> None:
-        """Forwarding → SkillPlanGlue.enqueue_plan_completed (PR-4)."""
-        await self._skill_plan_glue.enqueue_plan_completed(
-            plan_id=plan_id,
-            chain_id=chain_id,
-            goal=goal,
-            step_results=step_results,
-            step_failures=step_failures,
-            n_steps=n_steps,
-        )
-
-    async def _handle_plan_completed(self, payload: dict) -> None:
-        """FP-0025 C: narrate plan completion via one router LLM turn.
-
-        Symmetric with _handle_skill_completed (FP-0012). Injects a
-        [task_completed] user-role message (kind=plan) into history so
-        the router LLM sees step_results and synthesises a user reply.
-        """
-        # B49 W1-S6 fix (2026-05-22): unified "task" abstraction with
-        # skill completion. Both emit [task_completed] with kind= field
-        # for disambiguation; the SP TASK_COMPLETED rule covers both via
-        # the meaning of status + result fields, no prescriptive
-        # "summarize in 1-2 sentences" or "synthesize the step results"
-        # trailer (= those were handling prescriptions that pre-empted
-        # the LLM's own judgment).
-        plan_id = payload.get("plan_id", "")
-        chain_id = payload.get("chain_id") or _new_chain_id()
-        goal = payload.get("goal", "")
-        step_results = payload.get("step_results") or {}
-        step_failures = payload.get("step_failures") or {}
-        try:
-            results_str = json.dumps(step_results, ensure_ascii=False, indent=2)
-        except (TypeError, ValueError):
-            results_str = repr(step_results)
-        # status='finished' is the implicit success state for plans; if any
-        # step failed, that surfaces via step_failures + the LLM sees both.
-        injected_text = (
-            f"[task_completed] kind=plan plan_id={plan_id} chain_id={chain_id}\n"
-            f"goal: {goal}  status: {'failed' if step_failures else 'finished'}\n"
-            f"step_results:\n{results_str}"
-        )
-        if step_failures:
-            try:
-                failures_str = json.dumps(step_failures, ensure_ascii=False, indent=2)
-            except (TypeError, ValueError):
-                failures_str = repr(step_failures)
-            injected_text += f"\n\nstep_failures:\n{failures_str}\n"
-        self._append_history(ChatMessage(
-            role="user", content=injected_text, ts=_now_iso(),
-            meta={
-                "source": "plan_completion",
-                "plan_id": plan_id,
-                "chain_id": chain_id,
-            },
-        ))
-        self._chat_events.emit(
-            "plan_completion_injected",
-            plan_id=plan_id, chain_id=chain_id,
-        )
-        self._reset_router_turn_counter()
-        try:
-            await self._run_router_loop(injected_text, chain_id)
-        except RouterCapExceeded as exc:
-            await self._emit_router_cap_exhausted_user(exc, chain_id=chain_id, user_text=injected_text)
-            return
-        except Exception as exc:
-            await self._put_outbox(OutboxMessage(
-                kind="error",
-                text=f"router failed (plan_completed): {exc}",
-                meta={"chain_id": chain_id, "plan_id": plan_id},
-            ))
-            return
-
     # ── RouterLoop helper methods (Wave 3 F1, kept for session callbacks) ──────────
     # _make_router_op_context + 3 helpers remain on Session because the
     # session's internal MCP/file callbacks (_mcp_list_tools, _mcp_call_tool,
@@ -4818,11 +4624,6 @@ class Session:
                         exc_info=True,
                     )
             ctx.mcp_clients.clear()
-
-    # NOTE: ``spawn_plan_task`` and ``_spawn_resumed_plan`` moved to
-    # PlanRunner.spawn_plan_task / spawn_resumed_plan (RunSpawner wave).
-    # RouterHostAdapter binds the method reference; registry.py calls
-    # ``session._plan_runner.spawn_resumed_plan(...)`` directly.
 
     # --- RouterLoop orchestration ---
 

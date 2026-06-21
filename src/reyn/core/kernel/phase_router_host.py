@@ -1,9 +1,9 @@
 """PhaseRouterLoopHost — #1092 PR-A (FD1, ADR-0036).
 
 The phase-side ``RouterLoopCore`` implementation that lets a phase act-loop
-drive the shared chat ``RouterLoop`` (Fork 1 convergence). It mirrors the
-proven narrow ``_PlanStepHost`` (``chat/planner.py``) shape but is
-TERMINAL-VALUED: a phase has no parent chat host to delegate to, and — per
+drive the shared chat ``RouterLoop`` (Fork 1 convergence). It is a narrow
+per-loop host that is TERMINAL-VALUED: a phase has no parent chat host to
+delegate to, and — per
 #1212 PR3 decision A — no skills / agents / mcp / universal catalog.
 
 It owns the catalog-source REPLACE seam:
@@ -26,7 +26,7 @@ registry handlers enforce phase permissions — the role the obviated seam's
 ``control_ir_executor`` dispatch played.
 
 This host is the chat-vs-phase polymorphism point — the same role
-``RouterHostAdapter`` (chat) and ``_PlanStepHost`` (plan-step) play for their loops.
+``RouterHostAdapter`` (chat) plays for its loop.
 It is INERT until ``PhaseExecutor`` wires it in (PR-B); today's phase act-loop still
 runs the json-mode ``_run_op_loop`` unchanged.
 """
@@ -191,7 +191,7 @@ class PhaseRouterLoopHost:
             _LLM_VOLATILE_FRAME_FIELDS,
             _LLM_VOLATILE_NESTED_FIELDS,
         )
-        from reyn.core.plan.sub_loop_memo import compute_sub_loop_args_hash
+        from reyn.core.kernel.sub_loop_memo_key import compute_sub_loop_args_hash
 
         robust = [
             self._strip_volatile_frame_fields(
