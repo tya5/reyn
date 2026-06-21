@@ -155,6 +155,14 @@ async def _lifespan(app: FastAPI):
     persist_path = Path(".reyn") / "state" / "run_registry.json"
     app.state.run_registry = RunRegistry(persist_path=persist_path)
 
+    # #1953 slice 5a: the process-singleton Task backend the A2A surface reads
+    # (GetTask / ListTasks / Cancel). Single store keyed by session_id columns
+    # (the §24/R1 per-session store for rewind is revisited at slice 9). Durable
+    # sqlite under the server state dir.
+    from reyn.task import create_task_backend  # noqa: PLC0415
+    task_db_path = Path(".reyn") / "state" / "tasks.db"
+    app.state.task_backend = create_task_backend("sqlite", path=str(task_db_path))
+
     # FP-0009 B: cron scheduler — start only if reyn.yaml has any enabled
     # cron jobs.  Failures are caught so a misconfigured cron block does
     # not prevent the web gateway from booting.

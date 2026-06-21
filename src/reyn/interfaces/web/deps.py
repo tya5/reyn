@@ -408,6 +408,13 @@ def get_run_registry(request: Request) -> "RunRegistry":
     return request.app.state.run_registry
 
 
+def get_task_backend(request: Request):
+    """FastAPI dependency: return the process-singleton Task backend (#1953 slice
+    5a). Attached to ``app.state.task_backend`` by ``reyn.interfaces.web.server``;
+    the A2A read/cancel surface reads it."""
+    return request.app.state.task_backend
+
+
 __all__ = [
     "get_project_root",
     "get_reyn_config",
