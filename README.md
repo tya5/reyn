@@ -121,6 +121,39 @@ flowchart TB
 - **Governance** — *Permission* gates every action; cost caps and the sandbox bound it.
 - **State of record** — the *Workspace* holds data, the *WAL* drives crash recovery, the *AuditEvent log* drives replay and audit. These are separate logs on purpose.
 
+The diagram above is the **depth** view — one agent's execution. The **breadth** view shows how agents are *reached* and how they *relate*: every trigger converges on an agent's inbox, and the fleet delegates under a topology.
+
+```mermaid
+flowchart LR
+    subgraph L1["External connection — outside calls in"]
+      direction TB
+      MCP["MCP server<br/>AI clients"]
+      A2A["A2A server<br/>peer agents"]
+      GW["Gateway<br/>Slack / LINE webhooks"]
+    end
+    subgraph L2["Internal trigger — Reyn raises a turn"]
+      direction TB
+      CRON["cron<br/>scheduled jobs"]
+    end
+    INBOX(["agent inbox<br/>send_to_agent"])
+    L1 --> INBOX
+    L2 --> INBOX
+    subgraph FLEET["Agent fleet"]
+      direction TB
+      REG[("AgentRegistry<br/>multi-agent")]
+      Ax["Agent A<br/>identity · agent_id"]
+      Ay["Agent B"]
+      Ax --- SAx["Sessions<br/>multi-session"]
+      REG --> Ax
+      REG --> Ay
+    end
+    INBOX --> FLEET
+    Ax <-. "delegate_to_agent · topology-gated<br/>network / team / pipeline · chain_id" .-> Ay
+```
+
+- **Reached** — three trigger layers converge on the agent inbox: *external connection* (MCP server · A2A server · gateway webhooks like Slack / LINE), *internal trigger* (`cron`), and *in-turn intervention* (lifecycle hooks — proposed). See [interaction layers](docs/concepts/architecture/interaction-layers.md).
+- **Related** — an `AgentRegistry` holds many *Agents* (each an identity), each with many parallel *Sessions*; agents delegate to peers under a *topology* (network / team / pipeline), hop-capped and `chain_id`-traced. See [multi-agent](docs/concepts/multi-agent/multi-agent.md) · [sessions](docs/concepts/multi-agent/sessions.md).
+
 Details: [architecture](docs/concepts/architecture/architecture.md) · [principles](docs/concepts/architecture/principles.md).
 
 ---
