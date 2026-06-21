@@ -48,6 +48,7 @@ from rich.markdown import Markdown as RichMarkdown
 from rich.padding import Padding
 from rich.text import Text
 from textual.app import ComposeResult
+from textual.events import Resize
 from textual.widget import Widget
 from textual.widgets import RichLog, Static
 
@@ -112,6 +113,12 @@ _RECENT_REPLIES_MAX = 10
 # turn anchors below are drop-aware so even pathological sessions that DO
 # cross the boundary don't break Ctrl+P/N navigation.
 _RICHLOG_MAX_LINES = 20_000
+# #1950: debounce window for the resize-repaint heal. A rapid terminal-resize
+# (SIGWINCH) storm — e.g. drag-resizing the window — corrupts the RichLog's
+# rendered TTY output (dropped characters) via a Textual compositor issue; the
+# log.lines data stays intact. We repaint ONCE after the storm settles, not on
+# every event. Small enough to feel instant, large enough to coalesce a drag.
+_RESIZE_REPAINT_DEBOUNCE_S = 0.15
 # F-H: minimum visible duration for an inline ToolCallRow before the conv
 # pane flushes it into the RichLog scroll history + unmounts the live
 # widget. Cache hits / instant returns would otherwise mount + flush
@@ -1766,6 +1773,42 @@ class ConversationView(Widget):
         # signal time sits BELOW the monolithic RichLog, so the non-streaming
         # reply (RichLog text) would render above it — wrong order.
         self._pending_reasoning: str | None = None
+        # #1950: debounce timer for the resize-repaint heal (see on_resize).
+        self._resize_repaint_timer: object | None = None
+
+    # ── #1950 resize-repaint heal ──────────────────────────────────────────────
+
+    def on_resize(self, event: Resize) -> None:
+        """Heal RichLog TTY corruption from a rapid terminal-resize storm.
+
+        Drag-resizing the window emits a continuous SIGWINCH stream; under it the
+        Textual compositor's writes to the TTY drop characters, corrupting the
+        VISIBLE conversation text (e.g. ``"It uses a hash function"`` →
+        ``"It a hash function"``) while ``log.lines`` stays byte-intact. We force
+        a full repaint of the log from those intact lines AFTER the storm settles
+        — debounced so a drag coalesces into one repaint. Documented Textual
+        workaround (Discussion #3527); reyn's data model is provably correct, so
+        this is display-only healing, not a content fix.
+        """
+        if self._resize_repaint_timer is not None:
+            self._resize_repaint_timer.stop()
+        self._resize_repaint_timer = self.set_timer(
+            _RESIZE_REPAINT_DEBOUNCE_S, self._repaint_after_resize,
+        )
+
+    def _repaint_after_resize(self) -> None:
+        self._resize_repaint_timer = None
+        # call_after_refresh: run the repaint once the post-resize layout pass has
+        # settled the new geometry, then force a full RichLog repaint from the
+        # intact lines (repaint=True re-renders the region, overwriting the
+        # compositor's corrupted cells).
+        self.call_after_refresh(self._force_log_repaint)
+
+    def _force_log_repaint(self) -> None:
+        try:
+            self._log().refresh(repaint=True)
+        except Exception:
+            pass
 
     # ── #1652 reasoning ────────────────────────────────────────────────────────
 
