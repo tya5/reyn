@@ -94,13 +94,13 @@ async def test_inmemory_backend_create_get_list_roundtrip():
     backend = InMemoryTaskBackend()
     task = Task(
         task_id="t1", name="ship", assignee="bob", requester="alice",
-        status=TaskState.BLOCKED, budget_cap=12.5,
+        status=TaskState.BLOCKED,
     )
     await backend.create(task)
 
     got = await backend.get("t1")
     assert got is not None
-    assert got.assignee == "bob" and got.budget_cap == 12.5
+    assert got.assignee == "bob"
     assert got.status is TaskState.BLOCKED
 
     by_assignee = await backend.list(assignee="bob")
@@ -116,7 +116,7 @@ async def test_create_then_get_via_handlers():
     """Tier 2: task.create returns a task_id that task.get resolves."""
     created = await taskmod._create(
         SimpleNamespace(name="ship", assignee="bob", requester="alice",
-                        origin="self", description=None, budget_cap=None, deps=[]),
+                        origin="self", description=None, deps=[]),
         _ctx(), "control_ir",
     )
     assert created["status"] == "ok"
@@ -134,7 +134,7 @@ async def test_update_status_single_writer_is_assignee_session():
     rejected (settled #1953 model; run_id/current_run_id retired)."""
     created = await taskmod._create(
         SimpleNamespace(name="n", assignee="sess-A", requester="alice",
-                        origin="self", description=None, budget_cap=None, deps=[]),
+                        origin="self", description=None, deps=[]),
         _ctx(), "control_ir",
     )
     task_id = created["task"]["task_id"]
@@ -193,7 +193,7 @@ async def test_abort_archives_and_rejects_assignee_straggler():
     update_status by the assignee is rejected by the terminal state, so nothing
     lands (RED if the terminal-guard is dropped)."""
     created = await taskmod._create(
-        SimpleNamespace(name="t", assignee="A", description=None, budget_cap=None,
+        SimpleNamespace(name="t", assignee="A", description=None,
                         deps=[], parent_id=None),
         SimpleNamespace(session_id="R", agent_id="r", events=None), "control_ir")
     task_id = created["task"]["task_id"]
@@ -226,7 +226,7 @@ async def _make_cross_session_task(requester="R", assignee="A"):
     """Create a task with requester=R (the caller) and assignee=A (cross-session)."""
     created = await taskmod._create(
         SimpleNamespace(name="n", assignee=assignee, description=None,
-                        budget_cap=None, deps=[], parent_id=None),
+                        deps=[], parent_id=None),
         SimpleNamespace(session_id=requester, agent_id="x", events=None), "control_ir",
     )
     assert created["task"]["requester"] == requester
@@ -290,7 +290,7 @@ async def test_create_parent_id_must_be_requester_owned():
     # a different session cannot make a sub-task under R's parent.
     other_ctx = SimpleNamespace(session_id="OTHER", agent_id="o", events=None)
     res = await taskmod._create(
-        SimpleNamespace(name="sub", assignee=None, description=None, budget_cap=None,
+        SimpleNamespace(name="sub", assignee=None, description=None,
                         deps=[], parent_id=parent_id), other_ctx, "control_ir")
     assert res["status"] == "denied"
     assert res["error"]["kind"] == "role_denied"
@@ -298,7 +298,7 @@ async def test_create_parent_id_must_be_requester_owned():
     # R (the parent's requester) can.
     req_ctx = SimpleNamespace(session_id="R", agent_id="r", events=None)
     ok = await taskmod._create(
-        SimpleNamespace(name="sub", assignee=None, description=None, budget_cap=None,
+        SimpleNamespace(name="sub", assignee=None, description=None,
                         deps=[], parent_id=parent_id), req_ctx, "control_ir")
     assert ok["status"] == "ok"
     assert ok["task"]["parent_id"] == parent_id

@@ -582,7 +582,6 @@ class TaskCreateIROp(BaseModel):
     name: str
     assignee: str | None = None  # default: the caller's own session (self-task)
     description: str | None = None
-    budget_cap: float | None = None
     deps: list[str] = Field(default_factory=list)  # depends-on task_ids (DAG, §13)
     parent_id: str | None = None  # optional tree parent (must be requester-owned)
 

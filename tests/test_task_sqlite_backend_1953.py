@@ -35,7 +35,7 @@ async def test_nondefault_task_round_trips_across_reload_from_disk(tmp_path):
         task_id="t-1", name="ship", assignee="bob", requester="alice",
         origin=TaskOrigin.EXTERNAL, status=TaskState.BLOCKED,
         description="do the thing", created_by="alice", parent_id="p-0",
-        budget_cap=42.5, cost_accum=3.5, awaiting_since=1234.5,
+        awaiting_since=1234.5,
         deps=["d-1", "d-2"],
     )
     await backend.create(task)
@@ -54,8 +54,6 @@ async def test_nondefault_task_round_trips_across_reload_from_disk(tmp_path):
     assert got.description == "do the thing"
     assert got.created_by == "alice"
     assert got.parent_id == "p-0"
-    assert got.budget_cap == 42.5
-    assert got.cost_accum == 3.5
     assert got.awaiting_since == 1234.5
     assert got.deps == ["d-1", "d-2"]
     reopened.close()

@@ -65,8 +65,6 @@ CREATE TABLE IF NOT EXISTS tasks(
   description TEXT,
   created_by TEXT,
   parent_id TEXT,
-  budget_cap REAL,
-  cost_accum REAL NOT NULL DEFAULT 0,
   awaiting_since REAL,
   unblock_predicate TEXT,
   tools TEXT,
@@ -109,7 +107,7 @@ CREATE TABLE IF NOT EXISTS task_comments(
 
 _TASK_COLUMNS = (
     "task_id, name, assignee, requester, origin, status, description, created_by, "
-    "parent_id, budget_cap, cost_accum, awaiting_since, tools, result, created_at, updated_at"
+    "parent_id, awaiting_since, tools, result, created_at, updated_at"
 )
 
 
@@ -295,8 +293,6 @@ class SqliteTaskBackend:
             description=row["description"],
             created_by=row["created_by"],
             parent_id=row["parent_id"],
-            budget_cap=row["budget_cap"],
-            cost_accum=row["cost_accum"],
             awaiting_since=row["awaiting_since"],
             deps=self._deps(row["task_id"]),
             tools=json.loads(row["tools"]) if row["tools"] else [],
@@ -337,12 +333,11 @@ class SqliteTaskBackend:
             self._conn.execute("BEGIN IMMEDIATE")
             self._conn.execute(
                 f"INSERT INTO tasks({_TASK_COLUMNS}) "
-                f"VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                f"VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (
                     task.task_id, task.name, task.assignee, task.requester,
                     task.origin.value, task.status.value, task.description,
-                    task.created_by, task.parent_id, task.budget_cap,
-                    task.cost_accum, task.awaiting_since,
+                    task.created_by, task.parent_id, task.awaiting_since,
                     json.dumps(task.tools) if task.tools else None, task.result,
                     task.created_at, task.updated_at,
                 ),
@@ -561,19 +556,6 @@ class SqliteTaskBackend:
             self._conn.commit()
             return [t for t in (self._fetch(tid) for tid in subtree) if t is not None]
 
-    async def record_cost(self, task_id: str, delta: float) -> Task | None:
-        async with self._lock:
-            self._conn.execute("BEGIN IMMEDIATE")
-            cur = self._conn.execute(
-                "UPDATE tasks SET cost_accum=cost_accum+?, updated_at=? WHERE task_id=?",
-                (delta, _now_iso(), task_id),
-            )
-            if cur.rowcount == 0:
-                self._conn.rollback()
-                return None
-            self._emit(task_id, "cost_recorded", delta=delta)
-            self._conn.commit()
-            return self._fetch(task_id)
 
     async def set_result(self, task_id: str, result: str) -> Task | None:
         async with self._lock:

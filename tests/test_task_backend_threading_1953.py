@@ -80,7 +80,7 @@ async def test_handler_uses_threaded_sqlite_backend(tmp_path: Path):
 
     created = await taskmod._create(
         SimpleNamespace(name="n", assignee="bob", requester="alice",
-                        origin="self", description=None, budget_cap=None, deps=[]),
+                        origin="self", description=None, deps=[]),
         ctx, "control_ir",
     )
     task_id = created["task"]["task_id"]
@@ -104,7 +104,7 @@ async def test_cas_reject_end_to_end_through_op_layer(tmp_path: Path):
 
     created = await taskmod._create(
         SimpleNamespace(name="n", assignee="sess-A", requester="r",
-                        origin="self", description=None, budget_cap=None, deps=[]),
+                        origin="self", description=None, deps=[]),
         ctx_a, "control_ir",
     )
     task_id = created["task"]["task_id"]
