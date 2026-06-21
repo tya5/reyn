@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Annotated, Any, Literal, Union
+from typing import TYPE_CHECKING, Annotated, Any, Literal, Union
 
 from pydantic import BaseModel, Field, model_serializer, model_validator
 
@@ -663,32 +663,90 @@ class TaskCommentIROp(BaseModel):
     body: str
 
 
-# Discriminated union — Pydantic selects the variant via the "kind" field.
-# All variants below are implemented in `op_runtime/`:
-#   file, mcp, ask_user, shell, lint, run_skill, web_fetch, web_search,
-#   mcp_install, embed, index_write, index_query, recall, index_drop,
-#   sandboxed_exec, judge_output, skill_resolve, compact, task.* (#1953).
-# Fine-grained file ops (#1240 Wave 1+1.5): read_file, write_file, edit_file,
-#   delete_file, glob_files, grep_files (phase=allow registry entries).
-ControlIROp = Annotated[
-    Union[
-        FileIROp,
-        # #1240 Wave 1: fine-grained file ops (coarse FileIROp retained for compat).
-        ReadFileIROp, WriteFileIROp, EditFileIROp, DeleteFileIROp,
-        # #1240 Wave 1.5: glob_files / grep_files fine ops.
-        GlobFilesIROp, GrepFilesIROp,
-        MCPIROp, AskUserIROp, LintIROp,
-        RunSkillIROp, WebFetchIROp, WebSearchIROp, MCPInstallIROp,
-        IndexQueryIROp, RecallIROp, IndexDropIROp,
-        SandboxedExecIROp, JudgeOutputIROp, SkillResolveIROp, CompactIROp,
-        # #1953: Task ops.
-        TaskCreateIROp, TaskUpdateStatusIROp, TaskGetIROp, TaskListIROp,
-        TaskAddDependencyIROp, TaskAbortIROp,
-        TaskHeartbeatIROp, TaskRegisterUnblockPredicateIROp,
-        TaskCommentIROp,
-    ],
-    Field(discriminator="kind"),
-]
+# ── Op-kind registry — the single source for the Control IR op surface ───────
+# #1983: OP_KIND_MODEL_MAP is co-located HERE (relocated from
+# op_runtime/registry.py) so the ControlIROp union, ALL_OP_KINDS, and
+# op_runtime's purity / op_catalog all derive from ONE map. Previously the map
+# lived in registry.py — which imports these model classes — so models.py could
+# not derive the union from it without a cycle; that dual-source (hand-listed
+# union vs the map) was #1983's root cause. Add a new op kind HERE (kind → IROp
+# model); the union + ALL_OP_KINDS follow by construction. op_runtime/registry.py
+# keeps the *purity* classification (OP_PURITY) and re-imports ALL_OP_KINDS from
+# here (intentional convenience, not a migration shim).
+#
+# NOTE: the coarse "file" kind is intentionally NOT in the map (#1240 Wave 2b
+# dropped it; fine handlers still build FileIROp(kind="file") internally). It is
+# the one explicit non-map member of the union below.
+OP_KIND_MODEL_MAP: dict[str, type[BaseModel]] = {
+    "read_file":   ReadFileIROp,
+    "write_file":  WriteFileIROp,
+    "edit_file":   EditFileIROp,
+    "delete_file": DeleteFileIROp,
+    "glob_files":  GlobFilesIROp,
+    "grep_files":  GrepFilesIROp,
+    "mcp":         MCPIROp,
+    "run_skill":   RunSkillIROp,
+    "lint":        LintIROp,
+    "ask_user":    AskUserIROp,
+    "web_fetch":   WebFetchIROp,
+    "web_search":  WebSearchIROp,
+    "mcp_install": MCPInstallIROp,
+    # #1983: was registered + documented (control-ir.md) + handled but ABSENT
+    # here → a phase emitting it failed ActOutput validation. Added to restore
+    # the control-ir.md ↔ map sync invariant.
+    "mcp_drop_server": MCPDropServerIROp,
+    "index_query": IndexQueryIROp,
+    "recall":      RecallIROp,
+    "index_drop":  IndexDropIROp,
+    "sandboxed_exec": SandboxedExecIROp,
+    "judge_output": JudgeOutputIROp,
+    "skill_resolve": SkillResolveIROp,
+    "compact": CompactIROp,
+    "task.create": TaskCreateIROp,
+    "task.update_status": TaskUpdateStatusIROp,
+    "task.get": TaskGetIROp,
+    "task.list": TaskListIROp,
+    "task.add_dependency": TaskAddDependencyIROp,
+    "task.abort": TaskAbortIROp,
+    "task.heartbeat": TaskHeartbeatIROp,
+    "task.register_unblock_predicate": TaskRegisterUnblockPredicateIROp,
+    "task.comment": TaskCommentIROp,
+}
+
+# Frozenset of op kinds — DSL linter, OP_PURITY coverage, contextual gate.
+ALL_OP_KINDS: frozenset[str] = frozenset(OP_KIND_MODEL_MAP.keys())
+
+# Discriminated union — DERIVED from OP_KIND_MODEL_MAP (#1983, completeness-by-
+# construction: any kind in the map is in the union → no dual-source). FileIROp
+# (coarse "file") is the only explicit non-map member (internal-use, see note
+# above). Pydantic accepts the dynamically-built discriminated Union (verified).
+if TYPE_CHECKING:
+    # Static mirror for type-checkers only — mypy can't evaluate the runtime-built
+    # Union. The RUNTIME value derives from the map (below); this list is NOT the
+    # source of truth and is pinned in sync by the completeness-invariant test
+    # ({union kinds} == ALL_OP_KINDS ∪ {"file"}).
+    ControlIROp = Annotated[
+        Union[
+            FileIROp,
+            ReadFileIROp, WriteFileIROp, EditFileIROp, DeleteFileIROp,
+            GlobFilesIROp, GrepFilesIROp,
+            MCPIROp, AskUserIROp, LintIROp,
+            RunSkillIROp, WebFetchIROp, WebSearchIROp, MCPInstallIROp,
+            MCPDropServerIROp,
+            IndexQueryIROp, RecallIROp, IndexDropIROp,
+            SandboxedExecIROp, JudgeOutputIROp, SkillResolveIROp, CompactIROp,
+            TaskCreateIROp, TaskUpdateStatusIROp, TaskGetIROp, TaskListIROp,
+            TaskAddDependencyIROp, TaskAbortIROp,
+            TaskHeartbeatIROp, TaskRegisterUnblockPredicateIROp,
+            TaskCommentIROp,
+        ],
+        Field(discriminator="kind"),
+    ]
+else:
+    ControlIROp = Annotated[
+        Union[tuple([FileIROp, *OP_KIND_MODEL_MAP.values()])],
+        Field(discriminator="kind"),
+    ]
 
 # Resolve forward references now that ControlIROp is in scope.
 RunOpStep.model_rebuild()

@@ -471,7 +471,7 @@ class ControlIRExecutor:
         if allowed_ops is not None:
             catalog_ops = allowed_ops
         else:
-            from reyn.core.op_runtime.registry import OP_KIND_MODEL_MAP
+            from reyn.schemas.models import OP_KIND_MODEL_MAP
             catalog_ops = set(OP_KIND_MODEL_MAP.keys())
         tool_catalog = _build_phase_tool_catalog(catalog_ops)
 

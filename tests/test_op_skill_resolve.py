@@ -15,9 +15,9 @@ import pytest
 from reyn.core.events.events import EventLog
 from reyn.core.op_runtime import execute_op
 from reyn.core.op_runtime.context import OpContext
-from reyn.core.op_runtime.registry import OP_KIND_MODEL_MAP, OP_PURITY, OpPurity
+from reyn.core.op_runtime.registry import OP_PURITY, OpPurity
 from reyn.data.workspace.workspace import Workspace
-from reyn.schemas.models import SkillResolveIROp
+from reyn.schemas.models import OP_KIND_MODEL_MAP, SkillResolveIROp
 from reyn.security.permissions.permissions import PermissionDecl
 
 # ---------------------------------------------------------------------------

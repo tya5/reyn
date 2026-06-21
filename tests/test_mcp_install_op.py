@@ -537,8 +537,7 @@ def test_mcp_install_irop_model_defaults():
 
 def test_mcp_install_irop_in_op_kind_model_map():
     """Tier 2: mcp_install is registered in OP_KIND_MODEL_MAP."""
-    from reyn.core.op_runtime.registry import OP_KIND_MODEL_MAP
-    from reyn.schemas.models import MCPInstallIROp
+    from reyn.schemas.models import OP_KIND_MODEL_MAP, MCPInstallIROp
 
     assert "mcp_install" in OP_KIND_MODEL_MAP
     assert OP_KIND_MODEL_MAP["mcp_install"] is MCPInstallIROp
@@ -546,7 +545,7 @@ def test_mcp_install_irop_in_op_kind_model_map():
 
 def test_mcp_install_in_all_op_kinds():
     """Tier 2: mcp_install is in ALL_OP_KINDS (used by DSL linter)."""
-    from reyn.core.op_runtime.registry import ALL_OP_KINDS
+    from reyn.schemas.models import ALL_OP_KINDS
 
     assert "mcp_install" in ALL_OP_KINDS
 

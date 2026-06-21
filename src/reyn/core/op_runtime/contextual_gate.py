@@ -46,6 +46,7 @@ _OP_KIND_ALIASES: "dict[str, frozenset[str]]" = {
     "mcp_install": frozenset({
         "mcp__install_registry", "mcp__install_package", "mcp__install_local",
     }),
+    "mcp_drop_server": frozenset({"mcp__drop_server"}),
     "mcp": frozenset(),
     # control-IR-only ops with no distinct chat-tool qualified name → kind only.
     "run_skill": frozenset(),
