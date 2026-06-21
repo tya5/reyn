@@ -552,37 +552,56 @@ class _PlanStepHost:
 
     # ── Catalog narrowing — what tools / skills / agents are visible ──────
 
+    def _uses_family(self, legacy: frozenset[str], qualified_prefix: str) -> bool:
+        """True when this step's tools name a member of a tool family — by its
+        LEGACY name OR its qualified ``<category>__*`` name (#1984).
+
+        Default plans use the **qualified** names (#1657 enumerate-all flat-lists
+        ``skill__x`` / ``file__read`` / …), while pre-#1657 / self-contained plans
+        use the **legacy** names (``invoke_skill`` / ``read_file`` / …). The narrow
+        host's per-family plumbing must recognize BOTH, else a default-mode step
+        that names ``skill__x`` is silently starved of the skill catalog (its
+        ``available_skills`` resolves to ``[]`` → the universal catalog drops the
+        skill category). Purely additive: a legacy-name step is byte-identical."""
+        return bool(self._tool_set & legacy) or any(
+            t.startswith(qualified_prefix) for t in self._tool_set
+        )
+
     def list_available_skills(self) -> list[dict]:
-        # Skills only visible if the step asked for invoke_skill / describe_skill.
-        if _INVOKE_SKILL_TOOL_NAME in self._tool_set or "describe_skill" in self._tool_set:
+        # Skills only visible if the step asked for them (invoke_skill / describe_skill
+        # legacy, or any qualified skill__* — #1984: the latter was the live break).
+        if self._uses_family(frozenset({_INVOKE_SKILL_TOOL_NAME, "describe_skill"}), "skill__"):
             return self._parent.list_available_skills()
         return []
 
     def list_available_agents(self) -> list[dict]:
-        if _DELEGATE_TOOL_NAME in self._tool_set or "describe_agent" in self._tool_set:
+        if self._uses_family(frozenset({_DELEGATE_TOOL_NAME, "describe_agent"}), "multi_agent__"):
             return self._parent.list_available_agents()
         return []
 
     def get_memory_index(self) -> dict:
-        if "list_memory" in self._tool_set or "read_memory_body" in self._tool_set:
+        if self._uses_family(frozenset({"list_memory", "read_memory_body"}), "memory_operation__"):
             return self._parent.get_memory_index()
         return {"status": "not_found", "content": ""}
 
     def get_file_permissions(self) -> dict | None:
-        if self._tool_set & _FILE_TOOL_NAMES:
+        # Consumed by the ``universal`` scheme's build_tools (the enumerate-all
+        # default catalogs file as a static category, so this is masked there —
+        # but the universal scheme is config-selectable, so keep it correct, #1984).
+        if self._uses_family(_FILE_TOOL_NAMES, "file__"):
             return self._parent.get_file_permissions()
         return None
 
     def get_mcp_servers(self) -> list[dict]:
-        if self._tool_set & _MCP_TOOL_NAMES:
+        if self._uses_family(_MCP_TOOL_NAMES, "mcp__"):
             return self._parent.get_mcp_servers()
         return []
 
     def get_web_fetch_allowed(self) -> bool:
         # FP-0022: web_fetch is always allowed at the catalog level; authorization
         # is enforced at the handler level. Return True when the step's tool_set
-        # includes web_fetch, matching the parent's always-True behavior.
-        return _WEB_FETCH_TOOL_NAME in self._tool_set
+        # includes web_fetch (legacy or qualified web__*, #1984).
+        return self._uses_family(frozenset({_WEB_FETCH_TOOL_NAME}), "web__")
 
     def get_project_context(self) -> str:
         # Project context narrowed out by default — plan steps work from
