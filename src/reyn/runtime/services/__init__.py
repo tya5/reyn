@@ -9,7 +9,6 @@ from reyn.runtime.services.intervention_coordinator import InterventionCoordinat
 from reyn.runtime.services.intervention_handler import InterventionHandler
 from reyn.runtime.services.intervention_registry import InterventionRegistry
 from reyn.runtime.services.memory_service import MemoryService
-from reyn.runtime.services.plan_runner import PlanRunner
 from reyn.runtime.services.router_history_buffer import RouterHistoryBuffer
 from reyn.runtime.services.router_host_adapter import RouterHostAdapter
 from reyn.runtime.services.router_loop_driver import RouterLoopDriver
