@@ -14,11 +14,14 @@ from reyn.tools.schemes._universal_sp import build_universal_tool_use_slots
 
 
 def _default_slots() -> "dict[str, str]":
-    """Default universal slot-map (wrappers off, search on) — mirrors the legacy
-    tool_use_sp=None path that previously called build_universal_tool_use_slots
-    with all defaults."""
+    """Universal-category slot-map (wrappers ON, search on). #1977: these tests
+    assert the wrapper-SP (invoke_action routing), so build with wrappers ON to
+    match that intent — pre-#1977 the wrappers-off SP leaked the wrapper vocab,
+    masking this flag. ON output is byte-identical to the prior behaviour; the
+    wrappers-off (no-wrapper-vocab) path is covered by
+    test_plan_tool_surface_scheme_consistency_1977."""
     return build_universal_tool_use_slots(
-        universal_wrappers_enabled=False,
+        universal_wrappers_enabled=True,
         search_actions_enabled=True,
         discovery_mandate=False,
         has_hot_list_aliases=False,

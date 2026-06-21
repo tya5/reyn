@@ -89,8 +89,10 @@ async def test_build_presentation_tool_use_sp_disable_wrappers() -> None:
     no-wrapper, search-visible SP (sp_params removed from build_presentation).
 
     The slot-map must contain slot_pre_environment (the Capabilities block) with
-    NO ## Action categories (universal_wrappers_enabled=False) and WITH the
-    search_actions chain (search_visible=True from layer_ctx).
+    NO ## Action categories (universal_wrappers_enabled=False) and — #1977 — NO
+    universal wrapper vocab at all: enumerate-all advertises actions flat, so the
+    SP uses flat-call phrasing, never list_actions/search_actions/invoke_action
+    (instructing a wrapper tool the enumerate catalog lacks produced plan_invalid).
     """
     s = EnumerateAllScheme()
     pres = await s.build_presentation(
@@ -103,8 +105,12 @@ async def test_build_presentation_tool_use_sp_disable_wrappers() -> None:
     slots = pres.tool_use_sp
     # Wrappers off → no ## Action categories in slot_post_environment
     assert "slot_post_environment" not in slots or "## Action categories" not in slots.get("slot_post_environment", "")
-    # search_visible=True → search_actions in the chain
-    assert "search_actions" in slots.get("slot_pre_environment", "")
+    # #1977: wrappers off → NO universal wrapper vocab in the Capabilities block,
+    # even with search_visible=True (search_actions is a wrapper tool absent under
+    # enumerate-all). The model is told to call actions directly by name.
+    pre = slots.get("slot_pre_environment", "")
+    assert "search_actions" not in pre
+    assert "invoke_action" not in pre
 
 
 def test_interpret_resolves_to_execute() -> None:
