@@ -105,6 +105,42 @@ def test_web_search_started_cjk_fits_cell_budget() -> None:
     )
 
 
+def test_phase_budget_exceeded_cjk_fits_cell_budget() -> None:
+    """Tier 2b: CJK phase_budget_exceeded reason hint stays cell-bounded — one of
+    the 3 chain/budget branches MISSED by the Wave-13 cell-aware sweep (it fixed
+    6 branches but left phase_budget_exceeded / chain_timeout[_extended] on raw
+    ``[:N]``)."""
+    ev = {
+        "type": "phase_budget_exceeded",
+        "data": {"phase": "p", "reason": "予算を超過しました" * 5},  # 45 CJK = 90 cells raw
+    }
+    hint = _event_hint(ev)
+    width = cell_len(hint)
+    assert width <= _MAX_HINT_CELLS, f"cell_width={width}: {hint!r}"
+
+
+def test_chain_timeout_cjk_fits_cell_budget() -> None:
+    """Tier 2b: CJK chain_timeout waiting_on hint stays cell-bounded (Wave-13 miss)."""
+    ev = {
+        "type": "chain_timeout",
+        "data": {"waiting_on": "応答を待っています" * 5, "timeout_seconds": 30},
+    }
+    hint = _event_hint(ev)
+    width = cell_len(hint)
+    assert width <= _MAX_HINT_CELLS, f"cell_width={width}: {hint!r}"
+
+
+def test_chain_timeout_extended_cjk_fits_cell_budget() -> None:
+    """Tier 2b: CJK chain_timeout_extended waiting_on hint stays cell-bounded (Wave-13 miss)."""
+    ev = {
+        "type": "chain_timeout_extended",
+        "data": {"waiting_on": "応答を待っています" * 5, "extension_seconds": 10},
+    }
+    hint = _event_hint(ev)
+    width = cell_len(hint)
+    assert width <= _MAX_HINT_CELLS, f"cell_width={width}: {hint!r}"
+
+
 def test_tool_failed_cjk_does_not_overflow_message() -> None:
     """Tier 2b: CJK tool_failed hint truncates the message portion with ellipsis."""
     # tool_failed uses a 25-cell cap for the message portion.
