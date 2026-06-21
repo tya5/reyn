@@ -803,65 +803,6 @@ class RouterLoopHost(RouterLoopCore, Protocol):
     @property
     def resolver(self) -> Any: ...
 
-    # Plan-mode lifecycle persistence (ADR-0022 Phase 1).
-    # Optional — implementations that don't support plan-mode crash
-    # recovery (e.g. test stubs) leave these as no-ops. Real chat
-    # session implementation (`session.py`) wires through to
-    # SnapshotJournal.record_plan_*.
-    async def record_plan_started(
-        self, *, plan_id: str, goal: str, n_steps: int,
-    ) -> None: ...
-
-    async def record_plan_completed(self, *, plan_id: str) -> None: ...
-
-    async def record_plan_aborted(
-        self, *, plan_id: str, reason: str = "",
-    ) -> None: ...
-
-    # Plan-mode per-step WAL persistence (ADR-0023 Phase 2 step 6).
-    # Optional — test stubs may omit. Session routes these through
-    # SnapshotJournal.record_plan_step_*.
-    async def record_plan_step_started(
-        self, *, plan_id: str, step_id: str, depends_on: list[str],
-        n_tools: int,
-    ) -> None: ...
-
-    async def record_plan_step_completed(
-        self, *, plan_id: str, step_id: str, content_len: int,
-        result_text: str | None = None,
-    ) -> None: ...
-
-    async def record_plan_step_failed(
-        self, *, plan_id: str, step_id: str, error: str,
-    ) -> None: ...
-
-    # Decomposition artifact persistence (ADR-0023 §3.5).
-    # The artifact is the canonical SSoT for the plan shape on resume.
-    # Session threads this through reyn.core.plan.decomposition with the
-    # agent-specific state directory; test stubs may no-op.
-    async def write_plan_decomposition(
-        self, *, plan_id: str, plan: "Any",
-    ) -> str | None:
-        """Persist the plan decomposition. Returns the artifact path or None."""
-        ...
-
-    async def delete_plan_decomposition(self, *, plan_id: str) -> None:
-        """Remove the plan decomposition artifact (= P5 cleanup on success)."""
-        ...
-
-    async def spawn_plan_task(
-        self, *, plan_id: str, runtime: "Any", chain_id: str,
-    ) -> None:
-        """Register a PlanRuntime as a background task (ADR-0023 Phase 2.1).
-
-        Session owns the task lifecycle (= ``running_plans`` dict)
-        and the wrap-around finally that emits the terminal aggregator
-        text via ``put_outbox(kind="agent")`` and cleans up the
-        decomposition artifact on clean exit. dispatch_plan_tool hands
-        the constructed runtime here and returns immediately.
-        """
-        ...
-
 
 # ---------------------------------------------------------------------------
 # FP-0034 Phase 2 step 5: hot list alias builder
@@ -1394,7 +1335,6 @@ class RouterLoop:
         skill_search_config: "SkillSearchConfig | None" = None,  # FP-0024-A BM25 pre-filter
         empty_stop_retry_directive: str | None = None,  # B42-NF-W6-1 opt-in retry
         empty_stop_retry_auto: bool = False,  # #187: always-on (no env opt-in); all prod sites pass True
-        plan_invalid_retries: int = 1,  # B51 NF-W6-3 — safety.loop.plan_invalid_retries
         max_tool_calls_per_turn: int = 50,  # #1666 — safety.loop.max_tool_calls_per_turn (0 = unlimited)
         on_limit: "Any | None" = None,  # OnLimitConfig | None — FP-0005 max_iterations checkpoint
         llm_caller: "Any | None" = None,  # Tier 2 test seam: real-fake injection
@@ -1503,17 +1443,6 @@ class RouterLoop:
         # retracted). If a measured problem later motivates per-site
         # divergence, this flag is the switch — but uniform-first by default.
         self._empty_stop_retry_auto = empty_stop_retry_auto
-        # B51 NF-W6-3: plan_invalid self-correction retry cap. When the
-        # ``plan`` tool returns ``{status:error, error:{kind:
-        # plan_invalid}}`` (= the LLM's ``steps_json`` failed JSON
-        # validation, typically from unescaped ``"`` inside step
-        # description strings), the router loop appends a sanitised
-        # directive carrying the parser error and re-enters the LLM
-        # loop. This counter caps the per-turn directive injections so
-        # a persistently-failing LLM is bounded; the outer caps
-        # (``max_router_calls_per_turn`` + ``max_iterations``) still
-        # apply on top. ``0`` disables the retry (= pre-fix behaviour).
-        self._plan_invalid_max_retries = max(0, int(plan_invalid_retries))
         # #1666: per-turn tool_call count cap (cost-bound). 0 = unlimited.
         self._max_tool_calls_per_turn = max(0, int(max_tool_calls_per_turn))
         # Tier 2 test seam: when set, ``run()`` calls this callable instead of
@@ -1950,12 +1879,6 @@ class RouterLoop:
         # prompt; the second empty stop falls through to the standard
         # "observe + surface" path).
         _empty_stop_retries: int = 0
-        # B51 NF-W6-3: plan_invalid retry counter. Incremented every time
-        # the plan tool returns ``{status:error, kind:plan_invalid}`` and
-        # the router injects a self-correction directive back into the
-        # message list. Bounded by ``self._plan_invalid_max_retries``
-        # (default 1 = one correction attempt per chat turn).
-        _plan_invalid_retries: int = 0
         # #1593 PR-4: OS RePresent convergence state (per-turn loop-locals — NOT
         # scheme self-state; schemes are registered singletons). ``_represented``
         # is the monotonic accumulator of every candidate the scheme has presented
@@ -2698,8 +2621,7 @@ class RouterLoop:
 
                 # #1666: after a capped round's results, append the single
                 # re-grounding notice (placed AFTER all tool results so the
-                # assistant.tool_calls ↔ tool_result pairing stays intact —
-                # same ordering contract as the plan_invalid directive below).
+                # assistant.tool_calls ↔ tool_result pairing stays intact).
                 if _cap_info is not None:
                     _cap_msg = self._tool_call_cap_notice(*_cap_info)
                     messages.append(_cap_msg)

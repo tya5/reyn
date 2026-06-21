@@ -38,7 +38,7 @@ class RouterLoopDriver:
         self,
         *,
         router_host: Any,             # RouterHostAdapter
-        safety: Any,                  # SafetyConfig — loop.plan_invalid_retries
+        safety: Any,                  # SafetyConfig — loop.max_tool_calls_per_turn
         router_max_iterations: int,
         budget_tracker: Any,          # BudgetTracker — for RouterLoop
         non_interactive: bool,
@@ -354,14 +354,6 @@ class RouterLoopDriver:
         self._turn_cancel_event.clear()
         # FP-0005: now async (consults safety.on_limit on hit).
         await self._check_cap(user_text)
-        # B51 NF-W6-3: plan_invalid self-correction cap, sourced from
-        # safety.loop.plan_invalid_retries (default 1). When set to 0
-        # the retry is disabled and the LLM sees the plain tool error.
-        _plan_invalid_retries_cap = getattr(
-            getattr(self._safety, "loop", None),
-            "plan_invalid_retries",
-            1,
-        )
         # #1666: per-turn tool_call count cap (cost-bound) sourced from
         # safety.loop.max_tool_calls_per_turn (default 50). 0 = unlimited.
         _max_tool_calls_per_turn = getattr(
@@ -397,7 +389,6 @@ class RouterLoopDriver:
             # uniform "resume" directive.
             empty_stop_retry_directive=EMPTY_STOP_RETRY_DIRECTIVE,
             empty_stop_retry_auto=True,
-            plan_invalid_retries=_plan_invalid_retries_cap,
             # #1666: per-turn tool_call count cap (cost-bound).
             max_tool_calls_per_turn=_max_tool_calls_per_turn,
             # FP-0005: wire safety.on_limit so max_iterations exhaustion routes
