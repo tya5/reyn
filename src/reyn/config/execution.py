@@ -73,23 +73,6 @@ def _build_self_improvement_config(raw: object) -> "SelfImprovementConfig":
 
 
 @dataclass
-class PlanConfig:
-    """`plan:` — plan-mode execution tuning.
-
-    ``step_max_iterations``: maximum RouterLoop iterations per plan step
-    before the OS records a step failure.  Default 5 (FP-0029).  Raise
-    when steps regularly run long tool chains; lower for tighter budgets.
-
-    ``retry_limit``: maximum automatic retries per step on transient errors
-    (FP-0031-C).  Default 3.  Set 0 to disable auto-retry.  Exceptions
-    that have their own ask/abort path (PermissionError, BudgetExceeded,
-    etc.) are always excluded from retry regardless of this setting.
-    """
-    step_max_iterations: int = 5
-    retry_limit: int = 3
-
-
-@dataclass
 class SkillResumeConfig:
     """`skill_resume:` — policy for handling ambiguous steps on resume.
 
@@ -280,26 +263,3 @@ def _build_skill_resume_config(raw: object) -> SkillResumeConfig:
     return SkillResumeConfig(default=default, per_skill=per_skill)
 
 
-def _build_plan_config(raw: object) -> PlanConfig:
-    """Parse ``plan:`` block; unknown keys are ignored (forward-compat)."""
-    defaults = PlanConfig()
-    if not isinstance(raw, dict):
-        return defaults
-    step_max_raw = raw.get("step_max_iterations")
-    try:
-        step_max = int(step_max_raw) if step_max_raw is not None else defaults.step_max_iterations
-    except (TypeError, ValueError):
-        step_max = defaults.step_max_iterations
-    if step_max < 1:
-        step_max = defaults.step_max_iterations
-    retry_limit_raw = raw.get("retry_limit")
-    try:
-        retry_limit = int(retry_limit_raw) if retry_limit_raw is not None else defaults.retry_limit
-    except (TypeError, ValueError):
-        retry_limit = defaults.retry_limit
-    if retry_limit < 0:
-        retry_limit = defaults.retry_limit
-    return PlanConfig(
-        step_max_iterations=step_max,
-        retry_limit=retry_limit,
-    )
