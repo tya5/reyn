@@ -39,6 +39,7 @@ def _capture_new_keys(test_pattern: str) -> list[dict]:
     # a small wrapper script that installs the patch before importing pytest.
 
     patcher_code = textwrap.dedent("""\
+        import json
         import sys
         from pathlib import Path
         from reyn.dev.testing.replay import LLMReplay, MissingFixture
@@ -48,9 +49,15 @@ def _capture_new_keys(test_pattern: str) -> list[dict]:
         def _patched_replay(self, key, model, messages):
             if key not in self._records:
                 preview = self._prompt_preview(messages)
-                # Emit machine-readable line BEFORE raising
+                # Emit a machine-readable JSON line BEFORE raising. JSON keeps it
+                # single-line + delimiter-safe: a preview or path may contain
+                # newlines or '|' (the old f-string |-split form truncated those).
                 print(
-                    f"MISSING_KEY={key}|{self.fixture_path}|{preview[:200]}",
+                    "MISSING_KEY=" + json.dumps({
+                        "new_key": key,
+                        "fixture_path": str(self.fixture_path),
+                        "prompt_preview": preview[:200],
+                    }),
                     flush=True,
                 )
             return _orig_replay(self, key, model, messages)
@@ -69,36 +76,53 @@ def _capture_new_keys(test_pattern: str) -> list[dict]:
         cmd = [
             sys.executable, str(patcher_path),
             test_pattern,
-            "-v", "--tb=no", "--no-header", "-q",
+            # `-s` (= --capture=no) is MANDATORY: without it pytest captures the
+            # patcher's MISSING_KEY print per-test and `--tb=no -q` never surfaces
+            # it, so the scan finds nothing and silently no-ops (#2024 bug 1).
+            "-s", "--tb=no", "--no-header", "-q",
         ]
         result = subprocess.run(
             cmd, capture_output=True, text=True, cwd=str(REPO_ROOT)
         )
-        output = result.stdout + result.stderr
-
-        captured: list[dict] = []
-        seen: set[tuple] = set()
-        for line in output.splitlines():
-            if not line.startswith("MISSING_KEY="):
-                continue
-            rest = line[len("MISSING_KEY="):]
-            parts = rest.split("|", 2)
-            if len(parts) < 2:
-                continue
-            new_key = parts[0]
-            fixture_path = Path(parts[1])
-            prompt_preview = parts[2] if len(parts) > 2 else ""
-            dedup = (new_key, str(fixture_path))
-            if dedup not in seen:
-                seen.add(dedup)
-                captured.append({
-                    "new_key": new_key,
-                    "fixture_path": fixture_path,
-                    "prompt_preview": prompt_preview,
-                })
-        return captured
+        return _parse_missing_keys(result.stdout + result.stderr)
     finally:
         patcher_path.unlink(missing_ok=True)
+
+
+def _parse_missing_keys(output: str) -> list[dict]:
+    """Parse ``MISSING_KEY=<json>`` lines from the patcher subprocess output.
+
+    Each line is ``MISSING_KEY=`` followed by a JSON object
+    ``{new_key, fixture_path, prompt_preview}``. JSON-encoding makes the line
+    newline-/delimiter-safe (a preview or path may contain ``|`` or a newline —
+    the old ``|``-split + raw f-string form truncated the preview at the first
+    newline, #2024 bug 1). The marker is matched anywhere in the line (pytest may
+    prefix it), and results are deduped by ``(new_key, fixture_path)``."""
+    marker = "MISSING_KEY="
+    captured: list[dict] = []
+    seen: set[tuple[str, str]] = set()
+    for line in output.splitlines():
+        idx = line.find(marker)
+        if idx < 0:
+            continue
+        try:
+            rec = json.loads(line[idx + len(marker):])
+        except json.JSONDecodeError:
+            continue
+        new_key = rec.get("new_key")
+        fixture_path = rec.get("fixture_path")
+        if not new_key or not fixture_path:
+            continue
+        dedup = (new_key, fixture_path)
+        if dedup in seen:
+            continue
+        seen.add(dedup)
+        captured.append({
+            "new_key": new_key,
+            "fixture_path": Path(fixture_path),
+            "prompt_preview": rec.get("prompt_preview", ""),
+        })
+    return captured
 
 
 # ── Step 3: load fixture, find latest entry, append under new key ──────────────
@@ -125,7 +149,20 @@ def _rekey_fixture(
     prompt_preview: str,
     dry_run: bool,
 ) -> bool:
-    """Append a new entry for new_key reusing the last entry's response.
+    """Append a new entry for ``new_key`` reusing the response of the EXISTING
+    entry whose ``prompt_preview`` matches.
+
+    A re-key happens when a system-prompt change shifts the SHA key of an
+    otherwise-identical request. The fixture's ``prompt_preview`` is the last
+    message's content, which is stable across SP changes — so the new key's
+    captured preview matches the original entry's preview exactly, and that
+    entry's response is the correct one to reuse.
+
+    Reusing the LAST entry unconditionally (the old behavior) corrupts
+    multi-round fixtures: every re-keyed round would get the final round's
+    response (#2024 bug 2). On an ambiguous match (several entries share a
+    preview) the most-recent match is reused (tie-break); on NO match the rekey
+    is skipped with a warning — never write an unjustified response.
 
     Returns True if a rekey was performed (or would be in dry-run).
     """
@@ -138,27 +175,37 @@ def _rekey_fixture(
         print(f"  [SKIP] key already present: {new_key[:16]}... in {fixture_path.name}")
         return False
 
-    # Use the last entry's response (most recent recorded state)
-    last_entry = entries[-1]
+    # Preview-match: the existing entry(ies) for the same logical request. The
+    # last among matches is the most-recent recording (tie-break for duplicates).
+    matches = [e for e in entries if e.get("prompt_preview", "") == prompt_preview]
+    if not matches:
+        print(
+            f"  [WARN] no prompt_preview match for {new_key[:16]}... in "
+            f"{fixture_path.name} — skip (manual rekey needed; not reusing an "
+            f"unrelated response)",
+            file=sys.stderr,
+        )
+        return False
+    source = matches[-1]
+
     new_entry = {
         "key": new_key,
-        "model": last_entry.get("model", ""),
-        "prompt_preview": prompt_preview or last_entry.get("prompt_preview", ""),
-        "response": last_entry["response"],
+        "model": source.get("model", ""),
+        "prompt_preview": prompt_preview or source.get("prompt_preview", ""),
+        "response": source["response"],
     }
 
     if dry_run:
-        old_key = last_entry["key"]
         print(
             f"  [DRY-RUN] {fixture_path.name}\n"
-            f"    old key: {old_key[:16]}...\n"
+            f"    matched key: {source['key'][:16]}...\n"
             f"    new key: {new_key[:16]}..."
         )
         return True
 
     with fixture_path.open("a", encoding="utf-8") as fh:
         fh.write(json.dumps(new_entry, ensure_ascii=False) + "\n")
-    print(f"  [REKEY] {fixture_path.name}: +{new_key[:16]}...")
+    print(f"  [REKEY] {fixture_path.name}: +{new_key[:16]}... (matched {source['key'][:16]}...)")
     return True
 
 
