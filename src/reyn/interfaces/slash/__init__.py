@@ -249,7 +249,6 @@ from reyn.interfaces.slash import matrix as _matrix_mod  # noqa: E402, F401
 from reyn.interfaces.slash import memory as _memory_mod  # noqa: E402, F401
 from reyn.interfaces.slash import model as _model_mod  # noqa: E402, F401
 from reyn.interfaces.slash import pending as _pending_mod  # noqa: E402, F401
-from reyn.interfaces.slash import plan as _plan_mod  # noqa: E402, F401
 from reyn.interfaces.slash import quit as _quit_mod  # noqa: E402, F401
 from reyn.interfaces.slash import reset as _reset_mod  # noqa: E402, F401
 from reyn.interfaces.slash import rewind as _rewind_mod  # noqa: E402, F401

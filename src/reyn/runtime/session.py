@@ -2968,11 +2968,6 @@ class Session:
                 # user-role completion message into the existing thread
                 # and run one router LLM turn for narration.
                 await self._handle_skill_completed(payload)
-            elif kind == "plan_completed":
-                # FP-0025 C: a background plan finished. Inject a
-                # user-role message with step_results and run one
-                # router LLM turn for synthesis narration.
-                await self._handle_plan_completed(payload)
             elif kind in ("task_ready", "task_dependency_aborted"):
                 # #1953 slice 7: the TaskWaker delivered a dep-graph disposition
                 # (a dependent became ready, or a parent must decide recovery). Both
@@ -4426,88 +4421,6 @@ class Session:
                 "skill_completed inbox enqueue failed for run_id=%s skill=%s: %s",
                 run_id, skill, exc,
             )
-
-    async def _enqueue_plan_completed(
-        self,
-        *,
-        plan_id: str,
-        chain_id: str,
-        goal: str,
-        step_results: "dict[str, str]",
-        step_failures: "dict[str, str]",
-        n_steps: int,
-    ) -> None:
-        """Forwarding → SkillPlanGlue.enqueue_plan_completed (PR-4)."""
-        await self._skill_plan_glue.enqueue_plan_completed(
-            plan_id=plan_id,
-            chain_id=chain_id,
-            goal=goal,
-            step_results=step_results,
-            step_failures=step_failures,
-            n_steps=n_steps,
-        )
-
-    async def _handle_plan_completed(self, payload: dict) -> None:
-        """FP-0025 C: narrate plan completion via one router LLM turn.
-
-        Symmetric with _handle_skill_completed (FP-0012). Injects a
-        [task_completed] user-role message (kind=plan) into history so
-        the router LLM sees step_results and synthesises a user reply.
-        """
-        # B49 W1-S6 fix (2026-05-22): unified "task" abstraction with
-        # skill completion. Both emit [task_completed] with kind= field
-        # for disambiguation; the SP TASK_COMPLETED rule covers both via
-        # the meaning of status + result fields, no prescriptive
-        # "summarize in 1-2 sentences" or "synthesize the step results"
-        # trailer (= those were handling prescriptions that pre-empted
-        # the LLM's own judgment).
-        plan_id = payload.get("plan_id", "")
-        chain_id = payload.get("chain_id") or _new_chain_id()
-        goal = payload.get("goal", "")
-        step_results = payload.get("step_results") or {}
-        step_failures = payload.get("step_failures") or {}
-        try:
-            results_str = json.dumps(step_results, ensure_ascii=False, indent=2)
-        except (TypeError, ValueError):
-            results_str = repr(step_results)
-        # status='finished' is the implicit success state for plans; if any
-        # step failed, that surfaces via step_failures + the LLM sees both.
-        injected_text = (
-            f"[task_completed] kind=plan plan_id={plan_id} chain_id={chain_id}\n"
-            f"goal: {goal}  status: {'failed' if step_failures else 'finished'}\n"
-            f"step_results:\n{results_str}"
-        )
-        if step_failures:
-            try:
-                failures_str = json.dumps(step_failures, ensure_ascii=False, indent=2)
-            except (TypeError, ValueError):
-                failures_str = repr(step_failures)
-            injected_text += f"\n\nstep_failures:\n{failures_str}\n"
-        self._append_history(ChatMessage(
-            role="user", content=injected_text, ts=_now_iso(),
-            meta={
-                "source": "plan_completion",
-                "plan_id": plan_id,
-                "chain_id": chain_id,
-            },
-        ))
-        self._chat_events.emit(
-            "plan_completion_injected",
-            plan_id=plan_id, chain_id=chain_id,
-        )
-        self._reset_router_turn_counter()
-        try:
-            await self._run_router_loop(injected_text, chain_id)
-        except RouterCapExceeded as exc:
-            await self._emit_router_cap_exhausted_user(exc, chain_id=chain_id, user_text=injected_text)
-            return
-        except Exception as exc:
-            await self._put_outbox(OutboxMessage(
-                kind="error",
-                text=f"router failed (plan_completed): {exc}",
-                meta={"chain_id": chain_id, "plan_id": plan_id},
-            ))
-            return
 
     # ── RouterLoop helper methods (Wave 3 F1, kept for session callbacks) ──────────
     # _make_router_op_context + 3 helpers remain on Session because the
