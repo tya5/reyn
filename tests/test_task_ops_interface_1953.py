@@ -71,6 +71,8 @@ def test_union_validates_every_task_kind():
         "task.get": {"kind": "task.get", "task_id": "t"},
         "task.list": {"kind": "task.list"},
         "task.add_dependency": {"kind": "task.add_dependency", "task_id": "t", "depends_on": "u"},
+        "task.remove_dependency": {"kind": "task.remove_dependency", "task_id": "t", "depends_on": "u"},
+        "task.repoint_dependency": {"kind": "task.repoint_dependency", "task_id": "t", "from_depends_on": "u", "to_depends_on": "v"},
         "task.abort": {"kind": "task.abort", "task_id": "t"},
         "task.heartbeat": {"kind": "task.heartbeat", "task_id": "t"},
         "task.register_unblock_predicate": {"kind": "task.register_unblock_predicate", "task_id": "t", "predicate": "x"},

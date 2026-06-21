@@ -588,9 +588,11 @@ class TaskCreateIROp(BaseModel):
 
 
 class TaskUpdateStatusIROp(BaseModel):
-    """Declare a status transition. Writer = the task's assignee; the gate is a
-    backend-CAS on the caller's skill-run run_id (threaded from OpContext, not a
-    field here — audit C2), enforced in slice 3."""
+    """Declare a status transition. Writer = the task's **assignee session**; the
+    gate is a fixed-equality backend CAS ``assignee == caller_session_id``
+    (``OpContext.session_id``, the #1814 routing-key — threaded, not a field here).
+    The assignee is immutable, so no claim token / run_id / version is needed; a
+    terminal task rejects all writes (the cooperative-terminal guard)."""
 
     kind: Literal["task.update_status"]
     task_id: str
@@ -617,18 +619,43 @@ class TaskListIROp(BaseModel):
 
 class TaskAddDependencyIROp(BaseModel):
     """Add a depends-on edge (dependency DAG, §13). Topology owned by the
-    decomposing parent; readiness is derived read-only (no write to the dep).
-    Cycle-check lands in slice 6."""
+    decomposing requester; readiness is derived read-only (no write to the dep).
+    Existence + cycle-checked via the shared edge-guard (slice 6)."""
 
     kind: Literal["task.add_dependency"]
     task_id: str
     depends_on: str
 
 
+class TaskRemoveDependencyIROp(BaseModel):
+    """Drop a depends-on edge (#1953 slice 6-ext). Requester topology write,
+    idempotent (no-op on a missing edge). Dropping an edge only relaxes the graph,
+    so the OS re-derive may promote a now-satisfied blocked dependent (incl. the
+    last-dep-removed → ready case); it never demotes."""
+
+    kind: Literal["task.remove_dependency"]
+    task_id: str
+    depends_on: str
+
+
+class TaskRepointDependencyIROp(BaseModel):
+    """Atomically repoint an edge ``from_depends_on`` → ``to_depends_on`` (#1953
+    slice 6-ext) — the parent's primary recovery move (point a dependent at a
+    substitute). The NEW edge is cycle-checked BEFORE any mutation (a cycle/dangling
+    repoint changes nothing, returning the structured error); then the dependent's
+    readiness is re-blocked + re-evaluated against the new graph."""
+
+    kind: Literal["task.repoint_dependency"]
+    task_id: str
+    from_depends_on: str
+    to_depends_on: str
+
+
 class TaskAbortIROp(BaseModel):
-    """OS-authority terminal cancel (→ aborted; A2A canceled). The enforced
-    contract is cooperative: ``cancel_inflight → await_quiescent → terminal``
-    (+ seq-fence) so no write lands after terminal (audit C1, slice 3)."""
+    """Requester remove-op (= delete) → ``aborted``/``archived`` (A2A canceled).
+    Cooperative-terminal: it archives the task + its sub-tree (DOWN-cascade); there
+    is no forced cancel — the assignee's in-flight work is rejected by the terminal
+    guard at its next status-write (no straggler, no sibling-kill)."""
 
     kind: Literal["task.abort"]
     task_id: str
@@ -707,6 +734,8 @@ OP_KIND_MODEL_MAP: dict[str, type[BaseModel]] = {
     "task.get": TaskGetIROp,
     "task.list": TaskListIROp,
     "task.add_dependency": TaskAddDependencyIROp,
+    "task.remove_dependency": TaskRemoveDependencyIROp,
+    "task.repoint_dependency": TaskRepointDependencyIROp,
     "task.abort": TaskAbortIROp,
     "task.heartbeat": TaskHeartbeatIROp,
     "task.register_unblock_predicate": TaskRegisterUnblockPredicateIROp,
@@ -736,7 +765,8 @@ if TYPE_CHECKING:
             IndexQueryIROp, RecallIROp, IndexDropIROp,
             SandboxedExecIROp, JudgeOutputIROp, SkillResolveIROp, CompactIROp,
             TaskCreateIROp, TaskUpdateStatusIROp, TaskGetIROp, TaskListIROp,
-            TaskAddDependencyIROp, TaskAbortIROp,
+            TaskAddDependencyIROp, TaskRemoveDependencyIROp, TaskRepointDependencyIROp,
+            TaskAbortIROp,
             TaskHeartbeatIROp, TaskRegisterUnblockPredicateIROp,
             TaskCommentIROp,
         ],

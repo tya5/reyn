@@ -193,6 +193,13 @@ class OpContext:
     # across BOTH the control-IR and preprocessor ctx-build seams.
     task_backend: "object | None" = None
 
+    # #1953 slice 6-ext: the OS TaskWaker driver (parallel to task_backend). The
+    # abort/failed → parent-routing hub calls it to wake the parent's session to
+    # decide recovery. None = no-op stub here (slice 7 wires the real TaskWaker +
+    # threads it through the same Session → SkillRuntime → OSRuntime chain). Tests
+    # inject a recording waker to verify the call-site fires.
+    task_waker: "object | None" = None
+
     # #1953 slice 3 (rework): the caller's session identity (#1814 per-contextId
     # routing-key ``Session._session_id``), threaded down the same chain. This is
     # the single-writer key for Task ``update_status`` — the backend CAS-rejects

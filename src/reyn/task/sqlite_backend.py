@@ -157,6 +157,53 @@ class SqliteTaskBackend:
         if path is not None:
             raise TaskCycleError(task_id, depends_on, path)
 
+    def _all_deps_completed(self, task_id: str) -> bool:
+        # No deps → vacuously satisfied (the slice 6-ext I-1 case). Else every dep
+        # must exist + be completed.
+        deps = self._deps(task_id)
+        for d in deps:
+            row = self._conn.execute(
+                "SELECT status FROM tasks WHERE task_id=?", (d,)
+            ).fetchone()
+            if row is None or row["status"] != TaskState.COMPLETED.value:
+                return False
+        return True
+
+    def _derive_readiness(self, task_id: str, *, allow_demote: bool = False) -> str | None:
+        """OS-authority readiness derivation (#1953 slice 6-ext, P3 — no CAS) — the
+        shared primitive for recompute / remove / repoint. Sync; call INSIDE the
+        caller's ``BEGIN IMMEDIATE`` transaction. Pre-run states only
+        {pending, ready, blocked}: always promote ``blocked → ready`` when all deps
+        are satisfied; only when ``allow_demote`` re-block {pending, ready} →
+        ``blocked`` when not (recompute / remove relax → promote-only; repoint
+        re-wires → full). IN_PROGRESS / terminal left untouched (assignee owns the
+        run). Returns the transition (``"ready"`` / ``"blocked"``) or None."""
+        row = self._conn.execute(
+            "SELECT status FROM tasks WHERE task_id=?", (task_id,)
+        ).fetchone()
+        if row is None:
+            return None
+        status = row["status"]
+        if status not in (
+            TaskState.PENDING.value, TaskState.READY.value, TaskState.BLOCKED.value
+        ):
+            return None
+        satisfied = self._all_deps_completed(task_id)
+        if satisfied and status == TaskState.BLOCKED.value:
+            new = TaskState.READY.value
+        elif allow_demote and not satisfied and status in (
+            TaskState.PENDING.value, TaskState.READY.value
+        ):
+            new = TaskState.BLOCKED.value
+        else:
+            return None
+        self._conn.execute(
+            "UPDATE tasks SET status=?, updated_at=? WHERE task_id=?",
+            (new, _now_iso(), task_id),
+        )
+        self._emit(task_id, "readiness_changed", to=new)
+        return new
+
     def _row_to_task(self, row: sqlite3.Row) -> Task:
         return Task(
             task_id=row["task_id"],
@@ -308,12 +355,75 @@ class SqliteTaskBackend:
             self._conn.commit()
             return self._fetch(task_id)
 
+    async def dependents(self, task_id: str) -> list[Task]:
+        async with self._lock:
+            rows = self._conn.execute(
+                "SELECT task_id FROM task_links WHERE depends_on=?", (task_id,)
+            ).fetchall()
+            return [t for t in (self._fetch(r["task_id"]) for r in rows) if t is not None]
+
+    async def remove_dependency(self, task_id: str, depends_on: str) -> Task | None:
+        async with self._lock:
+            if not self._exists(task_id):
+                return None
+            self._conn.execute("BEGIN IMMEDIATE")
+            try:
+                # Idempotent: DELETE is a no-op on a missing edge. Dropping an edge
+                # only RELAXES → the re-derive can only promote (incl. I-1).
+                self._conn.execute(
+                    "DELETE FROM task_links WHERE task_id=? AND depends_on=?",
+                    (task_id, depends_on),
+                )
+                self._conn.execute(
+                    "UPDATE tasks SET updated_at=? WHERE task_id=?", (_now_iso(), task_id)
+                )
+                self._emit(task_id, "dependency_removed", depends_on=depends_on)
+                self._derive_readiness(task_id)
+                self._conn.commit()
+            except Exception:
+                self._conn.rollback()
+                raise
+            return self._fetch(task_id)
+
+    async def repoint_dependency(
+        self, task_id: str, from_depends_on: str, to_depends_on: str
+    ) -> Task | None:
+        async with self._lock:
+            if not self._exists(task_id):
+                return None
+            # Cycle-check the NEW edge BEFORE any mutation (read-only, pre-tx): a
+            # cycle/dangling repoint raises → nothing changes (atomic). Safe with the
+            # from-edge present (task→from is task's outgoing, never on a to→…→task path).
+            self._validate_edge(task_id, to_depends_on)
+            self._conn.execute("BEGIN IMMEDIATE")
+            try:
+                self._conn.execute(
+                    "DELETE FROM task_links WHERE task_id=? AND depends_on=?",
+                    (task_id, from_depends_on),
+                )
+                self._conn.execute(
+                    "INSERT OR IGNORE INTO task_links(task_id, depends_on) VALUES (?,?)",
+                    (task_id, to_depends_on),
+                )
+                self._conn.execute(
+                    "UPDATE tasks SET updated_at=? WHERE task_id=?", (_now_iso(), task_id)
+                )
+                self._emit(task_id, "dependency_repointed",
+                           from_depends_on=from_depends_on, to_depends_on=to_depends_on)
+                # Re-block then re-evaluate (may demote on the new edge or promote).
+                self._derive_readiness(task_id, allow_demote=True)
+                self._conn.commit()
+            except Exception:
+                self._conn.rollback()
+                raise
+            return self._fetch(task_id)
+
     async def recompute_readiness(self, completed_task_id: str) -> list[Task]:
         """OS-authority readiness recompute (#1953 slice 6, OQ-3): no
-        ``caller_session_id`` / no CAS (P3 scheduling, like ``abort``). Flip each
-        dependent of ``completed_task_id`` from ``blocked`` → ``ready`` when ALL of
-        its deps are ``completed``. The ``WHERE status='blocked'`` guard IS the
-        OS-authority write (no assignee equality), distinct from ``update_status``."""
+        ``caller_session_id`` / no CAS (P3 scheduling, like ``abort``). Re-derive
+        readiness for each dependent of the just-completed task via the shared
+        ``_derive_readiness`` primitive — a completion only RELAXES, so only a
+        promote (``blocked → ready``) can fire here."""
         async with self._lock:
             dependents = [
                 r["task_id"] for r in self._conn.execute(
@@ -324,29 +434,8 @@ class SqliteTaskBackend:
             self._conn.execute("BEGIN IMMEDIATE")
             try:
                 for dep_task in dependents:
-                    row = self._conn.execute(
-                        "SELECT status FROM tasks WHERE task_id=?", (dep_task,)
-                    ).fetchone()
-                    if row is None or row["status"] != TaskState.BLOCKED.value:
-                        continue
-                    deps = self._deps(dep_task)
-                    statuses = [
-                        (self._conn.execute(
-                            "SELECT status FROM tasks WHERE task_id=?", (d,)
-                        ).fetchone() or {"status": None})["status"]
-                        for d in deps
-                    ]
-                    if deps and all(s == TaskState.COMPLETED.value for s in statuses):
-                        cur = self._conn.execute(
-                            "UPDATE tasks SET status=?, updated_at=? "
-                            "WHERE task_id=? AND status=?",
-                            (TaskState.READY.value, _now_iso(), dep_task,
-                             TaskState.BLOCKED.value),
-                        )
-                        if cur.rowcount:
-                            self._emit(dep_task, "readiness_changed", to="ready",
-                                       trigger=completed_task_id)
-                            promoted_ids.append(dep_task)
+                    if self._derive_readiness(dep_task) == "ready":
+                        promoted_ids.append(dep_task)
                 self._conn.commit()
             except Exception:
                 self._conn.rollback()

@@ -28,6 +28,7 @@ from reyn.task import (
     TaskOrigin,
     TaskState,
 )
+from reyn.task.model import TERMINAL_STATES
 
 from . import register
 from .context import OpContext
@@ -191,6 +192,11 @@ async def _update_status(op, ctx: OpContext, caller) -> dict:
                 # closed-vocab kind (WAL-vs-P6 separation, P7).
                 events.emit("task_readiness", task_id=p.task_id, to="ready",
                             trigger=op.task_id)
+    elif task.status is TaskState.FAILED:
+        # slice 6-ext §C: a non-completed terminal (the assignee declared `failed`)
+        # doesn't satisfy a dependency edge → route the disposition to the parent's
+        # session to decide recovery (the OQ-7/H5 gap-close; wake stubbed → slice 7).
+        await _route_terminal_to_parent(ctx, _backend(ctx), task)
     return _ok("task.update_status", task=task.to_dict())
 
 
@@ -229,6 +235,89 @@ async def _add_dependency(op, ctx: OpContext, caller) -> dict:
     return _ok("task.add_dependency", task=task.to_dict())
 
 
+def _emit_readiness_if_changed(ctx: OpContext, task, before_status, trigger: str) -> None:
+    """Emit the generic P6 ``task_readiness`` event when an OS re-derive changed a
+    task's readiness (#1953 slice 6-ext). ``before_status`` is captured from the
+    role-gate fetch (pre-mutation), so this fires only on an actual transition and
+    only for the pre-run readiness states (ready / blocked)."""
+    if task.status is before_status:
+        return
+    if task.status not in (TaskState.READY, TaskState.BLOCKED):
+        return
+    events = getattr(ctx, "events", None)
+    if events is not None:
+        events.emit("task_readiness", task_id=task.task_id,
+                    to=task.status.value, trigger=trigger)
+
+
+async def _route_terminal_to_parent(ctx: OpContext, backend, terminal_task) -> None:
+    """slice 6-ext §C: when a task reaches a non-completed terminal (aborted /
+    failed) and has STILL-ALIVE dependents, notify its parent's session to decide
+    recovery (the parent re-wires via ordinary ops — NOT a `decision=` vocabulary,
+    P7). The wake is via ``OpContext.task_waker`` (slice 7 real driver; None here =
+    no-op stub — only the P6 audit fires). Guards: a root task (no parent) and a
+    parent that is itself terminal (its own cascade handles it) route nothing."""
+    parent_id = getattr(terminal_task, "parent_id", None)
+    if not parent_id:
+        return
+    deps_on_it = await backend.dependents(terminal_task.task_id)
+    stuck = [d for d in deps_on_it if d.status not in TERMINAL_STATES]
+    if not stuck:
+        return
+    parent = await backend.get(parent_id)
+    if parent is None or parent.status in TERMINAL_STATES:
+        return  # parent-gone guard (the parent's own cascade subsumes this)
+    events = getattr(ctx, "events", None)
+    if events is not None:
+        # Generic P6 (P7); NOT a WAL closed-vocab kind (WAL-vs-P6 separation).
+        events.emit(
+            "task_dependency_aborted", task_id=terminal_task.task_id,
+            disposition=terminal_task.status.value, parent_id=parent_id,
+            parent_session=parent.assignee, dependents=[d.task_id for d in stuck],
+        )
+    waker = getattr(ctx, "task_waker", None)
+    if waker is not None:
+        await waker.notify_parent_decide(
+            parent_session=parent.assignee, terminal_task=terminal_task, dependents=stuck,
+        )
+
+
+async def _remove_dependency(op, ctx: OpContext, caller) -> dict:
+    # requester-gated: the decomposing requester owns the dependency topology (§13).
+    _task, denied = await _authorize(
+        "task.remove_dependency", ctx, _backend(ctx), op.task_id, "requester")
+    if denied is not None:
+        return denied
+    before = _task.status  # captured pre-mutation (InMemory mutates in place)
+    task = await _backend(ctx).remove_dependency(op.task_id, op.depends_on)
+    if task is None:
+        return _not_found("task.remove_dependency", op.task_id)
+    _audit(ctx, "task.remove_dependency", op.task_id, depends_on=op.depends_on)
+    _emit_readiness_if_changed(ctx, task, before, op.task_id)
+    return _ok("task.remove_dependency", task=task.to_dict())
+
+
+async def _repoint_dependency(op, ctx: OpContext, caller) -> dict:
+    # requester-gated: the parent re-wires the topology (its recovery move, §C).
+    _task, denied = await _authorize(
+        "task.repoint_dependency", ctx, _backend(ctx), op.task_id, "requester")
+    if denied is not None:
+        return denied
+    before = _task.status
+    try:
+        task = await _backend(ctx).repoint_dependency(
+            op.task_id, op.from_depends_on, op.to_depends_on)
+    except (TaskCycleError, TaskDepNotFoundError) as err:
+        # The NEW edge is dangling or cycle-forming → nothing changed (atomic).
+        return _edge_error("task.repoint_dependency", err)
+    if task is None:
+        return _not_found("task.repoint_dependency", op.task_id)
+    _audit(ctx, "task.repoint_dependency", op.task_id,
+           from_depends_on=op.from_depends_on, to_depends_on=op.to_depends_on)
+    _emit_readiness_if_changed(ctx, task, before, op.task_id)
+    return _ok("task.repoint_dependency", task=task.to_dict())
+
+
 async def _abort(op, ctx: OpContext, caller) -> dict:
     # requester-gated remove-op (§model abort=delete). Cooperative-terminal
     # (Option B): the backend archives the task + its sub-tree (DOWN-cascade);
@@ -253,6 +342,10 @@ async def _abort(op, ctx: OpContext, caller) -> dict:
                 requester=t.requester, origin=t.origin.value, root=op.task_id,
             )
     root = aborted[0]
+    # slice 6-ext §C: route the aborted root to its parent so a stuck sibling
+    # dependent gets a recovery decision (the OQ-7/H5 gap-close). The cascade's
+    # descendants have an in-subtree (now terminal) parent → the guard skips them.
+    await _route_terminal_to_parent(ctx, _backend(ctx), root)
     return _ok("task.abort", task=root.to_dict())
 
 
@@ -287,6 +380,8 @@ register("task.update_status", _update_status)
 register("task.get", _get)
 register("task.list", _list)
 register("task.add_dependency", _add_dependency)
+register("task.remove_dependency", _remove_dependency)
+register("task.repoint_dependency", _repoint_dependency)
 register("task.abort", _abort)
 register("task.heartbeat", _heartbeat)
 register("task.register_unblock_predicate", _register_unblock_predicate)
