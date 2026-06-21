@@ -47,6 +47,36 @@ def _panel_row(snap: list[dict], agent_id: str) -> dict | None:
     return None
 
 
+# #2003-class flake-harden: the flash window is wall-clock-driven
+# (``_FLASH_DURATION_S``), so a "row still in the flash window" precondition was a
+# timing race under xdist parallel load — a slowed worker let the window close
+# before the assertion. Drive the window deterministically (same shape as #2003,
+# tests/cli/test_toolrow_flush_survives_clear.py); flash-contract assertions are
+# unchanged. Inject a LARGE window for "still-present" tests (stays open the whole
+# ms-scale test) and a FAST window + a poll for "gone-after" tests (closes
+# promptly, then wait for the removal to land rather than a fixed pause-past).
+_FLASH_OPEN_S = 3600.0
+_FLASH_FAST_S = 0.05
+
+
+def _patch_flash(monkeypatch, seconds: float) -> None:
+    import reyn.interfaces.tui.widgets.async_stack_panel as _asp
+    monkeypatch.setattr(_asp, "_FLASH_DURATION_S", seconds)
+
+
+async def _wait_until(pilot, predicate, *, cap: float = 2.0, step: float = 0.02) -> bool:
+    """Poll ``predicate`` (yielding the loop) until true or ``cap`` — a
+    deterministic wait for a timer-driven transition (vs a fixed pause that races
+    the removal task under load). Returns the final predicate value."""
+    waited = 0.0
+    while waited < cap:
+        if predicate():
+            return True
+        await pilot.pause(step)
+        waited += step
+    return predicate()
+
+
 # ── test 1: terminal="ok" → immediate unmount ────────────────────────────────
 
 @pytest.mark.asyncio
@@ -76,11 +106,12 @@ async def test_remove_ok_unmounts_immediately() -> None:
 # ── test 2: terminal="interrupted" → row stays (flashing) for 0.1 s ─────────
 
 @pytest.mark.asyncio
-async def test_remove_interrupted_row_still_present_before_flush() -> None:
-    """Tier 2: remove(terminal="interrupted") → row present and flashing after 0.1 s."""
+async def test_remove_interrupted_row_still_present_before_flush(monkeypatch) -> None:
+    """Tier 2: remove(terminal="interrupted") → row present and flashing in window."""
     from reyn.interfaces.tui.app import ReynTUIApp
     from reyn.interfaces.tui.widgets import ConversationView
 
+    _patch_flash(monkeypatch, _FLASH_OPEN_S)  # window stays open for the whole test
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
         await pilot.pause()
@@ -93,7 +124,7 @@ async def test_remove_interrupted_row_still_present_before_flush() -> None:
         assert _panel_has_id(panel.snapshot(), "p2"), "row must appear after add"
 
         panel.remove("p2", terminal="interrupted")
-        await pilot.pause(0.1)  # 0.1 s — well before the 1.5 s flush
+        await pilot.pause()  # the injected window cannot close during the test
 
         snap = panel.snapshot()
         row = _panel_row(snap, "p2")
@@ -113,11 +144,12 @@ async def test_remove_interrupted_row_still_present_before_flush() -> None:
 # ── test 3: terminal="interrupted" → row gone after 1.6 s ───────────────────
 
 @pytest.mark.asyncio
-async def test_remove_interrupted_row_gone_after_flush_delay() -> None:
-    """Tier 2: remove(terminal="interrupted") → row gone after ~1.6 s (post-flush)."""
+async def test_remove_interrupted_row_gone_after_flush_delay(monkeypatch) -> None:
+    """Tier 2: remove(terminal="interrupted") → row gone after the flash window."""
     from reyn.interfaces.tui.app import ReynTUIApp
     from reyn.interfaces.tui.widgets import ConversationView
 
+    _patch_flash(monkeypatch, _FLASH_FAST_S)  # window closes promptly; poll for the removal
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
         await pilot.pause()
@@ -129,11 +161,11 @@ async def test_remove_interrupted_row_gone_after_flush_delay() -> None:
         await pilot.pause()
 
         panel.remove("p2b", terminal="interrupted")
-        await pilot.pause(1.6)  # past the 1.5 s flash window
+        # Poll past the (fast) window for the flush to land — deterministic vs a
+        # fixed pause that races the removal task under load.
+        gone = await _wait_until(pilot, lambda: not _panel_has_id(panel.snapshot(), "p2b"))
 
-        assert not _panel_has_id(panel.snapshot(), "p2b"), (
-            "row must be gone from DOM after the 1.5 s flash window expires"
-        )
+        assert gone, "row must be gone from DOM after the flash window expires"
 
 
 # ── test 4: second remove() cancels pending timer + unmounts immediately ─────
@@ -199,7 +231,7 @@ async def test_remove_no_kwarg_still_works() -> None:
 # ── test 6: elapsed freezes at flash start (not live) ────────────────────────
 
 @pytest.mark.asyncio
-async def test_elapsed_frozen_at_flash_start() -> None:
+async def test_elapsed_frozen_at_flash_start(monkeypatch) -> None:
     """Tier 2: elapsed_s in snapshot is frozen the moment remove(terminal!='ok') fires.
 
     After calling remove(terminal='aborted'), the snapshot's elapsed_s for
@@ -209,6 +241,7 @@ async def test_elapsed_frozen_at_flash_start() -> None:
     from reyn.interfaces.tui.app import ReynTUIApp
     from reyn.interfaces.tui.widgets import ConversationView
 
+    _patch_flash(monkeypatch, _FLASH_OPEN_S)  # window stays open across the freeze check
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
         await pilot.pause()
@@ -232,8 +265,9 @@ async def test_elapsed_frozen_at_flash_start() -> None:
         assert row1["flashing"] is True
         elapsed_at_flash = row1["elapsed_s"]
 
-        # Wait ~1 s — well inside the 1.5 s flash window.
-        await pilot.pause(1.0)
+        # Let time pass — the window stays open (injected), so the row is still
+        # flashing and elapsed_s must NOT have advanced (it is frozen).
+        await pilot.pause(0.3)
 
         snap2 = panel.snapshot()
         row2 = _panel_row(snap2, "p5")
