@@ -159,7 +159,7 @@ async def handle_limit_exceeded(
               for event audit + as part of the ``UserIntervention.kind``
               namespace (``safety.limit.<kind>``).
         run_id: Stable run identifier used for the auto_extend counter.
-                Pass the OSRuntime run_id, plan_id, or chain_id —
+                Pass the OSRuntime run_id or chain_id —
                 whichever scopes the extension correctly for this site.
         prompt: User-facing question text.
         detail: Optional second line of context (= specifics like

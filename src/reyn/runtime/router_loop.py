@@ -710,7 +710,7 @@ class RouterLoopHost(RouterLoopCore, Protocol):
     # FP-0012: non-blocking skill dispatch. Chat-mode hosts return
     # ``{status: "spawned", run_id, chain_id, note}`` immediately and
     # deliver completion via the ``skill_completed`` inbox kind. Hosts
-    # that don't support spawn semantics (e.g. plan-mode steps) leave
+    # that don't support spawn semantics (e.g. blocking phase sub-loops) leave
     # this method un-bound (= duck-typing / hasattr check) so the
     # invoke_skill handler falls back to ``run_skill_awaitable``.
     async def spawn_skill(self, *, skill: str, input: dict,
@@ -1387,7 +1387,7 @@ class RouterLoop:
         # ADR-0025: optional sub-loop LLM call memoization. When set,
         # ``call_llm_tools`` invocations consult the provider before
         # invoking — args_hash hit returns the recorded LLMToolCallResult
-        # without paying LLM cost. Used by plan-mode resume so a crashed
+        # without paying LLM cost. Used by phase-step resume so a crashed
         # mid-step sub-loop replays its earlier LLM turns from snapshot
         # rather than re-paying. ``None`` = normal execution (no memo).
         self._memo_provider = memo_provider
@@ -1470,9 +1470,9 @@ class RouterLoop:
         _tracker_getter = getattr(host, "get_action_usage_tracker", None)
         _tracker = _tracker_getter() if _tracker_getter else None
         # FP-0034 PR-3b-iii: read universal wrapper visibility from host.
-        # getattr fallback so narrow hosts (= plan-mode sub-host) that
+        # getattr fallback so narrow hosts (= phase sub-host) that
         # don't implement the method default to off (= preserve prior
-        # plan-step tools= shape).
+        # phase-step tools= shape).
         _univ_enabled_getter = getattr(
             host, "get_universal_wrappers_enabled", None,
         )
@@ -1624,7 +1624,7 @@ class RouterLoop:
                 # FP-0034 refactor: live (= uncompacted) tool-call records
                 # are scanned on demand so the hot-list reflects in-session
                 # invocations without needing per-call disk writes. Hosts
-                # without the accessor (= older mocks, plan-mode sub-host)
+                # without the accessor (= older mocks, phase sub-host)
                 # degrade to compacted-table-only ranking.
                 _live_records: list = []
                 _live_getter = getattr(
@@ -1925,7 +1925,7 @@ class RouterLoop:
             )
             # ADR-0025: memo lookup — a recorded LLMToolCallResult for
             # this exact (model, messages, tools, tool_choice) tuple
-            # short-circuits the call. Used by plan-mode resume so a
+            # short-circuits the call. Used by phase-step resume so a
             # crashed mid-step sub-loop replays earlier LLM turns
             # without re-paying. memo_provider is None for non-resume
             # paths (= chat router main loop, fresh plan runs).
@@ -3691,11 +3691,11 @@ class RouterLoop:
             send_to_agent=_send_to_agent_bound,
             # Skill invocation bridge (= for invoke_skill handler;
             # Phase 3.5-B-light) — chain_id pre-bound to preserve PR14
-            # multi-hop chain semantics. Plan-mode keeps using this for
+            # multi-hop chain semantics. Phase sub-loops keep using this for
             # blocking step execution; chat-mode prefers spawn_skill_fn.
             run_skill_fn=_run_skill_bound,
             # FP-0012: non-blocking spawn binding for chat-mode invoke_skill.
-            # None for plan-mode hosts (= no spawn_skill method on host).
+            # None for blocking phase sub-loop hosts (= no spawn_skill method on host).
             spawn_skill_fn=_spawn_skill_bound,
             # Memory tool bridges (= for memory cluster handlers;
             # Phase 3.5-B-heavy) — bound to RouterLoop's private helpers

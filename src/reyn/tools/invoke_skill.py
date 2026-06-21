@@ -121,8 +121,8 @@ async def _handle(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
     non-blocking spawn path. The handler returns the spawn-ack
     ``{status: "spawned", run_id, chain_id, note}`` immediately and the
     background task delivers completion via the ``skill_completed``
-    inbox kind. Plan-mode RouterLoops leave ``spawn_skill_fn=None`` so
-    plan steps keep blocking semantics (= step's LLM sees the actual
+    inbox kind. Blocking phase sub-loop RouterLoops leave ``spawn_skill_fn=None``
+    so their steps keep blocking semantics (= step's LLM sees the actual
     skill result and can synthesize the next step's input).
 
     Fallback (= phase-side dispatch / test sites): build a transient
@@ -148,7 +148,7 @@ async def _handle(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
                     f"available: {sorted(available)}"
                 )
         # FP-0012: prefer non-blocking spawn when chat-mode binding is
-        # active. Plan-mode falls through to run_skill_fn (blocking).
+        # active. Blocking sub-loops fall through to run_skill_fn (blocking).
         if rs.spawn_skill_fn is not None:
             return await rs.spawn_skill_fn(
                 skill=skill_name,
