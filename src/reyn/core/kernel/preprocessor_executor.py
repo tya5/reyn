@@ -115,6 +115,7 @@ class PreprocessorExecutor:
         threat_scan: "object | None" = None,  # FP-0050/#1822 S5 (EP4)
         contextual_permission: "object | None" = None,  # #1912b: per-session capability narrowing → run_op/iterate gate
         task_backend: "object | None" = None,  # #1953 slice 3a: session-scoped Task backend
+        task_waker: "object | None" = None,  # #1953 slice 7: the OS TaskWaker driver
         session_id: "str | None" = None,  # #1953 slice 3: caller session identity (single-writer key)
     ) -> None:
         self._skill = skill
@@ -148,6 +149,7 @@ class PreprocessorExecutor:
         self._threat_scan = threat_scan
         self._contextual_permission = contextual_permission  # #1912b
         self._task_backend = task_backend  # #1953 slice 3a
+        self._task_waker = task_waker  # #1953 slice 7
         self._task_session_id = session_id  # #1953 slice 3
 
     @property
@@ -196,6 +198,7 @@ class PreprocessorExecutor:
             threat_scan=self._threat_scan,  # FP-0050/#1822 S5 (EP4)
             contextual_permission=self._contextual_permission,  # #1912b
             task_backend=self._task_backend,  # #1953 slice 3a
+            task_waker=self._task_waker,  # #1953 slice 7
             session_id=self._task_session_id,  # #1953 slice 3
         )
 
