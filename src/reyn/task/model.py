@@ -40,6 +40,35 @@ TERMINAL_STATES: frozenset[TaskState] = frozenset(
 )
 
 
+class TaskDepNotFoundError(Exception):
+    """A dependency edge references a ``depends_on`` task that does not exist
+    (#1953 slice 6, OQ-1). A dangling dep is an instant latent deadlock, so the
+    edge is rejected at add-time. The op layer maps this to a decision-enabling
+    ``status="error"`` result (never propagated through the op dispatcher)."""
+
+    def __init__(self, task_id: str, depends_on: str) -> None:
+        self.task_id = task_id
+        self.depends_on = depends_on
+        super().__init__(
+            f"dependency {depends_on!r} of task {task_id!r} does not exist"
+        )
+
+
+class TaskCycleError(Exception):
+    """Adding a dependency edge would create a cycle in the dependency DAG
+    (#1953 slice 6, OQ-4/5) — rejected so the graph stays acyclic-by-construction
+    (deadlock-impossible, §13). Carries the offending edge + the cycle node-path
+    for a decision-enabling op result (never propagated through the dispatcher)."""
+
+    def __init__(self, task_id: str, depends_on: str, path: list[str]) -> None:
+        self.task_id = task_id
+        self.depends_on = depends_on
+        self.path = path
+        super().__init__(
+            f"edge {task_id!r}->{depends_on!r} would create a cycle: {' -> '.join(path)}"
+        )
+
+
 class TaskOrigin(str, Enum):
     """Origin decides deletion coupling (#1953 §17).
 

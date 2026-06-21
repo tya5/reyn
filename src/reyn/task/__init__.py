@@ -18,6 +18,8 @@ from reyn.task.factory import create_task_backend
 from reyn.task.model import (
     TERMINAL_STATES,
     Task,
+    TaskCycleError,
+    TaskDepNotFoundError,
     TaskOrigin,
     TaskState,
 )
@@ -28,6 +30,8 @@ __all__ = [
     "TaskState",
     "TaskOrigin",
     "TERMINAL_STATES",
+    "TaskCycleError",
+    "TaskDepNotFoundError",
     "TaskBackend",
     "InMemoryTaskBackend",
     "SqliteTaskBackend",

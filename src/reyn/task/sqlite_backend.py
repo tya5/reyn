@@ -35,7 +35,16 @@ import json
 import sqlite3
 from pathlib import Path
 
-from reyn.task.model import TERMINAL_STATES, Task, TaskOrigin, TaskState, _now_iso
+from reyn.task.backend import find_cycle_path
+from reyn.task.model import (
+    TERMINAL_STATES,
+    Task,
+    TaskCycleError,
+    TaskDepNotFoundError,
+    TaskOrigin,
+    TaskState,
+    _now_iso,
+)
 
 # Terminal status values (no further transitions) — used by the update_status
 # terminal-guard (the abort straggler-reject, #1953 Option B).
@@ -65,6 +74,8 @@ CREATE TABLE IF NOT EXISTS task_links(
   depends_on TEXT NOT NULL,
   PRIMARY KEY(task_id, depends_on)
 );
+-- #1953 slice 6 (OQ-8): reverse (dependents) lookup for readiness recompute.
+CREATE INDEX IF NOT EXISTS idx_task_links_depends_on ON task_links(depends_on);
 CREATE TABLE IF NOT EXISTS task_runs(
   run_id TEXT PRIMARY KEY,
   task_id TEXT NOT NULL,
@@ -130,6 +141,22 @@ class SqliteTaskBackend:
         ).fetchall()
         return [r["depends_on"] for r in rows]
 
+    def _exists(self, task_id: str) -> bool:
+        return self._conn.execute(
+            "SELECT 1 FROM tasks WHERE task_id=?", (task_id,)
+        ).fetchone() is not None
+
+    def _validate_edge(self, task_id: str, depends_on: str) -> None:
+        """Shared edge guard (#1953 slice 6, OQ-1/OQ-4): ``depends_on`` must exist
+        and the edge must not create a cycle. Called by both ``create(deps)`` and
+        ``add_dependency`` (completeness-by-construction). Read-only — call inside
+        the lock, before opening the write transaction."""
+        if not self._exists(depends_on):
+            raise TaskDepNotFoundError(task_id, depends_on)
+        path = find_cycle_path(self._deps, task_id, depends_on)
+        if path is not None:
+            raise TaskCycleError(task_id, depends_on, path)
+
     def _row_to_task(self, row: sqlite3.Row) -> Task:
         return Task(
             task_id=row["task_id"],
@@ -159,6 +186,25 @@ class SqliteTaskBackend:
 
     async def create(self, task: Task) -> Task:
         async with self._lock:
+            # Validate every born-with dep (existence + cycle) before writing
+            # (OQ-4 shared helper on the create path); read-only, pre-transaction.
+            for dep in task.deps:
+                self._validate_edge(task.task_id, dep)
+            # Born-blocked (OQ-3 origin of `blocked`): a task born with deps not ALL
+            # completed is OS-derived `blocked` at birth (§13) — initial-status
+            # derivation, not a post-hoc flip (OQ-2). Deps-less tasks (the A2A create
+            # path) keep their requested status.
+            status = task.status
+            if task.deps:
+                dep_statuses = [
+                    (self._conn.execute(
+                        "SELECT status FROM tasks WHERE task_id=?", (dep,)
+                    ).fetchone() or {"status": None})["status"]
+                    for dep in task.deps
+                ]
+                if not all(s == TaskState.COMPLETED.value for s in dep_statuses):
+                    status = TaskState.BLOCKED
+            task.status = status
             self._conn.execute("BEGIN IMMEDIATE")
             self._conn.execute(
                 f"INSERT INTO tasks({_TASK_COLUMNS}) "
@@ -245,10 +291,11 @@ class SqliteTaskBackend:
 
     async def add_dependency(self, task_id: str, depends_on: str) -> Task | None:
         async with self._lock:
-            if self._conn.execute(
-                "SELECT 1 FROM tasks WHERE task_id=?", (task_id,)
-            ).fetchone() is None:
+            if not self._exists(task_id):
                 return None
+            # Pure topology write (OQ-2): validate (existence + cycle) then record
+            # the edge — never flips this task's status (readiness is OS-derived).
+            self._validate_edge(task_id, depends_on)
             self._conn.execute("BEGIN IMMEDIATE")
             self._conn.execute(
                 "INSERT OR IGNORE INTO task_links(task_id, depends_on) VALUES (?,?)",
@@ -260,6 +307,51 @@ class SqliteTaskBackend:
             self._emit(task_id, "dependency_added", depends_on=depends_on)
             self._conn.commit()
             return self._fetch(task_id)
+
+    async def recompute_readiness(self, completed_task_id: str) -> list[Task]:
+        """OS-authority readiness recompute (#1953 slice 6, OQ-3): no
+        ``caller_session_id`` / no CAS (P3 scheduling, like ``abort``). Flip each
+        dependent of ``completed_task_id`` from ``blocked`` → ``ready`` when ALL of
+        its deps are ``completed``. The ``WHERE status='blocked'`` guard IS the
+        OS-authority write (no assignee equality), distinct from ``update_status``."""
+        async with self._lock:
+            dependents = [
+                r["task_id"] for r in self._conn.execute(
+                    "SELECT task_id FROM task_links WHERE depends_on=?", (completed_task_id,)
+                ).fetchall()
+            ]
+            promoted_ids: list[str] = []
+            self._conn.execute("BEGIN IMMEDIATE")
+            try:
+                for dep_task in dependents:
+                    row = self._conn.execute(
+                        "SELECT status FROM tasks WHERE task_id=?", (dep_task,)
+                    ).fetchone()
+                    if row is None or row["status"] != TaskState.BLOCKED.value:
+                        continue
+                    deps = self._deps(dep_task)
+                    statuses = [
+                        (self._conn.execute(
+                            "SELECT status FROM tasks WHERE task_id=?", (d,)
+                        ).fetchone() or {"status": None})["status"]
+                        for d in deps
+                    ]
+                    if deps and all(s == TaskState.COMPLETED.value for s in statuses):
+                        cur = self._conn.execute(
+                            "UPDATE tasks SET status=?, updated_at=? "
+                            "WHERE task_id=? AND status=?",
+                            (TaskState.READY.value, _now_iso(), dep_task,
+                             TaskState.BLOCKED.value),
+                        )
+                        if cur.rowcount:
+                            self._emit(dep_task, "readiness_changed", to="ready",
+                                       trigger=completed_task_id)
+                            promoted_ids.append(dep_task)
+                self._conn.commit()
+            except Exception:
+                self._conn.rollback()
+                raise
+            return [t for t in (self._fetch(tid) for tid in promoted_ids) if t is not None]
 
     async def abort(self, task_id: str, reason: str | None = None) -> list[Task]:
         """abort = delete (cooperative-terminal, #1953 Option B): set this task +

@@ -23,9 +23,49 @@ Enforcement deferred to later slices:
 """
 from __future__ import annotations
 
-from typing import Protocol
+from typing import Callable, Protocol
 
-from reyn.task.model import TERMINAL_STATES, Task, TaskState, _now_iso
+from reyn.task.model import (
+    TERMINAL_STATES,
+    Task,
+    TaskCycleError,
+    TaskDepNotFoundError,
+    TaskState,
+    _now_iso,
+)
+
+
+def find_cycle_path(
+    deps_of: Callable[[str], list[str]], task_id: str, depends_on: str
+) -> list[str] | None:
+    """Return the cycle node-path if adding the edge ``task_id depends-on
+    depends_on`` would create a cycle in the dependency DAG, else ``None``
+    (#1953 slice 6, OQ-4). A cycle forms iff ``task_id`` is already reachable
+    from ``depends_on`` by following depends-on edges (then ``task_id ->
+    depends_on -> ... -> task_id``), or the edge is a self-loop.
+
+    Pure + backend-agnostic: ``deps_of(node)`` returns ``node``'s depends-on
+    ids, so the in-memory and sqlite backends share one cycle check (the
+    shared-helper completeness OQ-4 calls for). Returns the offending cycle as a
+    node sequence for a decision-enabling error (OQ-5)."""
+    if task_id == depends_on:
+        return [task_id, depends_on]
+    parent: dict[str, str | None] = {depends_on: None}
+    stack: list[str] = [depends_on]
+    while stack:
+        node = stack.pop()
+        for d in deps_of(node):
+            if d == task_id:
+                # Reconstruct depends_on .. node, then close the cycle T -> .. -> T.
+                chain = [node]
+                while parent[chain[-1]] is not None:
+                    chain.append(parent[chain[-1]])  # type: ignore[arg-type]
+                chain.reverse()
+                return [task_id, *chain, task_id]
+            if d not in parent:
+                parent[d] = node
+                stack.append(d)
+    return None
 
 
 class TaskBackend(Protocol):
@@ -53,7 +93,22 @@ class TaskBackend(Protocol):
         caller raises ``PermissionError``. Returns None for an unknown task."""
         ...
 
-    async def add_dependency(self, task_id: str, depends_on: str) -> Task | None: ...
+    async def add_dependency(self, task_id: str, depends_on: str) -> Task | None:
+        """Add a depends-on edge (pure topology write, OQ-2 — never flips the
+        task's status). Validates ``depends_on`` exists (raises
+        ``TaskDepNotFoundError``) and that the edge does not create a cycle
+        (raises ``TaskCycleError``); the op layer maps both to error results.
+        Returns None for an unknown ``task_id``."""
+        ...
+
+    async def recompute_readiness(self, completed_task_id: str) -> list[Task]:
+        """OS-authority readiness recompute (#1953 slice 6, OQ-3): a predecessor
+        reaching ``completed`` → re-evaluate its dependents → any whose deps are
+        ALL ``completed`` transitions ``blocked → ready``. This is an OS
+        scheduling write (P3), **not** an assignee progress write — it takes no
+        ``caller_session_id`` and bypasses the single-writer CAS (like ``abort``).
+        Returns the newly-readied tasks (so the caller emits P6 + later nudges)."""
+        ...
 
     async def abort(self, task_id: str, reason: str | None = None) -> list[Task]: ...
 
@@ -77,7 +132,33 @@ class InMemoryTaskBackend:
         self._comments: dict[str, list[dict]] = {}
         self._comment_seq = 0
 
+    def _deps_of(self, node: str) -> list[str]:
+        t = self._tasks.get(node)
+        return list(t.deps) if t is not None else []
+
+    def _validate_edge(self, task_id: str, depends_on: str) -> None:
+        """Shared edge guard (#1953 slice 6, OQ-1/OQ-4): the ``depends_on`` task
+        must exist, and the edge must not create a cycle. Called by both
+        ``create(deps)`` and ``add_dependency`` (completeness-by-construction)."""
+        if depends_on not in self._tasks:
+            raise TaskDepNotFoundError(task_id, depends_on)
+        path = find_cycle_path(self._deps_of, task_id, depends_on)
+        if path is not None:
+            raise TaskCycleError(task_id, depends_on, path)
+
     async def create(self, task: Task) -> Task:
+        # Validate every born-with dep (existence + cycle) before storing (OQ-4
+        # shared helper on the create path too).
+        for dep in task.deps:
+            self._validate_edge(task.task_id, dep)
+        # Born-blocked (OQ-3 origin of `blocked`): a task born with deps that are
+        # not ALL already completed is OS-derived `blocked` at birth (§13). This is
+        # an initial-status derivation, not a post-hoc status flip (OQ-2) — deps-less
+        # tasks (e.g. the A2A create path) keep their requested status.
+        if task.deps and not all(
+            self._tasks[d].status == TaskState.COMPLETED for d in task.deps
+        ):
+            task.status = TaskState.BLOCKED
         self._tasks[task.task_id] = task
         return task
 
@@ -132,11 +213,31 @@ class InMemoryTaskBackend:
         task = self._tasks.get(task_id)
         if task is None:
             return None
-        # slice 6 adds cycle-check + readiness propagation; slice 1 records the edge.
+        # Pure topology write (OQ-2): validate (existence + cycle) then record the
+        # edge — never flips this task's status (the requester must not write the
+        # assignee's status; readiness is OS-derived on completion).
+        self._validate_edge(task_id, depends_on)
         if depends_on not in task.deps:
             task.deps.append(depends_on)
         task.updated_at = _now_iso()
         return task
+
+    async def recompute_readiness(self, completed_task_id: str) -> list[Task]:
+        # OS-authority (OQ-3): no caller_session_id, no CAS — readiness is OS
+        # scheduling (P3). Re-evaluate the just-completed task's dependents; flip
+        # blocked → ready only when ALL of a dependent's deps are completed.
+        promoted: list[Task] = []
+        for t in self._tasks.values():
+            if t.status is not TaskState.BLOCKED or completed_task_id not in t.deps:
+                continue
+            if all(
+                d in self._tasks and self._tasks[d].status == TaskState.COMPLETED
+                for d in t.deps
+            ):
+                t.status = TaskState.READY
+                t.updated_at = _now_iso()
+                promoted.append(t)
+        return promoted
 
     async def abort(self, task_id: str, reason: str | None = None) -> list[Task]:
         # abort = delete (cooperative-terminal, Option B): archive this task + its
