@@ -55,6 +55,7 @@ from reyn.runtime.router_loop import (
     RouterLoop,
     RouterLoopHost,
 )
+from reyn.tools.universal_catalog import strip_provider_tool_namespace
 
 if TYPE_CHECKING:
     from reyn.config import PlannerStepCompactionConfig
@@ -332,18 +333,27 @@ def parse_and_validate_plan(args: dict, *, allowed_tool_names: set[str]) -> Plan
             raise PlanValidationError(
                 f"plan.steps[{i}] (id={sid!r}).tools must be a list (use [] for narration-only steps)"
             )
-        tools_tuple: tuple[str, ...] = tuple(raw_tools)
-        for t in tools_tuple:
+        # #1989: a weak model (Gemini) sometimes writes a tool name with its
+        # function-calling namespace prefix (``default_api.invoke_action``) as a
+        # step-tools VALUE. Normalize it away BEFORE the membership check AND
+        # before storing, so the step carries the bare name downstream (the
+        # narrow host / dispatch see the catalog name). Safe: reyn names are
+        # dot-free (see strip_provider_tool_namespace).
+        normalized: list[str] = []
+        for t in raw_tools:
             if not isinstance(t, str):
                 raise PlanValidationError(
                     f"plan.steps[{i}] (id={sid!r}).tools[*] must be strings"
                 )
-            if t not in allowed_tool_names:
+            nt = strip_provider_tool_namespace(t)
+            if nt not in allowed_tool_names:
                 raise PlanValidationError(
                     f"plan.steps[{i}] (id={sid!r}).tools references {t!r} "
                     f"which is not in the available tool catalog. "
                     f"Allowed: {sorted(allowed_tool_names)}"
                 )
+            normalized.append(nt)
+        tools_tuple: tuple[str, ...] = tuple(normalized)
         raw_deps = raw.get("depends_on", [])
         if not isinstance(raw_deps, list):
             raise PlanValidationError(
