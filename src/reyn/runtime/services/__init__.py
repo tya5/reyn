@@ -34,7 +34,6 @@ __all__ = [
     "InterventionHandler",
     "InterventionRegistry",
     "MemoryService",
-    "PlanRunner",
     "RouterHistoryBuffer",
     "RouterHostAdapter",
     "RouterLoopDriver",

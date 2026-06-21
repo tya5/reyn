@@ -1220,11 +1220,6 @@ class Session:
         # when an AgentRegistry back-reference is wired (production path);
         # tests with registry=None see no truncation triggers (acceptable).
         self._skill_registry: SkillRegistry | None = None
-        # ADR-0023 Phase 2 + ADR-0025: lazy per-agent PlanRegistry. Created
-        # on first plan-mode invocation so per-plan snapshots persist
-        # alongside SnapshotJournal's WAL-side bookkeeping. Mirrors the
-        # SkillRegistry lazy-init pattern.
-        self._plan_registry: "Any" = None
 
         # PR22: budget / rate-limit tracker (process-shared). When None,
         # checks are noops and counters are not maintained.
@@ -1990,15 +1985,6 @@ class Session:
         """Forwarding property → SkillRunner.running_skills_chain."""
         return self._skill_runner.running_skills_chain
 
-    @property
-    def running_plans(self) -> dict:
-        """Forwarding property → PlanRunner.running_plans.
-
-        Slash commands (slash/plan.py), mcp_server.py shutdown gather,
-        and the TUI app read this directly; the dict itself is owned by
-        PlanRunner.
-        """
-        return self._plan_runner.running_plans
 
     def _is_turn_cancel_requested(self) -> bool:
         """Forwarding → RouterLoopDriver.is_cancel_requested (PR-3)."""
@@ -2022,11 +2008,6 @@ class Session:
             if not task.done():
                 task.cancel()
                 cancelled_skills += 1
-        cancelled_plans = 0
-        for task in list(self.running_plans.values()):
-            if not task.done():
-                task.cancel()
-                cancelled_plans += 1
         parts: list[str] = []
         # Turn cancel is always "requested" when this method is called, but
         # only fires if a turn is actually running. We include it in the
@@ -2034,8 +2015,6 @@ class Session:
         parts.append("turn")
         if cancelled_skills:
             parts.append(f"{cancelled_skills} skill{'s' if cancelled_skills != 1 else ''}")
-        if cancelled_plans:
-            parts.append(f"{cancelled_plans} plan{'s' if cancelled_plans != 1 else ''}")
         return f"✗ cancelled {' + '.join(parts)}"
 
     async def await_quiescent(self) -> None:
@@ -2078,7 +2057,6 @@ class Session:
         pending = [
             t for t in (
                 *self.running_skills.values(),
-                *self.running_plans.values(),
                 *self._inflight_wal_tasks,
             )
             if not t.done()
@@ -2176,11 +2154,10 @@ class Session:
             self._restore_intervention_tasks = []
         # buffered_intervention_answers
         self._buffered_intervention_answers.clear()
-        # active_skill_run_ids / active_plan_ids live mirrors (handles settled)
+        # active_skill_run_ids live mirrors (handles settled)
         self.running_skills.clear()
         self.running_skills_started_at.clear()
         self.running_skills_chain.clear()
-        self.running_plans.clear()
         self._inflight_wal_tasks.clear()
 
     @property
@@ -2251,9 +2228,6 @@ class Session:
                     long_await_threshold=long_await_threshold,
                 )
             )
-        plan_reg = self.get_plan_registry()
-        if plan_reg is not None:
-            out.extend(plan_reg.iter_step_applied_seqs())
         return out
 
     def current_state_summary(self) -> dict:
@@ -2263,10 +2237,6 @@ class Session:
         ``/reset`` (confirm preview line).  Keys:
 
         - ``running_skills``: count of currently running skill runs.
-        - ``running_plans``: count of currently running plan tasks.
-        - ``interrupted_plans``: list of ``{plan_id, goal, exc_type}``
-          dicts for recently-interrupted plans (event-store scan; empty
-          when project_root is unavailable).
         - ``stuck_skills``: list of ``{skill_name, run_id, stuck_at}``
           dicts for skill runs that ended on a non-terminal event.
 
@@ -2274,12 +2244,10 @@ class Session:
         return zero / empty rather than raising.
         """
         n_skills = len(self.running_skills) if hasattr(self, "_skill_runner") else 0
-        n_plans = len(self.running_plans) if hasattr(self, "_plan_runner") else 0
 
-        # Interrupted plans + stuck skills require the event-store scan
-        # implemented in the agents-tab helper functions.  We import lazily
-        # (avoids pulling TUI widgets at session-bootstrap time).
-        interrupted_plans: list[dict] = []
+        # Stuck skills require the event-store scan implemented in the agents-tab
+        # helper functions.  We import lazily (avoids pulling TUI widgets at
+        # session-bootstrap time).
         stuck_skills: list[dict] = []
         try:
             project_root: "Path | None" = None
@@ -2289,21 +2257,9 @@ class Session:
 
             if project_root is not None:
                 from reyn.interfaces.tui.widgets.right_panel.agents_tab import (
-                    _recent_plans_for_agent,
                     _recent_skill_runs_for_agent,
                 )
-                running_plan_ids = set(self.running_plans.keys())
                 running_run_ids = set(self.running_skills.keys())
-                plans = _recent_plans_for_agent(
-                    project_root, self.agent_name, running_plan_ids,
-                )
-                for p in plans:
-                    if p.get("status") == "interrupted":
-                        interrupted_plans.append({
-                            "plan_id": p.get("plan_id", "?"),
-                            "goal": p.get("goal", ""),
-                            "exc_type": p.get("exc_type", ""),
-                        })
                 skills = _recent_skill_runs_for_agent(
                     project_root, self.agent_name, running_run_ids,
                 )
@@ -2319,8 +2275,6 @@ class Session:
 
         return {
             "running_skills": n_skills,
-            "running_plans": n_plans,
-            "interrupted_plans": interrupted_plans,
             "stuck_skills": stuck_skills,
         }
 
@@ -3245,42 +3199,6 @@ class Session:
                 session_id=self._session_id,  # FP-0043 S5: per-session WAL routing
             )
         return self._skill_registry
-
-    def get_plan_registry(self) -> "Any":
-        """Return the per-agent PlanRegistry, lazily constructed on first call.
-
-        ADR-0023 Phase 2 + ADR-0025: per-plan snapshots persist
-        alongside SnapshotJournal's WAL-side bookkeeping. Without this
-        registry hook, ADR-0023 forward replay has nothing to read on
-        resume (PlanRegistry.load_active() returns empty), and ADR-0025
-        sub-loop LLM memoization has nowhere to record.
-
-        Returns None when no state_log is wired — test / standalone
-        mode without persistence.
-
-        Truncate hook mirrors get_skill_registry: fires
-        AgentRegistry.truncate_wal_if_eligible after every durable
-        per-plan mutation (= last_step_applied_seq bump).
-        """
-        if self._state_log is None:
-            return None
-        if self._plan_registry is None:
-            from reyn.core.plan import PlanRegistry
-            agent_state_dir = (
-                Path(".reyn") / "agents" / self.agent_name / "state"
-            )
-            hook = None
-            if self._registry is not None:
-                async def _truncate_hook() -> None:
-                    if self._registry is not None:
-                        await self._registry.truncate_wal_if_eligible()
-                hook = _truncate_hook
-            self._plan_registry = PlanRegistry(
-                agent_name=self.agent_name,
-                agent_state_dir=agent_state_dir,
-                truncate_eligible_hook=hook,
-            )
-        return self._plan_registry
 
     def _build_agent(
         self,

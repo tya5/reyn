@@ -326,9 +326,6 @@ def _is_quiescent_after_bus(session) -> bool:
     running_skills: dict = getattr(session, "running_skills", {})
     if any(not t.done() for t in running_skills.values()):
         return False
-    running_plans: dict = getattr(session, "running_plans", {})
-    if any(not t.done() for t in running_plans.values()):
-        return False
     return True
 
 

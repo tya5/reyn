@@ -181,9 +181,6 @@ class MessageBus:
         running_skills: dict = getattr(agent, "running_skills", {})
         if any(not t.done() for t in running_skills.values()):
             return False
-        running_plans: dict = getattr(agent, "running_plans", {})
-        if any(not t.done() for t in running_plans.values()):
-            return False
         return True
 
 
