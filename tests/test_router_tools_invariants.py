@@ -104,14 +104,12 @@ def test_build_tools_dispatch_kinds_consistent() -> None:
     tools = build_tools(_SAMPLE_SKILLS, _SAMPLE_AGENTS)
     tool_names = [t["function"]["name"] for t in tools]
 
-    # These two are always present and must be "async".
+    # delegate_to_agent is always present and must be "async".
     assert "delegate_to_agent" in tool_names, "delegate_to_agent must always be present"
-    assert "plan" in tool_names, "plan must always be present"
     assert get_dispatch_kind("delegate_to_agent") == "async"
-    assert get_dispatch_kind("plan") == "async"
 
     # All other tools in the baseline set must be "sync".
-    async_tools = {"delegate_to_agent", "plan"}
+    async_tools = {"delegate_to_agent"}
     for name in tool_names:
         expected = "async" if name in async_tools else "sync"
         actual = get_dispatch_kind(name)
@@ -132,7 +130,7 @@ def test_build_tools_full_permissions_dispatch_kinds_consistent() -> None:
         web_fetch_allowed=True,
     )
     tool_names = [t["function"]["name"] for t in tools]
-    async_tools = {"delegate_to_agent", "plan"}
+    async_tools = {"delegate_to_agent"}
     for name in tool_names:
         expected = "async" if name in async_tools else "sync"
         actual = get_dispatch_kind(name)

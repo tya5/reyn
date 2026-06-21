@@ -428,7 +428,6 @@ def test_router_caller_state_defaults_all_none():
     assert state.available_skills is None
     assert state.available_agents is None
     assert state.send_to_agent is None
-    assert state.dispatch_plan_tool is None
     assert state.chain_id is None
     assert state.budget is None
     assert state.router_model is None
@@ -535,7 +534,6 @@ def test_router_caller_state_partial_population():
     assert state.available_skills is None
     assert state.available_agents is None
     assert state.send_to_agent is None
-    assert state.dispatch_plan_tool is None
     assert state.chain_id is None
     assert state.budget is None
     assert state.router_model is None
@@ -553,16 +551,12 @@ def test_router_caller_state_full_population():
     async def _send_to_agent(*a, **kw):
         pass
 
-    async def _dispatch_plan(*a, **kw):
-        pass
-
     state = RouterCallerState(
         skill_registry=sentinel_skill_reg,
         agent_registry=sentinel_agent_reg,
         available_skills=[{"name": "s1"}],
         available_agents=[{"name": "a1"}],
         send_to_agent=_send_to_agent,
-        dispatch_plan_tool=_dispatch_plan,
         chain_id="chain-xyz",
         budget=sentinel_budget,
         router_model="openai/gpt-4o",
@@ -575,7 +569,6 @@ def test_router_caller_state_full_population():
     assert state.available_skills == [{"name": "s1"}]
     assert state.available_agents == [{"name": "a1"}]
     assert state.send_to_agent is _send_to_agent
-    assert state.dispatch_plan_tool is _dispatch_plan
     assert state.chain_id == "chain-xyz"
     assert state.budget is sentinel_budget
     assert state.router_model == "openai/gpt-4o"
