@@ -121,8 +121,17 @@ Key constraints (full rationale in the doc):
 ## PR workflow (READ BEFORE OPENING / REVIEWING A PR)
 
 This repo is touched by multiple Claude sessions (lead-coder, e2e-coder,
-per-PR coders) authenticating as the same `gh` user. Three rules keep that
-coherent:
+per-PR coders) authenticating as the same `gh` user.
+
+**Before you open a PR, run all three CI gates locally** — `ruff check src
+tests`, `python scripts/test_tier_audit.py --strict <changed test files>`, and
+`pytest` (from the repo root) are *separate* CI jobs. A green `pytest` alone is
+**not** a green CI run (`pytest-green ≠ CI-green`): ruff `I001` import-sort and a
+Tier-4 format pin (`len(...) == N`) both fail CI while `pytest` passes. Details
++ the Tier-4 → behavioral-assertion fix idioms:
+`docs/deep-dives/contributing/testing.md` § "Before you push".
+
+Three rules then keep multi-session work coherent:
 
 1. **Finish your own Test plan before merge.** PR authors run every
    Manual / Visual item in the Test plan and tick the box, or replace

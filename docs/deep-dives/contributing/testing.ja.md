@@ -406,6 +406,36 @@ REYN_LLM_RECORD=1 python -m pytest tests/ -v
 
 ---
 
+## プッシュ前 — 3 つの CI ゲート
+
+`pytest` が green でも CI が green とは限りません。`.github/workflows/test.yml`
+は **3 つの独立したゲート**を回します。PR を ready とする前に、diff に対して 3 つ
+ともローカルで実行してください:
+
+1. **pytest** — リポジトリルートから（サブセットパスでなく）。collection が CI と一致します:
+   ```bash
+   python -m pytest tests/ -q
+   ```
+2. **ruff** — lint + import-sort（`I001`）:
+   ```bash
+   ruff check src tests        # autofix 可能な I001 / format は --fix
+   ```
+3. **test-tier audit** — 新規・変更したテストファイルごとに
+   `scripts/test_tier_audit.py --strict`（後述の Tier コンプライアンス監査ツールと
+   同じ linter）。Tier-4 の format-pin（`len(...) == N`、exact whitespace、行数）は
+   pytest が green でもここで fail します — behavioral assertion に置き換えてください
+   （長さでなく抽出した値そのものを assert）:
+   ```bash
+   python scripts/test_tier_audit.py --strict <変更したテストファイル>
+   ```
+
+`pytest` だけが green の PR が、CI で ruff（`I001`）や tier audit（`len(...) == 1`
+の format-pin）で bounce した実例があります。report scope は正直に: 走らせたのが
+pytest だけなら「pytest passed」と言い、「suite passed」（lint・audit ゲートも含意する）
+とは言わないこと。
+
+---
+
 ## 新しい OS 機能のカバレッジチェックリスト
 
 LLM 依存の OS パスを新たに追加する場合:
