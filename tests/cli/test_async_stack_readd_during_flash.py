@@ -37,12 +37,39 @@ def _panel_row(snap: list[dict], agent_id: str) -> dict | None:
     return None
 
 
+# #2003-class flake-harden: the flash window is wall-clock-driven, so "re-add
+# inside the flash window" was a timing race under xdist load (a slowed worker
+# let the window close before the re-add, silently degrading the test to a fresh
+# add). Drive the window deterministically — a LARGE window keeps it open across
+# the re-add; for the "survives the stale timer" test the re-add is SYNCHRONOUS
+# (cancels the timer before it can fire) and we poll past a FAST window for a
+# (buggy) stale removal. Same shape as #2003; behaviour assertions unchanged.
+_FLASH_OPEN_S = 3600.0
+_FLASH_FAST_S = 0.05
+
+
+def _patch_flash(monkeypatch, seconds: float) -> None:
+    import reyn.interfaces.tui.widgets.async_stack_panel as _asp
+    monkeypatch.setattr(_asp, "_FLASH_DURATION_S", seconds)
+
+
+async def _wait_until(pilot, predicate, *, cap: float = 2.0, step: float = 0.02) -> bool:
+    waited = 0.0
+    while waited < cap:
+        if predicate():
+            return True
+        await pilot.pause(step)
+        waited += step
+    return predicate()
+
+
 @pytest.mark.asyncio
-async def test_readd_during_flash_returns_to_running_state() -> None:
+async def test_readd_during_flash_returns_to_running_state(monkeypatch) -> None:
     """Tier 2: re-adding an id mid-flash clears the interrupted flash state."""
     from reyn.interfaces.tui.app import ReynTUIApp
     from reyn.interfaces.tui.widgets import ConversationView
 
+    _patch_flash(monkeypatch, _FLASH_OPEN_S)  # window stays open across the re-add
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
         await pilot.pause()
@@ -52,9 +79,9 @@ async def test_readd_during_flash_returns_to_running_state() -> None:
         panel.add("a1", "running task")
         await pilot.pause()
         panel.remove("a1", terminal="interrupted")
-        await pilot.pause(0.1)  # inside the flash window
+        await pilot.pause()  # the injected window cannot close during the test
 
-        # Same agent restarts → re-add under the same id.
+        # Same agent restarts → re-add under the same id, still inside the window.
         panel.add("a1", "restarted task")
         await pilot.pause()
 
@@ -67,11 +94,12 @@ async def test_readd_during_flash_returns_to_running_state() -> None:
 
 
 @pytest.mark.asyncio
-async def test_readd_during_flash_survives_old_timer() -> None:
+async def test_readd_during_flash_survives_old_timer(monkeypatch) -> None:
     """Tier 2: the stale flash timer must not yank a re-added live row."""
     from reyn.interfaces.tui.app import ReynTUIApp
     from reyn.interfaces.tui.widgets import ConversationView
 
+    _patch_flash(monkeypatch, _FLASH_FAST_S)  # original timer would fire promptly
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
         await pilot.pause()
@@ -81,15 +109,19 @@ async def test_readd_during_flash_survives_old_timer() -> None:
         panel.add("a2", "running task")
         await pilot.pause()
         panel.remove("a2", terminal="interrupted")
-        await pilot.pause(0.1)  # inside the flash window
-
+        # Re-add WHILE the flash timer is still pending — synchronously, before any
+        # await lets the timer fire, so the re-add deterministically lands inside
+        # the window and must cancel the stale timer (no wall-clock race).
         panel.add("a2", "restarted task")
         await pilot.pause()
 
-        # Past the ORIGINAL ~1.5 s flash deadline.
-        await pilot.pause(1.6)
-
-        assert _panel_has_id(panel.snapshot(), "a2"), (
+        # Poll PAST the original (fast) flash deadline for a (buggy) stale removal:
+        # a non-cancelled timer would yank the live row; it must never happen.
+        yanked = await _wait_until(
+            pilot, lambda: not _panel_has_id(panel.snapshot(), "a2"),
+            cap=_FLASH_FAST_S * 6,
+        )
+        assert not yanked, (
             "the re-added live row must survive past the old flash deadline — "
             "add() must cancel the stale flash timer"
         )
