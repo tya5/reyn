@@ -32,6 +32,13 @@ class _InlineRowManager:
         self._skill_rows: dict[str, SkillActivityRow] = {}
         self._tool_call_rows: dict[str, ToolCallRow] = {}
         self._last_failed_tool_row: ToolCallRow | None = None
+        # Rows in their min-display flush window: popped from
+        # ``_tool_call_rows`` but still mounted with a pending deferred-flush
+        # timer. Tracked so ``clear()`` can cancel the timer + remove the row
+        # (the dict sweep can't see them — stale-removal hazard, see
+        # feedback_tui_deferred_timer_stale_removal_class). Each entry is
+        # ``(row, timer)``; ``timer`` has a ``stop()`` method.
+        self._pending_flush: list[tuple[ToolCallRow, object]] = []
 
     # ── skill rows ────────────────────────────────────────────────────────────
 
@@ -178,15 +185,23 @@ class _InlineRowManager:
         if elapsed < _TOOL_CALL_MIN_DISPLAY_S:
             delay = _TOOL_CALL_MIN_DISPLAY_S - elapsed
             try:
-                self._parent.app.set_timer(
+                timer = self._parent.app.set_timer(
                     delay, lambda: self._do_flush_tool_call_row(row),
                 )
+                # Track so clear() can cancel + remove this still-mounted row.
+                self._pending_flush.append((row, timer))
                 return
             except Exception:
                 pass
         self._do_flush_tool_call_row(row)
 
     def _do_flush_tool_call_row(self, row: ToolCallRow) -> None:
+        # The deferred flush fired (or we flushed immediately) — drop any
+        # pending-flush tracking for this row so clear() doesn't double-handle.
+        if self._pending_flush:
+            self._pending_flush = [
+                (r, t) for (r, t) in self._pending_flush if r is not row
+            ]
         try:
             line1 = row._build_line1()
             line2 = row._build_line2()
@@ -211,4 +226,19 @@ class _InlineRowManager:
             except Exception:
                 pass
         self._tool_call_rows.clear()
+        # Rows mid-flush are popped from the dict above but still mounted with a
+        # pending timer — invisible to the sweep, the same untracked hazard the
+        # InterventionWidget query-sweep in ConversationView.clear() handles.
+        # Cancel the timer (so it can't write stale lines into the cleared log)
+        # and remove the ghost row.
+        for row, timer in self._pending_flush:
+            try:
+                timer.stop()
+            except Exception:
+                pass
+            try:
+                row.remove()
+            except Exception:
+                pass
+        self._pending_flush.clear()
         self._last_failed_tool_row = None
