@@ -1,6 +1,5 @@
 """Compaction engine — multi-axis OS-internal compaction (chat / planner step / phase)."""
 from reyn.services.compaction.engine import (
-    STEP_RESULTS_COMPACTED_KEY,
     ChatSummary,
     ChatSummaryRaw,
     CompactionEngine,
@@ -13,7 +12,6 @@ from reyn.services.compaction.engine import (
     UnrecoveredError,
     assert_static_bounds,
     compact_control_ir_results,
-    compact_step_results,
     compute_budgets,
     compute_covers_through_seq,
     estimate_tokens,
@@ -35,10 +33,8 @@ __all__ = [
     "ForceCompactRaceUnrecoveredError",
     "NewMsgExceedsBudgetError",
     "UnrecoveredError",
-    "STEP_RESULTS_COMPACTED_KEY",
     "assert_static_bounds",
     "compact_control_ir_results",
-    "compact_step_results",
     "compute_budgets",
     "compute_covers_through_seq",
     "estimate_tokens",

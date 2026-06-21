@@ -221,11 +221,6 @@ class ReynConfig:
     # #1593 — per-layer tool-use scheme selector (chat/step/phase). Default all
     # universal-category (today's behaviour); generalizes universal_wrappers_enabled.
     tool_use: ToolUseConfig = field(default_factory=ToolUseConfig)
-    # Plan resume policy (ADR-0023 Phase 2) — how the resume coordinator
-    # treats interrupted plan-mode runs on restart. Loaded as a raw dict
-    # and parsed lazily by the coordinator (= keeps PlanResumeConfig in
-    # the plan/ module rather than coupling config.py to it).
-    plan_resume_raw: dict | None = None
     # Voice input (Whisper) settings for the chat TUI. Optional feature gated
     # by the `reyn[voice]` extras; the OS itself never depends on this block.
     voice: VoiceConfig = field(default_factory=VoiceConfig)

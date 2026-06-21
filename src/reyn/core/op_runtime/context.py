@@ -169,15 +169,6 @@ class OpContext:
     # passes it down through Agent → OSRuntime → executors → OpContext.
     secret_store: "ScopedSecretStore | None" = None
 
-    # Issue #214 (= #180 #2 split): plan_step context for any skill spawned
-    # within a plan step's RouterLoop. ``run_skill`` op propagates this
-    # forward to the sub-skill's OSRuntime so the child EventLog stamps
-    # ``plan_step`` into every emit, letting ChatEventForwarder render
-    # "plan N/M" detail on the child's SkillActivityRow. None = top-level
-    # (= not inside a plan step). Shape: ``{"n_done": int, "n_total": int,
-    # "step_id": str}``.
-    plan_step: dict | None = None
-
     # #1470: per-turn asyncio.Event fired by cancel_inflight(). When set,
     # sandboxed_exec backends kill the running subprocess instead of waiting
     # for it to complete. None = no cancel-awareness (OS-internal ops,

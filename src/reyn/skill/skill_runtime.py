@@ -265,7 +265,6 @@ class SkillRuntime:
         resume_plan: "Any | None" = None,
         run_id: str | None = None,
         parent_run_id: str | None = None,
-        plan_step: dict | None = None,
     ) -> RunResult:
         # Run-id resolution priority (FP-0008 PR-R wiring contract):
         #   1. ``run_id`` kwarg to this call    (= caller overrides per-call)
@@ -333,7 +332,6 @@ class SkillRuntime:
             multimodal_config=self._multimodal_config,
             media_store=self._media_store,
             secret_store=self._secret_store,
-            plan_step=plan_step,
             workspace_base_dir=self._workspace_base_dir,
             workspace_state_dir=self._workspace_state_dir,
             tool_calls_op_loop_skills=self._tool_calls_op_loop_skills,

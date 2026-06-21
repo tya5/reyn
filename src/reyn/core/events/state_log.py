@@ -60,10 +60,6 @@ WAL_EVENT_KINDS = (
     # second crash before the resuming skill consumes it
     "intervention_answer_buffered",
     "intervention_answer_consumed",
-    # NEW (ADR-0022) — plan-mode lifecycle (Phase 1: fail-safe + observability)
-    "plan_started",
-    "plan_completed",
-    "plan_aborted",
     # NEW (ADR-0023 Phase 2 step 4) — per-step events promoted from
     # events-log into WAL for resume determinism. The analyzer pairs
     # (plan_step_started, plan_step_completed | plan_step_failed) by

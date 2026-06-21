@@ -6,10 +6,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
 
-from reyn.config.chat import (  # #1682 #3: plan-step compaction configs live in chat
+from reyn.config.chat import (  # #1682 #3: phase compaction config lives in chat
     PhaseActResultsCompactionConfig,
-    PlannerStepCompactionConfig,
-    _build_plan_step_compaction_config,  # #1682 #3 cross-section
 )
 from reyn.runtime.budget.budget import CostConfig, CostLimitConfig
 
@@ -86,17 +84,9 @@ class PlanConfig:
     (FP-0031-C).  Default 3.  Set 0 to disable auto-retry.  Exceptions
     that have their own ask/abort path (PermissionError, BudgetExceeded,
     etc.) are always excluded from retry regardless of this setting.
-
-    ``step_compaction``: prior step_results compaction policy (PR-N4).
-    When accumulated step outputs would exceed the threshold, older entries
-    are summarised by CompactionEngine before the next step's sys_prompt
-    is built.  Default-enabled with conservative thresholds.
     """
     step_max_iterations: int = 5
     retry_limit: int = 3
-    step_compaction: PlannerStepCompactionConfig = field(
-        default_factory=PlannerStepCompactionConfig
-    )
 
 
 @dataclass
@@ -309,9 +299,7 @@ def _build_plan_config(raw: object) -> PlanConfig:
         retry_limit = defaults.retry_limit
     if retry_limit < 0:
         retry_limit = defaults.retry_limit
-    step_compaction = _build_plan_step_compaction_config(raw.get("step_compaction"))
     return PlanConfig(
         step_max_iterations=step_max,
         retry_limit=retry_limit,
-        step_compaction=step_compaction,
     )

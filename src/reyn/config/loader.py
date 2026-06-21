@@ -473,10 +473,6 @@ def load_config(cwd: Path | None = None) -> ReynConfig:
         skill_resume=_build_skill_resume_config(merged.get("skill_resume")),
         time_travel=_build_time_travel_config(merged.get("time_travel")),
         tool_use=_build_tool_use_config(merged.get("tool_use")),
-        plan_resume_raw=(
-            merged.get("plan_resume")
-            if isinstance(merged.get("plan_resume"), dict) else None
-        ),
         voice=_build_voice_config(merged.get("voice")),
         embedding=_build_embedding_config(merged.get("embedding")),
         safety=safety,

@@ -680,10 +680,6 @@ class SkillRunner:
             subscribers=self._make_subscribers(skill_name, run_id),
         )
 
-        # Issue #214: forward the plan_step ContextVar so a blocking
-        # router invoke_skill inside a plan step's sub-loop stamps the
-        # spawned skill's events with the originating step.
-        _plan_step = None  # plan-step context removed with plan (#1953)
         try:
             result = await agent.run(
                 skill, input_artifact,
@@ -691,7 +687,6 @@ class SkillRunner:
                 chain_id=chain_id,
                 skill_registry=self._get_skill_registry(),
                 state_log=self._state_log,
-                plan_step=_plan_step,
             )
         except asyncio.CancelledError:
             return {"status": "error", "data": {"error": "cancelled"}}
@@ -874,12 +869,6 @@ class SkillRunner:
         # success) produced the terminal status.
         _terminal_status: str | None = None
         _terminal_data: dict = {}
-        # Issue #214: read the plan_step ContextVar set by planner.py
-        # around the step's sub-RouterLoop. ContextVar propagates through
-        # any asyncio.Task created within the scope, so this spawn site
-        # sees the planner-set value when the skill was invoked inside a
-        # plan step. None = top-level invocation (not in a plan).
-        _plan_step = None  # plan-step context removed with plan (#1953)
         try:
             result = await agent.run(
                 skill, input_artifact,
@@ -887,7 +876,6 @@ class SkillRunner:
                 chain_id=chain_id,
                 skill_registry=self._get_skill_registry(),
                 state_log=self._state_log,
-                plan_step=_plan_step,
             )
         except asyncio.CancelledError:
             await self._put_outbox(SkillOutboundMessage(

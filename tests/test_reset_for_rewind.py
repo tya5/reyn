@@ -92,7 +92,6 @@ def test_reset_for_rewind_clear_scope_covers_all_agentsnapshot_fields():
         "inbox": "session.inbox drained",
         "pending_chains": "session._chains.reset()",
         "active_skill_run_ids": "session.running_skills (+ started_at / chain) cleared",
-        "active_plan_ids": "session.running_plans cleared",
         "outstanding_interventions": "session._interventions.clear() + restore tasks",
         "buffered_intervention_answers": "session._buffered_intervention_answers cleared",
     }

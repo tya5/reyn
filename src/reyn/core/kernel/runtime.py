@@ -89,7 +89,6 @@ class OSRuntime:
         multimodal_config: "MultimodalConfig | None" = None,
         media_store: "MediaStore | None" = None,
         secret_store: "ScopedSecretStore | None" = None,
-        plan_step: dict | None = None,
         workspace_base_dir: "Path | None" = None,
         workspace_state_dir: "Path | None" = None,
         phase_compaction_engine: "CompactionEngine | None" = None,
@@ -111,7 +110,7 @@ class OSRuntime:
         # #1092); un-listed skills run json-mode unchanged.
         self._tool_calls_op_loop_skills = list(tool_calls_op_loop_skills or [])
         self.events = EventLog(
-            subscribers=subscribers, run_id=run_id, plan_step=plan_step,
+            subscribers=subscribers, run_id=run_id,
         )
         # #1669: publish this runtime's EventLog as the ambient sink for the LLM
         # acompletion chokepoint, so every LLM call in this run emits an observable

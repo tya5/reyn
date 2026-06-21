@@ -46,7 +46,6 @@ async def invoke_sub_skill(
     caller: str = "direct",
     parent_run_id: str | None = None,
     secret_store: "ScopedSecretStore | None" = None,  # NEW (FP-0016 D)
-    plan_step: dict | None = None,
 ) -> SubSkillResult:
     """Run a sub-app and return a SubSkillResult.
 
@@ -87,7 +86,6 @@ async def invoke_sub_skill(
         sub_skill, input_artifact,
         output_language=output_language,
         parent_run_id=parent_run_id,
-        plan_step=plan_step,
     )
     return SubSkillResult(
         data=run_result.data,
