@@ -64,7 +64,6 @@ from reyn.runtime.services import (
     InterventionHandler,
     InterventionRegistry,
     MemoryService,
-    PlanRunner,
     RouterHostAdapter,
     SnapshotJournal,
 )
