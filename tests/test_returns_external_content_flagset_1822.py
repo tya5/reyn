@@ -56,7 +56,10 @@ _NOT_EXTERNAL = {
     "list_actions", "search_actions", "describe_action",
     "list_mcp_servers", "cron_list",
     # — control / orchestration —
-    "compact", "plan",
+    # decompose (#1953): task-driven analog of plan; the synthesized reply is
+    # reyn-assembled from sub-task results, and any external content a sub-task
+    # reads is fenced at that sub-run's own tool-result chokepoint (like plan).
+    "compact", "plan", "decompose",
     # invoke_action: generic dispatcher — trust resolved by the EFFECTIVE inner
     # name at dispatch() (the dispatch-tag), not by this wrapper.
     "invoke_action",
