@@ -1183,6 +1183,12 @@ class Session:
             generation_store=self._generation_store,
             session_id=session_id,  # FP-0043 S5: per-session WAL routing
         )
+        # #1953 slice R: hand the journal this session's Task backend so
+        # cut_generation captures the task db at each WAL boundary (opt-in — a
+        # non-rewinding backend is skipped there). I-5=(A): only a per-session
+        # backend is threaded here (build_scoped_chat_session); the A2A/web
+        # process-singleton is never given to a session, so it never rewinds.
+        self._journal.set_task_backend(self._task_backend)
         # ADR-0038 Stage 1c: turn-idle event for quiescence. Set = no turn in
         # flight; cleared while run_one_iteration processes a turn. Lets a global
         # rewind await all in-flight WAL appends settling (await_quiescent) before
@@ -2215,6 +2221,17 @@ class Session:
         instance is set once in ``__init__`` and never re-bound.
         """
         return self._journal
+
+    @property
+    def task_backend(self) -> "object | None":
+        """Read-only accessor for this session's Task backend (#1953 slice R).
+
+        The registry pulls it at construction (``_construct_session``) so the
+        rewind/recovery restore (``_restore_task_active``) has a handle to the
+        same per-session backend the capture seam (cut_generation) snapshots.
+        None when the session carries no backend (op-runtime in-memory fallback).
+        """
+        return self._task_backend
 
     def iter_applied_seqs(
         self, *, now_ts: float, long_await_threshold: float,
