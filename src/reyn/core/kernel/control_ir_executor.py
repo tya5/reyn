@@ -32,6 +32,8 @@ from reyn.core.op_runtime.context import OpContext
 from reyn.data.workspace.workspace import Workspace
 from reyn.llm.model_resolver import ModelResolver
 from reyn.schemas.models import (
+    ALL_OP_KINDS,
+    OP_KIND_MODEL_MAP,
     ControlIROp,
     ControlIROpSpec,
 )
@@ -75,6 +77,46 @@ def _build_phase_tool_catalog(allowed_ops: set[str]) -> dict[str, dict]:
             }
         }
     return catalog
+
+
+def _placeholder_for(annotation: Any) -> Any:
+    """Crude type→placeholder for a minimal op example (#1993, illustrative
+    only — the LLM gets the exact JSON schema via the per-phase tool catalog)."""
+    import typing
+
+    origin = typing.get_origin(annotation)
+    args = typing.get_args(annotation)
+    if args and type(None) in args:  # Optional[X] / X | None → unwrap
+        non_none = [a for a in args if a is not type(None)]
+        if non_none:
+            return _placeholder_for(non_none[0])
+    if origin is typing.Literal:
+        return args[0] if args else "..."
+    if annotation is str:
+        return "..."
+    if annotation is bool:
+        return False
+    if annotation is int:
+        return 0
+    if annotation is float:
+        return 0.0
+    if origin in (list, tuple, set, frozenset):
+        return []
+    if origin is dict:
+        return {}
+    return "..."
+
+
+def _minimal_example(kind: str, model: Any) -> dict:
+    """#1993: an illustrative example for an op kind from its model's REQUIRED
+    fields (kind + each required field with a type placeholder)."""
+    ex: dict[str, Any] = {"kind": kind}
+    for fname, finfo in getattr(model, "model_fields", {}).items():
+        if fname == "kind":
+            continue
+        if getattr(finfo, "is_required", lambda: False)():
+            ex[fname] = _placeholder_for(getattr(finfo, "annotation", None))
+    return ex
 
 
 class ControlIRExecutor:
@@ -239,7 +281,39 @@ class ControlIRExecutor:
         from this list when emitting `control_ir`. Op kinds are filtered per
         runtime config (mcp_servers configured) and per phase by
         ``allowed_ops`` in ``build_frame``.
+
+        #1993: completeness-by-construction — the rich hand-authored specs cover
+        the core ops; EVERY remaining kind in OP_KIND_MODEL_MAP gets a minimal
+        model-derived spec, so a phase that declares any phase-permitted op kind
+        (e.g. a task.* op via the coarse ``task`` grant) actually receives its
+        schema instead of being silently filtered + gap-warned. A new op kind
+        added to the map auto-advertises here.
         """
+        from reyn.core.op_runtime.registry import _PHASE_TOOL_NAME_ALIAS
+
+        hand = self._hand_written_specs()
+        covered = {_PHASE_TOOL_NAME_ALIAS.get(s.kind, s.kind) for s in hand}
+        specs = hand + [
+            self._minimal_op_spec(kind)
+            for kind in sorted(ALL_OP_KINDS)
+            if kind not in covered
+        ]
+        # Config gate (mirror pre-#1993): the mcp *call* op is advertised only
+        # when a server is configured. ``mcp`` is in ``covered`` (via the
+        # call_mcp_tool hand spec) so it is never in the minimal set; here we
+        # drop the hand spec itself when no server exists, keeping the gate.
+        # A phase that still declares ``mcp`` with no server is surfaced by the
+        # narrowed phase_op_catalog_gap warning (#997/FP-0008).
+        if not self._mcp_servers:
+            specs = [s for s in specs if s.kind != "call_mcp_tool"]
+        return specs
+
+    def _hand_written_specs(self) -> list[ControlIROpSpec]:
+        """Rich, hand-authored specs for the core LLM-facing phase ops. The 19
+        remaining map kinds get minimal model-derived specs via
+        ``_minimal_op_spec`` (called from ``available_ops``). ``call_mcp_tool``
+        is listed unconditionally here; ``available_ops`` applies the
+        mcp-servers config gate."""
         return [
             # #1240 Wave 2b: coarse "file" op dropped — all file ops use fine kinds.
             # build_frame filters per phase by allowed_ops.
@@ -283,11 +357,12 @@ class ControlIRExecutor:
                 ),
                 example={"kind": "sandboxed_exec", "argv": ["python", "-m", "pytest", "-x", "--tb=short"]},
             ),
-            *([ControlIROpSpec(
+            ControlIROpSpec(
                 # #1240 Wave 2b (A)-alias: advertise as "call_mcp_tool" (chat name)
                 # — the op-loop and json-mode parse paths rewrite this to "mcp"
                 # before ControlIROp validation.  allowed_ops=[mcp] still works
-                # via _PHASE_TOOL_NAME_ALIAS in build_frame.
+                # via _PHASE_TOOL_NAME_ALIAS in build_frame. #1993: listed
+                # unconditionally; available_ops() applies the mcp-servers gate.
                 kind="call_mcp_tool",
                 description=(
                     "Call a tool on a configured MCP server (HTTP transport). "
@@ -300,7 +375,7 @@ class ControlIRExecutor:
                     "directly; do not abort on permission concerns."
                 ),
                 example={"kind": "call_mcp_tool", "server": "my_tool", "tool": "search", "args": {"query": "hello"}},
-            )] if self._mcp_servers else []),
+            ),
             ControlIROpSpec(
                 kind="lint",
                 description=(
@@ -353,6 +428,24 @@ class ControlIRExecutor:
                 example={"kind": "web_search", "query": "Claude Code latest news", "max_results": 5},
             ),
         ]
+
+    def _minimal_op_spec(self, kind: str) -> ControlIROpSpec:
+        """#1993: a minimal model-derived spec for an op kind that has no rich
+        hand-authored spec — so it is still advertised (reachable + meta-skill
+        visible). Description: the unified registry's ToolDefinition where one
+        exists (e.g. compact / mcp_install / mcp_drop_server / recall), else the
+        op model's docstring summary, else a generic line. Example: the kind +
+        the model's required fields with type placeholders (illustrative — the
+        LLM gets the exact JSON schema via the per-phase tool catalog)."""
+        from reyn.tools import get_default_registry
+
+        model = OP_KIND_MODEL_MAP[kind]
+        td = get_default_registry().lookup(kind)
+        desc = getattr(td, "description", None) if td is not None else None
+        if not desc:
+            doc = (model.__doc__ or "").strip()
+            desc = doc.split("\n", 1)[0] if doc else f"Dispatch the '{kind}' Control IR op."
+        return ControlIROpSpec(kind=kind, description=desc, example=_minimal_example(kind, model))
 
     def _build_ctx(
         self,
