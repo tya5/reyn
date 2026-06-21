@@ -179,11 +179,133 @@ def _gateway_mcp() -> list[Finding]:
     return findings
 
 
+# ── #1892: control_ir / phase-ops gateway analysis ──────────────────────────
+# Deep static analysis of a skill's PHASE OPS (vs the .py scan in _gateway_skill):
+# ``allowed_ops`` is the phase's op-KIND capability GRANT (statically declared);
+# a preprocessor step carries a LITERAL op with literal args. Runtime LLM-emitted
+# op args are out of static scope — the GRANT is the auditable gateway-exposure
+# (the OpenClaw audit-* analog flags capability, not runtime values).
+#
+# Op-kind → gateway category (single-source). Severities lead-decided (#1892):
+#   sandboxed_exec GRANT → MED (common + legit build/test grants → visibility,
+#     no CI-block); a LITERAL preprocessor sandboxed_exec → HIGH (hard-coded exec
+#     is materially riskier); network GRANT → egress INFO, + secret access →
+#     egress+secrets HIGH; out-of-zone LITERAL preprocessor file path → broad-FS
+#     MED. (Severity policy is config-tightenable in a later pass.)
+# The map's completeness vs OP_PURITY world/side_effect is guarded by a test
+# (test_audit_skill_ops_1892), not a runtime finding — avoids per-skill noise.
+_EXEC_OPS = frozenset({"sandboxed_exec"})
+_EGRESS_OPS = frozenset({"web_fetch", "web_search", "mcp", "call_mcp_tool"})
+_SECRET_OPS = frozenset({"recall"})  # memory/secret retrieval (#1892 Q2)
+_FS_PATH_OPS = frozenset({
+    "read_file", "write_file", "edit_file", "delete_file", "glob_files",
+    "grep_files", "file",
+})
+
+
+def _resolve_coarse(grants: set[str]) -> set[str]:
+    """Expand coarse op families (``allowed_ops:[mcp]`` → its fine kinds) so the
+    category match sees the real granted capability."""
+    from reyn.core.op_runtime.registry import COARSE_TO_FINE
+    out = set(grants)
+    for g in grants:
+        out |= set(COARSE_TO_FINE.get(g, frozenset()))
+    return out
+
+
+def _skill_reads_secrets(skill_dir: Path, grants: set[str]) -> bool:
+    """#1892 Q2: a skill can read secrets if it GRANTS a memory/secret-retrieval
+    op (``recall``) OR declares a secret-looking permission in skill.md."""
+    if grants & _SECRET_OPS:
+        return True
+    from reyn.core.compiler.parser import parse_skill
+    try:
+        perms = parse_skill(skill_dir / "skill.md").permissions or {}
+    except Exception:
+        return False
+    return any("secret" in str(k).lower() for k in perms)
+
+
+def _is_out_of_zone(path: object) -> bool:
+    """#1892 Q3: a literal preprocessor file-op path is out-of-zone if it is
+    absolute or escapes upward (``..``). The runtime sandbox read/write allowlist
+    is the dynamic guard; statically we flag a hard-coded path that leaves the
+    skill/workspace-relative zone."""
+    if not isinstance(path, str) or not path:
+        return False
+    from pathlib import PurePosixPath
+    return os.path.isabs(path) or ".." in PurePosixPath(path).parts
+
+
+def _gateway_skill_ops(skill_dir: Path) -> list[Finding]:
+    """Rule 3 (#1892): static gateway analysis of a skill's phase ops — the
+    op-KIND capability grants (``allowed_ops``) + literal preprocessor ops.
+    Never executes (reads the parsed IR only)."""
+    from reyn.core.compiler.parser import parse_phase
+
+    parsed: list[tuple[Path, object]] = []
+    for pf in sorted(skill_dir.glob("phases/*.md")):
+        try:
+            parsed.append((pf, parse_phase(pf)))
+        except Exception:
+            continue
+    if not parsed:
+        return []
+
+    # #1892 Q2: secret access is a skill-wide signal (union of all phases' grants).
+    union = _resolve_coarse({op for _, pd in parsed for op in (pd.allowed_ops or [])})
+    reads_secrets = _skill_reads_secrets(skill_dir, union)
+
+    findings: list[Finding] = []
+    for pf, pd in parsed:
+        loc = f"{skill_dir.name}/{pf.relative_to(skill_dir).as_posix()}"
+        grants = _resolve_coarse(set(pd.allowed_ops or []))
+        # (a) sandboxed_exec GRANT → MED capability (HIGH only for a literal exec, (c)).
+        if grants & _EXEC_OPS:
+            findings.append(Finding(
+                loc, "gateway:exec-capability", _MED,
+                "phase grants sandboxed_exec (op-layer subprocess capability)",
+            ))
+        # (b) network GRANT → egress INFO; + secret access → egress+secrets HIGH.
+        net = sorted(grants & _EGRESS_OPS)
+        if net:
+            if reads_secrets:
+                findings.append(Finding(
+                    loc, "gateway:egress+secrets", _HIGH,
+                    f"network grant {net} co-occurs with secret access "
+                    f"(recall / secret-permission) — exfiltration risk",
+                ))
+            else:
+                findings.append(Finding(
+                    loc, "gateway:egress", _INFO, f"phase grants network op(s): {net}",
+                ))
+        # (c) preprocessor LITERAL ops (literal args ARE statically knowable).
+        for step in (pd.preprocessor or []):
+            op = step.get("op") if isinstance(step, dict) else None
+            if not isinstance(op, dict):
+                continue
+            kind = op.get("kind")
+            if kind in _EXEC_OPS:
+                findings.append(Finding(
+                    loc, "gateway:sandboxed-exec", _HIGH,
+                    f"preprocessor ships a literal sandboxed_exec (argv={op.get('argv')!r})",
+                ))
+            elif kind in _FS_PATH_OPS:
+                for path in (op.get("path"), op.get("dest_path")):
+                    if _is_out_of_zone(path):
+                        findings.append(Finding(
+                            loc, "gateway:broad-fs", _MED,
+                            f"preprocessor {kind} uses an out-of-zone literal path: {path!r}",
+                        ))
+    return findings
+
+
 def _collect(only: str | None) -> list[Finding]:
     findings: list[Finding] = []
     for d in _skill_dirs(only):
         findings.extend(_scan_text_files(d))
         findings.extend(_gateway_skill(d))
+        findings.extend(_gateway_skill_ops(d))  # #1892: deep phase-ops gateway
     findings.extend(_secrets_perm())
     if only is None:
         findings.extend(_gateway_mcp())
