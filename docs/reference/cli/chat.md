@@ -83,9 +83,6 @@ While a session is active, lines starting with `/` are intercepted and never rou
 | `/memory [list\|view <name>]` | Inspect project memory entries (see [concepts/memory](../../concepts/data-retrieval/memory.md)) |
 | `/model [<class>]` | Show the session's model class and any override, or set a per-session model-class override with `/model <class>` (validated against known classes; clears on restart) |
 | `/pending [list\|discard <id>\|claim <id>]` | List / discard / claim stalled cross-channel ops |
-| `/plan list` | Show active plan runs (combined view: in-flight tasks + pending-resume) |
-| `/plan discard <plan_id>` | Abort a specific plan run + cleanup; notifies waiting peer agents via R-D14 |
-| `/plan resume <plan_id> --from <step_id>` | Surgical operator escape hatch; clears step results from the target step onward and re-launches with a fresh resume_plan |
 | `/quit` | Exit the chat (alias: `/exit`, Ctrl+D) |
 | `/reset confirm` | Reset in-flight skill state (snapshots + WAL; audit logs preserved) |
 | `/rewind [seq]` | Time-travel to an earlier checkpoint — no arg opens the picker menu; `seq` jumps directly (see [Time-travel](../../concepts/runtime/time-travel.md) · [How-to](../../guide/for-users/time-travel.md)) |

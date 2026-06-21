@@ -66,9 +66,6 @@ reyn chat researcher
 | `/session new \| switch <sid> \| list` | アタッチ中 agent の会話セッションを開く / 切り替える / 一覧表示（[Sessions](../../concepts/multi-agent/sessions.md) 参照） |
 | `/skill list` | 実行中の Skill 実行を表示（id / 名前 / current_phase + 親子関係） |
 | `/skill discard <run_id>` | 特定の Skill 実行を中止して cleanup を実行 |
-| `/plan list` | 実行中の Plan を表示（動作中 task と resume 待ちを組み合わせて表示） |
-| `/plan discard <plan_id>` | 特定の Plan を中止して cleanup を実行。R-D14 経由で待機中の peer agent に通知 |
-| `/plan resume <plan_id> --from <step_id>` | 特定 step から Plan を再実行するオペレーター向け escape hatch |
 | `/tasks` | Skill 実行と Plan task を横断する統合ビュー。`/tasks list` と同じ |
 | `/tasks status <prefix>` | 特定 task の current phase + 経過時間を表示（Skill / Plan どちらでも prefix で解決） |
 | `/tasks kill <prefix>` | 特定 task を中止。prefix は Skill の run_id と Plan の plan_id 両方とマッチ |
