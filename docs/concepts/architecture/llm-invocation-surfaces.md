@@ -8,25 +8,23 @@ audience: [human, agent]
 
 ## 1. Why this matters
 
-Reyn invokes the LLM in two structurally distinct contexts: the chat router (and its plan-mode variant) and the phase executor inside a skill. Each context exposes its own vocabulary of capabilities — function-calling tools for the router, Control IR ops for the phase. The two sets overlap substantially but not completely. Without a written account of that divergence, contributors tend to add new capabilities to whichever surface is convenient, and the gap widens silently. This document names the two invocation kinds, maps the divergence, and identifies which asymmetries are principled and which are convention drift — so that future additions land in the right place, and unintended asymmetries surface before they accumulate.
+Reyn invokes the LLM in two structurally distinct contexts: the chat router and the phase executor inside a skill. Each context exposes its own vocabulary of capabilities — function-calling tools for the router, Control IR ops for the phase. The two sets overlap substantially but not completely. Without a written account of that divergence, contributors tend to add new capabilities to whichever surface is convenient, and the gap widens silently. This document names the two invocation kinds, maps the divergence, and identifies which asymmetries are principled and which are convention drift — so that future additions land in the right place, and unintended asymmetries surface before they accumulate.
 
 ---
 
 ## 2. Two invocation kinds
 
-### 2.1 Router-style (chat and planner)
+### 2.1 Router-style (chat)
 
-**Used by:** `RouterLoop` (interactive chat sessions) and `PlanRuntime` (plan-mode step execution). Both share a single implementation: `RouterLoop` with a `RouterLoopHost` facade that narrows the catalog per context.
+**Used by:** `RouterLoop` (interactive chat sessions), with a `RouterLoopHost` facade that narrows the catalog per context.
 
 **Mechanism:** native LLM function calling via `call_llm_tools` (backed by litellm). Tool definitions follow the OpenAI `tools` array shape; the model replies with `tool_calls` in the assistant message. The OS dispatches each call, appends the `tool_result`, and re-invokes the LLM until it produces a plain text reply.
 
 **Tool surface:** `build_tools()` in `src/reyn/runtime/router_tools.py` assembles the tool list. The actual count depends on operator configuration:
 
-- **Always present (14 tools):** `list_skills`, `describe_skill`, `list_agents`, `describe_agent`, `list_memory`, `read_memory_body`, `delegate_to_agent`, `remember_shared`, `remember_agent`, `forget_memory`, `web_search`, `plan`, `reyn_src_list`, `reyn_src_read`.
+- **Always present (13 tools):** `list_skills`, `describe_skill`, `list_agents`, `describe_agent`, `list_memory`, `read_memory_body`, `delegate_to_agent`, `remember_shared`, `remember_agent`, `forget_memory`, `web_search`, `reyn_src_list`, `reyn_src_read`.
 - **Conditional (+0 to +9 tools):** `invoke_skill` (when skills are registered), `list_directory` + `read_file` (when file read scope is configured), `write_file` + `delete_file` (when file write scope is configured), `web_fetch` (operator opt-in), `list_mcp_servers` + `list_mcp_tools` + `call_mcp_tool` (when MCP servers are configured).
-- **Verified range: 14–23 tools.** (The comment in `router_tools.py` that states "11–18" predates the addition of `web_search`, `plan`, `reyn_src_list`, and `reyn_src_read` and is stale.)
-
-**Plan-mode is the same surface, minus `plan` itself:** `PlanRuntime` wraps `execute_plan`, which builds a `_PlanStepHost` facade and instantiates `RouterLoop` with `exclude_tools={"plan"}` to prevent recursive plan decomposition. Every other router tool available to the parent session is available to each plan step, filtered further by the step's declared `tools` list.
+- **Verified range: 13–22 tools.** (The comment in `router_tools.py` that states "11–18" predates the addition of `web_search`, `reyn_src_list`, and `reyn_src_read` and is stale.)
 
 **Role:** orchestration — pick the next sub-component (skill, agent, plan, memory operation, direct text reply).
 

@@ -25,7 +25,6 @@ How skills compose with each other and with peer agents.
 - **[Iterate with fan-out](composition/iterate-with-fan-out.md)** — apply a sub-step over a list and collect results.
 - **[Build an agent team](composition/build-an-agent-team.md)** — set up multiple agents with role-specific skill allowlists.
 - **[Multi-hop delegation](composition/multi-hop-delegation.md)** — chain delegations through more than one agent.
-- **[Use plan mode for multi-step tasks](composition/use-plan-mode.md)** — decompose a complex chat request into async steps with crash recovery and operator escape hatches.
 - **[Restrict agent skills](composition/restrict-agent-skills.md)** — scope what each agent in a team can run.
 
 ## Phase mechanics

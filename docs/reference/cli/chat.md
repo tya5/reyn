@@ -83,9 +83,6 @@ While a session is active, lines starting with `/` are intercepted and never rou
 | `/memory [list\|view <name>]` | Inspect project memory entries (see [concepts/memory](../../concepts/data-retrieval/memory.md)) |
 | `/model [<class>]` | Show the session's model class and any override, or set a per-session model-class override with `/model <class>` (validated against known classes; clears on restart) |
 | `/pending [list\|discard <id>\|claim <id>]` | List / discard / claim stalled cross-channel ops |
-| `/plan list` | Show active plan runs (combined view: in-flight tasks + pending-resume) |
-| `/plan discard <plan_id>` | Abort a specific plan run + cleanup; notifies waiting peer agents via R-D14 |
-| `/plan resume <plan_id> --from <step_id>` | Surgical operator escape hatch; clears step results from the target step onward and re-launches with a fresh resume_plan ; see [concepts/plan-mode](../../concepts/multi-agent/plan-mode.md) |
 | `/quit` | Exit the chat (alias: `/exit`, Ctrl+D) |
 | `/reset confirm` | Reset in-flight skill state (snapshots + WAL; audit logs preserved) |
 | `/rewind [seq]` | Time-travel to an earlier checkpoint — no arg opens the picker menu; `seq` jumps directly (see [Time-travel](../../concepts/runtime/time-travel.md) · [How-to](../../guide/for-users/time-travel.md)) |
@@ -94,11 +91,11 @@ While a session is active, lines starting with `/` are intercepted and never rou
 | `/skill list` | Show active skill runs (id, name, current phase + parent lineage) |
 | `/skill discard <run_id>` | Abort a specific skill run + cleanup |
 | `/skills` | List available skills (stdlib, project, local) |
-| `/tasks` | Unified view spanning skill runs + plan tasks. Same as `/tasks list` |
-| `/tasks status <prefix>` | Show current phase + elapsed for a specific task (skill or plan) |
-| `/tasks kill <prefix>` | Cancel a specific task; prefix matches against both skill run_ids and plan_ids |
+| `/tasks` | Unified view of active skill runs. Same as `/tasks list` |
+| `/tasks status <prefix>` | Show current phase + elapsed for a specific skill run |
+| `/tasks kill <prefix>` | Cancel a specific skill run; prefix matches against skill run_ids |
 
-`/list` / `/cancel` / `/answer` are foundational — they let multiple skill runs and interventions coexist without blocking the prompt. `/agents` / `/attach` / `/agent` are the multi-agent workflow primitives. `/skill` and `/plan` are crash-recovery operator commands that surface the per-skill-run and per-plan-run lifecycle: inspect what is running, abort a stuck run, or surgically re-run a plan from a specific step. `/tasks` is the unified entry point that spans both — the LLM also points users at `/tasks` after a skill is spawned. `/copy`, `/find`, and `/save` are conversation-pane utilities; `/image` enables multimodal input.
+`/list` / `/cancel` / `/answer` are foundational — they let multiple skill runs and interventions coexist without blocking the prompt. `/agents` / `/attach` / `/agent` are the multi-agent workflow primitives. `/skill` is the crash-recovery operator command that surfaces the per-skill-run lifecycle: inspect what is running or abort a stuck run. `/tasks` is the unified entry point for skill runs — the LLM also points users at `/tasks` after a skill is spawned. `/copy`, `/find`, and `/save` are conversation-pane utilities; `/image` enables multimodal input.
 
 ## Multi-agent behavior
 
@@ -142,5 +139,4 @@ reyn chat --model strong
 - [Reference: state-dir](../config/state-dir.md) — `agents/` location
 - [Concepts: multi-agent](../../concepts/multi-agent/multi-agent.md)
 - [Concepts: memory](../../concepts/data-retrieval/memory.md)
-- [Concepts: plan-mode](../../concepts/multi-agent/plan-mode.md)
 - [Concepts: skill-resume](../../concepts/skills/skill-resume.md)
