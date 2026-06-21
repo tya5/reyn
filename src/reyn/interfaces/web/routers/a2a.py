@@ -81,6 +81,16 @@ _A2A_PROTOCOL_VERSION = "0.2.0"
 # a stale Reyn instance during interop debugging).
 _REYN_A2A_VERSION = "0.1.0"
 
+# A2A AgentProvider (#1811) — the service provider of these agents. The v0.2.0
+# AgentCard's optional `provider` (organization + url, both required when present)
+# was the one discovery-metadata field still missing. Sourced from the project
+# metadata (pyproject [project.urls] Homepage), kept as constants in the same
+# style as the version constants above. (preferredTransport / additionalInterfaces
+# do NOT exist in the v0.2.0 schema reyn declares — they are later-0.2.x additions
+# that would require a protocolVersion bump, so they are intentionally omitted.)
+_PROVIDER_ORGANIZATION = "Reyn"
+_PROVIDER_URL = "https://tya5.github.io/reyn/"
+
 
 # ── helpers ─────────────────────────────────────────────────────────────────
 
@@ -141,6 +151,13 @@ def _build_agent_card(agent_name: str, role: str, base_url: str) -> dict:
         "name": agent_name,
         "description": role or f"Reyn agent {agent_name!r}",
         "url": base_url,
+        # A2A v0.2.0 optional `provider` (#1811) — the service provider metadata
+        # peers read during discovery. organization + url are both required when
+        # `provider` is present.
+        "provider": {
+            "organization": _PROVIDER_ORGANIZATION,
+            "url": _PROVIDER_URL,
+        },
         "version": _REYN_A2A_VERSION,
         "protocolVersion": _A2A_PROTOCOL_VERSION,
         "capabilities": {

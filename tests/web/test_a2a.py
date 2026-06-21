@@ -170,6 +170,13 @@ def test_agent_card_returns_canonical_shape(tmp_path):
         # Endpoint URL points at the JSON-RPC handler for THIS agent.
         assert card["url"].endswith("/a2a/agents/default")
 
+        # Provider: A2A v0.2.0 discovery metadata (#1811). The optional
+        # `provider` requires organization + url when present; reyn now surfaces
+        # both (sourced from the project Homepage).
+        provider = card["provider"]
+        assert provider["organization"] == "Reyn"
+        assert provider["url"].startswith("https://")
+
         # Capabilities advertised: issue #267 Gap 3 Z-c re-elevation
         # — both True after Gap 1 + Gap 2 closed.
         caps = card["capabilities"]
