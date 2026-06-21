@@ -759,6 +759,26 @@ class ReynTUIApp(App):
         """Called every 1s by set_interval to keep status line current."""
         self._maybe_refresh_status()
 
+    def _async_strip_summary(self, exec_state: dict) -> str:
+        """Build the bottom async-strip row summary from skill exec state.
+
+        ② design-check (Option A): surface WHICH phase a background skill is
+        currently in — ``skill · <phase>`` (+ ``(N/M)`` when a plan-step count
+        is known) — rather than a static skill name with only ticking elapsed,
+        which left a long-running task looking potentially stuck. The
+        AsyncStackPanel truncates this cell-aware, so a long / CJK phase name
+        stays width-safe.
+        """
+        label = (exec_state or {}).get("skill_name") or "skill"
+        phase = (exec_state or {}).get("phase") or ""
+        if phase:
+            label = f"{label} · {phase}"
+        n_done = (exec_state or {}).get("plan_n_done")
+        n_total = (exec_state or {}).get("plan_n_total")
+        if n_done is not None and n_total:
+            label = f"{label} ({n_done}/{n_total})"
+        return label
+
     def _update_skill_exec(self, msg) -> None:
         """Parse a trace OutboxMessage with skill_name in meta and update _skill_exec."""
         import time as _time
@@ -808,7 +828,7 @@ class ReynTUIApp(App):
             # ``[task_completed]`` boundary).
             try:
                 conv = self.query_one("#conversation", ConversationView)
-                conv.add_async_task(run_id, skill_name or "skill")
+                conv.add_async_task(run_id, self._async_strip_summary(existing))
             except Exception:
                 pass
         # Text pattern: "phase started: <phase_name>"
@@ -816,6 +836,15 @@ class ReynTUIApp(App):
             phase = text[len("phase started: "):].strip()
             existing["phase"] = phase
             existing["phase_visits"] = existing.get("phase_visits", 0) + 1
+            # ② design-check: refresh the bottom async-strip row so a
+            # background skill shows its CURRENT phase, not just ticking
+            # elapsed. add() updates an existing row's summary in place
+            # (no flash; started_at/elapsed preserved).
+            try:
+                conv = self.query_one("#conversation", ConversationView)
+                conv.add_async_task(run_id, self._async_strip_summary(existing))
+            except Exception:
+                pass
         # Text pattern: "detail: plan N/M" (= ChatEventForwarder one-shot
         # plan-step badge emit, see forwarder.on_phase_started). Capture
         # the N/M values into _skill_exec so the right-panel agents tab
