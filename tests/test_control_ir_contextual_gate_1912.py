@@ -23,9 +23,8 @@ from reyn.core.op_runtime.contextual_gate import (
     op_contextually_denied,
     op_kind_tool_names,
 )
-from reyn.core.op_runtime.registry import ALL_OP_KINDS
 from reyn.data.workspace.workspace import Workspace
-from reyn.schemas.models import SandboxedExecIROp
+from reyn.schemas.models import ALL_OP_KINDS, SandboxedExecIROp
 from reyn.security.permissions.effective import ContextualPermission
 from reyn.security.permissions.permissions import PermissionResolver
 

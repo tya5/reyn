@@ -19,14 +19,9 @@ import pytest
 from reyn.core.events.events import EventLog
 from reyn.core.op_runtime import execute_op
 from reyn.core.op_runtime.context import OpContext
-from reyn.core.op_runtime.registry import (
-    ALL_OP_KINDS,
-    OP_KIND_MODEL_MAP,
-    OP_PURITY,
-    OpPurity,
-)
+from reyn.core.op_runtime.registry import OP_PURITY, OpPurity
 from reyn.data.workspace.workspace import Workspace
-from reyn.schemas.models import SandboxedExecIROp
+from reyn.schemas.models import ALL_OP_KINDS, OP_KIND_MODEL_MAP, SandboxedExecIROp
 from reyn.security.permissions.permissions import PermissionDecl
 from reyn.security.sandbox import (
     NoopBackend,

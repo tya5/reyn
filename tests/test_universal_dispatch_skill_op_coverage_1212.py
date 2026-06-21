@@ -164,7 +164,7 @@ def _skill_real_op_kinds(skill_dir: Path) -> dict[str, set[str]]:
     """
     # Import here so the test can be collected without a full reyn install; the
     # import is deferred to function body so collection errors surface as test errors.
-    from reyn.core.op_runtime.registry import ALL_OP_KINDS  # noqa: PLC0415
+    from reyn.schemas.models import ALL_OP_KINDS  # noqa: PLC0415
 
     op_to_sources: dict[str, set[str]] = {}
 
@@ -334,7 +334,7 @@ def test_op_kind_category_map_references_known_skills_only() -> None:
     for an op kind that doesn't exist in the OS registry — that would be
     a stale entry silently hiding a missing op kind.
     """
-    from reyn.core.op_runtime.registry import ALL_OP_KINDS  # noqa: PLC0415
+    from reyn.schemas.models import ALL_OP_KINDS  # noqa: PLC0415
 
     stale = {k for k in _OP_KIND_CATEGORY if k not in ALL_OP_KINDS}
     assert stale == set(), (

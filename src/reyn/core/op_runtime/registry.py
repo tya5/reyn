@@ -12,9 +12,11 @@ execution backend (``op_runtime/file.py`` ``register("file", handle)``)
 is KEPT — fine handlers still build ``FileIROp(kind="file")`` internally.
 
   1. ``OP_KIND_MODEL_MAP`` — op kind → IROp Pydantic model.
+     **Relocated to ``reyn.schemas.models`` (#1983)** (co-located with IROp
+     classes; registry re-imports ``ALL_OP_KINDS`` from there).
      Schema derivation is done by ``reyn.tools.ToolRegistry``
-     entries (= ADR-0026 Phase 4-3); this map is retained as a
-     stable target for ``ALL_OP_KINDS`` and purity classification.
+     entries (= ADR-0026 Phase 4-3); the map remains the stable target
+     for ``ALL_OP_KINDS`` and purity classification.
 
   2. ``ALL_OP_KINDS`` — frozenset of op kinds.  Used by the DSL
      linter to flag misspelled ``allowed_ops`` entries; also drives
@@ -43,39 +45,14 @@ from __future__ import annotations
 
 from enum import Enum
 
-from pydantic import BaseModel
-
-from reyn.schemas.models import (
-    AskUserIROp,
-    CompactIROp,
-    DeleteFileIROp,
-    EditFileIROp,
-    GlobFilesIROp,
-    GrepFilesIROp,
-    IndexDropIROp,
-    IndexQueryIROp,
-    JudgeOutputIROp,
-    LintIROp,
-    MCPInstallIROp,
-    MCPIROp,
-    ReadFileIROp,
-    RecallIROp,
-    RunSkillIROp,
-    SandboxedExecIROp,
-    SkillResolveIROp,
-    TaskAbortIROp,
-    TaskAddDependencyIROp,
-    TaskCommentIROp,
-    TaskCreateIROp,
-    TaskGetIROp,
-    TaskHeartbeatIROp,
-    TaskListIROp,
-    TaskRegisterUnblockPredicateIROp,
-    TaskUpdateStatusIROp,
-    WebFetchIROp,
-    WebSearchIROp,
-    WriteFileIROp,
-)
+# #1983: OP_KIND_MODEL_MAP + ALL_OP_KINDS relocated to schemas/models.py
+# (co-located with the IROp model classes + the now-derived ControlIROp union =
+# single source; the map lived here before, but registry imports those model
+# classes, so models.py could not derive the union from the map without a cycle).
+# registry keeps the *purity* classification (OP_PURITY) and re-imports
+# ALL_OP_KINDS from models for ALL_TOOL_NAMES — an intentional op-runtime-view
+# convenience, NOT a migration shim.
+from reyn.schemas.models import ALL_OP_KINDS
 
 
 class OpPurity(str, Enum):
@@ -105,63 +82,10 @@ class OpPurity(str, Enum):
     llm = "llm"
 
 
-# ---------------------------------------------------------------------------
-# OP_KIND_MODEL_MAP
-# ---------------------------------------------------------------------------
-# Maps op kind → IROp Pydantic model used for JSON schema derivation.
-# Add a new entry here whenever a new op kind is introduced — the kernel
-# executor and DSL linter both derive from this single source.
-# ---------------------------------------------------------------------------
-
-OP_KIND_MODEL_MAP: dict[str, type[BaseModel]] = {
-    # #1240 Wave 2b: coarse "file" kind dropped from OP_KIND_MODEL_MAP.
-    # The execution backend (op_runtime/file.py register("file") + handle())
-    # is KEPT — fine handlers still build FileIROp(kind="file") internally.
-    # #1240 Wave 1: fine-grained file kinds (phase = chat-tools subset).
-    # control_ir_executor routes each via the registry (READ_FILE/WRITE_FILE/...
-    # ToolDefinitions, gates.phase=allow) — no separate op_runtime handler.
-    "read_file":   ReadFileIROp,
-    "write_file":  WriteFileIROp,
-    "edit_file":   EditFileIROp,
-    "delete_file": DeleteFileIROp,
-    # #1240 Wave 1.5: glob_files / grep_files fine kinds (same pattern).
-    # GLOB_FILES/GREP_FILES ToolDefinitions (tools/file.py, gates.phase=allow)
-    # route via the unified registry — same handler path chat uses.
-    "glob_files":  GlobFilesIROp,
-    "grep_files":  GrepFilesIROp,
-    "mcp":         MCPIROp,
-    "run_skill":   RunSkillIROp,
-    "lint":        LintIROp,
-    "ask_user":    AskUserIROp,
-    "web_fetch":   WebFetchIROp,
-    "web_search":  WebSearchIROp,
-    "mcp_install": MCPInstallIROp,
-    # ADR-0033: RAG-extensible OS — index_* / recall ops.
-    # #1303 Stage I: embed + index_write deleted (chunkers stream into
-    # reyn.api.safe.embed_index; recall embeds provider-direct).
-    "index_query": IndexQueryIROp,
-    "recall":      RecallIROp,
-    "index_drop":  IndexDropIROp,
-    # FP-0017: sandboxed_exec — argv under SandboxPolicy via SandboxBackend.
-    "sandboxed_exec": SandboxedExecIROp,
-    # FP-0007 Component D: LLM-based output scorer for in-phase eval loops.
-    "judge_output": JudgeOutputIROp,
-    # R-PURE-MODE Wave 5a: resolve a skill name to its on-disk path.
-    "skill_resolve": SkillResolveIROp,
-    # #272/#1128: LLM-emittable voluntary compaction (advisory; the mandatory
-    # retry_loop backstop is independent).
-    "compact": CompactIROp,
-    # #1953 slice 1: Task ops (first-class trackable work-units).
-    "task.create": TaskCreateIROp,
-    "task.update_status": TaskUpdateStatusIROp,
-    "task.get": TaskGetIROp,
-    "task.list": TaskListIROp,
-    "task.add_dependency": TaskAddDependencyIROp,
-    "task.abort": TaskAbortIROp,
-    "task.heartbeat": TaskHeartbeatIROp,
-    "task.register_unblock_predicate": TaskRegisterUnblockPredicateIROp,
-    "task.comment": TaskCommentIROp,
-}
+# #1983: OP_KIND_MODEL_MAP + ALL_OP_KINDS now live in schemas/models.py — the
+# single source (the ControlIROp discriminated union derives from the map there,
+# completeness-by-construction). Add a new op kind in models.py; ALL_OP_KINDS is
+# imported above (used by ALL_TOOL_NAMES below). registry owns only OP_PURITY.
 
 # ---------------------------------------------------------------------------
 # OP_PURITY
@@ -200,6 +124,8 @@ OP_PURITY: dict[str, OpPurity] = {
     "ask_user":    OpPurity.side_effect,
     # MCP server install: writes config + secrets, runs registry fetch.
     "mcp_install": OpPurity.side_effect,
+    # #1983: MCP server drop — mutates config (removes a server entry).
+    "mcp_drop_server": OpPurity.side_effect,
     # ADR-0033 RAG ops (#1303 Stage I: embed + index_write deleted):
     # - index_query: read-only, depends on backend state (= world).
     "index_query": OpPurity.world,
@@ -245,21 +171,8 @@ def get_op_purity(op_kind: str) -> OpPurity:
     return OP_PURITY.get(op_kind, OpPurity.side_effect)
 
 
-# ---------------------------------------------------------------------------
-# ALL_OP_KINDS
-# ---------------------------------------------------------------------------
-# Coarse-name set (= OP_KIND_MODEL_MAP.keys()).  These are the kinds phase
-# Control IR emits in ``op.kind`` today, the names ``allowed_ops``
-# frontmatter targets, and the rows OP_PURITY classifies.  Fine-grained
-# router-side names (= read_file / write_file / call_mcp_tool / etc.) are
-# NOT in this set; they live in the unified ToolRegistry (reyn.tools).
-# When phase Control IR migrates to fine-grained kinds in a future phase,
-# this set will expand to a union of coarse + fine.  Until then, the
-# ``is_op_allowed`` helper below covers the prefix-wildcard semantics for
-# any fine-grained kinds the future phase emits.
-# ---------------------------------------------------------------------------
-
-ALL_OP_KINDS: frozenset[str] = frozenset(OP_KIND_MODEL_MAP.keys())
+# ALL_OP_KINDS is imported from schemas/models.py above (single source, #1983);
+# it remains importable from this module for back-compat (intentional convenience).
 
 
 # ---------------------------------------------------------------------------

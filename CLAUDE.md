@@ -90,7 +90,7 @@ Single format for all phases:
 - NEVER describe Control IR format in Phase instructions (P8)
 - ALWAYS validate LLM output (Transition + Finish above)
 - ALWAYS emit events for state changes (P6)
-- **`docs/reference/runtime/control-ir.md` must stay synced with `OP_KIND_MODEL_MAP`** in `src/reyn/core/op_runtime/registry.py`. New op kinds get a section in the reference in the same PR.
+- **`docs/reference/runtime/control-ir.md` must stay synced with `OP_KIND_MODEL_MAP`** in `src/reyn/schemas/models.py` (#1983: relocated there from `op_runtime/registry.py` so the `ControlIROp` union derives from the same map). New op kinds get a section in the reference in the same PR.
 
 ## Testing policy (READ BEFORE WRITING TESTS)
 

@@ -29,7 +29,7 @@ from __future__ import annotations
 
 import pytest
 
-from reyn.core.op_runtime.registry import OP_KIND_MODEL_MAP
+from reyn.schemas.models import OP_KIND_MODEL_MAP
 from reyn.tools import get_default_registry
 
 # Coarse op kinds that dispatch through the unified registry.
@@ -53,6 +53,9 @@ _REGISTRY_WIRED_KINDS: frozenset[str] = frozenset({
     "lint",
     # #1240 Wave 2b: "mcp" and "run_skill" moved to _LEGACY_ONLY_KINDS (see below).
     "mcp_install",
+    # #1983: mcp_drop_server has a phase=allow ToolDefinition (tools/mcp_drop.py
+    # MCP_DROP_SERVER_OP) — registry-wired, same pattern as mcp_install.
+    "mcp_drop_server",
     "recall",
     "sandboxed_exec",
     "web_fetch",

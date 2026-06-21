@@ -21,8 +21,8 @@ from pydantic import TypeAdapter
 from reyn.core.op_runtime import available_kinds
 from reyn.core.op_runtime import task as taskmod
 from reyn.core.op_runtime.contextual_gate import _OP_KIND_ALIASES
-from reyn.core.op_runtime.registry import ALL_OP_KINDS, OP_KIND_MODEL_MAP, OP_PURITY
-from reyn.schemas.models import ControlIROp
+from reyn.core.op_runtime.registry import OP_PURITY
+from reyn.schemas.models import ALL_OP_KINDS, OP_KIND_MODEL_MAP, ControlIROp
 from reyn.task import InMemoryTaskBackend, Task, TaskState
 
 _TASK_KINDS = frozenset(k for k in ALL_OP_KINDS if k.startswith("task."))
