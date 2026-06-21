@@ -178,15 +178,13 @@ class BudgetLedger:
         tokens: int,
         cost_usd: float,
         purpose: str | None = None,
-        task_id: str | None = None,
     ) -> None:
         """Append one LLM-call record and fsync.
 
         ``purpose`` (#1190) is the cost-attribution bucket
-        (main/phase/compaction/judge/skill_node_adapt/dogfood). ``task_id``
-        (#1953 slice P2) attributes the call to the Task whose exec sub-loop made
-        it. Both are omitted from the record when None so pre-existing ledger
-        lines stay byte-identical.
+        (main/phase/compaction/judge/skill_node_adapt/dogfood). It is omitted
+        from the record when None so pre-existing ledger lines stay
+        byte-identical.
         """
         record: dict = {
             "ts": self._now_iso(),
@@ -197,8 +195,6 @@ class BudgetLedger:
         }
         if purpose is not None:
             record["purpose"] = purpose
-        if task_id is not None:
-            record["task_id"] = task_id
         self._write_record(record)
 
     def append_spawn(self, *, chain_id: str, skill: str) -> None:
@@ -360,12 +356,6 @@ class BudgetTracker:
         # judge/skill_node_adapt/dogfood) for the /budget breakdown payoff.
         self._purpose_tokens: dict[str, int] = defaultdict(int)
         self._purpose_cost_usd: dict[str, float] = defaultdict(float)
-        # #1953 slice P2: per-task cost attribution (the global-ledger breakdown
-        # complement to the slice-8 per-Task cap counter). task_id is injected at
-        # RouterLoop construction (NOT a global handle) so every LLM call made
-        # inside a Task's exec sub-loop attributes here unforgeably.
-        self._task_tokens: dict[str, int] = defaultdict(int)
-        self._task_cost_usd: dict[str, float] = defaultdict(float)
         self._chain_skill_calls: dict[tuple[str, str], int] = defaultdict(int)
         self._chain_skill_tokens: dict[tuple[str, str], int] = defaultdict(int)
         # FP-0005 (#1877): per-(chain_id, skill) extensions granted via the
@@ -620,7 +610,6 @@ class BudgetTracker:
         chain_id: str | None = None,
         skill: str | None = None,
         purpose: str | None = None,
-        task_id: str | None = None,
     ) -> BudgetCheck:
         """Update counters after a successful LLM call.
 
@@ -640,11 +629,6 @@ class BudgetTracker:
         if purpose is not None:
             self._purpose_tokens[purpose] += usage.total_tokens
             self._purpose_cost_usd[purpose] += cost_usd
-
-        # #1953 slice P2: per-task attribution (mirrors purpose).
-        if task_id is not None:
-            self._task_tokens[task_id] += usage.total_tokens
-            self._task_cost_usd[task_id] += cost_usd
 
         if agent is not None:
             new_tokens = self._agent_tokens[agent] + usage.total_tokens
@@ -680,7 +664,6 @@ class BudgetTracker:
                 tokens=usage.total_tokens,
                 cost_usd=cost_usd,
                 purpose=purpose,
-                task_id=task_id,
             )
 
         # Warn on daily / monthly thresholds
@@ -705,13 +688,6 @@ class BudgetTracker:
         if self._ledger is not None:
             self._ledger.append_spawn(chain_id=chain_id, skill=skill)
         self._maybe_auto_save()
-
-    def task_cost_usd(self, task_id: str) -> float:
-        """#1953 slice P2: the cost attributed so far to ``task_id`` (the sum of
-        every LLM call whose RouterLoop carried this task_id). The exec driver
-        reads the before/after delta to charge the Task's cap counter — so the
-        cap charge is the *actually recorded* cost, never a re-priced estimate."""
-        return self._task_cost_usd.get(task_id, 0.0)
 
     # ── reset / introspect ──────────────────────────────────────────────
 
@@ -913,8 +889,6 @@ class BudgetTracker:
             # #1190 stage (iii): per-purpose cost attribution.
             "purpose_tokens": dict(self._purpose_tokens),
             "purpose_cost_usd": dict(self._purpose_cost_usd),
-            "task_tokens": dict(self._task_tokens),
-            "task_cost_usd": dict(self._task_cost_usd),
             "chain_skill_calls": {
                 f"{cid}/{sk}": v
                 for (cid, sk), v in self._chain_skill_calls.items()

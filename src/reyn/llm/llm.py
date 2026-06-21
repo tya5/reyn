@@ -2047,7 +2047,6 @@ async def call_llm_tools(
     budget: "BudgetTracker | None" = None,
     budget_agent: str | None = None,
     purpose: str = "main",  # #1190 cost-attribution bucket (chat router = main)
-    task_id: str | None = None,  # #1953 slice P2: per-Task cost attribution (set by a Task exec sub-loop)
     trace_caller: str | None = None,
     event_log: "EventLog | None" = None,
     emit_cost_events: bool = False,  # #1683: forwarded to recorded_acompletion (chat opts in)
@@ -2221,7 +2220,6 @@ async def call_llm_tools(
             agent=budget_agent,
             usage=usage,
             purpose=purpose,
-            task_id=task_id,
         )
 
     # Normalize tool_calls to plain dicts so callers don't depend on litellm internals

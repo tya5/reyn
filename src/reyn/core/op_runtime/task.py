@@ -162,7 +162,6 @@ async def _create(op, ctx: OpContext, caller) -> dict:
         requester=requester,
         origin=TaskOrigin(getattr(op, "origin", "self") or "self"),
         description=op.description,
-        budget_cap=getattr(op, "budget_cap", None),
         parent_id=parent_id,
         created_by=_actor(ctx),
         deps=list(op.deps),
@@ -311,47 +310,6 @@ async def _route_terminal_to_parent(
             parent_session=parent.assignee, terminal_task=terminal_task,
             dependents=stuck, disposition=disp,
         )
-
-
-async def record_task_cost(ctx: OpContext, task_id: str, delta: float):
-    """OS-internal per-Task cost attribution + cap enforcement (#1953 slice 8).
-
-    Accumulates ``delta`` onto the task's ``cost_accum``; on a **cap-hit**
-    (``cost_accum >= budget_cap``, when a per-Task ``budget_cap`` is set) the task
-    is force-terminated (abort-like — the work can't continue out of budget, so the
-    sub-tree is archived) and a first-class ``cap_exceeded`` disposition is routed
-    to the parent via the SAME parent-LLM seam as abort/failed — the "one decision
-    resolves OQ-7 + cap-hit" property. The ``cap_exceeded`` disposition is carried
-    first-class in both the P6 ``task_disposition`` event and the parent payload
-    (the no-conflation invariant: a budget cap-hit is NOT a genuine error
-    ``failed``). Per-Task is an INDEPENDENT cap dimension (§I-3 (A)): the existing
-    session / daily caps stay enforced separately (tighter-hits-first).
-
-    This is the **tested primitive**. The production cost-path attribution — wiring
-    the LLM-call cost recorder to call this with the right ``task_id`` — is a
-    DELIBERATE, TRACKED defer that co-lands with the task-execution engine
-    (slice P); there is no implicit active-task handle to thread it from today
-    (§I-3 (B)). Returns the (possibly terminated) task, or None for an unknown id."""
-    backend = _backend(ctx)
-    task = await backend.record_cost(task_id, delta)
-    if task is None:
-        return None
-    if task.budget_cap is None or task.cost_accum < task.budget_cap:
-        return task  # under cap (or uncapped) — nothing to enforce
-    # Cap-hit: force-terminate (archive the sub-tree, like abort) + route the
-    # cap_exceeded disposition to the parent for a recovery decision.
-    aborted = await backend.abort(task_id, reason="budget cap exceeded")
-    events = getattr(ctx, "events", None)
-    if events is not None:
-        for t in aborted:
-            events.emit(
-                "task_disposition", task_id=t.task_id, disposition="cap_exceeded",
-                requester=t.requester, origin=t.origin.value, root=task_id,
-            )
-    if aborted:
-        await _route_terminal_to_parent(
-            ctx, backend, aborted[0], disposition="cap_exceeded")
-    return await backend.get(task_id)
 
 
 async def _remove_dependency(op, ctx: OpContext, caller) -> dict:

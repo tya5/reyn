@@ -105,8 +105,6 @@ class Task:
     description: str | None = None
     created_by: str | None = None  # audit provenance (§0-Q3); operative notify = requester
     parent_id: str | None = None  # ownership tree (§12), distinct from deps DAG
-    budget_cap: float | None = None  # per-task budget (§8)
-    cost_accum: float = 0.0
     awaiting_since: float | None = None  # R-D16 WAL-floor exclusion (set while blocked)
     deps: list[str] = field(default_factory=list)  # depends-on task_ids (DAG, §13)
     tools: list[str] = field(default_factory=list)  # narrowed tool set for the exec engine (#1953 slice P2)
@@ -126,8 +124,6 @@ class Task:
             "description": self.description,
             "created_by": self.created_by,
             "parent_id": self.parent_id,
-            "budget_cap": self.budget_cap,
-            "cost_accum": self.cost_accum,
             "awaiting_since": self.awaiting_since,
             "deps": list(self.deps),
             "tools": list(self.tools),
