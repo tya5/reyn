@@ -70,10 +70,19 @@ class WebFetchConfig:
             redirects to a huge payload). Distinct from ``WebFetchIROp.max_length``
             (which caps the *extracted text* only AFTER the full body is loaded).
             Default 10 MiB.
+        allow_private_ips:
+            #1956 SSRF: when ``True``, ``web_fetch`` / ``safe.http`` may reach
+            private RFC1918/ULA addresses (enterprise internal-fetch opt-in).
+            Default ``False`` = deny. Link-local / cloud-metadata / loopback are
+            ALWAYS denied regardless of this flag (no opt-out). Also exported to
+            the ``REYN_FETCH_ALLOW_PRIVATE_IPS`` env var so the config-less
+            SSRF-guard surfaces (the safe.http subprocess + registry clients)
+            see the same opt-in.
     """
     verify_ssl: bool | None = None
     ca_bundle: str | None = None
     max_download_bytes: int = MAX_DOWNLOAD_BYTES  # single-source (#1913 class)
+    allow_private_ips: bool = False  # #1956 SSRF: opt-in to private RFC1918/ULA
 
 
 # Default WebSocket max frame size (bytes) for the `reyn web` gateway. Pins
@@ -113,10 +122,16 @@ def _build_web_fetch_config(raw: object) -> WebFetchConfig:
             max_download_bytes = defaults.max_download_bytes
     except (TypeError, ValueError):
         max_download_bytes = defaults.max_download_bytes
+    # #1956: bool, but tolerate a truthy string (e.g. an interpolated ${VAR}).
+    ap_raw = raw.get("allow_private_ips")
+    allow_private_ips = ap_raw is True or (
+        isinstance(ap_raw, str) and ap_raw.strip().lower() in ("1", "true", "yes", "on")
+    )
     return WebFetchConfig(
         verify_ssl=verify_ssl,
         ca_bundle=ca_bundle,
         max_download_bytes=max_download_bytes,
+        allow_private_ips=allow_private_ips,
     )
 
 

@@ -211,37 +211,54 @@ def _resolve_ssl_verify(ctx: OpContext) -> bool | str:
 
 
 async def handle_web_fetch(op: WebFetchIROp, ctx: OpContext, caller: Literal["preprocessor", "control_ir"]) -> dict:
+    from urllib.parse import urljoin, urlparse
+
     import httpx
 
-    # #571 Phase 7: route through ``require_http_get`` (= unified
-    # ``http.get`` axis). Declared specific hosts pass silently if
-    # approved at startup_guard; wildcard ``http.get: ["*"]`` fires
-    # a per-host 4-layer prompt; the legacy ``web.fetch`` config /
-    # approvals keys remain honored during the segmented migration
-    # window. A skill with no http.get declaration falls back to the
-    # legacy ``web.fetch`` prompt with a DeprecationWarning.
-    if ctx.permission_resolver is not None:
-        from urllib.parse import urlparse
-        host = urlparse(op.url).hostname or ""
+    from reyn import _ssrf_guard
+
+    # #1956 SSRF: the http.get allowlist (require_http_get) used to be validated
+    # ONLY on the initial url, then follow_redirects=True let httpx reach ANY
+    # host — an allowlisted host could redirect to a link-local / metadata /
+    # loopback / private target (e.g. 169.254.169.254 → cloud IAM creds). We now
+    # follow redirects MANUALLY and re-gate EACH hop: Layer 1 = allowlist
+    # re-validate (require_http_get), Layer 2 = IP-deny (reyn._ssrf_guard).
+    # ``allow_private`` is the operator opt-in (web.fetch.allow_private_ips).
+    _allow_private = (
+        ctx.web_config.fetch.allow_private_ips if ctx.web_config is not None else False
+    )
+
+    async def _gate_hop(hop_url: str) -> dict | None:
+        """L1 (allowlist) + L2 (SSRF IP-deny) for one hop's host. Returns an
+        error envelope to short-circuit on block, else None."""
+        host = urlparse(hop_url).hostname or ""
         if not host:
             return {
                 "kind": "web_fetch", "url": op.url, "status": "error",
-                "error": f"web_fetch: cannot resolve host from URL {op.url!r}",
+                "error": f"web_fetch: cannot resolve host from URL {hop_url!r}",
             }
-        # #1199 S3.1c-2: fold the phase sandbox policy into the http gate's ∩ —
-        # a sandbox with network:false vetoes the fetch (overrides config-allow).
-        await ctx.permission_resolver.require_http_get(
-            ctx.permission_decl, host, ctx.intervention_bus, ctx.skill_name,
-            sandbox_policy=_sandbox_policy_from_ctx(ctx),
-        )
+        # L1 — #571 Phase 7 unified http.get axis (specific hosts pass silently;
+        # wildcard fires the per-host prompt). #1199 S3.1c-2: a sandbox with
+        # network:false vetoes the fetch. Re-run on EVERY hop (not just initial).
+        if ctx.permission_resolver is not None:
+            await ctx.permission_resolver.require_http_get(
+                ctx.permission_decl, host, ctx.intervention_bus, ctx.skill_name,
+                sandbox_policy=_sandbox_policy_from_ctx(ctx),
+            )
+        # L2 — SSRF IP-deny (always; independent of the permission system).
+        try:
+            await asyncio.to_thread(
+                _ssrf_guard.assert_fetch_host_allowed, host, allow_private=_allow_private,
+            )
+        except _ssrf_guard.SSRFBlocked as exc:
+            ctx.events.emit("web_fetch_ssrf_blocked", url=hop_url, host=host, reason=str(exc))
+            return {"kind": "web_fetch", "url": op.url, "status": "blocked", "error": str(exc)}
+        return None
 
     ctx.events.emit("web_fetch_started", url=op.url)
     # #1913: hard ceiling on the downloaded body to prevent an unbounded-memory
-    # DoS. ``client.get`` materializes the ENTIRE response into memory before
-    # ``max_length`` (an extracted-TEXT cap) ever applies, so a hostile URL —
-    # including a benign one that redirects to a huge payload — could exhaust
-    # memory. Stream instead, rejecting on a declared Content-Length over the
-    # cap and on the running byte total exceeding it (covers chunked / no-CL).
+    # DoS. Stream instead, rejecting on a declared Content-Length over the cap
+    # and on the running byte total exceeding it (covers chunked / no-CL).
     _max_dl = (
         ctx.web_config.fetch.max_download_bytes
         if ctx.web_config is not None
@@ -258,27 +275,50 @@ async def handle_web_fetch(op: WebFetchIROp, ctx: OpContext, caller: Literal["pr
             ),
         }
 
+    _REDIRECT_CODES = (301, 302, 303, 307, 308)
+    body = b""
     try:
         # SSL verification — priority: reyn.yaml web.fetch config → env-var chain.
-        # See _resolve_ssl_verify() docstring for the full priority order.
+        # #1956: follow_redirects=False — we follow manually so each hop is gated.
         async with httpx.AsyncClient(
             timeout=op.timeout,
-            follow_redirects=True,
+            follow_redirects=False,
             headers={"User-Agent": "reyn/1.0"},
             verify=_resolve_ssl_verify(ctx),
         ) as client:
-            async with client.stream("GET", op.url) as response:
-                _cl = response.headers.get("content-length")
-                if _cl is not None and _cl.isdigit() and int(_cl) > _max_dl:
-                    return _too_large(int(_cl))
-                _chunks: list[bytes] = []
-                _total = 0
-                async for _chunk in response.aiter_bytes():
-                    _total += len(_chunk)
-                    if _total > _max_dl:
-                        return _too_large(_total)
-                    _chunks.append(_chunk)
-                body = b"".join(_chunks)
+            _url = op.url
+            for _hop in range(_ssrf_guard.MAX_REDIRECTS + 1):
+                _blocked = await _gate_hop(_url)
+                if _blocked is not None:
+                    return _blocked
+                async with client.stream("GET", _url) as response:
+                    _loc = response.headers.get("location")
+                    if response.status_code in _REDIRECT_CODES and _loc:
+                        # next hop — the redirect response body is drained on
+                        # the ``async with`` exit; only its Location matters.
+                        _url = urljoin(_url, _loc)
+                        continue
+                    _cl = response.headers.get("content-length")
+                    if _cl is not None and _cl.isdigit() and int(_cl) > _max_dl:
+                        return _too_large(int(_cl))
+                    _chunks: list[bytes] = []
+                    _total = 0
+                    async for _chunk in response.aiter_bytes():
+                        _total += len(_chunk)
+                        if _total > _max_dl:
+                            return _too_large(_total)
+                        _chunks.append(_chunk)
+                    body = b"".join(_chunks)
+                    break
+            else:
+                ctx.events.emit(
+                    "web_fetch_too_many_redirects", url=op.url,
+                    limit=_ssrf_guard.MAX_REDIRECTS,
+                )
+                return {
+                    "kind": "web_fetch", "url": op.url, "status": "error",
+                    "error": f"too many redirects (exceeded {_ssrf_guard.MAX_REDIRECTS})",
+                }
     except httpx.TimeoutException:
         return {"kind": "web_fetch", "url": op.url, "status": "timeout",
                 "error": f"request timed out after {op.timeout}s"}

@@ -584,12 +584,21 @@
 # is aborted once the stream passes the ceiling. Guards against an
 # unbounded-body memory blow-up from a hostile / runaway URL. ``<= 0`` or a
 # non-integer falls back to the 10MB default.
+#
+# ``allow_private_ips`` (#1956 SSRF, default false) controls whether
+# ``web_fetch`` / ``safe.http`` may reach PRIVATE RFC1918 / ULA addresses
+# (enterprise internal-fetch opt-in). Link-local, cloud-metadata
+# (169.254.169.254), and loopback are ALWAYS denied regardless of this flag.
+# HTTP redirects are re-validated per hop, so an allowlisted host cannot
+# bounce to an internal target. Also exported to REYN_FETCH_ALLOW_PRIVATE_IPS
+# for the safe.http subprocess + registry clients.
 # -----------------------------------------------------------------------------
 # web:
 #   fetch:
 #     verify_ssl: null              # null = delegate to env / litellm fallback
 #     ca_bundle: null               # absolute / cwd-relative PEM path
 #     max_download_bytes: 10485760  # 10MB wire-byte ceiling (DoS guard)
+#     allow_private_ips: false      # #1956 SSRF: opt-in to private IPs (link-local/metadata/loopback always denied)
 #   ws_max_size: 16777216           # 16MB WebSocket inbound-frame ceiling (reyn web gateway)
 
 

@@ -42,9 +42,11 @@ import json as _json
 from typing import Any
 from urllib.error import HTTPError as _HTTPError
 from urllib.parse import urlparse as _urlparse
+from urllib.request import HTTPRedirectHandler as _HTTPRedirectHandler
 from urllib.request import Request as _Request
-from urllib.request import urlopen as _urlopen
+from urllib.request import build_opener as _build_opener
 
+from reyn import _ssrf_guard
 from reyn._http_limits import read_capped
 
 # ── Internal state ─────────────────────────────────────────────────────────
@@ -77,7 +79,16 @@ def _set_permission_context(
 
 
 def _check_host(url: str) -> None:
-    """Raise PermissionError if ``url``'s host is not in the allowlist."""
+    """Raise PermissionError if ``url``'s host is disallowed.
+
+    L1: the declared ``http_hosts`` allowlist. L2 (#1956 SSRF): the host's
+    resolved IP must not be link-local / metadata / loopback / private (private
+    allowed only via the ``web.fetch.allow_private_ips`` operator opt-in). L2
+    runs on the allowlisted host too — an allowlisted host can still resolve to,
+    or (via a redirect hop) BE, an internal IP. ``SSRFBlocked`` is a
+    ``PermissionError`` subclass, so callers catching ``PermissionError`` handle
+    both layers.
+    """
     if not _context_initialised:
         raise PermissionError(
             "reyn.api.safe.http: permission context not initialised. This "
@@ -89,6 +100,10 @@ def _check_host(url: str) -> None:
     parsed = _urlparse(url)
     host = parsed.hostname or ""
     if host in _allowed_hosts:
+        # L2 (#1956 SSRF): IP-deny even for an allowlisted host.
+        _ssrf_guard.assert_fetch_host_allowed(
+            host, allow_private=_ssrf_guard.resolve_allow_private()
+        )
         return
     raise PermissionError(
         f"reyn.api.safe.http: request to host {host!r} (url={url!r}) is not "
@@ -98,6 +113,25 @@ def _check_host(url: str) -> None:
         f"    http.get:\n"
         f"      - host: {host}\n"
     )
+
+
+class _SSRFSafeRedirectHandler(_HTTPRedirectHandler):
+    """#1956: re-validate the host on EVERY redirect hop (L1 allowlist + L2 SSRF
+    IP-deny). Stock urllib follows redirects to ANY host with no re-check, so an
+    allowlisted host could redirect to a link-local / metadata / loopback /
+    private target. ``_check_host`` raises (PermissionError / SSRFBlocked) on a
+    denied hop, aborting the fetch."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        _check_host(newurl)
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+# Module-level URL opener whose redirect handler re-gates every hop (#1956),
+# kept under the ``_urlopen`` name as the stable seam ``_request`` calls (and
+# that tests patch to inject fake responses) — a drop-in for the old
+# ``urllib.request.urlopen`` but redirect-safe.
+_urlopen = _build_opener(_SSRFSafeRedirectHandler()).open
 
 
 def _response_dict(resp: Any) -> dict:
@@ -132,6 +166,8 @@ def _request(
         else:
             data = str(body).encode("utf-8")
     req = _Request(url, data=data, headers=hdrs, method=method)
+    # #1956: ``_urlopen`` is the SSRF-safe opener (redirect handler re-gates each
+    # hop). Called via the module global so tests can patch the seam.
     try:
         with _urlopen(req, timeout=timeout) as resp:  # noqa: S310 — see module docstring
             return _response_dict(resp)
