@@ -112,24 +112,6 @@ _SPAWN_ACK_MSG: dict[str, str] = {
 }
 
 
-# B49 plan-side spawn alignment (= #441 / #445 follow-up): the user-
-# friendly trailer that pairs with the `[task_spawned] kind=plan`
-# structured header. Plan dispatch is async (= ADR-0023 §2.1.1) so
-# behaviour mirrors skill spawn-ack: router exits after dispatch,
-# the LLM regains control on the next [task_completed] kind=plan
-# injection from session._handle_plan_completed.
-_PLAN_SPAWN_ACK_MSG: dict[str, str] = {
-    "ja": (
-        "プランをバックグラウンドで実行しています。"
-        " `/tasks` で進行状況を確認できます。"
-    ),
-    "en": (
-        "Plan is running in the background."
-        " Use `/tasks` to monitor progress."
-    ),
-}
-
-
 # B55 R-7 (2026-05-25): agent-side spawn alignment — symmetric with
 # skill/plan spawn_ack so the LLM sees a structured task lifecycle
 # event for delegate_to_agent / other peer-async tools too. Prior
@@ -1290,11 +1272,10 @@ def _apply_tool_exclusions(
 
     The post-build filter that hides tools from the LLM-visible catalog (and,
     in lockstep, from the dispatch catalog — both derive from this same
-    ``tools`` list). Two callers: the plan sub-loops pass ``{"plan"}`` so plan
-    steps cannot recursively self-decompose (planner.py), and the #187
-    faithful SWE-eval passes the web tools (``web__search`` / ``web__fetch``)
-    so the general agent solves from the repo + issue, not a web lookup of the
-    gold solution. ``exclude_tools`` empty → ``tools`` returned unchanged.
+    ``tools`` list). Caller: the #187 faithful SWE-eval passes the web tools
+    (``web__search`` / ``web__fetch``) so the general agent solves from the
+    repo + issue, not a web lookup of the gold solution. ``exclude_tools``
+    empty → ``tools`` returned unchanged.
 
     P7-clean: no hardcoded tool names; the exclusion set is data supplied by
     the caller.
@@ -1372,12 +1353,9 @@ class RouterLoop:
         # this live path → run-once still dead-stopped (13398). Threaded from
         # Session._non_interactive via the constructor.
         self._non_interactive = bool(non_interactive)
-        # Tool names to drop from the catalog (= post-build filter). Used by
-        # plan executor to pass ``{"plan"}`` so plan steps cannot recursively
-        # call plan (= prevents unbounded nesting). Discovered 2026-05-07:
-        # without this, plan-mode dogfood "Read README and CLAUDE.md, then
-        # compare" produced 3 plan invocations because step LLMs saw plan
-        # in their tool catalog and self-decomposed.
+        # Tool names to drop from the catalog (= post-build filter). E.g. the
+        # #187 faithful SWE-eval drops the web tools so the general agent solves
+        # from the repo + issue, not a web lookup of the gold solution.
         self._exclude_tools: frozenset[str] = frozenset(exclude_tools or set())
         # #1667: catalog categories skipped at the source (_enumerate_category),
         # threaded onto RouterCallerState so the universal catalog drops them.
@@ -2229,78 +2207,6 @@ class RouterLoop:
                     if get_dispatch_kind(tc["function"]["name"]) == "async"
                 )
                 if async_count:
-                    # B49 plan-side spawn alignment (= #441 / #445
-                    # follow-up): when a plan tool dispatch is in the
-                    # async batch, push a ``[task_spawned] kind=plan``
-                    # structured header instead of the generic
-                    # "dispatched N async request" status. This makes
-                    # plan spawn-ack symmetric with skill spawn-ack
-                    # (= router_loop.py:1881 path), so the LLM history
-                    # carries a correlatable spawn record that pairs
-                    # with the later ``[task_completed] kind=plan
-                    # plan_id=<X>`` injection from
-                    # session._handle_plan_completed.
-                    # B49 plan-side retest discipline (= retest-before-PR
-                    # surfaced this bug): dispatch_tool() wraps all
-                    # invoker results as ``{"status": "ok", "data":
-                    # <raw_result>}`` (see dispatch/dispatcher.py), so
-                    # the spawned status is nested under ``data``. The
-                    # skill spawn-ack indices block (above) already
-                    # handles both forms; mirror that pattern here so
-                    # plan dispatch detection is symmetric.
-                    plan_idx = next(
-                        (
-                            i
-                            for i, (tc, r) in enumerate(zip(tool_calls, tool_results))
-                            if tc["function"]["name"] == "plan"
-                            and isinstance(r, dict)
-                            and (
-                                r.get("status") == "spawned"
-                                or (
-                                    isinstance(r.get("data"), dict)
-                                    and r["data"].get("status") == "spawned"
-                                )
-                            )
-                        ),
-                        None,
-                    )
-                    if plan_idx is not None:
-                        tc_plan = tool_calls[plan_idx]
-                        r_plan = tool_results[plan_idx]
-                        plan_spawn = (
-                            r_plan["data"]
-                            if isinstance(r_plan.get("data"), dict)
-                            else r_plan
-                        )
-                        plan_id = plan_spawn.get("plan_id", "")
-                        plan_chain_id = plan_spawn.get("chain_id", self.chain_id)
-                        n_steps = plan_spawn.get("n_steps", 0)
-                        try:
-                            plan_args = json.loads(
-                                tc_plan["function"].get("arguments") or "{}",
-                            )
-                        except (json.JSONDecodeError, TypeError):
-                            plan_args = {}
-                        plan_goal = plan_args.get("goal", "")
-                        header = (
-                            f"[task_spawned] kind=plan "
-                            f"plan_id={plan_id} chain_id={plan_chain_id}\n"
-                            f"goal: {plan_goal}  n_steps: {n_steps}"
-                        )
-                        lang = getattr(host, "output_language", None)
-                        trailer = _PLAN_SPAWN_ACK_MSG.get(
-                            lang, _PLAN_SPAWN_ACK_MSG["en"],
-                        )
-                        ack_text = f"{header}\n\n{trailer}"
-                        await self.host.put_outbox(
-                            kind="agent",
-                            text=ack_text,
-                            meta={
-                                "chain_id": self.chain_id,
-                                "source": "plan_spawn_ack",
-                            },
-                        )
-                        return self._total_usage
                     # B55 R-7 (2026-05-25): non-plan async dispatch (=
                     # delegate_to_agent or other peer-async tools). Mirror
                     # skill / plan spawn_ack format: `[task_spawned]
@@ -2362,24 +2268,6 @@ class RouterLoop:
                     )
                     return self._total_usage
 
-                # The async tool exit branch above already returned. The legacy
-                # synchronous "status=ok with text" special-case is preserved as a
-                # safety net for hosts whose async tool dispatch falls back to a
-                # synchronous result (= test stubs).
-                for tc, r in zip(tool_calls, tool_results):
-                    if (
-                        tc["function"]["name"] == "plan"
-                        and isinstance(r, dict)
-                        and r.get("status") == "ok"
-                        and isinstance(r.get("text"), str)
-                        and r["text"]
-                    ):
-                        await self.host.put_outbox(
-                            kind="agent",
-                            text=r["text"],
-                            meta={"chain_id": self.chain_id, "source": "plan"},
-                        )
-                        return self._total_usage
                 # G10 / B2-M2 fix: intercept invoke_skill tool_failed results and
                 # emit a deterministic i18n message instead of letting the LLM
                 # generate an English fallback reply. Checked before accumulating
@@ -3573,7 +3461,7 @@ class RouterLoop:
     REGISTRY_DISPATCH_TOOLS: frozenset[str] = frozenset({
         # Phase 3 step 2 (commit 649a426)
         "list_skills", "describe_skill", "list_agents", "describe_agent",
-        "delegate_to_agent", "plan",
+        "delegate_to_agent",
         # Phase 3.5-D — zero-diff handlers (reyn_src + web).
         # reyn_src handlers are literal copies of RouterHostAdapter helpers;
         # web handlers delegate to op_runtime.web with a synthesized OpContext
