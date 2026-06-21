@@ -199,9 +199,6 @@ async def test_run_one_iteration_dispatches_all_known_kinds(tmp_path, monkeypatc
     async def _record_skill_completed(self, payload):
         dispatched.append("skill_completed")
 
-    async def _record_plan_completed(self, payload):
-        dispatched.append("plan_completed")
-
     async def _record_agent_request(self, payload):
         dispatched.append("agent_request")
 
@@ -210,19 +207,18 @@ async def test_run_one_iteration_dispatches_all_known_kinds(tmp_path, monkeypatc
 
     monkeypatch.setattr(Session, "_handle_user_message", _record_user)
     monkeypatch.setattr(Session, "_handle_skill_completed", _record_skill_completed)
-    monkeypatch.setattr(Session, "_handle_plan_completed", _record_plan_completed)
     monkeypatch.setattr(Session, "_handle_agent_request", _record_agent_request)
     monkeypatch.setattr(Session, "_handle_agent_response", _record_agent_response)
 
-    for kind in ("user", "skill_completed", "plan_completed", "agent_request", "agent_response"):
+    for kind in ("user", "skill_completed", "agent_request", "agent_response"):
         await session._put_inbox(kind, {"text": "x"})
 
-    for _ in range(5):
+    for _ in range(4):
         result = await session.run_one_iteration()
         assert result is True
 
     assert set(dispatched) == {
-        "user", "skill_completed", "plan_completed", "agent_request", "agent_response"
+        "user", "skill_completed", "agent_request", "agent_response"
     }
 
 

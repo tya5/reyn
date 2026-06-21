@@ -258,17 +258,14 @@ async def test_cancel_inflight_causes_next_run_loop_to_break() -> None:
 
 
 @pytest.mark.asyncio
-async def test_cancel_inflight_cancels_skills_and_plans() -> None:
-    """Tier 2: #1468 — cancel_inflight() cancels all non-done skill/plan tasks
-    in the single call (single seam covers turn + skills + plans)."""
+async def test_cancel_inflight_cancels_skills() -> None:
+    """Tier 2: #1468 — cancel_inflight() cancels all non-done skill tasks in the
+    single call (single seam covers turn + skills)."""
     session = _SessionWithCancelSeam()
     skill_task = _FakeSkillTask()
-    plan_task = _FakeSkillTask()
     session.running_skills = {"r1": skill_task}
-    session.running_plans = {"p1": plan_task}
     await session.cancel_inflight()
     assert skill_task.was_cancelled()
-    assert plan_task.was_cancelled()
 
 
 @pytest.mark.asyncio

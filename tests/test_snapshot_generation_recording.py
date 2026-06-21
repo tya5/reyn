@@ -49,16 +49,6 @@ async def test_cut_generation_records_current_snapshot(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_plan_step_boundary_cuts_generation(tmp_path):
-    """Tier 2: record_plan_step_completed cuts a generation at the step boundary."""
-    log, store, journal = _journal(tmp_path)
-    await journal.record_plan_step_completed(
-        plan_id="p1", step_id="s1", content_len=5,
-    )
-    assert journal.snapshot.applied_seq in store.seqs()
-
-
-@pytest.mark.asyncio
 async def test_reconstruct_head_equals_live_snapshot(tmp_path):
     """Tier 2: reconstruct(head) from the store == the live snapshot (parity).
 
