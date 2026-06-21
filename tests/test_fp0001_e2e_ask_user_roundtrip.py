@@ -310,9 +310,10 @@ def test_async_mode_message_send_returns_task_envelope(tmp_path, monkeypatch):
 
     from fastapi.testclient import TestClient
 
-    from reyn.interfaces.web.deps import get_registry, get_run_registry
+    from reyn.interfaces.web.deps import get_registry, get_run_registry, get_task_backend
     from reyn.interfaces.web.run_registry import RunRegistry
     from reyn.interfaces.web.server import app
+    from reyn.task import InMemoryTaskBackend
 
     registry = _build_registry_for_test(tmp_path)
     # FP-0009 B: RunRegistry now lives in the FastAPI lifespan startup.
@@ -321,6 +322,7 @@ def test_async_mode_message_send_returns_task_envelope(tmp_path, monkeypatch):
     run_registry = RunRegistry()
     app.dependency_overrides[get_registry] = lambda: registry
     app.dependency_overrides[get_run_registry] = lambda: run_registry
+    app.dependency_overrides[get_task_backend] = lambda: InMemoryTaskBackend()
     client = TestClient(app, raise_server_exceptions=False)
 
     try:
@@ -351,43 +353,40 @@ def test_async_mode_message_send_returns_task_envelope(tmp_path, monkeypatch):
 
 
 @pytest.mark.skipif(_SKIP_ROUTER, reason=_SKIP_REASON)
-def test_get_task_returns_run_entry(tmp_path, monkeypatch):
-    """Tier 2c: GET /a2a/tasks/{run_id} returns the RunEntry public dict.
+def test_get_task_returns_a2a_envelope_from_task_backend(tmp_path, monkeypatch):
+    """Tier 2c (#1953 slice 5a): GET /a2a/tasks/{task_id} returns the spec A2A
+    Task envelope read from the Task backend (Task-vocab state). A blocked Task
+    surfaces as input-required (interim — slice 7 splits the block-reason)."""
+    import asyncio
 
-    Pre-populates RunRegistry with a known entry so the test exercises the
-    polling endpoint contract without needing a live async task running.
-    Requires F4 router extensions.  Skipped otherwise.
-    """
     monkeypatch.chdir(tmp_path)
 
     from fastapi.testclient import TestClient
 
-    from reyn.interfaces.web.deps import get_registry, get_run_registry
+    from reyn.interfaces.web.deps import get_registry, get_run_registry, get_task_backend
     from reyn.interfaces.web.run_registry import RunRegistry
     from reyn.interfaces.web.server import app
+    from reyn.task import InMemoryTaskBackend, Task, TaskState
 
     registry = _build_registry_for_test(tmp_path)
-
-    # Pre-populate RunRegistry with a known entry so we can exercise
-    # GET /a2a/tasks/{run_id} without needing a live async task.
-    # issue #292 (α): ``question`` is removed from the public dict —
-    # iv prompt text is exposed via the SSE stream / webhook payload
-    # (= history_events buffer), not via the GET-task endpoint.
-    run_registry = RunRegistry()
-    entry = run_registry.create(agent_name="default", chain_id="test-chain")
-    run_registry.update(entry.run_id, status="input-required")
+    backend = InMemoryTaskBackend()
+    asyncio.new_event_loop().run_until_complete(
+        backend.create(Task(task_id="t-1", name="n", assignee="a2a:ctx-9",
+                            requester="r", status=TaskState.BLOCKED)))
 
     app.dependency_overrides[get_registry] = lambda: registry
-    app.dependency_overrides[get_run_registry] = lambda: run_registry
+    app.dependency_overrides[get_run_registry] = lambda: RunRegistry()
+    app.dependency_overrides[get_task_backend] = lambda: backend
     client = TestClient(app, raise_server_exceptions=False)
 
     try:
-        r = client.get(f"/a2a/tasks/{entry.run_id}")
+        r = client.get("/a2a/tasks/t-1")
         assert r.status_code == 200, r.text
         body = r.json()
-        assert body["run_id"] == entry.run_id
-        assert body["status"] == "input-required"
-        assert "question" not in body  # α: field removed
-        assert body["agent_name"] == "default"
+        assert body["kind"] == "task"
+        assert body["id"] == "t-1"
+        assert body["status"]["state"] == "input-required"  # blocked (interim)
+        assert body["contextId"] == "ctx-9"
+        assert "question" not in body
     finally:
         app.dependency_overrides.clear()

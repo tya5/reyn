@@ -77,7 +77,7 @@ def test_get_task_returns_a2a_envelope_from_task_backend() -> None:
     from reyn.task import InMemoryTaskBackend, Task, TaskState
 
     backend = InMemoryTaskBackend()
-    asyncio.get_event_loop().run_until_complete(
+    asyncio.new_event_loop().run_until_complete(
         backend.create(Task(task_id="t-1", name="n", assignee="a2a:ctx-7",
                             requester="r", status=TaskState.IN_PROGRESS)))
     client = _make_client_with_registry(RunRegistry(), task_backend=backend)
@@ -125,7 +125,7 @@ def test_cancel_task_aborts_task_in_backend() -> None:
     from reyn.task import InMemoryTaskBackend, Task, TaskState
 
     backend = InMemoryTaskBackend()
-    loop = asyncio.get_event_loop()
+    loop = asyncio.new_event_loop()
     loop.run_until_complete(
         backend.create(Task(task_id="t-1", name="n", assignee="a2a:ctx-1",
                             requester="r", status=TaskState.IN_PROGRESS)))

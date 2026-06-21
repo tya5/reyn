@@ -95,14 +95,16 @@ def _client_with_registry(tmp_path: Path, agents: list[tuple[str, str]]):
     """
     from fastapi.testclient import TestClient
 
-    from reyn.interfaces.web.deps import get_registry, get_run_registry
+    from reyn.interfaces.web.deps import get_registry, get_run_registry, get_task_backend
     from reyn.interfaces.web.run_registry import RunRegistry
     from reyn.interfaces.web.server import app
+    from reyn.task import InMemoryTaskBackend
 
     registry = _build_registry(tmp_path, agents)
     run_registry = RunRegistry()
     app.dependency_overrides[get_registry] = lambda: registry
     app.dependency_overrides[get_run_registry] = lambda: run_registry
+    app.dependency_overrides[get_task_backend] = lambda: InMemoryTaskBackend()
     client = TestClient(app, raise_server_exceptions=False)
     return client, registry
 
