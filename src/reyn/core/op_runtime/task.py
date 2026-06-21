@@ -71,6 +71,25 @@ def _ok(kind: str, **data) -> dict:
     return {"kind": kind, "status": "ok", **data}
 
 
+def _fence_view(ctx: OpContext, task_view: dict) -> dict:
+    """#2027: fence the cross-session-authorable free-text fields of a task VIEW
+    (``description`` / ``name`` / ``result``) when content-fencing is enabled — so a
+    delegated task's description (or a peer assignee's result) cannot inject the
+    LLM via the read/list query path. Uniform: the view's text IS data, so no
+    per-source trust classification (the gap is closed by always fencing); the
+    structural fields (id / status / deps / dates) are OS-generated → not fenced.
+    Mutates + returns the passed ``to_dict()`` copy (the stored Task is untouched).
+    Reuses ``content_guard.fence_if_enabled`` (the global fence_enabled gate +
+    the same Class-A fence as the other content seams)."""
+    from reyn.security.content_guard import fence_if_enabled
+    cfg = getattr(ctx, "threat_scan", None)
+    for field in ("description", "name", "result"):
+        val = task_view.get(field)
+        if isinstance(val, str) and val:
+            task_view[field] = fence_if_enabled(val, cfg)
+    return task_view
+
+
 def _not_found(kind: str, task_id: str) -> dict:
     return {"kind": kind, "status": "error", "error": f"task {task_id!r} not found"}
 
@@ -216,7 +235,7 @@ async def _get(op, ctx: OpContext, caller) -> dict:
     task, denied = await _authorize("task.get", ctx, _backend(ctx), op.task_id, "requester")
     if denied is not None:
         return denied
-    return _ok("task.get", task=task.to_dict())
+    return _ok("task.get", task=_fence_view(ctx, task.to_dict()))
 
 
 async def _list(op, ctx: OpContext, caller) -> dict:
@@ -226,7 +245,7 @@ async def _list(op, ctx: OpContext, caller) -> dict:
         status=op.status,
         parent_id=op.parent_id,
     )
-    return _ok("task.list", tasks=[t.to_dict() for t in tasks])
+    return _ok("task.list", tasks=[_fence_view(ctx, t.to_dict()) for t in tasks])
 
 
 async def _add_dependency(op, ctx: OpContext, caller) -> dict:
