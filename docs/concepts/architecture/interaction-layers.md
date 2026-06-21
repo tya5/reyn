@@ -19,6 +19,12 @@ All three layers ultimately converge on the same primitive — a message placed 
 an **agent's inbox** (the `send_to_agent_impl` path). They differ only in *who
 initiates* and *when*.
 
+> **Distinct from these: the direct operator surface.** The interactive TUI
+> (`reyn chat`) and the browser Web UI drive a session **directly** via
+> `Session.submit_user_text`, not through the inbox. They are the human operator's
+> own surface — the baseline these three trigger layers complement — so they are
+> not counted among the inbox-converging layers below.
+
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │  1. External connection  (outside → Reyn; Reyn is a server)  │

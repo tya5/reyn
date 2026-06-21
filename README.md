@@ -125,33 +125,35 @@ The diagram above is the **depth** view — one agent's execution. The **breadth
 
 ```mermaid
 flowchart LR
-    subgraph L1["External connection — outside calls in"]
+    HUMAN["Human (direct)<br/>TUI · Web UI"]
+    subgraph EXT["External connection — outside calls in"]
       direction TB
       MCP["MCP server<br/>AI clients"]
       A2A["A2A server<br/>peer agents"]
       GW["Gateway<br/>Slack / LINE webhooks"]
     end
-    subgraph L2["Internal trigger — Reyn raises a turn"]
-      direction TB
-      CRON["cron<br/>scheduled jobs"]
-    end
+    INT["Internal trigger<br/>cron"]
     INBOX(["agent inbox<br/>send_to_agent"])
-    L1 --> INBOX
-    L2 --> INBOX
+    EXT --> INBOX
+    INT --> INBOX
     subgraph FLEET["Agent fleet"]
       direction TB
       REG[("AgentRegistry<br/>multi-agent")]
-      Ax["Agent A<br/>identity · agent_id"]
+      Ax["Agent A · agent_id"]
       Ay["Agent B"]
       Ax --- SAx["Sessions<br/>multi-session"]
       REG --> Ax
       REG --> Ay
     end
+    HUMAN -- submit_user_text --> Ax
     INBOX --> FLEET
-    Ax <-. "delegate_to_agent · topology-gated<br/>network / team / pipeline · chain_id" .-> Ay
+    HOOK["In-turn hooks<br/>(proposed)"] -. intercept running turn .-> Ax
+    Ax <-. "delegate · topology-gated<br/>network / team / pipeline · chain_id" .-> Ay
+    classDef pr stroke-dasharray:5 4;
+    class HOOK pr;
 ```
 
-- **Reached** — three trigger layers converge on the agent inbox: *external connection* (MCP server · A2A server · gateway webhooks like Slack / LINE), *internal trigger* (`cron`), and *in-turn intervention* (lifecycle hooks — proposed). See [interaction layers](docs/concepts/architecture/interaction-layers.md).
+- **Reached two ways** — *humans drive a session directly* (TUI / browser Web UI → `submit_user_text`), while *systems and schedules inject into an agent's inbox*: external connection (MCP server · A2A server · gateway webhooks like Slack / LINE) and internal trigger (`cron`). An *in-turn hook* layer can intercept a running turn (proposed). The HTTP surfaces — A2A, MCP-over-SSE, gateway webhooks, and the browser Web UI — are all served by the one `reyn web` (FastAPI) gateway. See [interaction layers](docs/concepts/architecture/interaction-layers.md).
 - **Related** — an `AgentRegistry` holds many *Agents* (each an identity), each with many parallel *Sessions*; agents delegate to peers under a *topology* (network / team / pipeline), hop-capped and `chain_id`-traced. See [multi-agent](docs/concepts/multi-agent/multi-agent.md) · [sessions](docs/concepts/multi-agent/sessions.md).
 
 Details: [architecture](docs/concepts/architecture/architecture.md) · [principles](docs/concepts/architecture/principles.md).
