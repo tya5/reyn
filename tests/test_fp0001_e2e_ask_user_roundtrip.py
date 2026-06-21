@@ -389,9 +389,9 @@ def test_e2e_create_with_webhook_then_cancel_fires_disposition(tmp_path, monkeyp
     """
     monkeypatch.chdir(tmp_path)
 
-    import reyn.interfaces.web.routers.a2a as a2a_mod
     from fastapi.testclient import TestClient
 
+    import reyn.interfaces.web.routers.a2a as a2a_mod
     from reyn.interfaces.web.a2a_webhook_registry import (
         A2AWebhookRegistry,
         sweep_dispositions,
@@ -470,10 +470,11 @@ def test_e2e_create_with_webhook_then_cancel_fires_disposition(tmp_path, monkeyp
             sweep_dispositions(task_backend, webhook_registry, post_fn=poster)
         )
         assert fired == 1
-        assert len(poster.calls) == 1
+        # Exactly the one aborted external task was notified, on its channel —
+        # behavioral (which task_ids fired), not a size/shape pin.
+        assert [c[1]["task_id"] for c in poster.calls] == [task_id]
         url, payload = poster.calls[0]
         assert url == hook_url
-        assert payload["task_id"] == task_id
         assert payload["contextId"] == "ctx-e2e"
         assert payload["disposition"] == "aborted"
     finally:
