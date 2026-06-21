@@ -1260,7 +1260,7 @@ class ReynTUIApp(App):
             pass
 
     def action_cancel_inflight(self) -> None:
-        """Cancel the in-flight skill/plan/model call on the attached session.
+        """Cancel the in-flight skill/model call on the attached session.
 
         Visibility: unmounts the inline thinking spinner AND clears the
         sticky ``⟳ thinking…`` indicator. Also writes a one-line summary

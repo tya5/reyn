@@ -292,7 +292,7 @@ class AsyncStackPanel(RenderableCacheMixin, Widget):
         if not agent_id:
             return
         # An ``agent_id`` re-added during its interrupt/abort flash window
-        # (= the async restarts, or a plan resumes under the same id) must
+        # (= the async restarts, or a task resumes under the same id) must
         # return to a clean running state. Cancel the pending flash timer —
         # otherwise it fires ~1.5 s later and yanks this LIVE row — and reset
         # the flashing state so the row renders as ⟳ running, not ✗ interrupted.

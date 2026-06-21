@@ -849,8 +849,8 @@ class InputBar(Widget):
 
         Filtering uses the LAST whitespace-delimited token of
         ``arg_partial`` rather than the whole string, so multi-arg
-        commands like ``/plan discard ab`` filter the completions
-        (= plan_ids) by ``"ab"`` and not by ``"discard ab"`` — the
+        commands like ``/tasks kill ab`` filter the completions
+        (= run_ids) by ``"ab"`` and not by ``"kill ab"`` — the
         subcommand prefix is consumed in choosing the completer's
         context, not in the prefix match.
         """

@@ -25,8 +25,8 @@ from typing import Awaitable, Callable, Iterable
 HandlerFn = Callable[..., Awaitable[None]]
 # CompleterFn signature: ``(session, arg_partial: str = "") -> list[str]``.
 # ``arg_partial`` is the string typed after the slash command and the
-# trailing space (e.g. for ``/plan discard ab`` the partial is
-# ``"discard ab"``). Completers that don't need it (e.g. ``/attach``
+# trailing space (e.g. for ``/tasks kill ab`` the partial is
+# ``"kill ab"``). Completers that don't need it (e.g. ``/attach``
 # which always lists agent names) can ignore the arg via a default.
 CompleterFn = Callable[..., list[str]]
 # TabFooterFn signature: ``() -> str | None``. Supplies the optional
@@ -62,7 +62,7 @@ class SlashCommand:
     # the focus panel appends a ``  see also: <path1>, <path2>`` footer
     # so the user can navigate from the picker-hint summary to the
     # canonical concept doc. Paths are repo-relative (e.g.
-    # ``"docs/concepts/plan-mode.md"``). Defaults to empty tuple so all
+    # ``"docs/concepts/runtime/events.md"``). Defaults to empty tuple so all
     # existing commands without explicit see_also are unaffected.
     see_also: tuple[str, ...] = ()
     # Optional picker-hint footer supplier. When set, the SlashPicker hint

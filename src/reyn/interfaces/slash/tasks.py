@@ -1,7 +1,7 @@
 """/tasks slash command — unified async-task view (FP-0012 Component D).
 
 Sub-commands:
-  /tasks                          — list all running tasks (skills + plans)
+  /tasks                          — list all running tasks (skill runs)
   /tasks list                     — same as `/tasks`
   /tasks status <run_id_prefix>   — show current phase + elapsed time + last event
   /tasks kill   <run_id_prefix>   — cancel a specific task
@@ -14,8 +14,8 @@ Reads from existing infrastructure (= no new state required):
     the slash cheap and synchronous; users wanting raw events run ``reyn events``).
 
 The legacy ``/skill list`` and ``/skill discard`` commands continue to work as
-before (= unchanged); ``/tasks`` is the unified entry point spanning both
-skill runs and plan tasks. This mirrors the FP-0012 proposal's Component D.
+before (= unchanged); ``/tasks`` is the entry point for running skill runs.
+This mirrors the FP-0012 proposal's Component D.
 """
 from __future__ import annotations
 
@@ -31,7 +31,7 @@ if TYPE_CHECKING:
 
 _USAGE = (
     "Usage: /tasks [list|status <run_id>|kill <run_id>]\n"
-    "  list              — show all running tasks (skills + plans). Default.\n"
+    "  list              — show all running tasks (skill runs). Default.\n"
     "  status <prefix>   — show current phase + elapsed for a specific task\n"
     "  kill   <prefix>   — cancel a specific task"
 )
@@ -39,7 +39,7 @@ _USAGE = (
 
 @slash(
     "tasks",
-    summary="Unified view of running async tasks (skills + plans)",
+    summary="Unified view of running async tasks (skill runs)",
     usage="/tasks [list|status <run_id>|kill <run_id>]",
 )
 async def tasks_cmd(session: "Session", args: str) -> None:

@@ -380,7 +380,7 @@ class SlashPicker(RenderableCacheMixin, Static):
         #
         # Wave-11 C#5: previously skipped when ``_completions`` was
         # non-empty — but the commands with both required args AND a
-        # finite arg list (/attach, /memory view, /plan resume) were
+        # finite arg list (/attach, /memory view, /tasks kill) were
         # exactly the ones that benefit most from showing usage.
         # The guard meant usage rarely rendered in practice. Now
         # always renders when ``cmd.usage`` is set; total row count
