@@ -29,7 +29,6 @@ models:
 | `output_language` | string | Default output language code (e.g. `en`, `ja`). Override with `--output-language`. |
 | `safety` | map | Runtime stop conditions: loop-detection caps, timeouts, on-limit policy. See below. |
 | `cost` | map | Budget caps and rate limits (per-agent, daily, monthly). See below. |
-| `plan` | map | Plan-mode step budget and retry tuning. See below. |
 | `web` | map | SSL settings for `web_fetch` and MCP registry calls. See below. |
 | `eval` | map | Trace exporter backends for `reyn eval`. See below. |
 | `sandbox` | map | Sandboxed-exec backend selection, unsupported-platform policy, and the agent-level sandbox policy. See below. |
@@ -51,7 +50,6 @@ models:
 | `external_transports` | map | Inbound transport → MCP tool routing for chat (Slack / LINE / Discord etc.). See below. |
 | `multimodal` | map | Binary media (image/audio) size cap, on-oversize behaviour, and artefact storage paths. See below. |
 | `permissions` | map | Default permission policy. See below. |
-| `plan_resume_raw` | map | Raw resume-policy dict for plan-mode runs. Parsed lazily by the plan coordinator. |
 | `prompt_cache_enabled` | bool | Attach Anthropic prompt-cache markers to system prompts. Default `true`. |
 | `project_context_path` | string | Markdown file injected into every phase system prompt. Unset (default): auto-resolves the cross-tool standard — `AGENTS.md` if present, else `REYN.md` (legacy fallback). Set an explicit path to pin one file; set `""` to disable. See note below. |
 | `api_base` | string | LiteLLM proxy base URL. Typically set in `reyn.local.yaml` (gitignored). |
@@ -273,7 +271,7 @@ specific purpose; an unset purpose falls back to `model`.
 
 | Purpose | What it covers |
 |---|---|
-| `router` | The per-turn chat router / intent classification (and the plan-decomposition router). |
+| `router` | The per-turn chat router / intent classification. |
 | `control_ir` | Control-IR sub-execution model. |
 | `tool` | The default class for tool-spawned skill runs. |
 | `compaction` | Context-compaction summarisation. |
@@ -342,8 +340,8 @@ budget has a single source. (On the direct, non-Router path the per-call
 ### `llm.retry` fields (#1835)
 
 Controls the **timing** of the Reyn self-retry layer only (semantic-retry
-behaviours — EmptyLLMResponseError, empty\_stop\_retry, plan\_invalid\_retry,
-compaction shrink — are unaffected). Both defaults are `true`.
+behaviours — EmptyLLMResponseError, empty\_stop\_retry, compaction shrink — are
+unaffected). Both defaults are `true`.
 
 | Field | Type | Default | Meaning |
 |---|---|---|---|
@@ -428,7 +426,6 @@ safety:
 | `safety.loop.max_router_iterations` | int | `5` | `--max-iterations` | Maximum LLM tool-call iterations per user turn. CLI `--max-iterations` overrides when provided; `reyn run-once` uses CLI default of 80. |
 | `safety.loop.max_tool_calls_per_turn` | int | `50` | — | Cost-bound: maximum `tool_calls` honoured from a SINGLE LLM completion. A degenerate completion can emit thousands (observed 3451); the OS processes only the first N, drops the overflow, and appends a re-grounding notice. `0` = unlimited. |
 | `safety.loop.max_agent_hops` | int | `3` | — | Maximum delegation depth (user → A → B → C = 3 hops). |
-| `safety.loop.plan_invalid_retries` | int | `1` | — | When the router emits a malformed `plan()` tool call, append the error + an "escape inner quotes" hint and let the LLM re-emit. `0` disables; `1` (default) allows one directive-driven correction per chat turn. |
 | `safety.loop.skill_calls_per_chain` | map | `{}` (unlimited) | — | Per-(chain, skill) spawn cap. `hard_limit` + `warn_ratio` sub-fields. Hybrid: loop-detection semantics, budget-style user approval on hit. |
 | `safety.loop.skill_tokens_per_chain` | map | `{}` (unlimited) | — | Per-(chain, skill) token cap. `hard_limit` + `warn_ratio` sub-fields. |
 
@@ -461,36 +458,6 @@ Content-layer threat defense (FP-0050 / #1822): inspects untrusted content for p
 | `safety.threat_scan.block_severity` | string | `block` | Minimum severity that BLOCKS at agent-write seams (memory write / skill install). `block` = only `block`-severity patterns; `warn` = warn-severity also blocks (stricter). |
 | `safety.threat_scan.custom_patterns` | list | `[]` | Operator pattern extensions, each `[regex, id, scope, severity]`. Merged into the built-in catalog for scans. |
 
-## `plan` block
-
-Controls plan step execution budget, retry behaviour, and prior-step compaction.
-
-```yaml
-plan:
-  step_max_iterations: 5   # max RouterLoop turns per step (default: 5)
-  retry_limit: 3           # max auto-retries per step on failure (default: 3)
-  step_compaction:
-    recent_step_results_raw: 3                # keep the last N step_results verbatim
-    step_results_ratio: 0.50                  # fraction of main_pool reserved for step_results
-    summarize_older_threshold_tokens: null    # null = derive from main_pool (engine ComputedBudgets)
-    use_chars4_estimate: false                # true = len(text)//4 (latency opt-out)
-```
-
-| Key | Type | Default | Description |
-|-----|------|---------|-------------|
-| `step_max_iterations` | integer | `5` | Maximum RouterLoop iterations one plan step may consume before being recorded as failed. |
-| `retry_limit` | integer | `3` | Maximum automatic retries per step on transient errors. When exhausted, the user is prompted to extend the budget. Acts as a cost protection ceiling analogous to token limits. |
-| `step_compaction` | map | see defaults | Prior `step_results` compaction policy. Sibling to `chat.compaction` — when accumulated step outputs would balloon the next step's system prompt, older entries are summarised. |
-
-### `plan.step_compaction` fields
-
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `recent_step_results_raw` | int | `3` | Keep the last N step_results verbatim; compact older ones. |
-| `step_results_ratio` | float | `0.50` | Fraction of `main_pool` (= `T_max - T_SP`) allocated for the step_results portion of the next step's sys_prompt. Sibling to `chat.compaction.component_weights` body allocation. |
-| `summarize_older_threshold_tokens` | int \| null | `null` | Total token threshold above which older step_results are compacted. `null` derives the threshold from `ComputedBudgets` (= `step_results_ratio × main_pool`). |
-| `use_chars4_estimate` | bool | `false` | When `true`, use `len(text)//4` for token estimation instead of `litellm.token_counter` (latency opt-out, mirrors `chat.compaction.use_chars4_estimate`). |
-
 ## `time_travel` block
 
 Cost knobs for the time-travel (rewind/resume) feature (#1582).
@@ -520,7 +487,7 @@ tool_use:
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | `chat` | string | `enumerate-all` | Tool-use scheme for the top-level chat layer. **Default `enumerate-all` (#1657)** — flat-lists actions so the LLM invokes them directly instead of hallucinating `invoke_action` names (raised non-hot-list tool-use ~30%→100%). Set to `universal-category` for a minimal-surface / many-tool catalog (discover-then-call), or another registered scheme. |
-| `step` | string | `universal-category` | Tool-use scheme for the plan/skill step layer. |
+| `step` | string | `universal-category` | Tool-use scheme for the skill step layer. |
 | `phase` | string | `universal-category` | Tool-use scheme for the OS phase layer. |
 
 The chat layer defaults to `enumerate-all` (#1657); `step` / `phase` keep `universal-category`. A scheme owns how the `tools=` payload is built, the SP tool-use instructions, how an LLM response is interpreted, and how it is dispatched — so swapping a layer's scheme changes the whole tool-use loop for that layer without OS changes. `universal-category` remains available per-layer via this config (e.g. for very large tool catalogs where flat-listing every action would bloat the request). `retrieval` (search-over-tools) and `CodeAct` are likewise supported opt-in schemes per layer; `retrieval` additionally requires `action_retrieval.embedding_class` set to a configured embedding provider.
@@ -542,11 +509,11 @@ phase:
 
 ### `phase.act_results_compaction` fields
 
-Controls how the act-loop's accumulated `control_ir_results` are compacted when they approach the context budget. Sibling to `plan.step_compaction` (planner step) and `chat.compaction` (conversation history).
+Controls how the act-loop's accumulated `control_ir_results` are compacted when they approach the context budget. Sibling to `chat.compaction` (conversation history).
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `recent_act_turns_raw` | int | `5` | Keep the last N act-turn results verbatim; compact older ones. Higher than `plan.step_compaction.recent_step_results_raw` (= 3) because phase ops carry specific structured data (paths, line numbers, exit codes) the LLM needs for planning next ops. |
+| `recent_act_turns_raw` | int | `5` | Keep the last N act-turn results verbatim; compact older ones. Set higher than the conversation-history default because phase ops carry specific structured data (paths, line numbers, exit codes) the LLM needs for planning next ops. |
 | `control_ir_results_ratio` | float | `0.50` | Fraction of `main_pool` (= `T_max - T_SP`) allocated for the `control_ir_results` portion of the act-loop context. Sibling to `chat.compaction.component_weights["body"]`. |
 | `summarize_older_threshold_tokens` | int \| null | `null` | Total token threshold above which older results are compacted. `null` derives the threshold from `control_ir_results_ratio × main_pool` (via `ComputedBudgets`). |
 | `use_chars4_estimate` | bool | `false` | When `true`, use `len(text)//4` for token estimation (latency opt-out). |

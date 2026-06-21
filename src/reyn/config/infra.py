@@ -105,7 +105,7 @@ class RetryConfig:
     """``llm.retry:`` — backoff timing for the Reyn self-retry layer (#1835).
 
     Controls TIMING only; semantic-retry behaviours (EmptyLLMResponseError,
-    empty_stop_retry, plan_invalid_retry, compaction shrink) are unaffected.
+    empty_stop_retry, compaction shrink) are unaffected.
 
     ``jitter=true`` (default): equal jitter (AWS pattern) —
       ``sleep = backoff/2 + uniform(0, backoff/2)``
