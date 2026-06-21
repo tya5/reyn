@@ -233,3 +233,100 @@ def make_production_run_unit(
         return host.captured_text, (after - before)
 
     return run_unit
+
+
+async def dispatch_task_tool(
+    *,
+    args: dict,
+    parent_host: Any,
+    chain_id: str,
+    task_backend: Any,
+    assignee: str,
+    requester: str,
+    budget: Any = None,
+    router_model: "str | None" = None,
+    available_tool_names: "set[str]",
+    accept_qualified_actions: bool = False,
+) -> dict:
+    """Router entry for the ``decompose`` tool (#1953 slice P3) — the task-driven
+    analog of ``dispatch_plan_tool``, running in parallel with ``plan`` for parity.
+
+    Lifecycle: parse + validate the goal/steps (reused from the plan parser while
+    both coexist — P4 repoints it), build the child Task DAG (the **SSoT** — the
+    Tasks *are* the decomposition record, so no separate artifact), then run the
+    DAG through the Task exec engine and emit the synthesized reply to the outbox.
+
+    Async posture mirrors plan's outbox UX *lightly* (P3 ruling): spawn via the
+    ``host.spawn_task_graph`` hook when present, else run inline (test stubs /
+    lightweight hosts). The deep running-tasks lifecycle (crash-recovery / cleanup
+    parity) is **deferred to P4**, where plan's ``running_plans`` is MOVED onto the
+    Task subsystem rather than parallel-built here (no throwaway)."""
+    from reyn.runtime.planner import parse_and_validate_plan, PlanValidationError
+
+    try:
+        plan = parse_and_validate_plan(
+            args, allowed_tool_names=available_tool_names,
+            accept_qualified_actions=accept_qualified_actions,
+        )
+    except PlanValidationError as exc:
+        return {"status": "error",
+                "error": {"kind": "decompose_invalid", "message": str(exc)}}
+
+    # PlanStep.tools are already normalized + validated by the parser → build the
+    # DAG without re-validating (allowed_tool_names=None skips the redundant pass).
+    steps = [
+        {"id": s.id, "description": s.description,
+         "tools": list(s.tools), "depends_on": list(s.depends_on)}
+        for s in plan.steps
+    ]
+    parent_id = await build_task_graph(
+        task_backend, goal=plan.goal, steps=steps,
+        assignee=assignee, requester=requester,
+    )
+    run_unit = make_production_run_unit(
+        parent_host, chain_id=chain_id, router_model=router_model, budget=budget)
+
+    # slice-8 (B) cap-charge in the live path: charge each unit's recorded cost
+    # onto its Task via the record_task_cost prod-caller. A minimal ctx carries the
+    # backend + events (the same surface the P2 tests exercised).
+    from types import SimpleNamespace
+
+    from reyn.core.op_runtime import task as _taskmod
+
+    _cost_ctx = SimpleNamespace(
+        session_id=requester, agent_id=getattr(parent_host, "agent_name", ""),
+        events=getattr(parent_host, "events", None),
+        task_backend=task_backend, task_waker=None,
+    )
+
+    async def _on_unit_cost(task_id: str, cost: float) -> None:
+        await _taskmod.record_task_cost(_cost_ctx, task_id, cost)
+
+    async def _run_and_post() -> None:
+        # Mirror execute_plan's start + terminal outbox emits (event/TUI parity).
+        await _safe_outbox(parent_host, kind="agent",
+                           text=f"Decomposed into {len(steps)} sub-tasks; running…",
+                           meta={"source": "decompose", "parent_task_id": parent_id})
+        final = await run_task_graph(
+            task_backend, parent_id, run_unit=run_unit, on_unit_cost=_on_unit_cost)
+        await _safe_outbox(parent_host, kind="agent", text=final,
+                           meta={"source": "decompose", "parent_task_id": parent_id})
+
+    if hasattr(parent_host, "spawn_task_graph"):
+        await parent_host.spawn_task_graph(
+            parent_id=parent_id, coro=_run_and_post(), chain_id=chain_id)
+        return {"status": "spawned", "parent_task_id": parent_id,
+                "n_steps": len(steps)}
+    # Synchronous fallback (test stubs / hosts without the spawn hook).
+    await _run_and_post()
+    return {"status": "completed", "parent_task_id": parent_id,
+            "n_steps": len(steps)}
+
+
+async def _safe_outbox(host: Any, *, kind: str, text: str, meta: dict) -> None:
+    """Best-effort outbox emit — a host that does not implement put_outbox (= a
+    lightweight stub) must not break the run."""
+    try:
+        await host.put_outbox(kind=kind, text=text, meta=meta)
+    except Exception:  # noqa: BLE001 — outbox is observability, never load-bearing
+        pass
