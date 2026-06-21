@@ -2025,7 +2025,7 @@ class Session:
 
         Coverage (the exhaustive set of append-capable spawned tasks in this
         surface — see #1533 source→gated-by table): the current turn (``_turn_idle``),
-        in-flight skills / plans (``running_skills`` / ``running_plans``), chain-timeout
+        in-flight skills (``running_skills``), chain-timeout
         watchdogs (``_chains`` timers, cancel+join), and fire-and-forget WAL-append
         tasks — intervention dispatch + intervention_answer_consumed (``_inflight_wal_tasks``).
         """

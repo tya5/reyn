@@ -11,10 +11,10 @@ Quiescence predicate (ADR-E):
     (a) No outbox messages for this reply_to are pending (= the RoutingLayer
         has dispatched all of them).
     (b) The agent's inbox is empty.
-    (c) No in-flight async tasks remain (running_skills + running_plans all
+    (c) No in-flight async tasks remain (running_skills all
         done for the current chain).
-  Cross-chain interference: the predicate tests running_skills and
-  running_plans globally, not per chain_id.  This is conservative (may wait
+  Cross-chain interference: the predicate tests running_skills
+  globally, not per chain_id.  This is conservative (may wait
   slightly longer when another concurrent chain is active) but correct —
   false-positive quiescence (returning too early) is worse than false-negative
   (waiting a little longer).
