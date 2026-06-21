@@ -537,15 +537,20 @@ class OSRuntime:
             op for op in all_ops
             if _PHASE_TOOL_NAME_ALIAS.get(op.kind, op.kind) in allowed
         ]
-        # #997: wiring-gap detection. A phase that declares an op in allowed_ops
-        # which the executor does NOT advertise (e.g. `mcp` with no servers
-        # configured) has that op
-        # filtered to nothing — the LLM sees the phase instruction referencing
-        # the op but no schema, and hallucinates a fake one (the FP-0008 / #1133
-        # failure class). Surface it as a P6 event so the trace tool catches the
-        # caller-side wiring gap proactively, once per phase per run.
-        # Apply the alias in reverse to exclude aliased names from the gap set:
-        # an allowed_ops entry "run_skill" is covered by the "invoke_skill" spec.
+        # #997 wiring-gap detection — NARROWED by #1993. A phase declares an op
+        # in allowed_ops that available_ops() does NOT advertise → it is filtered
+        # to nothing → the LLM sees the instruction but no schema and hallucinates
+        # a fake op (the FP-0008 / #1133 class). Surface it as a P6 event so the
+        # trace tool catches the caller-side gap, once per phase per run.
+        #
+        # #1993 widened available_ops() to EVERY map kind (completeness-by-
+        # construction), so the "handled-but-unconditionally-unadvertised" gap is
+        # gone. The residual — and only — purpose now is a CONFIG-GATED-OFF op a
+        # phase still declares: e.g. allowed_ops=[mcp] with no mcp server →
+        # call_mcp_tool is dropped from available_ops(), so the schema is absent.
+        # This warning is therefore KEPT (NOT inert): removing it would regress
+        # the mcp-no-servers FP-0008 guard. Alias-resolve so "run_skill" (the
+        # "invoke_skill" spec) / "mcp" (when configured) are not false gaps.
         _advertised_resolved = {
             _PHASE_TOOL_NAME_ALIAS.get(op.kind, op.kind) for op in all_ops
         }
@@ -605,6 +610,17 @@ class OSRuntime:
                 free_window=max(0, _budgets.effective_trigger - _used),
                 effective_trigger=_budgets.effective_trigger,
             )
+        # #1993: op_catalog (the meta-skill reference for choosing allowed_ops)
+        # uses CANONICAL kind names — meta-skills copy these into the phases they
+        # generate, and the DSL linter validates allowed_ops against ALL_OP_KINDS
+        # (canonical). available_control_ops (the LLM act-turn list, effective_ops)
+        # keeps the chat-name aliases (invoke_skill/call_mcp_tool) unchanged.
+        op_catalog = [
+            spec.model_copy(
+                update={"kind": _PHASE_TOOL_NAME_ALIAS.get(spec.kind, spec.kind)}
+            )
+            for spec in all_ops
+        ]
         return build_frame(
             phase_name=current_phase,
             phase=phase_def,
@@ -616,7 +632,7 @@ class OSRuntime:
             finish_criteria=self.skill.finish_criteria,
             max_phase_visits=self._max_phase_visits or None,
             available_ops=effective_ops,
-            op_catalog=all_ops,
+            op_catalog=op_catalog,
             effective_model=effective_model,
             model_resolved=model_resolved,
             events=self.events,
