@@ -1,16 +1,17 @@
-"""Task-driven decomposition + execution (#1953 slice P2).
+"""Task-driven decomposition + execution (#1953).
 
-The internal entry that subsumes ``plan``: decompose a goal into a parent Task +
-a child Task DAG (each child = a unit of work with its own narrowed ``tools`` and
+The entry that subsumes ``plan``: decompose a goal into a parent Task + a child
+Task DAG (each child = a unit of work with its own narrowed ``tools`` and
 ``depends_on`` edges), then drive the DAG to completion through the
-``TaskExecutionHost`` engine, propagating readiness (slices 6/6-ext) as each unit
-completes and synthesizing the final reply from the children's results.
+``TaskExecutionHost`` engine in topological order, propagating readiness
+(slices 6/6-ext) as each unit completes and synthesizing the final reply from the
+children's results.
 
-P2 keeps this **internal** (not an LLM-facing router tool yet — the router-expose
-co-lands with the plan-tool repoint at P3, avoiding a dual LLM-facing entry while
-``plan`` still runs in parallel). The orchestration takes an injectable
-``run_unit`` so it is testable without a live RouterLoop / LLM; the production
-``run_unit`` builds the engine + sub-loop.
+``run_task_graph`` takes an injectable ``run_unit`` so the orchestration is
+testable without a live RouterLoop / LLM; ``make_production_run_unit`` builds the
+real engine + sub-loop. ``dispatch_task_tool`` is the LLM-facing router entry (the
+``decompose`` tool), running in parallel with ``plan`` for behavioral-parity
+comparison.
 
 Result-channel (I-2): a unit's reply text lands on its Task (``set_result``); a
 dependent reads its deps' results from the backend at run time. The edges are pure
@@ -261,7 +262,7 @@ async def dispatch_task_tool(
     lightweight hosts). The deep running-tasks lifecycle (crash-recovery / cleanup
     parity) is **deferred to P4**, where plan's ``running_plans`` is MOVED onto the
     Task subsystem rather than parallel-built here (no throwaway)."""
-    from reyn.runtime.planner import parse_and_validate_plan, PlanValidationError
+    from reyn.runtime.planner import PlanValidationError, parse_and_validate_plan
 
     try:
         plan = parse_and_validate_plan(
