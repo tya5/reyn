@@ -61,8 +61,6 @@ class RouterHostAdapter:
         ``enumerate_available_skills`` without importing it here.
     agent_workspace_dir:
         Path to ``.reyn/agents/<agent_name>`` — used for ``get_memory_index``.
-    plan_registry_getter:
-        Zero-arg callable returning the current PlanRegistry (or None).
     file_read:
         Async callback ``(path: str) -> dict``.
     file_write:
@@ -91,8 +89,6 @@ class RouterHostAdapter:
         Async callback ``(OutboxMessage) -> None`` — the raw outbox put.
     append_history:
         Sync callback ``(ChatMessage) -> None``.
-    spawn_plan_task:
-        Async callback forwarded from session's ``spawn_plan_task``.
     delegation_tracker:
         Zero-arg callable returning the current ``list[dict] | None``.
     agent_replies_tracker:
