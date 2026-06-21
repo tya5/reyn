@@ -1360,19 +1360,30 @@ class OutboxRouter:
         """
         source = (msg.meta or {}).get("source", "")
         plan_id = (msg.meta or {}).get("plan_id", "")
-        if plan_id:
-            if source == "plan_summary":
-                # Compact summary for the bottom strip — the full
-                # multi-line ``Executing plan: …`` text already lands
-                # in the conv pane via the default render below.
-                summary = f"plan #{str(plan_id)[:8]}"
+        # #1953 P3 (b) TUI-surface parity: the task-driven ``decompose`` mirrors
+        # plan's lifecycle surface — ``task_summary`` / ``task_complete`` (keyed on
+        # ``parent_task_id``) drive the SAME bottom-strip AsyncStackPanel row as
+        # ``plan_summary`` / ``plan_complete`` (keyed on ``plan_id``), so the two
+        # decomposition paths render an equivalent "running" progress UX. The
+        # synthesized reply stays a ``kind="agent"`` message (the user-facing
+        # answer), exactly like plan's aggregator reply. (Emit side = decompose's
+        # dispatcher; #1953 slice P3.)
+        task_id = (msg.meta or {}).get("parent_task_id", "")
+        row_key = plan_id or task_id
+        if row_key:
+            if source in ("plan_summary", "task_summary"):
+                # Compact summary for the bottom strip — the full multi-line
+                # start text already lands in the conv pane via the default
+                # render below.
+                label = "task" if source == "task_summary" else "plan"
+                summary = f"{label} #{str(row_key)[:8]}"
                 try:
-                    conv.add_async_task(str(plan_id), summary)
+                    conv.add_async_task(str(row_key), summary)
                 except Exception:
                     pass
-            elif source == "plan_complete":
+            elif source in ("plan_complete", "task_complete"):
                 try:
-                    conv.remove_async_task(str(plan_id))
+                    conv.remove_async_task(str(row_key))
                 except Exception:
                     pass
             elif source == "plan_aborted":
@@ -1380,7 +1391,7 @@ class OutboxRouter:
                 # so the user sees the row terminated abnormally rather
                 # than silently disappearing (= audit finding A#6).
                 try:
-                    conv.remove_async_task(str(plan_id), terminal="aborted")
+                    conv.remove_async_task(str(row_key), terminal="aborted")
                 except Exception:
                     pass
         # Default render path — preserves the dim marker line / slash
