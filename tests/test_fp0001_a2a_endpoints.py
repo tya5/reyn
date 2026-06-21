@@ -70,7 +70,7 @@ def _restore_overrides() -> None:
 
 
 def test_get_task_returns_a2a_envelope_from_task_backend() -> None:
-    """Tier 2 (#1953 slice 5a): GET /a2a/tasks/{task_id} returns 200 with the spec
+    """Tier 2: (#1953 slice 5a) GET /a2a/tasks/{task_id} returns 200 with the spec
     A2A Task envelope read from the Task backend (Task-vocab state)."""
     import asyncio
 
@@ -117,7 +117,7 @@ def test_get_task_returns_404_for_unknown_run() -> None:
 
 
 def test_cancel_task_aborts_task_in_backend() -> None:
-    """Tier 2 (#1953 slice 5a): POST /a2a/tasks/{task_id}/cancel = the external
+    """Tier 2: (#1953 slice 5a) POST /a2a/tasks/{task_id}/cancel = the external
     requester's remove-op → task.abort (cooperative-terminal → archived). The
     response is the archived Task's A2A envelope (status=canceled)."""
     import asyncio

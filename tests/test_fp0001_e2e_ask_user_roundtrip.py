@@ -354,7 +354,7 @@ def test_async_mode_message_send_returns_task_envelope(tmp_path, monkeypatch):
 
 @pytest.mark.skipif(_SKIP_ROUTER, reason=_SKIP_REASON)
 def test_get_task_returns_a2a_envelope_from_task_backend(tmp_path, monkeypatch):
-    """Tier 2c (#1953 slice 5a): GET /a2a/tasks/{task_id} returns the spec A2A
+    """Tier 2c: (#1953 slice 5a) GET /a2a/tasks/{task_id} returns the spec A2A
     Task envelope read from the Task backend (Task-vocab state). A blocked Task
     surfaces as input-required (interim — slice 7 splits the block-reason)."""
     import asyncio
