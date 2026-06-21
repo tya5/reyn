@@ -1,7 +1,7 @@
 """Tier 2: #1953 slice 5b — A2A async-run terminal status-reflection.
 
 The async background run reflects its terminal outcome onto the canonical Task
-via the single-writer assignee CAS (``_reflect_task_terminal``). The reflection
+via the single-writer assignee CAS (``_reflect_task_status``). The reflection
 is **best-effort + race-safe**: if an A2A ``Cancel`` archived the Task first, the
 terminal-guard rejects the late reflection and the abort wins — the helper
 swallows the rejection so the background run never crashes on it.
@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import pytest
 
-from reyn.interfaces.web.routers.a2a import _reflect_task_terminal
+from reyn.interfaces.web.routers.a2a import _reflect_task_status
 from reyn.runtime.a2a_routing import a2a_session_id
 from reyn.task import InMemoryTaskBackend, Task, TaskOrigin, TaskState
 
@@ -39,7 +39,7 @@ async def test_completed_run_reflects_onto_task():
     sid = a2a_session_id("ctx-r")
     await _a2a_task(backend, "t-1", sid)
 
-    await _reflect_task_terminal(backend, "t-1", "completed", sid)
+    await _reflect_task_status(backend, "t-1", "completed")
 
     refreshed = await backend.get("t-1")
     assert refreshed is not None and refreshed.status is TaskState.COMPLETED
@@ -58,7 +58,7 @@ async def test_reflection_after_abort_is_swallowed_and_abort_wins():
     assert aborted and aborted[0].status is TaskState.ARCHIVED
 
     # Must NOT raise even though the Task is terminal (best-effort reflection).
-    await _reflect_task_terminal(backend, "t-1", "completed", sid)
+    await _reflect_task_status(backend, "t-1", "completed")
 
     refreshed = await backend.get("t-1")
     assert refreshed is not None and refreshed.status is TaskState.ARCHIVED

@@ -60,9 +60,14 @@ class A2AInterventionBus:
     issue #292 (α): no longer an iv owner; pure side-effect emitter.
     """
 
-    def __init__(self, run_id: str, registry: "RunRegistry") -> None:
+    def __init__(self, run_id: str, registry: "RunRegistry", *, task_backend=None) -> None:
         self._run_id = run_id
         self._registry = registry
+        # #1981 P3: the canonical Task backend (optional). When wired, an ask_user
+        # dispatch reflects the Task → blocked (input-required) so GetTask stays
+        # coherent with the RunEntry's input-required mirror. The iv itself remains
+        # Session-owned (#292 α); this is only the public-status reflection.
+        self._task_backend = task_backend
 
     @property
     def channel_id(self) -> str:
@@ -112,6 +117,12 @@ class A2AInterventionBus:
         # outstanding_interventions; we only reflect the high-level
         # state on the RunEntry for peer polling visibility.
         self._registry.update(self._run_id, status="input-required")
+
+        # #1981 P3: reflect the canonical Task → blocked (= A2A input-required) so
+        # GetTask is coherent with this RunEntry mirror. Best-effort + race-safe
+        # (assignee CAS, terminal-guard); the assignee read off the Task is the
+        # immutable owner session, so this is the assignee's own status write.
+        await self._reflect_task_blocked()
 
         # Build the canonical input-required payload (issue #267 Gap 4 shape).
         payload: dict = {
@@ -177,6 +188,33 @@ class A2AInterventionBus:
                 )
             if channel_state is not None:
                 channel_state.record_attempt(result)
+
+    async def _reflect_task_blocked(self) -> None:
+        """#1981 P3: reflect the canonical Task → ``blocked`` on ask_user dispatch.
+
+        Best-effort + race-safe: the assignee read off the Task is the immutable
+        owner session, so the ``update_status`` is the assignee's own write (the
+        CAS passes); a terminal Task (e.g. already cancelled) is left as-is via the
+        terminal-guard. A missing backend / Task is a no-op. Never raised."""
+        if self._task_backend is None:
+            return
+        try:
+            task = await self._task_backend.get(self._run_id)
+            if task is None or not task.assignee:
+                return
+            await self._task_backend.update_status(
+                self._run_id, "blocked", caller_session_id=task.assignee,
+            )
+        except PermissionError:
+            logger.debug(
+                "A2AInterventionBus: task %r blocked-reflection skipped "
+                "(terminal-guard)", self._run_id,
+            )
+        except Exception:  # noqa: BLE001 — reflection is best-effort
+            logger.exception(
+                "A2AInterventionBus: task %r blocked-reflection failed",
+                self._run_id,
+            )
 
 
 __all__ = ["A2AInterventionBus"]
