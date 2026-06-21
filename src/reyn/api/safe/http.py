@@ -48,6 +48,7 @@ from urllib.request import build_opener as _build_opener
 
 from reyn import _ssrf_guard
 from reyn._http_limits import read_capped
+from reyn._ssrf_pin import _PinnedHTTPHandler, _PinnedHTTPSHandler
 
 # ── Internal state ─────────────────────────────────────────────────────────
 #
@@ -131,7 +132,13 @@ class _SSRFSafeRedirectHandler(_HTTPRedirectHandler):
 # kept under the ``_urlopen`` name as the stable seam ``_request`` calls (and
 # that tests patch to inject fake responses) — a drop-in for the old
 # ``urllib.request.urlopen`` but redirect-safe.
-_urlopen = _build_opener(_SSRFSafeRedirectHandler()).open
+# #1972: _PinnedHTTP(S)Handler ensure each connection goes to the pre-validated
+# IP (pinned at check time), closing the DNS-rebind TOCTOU window.
+_urlopen = _build_opener(
+    _SSRFSafeRedirectHandler(),
+    _PinnedHTTPHandler(),
+    _PinnedHTTPSHandler(),
+).open
 
 
 def _response_dict(resp: Any) -> dict:

@@ -5,6 +5,7 @@ import asyncio
 import html.parser
 from typing import Literal
 
+from reyn._ssrf_pin import PinnedAsyncHTTPTransport
 from reyn.schemas.models import WebFetchIROp, WebSearchIROp
 
 from . import register
@@ -280,11 +281,16 @@ async def handle_web_fetch(op: WebFetchIROp, ctx: OpContext, caller: Literal["pr
     try:
         # SSL verification — priority: reyn.yaml web.fetch config → env-var chain.
         # #1956: follow_redirects=False — we follow manually so each hop is gated.
+        # #1972: PinnedAsyncHTTPTransport pins each hop's connect to the pre-
+        # validated IP (resolve_and_validate at gate time) so the client never
+        # re-resolves the host at connect time — closing the DNS-rebind TOCTOU.
+        # The manual redirect loop's _gate_hop L1+L2 logic is preserved; the
+        # transport adds connect-time pinning on top of the check-time gate.
         async with httpx.AsyncClient(
             timeout=op.timeout,
             follow_redirects=False,
             headers={"User-Agent": "reyn/1.0"},
-            verify=_resolve_ssl_verify(ctx),
+            transport=PinnedAsyncHTTPTransport(verify=_resolve_ssl_verify(ctx)),
         ) as client:
             _url = op.url
             for _hop in range(_ssrf_guard.MAX_REDIRECTS + 1):

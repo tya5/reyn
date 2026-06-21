@@ -21,27 +21,15 @@ by the search response (e.g. ``"io.github.foo/bar-mcp"``).
 """
 from __future__ import annotations
 
-import asyncio
 import os
 import urllib.parse
 from typing import TYPE_CHECKING
 
 from reyn import _ssrf_guard
+from reyn._ssrf_pin import PinnedAsyncHTTPTransport
 
 if TYPE_CHECKING:
     pass
-
-
-async def _ssrf_request_hook(request) -> None:
-    """#1956 SSRF: gate EVERY httpx request — the initial AND each redirect hop
-    (httpx request event-hooks fire per-hop, verified) — against the IP-deny
-    guard, so a malicious / compromised registry that redirects to an internal
-    IP is blocked. ``allow_private`` is the operator opt-in (env-exported)."""
-    await asyncio.to_thread(
-        _ssrf_guard.assert_fetch_host_allowed,
-        request.url.host or "",
-        allow_private=_ssrf_guard.resolve_allow_private(),
-    )
 
 
 class RegistryError(Exception):
@@ -174,13 +162,14 @@ class RegistryClient:
         # through to the litellm env-var chain (same as web_fetch handler).
         verify = self._verify if self._verify is not None else get_ssl_verify()
         # SSL verification — priority: constructor arg → litellm env-var chain.
+        # #1972: PinnedAsyncHTTPTransport replaces the old event_hooks approach —
+        # it both validates (L2 SSRF IP-deny, #1956) AND pins the connect-time
+        # socket to the pre-validated IP, closing the DNS-rebind TOCTOU window.
         self._client = httpx.AsyncClient(
             timeout=15.0,
             follow_redirects=True,
             headers={"User-Agent": "reyn/1.0"},
-            verify=verify,
-            # #1956 SSRF: re-gate every hop (incl. redirects) via the IP-deny guard.
-            event_hooks={"request": [_ssrf_request_hook]},
+            transport=PinnedAsyncHTTPTransport(verify=verify),
         )
         return self
 

@@ -86,6 +86,7 @@ from typing import Any
 # user code through this safe namespace surface.
 from reyn import _ssrf_guard
 from reyn._http_limits import read_capped
+from reyn._ssrf_pin import _PinnedHTTPHandler, _PinnedHTTPSHandler
 from reyn.core.registry import cache as _cache
 from reyn.core.registry.client import _dedup_by_latest
 from reyn.core.registry.models import server_info_from_raw
@@ -156,7 +157,12 @@ def _http_get_json(url: str) -> dict:
     req = urllib.request.Request(url, headers={"User-Agent": _USER_AGENT})
     # #1956 SSRF: gate the initial host + (via the opener's redirect handler)
     # each redirect hop against the IP-deny guard. Both surface as RegistryError.
-    opener = urllib.request.build_opener(_SSRFRedirectHandler())
+    # #1972: _PinnedHTTP(S)Handler pin the socket connect to the pre-validated IP.
+    opener = urllib.request.build_opener(
+        _SSRFRedirectHandler(),
+        _PinnedHTTPHandler(),
+        _PinnedHTTPSHandler(),
+    )
     try:
         _ssrf_guard.assert_fetch_host_allowed(
             urllib.parse.urlparse(url).hostname or "",
