@@ -147,7 +147,7 @@ flowchart LR
     end
     HUMAN -- submit_user_text --> Ax
     INBOX --> FLEET
-    HOOK["In-turn hooks<br/>(proposed)"] -. intercept running turn .-> Ax
+    HOOK["In-turn intervention hooks<br/>(proposed)"] -. block / rewrite running turn .-> Ax
     Ax <-. "delegate · topology-gated<br/>network / team / pipeline · chain_id" .-> Ay
     classDef pr stroke-dasharray:5 4;
     class HOOK pr;
