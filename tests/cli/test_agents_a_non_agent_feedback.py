@@ -1,10 +1,9 @@
 """Tier 2: Agents tab ``a`` on a non-agent row walks up to owning agent.
 
 Wave-11 finding A#6. Before this PR, pressing ``a`` while the
-cursor sat on a running_skill / running_plan / recent_skill /
-recent_plan row silently no-op'd. User got no feedback —
-indistinguishable from "the key is broken". First-time-user
-discoverability bug.
+cursor sat on a running_skill / recent_skill row silently no-op'd.
+User got no feedback — indistinguishable from "the key is broken".
+First-time-user discoverability bug.
 
 This PR: walk UP through ``_agents_items`` to the nearest
 ``kind == "agent"`` row and prefill /attach for THAT agent. The
@@ -18,7 +17,7 @@ Edge case (= rare): no agent above the cursor → surface a
 
 Pinned:
   - cursor on running_skill row → walks up to parent agent
-  - cursor on recent_plan row → walks up to parent agent
+  - cursor on recent_skill row → walks up to parent agent
   - cursor on agent row → unchanged from prior behaviour
   - empty agent list above cursor → flash hint, no prefill
 """
@@ -75,9 +74,9 @@ async def test_cursor_on_bobs_sub_row_walks_to_bob_not_alice() -> None:
             {"kind": "agent", "name": "alice"},
             {"kind": "running_skill", "skill_name": "code_review"},
             {"kind": "agent", "name": "bob"},
-            {"kind": "recent_plan", "plan_id": "p1"},
+            {"kind": "recent_skill", "skill_name": "shell"},
         ]
-        panel._agents_cursor = 3  # bob's recent plan
+        panel._agents_cursor = 3  # bob's recent skill
         panel._prefill_attach_for_cursor()
         await pilot.pause()
         ib = app.query_one("#inputbar", InputBar)

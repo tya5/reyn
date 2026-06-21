@@ -11,7 +11,7 @@ Before this work:
     reached the InterventionWidget's ``on_key`` handler, so chip
     hotkeys were dead and the only keyboard path was ``Ctrl+O`` + Tab.
   - ``action_cancel_inflight`` only iterated ``session.running_skills``
-    / ``running_plans`` / streams. A pending intervention (= modal
+    / streams. A pending intervention (= modal
     waiting for an answer) was invisible to the cancel path, so
     ``Ctrl+C`` reported ``nothing in-flight to cancel`` and the modal
     stayed up indefinitely.

@@ -23,7 +23,6 @@ from reyn.interfaces.tui._palette import _BG_PANEL, _BORDER_DIM
 from .agents_tab import render_agents
 from .base import (
     _CORAL,
-    _EVENT_PLAN,
     _STATUS_ERROR,
     _STATUS_READY,
     _STATUS_SUCCESS,
@@ -1587,10 +1586,6 @@ class RightPanel(Widget):
             recent traces (read from the live skill_run jsonl if visible).
           * ``recent_skill``  — full event sequence from the run's jsonl
             file, JSON-prettified (mirrors the events tab preview).
-          * ``running_plan``  — agent / plan_id / goal / done/total /
-            failed count.
-          * ``recent_plan``   — agent / plan_id / goal / completion stats /
-            exception type when interrupted.
         """
         if not self._agents_items:
             pane.clear()
@@ -1600,12 +1595,8 @@ class RightPanel(Widget):
         kind = item.get("kind", "")
         if kind == "running_skill":
             self._preview_running_skill(pane, item)
-        elif kind == "running_plan":
-            self._preview_running_plan(pane, item)
         elif kind == "recent_skill":
             self._preview_recent_skill(pane, item)
-        elif kind == "recent_plan":
-            self._preview_recent_plan(pane, item)
         elif kind == "agent":
             # Wave-10 H-F1: agent-label row preview. Pre-fix this branch
             # fell through to ``pane.clear()``, leaving the preview pane
@@ -1717,32 +1708,6 @@ class RightPanel(Widget):
             short = trig if len(trig) <= 240 else trig[:237] + "…"
             head.append(short, style=_TEXT_BODY)
         title = f"running · {item.get('skill_name', '?')}"
-        pane.show_text(title, RichGroup(head))
-
-    def _preview_running_plan(self, pane: _PreviewPane, item: dict) -> None:
-        """Live snapshot for an in-flight plan run."""
-        from rich.console import Group as RichGroup
-        from rich.text import Text as RichText
-        head = RichText()
-        head.append("plan ", style="dim")
-        head.append(item.get("plan_id", "?"), style="bold " + _EVENT_PLAN)
-        head.append("  ")
-        head.append(item.get("status", "?"),
-                    style=_STATUS_SUCCESS if item.get("status") == "running" else _STATUS_READY)
-        head.append("\n")
-        head.append("agent: ", style="dim")
-        head.append(item.get("agent", "?"), style=_TEXT_BRIGHT)
-        head.append("\n")
-        head.append("progress: ", style="dim")
-        head.append(
-            f"{item.get('done', 0)}/{item.get('total', 0)}", style=_TEXT_BRIGHT,
-        )
-        if item.get("failed"):
-            head.append(f"  ({item['failed']} failed)", style=_STATUS_ERROR)
-        if item.get("goal"):
-            head.append("\n\ngoal:\n", style="dim")
-            head.append(item["goal"], style=_TEXT_BODY)
-        title = f"running · plan {item.get('plan_id', '?')}"
         pane.show_text(title, RichGroup(head))
 
     def _preview_recent_skill(self, pane: _PreviewPane, item: dict) -> None:
@@ -2016,20 +1981,10 @@ class RightPanel(Widget):
                     self._build_recent_skill_bundle(item),
                     f"skill run · {item.get('skill_name', '?')}",
                 )
-            if kind == "recent_plan":
-                return (
-                    self._build_recent_plan_bundle(item),
-                    f"plan · {item.get('plan_id', '?')}",
-                )
             if kind == "running_skill":
                 return (
                     self._build_running_skill_bundle(item),
                     f"running skill · {item.get('skill_name', '?')}",
-                )
-            if kind == "running_plan":
-                return (
-                    self._build_running_plan_bundle(item),
-                    f"running plan · {item.get('plan_id', '?')}",
                 )
         if self._panel_type == "docs" and self._docs_files:
             idx = max(0, min(len(self._docs_files) - 1, self._docs_cursor))
@@ -2385,26 +2340,6 @@ class RightPanel(Widget):
             lines.append("(no events)")
         return "\n".join(lines) + "\n"
 
-    def _build_recent_plan_bundle(self, item: dict) -> str:
-        """Header for a finished plan."""
-        lines: list[str] = []
-        lines.append(f"# Reyn plan · {item.get('plan_id', '?')}")
-        lines.append(f"# agent:    {item.get('agent', '?')}")
-        lines.append(f"# status:   {item.get('status', '?')}")
-        lines.append(
-            f"# steps:    {item.get('n_completed', 0)} ok / "
-            f"{item.get('n_failed', 0)} failed",
-        )
-        if item.get("exc_type"):
-            lines.append(f"# exc:      {item['exc_type']}")
-        lines.append(f"# finished: {item.get('ts', '?')}")
-        if item.get("goal"):
-            lines.append("")
-            lines.append("goal: |")
-            for goal_line in str(item["goal"]).splitlines() or [str(item["goal"])]:
-                lines.append(f"  {goal_line}")
-        return "\n".join(lines) + "\n"
-
     def _build_running_skill_bundle(self, item: dict) -> str:
         lines: list[str] = []
         lines.append(f"# Reyn skill run (running) · {item.get('skill_name', '?')}")
@@ -2420,63 +2355,6 @@ class RightPanel(Widget):
             for ln in str(item["triggered_by"]).splitlines() or [str(item["triggered_by"])]:
                 lines.append(f"  {ln}")
         return "\n".join(lines) + "\n"
-
-    def _build_running_plan_bundle(self, item: dict) -> str:
-        lines: list[str] = []
-        # Wave-10 follow-up H-F6: prefer ``plan_id_full`` (= the
-        # canonical UUID) when it's present so the copied payload
-        # matches the events log identifier exactly. Falls back to
-        # the 8-char display prefix if the flat_item lacks the full
-        # form — defensive against older callers.
-        plan_id = item.get("plan_id_full") or item.get("plan_id", "?")
-        lines.append(f"# Reyn plan (running) · {plan_id}")
-        lines.append(f"# agent:    {item.get('agent', '?')}")
-        lines.append(f"# status:   {item.get('status', '?')}")
-        lines.append(
-            f"# progress: {item.get('done', 0)}/{item.get('total', 0)} "
-            f"({item.get('failed', 0)} failed)"
-        )
-        if item.get("goal"):
-            lines.append("")
-            lines.append("goal: |")
-            for ln in str(item["goal"]).splitlines() or [str(item["goal"])]:
-                lines.append(f"  {ln}")
-        return "\n".join(lines) + "\n"
-
-    def _preview_recent_plan(self, pane: _PreviewPane, item: dict) -> None:
-        """Detail view for a finished plan."""
-        from rich.console import Group as RichGroup
-        from rich.text import Text as RichText
-        head = RichText()
-        ok = item.get("status") == "ok"
-        head.append("✓ " if ok else "✗ ",
-                    style="bold " + (_STATUS_SUCCESS if ok else _STATUS_ERROR))
-        head.append("plan ", style="dim")
-        head.append(item.get("plan_id", "?"), style="bold " + _EVENT_PLAN)
-        head.append("\n")
-        head.append("agent: ", style="dim")
-        head.append(item.get("agent", "?"), style=_TEXT_BRIGHT)
-        head.append("\n")
-        head.append("status: ", style="dim")
-        head.append(item.get("status", "?"),
-                    style=_STATUS_SUCCESS if ok else _STATUS_ERROR)
-        head.append("\n")
-        head.append("steps: ", style="dim")
-        head.append(
-            f"{item.get('n_completed', 0)} ok / {item.get('n_failed', 0)} failed",
-            style=_TEXT_BRIGHT,
-        )
-        head.append("\n")
-        head.append("finished: ", style="dim")
-        head.append(item.get("ts", "?"), style=_TEXT_BRIGHT)
-        if item.get("exc_type"):
-            head.append("\n\nexception:\n", style="dim")
-            head.append(item["exc_type"], style=_STATUS_ERROR)
-        if item.get("goal"):
-            head.append("\n\ngoal:\n", style="dim")
-            head.append(item["goal"], style=_TEXT_BODY)
-        title = f"plan {item.get('plan_id', '?')}"
-        pane.show_text(title, RichGroup(head))
 
     # ── docs navigation ───────────────────────────────────────────────────────
 
