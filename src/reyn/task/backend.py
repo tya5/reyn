@@ -133,6 +133,13 @@ class TaskBackend(Protocol):
         satisfied). None for unknown task."""
         ...
 
+    async def record_cost(self, task_id: str, delta: float) -> Task | None:
+        """Accumulate ``delta`` onto the task's ``cost_accum`` (#1953 slice 8) — the
+        per-Task cost-attribution primitive. Pure write (the cap-hit check + the
+        ``cap_exceeded`` disposition routing is the op layer's, which has the ctx).
+        None for an unknown task."""
+        ...
+
     async def abort(self, task_id: str, reason: str | None = None) -> list[Task]: ...
 
     async def set_awaiting(self, task_id: str, awaiting_since: float | None) -> Task | None: ...
@@ -351,6 +358,14 @@ class InMemoryTaskBackend:
             self._tasks[tid].updated_at = _now_iso()
             aborted.append(self._tasks[tid])
         return aborted
+
+    async def record_cost(self, task_id: str, delta: float) -> Task | None:
+        task = self._tasks.get(task_id)
+        if task is None:
+            return None
+        task.cost_accum += delta
+        task.updated_at = _now_iso()
+        return task
 
     async def set_awaiting(self, task_id: str, awaiting_since: float | None) -> Task | None:
         task = self._tasks.get(task_id)

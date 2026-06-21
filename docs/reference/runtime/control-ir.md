@@ -554,13 +554,24 @@ Completion-recompute (relax → only promotes), `remove` (relax), and `repoint`
 `task_readiness` event.
 
 **Disposition → parent routing (slice 6-ext).** When a task reaches a
-non-`completed` terminal (`aborted` via `task.abort`, or `failed` via
-`task.update_status`) and has **still-alive dependents**, the OS routes the
-disposition to the task's **parent session** (`parent_id`'s assignee) to decide
-recovery — the parent re-wires via ordinary ops (`repoint` / `remove` / fail /
-support-self), **not** a `decision=` vocabulary (P7). Emits a generic P6
-`task_dependency_aborted`. A root task (no parent) or an already-terminal parent
-routes nothing (the parent's own cascade subsumes it).
+non-`completed` terminal (`aborted` via `task.abort`, `failed` via
+`task.update_status`, or `cap_exceeded` on a per-Task budget cap-hit) and has
+**still-alive dependents**, the OS routes the disposition to the task's **parent
+session** (`parent_id`'s assignee) to decide recovery — the parent re-wires via
+ordinary ops (`repoint` / `remove` / fail / support-self), **not** a `decision=`
+vocabulary (P7). The **disposition** is carried first-class (in both the P6
+`task_dependency_aborted` event and the parent payload) so a budget `cap_exceeded`
+is never conflated with a genuine error `failed` (slice 8). A root task (no parent)
+or an already-terminal parent routes nothing (the parent's own cascade subsumes it).
+
+**Per-Task budget cap (slice 8).** `record_cost(task_id, delta)` accumulates an
+LLM call's cost onto the Task's `cost_accum`; when it crosses the Task's
+`budget_cap` (an INDEPENDENT cap dimension, enforced alongside the session / daily
+caps — the tighter hits first), the OS force-terminates the task (abort-like) and
+routes the `cap_exceeded` disposition through the SAME parent-LLM seam — so one
+recovery mechanism resolves both a terminal-dependency and a cap-hit. (The
+production wiring of the LLM cost recorder to `record_cost` co-lands with the
+task-execution engine in a later slice.)
 
 **The TaskWaker (slice 7).** The `OpContext.task_waker` (the OS `TaskWaker`
 driver) turns these dispositions into actual session **wakes** via the canonical
