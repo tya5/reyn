@@ -96,7 +96,7 @@ def _assert_executes_and_fences(text: str) -> None:
 
 @pytest.mark.asyncio
 async def test_create_time_wake_delegated_executes_and_fences_injection():
-    """Tier 2 (THE acceptance test): a born-ready DELEGATED task (assignee !=
+    """Tier 2: THE acceptance test — a born-ready DELEGATED task (assignee !=
     requester) wakes the assignee with BOTH (a) the trusted-OS execute framing and
     (b) the injection-bearing description FENCED. Both halves must hold."""
     backend = InMemoryTaskBackend()
@@ -176,7 +176,7 @@ async def test_create_time_wake_skipped_for_born_blocked_delegated():
 
 @pytest.mark.asyncio
 async def test_dep_completion_wakes_dependent_with_full_fenced_description():
-    """Tier 2 (item 4, end-to-end): completing a dependency wakes the now-ready
+    """Tier 2: item 4 (end-to-end) — completing a dependency wakes the now-ready
     dependent's assignee with the FULL description fenced + the execute framing —
     via the real update_status → recompute_readiness → wake_ready_dependent path
     (previously only the task name was delivered)."""
