@@ -65,6 +65,16 @@ _NOT_EXTERNAL = {
     "invoke_skill",
     # — reyn's own framework source (trusted) —
     "reyn_src_list", "reyn_src_read", "reyn_src_glob", "reyn_src_grep",
+    # — task subsystem (#1953 dynamic-wire) — return the OS task RECORD (id /
+    # status / deps / the task's own fields) from the CAS-gated task backend:
+    # structured OS state, not external content. Cross-session content (a
+    # delegated task's description / a peer's comment) crosses the trust
+    # boundary at the WAKE / result inbound seam (items 4-5), fenced THERE —
+    # the same pattern as delegate_to_agent (ACK here, reply fenced inbound).
+    "task.create", "task.update_status", "task.get", "task.list",
+    "task.add_dependency", "task.remove_dependency", "task.repoint_dependency",
+    "task.abort", "task.heartbeat", "task.register_unblock_predicate",
+    "task.comment",
 }
 
 
