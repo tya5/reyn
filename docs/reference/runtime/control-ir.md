@@ -38,6 +38,8 @@ Control IR is the list of side-effect operations the LLM may emit alongside its 
 | `task.get` | Read one Task record | requester-gated |
 | `task.list` | List Tasks (filter by assignee / requester / status / parent) | none (filtered read) |
 | `task.add_dependency` | Add a depends-on edge (dependency DAG) | requester-gated |
+| `task.remove_dependency` | Drop a depends-on edge (idempotent); may promote a now-satisfied dependent | requester-gated |
+| `task.repoint_dependency` | Atomically repoint an edge `from_depends_on`→`to_depends_on` (cycle-checked first); re-evals readiness | requester-gated |
 | `task.abort` | Remove-op (= delete): archive the task + sub-tree (cooperative-terminal) | requester-gated |
 | `task.heartbeat` | Liveness / unblock-predicate trigger for a blocked Task | assignee-gated |
 | `task.register_unblock_predicate` | Register a deterministic unblock predicate | assignee-gated |
@@ -533,17 +535,36 @@ status (the requester does not write the assignee's status). A task born with
 not-all-completed deps is **OS-derived `blocked`** at create (deps-less tasks keep
 their requested status).
 
-**Completion-driven readiness (OS-authority).** When a predecessor reaches
-`completed`, `task.update_status` drives an OS readiness recompute: each dependent
-whose deps are **all** `completed` transitions `blocked → ready`, emitting a
-generic P6 `task_readiness` event. This `blocked → ready` write is an **OS
-scheduling transition** (P3) — like `abort`, it is a dedicated backend method that
-**bypasses the assignee CAS** (it is not an assignee progress write). A
-non-`completed` terminal dep (`failed` / `aborted`) does not satisfy an edge
-(liveness backstop lands in a later slice).
+**Mutable edges (slice 6-ext).** `task.remove_dependency` drops an edge
+(idempotent — a no-op on a missing edge); `task.repoint_dependency` atomically
+repoints `from_depends_on` → `to_depends_on`, **cycle-checking the NEW edge BEFORE
+any mutation** (a cycle/dangling repoint changes nothing and returns the same
+structured error). Both are requester topology writes that go through the same
+shared edge-guard, then run the **OS-authority readiness re-derive**.
 
-Still landing in later slices: unblock-predicate evaluation; terminal-non-completed
-dependency handling (liveness backstop).
+**Readiness re-derive (OS-authority, P3).** A single primitive derives a task's
+readiness over the **pre-run** scheduling states `{pending, ready, blocked}`:
+promote `blocked → ready` when all deps are satisfied (incl. a deps-less task —
+removing the last dep readies it), re-block `{pending, ready} → blocked` when they
+are not. An `in_progress` (the assignee owns the run) or terminal task is left
+untouched — this is the single-writer split (the OS schedules pre-run, the
+assignee owns the run), and the write **bypasses the assignee CAS** like `abort`.
+Completion-recompute (relax → only promotes), `remove` (relax), and `repoint`
+(may demote or promote) all share it. A readiness change emits a generic P6
+`task_readiness` event.
+
+**Disposition → parent routing (slice 6-ext).** When a task reaches a
+non-`completed` terminal (`aborted` via `task.abort`, or `failed` via
+`task.update_status`) and has **still-alive dependents**, the OS routes the
+disposition to the task's **parent session** (`parent_id`'s assignee) to decide
+recovery — the parent re-wires via ordinary ops (`repoint` / `remove` / fail /
+support-self), **not** a `decision=` vocabulary (P7). Emits a generic P6
+`task_dependency_aborted`. A root task (no parent) or an already-terminal parent
+routes nothing (the parent's own cascade subsumes it). The session **wake** is the
+slice-7 `TaskWaker` (stubbed here via `OpContext.task_waker`).
+
+Still landing in later slices: the `TaskWaker` driver (turns the events into a
+session wake) + unblock-predicate evaluation.
 
 ---
 

@@ -110,6 +110,29 @@ class TaskBackend(Protocol):
         Returns the newly-readied tasks (so the caller emits P6 + later nudges)."""
         ...
 
+    async def dependents(self, task_id: str) -> list[Task]:
+        """Tasks that depend ON ``task_id`` (reverse edge lookup, §13) — the
+        abort/failed → parent-routing hub reads it to find stuck dependents."""
+        ...
+
+    async def remove_dependency(self, task_id: str, depends_on: str) -> Task | None:
+        """Drop a depends-on edge (#1953 slice 6-ext) — requester topology write,
+        idempotent (no-op on a missing edge). Dropping an edge only RELAXES, so the
+        OS-authority re-derive may promote a now-satisfied ``blocked`` task (incl.
+        the I-1 last-dep-removed → ready case), never demote. None for unknown task."""
+        ...
+
+    async def repoint_dependency(
+        self, task_id: str, from_depends_on: str, to_depends_on: str
+    ) -> Task | None:
+        """Atomically repoint an edge ``from_depends_on`` → ``to_depends_on``
+        (#1953 slice 6-ext) — the parent's primary recovery move. Cycle-checks the
+        NEW edge BEFORE any mutation (raises ``TaskCycleError`` / ``TaskDepNotFoundError``
+        → the op layer returns the structured error, nothing changed). Re-blocks
+        then re-evaluates readiness (the new edge may demote or the graph may now be
+        satisfied). None for unknown task."""
+        ...
+
     async def abort(self, task_id: str, reason: str | None = None) -> list[Task]: ...
 
     async def set_awaiting(self, task_id: str, awaiting_since: float | None) -> Task | None: ...
@@ -222,22 +245,89 @@ class InMemoryTaskBackend:
         task.updated_at = _now_iso()
         return task
 
+    def _all_deps_satisfied(self, task: Task) -> bool:
+        # A dep is satisfied when it exists + is completed. No deps → vacuously
+        # satisfied (the #1953 slice 6-ext I-1 case: an ordering-free task is ready).
+        return all(
+            d in self._tasks and self._tasks[d].status == TaskState.COMPLETED
+            for d in task.deps
+        )
+
+    def _derive_readiness(self, task: Task, *, allow_demote: bool = False) -> str | None:
+        """OS-authority readiness derivation (#1953 slice 6-ext, P3 — no CAS).
+        Operates ONLY on the pre-run scheduling states {PENDING, READY, BLOCKED};
+        an IN_PROGRESS task (the assignee owns the run) or a terminal task is left
+        untouched (the single-writer split). Always promotes BLOCKED → READY when
+        all deps are satisfied; **only when ``allow_demote``** re-blocks
+        {PENDING, READY} → BLOCKED when they are not. Returns the transition
+        (``"ready"`` / ``"blocked"``) when the status changed, else None.
+
+        The shared primitive: completion-recompute + ``remove`` only RELAX the
+        graph → promote-only (``allow_demote=False``, consistent with the OQ-2
+        pure-topology rule that a mere edge change does not re-block a non-blocked
+        task); ``repoint`` is a material re-wire → full re-derive (``allow_demote=True``)."""
+        if task.status not in (TaskState.PENDING, TaskState.READY, TaskState.BLOCKED):
+            return None
+        satisfied = self._all_deps_satisfied(task)
+        if satisfied and task.status is TaskState.BLOCKED:
+            task.status = TaskState.READY
+            task.updated_at = _now_iso()
+            return "ready"
+        if allow_demote and not satisfied and task.status in (TaskState.PENDING, TaskState.READY):
+            task.status = TaskState.BLOCKED
+            task.updated_at = _now_iso()
+            return "blocked"
+        return None
+
+    async def dependents(self, task_id: str) -> list[Task]:
+        """Tasks that depend ON ``task_id`` (reverse edge lookup, §13)."""
+        return [t for t in self._tasks.values() if task_id in t.deps]
+
     async def recompute_readiness(self, completed_task_id: str) -> list[Task]:
-        # OS-authority (OQ-3): no caller_session_id, no CAS — readiness is OS
-        # scheduling (P3). Re-evaluate the just-completed task's dependents; flip
-        # blocked → ready only when ALL of a dependent's deps are completed.
+        # OS-authority (OQ-3): re-derive readiness for each dependent of the just-
+        # completed task via the shared primitive. A completion only RELAXES, so
+        # the only transition that can fire here is a promote (blocked → ready).
         promoted: list[Task] = []
         for t in self._tasks.values():
-            if t.status is not TaskState.BLOCKED or completed_task_id not in t.deps:
+            if completed_task_id not in t.deps:
                 continue
-            if all(
-                d in self._tasks and self._tasks[d].status == TaskState.COMPLETED
-                for d in t.deps
-            ):
-                t.status = TaskState.READY
-                t.updated_at = _now_iso()
+            if self._derive_readiness(t) == "ready":
                 promoted.append(t)
         return promoted
+
+    async def remove_dependency(self, task_id: str, depends_on: str) -> Task | None:
+        task = self._tasks.get(task_id)
+        if task is None:
+            return None
+        # Requester topology write; idempotent (no-op if the edge is absent).
+        # Dropping an edge only RELAXES → the re-derive can only promote (incl. the
+        # I-1 last-dep-removed → ready case), never demote.
+        if depends_on in task.deps:
+            task.deps.remove(depends_on)
+            task.updated_at = _now_iso()
+        self._derive_readiness(task)
+        return task
+
+    async def repoint_dependency(
+        self, task_id: str, from_depends_on: str, to_depends_on: str
+    ) -> Task | None:
+        task = self._tasks.get(task_id)
+        if task is None:
+            return None
+        # Cycle-check the NEW edge BEFORE any mutation (atomic): a cycle/dangling
+        # repoint raises → nothing changes. Safe with the from-edge still present
+        # (``task → from`` is task's OUTGOING edge, never on a ``to → … → task``
+        # cycle path, so no false reject).
+        self._validate_edge(task_id, to_depends_on)
+        if from_depends_on in task.deps:
+            task.deps.remove(from_depends_on)
+        if to_depends_on not in task.deps:
+            task.deps.append(to_depends_on)
+        task.updated_at = _now_iso()
+        # Re-block then re-evaluate (the new edge may TIGHTEN → demote, or the
+        # graph may now be satisfied → promote).
+        self._derive_readiness(task, allow_demote=True)
+        return task
 
     async def abort(self, task_id: str, reason: str | None = None) -> list[Task]:
         # abort = delete (cooperative-terminal, Option B): archive this task + its

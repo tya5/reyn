@@ -153,6 +153,8 @@ OP_PURITY: dict[str, OpPurity] = {
     "task.create": OpPurity.side_effect,
     "task.update_status": OpPurity.side_effect,
     "task.add_dependency": OpPurity.side_effect,
+    "task.remove_dependency": OpPurity.side_effect,
+    "task.repoint_dependency": OpPurity.side_effect,
     "task.abort": OpPurity.side_effect,
     "task.heartbeat": OpPurity.side_effect,
     "task.register_unblock_predicate": OpPurity.side_effect,
@@ -196,7 +198,8 @@ COARSE_TO_FINE: dict[str, frozenset[str]] = {
     # declare allowed_ops: [task] to permit the whole Task op family.
     "task": frozenset({
         "task.create", "task.update_status", "task.get", "task.list",
-        "task.add_dependency", "task.abort", "task.heartbeat",
+        "task.add_dependency", "task.remove_dependency", "task.repoint_dependency",
+        "task.abort", "task.heartbeat",
         "task.register_unblock_predicate", "task.comment",
     }),
 }

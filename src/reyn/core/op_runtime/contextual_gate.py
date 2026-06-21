@@ -61,6 +61,8 @@ _OP_KIND_ALIASES: "dict[str, frozenset[str]]" = {
     "task.get": frozenset(),
     "task.list": frozenset(),
     "task.add_dependency": frozenset(),
+    "task.remove_dependency": frozenset(),
+    "task.repoint_dependency": frozenset(),
     "task.abort": frozenset(),
     "task.heartbeat": frozenset(),
     "task.register_unblock_predicate": frozenset(),
