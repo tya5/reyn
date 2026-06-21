@@ -44,11 +44,9 @@ def _mk_host_with_kwargs():
         memory=MemoryService(agent_workspace_dir=workspace, events=events,
             file_write=_noop, file_read=_noop, file_delete=_noop, file_regenerate_index=_noop),
         journal=None, agent_registry=None, skill_enumerate_fn=lambda exclude: [],
-        agent_workspace_dir=workspace, plan_registry_getter=lambda: None,
         file_read=_noop, file_write=_noop, file_delete=_noop, file_list_directory=_noop,
         file_regenerate_index=_noop, mcp_list_servers=_noop, mcp_list_tools=_noop,
         mcp_call_tool=_noop, run_skill_awaitable=_noop, spawn_skill=_noop, send_to_agent=_noop,
-        put_outbox=_noop, append_history=lambda m: None, spawn_plan_task=_noop,
         delegation_tracker=lambda: [], agent_replies_tracker=lambda: [],
         turn_budget_engine=None, environment_backend=None,
     )
