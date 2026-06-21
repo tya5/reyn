@@ -60,15 +60,6 @@ WAL_EVENT_KINDS = (
     # second crash before the resuming skill consumes it
     "intervention_answer_buffered",
     "intervention_answer_consumed",
-    # NEW (ADR-0023 Phase 2 step 4) — per-step events promoted from
-    # events-log into WAL for resume determinism. The analyzer pairs
-    # (plan_step_started, plan_step_completed | plan_step_failed) by
-    # (plan_id, step_id) to derive each step's recovery state. Forensic-
-    # only events (plan_emitted / plan_aggregated / plan_run_interrupted)
-    # remain in the events log — they don't drive resume decisions.
-    "plan_step_started",
-    "plan_step_completed",
-    "plan_step_failed",
     # NEW (ADR-0038 Stage 1b) — user-facing time-travel rewind reset-record.
     # Append-only compensating record: moves the active pointer to ``target_n``;
     # the abandoned future is retained as an inactive branch (reconstruct honors

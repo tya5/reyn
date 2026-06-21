@@ -5,9 +5,9 @@ turn's predecessor, then submit the edit (a new fork). The predecessor must be
 the immediately-prior **TURN** checkpoint along the target's **lineage** (its
 branch + ancestor branches back to the fork-point) — two subtleties:
 
-  - **turn-kind only**: `record_plan_step_completed` cuts intra-turn plan-step
-    checkpoints; a plan-bearing turn's naive predecessor would be a mid-turn
-    plan-step. Edit must return to the prior *turn*, so plan-step/phase are skipped.
+  - **turn-kind only**: skill-step (`step_completed`) and phase boundaries cut
+    intra-turn checkpoints; a step-bearing turn's naive predecessor would be a
+    mid-turn step. Edit must return to the prior *turn*, so plan-step/phase are skipped.
   - **lineage, not same-branch-max**: when the target is the FIRST checkpoint on a
     forked branch, its predecessor is on the PARENT branch at the fork-point — a
     same-branch-only max would miss it (the over-include sibling trap). Computed
@@ -51,9 +51,11 @@ async def _turn_cp(reg: AgentRegistry, text: str) -> int:
 
 
 async def _plan_step_cp(reg: AgentRegistry) -> int:
-    """A PLAN-STEP-kind checkpoint (must be skipped by predecessor_turn_checkpoint)."""
+    """A plan-step-granularity checkpoint (must be skipped by
+    predecessor_turn_checkpoint). ``step_completed`` is the live skill-step WAL
+    kind that classifies to the ``plan-step`` rewind label."""
     seq = await reg.state_log.append(
-        "plan_step_completed", target="alpha", payload={},
+        "step_completed", target="alpha", payload={},
     )
     return _record_gen(reg, seq)
 

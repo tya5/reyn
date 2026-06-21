@@ -69,7 +69,6 @@ _DEFAULT_SID = "main"
 # output labels are the D6 Phase-1 granularity (turn / plan-step / phase).
 _REWIND_PLAN_STEP_KINDS = frozenset({
     "step_completed", "step_failed",
-    "plan_step_completed", "plan_step_failed",
 })
 
 
@@ -740,8 +739,7 @@ class AgentRegistry:
         live in ``WAL_EVENT_KINDS``, none are skill/domain strings):
 
           - ``skill_phase_advanced``                      → ``phase``
-          - ``step_completed`` / ``step_failed`` /
-            ``plan_step_completed`` / ``plan_step_failed`` → ``plan-step``
+          - ``step_completed`` / ``step_failed``          → ``plan-step``
           - anything else (``inbox_consume``, …)           → ``turn``
 
         Generations are per-agent but keyed by the single global WAL seq, so

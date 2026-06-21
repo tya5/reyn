@@ -59,8 +59,6 @@ def test_rewind_point_kind_mapping() -> None:
     assert _rewind_point_kind("skill_phase_advanced") == "phase"
     assert _rewind_point_kind("step_completed") == "plan-step"
     assert _rewind_point_kind("step_failed") == "plan-step"
-    assert _rewind_point_kind("plan_step_completed") == "plan-step"
-    assert _rewind_point_kind("plan_step_failed") == "plan-step"
     assert _rewind_point_kind("inbox_consume") == "turn"
     assert _rewind_point_kind("") == "turn"
 

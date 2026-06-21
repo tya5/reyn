@@ -2,8 +2,8 @@
 
 ADR-0038 Stage 1a part-2. Real `SnapshotJournal` + `StateLog` +
 `SnapshotGenerationStore` (no mocks): generation cuts happen only at the
-boundary seams (turn via `cut_generation`, plan-step via
-`record_plan_step_completed`), the latest generation equals the live snapshot,
+boundary seams (turn via `cut_generation`), the latest generation equals the
+live snapshot,
 and `reconstruct(head)` from the store reproduces the live snapshot (the
 invariant crash recovery relies on). Absent a store, cuts are a no-op (no
 behavior change to the single ``snapshot.json`` path).
