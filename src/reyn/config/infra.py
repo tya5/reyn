@@ -101,10 +101,46 @@ class RouterConfig:
 
 
 @dataclass
+class RetryConfig:
+    """``llm.retry:`` — backoff timing for the Reyn self-retry layer (#1835).
+
+    Controls TIMING only; semantic-retry behaviours (EmptyLLMResponseError,
+    empty_stop_retry, plan_invalid_retry, compaction shrink) are unaffected.
+
+    ``jitter=true`` (default): equal jitter (AWS pattern) —
+      ``sleep = backoff/2 + uniform(0, backoff/2)``
+      where ``backoff = min(base * 2**attempt, max_backoff)``.
+      Prevents thundering herd when parallel chains retry in lockstep.
+
+    ``respect_retry_after=true`` (default): when a retryable exception carries
+      a ``Retry-After`` header (delta-seconds or HTTP-date), honour it (capped
+      at ``_LLM_RETRY_MAX_BACKOFF_S``) instead of the computed jittered backoff.
+      Lets the provider's guidance drive wait time on 429/503 responses.
+    """
+
+    jitter: bool = True
+    respect_retry_after: bool = True
+
+
+@dataclass
 class LLMConfig:
-    """``llm:`` — LLM-layer config. Currently the litellm.Router surface (#1829)."""
+    """``llm:`` — LLM-layer config (#1829 router, #1835 retry)."""
 
     router: RouterConfig = field(default_factory=RouterConfig)
+    retry: RetryConfig = field(default_factory=RetryConfig)
+
+
+def _build_retry_config(raw: object) -> RetryConfig:
+    """Parse ``llm.retry:`` from reyn.yaml. None/missing → defaults (both true)."""
+    if raw is None:
+        return RetryConfig()
+    if not isinstance(raw, dict):
+        raise ValueError(f"llm.retry must be a mapping, got {type(raw).__name__}")
+    d = RetryConfig()
+    return RetryConfig(
+        jitter=bool(raw.get("jitter", d.jitter)),
+        respect_retry_after=bool(raw.get("respect_retry_after", d.respect_retry_after)),
+    )
 
 
 def _build_router_config(raw: object) -> RouterConfig:
@@ -165,7 +201,10 @@ def _build_llm_config(raw: object) -> LLMConfig:
         return LLMConfig()
     if not isinstance(raw, dict):
         raise ValueError(f"llm must be a mapping, got {type(raw).__name__}")
-    return LLMConfig(router=_build_router_config(raw.get("router")))
+    return LLMConfig(
+        router=_build_router_config(raw.get("router")),
+        retry=_build_retry_config(raw.get("retry")),
+    )
 
 
 @dataclass

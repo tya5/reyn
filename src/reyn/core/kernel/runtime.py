@@ -83,6 +83,7 @@ class OSRuntime:
         task_waker: "object | None" = None,  # #1953 slice 7: the OS TaskWaker → control-IR + preprocessor op ctx
         task_session_id: "str | None" = None,  # #1953 slice 3: caller session identity (Task single-writer key)
         router_config: "object | None" = None,  # #1829 S3b: reyn.yaml llm.router.*
+        retry_config: "object | None" = None,  # #1835: reyn.yaml llm.retry.*
         environment_backend: "EnvironmentBackend | None" = None,
         sandbox_backend: "SandboxBackend | None" = None,
         multimodal_config: "MultimodalConfig | None" = None,
@@ -124,6 +125,11 @@ class OSRuntime:
         if router_config is not None:
             from reyn.llm.llm import set_router_config
             set_router_config(router_config)
+        # #1835: publish reyn.yaml llm.retry.* for the LLM retry chokepoint. Same
+        # guard: only set when provided to avoid clobbering the parent's ContextVar.
+        if retry_config is not None:
+            from reyn.llm.llm import set_retry_config
+            set_retry_config(retry_config)
         self.workspace = Workspace(
             self.events,
             permission_resolver=permission_resolver,

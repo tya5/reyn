@@ -100,6 +100,12 @@
 #       TimeoutErrorRetries: 3
 #       # Supported: BadRequestErrorRetries, AuthenticationErrorRetries,
 #       #   ContentPolicyViolationErrorRetries, InternalServerErrorRetries
+#   retry:                   # backoff timing for the Reyn self-retry layer (#1835)
+#     jitter: true           # equal jitter (AWS): sleep=base/2+uniform(0,base/2).
+#                            # Prevents thundering herd on parallel-chain retries.
+#     respect_retry_after: true  # honour provider Retry-After header on 429/503.
+#                            # Caps the wait at llm_retry_max_backoff (16 s).
+#                            # Falls back to jittered backoff when header absent.
 
 
 # -----------------------------------------------------------------------------
