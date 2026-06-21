@@ -132,10 +132,14 @@ def build_universal_tool_use_slots(
         + " for an explicit"
         " named skill), invoke directly. " + _otherwise_slot,
         "- Multi-target / iteration (= \"do X for each Y\", \"process N"
-        " files\", \"run X on every Y\"): decompose with plan into"
-        " per-target steps + a final aggregate step. Do NOT invoke a"
-        " per-target action directly without decomposition — it loses"
-        " the iteration shape and gets stuck on the first item.",
+        " files\", \"run X on every Y\") or multi-step work worth"
+        " tracking: decompose into sub-tasks — `task__create` one per"
+        " target/step (use `deps` to order them, plus a final aggregate"
+        " task depending on the rest), then track via `task__list` /"
+        " `task__update_status`, or delegate a sub-task to another agent"
+        " via `task__create`'s `assignee`. Do NOT invoke a per-target"
+        " action directly without decomposition — it loses the iteration"
+        " shape and gets stuck on the first item.",
         "",
         (
             "**Ambiguous or missing essential information** → there is no"
