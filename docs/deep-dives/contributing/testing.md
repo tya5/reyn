@@ -487,6 +487,37 @@ REYN_LLM_RECORD=1 python -m pytest tests/ -v
 
 ---
 
+## Before you push — the three CI gates
+
+A green `pytest` run is **not** a green CI run. `.github/workflows/test.yml` runs
+three *separate* gates; run all three locally on your diff before calling a PR
+ready:
+
+1. **pytest** — from the repo root (not a subset path) so collection matches CI:
+   ```bash
+   python -m pytest tests/ -q
+   ```
+2. **ruff** — lint + import-sort (`I001`):
+   ```bash
+   ruff check src tests        # add --fix for autofixable I001 / formatting
+   ```
+3. **test-tier audit** — `scripts/test_tier_audit.py --strict` on each new or
+   modified test file (the linter described under
+   [Tier compliance auditor](#tier-compliance-auditor)). A Tier-4 format pin
+   (`len(...) == N`, exact whitespace, line count) fails here even when pytest is
+   green — replace it with a behavioural assertion (assert on the extracted value,
+   not its length):
+   ```bash
+   python scripts/test_tier_audit.py --strict <changed_test_files>
+   ```
+
+A green `pytest` alone has shipped PRs that CI then bounced on ruff (`I001`) or
+the tier audit (a `len(...) == 1` format pin). Report scope honestly: say
+"pytest passed" if that is all you ran — "suite passed" implies the lint and
+audit gates too.
+
+---
+
 ## Coverage checklist for a new OS feature
 
 When adding a new LLM-dependent OS path:
