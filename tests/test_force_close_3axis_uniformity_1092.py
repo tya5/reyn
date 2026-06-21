@@ -27,7 +27,6 @@ import ast
 from pathlib import Path
 
 import reyn.core.kernel.phase_executor as _phase_mod
-import reyn.runtime.planner as _planner_mod
 import reyn.runtime.session as _session_mod
 from reyn.services.turn_budget import (
     try_build_default_turn_budget_engine,
@@ -59,19 +58,6 @@ def test_chat_and_phase_activate_via_try_build_not_build_default() -> None:
             f"{mod.__name__} must degrade gracefully (try_build), not raise "
             f"(build_default) — uniform with the other axis"
         )
-
-
-def test_plan_wires_turn_budget_engine() -> None:
-    """Tier 2: #1285 (#1092 plan-axis activation) — plan NOW builds a turn_budget
-    engine and wires it into ``_PlanStepHost``, so a long plan step force-closes
-    (PR1 FLOOR: the bounded wrap-up consolidation becomes the step output; PR2
-    re-enters the same step from it). Uses ``try_build`` (not ``build_default``)
-    so a small-context model that cannot satisfy the by-construction floor
-    DEGRADES to None (force-close inert) — uniform with phase (PR-F3) + chat (F1):
-    all three axes now wire the engine. (Was deferred at #1092 wave time; this
-    test flipped when #1285 landed.)"""
-    called = _called_names(_planner_mod)
-    assert "try_build_default_turn_budget_engine" in called
 
 
 # ── invariant 2: by-construction floor holds per axis ────────────────────────

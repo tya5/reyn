@@ -14,7 +14,6 @@ import pytest
 
 from reyn.tools.catalog import DESCRIBE_AGENT, DESCRIBE_SKILL, LIST_AGENTS, LIST_SKILLS
 from reyn.tools.delegate_to_agent import DELEGATE_TO_AGENT
-from reyn.tools.plan import PLAN
 from reyn.tools.types import RouterCallerState, ToolContext
 
 # ── helpers ───────────────────────────────────────────────────────────────────
@@ -160,42 +159,6 @@ async def test_describe_agent_handler_raises_when_fn_none():
     rs = RouterCallerState()  # describe_agent_fn defaults to None
     with pytest.raises(RuntimeError, match="router_state.describe_agent_fn"):
         await DESCRIBE_AGENT.handler({"name": "research"}, _ctx(rs))
-
-
-# ---------------------------------------------------------------------------
-# Wave 2b: plan handler (ADR-0026 M4 Phase 3)
-# ---------------------------------------------------------------------------
-
-@pytest.mark.asyncio
-async def test_plan_handler_delegates_to_router_state_dispatch_plan_tool():
-    """Tier 2: plan handler delegates to ctx.router_state.dispatch_plan_tool with args passthrough."""
-    captured: list[dict] = []
-
-    async def fake_dispatch(*, args):
-        captured.append(args)
-        return {"status": "dispatched", "plan_id": "p_abc"}
-
-    rs = RouterCallerState(dispatch_plan_tool=fake_dispatch)
-    ctx = _ctx(rs)
-    plan_args = {"goal": "test", "steps_json": "[]"}
-    result = await PLAN.handler(plan_args, ctx)
-    assert captured == [plan_args]
-    assert result == {"status": "dispatched", "plan_id": "p_abc"}
-
-
-@pytest.mark.asyncio
-async def test_plan_handler_raises_when_dispatch_plan_tool_missing():
-    """Tier 2: plan handler raises RuntimeError when dispatch_plan_tool is not populated."""
-    rs = RouterCallerState()  # dispatch_plan_tool defaults to None
-    with pytest.raises(RuntimeError, match="dispatch_plan_tool"):
-        await PLAN.handler({"goal": "test", "steps_json": "[]"}, _ctx(rs))
-
-
-@pytest.mark.asyncio
-async def test_plan_handler_raises_when_router_state_is_none():
-    """Tier 2: plan handler raises RuntimeError when ctx.router_state is None."""
-    with pytest.raises(RuntimeError, match="dispatch_plan_tool"):
-        await PLAN.handler({"goal": "test", "steps_json": "[]"}, _ctx(None))
 
 
 # ── delegate_to_agent ─────────────────────────────────────────────────────────

@@ -6,13 +6,10 @@ namespace onto a tool name — both as a ``plan`` step-tools VALUE
 ``plan_invalid``) and, latently, as an actual function-call NAME. ``reyn`` tool
 names are dot-free (qualified use ``__``, bare verbs single underscores), so
 stripping a leading ``<namespace>.`` is safe for every provider (a no-op when
-absent). The shared helper is applied at BOTH surfaces (validator + dispatch).
+absent). The shared helper is applied at the dispatch surface.
 
 Falsification:
 - the helper strips a known prefix and is a no-op for a dot-free / bare name;
-- the plan validator accepts a ``default_api.``-prefixed step tool + stores the
-  bare name (RED pre-#1989 = ``plan_invalid``); a genuinely-unknown tool still
-  rejects (no over-acceptance);
 - the dispatch resolver strips the prefix so the call hits the catalog / salvage.
 """
 from __future__ import annotations
@@ -21,7 +18,6 @@ from typing import Any
 
 import pytest
 
-from reyn.runtime.planner import PlanValidationError, parse_and_validate_plan
 from reyn.runtime.router_loop import RouterLoop
 from reyn.tools.universal_catalog import strip_provider_tool_namespace
 
@@ -48,51 +44,6 @@ def test_strip_does_not_touch_a_non_leading_or_unknown_namespace():
     over-strip)."""
     assert strip_provider_tool_namespace("skill__default_api.thing") == "skill__default_api.thing"
     assert strip_provider_tool_namespace("functions.invoke_action") == "functions.invoke_action"
-
-
-# ── 2. the plan validator (the reported surface) ────────────────────────────
-
-
-def _plan_args(tools_step1, tools_step2):
-    return {
-        "goal": "do the thing",
-        "steps": [
-            {"id": "s1", "description": "first", "tools": tools_step1, "depends_on": []},
-            {"id": "s2", "description": "second", "tools": tools_step2, "depends_on": ["s1"]},
-        ],
-    }
-
-
-def test_validator_accepts_namespaced_tool_and_stores_bare_name():
-    """Tier 2: a ``default_api.``-prefixed step tool validates (RED pre-#1989 =
-    plan_invalid) AND the stored step carries the BARE name downstream."""
-    plan = parse_and_validate_plan(
-        _plan_args(["default_api.invoke_action"], ["default_api.web__search"]),
-        allowed_tool_names={"invoke_action", "web__search"},
-    )
-    assert plan.steps[0].tools == ("invoke_action",)
-    assert plan.steps[1].tools == ("web__search",)
-
-
-def test_validator_still_accepts_bare_names_unaffected():
-    """Tier 2: a bare-name plan is unaffected — the strip is purely additive (a
-    no-op for names without a provider prefix)."""
-    plan = parse_and_validate_plan(
-        _plan_args(["invoke_action"], ["web__search"]),
-        allowed_tool_names={"invoke_action", "web__search"},
-    )
-    assert plan.steps[0].tools == ("invoke_action",)
-    assert plan.steps[1].tools == ("web__search",)
-
-
-def test_validator_still_rejects_genuinely_unknown_tool():
-    """Tier 2: a real unknown tool (not a namespace artifact) still rejects — the
-    strip does not over-accept."""
-    with pytest.raises(PlanValidationError):
-        parse_and_validate_plan(
-            _plan_args(["invoke_action"], ["totally_made_up_tool"]),
-            allowed_tool_names={"invoke_action", "web__search"},
-        )
 
 
 # ── 3. the dispatch resolver (the fix-class extension) ──────────────────────

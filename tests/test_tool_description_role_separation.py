@@ -17,7 +17,6 @@ from reyn.tools.memory import (
     _FORGET_MEMORY_DESCRIPTION,
     _REMEMBER_SHARED_DESCRIPTION,
 )
-from reyn.tools.plan import _PLAN_DESCRIPTION
 from reyn.tools.recall import _RECALL_DESCRIPTION_HIDE_LEGACY
 from reyn.tools.universal_catalog import (
     _DESCRIBE_ACTION_DESCRIPTION,
@@ -170,16 +169,6 @@ def test_search_actions_description_contains_post_call_must() -> None:
     desc = _SEARCH_ACTIONS_DESCRIPTION
     assert "POST_CALL" in desc
     assert "MUST" in desc
-
-
-# ── plan description tests ──────────────────────────────────────────────────────
-
-def test_plan_description_contains_multi_source_examples() -> None:
-    """Tier 2: plan description contains multi-source examples."""
-    desc = _PLAN_DESCRIPTION
-    assert "multi" in desc.lower()
-    # Should reference the compare/explain/summarise pattern
-    assert "compare" in desc.lower() or "multiple independent" in desc.lower()
 
 
 # ── recall description tests ───────────────────────────────────────────────────
