@@ -224,8 +224,6 @@ a fresh run.
 
 ## See also
 
-- [Concepts: plan-mode](../multi-agent/plan-mode.md) — sequential step execution
-  (= explicitly blocking, contrast with chat-mode async)
 - [Concepts: skill-resume](../skills/skill-resume.md) — crash recovery for
   in-flight skill state
 - [Reference: chat CLI](../../reference/cli/chat.md) — `/tasks` /

@@ -8,25 +8,23 @@ audience: [human, agent]
 
 ## 1. なぜこれが重要か
 
-Reyn は LLM を2つの異なる文脈で呼び出す。チャットルーター（および plan-mode バリアント）と、Skill 内部の Phase executor である。各文脈はそれぞれ固有の機能語彙を持つ — ルーターには function calling tools、Phase には Control IR ops。この2つのセットは大きく重なるが、完全には一致しない。この乖離を明文化しなければ、貢献者は便宜上どちらかの surface に新機能を追加し続け、差異は静かに広がる。本ドキュメントは2つの invocation kind を命名し、乖離を整理し、どの非対称性に原則的根拠があるか・どれが convention drift かを識別する。これにより、将来の追加が正しい場所に着地し、意図しない非対称性が積み重なる前に表面化するようになる。
+Reyn は LLM を2つの異なる文脈で呼び出す。チャットルーターと、Skill 内部の Phase executor である。各文脈はそれぞれ固有の機能語彙を持つ — ルーターには function calling tools、Phase には Control IR ops。この2つのセットは大きく重なるが、完全には一致しない。この乖離を明文化しなければ、貢献者は便宜上どちらかの surface に新機能を追加し続け、差異は静かに広がる。本ドキュメントは2つの invocation kind を命名し、乖離を整理し、どの非対称性に原則的根拠があるか・どれが convention drift かを識別する。これにより、将来の追加が正しい場所に着地し、意図しない非対称性が積み重なる前に表面化するようになる。
 
 ---
 
 ## 2. 2つの invocation kind
 
-### 2.1 Router-style（チャット・planner）
+### 2.1 Router-style（チャット）
 
-**使用箇所:** `RouterLoop`（インタラクティブチャットセッション）および `PlanRuntime`（plan-mode ステップ実行）。両者は単一実装を共有する — コンテキストごとにカタログを絞り込む `RouterLoopHost` facade を用いた `RouterLoop`。
+**使用箇所:** `RouterLoop`（インタラクティブチャットセッション）。コンテキストごとにカタログを絞り込む `RouterLoopHost` facade を用いる。
 
 **仕組み:** litellm 経由の `call_llm_tools` によるネイティブ LLM function calling。ツール定義は OpenAI `tools` 配列形式に従い、モデルはアシスタントメッセージ内の `tool_calls` で応答する。OS は各呼び出しをディスパッチし、`tool_result` を追記して、モデルが通常テキストを返すまで LLM を再呼び出しする。
 
 **ツール surface:** `src/reyn/runtime/router_tools.py` の `build_tools()` がツールリストを組み立てる。実際の数はオペレーター設定に依存する。
 
-- **常時存在（14 tools）:** `list_skills`, `describe_skill`, `list_agents`, `describe_agent`, `list_memory`, `read_memory_body`, `delegate_to_agent`, `remember_shared`, `remember_agent`, `forget_memory`, `web_search`, `plan`, `reyn_src_list`, `reyn_src_read`
+- **常時存在（13 tools）:** `list_skills`, `describe_skill`, `list_agents`, `describe_agent`, `list_memory`, `read_memory_body`, `delegate_to_agent`, `remember_shared`, `remember_agent`, `forget_memory`, `web_search`, `reyn_src_list`, `reyn_src_read`
 - **条件付き（+0〜+9 tools）:** `invoke_skill`（Skill 登録時）、`list_directory` + `read_file`（file read スコープ設定時）、`write_file` + `delete_file`（file write スコープ設定時）、`web_fetch`（オペレーターのオプトイン）、`list_mcp_servers` + `list_mcp_tools` + `call_mcp_tool`（MCP servers 設定時）
-- **実測レンジ: 14–23 tools**（`router_tools.py` のコメントに記載の「11–18」は `web_search`、`plan`、`reyn_src_list`、`reyn_src_read` 追加前の記述であり、現在は stale）
-
-**Plan-mode は同一 surface から `plan` 自身を除いたもの:** `PlanRuntime` は `execute_plan` をラップし、`exclude_tools={"plan"}` を指定した `RouterLoop` を内部で使用する。これにより再帰的な plan 分解を防ぐ。親セッションで使用可能な他のすべての router tool は各 plan step で利用可能であり、step の `tools` リストでさらに絞り込まれる。
+- **実測レンジ: 13–22 tools**（`router_tools.py` のコメントに記載の「11–18」は `web_search`、`reyn_src_list`、`reyn_src_read` 追加前の記述であり、現在は stale）
 
 **役割:** オーケストレーション — 次のサブコンポーネント（Skill、Agent、plan、メモリ操作、直接テキスト応答）を選択する。
 

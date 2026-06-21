@@ -60,15 +60,6 @@ mindmap
         Overflow retry loop
         Adaptive token estimation
         Multimodal token estimation
-      📋 Plan Mode
-        LLM decomposition
-        Persistent plan artifact
-        Async dispatch
-        PlanRuntime
-        Step iteration + retry
-        Plan resume
-        Per-step compaction
-        Multi-plan concurrency
     ⚙️ Control IR Ops
       file
       ask_user
@@ -347,22 +338,6 @@ User-facing point-in-time rewind with branching. Phase 1 and Phase 2 (2a/2b/2c/2
 | Memory-quality guidance (gated) | Guidance on what makes a good memory entry, rendered only when memory is in scope | [SP-improvements study](deep-dives/research/competitive/sp-improvements-measured-1791.md) |
 
 > **Differentiation vs general agents:** these SP improvements are adopted by **design-judgment** (sound + low-cost + non-harmful), not gated on a limited-environment A/B — a measured null on one environment cannot prove a universal negative, so structurally-sound guidance is adopted while genuinely measurable wins are verified separately.
-
-#### Plan Mode
-
-| Feature | Description | Documentation |
-|---------|-------------|---------------|
-| LLM plan decomposition | The router LLM decomposes a user goal into an ordered list of named steps with declared dependencies; each step runs in a narrow sub-loop call with a focused prompt and reduced tool catalog | [Plan Mode](concepts/multi-agent/plan-mode.md) |
-| Async dispatch | The `plan` tool returns immediately; execution runs as a background task while the user can issue new messages | [Plan Mode](concepts/multi-agent/plan-mode.md) |
-| Persistent plan artifact | The decomposed plan is written to the workspace; resume and step replay use the original structure rather than re-decomposing | [Plan Mode](concepts/multi-agent/plan-mode.md) |
-| PlanRuntime | Dedicated execution engine for plan-mode, peer to the OS phase runtime | [Plan Mode](concepts/multi-agent/plan-mode.md) |
-| Step iteration | Each step runs the router sub-loop up to `step_max_iterations` turns; `retry_limit` caps automatic retries on transient failure with user-approval escalation when the budget is exhausted | [Plan Mode](concepts/multi-agent/plan-mode.md) · [Config: plan block](reference/config/reyn-yaml.md#plan-block) |
-| Plan resume | Persisted decomposition and per-step result memos allow a plan to resume after crash; completed steps replay without LLM cost | [Plan Mode](concepts/multi-agent/plan-mode.md) |
-| Per-step compaction | Each plan step runs its own context compaction budget, independent of the main session | [Plan Mode](concepts/multi-agent/plan-mode.md) · [Chat Compaction](concepts/data-retrieval/chat-compaction.md) |
-| Multi-plan concurrency | Multiple plans can be in flight simultaneously; each has its own `plan_id` with results delivered in completion order | [Plan Mode](concepts/multi-agent/plan-mode.md) |
-| Operator slash commands | `/plan list` / `/plan discard` / `/plan resume --from <step>` for plan lifecycle management | [Plan Mode](concepts/multi-agent/plan-mode.md) |
-
-> **Differentiation vs general agents:** plan decomposition is OS-governed — persisted, resumable per-step (completed steps replay without LLM cost), with per-step compaction and multi-plan concurrency — not an ad-hoc in-prompt task loop.
 
 #### LLM router resilience
 

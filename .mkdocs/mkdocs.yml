@@ -110,7 +110,6 @@ nav:
               - guide/for-skill-authors/composition/iterate-with-fan-out.md
               - guide/for-skill-authors/composition/build-an-agent-team.md
               - guide/for-skill-authors/composition/multi-hop-delegation.md
-              - guide/for-skill-authors/composition/use-plan-mode.md
               - guide/for-skill-authors/composition/restrict-agent-skills.md
           - Phase mechanics:
               - guide/for-skill-authors/phase-mechanics/add-a-python-preprocessor.md
@@ -268,7 +267,6 @@ nav:
           - concepts/multi-agent/multi-agent.md
           - concepts/multi-agent/a2a.md
           - concepts/multi-agent/topology.md
-          - concepts/multi-agent/plan-mode.md
       - Data & retrieval:
           - concepts/data-retrieval/rag.md
           - concepts/data-retrieval/memory.md

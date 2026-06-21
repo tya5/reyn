@@ -64,8 +64,6 @@ No configuration required for any of these. Reyn has the skills for them out of 
 
 **Memory** — Reyn remembers facts across sessions automatically. No setup needed. To review or curate what it has stored, see [Inspect and manage memory](manage-memory.md).
 
-**Plan mode** — for a multi-step request, Reyn automatically decomposes the work into ordered background steps you can watch, inspect, or redirect mid-run. It's not a command you type — Reyn decides based on how the task breaks down. See [Use plan mode for multi-step tasks](../for-skill-authors/composition/use-plan-mode.md).
-
 **Crash recovery** — if a long task is interrupted, re-run `reyn chat` and it resumes from where it left off.
 
 **Cleanup** — when you close the TUI, the session ends cleanly. No background processes left behind.
