@@ -81,6 +81,7 @@ CATEGORIES: Final[tuple[str, ...]] = (
     "rag_operation",
     "validation",
     "exec",
+    "task",  # #1953 dynamic-wire: task.* control-IR ops as invoke_action targets
 )
 
 

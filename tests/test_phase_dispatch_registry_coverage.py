@@ -67,6 +67,21 @@ _REGISTRY_WIRED_KINDS: frozenset[str] = frozenset({
     # compaction_unavailable rather than silently no-op'ing. Dispatch path is
     # registry-wired either way → classified here.
     "compact",
+    # #1953 dynamic-wire item-1: the 11 task.* ops now have router+phase
+    # ToolDefinitions (tools/task_ops.py, single-source from the IROp models),
+    # registered in get_default_registry → registry-wired (router-callable via
+    # invoke_action task__*). Moved from _LEGACY_ONLY_KINDS by item-1.
+    "task.create",
+    "task.update_status",
+    "task.get",
+    "task.list",
+    "task.add_dependency",
+    "task.remove_dependency",
+    "task.repoint_dependency",
+    "task.abort",
+    "task.heartbeat",
+    "task.register_unblock_predicate",
+    "task.comment",
 })
 
 # Coarse op kinds that intentionally still dispatch via the legacy
@@ -87,19 +102,6 @@ _LEGACY_ONLY_KINDS: frozenset[str] = frozenset({
     "mcp",
     "run_skill",
     "skill_resolve",
-    # #1953 slice 1: Task ops dispatch via op_runtime handlers (op_runtime/task.py
-    # register()), not phase=allow ToolDefinitions — legacy-only by this taxonomy.
-    "task.create",
-    "task.update_status",
-    "task.get",
-    "task.list",
-    "task.add_dependency",
-    "task.remove_dependency",
-    "task.repoint_dependency",
-    "task.abort",
-    "task.heartbeat",
-    "task.register_unblock_predicate",
-    "task.comment",
 })
 
 

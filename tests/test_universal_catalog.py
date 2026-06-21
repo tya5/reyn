@@ -65,6 +65,8 @@ def test_categories_master_table_order() -> None:
         "rag_operation",
         "validation",
         "exec",
+        # #1953 dynamic-wire: task.* control-IR ops as invoke_action targets.
+        "task",
     )
 
 

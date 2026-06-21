@@ -124,6 +124,11 @@ def get_default_registry() -> ToolRegistry:
     registry.register(RECALL)
     registry.register(DROP_SOURCE)
     registry.register(COMPACT)
+    # Task ops (#1953 dynamic-wire): the 11 task.* ToolDefinitions, derived
+    # single-source from the IROp models (tools/task_ops.py).
+    from reyn.tools.task_ops import TASK_TOOL_DEFINITIONS
+    for _task_def in TASK_TOOL_DEFINITIONS:
+        registry.register(_task_def)
     # File ops (Wave 2 — Open Q #6 fine-grained naming)
     registry.register(READ_FILE)
     registry.register(WRITE_FILE)
