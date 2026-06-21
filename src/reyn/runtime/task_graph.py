@@ -123,6 +123,33 @@ async def build_task_graph(
     return parent.task_id
 
 
+def _topo_order_tasks(children: "list[Any]") -> "list[Any]":
+    """Kahn's algorithm with a stable tie-break — the children's list (creation =
+    LLM-emitted step) order — identical to the plan executor's
+    ``_topological_order``. Returns the children in a deterministic topological
+    linearization so the Task exec engine runs + aggregates units in **byte-identical
+    order to the plan path** (the parity-by-construction requirement for the slice-P
+    delete gate: relying on the readiness-loop's execution order to *coincide* with
+    plan's topo order is fragile; computing the same order makes it a guarantee).
+    Only sibling edges within ``children`` count (a dep outside the set is treated as
+    already-satisfied). Cycles are impossible here — the edge-guard rejects them at
+    create — so every child is emitted."""
+    ids = {c.task_id for c in children}
+    by_id = {c.task_id: c for c in children}
+    indeg = {c.task_id: sum(1 for d in c.deps if d in ids) for c in children}
+    ready = [c for c in children if indeg[c.task_id] == 0]  # preserves list order
+    out: list[Any] = []
+    while ready:
+        current = ready.pop(0)
+        out.append(current)
+        for c in children:
+            if current.task_id in c.deps:
+                indeg[c.task_id] -= 1
+                if indeg[c.task_id] == 0:
+                    ready.append(by_id[c.task_id])
+    return out
+
+
 async def run_task_graph(
     backend: Any,
     parent_id: str,
@@ -130,40 +157,41 @@ async def run_task_graph(
     run_unit: RunUnit,
     on_unit_cost: "Callable[[str, float], Awaitable[None]] | None" = None,
 ) -> str:
-    """Drive the parent's child DAG to completion: repeatedly run every runnable
-    child (no unsatisfied deps) through ``run_unit``, store its result, charge its
-    cost, mark it completed (which propagates readiness to its dependents), until
-    no child remains runnable. Then synthesize the parent's result (the
-    topologically-last completed child's text, mirroring the plan aggregator) and
-    return it.
+    """Drive the parent's child DAG to completion in **topological order** (matching
+    the plan executor's sequential ``for step in ordered``): run each unit through
+    ``run_unit`` once its deps precede it, store its result, charge its cost, mark it
+    completed (propagating readiness + wake events to any cross-session dependents),
+    then synthesize the parent's result — the topologically-last unit whose result is
+    non-empty, identical to the plan aggregator (planner.py ``reversed(ordered)``
+    first-non-empty). Returns the synthesized reply.
 
-    ``run_unit`` is handed each unit + the dep-results map it reads from the
-    backend; ``on_unit_cost`` (the slice-8 ``record_task_cost`` prod-caller) charges
-    the unit's cost onto its Task (cap-enforcement)."""
-    completed_order: list[str] = []
-    while True:
-        children = await backend.list(parent_id=parent_id)
-        runnable = [c for c in children if c.status in (TaskState.PENDING, TaskState.READY)]
-        if not runnable:
-            break
-        for child in runnable:
-            prior_results = {}
-            for dep_id in child.deps:
-                dep = await backend.get(dep_id)
-                prior_results[dep_id] = (dep.result or "") if dep is not None else ""
-            result_text, cost = await run_unit(child, prior_results)
-            await backend.set_result(child.task_id, result_text)
-            if on_unit_cost is not None:
-                await on_unit_cost(child.task_id, cost)
-            await backend.update_status(
-                child.task_id, "completed", caller_session_id=child.assignee)
-            await backend.recompute_readiness(child.task_id)
-            completed_order.append(child.task_id)
-    # Synthesis: the last completed child's result is the aggregate reply (the
-    # plan aggregator's "topologically-last non-empty" rule).
+    Topological order (not the readiness-loop's execution order) is used so the unit
+    exec sequence + aggregation are byte-identical to the plan path under the same
+    LLM responses — the deterministic-equivalence half of the slice-P delete gate.
+
+    ``run_unit`` is handed each unit + the dep-results map it reads from the backend
+    (the result-channel); ``on_unit_cost`` (the slice-8 ``record_task_cost``
+    prod-caller) charges the unit's cost onto its Task (cap-enforcement)."""
+    children = await backend.list(parent_id=parent_id)
+    ordered = _topo_order_tasks(children)
+    for unit in ordered:
+        # Deps precede ``unit`` in topo order → already completed (+ recomputed,
+        # promoting this born-blocked unit to READY). Topo order guarantees the
+        # dep-results are present, so running here is valid regardless of status.
+        prior_results = {}
+        for dep_id in unit.deps:
+            dep = await backend.get(dep_id)
+            prior_results[dep_id] = (dep.result or "") if dep is not None else ""
+        result_text, cost = await run_unit(unit, prior_results)
+        await backend.set_result(unit.task_id, result_text)
+        if on_unit_cost is not None:
+            await on_unit_cost(unit.task_id, cost)
+        await backend.update_status(
+            unit.task_id, "completed", caller_session_id=unit.assignee)
+        await backend.recompute_readiness(unit.task_id)
     final = ""
-    for tid in reversed(completed_order):
-        t = await backend.get(tid)
+    for unit in reversed(ordered):
+        t = await backend.get(unit.task_id)
         if t is not None and t.result:
             final = t.result
             break
