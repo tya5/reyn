@@ -26,9 +26,14 @@ Policy (lead-approved, #1956):
 Resolution is DNS-aware: the host is resolved and EVERY returned IP is checked
 (deny if ANY is denied), so an allowlisted hostname that resolves to an internal
 IP is caught. IPv4-mapped IPv6 (``::ffff:a.b.c.d``) is normalised so a mapped
-metadata/internal address cannot bypass. Residual: the client re-resolves at
-connect (a small TOCTOU window vs full IP-pinning) — tracked separately as
-future hardening.
+metadata/internal address cannot bypass.
+
+#1972 (full DNS-rebind resistance): :func:`resolve_and_validate` returns the
+validated IPs so each redirect-following client connects to a **pinned** IP
+(preserving the original ``Host`` header + TLS SNI) instead of re-resolving the
+host at connect time — closing the check-time-vs-connect-time TOCTOU window an
+attacker-controlled fast-rebind DNS could exploit. ``assert_fetch_host_allowed``
+remains the check-only Layer-2 gate (it delegates to ``resolve_and_validate``).
 """
 from __future__ import annotations
 
@@ -87,13 +92,27 @@ def _deny_reason(ip: _IPAddr, *, allow_private: bool) -> str | None:
     return None
 
 
-def assert_fetch_host_allowed(host: str, *, allow_private: bool) -> None:
-    """Raise :class:`SSRFBlocked` if ``host`` resolves to any denied IP.
+def resolve_and_validate(host: str, *, allow_private: bool) -> list[str]:
+    """Resolve + validate ``host`` and RETURN its allowed IPs, for connect-time
+    IP-pinning (#1972 — full DNS-rebind resistance).
 
-    A bare IP literal is checked directly (the common redirect-to-IP attack).
-    A hostname is resolved and EVERY returned address is checked (deny if ANY is
-    denied). An unresolvable host is left to the client's own connection error
-    (nothing to gate — no reachable IP). Empty host is denied.
+    Same policy as :func:`assert_fetch_host_allowed` (raise :class:`SSRFBlocked`
+    if ANY resolved IP is denied), but it RETURNS the validated IP strings so the
+    caller can connect to a **pinned** IP instead of letting the HTTP client
+    re-resolve at connect time — closing the DNS-rebind TOCTOU window (an
+    attacker-controlled DNS returning a public IP to our check and an internal IP
+    to the client's connect).
+
+    - A bare IP literal → validated and returned as ``[host]`` (it IS the
+      connect target; no DNS involved).
+    - A hostname → resolved; EVERY returned IP validated (deny if ANY is denied);
+      ALL validated IPs returned, de-duplicated in resolution order (the caller
+      pins to one — typically the first — and preserves the original host for the
+      ``Host`` header + TLS SNI).
+    - Unresolvable → ``[]`` (no IP to pin; the caller falls back to its normal
+      connect, which surfaces the real DNS/connection error — same non-gating
+      behaviour as ``assert_fetch_host_allowed``).
+    - Empty host → denied.
     """
     if not host:
         raise SSRFBlocked("blocked fetch: empty host")
@@ -105,18 +124,37 @@ def assert_fetch_host_allowed(host: str, *, allow_private: bool) -> None:
         reason = _deny_reason(literal, allow_private=allow_private)
         if reason is not None:
             raise SSRFBlocked(f"blocked fetch to {host} ({reason})")
-        return
+        return [host]
     try:
         infos = socket.getaddrinfo(host, None, proto=socket.IPPROTO_TCP)
     except socket.gaierror:
-        # Unresolvable here → no IP to gate; let the client surface its own
-        # DNS/connection failure rather than mislabelling it as an SSRF block.
-        return
+        # Unresolvable here → no IP to gate or pin; let the client surface its
+        # own DNS/connection failure rather than mislabelling it as an SSRF block.
+        return []
+    out: list[str] = []
+    seen: set[str] = set()
     for info in infos:
-        ip = ipaddress.ip_address(info[4][0])
+        ip_str = info[4][0]
+        ip = ipaddress.ip_address(ip_str)
         reason = _deny_reason(ip, allow_private=allow_private)
         if reason is not None:
             raise SSRFBlocked(f"blocked fetch to {host} → {ip} ({reason})")
+        if ip_str not in seen:  # getaddrinfo repeats per socktype/proto
+            seen.add(ip_str)
+            out.append(ip_str)
+    return out
+
+
+def assert_fetch_host_allowed(host: str, *, allow_private: bool) -> None:
+    """Raise :class:`SSRFBlocked` if ``host`` resolves to any denied IP.
+
+    The check-only entry point (Layer 2 gate at each host boundary). Delegates to
+    :func:`resolve_and_validate` and discards the returned IPs — same resolution,
+    same deny policy, same non-gating behaviour for an unresolvable / empty host.
+    Callers that need the validated IP for connect-time pinning (#1972) call
+    ``resolve_and_validate`` directly.
+    """
+    resolve_and_validate(host, allow_private=allow_private)
 
 
 def resolve_allow_private() -> bool:
