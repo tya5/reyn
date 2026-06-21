@@ -594,6 +594,19 @@ _ROUTE_CONTRACT_SAMPLES: list[tuple[str, dict[str, Any]]] = [
     ("rag_operation__drop_source", {"source": "s"}),
     ("validation__lint",           {"skill_path": "index_events"}),
     ("exec__sandboxed_exec",       {"argv": ["echo", "hi"]}),
+    # task category (#1953 dynamic-wire) — args cover each IROp's required fields.
+    ("task__create",                     {"name": "ship it"}),
+    ("task__update_status",              {"task_id": "t1", "status": "in_progress"}),
+    ("task__get",                        {"task_id": "t1"}),
+    ("task__list",                       {}),
+    ("task__add_dependency",             {"task_id": "t1", "depends_on": "t0"}),
+    ("task__remove_dependency",          {"task_id": "t1", "depends_on": "t0"}),
+    ("task__repoint_dependency",
+     {"task_id": "t1", "from_depends_on": "t0", "to_depends_on": "t2"}),
+    ("task__abort",                      {"task_id": "t1"}),
+    ("task__heartbeat",                  {"task_id": "t1"}),
+    ("task__register_unblock_predicate", {"task_id": "t1", "predicate": "x>0"}),
+    ("task__comment",                    {"task_id": "t1", "body": "note"}),
 ]
 
 

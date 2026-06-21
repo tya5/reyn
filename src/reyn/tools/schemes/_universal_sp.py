@@ -198,6 +198,13 @@ def build_universal_tool_use_slots(
         _r2.append(
             "- **exec** — sandboxed argv execution (only when sandbox backend is enabled)."
         )
+        _r2.append(
+            "- **task** — dynamically create + manage sub-tasks: decompose a "
+            "complex request into trackable units (`task__create` — `deps` order "
+            "them, `assignee` delegates to another session), then "
+            "`task__update_status` / `task__list` / `task__abort`. Use when a "
+            "request needs multi-step tracking or delegation, not a single reply."
+        )
         _r2.append("")
         if has_hot_list_aliases:
             _r2.append(
