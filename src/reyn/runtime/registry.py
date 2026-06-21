@@ -603,31 +603,6 @@ class AgentRegistry:
                 if session is not None:
                     session.restore_state(snap)
 
-        # 6. ADR-0023 Phase 2: orphan plan recovery via PlanResumeCoordinator.
-        # Plans whose decomposition artifact survived (= post-Step-6 plans)
-        # are analyzed for memo replay; pre-Phase-2 plans without an
-        # artifact get the same Phase 1 outcome (= forced discard +
-        # outbox notice + plan_aborted) via the coordinator's missing-
-        # artifact fallback.
-        # FP-0043 S5 boundary: this iterates the MAIN session only. The recovery
-        # coordinator drives an agent-level PlanRegistry (a separate consumer from
-        # AgentSnapshot), so per-session plan recovery belongs with the deferred
-        # plan/step consumer-scoping line (#1737), not S5's AgentSnapshot re-key. A
-        # spawned session's active_plan_ids is still restored into its snapshot
-        # above; only the orphan-cleanup coordinator stays main-scoped here.
-        for name, snap in snapshots.items():
-            if not snap.active_plan_ids:
-                continue
-            session = self._peek_session(name)
-            if session is None:
-                continue
-            try:
-                await self._recover_plans_for_agent(name, session)
-            except Exception as exc:  # noqa: BLE001 — defensive
-                logger.warning(
-                    "plan recovery failed for agent=%s: %r", name, exc,
-                )
-
         return snapshots
 
     # ── Global rewind (ADR-0038 Stage 1c-2, D2 consistent-cut) ──────────────
