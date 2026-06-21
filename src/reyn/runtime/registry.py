@@ -812,8 +812,8 @@ class AgentRegistry:
 
         The 2c edit flow re-runs an edited turn from the state before it: checkout
         this predecessor, then submit the edit (a new fork). The result is the
-        immediately-prior checkpoint that is a **turn** (plan-step / phase cuts are
-        skipped — ``record_plan_step_completed`` cuts intra-turn checkpoints, but an
+        immediately-prior checkpoint that is a **turn** (phase cuts are
+        skipped — they cut intra-turn checkpoints, but an
         edit must return to the prior *turn*) AND on ``seq``'s **lineage** (its branch
         + ancestors back to the fork-point — so a forked branch's first turn resolves
         to the parent's fork-point turn, not a same-branch-only miss).

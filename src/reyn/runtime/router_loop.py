@@ -566,7 +566,7 @@ class RouterLoopCore(Protocol):
     ``RouterHostAdapter`` is a superset and satisfies this for free.
 
     The chat-extras (skills/agents/mcp/memory/web/file/reyn_src/embedding/
-    discovery/spawn/send_to_agent/record_plan_*) live on ``RouterLoopHost``
+    discovery/spawn/send_to_agent) live on ``RouterLoopHost``
     below; they are reached only via the chat-discovery setup, the chat
     system-prompt build, or chat-dispatch handlers — a phase never reaches them
     (its op catalog REPLACES chat-discovery, and its ops dispatch via the op
@@ -1347,10 +1347,8 @@ class RouterLoop:
         self._task_id = task_id
         # #1672: an UNSET router_model follows the configured model (no hidden
         # "light" tier) — resolve the "router" purpose class via the host's
-        # config-aware ModelResolver. Explicit router_model still wins. The plan
-        # path inherits this resolved value (dispatch_plan_tool passes
-        # self.router_model), so the chat router + plan-decomposition router both
-        # follow config from this single resolution point.
+        # config-aware ModelResolver. Explicit router_model still wins, so the
+        # chat router follows config from this single resolution point.
         from reyn.llm.model_resolver import resolve_purpose_class
         self.router_model = resolve_purpose_class(
             router_model, getattr(host, "resolver", None), "router",
@@ -2371,12 +2369,10 @@ class RouterLoop:
                     )
                     return self._total_usage
 
-                # ADR-0023 Phase 2.1: plan dispatch is now async — the
-                # async tool exit branch above already returned. The
-                # legacy synchronous "status=ok with text" special-case
-                # is preserved as a safety net for hosts that lack
-                # spawn_plan_task (= test stubs running planner sync via
-                # the AttributeError fallback in dispatch_plan_tool).
+                # The async tool exit branch above already returned. The legacy
+                # synchronous "status=ok with text" special-case is preserved as a
+                # safety net for hosts whose async tool dispatch falls back to a
+                # synchronous result (= test stubs).
                 for tc, r in zip(tool_calls, tool_results):
                     if (
                         tc["function"]["name"] == "plan"
@@ -3743,9 +3739,6 @@ class RouterLoop:
         * ``send_to_agent`` is bound with ``chain_id`` and ``depth=0`` at
           population time so the delegate handler signature stays pure
           ``(to, request)``.
-        * ``dispatch_plan_tool`` is bound with ``parent_host`` / ``chain_id``
-          / ``budget`` / ``router_model`` / ``available_tool_names``; the
-          plan handler passes only ``args``.
 
         Forward-looking fields (``available_skills`` / ``available_agents``
         for schema enrichment, identity / cost / model context) are also
@@ -3764,9 +3757,8 @@ class RouterLoop:
             )
 
         # FP-0012: non-blocking spawn binding. Only chat-mode hosts
-        # implement ``spawn_skill``; plan-mode ``_PlanStepHost`` does not,
-        # so the hasattr check leaves this None and invoke_skill falls
-        # back to run_skill_fn (= blocking) inside plan steps.
+        # implement ``spawn_skill``; a host that lacks it leaves this None
+        # and invoke_skill falls back to run_skill_fn (= blocking).
         _spawn_skill_bound: Any = None
         if hasattr(self.host, "spawn_skill") and callable(
             getattr(self.host, "spawn_skill", None)

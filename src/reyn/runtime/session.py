@@ -781,8 +781,7 @@ class Session:
         sandbox_config: "SandboxConfig | None" = None,
         # #1200 PR-F1 (agent-level-uniform backend, FS seam): the agent's
         # EnvironmentBackend INSTANCE, threaded to the chat Workspace so chat's
-        # file ops run on the SAME backend as the OSRuntime path (and plan, which
-        # delegates tool exec to chat via _PlanStepHost). None → HostBackend (the
+        # file ops run on the SAME backend as the OSRuntime path. None → HostBackend (the
         # workspace's own default) → unchanged behaviour. The sibling exec seam
         # (sandbox_backend string via sandbox_config) already flows agent-level.
         environment_backend: "EnvironmentBackend | None" = None,
@@ -1340,11 +1339,6 @@ class Session:
         # Session exposes forwarding properties for slash commands that
         # access them directly (slash/skill.py, slash/tasks.py).
         # SkillRunner is constructed below after _interventions is ready.
-
-        # ADR-0023 Phase 2 step 7d: per-plan resume task tracking is now
-        # owned by PlanRunner (constructed below). ``self.running_plans``
-        # remains accessible via a forwarding property — slash commands
-        # and mcp_server.py read it directly.
 
         # PR-refactor-session-1 wave 2: pending-chain lifecycle and intervention
         # queue ownership extracted into services. The session orchestrates the
@@ -2130,7 +2124,6 @@ class Session:
                                              + self._restore_intervention_tasks
             buffered_intervention_answers  → self._buffered_intervention_answers
             active_skill_run_ids           → self.running_skills (+ started_at / chain)
-            active_plan_ids                → self.running_plans
 
         The running_*/_inflight_wal_tasks task handles are already settled by
         await_quiescent; this drops the (now-done) handles so the rewound
@@ -2176,8 +2169,7 @@ class Session:
     def journal(self) -> "SnapshotJournal":
         """Read-only accessor for the session's SnapshotJournal.
 
-        The journal carries rich public API (``record_plan_started`` /
-        ``record_plan_aborted`` / ``append_inbox`` / ``consume_inbox`` /
+        The journal carries rich public API (``append_inbox`` / ``consume_inbox`` /
         ``snapshot``); exposing the holder via a public name keeps slash
         commands and tests off the underscore field. The journal
         instance is set once in ``__init__`` and never re-bound.
@@ -4626,11 +4618,6 @@ class Session:
                         exc_info=True,
                     )
             ctx.mcp_clients.clear()
-
-    # NOTE: ``spawn_plan_task`` and ``_spawn_resumed_plan`` moved to
-    # PlanRunner.spawn_plan_task / spawn_resumed_plan (RunSpawner wave).
-    # RouterHostAdapter binds the method reference; registry.py calls
-    # ``session._plan_runner.spawn_resumed_plan(...)`` directly.
 
     # --- RouterLoop orchestration ---
 

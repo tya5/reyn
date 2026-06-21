@@ -9,8 +9,6 @@ Sub-commands:
 Reads from existing infrastructure (= no new state required):
   - ``session.running_skills`` / ``running_skills_started_at`` /
     ``running_skills_chain`` for skill runs (PR22)
-  - ``session.running_plans`` + ``active_plan_ids`` for plan tasks (ADR-0023
-    Phase 2.1)
   - SkillRegistry per-skill snapshot for current_phase
   - The P6 events log via ``self._chat_events`` is NOT consulted here (= keeping
     the slash cheap and synchronous; users wanting raw events run ``reyn events``).
