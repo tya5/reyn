@@ -1537,7 +1537,11 @@ class _StreamController:
         self._parent._renderer.set_speaker("reyn", time.time())
         row = StreamingRow(
             prefix="",
-            id=f"stream_{msg_id[:8]}",
+            # Same id-collision class as the skillrow fix (#1971): deduped by
+            # the FULL msg_id below, but ``msg_id[:8]`` truncated the widget id
+            # so two msg_ids sharing an 8-char prefix would collide →
+            # DuplicateIds. Key on the full sanitized msg_id.
+            id=f"stream_{re.sub(r'[^A-Za-z0-9_-]', '_', msg_id)}",
             indent=self._parent._current_body_indent(),
         )
         self._stream_rows[msg_id] = row

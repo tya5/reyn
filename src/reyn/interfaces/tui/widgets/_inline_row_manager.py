@@ -129,7 +129,11 @@ class _InlineRowManager:
             tool_name=tool_name,
             args_repr=args_repr,
             label_prefix=label_prefix,
-            id=f"toolcall_{op_id[:8]}",
+            # Same id-collision class as the skillrow fix (#1971): the row is
+            # deduped by the FULL op_id above, but ``op_id[:8]`` truncated the
+            # widget id, so two distinct op_ids sharing an 8-char prefix
+            # collided → DuplicateIds. Key on the full sanitized op_id.
+            id=f"toolcall_{re.sub(r'[^A-Za-z0-9_-]', '_', op_id)}",
         )
         self._tool_call_rows[op_id] = row
         self._parent.mount(row)
