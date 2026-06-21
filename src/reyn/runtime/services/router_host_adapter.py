@@ -120,7 +120,6 @@ class RouterHostAdapter:
         agent_registry: Any,                    # AgentRegistry | None
         skill_enumerate_fn: Callable[[set], list],
         agent_workspace_dir: Path,
-        plan_registry_getter: Callable[[], Any],
         # File op callbacks
         file_read: Callable[..., Awaitable[dict]],
         file_write: Callable[..., Awaitable[dict]],
@@ -137,7 +136,6 @@ class RouterHostAdapter:
         send_to_agent: Callable[..., Awaitable[None]],
         put_outbox: Callable[..., Awaitable[None]],
         append_history: Callable,
-        spawn_plan_task: Callable[..., Awaitable[None]],
         # Tracker getters (return mutable list or None)
         delegation_tracker: Callable[[], "list[dict] | None"],
         agent_replies_tracker: Callable[[], "list[str] | None"],
@@ -309,7 +307,6 @@ class RouterHostAdapter:
         self._registry = agent_registry
         self._skill_enumerate_fn = skill_enumerate_fn
         self._workspace_dir = Path(agent_workspace_dir)
-        self._plan_registry_getter = plan_registry_getter
         # File callbacks
         self._file_read_cb = file_read
         self._file_write_cb = file_write
@@ -326,7 +323,6 @@ class RouterHostAdapter:
         self._send_to_agent_cb = send_to_agent
         self._put_outbox_cb = put_outbox
         self._append_history_cb = append_history
-        self._spawn_plan_task_cb = spawn_plan_task
         # Tracker getters
         self._delegation_tracker = delegation_tracker
         self._agent_replies_tracker = agent_replies_tracker
@@ -1097,163 +1093,6 @@ class RouterHostAdapter:
             return self._context_window_status()
         except Exception:  # noqa: BLE001 — signal is best-effort, never break a turn
             return None
-
-    # --- Plan-mode lifecycle persistence (ADR-0022 Phase 1) ---
-    #
-    # RouterLoopHost methods that wire through to SnapshotJournal so plan-
-    # mode executions become crash-discoverable.
-
-    async def record_plan_started(
-        self, *, plan_id: str, goal: str, n_steps: int,
-    ) -> None:
-        await self._journal.record_plan_started(
-            plan_id=plan_id, goal=goal, n_steps=n_steps,
-        )
-        # ADR-0023 Phase 2 + ADR-0025 wiring: per-plan snapshot is
-        # created here so on-disk state mirrors AgentSnapshot's
-        # active_plan_ids.
-        plan_reg = self._plan_registry_getter()
-        if plan_reg is not None:
-            try:
-                applied = self._journal.snapshot.applied_seq
-                agent_state_dir = (
-                    Path(".reyn") / "agents" / self._agent_name / "state"
-                )
-                from reyn.core.plan import decomposition_path
-                artifact = decomposition_path(agent_state_dir, plan_id)
-                plan_reg.start(
-                    plan_id=plan_id,
-                    chain_id=f"plan_{plan_id}",
-                    goal=goal,
-                    applied_seq=applied,
-                    decomposition_artifact_path=str(artifact)
-                    if artifact.exists()
-                    else None,
-                )
-            except Exception as exc:  # noqa: BLE001
-                logger.warning(
-                    "PlanRegistry.start failed for %s: %r", plan_id, exc,
-                )
-
-    async def record_plan_completed(self, *, plan_id: str) -> None:
-        await self._journal.record_plan_completed(plan_id=plan_id)
-        plan_reg = self._plan_registry_getter()
-        if plan_reg is not None:
-            try:
-                await plan_reg.complete(plan_id=plan_id, status="completed")
-            except Exception as exc:  # noqa: BLE001
-                logger.warning(
-                    "PlanRegistry.complete failed for %s: %r", plan_id, exc,
-                )
-
-    async def record_plan_aborted(
-        self, *, plan_id: str, reason: str = "",
-    ) -> None:
-        await self._journal.record_plan_aborted(plan_id=plan_id, reason=reason)
-        plan_reg = self._plan_registry_getter()
-        if plan_reg is not None:
-            try:
-                await plan_reg.complete(plan_id=plan_id, status="aborted")
-            except Exception as exc:  # noqa: BLE001
-                logger.warning(
-                    "PlanRegistry.complete (abort) failed for %s: %r",
-                    plan_id, exc,
-                )
-
-    # --- Plan-mode per-step WAL persistence (ADR-0023 Phase 2 step 6) ---
-
-    async def record_plan_step_started(
-        self, *, plan_id: str, step_id: str, depends_on: list[str],
-        n_tools: int,
-    ) -> None:
-        seq = await self._journal.record_plan_step_started(
-            plan_id=plan_id, step_id=step_id,
-            depends_on=depends_on, n_tools=n_tools,
-        )
-        plan_reg = self._plan_registry_getter()
-        if plan_reg is not None and seq is not None:
-            plan_reg.record_step_started(
-                plan_id=plan_id, step_id=step_id, applied_seq=seq,
-            )
-
-    async def record_plan_step_completed(
-        self, *, plan_id: str, step_id: str, content_len: int,
-        result_text: str | None = None,
-    ) -> None:
-        """Record durable step completion.
-
-        ADR-0023 Phase 2 + ADR-0024: ``result_text`` is the optional
-        full text — passed through to PlanRegistry which inlines or
-        spills based on size.
-        """
-        seq = await self._journal.record_plan_step_completed(
-            plan_id=plan_id, step_id=step_id, content_len=content_len,
-        )
-        plan_reg = self._plan_registry_getter()
-        if plan_reg is not None and seq is not None:
-            await plan_reg.record_step_completed(
-                plan_id=plan_id, step_id=step_id, applied_seq=seq,
-                result_text=result_text or "",
-            )
-
-    async def record_plan_step_failed(
-        self, *, plan_id: str, step_id: str, error: str,
-    ) -> None:
-        seq = await self._journal.record_plan_step_failed(
-            plan_id=plan_id, step_id=step_id, error=error,
-        )
-        plan_reg = self._plan_registry_getter()
-        if plan_reg is not None and seq is not None:
-            await plan_reg.record_step_failed(
-                plan_id=plan_id, step_id=step_id, applied_seq=seq,
-                error_repr=error,
-            )
-
-    # --- Decomposition artifact persistence (ADR-0023 §3.5) ---
-
-    async def write_plan_decomposition(
-        self, *, plan_id: str, plan: Any,
-    ) -> str | None:
-        """Persist the plan decomposition. Returns the artifact path or None."""
-        from reyn.core.plan import write_decomposition
-        agent_state_dir = (
-            Path(".reyn") / "agents" / self._agent_name / "state"
-        )
-        try:
-            return str(write_decomposition(agent_state_dir, plan_id, plan))
-        except OSError as exc:
-            logger.warning(
-                "write_plan_decomposition failed for %s: %r", plan_id, exc,
-            )
-            return None
-
-    async def delete_plan_decomposition(self, *, plan_id: str) -> None:
-        """Remove the plan decomposition artifact (P5 cleanup on success)."""
-        from reyn.core.plan import delete_decomposition
-        agent_state_dir = (
-            Path(".reyn") / "agents" / self._agent_name / "state"
-        )
-        try:
-            delete_decomposition(agent_state_dir, plan_id)
-        except OSError as exc:
-            logger.warning(
-                "delete_plan_decomposition failed for %s: %r", plan_id, exc,
-            )
-
-    async def spawn_plan_task(
-        self, *, plan_id: str, runtime: Any, chain_id: str,
-        parent_chain_id: str | None = None,
-    ) -> None:
-        """Delegate to the session-owned spawn_plan_task callback.
-
-        Task lifecycle (running_plans dict) stays with Session.
-        """
-        await self._spawn_plan_task_cb(
-            plan_id=plan_id,
-            runtime=runtime,
-            chain_id=chain_id,
-            parent_chain_id=parent_chain_id,
-        )
 
     # --- Private helpers ---
 

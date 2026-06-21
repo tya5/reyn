@@ -1435,20 +1435,6 @@ class Session:
         # forward the reply upstream. None = not capturing (user-turn context).
         self._router_loop_agent_replies: list[str] | None = None
 
-        # RunSpawner wave: PlanRunner — plan task lifecycle (spawn / resume).
-        # Owns ``running_plans``; session exposes a forwarding property.
-        # Constructed BEFORE RouterHostAdapter because the adapter binds
-        # ``spawn_plan_task=self._plan_runner.spawn_plan_task`` as one of
-        # its callbacks. PlanRunner needs ``_router_host`` for plan
-        # artifact cleanup, resolved lazily via ``get_router_host``.
-        self._plan_runner = PlanRunner(
-            agent_name=self.agent_name,
-            put_outbox=self._put_outbox,
-            enqueue_plan_completed=self._enqueue_plan_completed,
-            journal=self._journal,
-            get_router_host=lambda: self._router_host,
-        )
-
         # #1092 PR-F1 (chat activation): build the chat axis's turn_budget engine
         # off the RESOLVED model (#1172-safe — resolve self.model exactly as the
         # CompactionEngine does; never hand the cosmetic class to the budget).
@@ -1492,7 +1478,6 @@ class Session:
             agent_registry=self._registry,
             skill_enumerate_fn=enumerate_available_skills,
             agent_workspace_dir=self.workspace_dir,
-            plan_registry_getter=self.get_plan_registry,
             file_read=self._file_read,
             file_write=self._file_write,
             file_delete=self._file_delete,
@@ -1506,7 +1491,6 @@ class Session:
             send_to_agent=self._send_to_agent,
             put_outbox=self._put_outbox,
             append_history=self._append_history,
-            spawn_plan_task=self._plan_runner.spawn_plan_task,
             delegation_tracker=lambda: self._router_loop_delegations,
             agent_replies_tracker=lambda: self._router_loop_agent_replies,
             universal_wrappers_enabled=self._action_retrieval.universal_wrappers_enabled,
