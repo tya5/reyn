@@ -20,7 +20,14 @@ from __future__ import annotations
 
 import uuid
 
-from reyn.task import InMemoryTaskBackend, Task, TaskOrigin
+from reyn.task import (
+    InMemoryTaskBackend,
+    Task,
+    TaskCycleError,
+    TaskDepNotFoundError,
+    TaskOrigin,
+    TaskState,
+)
 
 from . import register
 from .context import OpContext
@@ -58,6 +65,31 @@ def _ok(kind: str, **data) -> dict:
 
 def _not_found(kind: str, task_id: str) -> dict:
     return {"kind": kind, "status": "error", "error": f"task {task_id!r} not found"}
+
+
+def _edge_error(op_kind: str, err: Exception) -> dict:
+    """Decision-enabling error result for a rejected dependency edge (#1953 slice
+    6, OQ-5): a structured ``status="error"`` dict (the edge + cycle path), NOT a
+    raised exception through the op dispatcher."""
+    if isinstance(err, TaskCycleError):
+        return {
+            "kind": op_kind,
+            "status": "error",
+            "error": {
+                "kind": "cycle",
+                "edge": [err.task_id, err.depends_on],
+                "path": err.path,
+            },
+        }
+    assert isinstance(err, TaskDepNotFoundError)
+    return {
+        "kind": op_kind,
+        "status": "error",
+        "error": {
+            "kind": "dep_not_found",
+            "edge": [err.task_id, err.depends_on],
+        },
+    }
 
 
 def _actor(ctx: OpContext) -> str | None:
@@ -127,7 +159,11 @@ async def _create(op, ctx: OpContext, caller) -> dict:
         created_by=_actor(ctx),
         deps=list(op.deps),
     )
-    created = await _backend(ctx).create(task)
+    try:
+        created = await _backend(ctx).create(task)
+    except (TaskCycleError, TaskDepNotFoundError) as err:
+        # A born-with dependency is dangling or cycle-forming (OQ-1/OQ-4/OQ-5).
+        return _edge_error("task.create", err)
     _audit(ctx, "task.create", created.task_id, status=created.status.value,
            assignee=created.assignee, parent_id=parent_id)
     return _ok("task.create", task=created.to_dict())
@@ -142,6 +178,19 @@ async def _update_status(op, ctx: OpContext, caller) -> dict:
     if task is None:
         return _not_found("task.update_status", op.task_id)
     _audit(ctx, "task.update_status", op.task_id, status=op.status)
+    # OQ-3: a predecessor reaching `completed` drives DAG readiness (OS scheduling,
+    # P3) — recompute its dependents and flip any fully-satisfied one blocked→ready
+    # via the OS-authority backend method (no assignee CAS). `completed` only;
+    # failed/aborted/archived deps don't satisfy an edge (H5/OQ-7 → slice 7).
+    if task.status is TaskState.COMPLETED:
+        promoted = await _backend(ctx).recompute_readiness(op.task_id)
+        events = getattr(ctx, "events", None)
+        if events is not None:
+            for p in promoted:
+                # Generic P6 audit (like task_op/task_disposition); NOT a WAL
+                # closed-vocab kind (WAL-vs-P6 separation, P7).
+                events.emit("task_readiness", task_id=p.task_id, to="ready",
+                            trigger=op.task_id)
     return _ok("task.update_status", task=task.to_dict())
 
 
@@ -169,7 +218,14 @@ async def _add_dependency(op, ctx: OpContext, caller) -> dict:
         "task.add_dependency", ctx, _backend(ctx), op.task_id, "requester")
     if denied is not None:
         return denied
-    task = await _backend(ctx).add_dependency(op.task_id, op.depends_on)
+    try:
+        task = await _backend(ctx).add_dependency(op.task_id, op.depends_on)
+    except (TaskCycleError, TaskDepNotFoundError) as err:
+        # OQ-1/OQ-4/OQ-5: dangling or cycle-forming edge → decision-enabling dict.
+        return _edge_error("task.add_dependency", err)
+    if task is None:
+        return _not_found("task.add_dependency", op.task_id)
+    _audit(ctx, "task.add_dependency", op.task_id, depends_on=op.depends_on)
     return _ok("task.add_dependency", task=task.to_dict())
 
 

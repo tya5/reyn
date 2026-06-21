@@ -523,8 +523,27 @@ tree, and the assignee discovers the abort via the terminal guard).
 **States:** `pending` / `ready` / `in_progress` / `blocked` / `completed` /
 `failed` / `aborted` / `archived`.
 
-Still landing in later slices: dependency cycle-check + readiness,
-unblock-predicate evaluation.
+**Dependency DAG (§13).** `task.add_dependency` and `task.create(deps=[...])` add
+depends-on edges through a **shared edge-guard** (completeness): the `depends_on`
+task must exist and the edge must not create a cycle. A rejected edge returns a
+decision-enabling **error result** (`status="error"`, `error.kind="cycle"` /
+`"dep_not_found"`, the offending `edge`, and — for a cycle — the `path`), never a
+raised exception. Edge-add is a **pure topology write** — it never flips a task's
+status (the requester does not write the assignee's status). A task born with
+not-all-completed deps is **OS-derived `blocked`** at create (deps-less tasks keep
+their requested status).
+
+**Completion-driven readiness (OS-authority).** When a predecessor reaches
+`completed`, `task.update_status` drives an OS readiness recompute: each dependent
+whose deps are **all** `completed` transitions `blocked → ready`, emitting a
+generic P6 `task_readiness` event. This `blocked → ready` write is an **OS
+scheduling transition** (P3) — like `abort`, it is a dedicated backend method that
+**bypasses the assignee CAS** (it is not an assignee progress write). A
+non-`completed` terminal dep (`failed` / `aborted`) does not satisfy an edge
+(liveness backstop lands in a later slice).
+
+Still landing in later slices: unblock-predicate evaluation; terminal-non-completed
+dependency handling (liveness backstop).
 
 ---
 

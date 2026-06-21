@@ -28,6 +28,9 @@ async def test_nondefault_task_round_trips_across_reload_from_disk(tmp_path):
     """Tier 2: a fully non-default task survives a close + reopen from disk."""
     path = _db(tmp_path)
     backend = SqliteTaskBackend(path)
+    # #1953 slice 6 (OQ-1): deps must reference existing tasks — create them first.
+    await backend.create(Task(task_id="d-1", name="d1", assignee="bob", requester="alice"))
+    await backend.create(Task(task_id="d-2", name="d2", assignee="bob", requester="alice"))
     task = Task(
         task_id="t-1", name="ship", assignee="bob", requester="alice",
         origin=TaskOrigin.EXTERNAL, status=TaskState.BLOCKED,
@@ -155,6 +158,9 @@ async def test_add_dependency_and_comment(tmp_path):
     """Tier 2: dependency edges + comments persist."""
     backend = SqliteTaskBackend(_db(tmp_path))
     await backend.create(Task(task_id="t", name="n", assignee="b", requester="r"))
+    # #1953 slice 6 (OQ-1): the depends_on task must exist (a dangling dep is
+    # rejected as an instant deadlock), so create it first.
+    await backend.create(Task(task_id="u", name="u", assignee="b", requester="r"))
     updated = await backend.add_dependency("t", "u")
     assert updated is not None and updated.deps == ["u"]
 
