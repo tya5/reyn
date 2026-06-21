@@ -95,7 +95,13 @@ def _client_with_registry(tmp_path: Path, agents: list[tuple[str, str]]):
     """
     from fastapi.testclient import TestClient
 
-    from reyn.interfaces.web.deps import get_registry, get_run_registry, get_task_backend
+    from reyn.interfaces.web.a2a_webhook_registry import A2AWebhookRegistry
+    from reyn.interfaces.web.deps import (
+        get_a2a_webhook_registry,
+        get_registry,
+        get_run_registry,
+        get_task_backend,
+    )
     from reyn.interfaces.web.run_registry import RunRegistry
     from reyn.interfaces.web.server import app
     from reyn.task import InMemoryTaskBackend
@@ -105,6 +111,7 @@ def _client_with_registry(tmp_path: Path, agents: list[tuple[str, str]]):
     app.dependency_overrides[get_registry] = lambda: registry
     app.dependency_overrides[get_run_registry] = lambda: run_registry
     app.dependency_overrides[get_task_backend] = lambda: InMemoryTaskBackend()
+    app.dependency_overrides[get_a2a_webhook_registry] = lambda: A2AWebhookRegistry()
     client = TestClient(app, raise_server_exceptions=False)
     return client, registry
 

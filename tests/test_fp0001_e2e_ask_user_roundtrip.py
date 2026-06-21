@@ -310,7 +310,13 @@ def test_async_mode_message_send_returns_task_envelope(tmp_path, monkeypatch):
 
     from fastapi.testclient import TestClient
 
-    from reyn.interfaces.web.deps import get_registry, get_run_registry, get_task_backend
+    from reyn.interfaces.web.a2a_webhook_registry import A2AWebhookRegistry
+    from reyn.interfaces.web.deps import (
+        get_a2a_webhook_registry,
+        get_registry,
+        get_run_registry,
+        get_task_backend,
+    )
     from reyn.interfaces.web.run_registry import RunRegistry
     from reyn.interfaces.web.server import app
     from reyn.task import InMemoryTaskBackend
@@ -320,9 +326,11 @@ def test_async_mode_message_send_returns_task_envelope(tmp_path, monkeypatch):
     # TestClient constructed without ``with ...`` doesn't fire the lifespan,
     # so override the dependency with a real instance for this test.
     run_registry = RunRegistry()
+    task_backend = InMemoryTaskBackend()
     app.dependency_overrides[get_registry] = lambda: registry
     app.dependency_overrides[get_run_registry] = lambda: run_registry
-    app.dependency_overrides[get_task_backend] = lambda: InMemoryTaskBackend()
+    app.dependency_overrides[get_task_backend] = lambda: task_backend
+    app.dependency_overrides[get_a2a_webhook_registry] = lambda: A2AWebhookRegistry()
     client = TestClient(app, raise_server_exceptions=False)
 
     try:
@@ -345,9 +353,129 @@ def test_async_mode_message_send_returns_task_envelope(tmp_path, monkeypatch):
         body = r.json()
         assert body.get("jsonrpc") == "2.0"
         result = body.get("result", {})
+        # #1953 slice 5b: async-mode returns the canonical Task envelope (the Task
+        # is the single A2A work-unit authority; id = task_id, status is nested).
         assert result.get("kind") == "task", f"Expected kind=task, got: {result}"
-        assert "id" in result, "Task envelope must include a run_id"
-        assert result.get("status") == "running"
+        task_id = result.get("id")
+        assert task_id, "Task envelope must include a task_id"
+        assert result["status"]["state"] == "working"  # in_progress → working
+        # The create path actually created the canonical Task in the backend
+        # (RED if 5b's Task creation is dropped — the async run would be a
+        # RunEntry-only tombstone invisible to GetTask).
+        created = asyncio.new_event_loop().run_until_complete(task_backend.get(task_id))
+        assert created is not None and created.origin.value == "external"
+        assert created.assignee.startswith("a2a:")  # the #1814 per-contextId session_id
+    finally:
+        app.dependency_overrides.clear()
+
+
+@pytest.mark.skipif(_SKIP_ROUTER, reason=_SKIP_REASON)
+def test_e2e_create_with_webhook_then_cancel_fires_disposition(tmp_path, monkeypatch):
+    """Tier 2c: #1953 slice 5b — the full create→cancel→disposition wiring proof.
+
+    Drives the REAL endpoints (no mock collaborators; the agent send is a real
+    injected stub callable, the webhook poster is a real recording callable):
+
+      message/send (async + webhook_url)  → Task created + webhook channel
+                                            registered in the live A2AWebhookRegistry
+      POST /a2a/tasks/{task_id}/cancel    → task.abort → archived (cooperative-terminal)
+      sweep_dispositions(...)             → the registered webhook fires exactly once,
+                                            carrying the right contextId + task_id
+
+    This is the production-wiring proof that slice 5a-2's registry is populated by
+    the live create path (replacing the test-seeded `register_webhook` of the unit
+    test) — RED if 5b drops the `register_webhook` call or the assignee→contextId
+    round-trip breaks (the sweep would find no channel and fire 0).
+    """
+    monkeypatch.chdir(tmp_path)
+
+    import reyn.interfaces.web.routers.a2a as a2a_mod
+    from fastapi.testclient import TestClient
+
+    from reyn.interfaces.web.a2a_webhook_registry import (
+        A2AWebhookRegistry,
+        sweep_dispositions,
+    )
+    from reyn.interfaces.web.deps import (
+        get_a2a_webhook_registry,
+        get_registry,
+        get_run_registry,
+        get_task_backend,
+    )
+    from reyn.interfaces.web.run_registry import RunRegistry
+    from reyn.interfaces.web.server import app
+    from reyn.task import InMemoryTaskBackend
+
+    # Real injected collaborators (no mocks): a fast agent-send stub so the
+    # background run doesn't reach the LLM, and a recording webhook poster.
+    async def _stub_send(*_args, **_kwargs):
+        return {"reply": "ok", "partial": False, "running_skill_run_ids": []}
+
+    monkeypatch.setattr(a2a_mod, "send_to_agent_impl", _stub_send)
+    monkeypatch.setattr(
+        a2a_mod, "resolve_a2a_session",
+        lambda registry, agent_name, context_id=None: None,
+    )
+
+    class _RecordingPoster:
+        def __init__(self) -> None:
+            self.calls: list[tuple[str, dict]] = []
+
+        async def __call__(self, url, payload):
+            self.calls.append((url, payload))
+            from types import SimpleNamespace
+            return SimpleNamespace(ok=True)
+
+    registry = _build_registry_for_test(tmp_path)
+    run_registry = RunRegistry()
+    task_backend = InMemoryTaskBackend()
+    webhook_registry = A2AWebhookRegistry()  # the ONE live instance create + sweep share
+
+    app.dependency_overrides[get_registry] = lambda: registry
+    app.dependency_overrides[get_run_registry] = lambda: run_registry
+    app.dependency_overrides[get_task_backend] = lambda: task_backend
+    app.dependency_overrides[get_a2a_webhook_registry] = lambda: webhook_registry
+    client = TestClient(app, raise_server_exceptions=False)
+
+    hook_url = "https://client.example/disposition-hook"
+    try:
+        # 1. create with a webhook_url → Task created + channel registered.
+        r = client.post(
+            "/a2a/agents/default",
+            json={
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "message/send",
+                "params": {
+                    "message": {"role": "user", "parts": [{"kind": "text", "text": "go"}]},
+                    "contextId": "ctx-e2e",
+                    "async_mode": True,
+                    "webhook_url": hook_url,
+                },
+            },
+        )
+        assert r.status_code == 200, r.text
+        task_id = r.json()["result"]["id"]
+        # The live create path populated the registry (NOT a test seed).
+        assert webhook_registry.webhook_for("ctx-e2e") == hook_url
+
+        # 2. external requester cancels → task.abort → archived.
+        rc = client.post(f"/a2a/tasks/{task_id}/cancel")
+        assert rc.status_code == 200, rc.text
+        assert rc.json()["status"]["state"] == "canceled"
+
+        # 3. the periodic sweep notifies the external requester exactly once.
+        poster = _RecordingPoster()
+        fired = asyncio.new_event_loop().run_until_complete(
+            sweep_dispositions(task_backend, webhook_registry, post_fn=poster)
+        )
+        assert fired == 1
+        assert len(poster.calls) == 1
+        url, payload = poster.calls[0]
+        assert url == hook_url
+        assert payload["task_id"] == task_id
+        assert payload["contextId"] == "ctx-e2e"
+        assert payload["disposition"] == "aborted"
     finally:
         app.dependency_overrides.clear()
 
