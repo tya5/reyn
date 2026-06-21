@@ -1928,7 +1928,7 @@ class RouterLoop:
             # short-circuits the call. Used by phase-step resume so a
             # crashed mid-step sub-loop replays earlier LLM turns
             # without re-paying. memo_provider is None for non-resume
-            # paths (= chat router main loop, fresh plan runs).
+            # paths (= chat router main loop, fresh phase-step runs).
             result = None
             args_hash: str | None = None
             if self._memo_provider is not None:
