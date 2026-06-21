@@ -127,6 +127,13 @@ class _SSRFSafeRedirectHandler(_HTTPRedirectHandler):
         return super().redirect_request(req, fp, code, msg, headers, newurl)
 
 
+# Module-level URL opener whose redirect handler re-gates every hop (#1956),
+# kept under the ``_urlopen`` name as the stable seam ``_request`` calls (and
+# that tests patch to inject fake responses) — a drop-in for the old
+# ``urllib.request.urlopen`` but redirect-safe.
+_urlopen = _build_opener(_SSRFSafeRedirectHandler()).open
+
+
 def _response_dict(resp: Any) -> dict:
     headers = dict(resp.headers.items()) if hasattr(resp, "headers") else {}
     raw = read_capped(resp)  # bounded read — unbounded-body DoS guard (#1913 class)
@@ -159,11 +166,10 @@ def _request(
         else:
             data = str(body).encode("utf-8")
     req = _Request(url, data=data, headers=hdrs, method=method)
-    # #1956: open via an opener whose redirect handler re-gates each hop (L1+L2),
-    # replacing the stock global opener that followed redirects without re-check.
-    opener = _build_opener(_SSRFSafeRedirectHandler())
+    # #1956: ``_urlopen`` is the SSRF-safe opener (redirect handler re-gates each
+    # hop). Called via the module global so tests can patch the seam.
     try:
-        with opener.open(req, timeout=timeout) as resp:  # noqa: S310 — see module docstring
+        with _urlopen(req, timeout=timeout) as resp:  # noqa: S310 — see module docstring
             return _response_dict(resp)
     except _HTTPError as exc:
         return _response_dict(exc)
