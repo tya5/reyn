@@ -13,7 +13,6 @@ from reyn.interfaces.tui._palette import _TEXT_DIMMEST
 
 from .base import (
     _CORAL,
-    _EVENT_PLAN,
     _STATUS_CRITICAL,
     _STATUS_SUCCESS,
     _STATUS_SUCCESS_DARK,
@@ -21,7 +20,6 @@ from .base import (
     _TEXT_BRIGHT,
     _TEXT_DIM,
     _TEXT_MID,
-    _TEXT_NEUTRAL,
     _esc,
     logger,
 )
@@ -51,7 +49,7 @@ _BAR_THRESHOLD    = 44  # bar suppressed below this; pct label kept
 def _fit(s: str, w: int) -> str:
     """Truncate ``s`` to at most ``w`` display cells, appending '…' when cut.
 
-    Guards the BY-AGENT/SKILL/MODEL/PLAN name columns: these are rendered as
+    Guards the BY-AGENT/SKILL/MODEL name columns: these are rendered as
     ``{name:<{width}}{tokens:>7,} tok``, where the left-justify pads SHORT
     names so the padding separates the two columns. A name AT-OR-OVER the
     column width gets no padding and collides with the token count (observed
@@ -254,17 +252,6 @@ def render_cost(
     )
     # Per-model bucket (parsed from llm_called events)
     by_model: dict[str, dict] = defaultdict(_new_bucket)
-    # Plan-mode (ADR-0022 / 0023). Cost attribution: while we're inside a
-    # plan_step (= between plan_step_started and plan_step_{completed,failed}
-    # within the same file), each llm_response_received contributes to both
-    # the (plan_id) and the (plan_id, step_id) buckets. plan_emitted gives us
-    # the human-readable goal so the BY PLAN section shows what the plan was
-    # actually trying to do, not just an opaque uuid.
-    by_plan: dict[str, dict] = defaultdict(_new_bucket)
-    by_plan_step: dict[str, dict[str, dict]] = defaultdict(
-        lambda: defaultdict(_new_bucket)
-    )
-    plan_goals: dict[str, str] = {}
 
     for jsonl in sorted(events_root.rglob("*.jsonl")):
         try:
@@ -286,11 +273,6 @@ def render_cost(
                 skill = "(chat)"
 
             pending_model: str = "unknown"
-            # Plan attribution state (per-file). When inside an active step
-            # (= we've seen plan_step_started without a matching completion),
-            # llm_response_received also contributes to that plan + step.
-            current_plan_id: str | None = None
-            current_step_id: str | None = None
             for raw in jsonl.read_text(encoding="utf-8").splitlines():
                 raw = raw.strip()
                 if not raw:
@@ -299,21 +281,6 @@ def render_cost(
                     ev = json.loads(raw)
                     ev_type = ev.get("type")
                     d = ev.get("data") or {}
-                    if ev_type == "plan_emitted":
-                        pid = str(d.get("plan_id", ""))
-                        if pid:
-                            plan_goals[pid] = str(d.get("goal", ""))
-                        continue
-                    if ev_type == "plan_step_started":
-                        current_plan_id = str(d.get("plan_id", "")) or None
-                        current_step_id = str(d.get("step_id", "")) or None
-                        continue
-                    if ev_type in ("plan_step_completed", "plan_step_failed"):
-                        # Close the active step. Defensive: if plan_id changed
-                        # mid-stream (shouldn't happen) we still reset both.
-                        current_plan_id = None
-                        current_step_id = None
-                        continue
                     if ev_type == "llm_called":
                         raw_model = str(d.get("model", "unknown"))
                         # Strip the litellm proxy prefix (e.g.
@@ -353,20 +320,6 @@ def render_cost(
                     if has_cost:
                         mb["has_cost"] = True
                     mb["call_costs"].append(cost)
-
-                    # Plan attribution — additive view on top of by_agent/skill,
-                    # not a replacement. Same call counts toward both.
-                    if current_plan_id:
-                        for bucket in (
-                            by_plan[current_plan_id],
-                            by_plan_step[current_plan_id][current_step_id or "?"],
-                        ):
-                            bucket["p"] += pt; bucket["c"] += ct
-                            bucket["cost"] += cost; bucket["calls"] += 1
-                            bucket["cached"] += cached
-                            if has_cost:
-                                bucket["has_cost"] = True
-                            bucket["call_costs"].append(cost)
 
                     if ts.startswith(today_str):
                         today["p"] += pt; today["c"] += ct
@@ -474,59 +427,6 @@ def render_cost(
     else:
         lines.append(f"[{_TEXT_DIM}]    (no skill runs yet)[/]")
     lines.append("")
-
-    # ── BY PLAN ──────────────────────────────────────────────────────
-    # Only show when plans have actually run (avoid noise when nobody is
-    # using plan-mode). Sort plans by descending cost so the expensive
-    # ones surface first.
-    if by_plan:
-        lines.append(f"[bold {_TEXT_BODY}]  BY PLAN[/]")
-        sorted_plans = sorted(
-            by_plan.items(),
-            key=lambda kv: (-kv[1]["cost"], -(kv[1]["p"] + kv[1]["c"])),
-        )
-        for plan_id, pb in sorted_plans:
-            tok_total = pb["p"] + pb["c"]
-            cost_part = (
-                f"  [bold {_STATUS_SUCCESS}]${pb['cost']:.4f}[/]"
-                if pb["has_cost"] and show_extra else ""
-            )
-            calls_part = (
-                f"  [{_TEXT_MID}]{pb['calls']}c[/]"                if show_extra else ""
-            )
-            short_pid = plan_id[:8]
-            goal = plan_goals.get(plan_id, "")
-            goal_part = (
-                f"  [{_TEXT_NEUTRAL}]{_esc(goal[:32] + ('…' if len(goal) > 32 else ''))}[/]"
-                if goal and show_extra else ""
-            )
-            lines.append(
-                f"[bold {_EVENT_PLAN}]  {short_pid:<8}[/]"
-                f"  [{_TEXT_BODY}]{tok_total:>7,} tok[/]"
-                f"{cost_part}"
-                f"{calls_part}"
-                f"{goal_part}"
-            )
-            steps = by_plan_step.get(plan_id, {})
-            for step_id in sorted(steps):
-                sb = steps[step_id]
-                step_tok = sb["p"] + sb["c"]
-                step_cost_part = (
-                    f"  [{_STATUS_SUCCESS_DARK}]${sb['cost']:.4f}[/]"
-                    if sb["has_cost"] and show_extra else ""
-                )
-                step_calls_part = (
-                    f"  [{_TEXT_DIMMEST}]{sb['calls']}c[/]"
-                    if show_extra else ""
-                )
-                lines.append(
-                    f"[{_TEXT_DIM}]    {_esc(_fit(step_id, skill_name_w - 1)):<{skill_name_w}}[/]"
-                    f"[{_TEXT_DIM}]{step_tok:>7,} tok[/]"
-                    f"{step_cost_part}"
-                    f"{step_calls_part}"
-                )
-            lines.append("")
-        lines.append("")
 
     # ── BY MODEL ─────────────────────────────────────────────────────
     lines.append(f"[bold {_TEXT_BODY}]  BY MODEL[/]")

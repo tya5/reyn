@@ -18,8 +18,7 @@ on private state. Use the public surface or a snapshot()-style read").
 The widget is constructed without mounting it inside a Textual app —
 ``_refresh`` returns early when its Static children are None, so the
 internal state can be driven directly against the public API and
-verified via the render helpers, the same way ``test_skill_activity_plan_step_persist``
-exercises ``SkillActivityRow``.
+verified via the render helpers.
 """
 from __future__ import annotations
 

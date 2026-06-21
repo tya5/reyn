@@ -1335,63 +1335,38 @@ class OutboxRouter:
     def _on_system(
         self, msg: OutboxMessage, conv: ConversationView, header: ReynHeader,
     ) -> None:
-        """`system` — bridge plan lifecycle to AsyncStackPanel + default render.
+        """`system` — bridge task lifecycle to AsyncStackPanel + default render.
 
-        ``plan_runner`` / ``/plan discard`` emit ``kind="system"`` messages
-        with a ``source`` discriminator in meta:
+        The task-driven ``decompose`` path emits ``kind="system"`` messages
+        with a ``source`` discriminator in meta (#1953 P3):
 
-          - ``source="plan_summary"`` (= ``[task_spawned] kind=plan``
-            equivalent for the TUI) — fires when a plan starts. Carries
-            ``plan_id`` so the AsyncStackPanel can mount a row keyed
-            on the plan identity.
-          - ``source="plan_complete"`` (= ``[task_completed] kind=plan``
-            equivalent) — fires when the plan finishes cleanly. Row
-            unmounts immediately (= ``terminal="ok"``).
-          - ``source="plan_aborted"`` (= ``/plan discard`` or other abort
-            path) — fires when the plan is discarded. Wave-13 T2-2:
-            row briefly flashes red before unmounting
-            (= ``terminal="aborted"``).
+          - ``source="task_summary"`` (= ``[task_spawned]`` equivalent for the
+            TUI) — fires when a sub-task starts. Carries ``parent_task_id`` so
+            the AsyncStackPanel can mount a row keyed on the task identity.
+          - ``source="task_complete"`` (= ``[task_completed]`` equivalent) —
+            fires when the task finishes. Row unmounts immediately.
 
         Other ``kind="system"`` messages (lifecycle markers, slash-command
         output, attach/detach notices) flow through the default
-        ``conv.render_message`` path unchanged. The plan side-effect is
+        ``conv.render_message`` path unchanged. The task side-effect is
         ADDITIVE — we always also render the message so the conv pane's
         existing system-message UX (= dim marker line) stays intact.
         """
         source = (msg.meta or {}).get("source", "")
-        plan_id = (msg.meta or {}).get("plan_id", "")
-        # #1953 P3 (b) TUI-surface parity: the task-driven ``decompose`` mirrors
-        # plan's lifecycle surface — ``task_summary`` / ``task_complete`` (keyed on
-        # ``parent_task_id``) drive the SAME bottom-strip AsyncStackPanel row as
-        # ``plan_summary`` / ``plan_complete`` (keyed on ``plan_id``), so the two
-        # decomposition paths render an equivalent "running" progress UX. The
-        # synthesized reply stays a ``kind="agent"`` message (the user-facing
-        # answer), exactly like plan's aggregator reply. (Emit side = decompose's
-        # dispatcher; #1953 slice P3.)
         task_id = (msg.meta or {}).get("parent_task_id", "")
-        row_key = plan_id or task_id
-        if row_key:
-            if source in ("plan_summary", "task_summary"):
+        if task_id:
+            if source == "task_summary":
                 # Compact summary for the bottom strip — the full multi-line
                 # start text already lands in the conv pane via the default
                 # render below.
-                label = "task" if source == "task_summary" else "plan"
-                summary = f"{label} #{str(row_key)[:8]}"
+                summary = f"task #{str(task_id)[:8]}"
                 try:
-                    conv.add_async_task(str(row_key), summary)
+                    conv.add_async_task(str(task_id), summary)
                 except Exception:
                     pass
-            elif source in ("plan_complete", "task_complete"):
+            elif source == "task_complete":
                 try:
-                    conv.remove_async_task(str(row_key))
-                except Exception:
-                    pass
-            elif source == "plan_aborted":
-                # Wave-13 T2-2: /plan discard → flash red before unmount
-                # so the user sees the row terminated abnormally rather
-                # than silently disappearing (= audit finding A#6).
-                try:
-                    conv.remove_async_task(str(row_key), terminal="aborted")
+                    conv.remove_async_task(str(task_id))
                 except Exception:
                     pass
         # Default render path — preserves the dim marker line / slash
