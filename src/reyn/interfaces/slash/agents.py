@@ -29,7 +29,7 @@ def _attach_completer(session: "object", arg_partial: str = "") -> list[str]:
     """Return known agent names for tab completion.
 
     Accepts ``arg_partial`` for forward-compat with the CompleterFn
-    signature evolution (multi-arg commands like ``/plan`` need it) —
+    signature evolution (multi-arg commands like ``/tasks`` need it) —
     ``/attach`` itself is single-arg so the partial is unused.
     """
     if getattr(session, "_registry", None) is None:
