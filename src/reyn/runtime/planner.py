@@ -55,7 +55,10 @@ from reyn.runtime.router_loop import (
     RouterLoop,
     RouterLoopHost,
 )
-from reyn.tools.universal_catalog import strip_provider_tool_namespace
+from reyn.tools.universal_catalog import (
+    is_valid_qualified_name,
+    strip_provider_tool_namespace,
+)
 
 if TYPE_CHECKING:
     from reyn.config import PlannerStepCompactionConfig
@@ -248,7 +251,10 @@ class PlanValidationError(ValueError):
 # ── Parsing + validation ────────────────────────────────────────────────────
 
 
-def parse_and_validate_plan(args: dict, *, allowed_tool_names: set[str]) -> Plan:
+def parse_and_validate_plan(
+    args: dict, *, allowed_tool_names: set[str],
+    accept_qualified_actions: bool = False,
+) -> Plan:
     """Convert raw plan tool-call arguments into a typed ``Plan``.
 
     ``allowed_tool_names`` is the set of router-tool names available in
@@ -346,11 +352,28 @@ def parse_and_validate_plan(args: dict, *, allowed_tool_names: set[str]) -> Plan
                     f"plan.steps[{i}] (id={sid!r}).tools[*] must be strings"
                 )
             nt = strip_provider_tool_namespace(t)
-            if nt not in allowed_tool_names:
+            # #1998: in the universal scheme the callable tools are the wrappers
+            # (invoke_action/…), but step.tools' vocabulary is the per-step
+            # *narrowing* set — qualified ``<category>__action`` names (which
+            # _PlanStepHost._uses_family keys on, and which invoke_action can
+            # reach). The wrapper-only allow-set rejected exactly those qualified
+            # names a weak model correctly emits. When the caller signals the
+            # wrapper scheme (accept_qualified_actions), also accept any valid
+            # qualified action name. NOT leniency: invoke_action reachability is
+            # unchanged — this fixes the validator's vocabulary, scoped to the
+            # universal scheme (enumerate keeps the wrapper/qualified coincidence).
+            if nt not in allowed_tool_names and not (
+                accept_qualified_actions and is_valid_qualified_name(nt)
+            ):
+                allowed = sorted(allowed_tool_names)
+                extra = (
+                    " (or a qualified <category>__action name)"
+                    if accept_qualified_actions else ""
+                )
                 raise PlanValidationError(
                     f"plan.steps[{i}] (id={sid!r}).tools references {t!r} "
                     f"which is not in the available tool catalog. "
-                    f"Allowed: {sorted(allowed_tool_names)}"
+                    f"Allowed: {allowed}{extra}"
                 )
             normalized.append(nt)
         tools_tuple: tuple[str, ...] = tuple(normalized)
@@ -1209,6 +1232,7 @@ async def dispatch_plan_tool(
     budget: Any = None,
     router_model: "str | None" = None,  # #1672: None → config "router" purpose class (was "light")
     available_tool_names: set[str],
+    accept_qualified_actions: bool = False,  # #1998: universal scheme → step.tools may name qualified actions, not just the callable wrappers
 ) -> dict:
     """Entry point invoked from the chat router's ``plan`` tool dispatch.
 
@@ -1245,7 +1269,10 @@ async def dispatch_plan_tool(
     # #1672: an unset router_model follows the configured "router" class (was "light").
     router_model = _resolve_router_model(router_model, parent_host)
     try:
-        plan = parse_and_validate_plan(args, allowed_tool_names=available_tool_names)
+        plan = parse_and_validate_plan(
+            args, allowed_tool_names=available_tool_names,
+            accept_qualified_actions=accept_qualified_actions,
+        )
     except PlanValidationError as exc:
         return {
             "status": "error",

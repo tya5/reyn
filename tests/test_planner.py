@@ -144,6 +144,74 @@ def test_parse_rejects_unknown_tool_name():
         parse_and_validate_plan(args, allowed_tool_names=_ALLOWED)
 
 
+# ── #1998: universal scheme — step.tools may name qualified actions ──────────
+# Under the universal scheme the callable tools are the wrappers
+# (invoke_action/…), but step.tools' vocabulary is the per-step *narrowing* set:
+# qualified ``<category>__action`` names. The wrapper-only allow-set used to
+# reject exactly those qualified names a weak model correctly emits.
+
+_WRAPPERS = {"invoke_action", "describe_action", "list_actions"}
+
+
+def test_universal_step_tools_accepts_qualified_action_name():
+    """Tier 2: #1998 — with accept_qualified_actions (the universal scheme), a
+    step.tools entry naming a qualified ``<category>__action`` (e.g. web__search)
+    VALIDATES against the wrapper-only callable set."""
+    args = {
+        "goal": "search the web",
+        "steps_json": json.dumps([
+            {"id": "s1", "description": "search", "tools": ["web__search"]},
+            {"id": "s2", "description": "synthesise", "tools": [], "depends_on": ["s1"]},
+        ]),
+    }
+    plan = parse_and_validate_plan(
+        args, allowed_tool_names=_WRAPPERS, accept_qualified_actions=True)
+    assert plan.steps[0].tools == ("web__search",)
+
+
+def test_universal_qualified_action_rejected_without_the_flag():
+    """Tier 2: #1998 RED-guard — the SAME qualified name is rejected when
+    accept_qualified_actions is off (the pre-fix behaviour, == the enumerate
+    default where a name absent from the callable catalog is a real error)."""
+    args = {
+        "goal": "search the web",
+        "steps_json": json.dumps([
+            {"id": "s1", "description": "search", "tools": ["web__search"]},
+            {"id": "s2", "description": "synthesise", "tools": [], "depends_on": ["s1"]},
+        ]),
+    }
+    with pytest.raises(PlanValidationError, match="web__search"):
+        parse_and_validate_plan(args, allowed_tool_names=_WRAPPERS)
+
+
+def test_accept_qualified_actions_rejects_unknown_category():
+    """Tier 2: #1998 — the relaxation widens only to STRUCTURALLY-valid qualified
+    names with a KNOWN category; an unknown-category ``bogus__action`` (and a bare
+    non-qualified token) are still rejected. Scoped, not blanket-lenient."""
+    for bad in ("bogus__action", "totally_bogus"):
+        args = {"goal": "g", "steps_json": json.dumps([
+            {"id": "s1", "description": "x", "tools": [bad]},
+            {"id": "s2", "description": "y", "tools": []}])}
+        with pytest.raises(PlanValidationError, match=bad):
+            parse_and_validate_plan(
+                args, allowed_tool_names=_WRAPPERS, accept_qualified_actions=True)
+
+
+def test_enumerate_step_tools_validation_unchanged():
+    """Tier 2: #1998 regression-guard — the enumerate path (flag off, the default)
+    is unchanged: a catalog tool validates; a qualified name NOT in the catalog is
+    still rejected (no silent widening when the flag is absent)."""
+    ok = {"goal": "g", "steps_json": json.dumps([
+        {"id": "s1", "description": "read", "tools": ["read_file"]},
+        {"id": "s2", "description": "synth", "tools": []}])}
+    assert parse_and_validate_plan(ok, allowed_tool_names=_ALLOWED).steps[0].tools == ("read_file",)
+    bad = {"goal": "g", "steps_json": json.dumps([
+        {"id": "s1", "description": "x", "tools": ["file__read"]},  # qualified, not in _ALLOWED
+        {"id": "s2", "description": "y", "tools": []}])}
+    with pytest.raises(PlanValidationError, match="file__read"):
+        parse_and_validate_plan(bad, allowed_tool_names=_ALLOWED)
+
+
 def test_parse_rejects_unknown_depends_on_target():
     """Tier 2: depends_on must reference an id that exists in the plan."""
     args = {
@@ -398,6 +466,26 @@ def test_narrow_host_passes_file_perms_when_read_file_in_tools():
     )
     host = _PlanStepHost(plan=plan, step=plan.steps[0], prior_results={}, parent=parent)
     assert host.get_file_permissions() == {"read": ["docs"], "write": []}
+
+
+def test_narrow_host_exposes_family_for_qualified_action_name():
+    """Tier 2: #1998 'validate + narrow' pair — a qualified ``web__search`` in
+    step.tools (the universal scheme's narrowing vocabulary, now accepted by the
+    validator) drives the per-step narrowing correctly: _uses_family keys on the
+    ``web__`` prefix, so the web family is exposed for that step and withheld from
+    a step that doesn't name it."""
+    parent = _FakeParentHost()
+    plan = Plan(
+        goal="g",
+        steps=(
+            PlanStep(id="a", description="search", tools=("web__search",)),
+            PlanStep(id="b", description="y", tools=()),
+        ),
+    )
+    needs_web = _PlanStepHost(plan=plan, step=plan.steps[0], prior_results={}, parent=parent)
+    no_web = _PlanStepHost(plan=plan, step=plan.steps[1], prior_results={}, parent=parent)
+    assert needs_web.get_web_fetch_allowed() is True
+    assert no_web.get_web_fetch_allowed() is False
 
 
 def test_narrow_host_silences_project_context():

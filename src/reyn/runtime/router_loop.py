@@ -3894,6 +3894,14 @@ class RouterLoop:
                 budget=self.budget,
                 router_model=self.router_model,
                 available_tool_names=set(self._tool_names) - {"plan"},
+                # #1998: under the universal scheme the callable tools are the
+                # wrappers (univ_enabled gates them into the catalog → _tool_names),
+                # so step.tools must also accept qualified ``<category>__action``
+                # names (the per-step narrowing vocabulary). Enumerate keeps the
+                # strict wrapper/qualified coincidence.
+                accept_qualified_actions=bool(
+                    self._scheme_layer_ctx.get("univ_enabled", False)
+                ),
             )
 
         # FP-0034 Phase 2 prep: snapshot indexed RAG corpora for the
