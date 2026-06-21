@@ -816,6 +816,7 @@ class Session:
         # the chokepoint's env+default fallback (back-compat). Skill OSRuntimes
         # spawned within this session inherit the ContextVar (propagation).
         router_config: "RouterConfig | None" = None,
+        retry_config: "object | None" = None,  # #1835: reyn.yaml llm.retry.* timing config
         tool_calls_op_loop_skills: list[str] | None = None,  # #1212: op-loop gate for chat-run skills
         agent_id: str | None = None,
         exclude_tools: "frozenset[str] | set[str] | None" = None,  # #187: tool names hidden from the LLM catalog (e.g. web for faithful eval)
@@ -1285,6 +1286,11 @@ class Session:
         if router_config is not None:
             from reyn.llm.llm import set_router_config
             set_router_config(router_config)
+        # #1835: publish reyn.yaml llm.retry.* as the ambient retry timing config.
+        # Same guard as router_config.
+        if retry_config is not None:
+            from reyn.llm.llm import set_retry_config
+            set_retry_config(retry_config)
         # #1868: publish the budget-exceed policy context for the chat path's
         # per-LLM-call cost gate (call_llm / call_llm_tools). Reuses safety.on_limit
         # (one unified limit policy) + the SAME intervention path the chat-side

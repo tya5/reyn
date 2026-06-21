@@ -297,15 +297,8 @@ keys are warned (not fatal) at load time.
 
 ## `llm` block
 
-LLM-layer config. Currently the **`llm.router`** surface — opt-in
-[litellm.Router](https://docs.litellm.ai/docs/routing) provider-resilience
-(#1829). **Default OFF**: with `use: false` the LLM call path is the direct
-`litellm.acompletion` (byte-identical to no-Router). When enabled, the Router owns
-infra-exception retry (with native `Retry-After` respect), per-deployment
-cooldown, and a cross-model fallback chain — Reyn does not re-implement any of
-these. The single config surface supersedes the legacy `REYN_LLM_USE_ROUTER` /
-`REYN_LLM_ROUTER_NUM_RETRIES` env vars, which remain a back-compat fallback when
-this block is absent (the `ssl_verify` → env → default idiom).
+LLM-layer config: **`llm.router`** (opt-in litellm.Router, #1829) and
+**`llm.retry`** (backoff timing for the Reyn self-retry layer, #1835).
 
 ```yaml
 llm:
@@ -324,6 +317,9 @@ llm:
     retry_policy:          # per-exception-type retry counts (litellm.RetryPolicy)
       RateLimitErrorRetries: 5
       TimeoutErrorRetries: 3
+  retry:
+    jitter: true           # equal jitter (AWS pattern): sleep = base/2 + uniform(0, base/2)
+    respect_retry_after: true  # honour provider Retry-After header (capped at max_backoff)
 ```
 
 ### `llm.router` fields
@@ -342,6 +338,22 @@ On the Router path, retry count is **config-only**: `num_retries` is taken from
 `llm.router.num_retries` (a per-call `max_retries` is not applied), so the retry
 budget has a single source. (On the direct, non-Router path the per-call
 `max_retries` is unchanged.)
+
+### `llm.retry` fields (#1835)
+
+Controls the **timing** of the Reyn self-retry layer only (semantic-retry
+behaviours — EmptyLLMResponseError, empty\_stop\_retry, plan\_invalid\_retry,
+compaction shrink — are unaffected). Both defaults are `true`.
+
+| Field | Type | Default | Meaning |
+|---|---|---|---|
+| `jitter` | bool | `true` | Apply equal jitter (AWS pattern): `sleep = base/2 + uniform(0, base/2)` where `base = min(base_s * 2**attempt, max_backoff)`. Range `[base/2, base]`. Prevents thundering herd when parallel chains retry in lockstep. `false` → pure exponential (2 s, 4 s, 8 s, 16 s). |
+| `respect_retry_after` | bool | `true` | When a retryable exception carries a `Retry-After` header (delta-seconds **or** HTTP-date), honour it (capped at `_LLM_RETRY_MAX_BACKOFF_S` = 16 s) **instead of** the jittered backoff. Falls back to jittered backoff when the header is absent or unparseable. `false` → always use jittered backoff. |
+
+> **Router path**: when `llm.router.use: true`, the litellm.Router owns
+> infra-exception retry with its own `Retry-After` respect. The `llm.retry`
+> fields only apply to the Reyn self-retry layer (= the direct, non-Router path,
+> plus `EmptyLLMResponseError` on both paths). See the `llm.router` block above.
 
 ## `chat` block
 

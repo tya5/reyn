@@ -3,12 +3,14 @@ import contextvars
 import json
 import logging
 import os
+import random
 import re
 import sys
 import uuid
 import weakref
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from email.utils import parsedate_to_datetime
 from typing import TYPE_CHECKING, Coroutine, TypeVar, Union
 
 import httpx
@@ -606,6 +608,38 @@ def _use_llm_router() -> bool:
     return bool(_resolved_router_config().use)
 
 
+# #1835: ambient retry config (jitter + respect_retry_after). The runtime/session
+# sets this at construction via ``set_retry_config`` (mirrors set_router_config).
+# Default=None → env-fallback defaults (both features ON). The ContextVar scope
+# ensures per-task isolation under pytest-asyncio per-test event loops.
+_retry_config_var: "contextvars.ContextVar[object | None]" = contextvars.ContextVar(
+    "reyn_llm_retry_config", default=None,
+)
+
+
+def set_retry_config(cfg: object) -> "contextvars.Token":
+    """#1835: publish the ambient ``RetryConfig`` (reyn.yaml ``llm.retry.*``).
+
+    The runtime/session sets this at construction; mirrors ``set_router_config``.
+    Returns the token so a caller MAY reset for a nested scope. ``None`` → defaults.
+    """
+    return _retry_config_var.set(cfg)
+
+
+def _resolved_retry_config():
+    """#1835: single-source effective ``RetryConfig``.
+
+    reyn.yaml ``llm.retry.*`` (via the ContextVar) is authoritative; absent →
+    default (both jitter and respect_retry_after ON). The ONLY place retry timing
+    config is resolved — ``_backoff_s`` and ``_llm_call_with_retry`` read this.
+    """
+    cfg = _retry_config_var.get()
+    if cfg is not None:
+        return cfg
+    from reyn.config.infra import RetryConfig
+    return RetryConfig()
+
+
 # #1868: ambient budget-limit policy context for the per-LLM-call cost gate. The
 # runtime/session sets (bus, on_limit, run_id, non_interactive) here at the same
 # place it binds the limit framework (mirrors set_llm_request_event_log /
@@ -717,23 +751,97 @@ def _is_retryable_exc(exc: BaseException) -> bool:
 
 
 def _backoff_s(attempt: int) -> float:
-    """Exponential backoff: 2s, 4s, 8s, … capped at _LLM_RETRY_MAX_BACKOFF_S.
+    """Exponential backoff with optional equal jitter (#1835), capped at max.
 
-    ``attempt`` is 0-indexed (= attempt 0 is the first retry, after the initial
-    call fails).  Min 0.0 — never negative if someone passes a negative index.
+    When ``llm.retry.jitter`` is true (default), applies AWS-style equal jitter:
+      ``sleep = base/2 + uniform(0, base/2)`` (range: [base/2, base]).
+    When false, returns pure exponential (legacy: 2s, 4s, 8s, 16s).
+
+    ``attempt`` is 0-indexed (attempt 0 = first retry, after initial call fails).
+    Min 0.0 — never negative on a negative index.
     """
-    return min(_LLM_RETRY_BASE_S * (2 ** attempt), _LLM_RETRY_MAX_BACKOFF_S)
+    base = min(_LLM_RETRY_BASE_S * (2 ** attempt), _LLM_RETRY_MAX_BACKOFF_S)
+    if _resolved_retry_config().jitter:
+        # Equal jitter: half fixed + half random. Range [base/2, base].
+        return base / 2 + random.uniform(0, base / 2)
+    return base
+
+
+def _extract_retry_after(exc: BaseException) -> float | None:
+    """#1835: extract the ``Retry-After`` wait (seconds) from a retryable exception.
+
+    Checks (in order, defensive at each step — an unparseable value is ignored):
+      1. ``exc.response.headers["retry-after"]`` — the canonical HTTP location.
+         litellm wraps provider responses as ``httpx.Response``; the header is
+         present on 429 / 503 replies that carry it.
+      2. ``exc.headers`` — a secondary attr some litellm exception shapes expose
+         (not present in current litellm, but defensive probe costs nothing).
+
+    ``Retry-After`` value formats (RFC 7231):
+      - Delta-seconds (e.g. ``"30"`` → 30.0 s).
+      - HTTP-date (e.g. ``"Sat, 21 Jun 2026 12:00:00 GMT"`` → computed delta).
+        Negative deltas (date in the past) are clamped to 0.
+
+    Returns the wait in seconds, capped at ``_LLM_RETRY_MAX_BACKOFF_S``, or
+    ``None`` when no parseable ``Retry-After`` is found (caller falls back to
+    jittered backoff).  Never raises — unparseable values are silently ignored.
+    """
+    # Gather candidate header dicts (response.headers takes priority).
+    header_dicts: list = []
+    response = getattr(exc, "response", None)
+    if response is not None:
+        headers = getattr(response, "headers", None)
+        if headers is not None:
+            header_dicts.append(headers)
+    exc_headers = getattr(exc, "headers", None)
+    if exc_headers is not None:
+        header_dicts.append(exc_headers)
+
+    for headers in header_dicts:
+        try:
+            raw = headers.get("retry-after") or headers.get("Retry-After")
+        except Exception:
+            continue
+        if not raw:
+            continue
+        try:
+            # Try delta-seconds first (most common: "30", "120").
+            delta = float(raw)
+            return min(max(0.0, delta), _LLM_RETRY_MAX_BACKOFF_S)
+        except (ValueError, TypeError):
+            pass
+        try:
+            # Try HTTP-date ("Sat, 21 Jun 2026 12:00:00 GMT").
+            dt = parsedate_to_datetime(raw)
+            delta = (dt - datetime.now(UTC)).total_seconds()
+            return min(max(0.0, delta), _LLM_RETRY_MAX_BACKOFF_S)
+        except Exception:
+            pass
+    return None
 
 
 async def _llm_call_with_retry(
     coro_fn,
     model: str,
     event_log: "EventLog | None",
+    *,
+    sleep_fn=None,
 ) -> object:
     """Execute ``coro_fn()`` with infrastructure-error retry + backoff.
 
     ``coro_fn`` must be a zero-arg async callable that returns the litellm
     response object.  It is called once per attempt.
+
+    ``sleep_fn`` is an injectable async sleep callable (default: ``asyncio.sleep``).
+    Tests pass a recording shim here to capture actual sleep durations without
+    mocking — the default is preserved in production so behaviour is unchanged.
+
+    Backoff timing (#1835):
+      - ``llm.retry.jitter=true`` (default): equal jitter (AWS pattern):
+        ``sleep = base/2 + uniform(0, base/2)`` where ``base = min(base_s * 2**attempt, max_s)``.
+      - ``llm.retry.respect_retry_after=true`` (default): when a retryable exception
+        carries a ``Retry-After`` header, honour it (capped at max_backoff) INSTEAD
+        of the jittered backoff.
 
     Emits ``llm_call_retry`` on each retry and ``llm_call_retry_exhausted``
     when all attempts are exhausted.  When ``event_log`` is None, observability
@@ -741,6 +849,8 @@ async def _llm_call_with_retry(
 
     Raises the last exception when all retries are exhausted.
     """
+    if sleep_fn is None:
+        sleep_fn = asyncio.sleep
     last_exc: BaseException | None = None
     for attempt in range(_LLM_RETRY_MAX_ATTEMPTS):
         try:
@@ -794,7 +904,15 @@ async def _llm_call_with_retry(
                     except Exception:
                         pass
                 raise
-            backoff = _backoff_s(attempt)
+            # #1835: Retry-After takes priority over jittered backoff when
+            # respect_retry_after is enabled (default true) and the exception
+            # carries a parseable Retry-After header. Falls back to _backoff_s
+            # (which applies equal jitter when jitter=true, default).
+            retry_cfg = _resolved_retry_config()
+            retry_after = (
+                _extract_retry_after(exc) if retry_cfg.respect_retry_after else None
+            )
+            backoff = retry_after if retry_after is not None else _backoff_s(attempt)
             if event_log is not None:
                 try:
                     event_log.emit(
@@ -806,7 +924,7 @@ async def _llm_call_with_retry(
                     )
                 except Exception:
                     pass
-            await asyncio.sleep(backoff)
+            await sleep_fn(backoff)
     # Should be unreachable — loop always raises or returns.
     assert last_exc is not None
     raise last_exc  # pragma: no cover

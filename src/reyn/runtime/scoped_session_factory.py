@@ -68,6 +68,7 @@ def build_scoped_chat_session(
     action_retrieval_config: Any,  # ActionRetrievalConfig | None
     embedding_config: Any,  # EmbeddingConfig | None
     router_config: Any,  # #1829 S3b RouterConfig | None — reyn.yaml llm.router.*
+    retry_config: Any,  # #1835 RetryConfig | None — reyn.yaml llm.retry.*
     tool_calls_op_loop_skills: list[str] | None,  # #1212 op-loop gate
     chat_tool_use_scheme: str,  # #1593 PR-2 config.tool_use.chat — chat-layer ToolUseScheme name (UNIFORM: every frontend resolves the same reyn.yaml value)
     # ── common base (pass-through; session identity/infra, not a drift surface) ──
@@ -126,6 +127,7 @@ def build_scoped_chat_session(
         action_retrieval_config=action_retrieval_config,
         embedding_config=embedding_config,
         router_config=router_config,
+        retry_config=retry_config,  # #1835
         tool_calls_op_loop_skills=tool_calls_op_loop_skills,
         chat_tool_use_scheme=chat_tool_use_scheme,
         **base,

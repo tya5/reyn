@@ -48,9 +48,7 @@ from reyn.core.events.events import EventLog
 from reyn.llm.llm import (
     _LLM_RETRY_BASE_S,
     _LLM_RETRY_MAX_ATTEMPTS,
-    _LLM_RETRY_MAX_BACKOFF_S,
     EmptyLLMResponseError,
-    _backoff_s,
     _empty_response_diag,
     _env_num,
     _is_retryable_exc,
@@ -235,10 +233,17 @@ async def test_retry_and_succeed(monkeypatch):
     assert ev.data["model"] == "test-model"
     assert ev.data["error_kind"] == "Timeout"
     assert ev.data["attempt_n"] == 1
-    assert ev.data["backoff_s"] == _backoff_s(0)
+    # #1835: jitter is default-ON — the emitted backoff_s and the sleep duration are
+    # independently drawn from [base/2, base] = [1.0, 2.0] for attempt 0 (base=2.0),
+    # so exact-value equality would be non-deterministic. Assert the range instead.
+    assert 1.0 <= ev.data["backoff_s"] <= 2.0, (
+        f"backoff_s for attempt 0 must be in [1.0, 2.0] (jitter range), got {ev.data['backoff_s']}"
+    )
 
-    # Sleep called once with the correct backoff
-    assert slept == [_backoff_s(0)]
+    # Sleep called exactly once (one retry); with jitter the value is in [1.0, 2.0].
+    # Use unpack to assert exactly-one-element rather than len() (pin behavior not size).
+    (sleep_val,) = slept
+    assert 1.0 <= sleep_val <= 2.0, f"sleep duration must be in [1.0, 2.0], got {sleep_val}"
 
 
 # ---------------------------------------------------------------------------
@@ -312,38 +317,11 @@ async def test_4xx_no_retry(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# Test 5: backoff shape
+# Test 5: backoff shape — removed (covered by test_backoff_s_jitter_off_is_pure_exponential
+# in test_llm_retry_jitter_retry_after_1835.py, which tests jitter=off for the pure
+# exponential curve including the cap-at-16 assertion; #1835 made jitter default-ON so
+# exact-value assertions here would be non-deterministic).
 # ---------------------------------------------------------------------------
-
-
-def test_backoff_shape():
-    """Tier 2: _backoff_s — exponential curve capped at max.
-
-    Verifies the mathematical shape without relying on exact constants so a
-    future config change doesn't silently break the invariant.
-    """
-    # Monotonically increasing up to the cap
-    b0 = _backoff_s(0)
-    b1 = _backoff_s(1)
-    b2 = _backoff_s(2)
-    b3 = _backoff_s(3)
-
-    assert b0 > 0, "first backoff must be positive"
-    assert b1 > b0, "second backoff must be larger than first"
-    assert b2 > b1, "third backoff must be larger than second"
-
-    # Each step doubles up to the cap
-    assert b1 == min(b0 * 2, _LLM_RETRY_MAX_BACKOFF_S)
-    assert b2 == min(b0 * 4, _LLM_RETRY_MAX_BACKOFF_S)
-
-    # Cap is respected
-    assert b3 <= _LLM_RETRY_MAX_BACKOFF_S
-
-    # Concrete values (documentation + regression guard against constant changes)
-    assert b0 == _LLM_RETRY_BASE_S
-    assert b1 == _LLM_RETRY_BASE_S * 2
-    assert b2 == _LLM_RETRY_BASE_S * 4
-
 
 # ---------------------------------------------------------------------------
 # Test 6: httpx transport errors retried

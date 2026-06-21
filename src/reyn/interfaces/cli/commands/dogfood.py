@@ -489,6 +489,7 @@ def _build_live_runner(agent_name: str, *, env_backend=None, ws_base_dir=None, w
                 # the same ws_base_dir/ws_state_dir pattern.
                 embedding_config=None,  # gap: dogfood omitted embedding_config (had action_retrieval but not its sibling) → preserved as None
                 router_config=config.llm.router,  # #1829 S3b
+                retry_config=config.llm.retry,  # #1835
                 eager_embedding_build=False,
                 agent_id=None,
                 exclude_tools=None,
