@@ -58,6 +58,7 @@ def build_scoped_chat_session(
     non_interactive: bool,  # #1439 Fix #1: run-once (no TTY) → SP proceeds instead of asking a clarifying question. Per-frontend: chat-CLI = not isatty(); A2A/MCP/chainlit/dogfood = False (interactive byte-identical)
     eager_embedding_build: bool,  # build the action embedding index up-front
     allowed_mcp: list[str] | None,  # per-profile MCP allow-list
+    task_backend: Any,  # #1953 slice R — session-scoped Task backend instance. I-5=(A): cli/chat + MCP pass a per-session sqlite (rewind-participating); A2A/web passes None (the process-singleton A2A surface is read directly, NOT threaded here, so A2A tasks stay durable but un-rewound). None → op-runtime in-memory fallback (_BACKEND)
     # ── per-session config (required: should be UNIFORM across factories) ──
     # These are reyn.yaml-derived config every factory loads the same way; the
     # sandbox_config + multimodal_config drifts each previously needed a
@@ -119,6 +120,7 @@ def build_scoped_chat_session(
         non_interactive=non_interactive,
         eager_embedding_build=eager_embedding_build,
         allowed_mcp=allowed_mcp,
+        task_backend=task_backend,  # #1953 slice R
         sandbox_config=sandbox_config,
         multimodal_config=multimodal_config,
         action_retrieval_config=action_retrieval_config,

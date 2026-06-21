@@ -148,6 +148,42 @@ class TaskBackend(Protocol):
 
     async def add_comment(self, task_id: str, author: str, body: str) -> str | None: ...
 
+    # ── Rewind substrate (#1953 slice R) ─────────────────────────────────────
+    # A backend opts INTO session-rewind participation by setting
+    # ``supports_rewind = True`` and implementing per-generation snapshot/restore.
+    # The OS captures a generation at every WAL boundary seq (``SnapshotJournal.
+    # cut_generation``) and restores the nearest *active* generation <= the rewind
+    # target (``_materialize_rewind``) — symmetric with ``WorkspaceVersionStore``
+    # (the runtime + workspace substrates). A backend whose state cannot be
+    # rewound (in-memory; external trackers like gh-issue/jira) leaves
+    # ``supports_rewind = False`` and the OS skips it (opt-out).
+    supports_rewind: bool
+
+    async def snapshot_generation(self, seq: int) -> None:
+        """Capture a full point-in-time generation keyed by the WAL boundary
+        ``seq``. Idempotent for a given seq. No-op when ``supports_rewind`` is
+        False."""
+        ...
+
+    async def restore_to_seq(self, seq: int) -> None:
+        """Restore backend state to the generation captured at ``seq`` — the OS
+        passes the nearest active seq <= the rewind target. No-op when
+        ``supports_rewind`` is False."""
+        ...
+
+    async def generation_seqs(self) -> list[int]:
+        """Seqs of all captured generations, ascending — the OS resolves the
+        nearest *active* one <= the rewind target (``is_active_seq``, symmetric
+        with ``WorkspaceVersionStore.seqs``). Empty when ``supports_rewind`` is
+        False."""
+        ...
+
+    async def prune_generations_below(self, min_keep_seq: int) -> int:
+        """Drop generations older than ``min_keep_seq`` (WAL-truncation
+        piggyback, bounds storage). Returns the count removed. No-op when
+        ``supports_rewind`` is False."""
+        ...
+
 
 class InMemoryTaskBackend:
     """Process-local dict-backed backend (slice 1 stub + the ``in-memory``
@@ -391,3 +427,20 @@ class InMemoryTaskBackend:
             {"id": comment_id, "author": author, "body": body, "ts": _now_iso()}
         )
         return comment_id
+
+    # ── Rewind substrate (#1953 slice R): opt-out ────────────────────────────
+    # In-memory state is ephemeral and process-local — it cannot be rewound, so
+    # this backend declares supports_rewind=False and no-ops the substrate hooks.
+    supports_rewind: bool = False
+
+    async def snapshot_generation(self, seq: int) -> None:
+        return None
+
+    async def restore_to_seq(self, seq: int) -> None:
+        return None
+
+    async def generation_seqs(self) -> list[int]:
+        return []
+
+    async def prune_generations_below(self, min_keep_seq: int) -> int:
+        return 0

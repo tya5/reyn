@@ -346,6 +346,12 @@ def _get_registry():
                 # byte-identical. allowed_mcp / agent_id / router_max_iterations
                 # remain the #1431 item-2 gaps (separate capability decision).
                 allowed_mcp=None,
+                # #1953 slice R, I-5=(A): A2A/web does NOT thread a per-session
+                # backend. The process-singleton A2A Task surface (app.state.
+                # task_backend, GetTask/ListTasks/Cancel + sweep) is read directly
+                # and stays untouched/durable; A2A tasks are not rewound (external
+                # state can't be) — the cross-session fan-out is tracked in #1997.
+                task_backend=None,
                 agent_id=None,
                 exclude_tools=_scoped.exclude_tools,
                 excluded_categories=_profile_excluded,  # #1667 (none here) + #1827 S3 profile view

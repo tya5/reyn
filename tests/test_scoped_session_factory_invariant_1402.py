@@ -57,6 +57,7 @@ _REQUIRED_SCOPED = frozenset({
     "non_interactive",  # #1439 Fix #1: run-once SP autonomy flag (per-frontend scoped)
     "eager_embedding_build",
     "allowed_mcp",
+    "task_backend",  # #1953 slice R: per-session Task backend (per-frontend scoped — I-5=(A))
     # per-session config (should be UNIFORM across factories)
     "sandbox_config",
     "multimodal_config",

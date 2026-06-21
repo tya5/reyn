@@ -174,6 +174,13 @@ class AgentRegistry:
         # tracked follow-up (#1544). Lazily built so non-chat / no-WAL callers
         # never touch git.
         self._workspace_store: WorkspaceVersionStore | None = None
+        # #1953 slice R: the rewind-participating per-session Task backend, pulled
+        # from the session at construction (the session owns it — threaded via
+        # build_scoped_chat_session). The rewind/recovery restore
+        # (_restore_task_active) reads it. I-5=(A): only a local cli/chat
+        # per-session backend lands here; the A2A/web singleton is never threaded
+        # into a session, so it stays None here and its tasks never rewind.
+        self._task_backend: object | None = None
         # ADR-0038 #1544: FS+exec backend. None / name!="container" → host mode
         # (host subprocess git runner). When container, git runs in-container via
         # backend.run with the container path context (the work-tree is
@@ -1049,6 +1056,7 @@ class AgentRegistry:
                 # spawned → "name/sid".
                 agents.append(name if sid == _DEFAULT_SID else f"{name}/{sid}")
         await self._restore_workspace_active(at_or_below=workspace_at_or_below)
+        await self._restore_task_active(at_or_below=workspace_at_or_below)
         return agents
 
     async def _restore_workspace_active(self, *, at_or_below: int) -> None:
@@ -1069,6 +1077,29 @@ class AgentRegistry:
         ]
         if active:
             await ws.restore_to_seq(max(active))
+
+    async def _restore_task_active(self, *, at_or_below: int) -> None:
+        """Restore the Task substrate to the nearest ACTIVE generation
+        <= ``at_or_below`` — byte-mirror of ``_restore_workspace_active`` (same
+        ``is_active_seq`` honor; the rewind active-interval logic is WAL-derived
+        and substrate-agnostic, so it is shared, not re-implemented).
+
+        #1953 slice R, I-5=(A): only a rewind-participating per-session backend is
+        attached here (local cli/chat); the A2A/web process-singleton is not
+        threaded into this path, so it no-ops there (its tasks stay durable but
+        un-rewound — the cross-session fan-out is tracked in #1997). No-ops when
+        no backend is attached (e.g. crash-recovery before any session loads, so
+        crash-recovery stays untouched) or when the backend opts out of rewind.
+        """
+        tb = self._task_backend
+        if tb is None or not getattr(tb, "supports_rewind", False):
+            return
+        active = [
+            s for s in await tb.generation_seqs()
+            if s <= at_or_below and is_active_seq(self._state_log, s)
+        ]
+        if active:
+            await tb.restore_to_seq(max(active))
 
     async def recover_rewind_if_needed(self) -> dict | None:
         """Re-materialise both substrates as-of-N after a crash mid-rewind (1d).
@@ -1347,6 +1378,11 @@ class AgentRegistry:
             ws = self.workspace_store
             if ws is not None:
                 await ws.prune_below(floor)
+            # #1953 slice R: prune Task-substrate generations on the SAME boundary
+            # (bounds the full-DB-copy storage to the retention window — flag #2).
+            tb = self._task_backend
+            if tb is not None and getattr(tb, "supports_rewind", False):
+                await tb.prune_generations_below(floor)
             # #1560 PR-3: act-turn op-content-log GC on the same boundary — drop
             # entries below the floor + unref the out-window op-trees (so auto-gc
             # reclaims them, the same bounded lifecycle generations get).
@@ -1611,6 +1647,14 @@ class AgentRegistry:
         attach_anchor = getattr(session, "attach_anchor_store", None)
         if anchors is not None and callable(attach_anchor):
             attach_anchor(anchors)
+        # #1953 slice R: pull the session's rewind-participating Task backend so
+        # the rewind/recovery restore (_restore_task_active) has a handle to the
+        # same per-session backend the session's cut_generation captures. Only a
+        # backend that opts into rewind is held (I-5=(A) per-session); a None /
+        # non-rewinding backend leaves the restore path inert.
+        tb = getattr(session, "task_backend", None)
+        if tb is not None and getattr(tb, "supports_rewind", False):
+            self._task_backend = tb
         return session
 
     def spawn_session(self, name: str, sid: "str | None" = None) -> str:

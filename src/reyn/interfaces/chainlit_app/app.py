@@ -210,6 +210,7 @@ async def _get_or_build_registry() -> "AgentRegistry":
                 registry=registry_ref[0],
                 allowed_skills=profile.allowed_skills,
                 allowed_mcp=profile.allowed_mcp,
+                task_backend=None,  # #1953 slice R: behaviour-preserving (op-runtime fallback); per-session rewind opt-in is a follow-up
                 events_config=session_cfg.config.events,
                 state_log=state_log,
                 budget_tracker=budget_tracker,

@@ -62,6 +62,10 @@ class SnapshotJournal:
         # #1547: per-checkpoint anchor text (truncated last user message). Set
         # post-construction by the registry. None → no anchor capture.
         self._anchor_store = None
+        # #1953 slice R: the session-scoped Task backend (set by the owning
+        # Session when it carries a rewind-participating per-session backend).
+        # None / supports_rewind=False → task capture is skipped.
+        self._task_backend = None
         self._snapshot: AgentSnapshot = AgentSnapshot.empty(agent_name, session_id)
 
     async def _wal_append(self, kind: str, **fields):
@@ -117,6 +121,18 @@ class SnapshotJournal:
         """
         self._anchor_store = anchor_store
 
+    def set_task_backend(self, task_backend) -> None:
+        """Attach the session-scoped Task backend (#1953 slice R).
+
+        Set by the owning Session when it carries a rewind-participating
+        per-session backend (I-5=(A): local cli/chat). The capture seam
+        (cut_generation) then snapshots the task db at the SAME boundary seq as
+        the runtime + workspace substrates; the registry's rewind/recovery
+        restores it. A backend with ``supports_rewind=False`` (in-memory /
+        external) is skipped at capture time.
+        """
+        self._task_backend = task_backend
+
     async def cut_generation(self, anchor: str = "", full_message: str = "") -> None:
         """Record the current snapshot as a PITR generation (ADR-0038 Stage 1a/1d).
 
@@ -140,6 +156,12 @@ class SnapshotJournal:
         self._generation_store.record(self._snapshot)
         if self._workspace_store is not None:
             await self._workspace_store.capture(self._snapshot.applied_seq)
+        # #1953 slice R: the 3rd substrate — capture the Task db at the same WAL
+        # boundary seq (opt-in; skipped for a non-rewinding backend).
+        if self._task_backend is not None and getattr(
+            self._task_backend, "supports_rewind", False
+        ):
+            await self._task_backend.snapshot_generation(self._snapshot.applied_seq)
         if self._anchor_store is not None and anchor:
             self._anchor_store.capture(
                 self._snapshot.applied_seq, anchor, full=full_message,
