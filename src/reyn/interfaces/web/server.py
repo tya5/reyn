@@ -137,6 +137,11 @@ def _make_cron_runner():
     )
 
 
+# #1953 slice 5a-2: how often the disposition sweep runs (wall-clock interval;
+# decoupled from inbound A2A traffic for §24 forward-progress).
+_DISPOSITION_SWEEP_INTERVAL_SECONDS = 30.0
+
+
 @asynccontextmanager
 async def _lifespan(app: FastAPI):
     # ── Startup ──
@@ -162,6 +167,34 @@ async def _lifespan(app: FastAPI):
     from reyn.task import create_task_backend  # noqa: PLC0415
     task_db_path = Path(".reyn") / "state" / "tasks.db"
     app.state.task_backend = create_task_backend("sqlite", path=str(task_db_path))
+
+    # #1953 slice 5a-2: A2A-owned webhook registry (P7 — webhook_url stays out of
+    # the core Task model) + a periodic disposition sweep. The sweep is
+    # backend-derived + decoupled from inbound traffic (§24 forward-progress) and
+    # runs as a lifespan-owned asyncio task (mirrors the cron_scheduler lifecycle).
+    import asyncio  # noqa: PLC0415
+
+    from reyn.interfaces.web.a2a_webhook_registry import (  # noqa: PLC0415
+        A2AWebhookRegistry,
+        sweep_dispositions,
+    )
+    app.state.a2a_webhook_registry = A2AWebhookRegistry(
+        persist_path=Path(".reyn") / "state" / "a2a_webhooks.json"
+    )
+
+    async def _disposition_sweep_loop() -> None:
+        while True:
+            try:
+                await sweep_dispositions(
+                    app.state.task_backend, app.state.a2a_webhook_registry
+                )
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:  # noqa: BLE001 — a sweep error must not kill the loop
+                logger.warning("disposition sweep pass failed: %s", exc)
+            await asyncio.sleep(_DISPOSITION_SWEEP_INTERVAL_SECONDS)
+
+    app.state.disposition_sweep_task = asyncio.create_task(_disposition_sweep_loop())
 
     # FP-0009 B: cron scheduler — start only if reyn.yaml has any enabled
     # cron jobs.  Failures are caught so a misconfigured cron block does
@@ -205,6 +238,16 @@ async def _lifespan(app: FastAPI):
     yield  # ── App runs ──
 
     # ── Shutdown ──
+    # #1953 slice 5a-2: cancel the disposition sweep loop (no leak — await it so
+    # the cancellation propagates before the process exits).
+    sweep_task = getattr(app.state, "disposition_sweep_task", None)
+    if sweep_task is not None:
+        sweep_task.cancel()
+        try:
+            await sweep_task
+        except (asyncio.CancelledError, Exception):  # noqa: BLE001 — defensive shutdown
+            pass
+
     sched = getattr(app.state, "cron_scheduler", None)
     if sched is not None:
         try:
