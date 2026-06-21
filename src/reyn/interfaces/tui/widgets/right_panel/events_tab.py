@@ -380,13 +380,16 @@ def _event_hint(ev: dict) -> str:
     if t == "loop_limit_exceeded":
         return f"{d.get('phase', '')}: {d.get('visit_count', '?')}/{d.get('max', '?')}"
     if t == "phase_budget_exceeded":
-        return f"{d.get('phase', '')}: {str(d.get('reason', ''))[:30]}"
+        reason, was_trunc = _truncate_to_cells(str(d.get("reason", "")), 30)
+        return f"{d.get('phase', '')}: {reason}" + ("…" if was_trunc else "")
     if t == "chain_timeout":
-        wait = str(d.get("waiting_on", ""))[:25]
-        return f"{wait} ({d.get('timeout_seconds', '?')}s)"
+        wait, was_trunc = _truncate_to_cells(str(d.get("waiting_on", "")), 25)
+        ell = "…" if was_trunc else ""
+        return f"{wait}{ell} ({d.get('timeout_seconds', '?')}s)"
     if t == "chain_timeout_extended":
-        wait = str(d.get("waiting_on", ""))[:25]
-        return f"{wait} +{d.get('extension_seconds', '?')}s"
+        wait, was_trunc = _truncate_to_cells(str(d.get("waiting_on", "")), 25)
+        ell = "…" if was_trunc else ""
+        return f"{wait}{ell} +{d.get('extension_seconds', '?')}s"
     if t in ("budget_warn", "budget_exceeded"):
         dim = d.get("dimension", "")
         skill = d.get("skill", "")

@@ -22,6 +22,7 @@ from .base import (
     _TEXT_DIM,
     _TEXT_MUTED,
     logger,
+    truncate_to_cells,
 )
 
 
@@ -555,10 +556,10 @@ def render_agents(
                     # the "↳" node.
                     flattened = " ".join(snippet.split())
                     _max = 60
-                    short = (
-                        flattened if len(flattened) <= _max
-                        else flattened[:_max - 1] + "…"
-                    )
+                    # cell-aware: recent_user_message is user content (CJK /
+                    # emoji capable), so a len()/codepoint slice overshoots the
+                    # cell budget (wide chars = 2 cells) and wraps the row.
+                    short = truncate_to_cells(flattened, _max)
                     line2 = RichText()
                     line2.append("↳ ", style=_TEXT_DIM)
                     line2.append(short, style=_TEXT_DIMMEST)
