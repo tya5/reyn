@@ -61,6 +61,13 @@ def build_router_op_context(
     cancel_event: Any = None,  # #1470: asyncio.Event for mid-subprocess cancel
     threat_scan: Any = None,  # FP-0050/#1822 S5 (EP4): exec command-scan config
     contextual_permission: Any = None,  # #1827 S3: per-session capability narrowing → OpContext
+    # #1953 dynamic-wire: thread the caller's session identity + Task backend so
+    # router-dispatched task.* ops hit the SAME assignee/requester CAS gate as the
+    # phase path (control_ir_executor threads task_session_id + task_backend). The
+    # gate reads OpContext.session_id (_caller_session); a None here would mask the
+    # CAS (the no-bypass-by-construction invariant requires the REAL session_id).
+    session_id: str | None = None,
+    task_backend: Any = None,
 ) -> Any:
     """Build the chat-router OpContext (the single source for both hosts).
 
@@ -136,4 +143,8 @@ def build_router_op_context(
         cancel_event=cancel_event,
         threat_scan=threat_scan,
         contextual_permission=contextual_permission,
+        # #1953 dynamic-wire: real caller session + Task backend → the task.* CAS
+        # gate enforces byte-equal to the phase path (no None-placeholder mask).
+        session_id=session_id,
+        task_backend=task_backend,
     )
