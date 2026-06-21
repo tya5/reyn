@@ -579,9 +579,6 @@ class AgentRegistry:
         # restore — without it, an agent whose only stranded state is an
         # in-flight ask_user would be skipped here and the user could not
         # clear the queued intervention after restart.
-        # ADR-0022: active_plan_ids also triggers restore — needed so the
-        # cleanup hook can fire and notify the user that their plan was
-        # interrupted.
         # FP-0043 S5: the main session is get_or_load'd + ensure_running (live,
         # unchanged); a spawned session is recreated via spawn_session(name, sid)
         # — which re-applies the S5 path fixup — then re-adopts its state. Its
@@ -589,8 +586,7 @@ class AgentRegistry:
         for (name, sid), snap in all_snaps.items():
             if (not snap.inbox
                     and not snap.pending_chains
-                    and not snap.outstanding_interventions
-                    and not snap.active_plan_ids):
+                    and not snap.outstanding_interventions):
                 continue
             if sid == _DEFAULT_SID:
                 session = self.get_or_load(name)
