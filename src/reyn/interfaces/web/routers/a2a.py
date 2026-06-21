@@ -45,7 +45,8 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 
-from reyn.interfaces.web.deps import get_registry, get_run_registry
+from reyn.interfaces.web.a2a_task_view import to_a2a_task
+from reyn.interfaces.web.deps import get_registry, get_run_registry, get_task_backend
 from reyn.mcp.server import DEFAULT_SEND_TIMEOUT_SECONDS, send_to_agent_impl
 from reyn.runtime.a2a_routing import (
     a2a_context_id,
@@ -287,6 +288,7 @@ async def a2a_jsonrpc(
     request: Request,
     registry=Depends(get_registry),
     run_registry=Depends(get_run_registry),
+    task_backend=Depends(get_task_backend),
 ) -> dict:
     """JSON-RPC 2.0 endpoint for one Reyn agent.
 
@@ -333,7 +335,7 @@ async def a2a_jsonrpc(
         )
     if method == "tasks/list":
         return await _handle_tasks_list(
-            req_id, body.get("params") or {}, agent_name, run_registry,
+            req_id, body.get("params") or {}, agent_name, task_backend,
         )
 
     return _jsonrpc_error(
@@ -349,17 +351,17 @@ _LIST_TASKS_DEFAULT_PAGE_SIZE = 50
 _LIST_TASKS_MAX_PAGE_SIZE = 100  # A2A spec cap
 
 
-def _task_sort_key(entry) -> tuple[str, str]:
-    """Stable keyset order: (created_at, run_id). ISO-8601 timestamps sort
-    lexicographically = chronologically (all entries are UTC), and run_id
-    breaks ties — so the order is total and insertion-stable, which is what
-    makes the opaque page token a correct keyset cursor."""
-    return (entry.created_at.isoformat(), entry.run_id)
+def _task_sort_key(task) -> tuple[str, str]:
+    """Stable keyset order: (created_at, task_id). ISO-8601 ``Task.created_at``
+    (a string) sorts lexicographically = chronologically (UTC), and task_id
+    breaks ties — a total, insertion-stable order, which makes the opaque page
+    token a correct keyset cursor (#1953 slice 5a: Task-backed)."""
+    return (str(task.created_at), task.task_id)
 
 
-def _encode_page_token(entry) -> str:
+def _encode_page_token(task) -> str:
     raw = json.dumps(
-        {"created_at": entry.created_at.isoformat(), "run_id": entry.run_id},
+        {"created_at": str(task.created_at), "id": task.task_id},
         separators=(",", ":"),
     )
     return base64.urlsafe_b64encode(raw.encode()).decode()
@@ -371,7 +373,7 @@ def _decode_page_token(token: str) -> tuple[str, str] | None:
     try:
         raw = base64.urlsafe_b64decode(token.encode()).decode()
         data = json.loads(raw)
-        return (str(data["created_at"]), str(data["run_id"]))
+        return (str(data["created_at"]), str(data["id"]))
     except Exception:
         return None
 
@@ -380,28 +382,24 @@ async def _handle_tasks_list(
     req_id: Any,
     params: dict,
     agent_name: str,
-    run_registry,
+    task_backend,
 ) -> dict:
-    """A2A ``tasks/list`` — this agent's tasks, optionally filtered by
-    ``contextId`` (→ core session_id) and ``status``, keyset-paginated.
-
-    The A2A spec names this ``ListTasks`` (PascalCase); it is bound here as
-    slash-form ``tasks/list`` to stay consistent with the existing
-    ``message/send`` JSON-RPC binding Reyn ships (#1811). ``status`` is matched
-    against Reyn's own status names (the spec→Reyn STATUS_MAP normalization is a
-    separate cross-cutting #1811 slice that will normalize both ``tasks/list``
-    output and ``GetTask`` together — deferred here to avoid coupling).
+    """A2A ``tasks/list`` — Tasks for a ``contextId``, optionally filtered by
+    ``status``, keyset-paginated, as spec A2A Task envelopes (#1953 slice 5a:
+    Task-backed). Slash-form ``tasks/list`` (consistent with ``message/send``).
+    ``status`` is matched against the Reyn Task-state vocabulary.
     """
     # contextId (A2A term) → core-neutral session_id at the layer boundary; the
-    # A2A layer owns this map so core (RunRegistry) stays term-neutral (#1814).
+    # A2A layer owns this map so core (the Task backend) stays term-neutral
+    # (#1814). The contextId's session is the Task assignee.
     context_id = params.get("contextId")
     session_id = a2a_session_id(context_id) if context_id else None
 
-    entries = run_registry.list(agent_name, session_id=session_id)
+    entries = await task_backend.list(assignee=session_id)
 
     status_filter = params.get("status")
     if status_filter is not None:
-        entries = [e for e in entries if e.status == status_filter]
+        entries = [e for e in entries if e.status.value == status_filter]
 
     entries.sort(key=_task_sort_key)
     total_size = len(entries)  # full filtered set, before pagination
@@ -434,7 +432,7 @@ async def _handle_tasks_list(
     return _jsonrpc_result(
         req_id,
         {
-            "tasks": [e.to_public_dict() for e in page],
+            "tasks": [to_a2a_task(t) for t in page],
             "nextPageToken": next_token,
             "pageSize": page_size,
             "totalSize": total_size,
@@ -1150,13 +1148,16 @@ async def _handle_async_mode(
 @router.get("/a2a/tasks/{run_id}")
 async def get_task(
     run_id: str,
-    run_registry=Depends(get_run_registry),
+    task_backend=Depends(get_task_backend),
 ) -> dict:
-    """Poll a task's status. Returns RunEntry.to_public_dict()."""
-    entry = run_registry.get(run_id)
-    if entry is None:
+    """A2A GetTask — poll a Task's status from the Task backend (#1953 slice 5a).
+    Returns the spec A2A Task envelope (Task-vocab state). The path param is the
+    ``task_id``. A terminal/archived task returns its envelope (status=canceled),
+    a tombstone rather than 404; a genuinely-unknown id is 404."""
+    task = await task_backend.get(run_id)
+    if task is None:
         raise HTTPException(404, f"Task {run_id!r} not found")
-    return entry.to_public_dict()
+    return to_a2a_task(task)
 
 
 # ── POST /a2a/tasks/{run_id}/cancel — cancel a running task ─────────────────
@@ -1165,13 +1166,18 @@ async def get_task(
 @router.post("/a2a/tasks/{run_id}/cancel")
 async def cancel_task(
     run_id: str,
-    run_registry=Depends(get_run_registry),
+    task_backend=Depends(get_task_backend),
 ) -> dict:
-    """Cancel a running task. Idempotent for already-terminal tasks."""
-    if not run_registry.cancel(run_id):
+    """A2A CancelTask — the external requester's remove-op (#1953 slice 5a).
+    Maps to ``task.abort`` (cooperative-terminal: archive the Task + sub-tree;
+    the assignee's in-flight work is rejected by the terminal guard). The A2A
+    client owns the contextId/task as its external requester. Returns the
+    archived Task's A2A envelope (status=canceled). The path param is the
+    ``task_id``; an unknown id is 404."""
+    aborted = await task_backend.abort(run_id)
+    if not aborted:
         raise HTTPException(404, f"Task {run_id!r} not found")
-    entry = run_registry.get(run_id)
-    return entry.to_public_dict() if entry else {"run_id": run_id, "status": "cancelled"}
+    return to_a2a_task(aborted[0])
 
 
 # ── GET /a2a/tasks/{run_id}/events — SSE stream ──────────────────────────────

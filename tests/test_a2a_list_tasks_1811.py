@@ -1,11 +1,11 @@
 """Tier 2: #1811 — A2A ``tasks/list`` (ListTasks) listing + filter + pagination.
 
-``tasks/list`` returns one agent's tasks, narrowable by ``contextId`` (→ the
-core-neutral ``session_id`` routing-key, #1814) and ``status``, with a stable
-keyset cursor (sort key ``(created_at, run_id)``; opaque base64 ``pageToken``;
-``nextPageToken`` MUST always be present, ``''`` at end). Per-task shape reuses
-``RunEntry.to_public_dict()`` (consistent with GetTask; STATUS_MAP normalization
-is a separate #1811 slice). Real RunRegistry, no mocks.
+``tasks/list`` returns a contextId's Tasks (the context's assignee session),
+narrowable by ``status``, with a stable keyset cursor (sort key
+``(created_at, task_id)``; opaque base64 ``pageToken``; ``nextPageToken`` MUST
+always be present, ``''`` at end). Per-task shape is the spec A2A Task envelope
+(``to_a2a_task``, #1953 slice 5a — Task-backed; replaces the #1947 RunRegistry
+version). Real Task backend, no mocks.
 
 Falsification:
 - contextId filter test reds if the session_id filter is dropped (returns both
@@ -16,29 +16,35 @@ Falsification:
 """
 from __future__ import annotations
 
-from datetime import datetime, timezone
-
 import pytest
 
 from reyn.interfaces.web.routers.a2a import _handle_tasks_list
-from reyn.interfaces.web.run_registry import RunRegistry
 from reyn.runtime.a2a_routing import a2a_session_id
+from reyn.task import InMemoryTaskBackend, Task, TaskState
+
+_SEED_COUNTER = [0]
 
 
-def _seed(reg: RunRegistry, agent: str, session_id: str, n: int, *, status: str = "running"):
-    """Create ``n`` runs with deterministic, strictly-increasing created_at so
-    the keyset order is fully known."""
+async def _seed(backend: InMemoryTaskBackend, session_id: str, n: int, *,
+                status: TaskState = TaskState.IN_PROGRESS):
+    """Create ``n`` Tasks assigned to ``session_id`` (the contextId's session),
+    with globally-unique task_ids + deterministic strictly-increasing created_at
+    so the keyset order is fully known across multiple seed calls."""
     created = []
-    for i in range(n):
-        e = reg.create(agent_name=agent, chain_id=f"c{i}", session_id=session_id)
-        e.status = status
-        e.created_at = datetime(2026, 1, 1, 0, 0, i, tzinfo=timezone.utc)
-        created.append(e)
+    for _ in range(n):
+        k = _SEED_COUNTER[0]
+        _SEED_COUNTER[0] += 1
+        t = Task(task_id=f"task-{k}", name=f"n{k}", assignee=session_id,
+                 requester="req", status=status,
+                 created_at=f"2026-01-01T00:{k // 60:02d}:{k % 60:02d}+00:00")
+        await backend.create(t)
+        created.append(t)
     return created
 
 
-async def _list(reg: RunRegistry, agent: str, **params) -> dict:
-    resp = await _handle_tasks_list(req_id="r1", params=params, agent_name=agent, run_registry=reg)
+async def _list(backend: InMemoryTaskBackend, agent: str, **params) -> dict:
+    resp = await _handle_tasks_list(req_id="r1", params=params, agent_name=agent,
+                                    task_backend=backend)
     assert resp["jsonrpc"] == "2.0"
     assert "result" in resp, resp
     return resp["result"]
@@ -46,14 +52,14 @@ async def _list(reg: RunRegistry, agent: str, **params) -> dict:
 
 @pytest.mark.asyncio
 async def test_tasks_list_filters_by_contextid():
-    """Tier 2: contextId scopes results to that context's session_id only."""
-    reg = RunRegistry()
+    """Tier 2: contextId scopes results to that context's session (assignee) only."""
+    backend = InMemoryTaskBackend()
     ctx_a, ctx_b = "ctx-a", "ctx-b"
-    a_ids = {e.run_id for e in _seed(reg, "alice", a2a_session_id(ctx_a), 3)}
-    _seed(reg, "alice", a2a_session_id(ctx_b), 2)  # other context — must be excluded
+    a_ids = {t.task_id for t in await _seed(backend, a2a_session_id(ctx_a), 3)}
+    await _seed(backend, a2a_session_id(ctx_b), 2)  # other context — must be excluded
 
-    result = await _list(reg, "alice", contextId=ctx_a)
-    returned = {t["run_id"] for t in result["tasks"]}
+    result = await _list(backend, "alice", contextId=ctx_a)
+    returned = {t["id"] for t in result["tasks"]}
 
     # RED if the session_id filter is dropped: returned would also contain ctx_b.
     assert returned == a_ids
@@ -64,9 +70,9 @@ async def test_tasks_list_filters_by_contextid():
 async def test_tasks_list_pagination_keyset_covers_all_once():
     """Tier 2: keyset pages partition the full set — no overlap, no skips, and
     nextPageToken is non-empty until the final page then ''."""
-    reg = RunRegistry()
+    backend = InMemoryTaskBackend()
     ctx = "ctx-pg"
-    all_ids = {e.run_id for e in _seed(reg, "alice", a2a_session_id(ctx), 5)}
+    all_ids = {t.task_id for t in await _seed(backend, a2a_session_id(ctx), 5)}
 
     seen: list[str] = []
     token = ""
@@ -76,9 +82,9 @@ async def test_tasks_list_pagination_keyset_covers_all_once():
         params = {"contextId": ctx, "pageSize": 2}
         if token:
             params["pageToken"] = token
-        result = await _list(reg, "alice", **params)
+        result = await _list(backend, "alice", **params)
         page_lens.append(len(result["tasks"]))
-        seen.extend(t["run_id"] for t in result["tasks"])
+        seen.extend(t["id"] for t in result["tasks"])
         token = result["nextPageToken"]
         pages += 1
         assert pages <= 10, "pagination did not terminate"
@@ -95,14 +101,14 @@ async def test_tasks_list_pagination_keyset_covers_all_once():
 
 @pytest.mark.asyncio
 async def test_tasks_list_filters_by_status():
-    """Tier 2: status narrows the set (matched against Reyn status names)."""
-    reg = RunRegistry()
+    """Tier 2: status narrows the set (matched against the Task-state vocab)."""
+    backend = InMemoryTaskBackend()
     sid = a2a_session_id("ctx-st")
-    done = {e.run_id for e in _seed(reg, "alice", sid, 2, status="completed")}
-    _seed(reg, "alice", sid, 3, status="running")
+    done = {t.task_id for t in await _seed(backend, sid, 2, status=TaskState.COMPLETED)}
+    await _seed(backend, sid, 3, status=TaskState.IN_PROGRESS)
 
-    result = await _list(reg, "alice", contextId="ctx-st", status="completed")
-    returned = {t["run_id"] for t in result["tasks"]}
+    result = await _list(backend, "alice", contextId="ctx-st", status="completed")
+    returned = {t["id"] for t in result["tasks"]}
 
     assert returned == done
     assert result["totalSize"] == 2
@@ -111,30 +117,30 @@ async def test_tasks_list_filters_by_status():
 @pytest.mark.asyncio
 async def test_tasks_list_next_page_token_always_present_on_short_page():
     """Tier 2: nextPageToken MUST be present and '' when results fit one page."""
-    reg = RunRegistry()
-    seeded = _seed(reg, "alice", a2a_session_id("ctx-1"), 1)
+    backend = InMemoryTaskBackend()
+    seeded = await _seed(backend, a2a_session_id("ctx-1"), 1)
 
-    result = await _list(reg, "alice", contextId="ctx-1")
+    result = await _list(backend, "alice", contextId="ctx-1")
 
     # RED if the key is omitted on a single short page.
     assert "nextPageToken" in result
     assert result["nextPageToken"] == ""
     # the single seeded task is the only one returned (no extra page expected).
-    returned = {t["run_id"] for t in result["tasks"]}
-    assert returned == {seeded[0].run_id}
+    returned = {t["id"] for t in result["tasks"]}
+    assert returned == {seeded[0].task_id}
 
 
 @pytest.mark.asyncio
 async def test_tasks_list_rejects_malformed_page_token():
     """Tier 2: a malformed pageToken is an invalid-params error, not a crash."""
-    reg = RunRegistry()
-    _seed(reg, "alice", a2a_session_id("ctx-1"), 1)
+    backend = InMemoryTaskBackend()
+    await _seed(backend, a2a_session_id("ctx-1"), 1)
 
     resp = await _handle_tasks_list(
         req_id="r1",
         params={"contextId": "ctx-1", "pageToken": "!!!not-base64!!!"},
         agent_name="alice",
-        run_registry=reg,
+        task_backend=backend,
     )
 
     assert "error" in resp
