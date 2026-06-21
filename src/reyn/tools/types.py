@@ -64,9 +64,6 @@ class RouterCallerState:
     # Async dispatch callbacks (= for delegate_to_agent / plan
     # handlers that need to interact with chain / task lifecycle)
     send_to_agent: Callable[..., Awaitable[Any]] | None = None
-    dispatch_plan_tool: Callable[..., Awaitable[Any]] | None = None
-    # #1953 slice P3: task-driven decomposition entry (parallel with plan).
-    dispatch_task_tool: Callable[..., Awaitable[Any]] | None = None
 
     # Session-scoped chain identity (= for plan tool, delegate
     # tool, etc.)

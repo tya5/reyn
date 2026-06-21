@@ -191,7 +191,7 @@ class PhaseRouterLoopHost:
             _LLM_VOLATILE_FRAME_FIELDS,
             _LLM_VOLATILE_NESTED_FIELDS,
         )
-        from reyn.core.plan.sub_loop_memo import compute_sub_loop_args_hash
+        from reyn.core.kernel.sub_loop_memo_key import compute_sub_loop_args_hash
 
         robust = [
             self._strip_volatile_frame_fields(

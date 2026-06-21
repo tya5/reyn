@@ -54,7 +54,6 @@ def get_default_registry() -> ToolRegistry:
         CRON_REGISTER,
         CRON_UNREGISTER,
     )
-    from reyn.tools.decompose import DECOMPOSE
     from reyn.tools.delegate_to_agent import DELEGATE_TO_AGENT
     from reyn.tools.drop_source import DROP_SOURCE
 
@@ -92,7 +91,6 @@ def get_default_registry() -> ToolRegistry:
         REMEMBER_AGENT,
         REMEMBER_SHARED,
     )
-    from reyn.tools.plan import PLAN
     from reyn.tools.recall import RECALL
     from reyn.tools.reyn_src import (
         REYN_SRC_GLOB,
@@ -165,8 +163,6 @@ def get_default_registry() -> ToolRegistry:
     registry.register(ASK_USER)
     # ── Router-only capabilities (gates.router=allow, gates.phase=deny) ──
     registry.register(DELEGATE_TO_AGENT)
-    registry.register(PLAN)
-    registry.register(DECOMPOSE)
     registry.register(REYN_SRC_LIST)
     registry.register(REYN_SRC_READ)
     # FP-0041 #489 PR-B2: cron action category (= LLM-callable cron
