@@ -3155,7 +3155,13 @@ class RouterLoop:
         **Resolution only** (no dispatch), so the scheme's ``interpret`` runs it and
         the OS exclude-gates the result BEFORE ``execute`` — preserving the #1406/#187
         pre-dispatch order across the scheme split (byte-identical)."""
-        name = tc["function"]["name"]
+        from reyn.tools.universal_catalog import strip_provider_tool_namespace  # noqa: PLC0415
+
+        # #1989: a weak model (Gemini) may echo its function-calling namespace
+        # onto the call name (``default_api.invoke_action`` /
+        # ``default_api.web__search``). Strip it FIRST so the catalog membership +
+        # the ``__`` salvage below see the bare name. Safe: reyn names are dot-free.
+        name = strip_provider_tool_namespace(tc["function"]["name"])
         try:
             args = json.loads(tc["function"]["arguments"])
         except (json.JSONDecodeError, KeyError):

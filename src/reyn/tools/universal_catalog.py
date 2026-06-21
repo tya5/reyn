@@ -165,6 +165,31 @@ def is_valid_qualified_name(qualified_name: str) -> bool:
     return True
 
 
+# ── provider tool-name normalization (#1989) ───────────────────────────────
+
+# Known LLM function-calling namespace prefixes a model may echo onto a tool
+# name. Gemini wraps tools in a ``default_api`` namespace and a weak model
+# sometimes emits ``default_api.<tool>`` (e.g. ``default_api.invoke_action`` /
+# ``default_api.web__search``) — both as a function-call name and, observed in
+# #1989, as a string value inside a ``plan``'s step ``tools``. Stripping a
+# leading one is SAFE for EVERY provider: reyn tool names never contain a ``.``
+# — qualified names use ``__`` (``_NAME_SEPARATOR``) and bare verbs use single
+# underscores — so a dot-delimited ``<namespace>.`` prefix can never be part of a
+# legit reyn name. Extending the set (e.g. OpenAI ``functions.``) is a one-line add.
+_PROVIDER_TOOL_NAMESPACES: tuple[str, ...] = ("default_api.",)
+
+
+def strip_provider_tool_namespace(name: str) -> str:
+    """Strip a leading provider function-calling namespace prefix from a tool
+    name (#1989). A no-op for a name without a known prefix (so it is safe to
+    apply unconditionally). Safe across providers because reyn names are
+    dot-free, so a ``<namespace>.`` prefix is never part of a legit name."""
+    for ns in _PROVIDER_TOOL_NAMESPACES:
+        if name.startswith(ns):
+            return name[len(ns):]
+    return name
+
+
 # ── D14 visibility gating helpers ──────────────────────────────────────────
 
 
