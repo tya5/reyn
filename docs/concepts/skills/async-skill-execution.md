@@ -28,9 +28,9 @@ Anything the user typed during those minutes silently queued in the
 inbox. No acknowledgment, no progress feedback, no way to ask a quick
 clarifying question while the long task ran.
 
-Chat-mode `invoke_skill` is now non-blocking. Plan-mode keeps blocking
-semantics on purpose (= sequential step execution needs the nested
-skill's result inline to feed the next step's LLM).
+Chat-mode `invoke_skill` is now non-blocking. Blocking phase sub-loops
+keep the blocking path on purpose (= a phase op-loop needs the nested
+skill's result inline to feed the next op).
 
 ## How chat-mode action dispatch works
 
@@ -39,7 +39,8 @@ Since FP-0034 Phase 6, the LLM-visible surface is
 `universal_dispatch.py` routes the wrapper call to the same internal
 `invoke_skill` handler — the spawn-ack mechanism is unchanged.
 The legacy `invoke_skill(name, input)` direct form is no longer
-the production surface (kept internally for plan-mode; see below).
+the production surface (kept internally for blocking phase sub-loops /
+phase-side dispatch; see below).
 
 ```
 User: "skill_builder で string_length を作って"
@@ -144,13 +145,10 @@ agents.
 `_handle_user_message` returns, all within the remaining timeout
 budget:
 
-1. `await asyncio.gather(*running_plans)` — plan-mode async tasks
-   (= ADR-0023 §2.1.1) finish and append their terminal text to
-   history.
-2. `await asyncio.gather(*running_skills)` — spawned skills run to
+1. `await asyncio.gather(*running_skills)` — spawned skills run to
    terminal status and enqueue `skill_completed` via
    `_enqueue_skill_completed`.
-3. `session.drain_skill_completed_inbox(deadline_monotonic=...)` —
+2. `session.drain_skill_completed_inbox(deadline_monotonic=...)` —
    pops `skill_completed` items non-blockingly, records the WAL
    consume entry, and dispatches each one to
    `_handle_skill_completed` (which runs the router LLM for
@@ -160,16 +158,15 @@ budget:
 If the deadline fires mid-drain, `partial=True` is returned and the
 remaining items stay on the inbox for the next call to pick up.
 
-## Plan-mode keeps blocking semantics
+## Phase sub-loops keep blocking semantics
 
-Plan-mode RouterLoops bind only `run_skill_fn` (= the legacy blocking
-path); `spawn_skill_fn` is left None. So when a plan step's LLM calls
-`invoke_skill`, it blocks until completion and the result feeds the
-next step inline. This is intentional — plan steps are sequential and
-the next step's prompt frequently includes the previous step's
-outcome. Spawn-and-return semantics would force the planner to
-build its own completion-tracking layer and is not worth the
-complexity.
+Blocking phase sub-loops bind only `run_skill_fn` (= the blocking
+path); `spawn_skill_fn` is left None. So when a phase op-loop's LLM
+calls `invoke_skill`, it blocks until completion and the result feeds
+the next op inline. This is intentional — phase ops are sequential and
+the next op's prompt frequently includes the previous op's outcome.
+Spawn-and-return semantics would force the sub-loop to build its own
+completion-tracking layer and is not worth the complexity.
 
 The split is wired in `RouterLoop._build_router_caller_state`:
 
@@ -185,16 +182,15 @@ return RouterCallerState(
 )
 ```
 
-Plan-mode's `_PlanStepHost` does not implement `spawn_skill`, so the
-hasattr check fails and the binding stays None.
+A host that does not implement `spawn_skill` (= a phase sub-host) fails
+the hasattr check, so the binding stays None.
 
 ## Slash commands
 
-`/tasks` is the unified entry point spanning skill runs and plan
-tasks:
+`/tasks` is the unified entry point for skill runs:
 
 ```
-/tasks                          → list all running tasks (skills + plans)
+/tasks                          → list all running skill tasks
 /tasks list                     → same as /tasks
 /tasks status <run_id_prefix>   → current phase + elapsed time + chain_id
 /tasks kill <run_id_prefix>     → cancel a specific task
@@ -203,7 +199,6 @@ tasks:
 Legacy commands continue to work as aliases:
 
 - `/skill list` / `/skill discard <run_id>` — skills only (PR-resume-ux U2)
-- `/plan list` / `/plan discard <plan_id>` — plans only (ADR-0023)
 
 ## What's preserved across crashes
 
@@ -227,7 +222,7 @@ a fresh run.
 - [Concepts: skill-resume](../skills/skill-resume.md) — crash recovery for
   in-flight skill state
 - [Reference: chat CLI](../../reference/cli/chat.md) — `/tasks` /
-  `/skill` / `/plan` slash commands
+  `/skill` slash commands
 - FP-0011 (`docs/deep-dives/proposals/0011-remove-narrator.md`) —
   removed the dedicated narrator skill; router LLM narrates inline
 - FP-0012 (`docs/deep-dives/proposals/0012-../skills/async-skill-execution.md`) —
