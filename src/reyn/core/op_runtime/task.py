@@ -181,9 +181,23 @@ async def _abort(op, ctx: OpContext, caller) -> dict:
     _task, denied = await _authorize("task.abort", ctx, _backend(ctx), op.task_id, "requester")
     if denied is not None:
         return denied
-    task = await _backend(ctx).abort(op.task_id, reason=op.reason)
-    _audit(ctx, "task.abort", op.task_id, status=task.status.value)
-    return _ok("task.abort", task=task.to_dict())
+    aborted = await _backend(ctx).abort(op.task_id, reason=op.reason)
+    if not aborted:
+        return _not_found("task.abort", op.task_id)
+    # UP-notify (2b-2): emit a generic, term-neutral P6 disposition event per
+    # aborted task carrying requester + origin. The A2A layer (slice 5) consumes
+    # these and fires the external (webhook) channel for origin=external tasks
+    # (the persistent stakeholders); internal requesters need no notify (they own
+    # the tree + the assignee discovers the abort via the terminal-guard).
+    events = getattr(ctx, "events", None)
+    if events is not None:
+        for t in aborted:
+            events.emit(
+                "task_disposition", task_id=t.task_id, disposition="aborted",
+                requester=t.requester, origin=t.origin.value, root=op.task_id,
+            )
+    root = aborted[0]
+    return _ok("task.abort", task=root.to_dict())
 
 
 async def _heartbeat(op, ctx: OpContext, caller) -> dict:

@@ -156,6 +156,36 @@ async def test_update_status_single_writer_is_assignee_session():
 
 
 @pytest.mark.asyncio
+async def test_abort_emits_disposition_event_per_aborted_task():
+    """Tier 2: abort (UP-notify, 2b-2) emits a term-neutral `task_disposition`
+    P6 event per aborted task carrying requester + origin — the A2A layer (slice
+    5) routes origin=external to the external (webhook) channel. Falsification (d):
+    each aborted task's event carries the correct requester + origin."""
+    from reyn.core.events.events import EventLog
+    from reyn.task import InMemoryTaskBackend, Task, TaskOrigin
+
+    backend = InMemoryTaskBackend()
+    # external root P (origin=external, persistent external requester X) with an
+    # internal child C — abort P cascades to C; both get a disposition event.
+    await backend.create(Task(task_id="p", name="p", assignee="A", requester="X",
+                              origin=TaskOrigin.EXTERNAL))
+    await backend.create(Task(task_id="c", name="c", assignee="A", requester="Y",
+                              origin=TaskOrigin.SELF, parent_id="p"))
+    events = EventLog()
+    ctx = SimpleNamespace(task_backend=backend, session_id="X", agent_id="x", events=events)
+
+    res = await taskmod._abort(SimpleNamespace(task_id="p", reason=None), ctx, "control_ir")
+    assert res["status"] == "ok"
+
+    disp = {e.data["task_id"]: e.data for e in events.all() if e.type == "task_disposition"}
+    # RED if a cascade-aborted task is missing an event, or origin/requester wrong.
+    assert set(disp) == {"p", "c"}
+    assert disp["p"]["origin"] == "external" and disp["p"]["requester"] == "X"
+    assert disp["c"]["origin"] == "self" and disp["c"]["requester"] == "Y"
+    assert all(d["disposition"] == "aborted" for d in disp.values())
+
+
+@pytest.mark.asyncio
 async def test_abort_archives_and_rejects_assignee_straggler():
     """Tier 2: abort = delete → archived (Option B); a post-abort straggler
     update_status by the assignee is rejected by the terminal state, so nothing

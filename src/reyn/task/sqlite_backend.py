@@ -261,18 +261,19 @@ class SqliteTaskBackend:
             self._conn.commit()
             return self._fetch(task_id)
 
-    async def abort(self, task_id: str, reason: str | None = None) -> Task | None:
+    async def abort(self, task_id: str, reason: str | None = None) -> list[Task]:
         """abort = delete (cooperative-terminal, #1953 Option B): set this task +
         its whole sub-tree to ``archived`` (DOWN-cascade, §18). There is no forced
         cancel — the assignee's in-flight work discovers the abort at its next
-        status-write, which the terminal state rejects (so no straggler lands;
-        and a sibling task's work is untouched). Returns the now-archived task, or
-        None if it doesn't exist."""
+        status-write, which the terminal state rejects (so no straggler lands; and
+        a sibling task's work is untouched). Returns the aborted tasks (root
+        first) so the caller can emit a disposition event per task (UP-notify,
+        2b-2); ``[]`` if no such task."""
         async with self._lock:
             if self._conn.execute(
                 "SELECT 1 FROM tasks WHERE task_id=?", (task_id,)
             ).fetchone() is None:
-                return None
+                return []
             # BFS the sub-tree (this task + all descendants via parent_id;
             # acyclic by construction, with a guard).
             subtree: list[str] = [task_id]
@@ -294,7 +295,7 @@ class SqliteTaskBackend:
                 )
                 self._emit(tid, "aborted", root=task_id)
             self._conn.commit()
-            return self._fetch(task_id)
+            return [t for t in (self._fetch(tid) for tid in subtree) if t is not None]
 
     async def set_awaiting(self, task_id: str, awaiting_since: float | None) -> Task | None:
         async with self._lock:
