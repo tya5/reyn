@@ -321,6 +321,9 @@ llm:
       openai/gpt-4o-mini:  # ENV-VAR NAMES only; NEVER inline a key value
         - api_key_env: OPENAI_API_KEY_1
         - api_key_env: OPENAI_API_KEY_2
+    retry_policy:          # per-exception-type retry counts (litellm.RetryPolicy)
+      RateLimitErrorRetries: 5
+      TimeoutErrorRetries: 3
 ```
 
 ### `llm.router` fields
@@ -333,6 +336,7 @@ llm:
 | `cooldown_time` | float\|null | `null` | Seconds a deployment is cooled down after `allowed_fails` failures. Only meaningful with a fallback chain. |
 | `allowed_fails` | int\|null | `null` | Failures before a deployment is cooled down. |
 | `credentials` | map | `{}` | Credential rotation: `model → [{api_key_env: ENV_VAR_NAME}]`. Each usable key → one Router deployment (same model) → the Router rotates / fails over across keys. **Reference env-var NAMES only — never inline a key value**; values are read from `os.environ` at build time and are never logged or cache-fingerprinted. A declared model whose env vars all resolve to nothing is a load error (no silent keyless deployment). |
+| `retry_policy` | map\|null | `null` | Per-exception-type retry counts. Absent (null) → litellm defaults (`num_retries` applies uniformly). When set, constructs a `litellm.RetryPolicy` and passes it to the Router. Supported keys: `RateLimitErrorRetries`, `TimeoutErrorRetries`, `BadRequestErrorRetries`, `AuthenticationErrorRetries`, `ContentPolicyViolationErrorRetries`, `InternalServerErrorRetries`. |
 
 On the Router path, retry count is **config-only**: `num_retries` is taken from
 `llm.router.num_retries` (a per-call `max_retries` is not applied), so the retry

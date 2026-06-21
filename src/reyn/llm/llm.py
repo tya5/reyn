@@ -1077,7 +1077,11 @@ def _router_cache_fingerprint(rcfg) -> tuple:
 
     #1829 S4: includes the credential ENV-VAR NAMES — **never the key VALUES** (the
     value is read from os.environ at build, never stored/fingerprinted; secret-safe
-    by construction)."""
+    by construction).
+
+    #1870: includes ``retry_policy`` mapping (None → empty) so a changed
+    retry_policy invalidates the cached Router."""
+    rp = rcfg.retry_policy or {}
     return (
         rcfg.num_retries,
         rcfg.cooldown_time,
@@ -1087,6 +1091,7 @@ def _router_cache_fingerprint(rcfg) -> tuple:
             (m, tuple(c.get("api_key_env") for c in (creds or [])))
             for m, creds in getattr(rcfg, "credentials", {}).items()
         )),
+        tuple(sorted(rp.items())),
     )
 
 
@@ -1176,6 +1181,8 @@ def _single_deployment_router(model: str):
             kwargs["cooldown_time"] = rcfg.cooldown_time
         if rcfg.allowed_fails is not None:
             kwargs["allowed_fails"] = rcfg.allowed_fails
+        if rcfg.retry_policy:
+            kwargs["retry_policy"] = _ll.RetryPolicy(**rcfg.retry_policy)
         router = _ll.Router(**kwargs)
         per_loop[cache_key] = router
     return router

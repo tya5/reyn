@@ -91,6 +91,13 @@ class RouterConfig:
     # key value here (the value is read from os.environ at build time and is never
     # logged / fingerprinted; only the NAME is).
     credentials: dict = field(default_factory=dict)
+    # per-exception-type retry counts (None → litellm defaults, i.e. no typed
+    # policy). A mapping of RetryPolicy field names → counts; constructed into a
+    # ``litellm.RetryPolicy`` at Router build time. Supported keys:
+    #   RateLimitErrorRetries, TimeoutErrorRetries, BadRequestErrorRetries,
+    #   AuthenticationErrorRetries, ContentPolicyViolationErrorRetries,
+    #   InternalServerErrorRetries.
+    retry_policy: dict | None = None
 
 
 @dataclass
@@ -119,6 +126,11 @@ def _build_router_config(raw: object) -> RouterConfig:
             "llm.router.credentials must be a mapping (model → [{api_key_env: NAME}]), "
             f"got {type(cred).__name__}"
         )
+    rp_raw = raw.get("retry_policy")
+    if rp_raw is not None and not isinstance(rp_raw, dict):
+        raise ValueError(
+            f"llm.router.retry_policy must be a mapping, got {type(rp_raw).__name__}"
+        )
     return RouterConfig(
         use=bool(raw.get("use", d.use)),
         num_retries=int(raw.get("num_retries", d.num_retries)),
@@ -141,6 +153,9 @@ def _build_router_config(raw: object) -> RouterConfig:
             ]
             for m, lst in (cred or {}).items()
         },
+        # None → absent (default litellm behavior); mapping → constructed at Router
+        # build time into a litellm.RetryPolicy object.
+        retry_policy={str(k): int(v) for k, v in rp_raw.items()} if rp_raw else None,
     )
 
 
