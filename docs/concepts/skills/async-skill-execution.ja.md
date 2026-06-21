@@ -26,9 +26,9 @@ await _handle_user_message()
 User が入力した内容は inbox に黙って溜まるだけで、 ack も progress feedback も
 途中の clarifying question も不可能でした。
 
-Chat-mode の `invoke_skill` は非 blocking 化されました。 Plan-mode は意図的に
-blocking のままです (= 各 step の LLM が次 step の入力に nested skill 結果を
-inline で必要)。
+Chat-mode の `invoke_skill` は非 blocking 化されました。 blocking な phase sub-loop は
+意図的に blocking path を保ちます (= phase op-loop が次 op の入力に nested skill
+結果を inline で必要)。
 
 ## chat-mode invoke_skill の現挙動
 
@@ -136,12 +136,10 @@ agent では完了 narration が fire しません。
 `send_to_agent_impl` は `_handle_user_message` 完了後に残 timeout
 予算内で 3 step でこの gap を埋めます:
 
-1. `await asyncio.gather(*running_plans)` — plan-mode async task
-   (= ADR-0023 §2.1.1) が完了し、 terminal text を history に append。
-2. `await asyncio.gather(*running_skills)` — spawn 済 skill が
+1. `await asyncio.gather(*running_skills)` — spawn 済 skill が
    terminal status に到達し、 `_enqueue_skill_completed` 経由で
    `skill_completed` を enqueue。
-3. `session.drain_skill_completed_inbox(deadline_monotonic=...)` —
+2. `session.drain_skill_completed_inbox(deadline_monotonic=...)` —
    `skill_completed` item を非 blocking で pop、 WAL consume entry
    を記録、 各々を `_handle_skill_completed` (= router LLM を回して
    narration 生成) に dispatch。 `skill_completed` 以外の kind は
@@ -150,13 +148,13 @@ agent では完了 narration が fire しません。
 deadline が drain 中に fire したら `partial=True` で返り、 残 item は
 次 call の pickup を待って inbox に残ります。
 
-## Plan-mode は blocking のまま
+## Phase sub-loop は blocking のまま
 
-Plan-mode RouterLoop は `run_skill_fn` のみ bind し (= 旧 blocking path)、
-`spawn_skill_fn` は None のまま。 そのため plan step の LLM が `invoke_skill`
-を呼んでも完了まで blocking し、 結果が次 step に inline で feed されます。
-これは意図的で — plan step は sequential 実行で、 次 step の prompt は前 step
-の結果を含むことが頻繁にあるため。 spawn-and-return semantics だと planner が
+blocking な phase sub-loop は `run_skill_fn` のみ bind し (= blocking path)、
+`spawn_skill_fn` は None のまま。 そのため phase op-loop の LLM が `invoke_skill`
+を呼んでも完了まで blocking し、 結果が次 op に inline で feed されます。
+これは意図的で — phase op は sequential 実行で、 次 op の prompt は前 op
+の結果を含むことが頻繁にあるため。 spawn-and-return semantics だと sub-loop が
 独自の完了追跡層を構築する必要があり、 複雑性に見合いません。
 
 切り分けは `RouterLoop._build_router_caller_state` で wiring されています:
@@ -173,15 +171,15 @@ return RouterCallerState(
 )
 ```
 
-Plan-mode の `_PlanStepHost` は `spawn_skill` を実装しないので hasattr check が
+`spawn_skill` を実装しない host (= phase sub-host) は hasattr check が
 失敗し、 binding は None のまま維持されます。
 
 ## Slash commands
 
-`/tasks` は Skill 実行と Plan task を横断する統合 entry point:
+`/tasks` は Skill 実行の統合 entry point:
 
 ```
-/tasks                          → 実行中の全 task (skills + plans) を一覧
+/tasks                          → 実行中の全 skill task を一覧
 /tasks list                     → /tasks と同じ
 /tasks status <run_id_prefix>   → current phase + 経過時間 + chain_id
 /tasks kill <run_id_prefix>     → 特定 task を中止
@@ -190,7 +188,6 @@ Plan-mode の `_PlanStepHost` は `spawn_skill` を実装しないので hasattr
 旧 command も alias として継続:
 
 - `/skill list` / `/skill discard <run_id>` — Skill のみ (PR-resume-ux U2)
-- `/plan list` / `/plan discard <plan_id>` — Plan のみ (ADR-0023)
 
 ## Crash 越しに保持されるもの
 
