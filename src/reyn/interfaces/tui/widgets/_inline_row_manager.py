@@ -12,6 +12,7 @@ Dependencies injected via parent reference:
 """
 from __future__ import annotations
 
+import re
 from typing import TYPE_CHECKING
 
 from .skill_activity import SkillActivityRow
@@ -51,7 +52,13 @@ class _InlineRowManager:
         row = SkillActivityRow(
             run_id=run_id,
             skill_name=skill_name,
-            id=f"skillrow_{run_id[:8]}",
+            # Key the widget id on the FULL run_id (the same value used as the
+            # dedup dict key above), not ``run_id[:8]`` — that prefix is the
+            # YYYYMMDD date, so two skills spawned the same day collided on one
+            # widget id and the second mount raised DuplicateIds (the row was
+            # then lost). Sanitise to the Textual id charset; the ``skillrow_``
+            # prefix already satisfies the leading-character rule.
+            id=f"skillrow_{re.sub(r'[^A-Za-z0-9_-]', '_', run_id)}",
             label_prefix=label_prefix,
         )
         self._skill_rows[run_id] = row
