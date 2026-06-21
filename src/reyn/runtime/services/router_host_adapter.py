@@ -143,6 +143,11 @@ class RouterHostAdapter:
         # adapters by hand) preserve the prior tools= shape and don't
         # accidentally activate wrappers without intent.
         universal_wrappers_enabled: bool = False,
+        # #1953 dynamic-wire: the chat session identity (the single-writer CAS key)
+        # + the session-scoped Task backend, threaded so router-dispatched task.*
+        # ops hit the SAME assignee/requester gate as the phase path (no None mask).
+        session_id: str | None = None,
+        task_backend: Any = None,
         # FP-0034 Phase 2 step 1: ActionEmbeddingIndex + EmbeddingProvider
         # for search_actions.  When all three are set (= operator configured
         # ``action_retrieval.embedding_class`` AND Session built a
@@ -267,6 +272,8 @@ class RouterHostAdapter:
     ) -> None:
         self._threat_scan = threat_scan
         self._contextual_permission = contextual_permission
+        self._session_id = session_id  # #1953 dynamic-wire: task.* CAS gate key
+        self._task_backend = task_backend  # #1953 dynamic-wire: session-scoped Task backend
         self._turn_budget_engine = turn_budget_engine
         self._turn_cancel_fn = turn_cancel_fn  # #1468
         self._agent_name = agent_name
@@ -1522,6 +1529,10 @@ class RouterHostAdapter:
             cancel_event=self._cancel_event,
             threat_scan=self._threat_scan,
             contextual_permission=self._contextual_permission,  # #1827 S3
+            # #1953 dynamic-wire: the REAL chat-session id + Task backend so the
+            # task.* CAS gate enforces (no None-placeholder mask-pass).
+            session_id=self._session_id,
+            task_backend=self._task_backend,
         )
 
     def _set_cancel_event(self, event: asyncio.Event) -> None:
