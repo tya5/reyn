@@ -28,7 +28,6 @@ models:
 | `output_language` | 文字列 | デフォルトの出力言語コード（例: `en`、`ja`）。`--output-language` でオーバーライド。 |
 | `safety` | マップ | ランタイムの停止条件: ループ検出上限、タイムアウト、上限超過時ポリシー。以下参照。 |
 | `cost` | マップ | バジェット上限とレート制限（エージェントごと、日次、月次）。以下参照。 |
-| `plan` | マップ | プランモードのステップバジェットとリトライ設定。以下参照。 |
 | `web` | マップ | `web_fetch` と MCP レジストリ呼び出しの SSL 設定。以下参照。 |
 | `eval` | マップ | `reyn eval` のトレース exporter バックエンド。以下参照。 |
 | `sandbox` | マップ | `sandboxed_exec` のバックエンド選択・非対応プラットフォームポリシー・agent-level サンドボックスポリシー。以下参照。 |
@@ -48,7 +47,6 @@ models:
 | `external_transports` | マップ | チャット向け受信トランスポート → MCP ツールルーティング（Slack / LINE / Discord など）。以下参照。 |
 | `multimodal` | マップ | バイナリメディア（画像・音声）のサイズ上限・超過時の挙動・アーティファクト保存先。以下参照。 |
 | `permissions` | マップ | デフォルトの Permission ポリシー。以下参照。 |
-| `plan_resume_raw` | マップ | プランモードのレジューム ポリシーの raw dict。プランコーディネーターが遅延パース。 |
 | `prompt_cache_enabled` | bool | システムプロンプトに Anthropic プロンプトキャッシュマーカーを付与。デフォルト `true`。 |
 | `project_context_path` | 文字列 | すべての Phase システムプロンプトに注入する Markdown ファイル。未設定（デフォルト）: cross-tool 標準を auto-resolve — `AGENTS.md` があればそれ、なければ `REYN.md`（legacy fallback）。明示パスで 1 ファイルに固定、`""` で無効化。下記の注記参照。 |
 | `api_base` | 文字列 | LiteLLM プロキシベース URL。通常は `reyn.local.yaml`（gitignored）に設定。 |
@@ -269,7 +267,6 @@ safety:
 | `safety.loop.max_router_calls_per_turn` | int | `3` | — | ユーザーターンごとのチャットルーター呼び出し数。`0` = 無制限。 |
 | `safety.loop.max_router_iterations` | int | `5` | `--max-iterations` | ユーザーターンごとの LLM ツール呼び出しイテレーション上限。CLI `--max-iterations` が指定された場合はそちらが優先。`reyn run-once` のデフォルトは 80。 |
 | `safety.loop.max_agent_hops` | int | `3` | — | 最大委譲深度（ユーザー → A → B → C = 3 ホップ）。 |
-| `safety.loop.plan_invalid_retries` | int | `1` | — | ルーターが malformed な `plan()` ツール呼び出しを emit した時、エラー + 「内側クォートをエスケープ」 ヒントを user-role directive として追加して LLM に再 emit させる。`0` で無効化。`1`（デフォルト）でチャットターンごとに 1 回の directive 駆動訂正を許可。 |
 
 ### `safety.timeout` フィールド
 
@@ -287,36 +284,6 @@ safety:
 | `safety.on_limit.mode` | 文字列 | `interactive` | ループ/タイムアウト上限発動時の動作。`interactive`（デフォルト） — `ask_user` でユーザーに延長許可を確認。ヘッドレス（bus=None / 非 TTY）は自動的に abort へ短絡。`unattended` — 即時中止（CI / cron / スクリプト実行向けのオプトイン）。`auto_extend` — `auto_extend_times` 回自動延長後に中止。 |
 | `safety.on_limit.auto_extend_times` | int | `1` | abort フォールスルーまでの自動延長回数。`mode: auto_extend` 時のみ使用。 |
 | `safety.on_limit.ask_timeout_seconds` | float（秒） | `0` | `interactive` モードでユーザー返答を待機する時間。`0`（デフォルト） = 無制限待機、正の値 = ウィンドウ経過で partial data として abort。 |
-
-## `plan` ブロック
-
-プランのステップ実行バジェット、リトライ動作、ステップ結果コンパクションを制御します。
-
-```yaml
-plan:
-  step_max_iterations: 5   # ステップあたりの最大 RouterLoop ターン数（デフォルト: 5）
-  retry_limit: 3           # ステップ失敗時の最大自動リトライ数（デフォルト: 3）
-  step_compaction:
-    recent_step_results_raw: 3                # 最新 N 件の step_results はそのまま保持
-    step_results_ratio: 0.50                  # main_pool のうち step_results に割り当てる比率
-    summarize_older_threshold_tokens: null    # null = main_pool から導出（ComputedBudgets）
-    use_chars4_estimate: false                # true = len(text)//4（レイテンシ opt-out）
-```
-
-| キー | 型 | デフォルト | 説明 |
-|-----|------|---------|-------------|
-| `step_max_iterations` | integer | `5` | 1 つのプランステップが失敗として記録される前に消費できる最大 RouterLoop イテレーション数。 |
-| `retry_limit` | integer | `3` | 一時的エラーによるステップあたりの最大自動リトライ数。上限到達後はユーザーにバジェット延長を求めます。トークン制限と同様のコスト保護上限として機能します。 |
-| `step_compaction` | マップ | 下記デフォルト | prior `step_results` コンパクションポリシー。`chat.compaction` の sibling — 蓄積したステップ出力が次ステップのシステムプロンプトを肥大化させそうな時、古いエントリは要約されます。 |
-
-### `plan.step_compaction` フィールド
-
-| フィールド | 型 | デフォルト | 説明 |
-|-------|------|---------|-------------|
-| `recent_step_results_raw` | int | `3` | 最新 N 件の step_results はそのまま保持し、それより古いものをコンパクション。 |
-| `step_results_ratio` | float | `0.50` | `main_pool`（= `T_max - T_SP`）のうち次ステップの sys_prompt 内 step_results 部分に割り当てる比率。`chat.compaction.component_weights` の body 配分の sibling。 |
-| `summarize_older_threshold_tokens` | int \| null | `null` | 古い step_results をコンパクションする閾値（トークン数）。`null` の場合は `ComputedBudgets`（= `step_results_ratio × main_pool`）から導出。 |
-| `use_chars4_estimate` | bool | `false` | `true` の場合、`litellm.token_counter` の代わりに `len(text)//4` を使用（レイテンシ opt-out、`chat.compaction.use_chars4_estimate` と同じ意味）。 |
 
 ## `web` ブロック
 

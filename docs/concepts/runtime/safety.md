@@ -41,7 +41,6 @@ the current configured value, and which config key to change.
 | Phase wall-clock | `safety.timeout.phase_seconds` | 0 (off) | ✅ | yes |
 | Chain wait | `safety.timeout.chain_seconds` | 60 | ✅ | yes |
 | Router iterations | `safety.loop.max_router_iterations` | 5 | ✅ | partial |
-| Plan step iterations | `plan.step_max_iterations` | 5 | ✅ | partial |
 | LLM call timeout | `safety.timeout.llm_call_seconds` | 60 | ❌ auto-retry/abort | — |
 | Media cap | `multimodal.max_bytes` | 5 MB | ❌ auto-degrade | — |
 | Summary body cap | `chat.compaction.body_token_cap` | 1500 | ❌ auto-truncate | — |
@@ -124,12 +123,8 @@ safety:
     max_router_calls_per_turn: 3
     max_agent_hops: 3
     max_router_iterations: 5   # max LLM tool-call iterations per user turn (CLI --max-iterations overrides)
-    plan_invalid_retries: 1
   timeout:
     phase_seconds: 0.0         # 0 = disabled
     chain_seconds: 60.0
     llm_call_seconds: 60.0
-
-plan:
-  step_max_iterations: 5       # max RouterLoop iterations per plan step
 ```
