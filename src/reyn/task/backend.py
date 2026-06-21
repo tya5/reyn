@@ -140,6 +140,12 @@ class TaskBackend(Protocol):
         None for an unknown task."""
         ...
 
+    async def set_result(self, task_id: str, result: str) -> Task | None:
+        """Record the exec-layer output text on the task (#1953 slice P2). The
+        exec-engine writes it on a unit's completion; a dependent reads its deps'
+        results from here. None for an unknown task."""
+        ...
+
     async def abort(self, task_id: str, reason: str | None = None) -> list[Task]: ...
 
     async def set_awaiting(self, task_id: str, awaiting_since: float | None) -> Task | None: ...
@@ -400,6 +406,14 @@ class InMemoryTaskBackend:
         if task is None:
             return None
         task.cost_accum += delta
+        task.updated_at = _now_iso()
+        return task
+
+    async def set_result(self, task_id: str, result: str) -> Task | None:
+        task = self._tasks.get(task_id)
+        if task is None:
+            return None
+        task.result = result
         task.updated_at = _now_iso()
         return task
 

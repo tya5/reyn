@@ -109,6 +109,8 @@ class Task:
     cost_accum: float = 0.0
     awaiting_since: float | None = None  # R-D16 WAL-floor exclusion (set while blocked)
     deps: list[str] = field(default_factory=list)  # depends-on task_ids (DAG, §13)
+    tools: list[str] = field(default_factory=list)  # narrowed tool set for the exec engine (#1953 slice P2)
+    result: str | None = None  # exec-layer output captured on completion (#1953 slice P2)
     created_at: str = field(default_factory=_now_iso)
     updated_at: str = field(default_factory=_now_iso)
 
@@ -128,6 +130,8 @@ class Task:
             "cost_accum": self.cost_accum,
             "awaiting_since": self.awaiting_since,
             "deps": list(self.deps),
+            "tools": list(self.tools),
+            "result": self.result,
             "created_at": self.created_at,
             "updated_at": self.updated_at,
         }

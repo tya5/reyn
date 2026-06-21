@@ -69,6 +69,8 @@ CREATE TABLE IF NOT EXISTS tasks(
   cost_accum REAL NOT NULL DEFAULT 0,
   awaiting_since REAL,
   unblock_predicate TEXT,
+  tools TEXT,
+  result TEXT,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
@@ -107,7 +109,7 @@ CREATE TABLE IF NOT EXISTS task_comments(
 
 _TASK_COLUMNS = (
     "task_id, name, assignee, requester, origin, status, description, created_by, "
-    "parent_id, budget_cap, cost_accum, awaiting_since, created_at, updated_at"
+    "parent_id, budget_cap, cost_accum, awaiting_since, tools, result, created_at, updated_at"
 )
 
 
@@ -144,6 +146,12 @@ class SqliteTaskBackend:
         conn.execute("PRAGMA busy_timeout=0")
         if init_schema:
             conn.executescript(_SCHEMA)
+            # #1953 slice P2: additive migration for DBs created before the
+            # tools / result columns (CREATE TABLE IF NOT EXISTS won't add them).
+            existing = {r[1] for r in conn.execute("PRAGMA table_info(tasks)").fetchall()}
+            for col in ("tools", "result"):
+                if col not in existing:
+                    conn.execute(f"ALTER TABLE tasks ADD COLUMN {col} TEXT")
             conn.commit()
         return conn
 
@@ -291,6 +299,8 @@ class SqliteTaskBackend:
             cost_accum=row["cost_accum"],
             awaiting_since=row["awaiting_since"],
             deps=self._deps(row["task_id"]),
+            tools=json.loads(row["tools"]) if row["tools"] else [],
+            result=row["result"],
             created_at=row["created_at"],
             updated_at=row["updated_at"],
         )
@@ -327,12 +337,13 @@ class SqliteTaskBackend:
             self._conn.execute("BEGIN IMMEDIATE")
             self._conn.execute(
                 f"INSERT INTO tasks({_TASK_COLUMNS}) "
-                f"VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                f"VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (
                     task.task_id, task.name, task.assignee, task.requester,
                     task.origin.value, task.status.value, task.description,
                     task.created_by, task.parent_id, task.budget_cap,
                     task.cost_accum, task.awaiting_since,
+                    json.dumps(task.tools) if task.tools else None, task.result,
                     task.created_at, task.updated_at,
                 ),
             )
@@ -561,6 +572,20 @@ class SqliteTaskBackend:
                 self._conn.rollback()
                 return None
             self._emit(task_id, "cost_recorded", delta=delta)
+            self._conn.commit()
+            return self._fetch(task_id)
+
+    async def set_result(self, task_id: str, result: str) -> Task | None:
+        async with self._lock:
+            self._conn.execute("BEGIN IMMEDIATE")
+            cur = self._conn.execute(
+                "UPDATE tasks SET result=?, updated_at=? WHERE task_id=?",
+                (result, _now_iso(), task_id),
+            )
+            if cur.rowcount == 0:
+                self._conn.rollback()
+                return None
+            self._emit(task_id, "result_set")
             self._conn.commit()
             return self._fetch(task_id)
 
