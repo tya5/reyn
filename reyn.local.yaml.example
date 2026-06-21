@@ -93,6 +93,13 @@
 #       openai/gpt-4o-mini:  # Reference ENV-VAR NAMES only; NEVER inline a key.
 #         - api_key_env: OPENAI_API_KEY_1   # each usable key → one deployment;
 #         - api_key_env: OPENAI_API_KEY_2   # the Router rotates / fails over.
+#     retry_policy:          # per-exception-type retry counts (overrides num_retries
+#                            # for the matched exception class). Absent → litellm
+#                            # defaults (num_retries applies uniformly).
+#       RateLimitErrorRetries: 5
+#       TimeoutErrorRetries: 3
+#       # Supported: BadRequestErrorRetries, AuthenticationErrorRetries,
+#       #   ContentPolicyViolationErrorRetries, InternalServerErrorRetries
 
 
 # -----------------------------------------------------------------------------
