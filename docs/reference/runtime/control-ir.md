@@ -21,7 +21,7 @@ Control IR is the list of side-effect operations the LLM may emit alongside its 
 | `ask_user` | Pause the phase and ask the user a question | none (always allowed) |
 | `run_skill` | Run another skill as a sub-workflow | none (skill-level decision) |
 | `lint` | Run the DSL linter on a skill directory | none |
-| `sandboxed_exec` | Run argv under a `SandboxPolicy` via a `SandboxBackend` (replaces the removed `shell` op, #1352-A) | enforced by backend (`SandboxPolicy`) |
+| `sandboxed_exec` | Run argv under a `SandboxPolicy` via a `SandboxBackend` (replaces the removed `shell` op) | enforced by backend (`SandboxPolicy`) |
 | `web_search` | Search the public web via DuckDuckGo | Tier 1 — default allow; `web.search: deny` in `reyn.yaml` blocks |
 | `web_fetch` | Fetch a single URL and return extracted text | Tier 1 — default allow; `web.fetch: deny` in `reyn.yaml` blocks |
 | `mcp` | Call a tool on a configured MCP server | `permissions.mcp: [server_name]` in skill frontmatter |
@@ -93,7 +93,7 @@ Each is a distinct op kind with its own schema; there is no `op` sub-field.
 
 Permission scopes are configured per-op kind. See `reference/config/permissions.md`.
 
-A successful `edit_file` result additionally carries a `preview` (str, #1418): a
+A successful `edit_file` result additionally carries a `preview` (str): a
 numbered-line view (`<lineno>\t<text>`, 1-based) of the changed region — the
 lines around where `new_string` landed (±3 by default), so the agent can SEE
 *what* changed and at what indentation, not just `{status, replacements}`. It is
@@ -107,7 +107,7 @@ The fine kinds above are the only file ops a phase advertises to (and accepts
 from) the LLM. They are dispatched through the unified ToolRegistry, then build
 a coarse `FileIROp` (`{kind: "file", op: ...}`) internally and route to the
 shared `op_runtime/file.py` backend. That coarse `file` kind — dropped from
-`OP_KIND_MODEL_MAP` in #1240 Wave 2b — is **not** an LLM-emittable Control IR
+`OP_KIND_MODEL_MAP` — is **not** an LLM-emittable Control IR
 kind. It survives only as:
 
 - the shared execution backend the fine handlers delegate to, and
@@ -147,7 +147,7 @@ Runs another skill as a sub-workflow. The result is returned as a structured art
 > **Advertised name.** Phases advertise this op to the LLM under the chat-tool
 > name `invoke_skill` (so the catalog is uniform with the chat router). The OS
 > aliases the emitted `invoke_skill` name back to the `run_skill` kind at the
-> parse boundary (#1240). `run_skill` remains the canonical kind in
+> parse boundary. `run_skill` remains the canonical kind in
 > `OP_KIND_MODEL_MAP` and on the dispatched op.
 
 For deterministic invocation from a phase's preprocessor (rather than LLM-driven), use the `run_skill` preprocessor step instead — see `reference/dsl/preprocessor.md`.
@@ -252,7 +252,7 @@ Fields: `server` (required — must match a key under `mcp.servers:` in `reyn.ya
 
 > **Advertised name.** As with `run_skill`/`invoke_skill`, phases advertise
 > this op to the LLM under the chat-tool name `call_mcp_tool`; the OS aliases it
-> back to the `mcp` kind at the parse boundary (#1240). `mcp` remains the
+> back to the `mcp` kind at the parse boundary. `mcp` remains the
 > canonical kind in `OP_KIND_MODEL_MAP` and on the dispatched op.
 
 The OS resolves the server's transport (`stdio`, `http`, or `sse`), dispatches via `MCPClient`, and returns the tool result. Every call emits `mcp_called`, `mcp_completed`, and (on failure) `mcp_failed` events.
@@ -291,7 +291,7 @@ Handler lifecycle:
 5. Writes `mcp.servers.<name>` to the target scope config file
 6. Emits `mcp_server_installed` event (P6) — key names only, no values
 
-> **#1303 Stage I**: the `embed` and `index_write` control-IR ops were removed.
+> **Removed ops.** The `embed` and `index_write` control-IR ops were removed.
 > Embedding + index writing are now done **provider-direct** inside
 > `reyn.api.safe.embed_index` (the index_docs / index_events chunkers stream their
 > chunks into it) and inside the `recall` op (query embedding). The
@@ -454,7 +454,7 @@ Fields:
 
 Returns:
 - `status: "ok" | "error"`
-- `freed_tokens: int` — exact-token reduction. **Per-axis meaning (#191)**: on the **phase** axis this is the real `control_ir_results` shrink. On the **chat** axis it is **~0 by construction** — the router prompt is head+tail *turn*-count bounded (`_build_history_for_router`), so compaction does not shrink the bounded view; it compresses the already-elided middle into a summary bridge. Don't front `freed_tokens` for chat.
+- `freed_tokens: int` — exact-token reduction. **Per-axis meaning**: on the **phase** axis this is the real `control_ir_results` shrink. On the **chat** axis it is **~0 by construction** — the router prompt is head+tail *turn*-count bounded (`_build_history_for_router`), so compaction does not shrink the bounded view; it compresses the already-elided middle into a summary bridge. Don't front `freed_tokens` for chat.
 - `free_window_after` / `free_window_before: int` — exact-token headroom after / before.
 - **Chat-axis compression metric** (the meaningful chat signal; `null` on the phase axis): `summarized_turns: int` (older turns folded into the bridge), `compressed_tokens: int` (their raw token cost), `bridge_tokens: int` (the summary's token cost). The chat value is the `compressed_tokens → bridge_tokens` compression, not `freed_tokens`.
 - On error: `error_kind` (`compaction_unavailable` when no compaction context is wired here; `compaction_failed`) + `error`.
@@ -469,7 +469,7 @@ Returns:
 
 **Axis scope (chat vs phase)**: the `compact` op is available on **both** axes. On the **chat** axis, it routes to `force_compact_now`; on the **phase** axis, it routes to the `compact_control_ir_results` on-demand seam wired by the phase runtime (in addition to the automatic per-frame compaction that fires regardless). In both cases the OS wires `ctx.compact_now`; the op handler itself is axis-agnostic. Both axes also inject the paired context-size signal so the model knows when to emit `compact`.
 
-## Task ops (#1953)
+## Task ops
 
 First-class trackable work-units. A Task is **opt-in and additive** — the
 session model (concurrent / interleaved) is unchanged; a Task is a discrete
@@ -490,7 +490,7 @@ kinds); like any op, each is also subject to the per-session contextual gate.
 { "kind": "task.abort", "task_id": "<id>" }
 ```
 
-**Roles.** A Task is owned by two session identities (the #1814 per-contextId
+**Roles.** A Task is owned by two session identities (the per-contextId
 routing-key): the **requester** (origin / assigner / disposition notify-target —
 the caller of `task.create`, set by the OS, not an op field) and the **assignee**
 (the worker session, the single-writer of `status`, **immutable** — no handoff;

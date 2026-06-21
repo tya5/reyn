@@ -53,7 +53,7 @@ models:
 | `prompt_cache_enabled` | bool | Attach Anthropic prompt-cache markers to system prompts. Default `true`. |
 | `project_context_path` | string | Markdown file injected into every phase system prompt. Unset (default): auto-resolves the cross-tool standard — `AGENTS.md` if present, else `REYN.md` (legacy fallback). Set an explicit path to pin one file; set `""` to disable. See note below. |
 | `api_base` | string | LiteLLM proxy base URL. Typically set in `reyn.local.yaml` (gitignored). |
-| `tool_calls_op_loop_skills` | list | **Transitional.** Skill names opted into the native-tools op-loop — the phase act-loop drives the shared `RouterLoop.run_loop` (the converged op-loop, #1092): ops are emitted as native `tool_calls`, run through the shared executor, and threaded as native tool-role message-history. Default empty = all skills use json-mode (unchanged). Removed once the op-loop becomes the default. (#1092 PR-C-3 merged the former separate `routerloop_convergence_skills` gate into this one — the converged path is now the op-loop's implementation.) |
+| `tool_calls_op_loop_skills` | list | **Transitional.** Skill names opted into the native-tools op-loop — the phase act-loop drives the shared `RouterLoop.run_loop` (the converged op-loop): ops are emitted as native `tool_calls`, run through the shared executor, and threaded as native tool-role message-history. Default empty = all skills use json-mode (unchanged). Removed once the op-loop becomes the default. |
 
 > **Project context file (`project_context_path`).** Left unset, Reyn reads
 > `AGENTS.md` — the cross-tool convention that Claude Code, Codex, opencode and
@@ -182,7 +182,7 @@ models:
   Without `summary`, an OpenAI model's `reasoning_effort` still controls the budget
   but no reasoning text is displayed.
 
-> **Reasoning text IS captured, displayed, and replayed (#1652).** A non-zero
+> **Reasoning text IS captured, displayed, and replayed.** A non-zero
 > `reasoning_effort` sets the provider's `includeThoughts=true`; reyn captures the
 > reasoning text, displays it (TUI + chainlit, collapsible — `chat.reasoning.display`),
 > and replays recent turns' reasoning into the next prompt (`chat.reasoning.continuity`).
@@ -295,8 +295,8 @@ keys are warned (not fatal) at load time.
 
 ## `llm` block
 
-LLM-layer config: **`llm.router`** (opt-in litellm.Router, #1829) and
-**`llm.retry`** (backoff timing for the Reyn self-retry layer, #1835).
+LLM-layer config: **`llm.router`** (opt-in litellm.Router) and
+**`llm.retry`** (backoff timing for the Reyn self-retry layer).
 
 ```yaml
 llm:
@@ -337,7 +337,7 @@ On the Router path, retry count is **config-only**: `num_retries` is taken from
 budget has a single source. (On the direct, non-Router path the per-call
 `max_retries` is unchanged.)
 
-### `llm.retry` fields (#1835)
+### `llm.retry` fields
 
 Controls the **timing** of the Reyn self-retry layer only (semantic-retry
 behaviours — EmptyLLMResponseError, empty\_stop\_retry, compaction shrink — are
@@ -357,7 +357,7 @@ unaffected). Both defaults are `true`.
 
 Chat-session runtime knobs. `chat.compaction` controls chat-history compaction
 (ratio-based budget; see `reyn.local.yaml.example`). `chat.reasoning` controls
-model reasoning/"thinking" text handling (#1652).
+model reasoning/"thinking" text handling.
 
 ```yaml
 chat:
@@ -409,7 +409,7 @@ safety:
     auto_extend_times: 1       # (auto_extend mode) number of auto-extensions
     ask_timeout_seconds: 0     # (interactive mode) user-prompt timeout; 0 = wait forever
   threat_scan:
-    enabled: true              # content-layer prompt-injection scan + fence (#1822)
+    enabled: true              # content-layer prompt-injection scan + fence
     fail_open: true            # scanner error → allow (FN tolerated over FP)
     fence_enabled: true        # structurally fence untrusted content as data
     block_severity: block      # min severity that blocks at write seams: block | warn
@@ -448,7 +448,7 @@ safety:
 
 ### `safety.threat_scan` fields
 
-Content-layer threat defense (FP-0050 / #1822): inspects untrusted content for prompt-injection before it enters the system prompt / context, complementing the execution layer (permissions / sandbox). Defense-in-depth = a structural **fence** (mark untrusted content as data) plus a pattern **scan** backstop.
+Content-layer threat defense: inspects untrusted content for prompt-injection before it enters the system prompt / context, complementing the execution layer (permissions / sandbox). Defense-in-depth = a structural **fence** (mark untrusted content as data) plus a pattern **scan** backstop.
 
 | Path | Type | Default | Description |
 |------|------|---------|-------------|
@@ -460,7 +460,7 @@ Content-layer threat defense (FP-0050 / #1822): inspects untrusted content for p
 
 ## `time_travel` block
 
-Cost knobs for the time-travel (rewind/resume) feature (#1582).
+Cost knobs for the time-travel (rewind/resume) feature.
 
 ```yaml
 time_travel:
@@ -479,18 +479,18 @@ Per-layer tool-use scheme selector. Each layer picks a registered `ToolUseScheme
 
 ```yaml
 tool_use:
-  chat: enumerate-all         # default (#1657)
+  chat: enumerate-all         # default
   step: universal-category    # default
   phase: universal-category   # default
 ```
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `chat` | string | `enumerate-all` | Tool-use scheme for the top-level chat layer. **Default `enumerate-all` (#1657)** — flat-lists actions so the LLM invokes them directly instead of hallucinating `invoke_action` names (raised non-hot-list tool-use ~30%→100%). Set to `universal-category` for a minimal-surface / many-tool catalog (discover-then-call), or another registered scheme. |
+| `chat` | string | `enumerate-all` | Tool-use scheme for the top-level chat layer. **Default `enumerate-all`** — flat-lists actions so the LLM invokes them directly instead of hallucinating `invoke_action` names (raised non-hot-list tool-use ~30%→100%). Set to `universal-category` for a minimal-surface / many-tool catalog (discover-then-call), or another registered scheme. |
 | `step` | string | `universal-category` | Tool-use scheme for the skill step layer. |
 | `phase` | string | `universal-category` | Tool-use scheme for the OS phase layer. |
 
-The chat layer defaults to `enumerate-all` (#1657); `step` / `phase` keep `universal-category`. A scheme owns how the `tools=` payload is built, the SP tool-use instructions, how an LLM response is interpreted, and how it is dispatched — so swapping a layer's scheme changes the whole tool-use loop for that layer without OS changes. `universal-category` remains available per-layer via this config (e.g. for very large tool catalogs where flat-listing every action would bloat the request). `retrieval` (search-over-tools) and `CodeAct` are likewise supported opt-in schemes per layer; `retrieval` additionally requires `action_retrieval.embedding_class` set to a configured embedding provider.
+The chat layer defaults to `enumerate-all`; `step` / `phase` keep `universal-category`. A scheme owns how the `tools=` payload is built, the SP tool-use instructions, how an LLM response is interpreted, and how it is dispatched — so swapping a layer's scheme changes the whole tool-use loop for that layer without OS changes. `universal-category` remains available per-layer via this config (e.g. for very large tool catalogs where flat-listing every action would bloat the request). `retrieval` (search-over-tools) and `CodeAct` are likewise supported opt-in schemes per layer; `retrieval` additionally requires `action_retrieval.embedding_class` set to a configured embedding provider.
 
 For what each scheme does and **when to choose which** (`enumerate-all` / `retrieval` / `CodeAct` vs the default), see [Tool-Use Schemes](../../concepts/tools-integrations/tool-use-schemes.md).
 
@@ -528,7 +528,7 @@ web:
     verify_ssl: true     # true | false | omit (default: env-var chain)
     ca_bundle: /path/to/ca-bundle.pem   # optional custom CA bundle
     max_download_bytes: 10485760        # wire-byte ceiling (default 10MB)
-    allow_private_ips: false            # #1956 SSRF: opt-in to private IPs (default deny)
+    allow_private_ips: false            # SSRF: opt-in to private IPs (default deny)
   ws_max_size: 16777216                 # WS inbound-frame ceiling (default 16MB)
 ```
 
@@ -598,7 +598,7 @@ sandbox:
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | `backend` | string | `auto` | Enforcement backend. `auto` lets the OS pick: macOS < 26 → `seatbelt` (sandbox-exec SBPL), Linux ≥ 5.13 with `sandbox-linux` extra → `landlock` (+ optional seccomp-BPF), otherwise → `noop` (audit-only, no enforcement). Explicit values force a specific backend. |
-| `on_unsupported` | string | `warn` | Policy when **no OS sandbox backend is available** — whether an explicit `backend` was forced-but-unavailable OR `backend: auto` found no platform backend (#1660: the auto path now honors this too). `warn` logs a WARNING at selection and falls back to `noop` (default — not silent). `error` raises `RuntimeError` (**fail-closed** — refuse to run AI-generated code unsandboxed; set this where enforcement is required, and it now works with the default `backend: auto`). `ignore` silently falls back. |
+| `on_unsupported` | string | `warn` | Policy when **no OS sandbox backend is available** — whether an explicit `backend` was forced-but-unavailable OR `backend: auto` found no platform backend (the auto path now honors this too). `warn` logs a WARNING at selection and falls back to `noop` (default — not silent). `error` raises `RuntimeError` (**fail-closed** — refuse to run AI-generated code unsandboxed; set this where enforcement is required, and it now works with the default `backend: auto`). `ignore` silently falls back. |
 | `policy` | map | _none_ | **Agent-level (operator) sandbox policy.** When set, it is the deterministic policy applied to sandboxed ops **and** folded into the `SandboxLayer` of the permission intersection (`∩`) for the OS's in-process file/http gates — **winning over** op-declared fields, so a skill or the LLM cannot widen it. Omitted (the default) means **no agent-level restriction**: the `SandboxLayer` stays the identity (`⊤`) and op-level fields govern, exactly as before. Sandbox authorization is an operator/run concern. See sub-keys below. |
 
 ### `sandbox.policy` sub-keys
@@ -913,7 +913,7 @@ Layers 5 and 6 are scoped: each carries only its own section (`mcp.servers` / `c
 
 Budget caps and rate limits. All fields are optional; omitting a field (or setting its `hard_limit` to `null`) means **unlimited**.
 
-Each token / cost cap (`per_agent_tokens`, `per_agent_cost_usd`, `daily_*`, `monthly_*`) is a `CostLimitConfig` with three sub-fields: `hard_limit` (the cap; `null` = unlimited), `warn_ratio` (warn threshold as a fraction of `hard_limit`, default `0.8`), and `extension_calls` (per-grant extension amount; `> 0` opts the dimension into the unified `safety.on_limit` flow — on a `per_chain_skill_calls` hit the ask-vs-auto-extend-vs-deny behaviour follows `safety.on_limit.mode`). The examples below set only the commonly-tuned `hard_limit` / `warn_ratio`; `extension_calls` defaults to `0` (hard-refuse on hit). The per-dimension `ask_on_exceed` bool was removed in #1877 (subsumed into `safety.on_limit.mode`).
+Each token / cost cap (`per_agent_tokens`, `per_agent_cost_usd`, `daily_*`, `monthly_*`) is a `CostLimitConfig` with three sub-fields: `hard_limit` (the cap; `null` = unlimited), `warn_ratio` (warn threshold as a fraction of `hard_limit`, default `0.8`), and `extension_calls` (per-grant extension amount; `> 0` opts the dimension into the unified `safety.on_limit` flow — on a `per_chain_skill_calls` hit the ask-vs-auto-extend-vs-deny behaviour follows `safety.on_limit.mode`). The examples below set only the commonly-tuned `hard_limit` / `warn_ratio`; `extension_calls` defaults to `0` (hard-refuse on hit). The per-dimension `ask_on_exceed` bool was removed (subsumed into `safety.on_limit.mode`).
 
 ```yaml
 cost:
@@ -1045,7 +1045,7 @@ See [Concepts: MCP](../../concepts/tools-integrations/mcp.md) for the protocol o
 
 RAG embedding model classes and batch settings. Built-in defaults cover the OpenAI path — no `reyn.yaml` changes are required for a fresh install with `OPENAI_API_KEY`.
 
-> **Non-OpenAI embeddings behind a LiteLLM proxy (#1616).** If your embedding
+> **Non-OpenAI embeddings behind a LiteLLM proxy.** If your embedding
 > class routes through a LiteLLM proxy to a non-OpenAI provider (e.g. an
 > OpenAI-named route like `text-embedding-3-small` that the proxy maps to
 > `gemini-embedding-001`), the proxy may add `encoding_format` — which Gemini
