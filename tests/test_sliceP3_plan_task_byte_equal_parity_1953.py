@@ -19,6 +19,46 @@ from reyn.runtime.task_graph import build_task_graph, make_production_run_unit, 
 from reyn.task import InMemoryTaskBackend
 from tests._support.router_loop import FakeRouterHost, text_result
 
+
+@pytest.mark.asyncio
+async def test_dependent_unit_sp_carries_goal_and_prior_results(monkeypatch):
+    """Tier 2: regression for the SP-injection gap (b) live-parity caught — a
+    dependent unit's step system prompt must carry the goal framing AND its deps'
+    results (the I-2 result-channel rendered into the LLM context). (a) byte-equal
+    could not catch this: the scripted LLM keyed on the user message and ignored
+    the SP; only a real LLM reads the SP, so the channel was silently dropped."""
+    captured: dict[str, str] = {}
+
+    async def fake(**kwargs):
+        msgs = kwargs.get("messages", [])
+        sys_msg = next((str(m.get("content", "")) for m in msgs
+                        if m.get("role") == "system"), "")
+        users = [m for m in msgs if m.get("role") == "user"]
+        seed = str(users[-1].get("content", "")) if users else ""
+        captured[seed[:10]] = sys_msg
+        return text_result(f"REPLY[{seed[:10]}]")
+
+    monkeypatch.setattr("reyn.runtime.router_loop.call_llm_tools", fake)
+    b = InMemoryTaskBackend()
+    parent_id = await build_task_graph(
+        b, goal="THE-DECOMP-GOAL", assignee="a2a:s", requester="r", steps=[
+            {"id": "s1", "description": "alpha unit", "tools": [], "depends_on": []},
+            {"id": "s2", "description": "beta unit", "tools": [], "depends_on": ["s1"]},
+        ])
+    run_unit = make_production_run_unit(
+        FakeRouterHost(), chain_id="c", router_model=None, budget=None,
+        goal="THE-DECOMP-GOAL")
+    await run_task_graph(b, parent_id, run_unit=run_unit)
+
+    s2_sp = captured["beta unit"[:10]]
+    assert "THE-DECOMP-GOAL" in s2_sp                 # goal framing
+    assert "Prior step results" in s2_sp              # the channel section
+    assert "REPLY[alpha unit]" in s2_sp               # s1's actual result threaded in
+    # s1 (no deps) gets the goal but no prior-results section.
+    s1_sp = captured["alpha unit"[:10]]
+    assert "THE-DECOMP-GOAL" in s1_sp
+    assert "Prior step results" not in s1_sp
+
 # A fixed decomposition with a diamond dependency (s4 depends on two branches) so
 # the topological order + result-channel are exercised, not just a linear chain.
 _GOAL = "summarize the module"
@@ -75,7 +115,7 @@ async def test_plan_and_task_engines_are_byte_equal(monkeypatch):
         b, goal=_GOAL, assignee="a2a:s", requester="req", steps=_STEPS)
     task_host = FakeRouterHost()
     run_unit = make_production_run_unit(
-        task_host, chain_id="c", router_model=None, budget=None)
+        task_host, chain_id="c", router_model=None, budget=None, goal=_GOAL)
     task_final = await run_task_graph(b, parent_id, run_unit=run_unit)
 
     # 1. byte-equal synthesized reply (the user-facing aggregate).

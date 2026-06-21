@@ -206,6 +206,7 @@ def make_production_run_unit(
     chain_id: str,
     router_model: "str | None",
     budget: Any,
+    goal: str = "",
     exclude_tools: "frozenset[str]" = frozenset({"plan"}),
 ) -> RunUnit:
     """Build the production ``run_unit``: each unit runs through a
@@ -215,18 +216,45 @@ def make_production_run_unit(
     cost is the budget's *recorded* before/after delta for the Task, so the
     cap-counter charge is the actually-spent cost, not a re-priced estimate.
 
-    ``exclude_tools`` drops ``plan`` by default so a unit cannot recursively
-    self-decompose (the plan path's long-standing guard)."""
+    Each unit's LLM call gets the **narrow step system prompt** (goal framing +
+    the unit's assignment + its dependencies' results as inputs), built the same
+    way the plan executor builds it and passed as ``system_prompt_override``.
+    Without it the unit would run on the generic router prompt and a dependent
+    unit would not see its deps' results — the result-channel would be silently
+    dropped (#1953: the bug live-parity caught that byte-equal replay could not).
+
+    ``goal`` is the parent decomposition goal (shared by every unit); ``exclude_tools``
+    drops ``plan`` by default so a unit cannot recursively self-decompose (the plan
+    path's long-standing guard)."""
+    from reyn.runtime.planner import (
+        Plan,
+        PlanStep,
+        build_plan_step_system_prompt,
+    )
     from reyn.runtime.router_loop import RouterLoop
     from reyn.runtime.task_execution import TaskExecutionHost
+
+    _output_language = getattr(parent_host, "output_language", None)
 
     async def run_unit(task: Any, prior_results: "dict[str, str]") -> "tuple[str, float]":
         before = budget.task_cost_usd(task.task_id) if budget is not None else 0.0
         host = TaskExecutionHost.for_task(
             task, parent=parent_host, prior_results=prior_results)
+        # Build the per-unit step SP (goal + assignment + dep-results channel),
+        # byte-matching the plan path. A synthetic Plan/PlanStep adapts the Task to
+        # the shared builder; its depends_on = the unit's dep ids, which key
+        # prior_results, so the "## Prior step results" section renders. (P4 repoints
+        # this builder onto the Task system.)
+        _step = PlanStep(
+            id=task.task_id, description=task.description or task.name,
+            tools=tuple(task.tools), depends_on=tuple(task.deps))
+        _sys_prompt = build_plan_step_system_prompt(
+            Plan(goal=goal, steps=(_step,)), _step, prior_results,
+            output_language=_output_language)
         loop = RouterLoop(
             host=host, chain_id=chain_id, router_model=router_model,
             budget=budget, exclude_tools=set(exclude_tools),
+            system_prompt_override=_sys_prompt,
             task_id=task.task_id,
         )
         await loop.run(user_text=task.description or task.name, history=[])
@@ -285,7 +313,8 @@ async def dispatch_task_tool(
         assignee=assignee, requester=requester,
     )
     run_unit = make_production_run_unit(
-        parent_host, chain_id=chain_id, router_model=router_model, budget=budget)
+        parent_host, chain_id=chain_id, router_model=router_model, budget=budget,
+        goal=plan.goal)
 
     # slice-8 (B) cap-charge in the live path: charge each unit's recorded cost
     # onto its Task via the record_task_cost prod-caller. A minimal ctx carries the
