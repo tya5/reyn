@@ -50,13 +50,33 @@ Untrusted content is scanned and fenced at the OS seams where it enters the LLM 
 - **Pattern scan** (`security/threat_patterns.py`) — regex-based detection of injection / exfiltration / role-hijack / exec-scope threats. Matches emit threat events; blocked patterns abort the operation.
 - **Structural fence** (`security/content_fence.py`) — explicit delimiters wrap untrusted content so the model sees it as data, not instructions.
 
-Both apply at these seams:
-- **Tool results** — scanned and fenced via `security/content_guard.py` before reaching the prompt
+These primitives apply at the OS seams below — each seam uses the mechanism that fits its trust direction (read seams scan and/or fence; write seams block):
+- **Tool results** — scanned (all results) and structurally fenced (external-content results only) via `security/content_guard.py` before reaching the prompt
 - **Memory writes** — writes matching threat patterns are blocked at the router level
 - **Context files** (REYN.md/AGENTS.md) — fenced on load
 - **A2A inbound messages** — fenced + scanned on arrival
 - **Pre-exec commands** — `sandboxed_exec` scans the full joined argv for exec-scope threats before the subprocess is launched
 - **Compaction input** — secret-looking content is stripped before summaries persist (`security/secret_redaction.py`)
+
+#### What gets structurally fenced
+
+Scanning is broad (it runs on all content at read seams for detection telemetry), but the **structural fence** is applied selectively — only content from an *untrusted source* is wrapped, and only when fencing is enabled. Two gates decide:
+
+1. **Config gate** — `safety.threat_scan.enabled` *and* `safety.threat_scan.fence_enabled` must both be on (both default `true`). Either off → content passes through unfenced.
+2. **Source-trust gate** — applied per seam. Trusted-internal content (the OS's own framing, operator-typed input) is never fenced; only untrusted-source content is.
+
+With both gates open, these are the content targets fenced today:
+
+| Fenced target | What it is | Source-trust rule |
+|---|---|---|
+| **External-content tool results** | Results from tools that return outside content — web fetch / web search, MCP calls and server-authored tool descriptions, **recalled memory / RAG results**, and **memory-entry reads** | Only tools flagged as returning external content are fenced; every other (trusted-internal) tool result is **scan-only**, not fenced |
+| **Project context file** | `REYN.md` / `AGENTS.md` / `project_context_path` text threaded into the system prompt | Always fenced — an operator-editable file is treated as data |
+| **A2A inbound peer messages** | Message text from a remote peer agent, before it enters history | Always fenced — a remote peer is outside the trust boundary |
+| **External intervention answers** | An answer delivered from an external peer (A2A POST / webhook) | Only the history-bound (context) copy is fenced; the buffered / choice-matched answer and the audit record stay raw |
+| **Task query results** | The free-text `description` / `name` / `result` fields of a task returned by the task read / list ops | Always fenced; the structural fields (id / status / dependencies / dates) are OS-generated and left unfenced |
+| **Delegated-task wake descriptions** | A delegated task's description carried inside the wake message that tells an assignee to execute it | Always fenced as data; the OS "you are the assignee — execute this" framing is the trusted instruction |
+
+Memory is therefore covered on **both** directions: a memory **read** (recall or a memory-tool result) is fenced as external content on the way in, while a memory **write** is pattern-**blocked** at the write seam — a different mechanism (see the seam list above). Content that is deliberately *not* fenced: trusted-internal tool results, direct operator input (`ask_user`, chat messages — trusted by definition), pre-exec command argv (scanned, not fenced), and compaction input (secret-redacted, not fenced).
 
 ## Where it's still thin
 
