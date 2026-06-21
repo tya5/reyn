@@ -411,33 +411,6 @@ def render_agents(
                     info.get("skill_name", "?"),
                     style=name_style or _TEXT_BRIGHT,
                 )
-                # Wave-7 Topic C-F2: surface plan-step attribution as a
-                # ``[plan N/M]`` badge after the skill name so the
-                # agents tab matches the conv pane SkillActivityRow's
-                # persistent plan badge (wave-7 PR #418). Source is the
-                # ``_skill_exec`` snapshot, populated when
-                # ``_update_skill_exec`` parses ``detail: plan N/M``
-                # traces from ChatEventForwarder.
-                # F-I (#427 follow-up): plain coral instead of dim, so the
-                # badge is readable at a glance — the prior ``dim {coral}``
-                # blended into surrounding text and was easy to miss.
-                plan_n_done = info.get("plan_n_done")
-                plan_n_total = info.get("plan_n_total")
-                # Wave-10 follow-up H-F4: ``plan_n_done is not None``
-                # rather than truthiness. The pre-fix ``if plan_n_done
-                # and plan_n_total`` treats ``plan_n_done == 0`` (=
-                # plan just activated, step 1 of N not yet completed)
-                # as a hide signal, so the badge "pops in" mid-run
-                # instead of being consistent with the conv-pane
-                # SkillActivityRow badge that DOES show "plan 0/5" from
-                # the start of a plan. The ``plan_n_total`` check
-                # remains truthy (= a zero-total plan is degenerate
-                # noise; suppressing it stays correct).
-                if plan_n_done is not None and plan_n_total:
-                    skill_label.append(
-                        f"  [plan {plan_n_done}/{plan_n_total}]",
-                        style=_CORAL,
-                    )
                 skill_node = parent_node.add(skill_label)
                 nodes_by_run_id[run_id] = skill_node
                 item_ys.append(y_counter)
@@ -470,11 +443,6 @@ def render_agents(
                     # Issue #210: surface parent linkage in flat_items so
                     # the preview pane / future actions can route by it.
                     "parent_run_id": info.get("parent_run_id", ""),
-                    # Wave-7 Topic C-F2: plan-step attribution carried
-                    # so preview / future cursor actions can show "this
-                    # skill is plan step N/M".
-                    "plan_n_done": info.get("plan_n_done"),
-                    "plan_n_total": info.get("plan_n_total"),
                 })
 
             # Pass 1: root skills (no parent OR parent not on this agent

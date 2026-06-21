@@ -14,8 +14,6 @@ from .base import (
     _EVENT_INTERVENTION,
     _EVENT_LLM,
     _EVENT_PLAN,
-    _EVENT_PLAN_MEMO,
-    _EVENT_PLAN_STEP,
     _EVENT_SKILL,
     _EVENT_TOOL,
     _GREEN_DIMMEST,
@@ -131,17 +129,6 @@ _EVENT_COLORS: dict[str, str] = {
     # Internal routing / multi-agent housekeeping — very dim so they don't
     # crowd the visible window when many chains fire in a session.
     "chain_peer_discarded":        _BORDER_DIM,
-    # Plan-mode (ADR-0022 / 0023 / 0024 / 0025) — orange family so a plan's
-    # forensic events stand out from the blue skill_run / workflow events
-    # while still reading as a sibling concept.
-    "plan_emitted":                _EVENT_PLAN,
-    "plan_step_started":           _EVENT_PLAN_STEP,
-    "plan_step_completed":         _EVENT_PLAN_STEP,
-    "plan_step_failed":            _STATUS_ERROR,
-    "plan_step_memoized":          _EVENT_PLAN_MEMO,
-    "plan_step_memo_failed":       _EVENT_PLAN_MEMO,
-    "plan_aggregated":             _EVENT_PLAN,
-    "plan_run_interrupted":        _STATUS_CRITICAL,
     # RAG (ADR-0033) — yellow-blue family. embed_progress is high-volume / chatty
     # so dim it. recall_embed_failed and index_dropped surface state changes.
     "recall_embed_failed":         _STATUS_ERROR,
@@ -202,18 +189,9 @@ _FILTER_GROUPS: list[tuple[str, frozenset]] = [
         "workflow_started", "workflow_finished", "workflow_aborted",
         "agent_message_sent", "agent_request_received", "agent_response_received",
     })),
-    # Plan-mode group — every forensic plan_* event the runtime emits to the
-    # events log (WAL-only types like plan_started/plan_completed live in
-    # state_log.jsonl and don't appear here).
-    ("plan", frozenset({
-        "plan_emitted", "plan_aggregated", "plan_run_interrupted",
-        "plan_step_started", "plan_step_completed", "plan_step_failed",
-        "plan_step_memoized", "plan_step_memo_failed",
-    })),
     ("error", frozenset({
         "validation_error", "phase_retry", "permission_denied",
         "router_retry_exhausted", "tool_failed", "mcp_failed",
-        "plan_step_failed", "plan_step_memo_failed", "plan_run_interrupted",
         "loop_limit_exceeded", "phase_budget_exceeded", "budget_exceeded",
         "recall_embed_failed", "postprocessor_step_failed", "workflow_aborted",
         "phase_failed", "skill_run_failed", "control_ir_failed",
@@ -379,51 +357,6 @@ def _event_hint(ev: dict) -> str:
         return query + ("…" if was_trunc else "")
     if t == "web_search_completed":
         return f"{d.get('result_count', '')} results"
-    # Plan-mode (ADR-0022 / 0023 / 0024 / 0025). plan_id is a stable suffix —
-    # show only the leading 8 chars so it stays readable; pair with step_id
-    # where present so events from the same plan visually thread together.
-    if t == "plan_emitted":
-        plan_id = str(d.get("plan_id", ""))[:8]
-        n = d.get("n_steps", 0)
-        goal = str(d.get("goal", ""))
-        goal = goal[:32] + ("…" if len(goal) > 32 else "")
-        return f"[{plan_id}] {n} steps · {goal}"
-    if t == "plan_step_started":
-        plan_id = str(d.get("plan_id", ""))[:8]
-        step_id = d.get("step_id", "")
-        deps = d.get("depends_on") or []
-        dep_part = f" ← {','.join(deps)}" if deps else ""
-        return f"[{plan_id}] {step_id}{dep_part}"
-    if t == "plan_step_completed":
-        plan_id = str(d.get("plan_id", ""))[:8]
-        step_id = d.get("step_id", "")
-        nbytes = d.get("content_len", 0)
-        return f"[{plan_id}] {step_id} · {nbytes}b"
-    if t == "plan_step_failed":
-        plan_id = str(d.get("plan_id", ""))[:8]
-        step_id = d.get("step_id", "")
-        err = str(d.get("error", ""))[:30]
-        return f"[{plan_id}] {step_id} ✗ {err}"
-    if t == "plan_step_memoized":
-        plan_id = str(d.get("plan_id", ""))[:8]
-        step_id = d.get("step_id", "")
-        nbytes = d.get("content_len", 0)
-        return f"[{plan_id}] {step_id} · replay ({nbytes}b)"
-    if t == "plan_step_memo_failed":
-        plan_id = str(d.get("plan_id", ""))[:8]
-        step_id = d.get("step_id", "")
-        err = str(d.get("error", ""))[:30]
-        return f"[{plan_id}] {step_id} · replay ✗ {err}"
-    if t == "plan_aggregated":
-        plan_id = str(d.get("plan_id", ""))[:8]
-        ok = d.get("n_completed", 0)
-        bad = d.get("n_failed", 0)
-        rlen = d.get("result_len", 0)
-        return f"[{plan_id}] {ok} ok / {bad} fail · {rlen}b"
-    if t == "plan_run_interrupted":
-        plan_id = str(d.get("plan_id", ""))[:8]
-        exc_type = d.get("exc_type", "")
-        return f"[{plan_id}] interrupted ({exc_type})"
     # RAG (ADR-0033)
     if t == "recall_embed_failed":
         q = str(d.get("query", ""))[:30]

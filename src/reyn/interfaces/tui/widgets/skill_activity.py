@@ -152,14 +152,6 @@ class SkillActivityRow(RenderableCacheMixin, Widget):
         # stuck. The detail is replaced each event and cleared on phase
         # change (= the new phase's detail context starts fresh).
         self._detail: str = ""
-        # Persistent plan-step badge (e.g. "plan 2/5") for sub-skills
-        # spawned by a planner. The forwarder emits the badge once per
-        # run_id via ``set_detail`` with a "plan N/M" payload; on first
-        # arrival we extract it into ``_plan_step_label`` so it survives
-        # subsequent ``set_detail`` (llm:/act:) and ``set_phase`` calls.
-        # Without this, the plan context was visible for the first
-        # in-phase signal only and then silently disappeared.
-        self._plan_step_label: str = ""
 
         # Finish state
         self._finished = False
@@ -241,17 +233,7 @@ class SkillActivityRow(RenderableCacheMixin, Widget):
         the detail segment. Typical sources: forwarder ``on_llm_called``
         (= ``"llm: <model>"``) or ``on_act_executed``
         (= ``"act: <N> ops"``).
-
-        ``"plan N/M"`` is a special case: the forwarder emits it once
-        per sub-skill mount to communicate plan-step attribution. We
-        route it into the persistent ``_plan_step_label`` slot instead
-        of the ephemeral ``_detail`` so it survives the next in-phase
-        signal and the next ``set_phase`` call.
         """
-        if detail.startswith("plan ") and "/" in detail:
-            self._plan_step_label = detail
-            self._refresh()
-            return
         self._detail = detail
         self._refresh()
 
@@ -446,33 +428,20 @@ class SkillActivityRow(RenderableCacheMixin, Widget):
         detail_prefix_cells = cell_len("  ⤷ ")
         detail_cells = cell_len(self._detail) if self._detail else 0
 
-        # Plan badge: "  [plan N/M]" — plan + 4 bracket/space cells.
-        plan_badge_cells = (
-            cell_len(f"  [{self._plan_step_label}]")
-            if self._plan_step_label
-            else 0
-        )
-
         # Degrade order:
         # 1. Full layout — everything fits.
         # 2. Drop detail (most ephemeral).
-        # 3. Drop plan badge too.
-        # 4. Truncate phase to whatever remains after skill_name#id.
-        # 5. Truncate skill_name#id with ellipsis.
+        # 3. Truncate phase to whatever remains after skill_name#id.
+        # 4. Truncate skill_name#id with ellipsis.
 
         full_needed = (
             skill_id_cells + sep_cells + phase_cells
-            + plan_badge_cells + detail_prefix_cells + detail_cells
+            + detail_prefix_cells + detail_cells
         )
-        no_detail_needed = skill_id_cells + sep_cells + phase_cells + plan_badge_cells
 
         show_detail = full_needed <= body_budget
-        # Plan badge shown when dropping detail frees enough space.
-        show_plan_badge = no_detail_needed <= body_budget
         # Budget remaining for phase after skill_name#id + separator:
         after_skill_budget = max(0, body_budget - skill_id_cells - sep_cells)
-        if show_plan_badge:
-            after_skill_budget = max(0, after_skill_budget - plan_badge_cells)
         # Truncate phase to remaining budget:
         if phase_str and cell_len(phase_str) > after_skill_budget:
             phase_display = self._truncate_to_cells(phase_str, after_skill_budget)
@@ -502,14 +471,6 @@ class SkillActivityRow(RenderableCacheMixin, Widget):
         #   30–60s → amber (= "taking a while")
         #   ≥ 60 s → red (= "this is unusual; might be blocked")
         t.append(elapsed_str, style=elapsed_style)
-        # Persistent plan-step badge — appears between elapsed and detail
-        # so the user always knows "this skill is plan step 2/5" even after
-        # the in-phase detail has been overwritten by the next llm: / act:
-        # signal or cleared by a phase advance.
-        if show_plan_badge and self._plan_step_label:
-            t.append("  [", style="dim")
-            t.append(self._plan_step_label, style=f"dim {_CORAL}")
-            t.append("]", style="dim")
         # In-phase detail ("llm: opus-4-5", "act: 3 ops", etc.). Dim so
         # it doesn't compete with the phase name, separated from elapsed
         # by ``  ⤷`` so the eye can grok "this is the inner-most thing
