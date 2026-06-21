@@ -71,6 +71,19 @@ def _ok(kind: str, **data) -> dict:
     return {"kind": kind, "status": "ok", **data}
 
 
+def _fence_text(ctx: OpContext, text: "str | None") -> "str | None":
+    """Fence a single free-text field with the Class-A structural fence when
+    content-fencing is enabled (the global ``fence_enabled`` gate). Returns the
+    text unchanged when fencing is off or the text is empty (the safety valve).
+    Shared by ``_fence_view`` (the #2027 query path) and the WAKES execution path
+    (the description delivered into a wake message). Reuses
+    ``content_guard.fence_if_enabled`` (the same fence as the other content seams)."""
+    from reyn.security.content_guard import fence_if_enabled
+    if not text:
+        return text
+    return fence_if_enabled(text, getattr(ctx, "threat_scan", None))
+
+
 def _fence_view(ctx: OpContext, task_view: dict) -> dict:
     """#2027: fence the cross-session-authorable free-text fields of a task VIEW
     (``description`` / ``name`` / ``result``) when content-fencing is enabled — so a
@@ -78,15 +91,11 @@ def _fence_view(ctx: OpContext, task_view: dict) -> dict:
     LLM via the read/list query path. Uniform: the view's text IS data, so no
     per-source trust classification (the gap is closed by always fencing); the
     structural fields (id / status / deps / dates) are OS-generated → not fenced.
-    Mutates + returns the passed ``to_dict()`` copy (the stored Task is untouched).
-    Reuses ``content_guard.fence_if_enabled`` (the global fence_enabled gate +
-    the same Class-A fence as the other content seams)."""
-    from reyn.security.content_guard import fence_if_enabled
-    cfg = getattr(ctx, "threat_scan", None)
+    Mutates + returns the passed ``to_dict()`` copy (the stored Task is untouched)."""
     for field in ("description", "name", "result"):
         val = task_view.get(field)
         if isinstance(val, str) and val:
-            task_view[field] = fence_if_enabled(val, cfg)
+            task_view[field] = _fence_text(ctx, val)
     return task_view
 
 
@@ -192,6 +201,19 @@ async def _create(op, ctx: OpContext, caller) -> dict:
         return _edge_error("task.create", err)
     _audit(ctx, "task.create", created.task_id, status=created.status.value,
            assignee=created.assignee, parent_id=parent_id)
+    # WAKES (item 5): a born-startable DELEGATED task → wake the assignee to
+    # EXECUTE it now (the create-time counterpart of the dep-completion wake). A
+    # born deps-less op-created task is PENDING (the default kept by the backend);
+    # only a born-BLOCKED task (unmet deps) carries BLOCKED — so "born-ready" =
+    # not-blocked = PENDING|READY. A self-task (assignee == requester) needs no
+    # wake (the creator is the executor); a born-BLOCKED task is woken later when
+    # its deps clear (recompute_readiness → wake_ready_dependent).
+    waker = getattr(ctx, "task_waker", None)
+    if (waker is not None
+            and created.status in (TaskState.PENDING, TaskState.READY)
+            and created.assignee != created.requester):
+        await waker.wake_assigned(
+            created, fenced_description=_fence_text(ctx, created.description))
     return _ok("task.create", task=created.to_dict())
 
 
@@ -219,9 +241,12 @@ async def _update_status(op, ctx: OpContext, caller) -> dict:
                 events.emit("task_readiness", task_id=p.task_id, to="ready",
                             trigger=op.task_id)
             # slice 7: wake the now-ready dependent's session to continue its work
-            # (the C3 re-invoke driver; None waker = no-op stub, slice 6-ext).
+            # (the C3 re-invoke driver; None waker = no-op stub, slice 6-ext). WAKES
+            # item 4: deliver the full description as fenced DATA (the trusted-OS
+            # execute framing lives in the waker).
             if waker is not None:
-                await waker.wake_ready_dependent(p)
+                await waker.wake_ready_dependent(
+                    p, fenced_description=_fence_text(ctx, p.description))
     elif task.status is TaskState.FAILED:
         # slice 6-ext §C: a non-completed terminal (the assignee declared `failed`)
         # doesn't satisfy a dependency edge → route the disposition to the parent's
@@ -283,7 +308,8 @@ async def _emit_readiness_if_changed(ctx: OpContext, task, before_status, trigge
     if task.status is TaskState.READY:
         waker = getattr(ctx, "task_waker", None)
         if waker is not None:
-            await waker.wake_ready_dependent(task)
+            await waker.wake_ready_dependent(
+                task, fenced_description=_fence_text(ctx, task.description))
 
 
 async def _route_terminal_to_parent(
