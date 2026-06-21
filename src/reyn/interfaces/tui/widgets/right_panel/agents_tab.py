@@ -15,7 +15,6 @@ from reyn.interfaces.tui._palette import _DIVIDER_DIM, _TEXT_DIMMEST
 
 from .base import (
     _CORAL,
-    _EVENT_PLAN,
     _STATUS_ERROR,
     _STATUS_READY,
     _STATUS_SUCCESS,
@@ -23,7 +22,6 @@ from .base import (
     _TEXT_DIM,
     _TEXT_MUTED,
     logger,
-    truncate_to_cells,
 )
 
 
@@ -222,195 +220,6 @@ def _recent_skill_runs_for_agent(
     return out
 
 
-def _recent_plans_for_agent(
-    project_root: Path | None,
-    agent_name: str,
-    running_plan_ids: set[str],
-    limit: int = _RECENT_LIMIT,
-) -> list[dict]:
-    """Return up to ``limit`` recently-finished plans for ``agent_name``.
-
-    Reads plan_aggregated / plan_run_interrupted events from the agent's
-    chat events log (= where forensic plan_* events land — see planner.py).
-    Skips plans whose plan_id is still in ``running_plan_ids`` so the
-    "RECENT" section is strictly past tense.
-    """
-    out: list[dict] = []
-    if project_root is None:
-        return out
-    agent_dir = project_root / ".reyn" / "events" / "agents" / agent_name
-    if not agent_dir.is_dir():
-        return out
-
-    # Newest-first scan across all the agent's event files. Plans usually
-    # finish in the same chat-events file they started in; iterate the most
-    # recently modified first so we hit recent completions quickly.
-    files: list[tuple[float, Path]] = []
-    for jsonl in agent_dir.rglob("*.jsonl"):
-        if "skill_runs" in jsonl.parts:
-            continue  # skill files don't carry plan events
-        try:
-            files.append((jsonl.stat().st_mtime, jsonl))
-        except OSError:
-            continue
-    files.sort(reverse=True)
-
-    # We track the most recent plan_emitted (for goal) and plan_aggregated /
-    # plan_run_interrupted (for completion + counts) per plan_id.
-    seen: set[str] = set()
-    candidates: list[dict] = []  # newest-first
-    plan_goals: dict[str, str] = {}
-
-    for _mtime, jsonl in files:
-        if len(candidates) >= limit:
-            break
-        # Read the file once; collect plan_emitted goals first, then walk
-        # backwards through the lines to find the most recent terminal
-        # event(s) for unseen plan_ids.
-        raw_lines: list[str] = []
-        try:
-            raw_lines = jsonl.read_text(encoding="utf-8").splitlines()
-        except OSError as exc:
-            logger.warning(
-                "right_panel agents: read of %s failed: %s", jsonl, exc,
-            )
-            continue
-        # Forward pass: capture goals.
-        for raw in raw_lines:
-            raw = raw.strip()
-            if not raw:
-                continue
-            try:
-                ev = json.loads(raw)
-            except Exception:
-                continue
-            if ev.get("type") == "plan_emitted":
-                d = ev.get("data") or {}
-                pid = str(d.get("plan_id", ""))
-                if pid:
-                    plan_goals[pid] = str(d.get("goal", ""))
-        # Reverse pass: pick terminal events (newest first within file).
-        for raw in reversed(raw_lines):
-            if len(candidates) >= limit:
-                break
-            raw = raw.strip()
-            if not raw:
-                continue
-            try:
-                ev = json.loads(raw)
-            except Exception:
-                continue
-            ev_type = ev.get("type", "")
-            if ev_type not in ("plan_aggregated", "plan_run_interrupted"):
-                continue
-            d = ev.get("data") or {}
-            pid = str(d.get("plan_id", ""))
-            if not pid or pid in seen or pid in running_plan_ids:
-                continue
-            seen.add(pid)
-            candidates.append({
-                "plan_id": pid[:8],
-                "goal": plan_goals.get(pid, ""),
-                "ts": str(ev.get("timestamp", ""))[:19].replace("T", " "),
-                "status": (
-                    "ok" if ev_type == "plan_aggregated"
-                    and (d.get("n_failed", 0) or 0) == 0
-                    else "interrupted" if ev_type == "plan_run_interrupted"
-                    else "partial"
-                ),
-                "n_completed": int(d.get("n_completed", 0) or 0),
-                "n_failed": int(d.get("n_failed", 0) or 0),
-                "exc_type": str(d.get("exc_type", "")),
-            })
-    return candidates
-
-
-def _plans_for_agent(registry: "AgentRegistry", name: str) -> list[dict]:
-    """Inspect the loaded session and return a list of plan-summary dicts.
-
-    Each entry has: ``plan_id`` (8-char prefix), ``goal`` (≤48 chars),
-    ``done`` (completed step count), ``failed`` (failed step count),
-    ``total`` (total step count), ``status`` (running / paused).
-
-    Defensive — main hasn't been rebased into this branch yet, so
-    ``running_plans`` / ``get_plan_registry`` may not exist on the session.
-    Returns ``[]`` for any failure path so the agents tab keeps rendering.
-    """
-    out: list[dict] = []
-    try:
-        session = registry.get_session(name)  # type: ignore[attr-defined]
-    except Exception:
-        return out
-    if session is None:
-        return out
-
-    running = getattr(session, "running_plans", None) or {}
-    plan_reg = None
-    getter = getattr(session, "get_plan_registry", None)
-    if callable(getter):
-        try:
-            plan_reg = getter()
-        except Exception as exc:
-            logger.warning(
-                "right_panel agents: get_plan_registry(%s) failed: %s",
-                name, exc,
-            )
-            plan_reg = None
-
-    # plan_ids = union of in-flight tasks + every persisted snapshot. The
-    # snapshot side covers paused / interrupted plans that have no live
-    # task but still have recovery state on disk.
-    seen: set[str] = set()
-    plan_ids: list[str] = []
-    for pid in running.keys():
-        if pid not in seen:
-            plan_ids.append(pid)
-            seen.add(pid)
-    if plan_reg is not None:
-        try:
-            for pid in plan_reg.list_active():
-                if pid not in seen:
-                    plan_ids.append(pid)
-                    seen.add(pid)
-        except Exception as exc:
-            logger.warning(
-                "right_panel agents: plan_registry.list_active(%s) failed: %s",
-                name, exc,
-            )
-
-    for plan_id in plan_ids:
-        snap = None
-        if plan_reg is not None:
-            try:
-                snap = plan_reg.get(plan_id)
-            except Exception:
-                snap = None
-        goal = getattr(snap, "goal", "") if snap is not None else ""
-        step_results = getattr(snap, "step_results", {}) if snap is not None else {}
-        step_failures = getattr(snap, "step_failures", {}) if snap is not None else {}
-        steps_serialized = (
-            getattr(snap, "steps_serialized", []) if snap is not None else []
-        )
-        total = len(steps_serialized) if steps_serialized else (
-            len(step_results) + len(step_failures)
-        )
-        task = running.get(plan_id)
-        is_running = task is not None and not task.done()
-        out.append({
-            "plan_id": plan_id[:8],
-            # Full plan_id retained alongside the 8-char display form so
-            # the orchestrator can build the "running set" used to keep
-            # recent_plans from double-listing in-flight runs.
-            "plan_id_full": plan_id,
-            "goal": goal,
-            "done": len(step_results),
-            "failed": len(step_failures),
-            "total": total,
-            "status": "running" if is_running else "paused",
-        })
-    return out
-
-
 def render_agents(
     registry: "AgentRegistry | None",
     exec_state: dict[str, dict],
@@ -421,7 +230,7 @@ def render_agents(
     """Return ``(renderable, flat_items, item_ys)`` for the agents tab.
 
     ``project_root`` is optional — when provided, the RECENT subsection
-    surfaces the last few completed skill runs and finished plans by reading
+    surfaces the last few completed skill runs by reading
     `.reyn/events/agents/<name>/`. When omitted, the renderer degrades to
     just running + idle context.
 
@@ -430,16 +239,15 @@ def render_agents(
     tabs). Out-of-range cursors are silently clamped by the orchestrator.
 
     ``flat_items`` is an ordered list of selectable rows, one entry per
-    running skill / running plan / recent skill / recent plan. Each entry
-    carries enough metadata for the preview pane to build a detail view
-    without re-reading the registry.
+    running skill / recent skill. Each entry carries enough metadata for
+    the preview pane to build a detail view without re-reading the registry.
 
     ``item_ys`` is the 0-indexed y-coordinate (line number) of each item's
     row in the rendered output, so the orchestrator can scroll the cursor
     into view as j/k cycles past the visible window. Tracked here because
     RichTree's guide-line layout makes the y-coord impossible to predict
     arithmetically from the cursor index alone — running skills add 1-2
-    lines, recent plans with a goal add 2 lines, etc.
+    lines depending on whether a phase sub-row is present.
     """
     flat_items: list[dict] = []
     item_ys: list[int] = []
@@ -506,11 +314,9 @@ def render_agents(
             if info.get("agent_name") == name
         ]
 
-        agent_plans = _plans_for_agent(registry, name)
-
         # ── agent label ────────────────────────────────────────────
         # Three-state semantics, not two:
-        #   ● running  (green)  — at least one skill / plan in flight
+        #   ● running  (green)  — at least one skill in flight
         #   ◐ ready    (amber)  — session loaded but nothing in flight
         #   ○ idle     (grey)   — session not loaded
         # Old behaviour collapsed "loaded" and "actively executing" into
@@ -518,7 +324,7 @@ def render_agents(
         # show "● running" alongside the idle-context tail (last/↳),
         # confusing the user about whether anything was actually
         # happening.
-        has_work = bool(agent_skills) or bool(agent_plans)
+        has_work = bool(agent_skills)
         if has_work:
             status_glyph, status_text, status_style = (
                 "● ", "running", _STATUS_SUCCESS,
@@ -690,82 +496,16 @@ def render_agents(
                 )
                 _emit_skill_row(run_id, info, parent_node)
 
-        # Plan-mode (ADR-0022 / 0023). Surfaced as a sibling of running
-        # skills — same agent can simultaneously run skills + plans.
-        # Coloured orange (#ff9944) to match the events-tab plan_* family.
-        if agent_plans:
-            for p in agent_plans:
-                pfx, _ = _cursor_prefix(len(flat_items))
-                plan_label = RichText()
-                plan_label.append(pfx, style=_CORAL)
-                plan_label.append("plan ", style=_TEXT_MUTED)
-                plan_label.append(p["plan_id"], style=_EVENT_PLAN)
-                plan_label.append(
-                    f"  {p['done']}/{p['total']}",
-                    style=_TEXT_BRIGHT,
-                )
-                if p["failed"]:
-                    plan_label.append(
-                        f"  ({p['failed']} failed)", style=_STATUS_ERROR,
-                    )
-                plan_label.append(
-                    f"  {p['status']}",
-                    style=_STATUS_SUCCESS if p["status"] == "running" else _STATUS_READY,
-                )
-                plan_node = tree.add(plan_label)
-                item_ys.append(y_counter)
-                y_counter += 1
-                if p["goal"]:
-                    goal = truncate_to_cells(p["goal"], 60)
-                    plan_node.add(RichText(goal, style=_TEXT_DIM))
-                    y_counter += 1
-                flat_items.append({
-                    "kind": "running_plan",
-                    "agent": name,
-                    "plan_id": p["plan_id"],
-                    # Wave-10 follow-up H-F6: carry the FULL plan_id so
-                    # ``_build_running_plan_bundle`` (= the ``c``
-                    # copy-bundle path) can hand the user the
-                    # canonical identifier instead of the 8-char
-                    # display prefix. Pre-fix the bundle contained
-                    # only ``plan_id`` (= prefix), causing the copied
-                    # payload to disagree with the full UUID in the
-                    # events log and breaking cross-reference. The
-                    # ``recent_plan`` flat_item already carried this
-                    # via ``**p`` splat; this aligns the
-                    # ``running_plan`` shape.
-                    "plan_id_full": p.get("plan_id_full", p["plan_id"]),
-                    "goal": p["goal"],
-                    "done": p["done"],
-                    "total": p["total"],
-                    "failed": p["failed"],
-                    "status": p["status"],
-                })
-
-        # ── recently completed (skills + plans) ────────────────────
+        # ── recently completed skills ───────────────────────────────
         # Always shown when project_root is supplied — gives the user
         # at-a-glance context about "what just happened" even while a new
-        # skill/plan is running. Skipped silently when project_root is
-        # missing (= test harnesses) or both lists are empty.
+        # skill is running. Skipped silently when project_root is
+        # missing (= test harnesses) or the list is empty.
         running_run_ids = {rid for rid, _info in agent_skills}
-        # Full plan_ids — must match the FULL id we'll see in event
-        # ``data.plan_id`` so ``_recent_plans_for_agent`` can dedup
-        # against currently-running plans correctly. Earlier code
-        # used ``p["plan_id"]`` (= 8-char display prefix) which never
-        # matched, leaving running plans visible in both sections.
-        running_plan_ids = {
-            p.get("plan_id_full", p["plan_id"]) for p in agent_plans
-        }
-        # Plan ids in agent_plans are 8-char prefixes; expand to a guard
-        # set that also catches full-length matches against the same
-        # prefix space.
         recent_skills = _recent_skill_runs_for_agent(
             project_root, name, running_run_ids,
         )
-        recent_plans = _recent_plans_for_agent(
-            project_root, name, running_plan_ids,
-        )
-        if recent_skills or recent_plans:
+        if recent_skills:
             recent_node = tree.add(
                 RichText("recent", style="#777777")  # palette-candidate: mid-dim label — no foundation token yet
             )
@@ -808,38 +548,8 @@ def render_agents(
                     "agent": name,
                     **s,
                 })
-            for p in recent_plans:
-                pfx, _ = _cursor_prefix(len(flat_items))
-                line = RichText()
-                line.append(pfx, style=_CORAL)
-                ok = p["status"] == "ok"
-                line.append("✓ " if ok else "✗ ", style=_STATUS_SUCCESS if ok else _STATUS_ERROR)
-                line.append("plan ", style=_TEXT_MUTED)
-                line.append(p["plan_id"], style=_EVENT_PLAN)
-                line.append(
-                    f"  {p['n_completed']}/{p['n_completed'] + p['n_failed']}",
-                    style="#bbbbbb",  # palette-candidate: near-bright label — no foundation token yet
-                )
-                if p["status"] == "interrupted" and p["exc_type"]:
-                    line.append(f"  {p['exc_type']}", style="#aa6655")  # palette-candidate: muted error — no foundation token yet
-                elif p["status"] == "partial":
-                    line.append(f"  ({p['n_failed']} failed)", style="#aa6655")  # palette-candidate: muted error — no foundation token yet
-                if p["ts"]:
-                    line.append(f"  {_compact_ts(p['ts'])}", style=_TEXT_DIMMEST)
-                node = recent_node.add(line)
-                item_ys.append(y_counter)
-                y_counter += 1
-                if p["goal"]:
-                    goal = truncate_to_cells(p["goal"], 60)
-                    node.add(RichText(goal, style=_TEXT_DIM))
-                    y_counter += 1
-                flat_items.append({
-                    "kind": "recent_plan",
-                    "agent": name,
-                    **p,
-                })
 
-        if not agent_skills and not agent_plans:
+        if not agent_skills:
             # idle: last activity + message count + recent user snippet
             try:
                 last = registry.last_activity_at(name)

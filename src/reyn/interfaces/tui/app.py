@@ -1377,10 +1377,10 @@ class ReynTUIApp(App):
         # Issue #276 Phase B: remote (``--connect``) mode delegates the
         # cancel to the server. The ``_WSSessionProxy`` exposes
         # ``cancel_inflight()`` which fires a WS frame; the server-side
-        # endpoint iterates the real ``session.running_skills`` /
-        # ``running_plans`` and emits a ``status`` outbox back with the
-        # "✗ cancelled N skill + M plan" summary. The local proxy's
-        # ``running_skills`` / ``running_plans`` dicts are always empty
+        # endpoint iterates the real ``session.running_skills``
+        # and emits a ``status`` outbox back with the
+        # "✗ cancelled N skill" summary. The local proxy's
+        # ``running_skills`` dict is always empty
         # (state lives server-side), so the legacy iteration below
         # would be a no-op and we'd report "(nothing in-flight to
         # cancel)" even when the remote agent is mid-call. Detect the
@@ -1439,7 +1439,7 @@ class ReynTUIApp(App):
             return
 
         # #1468: single seam — delegate asyncio cancellation (turn flag +
-        # skill tasks + plan tasks) to session.cancel_inflight(). The TUI
+        # skill tasks) to session.cancel_inflight(). The TUI
         # retains ownership of UI-layer cleanup (row sealing, stack panel
         # removal) which is TUI-specific and not appropriate to push into
         # the session model.
@@ -1451,29 +1451,10 @@ class ReynTUIApp(App):
             rid: t for rid, t in getattr(session, "running_skills", {}).items()
             if not t.done()
         }
-        _running_plans_snap = {
-            pid: t for pid, t in getattr(session, "running_plans", {}).items()
-            if not t.done()
-        }
         cancelled_skills = len(_running_skills_snap)
-        cancelled_plans = len(_running_plans_snap)
         _cancel_fn = getattr(session, "cancel_inflight", None)
         if callable(_cancel_fn):
             asyncio.create_task(_cancel_fn())
-        # UI-layer plan row cleanup: remove AsyncStackPanel rows for each
-        # cancelled plan. Must happen here (TUI event loop), not in the
-        # session. ``task.cancel()`` doesn't trigger the natural
-        # ``source=plan_complete`` outbox path, so without this sweep the
-        # bottom-strip rows persist after Ctrl+C.
-        for plan_id in _running_plans_snap:
-            if conv is not None:
-                try:
-                    # Wave-13 T2-2: terminal="interrupted" so the
-                    # strip briefly flashes red before unmounting,
-                    # distinguishing plan cancel from clean completion.
-                    conv.remove_async_task(str(plan_id), terminal="interrupted")
-                except Exception:
-                    pass
 
         # Stop any SkillActivityRow spinners + clear the right-panel agents
         # tab. ``task.cancel()`` only stops the asyncio producer; no
@@ -1544,7 +1525,6 @@ class ReynTUIApp(App):
 
         if (
             cancelled_skills == 0
-            and cancelled_plans == 0
             and cancelled_streams == 0
             and cancelled_interventions == 0
             and cancelled_tool_calls == 0
@@ -1574,10 +1554,6 @@ class ReynTUIApp(App):
         if cancelled_skills:
             parts.append(
                 f"{cancelled_skills} skill{'s' if cancelled_skills != 1 else ''}"
-            )
-        if cancelled_plans:
-            parts.append(
-                f"{cancelled_plans} plan{'s' if cancelled_plans != 1 else ''}"
             )
         if cancelled_streams:
             parts.append(
