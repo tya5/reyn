@@ -415,6 +415,14 @@ def get_task_backend(request: Request):
     return request.app.state.task_backend
 
 
+def get_a2a_webhook_registry(request: Request):
+    """FastAPI dependency: return the process-singleton A2A webhook registry
+    (#1953 slice 5a-2). Attached to ``app.state.a2a_webhook_registry`` by
+    ``reyn.interfaces.web.server``; the A2A create path (slice 5b) populates the
+    contextId→webhook_url channel, and the disposition sweep reads it."""
+    return request.app.state.a2a_webhook_registry
+
+
 __all__ = [
     "get_project_root",
     "get_reyn_config",

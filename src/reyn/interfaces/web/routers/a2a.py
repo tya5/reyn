@@ -46,7 +46,12 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Request
 
 from reyn.interfaces.web.a2a_task_view import to_a2a_task
-from reyn.interfaces.web.deps import get_registry, get_run_registry, get_task_backend
+from reyn.interfaces.web.deps import (
+    get_a2a_webhook_registry,
+    get_registry,
+    get_run_registry,
+    get_task_backend,
+)
 from reyn.mcp.server import DEFAULT_SEND_TIMEOUT_SECONDS, send_to_agent_impl
 from reyn.runtime.a2a_routing import (
     a2a_context_id,
@@ -289,6 +294,7 @@ async def a2a_jsonrpc(
     registry=Depends(get_registry),
     run_registry=Depends(get_run_registry),
     task_backend=Depends(get_task_backend),
+    webhook_registry=Depends(get_a2a_webhook_registry),
 ) -> dict:
     """JSON-RPC 2.0 endpoint for one Reyn agent.
 
@@ -332,6 +338,7 @@ async def a2a_jsonrpc(
     if method == "message/send":
         return await _handle_message_send(
             req_id, body.get("params") or {}, agent_name, registry, run_registry,
+            task_backend=task_backend, webhook_registry=webhook_registry,
         )
     if method == "tasks/list":
         return await _handle_tasks_list(
@@ -446,6 +453,9 @@ async def _handle_message_send(
     agent_name: str,
     registry,
     run_registry,
+    *,
+    task_backend=None,
+    webhook_registry=None,
 ) -> dict:
     """Backing for ``message/send``.
 
@@ -503,6 +513,7 @@ async def _handle_message_send(
         return await _handle_async_mode(
             req_id, text, agent_name, registry, run_registry, webhook_url,
             context_id=context_id,
+            task_backend=task_backend, webhook_registry=webhook_registry,
         )
 
     # ── Mode 3: synchronous (default) ────────────────────────────────────
@@ -1040,6 +1051,28 @@ class _A2AProgressBridge:
                 channel_state.record_attempt(result)
 
 
+async def _reflect_task_terminal(task_backend, task_id: str, status: str, assignee_sid: str) -> None:
+    """#1953 slice 5b: reflect the async execution's terminal outcome onto the
+    canonical Task (single-writer = the assignee session, fixed-equality CAS).
+
+    Best-effort and **race-safe**: if an A2A ``Cancel`` already archived the Task,
+    the terminal-guard rejects this write (``PermissionError``) — the abort wins
+    and the disposition sweep, not this reflection, notifies the requester. A
+    missing backend (unit-test sync path) or unknown task is a no-op. Reflection
+    is decoration on top of the RunEntry exec-record; it must never break ``_run``.
+    """
+    if task_backend is None:
+        return
+    try:
+        await task_backend.update_status(task_id, status, caller_session_id=assignee_sid)
+    except PermissionError:
+        # Terminal-guard (post-abort) or — impossibly here — a non-assignee write.
+        # Either way the Task is already in its authoritative terminal; leave it.
+        logger.debug("a2a task %r terminal-reflection skipped (terminal-guard)", task_id)
+    except Exception:  # noqa: BLE001 — reflection is best-effort decoration
+        logger.exception("a2a task %r terminal-reflection failed", task_id)
+
+
 async def _handle_async_mode(
     req_id: Any,
     text: str,
@@ -1049,10 +1082,25 @@ async def _handle_async_mode(
     webhook_url: str | None,
     *,
     context_id: str | None = None,  # #1814: per-contextId session
+    task_backend=None,
+    webhook_registry=None,
 ) -> dict:
-    """Spawn a background asyncio task and return an A2A Task envelope."""
+    """Spawn a background asyncio task and return an A2A Task envelope.
+
+    #1953 slice 5b — the A2A create path also creates a first-class **Task**
+    (the single canonical A2A work-unit authority: GetTask / ListTasks / Cancel /
+    disposition all read the Task backend). The ``RunEntry`` stays as the internal
+    execution detail (SSE progress replay, escalation, answer-injection) and is
+    **linked by a shared id** (``task_id == run_id``) so the execution can reflect
+    its terminal outcome onto the Task. The single-writer of the Task's status is
+    the assignee session (``a2a_session_id(context_id)``), which is exactly the
+    session the background ``_run`` executes on — so the reflection update passes
+    the fixed-equality CAS. An A2A ``Cancel`` that archived the Task first wins:
+    the reflection is then rejected by the terminal-guard (race-safe).
+    """
     from reyn.interfaces.web.a2a_intervention import A2AInterventionBus  # noqa: PLC0415
     from reyn.runtime.session import _new_chain_id  # noqa: PLC0415
+    from reyn.task.model import Task, TaskOrigin, TaskState  # noqa: PLC0415
 
     chain_id = _new_chain_id()
     entry = run_registry.create(
@@ -1062,6 +1110,29 @@ async def _handle_async_mode(
         session_id=a2a_session_id(context_id),  # #1814 core routing-key
     )
     run_id = entry.run_id
+
+    # #1953 slice 5b: create the canonical Task (linked to the RunEntry by a shared
+    # id). assignee = the per-contextId a2a session_id (#1814 routing-key) = the
+    # session ``_run`` executes on (so the status-reflection CAS passes); origin =
+    # external (an A2A client requested it → disposition sweep notifies it).
+    assignee_sid = a2a_session_id(context_id)
+    a2a_task = None
+    if task_backend is not None:
+        a2a_task = await task_backend.create(
+            Task(
+                task_id=run_id,
+                name=text[:120],
+                assignee=assignee_sid,
+                requester="external",
+                origin=TaskOrigin.EXTERNAL,
+                status=TaskState.IN_PROGRESS,
+            )
+        )
+        # Populate the A2A push channel so the disposition sweep (slice 5a-2) can
+        # reach this external requester on abort. A2A-owned (P7 — webhook_url is
+        # A2A vocabulary, never on the core Task).
+        if webhook_url and webhook_registry is not None:
+            webhook_registry.register_webhook(context_id, webhook_url)
 
     bus = A2AInterventionBus(run_id, run_registry)
 
@@ -1098,12 +1169,21 @@ async def _handle_async_mode(
                 message=text,
                 timeout=DEFAULT_SEND_TIMEOUT_SECONDS,
                 intervention_override=bus,
-                sid=a2a_session_id(),
+                # #1814: the async background run executes on the SAME per-contextId
+                # session as the sync send / escalation / answer-injection (the
+                # a2a_session_id docstring's invariant). The bare ``a2a_session_id()``
+                # here both raised (the arg is required) and — once defaulted — would
+                # mis-route to the native session; the assignee CAS for the 5b
+                # status-reflection relies on this being the contextId session.
+                sid=assignee_sid,
             )
             run_registry.update(
                 run_id,
                 status="completed",
                 result=result.get("reply", ""),
+            )
+            await _reflect_task_terminal(
+                task_backend, run_id, "completed", assignee_sid,
             )
             if webhook_url:
                 from reyn.interfaces.web.notifications import post_webhook  # noqa: PLC0415
@@ -1118,6 +1198,9 @@ async def _handle_async_mode(
         except Exception as exc:  # noqa: BLE001
             logger.exception("a2a async task %r raised", run_id)
             run_registry.update(run_id, status="failed", error=str(exc))
+            await _reflect_task_terminal(
+                task_backend, run_id, "failed", assignee_sid,
+            )
             if webhook_url:
                 from reyn.interfaces.web.notifications import post_webhook  # noqa: PLC0415
                 await post_webhook(
@@ -1131,6 +1214,11 @@ async def _handle_async_mode(
     task = asyncio.create_task(_run())
     run_registry.attach_task(run_id, task)
 
+    # #1953 slice 5b: return the canonical Task envelope (id = task_id = run_id).
+    # When no Task backend is wired (direct-call unit tests of the sync path),
+    # fall back to the pre-5b RunEntry-shaped envelope.
+    if a2a_task is not None:
+        return _jsonrpc_result(req_id, to_a2a_task(a2a_task))
     return _jsonrpc_result(
         req_id,
         {

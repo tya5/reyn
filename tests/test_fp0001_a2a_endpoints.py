@@ -41,20 +41,28 @@ from reyn.interfaces.web.run_registry import RunRegistry  # noqa: E402
 # ---------------------------------------------------------------------------
 
 
-def _make_client_with_registry(registry: RunRegistry, task_backend=None):
+def _make_client_with_registry(registry: RunRegistry, task_backend=None, webhook_registry=None):
     """Build a TestClient that uses the supplied RunRegistry (and an optional
     Task backend — #1953 slice 5a — for the Task-backed A2A surface) via DI
-    override. A default in-memory Task backend satisfies a2a_jsonrpc's
-    get_task_backend dependency for tests that don't exercise it."""
+    override. A default in-memory Task backend + A2A webhook registry satisfy
+    a2a_jsonrpc's get_task_backend / get_a2a_webhook_registry dependencies for
+    tests that don't exercise them."""
     from fastapi.testclient import TestClient
 
-    from reyn.interfaces.web.deps import get_run_registry, get_task_backend
+    from reyn.interfaces.web.a2a_webhook_registry import A2AWebhookRegistry
+    from reyn.interfaces.web.deps import (
+        get_a2a_webhook_registry,
+        get_run_registry,
+        get_task_backend,
+    )
     from reyn.interfaces.web.server import app
     from reyn.task import InMemoryTaskBackend
 
     backend = task_backend if task_backend is not None else InMemoryTaskBackend()
+    reg = webhook_registry if webhook_registry is not None else A2AWebhookRegistry()
     app.dependency_overrides[get_run_registry] = lambda: registry
     app.dependency_overrides[get_task_backend] = lambda: backend
+    app.dependency_overrides[get_a2a_webhook_registry] = lambda: reg
     client = TestClient(app, raise_server_exceptions=False)
     return client
 
@@ -367,11 +375,16 @@ def test_answer_injection_delivers_to_pending_intervention(tmp_path) -> None:
         session._interventions._active[iv.id] = iv
         session._interventions._order.append(iv.id)
 
-        from reyn.interfaces.web.deps import get_task_backend  # noqa: PLC0415
+        from reyn.interfaces.web.a2a_webhook_registry import A2AWebhookRegistry  # noqa: PLC0415
+        from reyn.interfaces.web.deps import (  # noqa: PLC0415
+            get_a2a_webhook_registry,
+            get_task_backend,
+        )
         from reyn.task import InMemoryTaskBackend  # noqa: PLC0415
         app.dependency_overrides[get_registry] = lambda: registry
         app.dependency_overrides[get_run_registry] = lambda: run_registry
         app.dependency_overrides[get_task_backend] = lambda: InMemoryTaskBackend()
+        app.dependency_overrides[get_a2a_webhook_registry] = lambda: A2AWebhookRegistry()
         client = TestClient(app, raise_server_exceptions=False)
         try:
             r = client.post(
@@ -414,7 +427,13 @@ def test_answer_injection_returns_answered_false_for_unknown_task(tmp_path) -> N
     from fastapi.testclient import TestClient
 
     from reyn.core.events.state_log import StateLog
-    from reyn.interfaces.web.deps import get_registry, get_run_registry, get_task_backend
+    from reyn.interfaces.web.a2a_webhook_registry import A2AWebhookRegistry
+    from reyn.interfaces.web.deps import (
+        get_a2a_webhook_registry,
+        get_registry,
+        get_run_registry,
+        get_task_backend,
+    )
     from reyn.interfaces.web.server import app
     from reyn.runtime.budget.budget import BudgetTracker, CostConfig
     from reyn.runtime.profile import AgentProfile
@@ -449,6 +468,7 @@ def test_answer_injection_returns_answered_false_for_unknown_task(tmp_path) -> N
     app.dependency_overrides[get_registry] = lambda: registry
     app.dependency_overrides[get_run_registry] = lambda: run_registry
     app.dependency_overrides[get_task_backend] = lambda: InMemoryTaskBackend()
+    app.dependency_overrides[get_a2a_webhook_registry] = lambda: A2AWebhookRegistry()
     client = TestClient(app, raise_server_exceptions=False)
     try:
         r = client.post(
