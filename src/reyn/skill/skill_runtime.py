@@ -55,6 +55,7 @@ class SkillRuntime:
         safety: "SafetyConfig | None" = None,
         contextual_permission: "object | None" = None,  # #1912: per-session capability narrowing → phase/control-IR gates (None = byte-identical)
         task_backend: "object | None" = None,  # #1953 slice 3a: session-scoped Task backend
+        task_waker: "object | None" = None,  # #1953 slice 7: the OS TaskWaker driver
         task_session_id: "str | None" = None,  # #1953 slice 3: caller session identity (Task single-writer key)
         mcp_servers: dict | None = None,
         python_allowed_modules: list[str] | None = None,
@@ -97,6 +98,7 @@ class SkillRuntime:
         # narrowed agent's skill execution is enforced on every tool path.
         self._contextual_permission = contextual_permission
         self._task_backend = task_backend  # #1953 slice 3a
+        self._task_waker = task_waker  # #1953 slice 7
         self._task_session_id = task_session_id  # #1953 slice 3
         self._resolver = resolver or ModelResolver({})
         self._permission_resolver = permission_resolver
@@ -323,6 +325,7 @@ class SkillRuntime:
             threat_scan=self._safety.threat_scan,  # FP-0050/#1822 S5 (EP4)
             contextual_permission=self._contextual_permission,  # #1912
             task_backend=self._task_backend,  # #1953 slice 3a
+            task_waker=self._task_waker,  # #1953 slice 7
             task_session_id=self._task_session_id,  # #1953 slice 3
 
             environment_backend=self._environment_backend,

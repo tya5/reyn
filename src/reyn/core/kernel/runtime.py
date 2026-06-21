@@ -80,6 +80,7 @@ class OSRuntime:
         threat_scan: "object | None" = None,  # FP-0050/#1822 S5 (EP4)
         contextual_permission: "object | None" = None,  # #1912: per-session capability narrowing → phase RouterLoop + control-IR gates
         task_backend: "object | None" = None,  # #1953 slice 3a: session-scoped Task backend → control-IR + preprocessor op gates
+        task_waker: "object | None" = None,  # #1953 slice 7: the OS TaskWaker → control-IR + preprocessor op ctx
         task_session_id: "str | None" = None,  # #1953 slice 3: caller session identity (Task single-writer key)
         router_config: "object | None" = None,  # #1829 S3b: reyn.yaml llm.router.*
         environment_backend: "EnvironmentBackend | None" = None,
@@ -228,6 +229,7 @@ class OSRuntime:
             threat_scan=threat_scan,
             contextual_permission=contextual_permission,  # #1912b: control-IR op gate
             task_backend=task_backend,  # #1953 slice 3a
+            task_waker=task_waker,  # #1953 slice 7
             session_id=task_session_id,  # #1953 slice 3
             sandbox_backend=sandbox_backend,
             multimodal_config=multimodal_config,
@@ -254,6 +256,7 @@ class OSRuntime:
             threat_scan=threat_scan,  # FP-0050/#1822 S5 (EP4)
             contextual_permission=contextual_permission,  # #1912b: preprocessor run_op/iterate gate
             task_backend=task_backend,  # #1953 slice 3a
+            task_waker=task_waker,  # #1953 slice 7
             session_id=task_session_id,  # #1953 slice 3
         )
         # FP-0020 Component A: all mutable run-scope state encapsulated in RunState.

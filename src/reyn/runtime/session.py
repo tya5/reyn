@@ -822,6 +822,7 @@ class Session:
         excluded_categories: "frozenset[str] | set[str] | None" = None,  # #1667: catalog categories hidden at source (e.g. reyn_source for external-repo eval)
         contextual_permission: "object | None" = None,  # #1827 S3: per-session capability_profile narrowing (ContextualPermission); from registry.resolved_profile_for; None = byte-identical
         task_backend: "object | None" = None,  # #1953 slice 3a: session-scoped Task backend instance (injected by the session factory); None → op-runtime in-memory fallback
+        task_waker: "object | None" = None,  # #1953 slice 7: the OS TaskWaker driver (injected by the session factory); None → op-runtime no-op stub
         router_max_iterations: int = 5,  # #187: per-message tool-call budget for the MAIN chat loop (interactive=5; one-shot autonomous SWE sets higher)
         non_interactive: bool = False,  # #1439 Fix #1: run-once (piped, no TTY) — no user to ask, so the SP directs proceed-with-assumption instead of clarifying
         # FP-0043 Stage 5: the conversation session id this Session records WAL
@@ -890,6 +891,7 @@ class Session:
         # session-scoped sqlite db path is finalized with §24); None → the op-runtime
         # falls back to its in-memory backend (tests / direct construction).
         self._task_backend = task_backend
+        self._task_waker = task_waker  # #1953 slice 7
         # #1827 S4b (context-auto): lazily-resolved minimal _untrusted profile
         # ContextualPermission, composed into the per-turn narrowing while
         # untrusted external content is live in context. None until first needed.
@@ -2971,9 +2973,24 @@ class Session:
                 # user-role message with step_results and run one
                 # router LLM turn for synthesis narration.
                 await self._handle_plan_completed(payload)
+            elif kind in ("task_ready", "task_dependency_aborted"):
+                # #1953 slice 7: the TaskWaker delivered a dep-graph disposition
+                # (a dependent became ready, or a parent must decide recovery). Both
+                # surface as an OS-originated message + one router turn so the LLM
+                # acts via ordinary task ops (P7 — no decision vocabulary).
+                await self._handle_task_wake(payload)
         finally:
             self._turn_idle.set()
         return True
+
+    async def _handle_task_wake(self, payload: dict) -> None:
+        """#1953 slice 7: surface a Task dep-graph wake (``task_ready`` /
+        ``task_dependency_aborted``) to the LLM as one router turn, so it resumes /
+        recovers the work via ordinary task ops."""
+        await self._handle_user_message(
+            payload.get("text", ""),
+            chain_id=payload.get("chain_id") or _new_chain_id(),
+        )
 
     async def run(self) -> None:
         self._chat_events.emit("chat_started", agent_name=self.agent_name, model=self.model)
@@ -3294,6 +3311,7 @@ class Session:
             safety=self._safety,
             contextual_permission=self._contextual_permission,  # #1912: narrow skill execution too
             task_backend=self._task_backend,  # #1953 slice 3a: session-scoped Task backend
+            task_waker=self._task_waker,  # #1953 slice 7: the OS TaskWaker driver
             task_session_id=self._session_id,  # #1953 slice 3: caller session identity (single-writer key)
             mcp_servers=mcp_servers,
             intervention_bus=intervention_bus,

@@ -560,11 +560,21 @@ disposition to the task's **parent session** (`parent_id`'s assignee) to decide
 recovery — the parent re-wires via ordinary ops (`repoint` / `remove` / fail /
 support-self), **not** a `decision=` vocabulary (P7). Emits a generic P6
 `task_dependency_aborted`. A root task (no parent) or an already-terminal parent
-routes nothing (the parent's own cascade subsumes it). The session **wake** is the
-slice-7 `TaskWaker` (stubbed here via `OpContext.task_waker`).
+routes nothing (the parent's own cascade subsumes it).
 
-Still landing in later slices: the `TaskWaker` driver (turns the events into a
-session wake) + unblock-predicate evaluation.
+**The TaskWaker (slice 7).** The `OpContext.task_waker` (the OS `TaskWaker`
+driver) turns these dispositions into actual session **wakes** via the canonical
+`resolve_session → _put_inbox → ensure_session_running` triple: a promoted
+dependent (on a predecessor `completed` OR a recovery `repoint`/`remove`) is woken
+with a `task_ready` inbox message; a parent is woken with `task_dependency_aborted`.
+Both surface to the woken session's LLM as one router turn (OS-generic inbox kinds,
+P7) so it resumes / recovers via ordinary task ops. A **loopless** session (A2A /
+MCP, no run-loop) is booted by `ensure_session_running`; a looped one is an
+idempotent no-op. This in-process driver is complementary to the cross-process A2A
+webhook disposition sweep.
+
+Still landing in later slices: per-task liveness (unblock-predicate / heartbeat
+evaluation) — the residual non-terminal-stuck backstop.
 
 ---
 

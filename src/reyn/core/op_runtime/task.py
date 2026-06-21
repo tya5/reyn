@@ -186,12 +186,17 @@ async def _update_status(op, ctx: OpContext, caller) -> dict:
     if task.status is TaskState.COMPLETED:
         promoted = await _backend(ctx).recompute_readiness(op.task_id)
         events = getattr(ctx, "events", None)
-        if events is not None:
-            for p in promoted:
+        waker = getattr(ctx, "task_waker", None)
+        for p in promoted:
+            if events is not None:
                 # Generic P6 audit (like task_op/task_disposition); NOT a WAL
                 # closed-vocab kind (WAL-vs-P6 separation, P7).
                 events.emit("task_readiness", task_id=p.task_id, to="ready",
                             trigger=op.task_id)
+            # slice 7: wake the now-ready dependent's session to continue its work
+            # (the C3 re-invoke driver; None waker = no-op stub, slice 6-ext).
+            if waker is not None:
+                await waker.wake_ready_dependent(p)
     elif task.status is TaskState.FAILED:
         # slice 6-ext §C: a non-completed terminal (the assignee declared `failed`)
         # doesn't satisfy a dependency edge → route the disposition to the parent's
@@ -235,11 +240,13 @@ async def _add_dependency(op, ctx: OpContext, caller) -> dict:
     return _ok("task.add_dependency", task=task.to_dict())
 
 
-def _emit_readiness_if_changed(ctx: OpContext, task, before_status, trigger: str) -> None:
+async def _emit_readiness_if_changed(ctx: OpContext, task, before_status, trigger: str) -> None:
     """Emit the generic P6 ``task_readiness`` event when an OS re-derive changed a
     task's readiness (#1953 slice 6-ext). ``before_status`` is captured from the
     role-gate fetch (pre-mutation), so this fires only on an actual transition and
-    only for the pre-run readiness states (ready / blocked)."""
+    only for the pre-run readiness states (ready / blocked). On a promote to
+    ``ready`` (e.g. the parent repoints a dependent onto a completed substitute —
+    the recovery loop), the task's session is also woken (slice 7)."""
     if task.status is before_status:
         return
     if task.status not in (TaskState.READY, TaskState.BLOCKED):
@@ -248,6 +255,10 @@ def _emit_readiness_if_changed(ctx: OpContext, task, before_status, trigger: str
     if events is not None:
         events.emit("task_readiness", task_id=task.task_id,
                     to=task.status.value, trigger=trigger)
+    if task.status is TaskState.READY:
+        waker = getattr(ctx, "task_waker", None)
+        if waker is not None:
+            await waker.wake_ready_dependent(task)
 
 
 async def _route_terminal_to_parent(ctx: OpContext, backend, terminal_task) -> None:
@@ -293,7 +304,7 @@ async def _remove_dependency(op, ctx: OpContext, caller) -> dict:
     if task is None:
         return _not_found("task.remove_dependency", op.task_id)
     _audit(ctx, "task.remove_dependency", op.task_id, depends_on=op.depends_on)
-    _emit_readiness_if_changed(ctx, task, before, op.task_id)
+    await _emit_readiness_if_changed(ctx, task, before, op.task_id)
     return _ok("task.remove_dependency", task=task.to_dict())
 
 
@@ -314,7 +325,7 @@ async def _repoint_dependency(op, ctx: OpContext, caller) -> dict:
         return _not_found("task.repoint_dependency", op.task_id)
     _audit(ctx, "task.repoint_dependency", op.task_id,
            from_depends_on=op.from_depends_on, to_depends_on=op.to_depends_on)
-    _emit_readiness_if_changed(ctx, task, before, op.task_id)
+    await _emit_readiness_if_changed(ctx, task, before, op.task_id)
     return _ok("task.repoint_dependency", task=task.to_dict())
 
 

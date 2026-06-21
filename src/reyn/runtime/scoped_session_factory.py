@@ -94,8 +94,19 @@ def build_scoped_chat_session(
         sandbox_backend=sandbox_backend,
         environment_backend=environment_backend,
     )
+    # #1953 slice 7: construct the OS TaskWaker for this session at the single
+    # factory chokepoint (every frontend builds sessions here). It closes over the
+    # AgentRegistry + this agent's name to resolve + wake sibling sessions on a
+    # dep-graph disposition. None when no registry is available (direct/test
+    # construction) → the op-runtime no-op stub.
+    _registry = base.get("registry")
+    task_waker = None
+    if _registry is not None:
+        from reyn.runtime.services.task_wake import TaskWaker  # noqa: PLC0415
+        task_waker = TaskWaker(_registry, base["agent_name"])
     return Session(
         agent=agent,
+        task_waker=task_waker,
         environment_backend=environment_backend,
         sandbox_backend=sandbox_backend,
         workspace_base_dir=workspace_base_dir,
