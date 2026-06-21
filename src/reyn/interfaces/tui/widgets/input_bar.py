@@ -25,6 +25,7 @@ Keybindings (handled here):
 from __future__ import annotations
 
 from collections import deque
+from typing import TYPE_CHECKING
 
 from rich.cells import cell_len
 from textual import events, on
@@ -37,6 +38,9 @@ from textual.widgets import Label, TextArea
 from reyn.interfaces.slash import SlashCommand
 
 from .slash_picker import SlashPicker
+
+if TYPE_CHECKING:
+    from textual.timer import Timer
 
 # Wave-11 C#1 — bounded + persisted input history.
 #
@@ -114,6 +118,9 @@ class InputBar(Widget):
     InputBar.disconnected #hints {
         color: #553333;
     }
+    InputBar.held-flash {
+        border-top: solid #d4a017;  /* advisory amber — momentary held-Enter flash */
+    }
     """
 
     # ── messages ──────────────────────────────────────────────────────────────
@@ -168,6 +175,12 @@ class InputBar(Widget):
         # callers toggle it via ``set_in_flight``: True at submit
         # time, False at stream_end / cancel / slash-return.
         self._in_flight: bool = False
+        # Option A held-Enter feedback: pending restore timer for the
+        # momentary ``.held-flash`` border + ``_HINT_HELD`` footer swap.
+        # Race-safe per feedback_tui_deferred_timer_stale_removal_class —
+        # cancelled before re-arm and on any in-flight transition so a
+        # turn-end mid-flash never restores a stale hint.
+        self._held_timer: "Timer | None" = None
         # Wave-13 T1-3: disconnected state for ``--connect`` WS mode.
         # When the WS connection drops, the session is unrecoverable
         # without a TUI restart. InputBar is locked permanently (= no
@@ -299,6 +312,11 @@ class InputBar(Widget):
         if self._in_flight == in_flight:
             return
         self._in_flight = in_flight
+        # Any held-flash in progress is now stale: the turn boundary changed,
+        # and the #hints rebuild below restores the correct footer. Cancel the
+        # pending restore + drop the flash class so a late timer can't repaint
+        # a stale hint (feedback_tui_deferred_timer_stale_removal_class).
+        self._cancel_held_flash()
         if in_flight:
             self.add_class("in-flight")
         else:
@@ -346,6 +364,65 @@ class InputBar(Widget):
         per the project testing policy: feedback_test_public_surface_not_private_state).
         """
         return self._in_flight
+
+    # ── Option A: held-Enter feedback ─────────────────────────────────────────
+
+    def _flash_held(self) -> None:
+        """Acknowledge an Enter pressed during an in-flight turn (Option A).
+
+        Adds a momentary amber border (``.held-flash``) and swaps the footer
+        to ``_HINT_HELD`` so the keypress is visibly *received* instead of
+        silently swallowed. The typed text is left untouched for manual
+        resubmit once the turn ends — pure feedback, NOT a queue/auto-send.
+
+        Re-arm semantics: a rapid second Enter cancels the pending restore
+        and restarts, so back-to-back presses extend the flash rather than
+        letting an earlier timer clear it mid-press
+        (feedback_tui_deferred_timer_stale_removal_class).
+        """
+        if self._held_timer is not None:
+            self._held_timer.stop()
+            self._held_timer = None
+        self.add_class("held-flash")
+        try:
+            self.query_one("#hints", Label).update(self._HINT_HELD)
+        except Exception:
+            pass
+        self._held_timer = self.set_timer(
+            self._HELD_FLASH_S, self._restore_after_held
+        )
+
+    def _restore_after_held(self) -> None:
+        """Timer callback: drop the flash + repaint the footer for the CURRENT
+        state.
+
+        Reads ``_in_flight`` live via ``_build_hint`` (not a value captured at
+        flash time) so a turn that ended during the flash restores the normal
+        hint, while a still-running turn restores the in-flight hint — the
+        stale-restore guard from
+        feedback_tui_deferred_timer_stale_removal_class.
+        """
+        self._held_timer = None
+        self.remove_class("held-flash")
+        try:
+            w = self.size.width
+        except Exception:
+            w = 0
+        try:
+            self.query_one("#hints", Label).update(self._build_hint(w))
+        except Exception:
+            pass
+
+    def _cancel_held_flash(self) -> None:
+        """Cancel a pending held-flash + drop the class without repainting.
+
+        For callers that rebuild ``#hints`` themselves (``set_in_flight``).
+        Idempotent — safe when no flash is in progress.
+        """
+        if self._held_timer is not None:
+            self._held_timer.stop()
+            self._held_timer = None
+        self.remove_class("held-flash")
 
     @property
     def disconnected(self) -> bool:
@@ -842,7 +919,13 @@ class InputBar(Widget):
         # quickly while an LLM call is in progress dispatches the same
         # prompt twice → doubled spend + duplicated reply in the conv
         # pane.
+        #
+        # Option A active feedback: rather than swallow silently, flash the
+        # border + momentarily swap the footer to _HINT_HELD so the user sees
+        # the Enter was received but held (text retained for manual resubmit;
+        # NOT queued — that is Option B).
         if self._in_flight:
+            self._flash_held()
             return
         if not self._history or self._history[-1] != text:
             self._history.append(text)
@@ -931,6 +1014,19 @@ class InputBar(Widget):
     # explicit blocked-state message so the user understands why pressing
     # Enter does nothing.
     _HINT_IN_FLIGHT = "  ⟳ responding — Ctrl+C to cancel"
+    # Option A active feedback: momentarily swapped in (with a border flash)
+    # when Enter is pressed during an in-flight turn, so the keypress is
+    # acknowledged instead of silently swallowed. "held" = received-but-not-
+    # sent; the typed text stays for MANUAL resubmit — it is NOT queued /
+    # auto-sent (that is Option B, deferred per owner product judgment), so
+    # the wording deliberately avoids promising a later send. No emoji /
+    # 23Fx glyph (e.g. ⏳) — those fall outside the TUI's monospace symbol
+    # set (│ ⟳ · —) and risk double-width / fallback boxes; the amber border
+    # flash is the visual punch, the text the explanation.
+    _HINT_HELD = "  Enter held — Ctrl+C to cancel"
+    # How long the held-flash border + hint swap stays before restoring the
+    # current footer (re-armed on each rapid Enter; see _flash_held).
+    _HELD_FLASH_S = 1.0
 
     # Cell width below which _HINT_MID is used instead of _HINT_FULL.
     _HINT_FULL_MIN_WIDTH = 55
