@@ -1,13 +1,13 @@
-"""TaskExecutionHost — the narrowed-LLM execution engine (#1953 slice P).
+"""The narrowed-LLM execution engine — a ``RouterLoopHost`` facade.
 
-A ``RouterLoopHost`` facade that narrows the parent host's tool catalog +
-system-prompt surface to ONE unit of work, so a per-unit LLM call stays small.
-Slice P1 relocates this engine out of ``planner.py`` (char-identical MOVE — the
-behavior is byte-identical, proven by the planner replay fixtures); the planner
-keeps driving it via the historical ``_PlanStepHost`` alias (coexist adapter).
-Slice P2 generalizes it to run a Task (not only a plan step); the per-step driver
-(sub-loop build / retry / force-close re-entry) still lives in ``planner.py`` for
-now and moves in P2.
+Narrows the parent host's tool catalog + system-prompt surface to ONE unit of
+work, so a per-unit LLM call stays small: each ``list_*`` / ``get_*`` introspection
+method returns the parent's data only when the unit's ``tools`` ask for that
+family (skills / agents / file / mcp / web — matched by legacy or qualified
+``<category>__*`` name), else empty / None. Tool dispatch passes through to the
+parent. The engine captures the unit's reply text (``put_outbox`` on the ``agent``
+kind) for the caller to collect, and exposes the force-close / retry interface the
+router loop consults each turn.
 """
 from __future__ import annotations
 
