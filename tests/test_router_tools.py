@@ -40,8 +40,6 @@ EXPECTED_TOOL_NAMES = [
     "web_fetch",
     # #1449: read_tool_result (the former E3) retired — its same-host read
     # folded into file__read; web_fetch's preview points there now.
-    # plan (G1) — always exposed; LLM opts in for complex queries.
-    "plan",
     # reyn_src_* are always exposed (F1, F2) — they read Reyn's own
     # public OSS repo, not the user's files, so no permission gate.
     "reyn_src_list",
