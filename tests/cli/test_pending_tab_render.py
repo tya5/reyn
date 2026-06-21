@@ -154,6 +154,50 @@ def test_dict_shaped_input_flows_through() -> None:
     assert flat_items[0]["id"] == "iv-xyz12345"
 
 
+def test_intervention_fields_with_markup_are_escaped_not_injected() -> None:
+    """Tier 2b: untrusted intervention fields containing Rich markup are ESCAPED,
+    not interpreted — so an origin / summary / detail carrying ``[..]`` (e.g.
+    A2A-inbound or permission-request content) can't inject styling or corrupt
+    the Pending tab (each row is rendered downstream via ``Text.from_markup``)."""
+    from rich.text import Text
+
+    op = _PendingOpViewLike(
+        id="iv-1",
+        kind="intervention",
+        origin_channel_id="a2a:[bold]evil[/]",
+        created_at="",
+        summary="please [red]ALERT[/red] approve",
+        detail="[link=http://x]click[/link]",
+    )
+    rendered, _flat, _ys = render_pending([op])
+    # The renderer output feeds Text.from_markup downstream. With the content
+    # escaped, the opening ``[..`` tags survive as LITERAL plain text; WITHOUT
+    # escaping they'd be consumed as style tags and absent from the plain text
+    # (the ALERT text styled instead of shown with its brackets).
+    plain = Text.from_markup(rendered).plain
+    assert "ALERT" in plain
+    assert "[red" in plain               # summary's tag kept literal (escaped)
+    assert "[bold" in plain              # origin's tag kept literal
+    assert "[link=http://x" in plain     # detail's link tag kept literal
+
+
+def test_unknown_kind_fields_with_markup_are_escaped() -> None:
+    """Tier 2b: the fallback (unknown-kind) renderer escapes its untrusted
+    ``kind`` / ``summary`` too — a future kind name or summary with ``[..]``
+    stays literal."""
+    from rich.text import Text
+
+    op = _PendingOpViewLike(
+        id="op-1", kind="weird[red]kind[/]", origin_channel_id="x",
+        created_at="", summary="do [bold]X[/bold]",
+    )
+    rendered, _flat, _ys = render_pending([op])
+    plain = Text.from_markup(rendered).plain
+    assert "weird[red" in plain   # kind's tag kept literal (escaped)
+    assert "do [bold" in plain    # summary's tag kept literal
+    assert "X" in plain
+
+
 def test_cursor_index_marks_row_distinctly() -> None:
     """Tier 2b: ``cursor=N`` marks the Nth row with the coral ``▶`` prefix.
 
