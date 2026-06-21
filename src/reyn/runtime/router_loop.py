@@ -3913,6 +3913,36 @@ class RouterLoop:
                 ),
             )
 
+        async def _dispatch_task_bound(*, args: dict) -> Any:
+            # #1953 slice P3: task-driven decomposition (parallel with plan). Same
+            # binding posture as _dispatch_plan_bound — session state pre-bound, the
+            # handler passes only ``args``. The task_backend is resolved the same way
+            # the task ops resolve it (session-scoped OpContext, else fallback).
+            from reyn.core.op_runtime import task as _taskmod
+            from reyn.runtime.task_graph import dispatch_task_tool
+            _octx = None
+            if hasattr(self.host, "make_router_op_context"):
+                try:
+                    _octx = self.host.make_router_op_context()
+                except Exception:  # noqa: BLE001 — fall back to module backend
+                    _octx = None
+            _backend = _taskmod.resolve_task_backend(_octx)
+            _session = getattr(self.host, "session_id", None) or self.chain_id
+            return await dispatch_task_tool(
+                args=args,
+                parent_host=self.host,
+                chain_id=self.chain_id,
+                task_backend=_backend,
+                assignee=_session,
+                requester=_session,
+                budget=self.budget,
+                router_model=self.router_model,
+                available_tool_names=set(self._tool_names) - {"plan", "decompose"},
+                accept_qualified_actions=bool(
+                    self._scheme_layer_ctx.get("univ_enabled", False)
+                ),
+            )
+
         # FP-0034 Phase 2 prep: snapshot indexed RAG corpora for the
         # universal catalog's rag_corpus enumeration. SourceManifest
         # caches the parsed YAML in-process so this is O(1) when the
@@ -3955,6 +3985,7 @@ class RouterLoop:
             # Async dispatch (= activated handlers)
             send_to_agent=_send_to_agent_bound,
             dispatch_plan_tool=_dispatch_plan_bound,
+            dispatch_task_tool=_dispatch_task_bound,
             # Skill invocation bridge (= for invoke_skill handler;
             # Phase 3.5-B-light) — chain_id pre-bound to preserve PR14
             # multi-hop chain semantics. Plan-mode keeps using this for

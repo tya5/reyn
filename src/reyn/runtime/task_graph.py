@@ -1,16 +1,17 @@
-"""Task-driven decomposition + execution (#1953 slice P2).
+"""Task-driven decomposition + execution (#1953).
 
-The internal entry that subsumes ``plan``: decompose a goal into a parent Task +
-a child Task DAG (each child = a unit of work with its own narrowed ``tools`` and
+The entry that subsumes ``plan``: decompose a goal into a parent Task + a child
+Task DAG (each child = a unit of work with its own narrowed ``tools`` and
 ``depends_on`` edges), then drive the DAG to completion through the
-``TaskExecutionHost`` engine, propagating readiness (slices 6/6-ext) as each unit
-completes and synthesizing the final reply from the children's results.
+``TaskExecutionHost`` engine in topological order, propagating readiness
+(slices 6/6-ext) as each unit completes and synthesizing the final reply from the
+children's results.
 
-P2 keeps this **internal** (not an LLM-facing router tool yet — the router-expose
-co-lands with the plan-tool repoint at P3, avoiding a dual LLM-facing entry while
-``plan`` still runs in parallel). The orchestration takes an injectable
-``run_unit`` so it is testable without a live RouterLoop / LLM; the production
-``run_unit`` builds the engine + sub-loop.
+``run_task_graph`` takes an injectable ``run_unit`` so the orchestration is
+testable without a live RouterLoop / LLM; ``make_production_run_unit`` builds the
+real engine + sub-loop. ``dispatch_task_tool`` is the LLM-facing router entry (the
+``decompose`` tool), running in parallel with ``plan`` for behavioral-parity
+comparison.
 
 Result-channel (I-2): a unit's reply text lands on its Task (``set_result``); a
 dependent reads its deps' results from the backend at run time. The edges are pure
@@ -123,6 +124,33 @@ async def build_task_graph(
     return parent.task_id
 
 
+def _topo_order_tasks(children: "list[Any]") -> "list[Any]":
+    """Kahn's algorithm with a stable tie-break — the children's list (creation =
+    LLM-emitted step) order — identical to the plan executor's
+    ``_topological_order``. Returns the children in a deterministic topological
+    linearization so the Task exec engine runs + aggregates units in **byte-identical
+    order to the plan path** (the parity-by-construction requirement for the slice-P
+    delete gate: relying on the readiness-loop's execution order to *coincide* with
+    plan's topo order is fragile; computing the same order makes it a guarantee).
+    Only sibling edges within ``children`` count (a dep outside the set is treated as
+    already-satisfied). Cycles are impossible here — the edge-guard rejects them at
+    create — so every child is emitted."""
+    ids = {c.task_id for c in children}
+    by_id = {c.task_id: c for c in children}
+    indeg = {c.task_id: sum(1 for d in c.deps if d in ids) for c in children}
+    ready = [c for c in children if indeg[c.task_id] == 0]  # preserves list order
+    out: list[Any] = []
+    while ready:
+        current = ready.pop(0)
+        out.append(current)
+        for c in children:
+            if current.task_id in c.deps:
+                indeg[c.task_id] -= 1
+                if indeg[c.task_id] == 0:
+                    ready.append(by_id[c.task_id])
+    return out
+
+
 async def run_task_graph(
     backend: Any,
     parent_id: str,
@@ -130,40 +158,41 @@ async def run_task_graph(
     run_unit: RunUnit,
     on_unit_cost: "Callable[[str, float], Awaitable[None]] | None" = None,
 ) -> str:
-    """Drive the parent's child DAG to completion: repeatedly run every runnable
-    child (no unsatisfied deps) through ``run_unit``, store its result, charge its
-    cost, mark it completed (which propagates readiness to its dependents), until
-    no child remains runnable. Then synthesize the parent's result (the
-    topologically-last completed child's text, mirroring the plan aggregator) and
-    return it.
+    """Drive the parent's child DAG to completion in **topological order** (matching
+    the plan executor's sequential ``for step in ordered``): run each unit through
+    ``run_unit`` once its deps precede it, store its result, charge its cost, mark it
+    completed (propagating readiness + wake events to any cross-session dependents),
+    then synthesize the parent's result — the topologically-last unit whose result is
+    non-empty, identical to the plan aggregator (planner.py ``reversed(ordered)``
+    first-non-empty). Returns the synthesized reply.
 
-    ``run_unit`` is handed each unit + the dep-results map it reads from the
-    backend; ``on_unit_cost`` (the slice-8 ``record_task_cost`` prod-caller) charges
-    the unit's cost onto its Task (cap-enforcement)."""
-    completed_order: list[str] = []
-    while True:
-        children = await backend.list(parent_id=parent_id)
-        runnable = [c for c in children if c.status in (TaskState.PENDING, TaskState.READY)]
-        if not runnable:
-            break
-        for child in runnable:
-            prior_results = {}
-            for dep_id in child.deps:
-                dep = await backend.get(dep_id)
-                prior_results[dep_id] = (dep.result or "") if dep is not None else ""
-            result_text, cost = await run_unit(child, prior_results)
-            await backend.set_result(child.task_id, result_text)
-            if on_unit_cost is not None:
-                await on_unit_cost(child.task_id, cost)
-            await backend.update_status(
-                child.task_id, "completed", caller_session_id=child.assignee)
-            await backend.recompute_readiness(child.task_id)
-            completed_order.append(child.task_id)
-    # Synthesis: the last completed child's result is the aggregate reply (the
-    # plan aggregator's "topologically-last non-empty" rule).
+    Topological order (not the readiness-loop's execution order) is used so the unit
+    exec sequence + aggregation are byte-identical to the plan path under the same
+    LLM responses — the deterministic-equivalence half of the slice-P delete gate.
+
+    ``run_unit`` is handed each unit + the dep-results map it reads from the backend
+    (the result-channel); ``on_unit_cost`` (the slice-8 ``record_task_cost``
+    prod-caller) charges the unit's cost onto its Task (cap-enforcement)."""
+    children = await backend.list(parent_id=parent_id)
+    ordered = _topo_order_tasks(children)
+    for unit in ordered:
+        # Deps precede ``unit`` in topo order → already completed (+ recomputed,
+        # promoting this born-blocked unit to READY). Topo order guarantees the
+        # dep-results are present, so running here is valid regardless of status.
+        prior_results = {}
+        for dep_id in unit.deps:
+            dep = await backend.get(dep_id)
+            prior_results[dep_id] = (dep.result or "") if dep is not None else ""
+        result_text, cost = await run_unit(unit, prior_results)
+        await backend.set_result(unit.task_id, result_text)
+        if on_unit_cost is not None:
+            await on_unit_cost(unit.task_id, cost)
+        await backend.update_status(
+            unit.task_id, "completed", caller_session_id=unit.assignee)
+        await backend.recompute_readiness(unit.task_id)
     final = ""
-    for tid in reversed(completed_order):
-        t = await backend.get(tid)
+    for unit in reversed(ordered):
+        t = await backend.get(unit.task_id)
         if t is not None and t.result:
             final = t.result
             break
@@ -205,3 +234,100 @@ def make_production_run_unit(
         return host.captured_text, (after - before)
 
     return run_unit
+
+
+async def dispatch_task_tool(
+    *,
+    args: dict,
+    parent_host: Any,
+    chain_id: str,
+    task_backend: Any,
+    assignee: str,
+    requester: str,
+    budget: Any = None,
+    router_model: "str | None" = None,
+    available_tool_names: "set[str]",
+    accept_qualified_actions: bool = False,
+) -> dict:
+    """Router entry for the ``decompose`` tool (#1953 slice P3) — the task-driven
+    analog of ``dispatch_plan_tool``, running in parallel with ``plan`` for parity.
+
+    Lifecycle: parse + validate the goal/steps (reused from the plan parser while
+    both coexist — P4 repoints it), build the child Task DAG (the **SSoT** — the
+    Tasks *are* the decomposition record, so no separate artifact), then run the
+    DAG through the Task exec engine and emit the synthesized reply to the outbox.
+
+    Async posture mirrors plan's outbox UX *lightly* (P3 ruling): spawn via the
+    ``host.spawn_task_graph`` hook when present, else run inline (test stubs /
+    lightweight hosts). The deep running-tasks lifecycle (crash-recovery / cleanup
+    parity) is **deferred to P4**, where plan's ``running_plans`` is MOVED onto the
+    Task subsystem rather than parallel-built here (no throwaway)."""
+    from reyn.runtime.planner import PlanValidationError, parse_and_validate_plan
+
+    try:
+        plan = parse_and_validate_plan(
+            args, allowed_tool_names=available_tool_names,
+            accept_qualified_actions=accept_qualified_actions,
+        )
+    except PlanValidationError as exc:
+        return {"status": "error",
+                "error": {"kind": "decompose_invalid", "message": str(exc)}}
+
+    # PlanStep.tools are already normalized + validated by the parser → build the
+    # DAG without re-validating (allowed_tool_names=None skips the redundant pass).
+    steps = [
+        {"id": s.id, "description": s.description,
+         "tools": list(s.tools), "depends_on": list(s.depends_on)}
+        for s in plan.steps
+    ]
+    parent_id = await build_task_graph(
+        task_backend, goal=plan.goal, steps=steps,
+        assignee=assignee, requester=requester,
+    )
+    run_unit = make_production_run_unit(
+        parent_host, chain_id=chain_id, router_model=router_model, budget=budget)
+
+    # slice-8 (B) cap-charge in the live path: charge each unit's recorded cost
+    # onto its Task via the record_task_cost prod-caller. A minimal ctx carries the
+    # backend + events (the same surface the P2 tests exercised).
+    from types import SimpleNamespace
+
+    from reyn.core.op_runtime import task as _taskmod
+
+    _cost_ctx = SimpleNamespace(
+        session_id=requester, agent_id=getattr(parent_host, "agent_name", ""),
+        events=getattr(parent_host, "events", None),
+        task_backend=task_backend, task_waker=None,
+    )
+
+    async def _on_unit_cost(task_id: str, cost: float) -> None:
+        await _taskmod.record_task_cost(_cost_ctx, task_id, cost)
+
+    async def _run_and_post() -> None:
+        # Mirror execute_plan's start + terminal outbox emits (event/TUI parity).
+        await _safe_outbox(parent_host, kind="agent",
+                           text=f"Decomposed into {len(steps)} sub-tasks; running…",
+                           meta={"source": "decompose", "parent_task_id": parent_id})
+        final = await run_task_graph(
+            task_backend, parent_id, run_unit=run_unit, on_unit_cost=_on_unit_cost)
+        await _safe_outbox(parent_host, kind="agent", text=final,
+                           meta={"source": "decompose", "parent_task_id": parent_id})
+
+    if hasattr(parent_host, "spawn_task_graph"):
+        await parent_host.spawn_task_graph(
+            parent_id=parent_id, coro=_run_and_post(), chain_id=chain_id)
+        return {"status": "spawned", "parent_task_id": parent_id,
+                "n_steps": len(steps)}
+    # Synchronous fallback (test stubs / hosts without the spawn hook).
+    await _run_and_post()
+    return {"status": "completed", "parent_task_id": parent_id,
+            "n_steps": len(steps)}
+
+
+async def _safe_outbox(host: Any, *, kind: str, text: str, meta: dict) -> None:
+    """Best-effort outbox emit — a host that does not implement put_outbox (= a
+    lightweight stub) must not break the run."""
+    try:
+        await host.put_outbox(kind=kind, text=text, meta=meta)
+    except Exception:  # noqa: BLE001 — outbox is observability, never load-bearing
+        pass

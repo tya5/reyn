@@ -51,6 +51,13 @@ def reset_backend_for_test() -> None:
     _BACKEND = InMemoryTaskBackend()
 
 
+def resolve_task_backend(ctx: "OpContext | None"):
+    """Public resolver (#1953 slice P3): the session-scoped backend on ``ctx`` when
+    present, else the in-memory fallback. Lets non-op callers (the ``decompose``
+    dispatch binding) reach the same backend the task ops use."""
+    return _backend(ctx)
+
+
 def _audit(ctx: OpContext, op_kind: str, task_id: str, **fields) -> None:
     """P6 audit emit for a task op (generic type; the backend's own task_events
     stays the source of truth — the WAL ``state_log`` closed vocab is NOT
