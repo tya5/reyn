@@ -263,9 +263,14 @@ def test_legacy_no_media_store_path_returns_inline_content(
     )
 
     assert result["status"] == "ok"
-    # content is the extracted body (= what every pre-PoC test asserts).
+    # content is the extracted body (= what every pre-PoC test asserts). Assert on
+    # paragraph text, NOT a heading: the content extractor is `trafilatura` when
+    # `reyn[fetch]` is installed, and it legitimately drops a lone <h1> on a
+    # minimal doc (keeps the main paragraph bodies) — so a heading assertion is
+    # extractor-fragile. Paragraph text is preserved by both trafilatura and the
+    # stdlib fallback extractor.
     assert result["content"]  # non-empty
-    assert "Top Heading" in result["content"]
+    assert "opening paragraph introduces the topic" in result["content"]
     assert "preview" not in result
     assert "path_ref" not in result
     assert "stored_as" not in result

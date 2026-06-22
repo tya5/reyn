@@ -21,6 +21,7 @@ are e2e tests validated separately on a Docker host.
 """
 from __future__ import annotations
 
+import importlib.util
 import subprocess
 import sys
 
@@ -304,9 +305,13 @@ def test_swebench_missing_honest_skip() -> None:
         run_tier1_swebench_eval,
     )
 
-    # Ensure swebench is not currently installed in THIS venv
-    # (it's a Tier1-only optional dep, not in reyn's core requirements)
-    if "swebench" in sys.modules:
+    # Ensure swebench is not installed in THIS venv (it's a Tier1-only optional
+    # dep, not in reyn's core requirements). Check IMPORTABILITY, not
+    # ``sys.modules``: swebench may be installed but not yet imported, in which
+    # case the lazy import inside run_tier1_swebench_eval would succeed and the
+    # function would proceed past the swebench-missing path (and hit the HF Hub).
+    # The missing path is only exercisable when swebench is genuinely absent.
+    if importlib.util.find_spec("swebench") is not None:
         pytest.skip(
             "swebench is installed in this environment; "
             "the swebench-missing path is only exercisable when it is absent"
