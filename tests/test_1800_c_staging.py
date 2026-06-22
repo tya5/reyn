@@ -1,19 +1,24 @@
 """Tests for #1800 slice 4b: wake=false ride-along (C) next-turn-context staging.
 
-Three test groups:
+Four test groups:
 
 1. **Tier 1 (contract) — trigger-turn history injection**: ride-alongs drained
    before a wake=true trigger appear as attributed system-role ChatMessages in
    history before the trigger's user message; ``_next_turn_context`` is cleared
    after injection.
 
-2. **Tier 2 (OS invariant — B=persist durability)**: staging a C message
-   persists it in the snapshot (WAL + snapshot file); restore_state recovers it
-   in ``_next_turn_context``.
+2. **Tier 2 (OS invariant — B=persist durability)**: C messages are staged
+   durably (WAL + snapshot) DURING ``_drain_to_wake`` — before the trigger
+   arrives — so a crash during the blocking wait does not lose them.
+   restore_state recovers them in ``_next_turn_context``.
 
 3. **Tier 1 (contract) — slash/intervention short-circuit safety**: a slash
    command short-circuit in ``_handle_user_message`` does NOT consume the staged
    C messages; they wait for the real turn.
+
+4. **Tier 2 (OS invariant — B=persist crash-window)**: falsifiable proof that
+   the B=persist gap is closed — C is durable DURING the drain-wait, not only
+   after ``run_one_iteration`` returns (the pre-fix location).
 
 Policy compliance (docs/deep-dives/contributing/testing.md):
 - No unittest.mock.MagicMock / AsyncMock / patch to fake collaborators.
@@ -341,46 +346,99 @@ async def test_c_staging_cleared_durably_after_injection(
 
 
 @pytest.mark.asyncio
-async def test_c_staging_decision_a_persist_while_waiting(tmp_path) -> None:
-    """Tier 1: wake=false messages alone → persisted while waiting for trigger.
+async def test_c_staging_durable_during_drain_wait(tmp_path) -> None:
+    """Tier 2: (OS invariant — B=persist): C staged in _drain_to_wake BEFORE trigger arrives.
 
-    Decision A (RESOLVED): C drained with no trigger yet → C's persisted
-    in _next_turn_context while waiting.
+    Falsifiable proof that the B=persist gap is fixed: a wake=false C is
+    persisted (WAL + snapshot) DURING _drain_to_wake — while the drain is
+    still blocking waiting for the trigger — NOT after run_one_iteration
+    returns.  A crash during that blocking wait must not lose the C.
 
-    This exercises the path where ride_alongs are staged but the session
-    has not yet received a trigger.  The staging must be durable (WAL event +
-    snapshot) even before any turn runs.
+    Mechanism under test: _drain_to_wake calls record_next_turn_context_staged
+    immediately after consuming a wake=false message, before re-entering the
+    blocking wait for the trigger.
+
+    Falsification: without the fix (staging only in run_one_iteration), the
+    WAL + snapshot would be empty while _drain_to_wake is blocked, and this
+    test would fail on the staged_events / n_snap assertions.
+
+    Test structure:
+    1. Enqueue one wake=false C into the inbox (no trigger).
+    2. Start _drain_to_wake as a concurrent task — it consumes the C, stages
+       it durably, then blocks waiting for the trigger (Decision A).
+    3. Yield briefly so the task can consume and stage the C.
+    4. While still blocking (no trigger sent), verify WAL + snapshot already
+       hold the staged entry.
+    5. Simulate crash+restore: load the snapshot into a new Session via
+       restore_state; verify _next_turn_context is recovered.
+    6. Cancel the drain task (simulating the crash).
     """
     session = _make_session(tmp_path)
 
-    # Stage directly as if _drain_to_wake returned ride-alongs with no trigger yet.
-    await session._journal.record_next_turn_context_staged(
-        kind="hook",
-        payload={"name": "waiting_hook", "text": "waiting-context"},
-    )
-    session._next_turn_context.append(
-        {"kind": "hook", "payload": {"name": "waiting_hook", "text": "waiting-context"}}
+    # Enqueue one wake=false C — no trigger follows.
+    await session._put_inbox(
+        "hook", {"name": "pre_trigger_hook", "text": "crash-window-context", "wake": False},
     )
 
-    # Verify WAL event exists.
+    # Start _drain_to_wake concurrently.  It will consume the wake=false C,
+    # stage it durably, then block waiting for a trigger (Decision A).
+    drain_task = asyncio.create_task(session._drain_to_wake())
+
+    # Yield control briefly to let the drain task consume the C and call
+    # record_next_turn_context_staged.  Multiple yields improve reliability
+    # across different event-loop scheduling policies.
+    for _ in range(10):
+        await asyncio.sleep(0)
+
+    # While _drain_to_wake is still blocking (no trigger sent), verify
+    # durability: WAL + snapshot must already contain the staged entry.
     events = _wal_events(tmp_path)
     staged_events = [e for e in events if e.get("kind") == "next_turn_context_staged"]
     n_staged = len(staged_events)
     assert n_staged == 1, (
-        f"Expected 1 next_turn_context_staged WAL event while waiting; got {n_staged}"
+        f"Expected 1 next_turn_context_staged WAL event DURING drain wait (no trigger sent); "
+        f"got {n_staged}.  Without the fix, staging happens only after _drain_to_wake "
+        f"returns (in run_one_iteration), so the WAL would still be empty here."
     )
 
-    # Verify in-memory buffer holds the entry.
-    n_ntc = len(session._next_turn_context)
-    assert n_ntc == 1, (
-        f"_next_turn_context must hold 1 entry while waiting; got {n_ntc}"
-    )
-
-    # Verify snapshot file holds the entry.
     snap = AgentSnapshot.load(session.agent_name, session._snapshot_path)
     n_snap = len(snap.next_turn_context)
     assert n_snap == 1, (
-        f"Snapshot next_turn_context must hold 1 entry while waiting; got {n_snap}"
+        f"Snapshot must hold 1 next_turn_context entry DURING drain wait; got {n_snap}"
+    )
+    (snap_entry,) = snap.next_turn_context
+    assert snap_entry.get("kind") == "hook", (
+        f"Snapshot entry kind must be 'hook'; got {snap_entry!r}"
+    )
+    assert snap_entry.get("payload", {}).get("text") == "crash-window-context", (
+        f"Snapshot entry payload text must be 'crash-window-context'; got {snap_entry!r}"
+    )
+
+    # Simulate crash: cancel the drain task (= process killed while blocking).
+    drain_task.cancel()
+    await asyncio.gather(drain_task, return_exceptions=True)
+
+    # Simulate restore: a fresh Session restores from the snapshot.
+    # restore_state must recover the staged entry in _next_turn_context.
+    session2 = Session(
+        agent_name=session.agent_name,
+        state_log=StateLog(tmp_path / "state2.wal"),
+        snapshot_path=session._snapshot_path,
+    )
+    recovered_snap = AgentSnapshot.load(session.agent_name, session._snapshot_path)
+    session2.restore_state(recovered_snap)
+
+    n_recovered = len(session2._next_turn_context)
+    assert n_recovered == 1, (
+        f"restore_state must recover 1 next_turn_context entry after crash; "
+        f"got {n_recovered}"
+    )
+    (recovered_entry,) = session2._next_turn_context
+    assert recovered_entry.get("kind") == "hook", (
+        f"Recovered entry kind must be 'hook'; got {recovered_entry!r}"
+    )
+    assert recovered_entry.get("payload", {}).get("text") == "crash-window-context", (
+        f"Recovered entry payload text; got {recovered_entry!r}"
     )
 
 

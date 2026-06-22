@@ -2846,10 +2846,15 @@ class Session:
         next step; no ``wake=false`` producers exist yet, so the collected
         list is returned but not consumed here.
 
-        #1800 slice 4b: ``ride_alongs`` are staged durably in
-        ``_next_turn_context`` by ``run_one_iteration`` before dispatching
-        to the handler.  Applied as attributed system-role context at the
-        trigger's ``_handle_user_message`` call.
+        #1800 slice 4b: each ``wake=false`` ride-along is staged durably
+        (B=persist) **here**, immediately after its ``inbox_consume``.
+        Staging in ``_drain_to_wake`` rather than in ``run_one_iteration``
+        closes the crash window: a crash while blocking-waiting for the
+        trigger (Decision A) leaves the C's already in the WAL + snapshot,
+        so restore_state recovers them.  ``run_one_iteration`` still
+        receives ``ride_alongs`` (4a contract) but no longer re-stages them.
+        The common path (no wake=false) never calls
+        ``record_next_turn_context_staged``, preserving 4a equivalence.
         """
         ride_alongs: list[tuple[str, dict]] = []
 
@@ -2870,7 +2875,15 @@ class Session:
             if p0.get("wake", True):
                 return ride_alongs, (kind0, p0)
 
-            # (d) wake=false ride-along: accumulate, then drain non-blocking.
+            # (d) wake=false ride-along: stage durably (B=persist) the
+            # moment it is consumed, BEFORE re-entering the blocking wait
+            # for the trigger.  This closes the gap: without this, a crash
+            # in the blocking wait would lose the consumed-but-not-persisted
+            # ride-along.
+            self._next_turn_context.append({"kind": kind0, "payload": p0})
+            await self._journal.record_next_turn_context_staged(
+                kind=kind0, payload=p0,
+            )
             ride_alongs.append((kind0, p0))
 
             # Non-blocking drain: collect additional wake=false messages until
@@ -2897,6 +2910,14 @@ class Session:
                 if p_nb.get("wake", True):
                     return ride_alongs, (kind_nb, p_nb)
 
+                # wake=false via non-blocking path: stage durably before
+                # accumulating (same B=persist guarantee as the outer path).
+                self._next_turn_context.append(
+                    {"kind": kind_nb, "payload": p_nb}
+                )
+                await self._journal.record_next_turn_context_staged(
+                    kind=kind_nb, payload=p_nb,
+                )
                 ride_alongs.append((kind_nb, p_nb))
 
     def restore_state(self, snapshot: AgentSnapshot) -> None:
@@ -3003,25 +3024,20 @@ class Session:
         directly.  With no ``wake=false`` messages ever enqueued (the current
         state — no wake=false producers exist yet), ``_drain_to_wake`` reduces
         to a single blocking get and the behaviour is identical to before.
+
+        #1800 slice 4b: ``_drain_to_wake`` now stages each wake=false
+        ride-along durably (B=persist) as it is consumed — see that method.
+        ``run_one_iteration`` receives ``ride_alongs`` for 4a contract
+        compatibility but no longer re-stages them.
         """
         # #1800 slice 4a/4b: drain up to the first wake=true trigger.
         # ride_alongs holds wake=false C messages accumulated before the
-        # trigger.  Stage them durably (decision B) before the trigger's turn
-        # runs so a crash-between-drain-and-turn doesn't lose them.
+        # trigger.  They are already staged durably by _drain_to_wake (4b);
+        # no further persist needed here.
         ride_alongs, trigger = await self._drain_to_wake()
         if trigger is None:
             # shutdown sentinel
             return False
-        # #1800 slice 4b: persist each ride-along into _next_turn_context
-        # durably BEFORE the trigger's turn starts.  Crash safety: if the
-        # process crashes after staging but before the trigger's turn
-        # finishes, restore_state re-loads them from the snapshot and the
-        # next run's trigger applies them.
-        for ra_kind, ra_payload in ride_alongs:
-            self._next_turn_context.append({"kind": ra_kind, "payload": ra_payload})
-            await self._journal.record_next_turn_context_staged(
-                kind=ra_kind, payload=ra_payload,
-            )
         kind, payload = trigger
         # FP-0041 (#489) PR-A: humanic dispatch attribution.
         # If this inbox item carries a ``sender`` (= new envelope
