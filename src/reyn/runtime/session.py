@@ -1214,6 +1214,12 @@ class Session:
         # the (user_answered → process_crashed → skill_not_yet_resumed)
         # window is R-D12 follow-up.
         self._buffered_intervention_answers: dict[str, "InterventionAnswer"] = {}
+        # #1800 slice 4b: in-memory staging buffer for wake=false ride-along (C)
+        # messages drained by _drain_to_wake.  Entries are applied to the next
+        # trigger's turn as attributed system-role history entries.  Persisted
+        # durably in the snapshot (decision B) via _journal; restored by
+        # restore_state.  Cleared (durably) after injection at the trigger turn.
+        self._next_turn_context: list[dict] = []
         # Per-agent SkillRegistry — lazily constructed on first skill run.
         # Tracks active skill_run_ids and emits skill lifecycle events.
         # Truncation auto-trigger flows through registry.truncate_wal_if_eligible
@@ -2133,6 +2139,7 @@ class Session:
             outstanding_interventions      → self._interventions (clear)
                                              + self._restore_intervention_tasks
             buffered_intervention_answers  → self._buffered_intervention_answers
+            next_turn_context              → self._next_turn_context
             active_skill_run_ids           → self.running_skills (+ started_at / chain)
 
         The running_*/_inflight_wal_tasks task handles are already settled by
@@ -2157,6 +2164,8 @@ class Session:
             self._restore_intervention_tasks = []
         # buffered_intervention_answers
         self._buffered_intervention_answers.clear()
+        # next_turn_context (#1800-4b)
+        self._next_turn_context.clear()
         # active_skill_run_ids live mirrors (handles settled)
         self.running_skills.clear()
         self.running_skills_started_at.clear()
@@ -2837,8 +2846,10 @@ class Session:
         next step; no ``wake=false`` producers exist yet, so the collected
         list is returned but not consumed here.
 
-        TODO(#1800-4b): pass ``ride_alongs`` into _handle_user_message /
-        equivalent after this return to inject them as attributed context.
+        #1800 slice 4b: ``ride_alongs`` are staged durably in
+        ``_next_turn_context`` by ``run_one_iteration`` before dispatching
+        to the handler.  Applied as attributed system-role context at the
+        trigger's ``_handle_user_message`` call.
         """
         ride_alongs: list[tuple[str, dict]] = []
 
@@ -2911,6 +2922,14 @@ class Session:
                 text=ans.get("text", ""),
                 choice_id=ans.get("choice_id"),
             )
+        # #1800 slice 4b: restore the staged next-turn-context buffer. If the
+        # session crashed while holding staged C messages (waiting for a trigger),
+        # they are recovered from the snapshot so the trigger's next turn
+        # still sees the accumulated context.
+        self._next_turn_context = [
+            entry for entry in snapshot.next_turn_context
+            if isinstance(entry, dict)
+        ]
         # Re-enqueue interventions in FIFO insertion order (dict preserves
         # insertion order in py3.7+). Each restored iv gets a fresh future
         # and a watcher task so dispatch's finally clause fires
@@ -2985,14 +3004,24 @@ class Session:
         state — no wake=false producers exist yet), ``_drain_to_wake`` reduces
         to a single blocking get and the behaviour is identical to before.
         """
-        # #1800 slice 4a: drain up to the first wake=true trigger.
-        # ride_alongs is always [] today (no wake=false producers in slice 4a);
-        # it will be staged as attributed context in slice 4b.
+        # #1800 slice 4a/4b: drain up to the first wake=true trigger.
+        # ride_alongs holds wake=false C messages accumulated before the
+        # trigger.  Stage them durably (decision B) before the trigger's turn
+        # runs so a crash-between-drain-and-turn doesn't lose them.
         ride_alongs, trigger = await self._drain_to_wake()
         if trigger is None:
             # shutdown sentinel
             return False
-        # TODO(#1800-4b): pass ride_alongs into the handler for context staging.
+        # #1800 slice 4b: persist each ride-along into _next_turn_context
+        # durably BEFORE the trigger's turn starts.  Crash safety: if the
+        # process crashes after staging but before the trigger's turn
+        # finishes, restore_state re-loads them from the snapshot and the
+        # next run's trigger applies them.
+        for ra_kind, ra_payload in ride_alongs:
+            self._next_turn_context.append({"kind": ra_kind, "payload": ra_payload})
+            await self._journal.record_next_turn_context_staged(
+                kind=ra_kind, payload=ra_payload,
+            )
         kind, payload = trigger
         # FP-0041 (#489) PR-A: humanic dispatch attribution.
         # If this inbox item carries a ``sender`` (= new envelope
@@ -3123,6 +3152,25 @@ class Session:
         # starting a fresh router turn.
         if await self._maybe_answer_oldest_intervention(text):
             return
+
+        # #1800 slice 4b: apply any staged wake=false ride-along (C) context
+        # to this turn.  Injected AFTER the slash/intervention short-circuits
+        # so C messages only attach to an actually-running router turn (flow-
+        # trace §3 risk note: a slash-command short-circuit must NOT consume
+        # the staged C's — they wait for the real turn).
+        if self._next_turn_context:
+            for entry in self._next_turn_context:
+                hook_kind = entry.get("kind", "hook")
+                payload_data = entry.get("payload", {})
+                hook_name = payload_data.get("name", hook_kind)
+                hook_text = payload_data.get("text", "")
+                self._append_history(ChatMessage(
+                    role="system",
+                    content=f"[hook:{hook_name}] {hook_text}",
+                    ts=_now_iso(),
+                ))
+            self._next_turn_context.clear()
+            await self._journal.record_next_turn_context_cleared()
 
         # R-D4: chat turn boundary — opportunistically check WAL size and
         # truncate if it has grown past the safety-net threshold. Long-idle

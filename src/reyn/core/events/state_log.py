@@ -60,6 +60,10 @@ WAL_EVENT_KINDS = (
     # second crash before the resuming skill consumes it
     "intervention_answer_buffered",
     "intervention_answer_consumed",
+    # NEW (#1800 slice 4b) — next-turn-context staging for wake=false ride-alongs.
+    # Staged (persisted) before the trigger turn; cleared durably after injection.
+    "next_turn_context_staged",
+    "next_turn_context_cleared",
     # NEW (ADR-0038 Stage 1b) — user-facing time-travel rewind reset-record.
     # Append-only compensating record: moves the active pointer to ``target_n``;
     # the abandoned future is retained as an inactive branch (reconstruct honors

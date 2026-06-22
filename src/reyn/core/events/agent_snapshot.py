@@ -65,6 +65,14 @@ class AgentSnapshot:
     # is the runtime cache; this field is its on-disk durable form).
     # Each value is ``{"text": str, "choice_id": str | None}``.
     buffered_intervention_answers: dict[str, dict] = field(default_factory=dict)
+    # #1800 slice 4b: staged wake=false ride-along (C) messages waiting for
+    # the next wake=true trigger turn to consume them.  Persisted (decision B)
+    # so a crash while waiting for the trigger doesn't silently drop context
+    # that was already inbox_consumed.  The in-memory ``_next_turn_context``
+    # list in Session is the runtime cache; this field is its on-disk form.
+    # Each entry is ``{"kind": str, "payload": dict}`` (no msg_id — already
+    # consumed from the inbox before staging here).
+    next_turn_context: list[dict] = field(default_factory=list)
 
     # ── persistence ─────────────────────────────────────────────────────
 
@@ -122,6 +130,9 @@ class AgentSnapshot:
             buffered_intervention_answers=dict(
                 data.get("buffered_intervention_answers", {}) or {}
             ),
+            next_turn_context=list(
+                data.get("next_turn_context", []) or []
+            ),
         )
 
     def save(self, path: Path) -> None:
@@ -137,6 +148,7 @@ class AgentSnapshot:
             "active_skill_run_ids": self.active_skill_run_ids,
             "outstanding_interventions": self.outstanding_interventions,
             "buffered_intervention_answers": self.buffered_intervention_answers,
+            "next_turn_context": self.next_turn_context,
         }
         with tmp.open("w", encoding="utf-8") as f:
             json.dump(payload, f, ensure_ascii=False, indent=2)
@@ -233,6 +245,13 @@ class AgentSnapshot:
             run_id = event.get("run_id")
             if run_id:
                 self.buffered_intervention_answers.pop(run_id, None)
+        # ── #1800 slice 4b: next-turn-context staging ───────────────────
+        elif kind == "next_turn_context_staged":
+            entry = event.get("entry")
+            if entry and isinstance(entry, dict):
+                self.next_turn_context.append(entry)
+        elif kind == "next_turn_context_cleared":
+            self.next_turn_context.clear()
         # skill_phase_advanced, step_started/completed/failed, skill_resumed
         # mutate per-skill snapshot only — no agent-level state change here.
         # Unknown kinds: no-op (forward compatibility for future kinds)
