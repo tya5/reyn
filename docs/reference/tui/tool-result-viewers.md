@@ -8,7 +8,7 @@ audience: [human, agent]
 
 The Right Panel events-tab preview renders a tool result (`tool_returned` /
 `tool_executed`) richer than the generic YAML fallback — the Jupyter-style
-"content-type → viewer" idea from #1154. A pluggable **viewer registry** maps a
+"content-type → viewer" idea. A pluggable **viewer registry** maps a
 result dict to a [Rich](https://rich.readthedocs.io/) renderable; when no
 registered viewer matches, an **LLM-generated template** produces an adaptive
 card for the unknown shape.
@@ -141,7 +141,7 @@ The viewer returns any Rich `RenderableType` (`Table`, `Panel`, `Syntax`,
 `Group`, `Markdown`, …) or `None`. Keep it pure — no Textual widgets, no app
 state — so it stays unit-testable.
 
-**Safety: result values are untrusted external content (#1822).** A tool result
+**Safety: result values are untrusted external content.** A tool result
 can come from an MCP server, a fetched web page, or a file. If you place a value
 into a Rich `Table`/`Text.from_markup`/any markup-parsing surface, escape it
 first, or Rich will interpret embedded `[red]…[/red]` console markup:

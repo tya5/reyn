@@ -163,7 +163,7 @@ intervention flow and force-close wrap-up.
 
 | Kind | When | Key payload |
 |------|------|-------------|
-| `limit_denied` | A safety limit was denied (no extension granted) and the OS is about to attempt the `#1496` force-close wrap-up. | `kind` (`max_iterations` \| `router_cap`), `chain_id`, plus `limit` (router iterations) or `count`/`cap` (router cap) |
+| `limit_denied` | A safety limit was denied (no extension granted) and the OS is about to attempt the force-close wrap-up. | `kind` (`max_iterations` \| `router_cap`), `chain_id`, plus `limit` (router iterations) or `count`/`cap` (router cap) |
 
 `loop_limit_exceeded` and `phase_budget_exceeded` (see [Lifecycle
 events](#lifecycle-events)) cover phase-visit and wall-clock limits.
