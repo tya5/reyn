@@ -2801,6 +2801,93 @@ class Session:
             await self._journal.consume_inbox(msg_id=msg_id)
         return kind, payload
 
+    async def _drain_to_wake(
+        self,
+    ) -> tuple[list[tuple[str, dict]], tuple[str, dict]] | tuple[None, None]:
+        """Drain the inbox up to and including the first ``wake=true`` message.
+
+        Each inbox payload carries an optional ``wake`` bool (default ``True``
+        when absent).  Existing producers (user / skill_completed / task_ready
+        / etc.) never set ``wake``; the absent-means-True default makes them
+        all behaviorally identical to wake=true, so the common/back-compat
+        path returns immediately after the first blocking get with no
+        ride-alongs.
+
+        Returns ``(ride_alongs, trigger)`` where:
+
+        - ``ride_alongs``  — list of ``(kind, payload)`` tuples for every
+          ``wake=false`` message drained before the trigger.  Staged for the
+          next turn as context (slice 4b — see TODO below).  Empty in the
+          common case.
+        - ``trigger``      — the first ``wake=true`` (or absent-wake) message;
+          this drives the turn.
+
+        Special case: if the first blocking get yields ``shutdown``, returns
+        ``(None, None)`` so the caller can signal loop exit.
+
+        Decision A (RESOLVED, issuecomment-4773744053): if the queue empties
+        while holding only ``wake=false`` ride-alongs (no trigger yet),
+        re-enter the blocking wait.  Ride-alongs NEVER trigger a turn alone.
+
+        Per-message ``inbox_consume`` is recorded via ``_consume_inbox`` for
+        EACH drained message (ride-alongs and the trigger alike), so the
+        snapshot stays correct on crash+restore.
+
+        #1800 slice 4a.  ``wake=false`` ride-along staging (slice 4b) is the
+        next step; no ``wake=false`` producers exist yet, so the collected
+        list is returned but not consumed here.
+
+        TODO(#1800-4b): pass ``ride_alongs`` into _handle_user_message /
+        equivalent after this return to inject them as attributed context.
+        """
+        ride_alongs: list[tuple[str, dict]] = []
+
+        while True:
+            # (a) Blocking wait — preserves the idle-sleep property exactly
+            # as the previous single-get path did.  Also records
+            # inbox_consume via _consume_inbox (journaled, P6-clean).
+            kind0, p0 = await self._consume_inbox()
+
+            # (b) Shutdown sentinel: propagate immediately regardless of any
+            # already-accumulated ride-alongs.
+            if kind0 == "shutdown":
+                return None, None
+
+            # (c) wake=true (or absent → default True): this is the trigger.
+            # Common/back-compat path — returns after the first blocking get
+            # with no ride-alongs.
+            if p0.get("wake", True):
+                return ride_alongs, (kind0, p0)
+
+            # (d) wake=false ride-along: accumulate, then drain non-blocking.
+            ride_alongs.append((kind0, p0))
+
+            # Non-blocking drain: collect additional wake=false messages until
+            # either a wake=true trigger arrives or the queue is momentarily
+            # empty (Decision A: re-enter the blocking wait in that case).
+            while True:
+                try:
+                    kind_nb, p_nb = self.inbox.get_nowait()
+                except asyncio.QueueEmpty:
+                    # Queue empty, no trigger yet — re-enter outer blocking
+                    # wait (Decision A).
+                    break
+
+                # Record inbox_consume for each non-blocking dequeue.
+                msg_id_nb = (
+                    p_nb.get("_msg_id") if isinstance(p_nb, dict) else None
+                )
+                if kind_nb != "shutdown":
+                    await self._journal.consume_inbox(msg_id=msg_id_nb)
+
+                if kind_nb == "shutdown":
+                    return None, None
+
+                if p_nb.get("wake", True):
+                    return ride_alongs, (kind_nb, p_nb)
+
+                ride_alongs.append((kind_nb, p_nb))
+
     def restore_state(self, snapshot: AgentSnapshot) -> None:
         """Adopt a recovered snapshot: install in journal, repopulate the
         async inbox, restore pending chains via ChainManager (which re-arms
@@ -2892,10 +2979,21 @@ class Session:
         Does NOT emit chat_started / chat_stopped events — those are emitted by
         run() which owns the session lifetime.  Does NOT call _drain_on_shutdown;
         that is also run()'s responsibility on loop exit.
+
+        #1800 slice 4a: uses ``_drain_to_wake`` instead of ``_consume_inbox``
+        directly.  With no ``wake=false`` messages ever enqueued (the current
+        state — no wake=false producers exist yet), ``_drain_to_wake`` reduces
+        to a single blocking get and the behaviour is identical to before.
         """
-        kind, payload = await self._consume_inbox()
-        if kind == "shutdown":
+        # #1800 slice 4a: drain up to the first wake=true trigger.
+        # ride_alongs is always [] today (no wake=false producers in slice 4a);
+        # it will be staged as attributed context in slice 4b.
+        ride_alongs, trigger = await self._drain_to_wake()
+        if trigger is None:
+            # shutdown sentinel
             return False
+        # TODO(#1800-4b): pass ride_alongs into the handler for context staging.
+        kind, payload = trigger
         # FP-0041 (#489) PR-A: humanic dispatch attribution.
         # If this inbox item carries a ``sender`` (= new envelope
         # convention: who/what produced this message — e.g.
