@@ -206,6 +206,13 @@ mindmap
       Topology system
       MessageBus
       delegate_to_agent
+    📋 Task system
+      11 dynamic task ops
+      Requester/assignee CAS
+      Dependency DAG
+      Cross-session WAKES
+      Content-fenced task text
+      /tasks view
     🖥️ TUI
       Conversation view
       Right Panel tabs
@@ -688,6 +695,26 @@ Cross-surface `ask_user` and permission routing — the same prompt reaches the 
 | `chain_id` propagation | Trace multi-hop chains in P6 events | [Events reference](reference/runtime/events.md) |
 
 > **Differentiation vs general agents:** delegation is topology-gated (network / team / pipeline) with a hop-depth cap and `chain_id` audit propagation — multi-agent reach is bounded and traceable, not free-form.
+
+---
+
+### Task system
+
+The dynamic work-unit model: small composable ops the LLM reaches for as structure emerges, instead of an upfront plan.
+
+| Feature | Description | Documentation |
+|---------|-------------|---------------|
+| Dynamic task ops | 11 composable work-unit ops (`task__create` / `update_status` / `get` / `list` / `add_dependency` / `remove_dependency` / `repoint_dependency` / `abort` / `heartbeat` / `register_unblock_predicate` / `comment`) the LLM reaches for when structure emerges | [Concepts: Tasks](concepts/runtime/tasks.md#the-ops) · [Control IR — Task ops](reference/runtime/control-ir.md#task-ops) |
+| Requester / assignee model | Requester (creator, notify-target) vs a single **immutable** assignee (worker); a non-self `assignee` delegates the task cross-session | [Concepts: Tasks](concepts/runtime/tasks.md#the-model) |
+| Single-writer CAS gate | Only the assignee session may write a task's status — fixed-equality `assignee == caller session_id` in the backend; topology writes (deps / abort) are owned by the requester | [Concepts: Tasks](concepts/runtime/tasks.md#the-model) |
+| Dual-path, no bypass | The same assignee CAS is enforced whether ops arrive from a phase's control-IR or the chat router (`invoke_action`); the bridge refuses a session-less context rather than mask the gate | [Concepts: Tasks](concepts/runtime/tasks.md#the-ops) |
+| Dependency DAG | `deps` are depends-on edges; a task with unmet deps is OS-derived `blocked`, readiness recomputed (never written); edges are existence- + cycle-checked; `repoint` swaps a dep to a substitute | [Concepts: Tasks](concepts/runtime/tasks.md#the-model) |
+| Cross-session WAKES | A born-startable delegated task — and a dependent promoted to ready — wakes its assignee session to execute it, with the OS execute-framing as the trusted instruction | [Concepts: Tasks](concepts/runtime/tasks.md) |
+| Content-fenced task text | The free-text `description` / `name` / `result` fields are structurally fenced as untrusted data on the query path (`task.get` / `list`) and in the execution-path wake message; OS-generated structural fields stay unfenced | [Security: what gets structurally fenced](concepts/agent-engineering/security.md#what-gets-structurally-fenced) |
+| `/tasks` view | List running tasks + per-task status + kill, spanning skill runs and dynamic tasks | [chat CLI](reference/cli/chat.md) |
+| Single-source ToolDefinitions | The LLM-facing tool schemas are derived from the IROp models (`model_json_schema()` minus the `kind` discriminator), so the catalog never drifts from the runtime contract | [Control IR — Task ops](reference/runtime/control-ir.md#task-ops) |
+
+> **Differentiation vs general agents:** rather than a forced upfront plan, the task model is small composable ops the LLM reaches for as structure emerges — with a single-writer compare-and-set on the immutable assignee session (no hand-off, no bypass across the phase / chat paths), a cycle-checked dependency DAG, and cross-session WAKES that let one agent hand a durable, crash-recoverable work-unit to a peer.
 
 ---
 
