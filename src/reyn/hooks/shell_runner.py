@@ -1,0 +1,348 @@
+"""reyn.hooks.shell_runner — execute a shell HookDef command (#1800 slice C).
+
+Contract
+--------
+* **Input to the subprocess**: event + context serialised as JSON → subprocess stdin.
+* **Output from the subprocess**: IGNORED — stdout / stderr are treated as logs
+  only.  The runner returns ``None`` (pure side-effect); the OS does not consume
+  hook output.
+* **Timeout** (default 60 s, overridable per-hook via ``timeout_seconds``).
+  Timeout / non-zero exit → log only; the runner NEVER crashes the agent.
+
+Push from shell hooks is **deferred** — revisit when needed.  Shell hooks =
+external resource control only.
+
+Sandbox (CRITICAL)
+------------------
+The hook command runs through the **same** :mod:`reyn.security.sandbox`
+backend that the ``sandboxed_exec`` op uses::
+
+    backend = sandbox_backend or get_default_backend(sandbox_config)
+    result = await backend.run(argv, policy, stdin=..., cwd=...)
+
+No new subprocess machinery is introduced.  When the caller passes
+``sandbox_backend=None`` and ``sandbox_config=None``, the factory auto-selects
+``SeatbeltBackend`` (macOS), ``LandlockBackend`` (Linux), or ``NoopBackend``
+as a last-resort fallback with a loud warning — same as ``sandboxed_exec``.
+
+Consent + allowlist (Hermes-style)
+------------------------------------
+Allowlist lives at ``~/.reyn/shell-hooks-allowlist.json`` (env-var override:
+``REYN_SHELL_HOOKS_ALLOWLIST``).  Each entry records:
+
+    {
+        "command": "<raw command string>",
+        "approved_at": "<ISO-8601>",
+        "script_mtime": <float or null>
+    }
+
+Rules:
+
+* **TTY** (``sys.stdin.isatty()``): if the command is not in the allowlist (or
+  its script mtime has changed), prompt the operator; record approval.
+* **Non-TTY without REYN_ACCEPT_HOOKS=1**: refuse to run + log (fail-closed).
+* **REYN_ACCEPT_HOOKS=1**: bypass the TTY check (for CI); record approval.
+* Mtime drift: if the command's first token resolves to an existing file AND its
+  mtime differs from the stored ``script_mtime``, treat as un-approved.
+"""
+from __future__ import annotations
+
+import json
+import logging
+import os
+import shlex
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from reyn.config import SandboxConfig
+    from reyn.security.sandbox import SandboxBackend
+    from reyn.security.sandbox.policy import SandboxPolicy
+
+_log = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Constants / env-var paths
+# ---------------------------------------------------------------------------
+
+_DEFAULT_ALLOWLIST_PATH = Path.home() / ".reyn" / "shell-hooks-allowlist.json"
+
+
+def _allowlist_path() -> Path:
+    """Return the allowlist path, consulting REYN_SHELL_HOOKS_ALLOWLIST first."""
+    env = os.environ.get("REYN_SHELL_HOOKS_ALLOWLIST")
+    if env:
+        return Path(env)
+    return _DEFAULT_ALLOWLIST_PATH
+
+
+# ---------------------------------------------------------------------------
+# Allowlist helpers
+# ---------------------------------------------------------------------------
+
+
+def _load_allowlist(path: Path) -> list[dict]:
+    """Load the allowlist JSON, returning an empty list on any error."""
+    try:
+        raw = path.read_text(encoding="utf-8")
+        data = json.loads(raw)
+        if isinstance(data, list):
+            return data
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        pass
+    return []
+
+
+def _save_allowlist(path: Path, entries: list[dict]) -> None:
+    """Persist the allowlist, creating parent dirs as needed."""
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(entries, indent=2), encoding="utf-8")
+    except OSError as exc:
+        _log.warning("shell-hook allowlist: could not save %s: %s", path, exc)
+
+
+def _script_mtime(command: str) -> float | None:
+    """Return the mtime of the first token of *command* if it is an existing file."""
+    try:
+        first_token = shlex.split(command)[0]
+        p = Path(first_token).expanduser()
+        if p.exists() and p.is_file():
+            return p.stat().st_mtime
+    except (ValueError, OSError):
+        pass
+    return None
+
+
+def _is_approved(command: str, entries: list[dict]) -> bool:
+    """Return True iff *command* has a current (no mtime drift) allowlist entry."""
+    current_mtime = _script_mtime(command)
+    for entry in entries:
+        if entry.get("command") != command:
+            continue
+        stored_mtime = entry.get("script_mtime")
+        # Mtime drift: stored mtime differs from current file mtime → un-approved.
+        if current_mtime is not None and stored_mtime is not None:
+            if abs(float(stored_mtime) - current_mtime) > 0.01:
+                _log.warning(
+                    "shell-hook: script mtime changed for %r (was %.3f, now %.3f) — "
+                    "re-approval required.",
+                    command,
+                    stored_mtime,
+                    current_mtime,
+                )
+                return False
+        return True
+    return False
+
+
+def _record_approval(command: str, path: Path) -> None:
+    """Add / update an allowlist entry for *command*."""
+    entries = _load_allowlist(path)
+    current_mtime = _script_mtime(command)
+    # Remove any existing entry for the same command.
+    entries = [e for e in entries if e.get("command") != command]
+    entries.append({
+        "command": command,
+        "approved_at": datetime.now(tz=timezone.utc).isoformat(),
+        "script_mtime": current_mtime,
+    })
+    _save_allowlist(path, entries)
+
+
+# ---------------------------------------------------------------------------
+# Consent gate
+# ---------------------------------------------------------------------------
+
+
+def _check_consent(command: str, allowlist_path: Path) -> bool:
+    """Return True if *command* is approved to run.
+
+    TTY (interactive): prompt on first use or mtime drift; record approval.
+    Non-TTY: requires REYN_ACCEPT_HOOKS=1 or a current allowlist entry.
+    """
+    entries = _load_allowlist(allowlist_path)
+
+    if _is_approved(command, entries):
+        return True
+
+    # Not approved — decide based on environment.
+    accept_env = os.environ.get("REYN_ACCEPT_HOOKS", "").strip() == "1"
+    is_tty = sys.stdin.isatty()
+
+    if accept_env:
+        # CI / non-TTY accept path: record and proceed.
+        _log.info("shell-hook: REYN_ACCEPT_HOOKS=1 — auto-approving %r", command)
+        _record_approval(command, allowlist_path)
+        return True
+
+    if is_tty:
+        # Interactive prompt.
+        print(
+            f"\nReyn shell hook: the following command has not been approved:\n\n"
+            f"  {command}\n\n"
+            "Allow this command to run under the Reyn sandbox? [y/N] ",
+            end="",
+            flush=True,
+        )
+        try:
+            answer = input().strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            answer = "n"
+        if answer in ("y", "yes"):
+            _record_approval(command, allowlist_path)
+            _log.info("shell-hook: operator approved %r", command)
+            return True
+        _log.warning("shell-hook: operator declined %r — skipping.", command)
+        return False
+
+    # Non-TTY, no accept flag, not pre-approved → fail-closed.
+    _log.warning(
+        "shell-hook REFUSED (fail-closed): %r is not in the allowlist and "
+        "REYN_ACCEPT_HOOKS=1 is not set. To allow in non-interactive / CI "
+        "environments, set REYN_ACCEPT_HOOKS=1 or pre-approve the command "
+        "interactively first.",
+        command,
+    )
+    return False
+
+
+# ---------------------------------------------------------------------------
+# Public API
+# ---------------------------------------------------------------------------
+
+
+async def run_shell_hook(
+    command: str,
+    event_context: dict,
+    *,
+    timeout_seconds: int = 60,
+    cwd: str | None = None,
+    sandbox_backend: "SandboxBackend | None" = None,
+    sandbox_config: "SandboxConfig | None" = None,
+    sandbox_policy: "SandboxPolicy | None" = None,
+    allowlist_path: Path | None = None,
+) -> None:
+    """Run a shell hook command as a pure side-effect.
+
+    The hook receives event + context as JSON on stdin.  Its output (stdout /
+    stderr) is treated as logs only and **never parsed**.  The OS does not
+    consume hook output.  Push from shell hooks is deferred.
+
+    Parameters
+    ----------
+    command:
+        The raw shell command string from ``HookDef.shell``.  Split via
+        ``shlex.split``; executed with ``shell=False`` (no shell injection).
+    event_context:
+        Dict serialised as JSON and passed to the subprocess on stdin.
+    timeout_seconds:
+        Wall-clock cap; default 60 s.
+    cwd:
+        Working directory for the subprocess.  Defaults to None (inherit).
+    sandbox_backend:
+        A pre-constructed :class:`~reyn.security.sandbox.SandboxBackend`
+        instance.  When ``None``, ``get_default_backend(sandbox_config)`` is
+        called to select the platform backend.
+    sandbox_config:
+        :class:`~reyn.config.SandboxConfig` forwarded to
+        ``get_default_backend``.  Used only when *sandbox_backend* is None.
+    sandbox_policy:
+        The :class:`~reyn.security.sandbox.policy.SandboxPolicy` to enforce.
+        When ``None``, a default policy (no network + no subprocess) is built.
+    allowlist_path:
+        Override the allowlist file path (used by tests to point at a tmp
+        file).  Defaults to ``~/.reyn/shell-hooks-allowlist.json`` (or the
+        ``REYN_SHELL_HOOKS_ALLOWLIST`` env var).
+
+    Returns
+    -------
+    None
+        Always.  Output is ignored; the runner is a pure side-effect call.
+
+    Notes
+    -----
+    **Never raises** — all errors (timeout, non-zero exit, consent refusal)
+    are logged and the function returns so the agent is never blocked by a
+    hook failure.
+    """
+    resolved_allowlist = allowlist_path if allowlist_path is not None else _allowlist_path()
+
+    # --- Consent gate (fail-closed in non-TTY without accept flag) --------
+    try:
+        approved = _check_consent(command, resolved_allowlist)
+    except Exception as exc:
+        _log.error("shell-hook: consent check error for %r: %s", command, exc)
+        return
+
+    if not approved:
+        return
+
+    # --- Split command (shlex; shell=False enforced by the backend) -------
+    try:
+        argv = shlex.split(command)
+    except ValueError as exc:
+        _log.error("shell-hook: invalid command %r: %s", command, exc)
+        return
+
+    if not argv:
+        _log.error("shell-hook: empty argv after shlex.split(%r)", command)
+        return
+
+    # --- Resolve sandbox backend ------------------------------------------
+    # Import here so the module is importable without the sandbox package in
+    # contexts where only the schema / allowlist code is needed.
+    from reyn.security.sandbox import SandboxPolicy as _SandboxPolicy
+    from reyn.security.sandbox import get_default_backend
+
+    backend = sandbox_backend if sandbox_backend is not None else get_default_backend(sandbox_config)
+
+    # Build a safe default policy when none is supplied.
+    policy: SandboxPolicy = (
+        sandbox_policy
+        if sandbox_policy is not None
+        else _SandboxPolicy(
+            network=False,
+            allow_subprocess=False,
+            timeout_seconds=timeout_seconds,
+        )
+    )
+
+    # --- Run via backend (same abstraction as sandboxed_exec.py) ----------
+    try:
+        stdin_bytes = json.dumps(event_context, default=str).encode("utf-8")
+
+        result = await backend.run(
+            argv,
+            policy,
+            stdin=stdin_bytes,
+            cwd=cwd,
+        )
+
+        # stdout / stderr are LOGS — never parsed.
+        if result.stdout.strip():
+            _log.debug(
+                "shell-hook %r stdout (logged, not parsed): %s",
+                command,
+                result.stdout[:200].decode("utf-8", errors="replace"),
+            )
+        if result.stderr.strip():
+            _log.debug(
+                "shell-hook %r stderr (logged, not parsed): %s",
+                command,
+                result.stderr[:200].decode("utf-8", errors="replace"),
+            )
+
+        if result.returncode not in (0,):
+            stderr_snippet = result.stderr[:200].decode("utf-8", errors="replace").strip()
+            _log.warning(
+                "shell-hook %r exited %d (stderr: %s).",
+                command,
+                result.returncode,
+                stderr_snippet or "<empty>",
+            )
+
+    except Exception as exc:
+        _log.error("shell-hook %r: unexpected error: %s", command, exc)
