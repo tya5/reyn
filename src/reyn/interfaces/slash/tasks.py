@@ -79,15 +79,16 @@ def _format_elapsed(seconds: float) -> str:
     return f"{hours}h {mins:02d}m"
 
 
-def _resolve_task(
+async def _resolve_task(
     session: "Session", prefix: str,
 ) -> tuple[str | None, str, list[str]]:
-    """Resolve a run_id / plan_id from a prefix.
+    """Resolve a run_id / task_id from a prefix across both task families.
 
     Returns ``(resolved_id, kind, candidates)``:
-      - ``resolved_id`` is non-None iff exactly one match exists.
-      - ``kind`` is "skill" or "plan" or "" (when ambiguous / unmatched).
-      - ``candidates`` lists every match across both task families so the
+      - ``resolved_id`` is non-None iff exactly one match exists across BOTH
+        skill runs and dynamic tasks.
+      - ``kind`` is "skill" or "task" or "" (when ambiguous / unmatched).
+      - ``candidates`` lists every match (``skill:<id>`` / ``task:<id>``) so the
         caller can show a "did you mean?" hint.
     """
     prefix = prefix.strip()
@@ -95,9 +96,26 @@ def _resolve_task(
         return None, "", []
     skill_ids = list(getattr(session, "running_skills", {}).keys())
     skill_matches = [r for r in skill_ids if prefix in r]
-    candidates = [f"skill:{r}" for r in skill_matches]
+    # Dynamic tasks: /tasks (#2036) LISTS them, so status|kill must resolve the
+    # same ids the list shows — otherwise the user sees a task they can't act on
+    # (the list-vs-action gap this fixes).
+    task_matches: list[str] = []
+    backend = getattr(session, "task_backend", None)
+    if backend is not None:
+        try:
+            task_matches = [
+                t.task_id for t in await backend.list() if prefix in t.task_id
+            ]
+        except Exception:
+            task_matches = []
+    candidates = (
+        [f"skill:{r}" for r in skill_matches]
+        + [f"task:{t}" for t in task_matches]
+    )
     if len(candidates) == 1:
-        return skill_matches[0], "skill", candidates
+        if skill_matches:
+            return skill_matches[0], "skill", candidates
+        return task_matches[0], "task", candidates
     return None, "", candidates
 
 
@@ -197,7 +215,7 @@ async def _task_status(session: "Session", args: str) -> None:
     if not prefix:
         await reply_error(session, "Usage: /tasks status <run_id_prefix>")
         return
-    resolved, kind, candidates = _resolve_task(session, prefix)
+    resolved, kind, candidates = await _resolve_task(session, prefix)
     if resolved is None:
         if not candidates:
             await reply_error(session, f"no task matches {prefix!r}")
@@ -210,8 +228,34 @@ async def _task_status(session: "Session", args: str) -> None:
 
     if kind == "skill":
         await _skill_status(session, resolved)
+    elif kind == "task":
+        await _dynamic_task_status(session, resolved)
     else:
         await reply_error(session, f"unknown task kind for {resolved}")
+
+
+async def _dynamic_task_status(session: "Session", task_id: str) -> None:
+    """Render a dynamic task's state for /tasks status (#2036 follow-up)."""
+    backend = getattr(session, "task_backend", None)
+    task = await backend.get(task_id) if backend is not None else None
+    if task is None:
+        await reply_error(session, f"task {task_id} not found")
+        return
+    status = getattr(task.status, "value", task.status)
+    deps = list(getattr(task, "deps", []) or [])
+    out: list[str] = [
+        f"task {task.task_id}",
+        f"  name:    {task.name}",
+        f"  status:  {status}",
+        f"  deps:    {', '.join(d[:8] for d in deps) if deps else '(none)'}",
+    ]
+    if getattr(task, "description", None):
+        out.append(f"  detail:  {task.description}")
+    if getattr(task, "assignee", None):
+        out.append(f"  assignee: {task.assignee}")
+    if getattr(task, "result", None):
+        out.append(f"  result:  {task.result}")
+    await reply(session, "\n".join(out))
 
 
 async def _skill_status(session: "Session", run_id: str) -> None:
@@ -244,7 +288,7 @@ async def _kill_task(session: "Session", args: str) -> None:
     if not prefix:
         await reply_error(session, "Usage: /tasks kill <run_id_prefix>")
         return
-    resolved, kind, candidates = _resolve_task(session, prefix)
+    resolved, kind, candidates = await _resolve_task(session, prefix)
     if resolved is None:
         if not candidates:
             await reply_error(session, f"no task matches {prefix!r}")
@@ -261,5 +305,14 @@ async def _kill_task(session: "Session", args: str) -> None:
         # circular imports at module load time.
         from reyn.interfaces.slash.skill import _discard_skill_run
         await _discard_skill_run(session, resolved)
+    elif kind == "task":
+        # A dynamic task: abort it via the backend (#2036 follow-up). abort()
+        # transitions the task + its dependents out of the runnable set.
+        backend = getattr(session, "task_backend", None)
+        if backend is None:
+            await reply_error(session, f"no task backend; cannot kill {resolved}")
+            return
+        await backend.abort(resolved, reason="/tasks kill")
+        await reply(session, f"aborted task {resolved}")
     else:
         await reply_error(session, f"unknown task kind for {resolved}")
