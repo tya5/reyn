@@ -1141,11 +1141,15 @@ class OutboxRouter:
             # Forward the full choice shape (label / id / hotkey / default)
             # so the widget can render `[h] Label` prefixes and highlight a
             # default option. Missing keys fall back to safe blanks — callers
-            # that historically only set label+id keep working.
+            # that historically only set label+id keep working. Interventions
+            # are load-bearing (the user must see + answer them), so a
+            # malformed choice degrades gracefully here rather than raising —
+            # a KeyError would drop the whole intervention (the handler's
+            # try/except swallows it), leaving the user unable to respond.
             choices = [
                 {
-                    "label": c["label"],
-                    "id": c["id"],
+                    "label": c.get("label", "?"),
+                    "id": c.get("id", ""),
                     "hotkey": c.get("hotkey") or "",
                     "default": bool(c.get("default", False)),
                 }
