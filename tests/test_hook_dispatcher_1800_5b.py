@@ -73,7 +73,7 @@ def _dispatcher(hooks: list[HookDef], **seams) -> tuple[HookDispatcher, dict]:
 async def test_push_wake_true_routes_to_inbox_E():
     """Tier 2: a push wake=true hook (E) routes to put_inbox as a turn trigger,
     carrying the [hook:name] attribution + wake=True; C-staging is NOT used."""
-    hook = HookDef(on="turn_end", push=PushBlock(message="continue", wake=True))
+    hook = HookDef(on="turn_end", template_push=PushBlock(message="continue", wake=True))
     disp, seams = _dispatcher([hook])
 
     await disp.dispatch("turn_end", {})
@@ -91,7 +91,7 @@ async def test_push_wake_true_routes_to_inbox_E():
 async def test_push_wake_false_routes_to_staging_C():
     """Tier 2: a push wake=false hook (C) stages next-turn context directly (the
     4b staging seam), NOT the inbox (a passive ride-along never triggers)."""
-    hook = HookDef(on="turn_start", push=PushBlock(message="ctx note", wake=False))
+    hook = HookDef(on="turn_start", template_push=PushBlock(message="ctx note", wake=False))
     disp, seams = _dispatcher([hook])
 
     await disp.dispatch("turn_start", {})
@@ -108,7 +108,7 @@ async def test_push_wake_false_routes_to_staging_C():
 async def test_shell_routes_to_run_shell_F():
     """Tier 2: a shell hook (F) invokes run_shell with the command + the event
     context (the observable side-effect); no push paths are taken."""
-    hook = HookDef(on="session_start", shell="echo hi")
+    hook = HookDef(on="session_start", shell_exec="echo hi")
     disp, seams = _dispatcher([hook])
 
     await disp.dispatch("session_start", {"point": "session_start"})
@@ -124,7 +124,7 @@ async def test_shell_routes_to_run_shell_F():
 async def test_push_when_false_skips_the_push():
     """Tier 2: push_when rendering to false skips the push entirely — neither the
     inbox nor staging is touched (the conditional-push guard)."""
-    hook = HookDef(on="turn_end", push=PushBlock(message="x", push_when="false"))
+    hook = HookDef(on="turn_end", template_push=PushBlock(message="x", push_when="false"))
     disp, seams = _dispatcher([hook])
 
     await disp.dispatch("turn_end", {})
@@ -139,8 +139,8 @@ async def test_throwing_hook_isolated_siblings_proceed():
     dispatch() never propagates the exception (the per-hook isolation property)."""
     raising = _Recorder(raises=RuntimeError("boom"))
     hooks = [
-        HookDef(on="turn_end", shell="first"),    # this one raises
-        HookDef(on="turn_end", shell="second"),   # must still run
+        HookDef(on="turn_end", shell_exec="first"),    # this one raises
+        HookDef(on="turn_end", shell_exec="second"),   # must still run
     ]
     disp, _seams = _dispatcher(hooks, run_shell=raising)
 
@@ -199,7 +199,7 @@ async def test_real_session_config_roundtrip_E_reaches_inbox(tmp_path):
     the attributed [hook:name] message to the real Session inbox. Proves the
     config→dispatcher→inbox path end-to-end on a real Session."""
     hooks_config = [
-        {"on": "turn_end", "push": {"message": "self-continue", "wake": True}},
+        {"on": "turn_end", "template_push": {"message": "self-continue", "wake": True}},
     ]
     session = _make_session(tmp_path, hooks_config=hooks_config)
 

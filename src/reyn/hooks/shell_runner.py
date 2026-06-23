@@ -3,14 +3,15 @@
 Contract
 --------
 * **Input to the subprocess**: event + context serialised as JSON → subprocess stdin.
-* **Output from the subprocess**: IGNORED — stdout / stderr are treated as logs
-  only.  The runner returns ``None`` (pure side-effect); the OS does not consume
-  hook output.
+* **Output from the subprocess**, by mode (``capture_stdout``, #2069):
+  * ``shell_exec`` (``capture_stdout=False``): stdout / stderr are logs only;
+    the runner returns ``None`` (pure side-effect). The OS ignores hook output.
+  * ``shell_push`` (``capture_stdout=True``): on an exit-0 run the decoded
+    **stdout is returned** (the caller parses it as a JSON push-directive);
+    stderr stays logs. Any failure returns ``None`` (fail-safe → skip the push).
 * **Timeout** (default 60 s, overridable per-hook via ``timeout_seconds``).
-  Timeout / non-zero exit → log only; the runner NEVER crashes the agent.
-
-Push from shell hooks is **deferred** — revisit when needed.  Shell hooks =
-external resource control only.
+  Timeout / non-zero exit → log + return ``None``; the runner NEVER crashes the
+  agent.
 
 Sandbox (CRITICAL)
 ------------------
@@ -224,18 +225,28 @@ async def run_shell_hook(
     sandbox_config: "SandboxConfig | None" = None,
     sandbox_policy: "SandboxPolicy | None" = None,
     allowlist_path: Path | None = None,
-) -> None:
-    """Run a shell hook command as a pure side-effect.
+    capture_stdout: bool = False,
+) -> str | None:
+    """Run a shell hook command under the sandbox + consent gate.
 
-    The hook receives event + context as JSON on stdin.  Its output (stdout /
-    stderr) is treated as logs only and **never parsed**.  The OS does not
-    consume hook output.  Push from shell hooks is deferred.
+    The hook receives event + context as JSON on stdin.  Two output disciplines,
+    selected by ``capture_stdout`` (#2069):
+
+    * ``capture_stdout=False`` (``shell_exec``, the default): output is treated as
+      logs only and **never parsed** — the runner is a pure side-effect and
+      returns ``None``.
+    * ``capture_stdout=True`` (``shell_push``): on a successful (exit-0) run the
+      decoded **stdout is returned** for the caller to parse as a JSON
+      push-directive.  Any failure (consent refusal, invalid command, non-zero
+      exit, timeout, exception) returns ``None`` so the caller skips the push
+      (fail-safe).  ``stderr`` is always logs.
 
     Parameters
     ----------
     command:
-        The raw shell command string from ``HookDef.shell``.  Split via
-        ``shlex.split``; executed with ``shell=False`` (no shell injection).
+        The raw shell command string from ``HookDef.shell_exec`` /
+        ``HookDef.shell_push``.  Split via ``shlex.split``; executed with
+        ``shell=False`` (no shell injection).
     event_context:
         Dict serialised as JSON and passed to the subprocess on stdin.
     timeout_seconds:
@@ -256,11 +267,17 @@ async def run_shell_hook(
         Override the allowlist file path (used by tests to point at a tmp
         file).  Defaults to ``~/.reyn/shell-hooks-allowlist.json`` (or the
         ``REYN_SHELL_HOOKS_ALLOWLIST`` env var).
+    capture_stdout:
+        When ``True`` (``shell_push``) return the decoded stdout on a successful
+        run; when ``False`` (``shell_exec``, default) ignore output and return
+        ``None``.
 
     Returns
     -------
-    None
-        Always.  Output is ignored; the runner is a pure side-effect call.
+    str | None
+        The decoded stdout when ``capture_stdout=True`` and the run succeeded;
+        otherwise ``None`` (always ``None`` for ``capture_stdout=False``, and on
+        any failure in either mode).
 
     Notes
     -----
@@ -321,8 +338,10 @@ async def run_shell_hook(
             cwd=cwd,
         )
 
-        # stdout / stderr are LOGS — never parsed.
-        if result.stdout.strip():
+        # stderr is ALWAYS logs. stdout is logs for shell_exec; for shell_push
+        # (capture_stdout) it is the JSON push-directive the caller parses — so
+        # don't log it as a side-effect line, return it below.
+        if not capture_stdout and result.stdout.strip():
             _log.debug(
                 "shell-hook %r stdout (logged, not parsed): %s",
                 command,
@@ -330,7 +349,7 @@ async def run_shell_hook(
             )
         if result.stderr.strip():
             _log.debug(
-                "shell-hook %r stderr (logged, not parsed): %s",
+                "shell-hook %r stderr (logs): %s",
                 command,
                 result.stderr[:200].decode("utf-8", errors="replace"),
             )
@@ -343,6 +362,14 @@ async def run_shell_hook(
                 result.returncode,
                 stderr_snippet or "<empty>",
             )
+            return None  # fail-safe: a failed command yields no push-directive
+
+        # Success. capture_stdout (shell_push) → return decoded stdout for the
+        # caller to parse; otherwise (shell_exec) output is ignored.
+        if capture_stdout:
+            return result.stdout.decode("utf-8", errors="replace")
+        return None
 
     except Exception as exc:
         _log.error("shell-hook %r: unexpected error: %s", command, exc)
+        return None

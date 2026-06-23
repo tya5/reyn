@@ -60,9 +60,9 @@ def _dispatcher(hooks: list[HookDef]) -> tuple[HookDispatcher, dict]:
 def test_loader_captures_name_and_defaults_none():
     """Tier 2: the loader captures an explicit ``name``; absent → ``None`` (the
     dispatcher then defaults the attribution to the hook-point)."""
-    named = load_hooks([{"name": "my_cont", "on": "turn_end", "push": {"message": "x"}}])
+    named = load_hooks([{"name": "my_cont", "on": "turn_end", "template_push": {"message": "x"}}])
     assert named.hooks_for("turn_end")[0].name == "my_cont"
-    unnamed = load_hooks([{"on": "turn_end", "push": {"message": "x"}}])
+    unnamed = load_hooks([{"on": "turn_end", "template_push": {"message": "x"}}])
     assert unnamed.hooks_for("turn_end")[0].name is None
 
 
@@ -72,7 +72,7 @@ def test_loader_rejects_non_string_name():
     from reyn.hooks.schema import HookConfigError
 
     with pytest.raises(HookConfigError):
-        load_hooks([{"name": 123, "on": "turn_end", "push": {"message": "x"}}])
+        load_hooks([{"name": 123, "on": "turn_end", "template_push": {"message": "x"}}])
 
 
 # --- dispatcher attribution (named → name; unnamed → point) -----------------
@@ -81,7 +81,7 @@ def test_loader_rejects_non_string_name():
 @pytest.mark.asyncio
 async def test_dispatcher_uses_name_when_set():
     """Tier 2: a named push hook attributes with the hook's ``name``."""
-    hook = HookDef(on="turn_end", name="my_cont", push=PushBlock(message="go", wake=True))
+    hook = HookDef(on="turn_end", name="my_cont", template_push=PushBlock(message="go", wake=True))
     disp, seams = _dispatcher([hook])
 
     await disp.dispatch("turn_end", {})
@@ -95,7 +95,7 @@ async def test_dispatcher_uses_name_when_set():
 async def test_dispatcher_defaults_to_point_when_unnamed():
     """Tier 2: an unnamed push hook defaults the attribution to the lifecycle
     point — preserving slice-5b ``[hook:<point>]`` (back-compat)."""
-    hook = HookDef(on="turn_start", name=None, push=PushBlock(message="go", wake=False))
+    hook = HookDef(on="turn_start", name=None, template_push=PushBlock(message="go", wake=False))
     disp, seams = _dispatcher([hook])
 
     await disp.dispatch("turn_start", {})

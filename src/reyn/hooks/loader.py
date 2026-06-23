@@ -4,8 +4,8 @@ Entry point: ``load_hooks(raw)`` — accepts the raw value of the ``hooks:``
 key from a reyn.yaml dict and returns a ``HookRegistry``.
 
 Validation is *structural only* (field presence, types, hook-point membership,
-push/shell mutual-exclusion).  Template *semantics* are not validated here —
-rendering is a later slice.
+the template_push / shell_exec / shell_push mutual-exclusion — exactly one).
+Template *semantics* are not validated here — rendering is a later slice.
 
 Validation errors raise ``HookConfigError`` with a decision-enabling message
 that names the entry index and the failing field so the operator can fix the
@@ -32,13 +32,13 @@ _log = logging.getLogger(__name__)
 
 
 def _parse_push_block(raw: object, entry_index: int) -> PushBlock:
-    """Validate and convert the ``push:`` sub-dict to a ``PushBlock``.
+    """Validate and convert the ``template_push:`` sub-dict to a ``PushBlock``.
 
     All Jinja2 template strings are stored raw; no rendering here.
     """
     if not isinstance(raw, dict):
         raise HookConfigError(
-            f"hooks[{entry_index}].push must be a mapping, "
+            f"hooks[{entry_index}].template_push must be a mapping, "
             f"got {type(raw).__name__!r}."
         )
 
@@ -46,23 +46,23 @@ def _parse_push_block(raw: object, entry_index: int) -> PushBlock:
     message = raw.get("message")
     if message is None:
         raise HookConfigError(
-            f"hooks[{entry_index}].push.message is required."
+            f"hooks[{entry_index}].template_push.message is required."
         )
     if not isinstance(message, str):
         raise HookConfigError(
-            f"hooks[{entry_index}].push.message must be a string, "
+            f"hooks[{entry_index}].template_push.message must be a string, "
             f"got {type(message).__name__!r}."
         )
     if not message.strip():
         raise HookConfigError(
-            f"hooks[{entry_index}].push.message must not be empty."
+            f"hooks[{entry_index}].template_push.message must not be empty."
         )
 
     # Optional: wake (bool or Jinja2 template string → bool, default True)
     raw_wake = raw.get("wake", True)
     if not isinstance(raw_wake, (bool, str)):
         raise HookConfigError(
-            f"hooks[{entry_index}].push.wake must be a bool or template string, "
+            f"hooks[{entry_index}].template_push.wake must be a bool or template string, "
             f"got {type(raw_wake).__name__!r}."
         )
     wake: bool | str = raw_wake
@@ -71,7 +71,7 @@ def _parse_push_block(raw: object, entry_index: int) -> PushBlock:
     raw_push_when = raw.get("push_when", "true")
     if not isinstance(raw_push_when, (bool, str)):
         raise HookConfigError(
-            f"hooks[{entry_index}].push.push_when must be a bool or template string, "
+            f"hooks[{entry_index}].template_push.push_when must be a bool or template string, "
             f"got {type(raw_push_when).__name__!r}."
         )
     # Normalise a plain bool to its string form so the type is uniform.
@@ -84,7 +84,7 @@ def _parse_push_block(raw: object, entry_index: int) -> PushBlock:
     raw_session = raw.get("session", None)
     if raw_session is not None and not isinstance(raw_session, str):
         raise HookConfigError(
-            f"hooks[{entry_index}].push.session must be a string or null, "
+            f"hooks[{entry_index}].template_push.session must be a string or null, "
             f"got {type(raw_session).__name__!r}."
         )
     session: str | None = raw_session if raw_session else None
@@ -129,39 +129,38 @@ def _parse_entry(raw: object, entry_index: int) -> HookDef:
             f"Allowed: {sorted_points}."
         )
 
-    # ── push / shell mutual-exclusion ──────────────────────────────────────
-    has_push = "push" in raw
-    has_shell = "shell" in raw
-
-    if has_push and has_shell:
+    # ── scheme: exactly one of template_push / shell_exec / shell_push (#2069) ─
+    present = [k for k in ("template_push", "shell_exec", "shell_push") if k in raw]
+    if len(present) > 1:
         raise HookConfigError(
-            f"hooks[{entry_index}]: 'push' and 'shell' are mutually exclusive; "
-            f"specify exactly one."
+            f"hooks[{entry_index}]: template_push / shell_exec / shell_push are "
+            f"mutually exclusive; specify exactly one (got {present})."
         )
-    if not has_push and not has_shell:
+    if not present:
         raise HookConfigError(
-            f"hooks[{entry_index}]: exactly one of 'push' or 'shell' is required."
+            f"hooks[{entry_index}]: exactly one of template_push / shell_exec / "
+            f"shell_push is required."
         )
 
-    # ── push block ─────────────────────────────────────────────────────────
-    push_block: PushBlock | None = None
-    if has_push:
-        push_block = _parse_push_block(raw["push"], entry_index)
+    # ── template_push block ──────────────────────────────────────────────────
+    template_push: PushBlock | None = None
+    if "template_push" in raw:
+        template_push = _parse_push_block(raw["template_push"], entry_index)
 
-    # ── shell ──────────────────────────────────────────────────────────────
-    shell: str | None = None
-    if has_shell:
-        shell_raw = raw["shell"]
-        if not isinstance(shell_raw, str):
+    # ── shell_exec / shell_push (each a non-empty command string) ─────────────
+    def _shell_cmd(key: str) -> str:
+        cmd = raw[key]
+        if not isinstance(cmd, str):
             raise HookConfigError(
-                f"hooks[{entry_index}].shell must be a string, "
-                f"got {type(shell_raw).__name__!r}."
+                f"hooks[{entry_index}].{key} must be a string, "
+                f"got {type(cmd).__name__!r}."
             )
-        if not shell_raw.strip():
-            raise HookConfigError(
-                f"hooks[{entry_index}].shell must not be empty."
-            )
-        shell = shell_raw
+        if not cmd.strip():
+            raise HookConfigError(f"hooks[{entry_index}].{key} must not be empty.")
+        return cmd
+
+    shell_exec: str | None = _shell_cmd("shell_exec") if "shell_exec" in raw else None
+    shell_push: str | None = _shell_cmd("shell_push") if "shell_push" in raw else None
 
     # ── matcher (optional, reserved) ───────────────────────────────────────
     matcher_raw = raw.get("matcher", None)
@@ -185,8 +184,9 @@ def _parse_entry(raw: object, entry_index: int) -> HookDef:
     return HookDef(
         on=on_key,
         name=name,
-        push=push_block,
-        shell=shell,
+        template_push=template_push,
+        shell_exec=shell_exec,
+        shell_push=shell_push,
         matcher=matcher,
     )
 
