@@ -72,15 +72,16 @@ def test_skill_allowed_is_the_profilelayer_decision(allowed, name) -> None:
 
 @pytest.mark.parametrize("allowed", [None, [], ["a"], ["a", "b"]])
 @pytest.mark.parametrize("name", ["a", "b", "z"])
-def test_from_allowlists_matches_agentprofile_source(allowed, name) -> None:
+def test_from_allowlists_matches_default_profile_source(allowed, name) -> None:
     """Tier 1: ProfileLayer.from_allowlists(allowed_skills=L) is byte-identical to
-    ProfileLayer(AgentProfile(allowed_skills=L)) on the SKILL axis — the S2 factory
-    introduces no semantic drift from the existing AgentProfile-backed layer."""
+    reading the agent's spec ProfileLayer(AgentProfile(allowed_skills=L).default_profile())
+    on the SKILL axis — the #2074 S4b extracted-vs-spec read identity (default_profile().
+    skill_allow == allowed_skills), so the layer-rewiring introduces no drift."""
     from_factory = ProfileLayer.from_allowlists(allowed_skills=allowed).allows(AX.SKILL, name)
-    from_profile = ProfileLayer(
-        AgentProfile(name="_", allowed_skills=allowed)
+    from_spec = ProfileLayer(
+        AgentProfile(name="_", allowed_skills=allowed).default_profile()
     ).allows(AX.SKILL, name)
-    assert from_factory is from_profile
+    assert from_factory is from_spec
 
 
 def test_skill_allowed_does_not_constrain_other_axes() -> None:
