@@ -281,6 +281,7 @@ The practical consequence: when a code path appears to "lack a capability," the 
 - [../architecture/phase-vs-skill-vs-os.md](../architecture/phase-vs-skill-vs-os.md) — responsibility boundaries
 - [../runtime/workspace.md](../runtime/workspace.md) — Workspace in depth
 - [../runtime/events.md](../runtime/events.md) — full event taxonomy
+- [../runtime/hooks.md](../runtime/hooks.md) — agent lifecycle hooks (operator/skill-scoped layer)
 - [Reference: control-ir](../../reference/runtime/control-ir.md) — Control IR op semantics
 - [Reference: llm-output-contract](../../reference/runtime/llm-output-contract.md) — the LLM JSON shape
 - [Reference: events](../../reference/runtime/events.md) — event types
