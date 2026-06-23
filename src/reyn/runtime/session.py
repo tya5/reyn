@@ -1502,6 +1502,7 @@ class Session:
             # router-dispatched task.* ops hit the assignee/requester CAS gate.
             session_id=self._session_id,
             task_backend=self._task_backend,
+            hook_dispatcher=self._hook_dispatcher,  # #1800 slice 5c: task_start/end (router path)
             agent_name=self.agent_name,
             agent_role=self._agent_role,
             output_language=self.output_language,
@@ -3496,6 +3497,7 @@ class Session:
                 state_log=self._state_log,
                 truncate_eligible_hook=hook,
                 session_id=self._session_id,  # FP-0043 S5: per-session WAL routing
+                hook_dispatcher=self._hook_dispatcher,  # #1800 slice 5c: skill_start/end
             )
         return self._skill_registry
 
@@ -3525,6 +3527,7 @@ class Session:
             task_backend=self._task_backend,  # #1953 slice 3a: session-scoped Task backend
             task_waker=self._task_waker,  # #1953 slice 7: the OS TaskWaker driver
             task_session_id=self._session_id,  # #1953 slice 3: caller session identity (single-writer key)
+            hook_dispatcher=self._hook_dispatcher,  # #1800 slice 5c: task_start/end (phase path)
             mcp_servers=mcp_servers,
             intervention_bus=intervention_bus,
             subscribers=subscribers,
@@ -4752,6 +4755,7 @@ class Session:
             ),
             agent_id=self._agent_id,
             contextual_permission=self._contextual_permission,  # #1827 S3 → control-IR OpContext
+            hook_dispatcher=self._hook_dispatcher,  # #1800 slice 5c: complete-by-construction (both router callers)
         )
 
     async def _file_op(self, op_dict: dict) -> dict:

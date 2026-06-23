@@ -68,6 +68,7 @@ def build_router_op_context(
     # CAS (the no-bypass-by-construction invariant requires the REAL session_id).
     session_id: str | None = None,
     task_backend: Any = None,
+    hook_dispatcher: Any = None,  # #1800 slice 5c: the Session's HookDispatcher
 ) -> Any:
     """Build the chat-router OpContext (the single source for both hosts).
 
@@ -147,4 +148,5 @@ def build_router_op_context(
         # gate enforces byte-equal to the phase path (no None-placeholder mask).
         session_id=session_id,
         task_backend=task_backend,
+        hook_dispatcher=hook_dispatcher,  # #1800 slice 5c: task_start/end dispatch
     )

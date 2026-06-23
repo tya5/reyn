@@ -191,6 +191,14 @@ class OpContext:
     # inject a recording waker to verify the call-site fires.
     task_waker: "object | None" = None
 
+    # #1800 slice 5c: the awaited HookDispatcher (the Session's instance, with the
+    # loaded hooks registry + the _put_inbox/_stage/_run_shell seams from 5b),
+    # threaded down the SAME Session → router / kernel chain as task_waker. The
+    # task op handlers (_create → task_start, _update_status→COMPLETED → task_end)
+    # call ``ctx.hook_dispatcher.dispatch(...)``. None = no-op (direct/test
+    # construction or no hooks) → the dispatch site is skipped.
+    hook_dispatcher: "object | None" = None
+
     # #1953 slice 3 (rework): the caller's session identity (#1814 per-contextId
     # routing-key ``Session._session_id``), threaded down the same chain. This is
     # the single-writer key for Task ``update_status`` — the backend CAS-rejects

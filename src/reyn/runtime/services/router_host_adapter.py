@@ -148,6 +148,7 @@ class RouterHostAdapter:
         # ops hit the SAME assignee/requester gate as the phase path (no None mask).
         session_id: str | None = None,
         task_backend: Any = None,
+        hook_dispatcher: Any = None,  # #1800 slice 5c: the Session's HookDispatcher
         # FP-0034 Phase 2 step 1: ActionEmbeddingIndex + EmbeddingProvider
         # for search_actions.  When all three are set (= operator configured
         # ``action_retrieval.embedding_class`` AND Session built a
@@ -274,6 +275,7 @@ class RouterHostAdapter:
         self._contextual_permission = contextual_permission
         self._session_id = session_id  # #1953 dynamic-wire: task.* CAS gate key
         self._task_backend = task_backend  # #1953 dynamic-wire: session-scoped Task backend
+        self._hook_dispatcher = hook_dispatcher  # #1800 slice 5c: task_start/end dispatch
         self._turn_budget_engine = turn_budget_engine
         self._turn_cancel_fn = turn_cancel_fn  # #1468
         self._agent_name = agent_name
@@ -1533,6 +1535,7 @@ class RouterHostAdapter:
             # task.* CAS gate enforces (no None-placeholder mask-pass).
             session_id=self._session_id,
             task_backend=self._task_backend,
+            hook_dispatcher=self._hook_dispatcher,  # #1800 slice 5c
         )
 
     def _set_cancel_event(self, event: asyncio.Event) -> None:
