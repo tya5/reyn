@@ -214,6 +214,16 @@ async def _create(op, ctx: OpContext, caller) -> dict:
             and created.assignee != created.requester):
         await waker.wake_assigned(
             created, fenced_description=_fence_text(ctx, created.description))
+    # #1800 slice 5c: task_start lifecycle hooks — the task has been created
+    # (backend.create + the P6 audit). None dispatcher (direct/test construction
+    # or no hooks) → no-op.
+    hook_dispatcher = getattr(ctx, "hook_dispatcher", None)
+    if hook_dispatcher is not None:
+        await hook_dispatcher.dispatch(
+            "task_start",
+            {"point": "task_start", "task_id": created.task_id,
+             "name": created.name, "assignee": created.assignee},
+        )
     return _ok("task.create", task=created.to_dict())
 
 
@@ -247,6 +257,15 @@ async def _update_status(op, ctx: OpContext, caller) -> dict:
             if waker is not None:
                 await waker.wake_ready_dependent(
                     p, fenced_description=_fence_text(ctx, p.description))
+        # #1800 slice 5c: task_end lifecycle hooks — the task reached COMPLETED.
+        # None dispatcher → no-op. (Aborted tasks terminate via the separate
+        # _abort handler — see the task_end symmetry note there.)
+        hook_dispatcher = getattr(ctx, "hook_dispatcher", None)
+        if hook_dispatcher is not None:
+            await hook_dispatcher.dispatch(
+                "task_end",
+                {"point": "task_end", "task_id": task.task_id, "status": "completed"},
+            )
     elif task.status is TaskState.FAILED:
         # slice 6-ext §C: a non-completed terminal (the assignee declared `failed`)
         # doesn't satisfy a dependency edge → route the disposition to the parent's
@@ -421,6 +440,18 @@ async def _abort(op, ctx: OpContext, caller) -> dict:
     # dependent gets a recovery decision (the OQ-7/H5 gap-close). The cascade's
     # descendants have an in-subtree (now terminal) parent → the guard skips them.
     await _route_terminal_to_parent(ctx, _backend(ctx), root, disposition="aborted")
+    # #1800 slice 5c: task_end lifecycle hooks for the aborted sub-tree — SYMMETRIC
+    # with task_start (at create) + task_end (at COMPLETED): every started task
+    # fires an end. ``status="aborted"`` lets an operator discriminate completion
+    # from abort. Mirrors the task_disposition loop above (one per aborted task).
+    # None dispatcher → no-op.
+    hook_dispatcher = getattr(ctx, "hook_dispatcher", None)
+    if hook_dispatcher is not None:
+        for t in aborted:
+            await hook_dispatcher.dispatch(
+                "task_end",
+                {"point": "task_end", "task_id": t.task_id, "status": "aborted"},
+            )
     return _ok("task.abort", task=root.to_dict())
 
 

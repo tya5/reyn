@@ -142,6 +142,7 @@ class ControlIRExecutor:
         sandbox_backend: "SandboxBackend | None" = None,
         task_backend: Any = None,  # #1953 slice 3a: session-scoped Task backend instance
         task_waker: Any = None,  # #1953 slice 7: the OS TaskWaker driver
+        hook_dispatcher: Any = None,  # #1800 slice 5c: the HookDispatcher
         session_id: Any = None,  # #1953 slice 3: caller session identity (single-writer key)
         multimodal_config: "MultimodalConfig | None" = None,
         media_store: "MediaStore | None" = None,
@@ -188,6 +189,7 @@ class ControlIRExecutor:
         self._contextual_permission = contextual_permission  # #1912b
         self._task_backend = task_backend  # #1953 slice 3a
         self._task_waker = task_waker  # #1953 slice 7
+        self._hook_dispatcher = hook_dispatcher  # #1800 slice 5c
         self._task_session_id = session_id  # #1953 slice 3
         # FP-0008 #1115 Stage 2: per-run injected exec backend instance. When
         # set (a dual-Protocol container backend), it takes precedence over
@@ -506,6 +508,7 @@ class ControlIRExecutor:
             task_backend=self._task_backend,
             # #1953 slice 7: the OS TaskWaker (abort/failed/ready → session wake).
             task_waker=self._task_waker,
+            hook_dispatcher=self._hook_dispatcher,  # #1800 slice 5c
             # #1953 slice 3: caller session identity (Task single-writer key).
             session_id=self._task_session_id,
             # FP-0008 #1115 Stage 2 (D): phase-level default SandboxPolicy

@@ -81,6 +81,7 @@ class OSRuntime:
         contextual_permission: "object | None" = None,  # #1912: per-session capability narrowing → phase RouterLoop + control-IR gates
         task_backend: "object | None" = None,  # #1953 slice 3a: session-scoped Task backend → control-IR + preprocessor op gates
         task_waker: "object | None" = None,  # #1953 slice 7: the OS TaskWaker → control-IR + preprocessor op ctx
+        hook_dispatcher: "object | None" = None,  # #1800 slice 5c: HookDispatcher → control-IR + preprocessor op ctx
         task_session_id: "str | None" = None,  # #1953 slice 3: caller session identity (Task single-writer key)
         router_config: "object | None" = None,  # #1829 S3b: reyn.yaml llm.router.*
         retry_config: "object | None" = None,  # #1835: reyn.yaml llm.retry.*
@@ -235,6 +236,7 @@ class OSRuntime:
             contextual_permission=contextual_permission,  # #1912b: control-IR op gate
             task_backend=task_backend,  # #1953 slice 3a
             task_waker=task_waker,  # #1953 slice 7
+            hook_dispatcher=hook_dispatcher,  # #1800 slice 5c
             session_id=task_session_id,  # #1953 slice 3
             sandbox_backend=sandbox_backend,
             multimodal_config=multimodal_config,
@@ -262,6 +264,7 @@ class OSRuntime:
             contextual_permission=contextual_permission,  # #1912b: preprocessor run_op/iterate gate
             task_backend=task_backend,  # #1953 slice 3a
             task_waker=task_waker,  # #1953 slice 7
+            hook_dispatcher=hook_dispatcher,  # #1800 slice 5c
             session_id=task_session_id,  # #1953 slice 3
         )
         # FP-0020 Component A: all mutable run-scope state encapsulated in RunState.

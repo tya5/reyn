@@ -703,8 +703,8 @@
 # and is EITHER a ``push`` (inject an attributed ``[hook:<point>]`` message) OR a
 # ``shell`` (run an external command, sandbox-gated, output ignored).
 #
-#   on:        turn_start | turn_end | session_start | session_end
-#              (skill_*/task_* points land in a later slice)
+#   on:        turn_start | turn_end | session_start | session_end |
+#              skill_start | skill_end | task_start | task_end
 #   push:      message:   Jinja2 template → the message text
 #              wake:      true  → start a new turn (self-continuation)   [default]
 #                         false → ride along with the next turn (passive context)

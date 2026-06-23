@@ -60,6 +60,7 @@ class SkillRegistry:
         state_log: "StateLog | None" = None,
         truncate_eligible_hook: Callable[[], Awaitable[None]] | None = None,
         session_id: str = "main",
+        hook_dispatcher: "object | None" = None,
     ) -> None:
         """
         truncate_eligible_hook: optional async callback fired *after* each
@@ -83,6 +84,10 @@ class SkillRegistry:
         self._skills_dir = self._state_dir / "skills"
         self._state_log = state_log
         self._truncate_hook = truncate_eligible_hook
+        # #1800 slice 5c: the Session's HookDispatcher (threaded in by the Session
+        # that owns this registry). start() → skill_start, complete() → skill_end.
+        # None = no dispatcher (direct/test construction or no hooks) → no-op.
+        self._hook_dispatcher = hook_dispatcher
         # In-memory cache: run_id → SkillSnapshot. Populated on start() /
         # load_active(); cleared on complete().
         self._snapshots: dict[str, SkillSnapshot] = {}
@@ -180,6 +185,14 @@ class SkillRegistry:
             snap.last_phase_applied_seq = seq
         self._save(snap)
         self._snapshots[run_id] = snap
+        # #1800 slice 5c: skill_start lifecycle hooks — fired AFTER the
+        # skill_started WAL event (mirrors 5b's emit-then-dispatch). None
+        # dispatcher (direct/test construction or no hooks) → no-op.
+        if self._hook_dispatcher is not None:
+            await self._hook_dispatcher.dispatch(
+                "skill_start",
+                {"point": "skill_start", "run_id": run_id, "skill_name": skill_name},
+            )
         return snap
 
     async def advance_phase(
@@ -260,6 +273,18 @@ class SkillRegistry:
                 target=self._agent_name,
                 agent=self._agent_name,
                 run_id=run_id,
+            )
+        # #1800 slice 5c: skill_end lifecycle hooks — after the skill_completed /
+        # skill_discarded WAL event, BEFORE the snapshot teardown so the ctx is
+        # valid. None dispatcher → no-op. NOTE: an interrupted/errored skill run
+        # emits ``skill_run_interrupted`` and BYPASSES complete() (run_orchestrator),
+        # so skill_end fires for success / discarded / WorkflowAborted only — the
+        # interrupt-branch asymmetry is a tracked 5c follow-up (firing skill_end
+        # there needs the dispatcher at the orchestrator branch, a broader change).
+        if self._hook_dispatcher is not None:
+            await self._hook_dispatcher.dispatch(
+                "skill_end",
+                {"point": "skill_end", "run_id": run_id, "status": status},
             )
         snap_path = self._skills_dir / f"{run_id}.snapshot.json"
         try:
