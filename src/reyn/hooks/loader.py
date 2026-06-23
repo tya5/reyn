@@ -172,8 +172,19 @@ def _parse_entry(raw: object, entry_index: int) -> HookDef:
         )
     matcher: str | None = matcher_raw if matcher_raw else None
 
+    # ── name (optional, #1800 slice 6) — the [hook:name] attribution label; ──
+    # absent / blank → None (the dispatcher defaults it to the hook-point).
+    name_raw = raw.get("name", None)
+    if name_raw is not None and not isinstance(name_raw, str):
+        raise HookConfigError(
+            f"hooks[{entry_index}].name must be a string or null, "
+            f"got {type(name_raw).__name__!r}."
+        )
+    name: str | None = name_raw.strip() if isinstance(name_raw, str) and name_raw.strip() else None
+
     return HookDef(
         on=on_key,
+        name=name,
         push=push_block,
         shell=shell,
         matcher=matcher,

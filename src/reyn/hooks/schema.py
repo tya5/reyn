@@ -101,6 +101,10 @@ class HookDef:
     ------
     on:
         Hook-point name — one of ``ALLOWED_HOOK_POINTS``.
+    name:
+        Optional operator label for the hook (#1800 slice 6). Surfaced as the
+        ``[hook:<name>]`` attribution prefix on a push. **Absent → the dispatcher
+        defaults it to the hook-point** (``on``), preserving slice-5b behavior.
     push:
         Inbox-push hook block.  Mutually exclusive with ``shell``.
     shell:
@@ -111,6 +115,7 @@ class HookDef:
     """
 
     on: str
+    name: str | None = field(default=None)
     push: PushBlock | None = field(default=None)
     shell: str | None = field(default=None)
     matcher: str | None = field(default=None)
