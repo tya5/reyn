@@ -39,6 +39,7 @@ from reyn.security.permissions.permissions import (
 
 if TYPE_CHECKING:
     from reyn.runtime.profile import AgentProfile
+    from reyn.security.permissions.capability_profile import CapabilityProfile
     from reyn.security.permissions.permissions import PermissionDecl
     from reyn.security.sandbox.policy import SandboxPolicy
 
@@ -204,27 +205,18 @@ class SandboxLayer:
         return True
 
 
-@dataclass(frozen=True)
-class _AllowlistSource:
-    """A minimal :class:`ProfileLayer` source carrying just the per-agent
-    allowlists (#2074 S2). Lets a caller route an already-extracted
-    ``allowed_skills`` / ``allowed_mcp`` through ``ProfileLayer`` (the single
-    SKILL/MCP-axis decision) without synthesizing a full ``AgentProfile``.
-    ``None`` = unrestricted on that axis (⊤). Duck-typed by ProfileLayer
-    (``.allowed_skills`` / ``.allowed_mcp``). S4a repoints the per-agent layer at
-    the unified capability spec."""
-
-    allowed_skills: "frozenset[str] | None" = None
-    allowed_mcp: "frozenset[str] | None" = None
-
-
 class ProfileLayer:
-    """The ALLOWLIST layer: ``AgentProfile`` agent-level allowlists. ``None`` means
-    no per-agent restriction (⊤). Generalizes the existing ``allowed_mcp`` ∩
-    precedent (agent-list ∩ project) to the unified model."""
+    """The per-agent ALLOWLIST layer (#2074) — reads the agent's **default
+    capability spec** (a :class:`CapabilityProfile`) on the SKILL / MCP axes, so one
+    primitive (the unified spec) feeds both binding adapters (per-agent + per-context).
 
-    def __init__(self, profile: "AgentProfile | _AllowlistSource | None") -> None:
-        self._profile = profile
+    The spec is ``AgentProfile.default_profile()`` where the profile is available
+    (the canonical source), else built from already-extracted allowlists via
+    :meth:`from_allowlists` (byte-identical — the same ``skill_allow`` / ``mcp_allow``
+    values). A ``None`` spec, or a ``None`` axis allow-list, is unrestricted (⊤)."""
+
+    def __init__(self, spec: "CapabilityProfile | None") -> None:
+        self._spec = spec
 
     @classmethod
     def from_allowlists(
@@ -233,24 +225,27 @@ class ProfileLayer:
         allowed_skills: "object | None" = None,
         allowed_mcp: "object | None" = None,
     ) -> "ProfileLayer":
-        """Build a per-agent layer from raw allowlists (#2074 S2). ``None`` =
-        unrestricted on that axis; an empty / non-empty collection narrows to
-        exactly its members — byte-identical to the legacy inline check
-        ``allowed is None or value in allowed``."""
-        return cls(_AllowlistSource(
-            allowed_skills=frozenset(allowed_skills) if allowed_skills is not None else None,
-            allowed_mcp=frozenset(allowed_mcp) if allowed_mcp is not None else None,
+        """Build a per-agent layer from already-extracted ``allowed_skills`` /
+        ``allowed_mcp`` by wrapping them in the canonical capability spec (#2074 S4b).
+        Byte-identical to ``AgentProfile.default_profile()`` (same skill_allow/
+        mcp_allow values). ``None`` = unrestricted on that axis."""
+        from reyn.security.permissions.capability_profile import CapabilityProfile
+
+        return cls(CapabilityProfile(
+            name="_per_agent_default",
+            skill_allow=tuple(allowed_skills) if allowed_skills is not None else None,
+            mcp_allow=tuple(allowed_mcp) if allowed_mcp is not None else None,
         ))
 
     def allows(self, axis: CapabilityAxis, value: Any) -> bool:
-        pr = self._profile
-        if pr is None:
+        sp = self._spec
+        if sp is None:
             return True
         if axis is CapabilityAxis.SKILL:
-            return pr.allowed_skills is None or value in pr.allowed_skills
+            return sp.skill_allow is None or value in sp.skill_allow
         if axis is CapabilityAxis.MCP:
-            return pr.allowed_mcp is None or value in pr.allowed_mcp
-        return True  # profile constrains only skill / mcp
+            return sp.mcp_allow is None or value in sp.mcp_allow
+        return True  # the per-agent spec constrains only skill / mcp (allow-lists)
 
 
 @dataclass(frozen=True)
@@ -417,5 +412,7 @@ class EffectivePermission:
         return cls([
             AgentLayer(decl, approval_check=approval_check, file_zone_root=file_zone_root),
             SandboxLayer(sandbox_policy),
-            ProfileLayer(profile),
+            # #2074 S4b: the per-agent layer reads the agent's default capability
+            # spec (the unified primitive), not the AgentProfile directly.
+            ProfileLayer(profile.default_profile() if profile is not None else None),
         ])

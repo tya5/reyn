@@ -69,7 +69,9 @@ def test_falsification_removing_a_layer_regrants_a_denied_capability() -> None:
 
     # Same shape for a profile deny (skill allowlist):
     prof = AgentProfile(name="a", allowed_skills=["allowed_skill"])
-    eff = EffectivePermission([AgentLayer(PermissionDecl()), ProfileLayer(prof)])
+    eff = EffectivePermission(
+        [AgentLayer(PermissionDecl()), ProfileLayer(prof.default_profile())]
+    )
     assert eff.allows(AX.SKILL, "blocked_skill") is False
     assert EffectivePermission([AgentLayer(PermissionDecl())]).allows(
         AX.SKILL, "blocked_skill"
@@ -108,7 +110,7 @@ def test_unconstrained_axis_is_top() -> None:
     narrows the ∩ on those axes (the sandbox doesn't gate skills; the profile
     doesn't gate files)."""
     assert SandboxLayer(SandboxPolicy()).allows(AX.SKILL, "any") is True
-    assert ProfileLayer(AgentProfile(name="a")).allows(AX.FILE_WRITE, "/x") is True
+    assert ProfileLayer(AgentProfile(name="a").default_profile()).allows(AX.FILE_WRITE, "/x") is True
     # None layers are fully ⊤.
     assert SandboxLayer(None).allows(AX.FILE_WRITE, "/anything") is True
     assert ProfileLayer(None).allows(AX.MCP, "any-server") is True

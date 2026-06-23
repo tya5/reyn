@@ -499,19 +499,41 @@ The authorization layers above answer: *"has this capability been granted?"* A s
 At gate time, a capability is permitted only if **every** active layer allows it:
 
 ```
-effective = AgentLayer ∩ SandboxLayer ∩ ProfileLayer
+effective = AgentLayer ∩ SandboxLayer ∩ ProfileLayer ∩ ContextualLayer
 allows(axis, value) = all(layer.allows(axis, value) for layer in layers)
 ```
 
-### The three restrict layers
+### The restrict layers
 
 | Layer | What it models | Role |
 |---|---|---|
 | **AgentLayer** | Skill declaration + default zone baseline + runtime approvals | Grant layer |
 | **SandboxLayer** | Runtime sandbox caps (paths, network, subprocess, env) | Restrict-only |
-| **ProfileLayer** | Agent-level allowlists (skills, MCP servers) | Restrict-only |
+| **ProfileLayer** | Per-agent capability narrowing — the agent's default capability spec | Restrict-only |
+| **ContextualLayer** | Per-session capability narrowing — delegation / topology / untrusted-auto | Restrict-only |
 
-`SandboxLayer` and `ProfileLayer` are **restrict-only**: they can narrow a permission, but cannot re-grant something the `AgentLayer` denied. This is a structural property of the conjunction (`all(...)`) — no layer's `False` can be overridden by any other layer.
+`SandboxLayer`, `ProfileLayer`, and `ContextualLayer` are **restrict-only**: they can narrow a permission, but cannot re-grant something the `AgentLayer` denied. This is a structural property of the conjunction (`all(...)`) — no layer's `False` can be overridden by any other layer.
+
+### One spec, two binding adapters (#2074)
+
+The two narrowing layers are **two bindings of one primitive**: both read a
+`CapabilityProfile` (the single capability-narrowing spec, covering the
+`skill` / `mcp` / `tool` axes + catalog-`category` visibility), separating the
+*spec* (what is narrowed) from the *binding* (when/how it is applied):
+
+- **`ProfileLayer` — per-agent default binding.** Reads the agent's
+  `AgentProfile.default_profile()` (a `CapabilityProfile`). The operator surface
+  stays the natural `allowed_skills` / `allowed_mcp` keys in
+  `.reyn/agents/<name>/profile.yaml`; these map onto the spec's `skill_allow` /
+  `mcp_allow` axes internally.
+- **`ContextualLayer` — per-session dynamic binding.** Reads a `CapabilityProfile`
+  resolved per-session from a delegation / topology role / untrusted-content
+  auto-profile (`.reyn/capability_profiles/<name>.yaml`), composable
+  (most-restrictive-wins) and subtractive-only.
+
+Both feed the **unchanged** conjunctive ∩ above. A `None` spec, or a `None`
+axis allow-list, is unrestricted (⊤) — so an agent/session with no narrowing is
+byte-identical to a build without the capability spec.
 
 ### How the two "layer" concepts relate
 

@@ -160,7 +160,7 @@ async def handle(op: MCPIROp, ctx: OpContext, caller: Literal["preprocessor", "c
             raise RuntimeError("mcp op requires intervention_bus on OpContext")
         await ctx.permission_resolver.require_mcp(
             ctx.permission_decl, op.server, ctx.intervention_bus,
-            contextual=getattr(ctx, "contextual_permission", None),  # #2074 S4a
+            contextual=ctx.contextual_permission,  # #2074 S4a/S4b (OpContext field)
         )
     return await _execute(op, ctx)
 
