@@ -231,13 +231,22 @@ class ContextualPermission:
     from a delegation / topology role / ephemeral profile (later slices wire those
     sources) and carried on ``OpContext.contextual_permission``.
 
-    S1 covers the TOOL axis: ``tool_allow`` (None = unconstrained) ∩ ``¬tool_deny``.
-    Further axes are added as later slices wire them — until then this term is ⊤
-    on those axes (never narrows).
+    Per-axis ``*_allow`` (None = unconstrained ⊤) ∩ ``¬*_deny``. The TOOL axis is
+    enforced by :class:`ContextualLayer` today; the SKILL / MCP axes are **carried
+    but not yet enforced** by ContextualLayer (the unified-spec resolver #2074 S1
+    populates them; #2074 S3 wires ContextualLayer to consume them — until then
+    this term is ⊤ on SKILL/MCP, so adding the fields changes no gate outcome).
     """
 
     tool_allow: "frozenset[str] | None" = None
     tool_deny: "frozenset[str]" = field(default_factory=frozenset)
+    # #2074 S1 (additive, inert): the SKILL / MCP axes of the unified capability
+    # spec. Carried here so one resolved term covers all axes; ContextualLayer
+    # still enforces only TOOL (S3 wires SKILL/MCP). Inert defaults = ⊤.
+    skill_allow: "frozenset[str] | None" = None
+    skill_deny: "frozenset[str]" = field(default_factory=frozenset)
+    mcp_allow: "frozenset[str] | None" = None
+    mcp_deny: "frozenset[str]" = field(default_factory=frozenset)
 
 
 class ContextualLayer:
