@@ -21,7 +21,6 @@ Filesystem isolation: allowlist tests point at a tmp_path file so
 """
 from __future__ import annotations
 
-import asyncio
 import json
 import sys
 from pathlib import Path
@@ -37,11 +36,6 @@ from reyn.security.sandbox import NoopBackend, SandboxPolicy
 # Python interpreter (same executable running pytest) — keeps tests hermetic
 # across venvs.
 _PY = sys.executable
-
-
-def _run(coro):
-    """Run a coroutine synchronously (avoids asyncio.run() in test bodies)."""
-    return asyncio.get_event_loop().run_until_complete(coro)
 
 
 def _noop_backend() -> NoopBackend:
@@ -70,7 +64,8 @@ def test_run_shell_hook_exported_from_reyn_hooks() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_output_ignored_returns_none(
+@pytest.mark.asyncio
+async def test_output_ignored_returns_none(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Tier 1: a command that writes JSON to stdout is NOT parsed as a push
@@ -89,15 +84,13 @@ def test_output_ignored_returns_none(
     )
     command = f"{_PY} -c \"{script}\""
 
-    result = _run(
-        run_shell_hook(
-            command,
-            event_context={"event": "turn_end"},
-            timeout_seconds=10,
-            sandbox_backend=_noop_backend(),
-            sandbox_policy=_policy(),
-            allowlist_path=allowlist,
-        )
+    result = await run_shell_hook(
+        command,
+        event_context={"event": "turn_end"},
+        timeout_seconds=10,
+        sandbox_backend=_noop_backend(),
+        sandbox_policy=_policy(),
+        allowlist_path=allowlist,
     )
 
     assert result is None
@@ -108,7 +101,8 @@ def test_output_ignored_returns_none(
 # ---------------------------------------------------------------------------
 
 
-def test_json_context_delivered_on_stdin(
+@pytest.mark.asyncio
+async def test_json_context_delivered_on_stdin(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Tier 1: the hook subprocess receives event_context serialised as JSON on
@@ -130,15 +124,13 @@ def test_json_context_delivered_on_stdin(
     )
     command = f"{_PY} -c \"{script}\""
 
-    _run(
-        run_shell_hook(
-            command,
-            event_context={"event": "skill_end", "skill": "my-skill"},
-            timeout_seconds=10,
-            sandbox_backend=_noop_backend(),
-            sandbox_policy=_policy(),
-            allowlist_path=allowlist,
-        )
+    await run_shell_hook(
+        command,
+        event_context={"event": "skill_end", "skill": "my-skill"},
+        timeout_seconds=10,
+        sandbox_backend=_noop_backend(),
+        sandbox_policy=_policy(),
+        allowlist_path=allowlist,
     )
 
     # The hook wrote the event name to the marker file — context was delivered.
@@ -151,7 +143,8 @@ def test_json_context_delivered_on_stdin(
 # ---------------------------------------------------------------------------
 
 
-def test_timeout_returns_none_no_crash(
+@pytest.mark.asyncio
+async def test_timeout_returns_none_no_crash(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Tier 1: a command that sleeps past the timeout returns None and does not
@@ -165,15 +158,13 @@ def test_timeout_returns_none_no_crash(
     # sleep for 60 s but timeout is 1 s → times out.
     command = f"{_PY} -c \"import time; time.sleep(60)\""
 
-    result = _run(
-        run_shell_hook(
-            command,
-            event_context={"event": "session_end"},
-            timeout_seconds=1,
-            sandbox_backend=_noop_backend(),
-            sandbox_policy=_policy(timeout=1),
-            allowlist_path=allowlist,
-        )
+    result = await run_shell_hook(
+        command,
+        event_context={"event": "session_end"},
+        timeout_seconds=1,
+        sandbox_backend=_noop_backend(),
+        sandbox_policy=_policy(timeout=1),
+        allowlist_path=allowlist,
     )
 
     assert result is None
@@ -184,7 +175,8 @@ def test_timeout_returns_none_no_crash(
 # ---------------------------------------------------------------------------
 
 
-def test_nonapproved_command_nontty_refused(
+@pytest.mark.asyncio
+async def test_nonapproved_command_nontty_refused(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Tier 1: a non-allowlisted command in a non-TTY environment without
@@ -203,15 +195,13 @@ def test_nonapproved_command_nontty_refused(
 
     command = f"{_PY} -c \"pass\""
 
-    result = _run(
-        run_shell_hook(
-            command,
-            event_context={"event": "session_start"},
-            timeout_seconds=10,
-            sandbox_backend=_noop_backend(),
-            sandbox_policy=_policy(),
-            allowlist_path=allowlist,
-        )
+    result = await run_shell_hook(
+        command,
+        event_context={"event": "session_start"},
+        timeout_seconds=10,
+        sandbox_backend=_noop_backend(),
+        sandbox_policy=_policy(),
+        allowlist_path=allowlist,
     )
 
     # Refused — fail-closed.
