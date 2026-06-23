@@ -560,3 +560,4 @@ They operate in sequence: authorization resolution (AgentLayer) determines wheth
 - [Concepts: secret handling](../runtime/secret-handling.md) — credential storage (`~/.reyn/secrets.env`)
 - [Reference: `reyn mcp`](../../reference/cli/mcp.md) — `install` subcommand and `mcp_install` gate interaction
 - [How-to: manage permissions](../../guide/for-users/manage-permissions.md)
+- [Concepts: Capability profile](../runtime/capability-profile.md) — per-agent ProfileLayer spec (skill / MCP / tool / category axes) and agent self-edit guide
