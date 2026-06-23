@@ -147,10 +147,6 @@ def patched_sdk():
 # ── tests ────────────────────────────────────────────────────────────────────
 
 
-def _run(coro):
-    return asyncio.get_event_loop().run_until_complete(coro) if False else asyncio.run(coro)
-
-
 def test_http_transport_round_trip(patched_sdk):
     """Tier 1: framework boundary (intentional SDK patch) — verifies HTTP transport config
     is forwarded correctly to the mcp SDK and that call_tool returns a valid result."""
