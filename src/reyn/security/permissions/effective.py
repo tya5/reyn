@@ -205,13 +205,43 @@ class SandboxLayer:
         return True
 
 
+@dataclass(frozen=True)
+class _AllowlistSource:
+    """A minimal :class:`ProfileLayer` source carrying just the per-agent
+    allowlists (#2074 S2). Lets a caller route an already-extracted
+    ``allowed_skills`` / ``allowed_mcp`` through ``ProfileLayer`` (the single
+    SKILL/MCP-axis decision) without synthesizing a full ``AgentProfile``.
+    ``None`` = unrestricted on that axis (⊤). Duck-typed by ProfileLayer
+    (``.allowed_skills`` / ``.allowed_mcp``). S4a repoints the per-agent layer at
+    the unified capability spec."""
+
+    allowed_skills: "frozenset[str] | None" = None
+    allowed_mcp: "frozenset[str] | None" = None
+
+
 class ProfileLayer:
     """The ALLOWLIST layer: ``AgentProfile`` agent-level allowlists. ``None`` means
     no per-agent restriction (⊤). Generalizes the existing ``allowed_mcp`` ∩
     precedent (agent-list ∩ project) to the unified model."""
 
-    def __init__(self, profile: "AgentProfile | None") -> None:
+    def __init__(self, profile: "AgentProfile | _AllowlistSource | None") -> None:
         self._profile = profile
+
+    @classmethod
+    def from_allowlists(
+        cls,
+        *,
+        allowed_skills: "object | None" = None,
+        allowed_mcp: "object | None" = None,
+    ) -> "ProfileLayer":
+        """Build a per-agent layer from raw allowlists (#2074 S2). ``None`` =
+        unrestricted on that axis; an empty / non-empty collection narrows to
+        exactly its members — byte-identical to the legacy inline check
+        ``allowed is None or value in allowed``."""
+        return cls(_AllowlistSource(
+            allowed_skills=frozenset(allowed_skills) if allowed_skills is not None else None,
+            allowed_mcp=frozenset(allowed_mcp) if allowed_mcp is not None else None,
+        ))
 
     def allows(self, axis: CapabilityAxis, value: Any) -> bool:
         pr = self._profile
@@ -295,6 +325,25 @@ def tool_contextually_denied(
     if contextual is None:
         return False
     return not ContextualLayer(contextual).allows(CapabilityAxis.TOOL, effective_name)
+
+
+def skill_allowed(allowed_skills: "object | None", skill_name: str) -> bool:
+    """The single per-agent SKILL-axis ∩ decision (#2074 S2).
+
+    Routes the per-agent ``allowed_skills`` allowlist through ``ProfileLayer`` so
+    the skill-spawn gates (skill_runner) AND the catalog filter (router host)
+    share ONE enforcement path — completing #1199's ∩ convergence for the SKILL
+    axis (previously an inline check that bypassed the ∩).
+
+    Byte-identical to the legacy ``allowed_skills is None or name in
+    allowed_skills``: ``None`` = unrestricted (⊤); ``[]`` = nothing allowed;
+    ``[a,b]`` = only those. ``skill_router`` is never passed here (it is excluded
+    from the catalog upstream and is never a spawn target), preserving its
+    exemption. S3 extends this gate with the contextual SKILL layer.
+    """
+    return EffectivePermission(
+        [ProfileLayer.from_allowlists(allowed_skills=allowed_skills)]
+    ).allows(CapabilityAxis.SKILL, skill_name)
 
 
 def _path_under(path_str: str, root: str) -> bool:

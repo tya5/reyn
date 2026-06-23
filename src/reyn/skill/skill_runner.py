@@ -245,11 +245,12 @@ class SkillRunner:
             ))
             return None
 
-        # PR15: defense-in-depth allowlist check.
-        if (
-            self._allowed_skills is not None
-            and skill_name not in self._allowed_skills
-        ):
+        # PR15 → #2074 S2: the per-agent SKILL allowlist now routes through the
+        # live ∩ (skill_allowed → ProfileLayer), the single SKILL-axis decision
+        # shared with spawn-path B + the catalog filter. Byte-identical to the
+        # legacy inline check (None = unrestricted / [] = none / [a,b] = only).
+        from reyn.security.permissions.effective import skill_allowed
+        if not skill_allowed(self._allowed_skills, skill_name):
             await self._put_outbox(SkillOutboundMessage(
                 kind="error",
                 text=(
@@ -573,11 +574,9 @@ class SkillRunner:
                 "data": {"error": f"invalid skill spec: {spec}"},
             }
 
-        # PR15: allowlist check — same defense as spawn().
-        if (
-            self._allowed_skills is not None
-            and skill_name not in self._allowed_skills
-        ):
+        # PR15 → #2074 S2: same SKILL ∩ decision as spawn-path A (skill_allowed).
+        from reyn.security.permissions.effective import skill_allowed
+        if not skill_allowed(self._allowed_skills, skill_name):
             self._events.emit(
                 "skill_spawn_refused",
                 reason="allowlist", skill=skill_name, agent=self._agent_name,

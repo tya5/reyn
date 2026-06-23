@@ -536,9 +536,13 @@ class RouterHostAdapter:
         PR-N3: chat_compactor skill retired — compaction is now OS-internal.)
         """
         avail = self._skill_enumerate_fn({"skill_router"})
-        if self._allowed_skills is not None:
-            allow = set(self._allowed_skills)
-            avail = [s for s in avail if s.get("name") in allow]
+        # #2074 S2: catalog-visibility shares the SKILL ∩ decision with the spawn
+        # gates (skill_allowed → ProfileLayer), preserving the visibility⇔spawn
+        # coupling. Byte-identical to the legacy inline allowlist filter
+        # (None = unrestricted ⇒ no filtering). skill_router is already excluded
+        # above, so its exemption is preserved.
+        from reyn.security.permissions.effective import skill_allowed
+        avail = [s for s in avail if skill_allowed(self._allowed_skills, s.get("name"))]
         return avail
 
     def list_available_agents(self) -> list[dict]:
