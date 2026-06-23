@@ -133,6 +133,7 @@ def _catalog_host(allowed_skills, enumerated):
     router is already excluded upstream by the {skill_router} exclude arg)."""
     host = RouterHostAdapter.__new__(RouterHostAdapter)
     host._allowed_skills = allowed_skills
+    host._contextual_permission = None  # #2074 S3: no per-context narrowing here
     host._skill_enumerate_fn = lambda exclude: list(enumerated)
     return host
 
