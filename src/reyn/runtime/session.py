@@ -474,6 +474,14 @@ def _new_chain_id() -> str:
     return uuid.uuid4().hex
 
 
+def _format_hook_attribution(name: str, text: str) -> str:
+    """Render an attributed hook message (#1800 slice 5b). The single source for
+    the ``[hook:<name>]`` system-role prefix, shared by the staged-context
+    consumer (C — wake=false ride-along) and ``_handle_hook_message`` (E —
+    wake=true trigger) so the two paths can never drift."""
+    return f"[hook:{name}] {text}"
+
+
 def _read_memory_index(path: Path) -> str:
     """Return MEMORY.md contents at `path` or empty string if absent."""
     try:
@@ -779,6 +787,10 @@ class Session:
         budget_tracker: BudgetTracker | None = None,
         snapshot_path: "Path | None" = None,
         sandbox_config: "SandboxConfig | None" = None,
+        # #1800 slice 5b: the resolved ``hooks:`` config block (the parsed list,
+        # mirroring sandbox_config's seam). None/absent → empty registry → every
+        # HookDispatcher.dispatch() is a no-op (the no-hooks equivalence property).
+        hooks_config: "object | None" = None,
         # #1200 PR-F1 (agent-level-uniform backend, FS seam): the agent's
         # EnvironmentBackend INSTANCE, threaded to the chat Workspace so chat's
         # file ops run on the SAME backend as the OSRuntime path. None → HostBackend (the
@@ -1220,6 +1232,25 @@ class Session:
         # durably in the snapshot (decision B) via _journal; restored by
         # restore_state.  Cleared (durably) after injection at the trigger turn.
         self._next_turn_context: list[dict] = []
+
+        # #1800 slice 5b: the awaited HookDispatcher. Hooks load from the resolved
+        # ``hooks:`` block; None/absent → empty registry → every dispatch() is a
+        # no-op (run-loop byte-identical to a hooks-free build). Constructed
+        # unconditionally so the 4 lifecycle dispatch() sites are uniform.
+        from reyn.hooks.dispatcher import HookDispatcher
+        from reyn.hooks.loader import load_hooks
+        from reyn.hooks.registry import HookRegistry as _HookRegistry
+        self._hook_registry = (
+            load_hooks(hooks_config) if hooks_config is not None else _HookRegistry([])
+        )
+        self._hook_dispatcher = HookDispatcher(
+            self._hook_registry,
+            put_inbox=self._put_inbox,
+            stage_next_turn_context=self._stage_next_turn_context,
+            sandbox_config=self._sandbox_config,
+            sandbox_backend=self._sandbox_backend,
+        )
+
         # Per-agent SkillRegistry — lazily constructed on first skill run.
         # Tracks active skill_run_ids and emits skill lifecycle events.
         # Truncation auto-trigger flows through registry.truncate_wal_if_eligible
@@ -2810,6 +2841,15 @@ class Session:
             await self._journal.consume_inbox(msg_id=msg_id)
         return kind, payload
 
+    async def _stage_next_turn_context(self, kind: str, payload: dict) -> None:
+        """Stage a wake=false ride-along (C) into next-turn context, durably
+        (B=persist): append to the in-memory buffer + record the WAL/snapshot
+        entry. Shared by ``_drain_to_wake`` (inbox ride-alongs) and the
+        ``HookDispatcher`` (#1800 slice 5b — direct C-staging that bypasses the
+        inbox). Byte-behavior-identical extraction of the prior inline pair."""
+        self._next_turn_context.append({"kind": kind, "payload": payload})
+        await self._journal.record_next_turn_context_staged(kind=kind, payload=payload)
+
     async def _drain_to_wake(
         self,
     ) -> tuple[list[tuple[str, dict]], tuple[str, dict]] | tuple[None, None]:
@@ -2880,10 +2920,7 @@ class Session:
             # for the trigger.  This closes the gap: without this, a crash
             # in the blocking wait would lose the consumed-but-not-persisted
             # ride-along.
-            self._next_turn_context.append({"kind": kind0, "payload": p0})
-            await self._journal.record_next_turn_context_staged(
-                kind=kind0, payload=p0,
-            )
+            await self._stage_next_turn_context(kind0, p0)
             ride_alongs.append((kind0, p0))
 
             # Non-blocking drain: collect additional wake=false messages until
@@ -2912,12 +2949,7 @@ class Session:
 
                 # wake=false via non-blocking path: stage durably before
                 # accumulating (same B=persist guarantee as the outer path).
-                self._next_turn_context.append(
-                    {"kind": kind_nb, "payload": p_nb}
-                )
-                await self._journal.record_next_turn_context_staged(
-                    kind=kind_nb, payload=p_nb,
-                )
+                await self._stage_next_turn_context(kind_nb, p_nb)
                 ride_alongs.append((kind_nb, p_nb))
 
     def restore_state(self, snapshot: AgentSnapshot) -> None:
@@ -3059,6 +3091,12 @@ class Session:
             kind=kind,
             chain_id=payload.get("chain_id"),
         )
+        # #1800 slice 5b: turn_start lifecycle hooks.
+        await self._hook_dispatcher.dispatch(
+            "turn_start",
+            {"point": "turn_start", "agent_name": self.agent_name,
+             "kind": kind, "chain_id": payload.get("chain_id")},
+        )
         # ADR-0038 Stage 1c: busy until this turn settles (its WAL appends done).
         self._turn_idle.clear()
         try:
@@ -3082,6 +3120,13 @@ class Session:
                 # surface as an OS-originated message + one router turn so the LLM
                 # acts via ordinary task ops (P7 — no decision vocabulary).
                 await self._handle_task_wake(payload)
+            elif kind == "hook":  # HOOK_INBOX_KIND (#1800 slice 5b)
+                # E (wake=true) lifecycle-hook push delivered as a turn trigger:
+                # a system-role [hook:name] message + one router turn (self-
+                # continuation). The attribution + wake binding ride in the
+                # payload (race-free; the slice-7 valve can count hook-driven
+                # turns, and the audit trail attributes the turn to the hook).
+                await self._handle_hook_message(payload)
         finally:
             self._turn_idle.set()
         return True
@@ -3095,12 +3140,40 @@ class Session:
             chain_id=payload.get("chain_id") or _new_chain_id(),
         )
 
+    async def _handle_hook_message(self, payload: dict) -> None:
+        """#1800 slice 5b: surface an E (wake=true) lifecycle-hook push as one
+        router turn (self-continuation). The push is appended as an attributed
+        system-role ``[hook:name]`` message — a NEW message (fidelity: never a
+        silent mutation of an existing one) using the shared
+        ``_format_hook_attribution`` helper so C and E cannot drift — then a
+        single router turn runs."""
+        name = payload.get("name", "hook")
+        text = payload.get("text", "")
+        chain_id = payload.get("chain_id") or _new_chain_id()
+        self._append_history(ChatMessage(
+            role="system",
+            content=_format_hook_attribution(name, text),
+            ts=_now_iso(),
+            meta={"chain_id": chain_id},
+        ))
+        try:
+            await self._run_router_loop(text, chain_id)
+        except RouterCapExceeded as exc:
+            await self._emit_router_cap_exhausted_user(
+                exc, chain_id=chain_id, user_text=text,
+            )
+
     async def run(self) -> None:
         self._chat_events.emit("chat_started", agent_name=self.agent_name, model=self.model)
         # #1800 slice 5a: session lifecycle audit event (P6). Emitted alongside
         # chat_started; marks the boundary of the session's resource scope so
         # slice 5b can attach the session_start hook here.
         self._chat_events.emit("session_started", agent_name=self.agent_name)
+        # #1800 slice 5b: session_start lifecycle hooks.
+        await self._hook_dispatcher.dispatch(
+            "session_start",
+            {"point": "session_start", "agent_name": self.agent_name},
+        )
 
         # #1830 / FP-0052: warn if the startup model is above the cost threshold.
         # Fires once per session per model class (de-duped in maybe_emit_model_cost_warn).
@@ -3116,6 +3189,13 @@ class Session:
             # #1800 slice 5a: session lifecycle audit event (P6). Emitted alongside
             # chat_stopped; marks the end of the session's resource scope.
             self._chat_events.emit("session_completed", agent_name=self.agent_name)
+            # #1800 slice 5b: session_end lifecycle hooks (F's natural resource
+            # scope). The run-loop has exited, so an E push here is not drained
+            # (harmless); session_end is the C/F point in practice.
+            await self._hook_dispatcher.dispatch(
+                "session_end",
+                {"point": "session_end", "agent_name": self.agent_name},
+            )
             await self._put_outbox(OutboxMessage(kind="__end__", text=""))
 
     async def _drain_on_shutdown(self) -> None:
@@ -3198,7 +3278,7 @@ class Session:
                 hook_text = payload_data.get("text", "")
                 self._append_history(ChatMessage(
                     role="system",
-                    content=f"[hook:{hook_name}] {hook_text}",
+                    content=_format_hook_attribution(hook_name, hook_text),
                     ts=_now_iso(),
                 ))
             self._next_turn_context.clear()
@@ -4905,6 +4985,15 @@ class Session:
         # turn independent of which terminal path the loop took, and so the
         # chain_id (known to _run_router_loop) is in scope.
         self._chat_events.emit("turn_completed", chain_id=chain_id)
+        # #1800 slice 5b: turn_end lifecycle hooks. E (wake=true) self-continuation
+        # fires here — the hook pushes a wake=true trigger that the next
+        # run_one_iteration drains as a new turn (bounded by the slice-7 valve).
+        # C (stage) / F (shell) also fire.
+        await self._hook_dispatcher.dispatch(
+            "turn_end",
+            {"point": "turn_end", "agent_name": self.agent_name,
+             "chain_id": chain_id, "user_text": user_text},
+        )
         # ADR-0038 Stage 1a: turn boundary = a user-facing checkpoint. #1547: the
         # user message is this checkpoint's anchor for the rewind-timeline preview.
         # #1533 2c: the FULL message is persisted alongside (edit-prefill source).

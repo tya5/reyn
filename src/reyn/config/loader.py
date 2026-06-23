@@ -481,6 +481,9 @@ def load_config(cwd: Path | None = None) -> ReynConfig:
         skill_search=_build_skill_search_config(merged.get("skill_search")),
         eval=_build_eval_config(merged.get("eval")),
         sandbox=_build_sandbox_config(merged.get("sandbox")),
+        # #1800 slice 5b: the raw ``hooks:`` block, passed through (parsed by
+        # ``load_hooks`` at Session construction). None/absent → empty list.
+        hooks=merged.get("hooks") or [],
         self_improvement=_build_self_improvement_config(merged.get("self_improvement")),
         action_retrieval=_build_action_retrieval_config(merged.get("action_retrieval")),
         cron=_build_cron_config(merged.get("cron")),

@@ -456,6 +456,7 @@ def run(args: argparse.Namespace) -> None:
             state_log=state_log,
             budget_tracker=budget_tracker,
             sandbox_config=session_cfg.config.sandbox,
+            hooks_config=session_cfg.config.hooks,  # #1800 slice 5b
             multimodal_config=session_cfg.config.multimodal,
             tool_calls_op_loop_skills=session_cfg.config.tool_calls_op_loop_skills,
             action_retrieval_config=session_cfg.config.action_retrieval,

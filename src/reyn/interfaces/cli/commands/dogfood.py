@@ -473,6 +473,7 @@ def _build_live_runner(agent_name: str, *, env_backend=None, ws_base_dir=None, w
                 state_log=None,  # no WAL for dogfood dispatch
                 budget_tracker=budget_tracker,
                 sandbox_config=config.sandbox,
+                hooks_config=config.hooks,  # #1800 slice 5b
                 multimodal_config=config.multimodal,
                 tool_calls_op_loop_skills=config.tool_calls_op_loop_skills,
                 action_retrieval_config=config.action_retrieval,

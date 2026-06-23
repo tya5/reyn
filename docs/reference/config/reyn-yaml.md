@@ -32,6 +32,7 @@ models:
 | `web` | map | SSL settings for `web_fetch` and MCP registry calls. See below. |
 | `eval` | map | Trace exporter backends for `reyn eval`. See below. |
 | `sandbox` | map | Sandboxed-exec backend selection, unsupported-platform policy, and the agent-level sandbox policy. See below. |
+| `hooks` | list | Agent-lifecycle hooks (#1800) — push / shell hooks at lifecycle points. See below. |
 | `action_retrieval` | map | Universal catalog visibility + retrieval settings. See below. |
 | `embedding` | map | RAG embedding model classes and batch settings. See below. |
 | `chat` | map | Chat-session compaction settings. See below. |
@@ -576,6 +577,31 @@ eval:
 | `ietf_audit` | IETF Agent Audit Trail draft format written to `path`. |
 
 All exporters are fire-and-forget: export failures are logged but do not abort the skill run.
+
+## `hooks` block
+
+Agent-lifecycle hooks (#1800) — a thin operator layer over the unified inbox and
+the P6 lifecycle. A **list** of entries; each fires at a lifecycle point (`on`)
+and is **either** a `push` (inject an attributed `[hook:<point>]` message) **or**
+a `shell` (run an external command — sandbox-gated, output ignored). Hooks never
+silently mutate tool results; pushes are new, attributed, evented messages.
+
+```yaml
+hooks:
+  - on: turn_end                 # turn_start | turn_end | session_start | session_end
+    push:
+      message: "Turn complete — consider the next step."
+      wake: false                # false = passive context (C); true = start a turn (E)
+      push_when: "true"          # optional Jinja2 → bool; false skips the push
+  - on: session_start
+    shell: "echo session-started >> /tmp/reyn-hooks.log"
+```
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `on` | string | _required_ | Lifecycle point: `turn_start`, `turn_end`, `session_start`, `session_end` (skill/task points land in a later slice). |
+| `push` | map | _none_ | Inbox-push hook (mutually exclusive with `shell`). `message` (Jinja2 → text), `wake` (bool/Jinja2, default `true`: `true` starts a new turn = self-continuation; `false` rides along with the next turn as passive context), `push_when` (Jinja2 → bool, default `true`; `false` skips). |
+| `shell` | string | _none_ | A shell command to run as a pure side-effect (mutually exclusive with `push`). Sandbox-gated + consent-allowlisted; stdout/stderr are logs, never parsed. |
 
 ## `sandbox` block
 
