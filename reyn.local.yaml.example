@@ -712,7 +712,8 @@
 #   shell:     a command string (mutually exclusive with ``push``)
 # -----------------------------------------------------------------------------
 # hooks:
-#   - on: turn_end
+#   - name: next_step          # optional label → the [hook:next_step] attribution
+#     on: turn_end             #   (absent → defaults to the hook-point, e.g. [hook:turn_end])
 #     push:
 #       message: "Turn complete — consider the next step."
 #       wake: false

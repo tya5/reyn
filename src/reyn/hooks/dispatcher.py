@@ -89,9 +89,10 @@ class HookDispatcher:
             resolved = render_push(hook.push, template_vars)
             if not resolved.push_when:
                 return  # conditional push guard (or a render failure — fail-safe)
-            # Attribution name: the lifecycle point (HookDef carries no separate
-            # name field). Consumed as the ``[hook:<name>]`` system-role prefix.
-            payload = {"name": point, "text": resolved.message}
+            # Attribution name (#1800 slice 6): the hook's operator label when
+            # set, else the lifecycle point (slice-5b default). Consumed as the
+            # ``[hook:<name>]`` system-role prefix (shared E + C renderer).
+            payload = {"name": hook.name or point, "text": resolved.message}
             if resolved.wake:
                 # E — a turn trigger (self-continuation). Routed to
                 # _handle_hook_message, which renders the system-role
