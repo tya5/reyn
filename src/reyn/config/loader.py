@@ -495,6 +495,42 @@ def load_config(cwd: Path | None = None) -> ReynConfig:
     return _cfg
 
 
+# ---------------------------------------------------------------------------
+# Hot-reload IN-set loader (#2073)
+# ---------------------------------------------------------------------------
+
+# The IN-set = the runtime-mutable ``.reyn/*.yaml`` registries (the only files the
+# hot-reload mechanism re-reads). The OUT-set (``reyn.yaml`` — security /
+# permission / sandbox / budget / the loop valve / state-coupled runtime) is loaded
+# ONCE at startup by ``load_config`` and is restart-only; the file-split IS the
+# write-gate boundary (owner-confirmed #2073). Keep this list narrow + explicit.
+_HOT_RELOAD_FILES: tuple[str, ...] = ("mcp.yaml", "cron.yaml")
+
+
+def load_hot_reload_config(project_root: "Path | None" = None) -> dict:
+    """Load ONLY the hot-reloadable IN-set (the runtime-mutable ``.reyn/*.yaml``
+    registries) for a config hot-reload (#2073).
+
+    Distinct from :func:`load_config`: this reads **none** of the OUT-set
+    (``reyn.yaml`` / ``reyn.local.yaml`` / ``~/.reyn/config.yaml``) — those are
+    restart-only. Reading exactly ``.reyn/<f>`` for ``f`` in
+    :data:`_HOT_RELOAD_FILES` is the structural safety boundary: a hot-reload (and
+    the LLM-op that triggers it) can never touch the OUT-set, because this loader
+    never opens those files.
+
+    Returns the merged IN-set dict (``{"mcp": …, "cron": …}``) with ``${VAR}``
+    interpolation applied (mirrors ``load_config`` so MCP server secrets resolve).
+    An absent ``.reyn/`` dir or missing file yields ``{}`` for that component
+    (``_load_yaml`` returns ``{}`` on absence) — a no-op reload, never an error.
+    """
+    root = (project_root or Path.cwd()).resolve()
+    merged: dict = {}
+    for fname in _HOT_RELOAD_FILES:
+        merged = _merge(merged, _load_yaml(root / ".reyn" / fname))
+    from reyn.security.secrets.interpolation import expand_env
+    return expand_env(merged)
+
+
 def _build_external_transports_config(raw: object):
     """Parse the ``external_transports:`` section (FP-0041 #489 PR-D2).
 
