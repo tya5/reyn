@@ -127,12 +127,16 @@ class SkillRunner:
         make_subscribers: Callable[..., list],
         format_refusal: Callable[..., str],
         format_warn: Callable[..., str],
+        contextual_permission: "object | None" = None,
     ) -> None:
         self._events = event_log
         self._agent_name = agent_name
         self._output_language = output_language
         self._mcp_servers = mcp_servers
         self._allowed_skills = allowed_skills
+        # #2074 S3: per-session contextual SKILL narrowing (a ContextualPermission)
+        # threaded into the spawn-gate ∩. None → ⊤ (byte-identical to pre-S3).
+        self._contextual_permission = contextual_permission
         self._budget = budget
         self._state_log = state_log
         self._build_agent_fn = build_agent_fn
@@ -250,7 +254,7 @@ class SkillRunner:
         # shared with spawn-path B + the catalog filter. Byte-identical to the
         # legacy inline check (None = unrestricted / [] = none / [a,b] = only).
         from reyn.security.permissions.effective import skill_allowed
-        if not skill_allowed(self._allowed_skills, skill_name):
+        if not skill_allowed(self._allowed_skills, skill_name, contextual=self._contextual_permission):
             await self._put_outbox(SkillOutboundMessage(
                 kind="error",
                 text=(
@@ -576,7 +580,7 @@ class SkillRunner:
 
         # PR15 → #2074 S2: same SKILL ∩ decision as spawn-path A (skill_allowed).
         from reyn.security.permissions.effective import skill_allowed
-        if not skill_allowed(self._allowed_skills, skill_name):
+        if not skill_allowed(self._allowed_skills, skill_name, contextual=self._contextual_permission):
             self._events.emit(
                 "skill_spawn_refused",
                 reason="allowlist", skill=skill_name, agent=self._agent_name,

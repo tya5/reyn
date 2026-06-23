@@ -1456,6 +1456,7 @@ class Session:
             make_subscribers=self._make_skill_subscribers,
             format_refusal=format_refusal_message,
             format_warn=format_warn_message,
+            contextual_permission=self._contextual_permission,  # #2074 S3
         )
 
         # F2: Delegation tracking for RouterLoop runs. Set to a list before

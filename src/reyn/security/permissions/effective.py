@@ -301,8 +301,14 @@ class ContextualLayer:
             in_allow = c.tool_allow is None or value in c.tool_allow
             not_denied = value not in c.tool_deny
             return in_allow and not_denied
-        # S1: only TOOL is constrained; other axes are ⊤ until later slices wire
-        # them (so the ∩ never narrows an axis the context does not yet cover).
+        if axis is CapabilityAxis.SKILL:
+            # #2074 S3: per-context SKILL narrowing. ⊤ when unset (skill_allow=None
+            # + empty skill_deny) → byte-identical for any context that does not
+            # narrow SKILL (= every production context today).
+            in_allow = c.skill_allow is None or value in c.skill_allow
+            return in_allow and value not in c.skill_deny
+        # MCP is consumed in #2074 S4a (paired with the require_mcp gate wiring);
+        # until then the contextual MCP axis is ⊤ (never narrows).
         return True
 
 
@@ -327,23 +333,36 @@ def tool_contextually_denied(
     return not ContextualLayer(contextual).allows(CapabilityAxis.TOOL, effective_name)
 
 
-def skill_allowed(allowed_skills: "object | None", skill_name: str) -> bool:
-    """The single per-agent SKILL-axis ∩ decision (#2074 S2).
+def skill_allowed(
+    allowed_skills: "object | None",
+    skill_name: str,
+    *,
+    contextual: "ContextualPermission | None" = None,
+) -> bool:
+    """The single SKILL-axis ∩ decision (#2074 S2/S3).
 
-    Routes the per-agent ``allowed_skills`` allowlist through ``ProfileLayer`` so
-    the skill-spawn gates (skill_runner) AND the catalog filter (router host)
-    share ONE enforcement path — completing #1199's ∩ convergence for the SKILL
-    axis (previously an inline check that bypassed the ∩).
+    Routes the per-agent ``allowed_skills`` allowlist (``ProfileLayer``) AND the
+    per-session contextual narrowing (``ContextualLayer``, #2074 S3) so the
+    skill-spawn gates (skill_runner) AND the catalog filter (router host) share
+    ONE enforcement path — completing #1199's ∩ convergence for the SKILL axis.
 
-    Byte-identical to the legacy ``allowed_skills is None or name in
-    allowed_skills``: ``None`` = unrestricted (⊤); ``[]`` = nothing allowed;
-    ``[a,b]`` = only those. ``skill_router`` is never passed here (it is excluded
-    from the catalog upstream and is never a spawn target), preserving its
-    exemption. S3 extends this gate with the contextual SKILL layer.
+    Per-agent (``allowed_skills``) byte-identical to the legacy ``allowed_skills
+    is None or name in allowed_skills``: ``None`` = unrestricted (⊤); ``[]`` =
+    nothing allowed; ``[a,b]`` = only those. ``skill_router`` is never passed here
+    (excluded from the catalog upstream + never a spawn target), preserving its
+    exemption.
+
+    Per-context (``contextual``, #2074 S3): ``None`` or a context that does not
+    narrow SKILL (``skill_allow=None`` + empty ``skill_deny``) → ⊤, so every
+    existing outcome is preserved (the contextual SKILL narrowing is NEW
+    capability that activates only when a bound profile sets it).
     """
-    return EffectivePermission(
-        [ProfileLayer.from_allowlists(allowed_skills=allowed_skills)]
-    ).allows(CapabilityAxis.SKILL, skill_name)
+    layers: "list[LayerView]" = [
+        ProfileLayer.from_allowlists(allowed_skills=allowed_skills)
+    ]
+    if contextual is not None:
+        layers.append(ContextualLayer(contextual))
+    return EffectivePermission(layers).allows(CapabilityAxis.SKILL, skill_name)
 
 
 def _path_under(path_str: str, root: str) -> bool:

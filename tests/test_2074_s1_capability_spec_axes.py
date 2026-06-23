@@ -114,21 +114,19 @@ def test_compose_empty_is_inert() -> None:
 # ── INERTNESS: ContextualLayer still enforces ONLY TOOL (S1 changes no gate) ─
 
 
-def test_contextual_layer_does_not_yet_enforce_skill_or_mcp() -> None:
-    """Tier 1: the load-bearing inertness proof — even a ContextualPermission that
-    DENIES a skill/mcp value is ⊤ on those axes through ContextualLayer (S1 carries
-    the axes; S3 wires enforcement). So S1 cannot change any SKILL/MCP gate outcome."""
+def test_contextual_layer_does_not_yet_enforce_mcp() -> None:
+    """Tier 1: the MCP contextual axis is still carried-but-not-enforced — a
+    ContextualPermission that DENIES an mcp value is ⊤ on MCP through
+    ContextualLayer (S1 carries the axis; #2074 S4a wires MCP enforcement, paired
+    with the require_mcp gate). (SKILL is now enforced by S3 — see
+    test_2074_s3_contextual_skill.py.)"""
     ctx = ContextualPermission(
-        skill_allow=frozenset({"only-this"}),
-        skill_deny=frozenset({"banned"}),
         mcp_allow=frozenset({"only-srv"}),
         mcp_deny=frozenset({"banned-srv"}),
     )
     layer = ContextualLayer(ctx)
-    # SKILL / MCP: not enforced by ContextualLayer yet → always allowed (⊤)
-    assert layer.allows(AX.SKILL, "banned") is True
-    assert layer.allows(AX.SKILL, "anything") is True
     assert layer.allows(AX.MCP, "banned-srv") is True
+    assert layer.allows(AX.MCP, "anything") is True
 
 
 def test_contextual_layer_still_enforces_tool() -> None:
