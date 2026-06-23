@@ -144,6 +144,7 @@ mindmap
       self_improvement
       skill_resume
       action_retrieval
+      hooks
     🔒 Permissions
       Tier 0-3 model
       4-layer resolution
@@ -503,6 +504,7 @@ Main reference: **[`reyn.yaml`](reference/config/reyn-yaml.md)**
 | `self_improvement` | Skill self-improvement (eval-plan-apply) settings | [reyn-yaml](reference/config/reyn-yaml.md) |
 | `skill_resume` | Crash-resume behaviour for skill runs | [Skill Resume](concepts/skills/skill-resume.md) |
 | `action_retrieval` | Action-catalog `search_actions` retrieval tuning | [Universal catalog](concepts/tools-integrations/universal-catalog.md) |
+| `hooks` | Agent-lifecycle push/shell hooks at 8 points (`turn_start/end`, `session_start/end`, `skill_start/end`, `task_start/end`). `push` mode: `wake:false` passive context ride-along, or `wake:true` self-continuation bounded by `safety.loop.max_hook_driven_turns`. `shell`: sandbox-gated side-effect, output ignored. Hooks emit attributed `[hook:name]` messages — history is never silently mutated. | [reyn-yaml § hooks](reference/config/reyn-yaml.md#hooks-block) |
 
 ---
 
