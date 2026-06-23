@@ -22,9 +22,14 @@ from types import SimpleNamespace
 
 import pytest
 
+from reyn.core.events.events import EventLog
 from reyn.core.events.state_log import StateLog
+from reyn.core.kernel.control_ir_executor import ControlIRExecutor
+from reyn.core.kernel.preprocessor_executor import PreprocessorExecutor
 from reyn.core.op_runtime import task as taskmod
+from reyn.data.workspace.workspace import Workspace
 from reyn.runtime.session import Session
+from reyn.security.permissions.permissions import PermissionDecl
 from reyn.skill.skill_registry import SkillRegistry
 from reyn.task import InMemoryTaskBackend
 
@@ -169,3 +174,38 @@ def test_session_router_op_contexts_carry_the_live_dispatcher(tmp_path):
     assert isinstance(direct.hook_dispatcher, HookDispatcher)
     # …and it is the SAME single instance on both router flows (no flow misses it).
     assert direct.hook_dispatcher is via_adapter.hook_dispatcher
+
+
+# --- live threading: the PHASE path (kernel chain) forwards to OpContext -----
+# Mirror tests/test_task_backend_threading_1953.py (the established ctx-build seam
+# completeness gate) so a refactor dropping hook_dispatcher on the phase leg —
+# silently disabling task_start/end in phases — is caught (RED), not just traced.
+
+
+def test_control_ir_executor_threads_hook_dispatcher_to_opcontext():
+    """Tier 2: ControlIRExecutor._build_ctx propagates hook_dispatcher to the
+    OpContext (the control-IR leg of the phase-path forwarding)."""
+    events = EventLog()
+    ws = Workspace(events=events)
+    sentinel = object()
+    ex = ControlIRExecutor(
+        workspace=ws, events=events, permission_resolver=None,
+        skill_name="s", chain_id="c", hook_dispatcher=sentinel,
+    )
+    ctx = ex._build_ctx(PermissionDecl(), "phase-1")
+    assert ctx.hook_dispatcher is sentinel
+
+
+def test_preprocessor_executor_threads_hook_dispatcher_to_opcontext():
+    """Tier 2: PreprocessorExecutor._build_op_ctx propagates hook_dispatcher to
+    the OpContext (the preprocessor leg — the phase path's second ctx-build seam)."""
+    events = EventLog()
+    ws = Workspace(events=events)
+    sentinel = object()
+    skill = SimpleNamespace(name="s", permissions=PermissionDecl())
+    ex = PreprocessorExecutor(
+        skill=skill, workspace=ws, model="standard", events=events,
+        subscribers=[], resolver=SimpleNamespace(), hook_dispatcher=sentinel,
+    )
+    ctx = ex._build_op_ctx(SimpleNamespace(name="phase-1"), 0)
+    assert ctx.hook_dispatcher is sentinel
