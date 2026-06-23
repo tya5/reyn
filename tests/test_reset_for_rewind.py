@@ -94,6 +94,7 @@ def test_reset_for_rewind_clear_scope_covers_all_agentsnapshot_fields():
         "active_skill_run_ids": "session.running_skills (+ started_at / chain) cleared",
         "outstanding_interventions": "session._interventions.clear() + restore tasks",
         "buffered_intervention_answers": "session._buffered_intervention_answers cleared",
+        "next_turn_context": "session._next_turn_context cleared",
     }
     assert set(disposition) == set(AgentSnapshot.__dataclass_fields__), (
         "AgentSnapshot fields changed — update reset_for_rewind (and this map) so "

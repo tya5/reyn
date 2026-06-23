@@ -377,6 +377,44 @@ class SnapshotJournal:
         self._snapshot.buffered_intervention_answers.pop(run_id, None)
         self.save()
 
+    async def record_next_turn_context_staged(
+        self, *, kind: str, payload: dict,
+    ) -> None:
+        """Append ``next_turn_context_staged`` to WAL + add entry to buffer (#1800-4b).
+
+        Called when a wake=false ride-along is drained and staged for the
+        next turn.  Persisting durably (decision B) ensures the entry
+        survives a crash while the session waits for the trigger message.
+        """
+        if self._state_log is None:
+            return
+        entry = {"kind": kind, "payload": payload}
+        seq = await self._wal_append(
+            "next_turn_context_staged",
+            target=self._agent_name,
+            entry=entry,
+        )
+        self._snapshot.applied_seq = seq
+        self._snapshot.next_turn_context.append(entry)
+        self.save()
+
+    async def record_next_turn_context_cleared(self) -> None:
+        """Append ``next_turn_context_cleared`` to WAL + clear the buffer (#1800-4b).
+
+        Called after the staged entries are injected into history at the
+        start of the trigger's turn.  Clearing durably prevents re-injection
+        on a crash+restore that happens mid-turn.
+        """
+        if self._state_log is None:
+            return
+        seq = await self._wal_append(
+            "next_turn_context_cleared",
+            target=self._agent_name,
+        )
+        self._snapshot.applied_seq = seq
+        self._snapshot.next_turn_context.clear()
+        self.save()
+
     # ── restore / persist ─────────────────────────────────────────────────
 
     def install(self, snapshot: AgentSnapshot) -> None:
