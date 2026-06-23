@@ -1154,6 +1154,10 @@ class Session:
         # `_handle_limit_checkpoint`. Cleared on turn / chain boundary
         # by the relevant call sites.
         self._safety_extensions: dict[str, float] = {}
+        # #1800 slice 7: the loop-valve counter — hook-driven (kind="hook") turns
+        # since the last human user turn. In-memory only (NOT snapshot-persisted);
+        # resets on each user turn (re-arm). Bounds hook self-continuation.
+        self._hook_driven_turns: int = 0
         # PR15: optional skill allowlist sourced from profile.allowed_skills.
         # None = unrestricted (default, BC). Empty list = router runs but no
         # skill spawn. stdlib router/compactor are NOT subject to this — they're
@@ -3071,6 +3075,41 @@ class Session:
             # shutdown sentinel
             return False
         kind, payload = trigger
+        # #1800 slice 7: the loop valve. Bound hook self-continuation at the
+        # SINGLE seam — before any per-turn work (sender attribution / turn_started
+        # emit / turn_start dispatch / kind dispatch). A human user turn re-arms
+        # the budget; each hook-originated (kind="hook") turn increments it. When
+        # the count exceeds the effective cap, the on_limit checkpoint fires
+        # (warn → ask_user → abort); if it does not extend, the over-limit hook
+        # turn is SUPPRESSED ENTIRELY (no turn_started, no turn_start E-hook
+        # re-trigger that would circumvent the bound, no _handle_hook_message) and
+        # the run-loop returns — the session stays alive + idle for the next real
+        # trigger. Monotonic counter + finite cap + reset-on-user-turn ⇒ finite.
+        if kind == "user":
+            self._hook_driven_turns = 0
+        elif kind == "hook":
+            self._hook_driven_turns += 1
+            _base_cap = self._safety.loop.max_hook_driven_turns
+            if _base_cap > 0:
+                _cap = _base_cap + int(self._safety_extensions.get("hook_driven_turns", 0.0))
+                if self._hook_driven_turns > _cap:
+                    decision = await self._handle_chat_limit_checkpoint(
+                        kind="hook_driven_turns",
+                        prompt=(
+                            f"Hook self-continuation reached the cap of {_cap} "
+                            f"consecutive hook-driven turns. Allow more?"
+                        ),
+                        detail=f"count={self._hook_driven_turns} cap={_cap}",
+                        extension_amount=float(_base_cap),
+                    )
+                    if not decision.allow_continue:
+                        # Bound reached + not extended → suppress this hook turn.
+                        # The chain stops here; the session survives (idle).
+                        return True
+                    # allow_continue: the checkpoint accumulated the extension into
+                    # self._safety_extensions["hook_driven_turns"], raising the
+                    # effective cap so this + subsequent turns proceed until the
+                    # new bound (no re-prompt every turn).
         # FP-0041 (#489) PR-A: humanic dispatch attribution.
         # If this inbox item carries a ``sender`` (= new envelope
         # convention: who/what produced this message — e.g.

@@ -57,6 +57,17 @@ class LoopConfig:
             (un-executed, un-appended), and appends a single re-grounding notice.
             Default ``50`` is generous headroom over legitimate parallel tool use
             (observed < 10) yet ~70x below the runaway. ``0`` = unlimited.
+        max_hook_driven_turns:
+            #1800 slice 7: the loop valve. Caps hook self-continuation — an
+            ``E`` (wake=true) hook firing at ``turn_end`` triggers a new turn,
+            which can fire another, … This bounds that chain: each
+            hook-originated (``kind="hook"``) turn counts 1; the counter resets
+            on each human user turn (``kind="user"`` re-arms the budget). When
+            the count would exceed the cap the next hook turn hits the
+            ``safety.on_limit`` checkpoint (warn → ask_user → abort) instead of
+            running. A backstop only — does NOT obstruct intentional
+            loop-engineering (the operator raises the cap). Default ``25``
+            aligns with ``max_phase_visits``. ``0`` = unlimited.
     """
 
     max_act_turns_per_phase: int = 10
@@ -65,6 +76,7 @@ class LoopConfig:
     max_agent_hops: int = 3
     max_router_iterations: int = 5
     max_tool_calls_per_turn: int = 50
+    max_hook_driven_turns: int = 25
     skill_calls_per_chain: CostLimitConfig = field(default_factory=CostLimitConfig)
     skill_tokens_per_chain: CostLimitConfig = field(default_factory=CostLimitConfig)
 
@@ -563,6 +575,9 @@ def _build_safety_config(raw: object) -> SafetyConfig:
         )),
         max_tool_calls_per_turn=int(loop_raw.get(
             "max_tool_calls_per_turn", loop_defaults.max_tool_calls_per_turn,
+        )),
+        max_hook_driven_turns=int(loop_raw.get(
+            "max_hook_driven_turns", loop_defaults.max_hook_driven_turns,
         )),
         skill_calls_per_chain=_build_cost_limit(
             loop_raw.get("skill_calls_per_chain")
