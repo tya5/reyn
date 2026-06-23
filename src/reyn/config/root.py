@@ -266,6 +266,10 @@ class ReynConfig:
     # FP-0017: sandbox backend selection + unsupported-platform policy.
     # Default: auto-select the best available backend for this platform.
     sandbox: SandboxConfig = field(default_factory=SandboxConfig)
+    # #1800 slice 5b: the raw ``hooks:`` block (a list of hook entries). Kept raw
+    # here and parsed via ``load_hooks`` at Session construction. Empty (default)
+    # → empty registry → the HookDispatcher is a no-op.
+    hooks: list = field(default_factory=list)
     # FP-0006 B+D: skill_improver behavior knobs (on_propose gate + max_versions cap).
     self_improvement: SelfImprovementConfig = field(default_factory=SelfImprovementConfig)
     # FP-0034: universal catalog gating + action retrieval (D13 / D14).

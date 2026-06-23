@@ -697,6 +697,29 @@
 
 
 # -----------------------------------------------------------------------------
+# hooks: agent-lifecycle hooks (#1800) — a thin operator layer over the inbox +
+# the P6 lifecycle. A list of entries; each fires at a lifecycle point (``on``)
+# and is EITHER a ``push`` (inject an attributed ``[hook:<point>]`` message) OR a
+# ``shell`` (run an external command, sandbox-gated, output ignored).
+#
+#   on:        turn_start | turn_end | session_start | session_end
+#              (skill_*/task_* points land in a later slice)
+#   push:      message:   Jinja2 template → the message text
+#              wake:      true  → start a new turn (self-continuation)   [default]
+#                         false → ride along with the next turn (passive context)
+#              push_when: Jinja2 → bool; false skips the push (conditional)
+#   shell:     a command string (mutually exclusive with ``push``)
+# -----------------------------------------------------------------------------
+# hooks:
+#   - on: turn_end
+#     push:
+#       message: "Turn complete — consider the next step."
+#       wake: false
+#   - on: session_start
+#     shell: "echo session-started >> /tmp/reyn-hooks.log"
+
+
+# -----------------------------------------------------------------------------
 # self_improvement: skill_improver behavior knobs.
 #
 #   on_propose:   ask_user (default; pause + prompt before applying)
