@@ -2,158 +2,176 @@
 type: concept
 topic: runtime
 audience: [human, agent]
-search_hints: [capability profile, agent profile, allowed_skills, mcp filter, tool restriction, category visibility, profile.yaml, self-edit, hot-reload, autonomous edit]
+search_hints: [capability profile, agent profile, allowed_skills, allowed_mcp, tool_allow, tool_deny, categories, category visibility, self-edit, named capability, untrusted narrowing]
 ---
 
 # Capability profile
 
-A capability profile is a per-agent specification that declares two things:
-the agent's **identity** (name, role) and its **capability restrictions** (which
-skills, MCP servers, tools, and tool categories the agent may use).
+The capability profile system has two distinct surfaces that serve complementary
+roles: the per-agent identity file (`profile.yaml`) and the named capability
+spec (`capability_profiles/<name>.yaml`).
 
-It is stored at `.reyn/agents/<name>/profile.yaml` and loaded at session
-construction. The `default` agent is created automatically on first `reyn chat`.
+## Two surfaces
 
-## One spec, two binding adapters
+### `profile.yaml` — per-agent identity (`AgentProfile`)
 
-The capability profile is one piece of data with two distinct consumers:
+Stored at `.reyn/agents/<name>/profile.yaml`. Loaded at session construction.
+Carries the agent's identity and coarse-grained allowlists:
 
-```
-profile.yaml
-    │
-    ├─→ AgentLayer   (authorization grant baseline: skill allowlist → router catalog)
-    │
-    └─→ ProfileLayer (conjunctive restrict: ∩ with AgentLayer + SandboxLayer)
-```
+- `name`, `role`, `created_at` — identity
+- `allowed_skills` — skill allowlist (which skills the router offers this agent)
+- `allowed_mcp` — MCP server allowlist (which servers this agent may call)
 
-**AgentLayer** uses the profile to filter the skill catalog before the router
-LLM sees it. This is the "what can this agent do?" surface — the router's
-available options.
+These two allowlists participate in the runtime ∩-gate as the **ProfileLayer**:
+`effective = AgentLayer ∩ SandboxLayer ∩ ProfileLayer`.
 
-**ProfileLayer** participates in the runtime conjunctive restrict model
-(`effective = AgentLayer ∩ SandboxLayer ∩ ProfileLayer`). ProfileLayer is
-restrict-only: it can narrow what AgentLayer grants, but can never re-grant
-something AgentLayer denied. The conjunction is structural — no layer's `False`
-can be overridden.
+Full schema: [profile.yaml reference](../../reference/dsl/profile-yaml.md).
 
-Both adapters read from the same profile spec. Adding a restriction to the
-profile narrows both the catalog (AgentLayer) and the runtime gate (ProfileLayer)
-simultaneously, without changing `EffectivePermission` logic.
+### `capability_profiles/<name>.yaml` — named capability spec (`CapabilityProfile`)
 
-For the full ∩-model, see [Permission model § conjunctive restrict model](permission-model.md#effective-permission-conjunctive-restrict-model).
+Stored at `.reyn/capability_profiles/<name>.yaml`. A named, declarative
+narrowing of tool-level capabilities. One project can define many profiles; a
+running agent may have one or more applied simultaneously.
 
-## Capability axes
+This is the surface introduced by #1827 and extended through its staging arc.
 
-The unified profile spec carries four restriction axes. All are optional; an
-absent or `null` axis means unrestricted on that dimension.
+## `CapabilityProfile` axes
 
-### `allowed_skills` (skill allowlist)
+A capability profile carries two independent narrowing axes:
 
-Controls which skills are offered to the router LLM.
+### Axis A — enforcement (`tool_allow` / `tool_deny`)
 
-| Value | Meaning |
-|-------|---------|
-| absent / `null` | **Unrestricted.** All project + stdlib skills are offered. |
-| `[]` | **Router-only.** No skill spawn; router may reply directly or delegate. |
-| `[a, b, c]` | **Allowlist.** Only the listed skill names are offered. |
+Tool-level allow/deny control. Produces a `ContextualPermission` that rides
+the live ∩-gate alongside the existing permission layers.
 
-System skills (`skill_router`, `chat_compactor`, `skill_narrator`) are always
-enabled — they are not subject to this list.
+| Field | Type | Semantics |
+|-------|------|-----------|
+| `tool_allow` | `list[str] \| null` | Allow-list. `null` = unconstrained (deny-list only). |
+| `tool_deny` | `list[str]` | Deny-list. Union of denials across composed profiles. |
 
-Two-layer enforcement: the router narrows `available_skills` before the LLM
-sees the catalog; `_spawn_skill` re-checks at launch time as defense-in-depth.
+Deny entries always win over allow entries on the same tool name.
 
-### `allowed_mcp` (MCP server allowlist) — ⏳ staged: #2074-S1
+### Axis B — visibility (`categories`)
 
-Restricts which MCP servers the agent may call, independent of which are
-installed. Filters the per-agent intersection at MCP call time.
+Cognitive narrowing: which tool categories remain visible to the agent. Derived
+from `categories` against the canonical 12-entry catalog (`CATEGORIES`).
 
-`null` = unrestricted (all configured servers available). A list restricts to
-the named server IDs.
+| Field | Type | Semantics |
+|-------|------|-----------|
+| `categories` | `list[str] \| null` | Categories to **keep visible**. `null` = no narrowing (all visible). `[]` = hide all. |
 
-Note: `allowed_mcp` is an ACL filter, not a capability grant — it narrows an
-already-granted `mcp` permission, it does not grant MCP access on its own. See
-[Permission model § allowed_mcp](permission-model.md#axes).
+An unknown category name is a no-op (forward-compat — not an error).
 
-### `tool_policy` (per-tool allow/deny) — ⏳ staged: #2074-S1
+Note: `visible ⊆ authorized` holds structurally — the visibility axis only
+hides tools, it cannot re-grant tools that the enforcement axis denied.
 
-Per-named-tool allow or deny entries applied at dispatch time before the tool
-reaches the LLM.
+## Composition model
 
-`null` = unrestricted. A list of `{tool: <name>, policy: allow|deny}` entries.
-Deny entries take precedence over allow entries for the same tool name.
+When multiple profiles are applied simultaneously, `compose_resolved` merges
+them under **most-restrictive-wins**:
 
-### `category_visibility` (tool category visibility) — ⏳ staged: #2074-S1
+- `tool_deny` → **union** (any profile's deny wins)
+- `tool_allow` → **intersection** of all constraining allow-sets (`null` = ⊤,
+  skipped); a tool stays allowed only if every constraining profile permits it
+- `excluded_categories` → **union** (any profile's hide wins)
 
-Controls which tool categories are visible to the agent. Categories group tools
-by function (e.g., `file`, `shell`, `web`, `mcp`).
+An empty profile list → inert result (byte-identical to no profile applied).
 
-`null` = all categories visible. A list restricts visibility to the named
-categories.
+## Context-auto untrusted narrowing (S4)
 
-## Reload model
+One profile is auto-applied automatically — without any explicit binding —
+while untrusted external content is live in the agent's context:
 
-Profile changes take effect at the **next session startup**. The profile is
-loaded once at session construction; a running session reads from the in-memory
-copy.
+**Profile name:** `_untrusted` (built-in secure default, overridable via
+`.reyn/capability_profiles/_untrusted.yaml`)
 
-**Turn-boundary hot-reload is planned** — edits to `profile.yaml` will be
-picked up between turns without restarting the session. This is being designed
-as part of the autonomous-edit workflow (⏳ #20, sequenced after #2074).
+**Trigger:** any history/context entry whose meta carries `external_source=true`
+(stamped by the content-fence seam at ingest time).
+
+**Built-in default deny-set:** memory writes / deletes, re-delegation,
+sandboxed execution, MCP install. The goal: untrusted content can be read and
+reasoned about, but cannot drive irreversible actions.
+
+This is seam-agnostic — the trigger is the meta marker, not the specific source.
+
+## Binding modes
+
+A `CapabilityProfile` is applied to a running session in one of two binding
+modes:
+
+- **Per-agent default** — one profile assigned as the default for an agent.
+- **Per-context composable** — profiles composed dynamically from the live
+  context (e.g., untrusted-source narrowing, ephemeral task scope).
+
+The exact inline-vs-ref mechanism for how profiles bind to agents, topology, and
+ephemeral scopes is being finalised (⏳ #2074-S4). Until S4 lands, only the
+context-auto untrusted binding is wired end-to-end.
 
 ## Agent self-edit
 
-An agent can edit its own capability profile at runtime without requesting extra
+An agent can create or update a capability profile without requesting extra
 permissions:
 
-**Path:** `.reyn/agents/<agent_name>/profile.yaml`
+**Path:** `.reyn/capability_profiles/<name>.yaml`
 
-**Write permission:** The `.reyn/` tree is the default write zone. `.reyn/agents/`
-is not a protected path (unlike `.reyn/approvals.yaml`), so a standard
-`file.write` to this path requires **no extra declaration** — it is within the
-default write grant.
+**Write permission:** `.reyn/capability_profiles/` is within the default write
+zone (`.reyn/`). It is **not** a protected path (unlike `.reyn/approvals.yaml`),
+so a standard `file.write` requires **no extra declaration**.
 
 **Verification:** `_DEFAULT_WRITE_ZONES = (".reyn",)` and
-`_CANONICAL_PROTECTED_WRITE_PATHS` does not include `.reyn/agents/` (confirmed
-in `src/reyn/security/permissions/permissions.py`).
+`_CANONICAL_PROTECTED_WRITE_PATHS` contains only `.reyn/approvals.yaml` and
+`.reyn/index/sources.yaml`. Confirmed in
+`src/reyn/security/permissions/permissions.py`.
 
-**Procedure:** read the current `profile.yaml` → modify the relevant axis →
-write back. Changes take effect at next startup (today) or next turn
-(⏳ hot-reload, #20).
+**Procedure:** write a YAML file with the desired `categories` / `tool_allow` /
+`tool_deny` axes. The profile name (file stem) is how it is referenced for
+binding (⏳ S4 wiring).
 
-**Self-edit use case:** the canonical autonomous-edit goal is for the agent to
-narrow its own capability profile during a session — e.g., write
-`allowed_skills: [skill_a, skill_b]` to restrict itself to a focused task set.
-Once hot-reload (#20) lands, this takes effect immediately at the next turn
-boundary.
+**Example:**
+
+```yaml
+name: read-only-researcher
+description: "Deny all write/execute surfaces; allow read categories only."
+categories:
+  - file
+  - web
+tool_deny:
+  - exec__sandboxed_exec
+  - memory_operation__remember_shared
+```
 
 ## Schema example
 
 ```yaml
-name: researcher
-role: |
-  Deep technical research, prefers primary sources.
-created_at: 2026-05-01T12:00:00+00:00
-allowed_skills:
-  - web_search
-  - recall_docs
-# axes below staged in #2074-S1:
-allowed_mcp:          # null = unrestricted
-  - github-mcp
-tool_policy:          # null = unrestricted
-  - tool: shell_exec
-    policy: deny
-category_visibility:  # null = all visible
+# .reyn/capability_profiles/read-only-researcher.yaml
+name: read-only-researcher        # required (== file stem)
+description: ""                   # optional, default ""
+categories:                       # optional; null = all visible
   - file
   - web
+tool_allow: null                  # optional; null = unconstrained (deny-list only)
+tool_deny:                        # optional, default []
+  - exec__sandboxed_exec
+  - multi_agent__delegate
 ```
 
-Full schema reference: [profile.yaml reference](../../reference/dsl/profile-yaml.md).
+Full field reference: a dedicated `capability-profiles-yaml.md` reference doc is planned (⏳ #2074-S4, inline-vs-ref surface).
+
+## Relationship to the ∩-model
+
+The `CapabilityProfile` enforcement axis produces a `ContextualPermission` that
+participates in the conjunctive restrict model as a runtime ∩ term — it is
+restrict-only and can never elevate a capability already denied by another layer.
+
+The `AgentProfile.allowed_skills` / `allowed_mcp` fields participate as the
+`ProfileLayer` in the same ∩-model.
+
+For the full ∩-model, see [Permission model § conjunctive restrict model](permission-model.md#effective-permission-conjunctive-restrict-model).
 
 ## See also
 
-- [Permission model](permission-model.md) — the ∩-model, authorization layers, axis taxonomy
+- [Permission model](permission-model.md) — ∩-model, authorization layers
 - [Permission model § conjunctive restrict](permission-model.md#effective-permission-conjunctive-restrict-model) — ProfileLayer in the ∩
-- [Reference: profile.yaml](../../reference/dsl/profile-yaml.md) — full schema + agent self-edit guide
+- [Reference: profile.yaml](../../reference/dsl/profile-yaml.md) — AgentProfile schema (allowed_skills, allowed_mcp)
+- [Concepts: multi-agent](../multi-agent/multi-agent.md) — agent composition
 - [Reference: reyn agent CLI](../../reference/cli/agent.md) — `reyn agent new`, `reyn agent list`
-- [Concepts: multi-agent](../multi-agent/multi-agent.md) — how agents are composed
