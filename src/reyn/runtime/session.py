@@ -445,8 +445,14 @@ _STATE_CHANGE_EVENT_MAPPINGS: dict[str, tuple[str, str]] = {
         "index_drop",
         "Indexed source '{source}' was removed.",
     ),
+    # Config hot-reload (#2073): the HotReloader emits this at the turn boundary
+    # after re-reading the IN-set (.reyn/*.yaml) + reapplying components, so the LLM
+    # sees that its runtime config changed (e.g. a newly-reloaded MCP server / hook).
+    "config_reloaded": (
+        "config_watcher",
+        "Reyn configuration was hot-reloaded (source: {source}).",
+    ),
     # Future emitter slots (= add when wired):
-    # "config_reloaded":  ("config_watcher", "Reyn configuration was updated."),
     # "sp_version_changed": ("sp_loader",   "Agent system prompt was updated to version {version}."),
 }
 
@@ -1307,6 +1313,14 @@ class Session:
         self._chat_events = EventLog(
             subscribers=[self._event_store],
             agent_id=self._agent_id,  # FP-0016 E: auto-inject agent_id into every event
+        )
+        # #2073 S1: the config hot-reloader. Reads ONLY the IN-set (.reyn/*.yaml);
+        # the OUT-set (reyn.yaml) is restart-only. Applies at the turn_end safe-point
+        # (apply_pending below). Per-component reapply seams are registered in S2.
+        from reyn.runtime.hot_reload import HotReloader
+        self._hot_reloader = HotReloader(
+            project_root=getattr(self._registry, "_project_root", None) or Path.cwd(),
+            events=self._chat_events,
         )
         # #1669: publish this session's EventLog as the ambient sink for the LLM
         # acompletion chokepoint, so every in-session LLM call emits an observable
@@ -5038,6 +5052,12 @@ class Session:
             {"point": "turn_end", "agent_name": self.agent_name,
              "chain_id": chain_id, "user_text": user_text},
         )
+        # #2073 S1: config hot-reload safe-point (Timing-B). A reload scheduled
+        # during/before this turn applies HERE — at the turn boundary
+        # (finish-reason=stop), never mid-turn — so the next turn runs under the new
+        # IN-set config (1 turn = 1 config snapshot). No-op (returns None) when no
+        # reload is pending → zero overhead on the happy path.
+        await self._hot_reloader.apply_pending()
         # ADR-0038 Stage 1a: turn boundary = a user-facing checkpoint. #1547: the
         # user message is this checkpoint's anchor for the rewind-timeline preview.
         # #1533 2c: the FULL message is persisted alongside (edit-prefill source).
