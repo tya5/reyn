@@ -495,8 +495,9 @@ ready:
 
 1. **pytest** — from the repo root (not a subset path) so collection matches CI:
    ```bash
-   python -m pytest tests/ -q
+   python -m pytest -q -n auto --timeout=120
    ```
+   CI runs with `-n auto` (parallel workers) and `--timeout=120` (`pytest-timeout>=2.2`, a dev dep — `pip install -e ".[dev]"` installs it). Run locally with the same flags: a test that would hang in CI will fail-and-name the hanger within 120 s instead of blocking the run indefinitely.
 2. **ruff** — lint + import-sort (`I001`):
    ```bash
    ruff check src tests        # add --fix for autofixable I001 / formatting
