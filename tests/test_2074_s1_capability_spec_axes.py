@@ -114,19 +114,9 @@ def test_compose_empty_is_inert() -> None:
 # ── INERTNESS: ContextualLayer still enforces ONLY TOOL (S1 changes no gate) ─
 
 
-def test_contextual_layer_does_not_yet_enforce_mcp() -> None:
-    """Tier 1: the MCP contextual axis is still carried-but-not-enforced — a
-    ContextualPermission that DENIES an mcp value is ⊤ on MCP through
-    ContextualLayer (S1 carries the axis; #2074 S4a wires MCP enforcement, paired
-    with the require_mcp gate). (SKILL is now enforced by S3 — see
-    test_2074_s3_contextual_skill.py.)"""
-    ctx = ContextualPermission(
-        mcp_allow=frozenset({"only-srv"}),
-        mcp_deny=frozenset({"banned-srv"}),
-    )
-    layer = ContextualLayer(ctx)
-    assert layer.allows(AX.MCP, "banned-srv") is True
-    assert layer.allows(AX.MCP, "anything") is True
+# (The S1 MCP-inertness proof was removed in #2074 S4a, which wires the
+# contextual MCP axis — see test_2074_s4a_mcp_unify.py for the MCP enforcement +
+# ⊤-when-unset tests. SKILL enforcement landed in S3.)
 
 
 def test_contextual_layer_still_enforces_tool() -> None:

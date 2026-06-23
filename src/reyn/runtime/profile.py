@@ -29,8 +29,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import yaml
+
+if TYPE_CHECKING:
+    from reyn.security.permissions.capability_profile import CapabilityProfile
 
 PROFILE_FILENAME = "profile.yaml"
 
@@ -101,6 +105,24 @@ class AgentProfile:
         path.write_text(
             yaml.safe_dump(payload, allow_unicode=True, sort_keys=False),
             encoding="utf-8",
+        )
+
+    def default_profile(self) -> "CapabilityProfile":
+        """The agent's default capability spec (#2074 S4a) — the canonical unified
+        representation of this agent's per-agent baseline narrowing.
+
+        The profile.yaml user keys stay ``allowed_skills`` / ``allowed_mcp`` (the
+        natural operator surface); this maps them onto the unified spec's
+        ``skill_allow`` / ``mcp_allow`` axes (the INTERNAL representation, no
+        user-facing rename). ``None`` allowlists pass through as ``None`` (= ⊤,
+        unrestricted). #2074 S4b repoints the per-agent ∩ layers to read this spec
+        object so one primitive feeds both binding adapters."""
+        from reyn.security.permissions.capability_profile import CapabilityProfile
+
+        return CapabilityProfile(
+            name=self.name,
+            skill_allow=tuple(self.allowed_skills) if self.allowed_skills is not None else None,
+            mcp_allow=tuple(self.allowed_mcp) if self.allowed_mcp is not None else None,
         )
 
 

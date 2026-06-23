@@ -142,13 +142,12 @@ class AgentLayer:
                 or self._approved(axis, value)
             )
         if axis is CapabilityAxis.MCP:
-            # #1199 S3.1b: faithful to require_mcp (permissions.py:1248+1253) —
-            # the per-skill grant (``decl.mcp``) AND the per-skill allowlist
-            # (``decl.allowed_mcp``: None = no restriction). The per-AGENT
-            # allowlist (AgentProfile.allowed_mcp) is the separate ProfileLayer.
-            in_grant = value in d.mcp
-            in_allowlist = d.allowed_mcp is None or value in d.allowed_mcp
-            return in_grant and in_allowlist
+            # #1199 S3.1b: the per-skill GRANT (``decl.mcp``). #2074 S4a moved the
+            # per-agent allowlist (``decl.allowed_mcp``) OUT to a ProfileLayer in
+            # require_mcp (symmetric with SKILL) — so the full ∩ is now
+            # ``AgentLayer(grant) ∩ ProfileLayer(allowlist) ∩ ContextualLayer``,
+            # byte-identical to the prior ``grant ∩ allowlist`` (∩ associative).
+            return value in d.mcp
         if axis is CapabilityAxis.SECRET_WRITE:
             # #1199 S3.1b-2c: faithful to require_secret_write — a specific key OR
             # the "*" wildcard (runtime-determined keys, gated by the per-value
@@ -307,8 +306,12 @@ class ContextualLayer:
             # narrow SKILL (= every production context today).
             in_allow = c.skill_allow is None or value in c.skill_allow
             return in_allow and value not in c.skill_deny
-        # MCP is consumed in #2074 S4a (paired with the require_mcp gate wiring);
-        # until then the contextual MCP axis is ⊤ (never narrows).
+        if axis is CapabilityAxis.MCP:
+            # #2074 S4a: per-context MCP narrowing (paired with the require_mcp
+            # gate wiring). ⊤ when unset (mcp_allow=None + empty mcp_deny) →
+            # byte-identical for any context that does not narrow MCP.
+            in_allow = c.mcp_allow is None or value in c.mcp_allow
+            return in_allow and value not in c.mcp_deny
         return True
 
 

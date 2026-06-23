@@ -12,6 +12,7 @@ from reyn.security.permissions.effective import (
     AgentLayer,
     CapabilityAxis,
     EffectivePermission,
+    ProfileLayer,
     SandboxLayer,
 )
 from reyn.security.permissions.permissions import PermissionDecl
@@ -20,21 +21,41 @@ from reyn.security.sandbox.policy import SandboxPolicy
 AX = CapabilityAxis
 
 
-def test_agent_layer_mcp_intersects_decl_mcp_and_allowed_mcp() -> None:
-    """Tier 2: AgentLayer.MCP = decl.mcp ∩ decl.allowed_mcp (the S3.1b fix,
-    faithful to require_mcp 1248+1253)."""
-    # in grant + allowlist → permitted
-    assert AgentLayer(PermissionDecl(mcp=["fs"], allowed_mcp=["fs"])).allows(AX.MCP, "fs")
-    # in grant but allowlist excludes → denied (the decl.allowed_mcp conjunct)
-    assert not AgentLayer(
-        PermissionDecl(mcp=["fs", "web"], allowed_mcp=["fs"])
-    ).allows(AX.MCP, "web")
-    # allowlist None → no per-skill filter, decl.mcp only
-    assert AgentLayer(PermissionDecl(mcp=["fs"], allowed_mcp=None)).allows(AX.MCP, "fs")
-    # not in decl.mcp → denied even if allowlist includes it
+def _mcp_gate(decl):
+    """The require_mcp MCP ∩ stack (#2074 S4a): AgentLayer(grant) ∩
+    ProfileLayer(per-agent allowlist). Mirrors permissions.require_mcp."""
+    return EffectivePermission(
+        [AgentLayer(decl), ProfileLayer.from_allowlists(allowed_mcp=decl.allowed_mcp)]
+    )
+
+
+def test_agent_layer_mcp_is_grant_only_after_s4a() -> None:
+    """Tier 2: #2074 S4a moved the per-agent allowlist OUT of AgentLayer.MCP — the
+    layer is now the GRANT only (decl.mcp); the allowlist (decl.allowed_mcp) is a
+    separate ProfileLayer (symmetric with the SKILL axis)."""
+    # grant-only: in decl.mcp → True regardless of allowed_mcp (allowlist not here)
+    assert AgentLayer(PermissionDecl(mcp=["fs"], allowed_mcp=[])).allows(AX.MCP, "fs")
+    # not in decl.mcp → denied (the grant)
     assert not AgentLayer(PermissionDecl(mcp=[], allowed_mcp=["fs"])).allows(AX.MCP, "fs")
+    # the allowlist now lives on ProfileLayer
+    assert ProfileLayer.from_allowlists(allowed_mcp=["fs"]).allows(AX.MCP, "fs")
+    assert not ProfileLayer.from_allowlists(allowed_mcp=["fs"]).allows(AX.MCP, "web")
+
+
+def test_mcp_gate_full_intersection_preserved() -> None:
+    """Tier 2: the FULL require_mcp ∩ (AgentLayer ∩ ProfileLayer) reproduces the
+    pre-S4a ``decl.mcp ∩ decl.allowed_mcp`` decision byte-identically (∩ associative
+    — the migration changed the decomposition, not the gate outcome)."""
+    # in grant + allowlist → permitted
+    assert _mcp_gate(PermissionDecl(mcp=["fs"], allowed_mcp=["fs"])).allows(AX.MCP, "fs")
+    # in grant but allowlist excludes → denied
+    assert not _mcp_gate(PermissionDecl(mcp=["fs", "web"], allowed_mcp=["fs"])).allows(AX.MCP, "web")
+    # allowlist None → no per-agent filter, decl.mcp only
+    assert _mcp_gate(PermissionDecl(mcp=["fs"], allowed_mcp=None)).allows(AX.MCP, "fs")
+    # not in decl.mcp → denied even if allowlist includes it
+    assert not _mcp_gate(PermissionDecl(mcp=[], allowed_mcp=["fs"])).allows(AX.MCP, "fs")
     # allowlist=[] blocks all
-    assert not AgentLayer(PermissionDecl(mcp=["fs"], allowed_mcp=[])).allows(AX.MCP, "fs")
+    assert not _mcp_gate(PermissionDecl(mcp=["fs"], allowed_mcp=[])).allows(AX.MCP, "fs")
 
 
 def test_approval_folded_inside_agent_layer_is_restricted_by_conjunction() -> None:

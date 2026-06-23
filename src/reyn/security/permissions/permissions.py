@@ -1421,29 +1421,54 @@ class PermissionResolver:
 
     async def require_mcp(
         self, decl: PermissionDecl, server: str, bus: RequestBus,
+        *, contextual: "object | None" = None,
     ) -> None:
-        # #1199 S3.1b (the migration anchor): the static MCP authority —
-        # decl.mcp ∩ decl.allowed_mcp — now flows through the unified
-        # EffectivePermission model (AgentLayer.MCP), the single conjunctive-∩
-        # source, instead of two inline checks. Byte-identical DECISION; the two
-        # diagnostics below are preserved (same messages + order). Local import
-        # avoids the effective.py → permissions.py circular. The interactive
-        # _approve prompt remains the separate runtime gate (not part of the ∩).
+        # #1199 S3.1b: the static MCP authority flows through the unified
+        # EffectivePermission ∩. #2074 S4a unifies the per-agent MCP allowlist
+        # into a ``ProfileLayer`` (symmetric with the SKILL axis), and adds an
+        # optional per-session ``ContextualLayer`` (MCP contextual narrowing,
+        # ⊤-when-unset). The full ∩ is now:
+        #   AgentLayer(decl.mcp grant) ∩ ProfileLayer(decl.allowed_mcp allowlist)
+        #     ∩ ContextualLayer(contextual)
+        # which is byte-identical to the prior ``grant ∩ allowlist`` when
+        # ``contextual`` does not narrow MCP (∩ associative). The three diagnostics
+        # below distinguish the failing layer (mirrors require_tool), preserving
+        # the original allowlist + declared messages exactly. Local import avoids
+        # the effective.py → permissions.py circular. ``_approve`` remains the
+        # separate runtime gate (not part of the ∩).
         from reyn.security.permissions.effective import (
             AgentLayer,
             CapabilityAxis,
+            ContextualLayer,
             EffectivePermission,
+            ProfileLayer,
         )
 
-        if not EffectivePermission([AgentLayer(decl)]).allows(
-            CapabilityAxis.MCP, server
-        ):
-            # PR37: per-agent allowlist check (narrower than project config).
+        layers: list = [
+            AgentLayer(decl),
+            ProfileLayer.from_allowlists(allowed_mcp=decl.allowed_mcp),
+        ]
+        if contextual is not None:
+            layers.append(ContextualLayer(contextual))
+        if not EffectivePermission(layers).allows(CapabilityAxis.MCP, server):
+            # Decision-enabling deny, distinguishing the failing layer (order
+            # preserves the pre-S4a allowlist-then-declared messages byte-identically;
+            # the contextual branch is NEW + only fires when a context narrows MCP):
+            # 1. per-agent allowlist (ProfileLayer) — "not in allowed_mcp"
             if decl.allowed_mcp is not None and server not in decl.allowed_mcp:
                 raise PermissionError(
                     f"MCP server {server!r} not in allowed_mcp for caller "
                     f"(agent allowlist exhausted)"
                 )
+            # 2. per-session contextual narrowing (ContextualLayer) — NEW (#2074 S4a)
+            if contextual is not None and not ContextualLayer(contextual).allows(
+                CapabilityAxis.MCP, server
+            ):
+                raise PermissionError(
+                    f"MCP server {server!r} is blocked by the active capability "
+                    f"context (delegation / topology / ephemeral narrowing)."
+                )
+            # 3. per-skill grant (AgentLayer) — "not declared in skill permissions"
             raise PermissionError(
                 f"MCP server {server!r} not declared in skill permissions. "
                 f"Add `permissions:\\n  mcp: [{server}]` to the skill.md frontmatter."
