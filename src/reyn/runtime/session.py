@@ -3050,6 +3050,15 @@ class Session:
         # cron, now Bob from Slack just said something" instead of
         # seeing a confused linear feed.
         self._handle_sender_attribution(payload)
+        # #1800 slice 5a: turn lifecycle audit event (P6). Emitted after the
+        # trigger is consumed and before dispatch, so slice 5b can attach the
+        # turn_start hook here. chain_id from the payload (may be absent for
+        # non-user triggers — that is fine, kind alone identifies the turn type).
+        self._chat_events.emit(
+            "turn_started",
+            kind=kind,
+            chain_id=payload.get("chain_id"),
+        )
         # ADR-0038 Stage 1c: busy until this turn settles (its WAL appends done).
         self._turn_idle.clear()
         try:
@@ -3088,6 +3097,10 @@ class Session:
 
     async def run(self) -> None:
         self._chat_events.emit("chat_started", agent_name=self.agent_name, model=self.model)
+        # #1800 slice 5a: session lifecycle audit event (P6). Emitted alongside
+        # chat_started; marks the boundary of the session's resource scope so
+        # slice 5b can attach the session_start hook here.
+        self._chat_events.emit("session_started", agent_name=self.agent_name)
 
         # #1830 / FP-0052: warn if the startup model is above the cost threshold.
         # Fires once per session per model class (de-duped in maybe_emit_model_cost_warn).
@@ -3100,6 +3113,9 @@ class Session:
         finally:
             await self._drain_on_shutdown()
             self._chat_events.emit("chat_stopped", agent_name=self.agent_name)
+            # #1800 slice 5a: session lifecycle audit event (P6). Emitted alongside
+            # chat_stopped; marks the end of the session's resource scope.
+            self._chat_events.emit("session_completed", agent_name=self.agent_name)
             await self._put_outbox(OutboxMessage(kind="__end__", text=""))
 
     async def _drain_on_shutdown(self) -> None:
@@ -4881,6 +4897,14 @@ class Session:
     ) -> None:
         """Forwarding → RouterLoopDriver.run_turn (PR-3)."""
         await self._loop_driver.run_turn(user_text, chain_id)
+        # #1800 slice 5a: turn lifecycle audit event (P6). Emitted immediately
+        # after RouterLoopDriver.run_turn() returns — the router loop has
+        # reached a terminal stop_reason and the turn's response is complete.
+        # This is the hook point for the turn_end lifecycle hook (slice 5b).
+        # Emitted here (not inside RouterLoop) so it fires exactly once per
+        # turn independent of which terminal path the loop took, and so the
+        # chain_id (known to _run_router_loop) is in scope.
+        self._chat_events.emit("turn_completed", chain_id=chain_id)
         # ADR-0038 Stage 1a: turn boundary = a user-facing checkpoint. #1547: the
         # user message is this checkpoint's anchor for the rewind-timeline preview.
         # #1533 2c: the FULL message is persisted alongside (edit-prefill source).

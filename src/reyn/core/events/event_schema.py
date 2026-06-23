@@ -62,4 +62,26 @@ EVENT_AUDIT_REQUIREMENTS: dict[str, frozenset[str]] = {
     #   tool_calls batch produced spawn-ack (= usually 1).
     # chain_id: for cross-agent tracing (P6)
     "invoke_skill_spawn_ack_exit": frozenset({"chain_id", "spawn_ack_count"}),
+    # #1800 slice 5a: session + turn lifecycle events (P6 audit — hook dispatch
+    # points added in slice 5b).
+    #
+    # session_started / session_completed: emitted in Session.run() alongside
+    #   chat_started / chat_stopped. Marks the boundary of the session's
+    #   resource scope (F in the lifecycle hook design).
+    # agent_name: the session's agent identity (same field as chat_started).
+    "session_started": frozenset({"agent_name"}),
+    "session_completed": frozenset({"agent_name"}),
+    # turn_started: emitted in Session.run_one_iteration() after the trigger
+    #   is consumed from the inbox and before dispatch to _handle_*.
+    # kind: the inbox message kind that triggered this turn (e.g. "user",
+    #   "skill_completed", "task_ready"). Lets subscribers distinguish human
+    #   triggers from automated ones without parsing the payload.
+    "turn_started": frozenset({"kind"}),
+    # turn_completed: emitted in Session._run_router_loop() immediately after
+    #   RouterLoopDriver.run_turn() returns — the router loop has reached a
+    #   terminal condition (the turn's response is complete). One emit per
+    #   turn, independent of skill/routing path. This is the hook point for
+    #   the turn_end lifecycle hook (slice 5b). chain_id matches the turn's
+    #   chain_id for cross-agent tracing.
+    "turn_completed": frozenset({"chain_id"}),
 }
