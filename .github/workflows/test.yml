@@ -33,7 +33,12 @@ jobs:
         run: pip install -e ".[dev,mcp,web]"
 
       - name: Run tests
-        run: python -m pytest -q -n auto
+        # --timeout=120: a per-test wall-clock cap (pytest-timeout). Without it a
+        # single hung test (e.g. a stuck subprocess/asyncio test under Linux-3.12)
+        # hangs the whole -n auto job to the 15-min job timeout → cancel, with no
+        # name. The cap interrupts the hung test (signal method on Linux) and
+        # NAMES it. Permanent CI hardening (#1800-7 diagnostic).
+        run: python -m pytest -q -n auto --timeout=120
 
   lint:
     name: ruff
