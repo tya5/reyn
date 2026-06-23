@@ -143,7 +143,7 @@ natural `allowed_skills` / `allowed_mcp` keys (no YAML rename).
 Changes to both files take effect at **next session startup**. The files are
 loaded once at session construction; running sessions use their in-memory copy.
 
-Turn-boundary hot-reload is in progress (⏳ #20, sequenced after #2074).
+Turn-boundary hot-reload is planned.
 
 ## Schema example
 
