@@ -23,11 +23,12 @@ real Session's methods (no mocks):
 """
 from __future__ import annotations
 
+import json
 import logging
 from typing import Any, Awaitable, Callable
 
 from reyn.hooks.registry import HookRegistry
-from reyn.hooks.render import render_push
+from reyn.hooks.render import ResolvedPush, render_push
 from reyn.hooks.schema import HookDef
 from reyn.hooks.shell_runner import run_shell_hook
 
@@ -84,37 +85,119 @@ class HookDispatcher:
                 )
 
     async def _dispatch_one(self, hook: HookDef, point: str, template_vars: dict) -> None:
-        """Dispatch a single hook by type (push C/E vs shell F)."""
-        if hook.push is not None:
-            resolved = render_push(hook.push, template_vars)
-            if not resolved.push_when:
-                return  # conditional push guard (or a render failure — fail-safe)
-            # Attribution name (#1800 slice 6): the hook's operator label when
-            # set, else the lifecycle point (slice-5b default). Consumed as the
-            # ``[hook:<name>]`` system-role prefix (shared E + C renderer).
-            payload = {"name": hook.name or point, "text": resolved.message}
-            if resolved.wake:
-                # E — a turn trigger (self-continuation). Routed to
-                # _handle_hook_message, which renders the system-role
-                # [hook:name] message + runs one turn. wake=True so
-                # _drain_to_wake treats it as the trigger.
-                await self._put_inbox(HOOK_INBOX_KIND, {**payload, "wake": True})
-            else:
-                # C — a passive ride-along: stage directly into next-turn context
-                # (the 4b staging API), NOT via the inbox (a wake=false-only inbox
-                # push would never drain alone — Decision A). Rides along with the
-                # next turn as a system-role [hook:name] message.
-                await self._stage_next_turn_context(HOOK_STAGE_KIND, payload)
-        elif hook.shell is not None:
-            # F — an external side-effect. Output ignored; never raises (the
-            # runner logs + returns). Backend: the injected instance, else
+        """Dispatch a single hook by scheme: template_push (C/E) / shell_exec (F)
+        / shell_push (run + parse stdout → the same C/E path as template_push)."""
+        if hook.template_push is not None:
+            resolved = render_push(hook.template_push, template_vars)
+            await self._push_resolved(resolved, hook, point)
+        elif hook.shell_exec is not None:
+            # shell_exec — an external side-effect. Output IGNORED; never raises
+            # (the runner logs + returns). Backend: the injected instance, else
             # run_shell_hook resolves get_default_backend(sandbox_config).
             await self._run_shell(
-                hook.shell,
+                hook.shell_exec,
                 template_vars,
                 sandbox_backend=self._sandbox_backend,
                 sandbox_config=self._sandbox_config,
             )
+        elif hook.shell_push is not None:
+            # shell_push (#2069) — a shell command whose STDOUT is a JSON
+            # push-directive. Captured (capture_stdout, vs shell_exec's ignored
+            # output), parsed fail-safe into a ResolvedPush, then dispatched via
+            # the SAME C/E path as template_push. The ONLY difference from
+            # template_push is the SOURCE of the ResolvedPush: stdout JSON here vs
+            # Jinja2 render there. A run-failure (→ stdout None) or a parse-failure
+            # (→ _parse_shell_push None) skips the push (fail-safe).
+            stdout = await self._run_shell(
+                hook.shell_push,
+                template_vars,
+                sandbox_backend=self._sandbox_backend,
+                sandbox_config=self._sandbox_config,
+                capture_stdout=True,
+            )
+            resolved = _parse_shell_push(stdout)
+            if resolved is not None:
+                await self._push_resolved(resolved, hook, point)
+
+    async def _push_resolved(self, resolved, hook: HookDef, point: str) -> None:
+        """Dispatch a resolved push directive via C/E (#1800 slice 5b/6) — shared
+        by ``template_push`` (Jinja2 render) and ``shell_push`` (stdout JSON), so
+        the only difference between the two is where ``resolved`` comes from."""
+        if not resolved.push_when:
+            return  # conditional push guard (or a render/parse failure — fail-safe)
+        # Attribution name (#1800 slice 6): the hook's operator label when set,
+        # else the lifecycle point (slice-5b default) — the ``[hook:<name>]``
+        # system-role prefix (shared E + C renderer).
+        payload = {"name": hook.name or point, "text": resolved.message}
+        if resolved.wake:
+            # E — a turn trigger (self-continuation): _put_inbox wake=True →
+            # _drain_to_wake treats it as the trigger → _handle_hook_message.
+            await self._put_inbox(HOOK_INBOX_KIND, {**payload, "wake": True})
+        else:
+            # C — a passive ride-along: stage directly into next-turn context (the
+            # 4b API), NOT via the inbox (a wake=false-only inbox push never drains
+            # alone — Decision A).
+            await self._stage_next_turn_context(HOOK_STAGE_KIND, payload)
+
+
+def _parse_shell_push(stdout: str | None) -> ResolvedPush | None:
+    """Parse a ``shell_push`` command's captured stdout (a JSON push-directive,
+    #2069) into a ``ResolvedPush``, or ``None`` to skip the push.
+
+    Contract: stdout is a single JSON object
+    ``{"push_when": bool, "wake": bool, "message": str, "session"?: str}``.
+    The first three are required; ``session`` is optional.
+
+    **Fail-safe** (never raises): empty stdout, invalid JSON, a non-object, a
+    missing or wrong-typed required field, or a non-string ``session`` all log a
+    WARNING and return ``None`` so the dispatcher skips the push and the run
+    proceeds — symmetric with ``render_push``'s ``push_when=False`` safety net.
+
+    ``session`` is parsed and carried on the ``ResolvedPush`` for uniformity with
+    ``template_push`` (forward-compat). Cross-session routing is **not wired** in
+    this slice — the dispatcher pushes to the current session and ignores
+    ``resolved.session``, so a ``session`` value is a no-op today (tracked
+    follow-up), exactly as for ``template_push``.
+    """
+    if not stdout or not stdout.strip():
+        return None
+    try:
+        obj = json.loads(stdout)
+    except (json.JSONDecodeError, ValueError) as exc:
+        _log.warning(
+            "shell_push stdout is not valid JSON — push skipped. error=%s: %s",
+            type(exc).__name__, exc,
+        )
+        return None
+    if not isinstance(obj, dict):
+        _log.warning(
+            "shell_push directive must be a JSON object, got %s — push skipped.",
+            type(obj).__name__,
+        )
+        return None
+
+    message = obj.get("message")
+    wake = obj.get("wake")
+    push_when = obj.get("push_when")
+    session = obj.get("session")
+
+    # Required-field + type checks (bool first — bool is an int subclass, so the
+    # isinstance(..., bool) guard correctly rejects an integer 1/0).
+    if not isinstance(message, str) or not message.strip():
+        _log.warning("shell_push directive 'message' must be a non-empty string — push skipped.")
+        return None
+    if not isinstance(wake, bool):
+        _log.warning("shell_push directive 'wake' must be a JSON bool — push skipped.")
+        return None
+    if not isinstance(push_when, bool):
+        _log.warning("shell_push directive 'push_when' must be a JSON bool — push skipped.")
+        return None
+    if session is not None and not isinstance(session, str):
+        _log.warning("shell_push directive 'session' must be a string or null — push skipped.")
+        return None
+    session = session if (session and session.strip()) else None
+
+    return ResolvedPush(message=message, wake=wake, push_when=push_when, session=session)
 
 
 __all__ = ["HookDispatcher", "HOOK_INBOX_KIND", "HOOK_STAGE_KIND"]

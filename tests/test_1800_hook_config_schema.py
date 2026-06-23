@@ -42,7 +42,7 @@ def _raw_push(
     push: dict = {"message": message, "wake": wake, "push_when": push_when}
     if session is not None:
         push["session"] = session
-    entry: dict = {"on": on, "push": push}
+    entry: dict = {"on": on, "template_push": push}
     if matcher is not None:
         entry["matcher"] = matcher
     return entry
@@ -50,7 +50,7 @@ def _raw_push(
 
 def _raw_shell(*, on: str = "session_end", command: str = "echo done") -> dict:
     """Build a raw shell-hook dict (valid by default)."""
-    return {"on": on, "shell": command}
+    return {"on": on, "shell_exec": command}
 
 
 # ===========================================================================
@@ -66,30 +66,30 @@ def test_hookdef_push_shape() -> None:
         push_when="{{ ctx.condition }}",
         session="session-abc",
     )
-    hd = HookDef(on="turn_end", push=push, shell=None, matcher="my-matcher")
+    hd = HookDef(on="turn_end", template_push=push, shell_exec=None, matcher="my-matcher")
 
     assert hd.on == "turn_end"
-    assert hd.push is push
-    assert hd.push.message == "{{ event.name }}"
-    assert hd.push.wake == "{{ ctx.needs_wake }}"
-    assert hd.push.push_when == "{{ ctx.condition }}"
-    assert hd.push.session == "session-abc"
+    assert hd.template_push is push
+    assert hd.template_push.message == "{{ event.name }}"
+    assert hd.template_push.wake == "{{ ctx.needs_wake }}"
+    assert hd.template_push.push_when == "{{ ctx.condition }}"
+    assert hd.template_push.session == "session-abc"
     assert hd.matcher == "my-matcher"
-    assert hd.shell is None
+    assert hd.shell_exec is None
 
 
 def test_hookdef_shell_shape() -> None:
     """Tier 1: ``HookDef`` with a shell command carries the expected fields."""
-    hd = HookDef(on="session_end", shell="scripts/cleanup.sh", push=None)
+    hd = HookDef(on="session_end", shell_exec="scripts/cleanup.sh", template_push=None)
 
     assert hd.on == "session_end"
-    assert hd.shell == "scripts/cleanup.sh"
-    assert hd.push is None
+    assert hd.shell_exec == "scripts/cleanup.sh"
+    assert hd.template_push is None
 
 
 def test_hookdef_is_frozen() -> None:
     """Tier 1: ``HookDef`` and ``PushBlock`` are immutable (frozen dataclasses)."""
-    hd = HookDef(on="skill_start", shell="echo hi")
+    hd = HookDef(on="skill_start", shell_exec="echo hi")
     with pytest.raises(Exception):  # FrozenInstanceError
         hd.on = "skill_end"  # type: ignore[misc]
 
@@ -115,16 +115,16 @@ def test_load_hooks_all_allowed_points_accepted() -> None:
 
 def test_load_hooks_push_minimal_valid() -> None:
     """Tier 1: a push hook with only required ``message`` is accepted."""
-    raw = [{"on": "turn_end", "push": {"message": "hello"}}]
+    raw = [{"on": "turn_end", "template_push": {"message": "hello"}}]
     registry = load_hooks(raw)
     hooks = registry.hooks_for("turn_end")
     (hd,) = hooks  # exactly one — unpack enforces count
-    assert hd.push is not None
-    assert hd.push.message == "hello"
+    assert hd.template_push is not None
+    assert hd.template_push.message == "hello"
     # Defaults
-    assert hd.push.wake is True
-    assert hd.push.push_when == "true"
-    assert hd.push.session is None
+    assert hd.template_push.wake is True
+    assert hd.template_push.push_when == "true"
+    assert hd.template_push.session is None
 
 
 def test_load_hooks_push_all_fields_accepted() -> None:
@@ -132,7 +132,7 @@ def test_load_hooks_push_all_fields_accepted() -> None:
     raw = [
         {
             "on": "skill_end",
-            "push": {
+            "template_push": {
                 "message": "{{ skill.name }} finished",
                 "wake": "{{ ctx.wake_needed }}",
                 "push_when": "{{ ctx.should_push }}",
@@ -144,31 +144,31 @@ def test_load_hooks_push_all_fields_accepted() -> None:
     registry = load_hooks(raw)
     hooks = registry.hooks_for("skill_end")
     (hd,) = hooks  # exactly one — unpack enforces count
-    assert hd.push is not None
-    assert hd.push.message == "{{ skill.name }} finished"
-    assert hd.push.wake == "{{ ctx.wake_needed }}"
-    assert hd.push.push_when == "{{ ctx.should_push }}"
-    assert hd.push.session == "{{ ctx.target_session }}"
+    assert hd.template_push is not None
+    assert hd.template_push.message == "{{ skill.name }} finished"
+    assert hd.template_push.wake == "{{ ctx.wake_needed }}"
+    assert hd.template_push.push_when == "{{ ctx.should_push }}"
+    assert hd.template_push.session == "{{ ctx.target_session }}"
     assert hd.matcher == "my-skill-filter"
 
 
 def test_load_hooks_shell_valid() -> None:
     """Tier 1: a shell hook is accepted and stores the command raw."""
-    raw = [{"on": "session_end", "shell": "scripts/cleanup.sh --force"}]
+    raw = [{"on": "session_end", "shell_exec": "scripts/cleanup.sh --force"}]
     registry = load_hooks(raw)
     hooks = registry.hooks_for("session_end")
     (hd,) = hooks  # exactly one — unpack enforces count
-    assert hd.shell == "scripts/cleanup.sh --force"
-    assert hd.push is None
+    assert hd.shell_exec == "scripts/cleanup.sh --force"
+    assert hd.template_push is None
 
 
 def test_load_hooks_push_wake_bool_false_accepted() -> None:
-    """Tier 1: push.wake=False (ride-along mode) is accepted."""
-    raw = [{"on": "turn_start", "push": {"message": "context note", "wake": False}}]
+    """Tier 1: template_push.wake=False (ride-along mode) is accepted."""
+    raw = [{"on": "turn_start", "template_push": {"message": "context note", "wake": False}}]
     registry = load_hooks(raw)
     hd = registry.hooks_for("turn_start")[0]
-    assert hd.push is not None
-    assert hd.push.wake is False
+    assert hd.template_push is not None
+    assert hd.template_push.wake is False
 
 
 def test_load_hooks_none_returns_empty_registry() -> None:
@@ -191,31 +191,31 @@ def test_load_hooks_empty_list_returns_empty_registry() -> None:
 def test_load_hooks_bad_hook_point_rejected() -> None:
     """Tier 1: an unrecognised ``on:`` value raises ``HookConfigError``."""
     with pytest.raises(HookConfigError, match="not a recognised hook-point"):
-        load_hooks([{"on": "phase_start", "shell": "echo hi"}])
+        load_hooks([{"on": "phase_start", "shell_exec": "echo hi"}])
 
 
 def test_load_hooks_missing_on_field_rejected() -> None:
     """Tier 1: a hook entry missing ``on`` raises ``HookConfigError``."""
     with pytest.raises(HookConfigError, match="on is required"):
-        load_hooks([{"shell": "echo hi"}])
+        load_hooks([{"shell_exec": "echo hi"}])
 
 
 def test_load_hooks_both_push_and_shell_rejected() -> None:
-    """Tier 1: specifying both ``push`` and ``shell`` raises ``HookConfigError``."""
+    """Tier 1: specifying more than one of template_push / shell_exec / shell_push raises ``HookConfigError``."""
     with pytest.raises(HookConfigError, match="mutually exclusive"):
         load_hooks(
             [
                 {
                     "on": "turn_end",
-                    "push": {"message": "hi"},
-                    "shell": "echo hi",
+                    "template_push": {"message": "hi"},
+                    "shell_exec": "echo hi",
                 }
             ]
         )
 
 
 def test_load_hooks_neither_push_nor_shell_rejected() -> None:
-    """Tier 1: an entry with neither ``push`` nor ``shell`` raises ``HookConfigError``."""
+    """Tier 1: an entry with none of template_push / shell_exec / shell_push raises ``HookConfigError``."""
     with pytest.raises(HookConfigError, match="exactly one of"):
         load_hooks([{"on": "turn_end"}])
 
@@ -223,25 +223,25 @@ def test_load_hooks_neither_push_nor_shell_rejected() -> None:
 def test_load_hooks_push_missing_message_rejected() -> None:
     """Tier 1: a push block without ``message`` raises ``HookConfigError``."""
     with pytest.raises(HookConfigError, match="message is required"):
-        load_hooks([{"on": "turn_end", "push": {}}])
+        load_hooks([{"on": "turn_end", "template_push": {}}])
 
 
 def test_load_hooks_push_empty_message_rejected() -> None:
     """Tier 1: a push block with empty ``message`` raises ``HookConfigError``."""
     with pytest.raises(HookConfigError, match="must not be empty"):
-        load_hooks([{"on": "turn_end", "push": {"message": "   "}}])
+        load_hooks([{"on": "turn_end", "template_push": {"message": "   "}}])
 
 
 def test_load_hooks_shell_empty_command_rejected() -> None:
     """Tier 1: a shell hook with empty command raises ``HookConfigError``."""
     with pytest.raises(HookConfigError, match="must not be empty"):
-        load_hooks([{"on": "session_end", "shell": ""}])
+        load_hooks([{"on": "session_end", "shell_exec": ""}])
 
 
 def test_load_hooks_push_wake_wrong_type_rejected() -> None:
-    """Tier 1: ``push.wake`` with an invalid type (int) raises ``HookConfigError``."""
-    with pytest.raises(HookConfigError, match="push.wake must be a bool or template string"):
-        load_hooks([{"on": "turn_end", "push": {"message": "hi", "wake": 42}}])
+    """Tier 1: ``template_push.wake`` with an invalid type (int) raises ``HookConfigError``."""
+    with pytest.raises(HookConfigError, match="template_push.wake must be a bool or template string"):
+        load_hooks([{"on": "turn_end", "template_push": {"message": "hi", "wake": 42}}])
 
 
 def test_load_hooks_entry_not_a_mapping_rejected() -> None:
@@ -254,7 +254,7 @@ def test_load_hooks_non_list_hooks_value_silently_empty(caplog: pytest.LogCaptur
     """Tier 1: a non-list ``hooks:`` value logs a warning and returns an empty registry."""
     import logging
     with caplog.at_level(logging.WARNING, logger="reyn.hooks.loader"):
-        registry = load_hooks({"on": "turn_end", "push": {"message": "hi"}})
+        registry = load_hooks({"on": "turn_end", "template_push": {"message": "hi"}})
     assert registry.hooks_for("turn_end") == []  # behavioral: no hooks despite non-empty input
     assert "must be a list" in caplog.text
 
@@ -264,8 +264,8 @@ def test_load_hooks_error_message_includes_entry_index() -> None:
     try:
         load_hooks(
             [
-                {"on": "turn_end", "push": {"message": "ok"}},
-                {"on": "bad_point", "shell": "echo"},
+                {"on": "turn_end", "template_push": {"message": "ok"}},
+                {"on": "bad_point", "shell_exec": "echo"},
             ]
         )
         raise AssertionError("should have raised")
@@ -281,31 +281,31 @@ def test_load_hooks_error_message_includes_entry_index() -> None:
 def test_registry_hooks_for_preserves_registration_order() -> None:
     """Tier 1: ``hooks_for`` returns hooks in registration (list) order."""
     raw = [
-        {"on": "turn_end", "push": {"message": "first"}},
-        {"on": "skill_start", "shell": "echo a"},
-        {"on": "turn_end", "push": {"message": "second"}},
-        {"on": "turn_end", "shell": "echo b"},
+        {"on": "turn_end", "template_push": {"message": "first"}},
+        {"on": "skill_start", "shell_exec": "echo a"},
+        {"on": "turn_end", "template_push": {"message": "second"}},
+        {"on": "turn_end", "shell_exec": "echo b"},
     ]
     registry = load_hooks(raw)
     hooks = registry.hooks_for("turn_end")
     # Exactly three hooks at turn_end — use unpack-enforcement so extra/missing fails
     first, second, third = hooks
     # Order: first push → second push → shell
-    assert first.push is not None and first.push.message == "first"
-    assert second.push is not None and second.push.message == "second"
-    assert third.shell == "echo b"
+    assert first.template_push is not None and first.template_push.message == "first"
+    assert second.template_push is not None and second.template_push.message == "second"
+    assert third.shell_exec == "echo b"
 
 
 def test_registry_hooks_for_unknown_point_returns_empty() -> None:
     """Tier 1: ``hooks_for`` with an unknown point returns an empty list (no error)."""
-    raw = [{"on": "turn_end", "shell": "echo hi"}]
+    raw = [{"on": "turn_end", "shell_exec": "echo hi"}]
     registry = load_hooks(raw)
     assert registry.hooks_for("agent_start") == []
 
 
 def test_registry_hooks_for_no_match_returns_empty() -> None:
     """Tier 1: ``hooks_for`` returns an empty list when no hooks match the point."""
-    raw = [{"on": "turn_end", "shell": "echo hi"}]
+    raw = [{"on": "turn_end", "shell_exec": "echo hi"}]
     registry = load_hooks(raw)
     assert registry.hooks_for("skill_start") == []
 
@@ -325,7 +325,7 @@ def test_load_hooks_round_trip_from_yaml(tmp_path: Path) -> None:
     yaml_content = """
 hooks:
   - on: skill_end
-    push:
+    template_push:
       message: "skill {{ skill.name }} done"
       wake: false
       push_when: "{{ ctx.should_notify }}"
@@ -333,7 +333,7 @@ hooks:
     matcher: skill-done-filter
 
   - on: session_start
-    shell: "scripts/on-session-start.sh"
+    shell_exec: "scripts/on-session-start.sh"
     matcher: session-filter
 """.lstrip()
 
@@ -347,14 +347,14 @@ hooks:
     skill_end_hooks = registry.hooks_for("skill_end")
     (h1,) = skill_end_hooks  # exactly one — unpack enforces count
     assert h1.on == "skill_end"
-    assert h1.push is not None
-    assert h1.push.message == "skill {{ skill.name }} done"
+    assert h1.template_push is not None
+    assert h1.template_push.message == "skill {{ skill.name }} done"
     # non-default wake=False (default is True)
-    assert h1.push.wake is False
+    assert h1.template_push.wake is False
     # non-default push_when template (default is "true")
-    assert h1.push.push_when == "{{ ctx.should_notify }}"
+    assert h1.template_push.push_when == "{{ ctx.should_notify }}"
     # non-default session template (default is None)
-    assert h1.push.session == "{{ ctx.target_session }}"
+    assert h1.template_push.session == "{{ ctx.target_session }}"
     # non-default matcher (default is None)
     assert h1.matcher == "skill-done-filter"
 
@@ -362,8 +362,8 @@ hooks:
     session_start_hooks = registry.hooks_for("session_start")
     (h2,) = session_start_hooks  # exactly one — unpack enforces count
     assert h2.on == "session_start"
-    assert h2.shell == "scripts/on-session-start.sh"
-    assert h2.push is None
+    assert h2.shell_exec == "scripts/on-session-start.sh"
+    assert h2.template_push is None
     assert h2.matcher == "session-filter"
 
     # ── Hooks at other points are empty (no stray registrations) ─────────

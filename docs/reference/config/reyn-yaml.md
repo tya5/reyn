@@ -32,7 +32,7 @@ models:
 | `web` | map | SSL settings for `web_fetch` and MCP registry calls. See below. |
 | `eval` | map | Trace exporter backends for `reyn eval`. See below. |
 | `sandbox` | map | Sandboxed-exec backend selection, unsupported-platform policy, and the agent-level sandbox policy. See below. |
-| `hooks` | list | Agent-lifecycle hooks (#1800) — push / shell hooks at lifecycle points. See below. |
+| `hooks` | list | Agent-lifecycle hooks (#1800/#2069) — template_push / shell_exec / shell_push hooks at lifecycle points. See below. |
 | `action_retrieval` | map | Universal catalog visibility + retrieval settings. See below. |
 | `embedding` | map | RAG embedding model classes and batch settings. See below. |
 | `chat` | map | Chat-session compaction settings. See below. |
@@ -582,30 +582,42 @@ All exporters are fire-and-forget: export failures are logged but do not abort t
 
 ## `hooks` block
 
-Agent-lifecycle hooks (#1800) — a thin operator layer over the unified inbox and
-the P6 lifecycle. A **list** of entries; each fires at a lifecycle point (`on`)
-and is **either** a `push` (inject an attributed `[hook:<point>]` message) **or**
-a `shell` (run an external command — sandbox-gated, output ignored). Hooks never
-silently mutate tool results; pushes are new, attributed, evented messages.
+Agent-lifecycle hooks (#1800/#2069) — a thin operator layer over the unified inbox
+and the P6 lifecycle. A **list** of entries; each fires at a lifecycle point (`on`)
+and carries **exactly one** of three mutually-exclusive schemes:
+
+- **`template_push`** — inject an attributed `[hook:<name>]` message from a config
+  Jinja2 template.
+- **`shell_exec`** — run an external command as a pure side-effect (output IGNORED).
+- **`shell_push`** — run a command whose **stdout is a JSON push-directive**, pushed
+  via the same path as `template_push` (the only difference is the directive's
+  source: captured stdout vs a Jinja2 render).
+
+Hooks never silently mutate tool results; pushes are new, attributed, evented
+messages.
 
 ```yaml
 hooks:
   - name: next_step              # optional → the [hook:next_step] attribution (absent → the point)
     on: turn_end                 # turn_start|turn_end|session_start|session_end|skill_start|skill_end|task_start|task_end
-    push:
+    template_push:
       message: "Turn complete — consider the next step."
       wake: false                # false = passive context (C); true = start a turn (E)
       push_when: "true"          # optional Jinja2 → bool; false skips the push
   - on: session_start
-    shell: "echo session-started >> /tmp/reyn-hooks.log"
+    shell_exec: "echo session-started >> /tmp/reyn-hooks.log"
+  - name: dynamic                # stdout decides whether/what/how to push
+    on: turn_end
+    shell_push: "scripts/decide-next.sh"   # emits {"push_when":true,"wake":true,"message":"..."}
 ```
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | `on` | string | _required_ | Lifecycle point: `turn_start`, `turn_end`, `session_start`, `session_end`, `skill_start`, `skill_end`, `task_start`, `task_end`. |
 | `name` | string | _the point_ | Optional operator label surfaced as the `[hook:<name>]` attribution prefix on a push. Absent → defaults to the hook-point (e.g. `[hook:turn_end]`). |
-| `push` | map | _none_ | Inbox-push hook (mutually exclusive with `shell`). `message` (Jinja2 → text), `wake` (bool/Jinja2, default `true`: `true` starts a new turn = self-continuation; `false` rides along with the next turn as passive context), `push_when` (Jinja2 → bool, default `true`; `false` skips). |
-| `shell` | string | _none_ | A shell command to run as a pure side-effect (mutually exclusive with `push`). Sandbox-gated + consent-allowlisted; stdout/stderr are logs, never parsed. |
+| `template_push` | map | _none_ | Inbox-push hook from a Jinja2 template (one of the three schemes). `message` (Jinja2 → text), `wake` (bool/Jinja2, default `true`: `true` starts a new turn = self-continuation; `false` rides along with the next turn as passive context), `push_when` (Jinja2 → bool, default `true`; `false` skips), `session` (parsed + carried forward-compat; cross-session routing is **not yet wired** — a no-op today, tracked follow-up). |
+| `shell_exec` | string | _none_ | A shell command run as a pure side-effect (one of the three schemes). Sandbox-gated + consent-allowlisted; stdout/stderr are logs, never parsed. |
+| `shell_push` | string | _none_ | A shell command whose **stdout is a single JSON object** `{"push_when": bool, "wake": bool, "message": str, "session"?: str}` (first three required), pushed via the same path as `template_push`. stdout must be pure JSON (logs → stderr). Sandbox-gated + consent-allowlisted. Any failure (non-zero exit, invalid JSON, missing/wrong-typed field) skips the push (fail-safe). |
 
 ## `sandbox` block
 

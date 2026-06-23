@@ -41,29 +41,54 @@ Implementation anchors:
 - `skill_end` currently fires only on clean completion — interrupt and error are
   deferred to [#2068](https://github.com/tya5/reyn/issues/2068)
 
+## Three config schemes
+
+Each entry carries **exactly one** of three mutually-exclusive schemes:
+
+- **`template_push`** — a push directive built from config Jinja2 templates.
+- **`shell_exec`** — a sandboxed command run as a pure side-effect (output ignored).
+- **`shell_push`** — a sandboxed command whose **stdout is a JSON push-directive**,
+  pushed via the same path as `template_push` (the only difference is the
+  directive's source: captured stdout vs a Jinja2 render).
+
 ## Three capabilities
 
-Each lifecycle point accepts three capabilities, uniformly:
+Those schemes deliver three behavioral capabilities, uniformly:
 
-### C — context inject (`push`, `wake: false`)
+### C — context inject (a push with `wake: false`)
 
 A passive `[hook:name]` system message is queued into the unified inbox. It
 rides along with the **next** turn — no extra turn is triggered. Use it to
 append read-only context (metrics, timestamps, retrieved facts) that the LLM
-sees in the conversation without being asked to act on it immediately.
+sees in the conversation without being asked to act on it immediately. Produced
+by a `template_push` or a `shell_push` whose directive sets `wake: false`.
 
-### E — self-continuation (`push`, `wake: true`)
+### E — self-continuation (a push with `wake: true`)
 
 Same as C, but the `wake: true` flag signals the run-loop to open a new turn
 immediately. This is the differentiating capability: a `turn_end` hook can
 restart the agent without any human input. Bounded by the [loop valve](#loop-valve).
+Produced by a `template_push` or a `shell_push` with `wake: true`.
 
-### F — external resource control (`shell`)
+### F — external side-effect (`shell_exec`)
 
 A sandboxed command is executed. Reyn writes a JSON event to the command's
 stdin; its stdout and stderr are **ignored**. Use it to update external
 state — write a log entry, emit a metric, post to a webhook. See
 [Sandbox](#sandbox) for the safety model.
+
+### Computed push (`shell_push`)
+
+A sandboxed command whose **stdout** is a single JSON object
+`{"push_when": bool, "wake": bool, "message": str, "session"?: str}` (first
+three required). stdout is parsed into the same push directive a `template_push`
+produces, then dispatched via the identical C/E path — so the command *decides
+at runtime* whether to push (`push_when`), how (`wake`), and what (`message`).
+stdout must be pure JSON (logs go to stderr). Any failure — non-zero exit,
+invalid JSON, or a missing / wrong-typed field — **skips the push** (fail-safe);
+the lifecycle point always proceeds. `session` is parsed and carried for
+forward-compatibility, but cross-session routing is not yet wired (a no-op
+today; the dispatcher pushes to the current session).
 
 ## wake flag and the run-loop
 
@@ -141,10 +166,10 @@ Control IR `shell_exec` ops: Seatbelt (macOS), Landlock/seccomp (Linux), Noop
 - Consent fail-closed: if the sandbox backend cannot be confirmed, the shell
   hook is refused rather than run unsandboxed
 
-Operators must explicitly grant `shell` consent in the reyn-yaml config, and
-may restrict which commands are allowlisted. See [sandbox](sandbox.md) for the
-full backend model and [permission model](permission-model.md) for the consent
-flow.
+Operators must explicitly grant consent for `shell_exec` / `shell_push` commands
+in the reyn-yaml config, and may restrict which commands are allowlisted. See
+[sandbox](sandbox.md) for the full backend model and
+[permission model](permission-model.md) for the consent flow.
 
 ## Configuration
 
@@ -152,33 +177,37 @@ Hooks are declared under the `hooks:` key in `reyn.yaml`. See the
 [reyn-yaml reference § hooks block](../../reference/config/reyn-yaml.md#hooks-block)
 for the full schema.
 
-Brief example — a `turn_end` self-continuation push and a `session_start` shell
-hook:
+Brief example — a `turn_end` self-continuation `template_push`, a `session_start`
+`shell_exec`, and a `turn_end` `shell_push` whose stdout decides the push:
 
 ```yaml
 hooks:
-  - point: turn_end
-    kind: push
-    wake: true
-    message: "[hook:turn_end] Run complete. Check for pending tasks."
+  - on: turn_end
+    template_push:
+      message: "Run complete. Check for pending tasks."
+      wake: true
 
-  - point: session_start
-    kind: shell
-    command: "echo session-started >> /tmp/reyn-hooks.log"
-    consent: true
+  - on: session_start
+    shell_exec: "echo session-started >> /tmp/reyn-hooks.log"
+
+  - name: dynamic
+    on: turn_end
+    shell_push: "scripts/decide-next.sh"   # emits {"push_when":true,"wake":true,"message":"..."}
 ```
 
 The `wake: true` on the first hook triggers a new turn after each `turn_end`,
-with the message injected as the system context. The shell hook on
-`session_start` appends a log line; its output is discarded.
+with the message injected as the system context. The `shell_exec` on
+`session_start` appends a log line; its output is discarded. The `shell_push`
+runs its command, parses stdout, and pushes only if the directive says so.
 
 ## Deferred
 
 The following capabilities are designed but not yet implemented:
 
-- **Push from shell** — letting a shell hook queue a `wake: true` push at
-  runtime (rather than statically in config). Tracked in
-  [#2069](https://github.com/tya5/reyn/issues/2069).
+- **Cross-session push** — a push directive's `session` field is parsed and
+  carried (both `template_push` and `shell_push`) but routing it to *another*
+  session's inbox is not yet wired; today a push always lands in the current
+  session.
 - **Agent-level and phase-level hooks** — fine-grained points inside a turn
   (rare use cases; session/turn/skill/task covers the common ones).
 - **`skill_end` on interrupt or error** — `skill_end` currently fires on clean

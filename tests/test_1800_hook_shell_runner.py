@@ -1,4 +1,4 @@
-"""Tests for #1800 slice C — shell-hook runner (side-effect only; output ignored).
+"""Tests for #1800 slice C / #2069 — shell-hook runner (shell_exec + shell_push).
 
 Coverage
 --------
@@ -9,8 +9,10 @@ platform-specific setup.
 
 Tier 1 — Contract:
   - ``run_shell_hook`` is exported from ``reyn.hooks`` (public API surface).
-  - A command that writes JSON to stdout is NOT parsed — output is ignored;
-    run_shell_hook returns None (pure side-effect).
+  - ``shell_exec`` mode (``capture_stdout=False``, the default): output is NOT
+    parsed — run_shell_hook returns None (pure side-effect).
+  - ``shell_push`` mode (``capture_stdout=True``, #2069): an exit-0 run returns
+    the decoded stdout; a non-zero exit returns None (fail-safe → skip push).
   - A command that reads stdin receives valid JSON context.
   - A command whose sleep exceeds the timeout → returns None, no crash.
   - Non-allowlisted command in non-TTY without REYN_ACCEPT_HOOKS → refuses
@@ -91,6 +93,69 @@ async def test_output_ignored_returns_none(
         sandbox_backend=_noop_backend(),
         sandbox_policy=_policy(),
         allowlist_path=allowlist,
+    )
+
+    assert result is None
+
+
+# ---------------------------------------------------------------------------
+# Tier 1 — Contract: capture_stdout (shell_push, #2069) returns / fails-safe
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_capture_stdout_returns_decoded_stdout(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Tier 1: capture_stdout=True (shell_push) returns the decoded stdout of an
+    exit-0 run — the caller parses it as a JSON push-directive (vs shell_exec,
+    which ignores output and returns None for the SAME command)."""
+    from reyn.hooks.shell_runner import run_shell_hook
+
+    allowlist = tmp_path / "allowlist.json"
+    monkeypatch.setenv("REYN_ACCEPT_HOOKS", "1")
+
+    directive = {"push_when": True, "wake": True, "message": "go"}
+    script = f"import json,sys; sys.stdout.write(json.dumps({directive!r}))"
+    command = f"{_PY} -c \"{script}\""
+
+    result = await run_shell_hook(
+        command,
+        event_context={"event": "turn_end"},
+        timeout_seconds=10,
+        sandbox_backend=_noop_backend(),
+        sandbox_policy=_policy(),
+        allowlist_path=allowlist,
+        capture_stdout=True,
+    )
+
+    assert result is not None
+    assert json.loads(result) == directive
+
+
+@pytest.mark.asyncio
+async def test_capture_stdout_nonzero_exit_returns_none(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Tier 1: capture_stdout=True with a NON-ZERO exit returns None (fail-safe) —
+    even if the command wrote to stdout, a failed run yields no push-directive."""
+    from reyn.hooks.shell_runner import run_shell_hook
+
+    allowlist = tmp_path / "allowlist.json"
+    monkeypatch.setenv("REYN_ACCEPT_HOOKS", "1")
+
+    # Writes a directive to stdout then exits non-zero → must NOT be returned.
+    script = "import json,sys; sys.stdout.write('{\\\"message\\\": \\\"x\\\"}'); sys.exit(3)"
+    command = f"{_PY} -c \"{script}\""
+
+    result = await run_shell_hook(
+        command,
+        event_context={"event": "turn_end"},
+        timeout_seconds=10,
+        sandbox_backend=_noop_backend(),
+        sandbox_policy=_policy(),
+        allowlist_path=allowlist,
+        capture_stdout=True,
     )
 
     assert result is None

@@ -698,27 +698,41 @@
 
 
 # -----------------------------------------------------------------------------
-# hooks: agent-lifecycle hooks (#1800) — a thin operator layer over the inbox +
-# the P6 lifecycle. A list of entries; each fires at a lifecycle point (``on``)
-# and is EITHER a ``push`` (inject an attributed ``[hook:<point>]`` message) OR a
-# ``shell`` (run an external command, sandbox-gated, output ignored).
+# hooks: agent-lifecycle hooks (#1800/#2069) — a thin operator layer over the
+# inbox + the P6 lifecycle. A list of entries; each fires at a lifecycle point
+# (``on``) and carries EXACTLY ONE of three mutually-exclusive schemes:
+#   template_push — inject an attributed ``[hook:<name>]`` message from a config
+#                   Jinja2 template.
+#   shell_exec    — run an external command as a pure side-effect (output IGNORED).
+#   shell_push    — run a command whose STDOUT is a JSON push-directive → pushed
+#                   via the same path as template_push (stdout is the SOURCE).
 #
-#   on:        turn_start | turn_end | session_start | session_end |
-#              skill_start | skill_end | task_start | task_end
-#   push:      message:   Jinja2 template → the message text
-#              wake:      true  → start a new turn (self-continuation)   [default]
-#                         false → ride along with the next turn (passive context)
-#              push_when: Jinja2 → bool; false skips the push (conditional)
-#   shell:     a command string (mutually exclusive with ``push``)
+#   on:            turn_start | turn_end | session_start | session_end |
+#                  skill_start | skill_end | task_start | task_end
+#   template_push: message:   Jinja2 template → the message text
+#                  wake:      true  → start a new turn (self-continuation)  [default]
+#                             false → ride along with the next turn (passive context)
+#                  push_when: Jinja2 → bool; false skips the push (conditional)
+#                  session:   parsed + carried forward-compat; cross-session routing
+#                             is NOT yet wired (no-op today, tracked follow-up)
+#   shell_exec:    a command string
+#   shell_push:    a command string; its stdout must be a single JSON object
+#                  {"push_when": bool, "wake": bool, "message": str, "session"?: str}
+#                  (first three required). Pure JSON on stdout; logs → stderr.
+#                  Any failure (non-zero exit, invalid JSON, missing/wrong-typed
+#                  field) skips the push (fail-safe).
 # -----------------------------------------------------------------------------
 # hooks:
 #   - name: next_step          # optional label → the [hook:next_step] attribution
 #     on: turn_end             #   (absent → defaults to the hook-point, e.g. [hook:turn_end])
-#     push:
+#     template_push:
 #       message: "Turn complete — consider the next step."
 #       wake: false
 #   - on: session_start
-#     shell: "echo session-started >> /tmp/reyn-hooks.log"
+#     shell_exec: "echo session-started >> /tmp/reyn-hooks.log"
+#   - name: dynamic            # stdout decides whether/what/how to push
+#     on: turn_end
+#     shell_push: "scripts/decide-next.sh"   # emits e.g. {"push_when":true,"wake":true,"message":"..."}
 
 
 # -----------------------------------------------------------------------------

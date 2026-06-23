@@ -93,9 +93,10 @@ class PushBlock:
 class HookDef:
     """A single lifecycle hook definition.
 
-    Exactly one of ``push`` or ``shell`` must be set (validated by the
-    loader, not by the dataclass itself — the dataclass is a plain data
-    container).
+    Exactly one of ``template_push`` / ``shell_exec`` / ``shell_push`` must be set
+    (validated by the loader, not by the dataclass itself — the dataclass is a
+    plain data container). The three consistent ``<source>_<action>`` keywords
+    (#2069 converged design):
 
     Fields
     ------
@@ -105,17 +106,25 @@ class HookDef:
         Optional operator label for the hook (#1800 slice 6). Surfaced as the
         ``[hook:<name>]`` attribution prefix on a push. **Absent → the dispatcher
         defaults it to the hook-point** (``on``), preserving slice-5b behavior.
-    push:
-        Inbox-push hook block.  Mutually exclusive with ``shell``.
-    shell:
-        Shell command to run.  Stored raw; the runner is a later slice.
-        Mutually exclusive with ``push``.
+    template_push:
+        Declarative inbox-push block from config Jinja2 templates (C/E). The
+        push directive is computed from the template against event/context.
+        Mutually exclusive with ``shell_exec`` / ``shell_push``.
+    shell_exec:
+        Shell command run as a pure side-effect — **output IGNORED**. Mutually
+        exclusive with ``template_push`` / ``shell_push``.
+    shell_push:
+        Shell command whose **stdout is a JSON push-directive**
+        (``{push_when, wake, message, session?}``, #2069) → pushed via the same
+        C/E dispatch path as ``template_push``. Mutually exclusive with the
+        other two.
     matcher:
         Reserved optional filter string.  Not interpreted in this slice.
     """
 
     on: str
     name: str | None = field(default=None)
-    push: PushBlock | None = field(default=None)
-    shell: str | None = field(default=None)
+    template_push: PushBlock | None = field(default=None)
+    shell_exec: str | None = field(default=None)
+    shell_push: str | None = field(default=None)
     matcher: str | None = field(default=None)
