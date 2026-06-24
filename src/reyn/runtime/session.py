@@ -86,6 +86,12 @@ from reyn.user_intervention import (
 
 ROUTER_SKILL_NAME = "skill_router"
 
+# #2115: cap for await_quiescent's re-drain loop. In-flight WAL-append tasks are
+# finite + cancel-requested + spawn no new user-work under a rewind, so the drain
+# converges in 1-2 rounds; the cap is purely a guard against a pathological spin
+# (logged, never silently looped).
+_QUIESCE_MAX_ROUNDS = 50
+
 # Localized user-facing messages for the router retry-exhausted fallback (F8).
 # Keys are BCP-47-style language codes matching config `output_language`.
 # Unsupported codes fall back to "en".
@@ -2148,27 +2154,38 @@ class Session:
         #    in-progress before this returns. On reconstruct, restore() re-arms a
         #    fresh watchdog from the recovered snapshot, so cancelling is reversible.
         await self._chains.cancel_and_join_timers()
-        # 3. cancel tracked fire-and-forget WAL-append tasks, then join. Cancel
-        #    (not join-only) is required: the intervention-dispatch task awaits the
-        #    user-answer future indefinitely, so a bare join would hang here. These
-        #    tasks are documented drop-safe (a dropped append is harmlessly
-        #    reconstructed on restore), so cancelling is correct. await_quiescent
-        #    owns this internal plumbing itself — independent of cancel_inflight.
-        for task in list(self._inflight_wal_tasks):
-            if not task.done():
-                task.cancel()
-        # 4. join cancelled skill / plan tasks (cancelled by the prior
-        #    cancel_inflight) + the now-cancelled fire-and-forget tasks. Each is an
-        #    append-capable spawned task that must settle before the reset-record.
-        pending = [
-            t for t in (
-                *self.running_skills.values(),
-                *self._inflight_wal_tasks,
-            )
-            if not t.done()
-        ]
-        if pending:
+        # 3-4. RE-DRAIN LOOP (#2115): cancel the tracked fire-and-forget WAL tasks
+        #    (cancel — not join-only — is required: the intervention-dispatch task
+        #    awaits the user-answer future indefinitely; the tasks are drop-safe so
+        #    cancelling is correct) + join the append-capable tasks (running_skills +
+        #    _inflight_wal_tasks), then RE-CHECK. A joined task may schedule a NEW
+        #    tracked append (or re-spawn) DURING the gather — which the prior
+        #    one-shot snapshot would miss (the join↔append race that let a
+        #    skill_completed land PAST the reset-record, #2115). Loop to a fixpoint
+        #    (both sets fully drained) so no append can land after this returns —
+        #    vector-agnostic: closes any append-scheduled-during-quiescence path,
+        #    subsuming the _inflight_wal_tasks special-case. On reconstruct, restore()
+        #    re-arms timers from the recovered snapshot, so cancelling is reversible.
+        for _ in range(_QUIESCE_MAX_ROUNDS):
+            for task in list(self._inflight_wal_tasks):
+                if not task.done():
+                    task.cancel()
+            pending = [
+                t for t in (
+                    *self.running_skills.values(),
+                    *self._inflight_wal_tasks,
+                )
+                if not t.done()
+            ]
+            if not pending:
+                break
             await asyncio.gather(*pending, return_exceptions=True)
+        else:
+            logger.warning(
+                "await_quiescent: WAL-append tasks did not drain to a fixpoint in "
+                "%d rounds — a straggler append may race the reset-record",
+                _QUIESCE_MAX_ROUNDS,
+            )
         # 5. re-confirm turn-idle — a joined task may have enqueued a follow-up
         #    turn; with cancel already requested it breaks immediately, so this
         #    settles. The double wait closes the join↔turn race.
@@ -2182,6 +2199,12 @@ class Session:
         escape ``await_quiescent`` and could append past a rewind reset-record.
         Tracking them in ``_inflight_wal_tasks`` (with discard-on-done to keep the
         set bounded) makes them joinable. Returns the task for call-site chaining.
+
+        #2115 CONVENTION: every async WAL-append spawned outside the current turn —
+        ESPECIALLY any skill-completion append — MUST be tracked here (or run within
+        a ``running_skills`` task) so ``await_quiescent``'s re-drain joins it before
+        the rewind reset-record. A new untracked append path would leak past a
+        rewind (the #2115 bug class).
         """
         self._inflight_wal_tasks.add(task)
         task.add_done_callback(self._inflight_wal_tasks.discard)

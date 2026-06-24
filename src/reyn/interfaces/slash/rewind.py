@@ -54,11 +54,22 @@ async def rewind_cmd(session: "object", args: str) -> None:
         return
 
     agents = result.get("agents", [])
-    await reply(
-        session,
+    # #2115: report the ACTUAL in-flight disposition (cancelled vs
+    # finished-before-the-cancel-landed) — not a hardcoded "cancelled" literal.
+    summary = (
         f"⏪ checked out to seq {result.get('target_n', target)} "
-        f"· {len(agents)} agent(s) reset · in-flight cancelled",
+        f"· {len(agents)} agent(s) reset"
     )
+    cancelled = result.get("in_flight_cancelled", 0)
+    finished = result.get("in_flight_finished", 0)
+    bits = []
+    if cancelled:
+        bits.append(f"{cancelled} in-flight cancelled")
+    if finished:
+        bits.append(f"{finished} in-flight finished")
+    if bits:
+        summary += " · " + ", ".join(bits)
+    await reply(session, summary)
 
 
 __all__ = ["rewind_cmd"]
