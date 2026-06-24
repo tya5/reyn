@@ -32,7 +32,7 @@ models:
 | `web` | map | SSL settings for `web_fetch` and MCP registry calls. See below. |
 | `eval` | map | Trace exporter backends for `reyn eval`. See below. |
 | `sandbox` | map | Sandboxed-exec backend selection, unsupported-platform policy, and the agent-level sandbox policy. See below. |
-| `hooks` | list | Agent-lifecycle hooks (#1800/#2069) — template_push / shell_exec / shell_push hooks at lifecycle points. See below. |
+| `hooks` | list | Agent-lifecycle hooks — template_push / shell_exec / shell_push hooks at lifecycle points. See below. |
 | `action_retrieval` | map | Universal catalog visibility + retrieval settings. See below. |
 | `embedding` | map | RAG embedding model classes and batch settings. See below. |
 | `chat` | map | Chat-session compaction settings. See below. |
@@ -193,7 +193,7 @@ models:
 > **Known behavior — re-enables thinking on the tool-use path.** Reyn does not force
 > thinking off; it relies on the provider default (off for Gemini 2.5). Setting
 > `reasoning_effort` turns thinking on, including on the multi-turn tool-use path where
-> Gemini previously had a parallel-tools + thinking interaction (Gemini #17949). Verify
+> Gemini previously had a parallel-tools + thinking interaction. Verify
 > behavior on your model if you enable it for a tool-heavy agent.
 
 > **Proxy passthrough (openai-compat).** When routing through a litellm proxy, reyn
@@ -399,7 +399,7 @@ safety:
     max_router_calls_per_turn: 3 # chat-router calls per user turn
     max_router_iterations: 5   # LLM tool-call iterations per user turn (CLI --max-iterations overrides)
     max_tool_calls_per_turn: 50 # max tool_calls honoured from ONE completion (cost-bound); 0 = unlimited
-    max_hook_driven_turns: 25  # #1800 loop valve: cap hook self-continuation; resets on user turn; 0 = unlimited
+    max_hook_driven_turns: 25  # loop valve: cap hook self-continuation; resets on user turn; 0 = unlimited
     max_agent_hops: 3          # maximum delegation depth
   timeout:
     llm_call_seconds: 60       # per-call HTTP timeout (--llm-timeout)
@@ -427,7 +427,7 @@ safety:
 | `safety.loop.max_router_calls_per_turn` | int | `3` | — | Chat-router invocations per user turn. `0` = unlimited. |
 | `safety.loop.max_router_iterations` | int | `5` | `--max-iterations` | Maximum LLM tool-call iterations per user turn. CLI `--max-iterations` overrides when provided; `reyn run-once` uses CLI default of 80. |
 | `safety.loop.max_tool_calls_per_turn` | int | `50` | — | Cost-bound: maximum `tool_calls` honoured from a SINGLE LLM completion. A degenerate completion can emit thousands (observed 3451); the OS processes only the first N, drops the overflow, and appends a re-grounding notice. `0` = unlimited. |
-| `safety.loop.max_hook_driven_turns` | int | `25` | — | #1800 loop valve: caps hook self-continuation. Each hook-originated (`kind="hook"`) turn counts 1; the counter resets on each human user turn. When the count would exceed the cap the next hook turn hits the `safety.on_limit` checkpoint (warn → ask_user → abort) instead of running — a backstop that does not obstruct intentional loop-engineering. `0` = unlimited. |
+| `safety.loop.max_hook_driven_turns` | int | `25` | — | Loop valve: caps hook self-continuation. Each hook-originated (`kind="hook"`) turn counts 1; the counter resets on each human user turn. When the count would exceed the cap the next hook turn hits the `safety.on_limit` checkpoint (warn → ask_user → abort) instead of running — a backstop that does not obstruct intentional loop-engineering. `0` = unlimited. |
 | `safety.loop.max_agent_hops` | int | `3` | — | Maximum delegation depth (user → A → B → C = 3 hops). |
 | `safety.loop.skill_calls_per_chain` | map | `{}` (unlimited) | — | Per-(chain, skill) spawn cap. `hard_limit` + `warn_ratio` sub-fields. Hybrid: loop-detection semantics, budget-style user approval on hit. |
 | `safety.loop.skill_tokens_per_chain` | map | `{}` (unlimited) | — | Per-(chain, skill) token cap. `hard_limit` + `warn_ratio` sub-fields. |
@@ -582,7 +582,7 @@ All exporters are fire-and-forget: export failures are logged but do not abort t
 
 ## `hooks` block
 
-Agent-lifecycle hooks (#1800/#2069) — a thin operator layer over the unified inbox
+Agent-lifecycle hooks — a thin operator layer over the unified inbox
 and the P6 lifecycle. A **list** of entries; each fires at a lifecycle point (`on`)
 and carries **exactly one** of three mutually-exclusive schemes:
 
