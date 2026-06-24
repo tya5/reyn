@@ -55,18 +55,27 @@ def _all_floored_forms() -> list[str]:
 
 
 def test_every_floored_tool_has_both_forms_in_the_floor() -> None:
-    """Tier 2: each floored qualified name AND its bare unwrapped alias (from the
-    invoke_action SoT) is in the floor. A future floored tool whose bare alias is
-    missing → RED (the gap-class guard)."""
+    """Tier 2: each floored name is in the floor — AND, for a name with an
+    invoke_action route, its bare unwrapped alias too (the live gate receives the bare
+    form; a missing alias → RED, the gap-class guard). A BARE-ONLY router tool (no
+    qualified route, e.g. session_spawn) has no alias and is floored by its own name."""
     for cls, qualifieds in _FLOORED_QUALIFIED.items():
         for q in qualifieds:
-            assert q in _BUILTIN_UNTRUSTED_DENY, f"{cls}: qualified {q!r} missing from floor"
+            assert q in _BUILTIN_UNTRUSTED_DENY, f"{cls}: {q!r} missing from floor"
             bare = unwrapped_tool_name(q)
-            assert bare is not None, f"{cls}: {q!r} has no unwrap alias in the SoT"
-            assert bare in _BUILTIN_UNTRUSTED_DENY, (
-                f"{cls}: bare alias {bare!r} of {q!r} missing from floor — the live gate "
-                "receives the bare form (#2111 regression)"
-            )
+            if bare is not None:  # has an invoke_action route → its bare alias must floor too
+                assert bare in _BUILTIN_UNTRUSTED_DENY, (
+                    f"{cls}: bare alias {bare!r} of {q!r} missing from floor — the live "
+                    "gate receives the bare form (#2111 regression)"
+                )
+
+
+def test_session_spawn_is_floored() -> None:
+    """Tier 2: #2103 S1bc — session_spawn (a new spawning capability) is in the floor,
+    so an unbound-delegate-under-deny / untrusted-content turn cannot spawn unbounded
+    sub-sessions (DoS). (Live-gate denial across both floors is covered by the
+    parametrized tests below, which enumerate session_spawn via _all_floored_forms.)"""
+    assert "session_spawn" in _BUILTIN_UNTRUSTED_DENY
 
 
 def test_bare_memory_write_aliases_present() -> None:

@@ -236,6 +236,13 @@ _FLOORED_QUALIFIED: "dict[str, frozenset[str]]" = {
     "mcp-install": frozenset({
         "mcp__install_registry", "mcp__install_package", "mcp__install_local",
     }),
+    # session/agent spawn — no spawning sub-sessions from untrusted content / an
+    # unbound delegate (#2103 S1bc: unbounded sub-session spawn is a DoS vector; the
+    # ⊆-parent model blocks escalation, but spawning itself is restrict-floored like
+    # re-delegation). ``session_spawn`` is a router-only tool with NO invoke_action
+    # route today, so it is BARE-ONLY (no qualified→bare unwrap alias); a future
+    # qualified route would be floored by the same _with_unwrapped_aliases derivation.
+    "spawn": frozenset({"session_spawn"}),
 }
 
 
@@ -353,6 +360,7 @@ _FLOORED_AUDIT_SEVERITY: "dict[str, str]" = {
     "exec": "HIGH",
     "mcp-install": "HIGH",
     "memory-write": "MED",
+    "spawn": "HIGH",  # #2103: unbounded sub-session spawn (DoS) — peer of re-delegation
 }
 DELEGATION_AUDIT_CLASSES: "dict[str, tuple[str, frozenset[str]]]" = {
     cls: (_FLOORED_AUDIT_SEVERITY[cls], tools)

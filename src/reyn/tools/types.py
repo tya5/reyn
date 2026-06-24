@@ -65,6 +65,13 @@ class RouterCallerState:
     # handlers that need to interact with chain / task lifecycle)
     send_to_agent: Callable[..., Awaitable[Any]] | None = None
 
+    # #2103 S1bc: session-spawn dispatch. The session_spawn handler spawns a
+    # fresh-context session under the agent (rewind-tracked via session_spawned),
+    # applies the per-session capability narrowing (S1a), and submits the task.
+    # Bound by RouterLoop with chain_id pre-bound; None when the host doesn't
+    # support session-spawn (= duck-typed, like spawn_skill_fn).
+    spawn_session_fn: Callable[..., Awaitable[Any]] | None = None
+
     # Session-scoped chain identity (= for plan tool, delegate
     # tool, etc.)
     chain_id: str | None = None

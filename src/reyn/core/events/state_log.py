@@ -77,6 +77,15 @@ WAL_EVENT_KINDS = (
     "agent_created",
     "agent_archived",
     "agent_purged",
+    # NEW (#2103 S1bc) — LLM session-spawn lifecycle. ``session_spawned`` is a #2103
+    # CREATE-event (unioned into the registry's _LIFECYCLE_CREATE_KINDS): it carries
+    # {entity_kind:"session", name, sid, mode, narrowing} and its own seq = the
+    # create-seq the as-of-cut DROP primitive keys off (a session spawned after a
+    # rewind cut is dropped, not left an empty orphan); mode+narrowing make it
+    # config-complete (uniform with agent_created, re-materialisable). ``session_
+    # vanished`` records the ephemeral auto-vanish / explicit teardown. OS-level (P7).
+    "session_spawned",
+    "session_vanished",
 )
 
 

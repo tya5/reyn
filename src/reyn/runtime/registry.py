@@ -72,11 +72,12 @@ _DEFAULT_SID = "main"
 # rewind/GC substrate (list_names stays the literal all-on-disk set).
 ARCHIVED_MARKER = ".archived"
 
-# #2103 S2: the agent-lifecycle WAL create-kind recognised by the as-of-cut DROP /
-# re-materialise primitive by default (session_spawned is added by e2e's S1bc).
-# A registry built with an explicit ``create_event_kinds`` overrides this (the
-# foundation tests do). Inert until S2b emits the events.
-_LIFECYCLE_CREATE_KINDS = frozenset({"agent_created"})
+# #2103: the lifecycle WAL create-kinds recognised by the as-of-cut DROP /
+# re-materialise primitive by default. One registration point (no per-construction-
+# site arg → no #2093 propagation drift): S2 added agent_created; S1bc adds
+# session_spawned. A registry built with an explicit ``create_event_kinds`` overrides
+# this (the foundation tests do). Inert until the events are emitted.
+_LIFECYCLE_CREATE_KINDS = frozenset({"agent_created", "session_spawned"})
 
 
 def _count_inflight_disposition(tasks: "list") -> "tuple[int, int]":
@@ -1238,13 +1239,51 @@ class AgentRegistry:
                 marker.unlink()
 
     async def _drop_session(self, name: str, sid: str) -> None:
-        """#2103 seam: tear down a single spawned session created after the cut.
-        Wired in S1bc with ``session_spawned`` (e2e's session lifecycle =
-        ``remove_session``). Unreached in the foundation — no session create-kinds
-        are registered, so agent-level ``_drop_agent`` subsumes sessions."""
-        raise NotImplementedError(
-            "#2103: session-drop is wired with session_spawned (S1bc)"
-        )
+        """#2103 S1bc: tear down a single spawned session created after the rewind cut
+        (the primitive's seam, now wired). Delegates to ``remove_session`` — the single
+        session-teardown used by BOTH this rewind-drop AND the ephemeral auto-vanish. A
+        post-cut session has no pre-cut generations → a clean drop (vs the #1954 archive
+        HIDE on the delete side). Reversible: a forward-checkout past the spawn would
+        re-materialise it from the config-complete ``session_spawned`` WAL record (the
+        session re-materialise seam is a follow-up; sessions are drop-only today)."""
+        self.remove_session(name, sid)
+
+    def remove_session(self, name: str, sid: str) -> bool:
+        """#2103 S1bc: tear down a SPAWNED (non-main) session — the single teardown
+        seam used by BOTH the rewind as-of-cut DROP (``_drop_session``) AND the
+        ephemeral auto-vanish. Cancels the ``(name, sid)`` run-loop + forwarder tasks,
+        drops it from the in-memory map, and removes its on-disk per-session state dir
+        (``state/sessions/<enc(sid)>/``). Returns True iff anything was removed.
+
+        Full teardown (rmtree) is correct: the global WAL is the durable source — the
+        ``session_spawned`` create-record + the session's session_id-routed entries
+        survive (the per-session dir is the snapshot/generations CACHE), so a
+        forward-checkout re-materialises from the WAL, not the dir. The MAIN session
+        (``_DEFAULT_SID``) is the agent's primary and is NOT removable here (its
+        lifecycle is ``registry.remove``). A no-op for an unknown ``(name, sid)``."""
+        if sid == _DEFAULT_SID:
+            raise ValueError("cannot remove the main session via remove_session")
+        removed = False
+        for task_dict in (self._tasks, self._forward_tasks):
+            task = task_dict.pop((name, sid), None)
+            if task is not None:
+                removed = True
+                if not task.done():
+                    task.cancel()
+        if self._sessions.get(name, {}).pop(sid, None) is not None:
+            removed = True
+        state_dir = self._session_state_dir(name, sid)  # sid != main → sessions/<enc>/
+        if state_dir.is_dir():
+            import shutil
+            try:
+                shutil.rmtree(state_dir)
+                removed = True
+            except OSError as e:  # noqa: BLE001 — best-effort; LOG (don't silently swallow)
+                logger.warning(
+                    "#2103: teardown of session %r/%r left state on disk: %s",
+                    name, sid, e,
+                )
+        return removed
 
     async def _materialize_rewind(
         self, *, reconstruct_seq: int, workspace_at_or_below: int,
@@ -1863,6 +1902,36 @@ class AgentRegistry:
         session._journal.set_generation_store(per_session_generations)
         self._sessions.setdefault(name, {})[new_sid] = session
         return new_sid
+
+    async def spawn_session_recorded(
+        self, name: str, *, mode: str = "persistent",
+        narrowing: "dict | None" = None,
+    ) -> str:
+        """#2103 S1bc: the action-layer SESSION-SPAWN seam — spawn a fresh-context
+        session under ``name`` (sync ``spawn_session``) + persist the spawner's
+        per-session capability narrowing (workspace-backed P5 config.yaml, the #2103
+        S1a layer) + emit ``session_spawned`` so rewind tracks/drops/re-materialises
+        it. Mirrors ``create_agent`` (the agent CREATE seam): the mechanism stays sync;
+        the event marks the LLM action. ``session_spawned`` is config-complete
+        (mode + narrowing) for symmetric re-materialise. Returns the new sid.
+
+        Does NOT submit a task — that is the caller (the spawn op), separable from the
+        record. Emit no-ops without a WAL."""
+        sid = self.spawn_session(name)
+        if narrowing:
+            import yaml
+            cfg_path = self._session_state_dir(name, sid) / "config.yaml"
+            cfg_path.parent.mkdir(parents=True, exist_ok=True)
+            cfg_path.write_text(
+                yaml.safe_dump({"name": f"_session_{sid}", **narrowing}),
+                encoding="utf-8",
+            )
+        if self._state_log is not None:
+            await self._state_log.append(
+                "session_spawned", entity_kind="session", name=name, sid=sid,
+                mode=mode, narrowing=narrowing,
+            )
+        return sid
 
     async def ensure_running(self, name: str) -> "object":
         """Load + start session.run() + forwarder for `name` without
