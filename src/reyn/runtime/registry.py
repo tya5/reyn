@@ -1275,8 +1275,14 @@ class AgentRegistry:
         state_dir = self._session_state_dir(name, sid)  # sid != main → sessions/<enc>/
         if state_dir.is_dir():
             import shutil
-            shutil.rmtree(state_dir, ignore_errors=True)
-            removed = True
+            try:
+                shutil.rmtree(state_dir)
+                removed = True
+            except OSError as e:  # noqa: BLE001 — best-effort; LOG (don't silently swallow)
+                logger.warning(
+                    "#2103: teardown of session %r/%r left state on disk: %s",
+                    name, sid, e,
+                )
         return removed
 
     async def _materialize_rewind(
