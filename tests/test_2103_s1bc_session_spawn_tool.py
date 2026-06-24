@@ -41,8 +41,8 @@ def _registry(tmp_path: Path) -> AgentRegistry:
 async def test_spawn_session_recorded_emits_config_complete_event(tmp_path: Path) -> None:
     """Tier 2: spawn_session_recorded emits a config-complete session_spawned WAL event
     (entity_kind/name/sid/mode/narrowing) — the create-record the rewind primitive +
-    a future re-materialise read. (The narrowing's runtime EFFECT is asserted via the
-    S1a public surface in the next test.)"""
+    a future re-materialise read. (The narrowing's runtime EFFECT on the LIVE session is
+    asserted via the production path in the next test.)"""
     reg = _registry(tmp_path)
     sid = await reg.spawn_session_recorded(
         "worker", mode="ephemeral", narrowing={"tool_deny": ["sandboxed_exec"]},
@@ -56,15 +56,31 @@ async def test_spawn_session_recorded_emits_config_complete_event(tmp_path: Path
 
 
 @pytest.mark.asyncio
-async def test_spawn_session_recorded_narrowing_applies_via_s1a(tmp_path: Path) -> None:
-    """Tier 2: the written config.yaml is the #2103 S1a per-session layer — the
-    spawned session's resolved capability is narrowed (restrict-only)."""
+async def test_spawn_session_recorded_enforces_narrowing_on_live_session(tmp_path: Path) -> None:
+    """Tier 2: #2126 — the PRODUCTION path. spawn_session_recorded re-resolves the
+    spawned session's profile WITH its sid and re-injects it into the LIVE session, so the
+    run-loop tool gate enforces the spawner's narrowing.
+
+    The factory builds the session with the sid=None resolution (= every real frontend
+    caller), so before the #2126 re-inject the live session's narrowing was None despite
+    the written config.yaml — the write-wired/read-dead defect. The prior test asserted
+    via ``resolved_profile_for(sid=sid)``, which hand-feeds the sid the production path
+    never passes (a false-green; the per-session layer only loads with a sid). Here we
+    read the per-turn effective narrowing the live tool gate actually consults. Strip the
+    re-inject in spawn_session_recorded → the live gate sees no narrowing → RED."""
     reg = _registry(tmp_path)
     sid = await reg.spawn_session_recorded(
         "worker", mode="persistent", narrowing={"tool_deny": ["delete_file"]},
     )
-    contextual, _ = reg.resolved_profile_for("worker", sid=sid)
-    assert contextual is not None and "delete_file" in contextual.tool_deny
+    session = reg.get_session("worker", sid)
+    # the live tool gate reads _effective_contextual_for_turn(); a fresh spawned session
+    # has no untrusted-content history → it returns the injected _contextual_permission.
+    effective = session._effective_contextual_for_turn()
+    assert effective is not None, (
+        "#2126: the live spawned session must enforce the spawner's narrowing "
+        "(was None — write-wired/read-dead: config.yaml written but never re-injected)"
+    )
+    assert "delete_file" in effective.tool_deny
 
 
 @pytest.mark.asyncio
