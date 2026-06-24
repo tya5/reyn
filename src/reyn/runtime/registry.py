@@ -1956,24 +1956,31 @@ class AgentRegistry:
         return [t for t in self.list_topologies() if agent in t.members]
 
     def resolved_profile_for(
-        self, agent: str, *, is_delegate: "bool | None" = None
+        self, agent: str, *, is_delegate: "bool | None" = None, sid: "str | None" = None
     ) -> "tuple[object | None, frozenset[str]]":
-        """#1827 S3: the agent's effective contextual narrowing from its topology
-        capability_profile bindings.
+        """#1827 S3: the agent's effective contextual narrowing — the composition
+        (most-restrictive: ∪ deny, ∩ allow, ∪ excluded) of every restrict-only layer:
+        topology ``capability_profile`` bindings, the #2081 ``_delegate`` floor, and
+        (#2103 S1a) the per-session config.
 
-        Returns ``(ContextualPermission | None, excluded_categories)`` — the
-        composition (most-restrictive: ∪ deny, ∩ allow, ∪ excluded) of every
-        profile bound to ``agent`` across its topologies.
+        Returns ``(ContextualPermission | None, excluded_categories)``.
 
-        **No binding →** normally ``(None, frozenset())`` = byte-identical to
-        pre-#1827. **#2081 exception:** when this is an UNBOUND **delegate** load
-        (``is_delegate``) and ``delegation.capability_default=deny``, the
-        restrictive built-in ``_delegate`` floor is applied instead — a topology
-        binding would have REPLACED it (the binding is the re-grant; composition is
-        most-restrictive-wins and cannot re-grant). ``is_delegate=None`` (the
-        factory's construction-time call) falls back to the
-        ``_constructing_as_delegate`` transient; an explicit value (direct callers /
-        tests) wins.
+        **No layer →** ``(None, frozenset())`` = byte-identical to pre-#1827.
+
+        **#2081 `_delegate` floor:** when this is an UNBOUND-by-topology **delegate**
+        load (``is_delegate``) and ``delegation.capability_default=deny``, the
+        restrictive built-in ``_delegate`` floor is composed in — a topology binding
+        REPLACES it (the binding is the re-grant). ``is_delegate=None`` (the factory's
+        construction-time call) falls back to the ``_constructing_as_delegate``
+        transient; an explicit value wins.
+
+        **#2103 S1a per-session config:** when ``sid`` is given AND a per-session
+        ``config.yaml`` exists (``.reyn/agents/<name>/state/sessions/<sid>/config.yaml``
+        — the spawner-set, workspace-backed P5 narrowing), it composes in as an
+        ADDITIONAL restrict-only ∩ conjunct — folded into the single ContextualLayer
+        (no 4th EffectivePermission conjunct), so it can only narrow within the agent
+        envelope, never re-grant (structural: one more conjunct in ``all(...)``).
+        ``sid=None`` or no file → byte-identical (inert).
 
         A bound-but-missing or malformed profile file is surfaced (stderr) and
         skipped — a typo must not silently widen capability, but it also must not
@@ -2011,22 +2018,55 @@ class AgentRegistry:
                 continue
             resolved.append(resolve_profile(prof))
 
+        # #2081: an UNBOUND-by-topology delegate under delegation.capability_default=
+        # deny gets the restrictive _delegate floor (a topology binding REPLACES it —
+        # the binding is the re-grant). The delegate-ness propagates recursively (every
+        # A2A request-path load passes is_delegate=True regardless of the spawner's own
+        # status), so a re-granted coordinator's sub-delegate is STILL default-denied
+        # (no laundering). Appended as a conjunct so a per-session narrowing composes
+        # WITH it (not instead of it).
         if not resolved:
-            # #2081: an UNBOUND delegate under delegation.capability_default=deny
-            # gets the restrictive _delegate floor (a binding above would have
-            # replaced it). The delegate-ness propagates recursively — every A2A
-            # request-path load passes is_delegate=True regardless of the spawner's
-            # own status — so a re-granted coordinator's sub-delegate is STILL
-            # default-denied (no laundering).
             effective_delegate = (
                 self._constructing_as_delegate if is_delegate is None else is_delegate
             )
             if effective_delegate and self._delegation_capability_default == "deny":
-                return compose_resolved([
-                    resolve_profile(load_delegate_profile(self._project_root))
-                ])
+                resolved.append(resolve_profile(load_delegate_profile(self._project_root)))
+
+        # #2103 S1a: the per-session config is an ADDITIONAL restrict-only ∩ conjunct
+        # (the spawner-set, workspace-backed narrowing) — composed into the single
+        # ContextualLayer, never re-granting (structural). Inert when sid is None or
+        # no config.yaml exists → byte-identical.
+        if sid is not None:
+            ps = self._load_per_session_capability_profile(agent, sid)
+            if ps is not None:
+                resolved.append(resolve_profile(ps))
+
+        if not resolved:
             return None, frozenset()
         return compose_resolved(resolved)
+
+    def _load_per_session_capability_profile(
+        self, name: str, sid: str
+    ) -> "object | None":
+        """#2103 S1a: load the per-session capability narrowing for ``(name, sid)`` —
+        ``<session-state-dir>/config.yaml`` (a capability_profile YAML, sibling of the
+        per-session snapshot.json; workspace-backed P5). ``None`` when absent. A
+        malformed file is surfaced (stderr) and skipped — a typo must not crash
+        session construction, and (restrict-only) skipping it only WIDENS toward the
+        agent envelope, never past it."""
+        from reyn.security.permissions.capability_profile import load_capability_profile
+        path = self._session_state_dir(name, sid) / "config.yaml"
+        if not path.is_file():
+            return None
+        try:
+            return load_capability_profile(path)
+        except Exception as e:  # noqa: BLE001 — hand/LLM-written yaml, surface not crash
+            import sys
+            print(
+                f"warning: skipping malformed per-session config {path}: {e}",
+                file=sys.stderr,
+            )
+            return None
 
     def permit(self, from_agent: str, to_agent: str) -> bool:
         """Return True iff some shared topology permits from→to.
