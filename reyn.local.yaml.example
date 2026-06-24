@@ -259,6 +259,22 @@
 
 
 # -----------------------------------------------------------------------------
+# delegation: cross-agent delegation policy (#2081).
+# ``capability_default`` selects the capability floor a DELEGATED agent (one
+# spawned by another agent's delegation, recursively) receives when otherwise
+# unbound by a topology capability_profile:
+#   inherit (default) — inherit the spawner's surface (byte-identical to pre-#2081)
+#   deny              — an unbound delegate is narrowed by the built-in restrictive
+#                       _delegate profile (re-delegation / exec / memory-write /
+#                       MCP-install denied) unless a topology binding re-grants it
+#                       (the binding REPLACES the default). Propagates recursively
+#                       to sub-delegates (no laundering).
+# -----------------------------------------------------------------------------
+# delegation:
+#   capability_default: inherit
+
+
+# -----------------------------------------------------------------------------
 # auth: OAuth provider configurations consumed by
 # ``reyn auth login``. Each entry maps a provider name to its OAuth 2.0
 # device authorization grant parameters. ``client_secret`` is optional for

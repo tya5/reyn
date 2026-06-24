@@ -59,6 +59,62 @@ def _build_agent_config(raw: object) -> AgentConfig:
 
 
 @dataclass
+class DelegationConfig:
+    """``delegation:`` — cross-agent delegation policy (#2081).
+
+    ``capability_default`` selects the capability floor a DELEGATED agent (one
+    spawned by another agent's delegation, recursively) receives when it is
+    otherwise unbound by a topology ``capability_profile``:
+
+    - ``inherit`` (default) — a delegate inherits the spawner's capability
+      surface; no extra narrowing. Byte-identical to pre-#2081.
+    - ``deny`` — an unbound delegate is narrowed by the built-in restrictive
+      ``_delegate`` profile (the dangerous-tool classes denied: re-delegation /
+      side-effect-exec / memory-write / MCP-install) unless a topology
+      capability_profile binding re-grants it (the binding REPLACES the default,
+      since composition is most-restrictive-wins and cannot re-grant). The
+      default-deny propagates RECURSIVELY — a sub-delegate is itself a delegate,
+      so a re-granted coordinator's own sub-delegates are still default-denied
+      (no laundering).
+
+    Only the unbound-delegate fallback is affected; a top-level agent and any
+    topology-bound agent are unchanged.
+    """
+
+    capability_default: str = "inherit"
+
+    def __post_init__(self) -> None:
+        if self.capability_default not in ("inherit", "deny"):
+            raise ValueError(
+                "delegation.capability_default must be 'inherit' or 'deny', "
+                f"got {self.capability_default!r}"
+            )
+
+
+def _build_delegation_config(raw: object) -> DelegationConfig:
+    """Parse ``delegation:`` from reyn.yaml (#2081).
+
+    ``None`` / missing block / empty dict → default (= ``inherit``, byte-identical
+    to pre-#2081). The value is validated by ``DelegationConfig.__post_init__``.
+    """
+    if raw is None:
+        return DelegationConfig()
+    if not isinstance(raw, dict):
+        raise ValueError(
+            f"delegation must be a mapping, got {type(raw).__name__}"
+        )
+    cap = raw.get("capability_default")
+    if cap is None:
+        return DelegationConfig()
+    if not isinstance(cap, str):
+        raise ValueError(
+            "delegation.capability_default must be a string, "
+            f"got {type(cap).__name__}"
+        )
+    return DelegationConfig(capability_default=cap)
+
+
+@dataclass
 class RouterConfig:
     """``llm.router:`` — litellm.Router resilience config (#1829).
 

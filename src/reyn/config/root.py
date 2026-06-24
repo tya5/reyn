@@ -51,6 +51,7 @@ from reyn.config.infra import (
     AgentConfig,
     AuthConfig,
     CronConfig,
+    DelegationConfig,
     EvalConfig,
     EventsConfig,
     LLMConfig,
@@ -200,6 +201,10 @@ class ReynConfig:
     # `agent:` block. Read by Session to construct its EventLog and
     # by mcp_client.MCPClient for the X-Reyn-Agent-Id header.
     agent: AgentConfig = field(default_factory=AgentConfig)
+    # #2081 — cross-agent delegation policy. ``delegation.capability_default``
+    # (inherit|deny, default=inherit) selects the capability floor an UNBOUND
+    # delegated agent receives. Default ``inherit`` = byte-identical to pre-#2081.
+    delegation: DelegationConfig = field(default_factory=DelegationConfig)
     # FP-0016 Component C — OAuth provider configurations for
     # `reyn auth login`. Empty by default; operator declares providers
     # in reyn.yaml `auth.providers.<name>`.
