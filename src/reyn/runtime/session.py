@@ -2872,43 +2872,60 @@ class Session:
         hr.register_seam("hooks", self._reapply_hooks)  # #2073 S2b (global hooks)
 
     def _build_hook_registry(self, in_set: "dict | None" = None) -> "object":
-        """Build the LAYERED hook registry (#2073 S2b): the reyn.yaml startup layer
-        (``self._startup_hooks_raw``, captured once at boot — the OUT-set, never
-        re-read on a reload) ∪ the ``.reyn/hooks.yaml`` runtime layer (from the
-        IN-set). Rebuilding from scratch each call means a removed runtime hook simply
-        isn't in the new registry (removal handled by construction — unlike cron's
-        add-only seam).
+        """Build the LAYERED hook registry — the three-layer COMBINE (#2073 S2b + the
+        per-agent-hooks add-on), ADDITIVE in order startup → runtime → per-agent:
 
-        **Boot resilience (#2073 S2b):** ``load_hooks`` raises ``HookConfigError`` on
-        a malformed layer. On the RELOAD path validate-before-apply rejects a bad
-        runtime layer first, so this won't raise there — but BOOT also calls this
-        (with the boot-read runtime layer) and has no validate gate. So a malformed
-        ``.reyn/hooks.yaml`` (e.g. one the S3 LLM-op wrote — rejected on reload but
-        PERSISTED to disk) must NOT crash the next boot. When a non-empty runtime
-        layer fails, degrade to STARTUP-only + a loud warning (the operator's reyn.yaml
-        always loads; a bad agent-written runtime never bricks boot). A failure with
-        no runtime layer is the operator's reyn.yaml → it propagates (fail loud)."""
+        - **startup** — the reyn.yaml hooks (``self._startup_hooks_raw``, captured once
+          at boot, the restart-only OUT-set, never re-read on a reload);
+        - **runtime** — the global ``.reyn/hooks.yaml`` (from the IN-set);
+        - **per-agent** — ``.reyn/agents/<name>/hooks.yaml`` (read directly here, same
+          IN-set grain but scoped per agent).
+
+        Rebuilding from scratch each call means a removed hook (runtime or per-agent)
+        simply isn't in the new registry — removal handled by construction.
+
+        **Per-LAYER boot resilience (the add-on refinement):** ``load_hooks`` raises
+        ``HookConfigError`` on a malformed layer, and BOTH boot AND the reload path call
+        this — a malformed persisted ``.reyn/hooks.yaml`` or per-agent file must NOT
+        crash boot, NOR may one bad UNTRUSTED layer drop a good sibling. So the trusted
+        startup layer (reyn.yaml — the operator's) must load (a failure propagates =
+        fail loud), then each untrusted layer is try-added INDEPENDENTLY: a bad runtime
+        keeps startup ∪ per-agent; a bad per-agent keeps startup ∪ runtime; each bad
+        layer is dropped + warned. (On the reload path validate-before-apply also rejects
+        a bad runtime layer up front; this is the boot + defence-in-depth guard.)"""
         from reyn.hooks.loader import HookConfigError, load_hooks
         runtime = (in_set or {}).get("hooks") or []
         runtime_list = list(runtime) if isinstance(runtime, list) else []
-        startup = list(self._startup_hooks_raw)
-        if not runtime_list:
-            return load_hooks(startup)  # startup-only; a failure is the operator's, raise
-        try:
-            return load_hooks(startup + runtime_list)
-        except HookConfigError as exc:
-            logger.warning(
-                "config hot-reload: malformed .reyn/hooks.yaml — runtime hooks "
-                "skipped, booting with the reyn.yaml startup hooks only: %s", exc,
-            )
-            return load_hooks(startup)
+        per_agent_list = self._read_per_agent_hooks()
+        combined = list(self._startup_hooks_raw)
+        registry = load_hooks(combined)  # trusted startup must load — else fail loud
+        for label, layer in (("runtime", runtime_list), ("per-agent", per_agent_list)):
+            if not layer:
+                continue
+            try:
+                registry = load_hooks(combined + layer)  # validate the cumulative add
+                combined = combined + layer
+            except HookConfigError as exc:
+                logger.warning(
+                    "config hot-reload: malformed %s hooks layer — skipped, keeping "
+                    "the valid hook layers: %s", label, exc,
+                )
+        return registry
+
+    def _read_per_agent_hooks(self) -> list:
+        """Read the per-agent runtime hooks layer for the COMBINE (#2073 per-agent
+        add-on) — ``.reyn/agents/<name>/hooks.yaml``, read directly (like the per-agent
+        profile.yaml, not via the top-level IN-set loader). ``[]`` when absent."""
+        from reyn.config.loader import load_per_agent_hooks
+        return load_per_agent_hooks(self._hot_reload_project_root(), self.agent_name)
 
     async def _reapply_hooks(self, in_set: dict) -> bool:
-        """Reapply the runtime hooks layer (#2073 S2b) — re-read .reyn/hooks.yaml,
+        """Reapply the hook layers (#2073 S2b + per-agent add-on) — re-read the global
+        .reyn/hooks.yaml (IN-set) AND the per-agent .reyn/agents/<name>/hooks.yaml,
         re-combine with the FIXED reyn.yaml startup layer, and swap the dispatcher's
         registry. The dispatcher reads its registry fresh per dispatch, so the swap
         propagates to every holder. The startup layer is never re-read (safety
-        boundary). Always rebuilds (handles add / change / remove of runtime hooks)."""
+        boundary). Always rebuilds (handles add / change / remove of either layer)."""
         self._hook_dispatcher.replace_registry(self._build_hook_registry(in_set))
         return True
 
