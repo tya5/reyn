@@ -38,6 +38,9 @@ class _FakeRegistry:
     def list_names(self) -> list[str]:
         return list(self._order)
 
+    def list_active_names(self) -> list[str]:
+        return self.list_names()
+
     def load_profile(self, name: str) -> _FakeProfile:
         return self._profiles[name]
 
@@ -93,6 +96,8 @@ def test_role_attr_missing_treated_as_empty():
     class _Reg:
         def list_names(self) -> list[str]:
             return ["x"]
+        def list_active_names(self) -> list[str]:
+            return self.list_names()
         def load_profile(self, name: str) -> _RolelessProfile:
             return _RolelessProfile(name=name)
 

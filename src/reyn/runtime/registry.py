@@ -64,6 +64,14 @@ DEFAULT_AGENT_NAME = "default"
 # generated ids (Stage 4 routes inbound messages to non-default sessions).
 _DEFAULT_SID = "main"
 
+# #1954: tombstone marker for an archived (soft-deleted) agent. Lives in the
+# agent dir; its content is the WAL seq at archival time (slice-2 GC hinge —
+# hard-purge once the retention floor passes it, §24-faithful). Archived agents
+# stay on disk (generations kept → rewind-to-before-delete works) but are hidden
+# from active surfaces (list_active_names) while remaining visible to the
+# rewind/GC substrate (list_names stays the literal all-on-disk set).
+ARCHIVED_MARKER = ".archived"
+
 # ADR-0038 1f: WAL-entry-kind → rewind-point boundary label. All inputs are
 # OS-level ``WAL_EVENT_KINDS`` (P7-safe — no skill/domain strings). The three
 # output labels are the D6 Phase-1 granularity (turn / plan-step / phase).
@@ -238,12 +246,42 @@ class AgentRegistry:
     # ── persistence ──────────────────────────────────────────────────────────
 
     def list_names(self) -> list[str]:
-        """All agent names found on disk (sorted)."""
+        """All agent names found on disk (sorted) — incl. archived (#1954).
+
+        Stays the literal all-on-disk set so the rewind/GC substrate
+        (_materialize_rewind / _prune_generations_below / checkpoint-seq unions)
+        reaches archived agents' generations. Active surfaces use
+        ``list_active_names()``."""
         out = []
         for entry in self._dir.iterdir():
             if entry.is_dir() and (entry / PROFILE_FILENAME).is_file():
                 out.append(entry.name)
         return sorted(out)
+
+    def is_archived(self, name: str) -> bool:
+        """True when ``name`` is an archived (soft-deleted) agent (#1954)."""
+        return (self._dir / name / ARCHIVED_MARKER).is_file()
+
+    def list_active_names(self) -> list[str]:
+        """Active (non-archived) agent names — the user-facing listing (#1954).
+
+        The fail-safe complement to ``list_names()``: active surfaces
+        (CLI/web/TUI/MCP/A2A/slash + the startup load) hide archived agents; the
+        rewind/GC substrate keeps using ``list_names()`` so a missed surface is
+        merely cosmetic (an archived agent shown), never broken rewind."""
+        return [n for n in self.list_names() if not self.is_archived(n)]
+
+    def _archived_seq(self, name: str) -> "int | None":
+        """The WAL seq at which ``name`` was archived (#1954 slice-2 GC hinge).
+
+        ``None`` when not archived or the marker is unreadable."""
+        marker = self._dir / name / ARCHIVED_MARKER
+        if not marker.is_file():
+            return None
+        try:
+            return int(marker.read_text(encoding="utf-8").strip())
+        except (ValueError, OSError):
+            return None
 
     # ── FP-0043 Stage 3: session-store accessors (centralize sid-defaulting) ──
     # Every former ``self._agents[name]`` access routes through these so the
@@ -338,7 +376,13 @@ class AgentRegistry:
         profile.save(self._dir / name)
         return profile
 
-    def remove(self, name: str) -> None:
+    def remove(self, name: str, *, purge: bool = False) -> None:
+        """Delete an agent. Default (#1954 Option A) = ARCHIVE (soft-delete): the
+        runtime PITR generations are kept in place so rewind-to-before-delete
+        works within the retention window, plus a tombstone recording the archival
+        WAL seq (the slice-2 WAL-window GC hinge). ``purge=True`` is the guarded
+        escape hatch — a real hard-delete (rmtree) that destroys the rewind
+        history (time-travel-to-before-purge is intentionally unsupported)."""
         if name == DEFAULT_AGENT_NAME:
             raise ValueError("cannot remove the default agent")
         if self._attached is not None and self._attached[0] == name:
@@ -346,7 +390,7 @@ class AgentRegistry:
         target = self._dir / name
         if not target.is_dir():
             raise FileNotFoundError(target)
-        # Cancel any cached tasks / drop sessions before deleting on-disk state.
+        # Cancel any cached tasks / drop in-memory sessions (both paths).
         # FP-0043 Stage 3: removing an agent drops ALL its sessions (every sid).
         sids = list(self._sessions.get(name, {}).keys())
         for task_dict in (self._tasks, self._forward_tasks):
@@ -356,13 +400,24 @@ class AgentRegistry:
                     task.cancel()
         self._sessions.pop(name, None)
         self._identities.pop(name, None)
-        # Recursive rm — agents/<name>/ is reyn-managed, no surprises expected.
-        import shutil
-        shutil.rmtree(target)
-        # PR12: cascade — drop the agent from any topology it belongs to so
-        # we don't leave dangling references. Topologies that would become
-        # invalid (team losing its leader, kind=team with no members) are
-        # removed entirely.
+        if purge:
+            # Explicit hard-delete — agents/<name>/ is reyn-managed. Destroys the
+            # runtime PITR generations (rewind-to-before-purge is intentionally
+            # unsupported); the real escape hatch for a genuine delete.
+            import shutil
+            shutil.rmtree(target)
+        else:
+            # #1954 Option A: archive-default. Keep generations in place (rewind
+            # works) + tombstone with the archival WAL seq. Hidden from active
+            # surfaces (list_active_names); still visible to the rewind/GC
+            # substrate (list_names). The WAL-window GC hard-purges it once the
+            # retention floor passes the archival seq (slice 2).
+            seq = self._state_log.current_seq if self._state_log is not None else 0
+            (target / ARCHIVED_MARKER).write_text(str(seq), encoding="utf-8")
+        # PR12: cascade — drop the agent from any topology it belongs to so we
+        # don't leave dangling references (an archived agent is not an active
+        # member). Topologies that would become invalid (team losing its leader,
+        # kind=team with no members) are removed entirely.
         self._cascade_agent_removal(name)
 
     def recent_user_message(self, name: str) -> str:
@@ -535,7 +590,10 @@ class AgentRegistry:
         # the main path → loads as session_id "main" (the migration fallback).
         snapshots: dict[str, AgentSnapshot] = {}
         all_snaps: dict[tuple[str, str], AgentSnapshot] = {}
-        for name in self.list_names():
+        # #1954: load only ACTIVE agents at startup — an archived agent's state
+        # stays on disk (rewind-reachable) but is not resurrected as a live
+        # session (else archive wouldn't survive a restart).
+        for name in self.list_active_names():
             state_dir = self._dir / name / "state"
             main_path = state_dir / "snapshot.json"
             if main_path.is_file():

@@ -41,6 +41,9 @@ class _StubRegistry:
     def list_names(self) -> list[str]:
         return list(self._names)
 
+    def list_active_names(self) -> list[str]:
+        return self.list_names()
+
     def loaded_names(self):  # type: ignore[no-untyped-def]
         return set(self._names)
 

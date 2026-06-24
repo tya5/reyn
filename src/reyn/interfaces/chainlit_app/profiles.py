@@ -59,7 +59,7 @@ def list_agent_profiles(registry: _RegistryLike) -> list[ChatProfileDict]:
     stable across reloads.
     """
     out: list[ChatProfileDict] = []
-    for name in registry.list_names():
+    for name in registry.list_active_names():  # #1954: hide archived agents
         profile = registry.load_profile(name)
         role = (getattr(profile, "role", "") or "").strip()
         description = role if role else _NO_ROLE_MARKER

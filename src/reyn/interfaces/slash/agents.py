@@ -34,7 +34,7 @@ def _attach_completer(session: "object", arg_partial: str = "") -> list[str]:
     """
     if getattr(session, "_registry", None) is None:
         return []
-    return session._registry.list_names()
+    return session._registry.list_active_names()  # #1954: hide archived agents
 
 
 @slash("agents", summary="List all agents (* = attached, · = loaded)")
@@ -43,7 +43,7 @@ async def agents_cmd(session: "Session", args: str) -> None:
     if session._registry is None:
         await reply_error(session, _NO_REGISTRY_AGENTS)
         return
-    names = session._registry.list_names()
+    names = session._registry.list_active_names()  # #1954: hide archived agents
     if not names:
         # Default agent auto-creates on first chat start, so an empty list
         # is unexpected — surface as system note rather than swallowing.

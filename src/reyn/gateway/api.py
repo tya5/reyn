@@ -136,7 +136,7 @@ def list_agents(*, registry: Any | None = None) -> list[str]:
     if registry is None:
         from reyn.interfaces.web.deps import _get_registry
         registry = _get_registry()
-    return registry.list_names()
+    return registry.list_active_names()  # #1954: hide archived agents
 
 
 def agent_exists(name: str, *, registry: Any | None = None) -> bool:

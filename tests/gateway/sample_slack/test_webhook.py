@@ -135,6 +135,9 @@ def _slack_client(monkeypatch):
         def list_names(self):
             return ["news_agent"]
 
+        def list_active_names(self):
+            return self.list_names()
+
         def exists(self, name):
             return name == "news_agent"
 
