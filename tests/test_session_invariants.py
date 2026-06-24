@@ -354,7 +354,7 @@ async def test_chain_timeout_fires_upstream_error_and_emits_event(tmp_path, monk
     upstream_session = Session(agent_name="upstream_agent")
     upstream_received: list[dict] = []
 
-    async def _fake_submit_agent_response(*, from_agent, response, depth, chain_id):
+    async def _fake_submit_agent_response(*, from_agent, response, depth, chain_id, responder_sid=None):
         upstream_received.append({
             "from_agent": from_agent,
             "response": response,
@@ -880,7 +880,7 @@ async def test_agent_request_empty_router_reply_sends_marker_upstream(
     upstream_session = Session(agent_name="origin_agent")
     upstream_received: list[dict] = []
 
-    async def _fake_submit_agent_response(*, from_agent, response, depth, chain_id):
+    async def _fake_submit_agent_response(*, from_agent, response, depth, chain_id, responder_sid=None):
         upstream_received.append({
             "from_agent": from_agent,
             "response": response,
@@ -946,7 +946,7 @@ async def test_agent_request_router_cap_exhausted_sends_marker_upstream(
     upstream_session = Session(agent_name="origin_agent")
     upstream_received: list[dict] = []
 
-    async def _fake_submit_agent_response(*, from_agent, response, depth, chain_id):
+    async def _fake_submit_agent_response(*, from_agent, response, depth, chain_id, responder_sid=None):
         upstream_received.append({
             "from_agent": from_agent,
             "response": response,
@@ -1081,7 +1081,7 @@ async def test_peer_no_reply_marker_forwarded_upstream_in_pending_chain(
     origin_session = Session(agent_name="origin_agent")
     upstream_received: list[dict] = []
 
-    async def _fake_submit_agent_response(*, from_agent, response, depth, chain_id):
+    async def _fake_submit_agent_response(*, from_agent, response, depth, chain_id, responder_sid=None):
         upstream_received.append({
             "from_agent": from_agent,
             "response": response,

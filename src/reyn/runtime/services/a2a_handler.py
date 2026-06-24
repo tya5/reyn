@@ -74,6 +74,19 @@ def _new_chain_id() -> str:
     return str(uuid.uuid4())
 
 
+_SPAWN_TASK_SUMMARY_MAX = 120
+
+
+def _summarize_task(task: str) -> str:
+    """#2103 S1bc-exec: a single-line, length-capped summary of the spawner's original
+    request for the trusted ``task=`` header. The task is TRUSTED (the spawner's own
+    request from its record), so this only flattens whitespace + truncates — no fencing."""
+    flat = " ".join((task or "").split())
+    if len(flat) > _SPAWN_TASK_SUMMARY_MAX:
+        return flat[: _SPAWN_TASK_SUMMARY_MAX - 1] + "…"
+    return flat
+
+
 # Localized user-facing message when a peer agent's reply signals failure (B2-H2).
 _PEER_REPLY_FAILED_MSG: dict[str, str] = {
     "ja": (
@@ -176,6 +189,10 @@ class A2AHandler:
         # FP-0050/#1822 S4b (EP5, Class A): content-threat scan + fence config.
         # Inbound peer text (request/response) is fenced before entering history.
         threat_scan: "object | None" = None,
+        # #2103 S1bc-exec: this session's LIVE sid (for the responder_sid tag when a
+        # spawned session replies) + the spawner's trusted spawned-task lookup.
+        session_id_fn: "Callable[[], str | None] | None" = None,
+        lookup_spawned_task: "Callable[[str | None], str | None] | None" = None,
     ) -> None:
         self._events = event_log
         self._chains = chain_manager
@@ -192,6 +209,8 @@ class A2AHandler:
         self._reset_router_turn_counter = reset_router_turn_counter
         self._send_request_callback = send_request_callback
         self._send_response_callback = send_response_callback
+        self._session_id_fn = session_id_fn            # #2103 S1bc-exec
+        self._lookup_spawned_task = lookup_spawned_task  # #2103 S1bc-exec
         self._on_chain_timeout_fire = on_chain_timeout_fire
         self._emit_router_cap_exhausted_fn = emit_router_cap_exhausted_fn
 
@@ -302,8 +321,15 @@ class A2AHandler:
             from_agent=self.agent_name, to_agent=to,
             depth=depth, chain_id=chain_id,
         )
+        # #2103 S1bc-exec: when THIS responder is a SPAWNED (non-main) session, tag the
+        # response with its own sid — the correlation key the receiver matches against its
+        # trusted spawned-task record. A main/normal-delegate responder tags None (no
+        # spawn correlation), so only spawned-session results carry it.
+        responder_sid = self._session_id_fn() if self._session_id_fn else None
+        if responder_sid in (None, "main"):
+            responder_sid = None
         await self._send_response_callback(
-            to, self.agent_name, response, depth, chain_id,
+            to, self.agent_name, response, depth, chain_id, responder_sid,
         )
 
     def _fence_inbound(self, text: str) -> str:
@@ -483,19 +509,40 @@ class A2AHandler:
         # FP-0050/#1822 S4b (EP5, Class A): fence + scan the untrusted peer reply
         # before it enters history. Only the history-bound copy is fenced; the
         # raw ``response`` stays for chain-resolution routing below.
-        injected_text = (
-            f"[task_completed] kind=agent "
-            f"from={from_agent or '<unknown>'} chain_id={chain_id}\n"
-            f"reply: {self._fence_inbound(response)}"
+        # #2103 S1bc-exec: a result from a session THIS agent SPAWNED (correlated by the
+        # responder's sid against our OWN trusted spawn record) renders a distinct
+        # kind=spawned_session header so the LLM reads it as "my spawned session finished
+        # task <T>", not an inbound from a peer agent. SECURITY SPLIT: the header (sid +
+        # task) is OS-generated TRUSTED framing — the task is OUR own request from the
+        # record, NOT the spawned session's echo (which a compromised sub-session could
+        # forge); ONLY the reply stays _fence_inbound'd (untrusted output). A spoofed /
+        # unknown sid → lookup miss → the plain kind=agent fallback (still fenced).
+        responder_sid = payload.get("responder_sid")
+        spawned_task = (
+            self._lookup_spawned_task(responder_sid) if self._lookup_spawned_task else None
         )
-        self._append_history(
-            "user", injected_text, _now_iso(),
-            {
+        if spawned_task is not None:
+            injected_text = (
+                f"[task_completed] kind=spawned_session sid={responder_sid} "
+                f"task={_summarize_task(spawned_task)} chain_id={chain_id}\n"
+                f"reply: {self._fence_inbound(response)}"
+            )
+            history_meta = {
+                "source": "spawned_session_result",
+                "spawned_sid": responder_sid, "depth": depth, "chain_id": chain_id,
+            }
+        else:
+            injected_text = (
+                f"[task_completed] kind=agent "
+                f"from={from_agent or '<unknown>'} chain_id={chain_id}\n"
+                f"reply: {self._fence_inbound(response)}"
+            )
+            history_meta = {
                 "source": "agent_response",
                 "from_agent": from_agent, "depth": depth,
                 "chain_id": chain_id,
-            },
-        )
+            }
+        self._append_history("user", injected_text, _now_iso(), history_meta)
         self._events.emit(
             "agent_response_received",
             from_agent=from_agent, depth=depth, chain_id=chain_id,
