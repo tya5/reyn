@@ -44,6 +44,10 @@ _NOT_EXTERNAL = {
     # sub-agent's output. The peer reply arrives via the A3 inbound seam
     # (EP5, handle_agent_response → history) and is fenced there in S4.
     "delegate_to_agent",
+    # #2103 S1bc: session_spawn → async dispatch, returns a "spawned" ACK
+    # {status, sid, mode}, not the spawned session's output (result-routing-back is
+    # the S1bc-exec/Stage-4 follow-on, fenced there).
+    "session_spawn",
     # — writes / installs / deletes: return status, not external content —
     "write_file", "edit_file", "delete_file", "drop_source",
     "remember_shared", "remember_agent", "forget_memory",

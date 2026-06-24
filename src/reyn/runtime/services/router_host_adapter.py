@@ -915,6 +915,42 @@ class RouterHostAdapter:
         if tracker is not None:
             tracker.append({"to": to, "request": request})
 
+    async def spawn_session(self, *, request: str, mode: str,
+                            narrowing: "dict | None", chain_id: str) -> dict:
+        """#2103 S1bc: spawn a fresh-context SESSION under THIS agent for a task.
+
+        Spawns + records the session (rewind-tracked via ``session_spawned`` +
+        per-session capability narrowing, the action-layer ``spawn_session_recorded``
+        seam), starts its run-loop (FP-0043 4b-2 ``ensure_session_running``), and
+        submits the task to it — the spawned session RUNS the task in isolation. The
+        result stays in the session; routing it BACK to the spawner is the S1bc-exec
+        follow-on (FP-0043 Stage-4 non-main routing), so this is async-dispatch posture
+        (returns a spawn-ack)."""
+        if self._registry is None:
+            raise RuntimeError(
+                "session_spawn requires a registry (multi-session host) — unavailable "
+                "in this context."
+            )
+        sid = await self._registry.spawn_session_recorded(
+            self._agent_name, mode=mode, narrowing=narrowing,
+        )
+        session = self._registry.ensure_session_running(self._agent_name, sid)
+        if session is not None:
+            await session.submit_agent_request(
+                from_agent=self._agent_name, request=request, depth=0,
+                chain_id=chain_id,
+            )
+        return {
+            "status": "spawned",
+            "sid": sid,
+            "mode": mode,
+            "note": (
+                "Fresh session spawned + task submitted; it runs in isolation. The "
+                "result stays in the spawned session — routing it back is a follow-on "
+                "(FP-0043 Stage-4)."
+            ),
+        }
+
     def append_history_entry(
         self,
         *,

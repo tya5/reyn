@@ -719,6 +719,12 @@ class RouterLoopHost(RouterLoopCore, Protocol):
     async def send_to_agent(self, *, to: str, request: str, depth: int,
                             chain_id: str) -> None: ...
 
+    # #2103 S1bc: spawn a fresh-context session under THIS agent for a task.
+    # Multi-session hosts (the chat RouterHostAdapter) implement it; others leave
+    # it unbound (= hasattr-guarded at caller-state build, like spawn_skill).
+    async def spawn_session(self, *, request: str, mode: str,
+                            narrowing: "dict | None", chain_id: str) -> dict: ...
+
     async def put_outbox(self, *, kind: str, text: str,
                          meta: dict) -> None: ...
 
@@ -3650,6 +3656,22 @@ class RouterLoop:
                 )
             _spawn_skill_bound = _spawn_skill_bound_impl
 
+        # #2103 S1bc: session-spawn binding. Only multi-session hosts (the chat
+        # RouterHostAdapter) implement ``spawn_session``; a host without it leaves
+        # this None (= duck-typed, like spawn_skill). chain_id pre-bound.
+        _spawn_session_bound: Any = None
+        if hasattr(self.host, "spawn_session") and callable(
+            getattr(self.host, "spawn_session", None)
+        ):
+            async def _spawn_session_bound_impl(
+                *, request: str, mode: str, narrowing: "dict | None" = None,
+            ) -> dict:
+                return await self.host.spawn_session(
+                    request=request, mode=mode, narrowing=narrowing,
+                    chain_id=self.chain_id,
+                )
+            _spawn_session_bound = _spawn_session_bound_impl
+
         # FP-0034 Phase 2 prep: snapshot indexed RAG corpora for the
         # universal catalog's rag_corpus enumeration. SourceManifest
         # caches the parsed YAML in-process so this is O(1) when the
@@ -3699,6 +3721,8 @@ class RouterLoop:
             # FP-0012: non-blocking spawn binding for chat-mode invoke_skill.
             # None for blocking phase sub-loop hosts (= no spawn_skill method on host).
             spawn_skill_fn=_spawn_skill_bound,
+            # #2103 S1bc: session-spawn dispatch (None for non-multi-session hosts).
+            spawn_session_fn=_spawn_session_bound,
             # Memory tool bridges (= for memory cluster handlers;
             # Phase 3.5-B-heavy) — bound to RouterLoop's private helpers
             # so registry handlers consume the same agent-aware
