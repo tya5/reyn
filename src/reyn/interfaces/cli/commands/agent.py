@@ -24,6 +24,10 @@ def register(sub) -> None:
     inner.required = True
 
     p_list = inner.add_parser("list", help="List agents")
+    p_list.add_argument(
+        "--all", action="store_true",
+        help="Include archived agents (marked '(archived)'). Default hides them.",
+    )
     p_list.set_defaults(func=_cmd_list)
 
     p_new = inner.add_parser("new", help="Create a new agent")
@@ -63,6 +67,19 @@ def _cmd_list(args: argparse.Namespace) -> None:
     if not base.is_dir():
         print("(no agents yet — `reyn chat` will auto-create `default`)")
         return
+    # #1954: hide archived agents by default — consistent with routing / A2A /
+    # the TUI Agents tab (all use ``list_active_names``) + the documented intent
+    # (agent.md: "Archived agents are hidden"). ``--all`` reveals them marked so
+    # an operator can still see / recover / purge them. Use the canonical
+    # registry seam rather than re-deriving the archive marker here.
+    show_all = bool(getattr(args, "all", False))
+
+    def _no_factory(profile):  # pragma: no cover — never invoked for a read-only list
+        raise RuntimeError("session factory not used in agent CLI")
+
+    reg = AgentRegistry(project_root=Path.cwd(), session_factory=_no_factory)
+    active = set(reg.list_active_names())
+
     rows: list[tuple[str, str, str]] = []
     for entry in sorted(base.iterdir()):
         if not entry.is_dir():
@@ -71,6 +88,9 @@ def _cmd_list(args: argparse.Namespace) -> None:
             profile = AgentProfile.load(entry)
         except FileNotFoundError:
             continue
+        archived = profile.name not in active
+        if archived and not show_all:
+            continue  # default view hides archived agents
         role_first_line = (profile.role or "").strip().splitlines()
         role_excerpt = role_first_line[0] if role_first_line else ""
         # Last activity = max mtime across history.jsonl + chat events tree.
@@ -93,7 +113,8 @@ def _cmd_list(args: argparse.Namespace) -> None:
             ts = datetime.fromtimestamp(latest, tz=timezone.utc).strftime("%Y-%m-%d %H:%M")
         else:
             ts = "—"
-        rows.append((profile.name, ts, role_excerpt[:60]))
+        name_display = f"{profile.name} (archived)" if archived else profile.name
+        rows.append((name_display, ts, role_excerpt[:60]))
     if not rows:
         print("(no agents yet — `reyn chat` will auto-create `default`)")
         return

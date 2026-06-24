@@ -21,10 +21,11 @@ Subcommands: `list`, `new`, `show`, `rm`.
 
 ## `reyn agent list`
 
-Print all **active** (non-archived) agents (alphabetical), with last-activity timestamp and the first line of each profile's `role`. Archived agents are hidden from this listing.
+Print all **active** (non-archived) agents (alphabetical), with last-activity timestamp and the first line of each profile's `role`. Archived agents are hidden from this listing. Pass `--all` to include archived agents, shown as `<name> (archived)`, so you can see / recover / purge them.
 
 ```bash
-reyn agent list
+reyn agent list          # active agents only
+reyn agent list --all    # also show archived agents
 ```
 
 ```
