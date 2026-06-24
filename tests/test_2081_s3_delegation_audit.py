@@ -156,11 +156,15 @@ def test_reachable_role_that_denies_is_clean(tmp_path: Path, monkeypatch) -> Non
         "name: t\nkind: network\nmembers: [worker, peer]\nprofiles:\n  worker: tight\n",
         encoding="utf-8",
     )
+    # genuinely tight: deny BOTH the qualified catalog names AND the bare unwrapped
+    # aliases (#2111 — the audit taxonomy covers every invocable form, so a profile
+    # denying only the qualified form would still re-grant the bare one).
     (_profiles(tmp_path) / "tight.yaml").write_text(
         "name: tight\ntool_deny: [delegate_to_agent, multi_agent__delegate, sandboxed_exec, "
         "exec__sandboxed_exec, delete_file, file__delete, memory_operation__remember_shared, "
-        "memory_operation__remember_agent, memory_operation__forget, mcp__install_registry, "
-        "mcp__install_package, mcp__install_local]\n",
+        "memory_operation__remember_agent, memory_operation__forget, remember_shared, "
+        "remember_agent, forget_memory, mcp__install_registry, mcp__install_package, "
+        "mcp__install_local, mcp_install_registry, mcp_install_package, mcp_install_local]\n",
         encoding="utf-8",
     )
     assert not _by(_findings(monkeypatch, tmp_path), contains="worker")
