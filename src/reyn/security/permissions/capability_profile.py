@@ -299,6 +299,38 @@ def load_delegate_profile(project_root: "str | Path") -> CapabilityProfile:
     return builtin_delegate_profile()
 
 
+# ── #2081 S3: the delegation-unsafe AUDIT taxonomy ──────────────────────────
+#
+# ``reyn audit`` (gateway:delegation-unsafe) flags, per dangerous CLASS, a
+# delegate-REACHABLE bound capability_profile — or the ``_delegate.yaml`` override —
+# that PERMITS the class (a re-grant that widens an unbound delegate's floor). This is
+# the security-JUDGMENT taxonomy for the static audit; it is RELATED to but not
+# identical with the runtime ``_delegate`` FLOOR (``_BUILTIN_UNTRUSTED_DENY``): the
+# audit additionally covers destructive-FS (``delete_file``) — a delegate-reachable
+# concern even though the floor does not deny it — and assigns per-class severities
+# (the dogfood-coder taxonomy). (``mcp-install`` is in the floor but is not separately
+# audit-flagged here — under ``deny`` it is denied; the per-class audit focuses on the
+# confirmed dogfood-coder severity classes.)
+DELEGATION_AUDIT_CLASSES: "dict[str, tuple[str, frozenset[str]]]" = {
+    "re-delegation": ("HIGH", frozenset({"delegate_to_agent", "multi_agent__delegate"})),
+    "exec": ("HIGH", frozenset({"sandboxed_exec", "exec__sandboxed_exec"})),
+    "memory-write": ("MED", frozenset({
+        "remember_shared", "remember_agent", "forget_memory",
+        "memory_operation__remember_shared", "memory_operation__remember_agent",
+        "memory_operation__forget",
+    })),
+    "destructive-fs": ("MED", frozenset({"delete_file", "file__delete"})),
+}
+
+
+def profile_permits(profile: CapabilityProfile, tool: str) -> bool:
+    """Whether ``profile`` would PERMIT ``tool`` on the TOOL axis — the allow-list is
+    satisfied (None = unconstrained, else membership) AND it is not denied. The
+    delegation-unsafe audit's re-grant check (#2081 S3)."""
+    in_allow = profile.tool_allow is None or tool in profile.tool_allow
+    return in_allow and tool not in profile.tool_deny
+
+
 def metas_have_untrusted(metas: "object") -> bool:
     """Seam-agnostic taint check: True iff any entry meta carries the untrusted
     marker. Derived from the **active** context (the caller passes the live,
