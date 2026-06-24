@@ -718,6 +718,25 @@ The default `reyn/<hostname>` gives a fresh install a usable identity without op
 
 See [Concepts: multi-agent — Agent ID propagation](../../concepts/multi-agent/multi-agent.md) for cross-agent tracing and A2A header forwarding.
 
+## `delegation` block
+
+Cross-agent delegation policy (#2081). Selects the capability floor a **delegated** agent — one spawned by another agent's delegation, recursively — receives when it is otherwise unbound by a topology `capability_profile`.
+
+```yaml
+delegation:
+  capability_default: inherit   # inherit (default) | deny
+```
+
+### `delegation` fields
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `delegation.capability_default` | `inherit` \| `deny` | `inherit` | `inherit` — a delegate inherits the spawner's capability surface (no extra narrowing; byte-identical to pre-#2081). `deny` — an **unbound** delegate is narrowed by the built-in restrictive `_delegate` profile (dangerous-tool classes denied: re-delegation, side-effect execution, memory-writes, MCP install) unless a topology `capability_profile` binding re-grants it (the binding **replaces** the default — composition is most-restrictive-wins and cannot re-grant). The default-deny propagates **recursively**: a sub-delegate is itself a delegate, so a re-granted coordinator's own sub-delegates are still default-denied (no laundering). |
+
+Only the unbound-delegate fallback is affected. A top-level agent and any topology-bound agent are unchanged. The restrictive floor reuses the same single-sourced dangerous-tool taxonomy as the `_untrusted` content-narrowing profile; operators may tune it independently via `.reyn/capability_profiles/_delegate.yaml`.
+
+See [Concepts: multi-agent](../../concepts/multi-agent/multi-agent.md) and [Concepts: capability profile](../../concepts/runtime/capability-profile.md).
+
 ## `auth` block
 
 OAuth provider configurations for `reyn auth login`. Each named entry under `auth.providers` defines an RFC 8628 Device Authorization Grant provider. Empty by default; the operator declares providers they want to authenticate against.
