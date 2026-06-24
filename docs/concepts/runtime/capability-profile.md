@@ -143,6 +143,8 @@ re-grants a class (re-delegation / exec = HIGH; memory-write / destructive-FS =
 MED), and nudges (INFO) when `capability_default=inherit` while a topology
 permits delegation.
 
+Full mechanism: [Concepts: Delegation policy](delegation-policy.md) — config, recursive propagation, binding-replaces semantics, audit classes, and OPT-A reachability scoping.
+
 ## Agent self-edit
 
 An agent can update either surface at runtime without requesting extra
