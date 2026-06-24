@@ -508,6 +508,7 @@ def run(args: argparse.Namespace) -> None:
         project_root=project_root,
         session_factory=_session_factory,
         state_log=state_log,
+        delegation_capability_default=session_cfg.config.delegation.capability_default,  # #2081
         environment_backend=env_backend,   # #1544: container shadow-git runs via this
         workspace_state_dir=ws_state_dir,  # #1557 gap-#1: shadow git-dir under --state-dir
         workspace_capture=session_cfg.config.time_travel.workspace_capture,  # #1582 opt-out

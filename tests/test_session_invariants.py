@@ -117,7 +117,7 @@ class _FakeRegistry:
             if n != self_name
         ]
 
-    def get_or_load(self, name: str) -> "Session":
+    def get_or_load(self, name: str, *, is_delegate: bool = False) -> "Session":
         return self._targets[name]
 
     async def ensure_running(self, name: str) -> None:

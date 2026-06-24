@@ -508,6 +508,7 @@ def _build_live_runner(agent_name: str, *, env_backend=None, ws_base_dir=None, w
             project_root=project_root,
             session_factory=_session_factory,
             state_log=None,
+            delegation_capability_default=config.delegation.capability_default,  # #2081
             environment_backend=env_backend,   # #1544: container shadow-git
             workspace_state_dir=ws_state_dir,  # #1557 gap-#1: shadow git-dir under --state-dir
             workspace_capture=config.time_travel.workspace_capture,  # #1582 opt-out

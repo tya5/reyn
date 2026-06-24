@@ -2696,7 +2696,12 @@ class Session:
                 meta={"chain_id": chain_id},
             ))
             return
-        target = self._registry.get_or_load(to)
+        # #2081: the A2A REQUEST path is a delegation by definition → mark the
+        # target a delegate (recorded on first construction; recursive — a
+        # sub-delegate's own delegations pass is_delegate=True too). The response
+        # path (_a2a_send_response) does NOT — the delegator's own delegate-ness was
+        # decided when it was constructed.
+        target = self._registry.get_or_load(to, is_delegate=True)
         await self._registry.ensure_running(to)
         await target.submit_agent_request(
             from_agent=from_agent, request=request,

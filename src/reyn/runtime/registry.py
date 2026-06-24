@@ -123,6 +123,7 @@ class AgentRegistry:
         workspace_state_dir: "Path | None" = None,
         workspace_capture: bool = True,
         act_turn_capture: bool = False,
+        delegation_capability_default: str = "inherit",
     ) -> None:
         """
         session_factory: returns a configured Session given an AgentProfile.
@@ -145,6 +146,14 @@ class AgentRegistry:
         self._factory = session_factory
         self._state_log = state_log
         self._project_root = project_root
+        # #2081: delegation policy. ``deny`` narrows an UNBOUND delegate with the
+        # restrictive _delegate floor; ``inherit`` (default) = byte-identical to
+        # pre-#2081. ``_constructing_as_delegate`` is the transient is_delegate
+        # context set by _construct_session around the (synchronous) factory call,
+        # read by resolved_profile_for — keeps the session_factory contract
+        # unchanged (it is a caller-provided closure, 60+ construction sites).
+        self._delegation_capability_default = delegation_capability_default
+        self._constructing_as_delegate = False
         # FP-0043 Stage 3: the Registry holds N conversation Sessions per Agent.
         # Identity (the Agent value object, S2) is shared per name; the
         # conversation instances (= today's Session, inbox+run-loop+history)
@@ -1428,8 +1437,14 @@ class AgentRegistry:
 
     # ── lifecycle ────────────────────────────────────────────────────────────
 
-    def get_or_load(self, name: str) -> "object":
-        """Return the Session for `name`, instantiating from profile if new."""
+    def get_or_load(self, name: str, *, is_delegate: bool = False) -> "object":
+        """Return the Session for `name`, instantiating from profile if new.
+
+        ``is_delegate`` (#2081): True when this load is a DELEGATION target (the
+        A2A request path). It is recorded on FIRST construction (a cache hit
+        returns the existing session unchanged) and drives the unbound-delegate
+        default-deny in ``resolved_profile_for``. Default False = a top-level /
+        non-delegation load (byte-identical to pre-#2081)."""
         existing = self._peek_session(name)
         if existing is not None:
             return existing
@@ -1438,15 +1453,26 @@ class AgentRegistry:
                 f"agent {name!r} not found; run `reyn agent new {name}` to create it"
             )
         profile = self.load_profile(name)
-        session = self._construct_session(profile)
+        session = self._construct_session(profile, is_delegate=is_delegate)
         self._store_session(name, session)
         return session
 
-    def _construct_session(self, profile: AgentProfile) -> "object":
+    def _construct_session(
+        self, profile: AgentProfile, *, is_delegate: bool = False
+    ) -> "object":
         """Build a configured Session from a profile (factory + shared-store
         attach), WITHOUT inserting it into the session map. Shared by get_or_load
-        (default session) and spawn_session (additional sessions) — FP-0043 S3."""
-        session = self._factory(profile)
+        (default session) and spawn_session (additional sessions) — FP-0043 S3.
+
+        #2081: ``is_delegate`` is published on the transient
+        ``_constructing_as_delegate`` for the duration of the (synchronous) factory
+        call, so the factory's ``resolved_profile_for(profile.name)`` sees it
+        without a factory-signature change. Cleared in ``finally`` (no leak)."""
+        self._constructing_as_delegate = is_delegate
+        try:
+            session = self._factory(profile)
+        finally:
+            self._constructing_as_delegate = False
         # ADR-0038 Stage 1d: hand the session the single shared workspace
         # shadow-git store so cut_generation captures the workspace at each
         # boundary against the same git-dir the registry's rewind/recovery uses.
@@ -1830,15 +1856,25 @@ class AgentRegistry:
         """All topologies the agent currently belongs to (including `_default`)."""
         return [t for t in self.list_topologies() if agent in t.members]
 
-    def resolved_profile_for(self, agent: str) -> "tuple[object | None, frozenset[str]]":
+    def resolved_profile_for(
+        self, agent: str, *, is_delegate: "bool | None" = None
+    ) -> "tuple[object | None, frozenset[str]]":
         """#1827 S3: the agent's effective contextual narrowing from its topology
         capability_profile bindings.
 
         Returns ``(ContextualPermission | None, excluded_categories)`` — the
         composition (most-restrictive: ∪ deny, ∩ allow, ∪ excluded) of every
-        profile bound to ``agent`` across its topologies. **No binding →
-        ``(None, frozenset())``** = byte-identical to pre-#1827 (the ``_default``
-        network has no profiles, so unaffiliated agents resolve to None).
+        profile bound to ``agent`` across its topologies.
+
+        **No binding →** normally ``(None, frozenset())`` = byte-identical to
+        pre-#1827. **#2081 exception:** when this is an UNBOUND **delegate** load
+        (``is_delegate``) and ``delegation.capability_default=deny``, the
+        restrictive built-in ``_delegate`` floor is applied instead — a topology
+        binding would have REPLACED it (the binding is the re-grant; composition is
+        most-restrictive-wins and cannot re-grant). ``is_delegate=None`` (the
+        factory's construction-time call) falls back to the
+        ``_constructing_as_delegate`` transient; an explicit value (direct callers /
+        tests) wins.
 
         A bound-but-missing or malformed profile file is surfaced (stderr) and
         skipped — a typo must not silently widen capability, but it also must not
@@ -1847,6 +1883,7 @@ class AgentRegistry:
         from reyn.security.permissions.capability_profile import (
             compose_resolved,
             load_capability_profile,
+            load_delegate_profile,
             resolve_profile,
         )
 
@@ -1876,6 +1913,19 @@ class AgentRegistry:
             resolved.append(resolve_profile(prof))
 
         if not resolved:
+            # #2081: an UNBOUND delegate under delegation.capability_default=deny
+            # gets the restrictive _delegate floor (a binding above would have
+            # replaced it). The delegate-ness propagates recursively — every A2A
+            # request-path load passes is_delegate=True regardless of the spawner's
+            # own status — so a re-granted coordinator's sub-delegate is STILL
+            # default-denied (no laundering).
+            effective_delegate = (
+                self._constructing_as_delegate if is_delegate is None else is_delegate
+            )
+            if effective_delegate and self._delegation_capability_default == "deny":
+                return compose_resolved([
+                    resolve_profile(load_delegate_profile(self._project_root))
+                ])
             return None, frozenset()
         return compose_resolved(resolved)
 

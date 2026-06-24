@@ -104,7 +104,7 @@ class _StubAgentRegistry:
     def permit(self, from_agent: str, to_agent: str) -> bool:
         return True
 
-    def get_or_load(self, name: str) -> _StubSession:
+    def get_or_load(self, name: str, *, is_delegate: bool = False) -> _StubSession:
         return self._target
 
     async def ensure_running(self, name: str) -> None:
