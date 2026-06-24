@@ -97,6 +97,28 @@ async def test_consent_bus_always_records_and_runs(
 
 
 @pytest.mark.asyncio
+async def test_consent_prompt_names_the_hook(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Tier 2: #2095 P2 — when a ``hook_name`` is supplied, the consent prompt
+    identifies WHICH hook is asking; without one it stays generic."""
+    monkeypatch.delenv("REYN_ACCEPT_HOOKS", raising=False)
+    allowlist = tmp_path / "allowlist.json"
+    allowlist.write_text("[]", encoding="utf-8")
+    marker = tmp_path / "ran.txt"
+    command = _marker_command(marker)
+
+    named = _RecordingBus(NO)
+    await _run(command, allowlist, consent_bus=named, hook_name="nightly-sync")
+    assert "nightly-sync" in named.seen[0].prompt
+
+    anon = _RecordingBus(NO)
+    await _run(command, allowlist, consent_bus=anon, hook_name=None)
+    assert "nightly-sync" not in anon.seen[0].prompt
+    assert "shell hook" in anon.seen[0].prompt.lower()
+
+
+@pytest.mark.asyncio
 async def test_consent_bus_yes_runs_without_persisting(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -193,21 +215,23 @@ async def test_accept_env_short_circuits_before_bus(
 
 
 class _RecordingShell:
-    """A real run_shell seam that records the consent_bus it was handed."""
+    """A real run_shell seam that records the consent_bus + hook_name it got."""
 
     def __init__(self) -> None:
         self.consent_buses: list[object] = []
+        self.hook_names: list[object] = []
 
     async def __call__(self, *args, **kwargs):
         self.consent_buses.append(kwargs.get("consent_bus"))
+        self.hook_names.append(kwargs.get("hook_name"))
         return None
 
 
-def _shell_exec_dispatcher(*, gate, run_shell, bus) -> HookDispatcher:
+def _shell_exec_dispatcher(*, gate, run_shell, bus, hook_name="e2e-probe") -> HookDispatcher:
     async def _noop(*_a, **_k):
         return None
 
-    reg = HookRegistry([HookDef(on="turn_end", shell_exec="echo hi")])
+    reg = HookRegistry([HookDef(on="turn_end", name=hook_name, shell_exec="echo hi")])
     return HookDispatcher(
         reg,
         put_inbox=_noop,
@@ -229,6 +253,8 @@ async def test_dispatcher_passes_bus_when_listener_present() -> None:
     await disp.dispatch("turn_end", {})
 
     assert shell.consent_buses == [bus]
+    # The dispatcher wires the hook's name through for the consent prompt (P2).
+    assert shell.hook_names == ["e2e-probe"]
 
 
 @pytest.mark.asyncio
