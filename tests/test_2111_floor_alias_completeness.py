@@ -29,6 +29,7 @@ import pytest
 from reyn.runtime.registry import AgentRegistry
 from reyn.security.permissions.capability_profile import (
     _BUILTIN_UNTRUSTED_DENY,
+    _FLOORED_BARE_ONLY,
     _FLOORED_QUALIFIED,
     builtin_untrusted_profile,
     resolve_profile,
@@ -68,6 +69,35 @@ def test_every_floored_tool_has_both_forms_in_the_floor() -> None:
                     f"{cls}: bare alias {bare!r} of {q!r} missing from floor — the live "
                     "gate receives the bare form (#2111 regression)"
                 )
+
+
+def test_floored_entries_are_qualified_or_explicitly_bare_only() -> None:
+    """Tier 2: #2111 SoT-completeness guard (the OTHER gap direction). Every name in
+    _FLOORED_QUALIFIED either unwraps to a bare alias (a real invoke_action route, so
+    derivation covers the live-gate form) OR is in the explicit _FLOORED_BARE_ONLY
+    allowlist. This converts the prior silent ``if bare is not None`` skip into an
+    enforced check: a MALFORMED qualified entry (typo / missing _OPERATION_RULES entry
+    whose unwrap unexpectedly returns None, not declared bare-only) → RED, instead of
+    silently flooring a non-existent form and leaving the real route unguarded."""
+    for cls, qualifieds in _FLOORED_QUALIFIED.items():
+        for q in qualifieds:
+            unwraps = unwrapped_tool_name(q) is not None
+            assert unwraps or q in _FLOORED_BARE_ONLY, (
+                f"{cls}: {q!r} neither unwraps to a bare alias nor is declared in "
+                f"_FLOORED_BARE_ONLY — a malformed floor entry would guard a "
+                f"non-existent form, leaving the real route unguarded (#2111 SoT gap)"
+            )
+
+
+def test_bare_only_set_entries_have_no_qualified_route() -> None:
+    """Tier 2: the inverse — nothing in _FLOORED_BARE_ONLY actually unwraps. A name with
+    a real invoke_action route mis-declared bare-only would bypass the derivation that
+    keeps its bare+qualified forms in lockstep; force it back onto _FLOORED_QUALIFIED."""
+    for name in _FLOORED_BARE_ONLY:
+        assert unwrapped_tool_name(name) is None, (
+            f"{name!r} is declared bare-only but has an invoke_action route — remove it "
+            f"from _FLOORED_BARE_ONLY and let _with_unwrapped_aliases derivation cover it"
+        )
 
 
 def test_session_spawn_is_floored() -> None:
