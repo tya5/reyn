@@ -73,7 +73,7 @@ async def create_agent(
 ) -> AgentDetail:
     """Create a new agent with the given name and optional role."""
     try:
-        profile = registry.create(body.name, role=body.role or "")
+        profile = await registry.create_agent(body.name, role=body.role or "")  # #2103 S2b: emit agent_created
     except FileExistsError:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -126,7 +126,7 @@ async def delete_agent(name: str, registry=Depends(get_registry)) -> None:
             detail=f"Agent {name!r} not found.",
         )
     try:
-        registry.remove(name)
+        await registry.archive_agent(name)  # #2103 S2b: emit agent_archived
     except ValueError as exc:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,

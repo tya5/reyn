@@ -75,7 +75,7 @@ async def _create_agent(session: "Session", name: str) -> None:
         await reply_error(session, _NO_REGISTRY)
         return
     try:
-        session._registry.create(name)
+        await session._registry.create_agent(name)  # #2103 S2b: emit agent_created
     except FileExistsError:
         await reply_error(
             session,
