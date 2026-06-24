@@ -142,6 +142,7 @@ async def _get_or_build_registry() -> "AgentRegistry":
         from reyn.core.events.state_log import StateLog
         from reyn.interfaces.cli.invocation_context import InvocationContext
         from reyn.runtime.budget.budget import BudgetTracker
+        from reyn.runtime.factory_config import SessionFactoryConfig
         from reyn.runtime.profile import AgentProfile
         from reyn.runtime.registry import AgentRegistry
         from reyn.runtime.scoped_session_factory import build_scoped_chat_session
@@ -214,14 +215,8 @@ async def _get_or_build_registry() -> "AgentRegistry":
                 events_config=session_cfg.config.events,
                 state_log=state_log,
                 budget_tracker=budget_tracker,
-                sandbox_config=session_cfg.config.sandbox,
-                multimodal_config=session_cfg.config.multimodal,
-                tool_calls_op_loop_skills=session_cfg.config.tool_calls_op_loop_skills,
-                action_retrieval_config=session_cfg.config.action_retrieval,
-                chat_tool_use_scheme=session_cfg.config.tool_use.chat,  # #1593 PR-2
-                embedding_config=session_cfg.config.embedding,
-                router_config=session_cfg.config.llm.router,  # #1829 S3b
-                retry_config=session_cfg.config.llm.retry,  # #1835
+                # #2093: the uniform reyn.yaml-derived per-session config bundle.
+                factory_config=SessionFactoryConfig.from_config(session_cfg.config),
                 agent_id=session_cfg.config.agent.id,
                 # #1402: scoped surface passed EXPLICITLY (required by
                 # build_scoped_chat_session). chainlit's current behaviour
@@ -245,9 +240,8 @@ async def _get_or_build_registry() -> "AgentRegistry":
             project_root=project_root,
             session_factory=_session_factory,
             state_log=state_log,
-            delegation_capability_default=session_cfg.config.delegation.capability_default,  # #2081
-            workspace_capture=session_cfg.config.time_travel.workspace_capture,  # #1582 opt-out
-            act_turn_capture=session_cfg.config.time_travel.act_turn_capture,  # #1560 opt-in
+            # #2093: the uniform reyn.yaml-derived registry config bundle.
+            factory_config=SessionFactoryConfig.from_config(session_cfg.config),
         )
         registry_ref.append(registry)
         _REGISTRY = registry

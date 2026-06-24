@@ -400,6 +400,7 @@ def _build_live_runner(agent_name: str, *, env_backend=None, ws_base_dir=None, w
     """
     import asyncio
     import shutil
+    from dataclasses import replace
     from pathlib import Path
 
     from reyn.config import _find_project_root, load_config, load_project_context
@@ -408,6 +409,7 @@ def _build_live_runner(agent_name: str, *, env_backend=None, ws_base_dir=None, w
     from reyn.llm.model_resolver import ModelResolver
     from reyn.mcp.server import send_to_agent_impl
     from reyn.runtime.budget.budget import BudgetTracker
+    from reyn.runtime.factory_config import SessionFactoryConfig
     from reyn.runtime.profile import AgentProfile
     from reyn.runtime.registry import AgentRegistry
     from reyn.runtime.scoped_session_factory import build_scoped_chat_session
@@ -472,12 +474,15 @@ def _build_live_runner(agent_name: str, *, env_backend=None, ws_base_dir=None, w
                 events_config=config.events,
                 state_log=None,  # no WAL for dogfood dispatch
                 budget_tracker=budget_tracker,
-                sandbox_config=config.sandbox,
-                hooks_config=config.hooks,  # #1800 slice 5b
-                multimodal_config=config.multimodal,
-                tool_calls_op_loop_skills=config.tool_calls_op_loop_skills,
-                action_retrieval_config=config.action_retrieval,
-                chat_tool_use_scheme=config.tool_use.chat,  # #1593 PR-2
+                hooks_config=config.hooks,  # #1800 slice 5b (pass-through, not bundled)
+                # #2093: the uniform per-session config bundle. dogfood deliberately
+                # keeps embedding_config=None (the documented gap — it had
+                # action_retrieval but not its sibling embedding), preserved via
+                # replace() as an EXPLICIT, visible deviation (not a silent miss) →
+                # behavior byte-identical to before the bundle.
+                factory_config=replace(
+                    SessionFactoryConfig.from_config(config), embedding_config=None,
+                ),
                 # #1289: same backend instance to both seams (single-shared-sandbox).
                 environment_backend=env_backend,
                 sandbox_backend=env_backend,
@@ -488,9 +493,6 @@ def _build_live_runner(agent_name: str, *, env_backend=None, ws_base_dir=None, w
                 # fixes the #187 wrong-FS class (file ops were rooting on host
                 # cwd while env_backend pointed at the container). chat.py uses
                 # the same ws_base_dir/ws_state_dir pattern.
-                embedding_config=None,  # gap: dogfood omitted embedding_config (had action_retrieval but not its sibling) → preserved as None
-                router_config=config.llm.router,  # #1829 S3b
-                retry_config=config.llm.retry,  # #1835
                 eager_embedding_build=False,
                 agent_id=None,
                 exclude_tools=None,
@@ -508,11 +510,10 @@ def _build_live_runner(agent_name: str, *, env_backend=None, ws_base_dir=None, w
             project_root=project_root,
             session_factory=_session_factory,
             state_log=None,
-            delegation_capability_default=config.delegation.capability_default,  # #2081
+            # #2093: the uniform reyn.yaml-derived registry config bundle.
+            factory_config=SessionFactoryConfig.from_config(config),
             environment_backend=env_backend,   # #1544: container shadow-git
             workspace_state_dir=ws_state_dir,  # #1557 gap-#1: shadow git-dir under --state-dir
-            workspace_capture=config.time_travel.workspace_capture,  # #1582 opt-out
-            act_turn_capture=config.time_travel.act_turn_capture,  # #1560 opt-in
         )
         _reg_cell.append(reg)
         return reg

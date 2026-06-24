@@ -325,6 +325,7 @@ def run_serve(args: argparse.Namespace) -> None:
     from reyn.core.events.state_log import StateLog
     from reyn.mcp.server import serve_stdio
     from reyn.runtime.budget.budget import BudgetTracker
+    from reyn.runtime.factory_config import SessionFactoryConfig
     from reyn.runtime.profile import AgentProfile
     from reyn.runtime.registry import AgentRegistry
     from reyn.runtime.scoped_session_factory import build_scoped_chat_session
@@ -421,18 +422,10 @@ def run_serve(args: argparse.Namespace) -> None:
             events_config=session_cfg.config.events,
             state_log=state_log,
             budget_tracker=budget_tracker,
-            # Same fix as web/deps.py: A2A / MCP-serve Session factory
-            # was missing ``sandbox_config`` propagation. Without it, the
-            # operator's reyn.yaml ``sandbox.backend`` selection (e.g.
-            # ``noop``) never reaches the sandboxed_exec handler.
-            sandbox_config=session_cfg.config.sandbox,
-            multimodal_config=session_cfg.config.multimodal,
-            tool_calls_op_loop_skills=session_cfg.config.tool_calls_op_loop_skills,
-            action_retrieval_config=session_cfg.config.action_retrieval,
-            chat_tool_use_scheme=session_cfg.config.tool_use.chat,  # #1593 PR-2
-            embedding_config=session_cfg.config.embedding,
-            router_config=session_cfg.config.llm.router,  # #1829 S3b
-            retry_config=session_cfg.config.llm.retry,  # #1835
+            # #2093: the uniform reyn.yaml-derived per-session config bundle. (The same
+            # sandbox_config the A2A/MCP-serve factory once dropped — now it's in the
+            # bundle, so it can't be missed here.)
+            factory_config=SessionFactoryConfig.from_config(session_cfg.config),
             # #1402: scoped capability surface, passed EXPLICITLY (required by
             # build_scoped_chat_session). The stdio-MCP factory's current
             # behaviour — defaults that document the gaps, NOT new capabilities
@@ -456,9 +449,8 @@ def run_serve(args: argparse.Namespace) -> None:
         project_root=project_root,
         session_factory=_session_factory,
         state_log=state_log,
-        delegation_capability_default=session_cfg.config.delegation.capability_default,  # #2081
-        workspace_capture=session_cfg.config.time_travel.workspace_capture,  # #1582 opt-out
-        act_turn_capture=session_cfg.config.time_travel.act_turn_capture,  # #1560 opt-in
+        # #2093: the uniform reyn.yaml-derived registry config bundle.
+        factory_config=SessionFactoryConfig.from_config(session_cfg.config),
     )
 
     timeout = float(getattr(args, "timeout", 60.0) or 60.0)

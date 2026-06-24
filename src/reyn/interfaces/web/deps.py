@@ -262,6 +262,7 @@ def _get_registry():
     global _registry
     if _registry is None:
         from reyn.config import load_project_context
+        from reyn.runtime.factory_config import SessionFactoryConfig
         from reyn.runtime.profile import AgentProfile
         from reyn.runtime.registry import AgentRegistry
         from reyn.runtime.scoped_session_factory import build_scoped_chat_session
@@ -323,22 +324,11 @@ def _get_registry():
                 events_config=config.events,
                 state_log=state_log,
                 budget_tracker=budget_tracker,
-                # B52 retro fix: A2A-side Session was missing
-                # ``sandbox_config`` propagation — ``reyn.yaml`` ``sandbox.backend``
-                # set in reyn.local.yaml never reached the sandboxed_exec
-                # handler via the chat-router path. Cron-side
-                # ``web/server.py`` already passes this; the A2A factory
-                # was the only gap. Surfaced by B52 W3-S5 retest where
-                # ``sandbox.backend: noop`` config loaded correctly but
-                # the runtime kept using Seatbelt.
-                sandbox_config=config.sandbox,
-                multimodal_config=config.multimodal,
-                tool_calls_op_loop_skills=config.tool_calls_op_loop_skills,
-                action_retrieval_config=config.action_retrieval,
-                chat_tool_use_scheme=config.tool_use.chat,  # #1593 PR-2
-                embedding_config=config.embedding,
-                router_config=config.llm.router,  # #1829 S3b
-                retry_config=config.llm.retry,  # #1835
+                # #2093: the uniform reyn.yaml-derived per-session config (sandbox /
+                # multimodal / action_retrieval / embedding / router / retry /
+                # op-loop-skills / tool-use-scheme) — one bundle, so a new uniform arg
+                # can't be missed here (the sandbox_config B52 drift class is gone).
+                factory_config=SessionFactoryConfig.from_config(config),
                 eager_embedding_build=_eager_embedding_build,
                 # #1401: the 3 scoped capabilities, filled from the CLI override
                 # holder (env-backend INSTANCE → both FS+exec seams = single-shared
@@ -383,15 +373,15 @@ def _get_registry():
             project_root=root,
             session_factory=_session_factory,
             state_log=state_log,
-            delegation_capability_default=config.delegation.capability_default,  # #2081
+            # #2093: the uniform reyn.yaml-derived registry config (workspace_capture /
+            # act_turn_capture / delegation_capability_default) — one bundle, so a new
+            # one can't be missed here (the delegation_capability_default #2081 drift).
+            factory_config=SessionFactoryConfig.from_config(config),
             # #1544: container shadow-git. ``_scoped`` is local to the session
             # factory above; fetch the overrides at this scope via the accessor.
             environment_backend=get_cli_scoped_overrides().environment_backend,
             # #1557 gap-#1: shadow git-dir under --state-dir (same accessor scope).
             workspace_state_dir=get_cli_scoped_overrides().workspace_state_dir,
-            # #1582: time-travel workspace-capture opt-out (reyn.yaml config).
-            workspace_capture=config.time_travel.workspace_capture,
-            act_turn_capture=config.time_travel.act_turn_capture,  # #1560 opt-in
         )
         registry_ref.append(registry)
         _registry = registry
