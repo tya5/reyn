@@ -1266,6 +1266,14 @@ class Session:
             sandbox_config=self._sandbox_config,
             sandbox_backend=self._sandbox_backend,
         )
+        # #2073 S4: track the RUNTIME (.reyn/cron.yaml) cron job names so the cron
+        # reapply seam can unschedule jobs removed from the runtime file WITHOUT
+        # touching startup (reyn.yaml) jobs (the same startup/runtime layering as
+        # hooks). Seeded from the boot IN-set; updated each reload.
+        self._runtime_cron_names: set = {
+            j["name"] for j in ((_boot_in_set.get("cron") or {}).get("jobs") or [])
+            if isinstance(j, dict) and j.get("name")
+        }
 
         # Per-agent SkillRegistry — lazily constructed on first skill run.
         # Tracks active skill_run_ids and emits skill lifecycle events.
@@ -2909,20 +2917,34 @@ class Session:
         return getattr(self._registry, "_project_root", None) or Path.cwd()
 
     async def _reapply_cron(self, in_set: dict) -> bool:
-        """Reapply .reyn/cron.yaml jobs to the live scheduler (#2073 S2). Idempotent
-        (add_job replaces by name). No active scheduler / no jobs → no-op."""
+        """Reapply .reyn/cron.yaml jobs to the live scheduler (#2073 S2/S4). Adds /
+        replaces present jobs (add_job is idempotent by name) AND unschedules RUNTIME
+        jobs removed from the file since the last reapply (#2073 S4 removal-diff). Only
+        runtime (.reyn/cron.yaml) jobs are removable — startup (reyn.yaml) jobs are
+        never in ``self._runtime_cron_names`` so they are never unscheduled. No active
+        scheduler → no-op."""
         from reyn.runtime.cron import CronJob, get_active_scheduler
         sched = get_active_scheduler()
         if sched is None:
             return False
-        jobs = (in_set.get("cron") or {}).get("jobs") or []
+        jobs = [
+            j for j in ((in_set.get("cron") or {}).get("jobs") or [])
+            if isinstance(j, dict) and j.get("name")
+        ]
+        new_names = {j["name"] for j in jobs}
         changed = False
+        # S4 removal-diff: unschedule runtime jobs deleted from .reyn/cron.yaml.
+        for removed in self._runtime_cron_names - new_names:
+            if await sched.remove_job(removed):
+                changed = True
+        # Add / replace the present runtime jobs (idempotent).
         for jd in jobs:
             await sched.add_job(CronJob(
                 name=jd["name"], schedule=jd["schedule"], to=jd.get("to"),
                 message=jd.get("message"), enabled=jd.get("enabled", True),
             ))
             changed = True
+        self._runtime_cron_names = new_names  # track for the next reload's diff
         return changed
 
     async def _reapply_mcp(self, in_set: dict) -> bool:
