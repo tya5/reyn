@@ -164,6 +164,7 @@ async def _check_consent(
     allowlist_path: Path,
     *,
     consent_bus: "RequestBus | None" = None,
+    hook_name: str | None = None,
 ) -> bool:
     """Return True if *command* is approved to run.
 
@@ -198,7 +199,9 @@ async def _check_consent(
     # An answerable surface is attached → route the consent through the unified
     # intervention bus (#2095). The allowlist remains the "always" persistence.
     if consent_bus is not None:
-        return await _prompt_consent_via_bus(command, allowlist_path, consent_bus)
+        return await _prompt_consent_via_bus(
+            command, allowlist_path, consent_bus, hook_name,
+        )
 
     # No consent bus → preserve the exact pre-#2095 behavior below.
     is_tty = sys.stdin.isatty()
@@ -235,7 +238,7 @@ async def _check_consent(
 
 
 async def _prompt_consent_via_bus(
-    command: str, allowlist_path: Path, bus: "RequestBus",
+    command: str, allowlist_path: Path, bus: "RequestBus", hook_name: str | None = None,
 ) -> bool:
     """Prompt for shell-hook consent through the unified intervention bus (#2095).
 
@@ -243,6 +246,11 @@ async def _prompt_consent_via_bus(
     permission-prompts use, so the prompt surfaces wherever interventions do
     (the TUI Pending tab, stdin for ``reyn run``, etc.) — not the stdin
     ``print``/``input`` that is invisible under a Textual app.
+
+    ``hook_name`` (#2095 P2): the operator's ``HookDef.name`` when set, so the
+    prompt identifies WHICH configured hook is asking (vs a generic "a shell
+    hook"). Shell hooks are always operator-config (``hooks_add`` can only write
+    ``template_push``), so no agent-vs-operator source label is shown.
 
     Choice mapping (``shell_hook_choices``): ``ALWAYS`` records to the allowlist
     (the "always" persistence); ``YES`` allows this run only; ``NO`` / unknown /
@@ -252,9 +260,10 @@ async def _prompt_consent_via_bus(
     from reyn.intervention_choices import ALWAYS, YES, shell_hook_choices
     from reyn.user_intervention import UserIntervention
 
+    who = f"Shell hook {hook_name!r}" if hook_name else "A shell hook"
     iv = UserIntervention(
         kind="permission.shell_hook",
-        prompt="A shell hook wants to run a command",
+        prompt=f"{who} wants to run a command",
         detail=f"$ {command}",
         choices=shell_hook_choices(),
     )
@@ -288,6 +297,7 @@ async def run_shell_hook(
     allowlist_path: Path | None = None,
     capture_stdout: bool = False,
     consent_bus: "RequestBus | None" = None,
+    hook_name: str | None = None,
 ) -> str | None:
     """Run a shell hook command under the sandbox + consent gate.
 
@@ -341,6 +351,10 @@ async def run_shell_hook(
         has a live intervention listener; ``None`` (incl. headless / CI /
         plain mcp-serve / ``reyn run`` with no listener) preserves the pre-#2095
         stdin / fail-closed gate.
+    hook_name:
+        The hook's ``HookDef.name`` (#2095 P2), surfaced in the consent prompt
+        so the user sees WHICH configured hook is asking. ``None`` → a generic
+        "a shell hook" prompt. Only used on the ``consent_bus`` path.
 
     Returns
     -------
@@ -363,6 +377,7 @@ async def run_shell_hook(
             command,
             resolved_allowlist,
             consent_bus=consent_bus,
+            hook_name=hook_name,
         )
     except Exception as exc:
         _log.error("shell-hook: consent check error for %r: %s", command, exc)

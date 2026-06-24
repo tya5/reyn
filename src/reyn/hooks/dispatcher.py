@@ -131,6 +131,7 @@ class HookDispatcher:
                 sandbox_backend=self._sandbox_backend,
                 sandbox_config=self._sandbox_config,
                 consent_bus=self._consent_bus_now(),
+                hook_name=hook.name,
             )
         elif hook.shell_push is not None:
             # shell_push (#2069) — a shell command whose STDOUT is a JSON
@@ -147,6 +148,7 @@ class HookDispatcher:
                 sandbox_config=self._sandbox_config,
                 capture_stdout=True,
                 consent_bus=self._consent_bus_now(),
+                hook_name=hook.name,
             )
             resolved = _parse_shell_push(stdout)
             if resolved is not None:
