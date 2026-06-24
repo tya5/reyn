@@ -34,6 +34,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from reyn.runtime.agent import Agent
+from reyn.runtime.factory_config import SessionFactoryConfig
 from reyn.runtime.session import Session
 
 if TYPE_CHECKING:
@@ -59,18 +60,14 @@ def build_scoped_chat_session(
     eager_embedding_build: bool,  # build the action embedding index up-front
     allowed_mcp: list[str] | None,  # per-profile MCP allow-list
     task_backend: Any,  # #1953 slice R — session-scoped Task backend instance. I-5=(A): cli/chat + MCP pass a per-session sqlite (rewind-participating); A2A/web passes None (the process-singleton A2A surface is read directly, NOT threaded here, so A2A tasks stay durable but un-rewound). None → op-runtime in-memory fallback (_BACKEND)
-    # ── per-session config (required: should be UNIFORM across factories) ──
-    # These are reyn.yaml-derived config every factory loads the same way; the
-    # sandbox_config + multimodal_config drifts each previously needed a
-    # dedicated uniformity point-test (now subsumed by the src/-wide invariant).
-    sandbox_config: Any,  # SandboxConfig | None — exec-tool gating string
-    multimodal_config: Any,  # MultimodalConfig | None
-    action_retrieval_config: Any,  # ActionRetrievalConfig | None
-    embedding_config: Any,  # EmbeddingConfig | None
-    router_config: Any,  # #1829 S3b RouterConfig | None — reyn.yaml llm.router.*
-    retry_config: Any,  # #1835 RetryConfig | None — reyn.yaml llm.retry.*
-    tool_calls_op_loop_skills: list[str] | None,  # #1212 op-loop gate
-    chat_tool_use_scheme: str,  # #1593 PR-2 config.tool_use.chat — chat-layer ToolUseScheme name (UNIFORM: every frontend resolves the same reyn.yaml value)
+    # ── per-session config — the UNIFORM, reyn.yaml-derived bundle (#2093) ──
+    # All eight previously-individual uniform args (sandbox_config / multimodal_config
+    # / action_retrieval_config / embedding_config / router_config / retry_config /
+    # tool_calls_op_loop_skills / chat_tool_use_scheme) now arrive as ONE bundle, built
+    # once per frontend via SessionFactoryConfig.from_config — so a new uniform arg is
+    # added in one place and reaches all five factory sites (completeness-by-
+    # construction; the sandbox_config drift class is structurally prevented).
+    factory_config: "SessionFactoryConfig",
     # ── common base (pass-through; session identity/infra, not a drift surface) ──
     **base: Any,
 ) -> Session:
@@ -92,7 +89,7 @@ def build_scoped_chat_session(
         permission_resolver=base.get("permission_resolver"),
         workspace_base_dir=workspace_base_dir,
         workspace_state_dir=workspace_state_dir,
-        sandbox_config=sandbox_config,
+        sandbox_config=factory_config.sandbox_config,
         sandbox_backend=sandbox_backend,
         environment_backend=environment_backend,
     )
@@ -122,13 +119,13 @@ def build_scoped_chat_session(
         eager_embedding_build=eager_embedding_build,
         allowed_mcp=allowed_mcp,
         task_backend=task_backend,  # #1953 slice R
-        sandbox_config=sandbox_config,
-        multimodal_config=multimodal_config,
-        action_retrieval_config=action_retrieval_config,
-        embedding_config=embedding_config,
-        router_config=router_config,
-        retry_config=retry_config,  # #1835
-        tool_calls_op_loop_skills=tool_calls_op_loop_skills,
-        chat_tool_use_scheme=chat_tool_use_scheme,
+        sandbox_config=factory_config.sandbox_config,
+        multimodal_config=factory_config.multimodal_config,
+        action_retrieval_config=factory_config.action_retrieval_config,
+        embedding_config=factory_config.embedding_config,
+        router_config=factory_config.router_config,
+        retry_config=factory_config.retry_config,  # #1835
+        tool_calls_op_loop_skills=factory_config.tool_calls_op_loop_skills,
+        chat_tool_use_scheme=factory_config.chat_tool_use_scheme,
         **base,
     )

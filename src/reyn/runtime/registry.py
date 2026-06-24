@@ -124,6 +124,7 @@ class AgentRegistry:
         workspace_capture: bool = True,
         act_turn_capture: bool = False,
         delegation_capability_default: str = "inherit",
+        factory_config: "object | None" = None,
     ) -> None:
         """
         session_factory: returns a configured Session given an AgentProfile.
@@ -137,6 +138,16 @@ class AgentRegistry:
             live (current behaviour, no deeper retention). When deeper, clamps the
             truncation floor + GCs generations/blobs to the configured window.
         """
+        # #2093: when the shared SessionFactoryConfig bundle is provided (the 5
+        # frontend factory sites pass it), it SUPPLIES the uniform config-derived args
+        # (workspace_capture / act_turn_capture / delegation_capability_default) — so a
+        # new one is added in one place (the bundle) and can't be missed at a site
+        # (delegation_capability_default was the drift). The individual params remain
+        # for the utility / test callers (which use defaults), keeping them unchanged.
+        if factory_config is not None:
+            workspace_capture = factory_config.workspace_capture
+            act_turn_capture = factory_config.act_turn_capture
+            delegation_capability_default = factory_config.delegation_capability_default
         self._dir = project_root / ".reyn" / "agents"
         self._dir.mkdir(parents=True, exist_ok=True)
         self._topology_dir = project_root / ".reyn" / TOPOLOGY_DIRNAME

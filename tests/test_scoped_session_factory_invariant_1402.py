@@ -32,9 +32,11 @@ construction-wiring invariant).
 from __future__ import annotations
 
 import ast
+import dataclasses
 import inspect
 from pathlib import Path
 
+from reyn.runtime.factory_config import SessionFactoryConfig
 from reyn.runtime.scoped_session_factory import build_scoped_chat_session
 
 _SRC = Path(__file__).resolve().parents[1] / "src" / "reyn"
@@ -42,8 +44,10 @@ _SRC = Path(__file__).resolve().parents[1] / "src" / "reyn"
 # The ONE module allowed to construct Session directly.
 _FACTORY_REL = "runtime/scoped_session_factory.py"
 
-# The drift surface: scoped capability + per-session config params that MUST stay
-# required so no factory can silently omit one.
+# The drift surface, part 1: the PER-SITE scoped capability params that legitimately
+# differ per frontend — they MUST stay required (no default) so a factory cannot
+# silently omit one. Plus ``factory_config`` (the #2093 bundle) — also required, so a
+# factory cannot omit the uniform-config bundle.
 _REQUIRED_SCOPED = frozenset({
     # scoped capability (per-frontend; explicit even when None/off)
     "environment_backend",
@@ -58,14 +62,28 @@ _REQUIRED_SCOPED = frozenset({
     "eager_embedding_build",
     "allowed_mcp",
     "task_backend",  # #1953 slice R: per-session Task backend (per-frontend scoped — I-5=(A))
-    # per-session config (should be UNIFORM across factories)
+    "factory_config",  # #2093: the uniform config bundle — required, can't be omitted
+})
+
+# The drift surface, part 2 (#2093): the UNIFORM, config-derived args that every site
+# threads identically. They moved OFF build_scoped_chat_session's signature INTO the
+# SessionFactoryConfig bundle (built once via from_config) — so a new uniform arg is
+# added in ONE place and reaches all five sites. The completeness invariant is now
+# "these are SessionFactoryConfig fields" (a new one missing from the bundle = drift).
+_BUNDLED_UNIFORM = frozenset({
+    # → build_scoped_chat_session (8)
     "sandbox_config",
     "multimodal_config",
     "action_retrieval_config",
     "embedding_config",
-    "router_config",  # #1829 S3b reyn.yaml llm.router.* (per-session, UNIFORM)
+    "router_config",  # #1829 S3b
+    "retry_config",  # #1835
     "tool_calls_op_loop_skills",
-    "chat_tool_use_scheme",  # #1593 PR-2 per-layer chat scheme selector
+    "chat_tool_use_scheme",  # #1593 PR-2
+    # → AgentRegistry (3) — where delegation_capability_default drifted (#2081)
+    "workspace_capture",
+    "act_turn_capture",
+    "delegation_capability_default",
 })
 
 
@@ -123,3 +141,22 @@ def test_scoped_params_are_required_no_default() -> None:
             f"{pname} must be REQUIRED (no default) — a default re-opens "
             "silent-omission drift (#1402 completeness-by-construction)"
         )
+
+
+def test_uniform_config_is_single_sourced_in_the_bundle() -> None:
+    """Tier 2: #2093 — the UNIFORM, config-derived factory args are SessionFactoryConfig
+    fields (the single mapping point ``from_config``), so a new uniform arg is added in
+    ONE place and reaches all five sites. A uniform arg NOT in the bundle re-opens the
+    per-arg propagation drift (sandbox_config / delegation_capability_default) — this
+    fails, naming it."""
+    fields = {f.name for f in dataclasses.fields(SessionFactoryConfig)}
+    missing = _BUNDLED_UNIFORM - fields
+    assert not missing, (
+        f"uniform config args missing from SessionFactoryConfig {sorted(missing)} — "
+        "re-opens the per-arg propagation drift; add them as bundle fields + in from_config"
+    )
+    # the bundle holds ONLY the uniform args (no per-site scoped capability leaked in)
+    assert not (fields & _REQUIRED_SCOPED), (
+        f"per-site scoped args leaked into the bundle {sorted(fields & _REQUIRED_SCOPED)} — "
+        "those legitimately differ per site and must stay explicit params"
+    )

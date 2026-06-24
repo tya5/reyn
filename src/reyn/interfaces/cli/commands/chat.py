@@ -330,6 +330,7 @@ def run(args: argparse.Namespace) -> None:
     from reyn.core.events.state_log import StateLog
     from reyn.interfaces.repl.repl import run_repl
     from reyn.runtime.budget.budget import BudgetTracker
+    from reyn.runtime.factory_config import SessionFactoryConfig
     from reyn.runtime.profile import AgentProfile
     from reyn.runtime.registry import DEFAULT_AGENT_NAME, AgentRegistry
     from reyn.runtime.scoped_session_factory import build_scoped_chat_session
@@ -455,15 +456,11 @@ def run(args: argparse.Namespace) -> None:
             events_config=session_cfg.config.events,
             state_log=state_log,
             budget_tracker=budget_tracker,
-            sandbox_config=session_cfg.config.sandbox,
-            hooks_config=session_cfg.config.hooks,  # #1800 slice 5b
-            multimodal_config=session_cfg.config.multimodal,
-            tool_calls_op_loop_skills=session_cfg.config.tool_calls_op_loop_skills,
-            action_retrieval_config=session_cfg.config.action_retrieval,
-            chat_tool_use_scheme=session_cfg.config.tool_use.chat,  # #1593 PR-2
-            embedding_config=session_cfg.config.embedding,
-            router_config=session_cfg.config.llm.router,  # #1829 S3b
-            retry_config=session_cfg.config.llm.retry,  # #1835
+            hooks_config=session_cfg.config.hooks,  # #1800 slice 5b (pass-through, not bundled)
+            # #2093: the uniform reyn.yaml-derived per-session config bundle (sandbox /
+            # multimodal / action_retrieval / embedding / router / retry /
+            # op-loop-skills / tool-use-scheme) — one source point for all five sites.
+            factory_config=SessionFactoryConfig.from_config(session_cfg.config),
             eager_embedding_build=getattr(args, "eager_embedding_build", False),
             agent_id=session_cfg.config.agent.id,  # FP-0016 E
             exclude_tools=_exclude_tools,  # #187: hide tools (e.g. web) from the LLM catalog
@@ -508,11 +505,11 @@ def run(args: argparse.Namespace) -> None:
         project_root=project_root,
         session_factory=_session_factory,
         state_log=state_log,
-        delegation_capability_default=session_cfg.config.delegation.capability_default,  # #2081
+        # #2093: the uniform reyn.yaml-derived registry config bundle (workspace_capture
+        # / act_turn_capture / delegation_capability_default) — one source point.
+        factory_config=SessionFactoryConfig.from_config(session_cfg.config),
         environment_backend=env_backend,   # #1544: container shadow-git runs via this
         workspace_state_dir=ws_state_dir,  # #1557 gap-#1: shadow git-dir under --state-dir
-        workspace_capture=session_cfg.config.time_travel.workspace_capture,  # #1582 opt-out
-        act_turn_capture=session_cfg.config.time_travel.act_turn_capture,  # #1560 opt-in
     )
 
     name = args.agent_name or DEFAULT_AGENT_NAME
