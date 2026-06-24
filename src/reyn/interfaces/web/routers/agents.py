@@ -61,8 +61,8 @@ def _profile_to_summary(registry, name: str) -> AgentSummary:
 
 @router.get("/agents", response_model=list[AgentSummary])
 async def list_agents(registry=Depends(get_registry)) -> list[AgentSummary]:
-    """List all agents found on disk."""
-    names = registry.list_names()
+    """List active (non-archived) agents found on disk."""
+    names = registry.list_active_names()  # #1954: hide archived agents
     return [_profile_to_summary(registry, n) for n in names]
 
 

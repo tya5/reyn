@@ -235,6 +235,9 @@ class _StubDiscoveryRegistry:
     def list_names(self) -> list[str]:
         return sorted(self._names)
 
+    def list_active_names(self) -> list[str]:
+        return self.list_names()
+
     def exists(self, name: str) -> bool:
         return name in self._names
 

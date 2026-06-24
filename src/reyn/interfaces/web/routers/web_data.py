@@ -125,7 +125,7 @@ _COLOR_CYCLE  = ["#7C4DFF", "#00BCD4", "#FF6B35", "#4CAF50", "#FF4081"]
 def _build_agents(registry) -> list[dict[str, Any]]:
     """Build Agent list from AgentRegistry. Treat profiles as opaque."""
     try:
-        names = registry.list_names()
+        names = registry.list_active_names()  # #1954: hide archived agents
     except Exception:
         return []
 

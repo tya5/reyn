@@ -254,7 +254,7 @@ async def list_a2a_agents(request: Request, registry=Depends(get_registry)) -> d
     """
     base = str(request.base_url).rstrip("/")
     out = []
-    for name in registry.list_names():
+    for name in registry.list_active_names():  # #1954: hide archived agents
         try:
             profile = registry.load_profile(name)
             role = profile.role or ""

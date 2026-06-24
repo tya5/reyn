@@ -11,6 +11,7 @@ import argparse
 import sys
 from pathlib import Path
 
+from reyn.core.events.state_log import StateLog
 from reyn.runtime.profile import AgentProfile
 from reyn.runtime.registry import DEFAULT_AGENT_NAME, AgentRegistry, _validate_agent_name
 
@@ -33,8 +34,15 @@ def register(sub) -> None:
     )
     p_new.set_defaults(func=_cmd_new)
 
-    p_rm = inner.add_parser("rm", help="Remove an agent (cannot remove default)")
+    p_rm = inner.add_parser(
+        "rm", help="Archive an agent (soft-delete; --purge to hard-delete)",
+    )
     p_rm.add_argument("name", help="Agent name to remove")
+    p_rm.add_argument(
+        "--purge", action="store_true",
+        help="Hard-delete: destroy rewind history (default archives — "
+             "recoverable via time-travel within the retention window)",
+    )
     p_rm.add_argument(
         "--yes", action="store_true",
         help="Skip the confirmation prompt",
@@ -122,21 +130,35 @@ def _cmd_rm(args: argparse.Namespace) -> None:
     if not target.is_dir():
         print(f"Error: agent {args.name!r} not found at {target}", file=sys.stderr)
         sys.exit(1)
+    purge = args.purge
     if not args.yes:
+        prompt = (
+            f"Hard-delete agent {args.name!r} and ALL its rewind history "
+            "(irreversible)? [y/N]: "
+            if purge
+            else f"Archive agent {args.name!r}? (recoverable via time-travel "
+                 "within the retention window) [y/N]: "
+        )
         try:
-            ans = input(f"Remove agent {args.name!r} and ALL its history? [y/N]: ")
+            ans = input(prompt)
         except (EOFError, KeyboardInterrupt):
             print()
             return
         if ans.strip().lower() != "y":
             print("aborted")
             return
-    # Route through AgentRegistry so PR12 topology cascade fires.
+    # Route through AgentRegistry so PR12 topology cascade fires. Attach the WAL
+    # (a read-only scan sets current_seq) so an archive records an accurate
+    # archival seq — slice-2's WAL-window GC hinge (#1954).
     def _no_factory(profile):
         raise RuntimeError("session factory not used in agent CLI")
-    reg = AgentRegistry(project_root=Path.cwd(), session_factory=_no_factory)
-    reg.remove(args.name)
-    print(f"Removed agent {args.name!r}")
+    wal_path = Path.cwd() / ".reyn" / "state" / "wal.jsonl"
+    state_log = StateLog(wal_path) if wal_path.is_file() else None
+    reg = AgentRegistry(
+        project_root=Path.cwd(), session_factory=_no_factory, state_log=state_log,
+    )
+    reg.remove(args.name, purge=purge)
+    print(f"{'Purged' if purge else 'Archived'} agent {args.name!r}")
 
 
 def _cmd_show(args: argparse.Namespace) -> None:

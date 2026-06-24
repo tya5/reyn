@@ -260,7 +260,7 @@ def render_agents(
         return f"[{_TEXT_DIM}]  (no registry)[/]", flat_items, item_ys
 
     try:
-        names = registry.list_names()
+        names = registry.list_active_names()  # #1954: hide archived agents
     except Exception as exc:
         logger.warning("right_panel agents: registry.list_names() failed: %s", exc)
         return f"[{_TEXT_DIM}]  (registry unavailable)[/]", flat_items, item_ys

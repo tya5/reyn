@@ -167,7 +167,7 @@ async def list_agents_impl(registry: "AgentRegistry") -> list[dict]:
     without spinning up a stdio transport.
     """
     out: list[dict] = []
-    for name in registry.list_names():
+    for name in registry.list_active_names():  # #1954: hide archived agents
         try:
             profile = registry.load_profile(name)
             role = (profile.role or "").strip().splitlines()

@@ -110,6 +110,9 @@ def _line_client(monkeypatch):
         def list_names(self):
             return ["line_agent"]
 
+        def list_active_names(self):
+            return self.list_names()
+
         def exists(self, name):
             return name == "line_agent"
 
