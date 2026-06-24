@@ -310,6 +310,7 @@ User-facing point-in-time rewind with branching. Phase 1 and Phase 2 (2a/2b/2c/2
 | tmux live e2e | P1 undo + P2 fork-switch verified on real terminal | — |
 | Phase 2c: fork-then-edit | New branch on edit via `ctrl+t` | [How-to: rewind](guide/for-users/time-travel.md) |
 | Phase 2d: web surface | `/rewind` picker over WebSocket / A2A; web edit via `AskUserMessage` UX (original message presented for edit + submit) | [How-to: rewind](guide/for-users/time-travel.md) |
+| Agent archive-delete (`reyn agent rm`) | Archive by default (soft-delete): data preserved — PITR generations + topology membership kept (agent dormant, not destroyed). `--purge` permanently hard-deletes (topology cascade fires immediately; no rewind possible). WAL-window GC auto-purges archived agents once archival seq leaves the retention window. | [CLI: reyn agent](reference/cli/agent.md) |
 
 #### Event System (P6)
 | Feature | Description | Documentation |
@@ -504,7 +505,7 @@ Main reference: **[`reyn.yaml`](reference/config/reyn-yaml.md)**
 | `self_improvement` | Skill self-improvement (eval-plan-apply) settings | [reyn-yaml](reference/config/reyn-yaml.md) |
 | `skill_resume` | Crash-resume behaviour for skill runs | [Skill Resume](concepts/skills/skill-resume.md) |
 | `action_retrieval` | Action-catalog `search_actions` retrieval tuning | [Universal catalog](concepts/tools-integrations/universal-catalog.md) |
-| `hooks` | Agent-lifecycle push/shell hooks at 8 points (`turn_start/end`, `session_start/end`, `skill_start/end`, `task_start/end`). `push` mode: `wake:false` passive context ride-along, or `wake:true` self-continuation bounded by `safety.loop.max_hook_driven_turns`. `shell`: sandbox-gated side-effect, output ignored. Hooks emit attributed `[hook:name]` messages — history is never silently mutated. | [reyn-yaml § hooks](reference/config/reyn-yaml.md#hooks-block) |
+| `hooks` | Agent-lifecycle push/shell hooks at 8 points (`turn_start/end`, `session_start/end`, `skill_start/end`, `task_start/end`). `push` mode: `wake:false` passive context ride-along, or `wake:true` self-continuation bounded by `safety.loop.max_hook_driven_turns`. `shell`: sandbox-gated side-effect, output ignored. Shell-hook consent routes through the intervention bus → TUI Pending-tab modal (`[A]lways` / `[y]es` / `[n]o`; `Always` persists to `~/.reyn/shell-hooks-allowlist.json`); falls back to stdin on non-TUI. All shell runs emit `hook_shell_executed` P6 event (Events-tab "tool" group; prefix `shell_exec:` or `shell_push:`). Hooks emit attributed `[hook:name]` messages — history is never silently mutated. | [reyn-yaml § hooks](reference/config/reyn-yaml.md#hooks-block) · [Concepts: hooks](concepts/runtime/hooks.md) |
 | Config hot-reload | Runtime re-read of the IN-set (`.reyn/mcp.yaml` / `cron.yaml` / `hooks.yaml`) at the turn boundary without a process restart. OUT-set (`reyn.yaml`: security / budget / loop valve) is restart-only — the file-split is the structural write-gate. Two triggers: operator `/reload` and agent `hooks_add` LLM-op. Validate-before-apply + per-layer boot resilience + sandbox/loop-valve = safe-by-construction. | [Concepts: Config hot-reload](concepts/runtime/config-hot-reload.md) |
 
 ---
