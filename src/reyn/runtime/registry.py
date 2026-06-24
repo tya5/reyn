@@ -133,6 +133,7 @@ class AgentRegistry:
         act_turn_capture: bool = False,
         delegation_capability_default: str = "inherit",
         factory_config: "object | None" = None,
+        create_event_kinds: "frozenset[str] | None" = None,
     ) -> None:
         """
         session_factory: returns a configured Session given an AgentProfile.
@@ -173,6 +174,14 @@ class AgentRegistry:
         # unchanged (it is a caller-provided closure, 60+ construction sites).
         self._delegation_capability_default = delegation_capability_default
         self._constructing_as_delegate = False
+        # #2103: WAL kinds the as-of-cut DROP primitive treats as entity-creates.
+        # Each such event carries {entity_kind: "agent"|"session", name, sid?}; on
+        # rewind, an entity whose create-event seq > the cut is torn down (it did
+        # not exist as-of-cut) instead of lingering as an empty-snapshot orphan.
+        # Empty by default → the primitive is a byte-identical no-op until
+        # session_spawned (S1bc) / agent_created (S2) register their kinds. The
+        # create-side inverse of the #1954 archive (delete-side).
+        self._create_event_kinds = create_event_kinds or frozenset()
         # FP-0043 Stage 3: the Registry holds N conversation Sessions per Agent.
         # Identity (the Agent value object, S2) is shared per name; the
         # conversation instances (= today's Session, inbox+run-loop+history)
@@ -1062,6 +1071,45 @@ class AgentRegistry:
             )
         return self._anchor_store
 
+    def _created_at_map(self) -> "dict[tuple[str, str, str], int]":
+        """#2103: (entity_kind, name, sid) → the WAL seq at which the entity was
+        created, scanned from the registered create-event kinds. Empty when no
+        kinds are registered (the no-op default) or there is no WAL. Drives the
+        as-of-cut DROP primitive in ``_materialize_rewind``."""
+        if not self._create_event_kinds or self._state_log is None:
+            return {}
+        created: dict[tuple[str, str, str], int] = {}
+        for entry in self._state_log.iter_from(0):
+            if entry.get("kind") not in self._create_event_kinds:
+                continue
+            seq = entry.get("seq")
+            if not isinstance(seq, int):
+                continue
+            key = (
+                str(entry.get("entity_kind", "")),
+                str(entry.get("name", "")),
+                str(entry.get("sid", "")),
+            )
+            created[key] = seq  # a create is unique; last-write-wins is moot
+        return created
+
+    def _drop_agent(self, name: str) -> None:
+        """#2103: tear down an agent created after the rewind cut. A post-cut agent
+        has NO pre-cut generations → nothing to preserve → a clean drop (vs the
+        #1954 archive HIDE on the delete side). rmtree subsumes the agent's sessions
+        (they nest under the agent dir). Best-effort; never raises into rewind."""
+        import shutil
+        shutil.rmtree(self._dir / name, ignore_errors=True)
+
+    async def _drop_session(self, name: str, sid: str) -> None:
+        """#2103 seam: tear down a single spawned session created after the cut.
+        Wired in S1bc with ``session_spawned`` (e2e's session lifecycle =
+        ``remove_session``). Unreached in the foundation — no session create-kinds
+        are registered, so agent-level ``_drop_agent`` subsumes sessions."""
+        raise NotImplementedError(
+            "#2103: session-drop is wired with session_spawned (S1bc)"
+        )
+
     async def _materialize_rewind(
         self, *, reconstruct_seq: int, workspace_at_or_below: int,
     ) -> list[str]:
@@ -1086,8 +1134,28 @@ class AgentRegistry:
         # (one SSoT per agent) and is restored once below. Session discovery is from
         # disk (this is shared with crash-recovery, where sessions are not loaded).
         agents: list[str] = []
+        created_at = self._created_at_map()   # #2103: as-of-cut DROP input (empty → no-op)
+        # #2103: the existence cut is the rewind TARGET (``workspace_at_or_below`` =
+        # target_n), NOT ``reconstruct_seq`` (= R, the reset-record head). An entity
+        # whose create-seq > target didn't exist as-of-target → drop it. In crash
+        # recovery ``workspace_at_or_below`` = head, so create-seq > head is never
+        # true → no spurious drops (recovery reconstructs the present, not a rewind).
+        drop_cut = workspace_at_or_below
         for name in self.list_names():
+            # An agent created after the cut → tear it down (subsumes its sessions,
+            # nested under the agent dir) instead of leaving an empty-snapshot
+            # orphan. Reversible: a forward-checkout past the create re-materialises
+            # it from the agent_created WAL record.
+            agent_seq = created_at.get(("agent", name, ""))
+            if agent_seq is not None and agent_seq > drop_cut:
+                self._drop_agent(name)
+                continue
             for sid in self._discover_session_ids(name):
+                # A session spawned after the cut → drop just that session.
+                sess_seq = created_at.get(("session", name, sid))
+                if sess_seq is not None and sess_seq > drop_cut:
+                    await self._drop_session(name, sid)
+                    continue
                 store = self._store_for(name, sid)
                 snap = reconstruct(
                     name, store, self._state_log,
