@@ -1268,6 +1268,21 @@ class AgentRegistry:
                 anchors.prune_below(floor)                  # AnchorStore (sync)
         except Exception as e:  # noqa: BLE001 — defensive; never fail caller
             logger.warning("Stage 1e generation GC failed (floor=%d): %s", floor, e)
+        # #1954 slice 2: WAL-window-bounded auto-purge of archived agents — run
+        # OUTSIDE the generation-GC try so a workspace-git hiccup above never
+        # blocks reclaiming archived state.
+        self._purge_archived_below(floor)
+
+    def _purge_archived_below(self, floor: int) -> None:
+        """#1954 slice 2: hard-delete archived agents whose archival seq fell
+        below the retention ``floor`` — the soft-delete left the WAL window, so
+        rewind-to-before-delete is no longer possible → hard-delete is safe
+        (§24-faithful). Best-effort; never raises into the truncation path."""
+        import shutil
+        for name in self.list_names():
+            seq = self._archived_seq(name)
+            if seq is not None and seq < floor:
+                shutil.rmtree(self._dir / name, ignore_errors=True)
 
     async def maybe_truncate_for_size(
         self, *, threshold_bytes: int | None = None,

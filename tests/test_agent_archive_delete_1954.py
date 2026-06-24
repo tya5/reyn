@@ -116,3 +116,26 @@ async def test_archive_hides_from_active_listing_but_kept_on_disk(tmp_path):
     assert "victim" not in reg.list_active_names()   # active surfaces hide it
     assert "alpha" in reg.list_active_names()
     assert (tmp_path / ".reyn" / "agents" / "victim").is_dir()  # kept on disk
+
+
+@pytest.mark.asyncio
+async def test_archived_agent_auto_purged_once_floor_passes_archival_seq(tmp_path):
+    """Tier 2: slice-2 WAL-window GC hard-purges an archived agent once the
+    retention floor passes its archival seq (§24 — the soft-delete left the
+    window), and retains it while the floor is at-or-below that seq."""
+    reg = _make_registry(tmp_path)
+    _seed_agent(tmp_path, "victim")
+    log = reg.state_log
+    await _put(log, "victim", "v1")        # seq 1
+    await _put(log, "victim", "v2")        # seq 2 -> archival seq = 2
+
+    reg.remove("victim")                    # archived at current_seq == 2
+    victim_dir = tmp_path / ".reyn" / "agents" / "victim"
+
+    # Floor at the archival seq -> still within the window -> retained.
+    await reg._prune_generations_below(2)
+    assert victim_dir.is_dir()
+
+    # Floor past the archival seq -> soft-delete left the window -> purged.
+    await reg._prune_generations_below(3)
+    assert not victim_dir.exists()
