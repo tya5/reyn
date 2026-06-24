@@ -21,7 +21,7 @@ reyn agent <subcommand> [args]
 
 ## `reyn agent list`
 
-すべての既知の agent をアルファベット順に表示します。最終アクティビティのタイムスタンプと各プロファイルの `role` の最初の行も表示されます。
+すべての**アクティブな**（アーカイブ済みでない）agent をアルファベット順に表示します。最終アクティビティのタイムスタンプと各プロファイルの `role` の最初の行も表示されます。アーカイブ済みの agent はこの一覧に表示されません。
 
 ```bash
 reyn agent list
@@ -69,15 +69,36 @@ role:
 - `(none — router-only, no skill spawn)` — 空リスト `[]`
 - 箇条書きリスト — 設定された allowlist
 
-## `reyn agent rm <name> [--yes]`
+## `reyn agent rm <name> [--purge] [--yes]`
 
-agent のディレクトリを再帰的に削除します（履歴、イベント、Memory レイヤー、runs）。この agent をメンバーとしてリストしているすべてのユーザー宣言 Topology にカスケードします。削除される agent がリーダーの team Topology は完全に削除されます。
+デフォルトでは agent を**アーカイブ**します（ソフトデリート、復元可能）。`--purge` を指定するとすべての rewind 履歴を破棄するハードデリートになります。
 
 ```bash
-reyn agent rm researcher --yes
+reyn agent rm researcher            # アーカイブ（確認プロンプトあり）
+reyn agent rm researcher --yes      # アーカイブ、プロンプトをスキップ
+reyn agent rm researcher --purge    # ハードデリート（確認プロンプトあり、不可逆）
+reyn agent rm researcher --purge --yes
 ```
 
 `default` agent は削除できません。
+
+### アーカイブ（デフォルト）
+
+agent の `.reyn/agents/<name>/` ディレクトリは**そのまま保持**されます — PITR 世代が intact のまま残るため、保持ウィンドウ内であればアーカイブ前の任意のチェックポイントへ `/rewind` で復元できます。
+
+アーカイブ時に起きること:
+
+- アーカイブ WAL seq を記録したトゥームストーンマーカーが書き込まれます（WAL ウィンドウ GC のヒンジ）。
+- agent は**アクティブなサーフェスから非表示**になります: `reyn agent list`、TUI Agents タブ、デフォルトトポロジールーティング、A2A `can_send` チェックのいずれもアーカイブ済み agent をスキップします。
+- **Topology メンバーシップは保持**されます — カスケードは発火しません。rewind で agent を復元すると、状態だけでなく所属チームにも戻ります。
+
+**WAL ウィンドウ自動パージ**: WAL 保持ウィンドウがアーカイブ seq を超えると、アーカイブ済み agent のディレクトリは自動的にハードデリートされます（ソフトデリートが rewind ウィンドウを外れたため、復元するものがなくなった状態）。この時点で Topology カスケードが発火し、全 Topology から agent が削除されます。
+
+### パージ (`--purge`)
+
+`.reyn/agents/<name>/` をただちにハードデリートし、すべての PITR 世代を破棄します。パージ前へのタイムトラベルは意図的に非サポートです。Topology カスケードがただちに発火します（全 Topology から agent が削除され、リーダーがパージされた team Topology は完全に削除されます）。
+
+復元ウィンドウが不要な場合、クリーンな完全削除として `--purge` を使用します。
 
 ## Workspace レイアウト
 
@@ -97,3 +118,4 @@ reyn agent rm researcher --yes
 - [リファレンス: chat CLI](chat.md)
 - [リファレンス: topology CLI](topology.md)
 - [コンセプト: multi-agent](../../concepts/multi-agent/multi-agent.md)
+- [コンセプト: time-travel](../../concepts/runtime/time-travel.md) — rewind + PITR メカニクス

@@ -21,7 +21,7 @@ Subcommands: `list`, `new`, `show`, `rm`.
 
 ## `reyn agent list`
 
-Print all known agents (alphabetical), with last-activity timestamp and the first line of each profile's `role`.
+Print all **active** (non-archived) agents (alphabetical), with last-activity timestamp and the first line of each profile's `role`. Archived agents are hidden from this listing.
 
 ```bash
 reyn agent list
@@ -69,15 +69,36 @@ role:
 - `(none — router-only, no skill spawn)` — empty list `[]`
 - bullet list — populated allowlist
 
-## `reyn agent rm <name> [--yes]`
+## `reyn agent rm <name> [--purge] [--yes]`
 
-Delete the agent's directory recursively (history, events, memory layer, runs). Cascades through any user-declared topology that listed this agent as a member; team topologies whose leader is being removed are deleted entirely.
+**Archive** the agent by default (soft-delete, recoverable). Pass `--purge` for a hard-delete that destroys all rewind history.
 
 ```bash
-reyn agent rm researcher --yes
+reyn agent rm researcher            # archive (prompted)
+reyn agent rm researcher --yes      # archive, skip prompt
+reyn agent rm researcher --purge    # hard-delete (prompted, irreversible)
+reyn agent rm researcher --purge --yes
 ```
 
 The `default` agent cannot be removed.
+
+### Archive (default)
+
+The agent's `.reyn/agents/<name>/` directory is **kept in place** — PITR generations remain intact so `/rewind` can reconstruct the agent's state to any checkpoint before the archive, within the retention window.
+
+What changes at archive time:
+
+- A tombstone marker is written recording the archival WAL seq (the WAL-window GC hinge).
+- The agent is **hidden from active surfaces**: `reyn agent list`, the TUI Agents tab, default-topology routing, and A2A `can_send` checks all skip archived agents.
+- **Topology membership is preserved** — no cascade fires. When rewind reconstructs the agent, it returns to its org membership, not just its state.
+
+**WAL-window auto-purge**: when the WAL retention window advances past the archival seq, the archived agent's directory is hard-deleted automatically (the soft-delete left the rewind window — there is nothing left to recover). At that point the topology cascade fires and removes the agent from all topologies.
+
+### Purge (`--purge`)
+
+Immediately hard-deletes `.reyn/agents/<name>/` and destroys all PITR generations. Time-travel to before the purge is intentionally unsupported. The topology cascade fires immediately (agent removed from all topologies; team topologies whose leader is purged are deleted entirely).
+
+Use `--purge` when you want a clean, permanent delete and do not need the recovery window.
 
 ## Workspace layout
 
@@ -97,3 +118,4 @@ Each agent owns `.reyn/agents/<name>/`:
 - [Reference: chat CLI](chat.md)
 - [Reference: topology CLI](topology.md)
 - [Concepts: multi-agent](../../concepts/multi-agent/multi-agent.md)
+- [Concepts: time-travel](../../concepts/runtime/time-travel.md) — rewind + PITR mechanics
