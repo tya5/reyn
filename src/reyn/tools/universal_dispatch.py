@@ -533,6 +533,35 @@ def unwrapped_tool_name(qualified_name: str) -> "str | None":
     return rule[0] if rule is not None else None
 
 
+# Reverse of the qualified→bare _OPERATION_RULES map (bare → qualified), built once.
+# Each bare tool has exactly one static qualified (universal-catalog) spelling.
+_BARE_TO_QUALIFIED: "Final[dict[str, str]]" = {
+    bare: qualified for qualified, (bare, _h) in _OPERATION_RULES.items()
+}
+
+
+def all_invocable_forms(name: str) -> "frozenset[str]":
+    """Every invocable form of a tool ``name`` — the bare AND the qualified
+    (universal-catalog ``category__verb``) spelling — derived from the ``invoke_action``
+    ``_OPERATION_RULES`` source of truth.
+
+    The live capability gate matches the EFFECTIVE resolved name, which differs by scheme
+    (some paths present the qualified catalog name; invoke_action unwraps to the bare
+    name). A deny/allow specified in EITHER form must therefore cover BOTH, or a dual-form
+    tool (``file__*`` / ``mcp__*``) is reachable via the unlisted spelling (#2132 — the
+    per-session-narrowing analogue of the #2111 floor's qualified→bare derivation, but
+    BIDIRECTIONAL because a spawner's narrowing may be written in either form). A name with
+    no static rule (a single-form tool) → just itself."""
+    forms = {name}
+    rule = _OPERATION_RULES.get(name)
+    if rule is not None:
+        forms.add(rule[0])  # name is qualified → add its bare alias
+    qualified = _BARE_TO_QUALIFIED.get(name)
+    if qualified is not None:
+        forms.add(qualified)  # name is bare → add its qualified alias
+    return frozenset(forms)
+
+
 __all__ = [
     "ResolvedAction",
     "UnknownActionError",
@@ -540,6 +569,7 @@ __all__ = [
     "resolve_describe_action",
     "suggest_similar_names",
     "unwrapped_tool_name",
+    "all_invocable_forms",
     "KNOWN_STATIC_QUALIFIED_NAMES",
     "known_qualified_name_for_category",
 ]

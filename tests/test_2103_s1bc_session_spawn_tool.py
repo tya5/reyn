@@ -80,7 +80,10 @@ async def test_spawn_session_recorded_enforces_narrowing_on_live_session(tmp_pat
         "#2126: the live spawned session must enforce the spawner's narrowing "
         "(was None — write-wired/read-dead: config.yaml written but never re-injected)"
     )
-    assert "delete_file" in effective.tool_deny
+    # #2132: BOTH invocable forms must be denied — the bare ``delete_file`` AND the native
+    # qualified ``file__delete`` the production enumerate-all catalog advertises. Asserting
+    # only the bare form was the false-green that hid the partial enforcement.
+    assert {"delete_file", "file__delete"} <= effective.tool_deny
 
 
 @pytest.mark.asyncio
