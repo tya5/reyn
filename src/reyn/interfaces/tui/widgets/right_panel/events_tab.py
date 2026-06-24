@@ -191,6 +191,12 @@ _FILTER_GROUPS: list[tuple[str, frozenset]] = [
         "workflow_started", "workflow_finished", "workflow_aborted",
         "agent_message_sent", "agent_request_received", "agent_response_received",
     })),
+    # #1953 dynamic task-ops — the chat-log task events (ctx.events.emit). A
+    # dedicated group so task activity (create / dep-wire / readiness / abort
+    # disposition) can be isolated when debugging a multi-step plan.
+    ("task", frozenset({
+        "task_op", "task_readiness", "task_disposition", "task_dependency_aborted",
+    })),
     ("error", frozenset({
         "validation_error", "phase_retry", "permission_denied",
         "router_retry_exhausted", "tool_failed", "mcp_failed",
@@ -198,6 +204,9 @@ _FILTER_GROUPS: list[tuple[str, frozenset]] = [
         "recall_embed_failed", "postprocessor_step_failed", "workflow_aborted",
         "phase_failed", "skill_run_failed", "control_ir_failed",
         "web_search_failed", "normalization_error", "compaction_failed",
+        # #1953: a dependency abort leaving live dependents stuck — a
+        # recovery-relevant signal, so it also shows under the error filter.
+        "task_dependency_aborted",
         # W13 A#8: add events with hard-stop / terminal semantics that
         # were missing from the error filter.
         # ``safety_limit_checkpoint`` can carry a hard-stop signal
@@ -298,6 +307,16 @@ def _event_hint(ev: dict) -> str:
         rc = d.get("returncode")
         rc_part = "" if rc in (0, None) else f" rc={rc}"
         return f"{d.get('mode', 'shell')}: {cmd}" + ("…" if was_trunc else "") + rc_part
+    # #1953 dynamic task-ops — the chat-log task events.
+    if t == "task_op":
+        return f"{d.get('op', '')} [{str(d.get('task_id', ''))[:8]}]"
+    if t == "task_readiness":
+        return f"{str(d.get('task_id', ''))[:8]} → {d.get('to', '')}"
+    if t == "task_disposition":
+        return f"{d.get('disposition', '')} [{str(d.get('task_id', ''))[:8]}]"
+    if t == "task_dependency_aborted":
+        stuck = d.get("dependents") or []
+        return f"{d.get('disposition', '')}: {len(stuck)} dependent(s) stuck"
     if t in ("mcp_called", "mcp_completed"):
         suffix = " ✗" if d.get("is_error") else ""
         return f"{d.get('server', '')}.{d.get('tool', '')}{suffix}"
