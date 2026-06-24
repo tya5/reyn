@@ -1467,12 +1467,14 @@ class AgentRegistry:
         #2081: ``is_delegate`` is published on the transient
         ``_constructing_as_delegate`` for the duration of the (synchronous) factory
         call, so the factory's ``resolved_profile_for(profile.name)`` sees it
-        without a factory-signature change. Cleared in ``finally`` (no leak)."""
+        without a factory-signature change. Save/restore (not set-False) so it is
+        correct under nesting too — non-re-entrant today, but free future-proofing."""
+        _prev_delegate = self._constructing_as_delegate
         self._constructing_as_delegate = is_delegate
         try:
             session = self._factory(profile)
         finally:
-            self._constructing_as_delegate = False
+            self._constructing_as_delegate = _prev_delegate
         # ADR-0038 Stage 1d: hand the session the single shared workspace
         # shadow-git store so cut_generation captures the workspace at each
         # boundary against the same git-dir the registry's rewind/recovery uses.

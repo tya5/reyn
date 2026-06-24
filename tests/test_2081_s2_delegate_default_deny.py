@@ -148,10 +148,29 @@ def test_get_or_load_is_delegate_threads_through_factory(tmp_path: Path) -> None
     assert seen["as_root"] == (None, frozenset())        # root → unaffected
 
 
-def test_construct_transient_cleared_after_load(tmp_path: Path) -> None:
-    """Tier 2: the is_delegate transient is cleared after construction — a subsequent
-    non-delegate resolution is not contaminated by a prior delegate load."""
-    reg = _registry(tmp_path)
-    reg.resolved_profile_for("d", is_delegate=True)  # explicit delegate resolution
-    # a later default resolution (no transient set) is clean
-    assert reg.resolved_profile_for("later") == (None, frozenset())
+def test_transient_restored_after_real_delegate_construction(tmp_path: Path) -> None:
+    """Tier 3a: the is_delegate transient is restored after a REAL delegate
+    construction — a later non-delegate resolution is not contaminated.
+
+    Exercises the actual get_or_load(is_delegate=True) → _construct_session →
+    factory path (not an explicit-arg shortcut, which would bypass the transient):
+    the factory's resolved_profile_for(name) sees the floor DURING construction;
+    afterwards a direct resolved_profile_for(other) must be (None, ∅). Removing the
+    finally-restore in _construct_session makes this RED (the transient stays True)."""
+    seen: dict = {}
+
+    def _factory(profile):
+        seen[profile.name] = reg.resolved_profile_for(profile.name)  # None-arg → transient
+        return None
+
+    reg = AgentRegistry(
+        project_root=tmp_path, session_factory=_factory, delegation_capability_default="deny",
+    )
+    reg.create("worker")
+    reg.get_or_load("worker", is_delegate=True)  # a REAL delegate construction
+
+    # DURING construction the transient was True (the floor was resolved)
+    worker_perm, _ = seen["worker"]
+    assert _REDELEGATE in worker_perm.tool_deny
+    # AFTER construction the transient is restored → a direct resolution is clean
+    assert reg.resolved_profile_for("other_unbound") == (None, frozenset())
