@@ -414,6 +414,28 @@ class AgentRegistry:
         profile.save(self._dir / name)
         return profile
 
+    async def create_agent(self, name: str, *, role: str = "") -> AgentProfile:
+        """#2103 S2b: the action-layer CREATE seam — create the profile (sync) +
+        emit ``agent_created`` so rewind can track / reconstruct / drop the agent
+        (the create-side of the as-of-cut lifecycle, #2114/#2117). Every creation
+        SURFACE (CLI / web / slash + the spawn op) routes through this ONE seam, so
+        no surface can miss the emit (rewind-completeness). Emit no-ops without a
+        WAL. The mechanism (sync ``create``) stays separate — the event marks the
+        user/LLM action, not the file write."""
+        profile = self.create(name, role=role)
+        if self._state_log is not None:
+            await self._state_log.append(
+                "agent_created", entity_kind="agent", name=name, sid="",
+                profile={
+                    "name": profile.name,
+                    "role": profile.role,
+                    "created_at": profile.created_at,
+                    "allowed_skills": profile.allowed_skills,
+                    "allowed_mcp": profile.allowed_mcp,
+                },
+            )
+        return profile
+
     def remove(self, name: str, *, purge: bool = False) -> None:
         """Delete an agent. Default (#1954 Option A) = ARCHIVE (soft-delete): the
         runtime PITR generations are kept in place so rewind-to-before-delete
@@ -460,6 +482,19 @@ class AgentRegistry:
             # window (slice 2).
             seq = self._state_log.current_seq if self._state_log is not None else 0
             (target / ARCHIVED_MARKER).write_text(str(seq), encoding="utf-8")
+
+    async def archive_agent(self, name: str, *, purge: bool = False) -> None:
+        """#2103 S2b: the action-layer DELETE seam — archive (or purge) the agent
+        (sync ``remove``) + emit the lifecycle event (``agent_archived`` |
+        ``agent_purged``) so rewind reconstructs the as-of-cut archived-state and
+        honors the permanent purge (fork A). The ONE delete seam the action-layer
+        callers (CLI / web + the spawn op) route through. Emit no-ops without a WAL."""
+        self.remove(name, purge=purge)
+        if self._state_log is not None:
+            await self._state_log.append(
+                "agent_purged" if purge else "agent_archived",
+                entity_kind="agent", name=name,
+            )
 
     def recent_user_message(self, name: str) -> str:
         """Return the most recent user-role text from the agent's history, or "".
@@ -1231,7 +1266,6 @@ class AgentRegistry:
                 continue  # fork A: purged = permanent, never re-materialised
             if _rcseq <= drop_cut and not (self._dir / _rname).is_dir():
                 self._rematerialise_agent(_rname, _rpayload)
-        agents: list[str] = []
         for name in self.list_names():
             # An agent created after the cut — OR purged (fork A: permanent) — is
             # torn down (subsumes its nested sessions) instead of reconstructed.

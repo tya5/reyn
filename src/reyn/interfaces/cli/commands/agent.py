@@ -8,6 +8,7 @@ prompts via `reyn agent new`.
 from __future__ import annotations
 
 import argparse
+import asyncio
 import sys
 from pathlib import Path
 
@@ -125,18 +126,29 @@ def _cmd_list(args: argparse.Namespace) -> None:
 
 
 def _cmd_new(args: argparse.Namespace) -> None:
+    # #2103 S2b: route through the registry create-seam (create_agent) so a
+    # CLI-created agent emits agent_created (rewind-trackable) — and so EVERY
+    # creation surface goes through the one canonical seam (this also fixes the
+    # prior AgentProfile.save-direct bypass). reg.create() is a safe superset of
+    # the old path (validate + create + save); existence is now profile-based
+    # (reg.exists) rather than dir-based — the canonical registry check. The WAL
+    # (read-only scan → current_seq) is attached so the emit records an accurate seq.
+    def _no_factory(profile):
+        raise RuntimeError("session factory not used in agent CLI")
+    wal_path = Path.cwd() / ".reyn" / "state" / "wal.jsonl"
+    state_log = StateLog(wal_path) if wal_path.is_file() else None
+    reg = AgentRegistry(
+        project_root=Path.cwd(), session_factory=_no_factory, state_log=state_log,
+    )
+    target = _agents_dir() / args.name
     try:
-        _validate_agent_name(args.name)
-    except ValueError as e:
+        asyncio.run(reg.create_agent(args.name, role=args.role))
+    except ValueError as e:                       # invalid name
         print(f"Error: {e}", file=sys.stderr)
         sys.exit(2)
-    base = _agents_dir()
-    target = base / args.name
-    if target.exists():
+    except FileExistsError:
         print(f"Error: agent {args.name!r} already exists at {target}", file=sys.stderr)
         sys.exit(1)
-    profile = AgentProfile.new(name=args.name, role=args.role)
-    profile.save(target)
     print(f"Created agent {args.name!r} at {target}")
     if args.role:
         print(f"  role: {args.role.strip().splitlines()[0]}")
@@ -178,7 +190,10 @@ def _cmd_rm(args: argparse.Namespace) -> None:
     reg = AgentRegistry(
         project_root=Path.cwd(), session_factory=_no_factory, state_log=state_log,
     )
-    reg.remove(args.name, purge=purge)
+    # #2103 S2b: route the delete through archive_agent (emit agent_archived |
+    # agent_purged) so rewind reconstructs the as-of-cut archived-state / honors the
+    # permanent purge. asyncio.run — the CLI is a sync top-level (no running loop).
+    asyncio.run(reg.archive_agent(args.name, purge=purge))
     print(f"{'Purged' if purge else 'Archived'} agent {args.name!r}")
 
 
