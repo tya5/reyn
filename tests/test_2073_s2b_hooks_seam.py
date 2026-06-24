@@ -153,3 +153,25 @@ async def test_reapply_handles_runtime_removal(tmp_path: Path, monkeypatch) -> N
 
     await session._hook_dispatcher.dispatch("turn_end", {})
     assert await _drain_texts(session) == {"startup"}  # back to startup-only
+
+
+@pytest.mark.asyncio
+async def test_boot_resilience_malformed_runtime_degrades_to_startup(tmp_path: Path, monkeypatch) -> None:
+    """Tier 2: BOOT resilience — a malformed .reyn/hooks.yaml (e.g. one the S3 LLM-op
+    wrote, rejected on reload but PERSISTED) must NOT crash Session construction. The
+    boot degrades to the reyn.yaml startup hooks only (a loud warning), so the agent
+    can't brick its own boot by writing a bad runtime layer."""
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / ".reyn").mkdir()
+    # malformed: a hook with no scheme (template_push/shell_exec/shell_push) → load_hooks raises
+    (tmp_path / ".reyn" / "hooks.yaml").write_text(
+        "hooks:\n  - on: turn_end\n", encoding="utf-8",
+    )
+    # construction must NOT raise (the bug was: unguarded boot load_hooks crashes here)
+    session = _make_session(
+        tmp_path,
+        hooks_config=[{"on": "turn_end", "template_push": {"message": "startup", "wake": True}}],
+    )
+    # booted startup-only: dispatch fires the startup hook, not the (skipped) runtime
+    await session._hook_dispatcher.dispatch("turn_end", {})
+    assert await _drain_texts(session) == {"startup"}

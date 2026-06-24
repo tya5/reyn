@@ -2864,14 +2864,31 @@ class Session:
         re-read on a reload) ∪ the ``.reyn/hooks.yaml`` runtime layer (from the
         IN-set). Rebuilding from scratch each call means a removed runtime hook simply
         isn't in the new registry (removal handled by construction — unlike cron's
-        add-only seam). ``load_hooks`` validates; a bad runtime layer is caught
-        earlier by validate-before-apply (so this won't raise on the reload path)."""
-        from reyn.hooks.loader import load_hooks
+        add-only seam).
+
+        **Boot resilience (#2073 S2b):** ``load_hooks`` raises ``HookConfigError`` on
+        a malformed layer. On the RELOAD path validate-before-apply rejects a bad
+        runtime layer first, so this won't raise there — but BOOT also calls this
+        (with the boot-read runtime layer) and has no validate gate. So a malformed
+        ``.reyn/hooks.yaml`` (e.g. one the S3 LLM-op wrote — rejected on reload but
+        PERSISTED to disk) must NOT crash the next boot. When a non-empty runtime
+        layer fails, degrade to STARTUP-only + a loud warning (the operator's reyn.yaml
+        always loads; a bad agent-written runtime never bricks boot). A failure with
+        no runtime layer is the operator's reyn.yaml → it propagates (fail loud)."""
+        from reyn.hooks.loader import HookConfigError, load_hooks
         runtime = (in_set or {}).get("hooks") or []
-        combined = list(self._startup_hooks_raw)
-        if isinstance(runtime, list):
-            combined += list(runtime)
-        return load_hooks(combined)
+        runtime_list = list(runtime) if isinstance(runtime, list) else []
+        startup = list(self._startup_hooks_raw)
+        if not runtime_list:
+            return load_hooks(startup)  # startup-only; a failure is the operator's, raise
+        try:
+            return load_hooks(startup + runtime_list)
+        except HookConfigError as exc:
+            logger.warning(
+                "config hot-reload: malformed .reyn/hooks.yaml — runtime hooks "
+                "skipped, booting with the reyn.yaml startup hooks only: %s", exc,
+            )
+            return load_hooks(startup)
 
     async def _reapply_hooks(self, in_set: dict) -> bool:
         """Reapply the runtime hooks layer (#2073 S2b) — re-read .reyn/hooks.yaml,
