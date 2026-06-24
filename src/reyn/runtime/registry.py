@@ -78,6 +78,17 @@ ARCHIVED_MARKER = ".archived"
 # foundation tests do). Inert until S2b emits the events.
 _LIFECYCLE_CREATE_KINDS = frozenset({"agent_created"})
 
+
+def _count_inflight_disposition(tasks: "list") -> "tuple[int, int]":
+    """#2115: classify settled in-flight skill tasks → (cancelled, finished). A task
+    cancelled at an await reports ``cancelled()``; one that RETURNED before the
+    cancel landed is ``done()`` and not cancelled = finished (it won the cancel
+    race). Powers the TRUTHFUL /rewind summary (vs the old hardcoded "in-flight
+    cancelled" literal that lied about finished runs, #2115)."""
+    cancelled = sum(1 for t in tasks if t.cancelled())
+    finished = sum(1 for t in tasks if t.done() and not t.cancelled())
+    return cancelled, finished
+
 # ADR-0038 1f: WAL-entry-kind → rewind-point boundary label. All inputs are
 # OS-level ``WAL_EVENT_KINDS`` (P7-safe — no skill/domain strings). The three
 # output labels are the D6 Phase-1 granularity (turn / plan-step / phase).
@@ -804,10 +815,15 @@ class AgentRegistry:
         self._rewind_in_progress = True
         try:
             sessions = self._iter_sessions()
+            # #2115: snapshot the in-flight skill tasks BEFORE the cancel, so the
+            # summary reports their TRUE disposition (cancelled vs
+            # finished-before-the-cancel-landed) instead of a hardcoded "cancelled"
+            # literal — a skill that already returned wins the cancel race.
+            inflight_tasks = [t for s in sessions for t in s.running_skills.values()]
             # 2. all-cancel (stop-world).
             for session in sessions:
                 await session.cancel_inflight()
-            # 3. all-quiesce (settle every WAL-append task).
+            # 3. all-quiesce (re-drain to a fixpoint — no append lands past the reset).
             for session in sessions:
                 await session.await_quiescent()
             # 4. single global reset-record; supersedes = prior active head (audit).
@@ -819,10 +835,16 @@ class AgentRegistry:
             agents = await self._materialize_rewind(
                 reconstruct_seq=reset_seq, workspace_at_or_below=seq,
             )
+            # #2115: the ACTUAL in-flight disposition (truthful rewind summary).
+            in_flight_cancelled, in_flight_finished = _count_inflight_disposition(
+                inflight_tasks
+            )
             return {
                 "target_n": seq,
                 "reset_seq": reset_seq,
                 "agents": agents,
+                "in_flight_cancelled": in_flight_cancelled,
+                "in_flight_finished": in_flight_finished,
             }
         finally:
             self._rewind_in_progress = False

@@ -82,10 +82,22 @@ async def handle_rewind_checkout(registry, seq: int) -> str:
     except Exception as exc:  # noqa: BLE001 — surface the reason to the user
         return f"⏪ checkout failed: {exc}"
     agents = result.get("agents", [])
-    return (
+    # #2115: report the ACTUAL in-flight disposition (cancelled vs
+    # finished-before-the-cancel-landed) — not a hardcoded "cancelled".
+    summary = (
         f"⏪ checked out to seq {result.get('target_n', seq)} "
-        f"· {len(agents)} agent(s) reset · in-flight cancelled"
+        f"· {len(agents)} agent(s) reset"
     )
+    c = result.get("in_flight_cancelled", 0)
+    f = result.get("in_flight_finished", 0)
+    bits = []
+    if c:
+        bits.append(f"{c} in-flight cancelled")
+    if f:
+        bits.append(f"{f} in-flight finished")
+    if bits:
+        summary += " · " + ", ".join(bits)
+    return summary
 
 
 def resolve_edit_target(registry, seq: int) -> dict:

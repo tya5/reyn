@@ -2764,13 +2764,22 @@ class ReynTUIApp(App):
             return
         if conv is not None:
             agents = result.get("agents", [])
-            conv.render_message(OutboxMessage(
-                kind="system",
-                text=(
-                    f"⏪ checked out to seq {result.get('target_n', target_seq)} "
-                    f"· {len(agents)} agent(s) reset · in-flight cancelled"
-                ),
-            ))
+            # #2115: report the ACTUAL in-flight disposition (cancelled vs
+            # finished-before-the-cancel-landed) — not a hardcoded "cancelled".
+            _text = (
+                f"⏪ checked out to seq {result.get('target_n', target_seq)} "
+                f"· {len(agents)} agent(s) reset"
+            )
+            _c = result.get("in_flight_cancelled", 0)
+            _f = result.get("in_flight_finished", 0)
+            _bits = []
+            if _c:
+                _bits.append(f"{_c} in-flight cancelled")
+            if _f:
+                _bits.append(f"{_f} in-flight finished")
+            if _bits:
+                _text += " · " + ", ".join(_bits)
+            conv.render_message(OutboxMessage(kind="system", text=_text))
             # The checkout cancels in-flight work + resets the agent(s), which
             # orphans the bottom async-strip rows: the pre-rewind skill-run
             # entries' completion no longer routes to the strip (the agent was
