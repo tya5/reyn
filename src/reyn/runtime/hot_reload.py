@@ -35,6 +35,32 @@ _log = logging.getLogger(__name__)
 ReapplySeam = tuple[str, Callable[[dict], Awaitable[bool]]]
 
 
+def validate_in_set(in_set: "dict") -> "str | None":
+    """Validate-before-apply (#2073 S2): a structural check of the re-read IN-set.
+
+    Returns a reason string when the IN-set is malformed (→ the HotReloader REJECTS
+    the whole reload: no seam runs, the live config is unchanged = rollback), or
+    ``None`` when valid. Permissive — an absent component is a no-op — but rejects a
+    malformed shape so a half-written ``.reyn/*.yaml`` can never half-apply. The
+    component checks grow with the IN-set (hooks in S2b)."""
+    if not isinstance(in_set, dict):
+        return f"IN-set must be a mapping, got {type(in_set).__name__}"
+    cron = in_set.get("cron")
+    if cron is not None:
+        if not isinstance(cron, dict):
+            return "cron section must be a mapping"
+        jobs = cron.get("jobs")
+        if jobs is not None and not isinstance(jobs, list):
+            return "cron.jobs must be a list"
+        for j in jobs or []:
+            if not isinstance(j, dict) or not j.get("name") or not j.get("schedule"):
+                return "each cron job needs a name + schedule"
+    mcp = in_set.get("mcp")
+    if mcp is not None and not isinstance(mcp, dict):
+        return "mcp section must be a mapping"
+    return None
+
+
 class HotReloader:
     """Schedules + applies an IN-set config reload at the turn boundary (#2073)."""
 
@@ -44,10 +70,16 @@ class HotReloader:
         project_root: "Path | None",
         events: "object | None",
         seams: "list[ReapplySeam] | None" = None,
+        validate: "Callable[[dict], str | None] | None" = None,
     ) -> None:
         self._project_root = project_root
         self._events = events
         self._seams: list[ReapplySeam] = list(seams or [])
+        # #2073 S2: validate-before-apply. ``validate(in_set) -> reason | None`` — a
+        # non-None reason REJECTS the whole reload (no seam runs, live config
+        # unchanged = rollback), so a malformed IN-set can never half-apply. Defaults
+        # to the built-in structural :func:`validate_in_set`.
+        self._validate: "Callable[[dict], str | None]" = validate or validate_in_set
         self._pending = False
         self._pending_source: "str | None" = None
 
@@ -60,6 +92,11 @@ class HotReloader:
         """Register a per-component reapply seam (#2073 S2). ``fn(in_set)`` returns
         whether it changed anything; it must not raise (the applier isolates it)."""
         self._seams.append((name, fn))
+
+    def set_validate(self, fn: "Callable[[dict], str | None]") -> None:
+        """Set the validate-before-apply hook (#2073 S2): ``fn(in_set) -> reason |
+        None``; a non-None reason rejects the reload atomically (no seam runs)."""
+        self._validate = fn
 
     def request_reload(self, *, source: str) -> None:
         """Schedule a reload at the next turn boundary (operator command / LLM-op).
@@ -93,6 +130,18 @@ class HotReloader:
         # Safety boundary: re-read ONLY the IN-set (.reyn/*.yaml). The OUT-set
         # (reyn.yaml) is never opened here, so a reload cannot touch it.
         in_set = load_hot_reload_config(self._project_root)
+
+        # Validate-before-apply (atomicity): a malformed IN-set is REJECTED whole —
+        # no seam runs, the live config is unchanged (rollback). config_reloaded is
+        # NOT emitted (no state change occurred), only a warning.
+        if self._validate is not None:
+            reason = self._validate(in_set)
+            if reason:
+                _log.warning(
+                    "hot-reload REJECTED (invalid IN-set): %s — live config unchanged",
+                    reason,
+                )
+                return {"source": source, "rejected": reason, "applied": [], "failed": []}
 
         applied: list[str] = []
         failed: list[str] = []

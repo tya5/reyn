@@ -1640,6 +1640,13 @@ class Session:
             turn_cancel_fn=self._is_turn_cancel_requested,
         )
 
+        # #2073 S2: register the per-component hot-reload reapply seams now that the
+        # sub-components they orchestrate (skill_runner / router_host) exist. Each
+        # seam reapplies one IN-set component live at the turn boundary; the Session
+        # owns + orchestrates them (the multi-holder per-agent swap is one method
+        # here, not scattered captures). Hooks → S2b. Set validate-before-apply too.
+        self._register_hot_reload_seams()
+
         # FP-0019 Wave 1: synchronous head/body/tail compaction service.
         # #1128 PR-a: background task lifecycle removed; the session drives
         # compaction via force_compact_now() (pre-frame guard). All callbacks
@@ -2827,6 +2834,80 @@ class Session:
                 for name, tools in snapshot_after.items()
             },
         }
+
+    # ── #2073 S2: config hot-reload reapply seams (registered on the HotReloader) ──
+
+    def _register_hot_reload_seams(self) -> None:
+        """Register the per-component reapply seams + validate-before-apply on the
+        HotReloader (#2073 S2). Called once at construction after skill_runner +
+        router_host exist. Each seam reapplies one IN-set component live at the turn
+        boundary; the Session orchestrates them (it owns the sub-components). Hooks =
+        S2b (global .reyn/hooks.yaml); per-agent-hooks add-on = a separate decision."""
+        hr = self._hot_reloader
+        # validate-before-apply is the HotReloader's built-in structural check
+        # (hot_reload.validate_in_set) — no per-Session override needed.
+        hr.register_seam("cron", self._reapply_cron)
+        hr.register_seam("mcp", self._reapply_mcp)
+        hr.register_seam("per_agent_capability", self._reapply_per_agent_capability)
+        hr.register_seam("new_agent", self._reapply_new_agent)
+
+    def _hot_reload_project_root(self) -> "Path":
+        """The project root for IN-set re-reads (same source the HotReloader uses)."""
+        return getattr(self._registry, "_project_root", None) or Path.cwd()
+
+    async def _reapply_cron(self, in_set: dict) -> bool:
+        """Reapply .reyn/cron.yaml jobs to the live scheduler (#2073 S2). Idempotent
+        (add_job replaces by name). No active scheduler / no jobs → no-op."""
+        from reyn.runtime.cron import CronJob, get_active_scheduler
+        sched = get_active_scheduler()
+        if sched is None:
+            return False
+        jobs = (in_set.get("cron") or {}).get("jobs") or []
+        changed = False
+        for jd in jobs:
+            await sched.add_job(CronJob(
+                name=jd["name"], schedule=jd["schedule"], to=jd.get("to"),
+                message=jd.get("message"), enabled=jd.get("enabled", True),
+            ))
+            changed = True
+        return changed
+
+    async def _reapply_mcp(self, in_set: dict) -> bool:
+        """Reapply MCP servers (#2073 S2) — re-probe via the existing turn-boundary
+        refresh chain (which reads the re-read .reyn/mcp.yaml). Returns whether the
+        in-memory tool cache changed."""
+        result = await self.refresh_mcp_servers()
+        return bool(result.get("refreshed"))
+
+    async def _reapply_per_agent_capability(self, in_set: dict) -> bool:
+        """Reapply the per-agent capability (#2073 S2) — Session-orchestrated. Re-read
+        .reyn/agents/<name>/profile.yaml and update the per-agent allowlists on the 3
+        holders the Session owns (itself / skill_runner / router_host) from the new
+        AgentProfile (the #2074 unified per-agent spec). No profile / no change →
+        no-op. (Single-source-of-truth is a beauty-follow-up, out of hot-reload scope.)"""
+        from reyn.runtime.profile import AgentProfile
+        agent_dir = self._hot_reload_project_root() / ".reyn" / "agents" / self.agent_name
+        try:
+            prof = AgentProfile.load(agent_dir)
+        except (FileNotFoundError, OSError):
+            return False  # single-agent / no profile → nothing per-agent to reapply
+        if prof.allowed_skills == self._allowed_skills and prof.allowed_mcp == self._allowed_mcp:
+            return False  # unchanged
+        # Session orchestrates the multi-holder swap (the holders it owns).
+        self._allowed_skills = prof.allowed_skills
+        self._allowed_mcp = prof.allowed_mcp
+        self._skill_runner._allowed_skills = prof.allowed_skills   # SKILL spawn gate
+        self._router_host._allowed_skills = prof.allowed_skills    # SKILL catalog gate
+        self._router_host._allowed_mcp = prof.allowed_mcp          # MCP gate (decl source)
+        return True
+
+    async def _reapply_new_agent(self, in_set: dict) -> bool:
+        """New-agent reapply (#2073 S2) — a confirming no-op: agent discovery is
+        filesystem-live (AgentRegistry.list_names / get_or_load walk .reyn/agents/
+        per call), so a newly-added agent is already visible without a reload step.
+        Kept as an explicit seam so the IN-set component is accounted for, and a
+        future cached-roster would slot its refresh here."""
+        return False
 
     # ── PR21: state persistence helpers (WAL + snapshot) ─────────────────────
     # PR-refactor-session-1 wave 2: WAL/snapshot ownership moved to
