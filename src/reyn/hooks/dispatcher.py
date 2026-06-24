@@ -67,6 +67,14 @@ class HookDispatcher:
         self._sandbox_config = sandbox_config
         self._sandbox_backend = sandbox_backend
 
+    def replace_registry(self, registry: HookRegistry) -> None:
+        """Swap the live hook registry (#2073 S2b config hot-reload). ``dispatch()``
+        reads ``self._registry`` fresh on every lifecycle point, so a single swap
+        here propagates to every holder of this dispatcher instance — no re-threading
+        through the kernel/router seams. Used by the Session's hooks reapply seam to
+        install ``startup ∪ re-read-runtime`` hooks at the turn boundary."""
+        self._registry = registry
+
     async def dispatch(self, point: str, template_vars: dict) -> None:
         """Run every hook registered for ``point`` (registration order).
 

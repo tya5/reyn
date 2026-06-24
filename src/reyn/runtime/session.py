@@ -1248,13 +1248,19 @@ class Session:
         # no-op (run-loop byte-identical to a hooks-free build). Constructed
         # unconditionally so the 4 lifecycle dispatch() sites are uniform.
         from reyn.hooks.dispatcher import HookDispatcher
-        from reyn.hooks.loader import load_hooks
-        from reyn.hooks.registry import HookRegistry as _HookRegistry
-        self._hook_registry = (
-            load_hooks(hooks_config) if hooks_config is not None else _HookRegistry([])
+        # #2073 S2b: hooks are LAYERED — the reyn.yaml startup layer (OUT-set,
+        # captured once here, NEVER re-read on a reload) ∪ the .reyn/hooks.yaml
+        # runtime layer (IN-set, hot-reloadable; the LLM-op writes it in S3).
+        # _build_hook_registry combines them; the boot registry includes the runtime
+        # layer too (active from session start, mirroring .reyn/mcp.yaml), and the
+        # hooks reapply seam re-reads only the runtime layer + re-combines.
+        self._startup_hooks_raw: list = hooks_config if isinstance(hooks_config, list) else []
+        from reyn.config.loader import load_hot_reload_config as _load_in_set
+        _boot_in_set = _load_in_set(
+            getattr(self._registry, "_project_root", None) or Path.cwd()
         )
         self._hook_dispatcher = HookDispatcher(
-            self._hook_registry,
+            self._build_hook_registry(_boot_in_set),
             put_inbox=self._put_inbox,
             stage_next_turn_context=self._stage_next_turn_context,
             sandbox_config=self._sandbox_config,
@@ -2850,6 +2856,48 @@ class Session:
         hr.register_seam("mcp", self._reapply_mcp)
         hr.register_seam("per_agent_capability", self._reapply_per_agent_capability)
         hr.register_seam("new_agent", self._reapply_new_agent)
+        hr.register_seam("hooks", self._reapply_hooks)  # #2073 S2b (global hooks)
+
+    def _build_hook_registry(self, in_set: "dict | None" = None) -> "object":
+        """Build the LAYERED hook registry (#2073 S2b): the reyn.yaml startup layer
+        (``self._startup_hooks_raw``, captured once at boot — the OUT-set, never
+        re-read on a reload) ∪ the ``.reyn/hooks.yaml`` runtime layer (from the
+        IN-set). Rebuilding from scratch each call means a removed runtime hook simply
+        isn't in the new registry (removal handled by construction — unlike cron's
+        add-only seam).
+
+        **Boot resilience (#2073 S2b):** ``load_hooks`` raises ``HookConfigError`` on
+        a malformed layer. On the RELOAD path validate-before-apply rejects a bad
+        runtime layer first, so this won't raise there — but BOOT also calls this
+        (with the boot-read runtime layer) and has no validate gate. So a malformed
+        ``.reyn/hooks.yaml`` (e.g. one the S3 LLM-op wrote — rejected on reload but
+        PERSISTED to disk) must NOT crash the next boot. When a non-empty runtime
+        layer fails, degrade to STARTUP-only + a loud warning (the operator's reyn.yaml
+        always loads; a bad agent-written runtime never bricks boot). A failure with
+        no runtime layer is the operator's reyn.yaml → it propagates (fail loud)."""
+        from reyn.hooks.loader import HookConfigError, load_hooks
+        runtime = (in_set or {}).get("hooks") or []
+        runtime_list = list(runtime) if isinstance(runtime, list) else []
+        startup = list(self._startup_hooks_raw)
+        if not runtime_list:
+            return load_hooks(startup)  # startup-only; a failure is the operator's, raise
+        try:
+            return load_hooks(startup + runtime_list)
+        except HookConfigError as exc:
+            logger.warning(
+                "config hot-reload: malformed .reyn/hooks.yaml — runtime hooks "
+                "skipped, booting with the reyn.yaml startup hooks only: %s", exc,
+            )
+            return load_hooks(startup)
+
+    async def _reapply_hooks(self, in_set: dict) -> bool:
+        """Reapply the runtime hooks layer (#2073 S2b) — re-read .reyn/hooks.yaml,
+        re-combine with the FIXED reyn.yaml startup layer, and swap the dispatcher's
+        registry. The dispatcher reads its registry fresh per dispatch, so the swap
+        propagates to every holder. The startup layer is never re-read (safety
+        boundary). Always rebuilds (handles add / change / remove of runtime hooks)."""
+        self._hook_dispatcher.replace_registry(self._build_hook_registry(in_set))
+        return True
 
     def _hot_reload_project_root(self) -> "Path":
         """The project root for IN-set re-reads (same source the HotReloader uses)."""

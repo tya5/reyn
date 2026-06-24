@@ -58,6 +58,16 @@ def validate_in_set(in_set: "dict") -> "str | None":
     mcp = in_set.get("mcp")
     if mcp is not None and not isinstance(mcp, dict):
         return "mcp section must be a mapping"
+    hooks = in_set.get("hooks")
+    if hooks is not None:
+        # #2073 S2b: validate the runtime hooks shape via the real loader so a
+        # malformed .reyn/hooks.yaml rejects the whole reload (atomic) rather than
+        # raising inside the reapply seam.
+        from reyn.hooks import HookConfigError, load_hooks
+        try:
+            load_hooks(hooks)
+        except HookConfigError as exc:
+            return f"hooks: {exc}"
     return None
 
 
