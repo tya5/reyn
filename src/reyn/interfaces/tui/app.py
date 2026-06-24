@@ -2771,6 +2771,13 @@ class ReynTUIApp(App):
                     f"· {len(agents)} agent(s) reset · in-flight cancelled"
                 ),
             ))
+            # The checkout cancels in-flight work + resets the agent(s), which
+            # orphans the bottom async-strip rows: the pre-rewind skill-run
+            # entries' completion no longer routes to the strip (the agent was
+            # reset), so they'd otherwise hang as ⟳-in-flight forever with a
+            # growing elapsed counter. Reconcile by clearing the strip — same
+            # rationale as the Ctrl+L (ConversationView.clear) path.
+            conv.clear_async_tasks()
 
     def _prefill_edit(self, seq: int) -> None:
         """Load checkpoint ``seq``'s FULL user message into the InputBar (2c).
