@@ -939,6 +939,38 @@ async def test_invoke_skill_layer_b_catches_bypass():
         )
 
 
+@pytest.mark.asyncio
+async def test_session_spawn_dispatches_to_host_not_unhandled():
+    """Tier 2: #2120 — _invoke_router_tool('session_spawn') reaches the registry handler
+    and the host's spawn_session, NOT the {"error": "unhandled tool"} fall-through.
+
+    The tui live-probe found session_spawn advertised but undispatched: the LLM called it
+    and got {"error": "unhandled tool: session_spawn"}, no spawn. This drives the real
+    dispatch path (REGISTRY_DISPATCH_TOOLS → _invoke_via_registry → SESSION_SPAWN._handle
+    → RouterCallerState.spawn_session_fn → host.spawn_session). Drop session_spawn from
+    REGISTRY_DISPATCH_TOOLS → the bare name falls through → result is the unhandled-tool
+    error and host.spawn_calls stays empty → RED."""
+    host = FakeRouterHost()
+    loop = RouterLoop(host=host, chain_id="chain-test")
+
+    from reyn.runtime.router_tools import build_tools
+    tools = build_tools(host.list_available_skills(), host.list_available_agents())
+    loop._catalog = {t["function"]["name"]: t for t in tools}
+    loop._tool_names = frozenset(loop._catalog.keys())
+
+    result = await loop._invoke_router_tool(
+        "session_spawn", {"request": "do a task", "mode": "persistent"}
+    )
+
+    assert not (isinstance(result, dict) and "unhandled tool" in str(result.get("error", ""))), (
+        f"session_spawn hit the unhandled-tool fall-through (#2120 dispatch gap): {result}"
+    )
+    assert host.spawn_calls, "session_spawn did not reach host.spawn_session"
+    spawned = host.spawn_calls[-1]
+    assert spawned["request"] == "do a task"
+    assert spawned["mode"] == "persistent"
+
+
 # ---------------------------------------------------------------------------
 # B3-M2 fix: _list_skills name-lookup fallback
 # ---------------------------------------------------------------------------

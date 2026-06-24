@@ -30,6 +30,7 @@ EXPECTED_TOOL_NAMES = [
     "read_memory_body",
     "invoke_skill",
     "delegate_to_agent",
+    "session_spawn",  # #2103 S1bc / #2120: router-only spawn primitive (unconditional)
     "remember_shared",
     "remember_agent",
     "forget_memory",
@@ -413,4 +414,22 @@ def test_drop_source_in_dispatch_registry():
     from reyn.runtime.router_loop import RouterLoop
     assert "drop_source" in RouterLoop.REGISTRY_DISPATCH_TOOLS, (
         "'drop_source' missing from RouterLoop.REGISTRY_DISPATCH_TOOLS"
+    )
+
+
+def test_session_spawn_in_dispatch_registry():
+    """Tier 2: session_spawn is in RouterLoop.REGISTRY_DISPATCH_TOOLS for runtime dispatch.
+
+    #2120 fix (tui live-probe): session_spawn was registered + floored + advertised
+    (build_tools B2b) but NOT dispatch-routed → the LLM called it and hit
+    {"error": "unhandled tool: session_spawn"} (the advertised-but-not-dispatched class,
+    same as read_tool_result / recall). Without this membership the bare name (no "__")
+    falls through to the unhandled-tool branch.
+    """
+    from reyn.runtime.router_loop import RouterLoop
+    # Paired with the delegate_to_agent sentinel (the async router-only peer it mirrors)
+    # so the test pins the shared dispatch family, not a session_spawn-only fluke.
+    assert "delegate_to_agent" in RouterLoop.REGISTRY_DISPATCH_TOOLS
+    assert "session_spawn" in RouterLoop.REGISTRY_DISPATCH_TOOLS, (
+        "'session_spawn' missing from RouterLoop.REGISTRY_DISPATCH_TOOLS"
     )

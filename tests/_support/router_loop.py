@@ -59,6 +59,7 @@ class FakeRouterHost:
         self.outbox: list[dict] = []
         self.skill_calls: list[dict] = []
         self.agent_sends: list[dict] = []
+        self.spawn_calls: list[dict] = []
         self.file_writes: list[tuple[str, str]] = []
         self.file_deletes: list[str] = []
         self.file_reads: list[str] = []
@@ -129,6 +130,15 @@ class FakeRouterHost:
                             chain_id: str) -> None:
         self.agent_sends.append({"to": to, "request": request, "depth": depth,
                                   "chain_id": chain_id})
+
+    async def spawn_session(self, *, request: str, mode: str,
+                            narrowing: "dict | None", chain_id: str) -> dict:
+        # #2103 S1bc / #2120: multi-session host hook (duck-typed; RouterLoop binds
+        # spawn_session_fn only when this method exists). Records the spawn + returns
+        # an ack — lets a dispatch test prove session_spawn reaches the handler.
+        self.spawn_calls.append({"request": request, "mode": mode,
+                                  "narrowing": narrowing, "chain_id": chain_id})
+        return {"status": "ok", "kind": "session_spawned", "mode": mode}
 
     async def put_outbox(self, *, kind: str, text: str, meta: dict) -> None:
         self.outbox.append({"kind": kind, "text": text, "meta": meta})
