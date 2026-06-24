@@ -18,7 +18,10 @@ from __future__ import annotations
 from pathlib import Path
 
 from reyn.runtime.registry import AgentRegistry
-from reyn.security.permissions.effective import ContextualPermission
+from reyn.security.permissions.effective import (
+    ContextualPermission,
+    tool_contextually_denied,
+)
 
 
 def _registry(tmp_path: Path, *, default: str = "inherit") -> AgentRegistry:
@@ -86,7 +89,10 @@ def test_composes_with_topology_binding(tmp_path: Path) -> None:
     reg = _registry(tmp_path)
     _write_per_session(reg, "worker", "task1", "name: s\ntool_deny: [sandboxed_exec]\n")
     contextual, _ = reg.resolved_profile_for("worker", sid="task1")
-    assert {"delete_file", "sandboxed_exec"} <= contextual.tool_deny  # both layers
+    # #2132: both layers AND both invocable forms of each (the gate matches the effective
+    # resolved name — the qualified catalog form must be denied too, not just the bare).
+    assert {"delete_file", "file__delete", "sandboxed_exec", "exec__sandboxed_exec"} \
+        <= contextual.tool_deny
 
 
 # ── restrict-only: the per-session layer can NEVER re-grant ─────────────────
@@ -102,7 +108,30 @@ def test_per_session_cannot_regrant_topology_deny(tmp_path: Path) -> None:
     # the per-session config tries to ALLOW delete_file (+ another) — must not re-grant
     _write_per_session(reg, "worker", "task1", "name: s\ntool_allow: [delete_file, read_file]\n")
     contextual, _ = reg.resolved_profile_for("worker", sid="task1")
-    assert "delete_file" in contextual.tool_deny  # topology deny survives the allow-list
+    # #2132: both invocable forms of the topology deny survive the allow-list.
+    assert {"delete_file", "file__delete"} <= contextual.tool_deny
+
+
+# ── #2132: per-session narrowing covers ALL invocable forms at the live gate ──
+
+
+def test_2132_per_session_deny_covers_both_forms_at_the_gate(tmp_path: Path) -> None:
+    """Tier 2: #2132 — a per-session ``tool_deny`` written in EITHER spelling denies BOTH
+    invocable forms at the REAL contextual gate. The bypass tui found:
+    ``narrowing=[delete_file]`` must deny the native ``file__delete`` the production
+    enumerate-all catalog advertises (the gate matches the effective resolved name).
+    Strip the ``_expand_tool_forms`` normalization → the unlisted form passes the gate → RED."""
+    reg = _registry(tmp_path)
+    _write_per_session(reg, "worker", "task1", "name: s\ntool_deny: [delete_file]\n")
+    contextual, _ = reg.resolved_profile_for("worker", sid="task1")
+    assert tool_contextually_denied(contextual, "delete_file")    # bare (specified)
+    assert tool_contextually_denied(contextual, "file__delete")   # native qualified — the gap
+
+    # the reverse direction: a qualified-specified deny covers the bare form too.
+    _write_per_session(reg, "worker", "task2", "name: s\ntool_deny: [file__delete]\n")
+    contextual2, _ = reg.resolved_profile_for("worker", sid="task2")
+    assert tool_contextually_denied(contextual2, "file__delete")  # qualified (specified)
+    assert tool_contextually_denied(contextual2, "delete_file")   # bare — both directions
 
 
 # ── composes with the #2081 _delegate floor (delegate + per-session) ─────────

@@ -101,6 +101,19 @@ def load_capability_profile(path: "str | Path") -> CapabilityProfile:
     )
 
 
+def _expand_tool_forms(names: "tuple[str, ...]") -> "frozenset[str]":
+    """#2132: every name PLUS all its invocable forms (bare + qualified), so a per-session
+    TOOL deny/allow covers the dual-form tool on EVERY scheme path (the gate matches the
+    effective resolved name). Derived from the ``invoke_action`` SoT — complete-by-
+    construction, bidirectional (a name written in either form expands to both)."""
+    from reyn.tools.universal_dispatch import all_invocable_forms
+
+    forms: "set[str]" = set()
+    for name in names:
+        forms |= all_invocable_forms(name)
+    return frozenset(forms)
+
+
 def resolve_profile(
     profile: CapabilityProfile,
 ) -> "tuple[ContextualPermission, frozenset[str]]":
@@ -115,11 +128,18 @@ def resolve_profile(
     so do not reduce the excluded set (they are a no-op, not an error — the loader
     is forward-compat).
     """
+    # #2132: normalize the TOOL axis to ALL invocable forms (bare AND qualified). A
+    # spawner's narrowing may name a tool in either spelling, but the live gate matches
+    # the effective resolved name (scheme-dependent), so a deny/allow of bare
+    # ``delete_file`` must also cover native ``file__delete`` (and vice versa) — else a
+    # dual-form tool (file__* / mcp__*) is reachable via the unlisted form. The per-session
+    # analogue of the #2111 floor's qualified→bare derivation, but BIDIRECTIONAL.
     contextual = ContextualPermission(
         tool_allow=(
-            frozenset(profile.tool_allow) if profile.tool_allow is not None else None
+            _expand_tool_forms(profile.tool_allow)
+            if profile.tool_allow is not None else None
         ),
-        tool_deny=frozenset(profile.tool_deny),
+        tool_deny=_expand_tool_forms(profile.tool_deny),
         # #2074 S1 — SKILL / MCP axes (carried; ContextualLayer enforces them in S3).
         skill_allow=(
             frozenset(profile.skill_allow) if profile.skill_allow is not None else None

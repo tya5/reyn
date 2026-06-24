@@ -533,6 +533,43 @@ def unwrapped_tool_name(qualified_name: str) -> "str | None":
     return rule[0] if rule is not None else None
 
 
+# Reverse of the qualified→bare _OPERATION_RULES map (bare → {qualified, …}), built once.
+# A MULTIMAP, not 1:1: today each bare tool has a single qualified spelling, but building
+# the reverse as a set means a future SECOND qualified form for some bare tool can't
+# silently drop a spelling (which would re-open the completeness gap this closes — a
+# security path, so it must not depend on the 1:1 assumption holding).
+def _build_bare_to_qualified() -> "dict[str, frozenset[str]]":
+    acc: "dict[str, set[str]]" = {}
+    for qualified, (bare, _h) in _OPERATION_RULES.items():
+        acc.setdefault(bare, set()).add(qualified)
+    return {bare: frozenset(quals) for bare, quals in acc.items()}
+
+
+_BARE_TO_QUALIFIED: "Final[dict[str, frozenset[str]]]" = _build_bare_to_qualified()
+
+
+def all_invocable_forms(name: str) -> "frozenset[str]":
+    """Every invocable form of a tool ``name`` — the bare AND the qualified
+    (universal-catalog ``category__verb``) spelling — derived from the ``invoke_action``
+    ``_OPERATION_RULES`` source of truth.
+
+    The live capability gate matches the EFFECTIVE resolved name, which differs by scheme
+    (some paths present the qualified catalog name; invoke_action unwraps to the bare
+    name). A deny/allow specified in EITHER form must therefore cover BOTH, or a dual-form
+    tool (``file__*`` / ``mcp__*``) is reachable via the unlisted spelling (#2132 — the
+    per-session-narrowing analogue of the #2111 floor's qualified→bare derivation, but
+    BIDIRECTIONAL because a spawner's narrowing may be written in either form). A name with
+    no static rule (a single-form tool) → just itself."""
+    forms = {name}
+    rule = _OPERATION_RULES.get(name)
+    if rule is not None:
+        forms.add(rule[0])  # name is qualified → add its bare alias
+    qualified_forms = _BARE_TO_QUALIFIED.get(name)
+    if qualified_forms is not None:
+        forms |= qualified_forms  # name is bare → add ALL its qualified aliases (multimap)
+    return frozenset(forms)
+
+
 __all__ = [
     "ResolvedAction",
     "UnknownActionError",
@@ -540,6 +577,7 @@ __all__ = [
     "resolve_describe_action",
     "suggest_similar_names",
     "unwrapped_tool_name",
+    "all_invocable_forms",
     "KNOWN_STATIC_QUALIFIED_NAMES",
     "known_qualified_name_for_category",
 ]
