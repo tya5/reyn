@@ -1897,6 +1897,36 @@ class AgentRegistry:
         self._sessions.setdefault(name, {})[new_sid] = session
         return new_sid
 
+    async def spawn_session_recorded(
+        self, name: str, *, mode: str = "persistent",
+        narrowing: "dict | None" = None,
+    ) -> str:
+        """#2103 S1bc: the action-layer SESSION-SPAWN seam — spawn a fresh-context
+        session under ``name`` (sync ``spawn_session``) + persist the spawner's
+        per-session capability narrowing (workspace-backed P5 config.yaml, the #2103
+        S1a layer) + emit ``session_spawned`` so rewind tracks/drops/re-materialises
+        it. Mirrors ``create_agent`` (the agent CREATE seam): the mechanism stays sync;
+        the event marks the LLM action. ``session_spawned`` is config-complete
+        (mode + narrowing) for symmetric re-materialise. Returns the new sid.
+
+        Does NOT submit a task — that is the caller (the spawn op), separable from the
+        record. Emit no-ops without a WAL."""
+        sid = self.spawn_session(name)
+        if narrowing:
+            import yaml
+            cfg_path = self._session_state_dir(name, sid) / "config.yaml"
+            cfg_path.parent.mkdir(parents=True, exist_ok=True)
+            cfg_path.write_text(
+                yaml.safe_dump({"name": f"_session_{sid}", **narrowing}),
+                encoding="utf-8",
+            )
+        if self._state_log is not None:
+            await self._state_log.append(
+                "session_spawned", entity_kind="session", name=name, sid=sid,
+                mode=mode, narrowing=narrowing,
+            )
+        return sid
+
     async def ensure_running(self, name: str) -> "object":
         """Load + start session.run() + forwarder for `name` without
         changing the user-attached pointer. Used for agent-to-agent
