@@ -456,6 +456,7 @@ def run_serve(args: argparse.Namespace) -> None:
         project_root=project_root,
         session_factory=_session_factory,
         state_log=state_log,
+        delegation_capability_default=session_cfg.config.delegation.capability_default,  # #2081
         workspace_capture=session_cfg.config.time_travel.workspace_capture,  # #1582 opt-out
         act_turn_capture=session_cfg.config.time_travel.act_turn_capture,  # #1560 opt-in
     )

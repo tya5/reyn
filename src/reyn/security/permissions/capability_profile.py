@@ -252,6 +252,53 @@ def load_untrusted_profile(project_root: "str | Path") -> CapabilityProfile:
     return builtin_untrusted_profile()
 
 
+# ── #2081: the restrictive floor for an unbound delegate ────────────────────
+#
+# delegation.capability_default=deny narrows an UNBOUND delegate (one spawned by
+# another agent's delegation, recursively) with this profile, unless a topology
+# capability_profile binding re-grants it (the binding REPLACES the default, since
+# composition is most-restrictive-wins). The NAME is decoupled from ``_untrusted``
+# (delegate-spawn vs untrusted-content are distinct contexts) but the default
+# taxonomy is the SAME single-sourced ``_BUILTIN_UNTRUSTED_DENY`` set — so operators
+# can tune delegate-deny independently via ``.reyn/capability_profiles/_delegate.yaml``.
+
+# The well-known auto-applied delegate-floor profile name.
+DELEGATE_PROFILE_NAME: "str" = "_delegate"
+
+
+def builtin_delegate_profile() -> CapabilityProfile:
+    """The built-in restrictive floor auto-applied to an unbound delegate under
+    ``delegation.capability_default=deny`` (#2081). Reuses the single-sourced
+    ``_BUILTIN_UNTRUSTED_DENY`` taxonomy (re-delegation / side-effect-exec /
+    memory-write / MCP-install)."""
+    return CapabilityProfile(
+        name=DELEGATE_PROFILE_NAME,
+        description="auto-applied to an unbound delegate under delegation.capability_default=deny (#2081)",
+        tool_deny=tuple(sorted(_BUILTIN_UNTRUSTED_DENY)),
+    )
+
+
+def load_delegate_profile(project_root: "str | Path") -> CapabilityProfile:
+    """The restrictive profile auto-applied to an unbound delegate (#2081).
+
+    An operator ``.reyn/capability_profiles/_delegate.yaml`` overrides the built-in
+    secure default (a deliberate loosening). A malformed override falls back to the
+    built-in (surfaced on stderr) — a typo must not silently drop the delegate floor.
+    """
+    path = Path(project_root) / ".reyn" / "capability_profiles" / f"{DELEGATE_PROFILE_NAME}.yaml"
+    if path.is_file():
+        try:
+            return load_capability_profile(path)
+        except Exception as e:  # noqa: BLE001 — fall back to the secure default
+            import sys
+            print(
+                f"warning: malformed {path.name}: {e} — using the built-in "
+                "delegate default",
+                file=sys.stderr,
+            )
+    return builtin_delegate_profile()
+
+
 def metas_have_untrusted(metas: "object") -> bool:
     """Seam-agnostic taint check: True iff any entry meta carries the untrusted
     marker. Derived from the **active** context (the caller passes the live,

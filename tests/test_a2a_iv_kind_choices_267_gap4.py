@@ -189,7 +189,7 @@ class _FakeAgentRegistry:
     def __init__(self, session) -> None:
         self._session = session
 
-    def get_or_load(self, name: str):  # noqa: ANN202
+    def get_or_load(self, name: str, *, is_delegate: bool = False):  # noqa: ANN202
         return self._session
 
     def resolve_session(self, name: str, transport: str, native_id: str):  # noqa: ANN202
