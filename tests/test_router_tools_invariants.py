@@ -109,7 +109,7 @@ def test_build_tools_dispatch_kinds_consistent() -> None:
     assert get_dispatch_kind("delegate_to_agent") == "async"
 
     # All other tools in the baseline set must be "sync".
-    async_tools = {"delegate_to_agent"}
+    async_tools = {"delegate_to_agent", "session_spawn"}
     for name in tool_names:
         expected = "async" if name in async_tools else "sync"
         actual = get_dispatch_kind(name)
@@ -130,7 +130,7 @@ def test_build_tools_full_permissions_dispatch_kinds_consistent() -> None:
         web_fetch_allowed=True,
     )
     tool_names = [t["function"]["name"] for t in tools]
-    async_tools = {"delegate_to_agent"}
+    async_tools = {"delegate_to_agent", "session_spawn"}
     for name in tool_names:
         expected = "async" if name in async_tools else "sync"
         actual = get_dispatch_kind(name)

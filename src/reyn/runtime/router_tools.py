@@ -428,6 +428,23 @@ def build_tools(
             dispatch_kind=_delegate_def.dispatch_kind,
         ))
 
+    # ── B2b: session_spawn (#2103 S1bc / #2120 fix) ──────────────────────
+    # Router-only spawn primitive. Static schema (no schema_enricher / per-call
+    # enum) → render without state, like remember_shared. (Registered + floored in
+    # S1bc but the advertising block was missed — the #1953/#2120 router=allow-but-
+    # unadvertised drift. test_2120_session_spawn_advertised.py pins reachability
+    # here + the wrappers-mode strip pairing below; a blanket "every router=allow
+    # advertised-or-exempt" guard is mode/condition-dependent — flagged for lead.)
+    _session_spawn_def = _registry.lookup("session_spawn")
+    if _session_spawn_def is not None and _session_spawn_def.gates.router == "allow":
+        _session_spawn_rendered = _session_spawn_def.render_for_router()
+        specs.append(ToolSpec(
+            name=_session_spawn_rendered["function"]["name"],
+            description=_session_spawn_rendered["function"]["description"],
+            parameters=_session_spawn_rendered["function"]["parameters"],
+            dispatch_kind=_session_spawn_def.dispatch_kind,
+        ))
+
     # ── B3: remember_shared ──────────────────────────────────────────────
     _remember_shared_def = _registry.lookup("remember_shared")
     if _remember_shared_def is not None and _remember_shared_def.gates.router == "allow":
@@ -821,7 +838,7 @@ def build_tools(
             "list_skills", "describe_skill",
             "invoke_skill",
             "list_agents", "describe_agent",
-            "delegate_to_agent",
+            "delegate_to_agent", "session_spawn",
             "list_mcp_servers", "list_mcp_tools",
             "call_mcp_tool", "describe_mcp_tool",
             "list_memory", "read_memory_body",

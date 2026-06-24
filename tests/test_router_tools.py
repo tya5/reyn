@@ -30,6 +30,7 @@ EXPECTED_TOOL_NAMES = [
     "read_memory_body",
     "invoke_skill",
     "delegate_to_agent",
+    "session_spawn",  # #2103 S1bc / #2120: router-only spawn primitive (unconditional)
     "remember_shared",
     "remember_agent",
     "forget_memory",
