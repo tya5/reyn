@@ -3127,6 +3127,7 @@ class RouterLoop:
             # a sub-run (invoke_skill) hands the spawned OpContext a real resolver
             # instead of resolver=None (→ literal "standard" → litellm BadRequestError).
             resolver=getattr(self.host, "resolver", None),
+            hot_reloader=getattr(self.host, "hot_reloader", None),  # #2073 S3
         )
         return [
             {
@@ -3573,6 +3574,7 @@ class RouterLoop:
                 router_state=rs,
                 # #1673: thread the config-aware resolver (see the sibling sites).
                 resolver=getattr(self.host, "resolver", None),
+                hot_reloader=getattr(self.host, "hot_reloader", None),  # #2073 S3
             )
             list_actions_def = get_default_registry().lookup("list_actions")
             if list_actions_def is None:
@@ -3788,6 +3790,7 @@ class RouterLoop:
             # a sub-run (invoke_skill) hands the spawned OpContext a real resolver
             # instead of resolver=None (→ literal "standard" → litellm BadRequestError).
             resolver=getattr(self.host, "resolver", None),
+            hot_reloader=getattr(self.host, "hot_reloader", None),  # #2073 S3
         )
         result = await invoke_tool(get_default_registry(), name, args, tool_ctx)
         return self._normalise_router_tool_result(name, result)

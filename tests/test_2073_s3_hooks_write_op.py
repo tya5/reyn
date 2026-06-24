@@ -79,6 +79,27 @@ async def test_hooks_add_schedules_reload(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_per_session_route_reloads_caller_not_the_global(tmp_path: Path) -> None:
+    """Tier 2: multi-session correctness (#2073 S3) — hooks_add reloads the CALLING
+    session's reloader (ctx.hot_reloader), NOT the process-wide last-registered one.
+    The reloader is per-session (unlike cron's single scheduler), so in multi-agent
+    agent A's self-added hook must take effect on A, not on the last-constructed B."""
+    caller = HotReloader(project_root=tmp_path, events=EventLog())   # the calling session (A)
+    other = HotReloader(project_root=tmp_path, events=EventLog())    # the last-registered (B)
+    set_active_hot_reloader(other)  # B is the process-wide active reloader
+
+    ctx = ToolContext(
+        events=EventLog(), permission_resolver=None,
+        workspace=SimpleNamespace(root=tmp_path), caller_kind="router",
+        hot_reloader=caller,  # the calling session threads its own reloader
+    )
+    await _handle_hooks_add({"on": "turn_end", "message": "a-hook"}, ctx)
+
+    assert caller.pending is True    # the caller (A) was reloaded
+    assert other.pending is False    # the global (B) was NOT (pre-fix bug)
+
+
+@pytest.mark.asyncio
 async def test_hooks_add_rejects_invalid_hook_no_write(tmp_path: Path) -> None:
     """Tier 2: write-time validate — a bad hook (invalid lifecycle point) returns an
     error and writes nothing."""

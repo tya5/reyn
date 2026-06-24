@@ -272,6 +272,12 @@ class ToolContext:
     # "standard" (which litellm rejects with BadRequestError — the latent bug).
     # Also completes #1672 CAT-3 (tool sub-runs follow model_class_by_purpose).
     resolver: Any | None = None                      # ModelResolver | None
+    # #2073 S3: the CALLING session's HotReloader, so a self-reload tool
+    # (hooks_add) requests a reload on THIS session's reloader (per-session
+    # correctness in multi-agent — a process-wide global would reload the wrong
+    # session). None in non-session/test contexts → the tool falls back to the
+    # process-wide get_active_hot_reloader().
+    hot_reloader: Any | None = None
 
 
 # ToolHandler: async callable signature.

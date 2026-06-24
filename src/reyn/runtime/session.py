@@ -1523,6 +1523,7 @@ class Session:
             # FP-0050 / #1822 S2: content-threat scan + fence config.
             threat_scan=self._safety.threat_scan,
             contextual_permission=self._contextual_permission,  # #1827 S3 → control-IR OpContext
+            hot_reloader=self._hot_reloader,  # #2073 S3 → per-session reload route (tool ctx)
             # #1953 dynamic-wire: thread the REAL session id + Task backend so
             # router-dispatched task.* ops hit the assignee/requester CAS gate.
             session_id=self._session_id,

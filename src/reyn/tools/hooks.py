@@ -172,8 +172,11 @@ async def _handle_hooks_add(args: Mapping[str, Any], ctx: ToolContext) -> ToolRe
 
     # Schedule the reload — the HotReloader applies the S2b hooks seam at the turn
     # boundary (1 turn = 1 config snapshot; never mid-turn).
+    # Per-session route (#2073 S3): reload THIS calling session's reloader (multi-agent
+    # correctness — the reloader is per-session, so a process-wide global would reload
+    # the wrong session). Fall back to the active reloader for non-session/test contexts.
     from reyn.runtime.hot_reload import get_active_hot_reloader
-    reloader = get_active_hot_reloader()
+    reloader = getattr(ctx, "hot_reloader", None) or get_active_hot_reloader()
     scheduled = reloader is not None
     if scheduled:
         reloader.request_reload(source="llm_op")
