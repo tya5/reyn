@@ -245,6 +245,17 @@ _FLOORED_QUALIFIED: "dict[str, frozenset[str]]" = {
     "spawn": frozenset({"session_spawn"}),
 }
 
+# Intentionally BARE-ONLY floored names: router-only tools with NO invoke_action
+# (universal-catalog) route, so ``unwrapped_tool_name`` returns None and the entry IS
+# already the sole invocable form (floored by its own name, no qualified→bare alias to
+# derive). Declared explicitly so the SoT-completeness guard distinguishes an
+# *intentional* bare-only entry from a *malformed* qualified name — a typo or a missing
+# ``_OPERATION_RULES`` entry whose unwrap silently returns None would otherwise floor a
+# non-existent form, leaving the real route UNGUARDED (the #2111 gap-class, in the
+# opposite direction). Invariant (enforced by tests/test_2111_floor_alias_completeness):
+# every name in ``_FLOORED_QUALIFIED`` either unwraps to a bare alias OR is listed here.
+_FLOORED_BARE_ONLY: "frozenset[str]" = frozenset({"session_spawn"})
+
 
 def _with_unwrapped_aliases(qualified: "frozenset[str]") -> "frozenset[str]":
     """Each qualified name PLUS its bare unwrapped alias (from the invoke_action
