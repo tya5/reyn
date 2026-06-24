@@ -116,7 +116,7 @@ B → C に委任
 
 ## 参照
 
-- [コンセプト: ケイパビリティプロファイル § デフォルト拒否委任絞り込み](capability-profile.md#default-deny-delegation-narrowing-2081) — ケイパビリティプロファイル概要の `_delegate` セクション
+- [コンセプト: ケイパビリティプロファイル](capability-profile.md) — ケイパビリティプロファイル概要（`_delegate` セクションを含む）
 - [コンセプト: ケイパビリティプロファイル](capability-profile.md) — 完全な ∩ モデル、ProfileLayer vs ContextualLayer、自己編集
 - [コンセプト: マルチエージェント](../multi-agent/multi-agent.md) — トポロジー、委任、`can_send` エッジ
 - [リファレンス: reyn.yaml § delegation](../../reference/config/reyn-yaml.md) — `delegation.capability_default` 設定

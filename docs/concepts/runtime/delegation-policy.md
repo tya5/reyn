@@ -151,7 +151,7 @@ B → delegates to C
 
 ## See also
 
-- [Concepts: Capability profile § Default-deny delegation narrowing](capability-profile.md#default-deny-delegation-narrowing-2081) — the `_delegate` section in the capability-profile overview
+- [Concepts: Capability profile § Default-deny delegation narrowing](capability-profile.md#default-deny-delegation-narrowing) — the `_delegate` section in the capability-profile overview
 - [Concepts: Capability profile](capability-profile.md) — the full ∩ model, ProfileLayer vs ContextualLayer, self-edit
 - [Concepts: Multi-agent](../multi-agent/multi-agent.md) — topology, delegation, `can_send` edges
 - [Reference: reyn.yaml § delegation](../../reference/config/reyn-yaml.md) — `delegation.capability_default` config
