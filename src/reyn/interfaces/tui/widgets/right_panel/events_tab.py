@@ -169,6 +169,8 @@ _FILTER_GROUPS: list[tuple[str, frozenset]] = [
         "mcp_server_installed", "act_executed",
         "web_fetch_started", "web_search_started",
         "web_search_completed", "web_search_failed",
+        # #2095 P3: a shell hook ran a command (incl. silent auto-runs).
+        "hook_shell_executed",
     })),
     # RAG (ADR-0033) — embed / recall / index lifecycle. Separate group so a
     # noisy embed_progress stream can be filtered in/out independently.
@@ -289,6 +291,13 @@ def _event_hint(ev: dict) -> str:
     if t == "tool_failed":
         msg, was_trunc = _truncate_to_cells(str(d.get("message", "")), 25)
         return f"{d.get('tool', '')}: {msg}" + ("…" if was_trunc else "")
+    if t == "hook_shell_executed":
+        # #2095 P3: surface a shell-hook command run (incl. silent auto-runs).
+        # The command is untrusted-length operator text → CJK-aware truncate.
+        cmd, was_trunc = _truncate_to_cells(str(d.get("command", "")), 40)
+        rc = d.get("returncode")
+        rc_part = "" if rc in (0, None) else f" rc={rc}"
+        return f"{d.get('mode', 'shell')}: {cmd}" + ("…" if was_trunc else "") + rc_part
     if t in ("mcp_called", "mcp_completed"):
         suffix = " ✗" if d.get("is_error") else ""
         return f"{d.get('server', '')}.{d.get('tool', '')}{suffix}"

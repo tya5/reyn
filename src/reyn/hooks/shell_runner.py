@@ -55,7 +55,7 @@ import shlex
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Callable
 
 if TYPE_CHECKING:
     from reyn.config import SandboxConfig
@@ -298,6 +298,7 @@ async def run_shell_hook(
     capture_stdout: bool = False,
     consent_bus: "RequestBus | None" = None,
     hook_name: str | None = None,
+    emit_event: "Callable[..., Any] | None" = None,
 ) -> str | None:
     """Run a shell hook command under the sandbox + consent gate.
 
@@ -355,6 +356,13 @@ async def run_shell_hook(
         The hook's ``HookDef.name`` (#2095 P2), surfaced in the consent prompt
         so the user sees WHICH configured hook is asking. ``None`` → a generic
         "a shell hook" prompt. Only used on the ``consent_bus`` path.
+    emit_event:
+        Optional ``(event_type, **data)`` sink (#2095 P3), wired to the session
+        event log. Called once with ``hook_shell_executed`` immediately after the
+        command actually runs (consent passed + executed) — so an auto-run
+        (allowlisted / accepted) hook, otherwise a silent side-effect, surfaces in
+        the TUI events tab. NOT called when consent is refused or the command is
+        skipped (then nothing ran). Best-effort: a sink error never breaks the run.
 
     Returns
     -------
@@ -426,6 +434,20 @@ async def run_shell_hook(
             stdin=stdin_bytes,
             cwd=cwd,
         )
+
+        # #2095 P3: the command actually ran (consent passed) — surface it as a
+        # P6 event so an auto-run (allowlisted) shell hook isn't a silent
+        # side-effect. Best-effort: a sink error must not break the run.
+        if emit_event is not None:
+            try:
+                emit_event(
+                    "hook_shell_executed",
+                    command=command,
+                    mode=("shell_push" if capture_stdout else "shell_exec"),
+                    returncode=result.returncode,
+                )
+            except Exception as exc:  # noqa: BLE001 — telemetry is best-effort
+                _log.debug("shell-hook: emit_event failed for %r: %s", command, exc)
 
         # stderr is ALWAYS logs. stdout is logs for shell_exec; for shell_push
         # (capture_stdout) it is the JSON push-directive the caller parses — so
