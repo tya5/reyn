@@ -61,6 +61,7 @@ if TYPE_CHECKING:
     from reyn.config import SandboxConfig
     from reyn.security.sandbox import SandboxBackend
     from reyn.security.sandbox.policy import SandboxPolicy
+    from reyn.user_intervention import RequestBus
 
 _log = logging.getLogger(__name__)
 
@@ -158,11 +159,27 @@ def _record_approval(command: str, path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _check_consent(command: str, allowlist_path: Path) -> bool:
+async def _check_consent(
+    command: str,
+    allowlist_path: Path,
+    *,
+    consent_bus: "RequestBus | None" = None,
+) -> bool:
     """Return True if *command* is approved to run.
 
-    TTY (interactive): prompt on first use or mtime drift; record approval.
-    Non-TTY: requires REYN_ACCEPT_HOOKS=1 or a current allowlist entry.
+    Approval order (#2095):
+      1. allowlist hit → approved.
+      2. ``REYN_ACCEPT_HOOKS=1`` → record + approve (CI / non-TTY accept).
+      3. ``consent_bus`` set → prompt through the SAME ``RequestBus`` that
+         ungated permission-prompts use, so it lands in the TUI Pending tab and
+         is answerable there (instead of the stdin ``print``/``input`` below,
+         which is invisible / unanswerable under a Textual app). The dispatcher
+         passes a non-None ``consent_bus`` ONLY when the session has a live
+         intervention listener (= a surface that will actually answer), so plain
+         ``mcp-serve`` / headless (no listener) and ``reyn run`` on a TTY (no
+         listener) both arrive here with ``consent_bus=None`` and take step 4.
+      4. **no consent bus** → the pre-#2095 behavior, byte-for-byte: TTY → stdin
+         prompt; non-TTY → fail-closed.
     """
     entries = _load_allowlist(allowlist_path)
 
@@ -171,13 +188,20 @@ def _check_consent(command: str, allowlist_path: Path) -> bool:
 
     # Not approved — decide based on environment.
     accept_env = os.environ.get("REYN_ACCEPT_HOOKS", "").strip() == "1"
-    is_tty = sys.stdin.isatty()
 
     if accept_env:
         # CI / non-TTY accept path: record and proceed.
         _log.info("shell-hook: REYN_ACCEPT_HOOKS=1 — auto-approving %r", command)
         _record_approval(command, allowlist_path)
         return True
+
+    # An answerable surface is attached → route the consent through the unified
+    # intervention bus (#2095). The allowlist remains the "always" persistence.
+    if consent_bus is not None:
+        return await _prompt_consent_via_bus(command, allowlist_path, consent_bus)
+
+    # No consent bus → preserve the exact pre-#2095 behavior below.
+    is_tty = sys.stdin.isatty()
 
     if is_tty:
         # Interactive prompt.
@@ -210,6 +234,43 @@ def _check_consent(command: str, allowlist_path: Path) -> bool:
     return False
 
 
+async def _prompt_consent_via_bus(
+    command: str, allowlist_path: Path, bus: "RequestBus",
+) -> bool:
+    """Prompt for shell-hook consent through the unified intervention bus (#2095).
+
+    Reuses the SAME ``UserIntervention`` / ``RequestBus`` mechanism that ungated
+    permission-prompts use, so the prompt surfaces wherever interventions do
+    (the TUI Pending tab, stdin for ``reyn run``, etc.) — not the stdin
+    ``print``/``input`` that is invisible under a Textual app.
+
+    Choice mapping (``shell_hook_choices``): ``ALWAYS`` records to the allowlist
+    (the "always" persistence); ``YES`` allows this run only; ``NO`` / unknown /
+    an empty answer (e.g. the iv was parked stalled because the origin channel
+    closed) → deny + skip the hook (fail-safe).
+    """
+    from reyn.intervention_choices import ALWAYS, YES, shell_hook_choices
+    from reyn.user_intervention import UserIntervention
+
+    iv = UserIntervention(
+        kind="permission.shell_hook",
+        prompt="A shell hook wants to run a command",
+        detail=f"$ {command}",
+        choices=shell_hook_choices(),
+    )
+    answer = await bus.request(iv)
+    choice = answer.choice_id
+    if choice == ALWAYS:
+        _record_approval(command, allowlist_path)
+        _log.info("shell-hook: approved (always) via intervention bus %r", command)
+        return True
+    if choice == YES:
+        _log.info("shell-hook: approved (once) via intervention bus %r", command)
+        return True
+    _log.warning("shell-hook: declined via intervention bus %r — skipping.", command)
+    return False
+
+
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
@@ -226,6 +287,7 @@ async def run_shell_hook(
     sandbox_policy: "SandboxPolicy | None" = None,
     allowlist_path: Path | None = None,
     capture_stdout: bool = False,
+    consent_bus: "RequestBus | None" = None,
 ) -> str | None:
     """Run a shell hook command under the sandbox + consent gate.
 
@@ -271,6 +333,14 @@ async def run_shell_hook(
         When ``True`` (``shell_push``) return the decoded stdout on a successful
         run; when ``False`` (``shell_exec``, default) ignore output and return
         ``None``.
+    consent_bus:
+        The session ``RequestBus`` (#2095), or ``None``. When set, a
+        not-yet-allowlisted command's consent prompt is routed through it (→ the
+        TUI Pending tab / the answering surface) instead of the stdin prompt. The
+        caller (``HookDispatcher``) passes a non-None bus ONLY when the session
+        has a live intervention listener; ``None`` (incl. headless / CI /
+        plain mcp-serve / ``reyn run`` with no listener) preserves the pre-#2095
+        stdin / fail-closed gate.
 
     Returns
     -------
@@ -289,7 +359,11 @@ async def run_shell_hook(
 
     # --- Consent gate (fail-closed in non-TTY without accept flag) --------
     try:
-        approved = _check_consent(command, resolved_allowlist)
+        approved = await _check_consent(
+            command,
+            resolved_allowlist,
+            consent_bus=consent_bus,
+        )
     except Exception as exc:
         _log.error("shell-hook: consent check error for %r: %s", command, exc)
         return

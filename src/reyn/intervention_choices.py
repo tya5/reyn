@@ -27,6 +27,21 @@ def generic_yn_choices() -> list[InterventionChoice]:
     ]
 
 
+def shell_hook_choices() -> list[InterventionChoice]:
+    """`[y]es / [A]lways / [n]o` for shell-hook consent (#2095).
+
+    No `NEVER`: the shell-hook allowlist persists approvals only (there is no
+    persistent-deny entry), so `ALWAYS` records to the allowlist and a plain
+    `[n]o` skips this run without persisting. Mirrors the python-preprocessor
+    yes/always/no shape.
+    """
+    return [
+        InterventionChoice(id=YES, label="[y]es", hotkey="y"),
+        InterventionChoice(id=ALWAYS, label="[A]lways", hotkey="A"),
+        InterventionChoice(id=NO, label="[n]o", hotkey="n"),
+    ]
+
+
 def python_choices() -> list[InterventionChoice]:
     """`[y]es / [A]lways / [N]o` for python preprocessor approval (no NEVER)."""
     return [
@@ -64,4 +79,5 @@ __all__ = [
     "file_access_choices",
     "generic_yn_choices",
     "python_choices",
+    "shell_hook_choices",
 ]
