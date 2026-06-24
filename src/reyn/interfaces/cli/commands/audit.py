@@ -4,7 +4,7 @@ A STATIC, install-time / on-demand audit (distinct from the #1822 S1-S5 runtime
 content-threat scan). It READS skill / plugin code + config and pattern-scans them —
 it never imports or executes skill code. The OpenClaw ``audit-*`` analog.
 
-Three rules (lead-greenlit, #1864):
+Rules (lead-greenlit, #1864; #2081 S3 adds rule 4):
   1. **unsafe code/config** — reuse the #1822 ``threat_patterns`` catalog (static
      scan of each skill/plugin text file at the strict + exec scopes).
   2. **secrets permission** — ``~/.reyn/secrets.env`` is written chmod 600
@@ -15,6 +15,11 @@ Three rules (lead-greenlit, #1864):
      HIGH); MCP plugin configs are read directly: a ``command`` (subprocess spawn,
      HIGH), secret-looking ``env`` keys (+secrets, HIGH), a network ``url`` (egress,
      INFO), and every server is enumerated (INFO).
+  4. **delegation-unsafe** (#2081 S3) — a delegate-REACHABLE topology role (inbound
+     ``can_send`` target) whose bound capability_profile, or the ``_delegate.yaml``
+     override, re-grants a dangerous class (re-delegation / exec = HIGH; memory-write /
+     destructive-FS = MED); + an INFO posture nudge when ``delegation.capability_default
+     =inherit`` while a topology permits delegation.
 
 ``reyn audit [--skill <name>] [--json]`` → findings; **exit non-zero only on a
 block-severity (HIGH) finding** (CI-usable).
@@ -300,6 +305,94 @@ def _gateway_skill_ops(skill_dir: Path) -> list[Finding]:
     return findings
 
 
+def _gateway_delegation() -> list[Finding]:
+    """Rule 4 (#2081 S3): delegation-unsafe capability. The audit flags, per dangerous
+    CLASS (re-delegation / exec = HIGH; memory-write / destructive-FS = MED):
+
+    - a delegate-REACHABLE topology role — a member with an inbound ``can_send`` edge,
+      = a delegation target (the A2A request path is can_send-gated) — whose bound
+      capability_profile PERMITS the class. Reachability-precise (OPT-A): an
+      outbound-only role (e.g. a hierarchy's top coordinator) that legitimately holds
+      ``delegate_to_agent`` is NOT a delegation target, so it is NOT flagged — avoiding
+      a false HIGH (which would wrongly ``exit(1)`` / block a deploy).
+    - the ``_delegate.yaml`` override permitting a class — it IS the global delegate
+      floor, so a re-grant there applies to every unbound delegate (no reachability
+      needed).
+    - INFO posture: ``delegation.capability_default=inherit`` while a topology has any
+      delegation edge — delegates inherit the spawner's full capability (a nudge, not
+      a block; ``inherit`` is the default)."""
+    from reyn.security.permissions.capability_profile import (
+        DELEGATE_PROFILE_NAME,
+        DELEGATION_AUDIT_CLASSES,
+        load_capability_profile,
+        profile_permits,
+    )
+
+    findings: list[Finding] = []
+    root = Path.cwd()
+    try:
+        from reyn.config import load_config
+        cap_default = load_config().delegation.capability_default
+    except Exception as exc:  # never let config-load break the audit
+        return [Finding("reyn.yaml delegation:", "gateway:delegation-unsafe", _INFO,
+                        f"could not load delegation config: {exc}")]
+
+    topologies = []
+    topo_dir = root / ".reyn" / "topologies"
+    if topo_dir.is_dir():
+        from reyn.runtime.topology import Topology
+        for p in sorted(topo_dir.glob("*.yaml")):
+            try:
+                topologies.append(Topology.load(p))
+            except Exception:  # a malformed topology is surfaced by other paths
+                continue
+
+    # OPT-C: inherit + any delegation edge → a posture nudge (INFO, never a block).
+    if cap_default == "inherit" and any(t.edges() for t in topologies):
+        findings.append(Finding(
+            "reyn.yaml delegation:", "gateway:delegation-unsafe", _INFO,
+            "capability_default=inherit: delegated agents inherit the spawner's full "
+            "capability (incl. re-delegation / exec / memory-write). Set "
+            "delegation.capability_default=deny to apply the restrictive _delegate floor.",
+        ))
+
+    prof_dir = root / ".reyn" / "capability_profiles"
+
+    def _scan(profile, loc: str) -> None:
+        for cls, (sev, tools) in DELEGATION_AUDIT_CLASSES.items():
+            permitted = sorted(t for t in tools if profile_permits(profile, t))
+            if permitted:
+                findings.append(Finding(
+                    loc, "gateway:delegation-unsafe", sev,
+                    f"permits {cls} for a delegate: {permitted}",
+                ))
+
+    # OPT-A: per-class re-grant scan of delegate-REACHABLE bound profiles.
+    for topo in topologies:
+        targets = {x for x in topo.members if any(topo.can_send(y, x) for y in topo.members)}
+        for member in sorted(targets):
+            pname = topo.profiles.get(member)
+            if not pname:
+                continue
+            ppath = prof_dir / f"{pname}.yaml"
+            if not ppath.is_file():
+                continue
+            try:
+                _scan(load_capability_profile(ppath), f"topology {topo.name}/{member} (profile {pname})")
+            except Exception:
+                continue
+
+    # the _delegate.yaml override is the GLOBAL delegate floor — scan it always.
+    dpath = prof_dir / f"{DELEGATE_PROFILE_NAME}.yaml"
+    if dpath.is_file():
+        try:
+            _scan(load_capability_profile(dpath), f"capability_profiles/{DELEGATE_PROFILE_NAME}.yaml")
+        except Exception:
+            pass
+
+    return findings
+
+
 def _collect(only: str | None) -> list[Finding]:
     findings: list[Finding] = []
     for d in _skill_dirs(only):
@@ -309,6 +402,7 @@ def _collect(only: str | None) -> list[Finding]:
     findings.extend(_secrets_perm())
     if only is None:
         findings.extend(_gateway_mcp())
+        findings.extend(_gateway_delegation())  # #2081 S3
     return findings
 
 

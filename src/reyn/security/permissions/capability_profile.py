@@ -207,18 +207,27 @@ UNTRUSTED_PROFILE_NAME: "str" = "_untrusted"
 # and reasoned about but cannot drive irreversible actions. Both the qualified
 # catalog names and their unwrapped aliases are denied (the live gate matches the
 # effective resolved name, which differs by scheme / invoke_action unwrap).
-_BUILTIN_UNTRUSTED_DENY: "frozenset[str]" = frozenset({
+#
+# Grouped by CLASS (#2081 S3): the runtime FLOOR is the flat union below; the
+# delegation-unsafe AUDIT (DELEGATION_AUDIT_CLASSES) derives its FLOORED classes +
+# severities from these same groups — so the floor and the audit cannot drift apart.
+_FLOORED_DENY_CLASSES: "dict[str, frozenset[str]]" = {
     # memory writes / deletes — no persistence from untrusted content
-    "memory_operation__remember_shared",
-    "memory_operation__remember_agent",
-    "memory_operation__forget",
+    "memory-write": frozenset({
+        "memory_operation__remember_shared",
+        "memory_operation__remember_agent",
+        "memory_operation__forget",
+    }),
     # re-delegation — no spawning peers from untrusted content
-    "multi_agent__delegate", "delegate_to_agent",
+    "re-delegation": frozenset({"multi_agent__delegate", "delegate_to_agent"}),
     # code execution
-    "exec__sandboxed_exec", "sandboxed_exec",
+    "exec": frozenset({"exec__sandboxed_exec", "sandboxed_exec"}),
     # MCP install — no installing servers from untrusted content
-    "mcp__install_registry", "mcp__install_package", "mcp__install_local",
-})
+    "mcp-install": frozenset({
+        "mcp__install_registry", "mcp__install_package", "mcp__install_local",
+    }),
+}
+_BUILTIN_UNTRUSTED_DENY: "frozenset[str]" = frozenset().union(*_FLOORED_DENY_CLASSES.values())
 
 
 def builtin_untrusted_profile() -> CapabilityProfile:
@@ -297,6 +306,40 @@ def load_delegate_profile(project_root: "str | Path") -> CapabilityProfile:
                 file=sys.stderr,
             )
     return builtin_delegate_profile()
+
+
+# ── #2081 S3: the delegation-unsafe AUDIT taxonomy ──────────────────────────
+#
+# ``reyn audit`` (gateway:delegation-unsafe) flags, per dangerous CLASS, a
+# delegate-REACHABLE bound capability_profile — or the ``_delegate.yaml`` override —
+# that PERMITS the class (a re-grant that widens an unbound delegate's floor; the floor
+# is REPLACED by a binding, so even a floored class can be re-granted).
+#
+# The FLOORED classes (re-delegation / exec / mcp-install / memory-write) are
+# single-sourced from ``_FLOORED_DENY_CLASSES`` + the severity map below — so the audit
+# and the runtime floor cannot drift. ``destructive-fs`` is an explicit, documented
+# AUDIT-ONLY class (the intentional audit ⊋ floor delta): ``delete_file`` is a
+# delegate-reachable concern, but it is FILE_WRITE-permission-bounded so it is not on
+# the runtime floor — the audit surfaces it as a re-grant judgment regardless.
+_FLOORED_AUDIT_SEVERITY: "dict[str, str]" = {
+    "re-delegation": "HIGH",
+    "exec": "HIGH",
+    "mcp-install": "HIGH",
+    "memory-write": "MED",
+}
+DELEGATION_AUDIT_CLASSES: "dict[str, tuple[str, frozenset[str]]]" = {
+    cls: (_FLOORED_AUDIT_SEVERITY[cls], tools)
+    for cls, tools in _FLOORED_DENY_CLASSES.items()
+}
+DELEGATION_AUDIT_CLASSES["destructive-fs"] = ("MED", frozenset({"delete_file", "file__delete"}))
+
+
+def profile_permits(profile: CapabilityProfile, tool: str) -> bool:
+    """Whether ``profile`` would PERMIT ``tool`` on the TOOL axis — the allow-list is
+    satisfied (None = unconstrained, else membership) AND it is not denied. The
+    delegation-unsafe audit's re-grant check (#2081 S3)."""
+    in_allow = profile.tool_allow is None or tool in profile.tool_allow
+    return in_allow and tool not in profile.tool_deny
 
 
 def metas_have_untrusted(metas: "object") -> bool:

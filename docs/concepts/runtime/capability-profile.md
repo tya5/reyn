@@ -112,6 +112,37 @@ execution, MCP install. Untrusted content can be read and reasoned about, but
 cannot drive irreversible actions. Override is a deliberate loosening — a
 malformed `_untrusted.yaml` falls back to the built-in (surfaced on stderr).
 
+## Default-deny delegation narrowing (#2081)
+
+A second built-in profile is auto-applied to a **delegated** agent when the
+operator opts into strict delegation:
+
+**Profile name:** `_delegate` (built-in restrictive default; overridable via
+`.reyn/capability_profiles/_delegate.yaml`). The name is decoupled from
+`_untrusted` (delegate-spawn vs untrusted-content are distinct contexts), but
+the default deny-set is the **same single-sourced taxonomy** — so operators tune
+delegate-deny independently.
+
+**Trigger:** `delegation.capability_default: deny` in reyn.yaml AND the agent is
+an **unbound delegate** — spawned by another agent's delegation (the A2A request
+path), with no topology `capability_profile` binding.
+
+**Effect:** the unbound delegate resolves to the `_delegate` floor instead of no
+narrowing. A topology binding **replaces** the default (the binding is the
+re-grant — composition is most-restrictive-wins and cannot re-grant). The
+default-deny propagates **recursively**: every delegation hop marks the target a
+delegate, so a re-granted coordinator's own unbound sub-delegate is still
+default-denied (no laundering).
+
+`delegation.capability_default: inherit` (the default) keeps a delegate
+inheriting the spawner's surface — byte-identical to pre-#2081.
+
+**Audit:** `reyn audit` (`gateway:delegation-unsafe`) flags, per dangerous class,
+a delegate-reachable bound profile (or the `_delegate.yaml` override) that
+re-grants a class (re-delegation / exec = HIGH; memory-write / destructive-FS =
+MED), and nudges (INFO) when `capability_default=inherit` while a topology
+permits delegation.
+
 ## Agent self-edit
 
 An agent can update either surface at runtime without requesting extra
