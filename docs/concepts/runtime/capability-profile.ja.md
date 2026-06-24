@@ -117,9 +117,14 @@ effective = AgentLayer ∩ SandboxLayer ∩ ProfileLayer ∩ ContextualLayer
 
 ## リロード
 
-両ファイルの変更は**次のセッション起動時**に有効になります。ファイルはセッション構築時に 1 回読み込まれ、実行中のセッションはメモリ内コピーを使用します。
+両サーフェスは**ターン境界でのホットリロード**をサポートしています（ライブ、再起動不要）:
 
-ターン境界でのホットリロードは計画中です。
+- **ContextualLayer** — `.reyn/capability_profiles/<name>.yaml` の変更は `per_agent_capability` リアプライシームによって取得され、`AgentProfile` を再読み込みしてセッションが所有する 3 つのホルダー（session / skill_runner / router_host）の `allowed_skills` / `allowed_mcp` を更新します。
+- **ProfileLayer** — `.reyn/agents/<name>/profile.yaml` の変更も同じシームによってリロードされます。
+
+両ファイルは IN-set（`.reyn/*.yaml` グレイン）です。`/reload` または `hooks_add` LLM-op でリロードをトリガーできます。完全なリロードサイクル（timing-B セーフポイント、適用前バリデーション、P6 イベント）については [コンセプト: Config ホットリロード](config-hot-reload.md) を参照してください。
+
+ペーエージェントフックレイヤー（`.reyn/agents/<name>/hooks.yaml`）も、`hooks` リアプライシームを経由して同じターン境界でリロードされます — `hooks` COMBINE はリロードのたびに startup + runtime + per-agent レイヤーを再読み込みします。
 
 ## スキーマ例
 

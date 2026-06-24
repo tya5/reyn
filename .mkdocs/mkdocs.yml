@@ -250,6 +250,7 @@ nav:
           - concepts/runtime/workspace.md
           - concepts/runtime/events.md
           - concepts/runtime/hooks.md
+          - concepts/runtime/config-hot-reload.md
           - concepts/runtime/time-travel.md
           - concepts/runtime/durability-scope.md
           - concepts/runtime/permission-model.md

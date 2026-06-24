@@ -140,10 +140,22 @@ natural `allowed_skills` / `allowed_mcp` keys (no YAML rename).
 
 ## Reload
 
-Changes to both files take effect at **next session startup**. The files are
-loaded once at session construction; running sessions use their in-memory copy.
+Both surfaces support **turn-boundary hot-reload** (live, no restart needed):
 
-Turn-boundary hot-reload is planned.
+- **ContextualLayer** — changes to `.reyn/capability_profiles/<name>.yaml` are
+  picked up by the `per_agent_capability` reapply seam, which re-reads the
+  `AgentProfile` and updates `allowed_skills` / `allowed_mcp` on all three
+  holders the Session owns (session / skill_runner / router_host).
+- **ProfileLayer** — changes to `.reyn/agents/<name>/profile.yaml` are reloaded
+  by the same seam.
+
+Both files are IN-set (`.reyn/*.yaml` grain). Trigger a reload with `/reload` or
+via the `hooks_add` LLM-op. See [Concepts: Config hot-reload](config-hot-reload.md)
+for the full reload cycle (timing-B safe-point, validate-before-apply, P6 event).
+
+The per-agent hooks layer (`.reyn/agents/<name>/hooks.yaml`) is also reloaded at
+the same turn boundary via the `hooks` reapply seam — the `hooks` COMBINE
+re-reads startup + runtime + per-agent layers on every reload.
 
 ## Schema example
 
