@@ -112,7 +112,7 @@ execution, MCP install. Untrusted content can be read and reasoned about, but
 cannot drive irreversible actions. Override is a deliberate loosening — a
 malformed `_untrusted.yaml` falls back to the built-in (surfaced on stderr).
 
-## Default-deny delegation narrowing (#2081)
+## Default-deny delegation narrowing
 
 A second built-in profile is auto-applied to a **delegated** agent when the
 operator opts into strict delegation:
@@ -135,13 +135,15 @@ delegate, so a re-granted coordinator's own unbound sub-delegate is still
 default-denied (no laundering).
 
 `delegation.capability_default: inherit` (the default) keeps a delegate
-inheriting the spawner's surface — byte-identical to pre-#2081.
+inheriting the spawner's surface.
 
 **Audit:** `reyn audit` (`gateway:delegation-unsafe`) flags, per dangerous class,
 a delegate-reachable bound profile (or the `_delegate.yaml` override) that
 re-grants a class (re-delegation / exec = HIGH; memory-write / destructive-FS =
 MED), and nudges (INFO) when `capability_default=inherit` while a topology
 permits delegation.
+
+Full mechanism: [Concepts: Delegation policy](delegation-policy.md) — config, recursive propagation, binding-replaces semantics, audit classes, and OPT-A reachability scoping.
 
 ## Agent self-edit
 
