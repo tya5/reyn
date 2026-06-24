@@ -504,7 +504,7 @@ def load_config(cwd: Path | None = None) -> ReynConfig:
 # permission / sandbox / budget / the loop valve / state-coupled runtime) is loaded
 # ONCE at startup by ``load_config`` and is restart-only; the file-split IS the
 # write-gate boundary (owner-confirmed #2073). Keep this list narrow + explicit.
-_HOT_RELOAD_FILES: tuple[str, ...] = ("mcp.yaml", "cron.yaml")
+_HOT_RELOAD_FILES: tuple[str, ...] = ("mcp.yaml", "cron.yaml", "hooks.yaml")
 
 
 def load_hot_reload_config(project_root: "Path | None" = None) -> dict:
