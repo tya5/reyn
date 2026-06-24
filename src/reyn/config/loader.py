@@ -531,6 +531,27 @@ def load_hot_reload_config(project_root: "Path | None" = None) -> dict:
     return expand_env(merged)
 
 
+def load_per_agent_hooks(
+    project_root: "Path | None", agent_name: str
+) -> list:
+    """Load the per-agent runtime hooks layer (#2073 per-agent-hooks add-on) — ONLY
+    ``.reyn/agents/<name>/hooks.yaml``.
+
+    Same IN-set grain as the global ``.reyn/hooks.yaml`` (runtime-mutable,
+    hot-reloadable) but scoped to one agent — read DIRECTLY here (not via
+    :func:`load_hot_reload_config`, which is the top-level ``.reyn/*.yaml`` set),
+    mirroring how the per-agent ``profile.yaml`` is read. ``${VAR}`` interpolation is
+    applied to match the global layer. Returns the raw ``hooks:`` list (``[]`` when the
+    file or key is absent — a no-op layer, never an error).
+    """
+    root = (project_root or Path.cwd()).resolve()
+    raw = _load_yaml(root / ".reyn" / "agents" / agent_name / "hooks.yaml")
+    from reyn.security.secrets.interpolation import expand_env
+    data = expand_env(raw)
+    hooks = data.get("hooks") if isinstance(data, dict) else None
+    return hooks if isinstance(hooks, list) else []
+
+
 def _build_external_transports_config(raw: object):
     """Parse the ``external_transports:`` section (FP-0041 #489 PR-D2).
 
