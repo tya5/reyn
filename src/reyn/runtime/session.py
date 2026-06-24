@@ -2229,6 +2229,35 @@ class Session:
         """
         self._journal.set_anchor_store(anchor_store)
 
+    def apply_per_session_narrowing(
+        self, contextual_permission: "object | None", excluded_categories,
+    ) -> None:
+        """#2126: re-inject the spawner-set per-session capability narrowing AFTER
+        spawn-time config resolution.
+
+        The #1827 / #2103-S1a per-session layer only composes when
+        ``resolved_profile_for`` is called WITH a ``sid`` — and no construction-time
+        factory caller passes one (every frontend resolves ``sid=None``), so the
+        narrowing a spawner writes to the session's ``config.yaml`` is otherwise never
+        enforced (``_contextual_permission`` is set once at construction from the
+        ``sid=None`` resolution). The registry calls this right after spawn-recording,
+        BEFORE the session's run-loop reads these into the live tool gate, so the first
+        turn already gates against the narrowing. Mirrors ``attach_workspace_store``: a
+        registry-driven post-construct injection.
+
+        ``contextual_permission`` is the FULL ``resolved_profile_for(name, sid=sid)``
+        composition (topology + delegate floor + per-session ∩), so it is overwritten —
+        it can only be MORE restrictive than the ``sid=None`` value it replaces (the
+        per-session config is an extra ∩ conjunct, never a re-grant). ``excluded_categories``
+        is UNIONED (never overwritten) so it composes with any construction-time view
+        narrowing (e.g. the #1667 eval ``reyn_source`` exclusions, which are not
+        capability-profile-derived).
+        """
+        self._contextual_permission = contextual_permission
+        self._excluded_categories = self._excluded_categories | frozenset(
+            excluded_categories or ()
+        )
+
     @property
     def current_snapshot(self) -> "AgentSnapshot":
         """Read-only view of the live in-memory AgentSnapshot (ADR-0038).

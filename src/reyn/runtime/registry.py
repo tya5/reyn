@@ -2014,6 +2014,19 @@ class AgentRegistry:
                 yaml.safe_dump({"name": f"_session_{sid}", **narrowing}),
                 encoding="utf-8",
             )
+            # #2126: ENFORCE the narrowing just written. The per-session capability
+            # layer (#1827 / #2103-S1a) only resolves WITH a sid, and every
+            # construction-time factory caller resolves sid=None — so the live spawned
+            # session's _contextual_permission (set once at construction) ignores its
+            # own config.yaml. Re-resolve WITH the sid and re-inject into the live
+            # session here, BEFORE the caller starts its run-loop, so the first turn
+            # gates against the narrowing. Without this the write above is inert
+            # (security-theater: narrowing accepted + persisted but never enforced).
+            session = self._peek_session(name, sid)
+            inject = getattr(session, "apply_per_session_narrowing", None)
+            if callable(inject):
+                contextual, excluded = self.resolved_profile_for(name, sid=sid)
+                inject(contextual, excluded)
         if self._state_log is not None:
             await self._state_log.append(
                 "session_spawned", entity_kind="session", name=name, sid=sid,
