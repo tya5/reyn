@@ -50,6 +50,9 @@ _NOT_EXTERNAL = {
     "mcp_install", "mcp_install_local", "mcp_install_package",
     "mcp_install_registry", "mcp_drop_server",
     "cron_register", "cron_unregister", "cron_enable", "cron_disable",
+    # #2073 S3: hooks_add writes .reyn/hooks.yaml + schedules a reload — returns a
+    # status dict (on / added / reload_scheduled / path), not external content.
+    "hooks_add",
     "lint",
     # — catalog / discovery (reyn-assembled or operator config) —
     "list_skills", "describe_skill", "list_agents", "describe_agent",

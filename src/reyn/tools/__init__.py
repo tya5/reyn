@@ -67,6 +67,7 @@ def get_default_registry() -> ToolRegistry:
         READ_FILE,
         WRITE_FILE,
     )
+    from reyn.tools.hooks import HOOKS_ADD
     from reyn.tools.invoke_skill import INVOKE_SKILL
     from reyn.tools.lint import LINT
     from reyn.tools.mcp import (
@@ -178,6 +179,9 @@ def get_default_registry() -> ToolRegistry:
     registry.register(CRON_LIST)
     registry.register(CRON_ENABLE)
     registry.register(CRON_DISABLE)
+    # #2073 S3: the hooks-write self-reload tool (the agent adds its own runtime
+    # hooks to .reyn/hooks.yaml + reloads at the turn boundary). Router-only.
+    registry.register(HOOKS_ADD)
     # FP-0038 (#171) S2 + S3: glob / grep for Reyn's own repo, mirroring
     # the file__glob / file__grep surfaces but scoped to the OS source tree.
     registry.register(REYN_SRC_GLOB)

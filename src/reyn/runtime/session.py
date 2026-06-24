@@ -1323,11 +1323,15 @@ class Session:
         # #2073 S1: the config hot-reloader. Reads ONLY the IN-set (.reyn/*.yaml);
         # the OUT-set (reyn.yaml) is restart-only. Applies at the turn_end safe-point
         # (apply_pending below). Per-component reapply seams are registered in S2.
-        from reyn.runtime.hot_reload import HotReloader
+        from reyn.runtime.hot_reload import HotReloader, set_active_hot_reloader
         self._hot_reloader = HotReloader(
             project_root=getattr(self._registry, "_project_root", None) or Path.cwd(),
             events=self._chat_events,
         )
+        # #2073 S3: publish as the process-wide active reloader so the hooks-write
+        # LLM-op can request_reload after writing .reyn/hooks.yaml (mirrors
+        # set_active_scheduler). Multi-session = last-registered wins (cron caveat).
+        set_active_hot_reloader(self._hot_reloader)
         # #1669: publish this session's EventLog as the ambient sink for the LLM
         # acompletion chokepoint, so every in-session LLM call emits an observable
         # `llm_request` event (non-message params) without threading events through
