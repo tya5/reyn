@@ -1238,22 +1238,41 @@ class AgentRegistry:
             elif marker.is_file():
                 marker.unlink()
 
-    async def _drop_session(self, name: str, sid: str) -> None:
+    async def _drop_session(self, name: str, sid: str, *, purge_dir: bool = True) -> None:
         """#2103 S1bc: tear down a single spawned session created after the rewind cut
         (the primitive's seam, now wired). Delegates to ``remove_session`` — the single
         session-teardown used by BOTH this rewind-drop AND the ephemeral auto-vanish. A
         post-cut session has no pre-cut generations → a clean drop (vs the #1954 archive
         HIDE on the delete side). Reversible: a forward-checkout past the spawn would
         re-materialise it from the config-complete ``session_spawned`` WAL record (the
-        session re-materialise seam is a follow-up; sessions are drop-only today)."""
-        self.remove_session(name, sid)
+        session re-materialise seam is a follow-up; sessions are drop-only today).
 
-    def remove_session(self, name: str, sid: str) -> bool:
+        ``purge_dir=False`` (the rewind path) defers the destructive on-disk rmtree to
+        the caller, so it runs only AFTER the substrate restores succeed (#2125 atomicity
+        — a restore-failure must not leave the dir dropped). The connection-release
+        (quiesce + backend close) still happens here, because it MUST precede the
+        ``_restore_task_active`` file-swap (that is the lock fix)."""
+        await self.remove_session(name, sid, purge_dir=purge_dir)
+
+    async def remove_session(self, name: str, sid: str, *, purge_dir: bool = True) -> bool:
         """#2103 S1bc: tear down a SPAWNED (non-main) session — the single teardown
         seam used by BOTH the rewind as-of-cut DROP (``_drop_session``) AND the
-        ephemeral auto-vanish. Cancels the ``(name, sid)`` run-loop + forwarder tasks,
-        drops it from the in-memory map, and removes its on-disk per-session state dir
+        ephemeral auto-vanish. Quiesces + closes the session's per-session Task backend,
+        cancels the ``(name, sid)`` run-loop + forwarder tasks, drops it from the
+        in-memory map, and (``purge_dir``) removes its on-disk per-session state dir
         (``state/sessions/<enc(sid)>/``). Returns True iff anything was removed.
+
+        #2125 (the differentiator: rewind-across-spawn): the per-session Task backend is a
+        SEPARATE ``sqlite3`` connection to the agent's shared ``tasks.db`` (one connection
+        per constructed session). Cancelling the run-loop WITHOUT closing that connection
+        left it open → ``_restore_task_active``'s ``restore_to_seq`` file-swap hit
+        "database is locked" (``busy_timeout=0``). So here we mirror the global-rewind
+        stop-world (``cancel_inflight`` + ``await_quiescent``, registry rewind_to 824-829 —
+        idempotent when rewind_to already quiesced; REQUIRED for the ephemeral caller,
+        which has no rewind orchestration) and then ``close()`` the backend — a
+        deterministic rollback of any open ``BEGIN IMMEDIATE`` + lock release. Closing is
+        safe because the backend is a per-session instance (not shared with the surviving
+        sessions, which keep their own connections to the same file).
 
         Full teardown (rmtree) is correct: the global WAL is the durable source — the
         ``session_spawned`` create-record + the session's session_id-routed entries
@@ -1264,6 +1283,20 @@ class AgentRegistry:
         if sid == _DEFAULT_SID:
             raise ValueError("cannot remove the main session via remove_session")
         removed = False
+        # #2125: quiesce + close the per-session Task-backend connection BEFORE teardown
+        # so its SQLite lock releases ahead of any _restore_task_active file-swap.
+        session = self._peek_session(name, sid)
+        if session is not None:
+            cancel_inflight = getattr(session, "cancel_inflight", None)
+            if callable(cancel_inflight):
+                await cancel_inflight()
+            quiesce = getattr(session, "await_quiescent", None)
+            if callable(quiesce):
+                await quiesce()
+            tb = getattr(session, "task_backend", None)
+            close = getattr(tb, "close", None) if tb is not None else None
+            if callable(close):
+                close()
         for task_dict in (self._tasks, self._forward_tasks):
             task = task_dict.pop((name, sid), None)
             if task is not None:
@@ -1272,18 +1305,56 @@ class AgentRegistry:
                     task.cancel()
         if self._sessions.get(name, {}).pop(sid, None) is not None:
             removed = True
-        state_dir = self._session_state_dir(name, sid)  # sid != main → sessions/<enc>/
-        if state_dir.is_dir():
-            import shutil
-            try:
-                shutil.rmtree(state_dir)
+        # #2125 (interim, secondary): the registry's single ``_task_backend`` pointer is
+        # set to the LAST-constructed session's backend (1849) — under multi-session it
+        # may point to the one we just closed, which would leave _restore_task_active
+        # (1401) operating on a closed connection. Re-point it to a SURVIVING session's
+        # rewind backend (or None) now that the dropped session is out of the map. The
+        # full fix (a per-session backend map so every survivor is restorable, not just
+        # one) is the broader per-session-Task-backend root, tracked separately.
+        if session is not None:
+            tb = getattr(session, "task_backend", None)
+            if tb is not None and tb is self._task_backend:
+                self._task_backend = self._surviving_rewind_backend()
+        if purge_dir:
+            if self._purge_session_dir(name, sid):
                 removed = True
-            except OSError as e:  # noqa: BLE001 — best-effort; LOG (don't silently swallow)
-                logger.warning(
-                    "#2103: teardown of session %r/%r left state on disk: %s",
-                    name, sid, e,
-                )
+        elif self._session_state_dir(name, sid).is_dir():
+            removed = True  # dir present; destructive purge deferred to the caller (#2125)
         return removed
+
+    def _surviving_rewind_backend(self) -> "object | None":
+        """#2125: the first loaded session's rewind-participating Task backend, or None.
+
+        Used to re-point the registry's single ``_task_backend`` after a session whose
+        backend it referenced is dropped+closed. Scans the CURRENT in-memory sessions
+        (the dropped one is already out of the map), so it never returns a closed handle.
+        """
+        for sessions in self._sessions.values():
+            for session in sessions.values():
+                tb = getattr(session, "task_backend", None)
+                if tb is not None and getattr(tb, "supports_rewind", False):
+                    return tb
+        return None
+
+    def _purge_session_dir(self, name: str, sid: str) -> bool:
+        """#2125: the destructive half of session teardown — rmtree the per-session
+        state dir. Split out from ``remove_session`` so the rewind path can DEFER it
+        until after the substrate restores succeed (atomicity). Best-effort; LOGs an
+        ``OSError`` rather than swallowing. Returns True iff a dir was removed."""
+        state_dir = self._session_state_dir(name, sid)  # sid != main → sessions/<enc>/
+        if not state_dir.is_dir():
+            return False
+        import shutil
+        try:
+            shutil.rmtree(state_dir)
+            return True
+        except OSError as e:  # noqa: BLE001 — best-effort; LOG (don't silently swallow)
+            logger.warning(
+                "#2103/#2125: teardown of session %r/%r left state on disk: %s",
+                name, sid, e,
+            )
+            return False
 
     async def _materialize_rewind(
         self, *, reconstruct_seq: int, workspace_at_or_below: int,
@@ -1309,6 +1380,12 @@ class AgentRegistry:
         # (one SSoT per agent) and is restored once below. Session discovery is from
         # disk (this is shared with crash-recovery, where sessions are not loaded).
         agents: list[str] = []
+        # #2125 (b)-split atomicity: collect the post-cut sessions whose destructive
+        # on-disk rmtree is DEFERRED until AFTER the substrate restores succeed (a
+        # restore-failure must not leave the dirs dropped). The connection-release
+        # (quiesce + Task-backend close) still happens inline at drop time below —
+        # it MUST precede _restore_task_active (the lock fix).
+        deferred_session_purges: list[tuple[str, str]] = []
         created_at = self._created_at_map()   # #2103: as-of-cut DROP input (empty → no-op)
         # #2103 S2: agent-lifecycle reconstruction (re-materialise / hide / purge) —
         # all inert until S2b emits the events.
@@ -1340,7 +1417,11 @@ class AgentRegistry:
                 # A session spawned after the cut → drop just that session.
                 sess_seq = created_at.get(("session", name, sid))
                 if sess_seq is not None and sess_seq > drop_cut:
-                    await self._drop_session(name, sid)
+                    # #2125: detach now (quiesce + close the Task-backend connection
+                    # so _restore_task_active doesn't hit "database is locked"); defer
+                    # the destructive rmtree until the restores below succeed.
+                    await self._drop_session(name, sid, purge_dir=False)
+                    deferred_session_purges.append((name, sid))
                     continue
                 store = self._store_for(name, sid)
                 snap = reconstruct(
@@ -1364,6 +1445,13 @@ class AgentRegistry:
         self._reconcile_archived_as_of_cut(ag_archived, drop_cut)
         await self._restore_workspace_active(at_or_below=workspace_at_or_below)
         await self._restore_task_active(at_or_below=workspace_at_or_below)
+        # #2125 (b)-split: the restores succeeded — NOW perform the deferred destructive
+        # rmtree of the dropped post-cut session dirs. Reaching here means no restore
+        # raised (a restore-failure propagates before this), so the drop is committed
+        # only alongside a successful restore (no half-applied "dirs dropped despite
+        # checkout failed" state).
+        for _purge_name, _purge_sid in deferred_session_purges:
+            self._purge_session_dir(_purge_name, _purge_sid)
         return agents
 
     async def _restore_workspace_active(self, *, at_or_below: int) -> None:
