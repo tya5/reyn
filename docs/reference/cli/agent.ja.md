@@ -21,10 +21,11 @@ reyn agent <subcommand> [args]
 
 ## `reyn agent list`
 
-すべての**アクティブな**（アーカイブ済みでない）agent をアルファベット順に表示します。最終アクティビティのタイムスタンプと各プロファイルの `role` の最初の行も表示されます。アーカイブ済みの agent はこの一覧に表示されません。
+すべての**アクティブな**（アーカイブ済みでない）agent をアルファベット順に表示します。最終アクティビティのタイムスタンプと各プロファイルの `role` の最初の行も表示されます。アーカイブ済みの agent はこの一覧に表示されません。`--all` を渡すとアーカイブ済み agent も `<name> (archived)` の形式で表示され、確認・復元・パージできます。
 
 ```bash
-reyn agent list
+reyn agent list          # アクティブな agent のみ
+reyn agent list --all    # アーカイブ済み agent も表示
 ```
 
 ```
