@@ -518,12 +518,28 @@ def known_qualified_name_for_category(category: str) -> tuple[str, ...]:
     )
 
 
+def unwrapped_tool_name(qualified_name: str) -> "str | None":
+    """The bare/unwrapped tool name a ``qualified_name`` (universal-catalog
+    ``category__verb``) resolves to via ``invoke_action`` — the SOURCE OF TRUTH for
+    the qualified↔bare alias (e.g. ``memory_operation__remember_shared`` →
+    ``remember_shared``, ``mcp__install_registry`` → ``mcp_install_registry``).
+    ``None`` when the name has no static operation rule.
+
+    The live capability gate matches the *effective resolved name*, which differs by
+    scheme (some paths present the qualified catalog name, invoke_action unwraps to the
+    bare name). Capability floors that must deny a tool on EVERY path derive both forms
+    from here (complete-by-construction) — see #2111."""
+    rule = _OPERATION_RULES.get(qualified_name)
+    return rule[0] if rule is not None else None
+
+
 __all__ = [
     "ResolvedAction",
     "UnknownActionError",
     "resolve_invoke_action",
     "resolve_describe_action",
     "suggest_similar_names",
+    "unwrapped_tool_name",
     "KNOWN_STATIC_QUALIFIED_NAMES",
     "known_qualified_name_for_category",
 ]

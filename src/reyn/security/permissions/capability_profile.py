@@ -211,7 +211,17 @@ UNTRUSTED_PROFILE_NAME: "str" = "_untrusted"
 # Grouped by CLASS (#2081 S3): the runtime FLOOR is the flat union below; the
 # delegation-unsafe AUDIT (DELEGATION_AUDIT_CLASSES) derives its FLOORED classes +
 # severities from these same groups — so the floor and the audit cannot drift apart.
-_FLOORED_DENY_CLASSES: "dict[str, frozenset[str]]" = {
+#
+# #2111 (CRITICAL fix): each class is defined by its QUALIFIED (universal-catalog)
+# names; the bare/unwrapped aliases are DERIVED from the invoke_action unwrap
+# source-of-truth (``unwrapped_tool_name``) — so EVERY invocable form (bare AND
+# qualified) is denied on EVERY scheme path, COMPLETE-BY-CONSTRUCTION. (The prior
+# manual lists missed the bare memory-write + mcp-install aliases — a delegate / an
+# untrusted-content turn could call bare ``remember_shared`` and persist to shared
+# memory. Deriving kills that gap-class at the root: a new floored tool can't miss
+# its alias.) Shared by BOTH floors (builtin_untrusted_profile + builtin_delegate_
+# profile), so this closes the gap on both surfaces.
+_FLOORED_QUALIFIED: "dict[str, frozenset[str]]" = {
     # memory writes / deletes — no persistence from untrusted content
     "memory-write": frozenset({
         "memory_operation__remember_shared",
@@ -219,13 +229,30 @@ _FLOORED_DENY_CLASSES: "dict[str, frozenset[str]]" = {
         "memory_operation__forget",
     }),
     # re-delegation — no spawning peers from untrusted content
-    "re-delegation": frozenset({"multi_agent__delegate", "delegate_to_agent"}),
+    "re-delegation": frozenset({"multi_agent__delegate"}),
     # code execution
-    "exec": frozenset({"exec__sandboxed_exec", "sandboxed_exec"}),
+    "exec": frozenset({"exec__sandboxed_exec"}),
     # MCP install — no installing servers from untrusted content
     "mcp-install": frozenset({
         "mcp__install_registry", "mcp__install_package", "mcp__install_local",
     }),
+}
+
+
+def _with_unwrapped_aliases(qualified: "frozenset[str]") -> "frozenset[str]":
+    """Each qualified name PLUS its bare unwrapped alias (from the invoke_action
+    source-of-truth) — every invocable form, complete-by-construction (#2111)."""
+    from reyn.tools.universal_dispatch import unwrapped_tool_name
+    forms = set(qualified)
+    for q in qualified:
+        bare = unwrapped_tool_name(q)
+        if bare is not None:
+            forms.add(bare)
+    return frozenset(forms)
+
+
+_FLOORED_DENY_CLASSES: "dict[str, frozenset[str]]" = {
+    cls: _with_unwrapped_aliases(q) for cls, q in _FLOORED_QUALIFIED.items()
 }
 _BUILTIN_UNTRUSTED_DENY: "frozenset[str]" = frozenset().union(*_FLOORED_DENY_CLASSES.values())
 
