@@ -86,6 +86,19 @@ def test_memory_write_regrant_is_med(tmp_path: Path, monkeypatch) -> None:
     assert med
 
 
+def test_mcp_install_regrant_flagged_high(tmp_path: Path, monkeypatch) -> None:
+    """Tier 2: mcp-install is a floored class (single-sourced) → a re-granted
+    mcp-install is flagged HIGH. A `tool_deny: []` binding REPLACES the floor's deny,
+    so the delegate CAN install servers — capability escalation, peer of re-deleg/exec."""
+    _reyn_yaml(tmp_path, "deny")
+    (_topos(tmp_path) / "t.yaml").write_text(
+        "name: t\nkind: network\nmembers: [worker, peer]\nprofiles:\n  worker: loose\n",
+        encoding="utf-8",
+    )
+    (_profiles(tmp_path) / "loose.yaml").write_text("name: loose\ntool_deny: []\n", encoding="utf-8")
+    assert _by(_findings(monkeypatch, tmp_path), severity="HIGH", contains="mcp-install")
+
+
 # ── OPT-A correctness: an outbound-only role is NOT a target → NOT flagged ───
 
 
@@ -145,9 +158,9 @@ def test_reachable_role_that_denies_is_clean(tmp_path: Path, monkeypatch) -> Non
     )
     (_profiles(tmp_path) / "tight.yaml").write_text(
         "name: tight\ntool_deny: [delegate_to_agent, multi_agent__delegate, sandboxed_exec, "
-        "exec__sandboxed_exec, remember_shared, remember_agent, forget_memory, delete_file, "
-        "file__delete, memory_operation__remember_shared, memory_operation__remember_agent, "
-        "memory_operation__forget]\n",
+        "exec__sandboxed_exec, delete_file, file__delete, memory_operation__remember_shared, "
+        "memory_operation__remember_agent, memory_operation__forget, mcp__install_registry, "
+        "mcp__install_package, mcp__install_local]\n",
         encoding="utf-8",
     )
     assert not _by(_findings(monkeypatch, tmp_path), contains="worker")
