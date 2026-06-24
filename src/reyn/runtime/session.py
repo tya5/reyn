@@ -1266,13 +1266,19 @@ class Session:
             sandbox_config=self._sandbox_config,
             sandbox_backend=self._sandbox_backend,
             # #2095: route a not-yet-allowlisted shell-hook's consent prompt
-            # through this session's RequestBus when there's an interactive
-            # surface, so it lands in the TUI Pending tab (vs the stdin prompt,
-            # invisible under Textual). Headless (non_interactive) → consent_bus
-            # is still passed but ``interactive=False`` keeps the runner on its
-            # REYN_ACCEPT_HOOKS / fail-closed path (byte-identical to pre-#2095).
+            # through this session's RequestBus, but ONLY when a live
+            # intervention listener is attached (TUI / chainlit / A2A-override) —
+            # i.e. a surface that will actually answer. ``has_active_listener``
+            # is checked per-dispatch (listeners attach/detach after this
+            # construction: TUI mount, A2A request windows). Plain mcp-serve and
+            # headless (no listener) → the dispatcher passes consent_bus=None →
+            # the runner's REYN_ACCEPT_HOOKS / fail-closed path, and ``reyn run``
+            # on a TTY (no listener) → the runner's stdin prompt — both
+            # byte-identical to pre-#2095.
             consent_bus=self.as_request_bus(),
-            interactive=not self._non_interactive,
+            # Lambda defers the lookup: ``self._interventions`` is constructed
+            # below this point, and the gate is only called at dispatch time.
+            consent_gate=lambda: self._interventions.has_active_listener(),
         )
         # #2073 S4: track the RUNTIME (.reyn/cron.yaml) cron job names so the cron
         # reapply seam can unschedule jobs removed from the runtime file WITHOUT

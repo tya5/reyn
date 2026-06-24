@@ -164,21 +164,22 @@ async def _check_consent(
     allowlist_path: Path,
     *,
     consent_bus: "RequestBus | None" = None,
-    interactive: bool = False,
 ) -> bool:
     """Return True if *command* is approved to run.
 
     Approval order (#2095):
       1. allowlist hit → approved.
       2. ``REYN_ACCEPT_HOOKS=1`` → record + approve (CI / non-TTY accept).
-      3. **interactive user surface available** (``consent_bus`` set +
-         ``interactive``) → prompt through the SAME ``RequestBus`` that ungated
-         permission-prompts use, so it lands in the TUI Pending tab and is
-         answerable there (instead of the stdin ``print``/``input`` below, which
-         is invisible / unanswerable under a Textual app).
-      4. **no interactive bus** → the pre-#2095 behavior, byte-for-byte: TTY →
-         stdin prompt; non-TTY → fail-closed. This is the degrade path for
-         headless ``reyn`` / CI / mcp-serve (``consent_bus is None``).
+      3. ``consent_bus`` set → prompt through the SAME ``RequestBus`` that
+         ungated permission-prompts use, so it lands in the TUI Pending tab and
+         is answerable there (instead of the stdin ``print``/``input`` below,
+         which is invisible / unanswerable under a Textual app). The dispatcher
+         passes a non-None ``consent_bus`` ONLY when the session has a live
+         intervention listener (= a surface that will actually answer), so plain
+         ``mcp-serve`` / headless (no listener) and ``reyn run`` on a TTY (no
+         listener) both arrive here with ``consent_bus=None`` and take step 4.
+      4. **no consent bus** → the pre-#2095 behavior, byte-for-byte: TTY → stdin
+         prompt; non-TTY → fail-closed.
     """
     entries = _load_allowlist(allowlist_path)
 
@@ -194,12 +195,12 @@ async def _check_consent(
         _record_approval(command, allowlist_path)
         return True
 
-    # Interactive surface → route the consent through the unified intervention
-    # bus (#2095). The allowlist remains the "always" persistence.
-    if consent_bus is not None and interactive:
+    # An answerable surface is attached → route the consent through the unified
+    # intervention bus (#2095). The allowlist remains the "always" persistence.
+    if consent_bus is not None:
         return await _prompt_consent_via_bus(command, allowlist_path, consent_bus)
 
-    # No interactive bus → preserve the exact pre-#2095 behavior below.
+    # No consent bus → preserve the exact pre-#2095 behavior below.
     is_tty = sys.stdin.isatty()
 
     if is_tty:
@@ -287,7 +288,6 @@ async def run_shell_hook(
     allowlist_path: Path | None = None,
     capture_stdout: bool = False,
     consent_bus: "RequestBus | None" = None,
-    interactive: bool = False,
 ) -> str | None:
     """Run a shell hook command under the sandbox + consent gate.
 
@@ -334,14 +334,13 @@ async def run_shell_hook(
         run; when ``False`` (``shell_exec``, default) ignore output and return
         ``None``.
     consent_bus:
-        The session ``RequestBus`` (#2095). When set AND ``interactive`` is True,
-        a not-yet-allowlisted command's consent prompt is routed through it (→ the
-        TUI Pending tab / the interactive surface) instead of the stdin prompt.
-        ``None`` (the default) preserves the pre-#2095 stdin / fail-closed gate.
-    interactive:
-        Whether an interactive user surface is attached (= ``not non_interactive``
-        at the Session). Gates the ``consent_bus`` path so headless / CI /
-        mcp-serve degrade to ``REYN_ACCEPT_HOOKS`` / fail-closed unchanged.
+        The session ``RequestBus`` (#2095), or ``None``. When set, a
+        not-yet-allowlisted command's consent prompt is routed through it (→ the
+        TUI Pending tab / the answering surface) instead of the stdin prompt. The
+        caller (``HookDispatcher``) passes a non-None bus ONLY when the session
+        has a live intervention listener; ``None`` (incl. headless / CI /
+        plain mcp-serve / ``reyn run`` with no listener) preserves the pre-#2095
+        stdin / fail-closed gate.
 
     Returns
     -------
@@ -364,7 +363,6 @@ async def run_shell_hook(
             command,
             resolved_allowlist,
             consent_bus=consent_bus,
-            interactive=interactive,
         )
     except Exception as exc:
         _log.error("shell-hook: consent check error for %r: %s", command, exc)

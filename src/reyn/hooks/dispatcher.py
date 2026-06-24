@@ -60,7 +60,7 @@ class HookDispatcher:
         sandbox_config: Any = None,
         sandbox_backend: Any = None,
         consent_bus: Any = None,
-        interactive: bool = False,
+        consent_gate: "Callable[[], bool] | None" = None,
     ) -> None:
         self._registry = registry
         self._put_inbox = put_inbox
@@ -68,12 +68,27 @@ class HookDispatcher:
         self._run_shell = run_shell
         self._sandbox_config = sandbox_config
         self._sandbox_backend = sandbox_backend
-        # #2095: the session RequestBus + interactivity flag, forwarded to the
-        # shell-hook consent gate so a not-yet-allowlisted command's prompt
-        # surfaces on the interactive surface (TUI Pending tab) instead of the
-        # stdin prompt. None / non-interactive → the runner's fail-closed path.
+        # #2095: the session RequestBus + a LIVE "is a listener attached?" gate,
+        # forwarded to the shell-hook consent gate so a not-yet-allowlisted
+        # command's prompt surfaces on the answering surface (TUI Pending tab)
+        # rather than the stdin prompt. ``_consent_bus_now()`` returns the bus
+        # ONLY when ``consent_gate()`` is true at dispatch time (a listener is
+        # registered — TUI/chainlit/A2A-override); otherwise None, so the runner
+        # takes its stdin / fail-closed path (plain mcp-serve, headless, and
+        # ``reyn run`` with no listener all hit this). Evaluated per-dispatch
+        # because listeners attach/detach after construction (TUI mount, A2A
+        # request windows).
         self._consent_bus = consent_bus
-        self._interactive = interactive
+        self._consent_gate = consent_gate
+
+    def _consent_bus_now(self) -> Any:
+        """The consent bus iff a live intervention listener is attached, else None."""
+        if self._consent_bus is None or self._consent_gate is None:
+            return None
+        try:
+            return self._consent_bus if self._consent_gate() else None
+        except Exception:  # noqa: BLE001 — a gate error must not break dispatch
+            return None
 
     def replace_registry(self, registry: HookRegistry) -> None:
         """Swap the live hook registry (#2073 S2b config hot-reload). ``dispatch()``
@@ -115,8 +130,7 @@ class HookDispatcher:
                 template_vars,
                 sandbox_backend=self._sandbox_backend,
                 sandbox_config=self._sandbox_config,
-                consent_bus=self._consent_bus,
-                interactive=self._interactive,
+                consent_bus=self._consent_bus_now(),
             )
         elif hook.shell_push is not None:
             # shell_push (#2069) — a shell command whose STDOUT is a JSON
@@ -132,8 +146,7 @@ class HookDispatcher:
                 sandbox_backend=self._sandbox_backend,
                 sandbox_config=self._sandbox_config,
                 capture_stdout=True,
-                consent_bus=self._consent_bus,
-                interactive=self._interactive,
+                consent_bus=self._consent_bus_now(),
             )
             resolved = _parse_shell_push(stdout)
             if resolved is not None:
