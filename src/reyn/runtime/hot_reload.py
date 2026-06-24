@@ -175,4 +175,30 @@ class HotReloader:
         return {"source": source, "applied": applied, "failed": failed}
 
 
-__all__ = ["HotReloader", "ReapplySeam"]
+# ── process-wide active HotReloader (#2073 S3) ──────────────────────────────
+# The LLM-op hooks-write tool reaches the reloader to ``request_reload`` after
+# writing .reyn/hooks.yaml. Mirrors ``set_active_scheduler`` / ``get_active_scheduler``
+# (cron). NOTE (multi-session caveat, same as cron's single-scheduler): this is the
+# last-registered session's reloader; a per-session route (via ToolContext) is a
+# noted beauty-follow-up, out of S3 scope.
+_active_hot_reloader: "HotReloader | None" = None
+
+
+def set_active_hot_reloader(reloader: "HotReloader | None") -> None:
+    """Register / unregister the process-wide active HotReloader (#2073 S3)."""
+    global _active_hot_reloader
+    _active_hot_reloader = reloader
+
+
+def get_active_hot_reloader() -> "HotReloader | None":
+    """Return the active HotReloader, or None when unset."""
+    return _active_hot_reloader
+
+
+__all__ = [
+    "HotReloader",
+    "ReapplySeam",
+    "validate_in_set",
+    "set_active_hot_reloader",
+    "get_active_hot_reloader",
+]

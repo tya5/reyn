@@ -270,9 +270,13 @@ class RouterHostAdapter:
         # → defaults (disabled-safe via the methods' guards).
         threat_scan: Any = None,
         contextual_permission: Any = None,  # #1827 S3: per-session capability narrowing → control-IR OpContext
+        hot_reloader: Any = None,  # #2073 S3: this session's HotReloader → tool ctx
     ) -> None:
         self._threat_scan = threat_scan
         self._contextual_permission = contextual_permission
+        # #2073 S3: exposed (public) so RouterLoop threads it onto the tool ctx, so a
+        # self-reload tool reloads THIS session (per-session, not a process global).
+        self.hot_reloader = hot_reloader
         self._session_id = session_id  # #1953 dynamic-wire: task.* CAS gate key
         self._task_backend = task_backend  # #1953 dynamic-wire: session-scoped Task backend
         self._hook_dispatcher = hook_dispatcher  # #1800 slice 5c: task_start/end dispatch
