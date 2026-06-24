@@ -1311,7 +1311,7 @@ class AgentRegistry:
         # (1401) operating on a closed connection. Re-point it to a SURVIVING session's
         # rewind backend (or None) now that the dropped session is out of the map. The
         # full fix (a per-session backend map so every survivor is restorable, not just
-        # one) is the broader per-session-Task-backend root, tracked separately.
+        # one) is the broader per-session-Task-backend root, tracked in #2128.
         if session is not None:
             tb = getattr(session, "task_backend", None)
             if tb is not None and tb is self._task_backend:
