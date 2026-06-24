@@ -406,19 +406,22 @@ class AgentRegistry:
             # unsupported); the real escape hatch for a genuine delete.
             import shutil
             shutil.rmtree(target)
+            # PR12: a hard-deleted agent would leave dangling topology references,
+            # so drop it from every topology (a team losing its leader / an
+            # emptied topology is removed entirely).
+            self._cascade_agent_removal(name)
         else:
             # #1954 Option A: archive-default. Keep generations in place (rewind
             # works) + tombstone with the archival WAL seq. Hidden from active
             # surfaces (list_active_names); still visible to the rewind/GC
-            # substrate (list_names). The WAL-window GC hard-purges it once the
-            # retention floor passes the archival seq (slice 2).
+            # substrate (list_names). PRESERVE topology membership — the agent dir
+            # survives (no dangling refs), so rewind-to-before-archive restores it
+            # to its ORG, not just its state; active topology ops (can_send /
+            # _default_topology) skip archived members so it stays dormant. The
+            # WAL-window GC hard-purges + cascades once the archival seq leaves the
+            # window (slice 2).
             seq = self._state_log.current_seq if self._state_log is not None else 0
             (target / ARCHIVED_MARKER).write_text(str(seq), encoding="utf-8")
-        # PR12: cascade — drop the agent from any topology it belongs to so we
-        # don't leave dangling references (an archived agent is not an active
-        # member). Topologies that would become invalid (team losing its leader,
-        # kind=team with no members) are removed entirely.
-        self._cascade_agent_removal(name)
 
     def recent_user_message(self, name: str) -> str:
         """Return the most recent user-role text from the agent's history, or "".
@@ -1280,9 +1283,16 @@ class AgentRegistry:
         (§24-faithful). Best-effort; never raises into the truncation path."""
         import shutil
         for name in self.list_names():
-            seq = self._archived_seq(name)
-            if seq is not None and seq < floor:
+            try:
+                seq = self._archived_seq(name)
+                if seq is None or seq >= floor:
+                    continue
                 shutil.rmtree(self._dir / name, ignore_errors=True)
+                # Now a permanent hard-delete → drop the (previously preserved)
+                # topology membership so no dangling reference is left behind.
+                self._cascade_agent_removal(name)
+            except Exception as e:  # noqa: BLE001 — best-effort; never fail caller
+                logger.warning("#1954 archived auto-purge failed for %r: %s", name, e)
 
     async def maybe_truncate_for_size(
         self, *, threshold_bytes: int | None = None,
@@ -1869,7 +1879,10 @@ class AgentRegistry:
         user-declared topology. Computed on demand; not persisted.
         """
         affiliated = self._affiliated_agents()
-        members = tuple(n for n in self.list_names() if n not in affiliated)
+        # #1954: archived agents don't actively participate — exclude them from
+        # the auto-default network (a user-topology member keeps its membership
+        # for rewind-recovery, but is skipped from active comm by can_send).
+        members = tuple(n for n in self.list_active_names() if n not in affiliated)
         return Topology(
             name=_DEFAULT_TOPOLOGY_NAME,
             kind="network",
@@ -1962,6 +1975,10 @@ class AgentRegistry:
         leaves `_default` and only the user topology's rule applies.
         """
         if from_agent == to_agent:
+            return False
+        # #1954: a soft-deleted (archived) agent does not actively participate,
+        # even though its topology membership is preserved for rewind-recovery.
+        if self.is_archived(from_agent) or self.is_archived(to_agent):
             return False
         candidates = list(self._topologies.values())
         candidates.append(self._default_topology())

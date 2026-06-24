@@ -20,6 +20,7 @@ from reyn.core.events.agent_snapshot import AgentSnapshot
 from reyn.core.events.state_log import StateLog
 from reyn.runtime.profile import AgentProfile
 from reyn.runtime.registry import AgentRegistry
+from reyn.runtime.topology import Topology
 
 
 def _no_factory(_profile):
@@ -129,13 +130,72 @@ async def test_archived_agent_auto_purged_once_floor_passes_archival_seq(tmp_pat
     await _put(log, "victim", "v1")        # seq 1
     await _put(log, "victim", "v2")        # seq 2 -> archival seq = 2
 
+    _seed_agent(tmp_path, "x")
+    reg.add_topology(Topology(name="squad", kind="network", members=("victim", "x")))
+
     reg.remove("victim")                    # archived at current_seq == 2
     victim_dir = tmp_path / ".reyn" / "agents" / "victim"
 
     # Floor at the archival seq -> still within the window -> retained.
     await reg._prune_generations_below(2)
     assert victim_dir.is_dir()
+    assert "victim" in reg.get_topology("squad").members   # membership preserved
 
-    # Floor past the archival seq -> soft-delete left the window -> purged.
+    # Floor past the archival seq -> soft-delete left the window -> purged + cascaded.
     await reg._prune_generations_below(3)
     assert not victim_dir.exists()
+    assert "victim" not in reg.get_topology("squad").members   # cascaded on purge
+
+
+@pytest.mark.asyncio
+async def test_archive_preserves_topology_membership_and_rewind_restores_org(tmp_path):
+    """Tier 2: archive PRESERVES topology membership (only purge cascades), so a
+    rewind-to-before-archive restores the agent to its ORG, not just its state —
+    topologies live outside the rewound agent dir, so a cascade-on-archive would
+    permanently org-orphan the agent even after a rewind."""
+    reg = _make_registry(tmp_path)
+    _seed_agent(tmp_path, "victim")
+    _seed_agent(tmp_path, "other")
+    reg.add_topology(Topology(name="squad", kind="network", members=("victim", "other")))
+    log = reg.state_log
+    await _put(log, "victim", "v1")        # seq 1
+    await _put(log, "victim", "v2")        # seq 2
+
+    reg.remove("victim")                    # archive (default)
+    assert "victim" in reg.get_topology("squad").members   # NOT cascaded
+
+    result = await reg.rewind_to(1)         # rewind to before the archive
+    assert "victim" in result["agents"]                    # state reconstructed
+    assert "victim" in reg.get_topology("squad").members   # + still in its org
+
+
+@pytest.mark.asyncio
+async def test_archived_member_skipped_from_active_comm(tmp_path):
+    """Tier 2: an archived agent is skipped from active comm (``permit`` False
+    both directions) even though its topology membership is preserved."""
+    reg = _make_registry(tmp_path)
+    _seed_agent(tmp_path, "victim")
+    _seed_agent(tmp_path, "other")
+    reg.add_topology(Topology(name="squad", kind="network", members=("victim", "other")))
+    assert reg.permit("other", "victim") is True     # live pair can communicate
+
+    reg.remove("victim")                                # archive
+
+    assert "victim" in reg.get_topology("squad").members   # membership preserved
+    assert reg.permit("other", "victim") is False        # but skipped (archived)
+    assert reg.permit("victim", "other") is False
+
+
+@pytest.mark.asyncio
+async def test_purge_cascades_topology_removal(tmp_path):
+    """Tier 2: an explicit purge (hard-delete) cascades the topology removal — the
+    agent is dropped from its topology (no dangling reference), unlike archive."""
+    reg = _make_registry(tmp_path)
+    _seed_agent(tmp_path, "victim")
+    _seed_agent(tmp_path, "other")
+    reg.add_topology(Topology(name="squad", kind="network", members=("victim", "other")))
+
+    reg.remove("victim", purge=True)
+
+    assert "victim" not in reg.get_topology("squad").members
+    assert "other" in reg.get_topology("squad").members
