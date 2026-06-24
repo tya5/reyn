@@ -59,6 +59,8 @@ class HookDispatcher:
         run_shell: RunShell = run_shell_hook,
         sandbox_config: Any = None,
         sandbox_backend: Any = None,
+        consent_bus: Any = None,
+        interactive: bool = False,
     ) -> None:
         self._registry = registry
         self._put_inbox = put_inbox
@@ -66,6 +68,12 @@ class HookDispatcher:
         self._run_shell = run_shell
         self._sandbox_config = sandbox_config
         self._sandbox_backend = sandbox_backend
+        # #2095: the session RequestBus + interactivity flag, forwarded to the
+        # shell-hook consent gate so a not-yet-allowlisted command's prompt
+        # surfaces on the interactive surface (TUI Pending tab) instead of the
+        # stdin prompt. None / non-interactive → the runner's fail-closed path.
+        self._consent_bus = consent_bus
+        self._interactive = interactive
 
     def replace_registry(self, registry: HookRegistry) -> None:
         """Swap the live hook registry (#2073 S2b config hot-reload). ``dispatch()``
@@ -107,6 +115,8 @@ class HookDispatcher:
                 template_vars,
                 sandbox_backend=self._sandbox_backend,
                 sandbox_config=self._sandbox_config,
+                consent_bus=self._consent_bus,
+                interactive=self._interactive,
             )
         elif hook.shell_push is not None:
             # shell_push (#2069) — a shell command whose STDOUT is a JSON
@@ -122,6 +132,8 @@ class HookDispatcher:
                 sandbox_backend=self._sandbox_backend,
                 sandbox_config=self._sandbox_config,
                 capture_stdout=True,
+                consent_bus=self._consent_bus,
+                interactive=self._interactive,
             )
             resolved = _parse_shell_push(stdout)
             if resolved is not None:
