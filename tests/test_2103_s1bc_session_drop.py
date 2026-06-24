@@ -108,26 +108,106 @@ async def test_session_spawned_at_or_before_cut_is_kept(tmp_path) -> None:
 # ── remove_session — the teardown seam ──────────────────────────────────────
 
 
-def test_remove_session_tears_down_spawned(tmp_path) -> None:
+@pytest.mark.asyncio
+async def test_remove_session_tears_down_spawned(tmp_path) -> None:
     """Tier 2: remove_session drops a spawned session in-memory + on-disk; get_session
     then None."""
     reg = _make_registry(tmp_path)
     reg._sessions.setdefault("worker", {})["s1"] = SimpleNamespace()
     d = _make_session_dir(reg, "worker", "s1")
-    assert reg.remove_session("worker", "s1") is True
+    assert await reg.remove_session("worker", "s1") is True
     assert reg.get_session("worker", "s1") is None
     assert not d.exists()
 
 
-def test_remove_session_refuses_main(tmp_path) -> None:
+@pytest.mark.asyncio
+async def test_remove_session_refuses_main(tmp_path) -> None:
     """Tier 2: the main session is the agent's — not removable via this seam."""
     reg = _make_registry(tmp_path)
     with pytest.raises(ValueError, match="cannot remove the main session"):
-        reg.remove_session("worker", "main")
+        await reg.remove_session("worker", "main")
 
 
-def test_remove_session_unknown_is_noop(tmp_path) -> None:
+@pytest.mark.asyncio
+async def test_remove_session_unknown_is_noop(tmp_path) -> None:
     """Tier 2: unknown (name, sid) → False (idempotent — the rewind drop can call it
     without pre-checking existence)."""
     reg = _make_registry(tmp_path)
-    assert reg.remove_session("worker", "never") is False
+    assert await reg.remove_session("worker", "never") is False
+
+
+# ── #2125 rewind-across-spawn: connection-close + atomicity ──────────────────
+
+
+@pytest.mark.asyncio
+async def test_rewind_restore_failure_does_not_drop_the_session_dir(tmp_path) -> None:
+    """Tier 2: #2125 atomicity — the destructive per-session rmtree is DEFERRED until the
+    substrate restores succeed. A restore-failure must NOT leave the dir dropped (tui's
+    'dirs dropped despite checkout failed'). Without the (b)-split (rmtree inline at drop),
+    the dir would be gone despite the failed restore → RED."""
+    reg = _make_registry(tmp_path)
+    _seed_agent(tmp_path, "worker")
+    victim_dir = _make_session_dir(reg, "worker", "task1")
+    log = reg.state_log
+    await _put(log, "worker", "pre")              # seq 1 (the rewind target)
+    await _spawn_event(log, "worker", "task1")    # seq 2 — spawned AFTER the cut
+
+    async def _boom(*, at_or_below: int) -> None:
+        raise RuntimeError("simulated restore failure")
+
+    # real callable (not a mock) — the restore raises mid-_materialize_rewind, AFTER the
+    # post-cut session was detached but BEFORE the deferred rmtree.
+    reg._restore_workspace_active = _boom  # type: ignore[method-assign]
+
+    with pytest.raises(RuntimeError, match="simulated restore failure"):
+        await reg.rewind_to(1)
+
+    assert victim_dir.exists(), (
+        "#2125: a failed restore must not commit the destructive session drop"
+    )
+
+
+@pytest.mark.asyncio
+async def test_remove_session_closes_backend_and_repoints_pointer(tmp_path) -> None:
+    """Tier 2: #2125 — remove_session CLOSES the dropped session's per-session Task-backend
+    (a separate sqlite connection to the agent's shared tasks.db), releasing its lock so a
+    later _restore_task_active file-swap doesn't hit 'database is locked' (busy_timeout=0),
+    AND re-points the registry's single _task_backend off the now-closed handle to a
+    surviving session's backend. Strip the close()/re-point → the survivor pointer dangles
+    to a closed connection."""
+    import sqlite3
+
+    from reyn.task.factory import create_task_backend
+
+    reg = _make_registry(tmp_path)
+    db = tmp_path / "tasks.db"
+    survivor_backend = create_task_backend("sqlite", path=str(db))
+    dropped_backend = create_task_backend("sqlite", path=str(db))  # 2nd connection, same file
+
+    async def _noop() -> None:
+        return None
+
+    main = SimpleNamespace(
+        task_backend=survivor_backend, cancel_inflight=_noop, await_quiescent=_noop,
+    )
+    spawned = SimpleNamespace(
+        task_backend=dropped_backend, cancel_inflight=_noop, await_quiescent=_noop,
+    )
+    reg._sessions["worker"] = {"main": main, "s1": spawned}
+    reg._task_backend = dropped_backend  # the single pointer → last-constructed (spawned)
+    _make_session_dir(reg, "worker", "s1")
+    # a captured generation on the SURVIVOR at an active WAL seq → _restore_task_active
+    # has real work that touches the backend's connection (else it no-ops without probing).
+    seq = await _put(reg.state_log, "worker", "x")
+    await survivor_backend.snapshot_generation(seq)
+
+    await reg.remove_session("worker", "s1")
+
+    # the dropped backend's connection is closed (a public DB read now raises) → lock released.
+    with pytest.raises(sqlite3.ProgrammingError):
+        await dropped_backend.get("any-task-id")
+    # the registry's single task-backend pointer was re-pointed off the now-closed dropped
+    # backend to the surviving session's backend: _restore_task_active restores the
+    # survivor's generation without error. A pointer still dangling to the closed dropped
+    # connection would raise ProgrammingError inside restore_to_seq.
+    await reg._restore_task_active(at_or_below=seq)
