@@ -109,6 +109,17 @@ See also: [Concepts: secret handling](../../concepts/runtime/secret-handling.md)
 | `skill_spawn_refused` | `_spawn_skill` rejected a skill not in the agent's `allowed_skills`. Payload: `reason="allowlist"`, `skill`, `agent` |
 | `skill_node_started` | A skill-graph node began executing (sub-skill node in a composite skill graph). Payload: `node` (node id), `skill_path`. |
 
+## Task management
+
+Events emitted by the task Control IR ops (`task.py`).
+
+| Kind | When | Key payload |
+|------|------|-------------|
+| `task_op` | Any mutating task operation completes (create / update-status / complete / abort) | `op` (op kind string), `task_id`, plus op-specific fields |
+| `task_readiness` | A task transitions to `ready` or `blocked` (OS re-derive changed readiness) | `task_id`, `to` (`"ready"` or `"blocked"`), `trigger` (task_id of the op that caused the change) |
+| `task_disposition` | Each task in an aborted subtree reaches its terminal disposition | `task_id`, `disposition` (`"aborted"`), `requester`, `origin`, `root` (task_id of the root abort op) |
+| `task_dependency_aborted` | A task's dependency reached a non-completed terminal; its parent session is notified to decide recovery | `task_id` (the terminal task), `disposition`, `parent_id`, `parent_session`, `dependents` (list of task_ids that are now stuck) |
+
 ## Agent-to-agent messaging
 
 | Kind | When | Key payload |
