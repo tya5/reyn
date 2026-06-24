@@ -1279,6 +1279,11 @@ class Session:
             # Lambda defers the lookup: ``self._interventions`` is constructed
             # below this point, and the gate is only called at dispatch time.
             consent_gate=lambda: self._interventions.has_active_listener(),
+            # #2095 P3: P6-event sink so an auto-run (allowlisted) shell hook
+            # surfaces in the events tab instead of being a silent side-effect.
+            # Lambda defers ``self._chat_events`` (assigned below this point);
+            # only called at dispatch time.
+            emit_event=lambda et, **d: self._chat_events.emit(et, **d),
         )
         # #2073 S4: track the RUNTIME (.reyn/cron.yaml) cron job names so the cron
         # reapply seam can unschedule jobs removed from the runtime file WITHOUT

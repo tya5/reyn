@@ -61,6 +61,7 @@ class HookDispatcher:
         sandbox_backend: Any = None,
         consent_bus: Any = None,
         consent_gate: "Callable[[], bool] | None" = None,
+        emit_event: "Callable[..., Any] | None" = None,
     ) -> None:
         self._registry = registry
         self._put_inbox = put_inbox
@@ -68,6 +69,10 @@ class HookDispatcher:
         self._run_shell = run_shell
         self._sandbox_config = sandbox_config
         self._sandbox_backend = sandbox_backend
+        # #2095 P3: P6-event sink for shell-hook executions, so an auto-run
+        # (allowlisted) shell hook surfaces in the events tab instead of being a
+        # silent side-effect. None → no emission (e.g. unit tests).
+        self._emit_event = emit_event
         # #2095: the session RequestBus + a LIVE "is a listener attached?" gate,
         # forwarded to the shell-hook consent gate so a not-yet-allowlisted
         # command's prompt surfaces on the answering surface (TUI Pending tab)
@@ -132,6 +137,7 @@ class HookDispatcher:
                 sandbox_config=self._sandbox_config,
                 consent_bus=self._consent_bus_now(),
                 hook_name=hook.name,
+                emit_event=self._emit_event,
             )
         elif hook.shell_push is not None:
             # shell_push (#2069) — a shell command whose STDOUT is a JSON
@@ -149,6 +155,7 @@ class HookDispatcher:
                 capture_stdout=True,
                 consent_bus=self._consent_bus_now(),
                 hook_name=hook.name,
+                emit_event=self._emit_event,
             )
             resolved = _parse_shell_push(stdout)
             if resolved is not None:
