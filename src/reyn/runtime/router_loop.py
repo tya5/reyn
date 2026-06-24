@@ -3469,6 +3469,13 @@ class RouterLoop:
         # Phase 3 step 2 (commit 649a426)
         "list_skills", "describe_skill", "list_agents", "describe_agent",
         "delegate_to_agent",
+        # #2120 (tui live-probe): session_spawn was registered + floored +
+        # advertised (build_tools B2b) but dispatch was missing here → the LLM
+        # called it and hit {"error": "unhandled tool: session_spawn"} (same
+        # advertised-but-not-dispatched class as read_tool_result / recall). Its
+        # registry handler (tools/session_spawn.py) delegates via
+        # RouterCallerState.spawn_session_fn → host.spawn_session.
+        "session_spawn",
         # Phase 3.5-D — zero-diff handlers (reyn_src + web).
         # reyn_src handlers are literal copies of RouterHostAdapter helpers;
         # web handlers delegate to op_runtime.web with a synthesized OpContext
