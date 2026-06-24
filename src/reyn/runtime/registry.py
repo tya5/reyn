@@ -72,6 +72,12 @@ _DEFAULT_SID = "main"
 # rewind/GC substrate (list_names stays the literal all-on-disk set).
 ARCHIVED_MARKER = ".archived"
 
+# #2103 S2: the agent-lifecycle WAL create-kind recognised by the as-of-cut DROP /
+# re-materialise primitive by default (session_spawned is added by e2e's S1bc).
+# A registry built with an explicit ``create_event_kinds`` overrides this (the
+# foundation tests do). Inert until S2b emits the events.
+_LIFECYCLE_CREATE_KINDS = frozenset({"agent_created"})
+
 # ADR-0038 1f: WAL-entry-kind → rewind-point boundary label. All inputs are
 # OS-level ``WAL_EVENT_KINDS`` (P7-safe — no skill/domain strings). The three
 # output labels are the D6 Phase-1 granularity (turn / plan-step / phase).
@@ -181,7 +187,10 @@ class AgentRegistry:
         # Empty by default → the primitive is a byte-identical no-op until
         # session_spawned (S1bc) / agent_created (S2) register their kinds. The
         # create-side inverse of the #1954 archive (delete-side).
-        self._create_event_kinds = create_event_kinds or frozenset()
+        self._create_event_kinds = (
+            create_event_kinds if create_event_kinds is not None
+            else _LIFECYCLE_CREATE_KINDS
+        )
         # FP-0043 Stage 3: the Registry holds N conversation Sessions per Agent.
         # Identity (the Agent value object, S2) is shared per name; the
         # conversation instances (= today's Session, inbox+run-loop+history)
@@ -1097,9 +1106,79 @@ class AgentRegistry:
         """#2103: tear down an agent created after the rewind cut. A post-cut agent
         has NO pre-cut generations → nothing to preserve → a clean drop (vs the
         #1954 archive HIDE on the delete side). rmtree subsumes the agent's sessions
-        (they nest under the agent dir). Best-effort; never raises into rewind."""
+        (they nest under the agent dir). Best-effort, but a failure is LOGGED (not
+        silently swallowed) so a stuck teardown is visible (#2114 review note)."""
         import shutil
-        shutil.rmtree(self._dir / name, ignore_errors=True)
+        try:
+            shutil.rmtree(self._dir / name)
+        except FileNotFoundError:
+            pass  # already gone — fine
+        except OSError as e:  # noqa: BLE001 — best-effort; never raise into rewind
+            logger.warning("#2103: drop of agent %r failed (left on disk): %s", name, e)
+
+    def _agent_lifecycle(
+        self,
+    ) -> "tuple[dict[str, tuple[int, dict]], dict[str, int], set[str]]":
+        """#2103 S2: one WAL scan → the agent-lifecycle state (created, archived,
+        purged):
+        - created: name → (create_seq, profile-payload) from ``agent_created`` (the
+          payload re-materialises the profile on a forward-checkout-past-drop).
+        - archived: name → latest ``agent_archived`` seq (the as-of-cut hide hinge).
+        - purged: names with an ``agent_purged`` event (fork A: permanent — never
+          re-materialised at any cut).
+        Empty without a WAL. Inert until S2b emits the events."""
+        created: dict[str, tuple[int, dict]] = {}
+        archived: dict[str, int] = {}
+        purged: set[str] = set()
+        if self._state_log is None:
+            return created, archived, purged
+        for entry in self._state_log.iter_from(0):
+            kind = entry.get("kind")
+            name = entry.get("name")
+            seq = entry.get("seq")
+            if not isinstance(name, str) or not isinstance(seq, int):
+                continue
+            if kind == "agent_created":
+                payload = entry.get("profile")
+                created[name] = (seq, payload if isinstance(payload, dict) else {})
+            elif kind == "agent_archived":
+                archived[name] = seq  # last wins = the latest archival
+            elif kind == "agent_purged":
+                purged.add(name)
+        return created, archived, purged
+
+    def _rematerialise_agent(self, name: str, profile_payload: dict) -> None:
+        """#2103 S2: re-create a dropped agent's profile from its ``agent_created``
+        record (the inverse of ``_drop_agent``), so a forward-checkout past the
+        create brings the agent back. Its per-agent generations were rmtree'd on the
+        drop, so the subsequent reconstruct replays the WAL from 0 for it — correct,
+        just unoptimised for this rare forward-checkout-past-drop path."""
+        prof = AgentProfile(
+            name=name,
+            role=str(profile_payload.get("role", "")),
+            created_at=str(profile_payload.get("created_at", "")),
+            allowed_skills=profile_payload.get("allowed_skills"),
+            allowed_mcp=profile_payload.get("allowed_mcp"),
+        )
+        prof.save(self._dir / name)
+
+    def _reconcile_archived_as_of_cut(
+        self, archived: "dict[str, int]", cut: int,
+    ) -> None:
+        """#2103 S2: rewrite each present agent's ``.archived`` tombstone to the
+        as-of-cut archived-state — archived iff its latest ``agent_archived`` seq ≤
+        cut. So rewind-before-archive → active (marker cleared); rewind-after →
+        archived (marker present). Inert when no ``agent_archived`` events exist
+        (the #1954 file-only tombstone is left untouched)."""
+        for name, aseq in archived.items():
+            target = self._dir / name
+            if not target.is_dir():
+                continue
+            marker = target / ARCHIVED_MARKER
+            if aseq <= cut:
+                marker.write_text(str(aseq), encoding="utf-8")
+            elif marker.is_file():
+                marker.unlink()
 
     async def _drop_session(self, name: str, sid: str) -> None:
         """#2103 seam: tear down a single spawned session created after the cut.
@@ -1135,19 +1214,31 @@ class AgentRegistry:
         # disk (this is shared with crash-recovery, where sessions are not loaded).
         agents: list[str] = []
         created_at = self._created_at_map()   # #2103: as-of-cut DROP input (empty → no-op)
+        # #2103 S2: agent-lifecycle reconstruction (re-materialise / hide / purge) —
+        # all inert until S2b emits the events.
+        ag_created, ag_archived, ag_purged = self._agent_lifecycle()
         # #2103: the existence cut is the rewind TARGET (``workspace_at_or_below`` =
         # target_n), NOT ``reconstruct_seq`` (= R, the reset-record head). An entity
         # whose create-seq > target didn't exist as-of-target → drop it. In crash
         # recovery ``workspace_at_or_below`` = head, so create-seq > head is never
         # true → no spurious drops (recovery reconstructs the present, not a rewind).
         drop_cut = workspace_at_or_below
+        # #2103 S2 re-materialise: an agent created ≤ cut, NOT purged, currently
+        # ABSENT (dropped at a prior cut) → re-create from its agent_created record
+        # so a forward-checkout-past-drop brings it back (the inverse of the drop).
+        for _rname, (_rcseq, _rpayload) in ag_created.items():
+            if _rname in ag_purged:
+                continue  # fork A: purged = permanent, never re-materialised
+            if _rcseq <= drop_cut and not (self._dir / _rname).is_dir():
+                self._rematerialise_agent(_rname, _rpayload)
+        agents: list[str] = []
         for name in self.list_names():
-            # An agent created after the cut → tear it down (subsumes its sessions,
-            # nested under the agent dir) instead of leaving an empty-snapshot
-            # orphan. Reversible: a forward-checkout past the create re-materialises
-            # it from the agent_created WAL record.
+            # An agent created after the cut — OR purged (fork A: permanent) — is
+            # torn down (subsumes its nested sessions) instead of reconstructed.
+            # Reversible (create case): a forward-checkout past the create
+            # re-materialises it from the agent_created WAL record (the pass above).
             agent_seq = created_at.get(("agent", name, ""))
-            if agent_seq is not None and agent_seq > drop_cut:
+            if name in ag_purged or (agent_seq is not None and agent_seq > drop_cut):
                 self._drop_agent(name)
                 continue
             for sid in self._discover_session_ids(name):
@@ -1173,6 +1264,9 @@ class AgentRegistry:
                 # main → bare name (back-compat with single-session callers);
                 # spawned → "name/sid".
                 agents.append(name if sid == _DEFAULT_SID else f"{name}/{sid}")
+        # #2103 S2: rewrite present agents' .archived tombstones to the as-of-cut
+        # archived-state (rewind-before-archive → active; rewind-after → archived).
+        self._reconcile_archived_as_of_cut(ag_archived, drop_cut)
         await self._restore_workspace_active(at_or_below=workspace_at_or_below)
         await self._restore_task_active(at_or_below=workspace_at_or_below)
         return agents

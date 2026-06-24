@@ -69,6 +69,14 @@ WAL_EVENT_KINDS = (
     # the abandoned future is retained as an inactive branch (reconstruct honors
     # the active path). A non-state marker — apply_events no-ops it.
     "rewind",
+    # NEW (#2103 S2) — agent-lifecycle events for rewind-reconstruction. The
+    # as-of-cut DROP primitive (#2114) + S2 reconstruct EXISTENCE from these:
+    # created → re-materialise (≤cut) or drop (>cut); archived → hide-as-of-cut;
+    # purged → permanent (out-of-time-travel, fork A — never re-materialised).
+    # apply_events no-ops them (existence-affecting, not snapshot STATE).
+    "agent_created",
+    "agent_archived",
+    "agent_purged",
 )
 
 
