@@ -102,6 +102,45 @@ def _chatsession_call_sites() -> list[str]:
     return sites
 
 
+def _has_factory_config_kw(call: "ast.Call") -> bool:
+    return any(k.arg == "factory_config" for k in call.keywords)
+
+
+def test_registry_gets_the_bundle_wherever_the_session_factory_does() -> None:
+    """Tier 2: #2093 — by-CONSTRUCTION on the AgentRegistry side too. A production
+    factory file calls ``build_scoped_chat_session(factory_config=…)``; it MUST also
+    pass ``factory_config`` to its ``AgentRegistry(…)`` — otherwise the registry's
+    uniform config args (workspace_capture / act_turn_capture /
+    delegation_capability_default — the EXACT arg #2093 protects) silently default.
+
+    The ``build_scoped_chat_session(factory_config=)`` call is the production-factory
+    signal, so the 60+ test/utility ``AgentRegistry`` callers (which never call
+    build_scoped_chat_session, and legitimately use the individual params / defaults)
+    are untouched. Falsifiable: a factory file that builds the bundle for the session
+    but omits it from its AgentRegistry fails here, naming file:line."""
+    offenders: list[str] = []
+    for py in sorted(_SRC.rglob("*.py")):
+        tree = ast.parse(py.read_text(encoding="utf-8"))
+        builds_factory_bundle = False
+        registry_calls: list[tuple[int, bool]] = []
+        for node in ast.walk(tree):
+            if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)):
+                continue
+            if node.func.id == "build_scoped_chat_session" and _has_factory_config_kw(node):
+                builds_factory_bundle = True
+            elif node.func.id == "AgentRegistry":
+                registry_calls.append((node.lineno, _has_factory_config_kw(node)))
+        if builds_factory_bundle:
+            rel = str(py.relative_to(_SRC))
+            offenders += [f"{rel}:{ln}" for ln, has_fc in registry_calls if not has_fc]
+    assert not offenders, (
+        "a production factory passes factory_config to build_scoped_chat_session but "
+        "NOT to its AgentRegistry — the registry's uniform config args (incl. "
+        "delegation_capability_default) silently default (#2093 drift class): "
+        f"{offenders}"
+    )
+
+
 def test_chatsession_constructed_only_in_scoped_factory() -> None:
     """Tier 2: #1402 — within src/reyn, ``Session(...)`` is constructed ONLY
     in scoped_session_factory.py; every frontend routes through
