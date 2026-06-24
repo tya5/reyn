@@ -186,10 +186,10 @@ See [sandbox](sandbox.md) for the full backend model and [permission model](perm
 Every shell hook run — including silently auto-approved runs — emits a `hook_shell_executed` P6 event. This event surfaces in the TUI **Events tab** (under the "tool" group) as:
 
 ```
-shell: <command> [rc=N]
+shell_exec: <command> [rc=N]
 ```
 
-The return code suffix is omitted when the command exits 0. This gives the operator a complete audit trail of shell-hook activity regardless of consent path.
+(`shell_push:` prefix for push-mode hooks.) The return code suffix is omitted when the command exits 0. This gives the operator a complete audit trail of shell-hook activity regardless of consent path.
 
 ## Configuration
 

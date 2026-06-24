@@ -71,7 +71,7 @@ role:
 
 ## `reyn agent rm <name> [--purge] [--yes]`
 
-**Archive** the agent by default (soft-delete, recoverable). Pass `--purge` for a hard-delete that destroys all rewind history.
+**Archive** the agent by default (soft-delete — data preserved, not destroyed). Pass `--purge` for a hard-delete that permanently destroys the agent directory and all rewind history.
 
 ```bash
 reyn agent rm researcher            # archive (prompted)
@@ -84,15 +84,14 @@ The `default` agent cannot be removed.
 
 ### Archive (default)
 
-The agent's `.reyn/agents/<name>/` directory is **kept in place** — PITR generations remain intact so `/rewind` can reconstruct the agent's state to any checkpoint before the archive, within the retention window.
+The agent's `.reyn/agents/<name>/` directory is **kept in place** — the data is not destroyed. This is the key distinction from `--purge`:
 
-What changes at archive time:
-
+- **PITR generations are preserved**: the WAL-derived checkpoint history survives, so the data is recoverable.
+- **Topology membership is preserved**: no cascade fires. The agent's team/network membership is not removed.
 - A tombstone marker is written recording the archival WAL seq (the WAL-window GC hinge).
-- The agent is **hidden from active surfaces**: `reyn agent list`, the TUI Agents tab, default-topology routing, and A2A `can_send` checks all skip archived agents.
-- **Topology membership is preserved** — no cascade fires. When rewind reconstructs the agent, it returns to its org membership, not just its state.
+- The agent is **hidden from active surfaces**: `reyn agent list`, the TUI Agents tab, default-topology routing, and A2A `can_send` checks all skip archived agents. It is dormant, not destroyed.
 
-**WAL-window auto-purge**: when the WAL retention window advances past the archival seq, the archived agent's directory is hard-deleted automatically (the soft-delete left the rewind window — there is nothing left to recover). At that point the topology cascade fires and removes the agent from all topologies.
+**WAL-window auto-purge**: when the WAL retention window advances past the archival seq, the archived agent's directory is hard-deleted automatically (the soft-delete left the rewind window — the data is no longer recoverable). At that point the topology cascade fires and removes the agent from all topologies.
 
 ### Purge (`--purge`)
 
