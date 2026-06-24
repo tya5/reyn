@@ -114,6 +114,8 @@ class RouterHostAdapter:
         memory: Any,                            # MemoryService
         journal: Any,                           # SnapshotJournal
         agent_registry: Any,                    # AgentRegistry | None
+        record_spawned_task: "Callable[[str, str], None] | None" = None,  # #2103 S1bc-exec
+        live_session_id_fn: "Callable[[], str | None] | None" = None,     # #2103 S1bc-exec
         skill_enumerate_fn: Callable[[set], list],
         agent_workspace_dir: Path,
         # File op callbacks
@@ -314,6 +316,8 @@ class RouterHostAdapter:
         self._memory = memory
         self._journal = journal
         self._registry = agent_registry
+        self._record_spawned_task = record_spawned_task   # #2103 S1bc-exec
+        self._live_session_id_fn = live_session_id_fn      # #2103 S1bc-exec
         self._skill_enumerate_fn = skill_enumerate_fn
         self._workspace_dir = Path(agent_workspace_dir)
         # File callbacks
@@ -931,9 +935,30 @@ class RouterHostAdapter:
                 "session_spawn requires a registry (multi-session host) — unavailable "
                 "in this context."
             )
+        # #2103 S1bc-exec GAP A guard: only the MAIN session may spawn. A spawned
+        # (non-main) session's result would route back by AGENT NAME to the agent's main
+        # session — NOT to this spawning sid — i.e. a silent misroute. Routing to a
+        # specific (agent, sid) is the first-class non-main addressing tracked in #2130;
+        # until then, refuse rather than misroute. Read the LIVE sid (the constructor's
+        # cached session_id is stale for spawned sessions, stamped post-construction).
+        live_sid = self._live_session_id_fn() if self._live_session_id_fn else self._session_id
+        if live_sid not in (None, "main"):  # "main" = registry._DEFAULT_SID (avoid the import cycle)
+            return {
+                "status": "error",
+                "kind": "nested_spawn_unsupported",
+                "error": (
+                    "session_spawn is only available from the main session: a spawned "
+                    "session's result can't yet route back to a non-main spawner "
+                    "(first-class (agent,sid) addressing — #2130)."
+                ),
+            }
         sid = await self._registry.spawn_session_recorded(
             self._agent_name, mode=mode, narrowing=narrowing,
         )
+        # #2103 S1bc-exec: record sid→task BEFORE submitting, so a fast result finds the
+        # trusted task on return (else it falls back to the kind=agent rendering).
+        if self._record_spawned_task is not None:
+            self._record_spawned_task(sid, request)
         session = self._registry.ensure_session_running(self._agent_name, sid)
         if session is not None:
             await session.submit_agent_request(

@@ -7,6 +7,7 @@ import logging
 import re
 import time
 import uuid
+from collections import OrderedDict
 from typing import Any, Awaitable, Callable, Literal
 
 logger = logging.getLogger(__name__)
@@ -91,6 +92,12 @@ ROUTER_SKILL_NAME = "skill_router"
 # converges in 1-2 rounds; the cap is purely a guard against a pathological spin
 # (logged, never silently looped).
 _QUIESCE_MAX_ROUNDS = 50
+
+# #2103 S1bc-exec: cap on the in-flight spawned-task correlation record (sid → task).
+# Each entry is evicted when its result routes back; this cap bounds the pathological
+# case where results never arrive (spawned crash / lost reply) so the map can't grow
+# unbounded. Holds only pending spawns whose result hasn't returned.
+_MAX_SPAWNED_TASKS = 256
 
 # Localized user-facing messages for the router retry-exhausted fallback (F8).
 # Keys are BCP-47-style language codes matching config `output_language`.
@@ -1339,6 +1346,13 @@ class Session:
         self.history: list[ChatMessage] = []
         self.inbox: asyncio.Queue = asyncio.Queue()
         self.outbox: asyncio.Queue = asyncio.Queue()
+        # #2103 S1bc-exec: sid → original-task record for sessions THIS session spawned.
+        # When a spawned session's result routes back, the result header renders
+        # ``task=<the spawner's OWN request>`` from THIS trusted record (keyed by the
+        # spawned sid) — never the spawned session's echo (which a compromised sub-session
+        # could forge into trusted framing). Bounded-by-construction: evicted on result
+        # arrival; a max-size cap (evict-oldest) caps a never-arriving result.
+        self._spawned_tasks: "OrderedDict[str, str]" = OrderedDict()
         # Detached by default — AgentRegistry.attach() flips this on. Outbox
         # `status`/`trace` emissions are dropped while detached so background
         # agents don't accumulate display noise.
@@ -1575,6 +1589,12 @@ class Session:
             memory=self._memory,
             journal=self._journal,
             agent_registry=self._registry,
+            # #2103 S1bc-exec: record a spawned session's sid→task (the trusted result
+            # header source) + read this session's LIVE sid (the cached session_id above
+            # is stale for spawned sessions, stamped post-construction) for the non-main
+            # spawn guard.
+            record_spawned_task=self.record_spawned_task,
+            live_session_id_fn=lambda: self._session_id,
             skill_enumerate_fn=enumerate_available_skills,
             agent_workspace_dir=self.workspace_dir,
             file_read=self._file_read,
@@ -1815,6 +1835,11 @@ class Session:
             set_router_loop_delegations=lambda v: setattr(self, "_router_loop_delegations", v),
             get_router_loop_agent_replies=lambda: self._router_loop_agent_replies,
             set_router_loop_agent_replies=lambda v: setattr(self, "_router_loop_agent_replies", v),
+            # #2103 S1bc-exec: read this session's LIVE sid (spawned sessions are stamped
+            # post-construction, so a cached value would be stale) for the responder_sid
+            # tag; + the trusted spawned-task lookup for rendering a returning result.
+            session_id_fn=lambda: self._session_id,
+            lookup_spawned_task=self.lookup_and_evict_spawned_task,
         )
 
         # session.py refactor PR-1: ContextBudgetAdvisor owns the five
@@ -2782,18 +2807,30 @@ class Session:
     async def _a2a_send_response(
         self,
         to: str, from_agent: str, response: str, depth: int, chain_id: str,
+        responder_sid: "str | None" = None,
     ) -> None:
         """Transport callback: submit agent_response to ``to``.
 
         Silently drops when the target no longer exists (race on shutdown).
+        ``responder_sid`` (#2103 S1bc-exec) carries the responder's own sid when it is a
+        spawned session, so the receiver can correlate the result to its spawn record.
         """
-        if self._registry is None or not self._registry.exists(to):
+        if self._registry is None:
+            # #2103 S1bc-exec hardening: a result-routing path that silently no-ops on an
+            # unwired registry is a bad failure mode — fail LOUD (logged) so a mis-wiring
+            # surfaces. Production wires the registry; this guards the regression.
+            logger.warning(
+                "a2a response to %r dropped: session has no registry wired (mis-wiring; "
+                "the result-routing path is inert)", to,
+            )
+            return
+        if not self._registry.exists(to):
             return
         target = self._registry.get_or_load(to)
         await self._registry.ensure_running(to)
         await target.submit_agent_response(
             from_agent=from_agent, response=response,
-            depth=depth, chain_id=chain_id,
+            depth=depth, chain_id=chain_id, responder_sid=responder_sid,
         )
 
     def load_history(self) -> None:
@@ -2839,11 +2876,36 @@ class Session:
 
     async def submit_agent_response(
         self, *, from_agent: str, response: str, depth: int, chain_id: str,
+        responder_sid: "str | None" = None,
     ) -> None:
         await self._put_inbox("agent_response", {
             "from_agent": from_agent, "response": response, "depth": depth,
             "chain_id": chain_id,
+            # #2103 S1bc-exec: the responder's own session id when it is a SPAWNED
+            # (non-main) session — the correlation key the receiver matches against its
+            # _spawned_tasks record to render the trusted "task=" header.
+            "responder_sid": responder_sid,
         })
+
+    # ── #2103 S1bc-exec: spawned-task correlation record (bounded) ──────────────
+
+    def record_spawned_task(self, sid: str, task: str) -> None:
+        """Record a session-I-spawned's ``sid → task`` BEFORE submitting it, so when its
+        result routes back the header renders ``task=<my OWN request>`` from this TRUSTED
+        record (not the spawned session's echo). Bounded: evicted on result arrival;
+        ``_MAX_SPAWNED_TASKS`` cap evicts oldest so a never-arriving result can't grow it."""
+        self._spawned_tasks[sid] = task
+        self._spawned_tasks.move_to_end(sid)
+        while len(self._spawned_tasks) > _MAX_SPAWNED_TASKS:
+            self._spawned_tasks.popitem(last=False)  # evict oldest in-flight
+
+    def lookup_and_evict_spawned_task(self, sid: "str | None") -> "str | None":
+        """The TRUSTED task for a spawned ``sid``, or None (not one I spawned / already
+        consumed). Evict-on-read — a result is consumed once; a spoofed/unknown sid → None
+        → the caller renders the safe ``kind=agent`` fallback (still fenced)."""
+        if not sid:
+            return None
+        return self._spawned_tasks.pop(sid, None)
 
     async def shutdown(self) -> None:
         # `shutdown` is a control signal, not recovery state — skip WAL/snapshot.
