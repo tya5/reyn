@@ -529,13 +529,15 @@ class SqliteTaskBackend:
         first) so the caller can emit a disposition event per task (UP-notify,
         2b-2); ``[]`` if no such task."""
         async with self._lock:
-            if self._conn.execute(
-                "SELECT 1 FROM tasks WHERE task_id=?", (task_id,)
-            ).fetchone() is None:
+            origin_row = self._conn.execute(
+                "SELECT origin FROM tasks WHERE task_id=?", (task_id,)
+            ).fetchone()
+            if origin_row is None:
                 return []
+            root_external = origin_row["origin"] == TaskOrigin.EXTERNAL.value
             # BFS the sub-tree (this task + all descendants via parent_id;
             # acyclic by construction, with a guard).
-            subtree: list[str] = [task_id]
+            to_abort: list[str] = [task_id]
             frontier = [task_id]
             while frontier:
                 pid = frontier.pop()
@@ -543,18 +545,43 @@ class SqliteTaskBackend:
                     "SELECT task_id FROM tasks WHERE parent_id=?", (pid,)
                 ).fetchall():
                     child = row["task_id"]
-                    if child not in subtree:
-                        subtree.append(child)
+                    if child not in to_abort:
+                        to_abort.append(child)
                         frontier.append(child)
+            # #2107 S2 (origin-split): an EXTERNAL terminal's dep-DAG DEPENDENTS can't be
+            # recovered — the external requester gives up (no in-session re-wire; that is
+            # the SELF path's requester wake, §16 S1). Abort them too, transitively (a dep
+            # graph is single-origin, so they are all EXTERNAL); the webhook sweep then
+            # propagates each archived dependent to the A2A client. The cascade lives in
+            # this ONE seam so every abort caller gets it by construction (the A2A cancel
+            # endpoint + /tasks kill abort the backend directly). Done as an in-lock BFS
+            # (NOT a recursive self.abort — the lock is not re-entrant); the non-terminal
+            # filter + the in-set guard bound it (no cycle / double-abort).
+            if root_external:
+                dep_frontier = list(to_abort)
+                while dep_frontier:
+                    tid = dep_frontier.pop()
+                    for row in self._conn.execute(
+                        "SELECT task_id FROM task_links WHERE depends_on=?", (tid,)
+                    ).fetchall():
+                        dep = row["task_id"]
+                        if dep in to_abort:
+                            continue
+                        srow = self._conn.execute(
+                            "SELECT status FROM tasks WHERE task_id=?", (dep,)
+                        ).fetchone()
+                        if srow is not None and srow["status"] not in _TERMINAL_VALUES:
+                            to_abort.append(dep)
+                            dep_frontier.append(dep)
             self._conn.execute("BEGIN IMMEDIATE")
-            for tid in subtree:
+            for tid in to_abort:
                 self._conn.execute(
                     "UPDATE tasks SET status=?, updated_at=? WHERE task_id=?",
                     (TaskState.ARCHIVED.value, _now_iso(), tid),
                 )
                 self._emit(tid, "aborted", root=task_id)
             self._conn.commit()
-            return [t for t in (self._fetch(tid) for tid in subtree) if t is not None]
+            return [t for t in (self._fetch(tid) for tid in to_abort) if t is not None]
 
 
     async def set_result(self, task_id: str, result: str) -> Task | None:

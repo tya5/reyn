@@ -30,6 +30,7 @@ from reyn.task.model import (
     Task,
     TaskCycleError,
     TaskDepNotFoundError,
+    TaskOrigin,
     TaskState,
     _now_iso,
 )
@@ -379,6 +380,7 @@ class InMemoryTaskBackend:
         # disposition event per task (UP-notify, 2b-2); [] if no such task.
         if task_id not in self._tasks:
             return []
+        root_origin = self._tasks[task_id].origin
         subtree: list[str] = [task_id]
         frontier = [task_id]
         while frontier:
@@ -392,6 +394,21 @@ class InMemoryTaskBackend:
             self._tasks[tid].status = TaskState.ARCHIVED
             self._tasks[tid].updated_at = _now_iso()
             aborted.append(self._tasks[tid])
+        # #2107 S2 (origin-split): an EXTERNAL terminal's dep-DAG DEPENDENTS can't be
+        # recovered — the external requester gives up (no in-session re-wire; that is the
+        # SELF path's requester wake, §16 S1). So abort them too, transitively: each
+        # dependent's own abort recurses for ITS dependents (a dep graph is single-origin
+        # — a dependency lives within one decomposition — so they are all EXTERNAL). The
+        # webhook sweep then propagates every archived dependent to the A2A client. The
+        # cascade lives HERE (one seam) so EVERY abort caller gets it by construction (the
+        # A2A cancel endpoint + /tasks kill abort the backend directly, bypassing the op
+        # layer). Bounded by the terminal-state idempotence (an already-archived task is
+        # skipped → no cycle / double-abort).
+        if root_origin is TaskOrigin.EXTERNAL:
+            for t in list(aborted):
+                for dep in await self.dependents(t.task_id):
+                    if dep.status not in TERMINAL_STATES:
+                        aborted.extend(await self.abort(dep.task_id, reason=reason))
         return aborted
 
     async def set_result(self, task_id: str, result: str) -> Task | None:

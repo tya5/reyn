@@ -357,7 +357,19 @@ async def _route_terminal_to_requester(
     to the task's status value (the abort path) when not given explicitly. The wake is via
     ``OpContext.task_waker`` (None = no-op stub — only the P6 audit fires)."""
     if terminal_task.origin is not TaskOrigin.SELF:
-        return  # external → the webhook channel (§16 S2), not an internal session wake
+        # §16 S2 (origin-split): an EXTERNAL terminal gets no in-session recovery wake (no
+        # session to wake — the requester is an A2A/webhook stakeholder). Its stuck dep-DAG
+        # dependents can't be recovered, so abort them → the webhook sweep propagates each
+        # archived dependent to the A2A client. backend.abort's own EXTERNAL cascade then
+        # handles the transitive descendants. This covers the failed / cap_exceeded
+        # triggers (which mark X terminal WITHOUT calling backend.abort on X); the abort /
+        # cancel / kill triggers already feed backend.abort directly, so by the time we
+        # reach here on the abort path X's dependents are already archived → no-op
+        # (idempotent via the terminal-state filter).
+        for dep in await backend.dependents(terminal_task.task_id):
+            if dep.status not in TERMINAL_STATES:
+                await backend.abort(dep.task_id)
+        return
     disp = disposition or terminal_task.status.value
     deps_on_it = await backend.dependents(terminal_task.task_id)
     stuck = [d for d in deps_on_it if d.status not in TERMINAL_STATES]
