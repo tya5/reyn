@@ -31,6 +31,7 @@ from reyn.task.model import (
     TaskCycleError,
     TaskDepNotFoundError,
     TaskOrigin,
+    TaskRequesterKind,
     TaskState,
     _now_iso,
 )
@@ -381,12 +382,25 @@ class InMemoryTaskBackend:
         if task_id not in self._tasks:
             return []
         root_origin = self._tasks[task_id].origin
+        # DOWN-cascade closure: archive this task + every owned/decomposed descendant.
+        # An edge child→pid is followed when EITHER (a) parent_id==pid (the §12
+        # decomposition tree, legacy; removed in slice C) OR (b) requester==pid AND
+        # requester_kind==TASK (the §16/§18 ownership forest — a task-as-request owns
+        # its sub-tasks). The recursive sub-tasks (slice A/B1/B1.5) are
+        # requester=pid / parent_id=None, so (b) is what catches them — (a) alone
+        # misses them. The ``requester_kind==TASK`` guard is REQUIRED: a session
+        # routing-key (spawned-session uuid) can collide with a task-id uuid, so a
+        # bare requester==pid would wrongly cascade a session-requester task; the
+        # marker disambiguates → collision-safe. Acyclic (one requester/task, set at
+        # create to an earlier task) + the in-set guard → bounded, no double-abort.
         subtree: list[str] = [task_id]
         frontier = [task_id]
         while frontier:
             pid = frontier.pop()
             for tid, t in self._tasks.items():
-                if t.parent_id == pid and tid not in subtree:
+                owned = (t.requester == pid
+                         and t.requester_kind is TaskRequesterKind.TASK)
+                if (t.parent_id == pid or owned) and tid not in subtree:
                     subtree.append(tid)
                     frontier.append(tid)
         aborted: list[Task] = []

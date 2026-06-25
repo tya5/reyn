@@ -567,14 +567,26 @@ class SqliteTaskBackend:
             if origin_row is None:
                 return []
             root_external = origin_row["origin"] == TaskOrigin.EXTERNAL.value
-            # BFS the sub-tree (this task + all descendants via parent_id;
-            # acyclic by construction, with a guard).
+            # BFS the down-cascade closure: this task + every owned/decomposed
+            # descendant. An edge child→pid is followed when EITHER parent_id==pid
+            # (the §12 decomposition tree, legacy; removed in slice C) OR
+            # requester==pid AND requester_kind='task' (the §16/§18 ownership forest —
+            # a task-as-request owns its sub-tasks). The recursive sub-tasks (slice
+            # A/B1/B1.5) are requester=pid / parent_id=NULL, so the ownership edge is
+            # what catches them — parent_id alone misses them. The
+            # ``requester_kind='task'`` guard is REQUIRED: a session routing-key can
+            # collide with a task-id uuid, so a bare requester=pid would wrongly
+            # cascade a session-requester task; the marker disambiguates →
+            # collision-safe. Acyclic (one requester/task → earlier task) + the in-set
+            # guard → bounded. In-lock BFS (NOT recursive — the lock is not re-entrant).
             to_abort: list[str] = [task_id]
             frontier = [task_id]
             while frontier:
                 pid = frontier.pop()
                 for row in self._conn.execute(
-                    "SELECT task_id FROM tasks WHERE parent_id=?", (pid,)
+                    "SELECT task_id FROM tasks "
+                    "WHERE parent_id=? OR (requester=? AND requester_kind='task')",
+                    (pid, pid),
                 ).fetchall():
                     child = row["task_id"]
                     if child not in to_abort:
