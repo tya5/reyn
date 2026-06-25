@@ -100,8 +100,15 @@ async def test_tasks_list_includes_dynamic_tasks():
 
 
 @pytest.mark.asyncio
-async def test_tasks_list_shows_both_skill_runs_and_dynamic_tasks():
-    """Tier 2: both sections render when skill runs AND dynamic tasks exist."""
+async def test_tasks_list_shows_dynamic_tasks_only_skill_runs_removed(monkeypatch):
+    """Tier 2: skill-runs section is removed (#2104 PR2); dynamic tasks still
+    render when task_backend has tasks.
+
+    #2104 PR2 removed the skill-runs section from ``_list_tasks``: with
+    synchronous dispatch, ``running_skills`` only holds auto-resumed skills
+    whose lifecycle is managed by the TUI — there is no separate ``/tasks``
+    display concern for them.  Dynamic-task lines remain the live output.
+    """
     backend = InMemoryTaskBackend()
     await _seed_tasks(backend)
     session = _CaptureSession(
@@ -112,17 +119,21 @@ async def test_tasks_list_shows_both_skill_runs_and_dynamic_tasks():
     await _list_tasks(session)
 
     out = session.replies[-1]
-    # Skill-run section still present (existing behavior preserved).
-    assert "Skills:" in out
-    assert "run-skill-xyz" in out
-    # Dynamic-task section added alongside it.
+    # Dynamic-task section is present.
     assert "Tasks:" in out
     assert "build" in out
+    # Skill-runs section is gone (#2104 PR2).
+    assert "Skills:" not in out
+    assert "run-skill-xyz" not in out
 
 
 @pytest.mark.asyncio
-async def test_tasks_list_no_backend_falls_back_to_skill_only():
-    """Tier 2: ``task_backend`` is None → no dynamic section, skill runs only."""
+async def test_tasks_list_no_backend_shows_empty(monkeypatch):
+    """Tier 2: ``task_backend`` is None and no dynamic tasks → empty message.
+
+    #2104 PR2 removed the skill-runs section; with no task backend and
+    no dynamic tasks, ``_list_tasks`` emits the "(no running tasks)" message.
+    """
     session = _CaptureSession(
         running_skills={"run-skill-xyz": object()},
         task_backend=None,
@@ -131,9 +142,8 @@ async def test_tasks_list_no_backend_falls_back_to_skill_only():
     await _list_tasks(session)
 
     out = session.replies[-1]
-    assert "Skills:" in out
-    assert "run-skill-xyz" in out
-    assert "Tasks:" not in out
+    assert "(no running tasks)" in out
+    assert "Skills:" not in out
 
 
 @pytest.mark.asyncio

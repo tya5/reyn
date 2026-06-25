@@ -188,16 +188,16 @@ async def test_run_one_iteration_returns_false_on_shutdown(tmp_path):
 async def test_run_one_iteration_dispatches_all_known_kinds(tmp_path, monkeypatch):
     """Tier 2: run_one_iteration dispatches each inbox kind to its handler.
 
-    All five non-shutdown kinds must reach their respective handlers.
+    All non-shutdown kinds must reach their respective handlers.
+    Note: ``skill_completed`` was removed in #2104 PR2 — skills are now
+    synchronous (run_skill_awaitable), so no background completion inbox
+    messages are generated.
     """
     session = _make_session(tmp_path)
     dispatched: list[str] = []
 
     async def _record_user(self, text, *, chain_id):
         dispatched.append("user")
-
-    async def _record_skill_completed(self, payload):
-        dispatched.append("skill_completed")
 
     async def _record_agent_request(self, payload):
         dispatched.append("agent_request")
@@ -206,20 +206,17 @@ async def test_run_one_iteration_dispatches_all_known_kinds(tmp_path, monkeypatc
         dispatched.append("agent_response")
 
     monkeypatch.setattr(Session, "_handle_user_message", _record_user)
-    monkeypatch.setattr(Session, "_handle_skill_completed", _record_skill_completed)
     monkeypatch.setattr(Session, "_handle_agent_request", _record_agent_request)
     monkeypatch.setattr(Session, "_handle_agent_response", _record_agent_response)
 
-    for kind in ("user", "skill_completed", "agent_request", "agent_response"):
+    for kind in ("user", "agent_request", "agent_response"):
         await session._put_inbox(kind, {"text": "x"})
 
-    for _ in range(4):
+    for _ in range(3):
         result = await session.run_one_iteration()
         assert result is True
 
-    assert set(dispatched) == {
-        "user", "skill_completed", "agent_request", "agent_response"
-    }
+    assert set(dispatched) == {"user", "agent_request", "agent_response"}
 
 
 @pytest.mark.asyncio

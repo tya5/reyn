@@ -1,34 +1,26 @@
-"""/tasks slash command — unified async-task view (FP-0012 Component D).
+"""/tasks slash command — dynamic-task view (FP-0012 Component D).
 
-Spans both async-task families in one view (#2035, restoring the FP-0012
-"unified" intent after the planner deletion #2018):
-  - **skill runs** — long-running ``@sub_skill`` / ``run_skill`` executions
-  - **dynamic tasks** — the Tasks the chat LLM creates via ``task__create``
-    (#2026/#2028/#2034), tracked in the session-scoped Task backend.
+Shows dynamic tasks — the Tasks the chat LLM creates via ``task__create``
+(#2026/#2028/#2034), tracked in the session-scoped Task backend.
 
 Sub-commands:
-  /tasks                          — list running skill runs + dynamic tasks
+  /tasks                          — list dynamic tasks
   /tasks list                     — same as `/tasks`
-  /tasks status <run_id_prefix>   — show current phase + elapsed time + last event
-  /tasks kill   <run_id_prefix>   — cancel a specific task
+  /tasks status <task_id_prefix>  — show task state + deps
+  /tasks kill   <task_id_prefix>  — abort a specific task
 
 Reads from existing infrastructure (= no new state required):
-  - ``session.running_skills`` / ``running_skills_started_at`` /
-    ``running_skills_chain`` for skill runs (PR22)
-  - SkillRegistry per-skill snapshot for current_phase
   - ``session.task_backend`` for dynamic tasks (#1953 slice R); ``None`` when
-    the session carries no backend, in which case the dynamic section is empty.
+    the session carries no backend, in which case the section is empty.
   - The P6 events log via ``self._chat_events`` is NOT consulted here (= keeping
     the slash cheap and synchronous; users wanting raw events run ``reyn events``).
 
 The legacy ``/skill list`` and ``/skill discard`` commands continue to work as
-before (= unchanged); ``/tasks`` is the entry point for running skill runs.
-This mirrors the FP-0012 proposal's Component D.
+before (= unchanged).
 """
 from __future__ import annotations
 
 import asyncio
-import time
 from typing import TYPE_CHECKING
 
 from reyn.interfaces.slash import reply, reply_error, slash
@@ -38,17 +30,17 @@ if TYPE_CHECKING:
 
 
 _USAGE = (
-    "Usage: /tasks [list|status <run_id>|kill <run_id>]\n"
-    "  list              — show running skill runs + dynamic tasks. Default.\n"
-    "  status <prefix>   — show current phase + elapsed for a specific task\n"
-    "  kill   <prefix>   — cancel a specific task"
+    "Usage: /tasks [list|status <task_id>|kill <task_id>]\n"
+    "  list              — show dynamic tasks. Default.\n"
+    "  status <prefix>   — show task state + deps\n"
+    "  kill   <prefix>   — abort a specific task"
 )
 
 
 @slash(
     "tasks",
-    summary="Unified view of running async tasks (skill runs + dynamic tasks)",
-    usage="/tasks [list|status <run_id>|kill <run_id>]",
+    summary="View of dynamic tasks (task__create work-units)",
+    usage="/tasks [list|status <task_id>|kill <task_id>]",
 )
 async def tasks_cmd(session: "Session", args: str) -> None:
     parts = args.strip().split(maxsplit=1)
@@ -68,37 +60,20 @@ async def tasks_cmd(session: "Session", args: str) -> None:
 # ── helpers ──────────────────────────────────────────────────────────────────
 
 
-def _format_elapsed(seconds: float) -> str:
-    """Render a monotonic duration in a human-friendly form."""
-    if seconds < 60:
-        return f"{seconds:.0f}s"
-    minutes, secs = divmod(int(seconds), 60)
-    if minutes < 60:
-        return f"{minutes}m {secs:02d}s"
-    hours, mins = divmod(minutes, 60)
-    return f"{hours}h {mins:02d}m"
-
-
 async def _resolve_task(
     session: "Session", prefix: str,
 ) -> tuple[str | None, str, list[str]]:
-    """Resolve a run_id / task_id from a prefix across both task families.
+    """Resolve a task_id from a prefix across dynamic tasks.
 
     Returns ``(resolved_id, kind, candidates)``:
-      - ``resolved_id`` is non-None iff exactly one match exists across BOTH
-        skill runs and dynamic tasks.
-      - ``kind`` is "skill" or "task" or "" (when ambiguous / unmatched).
-      - ``candidates`` lists every match (``skill:<id>`` / ``task:<id>``) so the
-        caller can show a "did you mean?" hint.
+      - ``resolved_id`` is non-None iff exactly one match exists.
+      - ``kind`` is "task" or "" (when ambiguous / unmatched).
+      - ``candidates`` lists every match (``task:<id>``) so the caller can
+        show a "did you mean?" hint.
     """
     prefix = prefix.strip()
     if not prefix:
         return None, "", []
-    skill_ids = list(getattr(session, "running_skills", {}).keys())
-    skill_matches = [r for r in skill_ids if prefix in r]
-    # Dynamic tasks: /tasks (#2036) LISTS them, so status|kill must resolve the
-    # same ids the list shows — otherwise the user sees a task they can't act on
-    # (the list-vs-action gap this fixes).
     task_matches: list[str] = []
     backend = getattr(session, "task_backend", None)
     if backend is not None:
@@ -108,13 +83,8 @@ async def _resolve_task(
             ]
         except Exception:
             task_matches = []
-    candidates = (
-        [f"skill:{r}" for r in skill_matches]
-        + [f"task:{t}" for t in task_matches]
-    )
+    candidates = [f"task:{t}" for t in task_matches]
     if len(candidates) == 1:
-        if skill_matches:
-            return skill_matches[0], "skill", candidates
         return task_matches[0], "task", candidates
     return None, "", candidates
 
@@ -123,57 +93,22 @@ async def _resolve_task(
 
 
 async def _list_tasks(session: "Session") -> None:
-    skill_lines = _list_skill_lines(session)
     task_lines = await _list_dynamic_task_lines(session)
-    if not skill_lines and not task_lines:
+    if not task_lines:
         await reply(session, "(no running tasks)")
         return
-
-    # "task(s)" not "running task(s)": the Tasks section now shows the full plan
-    # incl completed (#2036), so the count spans running skill runs + persistent
-    # tasks of any non-archived status.
-    total = len(skill_lines) + len(task_lines)
+    total = len(task_lines)
     out: list[str] = [f"{total} task(s):"]
-    if skill_lines:
-        out.append("  Skills:")
-        out.extend(f"    {ln}" for ln in skill_lines)
-    if task_lines:
-        out.append("  Tasks:")
-        out.extend(f"    {ln}" for ln in task_lines)
+    out.append("  Tasks:")
+    out.extend(f"    {ln}" for ln in task_lines)
     await reply(session, "\n".join(out))
-
-
-def _list_skill_lines(session: "Session") -> list[str]:
-    running = getattr(session, "running_skills", {}) or {}
-    if not running:
-        return []
-    started_at = getattr(session, "running_skills_started_at", {}) or {}
-    reg = session.get_skill_registry()
-    now = time.monotonic()
-    lines: list[str] = []
-    for run_id in running.keys():
-        elapsed = now - started_at.get(run_id, now)
-        skill_label = run_id
-        phase = "(unknown)"
-        if reg is not None:
-            snap = reg.get(run_id)
-            if snap is not None:
-                skill_label = snap.skill_name or run_id
-                phase = snap.current_phase or "(starting)"
-        lines.append(
-            f"{skill_label}  [{run_id}]  {_format_elapsed(elapsed)}  "
-            f"phase: {phase}"
-        )
-    return lines
 
 
 # Dynamic Tasks are PERSISTENT trackable work-units (the point of the
 # dynamic-task model), so the Tasks section shows the FULL plan WITH status —
 # active + completed + failed + aborted — so the user sees progress ("3/6 done")
 # and deps referencing completed tasks stay intact. Only ``archived`` (the
-# user-dismissed state) is hidden. NB the skill-runs section keeps its own
-# running-only filter (ephemeral runs, not trackable plans = different
-# semantics); the split is intentional (#2036 review).
+# user-dismissed state) is hidden.
 _HIDDEN_TASK_STATUSES = frozenset({"archived"})
 
 
@@ -183,8 +118,7 @@ async def _list_dynamic_task_lines(session: "Session") -> list[str]:
     Reads ``session.task_backend`` (#1953 slice R). Returns ``[]`` when the
     session carries no backend. Shows the full plan WITH status (active +
     completed + failed + aborted) so the user sees progress + intact deps; only
-    ``archived`` tasks are hidden. Each task is formatted in the same idiom as
-    ``_list_skill_lines``.
+    ``archived`` tasks are hidden.
     """
     backend = getattr(session, "task_backend", None)
     if backend is None:
@@ -213,7 +147,7 @@ async def _list_dynamic_task_lines(session: "Session") -> list[str]:
 async def _task_status(session: "Session", args: str) -> None:
     prefix = args.strip()
     if not prefix:
-        await reply_error(session, "Usage: /tasks status <run_id_prefix>")
+        await reply_error(session, "Usage: /tasks status <task_id_prefix>")
         return
     resolved, kind, candidates = await _resolve_task(session, prefix)
     if resolved is None:
@@ -226,9 +160,7 @@ async def _task_status(session: "Session", args: str) -> None:
             )
         return
 
-    if kind == "skill":
-        await _skill_status(session, resolved)
-    elif kind == "task":
+    if kind == "task":
         await _dynamic_task_status(session, resolved)
     else:
         await reply_error(session, f"unknown task kind for {resolved}")
@@ -258,35 +190,13 @@ async def _dynamic_task_status(session: "Session", task_id: str) -> None:
     await reply(session, "\n".join(out))
 
 
-async def _skill_status(session: "Session", run_id: str) -> None:
-    started_at = getattr(session, "running_skills_started_at", {}) or {}
-    elapsed = time.monotonic() - started_at.get(run_id, time.monotonic())
-    reg = session.get_skill_registry()
-    out: list[str] = [
-        f"skill run {run_id}",
-        f"  elapsed:  {_format_elapsed(elapsed)}",
-    ]
-    if reg is not None:
-        snap = reg.get(run_id)
-        if snap is not None:
-            out.append(f"  skill:    {snap.skill_name or '(unknown)'}")
-            out.append(f"  phase:    {snap.current_phase or '(starting)'}")
-            parent = getattr(snap, "parent_run_id", None)
-            if parent:
-                out.append(f"  parent:   {parent}")
-    chain_id = (getattr(session, "running_skills_chain", {}) or {}).get(run_id)
-    if chain_id:
-        out.append(f"  chain_id: {chain_id}")
-    await reply(session, "\n".join(out))
-
-
 # ── /tasks kill ──────────────────────────────────────────────────────────────
 
 
 async def _kill_task(session: "Session", args: str) -> None:
     prefix = args.strip()
     if not prefix:
-        await reply_error(session, "Usage: /tasks kill <run_id_prefix>")
+        await reply_error(session, "Usage: /tasks kill <task_id_prefix>")
         return
     resolved, kind, candidates = await _resolve_task(session, prefix)
     if resolved is None:
@@ -299,13 +209,7 @@ async def _kill_task(session: "Session", args: str) -> None:
             )
         return
 
-    if kind == "skill":
-        # Reuse the existing /skill discard implementation rather than
-        # duplicating cancel+notify+complete logic. Lazy-import to avoid
-        # circular imports at module load time.
-        from reyn.interfaces.slash.skill import _discard_skill_run
-        await _discard_skill_run(session, resolved)
-    elif kind == "task":
+    if kind == "task":
         # A dynamic task: abort it via the backend (#2036 follow-up). abort()
         # transitions the task + its dependents out of the runnable set.
         backend = getattr(session, "task_backend", None)

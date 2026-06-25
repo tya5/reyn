@@ -96,15 +96,23 @@ def test_skill_allowed_does_not_constrain_other_axes() -> None:
 
 
 def test_site1_spawn_gate_refuses_disallowed_skill() -> None:
-    """Tier 2: spawn gate A (SkillRunner.spawn) — with allowed_skills set, spawning
-    an un-listed skill is refused (returns None + skill_spawn_refused) via the
-    routed seam. Falsifiable: break ProfileLayer.allows(SKILL) → 'denied' becomes
-    allowed → not refused → RED."""
-    runner, events, _outbox, _completed = _make_runner(allowed_skills=["allowed_one"])
+    """Tier 2: spawn gate A (SkillRunner.run_skill_awaitable) — with allowed_skills
+    set, dispatching an un-listed skill is refused (error dict + skill_spawn_refused)
+    via the routed seam.
+
+    #2104 PR2: the old async ``spawn()`` method (gate A) was removed when chat-mode
+    dispatch became synchronous.  ``run_skill_awaitable`` (gate B) is now the primary
+    dispatch site; this test retargets to it so the falsify linkage
+    (break ProfileLayer.allows(SKILL) → both site 1 and site 2 RED) remains intact.
+    """
+    runner, events, _outbox = _make_runner(allowed_skills=["allowed_one"])
 
     async def _run():
-        result = await runner.spawn({"skill": "denied_one", "input": {"x": 1}})
-        assert result is None  # allowlist gate refuses before load
+        result = await runner.run_skill_awaitable(
+            {"skill": "denied_one", "input": {"x": 1}}, chain_id="c1",
+        )
+        assert result["status"] == "error"
+        assert "not in allowed_skills" in result["data"]["error"]
         assert "skill_spawn_refused" in [e.type for e in events.all()]
 
     asyncio.run(_run())
@@ -114,7 +122,7 @@ def test_site2_run_skill_awaitable_refuses_disallowed_skill() -> None:
     """Tier 2: spawn gate B (SkillRunner.run_skill_awaitable) — same routed seam;
     a disallowed skill returns the allowlist error dict + event. Falsifiable as
     site 1."""
-    runner, events, _outbox, _completed = _make_runner(allowed_skills=["allowed_one"])
+    runner, events, _outbox = _make_runner(allowed_skills=["allowed_one"])
 
     async def _run():
         result = await runner.run_skill_awaitable(

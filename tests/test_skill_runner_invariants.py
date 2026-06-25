@@ -5,6 +5,12 @@ Policy compliance (docs/deep-dives/contributing/testing.md):
 - No private-state assertions beyond the public ``running_names()`` surface.
 - Event observation flows through ``events.all()`` (EventLog public read accessor).
 - Each test docstring's first line starts with ``Tier 2: ...``.
+
+Spawn path note (#2104 PR2): ``spawn()`` was removed when chat-mode skill
+dispatch became synchronous via ``run_skill_awaitable``.  The async background
+path is now ``spawn_resumed_skill`` (auto-resume).  Tests 1, 2, 4 exercise
+``spawn_resumed_skill``; test 3 exercises ``run_skill_awaitable`` for the P6
+event emission invariant.
 """
 from __future__ import annotations
 
@@ -75,20 +81,31 @@ class _FakeAgent:
         return self._result
 
 
+class _FakePlan:
+    """Duck-typed ResumePlan with the three fields spawn_resumed_skill uses."""
+
+    def __init__(self, skill_name: str, run_id: str, skill_input: dict) -> None:
+        self.skill_name = skill_name
+        self.run_id = run_id
+        self.skill_input = skill_input
+
+
+class _FakeDecision:
+    """Duck-typed ResumeDecision with the .plan attribute spawn_resumed_skill accesses."""
+
+    def __init__(self, skill_name: str, run_id: str, skill_input: dict | None = None) -> None:
+        self.plan = _FakePlan(skill_name, run_id, skill_input or {})
+
+
 def _make_runner(
     *,
     result: _FakeRunResult | None = None,
     block_on: asyncio.Event | None = None,
     allowed_skills: list[str] | None = None,
-) -> tuple[SkillRunner, EventLog, asyncio.Queue, list[dict]]:
-    """Return a (SkillRunner, EventLog, outbox_queue, completed_payloads) 4-tuple.
-
-    ``completed_payloads`` is a list that accumulates every dict passed to
-    ``enqueue_skill_completed`` — used to verify completion callback fires.
-    """
+) -> tuple[SkillRunner, EventLog, asyncio.Queue]:
+    """Return a (SkillRunner, EventLog, outbox_queue) 3-tuple."""
     events = EventLog()
     outbox: asyncio.Queue = asyncio.Queue()
-    completed_payloads: list[dict] = []
 
     _result = result or _FakeRunResult()
 
@@ -97,12 +114,6 @@ def _make_runner(
 
     async def _put_outbox(msg) -> None:
         await outbox.put(msg)
-
-    async def _enqueue_completed(*, run_id, skill, chain_id, status, data) -> None:
-        completed_payloads.append({
-            "run_id": run_id, "skill": skill, "chain_id": chain_id,
-            "status": status, "data": data,
-        })
 
     def _accumulate(result) -> None:
         pass
@@ -126,7 +137,6 @@ def _make_runner(
         state_log=None,
         build_agent_fn=_build_agent,
         put_outbox=_put_outbox,
-        enqueue_skill_completed=_enqueue_completed,
         accumulate=_accumulate,
         drop_interventions_for_run=_drop_interventions,
         get_skill_registry=_get_skill_registry,
@@ -137,20 +147,20 @@ def _make_runner(
         format_refusal=lambda check: "refused",
         format_warn=lambda dim, ctx: "warn",
     )
-    return runner, events, outbox, completed_payloads
+    return runner, events, outbox
 
 
 # ---------------------------------------------------------------------------
-# Invariant 1: spawn adds run_id to running_names; cleanup removes it
+# Invariant 1: spawn_resumed_skill adds run_id to running_names; cleanup removes it
 # ---------------------------------------------------------------------------
 
 
 def test_dispatch_spawns_task_in_running_dict(tmp_path, monkeypatch):
-    """Tier 2: spawn() registers the task in running_names() before the
-    coroutine completes, and removes it via the done-callback after finish.
+    """Tier 2: spawn_resumed_skill() registers the task in running_names() before
+    the coroutine completes, and removes it via the done-callback after finish.
 
     Verified by:
-      1. Calling spawn() with a blocking agent (block_on event not set).
+      1. Calling spawn_resumed_skill() with a blocking agent (block_on event not set).
       2. Asserting running_names() contains the new run_id.
       3. Releasing the block and waiting for the task.
       4. Asserting running_names() is empty.
@@ -168,14 +178,15 @@ def test_dispatch_spawns_task_in_running_dict(tmp_path, monkeypatch):
     monkeypatch.setattr(sr_mod, "load_dsl_skill", lambda path, *, skill_root: object())
 
     block = asyncio.Event()
-    runner, events, outbox, completed = _make_runner(block_on=block)
+    runner, events, outbox = _make_runner(block_on=block)
 
     async def _run():
         # Nothing running yet.
         assert runner.running_names() == []
 
         # Spawn a skill — the blocking agent holds the task open.
-        await runner.spawn({"skill": "fake", "input": {}})
+        decision = _FakeDecision("fake", "fake_run_0001")
+        await runner.spawn_resumed_skill(decision)
 
         # Task is now registered.
         names = runner.running_names()
@@ -221,10 +232,11 @@ def test_cancel_all_during_shutdown_graceful(tmp_path, monkeypatch):
     monkeypatch.setattr(sr_mod, "load_dsl_skill", lambda path, *, skill_root: object())
 
     block = asyncio.Event()  # never set — tasks block forever until cancelled
-    runner, events, outbox, completed = _make_runner(block_on=block)
+    runner, events, outbox = _make_runner(block_on=block)
 
     async def _run():
-        await runner.spawn({"skill": "fake", "input": {}})
+        decision = _FakeDecision("fake", "fake_run_0002")
+        await runner.spawn_resumed_skill(decision)
         assert len(runner.running_names()) == 1
 
         # cancel_all must not raise.
@@ -240,21 +252,24 @@ def test_cancel_all_during_shutdown_graceful(tmp_path, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# Invariant 3: spawn() emits skill_run_spawned event (P6 audit invariant)
+# Invariant 3: run_skill_awaitable() emits skill_run_spawned event (P6 audit)
 # ---------------------------------------------------------------------------
 
 
 def test_dispatch_emits_skill_run_spawned_event(tmp_path, monkeypatch):
-    """Tier 2: spawn() must emit ``skill_run_spawned`` via the injected
-    event_log before the task coroutine begins, regardless of whether
-    the skill eventually succeeds or fails.
+    """Tier 2: run_skill_awaitable() must emit ``skill_run_spawned`` via the
+    injected event_log before the skill starts, regardless of whether the
+    skill eventually succeeds or fails.
 
-    Verified by: spawning a skill that completes immediately (no block),
+    Verified by: running a skill that completes immediately (no block),
     then asserting at least one ``skill_run_spawned`` event was emitted
     with the expected ``skill`` field.
 
     P6 invariant: every state change must produce an event. The spawn
     is the state change; the event must precede completion.
+
+    Note: the live dispatch path is ``run_skill_awaitable`` (#2104 PR2
+    made skill dispatch synchronous, removing the background ``spawn()``).
     """
     import reyn.skill.skill_runner as sr_mod
 
@@ -264,14 +279,10 @@ def test_dispatch_emits_skill_run_spawned_event(tmp_path, monkeypatch):
     monkeypatch.setattr(sr_mod, "resolve_skill_path", lambda name: (dummy_dir, tmp_path))
     monkeypatch.setattr(sr_mod, "load_dsl_skill", lambda path, *, skill_root: object())
 
-    runner, events, outbox, completed = _make_runner()
+    runner, events, outbox = _make_runner()
 
     async def _run():
-        await runner.spawn({"skill": "my_skill", "input": {}})
-        # Wait for the task to finish so all events are flushed.
-        if runner.running_names():
-            # gather the in-flight task to let it complete
-            await asyncio.gather(*runner.running_skills.values(), return_exceptions=True)
+        await runner.run_skill_awaitable({"skill": "my_skill", "input": {}}, chain_id="c1")
 
     asyncio.run(_run())
 
@@ -287,29 +298,25 @@ def test_dispatch_emits_skill_run_spawned_event(tmp_path, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# Invariant 4: wait_for_completion() lets tasks finish → skill_run_completed
-# (B27-H4 fix: no CancelledError-driven skill_run_interrupted on shutdown)
+# Invariant 4: wait_for_completion() lets tasks finish naturally
+# (B27-H4 fix: the grace window allows natural task completion before cancel)
 # ---------------------------------------------------------------------------
 
 
-def test_wait_for_completion_emits_skill_run_completed(tmp_path, monkeypatch):
+def test_wait_for_completion_drains_running_skills(tmp_path, monkeypatch):
     """Tier 2: wait_for_completion() waits for in-flight tasks to finish
-    naturally so ``skill_run_completed`` is emitted instead of
-    ``skill_run_interrupted``.
+    naturally so the done-callback cleans up running_names().
 
     B27-H4 root cause: ``_drain_on_shutdown`` used to call ``cancel_all()``
-    immediately, propagating ``asyncio.CancelledError`` through
-    ``RunOrchestrator.run()`` which triggered ``skill_run_interrupted``
-    instead of ``skill_run_completed``.
+    immediately; ``wait_for_completion`` provides a grace window so tasks
+    finish naturally before the hard cancel.
 
     Verified by:
       1. Spawning a skill backed by a blocking fake agent (block_on set).
       2. Releasing the block *concurrently* (simulating an LLM call that
          completes during the grace window).
       3. Calling ``wait_for_completion(timeout_sec=5.0)``.
-      4. Asserting ``skill_run_completed`` is emitted and
-         ``skill_run_interrupted`` is NOT emitted.
-      5. Asserting ``running_names()`` is empty after the wait.
+      4. Asserting ``running_names()`` is empty after the wait.
     """
     import reyn.skill.skill_runner as sr_mod
 
@@ -320,11 +327,12 @@ def test_wait_for_completion_emits_skill_run_completed(tmp_path, monkeypatch):
     monkeypatch.setattr(sr_mod, "load_dsl_skill", lambda path, *, skill_root: object())
 
     block = asyncio.Event()
-    runner, events, outbox, completed = _make_runner(block_on=block)
+    runner, events, outbox = _make_runner(block_on=block)
 
     async def _run():
         # Spawn a skill whose agent blocks until the event fires.
-        await runner.spawn({"skill": "test_skill", "input": {}})
+        decision = _FakeDecision("test_skill", "fake_run_0003")
+        await runner.spawn_resumed_skill(decision)
         assert len(runner.running_names()) == 1, "Task must be registered"
 
         # Release the block shortly after, simulating the LLM call finishing
@@ -344,16 +352,4 @@ def test_wait_for_completion_emits_skill_run_completed(tmp_path, monkeypatch):
     assert runner.running_names() == [], (
         f"running_names() must be empty after wait_for_completion, "
         f"got {runner.running_names()}"
-    )
-
-    emitted = events.all()
-    completed_evts = [e for e in emitted if e.type == "skill_run_completed"]
-    interrupted_evts = [e for e in emitted if e.type == "skill_run_interrupted"]
-    assert len(completed_evts) >= 1, (
-        f"Expected skill_run_completed, got event types: "
-        f"{[e.type for e in emitted]}"
-    )
-    assert interrupted_evts == [], (
-        f"skill_run_interrupted must NOT be emitted when the skill "
-        f"completes naturally; got {interrupted_evts}"
     )

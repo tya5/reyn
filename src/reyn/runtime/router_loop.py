@@ -100,18 +100,6 @@ _REPRESENT_ACK = (
 # realistic search-refine sequence. The outer max_iterations is the ultimate cap.
 _MAX_REPRESENT_ROUNDS = 64
 
-_SPAWN_ACK_MSG: dict[str, str] = {
-    "ja": (
-        "スキルをバックグラウンドで実行しています。"
-        " `/tasks` で進行状況を確認できます。"
-    ),
-    "en": (
-        "Skill is running in the background."
-        " Use `/tasks` to monitor progress."
-    ),
-}
-
-
 # B55 R-7 (2026-05-25): agent-side spawn alignment — symmetric with
 # skill/plan spawn_ack so the LLM sees a structured task lifecycle
 # event for delegate_to_agent / other peer-async tools too. Prior
@@ -131,34 +119,6 @@ _AGENT_SPAWN_ACK_MSG: dict[str, str] = {
         " Awaiting reply — use `/tasks` to monitor progress."
     ),
 }
-
-
-# NF-W7-B43-2: positive directive injected into the spawn-ack tool_result
-# content. Replaces the previous OS-synthetic spawn-ack outbox push +
-# early-exit pattern with the standard tool_call → tool_result → LLM
-# continuation pattern (= aligned with Claude / GPT competitor designs).
-#
-# Why directive, not bare status:
-#   - Trace-patch-replay N=10 (= 5 variant ablation, 2026-05-20):
-#       Variant A (bare status, no directive):      1/10 ACK, 8/10 EMPTY, 0/10 HALLUCINATE
-#       Variant B (negative directive "don't"):     0/10 ACK, 10/10 EMPTY
-#       Variant D (positive "write short reply"):   7/10 ACK, 3/10 EMPTY, **0/10 HALLUCINATE**
-#   - H3 hallucination defense (= B32 W3 S1 race) preserved across all
-#     variants thanks to "do not include skill output" framing.
-#   - Variant D (= "1-2 sentences confirm" voice) ACK 7/10 baseline;
-#     remaining 3/10 EMPTY covered by PR #265 retry mechanism
-#     (REYN_EMPTY_STOP_RETRY=1).
-#
-# The directive is appended to the tool_result body using the same
-# ``\n\n---\n`` separator pattern as PR #221's ``_post_text`` (= LLM
-# reads it as a textual instruction following the JSON status block).
-_SPAWN_ACK_TOOL_DIRECTIVE = (
-    "The skill has been spawned and is running in the background. "
-    "Write a short reply to the user (1-2 sentences) confirming the "
-    "skill has been started. The actual result will arrive in a "
-    "subsequent turn as a [task_completed] message — do not include "
-    "any skill output here, only the status confirmation."
-)
 
 
 # #187: the SINGLE empty-stop retry continuation directive, shared UNIFORMLY by
@@ -2352,129 +2312,6 @@ class RouterLoop:
                             chain_id=self.chain_id,
                         )
                         _routing_decided_fired = True  # B28-Q2: track for inline exclusivity
-                # H3-ablation race fix: detect invoke_skill / invoke_action
-                # spawn-ack and exit the router loop instead of accumulating
-                # the spawn-ack into messages for the next iteration.
-                #
-                # Race condition observed in dogfood batch 32 §4.2 (= W3 S1
-                # file_read_via_chat) and confirmed at the OS layer by the
-                # H3 ablation (= patch flipped only that single scenario;
-                # K/N = 1/22 at batch scale, but the fix is structural and
-                # model-agnostic — H1 strong-model ablation reproduced the
-                # same "Understood" hallucination under gemini-2.5-flash,
-                # confirming this is OS-layer, not LLM-layer).
-                #
-                # NF-W7-B43-2 (2026-05-20): the OS-synthetic spawn-ack
-                # message itself became an in-context-learning attractor —
-                # multi-turn conversations accumulated the literal text in
-                # the assistant slot, and weak LLMs echoed it in
-                # subsequent turns (10/10 deterministic in trace-patch-
-                # replay). The env-gated alternative path below switches
-                # to the standard role=tool + LLM-composed reply pattern
-                # (= Claude / GPT alignment) with H3 hallucination
-                # defense via a tool_result directive (= PR #221
-                # ``_post_text`` mechanism). Default behaviour is
-                # unchanged; ``REYN_SPAWN_ACK_TO_LLM=1`` opts in to the
-                # new pattern.
-                _spawn_ack_indices: list[int] = [
-                    i
-                    for i, (tc, r) in enumerate(zip(tool_calls, tool_results))
-                    if (
-                        tc["function"]["name"] in ("invoke_skill", "invoke_action")
-                        and isinstance(r, dict)
-                        and (
-                            r.get("status") == "spawned"
-                            or (
-                                isinstance(r.get("data"), dict)
-                                and r["data"].get("status") == "spawned"
-                            )
-                        )
-                    )
-                ]
-                if _spawn_ack_indices:
-                    host.events.emit(
-                        "invoke_skill_spawn_ack_exit",
-                        spawn_ack_count=len(_spawn_ack_indices),
-                        chain_id=self.chain_id,
-                    )
-                    if os.environ.get("REYN_SPAWN_ACK_TO_LLM") == "1":
-                        # NF-W7-B43-2 opt-in path: annotate each spawn-ack
-                        # tool_result with the directive via ``_post_text``
-                        # so the existing PR #221 serialisation layer below
-                        # appends it outside the JSON body with the standard
-                        # ``\n\n---\n`` separator. The loop continues
-                        # normally — the next LLM iteration composes the
-                        # user-facing reply (= 7/10 ACK in N=10 trace
-                        # replay) with H3 hallucination defense (= 0/10
-                        # hallucinate via the directive wording). Residual
-                        # 3/10 EMPTY is covered by PR #265 / PR #287's
-                        # ``REYN_EMPTY_STOP_RETRY=1`` retry mechanism.
-                        for idx in _spawn_ack_indices:
-                            r = tool_results[idx]
-                            if isinstance(r, dict):
-                                r["_post_text"] = _SPAWN_ACK_TOOL_DIRECTIVE
-                        # Fall through to the standard
-                        # ``messages.append(...)`` block below.
-                    else:
-                        # Default (= pre-NF-W7-B43-2) behaviour: OS pushes
-                        # the deterministic spawn-ack text to the outbox
-                        # and exits the loop. Preserves the existing
-                        # contract (= ``meta.source="spawn_ack"``
-                        # downstream consumers, no LLM composition for
-                        # this turn). The in-context-learning attractor
-                        # the new path closes is still present here.
-                        #
-                        # B49 W1-S6 follow-up (2026-05-22): prepend a
-                        # structured ``[task_spawned] kind=skill ...``
-                        # header so the LLM history carries a machine-
-                        # correlatable spawn record that pairs with the
-                        # later ``[task_completed] kind=skill run_id=<X>``
-                        # injection. The user-friendly trailer
-                        # (``_SPAWN_ACK_MSG``) is preserved as the second
-                        # paragraph; the user still reads the human
-                        # message, the LLM also sees the structured
-                        # header for correlation. SP TASK_SPAWNED rule
-                        # explains the header's meaning. Plan spawn-side
-                        # alignment is deferred to a follow-up (= plan
-                        # tool dispatch path currently continues the
-                        # router instead of pushing a spawn-ack, which
-                        # is a separate behaviour change beyond the
-                        # format-only fix here).
-                        first_idx = _spawn_ack_indices[0]
-                        tc_first = tool_calls[first_idx]
-                        r_first = tool_results[first_idx]
-                        spawn_data = (
-                            r_first["data"]
-                            if isinstance(r_first.get("data"), dict)
-                            else r_first
-                        )
-                        spawn_run_id = spawn_data.get("run_id", "")
-                        spawn_chain_id = spawn_data.get("chain_id", self.chain_id)
-                        try:
-                            spawn_args = json.loads(
-                                tc_first["function"].get("arguments") or "{}",
-                            )
-                        except (json.JSONDecodeError, TypeError):
-                            spawn_args = {}
-                        spawn_skill = (
-                            spawn_args.get("name")
-                            or spawn_args.get("action_name")
-                            or ""
-                        )
-                        header = (
-                            f"[task_spawned] kind=skill "
-                            f"run_id={spawn_run_id} chain_id={spawn_chain_id}\n"
-                            f"skill: {spawn_skill}"
-                        )
-                        lang = getattr(host, "output_language", None)
-                        trailer = _SPAWN_ACK_MSG.get(lang, _SPAWN_ACK_MSG["en"])
-                        ack_text = f"{header}\n\n{trailer}"
-                        await host.put_outbox(
-                            kind="agent",
-                            text=ack_text,
-                            meta={"chain_id": self.chain_id, "source": "spawn_ack"},
-                        )
-                        return self._total_usage
                 # #1608: the active scheme builds the appendable message sequence
                 # (assistant tool-call turn + per-result {role:tool, tool_call_id}
                 # messages + media follow-ups) AND persists each to history; the OS

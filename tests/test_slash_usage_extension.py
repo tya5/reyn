@@ -51,7 +51,7 @@ _EXPECTED_USAGE: dict[str, str] = {
     # /tasks has status/kill/list subcommands and genuinely takes args.
     # Previously omitted from _EXPECTED_USAGE (and misclassified as no-arg);
     # corrected here alongside the usage= addition in slash/tasks.py.
-    "tasks":       "/tasks [list|status <run_id>|kill <run_id>]",
+    "tasks":       "/tasks [list|status <task_id>|kill <task_id>]",
 }
 
 

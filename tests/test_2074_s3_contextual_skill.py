@@ -90,14 +90,20 @@ def test_skill_allowed_contextual_deny_narrows_even_when_agent_allows() -> None:
 
 
 def test_spawn_gate_honors_contextual_skill_deny() -> None:
-    """Tier 2: a SkillRunner with a contextual skill_deny refuses spawning the
-    denied skill even when the per-agent allowlist is unrestricted (None)."""
-    runner, events, _outbox, _completed = _make_runner(allowed_skills=None)
+    """Tier 2: a SkillRunner with a contextual skill_deny refuses dispatching the
+    denied skill even when the per-agent allowlist is unrestricted (None).
+
+    #2104 PR2: the old async ``spawn()`` method was removed; the live dispatch path
+    is ``run_skill_awaitable``.  The contextual gate applies to both.
+    """
+    runner, events, _outbox = _make_runner(allowed_skills=None)
     runner._contextual_permission = ContextualPermission(skill_deny=frozenset({"denied_ctx"}))
 
     async def _run():
-        result = await runner.spawn({"skill": "denied_ctx", "input": {"x": 1}})
-        assert result is None
+        result = await runner.run_skill_awaitable(
+            {"skill": "denied_ctx", "input": {"x": 1}}, chain_id="c1",
+        )
+        assert result["status"] == "error"
         assert "skill_spawn_refused" in [e.type for e in events.all()]
 
     asyncio.run(_run())
