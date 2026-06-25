@@ -167,16 +167,30 @@ session_spawn(
 An operator can bound how large an LLM-designed org can grow using
 `safety.spawn` in `reyn.yaml`. These are DoS guards — they prevent an
 agent from minting an unbounded organisation. The LLM has no runtime path
-to raise its own limit (the config is the restart-only OUT layer):
+to raise its own base limit (the config is the restart-only OUT layer).
 
 | Key | Default | Effect |
 |-----|---------|--------|
 | `safety.spawn.max_depth` | `10` | Maximum spawn-lineage chain depth (0 = unlimited) |
 | `safety.spawn.max_children` | `20` | Maximum direct spawn-children per parent, and maximum member count in a `topology_create` call |
 
-Reaches the limit → the spawn or topology-create is rejected. `0` = unlimited.
+When a spawn would exceed a limit, the `safety.on_limit` checkpoint fires — the same
+mode-driven framework used by loop and budget caps:
 
-See [reyn-yaml § safety.spawn](../../reference/config/reyn-yaml.md#safetyspawn-fields) for full schema.
+- **`interactive`** (default): the operator is prompted to approve an extension. On
+  approval, the extension is recorded per-spawner so the same scope does not re-prompt.
+  The base config limit stays unchanged — any extension is operator-approved, never
+  LLM-driven.
+- **`unattended`**: the spawn is rejected immediately (no prompt possible — use for CI
+  or scripted runs).
+- **`auto_extend`**: extensions are auto-approved up to `auto_extend_times` times, then
+  rejected.
+
+`max_depth` and `max_children` carry separate per-spawner extension keys: an
+operator-approved increase in one does not silently widen the other.
+
+See [reyn-yaml § safety.spawn](../../reference/config/reyn-yaml.md#safetyspawn-fields) and
+[safety.on_limit](../../reference/config/reyn-yaml.md#safetyonlimit-fields) for full schema.
 
 ---
 
