@@ -48,6 +48,10 @@ _NOT_EXTERNAL = {
     # {status, sid, mode}, not the spawned session's output (result-routing-back is
     # the S1bc-exec/Stage-4 follow-on, fenced there).
     "session_spawn",
+    # #2103 B-tool: agent_spawn → returns an OS-generated spawn ACK
+    # {status, name, parent, note}, not external content (it creates an agent; any
+    # output the new agent later produces is fenced on its own path).
+    "agent_spawn",
     # — writes / installs / deletes: return status, not external content —
     "write_file", "edit_file", "delete_file", "drop_source",
     "remember_shared", "remember_agent", "forget_memory",

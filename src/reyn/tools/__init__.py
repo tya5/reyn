@@ -39,6 +39,7 @@ def get_default_registry() -> ToolRegistry:
     callers may cache the result if needed).
     """
     # Lazy import to avoid circular dependencies at package-init time.
+    from reyn.tools.agent_spawn import AGENT_SPAWN
     from reyn.tools.ask_user import ASK_USER
     from reyn.tools.catalog import (
         DESCRIBE_AGENT,
@@ -171,6 +172,7 @@ def get_default_registry() -> ToolRegistry:
     # ── Router-only capabilities (gates.router=allow, gates.phase=deny) ──
     registry.register(DELEGATE_TO_AGENT)
     registry.register(SESSION_SPAWN)
+    registry.register(AGENT_SPAWN)
     registry.register(REYN_SRC_LIST)
     registry.register(REYN_SRC_READ)
     # FP-0041 #489 PR-B2: cron action category (= LLM-callable cron

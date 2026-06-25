@@ -256,13 +256,15 @@ _FLOORED_QUALIFIED: "dict[str, frozenset[str]]" = {
     "mcp-install": frozenset({
         "mcp__install_registry", "mcp__install_package", "mcp__install_local",
     }),
-    # session/agent spawn — no spawning sub-sessions from untrusted content / an
-    # unbound delegate (#2103 S1bc: unbounded sub-session spawn is a DoS vector; the
-    # ⊆-parent model blocks escalation, but spawning itself is restrict-floored like
-    # re-delegation). ``session_spawn`` is a router-only tool with NO invoke_action
-    # route today, so it is BARE-ONLY (no qualified→bare unwrap alias); a future
-    # qualified route would be floored by the same _with_unwrapped_aliases derivation.
-    "spawn": frozenset({"session_spawn"}),
+    # session/agent spawn — no spawning sub-sessions/agents from untrusted content / an
+    # unbound delegate (#2103: unbounded spawn is a DoS vector; the ⊆-parent model
+    # blocks ESCALATION, but spawning ITSELF is restrict-floored like re-delegation —
+    # default-deny, re-grantable within parent bounds by a topology binding). #2103
+    # B-tool adds ``agent_spawn`` (org-design create). Both are router-only tools with
+    # NO invoke_action route today, so BARE-ONLY (no qualified→bare unwrap alias); a
+    # future qualified route would be floored by the same _with_unwrapped_aliases
+    # derivation.
+    "spawn": frozenset({"session_spawn", "agent_spawn"}),
 }
 
 # Intentionally BARE-ONLY floored names: router-only tools with NO invoke_action
@@ -274,7 +276,7 @@ _FLOORED_QUALIFIED: "dict[str, frozenset[str]]" = {
 # non-existent form, leaving the real route UNGUARDED (the #2111 gap-class, in the
 # opposite direction). Invariant (enforced by tests/test_2111_floor_alias_completeness):
 # every name in ``_FLOORED_QUALIFIED`` either unwraps to a bare alias OR is listed here.
-_FLOORED_BARE_ONLY: "frozenset[str]" = frozenset({"session_spawn"})
+_FLOORED_BARE_ONLY: "frozenset[str]" = frozenset({"session_spawn", "agent_spawn"})
 
 
 def _with_unwrapped_aliases(qualified: "frozenset[str]") -> "frozenset[str]":
