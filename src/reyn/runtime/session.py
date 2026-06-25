@@ -3532,14 +3532,21 @@ class Session:
         ``_vanish_scheduled`` guard). The main session + persistent spawns are never
         ``_ephemeral`` → unaffected.
 
-        Boundary (close-review note): "task done" = the inbox is empty at turn end. A
-        spawned ephemeral session that DELEGATES and awaits an ``agent_response`` would
-        have a transiently-empty inbox between turns; the basic isolated-task spawn
-        (the #2103 S1bc use case) does not. A fuller "no awaited work" predicate
-        (pending chains / live §16 tasks) is a follow-on if the await-then-resume
-        ephemeral pattern is exercised."""
+        "Task done" = the inbox is drained AND there is no AWAITED work whose resume
+        arrives OUTSIDE the now-empty inbox: a pending delegation chain (an
+        ``agent_response`` is still coming — ``self._chains``) or a live task-as-request
+        execution (``self._current_task_id``). Without these guards a spawned ephemeral
+        session that DELEGATES + awaits a response has a transiently-empty inbox
+        mid-await → it would vanish (dir purged + ``session_vanished``) before the
+        response lands = silent + destructive. A spawned session CAN reach delegate +
+        await (it has the full ChainManager + send_to_agent wiring), so the guard is
+        load-bearing, not theoretical."""
         if (not self._ephemeral or self._vanish_scheduled
                 or self._registry is None or not self.inbox.empty()):
+            return
+        # awaited-work guard (delegate-then-await / live §16 task): the resume arrives
+        # outside the now-empty inbox, so emptiness alone is not "done".
+        if self._current_task_id is not None or self._chains.all_chain_ids():
             return
         self._vanish_scheduled = True
         # Keep a strong ref (self._vanish_task) so the task is not GC'd before it runs

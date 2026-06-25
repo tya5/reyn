@@ -79,6 +79,34 @@ async def test_ephemeral_spawn_auto_vanishes_persistent_survives(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_ephemeral_does_not_vanish_while_awaiting_delegation(tmp_path):
+    """Tier 2: #2103 A — the awaited-work guard. A spawned ephemeral session that has
+    DELEGATED and awaits a peer ``agent_response`` (a pending chain) has a
+    transiently-empty inbox mid-await; it must NOT vanish (purging its dir + emitting
+    session_vanished before the response lands = silent + destructive). A spawned
+    session has the full ChainManager + send_to_agent wiring, so this is reachable. RED
+    if the awaited-work guard is dropped (it vanishes mid-await)."""
+    reg = _make_registry(tmp_path)
+    reg.get_or_load("alice")
+    sid = await reg.spawn_session_recorded("alice", mode="ephemeral")
+    eph = reg._peek_session("alice", sid)
+
+    # the spawned session delegated to a peer + awaits its response (pending chain;
+    # the inbox is transiently empty between the delegate-send and the response).
+    await eph._chains.register(chain_id="c1", from_user=False, depth=1,
+                               original_text="sub", sender="alice", waiting_on={"peer"})
+    eph._maybe_schedule_ephemeral_vanish()
+    # drain any (erroneously) scheduled teardown so the assertion reflects the true
+    # outcome — without this a stripped guard would schedule a DETACHED vanish that
+    # hasn't run yet at the assert, hiding the regression.
+    if eph._vanish_task is not None:
+        await eph._vanish_task
+
+    # the guard held: NOT vanished mid-await (public surface).
+    assert sid in reg.session_ids("alice")
+
+
+@pytest.mark.asyncio
 async def test_ephemeral_vanish_scheduled_once(tmp_path):
     """Tier 2: #2103 A — the schedule is idempotent: a multi-turn ephemeral session
     that hits the post-turn check twice tears down ONCE (no double-teardown error), and
