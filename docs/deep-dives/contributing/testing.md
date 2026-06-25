@@ -498,6 +498,13 @@ ready:
    python -m pytest -q -n auto --timeout=120
    ```
    CI runs with `-n auto` (parallel workers) and `--timeout=120` (`pytest-timeout>=2.2`, a dev dep — `pip install -e ".[dev]"` installs it). Run locally with the same flags: a test that would hang in CI will fail-and-name the hanger within 120 s instead of blocking the run indefinitely.
+
+   > **Single-file invocation and `tests._support`:** running `pytest tests/path/to/test_foo.py` (without the full-suite `python -m pytest`) can raise `ModuleNotFoundError: No module named 'tests._support'` when the test imports from the `make_adapter` / `LLMReplay` harness. Root cause: `tests/` has no `__init__.py`, so pytest's default `prepend` import mode cannot resolve the `tests._support` namespace package from a single-file invocation. CI's full-suite collection resolves it. Fix for isolated runs:
+   > ```bash
+   > pytest --import-mode=importlib tests/path/to/test_foo.py
+   > ```
+   > A `ModuleNotFoundError` here is a local-env quirk, **not** a real test failure — do not fall back to structural-only verification before adding `--import-mode=importlib`.
+
 2. **ruff** — lint + import-sort (`I001`):
    ```bash
    ruff check src tests        # add --fix for autofixable I001 / formatting
