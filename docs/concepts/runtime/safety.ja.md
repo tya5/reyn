@@ -57,7 +57,7 @@ Reyn の安全フレームワークは、agent がどれだけ長く実行でき
               ├─ yes  ──► allow=True,  reason="user_approved"
               └─ no   ──► allow=False, reason="user_refused"
 
-すべての allow=False パス ──► force-close ラップアップ（#1496）
+すべての allow=False パス ──► force-close ラップアップ
       `limit_denied` イベント発火（kind = max_iterations | router_cap）
       → 達成内容をまとめる最後のツールなし LLM ターン 1 回
           ├─ ラップアップにテキストあり ──► outbox kind="agent",
@@ -67,7 +67,7 @@ Reyn の安全フレームワークは、agent がどれだけ長く実行でき
 
 **A2A ピアセッション.** A2A セッションは CLI セッションと同じ `on_limit` 設定を使います（デフォルト：`interactive`）。`interactive` モードで制限が発火すると、介入は `A2AInterventionBus` 経由で A2A ピアに通知されます。ランのステータスが `"input-required"` にミラーリングされ、ペイロードが SSE ストリーム / webhook に追記されます。ピアは A2A answer エンドポイント（`POST /a2a/agents/<name>` `{task_id, answer}`）で返答し、介入が解消されてループが継続します。ピア回答を無制限に待つのではなく、制限された動作を望む場合は `safety.on_limit.ask_timeout_seconds` に有限値（例：`ask_timeout_seconds: 60.0`）を設定してください——タイムアウトによる拒否は "no" 回答と同じ判断を促すエラーを生成します。
 
-**deny 時の force-close ラップアップ（#1496).** 制限が拒否されても即座に定型エラーに移行しなくなりました。OS はまず `limit_denied` イベントを発火（監査真実、P6）し、ターンが終了する前に LLM に達成内容をまとめる最後の**ツールなし**ターンを 1 回与えます。停止原因はそのラップアップのシステムプロンプトに注入されます（定常状態の SP は原因中立のまま。一部のプロバイダーは `tool_result` の直後のユーザーターンを拒否するため、末尾のユーザーメッセージとしては追記しません）。ラップアップがテキストを生成した場合、構造化された `meta.limit_stopped=True` + `meta.limit_kind` マーカーを持つ通常の `kind="agent"` outbox メッセージとして配信されます。UI はマーカーを読み取って強制停止を表示します（競合する prose ブロックなし）。フェーズ / プランホストでは、ラップアップはチェックポイント永続化のために返されます（`record_force_close`）。chat ホストはこのフックを no-op 処理します。
+**deny 時の force-close ラップアップ.** 制限が拒否されても即座に定型エラーに移行しなくなりました。OS はまず `limit_denied` イベントを発火（監査真実、P6）し、ターンが終了する前に LLM に達成内容をまとめる最後の**ツールなし**ターンを 1 回与えます。停止原因はそのラップアップのシステムプロンプトに注入されます（定常状態の SP は原因中立のまま。一部のプロバイダーは `tool_result` の直後のユーザーターンを拒否するため、末尾のユーザーメッセージとしては追記しません）。ラップアップがテキストを生成した場合、構造化された `meta.limit_stopped=True` + `meta.limit_kind` マーカーを持つ通常の `kind="agent"` outbox メッセージとして配信されます。UI はマーカーを読み取って強制停止を表示します（競合する prose ブロックなし）。フェーズ / プランホストでは、ラップアップはチェックポイント永続化のために返されます（`record_force_close`）。chat ホストはこのフックを no-op 処理します。
 
 **判断を促すエラーメッセージコントラクト** — **フォールバック**パス（ラップアップ呼び出しが例外を発生させたかテキストを生成しなかった場合）でのみ発火します。すべての `allow=False` パスは以下を含むメッセージにデグレードします：
 1. どの制限に到達したか、現在の設定値

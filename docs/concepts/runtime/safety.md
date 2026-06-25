@@ -66,7 +66,7 @@ limit hit
               ├─ yes  ──► allow=True,  reason="user_approved"
               └─ no   ──► allow=False, reason="user_refused"
 
-every allow=False path ──► force-close wrap-up (#1496)
+every allow=False path ──► force-close wrap-up
       emit `limit_denied` event (kind = max_iterations | router_cap)
       → one final tool-less LLM turn summarizing what was accomplished
           ├─ wrap-up has text ──► outbox kind="agent",
@@ -85,7 +85,7 @@ of waiting indefinitely for a peer answer, set `safety.on_limit.ask_timeout_seco
 to a finite value (e.g. `ask_timeout_seconds: 60.0`) — a timeout refusal produces
 the same decision-enabling error as a "no" answer.
 
-**Force-close wrap-up on deny (#1496).** A denied limit no longer goes
+**Force-close wrap-up on deny.** A denied limit no longer goes
 straight to a canned error. The OS first emits a `limit_denied` event
 (audit truth, P6) and gives the LLM one final **tool-less** turn to
 summarize what was accomplished before the turn ends. The stop cause is
