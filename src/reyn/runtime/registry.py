@@ -184,6 +184,14 @@ class AgentRegistry:
         self._factory = session_factory
         self._state_log = state_log
         self._project_root = project_root
+        # #2103 B (agent-spawn, Decision A): the spawn lineage child→parent. OS-set at
+        # an agent-SPAWN (not plain create), set-once + immutable (a forged/repeat parent
+        # is rejected), acyclic-by-construction (the parent pre-exists; a new child can't
+        # be an ancestor). resolved_profile_for composes the parent's LIVE resolved
+        # effective as a restrict-only conjunct → spawned ⊆ parent by construction,
+        # recursively (no-escalation-via-spawn). WAL-carried on agent_created for
+        # rewind-reconstruction.
+        self._spawn_lineage: "dict[str, str]" = {}
         # #2081: delegation policy. ``deny`` narrows an UNBOUND delegate with the
         # restrictive _delegate floor; ``inherit`` (default) = byte-identical to
         # pre-#2081. ``_constructing_as_delegate`` is the transient is_delegate
@@ -425,6 +433,23 @@ class AgentRegistry:
         profile = AgentProfile.new(name, role=role)
         profile.save(self._dir / name)
         return profile
+
+    def _record_spawn_lineage(self, child: str, parent: str) -> None:
+        """#2103 B: OS-set the spawn lineage ``child → parent``, set-once + immutable.
+        The lineage is the no-escalation linchpin (resolved_profile_for caps the child
+        at ⊆ parent via it), so it must NOT be forgeable or mutable post-spawn: a
+        re-set to a DIFFERENT parent is refused, and a self-link is rejected. Acyclic
+        by construction — the parent pre-exists and the child is freshly created, so a
+        child can never be an ancestor of its parent. Idempotent on the same parent
+        (rewind-reconstruction may replay the same edge)."""
+        if child == parent:
+            raise ValueError(f"spawn-lineage self-link rejected: {child!r}")
+        existing = self._spawn_lineage.get(child)
+        if existing is not None and existing != parent:
+            raise ValueError(
+                f"spawn-lineage for {child!r} is immutable "
+                f"(set to {existing!r}; refused re-set to {parent!r})")
+        self._spawn_lineage[child] = parent
 
     async def create_agent(self, name: str, *, role: str = "") -> AgentProfile:
         """#2103 S2b: the action-layer CREATE seam — create the profile (sync) +
@@ -2435,6 +2460,24 @@ class AgentRegistry:
             ps = self._load_per_session_capability_profile(agent, sid)
             if ps is not None:
                 resolved.append(resolve_profile(ps))
+
+        # #2103 B (agent-spawn, Decision A): cap a SPAWNED agent at ⊆ its PARENT, LIVE +
+        # by construction. The parent's OWN resolved effective is composed as one more
+        # restrict-only conjunct; compose_resolved is a lattice-meet (∩ allow, ∪ deny),
+        # which is order-independent, so the child can never EXCEED the parent — even if
+        # the child's assigned subset is mis-specified wider, or a topology re-grants
+        # (the re-grant is bounded ONLY because this LIVE parent-conjunct caps it; a
+        # stale snapshot could not — this is why Decision A, not a persisted ⊆, is
+        # REQUIRED). Recursive: the parent's resolved already ∩'d ITS parent up to the
+        # operator-authorized top (lineage is acyclic → terminates). The parent resolves
+        # with its OWN delegate-status (is_delegate=None → its construction transient)
+        # at the agent envelope (no sid). A forged/absent lineage simply isn't here
+        # (OS-set), so it cannot widen.
+        parent = self._spawn_lineage.get(agent)
+        if parent is not None:
+            parent_ctx, parent_excl = self.resolved_profile_for(parent)
+            if parent_ctx is not None:
+                resolved.append((parent_ctx, parent_excl))
 
         if not resolved:
             return None, frozenset()
