@@ -165,7 +165,7 @@ def test_reachable_role_that_denies_is_clean(tmp_path: Path, monkeypatch) -> Non
         "memory_operation__remember_agent, memory_operation__forget, remember_shared, "
         "remember_agent, forget_memory, mcp__install_registry, mcp__install_package, "
         "mcp__install_local, mcp_install_registry, mcp_install_package, mcp_install_local, "
-        "session_spawn, agent_spawn]\n",  # #2103: the spawn class too (session + agent)
+        "session_spawn, agent_spawn, topology_create]\n",  # #2103: the full spawn class (session + agent + topology)
         encoding="utf-8",
     )
     assert not _by(_findings(monkeypatch, tmp_path), contains="worker")

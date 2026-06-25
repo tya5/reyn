@@ -78,6 +78,13 @@ class RouterCallerState:
     # restrict-only narrowing. None when the host doesn't support agent-spawn.
     spawn_agent_fn: Callable[..., Awaitable[Any]] | None = None
 
+    # #2103 C1: topology-create dispatch. The topology_create handler wires the spawner's
+    # spawn-subtree agents into a topology (routed through registry.create_topology — the
+    # logged emit seam, WAL-tracked for rewind), restricting members to the creator's
+    # subtree so profile bindings stay ⊆-creator by construction. None when the host
+    # doesn't support topology-create.
+    topology_create_fn: Callable[..., Awaitable[Any]] | None = None
+
     # Session-scoped chain identity (= for plan tool, delegate
     # tool, etc.)
     chain_id: str | None = None

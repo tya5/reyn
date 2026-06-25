@@ -75,6 +75,7 @@ def make_adapter(
     task_waker: object = None,    # #2107: OS TaskWaker (router task.* terminal → requester wake)
     session_id: "str | None" = None,
     current_task_id_fn: "object | None" = None,  # #1953 §16: per-turn execution context
+    agent_registry: object = None,  # #2103: real AgentRegistry for spawn/topology seams
 ) -> RouterHostAdapter:
     """Construct a minimal RouterHostAdapter with real collaborators."""
     if events is None:
@@ -108,7 +109,7 @@ def make_adapter(
         resolver=resolver,
         memory=memory,
         journal=None,
-        agent_registry=None,
+        agent_registry=agent_registry,
         skill_enumerate_fn=lambda exclude: [],
         agent_workspace_dir=workspace,
         file_read=null_file_read,

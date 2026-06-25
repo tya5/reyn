@@ -995,6 +995,72 @@ class RouterHostAdapter:
             ),
         }
 
+    async def create_topology(
+        self,
+        *,
+        name: str,
+        kind: str,
+        members: "list[str]",
+        leader: "str | None" = None,
+        profiles: "dict[str, str] | None" = None,
+    ) -> dict:
+        """#2103 C1: wire/narrow agents THIS agent spawned into a topology (org-design).
+
+        Routes through ``registry.create_topology(topo)`` — the ONE logged CREATE seam
+        (#2153, add_topology + emit topology_created with the full config incl profiles),
+        so the topology is fully WAL-tracked for rewind reconstruction (never the sync
+        ``add_topology``).
+
+        Forge-guard (Q1, lead-approved): every member must be in THIS agent's spawn
+        SUBTREE (itself or a transitive spawn-descendant). That makes the profile
+        bindings safe by construction — each bound member is already ⊆ the creator via
+        the B-core lineage conjunct, so a binding can only narrow within that envelope,
+        never re-grant past it. An LLM thus cannot wire a non-descendant peer it doesn't
+        own (which would be a capability grant). Operator CLI/web create paths are
+        unrestricted (operator-authority); this seam is the LLM-tool path only."""
+        if self._registry is None:
+            raise RuntimeError(
+                "topology_create requires a registry (multi-agent host) — unavailable "
+                "in this context."
+            )
+        creator = self._agent_name
+        members = list(members)
+        outside = [
+            m for m in members if not self._registry.is_spawn_descendant(m, creator)
+        ]
+        if outside:
+            return {
+                "status": "error",
+                "kind": "member_outside_subtree",
+                "error": (
+                    f"topology_create: {sorted(outside)} are not in your spawn subtree "
+                    "— you may only wire agents you spawned (or yourself). Use "
+                    "agent_spawn to create them under your authority first."
+                ),
+            }
+        from reyn.runtime.topology import Topology
+        try:
+            topo = Topology.new(
+                name, kind=kind, members=members, leader=leader, profiles=profiles
+            )
+        except (ValueError, KeyError) as e:  # bad name/kind/leader, profile-non-member
+            return {"status": "error", "kind": "invalid_topology", "error": str(e)}
+        try:
+            await self._registry.create_topology(topo)
+        except FileExistsError:
+            return {"status": "error", "kind": "topology_exists",
+                    "error": f"topology {name!r} already exists."}
+        except ValueError as e:  # reserved/auto-managed name, unknown member agent
+            return {"status": "error", "kind": "create_rejected", "error": str(e)}
+        return {
+            "status": "created",
+            "name": name,
+            "kind": kind,
+            "members": members,
+            "leader": leader,
+            "profiles": dict(profiles or {}),
+        }
+
     def append_history_entry(
         self,
         *,

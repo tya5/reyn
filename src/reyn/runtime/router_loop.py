@@ -3309,6 +3309,11 @@ class RouterLoop:
         # + OS-set lineage). Dispatched here so the advertised router=allow tool reaches
         # its handler (the #2120 advertised-but-not-dispatched lesson).
         "agent_spawn",
+        # #2103 C1: topology_create — registry handler (tools/topology_create.py)
+        # delegates via RouterCallerState.topology_create_fn → host.create_topology
+        # (subtree-restricted member forge-guard + registry.create_topology emit seam).
+        # Dispatched here so the advertised router=allow tool reaches its handler.
+        "topology_create",
         # Phase 3.5-D — zero-diff handlers (reyn_src + web).
         # reyn_src handlers are literal copies of RouterHostAdapter helpers;
         # web handlers delegate to op_runtime.web with a synthesized OpContext
@@ -3509,6 +3514,26 @@ class RouterLoop:
                 return await self.host.spawn_agent(name=name, role=role)
             _spawn_agent_bound = _spawn_agent_bound_impl
 
+        # #2103 C1: topology-create binding (mirror agent-spawn). Only multi-agent hosts
+        # implement ``create_topology``; a host without it leaves this None.
+        _topology_create_bound: Any = None
+        if hasattr(self.host, "create_topology") and callable(
+            getattr(self.host, "create_topology", None)
+        ):
+            async def _topology_create_bound_impl(
+                *,
+                name: str,
+                kind: str,
+                members: "list[str]",
+                leader: "str | None" = None,
+                profiles: "dict[str, str] | None" = None,
+            ) -> dict:
+                return await self.host.create_topology(
+                    name=name, kind=kind, members=members,
+                    leader=leader, profiles=profiles,
+                )
+            _topology_create_bound = _topology_create_bound_impl
+
         # FP-0034 Phase 2 prep: snapshot indexed RAG corpora for the
         # universal catalog's rag_corpus enumeration. SourceManifest
         # caches the parsed YAML in-process so this is O(1) when the
@@ -3560,6 +3585,8 @@ class RouterLoop:
             spawn_session_fn=_spawn_session_bound,
             # #2103 B-tool: agent-spawn dispatch (None for non-multi-agent hosts).
             spawn_agent_fn=_spawn_agent_bound,
+            # #2103 C1: topology-create dispatch (None for non-multi-agent hosts).
+            topology_create_fn=_topology_create_bound,
             # Memory tool bridges (= for memory cluster handlers;
             # Phase 3.5-B-heavy) — bound to RouterLoop's private helpers
             # so registry handlers consume the same agent-aware

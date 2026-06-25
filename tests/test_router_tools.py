@@ -32,6 +32,7 @@ EXPECTED_TOOL_NAMES = [
     "delegate_to_agent",
     "session_spawn",  # #2103 S1bc / #2120: router-only spawn primitive (unconditional)
     "agent_spawn",     # #2103 B-tool: router-only org-design spawn primitive
+    "topology_create",  # #2103 C1: router-only org-wiring primitive
     "remember_shared",
     "remember_agent",
     "forget_memory",
