@@ -195,6 +195,32 @@ async def test_execution_context_threads_through_real_opctx_builder(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_adapter_builder_threads_current_task_id_live_router_path():
+    """Tier 2: #2134 L3 — the LIVE builder. Router-dispatched task ops build their
+    op-ctx via RouterHostAdapter.make_router_op_context (NOT the chat
+    Session._make_router_op_context), and the adapter reads the per-turn execution
+    context through a current_task_id_fn callback (varies per turn, like
+    live_session_id_fn). This is the exact builder that dropped task_waker in #2107 —
+    so it MUST be CI-pinned for current_task_id too. Mirrors
+    test_router_opctx_threads_task_waker_so_chat_abort_wakes_requester. Goes through
+    the REAL make_router_op_context. FALSIFY: strip the adapter's current_task_id
+    pass-through → ctx.current_task_id is None → RED (the chat-builder test stays
+    GREEN — which is exactly why this separate live-builder test is required)."""
+    from tests._support.router_host_adapter import make_adapter
+
+    adapter = make_adapter(agent_name="alice", session_id="worker",
+                           current_task_id_fn=lambda: "T-exec")
+    ctx = adapter.make_router_op_context()
+    assert ctx.current_task_id == "T-exec"  # the live-builder wire
+
+    # no execution context (top-level / user turn) → session-owned build.
+    adapter_none = make_adapter(agent_name="alice", session_id="worker",
+                                current_task_id_fn=lambda: None)
+    ctx_none = adapter_none.make_router_op_context()
+    assert ctx_none.current_task_id is None
+
+
+@pytest.mark.asyncio
 async def test_requester_kind_task_round_trips_through_sqlite(tmp_path):
     """Tier 2: the NON-DEFAULT requester_kind=task survives a sqlite set→reload→get
     (a default 'session' round-trip would pass trivially even if the column were
