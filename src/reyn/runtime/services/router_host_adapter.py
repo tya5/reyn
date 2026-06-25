@@ -978,6 +978,12 @@ class RouterHostAdapter:
                 "this context."
             )
         parent = self._agent_name
+        # #2103 C3: operator spawn-tree bound (safety.spawn.*) — reject a spawn that
+        # would exceed max_depth / max_children. LLM-seam only (the operator CLI create
+        # path does not route here → unbounded = authority, consistent with C1).
+        limit_reason = self._registry.spawn_would_exceed_limits(parent)
+        if limit_reason is not None:
+            return {"status": "error", "kind": "spawn_limit_exceeded", "error": limit_reason}
         try:
             await self._registry.create_agent(name, role=role, parent=parent)
         except FileExistsError:
@@ -1025,6 +1031,11 @@ class RouterHostAdapter:
             )
         creator = self._agent_name
         members = list(members)
+        # #2103 C3: operator spawn-tree bound (safety.spawn.*) — max_children governs
+        # topology SIZE too (org fan-out). LLM-seam only (operator CLI unbounded).
+        size_reason = self._registry.topology_size_exceeds_limit(len(members))
+        if size_reason is not None:
+            return {"status": "error", "kind": "spawn_limit_exceeded", "error": size_reason}
         outside = [
             m for m in members if not self._registry.is_spawn_descendant(m, creator)
         ]

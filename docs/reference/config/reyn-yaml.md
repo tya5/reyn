@@ -416,6 +416,9 @@ safety:
     fence_enabled: true        # structurally fence untrusted content as data
     block_severity: block      # min severity that blocks at write seams: block | warn
     custom_patterns: []        # operator [regex, id, scope, severity] extensions
+  spawn:
+    max_depth: 10              # max LLM spawn-lineage chain depth (agent_spawn); 0 = unlimited
+    max_children: 20           # max fan-out: direct children per parent AND topology size; 0 = unlimited
 ```
 
 ### `safety.loop` fields
@@ -460,6 +463,15 @@ Content-layer threat defense: inspects untrusted content for prompt-injection be
 | `safety.threat_scan.fence_enabled` | bool | `true` | Structurally fence untrusted content (random-id markers + control-token strip + unicode normalization) so the LLM treats it as data, not instructions. For *which* content this applies to, see [Security: what gets structurally fenced](../../concepts/agent-engineering/security.md#what-gets-structurally-fenced). |
 | `safety.threat_scan.block_severity` | string | `block` | Minimum severity that BLOCKS at agent-write seams (memory write / skill install). `block` = only `block`-severity patterns; `warn` = warn-severity also blocks (stricter). |
 | `safety.threat_scan.custom_patterns` | list | `[]` | Operator pattern extensions, each `[regex, id, scope, severity]`. Merged into the built-in catalog for scans. |
+
+### `safety.spawn` fields
+
+Operator bounds on the LLM spawn tree (#2103 C3) — a DoS guard so an agent cannot mint an unbounded org. Set in `reyn.yaml` (the restart-only OUT layer): an LLM has no runtime path to raise its own limit. Enforced at the LLM spawn **seams** (`agent_spawn`, `topology_create`); the operator CLI create path is unbounded (authority). Defense-by-default (non-zero) — there is no backward-compat spawn tree to break.
+
+| Path | Type | Default | Description |
+|------|------|---------|-------------|
+| `safety.spawn.max_depth` | int | `10` | Maximum spawn-lineage chain depth (operator-top = 0; each `agent_spawn` +1). A spawn whose child would exceed this is rejected. `0` = unlimited. |
+| `safety.spawn.max_children` | int | `20` | Maximum fan-out: governs BOTH the direct spawn-children per parent (`agent_spawn`) AND the member count of a `topology_create`d topology (org size). A spawn / wire that would exceed it is rejected. `0` = unlimited. |
 
 ## `time_travel` block
 

@@ -598,6 +598,9 @@
 #     fence_enabled: true           # structurally fence untrusted content as data
 #     block_severity: block         # min severity that blocks at write seams: block | warn
 #     custom_patterns: []           # operator [regex, id, scope, severity] extensions
+#   spawn:                          # #2103 C3: operator bounds on the LLM spawn tree (DoS guard)
+#     max_depth: 10                 # max spawn-lineage chain depth (agent_spawn); 0 = unlimited
+#     max_children: 20              # max fan-out: direct children per parent AND topology size; 0 = unlimited
 
 
 # -----------------------------------------------------------------------------

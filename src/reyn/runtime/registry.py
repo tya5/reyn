@@ -150,6 +150,8 @@ class AgentRegistry:
         workspace_capture: bool = True,
         act_turn_capture: bool = False,
         delegation_capability_default: str = "inherit",
+        max_spawn_depth: int = 0,
+        max_spawn_children: int = 0,
         factory_config: "object | None" = None,
         create_event_kinds: "frozenset[str] | None" = None,
     ) -> None:
@@ -175,6 +177,14 @@ class AgentRegistry:
             workspace_capture = factory_config.workspace_capture
             act_turn_capture = factory_config.act_turn_capture
             delegation_capability_default = factory_config.delegation_capability_default
+            max_spawn_depth = factory_config.max_spawn_depth
+            max_spawn_children = factory_config.max_spawn_children
+        # #2103 C3: operator spawn-tree bounds (safety.spawn.*), enforced at the LLM
+        # spawn seams (host adapter). 0 = unlimited. Util/test callers default to
+        # unlimited (byte-identical); the 5 frontend factory sites supply them via the
+        # factory_config bundle.
+        self._max_spawn_depth = max_spawn_depth
+        self._max_spawn_children = max_spawn_children
         self._dir = project_root / ".reyn" / "agents"
         self._dir.mkdir(parents=True, exist_ok=True)
         self._topology_dir = project_root / ".reyn" / TOPOLOGY_DIRNAME
@@ -526,6 +536,72 @@ class AgentRegistry:
                 return False
             seen.add(pname)
             cursor = pname
+
+    # ── #2103 C3: operator spawn-tree bounds (safety.spawn.*) ───────────────────────
+    # Computed over the SAME identity-keyed lineage as the cap-walk, so a stale
+    # (name-reused) edge does not inflate the counts. Enforced at the LLM spawn SEAMS
+    # (host adapter) only — the operator CLI create path is unbounded (authority).
+
+    def spawn_depth(self, agent: str) -> int:
+        """#2103 C3: the spawn-lineage chain depth of ``agent`` (an operator-top agent =
+        0; each spawn edge +1). Walks ``_spawn_lineage`` to the root; a STALE edge
+        (name-reused parent → frozen identity ≠ current) terminates the walk — the chain
+        is broken there, so a purged+reused ancestor does not inflate the depth."""
+        depth = 0
+        cursor = agent
+        seen: "set[str]" = set()
+        while True:
+            edge = self._spawn_lineage.get(cursor)
+            if edge is None:
+                return depth
+            pname, pseq = edge
+            if pseq is not None and self._agent_create_seq.get(pname) != pseq:
+                return depth  # stale edge → chain broken
+            if pname in seen:
+                return depth
+            seen.add(pname)
+            depth += 1
+            cursor = pname
+
+    def spawn_child_count(self, parent: str) -> int:
+        """#2103 C3: the number of LIVE direct spawn-children of ``parent`` — edges whose
+        parent NAME matches AND whose frozen identity matches ``parent``'s current
+        identity (a stale name-reuse edge from an orphan of a PRIOR same-named parent is
+        excluded; an untracked-parent edge is counted by name)."""
+        pid = self._agent_create_seq.get(parent)
+        n = 0
+        for _child, (pname, pseq) in self._spawn_lineage.items():
+            if pname == parent and (pseq is None or pseq == pid):
+                n += 1
+        return n
+
+    def spawn_would_exceed_limits(self, parent: str) -> "str | None":
+        """#2103 C3: a reject-reason if an ``agent_spawn`` under ``parent`` would exceed
+        the operator spawn bounds (``safety.spawn.*``), else None. Called by the LLM
+        spawn SEAM (host adapter); the operator CLI create path does NOT call it
+        (authority). ``0`` limits = unlimited (the check is skipped)."""
+        if self._max_spawn_depth and self.spawn_depth(parent) + 1 > self._max_spawn_depth:
+            return (
+                f"spawn-limit: max_depth={self._max_spawn_depth} would be exceeded "
+                f"(parent {parent!r} is at spawn-depth {self.spawn_depth(parent)})"
+            )
+        if self._max_spawn_children and self.spawn_child_count(parent) >= self._max_spawn_children:
+            return (
+                f"spawn-limit: max_children={self._max_spawn_children} would be exceeded "
+                f"(parent {parent!r} already has {self.spawn_child_count(parent)} children)"
+            )
+        return None
+
+    def topology_size_exceeds_limit(self, member_count: int) -> "str | None":
+        """#2103 C3: a reject-reason if a ``topology_create`` with ``member_count`` members
+        would exceed ``max_children`` (the fan-out bound governs topology size too), else
+        None. ``0`` = unlimited."""
+        if self._max_spawn_children and member_count > self._max_spawn_children:
+            return (
+                f"spawn-limit: max_children={self._max_spawn_children} would be exceeded "
+                f"(topology has {member_count} members)"
+            )
+        return None
 
     async def create_agent(
         self, name: str, *, role: str = "", parent: "str | None" = None
