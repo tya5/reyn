@@ -168,13 +168,15 @@ async def test_rewind_restore_failure_does_not_drop_the_session_dir(tmp_path) ->
 
 
 @pytest.mark.asyncio
-async def test_remove_session_closes_backend_and_repoints_pointer(tmp_path) -> None:
-    """Tier 2: #2125 — remove_session CLOSES the dropped session's per-session Task-backend
-    (a separate sqlite connection to the agent's shared tasks.db), releasing its lock so a
-    later _restore_task_active file-swap doesn't hit 'database is locked' (busy_timeout=0),
-    AND re-points the registry's single _task_backend off the now-closed handle to a
-    surviving session's backend. Strip the close()/re-point → the survivor pointer dangles
-    to a closed connection."""
+async def test_remove_session_closes_dropped_backend_restore_uses_survivor(tmp_path) -> None:
+    """Tier 2: #2125 + #2128 — remove_session CLOSES the dropped session's per-session
+    Task-backend (a separate sqlite connection to the agent's shared tasks.db), releasing
+    its lock. With #2128, _restore_task_active derives the rewind backends from the CURRENT
+    loaded sessions (``_rewind_backends``), so the dropped session is simply no longer
+    iterated — restore touches the survivor, never the now-closed dropped handle (no
+    re-point pointer needed; the #2125 interim is subsumed). Strip the close() → restore on
+    a still-open shared file is fine; the load-bearing property is that the dropped session
+    is OUT of the derive set."""
     import sqlite3
 
     from reyn.task.factory import create_task_backend
@@ -194,7 +196,6 @@ async def test_remove_session_closes_backend_and_repoints_pointer(tmp_path) -> N
         task_backend=dropped_backend, cancel_inflight=_noop, await_quiescent=_noop,
     )
     reg._sessions["worker"] = {"main": main, "s1": spawned}
-    reg._task_backend = dropped_backend  # the single pointer → last-constructed (spawned)
     _make_session_dir(reg, "worker", "s1")
     # a captured generation on the SURVIVOR at an active WAL seq → _restore_task_active
     # has real work that touches the backend's connection (else it no-ops without probing).
@@ -206,8 +207,8 @@ async def test_remove_session_closes_backend_and_repoints_pointer(tmp_path) -> N
     # the dropped backend's connection is closed (a public DB read now raises) → lock released.
     with pytest.raises(sqlite3.ProgrammingError):
         await dropped_backend.get("any-task-id")
-    # the registry's single task-backend pointer was re-pointed off the now-closed dropped
-    # backend to the surviving session's backend: _restore_task_active restores the
-    # survivor's generation without error. A pointer still dangling to the closed dropped
+    # #2128: _restore_task_active derives from the loaded sessions — only the survivor
+    # remains, so its generation is restored without error and the closed dropped backend
+    # is never touched (it's out of _sessions). A path that still reached the dropped
     # connection would raise ProgrammingError inside restore_to_seq.
     await reg._restore_task_active(at_or_below=seq)

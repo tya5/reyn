@@ -4,9 +4,11 @@ The session factory calls :func:`create_task_backend` to build the session-scope
 backend it injects into ``Session(task_backend=...)``. The choice is config-driven
 (``in-memory`` for tests / ephemeral, ``sqlite`` for durable) — never hardcoded.
 
-The sqlite ``path`` is session-scoped (one db per session, so the task store
-participates in that session's rewind window); the exact path is supplied by the
-caller that owns the session's state dir (finalized with §24). Path-agnostic here.
+The sqlite ``path`` is supplied by the caller. NOTE (#2128): the
+``per_session_sqlite_backend`` path below is AGENT-keyed
+(``.reyn/agents/<name>/state/tasks.db``) — one db file per AGENT, SHARED across that
+agent's sessions, NOT one db per session. The earlier "one db per session" wording was
+wrong; per-session isolation + the shared-file connection model are tracked in #2180.
 """
 from __future__ import annotations
 
@@ -36,16 +38,18 @@ def create_task_backend(kind: str | None = None, *, path: str | None = None):
 
 
 def per_session_sqlite_backend(agent_name: str) -> "SqliteTaskBackend":
-    """#1953 slice R, I-5=(A): a per-session sqlite Task backend at the agent's
-    default state dir — so in-session ``task.*`` ops are durable AND participate
-    in that session's rewind window (alongside runtime-snapshot + workspace).
+    """#1953 slice R, I-5=(A): the sqlite Task backend at the agent's default state
+    dir — so in-session ``task.*`` ops are durable AND participate in the rewind
+    window (alongside runtime-snapshot + workspace).
 
-    The path is the sibling of the Session's default ``_snapshot_path`` /
-    ``generations`` dir (``.reyn/agents/<name>/state/tasks.db``), centralized here
-    so the capture (``cut_generation``) and restore (``_restore_task_active``)
-    operate on the same db. Used by the single-tenant local frontends (cli/chat,
-    stdio-MCP); A2A/web pass ``None`` (the process-singleton A2A surface is read
-    directly, not threaded into a session — its tasks stay durable but un-rewound,
+    #2128 correction: the path is AGENT-keyed (``.reyn/agents/<name>/state/tasks.db``),
+    so it is ONE db file per AGENT, SHARED across that agent's sessions — NOT one db
+    per session (the function name + the old "per-session" wording are misleading; the
+    shared-file connection model + true per-session isolation are tracked in #2180).
+    Each session still constructs its OWN ``SqliteTaskBackend`` instance over this
+    shared path (N connections to one file). Used by the single-tenant local frontends
+    (cli/chat, stdio-MCP); A2A/web pass ``None`` (the process-singleton A2A surface is
+    read directly, not threaded into a session — its tasks stay durable but un-rewound,
     the cross-session fan-out tracked in #1997).
     """
     from pathlib import Path  # noqa: PLC0415

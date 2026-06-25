@@ -268,13 +268,10 @@ class AgentRegistry:
         # tracked follow-up (#1544). Lazily built so non-chat / no-WAL callers
         # never touch git.
         self._workspace_store: WorkspaceVersionStore | None = None
-        # #1953 slice R: the rewind-participating per-session Task backend, pulled
-        # from the session at construction (the session owns it — threaded via
-        # build_scoped_chat_session). The rewind/recovery restore
-        # (_restore_task_active) reads it. I-5=(A): only a local cli/chat
-        # per-session backend lands here; the A2A/web singleton is never threaded
-        # into a session, so it stays None here and its tasks never rewind.
-        self._task_backend: object | None = None
+        # #2128: the single ``_task_backend`` pointer is RETIRED. The rewind/recovery
+        # restore derives every loaded agent's rewind backend at use-time
+        # (``_rewind_backends``), and the prune is disk-driven over on-disk agents — so
+        # no per-construction pointer is held (it was multi-AGENT-incorrect: last-wins).
         # ADR-0038 #1544: FS+exec backend. None / name!="container" → host mode
         # (host subprocess git runner). When container, git runs in-container via
         # backend.run with the container path context (the work-tree is
@@ -1597,17 +1594,10 @@ class AgentRegistry:
                     task.cancel()
         if self._sessions.get(name, {}).pop(sid, None) is not None:
             removed = True
-        # #2125 (interim, secondary): the registry's single ``_task_backend`` pointer is
-        # set to the LAST-constructed session's backend (1849) — under multi-session it
-        # may point to the one we just closed, which would leave _restore_task_active
-        # (1401) operating on a closed connection. Re-point it to a SURVIVING session's
-        # rewind backend (or None) now that the dropped session is out of the map. The
-        # full fix (a per-session backend map so every survivor is restorable, not just
-        # one) is the broader per-session-Task-backend root, tracked in #2128.
-        if session is not None:
-            tb = getattr(session, "task_backend", None)
-            if tb is not None and tb is self._task_backend:
-                self._task_backend = self._surviving_rewind_backend()
+        # #2128: no single-pointer re-point needed — _restore_task_active derives the
+        # rewind backends from the CURRENT loaded sessions at use-time, so a dropped
+        # session is simply no longer iterated (no dangling/closed-handle hazard). This
+        # subsumes the #2125 interim re-point.
         if purge_dir:
             if self._purge_session_dir(name, sid):
                 removed = True
@@ -1624,19 +1614,27 @@ class AgentRegistry:
             )
         return removed
 
-    def _surviving_rewind_backend(self) -> "object | None":
-        """#2125: the first loaded session's rewind-participating Task backend, or None.
+    def _rewind_backends(self) -> "list[object]":
+        """#2128: every LOADED agent's rewind-participating Task backend — ONE per agent.
 
-        Used to re-point the registry's single ``_task_backend`` after a session whose
-        backend it referenced is dropped+closed. Scans the CURRENT in-memory sessions
-        (the dropped one is already out of the map), so it never returns a closed handle.
+        Replaces the single ``_task_backend`` pointer (multi-session/multi-AGENT
+        incorrect: it held only the last-constructed session's backend, so the rewind
+        RESTORE reached only one agent). The ``tasks.db`` is agent-keyed + shared across
+        an agent's sessions, so one backend per agent covers that agent's file; restoring
+        via N session-objects would redundantly file-swap the shared db (the #2125
+        cross-connection lock). Derived at use-time from the CURRENT loaded sessions, so a
+        dropped session is no longer iterated — no dangling/closed handle (subsumes the
+        #2125 re-point). Restore needs a LIVE backend (it mutates the live connection), so
+        this is loaded-derived; the disk-driven prune (over on-disk agents) is separate.
         """
+        out: "list[object]" = []
         for sessions in self._sessions.values():
             for session in sessions.values():
                 tb = getattr(session, "task_backend", None)
                 if tb is not None and getattr(tb, "supports_rewind", False):
-                    return tb
-        return None
+                    out.append(tb)
+                    break  # one per agent — the file is shared across its sessions
+        return out
 
     def _purge_session_dir(self, name: str, sid: str) -> bool:
         """#2125: the destructive half of session teardown — rmtree the per-session
@@ -1820,16 +1818,19 @@ class AgentRegistry:
         un-rewound — the cross-session fan-out is tracked in #1997). No-ops when
         no backend is attached (e.g. crash-recovery before any session loads, so
         crash-recovery stays untouched) or when the backend opts out of rewind.
+
+        #2128: restore EVERY loaded agent's rewind backend (``_rewind_backends`` — one
+        per agent), not a single last-constructed pointer, so a multi-AGENT rewind
+        restores all of them. Restore mutates the live connection, so it is loaded-
+        derived (an unloaded agent isn't running; its db isn't live to restore).
         """
-        tb = self._task_backend
-        if tb is None or not getattr(tb, "supports_rewind", False):
-            return
-        active = [
-            s for s in await tb.generation_seqs()
-            if s <= at_or_below and is_active_seq(self._state_log, s)
-        ]
-        if active:
-            await tb.restore_to_seq(max(active))
+        for tb in self._rewind_backends():
+            active = [
+                s for s in await tb.generation_seqs()
+                if s <= at_or_below and is_active_seq(self._state_log, s)
+            ]
+            if active:
+                await tb.restore_to_seq(max(active))
 
     async def recover_rewind_if_needed(self) -> dict | None:
         """Re-materialise both substrates as-of-N after a crash mid-rewind (1d).
@@ -1944,19 +1945,26 @@ class AgentRegistry:
         the store (#1544 — no host-PATH git_available pre-gate).
         """
         try:
+            from reyn.task.generation_store import SqliteTaskGenerationStore
             for name in self.list_names():
                 # FP-0043 S5: prune EVERY session's generations (main + spawned),
                 # not just main — per-session generation dirs now exist.
                 for sid in self._discover_session_ids(name):
                     self._store_for(name, sid).prune_below(floor)  # SnapshotGenerationStore (sync)
+                # #2128: prune the agent's (agent-keyed) Task-substrate generations on the
+                # SAME boundary, DISK-driven so UNLOADED agents are covered too — the old
+                # single ``_task_backend`` pointer reached only the last-loaded agent,
+                # leaving every other agent's task-gen DBs unbounded. The store is a
+                # standalone no-connection class (pure unlink of task-gen-<seq>.db below
+                # the floor), so this never touches a loaded agent's live tasks.db
+                # connection. ``is_dir()`` guard FIRST — the store ctor mkdir's the dir,
+                # so without it a non-rewind agent would get an empty task-generations/.
+                task_gen_dir = self._dir / name / "state" / "task-generations"
+                if task_gen_dir.is_dir():
+                    SqliteTaskGenerationStore(task_gen_dir).prune_below(floor)  # sync, pure-fs
             ws = self.workspace_store
             if ws is not None:
                 await ws.prune_below(floor)
-            # #1953 slice R: prune Task-substrate generations on the SAME boundary
-            # (bounds the full-DB-copy storage to the retention window — flag #2).
-            tb = self._task_backend
-            if tb is not None and getattr(tb, "supports_rewind", False):
-                await tb.prune_generations_below(floor)
             # #1560 PR-3: act-turn op-content-log GC on the same boundary — drop
             # entries below the floor + unref the out-window op-trees (so auto-gc
             # reclaims them, the same bounded lifecycle generations get).
@@ -2268,14 +2276,10 @@ class AgentRegistry:
         attach_anchor = getattr(session, "attach_anchor_store", None)
         if anchors is not None and callable(attach_anchor):
             attach_anchor(anchors)
-        # #1953 slice R: pull the session's rewind-participating Task backend so
-        # the rewind/recovery restore (_restore_task_active) has a handle to the
-        # same per-session backend the session's cut_generation captures. Only a
-        # backend that opts into rewind is held (I-5=(A) per-session); a None /
-        # non-rewinding backend leaves the restore path inert.
-        tb = getattr(session, "task_backend", None)
-        if tb is not None and getattr(tb, "supports_rewind", False):
-            self._task_backend = tb
+        # #2128: no per-construction pointer set — the session's rewind backend is
+        # reachable via ``session.task_backend`` and derived at use-time by
+        # ``_rewind_backends`` (the restore path) keyed by the loaded sessions, so a
+        # multi-AGENT registry restores EVERY agent's backend, not just the last one.
         return session
 
     def spawn_session(self, name: str, sid: "str | None" = None) -> str:
