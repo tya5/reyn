@@ -86,6 +86,14 @@ WAL_EVENT_KINDS = (
     # vanished`` records the ephemeral auto-vanish / explicit teardown. OS-level (P7).
     "session_spawned",
     "session_vanished",
+    # NEW (#2103 Piece-2) — topology-lifecycle events for rewind-reconstruction of
+    # the topology config-set (create / update / remove). OS-level (topology is an
+    # OS concept), P7-safe; apply_events no-ops them (config-set existence/shape,
+    # not agent-snapshot STATE). Each create/update carries the FULL topology config
+    # → as-of-cut reconstruction is latest-≤-cut-wins (no delta-fold).
+    "topology_created",
+    "topology_updated",
+    "topology_removed",
 )
 
 

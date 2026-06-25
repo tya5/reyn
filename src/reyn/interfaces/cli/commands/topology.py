@@ -8,6 +8,7 @@ AgentRegistry consults them when routing delegations.
 from __future__ import annotations
 
 import argparse
+import asyncio
 import sys
 from pathlib import Path
 
@@ -113,7 +114,7 @@ def _cmd_new(args: argparse.Namespace) -> None:
         topo = Topology.new(
             args.name, kind=args.kind, members=members, leader=args.leader,
         )
-        reg.add_topology(topo)
+        asyncio.run(reg.create_topology(topo))  # #2103: logged seam (WAL-tracked)
     except (ValueError, FileExistsError) as e:
         print(f"Error: {e}", file=sys.stderr)
         sys.exit(1)
@@ -166,7 +167,7 @@ def _cmd_rm(args: argparse.Namespace) -> None:
             print("aborted")
             return
     try:
-        reg.remove_topology(args.name)
+        asyncio.run(reg.delete_topology(args.name))  # #2103: logged seam
     except (FileNotFoundError, ValueError) as e:
         print(f"Error: {e}", file=sys.stderr)
         sys.exit(1)
@@ -176,7 +177,7 @@ def _cmd_rm(args: argparse.Namespace) -> None:
 def _cmd_add_member(args: argparse.Namespace) -> None:
     reg = _registry()
     try:
-        topo = reg.add_member(args.topology, args.agent)
+        topo = asyncio.run(reg.add_topology_member(args.topology, args.agent))  # #2103
     except (FileNotFoundError, ValueError) as e:
         print(f"Error: {e}", file=sys.stderr)
         sys.exit(1)
@@ -186,7 +187,7 @@ def _cmd_add_member(args: argparse.Namespace) -> None:
 def _cmd_rm_member(args: argparse.Namespace) -> None:
     reg = _registry()
     try:
-        topo = reg.remove_member(args.topology, args.agent)
+        topo = asyncio.run(reg.remove_topology_member(args.topology, args.agent))  # #2103
     except (FileNotFoundError, ValueError) as e:
         print(f"Error: {e}", file=sys.stderr)
         sys.exit(1)
