@@ -70,6 +70,7 @@ from reyn.runtime.services import (
 )
 from reyn.runtime.services.a2a_handler import A2AHandler
 from reyn.runtime.services.chain_manager import _PendingChain
+from reyn.runtime.services.task_wake import WAKE_READY_KIND
 from reyn.runtime.session_buses import AgentRequestBus, ChatInterventionBus
 from reyn.security.permissions.permissions import PermissionResolver
 from reyn.services.compaction.engine import CompactionEngine
@@ -922,6 +923,13 @@ class Session:
         # falls back to its in-memory backend (tests / direct construction).
         self._task_backend = task_backend
         self._task_waker = task_waker  # #1953 slice 7
+        # #1953 §16 (recursive-request): the task_id this session is currently
+        # EXECUTING as a task-as-request, set per-turn from an execute-wake's meta
+        # (run_one_iteration). Read by the router op-ctx builders so task.create
+        # derives ownership (requester=<this task>). None = not executing an assigned
+        # task (a user / hook / recovery turn). Slice B extends the lifetime to a
+        # persistent assignment spanning continuation + recovery turns.
+        self._current_task_id: "str | None" = None
         # #1827 S4b (context-auto): lazily-resolved minimal _untrusted profile
         # ContextualPermission, composed into the per-turn narrowing while
         # untrusted external content is live in context. None until first needed.
@@ -1596,6 +1604,9 @@ class Session:
             # spawn guard.
             record_spawned_task=self.record_spawned_task,
             live_session_id_fn=lambda: self._session_id,
+            # #1953 §16: the per-turn execution context (set in run_one_iteration),
+            # read at op-ctx-build time so a router task.create derives ownership.
+            current_task_id_fn=lambda: self._current_task_id,
             skill_enumerate_fn=enumerate_available_skills,
             agent_workspace_dir=self.workspace_dir,
             file_read=self._file_read,
@@ -3403,6 +3414,20 @@ class Session:
             # shutdown sentinel
             return False
         kind, payload = trigger
+        # #1953 §16 (recursive-request): stamp this session's current execution
+        # context. A turn the OS woke to EXECUTE an assigned task (``task_ready``)
+        # carries that task_id in its wake meta → set it so ``task.create`` during
+        # this turn derives ownership (requester=<this task>, requester_kind=task).
+        # Every other trigger (user / hook / recovery ``task_dependency_aborted``)
+        # CLEARS it — a per-turn lifetime. NOTE the recovery wake is deliberately
+        # excluded: its meta names the FAILED dependent, not the managing
+        # task-as-request, so stamping it would mis-own a recovery-create. Both the
+        # recovery-create and multi-turn-execution contexts are closed by slice B's
+        # persistent assignment (the SOURCE evolves; this set-point is the seam).
+        self._current_task_id = (
+            payload.get("meta", {}).get("task_id")
+            if kind == WAKE_READY_KIND else None
+        )
         # #1800 slice 7: the loop valve. Bound hook self-continuation at the
         # SINGLE seam — before any per-turn work (sender attribution / turn_started
         # emit / turn_start dispatch / kind dispatch). A human user turn re-arms
@@ -5083,6 +5108,7 @@ class Session:
             agent_id=self._agent_id,
             contextual_permission=self._contextual_permission,  # #1827 S3 → control-IR OpContext
             hook_dispatcher=self._hook_dispatcher,  # #1800 slice 5c: complete-by-construction (both router callers)
+            current_task_id=self._current_task_id,  # #1953 §16: ownership-derivation for task.create (enumerate ALL op-ctx builders)
         )
 
     async def _file_op(self, op_dict: dict) -> dict:

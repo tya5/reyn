@@ -82,6 +82,26 @@ class TaskOrigin(str, Enum):
     EXTERNAL = "external"
 
 
+class TaskRequesterKind(str, Enum):
+    """What kind of entity the ``requester`` routing-key names (#1953 §16
+    recursive-request model).
+
+    ``session`` — a session owns the request (the original model: a top-level
+    task requested by a session; ``requester`` is a session routing-key).
+    ``task`` — a *task-as-request* owns this sub-task; ``requester`` is that
+    task's ``task_id``. Recovery routing resolves a ``task`` requester to its
+    ASSIGNEE (the managing session) before waking — the recursive generalization
+    of §16 S1 (route to the requester; if it is a task, resolve to its assignee).
+
+    OS-SET at create from the caller's execution context + IMMUTABLE for the
+    Task's life — no LLM/op sets or mutates it, so it cannot be mis-marked to
+    mis-route a recovery (the §16 security invariant).
+    """
+
+    SESSION = "session"
+    TASK = "task"
+
+
 @dataclass
 class Task:
     """One trackable work-unit.
@@ -100,6 +120,7 @@ class Task:
     name: str
     assignee: str
     requester: str
+    requester_kind: TaskRequesterKind = TaskRequesterKind.SESSION  # §16: session-owned vs task-as-request owned
     origin: TaskOrigin = TaskOrigin.SELF
     status: TaskState = TaskState.PENDING
     description: str | None = None
@@ -119,6 +140,7 @@ class Task:
             "name": self.name,
             "assignee": self.assignee,
             "requester": self.requester,
+            "requester_kind": self.requester_kind.value,
             "origin": self.origin.value,
             "status": self.status.value,
             "description": self.description,

@@ -26,6 +26,7 @@ from reyn.task import (
     TaskCycleError,
     TaskDepNotFoundError,
     TaskOrigin,
+    TaskRequesterKind,
     TaskState,
 )
 from reyn.task.model import TERMINAL_STATES
@@ -171,11 +172,27 @@ async def _authorize(op_kind: str, ctx: OpContext, backend, task_id: str, role: 
 
 
 async def _create(op, ctx: OpContext, caller) -> dict:
-    # requester = the caller's session (the origin / assigner, §model "requester=self").
+    # §16 recursive-request: requester + requester_kind are OS-SET from the caller's
+    # EXECUTION context — NEVER an op field, so the LLM cannot mark ownership to
+    # mis-route a later recovery (the §16 security invariant). When the caller is
+    # executing a task-as-request (``ctx.current_task_id`` set by the OS for that
+    # turn), the new sub-task is OWNED by that task (``requester`` = the task id,
+    # ``requester_kind`` = task). Otherwise it is a top-level / session-owned task
+    # (``requester`` = the caller session, kind = session — the original model).
     # cross-session delegation supplies a different ``assignee``; a self-task defaults
-    # the assignee to the caller. parent_id (optional, absorbs the old create_subtask)
-    # must reference a task the CALLER owns as requester (tree decomposition, §12).
-    requester = _caller_session(ctx)
+    # the assignee to the caller SESSION (the executor — NOT the requester, which is
+    # now a task id in the recursive case; a task-id assignee would break the
+    # single-writer CAS ``assignee == caller_session_id``). parent_id (optional,
+    # absorbs the old create_subtask) must reference a task the CALLER owns as
+    # requester (tree decomposition, §12).
+    caller_session = _caller_session(ctx)
+    current_task_id = getattr(ctx, "current_task_id", None)
+    if current_task_id:
+        requester = current_task_id
+        requester_kind = TaskRequesterKind.TASK
+    else:
+        requester = caller_session
+        requester_kind = TaskRequesterKind.SESSION
     parent_id = getattr(op, "parent_id", None)
     if parent_id:
         parent = await _backend(ctx).get(parent_id)
@@ -186,8 +203,9 @@ async def _create(op, ctx: OpContext, caller) -> dict:
     task = Task(
         task_id=uuid.uuid4().hex,
         name=op.name,
-        assignee=(getattr(op, "assignee", None) or requester),
+        assignee=(getattr(op, "assignee", None) or caller_session),
         requester=requester,
+        requester_kind=requester_kind,
         origin=TaskOrigin(getattr(op, "origin", "self") or "self"),
         description=op.description,
         parent_id=parent_id,
@@ -376,18 +394,35 @@ async def _route_terminal_to_requester(
     if not stuck:
         return
     requester = terminal_task.requester
+    # §16 recursive-request: resolve the notify-TARGET session. A ``session``
+    # requester IS the target (the original S1 path). A ``task`` requester (a
+    # task-as-request owns this dependent's failed task) resolves to that task's
+    # ASSIGNEE — the managing session that owns + executes the request (parent ==
+    # requester by construction → no drift). One hop suffices: an assignee is always
+    # a session, never another task. This is the recursive generalization of S1.
+    requester_session = requester
+    if terminal_task.requester_kind is TaskRequesterKind.TASK:
+        owner = await backend.get(requester)
+        requester_session = owner.assignee if owner is not None else None
     events = getattr(ctx, "events", None)
     if events is not None:
-        # Generic P6 (P7); NOT a WAL closed-vocab kind (WAL-vs-P6 separation).
+        # Generic P6 (P7); NOT a WAL closed-vocab kind (WAL-vs-P6 separation). The
+        # event records the TRUE owner (``requester`` — a session or a task id) for
+        # audit; the wake goes to the resolved managing session below.
         events.emit(
             "task_dependency_aborted", task_id=terminal_task.task_id,
             disposition=disp, requester=requester,
             dependents=[d.task_id for d in stuck],
         )
+    if requester_session is None:
+        # The owning task-as-request is gone → no managing session to wake. The
+        # ownership-cascade (slice B) aborts such orphaned dependents; here the audit
+        # has fired, so drop the wake (cf. S1's bare-no-live-session drop).
+        return
     waker = getattr(ctx, "task_waker", None)
     if waker is not None:
         await waker.notify_requester_decide(
-            requester_session=requester, terminal_task=terminal_task,
+            requester_session=requester_session, terminal_task=terminal_task,
             dependents=stuck, disposition=disp,
         )
 

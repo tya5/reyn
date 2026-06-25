@@ -45,6 +45,7 @@ from reyn.task.model import (
     TaskCycleError,
     TaskDepNotFoundError,
     TaskOrigin,
+    TaskRequesterKind,
     TaskState,
     _now_iso,
 )
@@ -60,6 +61,7 @@ CREATE TABLE IF NOT EXISTS tasks(
   name TEXT NOT NULL,
   assignee TEXT NOT NULL,
   requester TEXT NOT NULL,
+  requester_kind TEXT NOT NULL DEFAULT 'session',
   origin TEXT NOT NULL,
   status TEXT NOT NULL,
   description TEXT,
@@ -106,8 +108,8 @@ CREATE TABLE IF NOT EXISTS task_comments(
 """
 
 _TASK_COLUMNS = (
-    "task_id, name, assignee, requester, origin, status, description, created_by, "
-    "parent_id, awaiting_since, tools, result, created_at, updated_at"
+    "task_id, name, assignee, requester, requester_kind, origin, status, description, "
+    "created_by, parent_id, awaiting_since, tools, result, created_at, updated_at"
 )
 
 
@@ -150,6 +152,13 @@ class SqliteTaskBackend:
             for col in ("tools", "result"):
                 if col not in existing:
                     conn.execute(f"ALTER TABLE tasks ADD COLUMN {col} TEXT")
+            # #1953 §16 (recursive-request): additive migration for pre-existing DBs —
+            # a row created before this column is a session-owned task by definition
+            # (the only kind that existed), so the 'session' default is correct.
+            if "requester_kind" not in existing:
+                conn.execute(
+                    "ALTER TABLE tasks ADD COLUMN requester_kind "
+                    "TEXT NOT NULL DEFAULT 'session'")
             conn.commit()
         return conn
 
@@ -288,6 +297,7 @@ class SqliteTaskBackend:
             name=row["name"],
             assignee=row["assignee"],
             requester=row["requester"],
+            requester_kind=TaskRequesterKind(row["requester_kind"]),
             origin=TaskOrigin(row["origin"]),
             status=TaskState(row["status"]),
             description=row["description"],
@@ -333,11 +343,11 @@ class SqliteTaskBackend:
             self._conn.execute("BEGIN IMMEDIATE")
             self._conn.execute(
                 f"INSERT INTO tasks({_TASK_COLUMNS}) "
-                f"VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                f"VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (
                     task.task_id, task.name, task.assignee, task.requester,
-                    task.origin.value, task.status.value, task.description,
-                    task.created_by, task.parent_id, task.awaiting_since,
+                    task.requester_kind.value, task.origin.value, task.status.value,
+                    task.description, task.created_by, task.parent_id, task.awaiting_since,
                     json.dumps(task.tools) if task.tools else None, task.result,
                     task.created_at, task.updated_at,
                 ),
