@@ -265,6 +265,26 @@ Session is similarly decomposed into services under `chat/services/`:
   `memory_service.py`, `router_host_adapter.py`, `snapshot_journal.py`
 - `a2a_handler.py`, `intervention_handler.py`, `auto_resume_handler.py`
 
+### LLM org-design tools
+
+An LLM running in the router can build a live multi-agent organisation at
+runtime using three primitives: `agent_spawn` (create a child agent capped at
+⊆ its own capability), `session_spawn` (start a fresh-context sub-session for
+an isolated task), and `topology_create` (wire its spawn subtree into a named
+communication topology and optionally narrow member capabilities).
+
+These are router-only decisions — they sit above the transport layer and above
+Phase execution. The OS enforces that spawned agents cannot escalate their
+capabilities beyond the spawner (the ⊆-parent model; see
+[permission-model](../runtime/permission-model.md#llm-spawn-capability-model)).
+
+This surface is distinct from the operator CLI and Topology YAML, which let a
+human define org structure in configuration. Both coexist: an
+operator-authored topology governs agents already configured in it; the LLM's
+`topology_create` only wires agents in its own spawn subtree.
+
+See [Concepts: LLM org-design tools](../multi-agent/org-design.md).
+
 ### Transport vs agent scoping
 
 Two concepts that appear to affect what an agent "can do" operate at different layers and must not be conflated:
@@ -286,3 +306,4 @@ The practical consequence: when a code path appears to "lack a capability," the 
 - [Reference: llm-output-contract](../../reference/runtime/llm-output-contract.md) — the LLM JSON shape
 - [Reference: events](../../reference/runtime/events.md) — event types
 - [Agent engineering — seven lenses](../agent-engineering/index.md) — the same architecture through external engineering perspectives
+- [Concepts: LLM org-design tools](../multi-agent/org-design.md) — `agent_spawn` / `session_spawn` / `topology_create` primitives
