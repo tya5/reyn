@@ -558,22 +558,27 @@ Completion-recompute (relax → only promotes), `remove` (relax), and `repoint`
 (may demote or promote) all share it. A readiness change emits a generic P6
 `task_readiness` event.
 
-**Disposition → parent routing (slice 6-ext).** When a task reaches a
+**Disposition → requester routing (§16, S1 #2134).** When a task reaches a
 non-`completed` terminal (`aborted` via `task.abort`, `failed` via
 `task.update_status`, or `cap_exceeded` on a per-Task budget cap-hit) and has
-**still-alive dependents**, the OS routes the disposition to the task's **parent
-session** (`parent_id`'s assignee) to decide recovery — the parent re-wires via
-ordinary ops (`repoint` / `remove` / fail / support-self), **not** a `decision=`
-vocabulary (P7). The **disposition** is carried first-class (in both the P6
-`task_dependency_aborted` event and the parent payload) so a budget `cap_exceeded`
-is never conflated with a genuine error `failed` (slice 8). A root task (no parent)
-or an already-terminal parent routes nothing (the parent's own cascade subsumes it).
+**still-alive dependents**, the OS notifies the task's **requester** (the §16
+disposition notify-target — the request-owner) to decide recovery — the requester
+re-wires via ordinary ops (`repoint` / `remove` / fail / support-self), **not** a
+`decision=` vocabulary (P7). If the requester is a **task** (`requester_kind=TASK`
+— a task-as-request owns the failed dependent), the OS resolves one hop to that
+task's **assignee** (the managing session) before waking. The **requester is always
+present** (every task carries one), so a root task is notified too — the prior
+`parent_id`-keyed routing silently dropped root-task recovery wakes (#2107). The
+**disposition** is carried first-class (in both the P6 `task_dependency_aborted`
+event and the requester payload) so a budget `cap_exceeded` is never conflated with
+a genuine error `failed` (slice 8). External-origin tasks route via the A2A/webhook
+channel rather than an in-session wake.
 
 **Per-Task budget cap (slice 8).** `record_cost(task_id, delta)` accumulates an
 LLM call's cost onto the Task's `cost_accum`; when it crosses the Task's
 `budget_cap` (an INDEPENDENT cap dimension, enforced alongside the session / daily
 caps — the tighter hits first), the OS force-terminates the task (abort-like) and
-routes the `cap_exceeded` disposition through the SAME parent-LLM seam — so one
+routes the `cap_exceeded` disposition through the SAME requester-LLM seam — so one
 recovery mechanism resolves both a terminal-dependency and a cap-hit. (The
 production wiring of the LLM cost recorder to `record_cost` co-lands with the
 task-execution engine in a later slice.)
@@ -582,7 +587,7 @@ task-execution engine in a later slice.)
 driver) turns these dispositions into actual session **wakes** via the canonical
 `resolve_session → _put_inbox → ensure_session_running` triple: a promoted
 dependent (on a predecessor `completed` OR a recovery `repoint`/`remove`) is woken
-with a `task_ready` inbox message; a parent is woken with `task_dependency_aborted`.
+with a `task_ready` inbox message; a requester (or its managing session) is woken with `task_dependency_aborted`.
 Both surface to the woken session's LLM as one router turn (OS-generic inbox kinds,
 P7) so it resumes / recovers via ordinary task ops. A **loopless** session (A2A /
 MCP, no run-loop) is booted by `ensure_session_running`; a looped one is an

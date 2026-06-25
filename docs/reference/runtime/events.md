@@ -118,7 +118,7 @@ Events emitted by the task Control IR ops (`task.py`).
 | `task_op` | Any mutating task operation completes (create / update-status / complete / abort) | `op` (op kind string), `task_id`, plus op-specific fields |
 | `task_readiness` | A task transitions to `ready` or `blocked` (OS re-derive changed readiness) | `task_id`, `to` (`"ready"` or `"blocked"`), `trigger` (task_id of the op that caused the change) |
 | `task_disposition` | Each task in an aborted subtree reaches its terminal disposition | `task_id`, `disposition` (`"aborted"`), `requester`, `origin`, `root` (task_id of the root abort op) |
-| `task_dependency_aborted` | A task's dependency reached a non-completed terminal; its parent session is notified to decide recovery | `task_id` (the terminal task), `disposition`, `parent_id`, `parent_session`, `dependents` (list of task_ids that are now stuck) |
+| `task_dependency_aborted` | A task's dependency reached a non-completed terminal; its requester is notified to decide recovery (§16) | `task_id` (the terminal task), `disposition`, `requester` (session or task id — the §16 notify-target), `dependents` (list of task_ids that are now stuck) |
 
 ## Agent-to-agent messaging
 
