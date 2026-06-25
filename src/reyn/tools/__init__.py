@@ -102,6 +102,7 @@ def get_default_registry() -> ToolRegistry:
     )
     from reyn.tools.sandboxed_exec import SANDBOXED_EXEC
     from reyn.tools.session_spawn import SESSION_SPAWN
+    from reyn.tools.topology_create import TOPOLOGY_CREATE
 
     # FP-0034 PR-3a: universal catalog wrappers (registered in registry;
     # not yet added to router build_tools() — that lands in PR-3b).
@@ -173,6 +174,7 @@ def get_default_registry() -> ToolRegistry:
     registry.register(DELEGATE_TO_AGENT)
     registry.register(SESSION_SPAWN)
     registry.register(AGENT_SPAWN)
+    registry.register(TOPOLOGY_CREATE)
     registry.register(REYN_SRC_LIST)
     registry.register(REYN_SRC_READ)
     # FP-0041 #489 PR-B2: cron action category (= LLM-callable cron

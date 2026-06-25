@@ -52,6 +52,9 @@ _NOT_EXTERNAL = {
     # {status, name, parent, note}, not external content (it creates an agent; any
     # output the new agent later produces is fenced on its own path).
     "agent_spawn",
+    # #2103 C1: topology_create → returns an OS-generated create ACK
+    # {status, name, kind, members, ...}, not external content (it wires a topology).
+    "topology_create",
     # — writes / installs / deletes: return status, not external content —
     "write_file", "edit_file", "delete_file", "drop_source",
     "remember_shared", "remember_agent", "forget_memory",

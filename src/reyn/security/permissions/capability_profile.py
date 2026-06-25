@@ -260,11 +260,13 @@ _FLOORED_QUALIFIED: "dict[str, frozenset[str]]" = {
     # unbound delegate (#2103: unbounded spawn is a DoS vector; the ⊆-parent model
     # blocks ESCALATION, but spawning ITSELF is restrict-floored like re-delegation —
     # default-deny, re-grantable within parent bounds by a topology binding). #2103
-    # B-tool adds ``agent_spawn`` (org-design create). Both are router-only tools with
-    # NO invoke_action route today, so BARE-ONLY (no qualified→bare unwrap alias); a
+    # B-tool adds ``agent_spawn`` (org-design create); C1 adds ``topology_create``
+    # (org-design wiring + capability-profile binding — same DoS-floor rationale: an
+    # unbound delegate must not forge an org). All router-only tools with NO
+    # invoke_action route today, so BARE-ONLY (no qualified→bare unwrap alias); a
     # future qualified route would be floored by the same _with_unwrapped_aliases
     # derivation.
-    "spawn": frozenset({"session_spawn", "agent_spawn"}),
+    "spawn": frozenset({"session_spawn", "agent_spawn", "topology_create"}),
 }
 
 # Intentionally BARE-ONLY floored names: router-only tools with NO invoke_action
@@ -276,7 +278,9 @@ _FLOORED_QUALIFIED: "dict[str, frozenset[str]]" = {
 # non-existent form, leaving the real route UNGUARDED (the #2111 gap-class, in the
 # opposite direction). Invariant (enforced by tests/test_2111_floor_alias_completeness):
 # every name in ``_FLOORED_QUALIFIED`` either unwraps to a bare alias OR is listed here.
-_FLOORED_BARE_ONLY: "frozenset[str]" = frozenset({"session_spawn", "agent_spawn"})
+_FLOORED_BARE_ONLY: "frozenset[str]" = frozenset(
+    {"session_spawn", "agent_spawn", "topology_create"}
+)
 
 
 def _with_unwrapped_aliases(qualified: "frozenset[str]") -> "frozenset[str]":

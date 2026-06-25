@@ -459,6 +459,20 @@ def build_tools(
             dispatch_kind=_agent_spawn_def.dispatch_kind,
         ))
 
+    # ── B2d: topology_create (#2103 C1) ───────────────────────────────────
+    # Router-only org-wiring primitive (static schema → render without state).
+    # Advertised alongside agent_spawn so the router=allow tool is reachable (the
+    # #2120 advertise-drift lesson); dispatch + floor pair land with it.
+    _topology_create_def = _registry.lookup("topology_create")
+    if _topology_create_def is not None and _topology_create_def.gates.router == "allow":
+        _topology_create_rendered = _topology_create_def.render_for_router()
+        specs.append(ToolSpec(
+            name=_topology_create_rendered["function"]["name"],
+            description=_topology_create_rendered["function"]["description"],
+            parameters=_topology_create_rendered["function"]["parameters"],
+            dispatch_kind=_topology_create_def.dispatch_kind,
+        ))
+
     # ── B3: remember_shared ──────────────────────────────────────────────
     _remember_shared_def = _registry.lookup("remember_shared")
     if _remember_shared_def is not None and _remember_shared_def.gates.router == "allow":

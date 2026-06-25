@@ -464,6 +464,29 @@ class AgentRegistry:
             cursor = self._spawn_lineage.get(cursor)
         self._spawn_lineage[child] = parent
 
+    def is_spawn_descendant(self, agent: str, ancestor: str) -> bool:
+        """#2103 C1: True iff ``agent`` is ``ancestor`` itself OR a transitive spawn-
+        descendant of it (walk ``agent``'s lineage chain upward; acyclic → terminates).
+
+        The subtree-membership predicate the ``topology_create`` spawn-seam uses to
+        forge-guard which agents an LLM may wire into a topology: members must be ⊆ the
+        creator's spawn subtree. That restriction is what makes C's profile bindings
+        safe BY CONSTRUCTION — every LLM-bindable member is a lineage descendant of the
+        creator, so ``resolved_profile_for``'s live parent-conjunct (B-core) backstops
+        the binding (it can only narrow within the member's ⊆-creator envelope, never
+        re-grant past it). An agent with no lineage edge (operator-top) is in no one's
+        subtree but its own → an LLM cannot wire a non-descendant peer."""
+        if agent == ancestor:
+            return True
+        cursor: "str | None" = self._spawn_lineage.get(agent)
+        seen: "set[str]" = set()
+        while cursor is not None and cursor not in seen:
+            if cursor == ancestor:
+                return True
+            seen.add(cursor)
+            cursor = self._spawn_lineage.get(cursor)
+        return False
+
     async def create_agent(
         self, name: str, *, role: str = "", parent: "str | None" = None
     ) -> AgentProfile:
