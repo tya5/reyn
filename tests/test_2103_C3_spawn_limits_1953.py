@@ -94,6 +94,31 @@ async def test_spawn_rejected_beyond_max_children(tmp_path):
     assert res["kind"] == "spawn_limit_exceeded"
 
 
+@pytest.mark.asyncio
+async def test_fan_out_count_is_identity_keyed_not_name(tmp_path):
+    """Tier 2: (the #2166 lens, carried forward by tui) the fan-out count keys on the
+    parent's IDENTITY, not its name — an ORPHAN of a purged+reused parent does NOT count
+    against the reused same-named parent's fan-out, so the reused parent gets its full
+    budget (and is not charged for children it never spawned). RED if spawn_child_count
+    counted by name (the orphan would consume a slot of the reused parent)."""
+    reg = _registry(tmp_path, max_children=2)
+    await reg.create_agent("par")                     # par identity #1
+    await reg.create_agent("orphan", parent="par")    # edge orphan → (par, #1)
+    assert reg.spawn_child_count("par") == 1
+
+    await reg.archive_agent("par", purge=True)
+    await reg.create_agent("par")                     # name reused → par identity #2
+
+    # the orphan's edge froze identity #1 ≠ the reused par's #2 → not a child of the new par
+    assert reg.spawn_child_count("par") == 0          # identity-keyed (a name count → 1)
+
+    # so the reused par gets its FULL fan-out budget (not charged for the orphan)
+    adapter = make_adapter(agent_name="par", agent_registry=reg)
+    assert (await adapter.spawn_agent(name="n1", role=""))["status"] == "spawned"
+    assert (await adapter.spawn_agent(name="n2", role=""))["status"] == "spawned"
+    assert (await adapter.spawn_agent(name="n3", role=""))["status"] == "error"  # now at cap
+
+
 # ── max_children enforcement (topology_create size) ─────────────────────────────────
 
 
