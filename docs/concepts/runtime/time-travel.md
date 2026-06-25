@@ -68,6 +68,8 @@ Each checkpoint stores an **AgentSnapshot** — a point-in-time snapshot of the 
 
 The WAL is a **synchronous-durability log** (fsync'd per append), separate from the P6 audit event log. See [Events](events.md) for the WAL vs audit-event distinction.
 
+**Schema compatibility invariant (no cross-version restore).** `restore_to_seq` restores a generation by copying the snapshot and reopening it **without re-running the schema migration** — it assumes the restored generation already carries the current schema. This holds within a single code version: every generation of a running database shares that version's migrated schema. Cross-version restore — a generation captured by an older code version, restored under newer code with additive schema columns — is **not supported**. This is a deliberate, correct invariant under the project's no-backward-compatibility policy: same-version generations are the only supported restore source. Attempting a cross-version restore is out of scope by design, not a gap to be filled.
+
 ### Global single-seq WAL and consistent-cut
 
 All WAL events share a **global single sequence namespace**. A consistent-cut rewind at seq N is well-defined: "the state of every substrate at the moment before seq N+1 was written". The global seq makes the cut precise — there is no per-substrate clock to reconcile.
