@@ -69,7 +69,7 @@ class RouterCallerState:
     # fresh-context session under the agent (rewind-tracked via session_spawned),
     # applies the per-session capability narrowing (S1a), and submits the task.
     # Bound by RouterLoop with chain_id pre-bound; None when the host doesn't
-    # support session-spawn (= duck-typed, like spawn_skill_fn).
+    # support session-spawn (= duck-typed / hasattr-guarded at caller-state build).
     spawn_session_fn: Callable[..., Awaitable[Any]] | None = None
 
     # Session-scoped chain identity (= for plan tool, delegate
@@ -118,21 +118,10 @@ class RouterCallerState:
     # op_runtime caller="control_ir" would not carry chain_id and PR14
     # pending_chain semantics would break for sub-skill delegations.
     #
-    # FP-0012: blocking call — used by blocking phase sub-loop steps that need the
-    # nested skill's result inline to feed the next step. Chat-mode now
-    # prefers ``spawn_skill_fn`` (below) for non-blocking dispatch.
+    # #2104 PR1 skill-unification: both chat-mode and blocking sub-loop
+    # paths now use run_skill_fn (synchronous inline). The spawn path
+    # (FP-0012 spawn_skill_fn) is retired.
     run_skill_fn: Callable[..., Awaitable[Any]] | None = None
-
-    # FP-0012: non-blocking skill dispatch callback. When set, the
-    # ``invoke_skill`` handler prefers this over ``run_skill_fn`` and
-    # returns the spawn-ack dict (``{status: "spawned", run_id,
-    # chain_id, note}``) immediately. The actual skill task runs in
-    # the background; completion is delivered to the chat router via
-    # the ``"skill_completed"`` inbox kind which injects a user-role
-    # message into the existing conversation thread for narration.
-    # Blocking phase sub-loop RouterLoops bind this to None so their
-    # steps keep blocking semantics via ``run_skill_fn``.
-    spawn_skill_fn: Callable[..., Awaitable[Any]] | None = None
 
     # RouterLoopHost reference for handlers that need duck-typed access
     # to host methods not covered by individual callable fields (=

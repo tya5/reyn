@@ -80,9 +80,6 @@ from tests._support.router_host_adapter import (
 from tests._support.router_host_adapter import (
     null_send_to_agent as _null_send_to_agent,
 )
-from tests._support.router_host_adapter import (
-    null_spawn_skill as _null_spawn_skill,
-)
 
 # ---------------------------------------------------------------------------
 # Test 1: Protocol conformance (runtime_checkable isinstance)
@@ -198,7 +195,6 @@ def test_delegation_tracker_appended_on_send_to_agent(tmp_path):
         mcp_list_tools=_null_mcp_list_tools,
         mcp_call_tool=_null_mcp_call_tool,
         run_skill_awaitable=_null_run_skill,
-        spawn_skill=_null_spawn_skill,
         send_to_agent=fake_send,
         put_outbox=_null_put_outbox,
         append_history=_null_append_history,
@@ -275,7 +271,6 @@ def test_adapter_exposes_permission_resolver_property(tmp_path):
         mcp_list_tools=_null_mcp_list_tools,
         mcp_call_tool=_null_mcp_call_tool,
         run_skill_awaitable=_null_run_skill,
-        spawn_skill=_null_spawn_skill,
         send_to_agent=_null_send_to_agent,
         put_outbox=_null_put_outbox,
         append_history=_null_append_history,
@@ -339,7 +334,6 @@ def test_make_router_op_context_wires_intervention_bus(tmp_path):
         mcp_list_tools=_null_mcp_list_tools,
         mcp_call_tool=_null_mcp_call_tool,
         run_skill_awaitable=_null_run_skill,
-        spawn_skill=_null_spawn_skill,
         send_to_agent=_null_send_to_agent,
         put_outbox=_null_put_outbox,
         append_history=_null_append_history,
@@ -402,7 +396,6 @@ def test_make_router_op_context_no_factory_leaves_bus_none(tmp_path):
         mcp_list_tools=_null_mcp_list_tools,
         mcp_call_tool=_null_mcp_call_tool,
         run_skill_awaitable=_null_run_skill,
-        spawn_skill=_null_spawn_skill,
         send_to_agent=_null_send_to_agent,
         put_outbox=_null_put_outbox,
         append_history=_null_append_history,

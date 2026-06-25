@@ -707,21 +707,12 @@ class RouterLoopHost(RouterLoopCore, Protocol):
     async def run_skill_awaitable(self, *, skill: str, input: dict,
                                    chain_id: str) -> dict: ...
 
-    # FP-0012: non-blocking skill dispatch. Chat-mode hosts return
-    # ``{status: "spawned", run_id, chain_id, note}`` immediately and
-    # deliver completion via the ``skill_completed`` inbox kind. Hosts
-    # that don't support spawn semantics (e.g. blocking phase sub-loops) leave
-    # this method un-bound (= duck-typing / hasattr check) so the
-    # invoke_skill handler falls back to ``run_skill_awaitable``.
-    async def spawn_skill(self, *, skill: str, input: dict,
-                          chain_id: str) -> dict: ...
-
     async def send_to_agent(self, *, to: str, request: str, depth: int,
                             chain_id: str) -> None: ...
 
     # #2103 S1bc: spawn a fresh-context session under THIS agent for a task.
     # Multi-session hosts (the chat RouterHostAdapter) implement it; others leave
-    # it unbound (= hasattr-guarded at caller-state build, like spawn_skill).
+    # it unbound (= hasattr-guarded at caller-state build).
     async def spawn_session(self, *, request: str, mode: str,
                             narrowing: "dict | None", chain_id: str) -> dict: ...
 
@@ -3650,22 +3641,9 @@ class RouterLoop:
                 skill=skill, input=input, chain_id=self.chain_id,
             )
 
-        # FP-0012: non-blocking spawn binding. Only chat-mode hosts
-        # implement ``spawn_skill``; a host that lacks it leaves this None
-        # and invoke_skill falls back to run_skill_fn (= blocking).
-        _spawn_skill_bound: Any = None
-        if hasattr(self.host, "spawn_skill") and callable(
-            getattr(self.host, "spawn_skill", None)
-        ):
-            async def _spawn_skill_bound_impl(*, skill: str, input: dict) -> Any:
-                return await self.host.spawn_skill(
-                    skill=skill, input=input, chain_id=self.chain_id,
-                )
-            _spawn_skill_bound = _spawn_skill_bound_impl
-
         # #2103 S1bc: session-spawn binding. Only multi-session hosts (the chat
         # RouterHostAdapter) implement ``spawn_session``; a host without it leaves
-        # this None (= duck-typed, like spawn_skill). chain_id pre-bound.
+        # this None (= duck-typed / hasattr-guarded). chain_id pre-bound.
         _spawn_session_bound: Any = None
         if hasattr(self.host, "spawn_session") and callable(
             getattr(self.host, "spawn_session", None)
@@ -3723,11 +3701,9 @@ class RouterLoop:
             # Skill invocation bridge (= for invoke_skill handler;
             # Phase 3.5-B-light) — chain_id pre-bound to preserve PR14
             # multi-hop chain semantics. Phase sub-loops keep using this for
-            # blocking step execution; chat-mode prefers spawn_skill_fn.
+            # #2104 PR1: synchronous skill execution for all callers (chat-mode and
+            # blocking sub-loop alike). run_skill_fn is the single invoke path.
             run_skill_fn=_run_skill_bound,
-            # FP-0012: non-blocking spawn binding for chat-mode invoke_skill.
-            # None for blocking phase sub-loop hosts (= no spawn_skill method on host).
-            spawn_skill_fn=_spawn_skill_bound,
             # #2103 S1bc: session-spawn dispatch (None for non-multi-session hosts).
             spawn_session_fn=_spawn_session_bound,
             # Memory tool bridges (= for memory cluster handlers;

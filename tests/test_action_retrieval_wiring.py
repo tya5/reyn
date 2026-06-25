@@ -76,7 +76,6 @@ def _make_adapter(
         mcp_list_tools=_noop_callable,
         mcp_call_tool=_noop_callable,
         run_skill_awaitable=_noop_callable,
-        spawn_skill=_noop_callable,
         send_to_agent=_noop_callable,
         put_outbox=_noop_callable,
         append_history=_noop_callable,

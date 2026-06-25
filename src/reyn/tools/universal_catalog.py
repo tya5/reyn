@@ -1448,7 +1448,7 @@ async def _handle_invoke_action(
       3. Invoke target.handler(transformed_args, ctx).
 
     The ToolContext is forwarded verbatim so router_state callbacks
-    (= run_skill_fn / spawn_skill_fn / send_to_agent / op_context_factory
+    (= run_skill_fn / send_to_agent / op_context_factory
     / list_memory_fn / etc.) reach the target handler as if the caller
     had invoked it directly. This is what makes invoke_action a
     transparent wrapper rather than a separate execution path.

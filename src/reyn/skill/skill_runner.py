@@ -476,15 +476,17 @@ class SkillRunner:
     async def spawn_for_router(self, spec: dict, *, chain_id: str) -> dict:
         """Non-blocking router-side spawn entry point.
 
-        Extracted from ``Session._spawn_skill_for_router``.  Wraps
-        :meth:`spawn` and returns the spawn-ack dict the router LLM
-        consumes via ``invoke_skill``'s tool_result.
+        NOTE: as of #2104 PR1, invoke_skill no longer calls this path —
+        chat-mode dispatch is now synchronous via run_skill_awaitable.
+        This method is preserved for PR2 cleanup and is dead code in
+        production. It remains the entry point for direct callers in
+        tests that exercise pre-spawn validation.
+
+        Wraps :meth:`spawn` and returns the spawn-ack dict.
 
         When :meth:`spawn` rejects pre-spawn (= input_schema violation
         / skill not found / load error), the structured error dict it
-        returns is forwarded verbatim so the router LLM sees a sync
-        tool_result with schema_hint in the same turn as its wrong
-        invoke_action call.
+        returns is forwarded verbatim.
         """
         before = set(self.running_skills.keys())
         spawn_result = await self.spawn(spec, chain_id=chain_id)

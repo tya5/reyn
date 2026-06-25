@@ -6,8 +6,6 @@ loop and handles chain timeout lifecycle:
   - handle_skill_completed(payload)
   - drain_skill_completed_inbox(deadline)
   - on_chain_timeout_fire(chain_id)
-  - spawn_skill_for_router(spec, chain_id)
-  - spawn_skill(spec, chain_id)
   - enqueue_plan_completed(**kw)
 
 Public-surface note: ``drain_skill_completed_inbox`` is called from
@@ -261,14 +259,3 @@ class SkillPlanGlue:
                 meta={"chain_id": chain_id},
             ))
 
-    # ── Skill spawning delegation ─────────────────────────────────────────────
-
-    async def spawn_skill_for_router(
-        self, spec: dict, *, chain_id: str
-    ) -> dict:
-        """Thin delegation to SkillRunner.spawn_for_router (FP-0019 Wave 1b)."""
-        return await self._skill_runner.spawn_for_router(spec, chain_id=chain_id)
-
-    async def spawn_skill(self, spec: dict, *, chain_id: str | None = None) -> None:
-        """Thin delegation to SkillRunner.spawn (FP-0019 Wave 1b)."""
-        await self._skill_runner.spawn(spec, chain_id=chain_id)
