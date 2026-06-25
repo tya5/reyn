@@ -128,10 +128,15 @@ async def test_purge_cascade_emits_topology_event(tmp_path):
     await reg.create_topology(Topology.new("net", kind="network", members=["a", "b"]))
 
     before = log.current_seq
-    await reg.archive_agent("a", purge=True)                 # cascade shrinks "net"
+    await reg.archive_agent("a", purge=True)                 # cascade shrinks "net" → [b]
 
     emitted = [
         e for e in log.iter_from(before + 1)
         if e.get("kind") in ("topology_updated", "topology_removed")
     ]
     assert emitted, "purge cascade must emit a topology-lifecycle WAL event (MUST-1)"
+    # The emitted PAYLOAD must reflect the cascade's actual mutation (shrunk to {b}),
+    # not merely that *an* event fired — else reconstruction would diverge.
+    ev = emitted[-1]
+    assert ev["kind"] == "topology_updated"
+    assert set(ev["topology"]["members"]) == {"b"}
