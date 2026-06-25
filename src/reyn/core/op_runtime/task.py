@@ -182,9 +182,10 @@ async def _create(op, ctx: OpContext, caller) -> dict:
     # cross-session delegation supplies a different ``assignee``; a self-task defaults
     # the assignee to the caller SESSION (the executor — NOT the requester, which is
     # now a task id in the recursive case; a task-id assignee would break the
-    # single-writer CAS ``assignee == caller_session_id``). parent_id (optional,
-    # absorbs the old create_subtask) must reference a task the CALLER owns as
-    # requester (tree decomposition, §12).
+    # single-writer CAS ``assignee == caller_session_id``). The requester edge IS
+    # the ownership/decomposition relation now — the legacy parent_id tree was
+    # removed (§16 slice C), so there is no op-supplied parent + no ownership-check
+    # (ownership is OS-derived from the execution context, not an op field).
     caller_session = _caller_session(ctx)
     current_task_id = getattr(ctx, "current_task_id", None)
     if current_task_id:
@@ -193,13 +194,6 @@ async def _create(op, ctx: OpContext, caller) -> dict:
     else:
         requester = caller_session
         requester_kind = TaskRequesterKind.SESSION
-    parent_id = getattr(op, "parent_id", None)
-    if parent_id:
-        parent = await _backend(ctx).get(parent_id)
-        if parent is None:
-            return _not_found("task.create", parent_id)
-        if parent.requester != requester:
-            return _role_denied("task.create", parent_id, "requester", requester)
     task = Task(
         task_id=uuid.uuid4().hex,
         name=op.name,
@@ -208,7 +202,6 @@ async def _create(op, ctx: OpContext, caller) -> dict:
         requester_kind=requester_kind,
         origin=TaskOrigin(getattr(op, "origin", "self") or "self"),
         description=op.description,
-        parent_id=parent_id,
         created_by=_actor(ctx),
         deps=list(op.deps),
     )
@@ -218,7 +211,7 @@ async def _create(op, ctx: OpContext, caller) -> dict:
         # A born-with dependency is dangling or cycle-forming (OQ-1/OQ-4/OQ-5).
         return _edge_error("task.create", err)
     _audit(ctx, "task.create", created.task_id, status=created.status.value,
-           assignee=created.assignee, parent_id=parent_id)
+           assignee=created.assignee)
     # WAKES (item 5): a born-startable DELEGATED task → wake the assignee to
     # EXECUTE it now (the create-time counterpart of the dep-completion wake). A
     # born deps-less op-created task is PENDING (the default kept by the backend);
@@ -305,7 +298,6 @@ async def _list(op, ctx: OpContext, caller) -> dict:
         assignee=op.assignee,
         requester=op.requester,
         status=op.status,
-        parent_id=op.parent_id,
     )
     return _ok("task.list", tasks=[_fence_view(ctx, t.to_dict()) for t in tasks])
 

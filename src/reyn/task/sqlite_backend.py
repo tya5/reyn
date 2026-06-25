@@ -66,7 +66,6 @@ CREATE TABLE IF NOT EXISTS tasks(
   status TEXT NOT NULL,
   description TEXT,
   created_by TEXT,
-  parent_id TEXT,
   awaiting_since REAL,
   unblock_predicate TEXT,
   tools TEXT,
@@ -109,7 +108,7 @@ CREATE TABLE IF NOT EXISTS task_comments(
 
 _TASK_COLUMNS = (
     "task_id, name, assignee, requester, requester_kind, origin, status, description, "
-    "created_by, parent_id, awaiting_since, tools, result, created_at, updated_at"
+    "created_by, awaiting_since, tools, result, created_at, updated_at"
 )
 
 
@@ -324,7 +323,6 @@ class SqliteTaskBackend:
             status=TaskState(row["status"]),
             description=row["description"],
             created_by=row["created_by"],
-            parent_id=row["parent_id"],
             awaiting_since=row["awaiting_since"],
             deps=self._deps(row["task_id"]),
             tools=json.loads(row["tools"]) if row["tools"] else [],
@@ -365,11 +363,11 @@ class SqliteTaskBackend:
             self._conn.execute("BEGIN IMMEDIATE")
             self._conn.execute(
                 f"INSERT INTO tasks({_TASK_COLUMNS}) "
-                f"VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                f"VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (
                     task.task_id, task.name, task.assignee, task.requester,
                     task.requester_kind.value, task.origin.value, task.status.value,
-                    task.description, task.created_by, task.parent_id, task.awaiting_since,
+                    task.description, task.created_by, task.awaiting_since,
                     json.dumps(task.tools) if task.tools else None, task.result,
                     task.created_at, task.updated_at,
                 ),
@@ -393,13 +391,12 @@ class SqliteTaskBackend:
         assignee: str | None = None,
         requester: str | None = None,
         status: str | None = None,
-        parent_id: str | None = None,
     ) -> list[Task]:
         clauses: list[str] = []
         params: list[object] = []
         for col, val in (
             ("assignee", assignee), ("requester", requester),
-            ("status", status), ("parent_id", parent_id),
+            ("status", status),
         ):
             if val is not None:
                 clauses.append(f"{col}=?")
@@ -567,26 +564,24 @@ class SqliteTaskBackend:
             if origin_row is None:
                 return []
             root_external = origin_row["origin"] == TaskOrigin.EXTERNAL.value
-            # BFS the down-cascade closure: this task + every owned/decomposed
-            # descendant. An edge child→pid is followed when EITHER parent_id==pid
-            # (the §12 decomposition tree, legacy; removed in slice C) OR
-            # requester==pid AND requester_kind='task' (the §16/§18 ownership forest —
-            # a task-as-request owns its sub-tasks). The recursive sub-tasks (slice
-            # A/B1/B1.5) are requester=pid / parent_id=NULL, so the ownership edge is
-            # what catches them — parent_id alone misses them. The
-            # ``requester_kind='task'`` guard is REQUIRED: a session routing-key can
-            # collide with a task-id uuid, so a bare requester=pid would wrongly
+            # BFS the down-cascade closure: this task + every OWNED descendant
+            # (§16/§18 ownership forest — a task-as-request owns its sub-tasks). An
+            # edge child→pid is followed when requester=pid AND requester_kind='task'.
+            # The ``requester_kind='task'`` guard is REQUIRED: a session routing-key
+            # can collide with a task-id uuid, so a bare requester=pid would wrongly
             # cascade a session-requester task; the marker disambiguates →
             # collision-safe. Acyclic (one requester/task → earlier task) + the in-set
             # guard → bounded. In-lock BFS (NOT recursive — the lock is not re-entrant).
+            # (The legacy parent_id decomposition tree was removed in §16 slice C —
+            # the requester edge is the sole decomposition relation.)
             to_abort: list[str] = [task_id]
             frontier = [task_id]
             while frontier:
                 pid = frontier.pop()
                 for row in self._conn.execute(
                     "SELECT task_id FROM tasks "
-                    "WHERE parent_id=? OR (requester=? AND requester_kind='task')",
-                    (pid, pid),
+                    "WHERE requester=? AND requester_kind='task'",
+                    (pid,),
                 ).fetchall():
                     child = row["task_id"]
                     if child not in to_abort:

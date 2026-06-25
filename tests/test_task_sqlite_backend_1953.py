@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import pytest
 
-from reyn.task import SqliteTaskBackend, Task, TaskOrigin, TaskState
+from reyn.task import SqliteTaskBackend, Task, TaskOrigin, TaskRequesterKind, TaskState
 
 
 def _db(tmp_path) -> str:
@@ -34,7 +34,7 @@ async def test_nondefault_task_round_trips_across_reload_from_disk(tmp_path):
     task = Task(
         task_id="t-1", name="ship", assignee="bob", requester="alice",
         origin=TaskOrigin.EXTERNAL, status=TaskState.BLOCKED,
-        description="do the thing", created_by="alice", parent_id="p-0",
+        description="do the thing", created_by="alice",
         awaiting_since=1234.5,
         deps=["d-1", "d-2"],
     )
@@ -53,7 +53,6 @@ async def test_nondefault_task_round_trips_across_reload_from_disk(tmp_path):
     assert got.status is TaskState.BLOCKED
     assert got.description == "do the thing"
     assert got.created_by == "alice"
-    assert got.parent_id == "p-0"
     assert got.awaiting_since == 1234.5
     assert got.deps == ["d-1", "d-2"]
     reopened.close()
@@ -129,13 +128,16 @@ async def test_awaiting_and_abort_persist_and_emit_events(tmp_path):
 
 @pytest.mark.asyncio
 async def test_abort_down_cascade_and_sibling_intact(tmp_path):
-    """Tier 2: aborting a parent archives its whole sub-tree (DOWN-cascade,
-    Option B), while an unrelated sibling task is untouched (proof there is no
-    whole-session cancel)."""
+    """Tier 2: aborting a task-as-request archives its whole OWNERSHIP sub-tree
+    (DOWN-cascade via the requester edge, §16 slice C — parent_id removed), while an
+    unrelated sibling task is untouched (proof there is no whole-session cancel)."""
     backend = SqliteTaskBackend(_db(tmp_path))
     await backend.create(Task(task_id="p", name="p", assignee="A", requester="R"))
-    await backend.create(Task(task_id="c1", name="c1", assignee="A", requester="R", parent_id="p"))
-    await backend.create(Task(task_id="c2", name="c2", assignee="A", requester="R", parent_id="c1"))
+    # c1 owned by p, c2 owned by c1 (the recursive-request ownership edge).
+    await backend.create(Task(task_id="c1", name="c1", assignee="A", requester="p",
+                              requester_kind=TaskRequesterKind.TASK))
+    await backend.create(Task(task_id="c2", name="c2", assignee="A", requester="c1",
+                              requester_kind=TaskRequesterKind.TASK))
     # an unrelated task owned by the SAME assignee session A (1:N) — must survive.
     await backend.create(Task(task_id="sib", name="sib", assignee="A", requester="R"))
 

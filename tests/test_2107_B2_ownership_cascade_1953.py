@@ -1,11 +1,12 @@
 """Tier 2: #2107 §16 B2 — the ownership-cascade (abort a task-as-request → its owned sub-tasks).
 
 §18: aborting a task-as-request X aborts everything X OWNS — ``list(requester==X
-AND requester_kind==task)`` — recursively. Unified into the existing down-cascade
-BFS (gather ``parent_id==pid OR (requester==pid AND requester_kind==task)``), so the
-ONE backend.abort seam serves every caller (the op, the A2A cancel endpoint, /tasks
-kill) by construction. Necessary because the recursive sub-tasks (slice A/B1/B1.5)
-are requester=X / parent_id=None — the legacy parent_id BFS misses them.
+AND requester_kind==task)`` — recursively. The down-cascade BFS gathers the
+ownership edge (``requester==pid AND requester_kind==task``; the legacy parent_id
+edge was removed in §16 slice C, so the requester edge is the sole decomposition
+relation). The ONE backend.abort seam serves every caller (the op, the A2A cancel
+endpoint, /tasks kill) by construction. The recursive sub-tasks (slice A/B1/B1.5)
+are owned via this requester edge.
 
 Distinct from S2's dep-DAG dependent cascade (a different graph); UNGATED (owned
 PARTS are intrinsic to X, any origin — unlike S2's EXTERNAL-gated dependents).
@@ -13,7 +14,7 @@ PARTS are intrinsic to X, any origin — unlike S2's EXTERNAL-gated dependents).
 Tests (both backends, real create-path for the ownership edges — no hand-fed
 requester):
   - recursive ownership cascade (depth ≥2): abort X → X + owned U + owned-of-U W all
-    archived. RED if the ownership edge is absent (U/W survive — parent_id=None).
+    archived. RED if the ownership BFS edge is absent (U/W survive).
   - COLLISION GUARD: a SESSION-requester task whose session routing-key == a task_id
     is NOT cascaded (the requester_kind==task marker disambiguates the uuid collision
     requester_kind exists for). RED if the gather drops the marker guard.
@@ -30,7 +31,7 @@ from reyn.task import InMemoryTaskBackend, SqliteTaskBackend, Task, TaskRequeste
 
 def _create_op(name, *, deps=None):
     return SimpleNamespace(name=name, description=f"do {name}", deps=list(deps or []),
-                           assignee=None, origin=None, parent_id=None)
+                           assignee=None, origin=None)
 
 
 def _ctx(backend, *, session_id, current_task_id=None):
@@ -60,9 +61,7 @@ def _reset_module_backend():
 async def test_ownership_cascade_aborts_owned_subtasks_recursively(backend):
     """Tier 2: §18 — aborting a task-as-request X archives its whole OWNERSHIP subtree
     recursively (X → owned U → owned-of-U W, depth 2), via the live create-path's
-    requester edges (parent_id is None). RED if the ownership BFS edge is absent — U/W
-    would survive (the legacy parent_id BFS misses requester=X/parent_id=None
-    sub-tasks)."""
+    requester edges. RED if the ownership BFS edge is absent — U/W would survive."""
     await backend.create(Task(task_id="X", name="X", assignee="sX", requester="client",
                               status=TaskState.IN_PROGRESS))
     res_u = await taskmod._create(
@@ -72,10 +71,10 @@ async def test_ownership_cascade_aborts_owned_subtasks_recursively(backend):
         _create_op("W"), _ctx(backend, session_id="sU", current_task_id=u_id), "control_ir")
     w_id = res_w["task"]["task_id"]
 
-    # live ownership (requester edges); the decomposition (parent_id) edge is absent.
+    # live ownership: U is owned by X via the requester edge (the sole decomposition
+    # relation now — parent_id was removed in §16 slice C).
     u = await backend.get(u_id)
     assert u.requester == "X" and u.requester_kind is TaskRequesterKind.TASK
-    assert u.parent_id is None
     assert (await backend.get(w_id)).requester == u_id
 
     aborted = await backend.abort("X")

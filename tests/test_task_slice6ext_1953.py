@@ -32,10 +32,10 @@ from reyn.task import (
 
 
 def _task(task_id, *, deps=None, status=TaskState.PENDING, assignee="sess",
-          requester="req", parent_id=None, origin=None):
+          requester="req", origin=None):
     kw = {} if origin is None else {"origin": origin}
     return Task(task_id=task_id, name=task_id, assignee=assignee, requester=requester,
-                status=status, deps=list(deps or []), parent_id=parent_id, **kw)
+                status=status, deps=list(deps or []), **kw)
 
 
 @pytest.fixture(params=["inmem", "sqlite"])
@@ -326,24 +326,6 @@ async def test_op_abort_root_routes_to_requester():
     assert waker.calls == [{"requester_session": "req", "terminal_task": "B",
                             "dependents": ["A"], "disposition": "aborted",
                             "managing_task_id": None}]  # #2107: NOT dropped
-
-
-@pytest.mark.asyncio
-async def test_op_abort_with_terminal_parent_still_routes_to_requester():
-    """Tier 2: §16 — the parent's state is now IRRELEVANT — recovery keys on the
-    REQUESTER, not the parent. A task whose (vestigial) parent is already terminal still
-    routes its disposition to its requester (the prior parent-gone guard is gone)."""
-    b = InMemoryTaskBackend()
-    waker = _RecordingWaker()
-    await b.create(_task("P", assignee="sP", requester="req", status=TaskState.ARCHIVED))
-    await b.create(_task("B", assignee="sB", requester="req", parent_id="P",
-                         status=TaskState.IN_PROGRESS))
-    await b.create(_task("A", deps=["B"], assignee="sA", requester="req", parent_id="P"))
-    await taskmod._abort(SimpleNamespace(task_id="B", reason=None),
-                         _opctx(b, waker=waker, session_id="req"), "control_ir")
-    assert waker.calls == [{"requester_session": "req", "terminal_task": "B",
-                            "dependents": ["A"], "disposition": "aborted",
-                            "managing_task_id": None}]
 
 
 @pytest.mark.asyncio

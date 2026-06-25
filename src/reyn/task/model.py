@@ -108,10 +108,13 @@ class Task:
 
     ``assignee`` is the **session identity** (#1814 routing-key) that owns the
     Task — the single-writer of ``status``, immutable for the Task's life (no
-    handoff — delegation is sub-task decomposition, §12). Because ``assignee`` is
+    handoff — delegation is sub-task decomposition). Because ``assignee`` is
     immutable, the single-writer CAS is a fixed equality ``assignee ==
     caller_session_id`` (no claim token / version needed). ``requester`` is the
-    notify-target on disposition (§16). ``deps`` are depends-on edges (the
+    notify-target on disposition AND the ownership edge (§16 recursive-request: a
+    task-as-request owns its sub-tasks, ``requester_kind=task``) — the sole
+    decomposition relation now (the legacy ``parent_id`` tree was removed in §16
+    slice C; ownership = the requester edge). ``deps`` are depends-on edges (the
     dependency DAG, §13) — kept here for the in-memory backend; the sqlite backend
     stores them in a ``task_links`` table.
     """
@@ -120,12 +123,11 @@ class Task:
     name: str
     assignee: str
     requester: str
-    requester_kind: TaskRequesterKind = TaskRequesterKind.SESSION  # §16: session-owned vs task-as-request owned
+    requester_kind: TaskRequesterKind = TaskRequesterKind.SESSION  # §16: session-owned vs task-as-request owned (the ownership edge)
     origin: TaskOrigin = TaskOrigin.SELF
     status: TaskState = TaskState.PENDING
     description: str | None = None
     created_by: str | None = None  # audit provenance (§0-Q3); operative notify = requester
-    parent_id: str | None = None  # ownership tree (§12), distinct from deps DAG
     awaiting_since: float | None = None  # R-D16 WAL-floor exclusion (set while blocked)
     deps: list[str] = field(default_factory=list)  # depends-on task_ids (DAG, §13)
     tools: list[str] = field(default_factory=list)  # narrowed tool set for the exec engine (#1953 slice P2)
@@ -145,7 +147,6 @@ class Task:
             "status": self.status.value,
             "description": self.description,
             "created_by": self.created_by,
-            "parent_id": self.parent_id,
             "awaiting_since": self.awaiting_since,
             "deps": list(self.deps),
             "tools": list(self.tools),

@@ -164,15 +164,17 @@ async def test_abort_emits_disposition_event_per_aborted_task():
     5) routes origin=external to the external (webhook) channel. Falsification (d):
     each aborted task's event carries the correct requester + origin."""
     from reyn.core.events.events import EventLog
-    from reyn.task import InMemoryTaskBackend, Task, TaskOrigin
+    from reyn.task import InMemoryTaskBackend, Task, TaskOrigin, TaskRequesterKind
 
     backend = InMemoryTaskBackend()
-    # external root P (origin=external, persistent external requester X) with an
-    # internal child C — abort P cascades to C; both get a disposition event.
+    # external root P (origin=external, persistent external requester X) that OWNS an
+    # internal sub-task C (requester=p, the §16 ownership edge — parent_id removed in
+    # slice C) — abort P cascades to C; both get a disposition event.
     await backend.create(Task(task_id="p", name="p", assignee="A", requester="X",
                               origin=TaskOrigin.EXTERNAL))
-    await backend.create(Task(task_id="c", name="c", assignee="A", requester="Y",
-                              origin=TaskOrigin.SELF, parent_id="p"))
+    await backend.create(Task(task_id="c", name="c", assignee="A", requester="p",
+                              requester_kind=TaskRequesterKind.TASK,
+                              origin=TaskOrigin.SELF))
     events = EventLog()
     ctx = SimpleNamespace(task_backend=backend, session_id="X", agent_id="x", events=events)
 
@@ -183,7 +185,7 @@ async def test_abort_emits_disposition_event_per_aborted_task():
     # RED if a cascade-aborted task is missing an event, or origin/requester wrong.
     assert set(disp) == {"p", "c"}
     assert disp["p"]["origin"] == "external" and disp["p"]["requester"] == "X"
-    assert disp["c"]["origin"] == "self" and disp["c"]["requester"] == "Y"
+    assert disp["c"]["origin"] == "self" and disp["c"]["requester"] == "p"
     assert all(d["disposition"] == "aborted" for d in disp.values())
 
 
@@ -193,8 +195,7 @@ async def test_abort_archives_and_rejects_assignee_straggler():
     update_status by the assignee is rejected by the terminal state, so nothing
     lands (RED if the terminal-guard is dropped)."""
     created = await taskmod._create(
-        SimpleNamespace(name="t", assignee="A", description=None,
-                        deps=[], parent_id=None),
+        SimpleNamespace(name="t", assignee="A", description=None, deps=[]),
         SimpleNamespace(session_id="R", agent_id="r", events=None), "control_ir")
     task_id = created["task"]["task_id"]
 
@@ -225,8 +226,7 @@ async def test_handlers_return_error_for_unknown_task():
 async def _make_cross_session_task(requester="R", assignee="A"):
     """Create a task with requester=R (the caller) and assignee=A (cross-session)."""
     created = await taskmod._create(
-        SimpleNamespace(name="n", assignee=assignee, description=None,
-                        deps=[], parent_id=None),
+        SimpleNamespace(name="n", assignee=assignee, description=None, deps=[]),
         SimpleNamespace(session_id=requester, agent_id="x", events=None), "control_ir",
     )
     assert created["task"]["requester"] == requester
@@ -279,26 +279,3 @@ async def test_assignee_gated_ops_reject_non_assignee():
     # the assignee itself is allowed.
     allowed = await taskmod._heartbeat(SimpleNamespace(task_id=task_id), assignee_ctx, "control_ir")
     assert allowed["status"] == "ok"
-
-
-@pytest.mark.asyncio
-async def test_create_parent_id_must_be_requester_owned():
-    """Tier 2: create with parent_id validates the parent is owned by the caller
-    as requester (tree decomposition §12) — another session's parent is denied."""
-    parent_id = await _make_cross_session_task(requester="R", assignee="A")
-
-    # a different session cannot make a sub-task under R's parent.
-    other_ctx = SimpleNamespace(session_id="OTHER", agent_id="o", events=None)
-    res = await taskmod._create(
-        SimpleNamespace(name="sub", assignee=None, description=None,
-                        deps=[], parent_id=parent_id), other_ctx, "control_ir")
-    assert res["status"] == "denied"
-    assert res["error"]["kind"] == "role_denied"
-
-    # R (the parent's requester) can.
-    req_ctx = SimpleNamespace(session_id="R", agent_id="r", events=None)
-    ok = await taskmod._create(
-        SimpleNamespace(name="sub", assignee=None, description=None,
-                        deps=[], parent_id=parent_id), req_ctx, "control_ir")
-    assert ok["status"] == "ok"
-    assert ok["task"]["parent_id"] == parent_id

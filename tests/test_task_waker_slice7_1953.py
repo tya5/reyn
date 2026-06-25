@@ -25,9 +25,9 @@ from reyn.task import InMemoryTaskBackend, Task, TaskState
 
 
 def _task(task_id, *, deps=None, status=TaskState.PENDING, assignee="sess",
-          requester="req", parent_id=None):
+          requester="req"):
     return Task(task_id=task_id, name=task_id, assignee=assignee, requester=requester,
-                status=status, deps=list(deps or []), parent_id=parent_id)
+                status=status, deps=list(deps or []))
 
 
 class _RecSession:

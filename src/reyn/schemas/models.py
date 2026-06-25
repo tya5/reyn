@@ -574,16 +574,17 @@ class TaskCreateIROp(BaseModel):
     session, immutable for the Task's life (no handoff — §12). ``assignee``
     defaults to the caller (a self-task); a different value delegates cross-session.
 
-    Optional ``parent_id`` makes this a sub-task of a task the caller owns as
-    requester (tree decomposition, §12 — absorbs the former ``create_subtask``);
-    ``deps`` are depends-on edges (dependency DAG, §13)."""
+    Ownership is OS-derived (§16 recursive-request): a sub-task created while a
+    session executes a task-as-request T is owned by T (``requester=T``,
+    ``requester_kind=task``, set from the execution context — never an op field).
+    The legacy ``parent_id`` tree was removed (§16 slice C); ``deps`` are
+    depends-on edges (dependency DAG, §13)."""
 
     kind: Literal["task.create"]
     name: str
     assignee: str | None = None  # default: the caller's own session (self-task)
     description: str | None = None
     deps: list[str] = Field(default_factory=list)  # depends-on task_ids (DAG, §13)
-    parent_id: str | None = None  # optional tree parent (must be requester-owned)
 
 
 class TaskUpdateStatusIROp(BaseModel):
@@ -607,13 +608,15 @@ class TaskGetIROp(BaseModel):
 
 
 class TaskListIROp(BaseModel):
-    """List Tasks, optionally narrowed by assignee / requester / status / parent."""
+    """List Tasks, optionally narrowed by assignee / requester / status.
+
+    Narrowing by ``requester`` (a task-as-request id) is the ownership query — it
+    lists the sub-tasks that task owns (§16 recursive-request)."""
 
     kind: Literal["task.list"]
     assignee: str | None = None
     requester: str | None = None
     status: str | None = None
-    parent_id: str | None = None
 
 
 class TaskAddDependencyIROp(BaseModel):

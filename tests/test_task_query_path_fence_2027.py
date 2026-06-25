@@ -80,7 +80,7 @@ async def test_list_fences_each_task_view():
     await _make_task(backend, _INJ)
     await _make_task(backend, _INJ + " #2")
     res = await taskmod._list(
-        SimpleNamespace(assignee=None, requester=None, status=None, parent_id=None),
+        SimpleNamespace(assignee=None, requester=None, status=None),
         _ctx(backend, fence_on=True), "control_ir")
     assert res["tasks"], "expected tasks in the list"
     assert all(_FENCE_MARK in t["description"] for t in res["tasks"]), (
