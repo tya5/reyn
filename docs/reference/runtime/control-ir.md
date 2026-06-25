@@ -33,10 +33,10 @@ Control IR is the list of side-effect operations the LLM may emit alongside its 
 | `judge_output` | LLM scorer: rubric + threshold + `on_fail` policy | none (LLM cost) |
 | `skill_resolve` | Resolve a skill name to its on-disk path (read-only) | none |
 | `compact` | Voluntarily compact the conversation/phase history (advisory) | none (LLM cost; the mandatory `retry_loop` backstop is independent) |
-| `task.create` | Create a Task (optional `parent_id` sub-task / `deps`) | requester-gated (caller becomes requester) |
+| `task.create` | Create a Task (`deps` for ordering; sub-task ownership is OS-derived from execution context — §16) | requester-gated (caller becomes requester) |
 | `task.update_status` | Declare a status transition | assignee-gated (single-writer CAS on `assignee == caller session_id`) |
 | `task.get` | Read one Task record | requester-gated |
-| `task.list` | List Tasks (filter by assignee / requester / status / parent) | none (filtered read) |
+| `task.list` | List Tasks (filter by assignee / requester / status); `requester=<task-id>` lists sub-tasks owned by that task | none (filtered read) |
 | `task.add_dependency` | Add a depends-on edge (dependency DAG) | requester-gated |
 | `task.remove_dependency` | Drop a depends-on edge (idempotent); may promote a now-satisfied dependent | requester-gated |
 | `task.repoint_dependency` | Atomically repoint an edge `from_depends_on`→`to_depends_on` (cycle-checked first); re-evals readiness | requester-gated |
@@ -484,7 +484,7 @@ kinds); like any op, each is also subject to the per-session contextual gate.
 
 ```json
 { "kind": "task.create", "name": "ship-feature" }
-{ "kind": "task.create", "name": "sub", "parent_id": "<id>", "deps": ["<other-id>"] }
+{ "kind": "task.create", "name": "sub", "deps": ["<other-id>"] }
 { "kind": "task.update_status", "task_id": "<id>", "status": "in_progress" }
 { "kind": "task.add_dependency", "task_id": "<id>", "depends_on": "<other-id>" }
 { "kind": "task.abort", "task_id": "<id>" }
@@ -494,7 +494,7 @@ kinds); like any op, each is also subject to the per-session contextual gate.
 routing-key): the **requester** (origin / assigner / disposition notify-target —
 the caller of `task.create`, set by the OS, not an op field) and the **assignee**
 (the worker session, the single-writer of `status`, **immutable** — no handoff;
-delegation is sub-task decomposition via `task.create` with `parent_id`).
+delegation is sub-task decomposition via `task.create` — sub-task ownership is OS-derived from the execution context (§16 recursive-request model), never an op field).
 `assignee` defaults to the caller (a self-task); a different value delegates
 cross-session (requester=A → assignee=B). One session can be the assignee of many
 Tasks (1 : N).

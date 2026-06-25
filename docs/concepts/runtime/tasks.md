@@ -48,9 +48,9 @@ refuses rather than run a session-less context that would mask the gate).
 
 | Op | Role gate | Purpose |
 |---|---|---|
-| `task.create` | requester = self | Create a (sub-)task; `deps` order it, `assignee` delegates, `parent_id` nests it |
+| `task.create` | requester = self | Create a (sub-)task; `deps` order it, `assignee` delegates; sub-task ownership is OS-derived from execution context (§16) |
 | `task.update_status` | **assignee** (CAS) | Declare a status transition (single writer) |
-| `task.get` / `task.list` | — | Read one record / list (by assignee / requester / status / parent) |
+| `task.get` / `task.list` | — | Read one record / list (by assignee / requester / status); `requester=<task-id>` lists sub-tasks owned by that task |
 | `task.add_dependency` / `task.remove_dependency` | requester | Add / drop a depends-on edge |
 | `task.repoint_dependency` | requester | Atomically repoint an edge to a substitute (cycle-checked first) |
 | `task.abort` | requester | Archive a Task + its sub-tree (cooperative-terminal, down-cascade) |
