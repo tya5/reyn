@@ -2830,12 +2830,23 @@ class AgentRegistry:
                 self.remove_topology(name)
                 changes.append((name, None))
                 continue
+            # #2103: PRESERVE surviving members' capability_profile bindings — drop
+            # ONLY the removed member's. Rebuilding without profiles wiped EVERY
+            # binding, so purging one member silently changed a SURVIVOR's effective
+            # capability (resolved_profile_for treats a missing binding as no-narrowing
+            # = full ⊆-parent cap → a widen/escalation in the narrowing-binding case).
+            # Dropping the removed member's entry also keeps Topology.__post_init__
+            # happy (it rejects profiles bound to non-members) → reconstruction-safe.
+            new_profiles = {
+                m: p for m, p in topo.profiles.items() if m != agent
+            }
             new_topo = Topology(
                 name=topo.name,
                 kind=topo.kind,
                 members=new_members,
                 leader=topo.leader,
                 created_at=topo.created_at,
+                profiles=new_profiles,
             )
             new_topo.save(self._topology_dir / f"{name}.yaml")
             self._topologies[name] = new_topo
