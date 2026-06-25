@@ -529,7 +529,7 @@ When adding a new LLM-dependent OS path:
 - [ ] If the feature derives from a P1–P8 invariant, add a Tier 2 test for it
 - [ ] If the feature changes a public contract (yaml schema, events payload, DSL section), update / add a Tier 1 test
 - [ ] Verify no `current_datetime=datetime.now()` — always `REPLAY_DATETIME`
-- [ ] Each test has a one-line docstring naming its tier (e.g. `"""Tier 3a: ..."""`)
+- [ ] Each test has a one-line docstring naming its tier (e.g. `"""Tier 3a: ..."""`). The exact format is `Tier N:` or `Tier Na:` — any text between the tier designation and the colon fails the audit (e.g. `"""Tier 2 (MUST-1): ..."""` → fail; fix: `"""Tier 2: (MUST-1) ..."""`)
 
 ---
 
@@ -541,7 +541,7 @@ Use it as a pre-commit check when adding new tests, for a Tier 4 violation sweep
 
 Detection rules (6):
 
-- Missing Tier docstring
+- Missing or malformed Tier docstring (regex: `^Tier [123][abc]?:` — colon must follow directly)
 - Format pinning (line count / char count / exact length = Tier 4 violation)
 - Private state assertion
 - MagicMock / AsyncMock / patch usage

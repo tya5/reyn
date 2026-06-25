@@ -42,8 +42,19 @@ def test_something():
 ```
 
 The Tier label (`Tier 1`, `Tier 2`, `Tier 3a`, `Tier 3b`) must appear at the
-start of the first docstring line. Functions without a docstring, or with a
-docstring that does not start with a Tier label, trigger this error.
+start of the first docstring line, followed immediately by a colon
+(`^Tier [123][abc]?:`). Functions without a docstring, or with a
+docstring that does not match this pattern, trigger this error.
+
+**Common footgun:** a qualifier between the tier and the colon fails the audit:
+
+```python
+# FAIL — parenthetical before the colon
+"""Tier 2 (MUST-1): checks the invariant."""
+
+# PASS — qualifier after the colon
+"""Tier 2: (MUST-1) checks the invariant."""
+```
 
 **Why:** Without the Tier label, there is no way to know whether a test
 belongs at all (Tier 4 = do not write) or what contract it is asserting.
