@@ -570,7 +570,7 @@ Because `ContextualLayer` is restrict-only (it feeds the `all(...)` conjunction
 the child cannot exceed the parent on any axis. This holds recursively: a
 grandchild is capped at ⊆ the child, which is itself ⊆ the parent.
 
-The `#2081 _delegate` floor also applies to spawned agents: an unbound spawned
+The default-deny `_delegate` floor also applies to spawned agents: an unbound spawned
 agent receives the least-privilege `_delegate` profile unless a `topology_create`
 binding explicitly re-grants within the ⊆-parent envelope.
 
