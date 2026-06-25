@@ -448,7 +448,7 @@ class AgentRegistry:
             )
         return profile
 
-    def remove(self, name: str, *, purge: bool = False) -> None:
+    def remove(self, name: str, *, purge: bool = False) -> "list[tuple[str, Topology | None]]":
         """Delete an agent. Default (#1954 Option A) = ARCHIVE (soft-delete): the
         runtime PITR generations are kept in place so rewind-to-before-delete
         works within the retention window, plus a tombstone recording the archival
@@ -480,8 +480,9 @@ class AgentRegistry:
             shutil.rmtree(target)
             # PR12: a hard-deleted agent would leave dangling topology references,
             # so drop it from every topology (a team losing its leader / an
-            # emptied topology is removed entirely).
-            self._cascade_agent_removal(name)
+            # emptied topology is removed entirely). #2103 MUST-1: return the
+            # cascade's topology changes so the async caller emits them logged.
+            return self._cascade_agent_removal(name)
         else:
             # #1954 Option A: archive-default. Keep generations in place (rewind
             # works) + tombstone with the archival WAL seq. Hidden from active
@@ -494,6 +495,7 @@ class AgentRegistry:
             # window (slice 2).
             seq = self._state_log.current_seq if self._state_log is not None else 0
             (target / ARCHIVED_MARKER).write_text(str(seq), encoding="utf-8")
+        return []  # archive does not cascade — topology membership preserved (#1954)
 
     async def archive_agent(self, name: str, *, purge: bool = False) -> None:
         """#2103 S2b: the action-layer DELETE seam — archive (or purge) the agent
@@ -501,12 +503,19 @@ class AgentRegistry:
         ``agent_purged``) so rewind reconstructs the as-of-cut archived-state and
         honors the permanent purge (fork A). The ONE delete seam the action-layer
         callers (CLI / web + the spawn op) route through. Emit no-ops without a WAL."""
-        self.remove(name, purge=purge)
+        cascade_changes = self.remove(name, purge=purge)
         if self._state_log is not None:
             await self._state_log.append(
                 "agent_purged" if purge else "agent_archived",
                 entity_kind="agent", name=name,
             )
+            # #2103 MUST-1: emit the purge cascade's topology changes through the
+            # logged seam so rewind reconstructs the topology config-set consistently.
+            for tname, topo in cascade_changes:
+                await self._emit_topology(
+                    "topology_removed" if topo is None else "topology_updated",
+                    tname, topo,
+                )
 
     def recent_user_message(self, name: str) -> str:
         """Return the most recent user-role text from the agent's history, or "".
@@ -1238,6 +1247,62 @@ class AgentRegistry:
             elif marker.is_file():
                 marker.unlink()
 
+    def _topology_lifecycle(
+        self,
+    ) -> "dict[str, list[tuple[int, str, dict | None]]]":
+        """#2103 Piece-2: one WAL scan → per WAL-TRACKED topology name, its ordered
+        lifecycle events ``(seq, kind, payload)`` from ``topology_created`` /
+        ``topology_updated`` / ``topology_removed`` (payload = FULL config; None for a
+        removal). Sourced from the WAL only — never the rotated #P6 audit log.
+        MUST-2: only names that appear here are WAL-tracked, so only these are touched
+        by reconstruction — pre-WAL/untracked topologies are invisible to this map and
+        left alone. Empty without a WAL."""
+        events: dict[str, list[tuple[int, str, dict | None]]] = {}
+        if self._state_log is None:
+            return events
+        for entry in self._state_log.iter_from(0):
+            kind = entry.get("kind")
+            if kind not in ("topology_created", "topology_updated", "topology_removed"):
+                continue
+            name = entry.get("name")
+            seq = entry.get("seq")
+            if not isinstance(name, str) or not isinstance(seq, int):
+                continue
+            payload = entry.get("topology") if kind != "topology_removed" else None
+            events.setdefault(name, []).append((seq, kind, payload))
+        return events
+
+    def _reconcile_topologies_as_of_cut(self, cut: int) -> None:
+        """#2103 Piece-2: reconstruct the topology config-set as-of-cut from the
+        lifecycle WAL (WAL-sourced only — never the rotated audit log). Per WAL-tracked
+        topology name, the LATEST event with seq ≤ cut decides: created/updated → exists
+        with that FULL config; removed (or no event ≤ cut, i.e. created-after-cut) →
+        gone. Reconcile both the on-disk YAML and the in-memory ``_topologies`` map.
+        MUST-2: ONLY WAL-tracked names are touched — untracked/pre-WAL topologies are
+        never created, mutated, or deleted here. Inert without lifecycle events."""
+        for name, evs in self._topology_lifecycle().items():
+            latest = max(
+                (e for e in evs if e[0] <= cut), key=lambda e: e[0], default=None,
+            )
+            path = self._topology_dir / f"{name}.yaml"
+            if latest is None or latest[1] == "topology_removed":
+                # Didn't exist as-of-cut (created-after-cut OR removed-≤-cut) → drop.
+                self._topologies.pop(name, None)
+                if path.is_file():
+                    path.unlink()
+            else:
+                payload = latest[2] or {}
+                topo = Topology(
+                    name=payload.get("name", name),
+                    kind=payload.get("kind", "network"),
+                    members=tuple(payload.get("members") or ()),
+                    leader=payload.get("leader"),
+                    created_at=payload.get("created_at", ""),
+                    profiles=dict(payload.get("profiles") or {}),
+                )
+                topo.save(path)
+                self._topologies[name] = topo
+
     async def _drop_session(self, name: str, sid: str, *, purge_dir: bool = True) -> None:
         """#2103 S1bc: tear down a single spawned session created after the rewind cut
         (the primitive's seam, now wired). Delegates to ``remove_session`` — the single
@@ -1443,6 +1508,7 @@ class AgentRegistry:
         # #2103 S2: rewrite present agents' .archived tombstones to the as-of-cut
         # archived-state (rewind-before-archive → active; rewind-after → archived).
         self._reconcile_archived_as_of_cut(ag_archived, drop_cut)
+        self._reconcile_topologies_as_of_cut(drop_cut)
         await self._restore_workspace_active(at_or_below=workspace_at_or_below)
         await self._restore_task_active(at_or_below=workspace_at_or_below)
         # #2125 (b)-split: the restores succeeded — NOW perform the deferred destructive
@@ -1639,9 +1705,9 @@ class AgentRegistry:
         # #1954 slice 2: WAL-window-bounded auto-purge of archived agents — run
         # OUTSIDE the generation-GC try so a workspace-git hiccup above never
         # blocks reclaiming archived state.
-        self._purge_archived_below(floor)
+        await self._purge_archived_below(floor)
 
-    def _purge_archived_below(self, floor: int) -> None:
+    async def _purge_archived_below(self, floor: int) -> None:
         """#1954 slice 2: hard-delete archived agents whose archival seq fell
         below the retention ``floor`` — the soft-delete left the WAL window, so
         rewind-to-before-delete is no longer possible → hard-delete is safe
@@ -1655,7 +1721,13 @@ class AgentRegistry:
                 shutil.rmtree(self._dir / name, ignore_errors=True)
                 # Now a permanent hard-delete → drop the (previously preserved)
                 # topology membership so no dangling reference is left behind.
-                self._cascade_agent_removal(name)
+                # #2103 MUST-1: emit the cascade's topology changes through the
+                # logged seam (async GC path → await the emits).
+                for tname, topo in self._cascade_agent_removal(name):
+                    await self._emit_topology(
+                        "topology_removed" if topo is None else "topology_updated",
+                        tname, topo,
+                    )
             except Exception as e:  # noqa: BLE001 — best-effort; never fail caller
                 logger.warning("#1954 archived auto-purge failed for %r: %s", name, e)
 
@@ -2538,23 +2610,87 @@ class AgentRegistry:
         self._topologies[topology_name] = new_topo
         return new_topo
 
-    def _cascade_agent_removal(self, agent: str) -> None:
+    # ── #2103 Piece-2: topology-lifecycle EMIT seams (rewind durability) ──────
+    # The create-side mirror of the agent-lifecycle seams (#2118). The sync
+    # add_topology/add_member/remove_member/remove_topology above are the MECHANISM
+    # (private internals); EVERY state-affecting topology mutation routes through a
+    # logged seam below so rewind reconstructs the topology config-set as-of-cut.
+    # MUST-1 invariant: a topology is fully-tracked or fully-untracked — a sync
+    # mutation on a tracked topology would diverge on reconstruction.
+
+    @staticmethod
+    def _topology_payload(topo: Topology) -> dict:
+        """#2103: serialise a Topology into a topology_created/updated WAL payload
+        (the FULL config → as-of-cut reconstruction is latest-≤-cut-wins)."""
+        return {
+            "name": topo.name,
+            "kind": topo.kind,
+            "members": list(topo.members),
+            "leader": topo.leader,
+            "created_at": topo.created_at,
+            "profiles": dict(topo.profiles),
+        }
+
+    async def _emit_topology(
+        self, kind: str, name: str, topo: "Topology | None",
+    ) -> None:
+        """#2103: emit a topology-lifecycle WAL event — the ONE logged path every
+        state-affecting topology mutator routes through. No-op without a WAL."""
+        if self._state_log is None:
+            return
+        fields: dict = {"name": name}
+        if topo is not None:
+            fields["topology"] = self._topology_payload(topo)
+        await self._state_log.append(kind, **fields)
+
+    async def create_topology(self, topo: Topology) -> None:
+        """#2103 logged CREATE seam: add_topology (sync) + emit topology_created.
+        Every creation surface (LLM tool / web / CLI) routes through this."""
+        self.add_topology(topo)
+        await self._emit_topology("topology_created", topo.name, topo)
+
+    async def add_topology_member(self, topology_name: str, agent: str) -> Topology:
+        """#2103 logged UPDATE seam: add_member (sync) + emit topology_updated."""
+        topo = self.add_member(topology_name, agent)
+        await self._emit_topology("topology_updated", topo.name, topo)
+        return topo
+
+    async def remove_topology_member(self, topology_name: str, agent: str) -> Topology:
+        """#2103 logged UPDATE seam: remove_member (sync) + emit topology_updated."""
+        topo = self.remove_member(topology_name, agent)
+        await self._emit_topology("topology_updated", topo.name, topo)
+        return topo
+
+    async def delete_topology(self, name: str) -> None:
+        """#2103 logged DELETE seam: remove_topology (sync) + emit topology_removed."""
+        self.remove_topology(name)
+        await self._emit_topology("topology_removed", name, None)
+
+    def _cascade_agent_removal(self, agent: str) -> "list[tuple[str, Topology | None]]":
         """Drop `agent` from every topology it's a member of.
 
         Team topologies losing their leader are removed entirely (a leader-less
         team is meaningless). Pipelines and networks shrink in place. Empty
         topologies are removed.
+
+        #2103 MUST-1: returns the topology mutations so the (async) caller emits
+        them through the logged path — else a tracked topology cascaded
+        synchronously would diverge on reconstruction. (name, None) = removed;
+        (name, new_topo) = updated.
         """
+        changes: list[tuple[str, Topology | None]] = []
         for name in list(self._topologies.keys()):
             topo = self._topologies[name]
             if agent not in topo.members:
                 continue
             if topo.kind == "team" and topo.leader == agent:
                 self.remove_topology(name)
+                changes.append((name, None))
                 continue
             new_members = tuple(m for m in topo.members if m != agent)
             if not new_members:
                 self.remove_topology(name)
+                changes.append((name, None))
                 continue
             new_topo = Topology(
                 name=topo.name,
@@ -2565,6 +2701,8 @@ class AgentRegistry:
             )
             new_topo.save(self._topology_dir / f"{name}.yaml")
             self._topologies[name] = new_topo
+            changes.append((name, new_topo))
+        return changes
 
 
 def _drain_queue(q: asyncio.Queue) -> None:

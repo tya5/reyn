@@ -82,7 +82,7 @@ async def create_topology(
             members=body.members,
             leader=body.leader,
         )
-        registry.add_topology(topo)
+        await registry.create_topology(topo)  # #2103: logged seam (WAL-tracked)
     except FileExistsError:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -113,7 +113,7 @@ async def get_topology(name: str, registry=Depends(get_registry)) -> TopologySum
 async def delete_topology(name: str, registry=Depends(get_registry)) -> None:
     """Remove a user-declared topology."""
     try:
-        registry.remove_topology(name)
+        await registry.delete_topology(name)  # #2103: logged seam (WAL-tracked)
     except FileNotFoundError:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -138,7 +138,7 @@ async def add_member(
 ) -> TopologySummary:
     """Add an agent to an existing topology."""
     try:
-        topo = registry.add_member(name, agent)
+        topo = await registry.add_topology_member(name, agent)  # #2103: logged seam
     except FileNotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
     except ValueError as exc:
@@ -160,7 +160,7 @@ async def remove_member(
 ) -> TopologySummary:
     """Remove an agent from a topology."""
     try:
-        topo = registry.remove_member(name, agent)
+        topo = await registry.remove_topology_member(name, agent)  # #2103: logged seam
     except FileNotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
     except ValueError as exc:
