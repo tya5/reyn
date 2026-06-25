@@ -20,6 +20,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from reyn.runtime.profile import AgentProfile
 from reyn.runtime.registry import AgentRegistry
 from reyn.security.permissions.effective import ContextualPermission, tool_contextually_denied
 
@@ -29,7 +30,10 @@ def _registry(tmp_path: Path) -> AgentRegistry:
 
 
 def _bind(tmp_path: Path, *, member: str, profile: str, body: str) -> None:
-    """Bind ``member`` to a capability ``profile`` via a topology + write the profile YAML."""
+    """Bind ``member`` to a capability ``profile`` via a topology + write the profile YAML.
+    Also seeds the member's AGENT DIR — a real lineage parent is a created agent (has a
+    dir); without it the #2161 parent-existence check would treat the bound parent as
+    absent → fail-closed."""
     td = tmp_path / ".reyn" / "topologies"
     td.mkdir(parents=True, exist_ok=True)
     (td / f"{member}.yaml").write_text(
@@ -40,6 +44,7 @@ def _bind(tmp_path: Path, *, member: str, profile: str, body: str) -> None:
     pd = tmp_path / ".reyn" / "capability_profiles"
     pd.mkdir(parents=True, exist_ok=True)
     (pd / f"{profile}.yaml").write_text(body, encoding="utf-8")
+    AgentProfile.new(member).save(tmp_path / ".reyn" / "agents" / member)  # the parent exists
 
 
 def test_a_wider_subset_is_capped_at_parent(tmp_path: Path) -> None:
@@ -101,6 +106,32 @@ def test_d_lineage_is_os_set_and_immutable(tmp_path: Path) -> None:
         reg._record_spawn_lineage("C", "EVIL")  # re-parent to escalate → refused
     with pytest.raises(ValueError):
         reg._record_spawn_lineage("X", "X")      # self-link → refused
+
+
+def test_orphaned_parent_fails_closed(tmp_path: Path) -> None:
+    """Tier 2: #2161 (tui-found) — a child whose lineage parent is ABSENT
+    (purged/archived-gone/crash/fs-delete) FAILS CLOSED (the _delegate floor), NOT open.
+    The fail-open it guards: skipping the parent-conjunct → child resolves UN-capped =
+    purge-the-parent-to-uncap-the-child (the destroy-side mirror of the rewind
+    escalation). RED if the parent-EXISTENCE check is dropped (child → unrestricted)."""
+    import shutil
+    _bind(tmp_path, member="P", profile="prole", body="name: prole\ntool_deny: [sandboxed_exec]\n")
+    reg = _registry(tmp_path)
+    reg._record_spawn_lineage("C", "P")
+
+    # parent PRESENT → C ⊆ P (denies P's sandboxed_exec; NOT the floor's re-delegation).
+    present, _ = reg.resolved_profile_for("C", is_delegate=False)
+    assert tool_contextually_denied(present, "sandboxed_exec")
+    assert not tool_contextually_denied(present, "multi_agent__delegate")  # P's binding only
+
+    # ORPHAN the parent (purge/remove its agent dir); the lineage edge persists.
+    shutil.rmtree(tmp_path / ".reyn" / "agents" / "P")
+    after, _ = reg.resolved_profile_for("C", is_delegate=False)
+    # FAIL CLOSED: the _delegate floor applies — a floored tool P did NOT deny is now
+    # denied, proving the floor was composed (not a skip → unrestricted). RED if the
+    # existence check is dropped (skip → multi_agent__delegate NOT denied).
+    assert after is not None
+    assert tool_contextually_denied(after, "multi_agent__delegate")  # floored = fail-closed
 
 
 def test_unspawned_agent_has_no_parent_cap(tmp_path: Path) -> None:

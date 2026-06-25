@@ -2592,9 +2592,21 @@ class AgentRegistry:
         # (OS-set), so it cannot widen.
         parent = self._spawn_lineage.get(agent)
         if parent is not None:
-            parent_ctx, parent_excl = self.resolved_profile_for(parent)
-            if parent_ctx is not None:
-                resolved.append((parent_ctx, parent_excl))
+            if not (self._dir / parent).is_dir():
+                # #2161 (tui-found, pre-merge): the lineage edge points to an ABSENT
+                # parent (purged / archived-then-gone / crash / fs-delete) — the capping
+                # parent is gone, so ⊆-parent CANNOT be verified. FAIL CLOSED: compose
+                # the restrictive _delegate floor (NOT skip — skipping is the fail-open
+                # escalation: purge-the-parent-to-uncap-the-child). This is DISTINCT from
+                # a PRESENT-but-unrestricted parent (parent_ctx is None in the else
+                # branch → correctly skipped, no cap to impose). Checking EXISTENCE (not
+                # just parent_ctx is None) resolves that ambiguity. One seam → covers
+                # every cap-drop cause; the destroy-side mirror of the rewind rebuild.
+                resolved.append(resolve_profile(load_delegate_profile(self._project_root)))
+            else:
+                parent_ctx, parent_excl = self.resolved_profile_for(parent)
+                if parent_ctx is not None:
+                    resolved.append((parent_ctx, parent_excl))
 
         if not resolved:
             return None, frozenset()
