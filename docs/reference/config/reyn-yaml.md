@@ -466,12 +466,22 @@ Content-layer threat defense: inspects untrusted content for prompt-injection be
 
 ### `safety.spawn` fields
 
-Operator bounds on the LLM spawn tree (#2103 C3) — a DoS guard so an agent cannot mint an unbounded org. Set in `reyn.yaml` (the restart-only OUT layer): an LLM has no runtime path to raise its own limit. Enforced at the LLM spawn **seams** (`agent_spawn`, `topology_create`); the operator CLI create path is unbounded (authority). Defense-by-default (non-zero) — there is no backward-compat spawn tree to break.
+Operator bounds on the LLM spawn tree — a DoS guard so an agent cannot mint an unbounded org. Set in `reyn.yaml` (the restart-only OUT layer): an LLM has no runtime path to raise its own base limit. Enforced at the LLM spawn **seams** (`agent_spawn`, `topology_create`); the operator CLI create path is unbounded (authority). Defense-by-default (non-zero) — there is no backward-compat spawn tree to break.
+
+When a spawn would exceed a limit, the `safety.on_limit` checkpoint fires — the same mode-driven framework used by loop and budget caps:
+
+- **`interactive`** (default): prompts the operator for approval to extend. On approval, the extension is recorded per-spawner so the same scope does not re-prompt. The base config limit is unchanged; any extension is operator-approved, never LLM-driven.
+- **`unattended`**: rejects immediately (no prompt possible — CI / scripted runs).
+- **`auto_extend`**: auto-approves up to `auto_extend_times` extensions, then rejects.
+
+`max_depth` and `max_children` carry **separate per-spawner extension keys** so an operator-approved increase in one does not silently widen the other.
 
 | Path | Type | Default | Description |
 |------|------|---------|-------------|
-| `safety.spawn.max_depth` | int | `10` | Maximum spawn-lineage chain depth (operator-top = 0; each `agent_spawn` +1). A spawn whose child would exceed this is rejected. `0` = unlimited. |
-| `safety.spawn.max_children` | int | `20` | Maximum fan-out: governs BOTH the direct spawn-children per parent (`agent_spawn`) AND the member count of a `topology_create`d topology (org size). A spawn / wire that would exceed it is rejected. `0` = unlimited. |
+| `safety.spawn.max_depth` | int | `10` | Maximum spawn-lineage chain depth (operator-top = 0; each `agent_spawn` +1). Exceeding this fires the `safety.on_limit` checkpoint. `0` = unlimited. |
+| `safety.spawn.max_children` | int | `20` | Maximum fan-out: governs BOTH the direct spawn-children per parent (`agent_spawn`) AND the member count of a `topology_create`d topology (org size). Exceeding this fires the `safety.on_limit` checkpoint. `0` = unlimited. |
+
+See [`safety.on_limit` fields](#safetyonlimit-fields) for the mode settings.
 
 ## `time_travel` block
 
