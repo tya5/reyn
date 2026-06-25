@@ -265,7 +265,7 @@ async def test_op_create_dangling_dep_returns_error_dict():
     dep_not_found error dict (OQ-1/OQ-5)."""
     b = InMemoryTaskBackend()
     op = SimpleNamespace(name="x", assignee=None, origin="self", description=None,
-                         deps=["ghost"], parent_id=None)
+                         deps=["ghost"])
     res = await taskmod._create(op, _opctx(b), "control_ir")
     assert res["status"] == "error"
     assert res["error"]["kind"] == "dep_not_found"

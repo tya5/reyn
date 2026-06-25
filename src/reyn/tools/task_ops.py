@@ -44,14 +44,16 @@ _TASK_OPS: tuple[tuple[str, type, str], ...] = (
     ("task.create", TaskCreateIROp,
      "Create a sub-task. Defaults to a self-task (you are the assignee); set "
      "`assignee` to delegate to another session. `deps` are depends-on task ids "
-     "(the task is born blocked until they complete); `parent_id` nests it under "
-     "a task you own. Use to decompose a complex request into trackable units."),
+     "(the task is born blocked until they complete). A task you create while "
+     "executing a task is automatically owned by it. Use to decompose a complex "
+     "request into trackable units."),
     ("task.update_status", TaskUpdateStatusIROp,
      "Declare a status transition on a task you are the ASSIGNEE of (the single "
      "writer). Terminal tasks reject writes."),
     ("task.get", TaskGetIROp, "Read one task record by id."),
     ("task.list", TaskListIROp,
-     "List tasks, optionally narrowed by assignee / requester / status / parent_id."),
+     "List tasks, optionally narrowed by assignee / requester / status. Narrowing "
+     "by `requester` (a task id) lists the sub-tasks that task owns."),
     ("task.add_dependency", TaskAddDependencyIROp,
      "Add a depends-on edge (you must be the requester/topology owner). "
      "Existence + cycle checked."),

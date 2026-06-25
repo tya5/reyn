@@ -76,7 +76,7 @@ async def _cancel_running(reg: AgentRegistry) -> None:
 
 def _create_op(name, *, deps=None, assignee=None, origin=None):
     return SimpleNamespace(name=name, description=f"do {name}", deps=list(deps or []),
-                           assignee=assignee, origin=origin, parent_id=None)
+                           assignee=assignee, origin=origin)
 
 
 def _ctx(backend, *, session_id="executor", current_task_id=None, waker=None):

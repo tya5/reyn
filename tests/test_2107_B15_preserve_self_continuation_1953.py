@@ -37,7 +37,7 @@ from tests._support.router_host_adapter import make_adapter
 
 def _create_op(name, *, deps=None):
     return SimpleNamespace(name=name, description=f"do {name}", deps=list(deps or []),
-                           assignee=None, origin=None, parent_id=None)
+                           assignee=None, origin=None)
 
 
 def _session(tmp_path: Path) -> Session:
