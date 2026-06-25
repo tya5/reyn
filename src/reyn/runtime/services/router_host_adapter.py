@@ -962,6 +962,39 @@ class RouterHostAdapter:
             ),
         }
 
+    async def spawn_agent(self, *, name: str, role: str) -> dict:
+        """#2103 B-tool: create a new AGENT under THIS agent (the spawner = parent).
+
+        Routes through ``registry.create_agent(parent=<spawner>)`` — the ONE create
+        seam — so the new agent's spawn LINEAGE is OS-SET + immutable (the LLM supplies
+        only WHO=name/role; the parent link is set by the OS, the forge-guard) AND
+        carried on ``agent_created`` for rewind-reconstruction. By B-core, the new
+        agent's effective capability is then capped at ⊆ the spawner by construction
+        (resolved_profile_for composes the spawner's live resolved as a conjunct).
+        Narrowing the child below the spawner is via ``topology_create`` (C)."""
+        if self._registry is None:
+            raise RuntimeError(
+                "agent_spawn requires a registry (multi-agent host) — unavailable in "
+                "this context."
+            )
+        parent = self._agent_name
+        try:
+            await self._registry.create_agent(name, role=role, parent=parent)
+        except FileExistsError:
+            return {"status": "error", "kind": "agent_exists",
+                    "error": f"agent {name!r} already exists."}
+        except ValueError as e:  # lineage guard (self-link / cycle / immutable) or bad name
+            return {"status": "error", "kind": "spawn_rejected", "error": str(e)}
+        return {
+            "status": "spawned",
+            "name": name,
+            "parent": parent,
+            "note": (
+                "New agent created; its capabilities are capped at ⊆ yours (the spawn "
+                "lineage). Use topology_create to narrow it further / wire messaging."
+            ),
+        }
+
     def append_history_entry(
         self,
         *,

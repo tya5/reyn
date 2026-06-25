@@ -3304,6 +3304,11 @@ class RouterLoop:
         # registry handler (tools/session_spawn.py) delegates via
         # RouterCallerState.spawn_session_fn → host.spawn_session.
         "session_spawn",
+        # #2103 B-tool: agent_spawn — registry handler (tools/agent_spawn.py) delegates
+        # via RouterCallerState.spawn_agent_fn → host.spawn_agent (create_agent(parent)
+        # + OS-set lineage). Dispatched here so the advertised router=allow tool reaches
+        # its handler (the #2120 advertised-but-not-dispatched lesson).
+        "agent_spawn",
         # Phase 3.5-D — zero-diff handlers (reyn_src + web).
         # reyn_src handlers are literal copies of RouterHostAdapter helpers;
         # web handlers delegate to op_runtime.web with a synthesized OpContext
@@ -3494,6 +3499,16 @@ class RouterLoop:
                 )
             _spawn_session_bound = _spawn_session_bound_impl
 
+        # #2103 B-tool: agent-spawn binding (mirror session-spawn). Only multi-agent
+        # hosts implement ``spawn_agent``; a host without it leaves this None.
+        _spawn_agent_bound: Any = None
+        if hasattr(self.host, "spawn_agent") and callable(
+            getattr(self.host, "spawn_agent", None)
+        ):
+            async def _spawn_agent_bound_impl(*, name: str, role: str = "") -> dict:
+                return await self.host.spawn_agent(name=name, role=role)
+            _spawn_agent_bound = _spawn_agent_bound_impl
+
         # FP-0034 Phase 2 prep: snapshot indexed RAG corpora for the
         # universal catalog's rag_corpus enumeration. SourceManifest
         # caches the parsed YAML in-process so this is O(1) when the
@@ -3543,6 +3558,8 @@ class RouterLoop:
             run_skill_fn=_run_skill_bound,
             # #2103 S1bc: session-spawn dispatch (None for non-multi-session hosts).
             spawn_session_fn=_spawn_session_bound,
+            # #2103 B-tool: agent-spawn dispatch (None for non-multi-agent hosts).
+            spawn_agent_fn=_spawn_agent_bound,
             # Memory tool bridges (= for memory cluster handlers;
             # Phase 3.5-B-heavy) — bound to RouterLoop's private helpers
             # so registry handlers consume the same agent-aware

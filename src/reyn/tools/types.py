@@ -72,6 +72,12 @@ class RouterCallerState:
     # support session-spawn (= duck-typed / hasattr-guarded at caller-state build).
     spawn_session_fn: Callable[..., Awaitable[Any]] | None = None
 
+    # #2103 B-tool: agent-spawn dispatch. The agent_spawn handler creates a new agent
+    # under the spawner (rewind-tracked via agent_created carrying the OS-set parent
+    # lineage), capped at ⊆ the spawner by construction (B-core), with an optional
+    # restrict-only narrowing. None when the host doesn't support agent-spawn.
+    spawn_agent_fn: Callable[..., Awaitable[Any]] | None = None
+
     # Session-scoped chain identity (= for plan tool, delegate
     # tool, etc.)
     chain_id: str | None = None

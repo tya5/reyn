@@ -445,6 +445,20 @@ def build_tools(
             dispatch_kind=_session_spawn_def.dispatch_kind,
         ))
 
+    # ── B2c: agent_spawn (#2103 B-tool) ──────────────────────────────────
+    # Router-only org-design spawn primitive (static schema → render without state).
+    # Advertised here alongside session_spawn so the router=allow tool is actually
+    # reachable (the #2120 advertise-drift lesson); dispatch + floor pair below.
+    _agent_spawn_def = _registry.lookup("agent_spawn")
+    if _agent_spawn_def is not None and _agent_spawn_def.gates.router == "allow":
+        _agent_spawn_rendered = _agent_spawn_def.render_for_router()
+        specs.append(ToolSpec(
+            name=_agent_spawn_rendered["function"]["name"],
+            description=_agent_spawn_rendered["function"]["description"],
+            parameters=_agent_spawn_rendered["function"]["parameters"],
+            dispatch_kind=_agent_spawn_def.dispatch_kind,
+        ))
+
     # ── B3: remember_shared ──────────────────────────────────────────────
     _remember_shared_def = _registry.lookup("remember_shared")
     if _remember_shared_def is not None and _remember_shared_def.gates.router == "allow":
