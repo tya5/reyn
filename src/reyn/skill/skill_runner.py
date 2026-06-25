@@ -4,7 +4,7 @@ Owns the running_skills dict and the stdlib skill invocation path; the Session
 delegates skill spawns to it.
 
 Intervention coupling:
-    _run_stdlib_skill and _spawn_skill/_run_one_skill both pass a
+    _run_stdlib_skill and run_skill_awaitable both pass a
     ChatInterventionBus to _build_agent. The bus holds a reference to
     Session (for _dispatch_intervention and
     consume_buffered_intervention_answer). SkillRunner does NOT call
@@ -16,9 +16,8 @@ Intervention coupling:
 
 All event emissions go through the injected ``event_log``; no silent
 state changes (P6).  Business logic lives entirely here; Session
-delegates via :meth:`spawn`, :meth:`spawn_for_router`,
-:meth:`run_stdlib`, :meth:`cancel`, :meth:`cancel_all`, and
-:meth:`running_names` (P3).
+delegates via :meth:`run_skill_awaitable`, :meth:`run_stdlib`,
+:meth:`cancel`, :meth:`cancel_all`, and :meth:`running_names` (P3).
 """
 from __future__ import annotations
 
@@ -85,9 +84,6 @@ class SkillRunner:
         SkillRunner never references ``ChatInterventionBus`` directly.
     put_outbox:
         Async callable ``(SkillOutboundMessage) -> None``.
-    enqueue_skill_completed:
-        Async callable with keyword args ``run_id``, ``skill``,
-        ``chain_id``, ``status``, ``data``.
     accumulate:
         Sync callable ``(RunResult) -> None``.
     drop_interventions_for_run:
@@ -119,7 +115,6 @@ class SkillRunner:
         state_log: StateLog | None,
         build_agent_fn: Callable[..., SkillRuntime],
         put_outbox: Callable[[SkillOutboundMessage], Awaitable[None]],
-        enqueue_skill_completed: Callable[..., Awaitable[None]],
         accumulate: Callable,
         drop_interventions_for_run: Callable[[str | None], None],
         get_skill_registry: Callable[[], SkillRegistry | None],
@@ -141,7 +136,6 @@ class SkillRunner:
         self._state_log = state_log
         self._build_agent_fn = build_agent_fn
         self._put_outbox = put_outbox
-        self._enqueue_skill_completed = enqueue_skill_completed
         self._accumulate = accumulate
         self._drop_interventions_for_run = drop_interventions_for_run
         self._get_skill_registry = get_skill_registry
@@ -226,302 +220,6 @@ class SkillRunner:
         if self.running_skills:
             await asyncio.gather(*self.running_skills.values(), return_exceptions=True)
 
-    async def spawn(self, spec: dict, *, chain_id: str | None = None) -> "dict | None":
-        """Launch a skill task and register it in the running dicts.
-
-        Extracted from ``Session._spawn_skill``.  Enforces the
-        allowlist, budget cap, FP-0003 budget extension, and pre-spawn
-        input_schema validation before creating the asyncio Task.
-
-        Returns ``None`` on successful spawn (= caller relies on
-        ``self.running_skills`` for the run_id). Returns a structured
-        error dict when pre-spawn checks reject the spawn before any
-        asyncio task is created — currently only the input_schema
-        validation path uses this return channel; other refusals (=
-        allowlist, budget) keep the legacy None-return + outbox-error
-        path for backward compat with non-router callers.
-        """
-        skill_name = spec.get("skill")
-        input_artifact = spec.get("input")
-        if not skill_name or not isinstance(input_artifact, dict):
-            await self._put_outbox(SkillOutboundMessage(
-                kind="error", text=f"invalid skill spec: {spec}",
-            ))
-            return None
-
-        # PR15 → #2074 S2: the per-agent SKILL allowlist now routes through the
-        # live ∩ (skill_allowed → ProfileLayer), the single SKILL-axis decision
-        # shared with spawn-path B + the catalog filter. Byte-identical to the
-        # legacy inline check (None = unrestricted / [] = none / [a,b] = only).
-        from reyn.security.permissions.effective import skill_allowed
-        if not skill_allowed(self._allowed_skills, skill_name, contextual=self._contextual_permission):
-            await self._put_outbox(SkillOutboundMessage(
-                kind="error",
-                text=(
-                    f"skill {skill_name!r} is not in allowed_skills for agent "
-                    f"{self._agent_name!r}; refused"
-                ),
-            ))
-            self._events.emit(
-                "skill_spawn_refused",
-                reason="allowlist", skill=skill_name, agent=self._agent_name,
-            )
-            return None
-
-        # PR22: per-chain per-skill cap check.
-        if chain_id is not None:
-            check = self._budget.check_pre_spawn(
-                chain_id=chain_id, skill=skill_name,
-            )
-            # FP-0005 (#1877): on a hard-limit hit, a dimension with a
-            # configured extension amount participates in the unified
-            # ``safety.on_limit`` flow (interactive=ask / auto_extend=bounded
-            # / unattended=deny — decided inside ``_ask_budget_extension``).
-            # ``extension_calls == 0`` (default) = nothing to grant → the
-            # refusal stays hard regardless of mode.
-            if (
-                not check.allowed
-                and int(check.context.get("extension_calls") or 0) > 0
-            ):
-                approved = await self._ask_budget_extension(
-                    chain_id=chain_id,
-                    skill_name=skill_name,
-                    check=check,
-                )
-                if approved:
-                    extension = int(check.context["extension_calls"])
-                    new_total = self._budget.extend_chain_calls(
-                        chain_id=chain_id,
-                        skill=skill_name,
-                        additional=extension,
-                    )
-                    self._events.emit(
-                        "budget_extended",
-                        dimension=check.hard_dimension,
-                        skill=skill_name,
-                        chain_id=chain_id,
-                        granted=extension,
-                        total_extension=new_total,
-                    )
-                    check = self._budget.check_pre_spawn(
-                        chain_id=chain_id, skill=skill_name,
-                    )
-            if not check.allowed:
-                self._events.emit(
-                    "budget_exceeded",
-                    dimension=check.hard_dimension,
-                    detail=check.detail,
-                    skill=skill_name,
-                    chain_id=chain_id,
-                )
-                await self._put_outbox(SkillOutboundMessage(
-                    kind="error",
-                    text=self._format_refusal(check),
-                    meta={"chain_id": chain_id, "skill": skill_name},
-                ))
-                return None
-            for dim in check.warn_dimensions:
-                self._events.emit(
-                    "budget_warn",
-                    dimension=dim, chain_id=chain_id, skill=skill_name,
-                    **check.context,
-                )
-                await self._put_outbox(SkillOutboundMessage(
-                    kind="status",
-                    text=self._format_warn(dim, check.context),
-                    meta={"chain_id": chain_id, "skill": skill_name},
-                ))
-            self._budget.record_spawn(chain_id=chain_id, skill=skill_name)
-
-        # Pre-spawn input_schema validation. Loads the skill the same way
-        # ``_run_one_skill`` does, validates ``input_artifact`` against the
-        # entry phase's input_schema, and rejects synchronously with a
-        # structured error before any asyncio task is created.
-        #
-        # Why pre-spawn: post-spawn validation arrives at the router LLM
-        # as an async ``[task_completed] kind=skill status=error`` message
-        # that's temporally separated from the originating invoke_action
-        # call. Weak-tier LLMs struggle to correlate the failure back to
-        # the original args + retry — they default to summarizing the
-        # error to the user. Validating sync at spawn time keeps the
-        # error in the same tool_result round-trip as the wrong args, so
-        # the LLM can react with full local context. Also avoids burning
-        # async-task setup cost on inputs that can never run.
-        try:
-            skill_dir, skill_root = resolve_skill_path(skill_name)
-            _skill_for_validation = load_dsl_skill(
-                str(skill_dir / "skill.md"), skill_root=str(skill_root),
-            )
-        except SkillNotFoundError as exc:
-            self._events.emit(
-                "skill_spawn_refused",
-                reason="skill_not_found",
-                skill=skill_name,
-                detail=str(exc),
-            )
-            await self._put_outbox(SkillOutboundMessage(
-                kind="error",
-                text=f"skill not found: {skill_name}",
-                meta={"chain_id": chain_id, "skill": skill_name},
-            ))
-            return {
-                "status": "error",
-                "data": {
-                    "kind": "spawn_refused",
-                    "reason": "skill_not_found",
-                    "skill": skill_name,
-                    "error": str(exc),
-                },
-            }
-        except Exception as exc:
-            # Skill md parse / compile error — surface as spawn refusal
-            # so the LLM sees a structured failure instead of an async
-            # crash inside _run_one_skill.
-            self._events.emit(
-                "skill_spawn_refused",
-                reason="skill_load_error",
-                skill=skill_name,
-                detail=str(exc),
-            )
-            await self._put_outbox(SkillOutboundMessage(
-                kind="error",
-                text=f"failed to load {skill_name}: {exc}",
-                meta={"chain_id": chain_id, "skill": skill_name},
-            ))
-            return {
-                "status": "error",
-                "data": {
-                    "kind": "spawn_refused",
-                    "reason": "skill_load_error",
-                    "skill": skill_name,
-                    "error": str(exc),
-                },
-            }
-
-        entry_schema = getattr(_skill_for_validation, "entry_input_schema", None)
-        if entry_schema:
-            import jsonschema
-            try:
-                jsonschema.validate(input_artifact, entry_schema)
-            except jsonschema.ValidationError as exc:
-                # Build the structured error response with a schema_hint
-                # the LLM can use directly on its next turn.
-                schema_hint = {
-                    "skill": skill_name,
-                    "input_schema": entry_schema,
-                    "retry_hint": (
-                        "Re-emit invoke_action with input matching "
-                        "input_schema above."
-                    ),
-                }
-                self._events.emit(
-                    "skill_spawn_refused",
-                    reason="input_schema_violation",
-                    skill=skill_name,
-                    detail=exc.message,
-                )
-                await self._put_outbox(SkillOutboundMessage(
-                    kind="error",
-                    text=(
-                        f"input validation failed for skill "
-                        f"{skill_name!r}: {exc.message}"
-                    ),
-                    meta={"chain_id": chain_id, "skill": skill_name},
-                ))
-                return {
-                    "status": "error",
-                    "data": {
-                        "kind": "spawn_refused",
-                        "reason": "input_schema_violation",
-                        "skill": skill_name,
-                        "validation_error": exc.message,
-                        "schema_hint": schema_hint,
-                    },
-                }
-
-        # tui-coder finding #1 fix (2026-05-28): use the OS-level canonical
-        # run_id form via SkillRuntime._make_run_id. Prior bespoke construction
-        # here added a `_4-hex` suffix that the agent / events layer did
-        # NOT use, leaving the same skill run with 2 run_id forms in
-        # flight — TUI `remove_async_task(run_id)` then failed to find rows
-        # by key. Funneling through the canonical eliminates the
-        # cross-layer mismatch class.
-        from reyn.skill.skill_runtime import SkillRuntime as _SkillRuntime
-        run_id = _SkillRuntime._make_run_id(skill_name)
-        self._events.emit("skill_run_spawned", run_id=run_id, skill=skill_name)
-        self.running_skills_started_at[run_id] = time.monotonic()
-        self.running_skills_chain[run_id] = chain_id
-        await self._put_outbox(SkillOutboundMessage(
-            kind="status", text="starting…",
-            meta=_run_meta(run_id, skill_name),
-        ))
-
-        task = asyncio.create_task(
-            self._run_one_skill(
-                run_id, skill_name, input_artifact,
-                chain_id=chain_id,
-                pre_loaded_skill=_skill_for_validation,
-            )
-        )
-        self.running_skills[run_id] = task
-
-        def _cleanup(_t: asyncio.Task, rid: str = run_id) -> None:
-            self.running_skills.pop(rid, None)
-            self.running_skills_started_at.pop(rid, None)
-            self.running_skills_chain.pop(rid, None)
-            self._drop_interventions_for_run(rid)
-
-        task.add_done_callback(_cleanup)
-
-    async def spawn_for_router(self, spec: dict, *, chain_id: str) -> dict:
-        """Non-blocking router-side spawn entry point.
-
-        NOTE: as of #2104 PR1, invoke_skill no longer calls this path —
-        chat-mode dispatch is now synchronous via run_skill_awaitable.
-        This method is preserved for PR2 cleanup and is dead code in
-        production. It remains the entry point for direct callers in
-        tests that exercise pre-spawn validation.
-
-        Wraps :meth:`spawn` and returns the spawn-ack dict.
-
-        When :meth:`spawn` rejects pre-spawn (= input_schema violation
-        / skill not found / load error), the structured error dict it
-        returns is forwarded verbatim.
-        """
-        before = set(self.running_skills.keys())
-        spawn_result = await self.spawn(spec, chain_id=chain_id)
-        if isinstance(spawn_result, dict):
-            return spawn_result
-        after = set(self.running_skills.keys())
-        new_run_ids = after - before
-        if not new_run_ids:
-            return {
-                "status": "error",
-                "data": {
-                    "error": (
-                        f"skill {spec.get('skill')!r} could not be spawned "
-                        f"(see prior outbox message for the specific reason)"
-                    ),
-                    "skill": spec.get("skill"),
-                },
-            }
-        run_id = next(iter(new_run_ids))
-        for rid in new_run_ids:
-            if rid.split("_", 2)[1:2] == [str(spec.get("skill"))]:
-                run_id = rid
-                break
-        return {
-            "status": "spawned",
-            "run_id": run_id,
-            "chain_id": chain_id,
-            "skill": spec.get("skill"),
-            "note": (
-                "Running in the background. "
-                "I will notify you when it completes. "
-                "Use /tasks to check progress."
-            ),
-        }
-
     async def run_stdlib(
         self,
         skill_name: str,
@@ -561,10 +259,9 @@ class SkillRunner:
         """Run a user-invoked skill to completion and return its tool-result dict.
 
         Used by the router's ``invoke_skill`` tool when the skill is dispatched
-        in blocking mode (= synchronous tool_result instead of the spawn-ack
-        path that :meth:`spawn_for_router` produces). Enforces the same
-        allowlist + budget pre-checks as :meth:`spawn`, then loads the
-        skill, builds an Agent, runs it, accumulates cost, and returns:
+        in blocking mode (= synchronous tool_result). Enforces the same
+        allowlist + budget pre-checks, then loads the skill, builds an Agent,
+        runs it, accumulates cost, and returns:
 
             {"status": "finished" | "error", "data": <final_output>}
 
@@ -802,177 +499,6 @@ class SkillRunner:
 
         task.add_done_callback(_cleanup)
 
-    # ── internal ──────────────────────────────────────────────────────────────
-
-    async def _run_one_skill(
-        self,
-        run_id: str,
-        skill_name: str,
-        input_artifact: dict,
-        *,
-        chain_id: str | None = None,
-        pre_loaded_skill: "Skill | None" = None,
-    ) -> None:
-        """Core skill execution coroutine.
-
-        Extracted from ``Session._run_one_skill``.  Loads the skill,
-        builds the agent with a ChatEventForwarder subscriber, runs it,
-        and emits lifecycle events (P6).
-
-        ``pre_loaded_skill`` lets ``spawn()`` hand off the Skill it
-        already parsed for pre-spawn input_schema validation, eliminating
-        the duplicate resolve_skill_path + load_dsl_skill on the success
-        path (= 2x disk read + 2x YAML parse per spawn pre-fix). When
-        absent (= callers other than spawn(), or future code paths) the
-        load fallback below preserves original behaviour.
-        """
-        meta = _run_meta(run_id, skill_name)
-        if pre_loaded_skill is not None:
-            skill = pre_loaded_skill
-        else:
-            try:
-                skill_dir, skill_root = resolve_skill_path(skill_name)
-            except SkillNotFoundError:
-                self._events.emit(
-                    "skill_run_failed", run_id=run_id, skill=skill_name,
-                    error=f"skill not found: {skill_name}",
-                )
-                await self._put_outbox(SkillOutboundMessage(
-                    kind="error", text=f"skill not found: {skill_name}", meta=meta,
-                ))
-                await self._enqueue_skill_completed(
-                    run_id=run_id, skill=skill_name, chain_id=chain_id,
-                    status="error", data={"error": f"skill not found: {skill_name}"},
-                )
-                return
-            try:
-                skill = load_dsl_skill(str(skill_dir / "skill.md"), skill_root=str(skill_root))
-            except Exception as exc:
-                self._events.emit(
-                    "skill_run_failed", run_id=run_id, skill=skill_name,
-                    error=f"failed to load: {exc}",
-                )
-                await self._put_outbox(SkillOutboundMessage(
-                    kind="error", text=f"failed to load {skill_name}: {exc}", meta=meta,
-                ))
-                await self._enqueue_skill_completed(
-                    run_id=run_id, skill=skill_name, chain_id=chain_id,
-                    status="error", data={"error": f"failed to load {skill_name}: {exc}"},
-                )
-                return
-
-        agent = self._build_agent_fn(
-            run_id=run_id, skill_name=skill_name,
-            subscribers=self._make_subscribers(skill_name, run_id),
-        )
-        # B33 W6 NEW-1 fix: track the terminal (status, data) pair so
-        # _enqueue_skill_completed fires even when an intermediate await
-        # (e.g. _put_outbox) raises before the explicit enqueue call.
-        # The finally clause guarantees the inbox message reaches the
-        # session loop on every non-cancelled terminal path — regardless
-        # of which sub-path (LLM-abort / phase_no_progress / budget /
-        # success) produced the terminal status.
-        _terminal_status: str | None = None
-        _terminal_data: dict = {}
-        try:
-            result = await agent.run(
-                skill, input_artifact,
-                output_language=self._output_language,
-                chain_id=chain_id,
-                skill_registry=self._get_skill_registry(),
-                state_log=self._state_log,
-            )
-        except asyncio.CancelledError:
-            await self._put_outbox(SkillOutboundMessage(
-                kind="status", text="cancelled", meta=meta,
-            ))
-            raise  # CancelledError: no completion enqueue (task was discarded)
-        except Exception as exc:
-            # WorkflowAbortedError (= LLM-abort / phase_no_progress / no
-            # previous phase) and all other terminal errors land here.
-            _terminal_status = "error"
-            _terminal_data = {"error": str(exc)}
-            self._events.emit("skill_run_failed", run_id=run_id, skill=skill_name, error=str(exc))
-            try:
-                await self._put_outbox(SkillOutboundMessage(
-                    kind="error", text=f"failed: {exc}", meta=meta,
-                ))
-            except Exception:  # noqa: BLE001 — outbox failure must not suppress enqueue
-                pass
-            # #106: an unexpected Python exception bypasses the OS's
-            # workflow_aborted emit, so ChatEventForwarder never converts
-            # it into a "skill done: aborted" trace — leaving any mounted
-            # SkillActivityRow spinning forever. Enqueue the trace
-            # directly so the TUI finishes the row.
-            try:
-                await self._put_outbox(SkillOutboundMessage(
-                    kind="trace", text="skill done: aborted", meta=meta,
-                ))
-            except Exception:  # noqa: BLE001 — same defense as above
-                pass
-        else:
-            if result.status == "budget_exceeded":
-                _terminal_status = "budget_exceeded"
-                _terminal_data = {"error": result.error or "budget exceeded"}
-                self._events.emit(
-                    "skill_run_failed",
-                    run_id=run_id, skill=skill_name,
-                    error="budget_exceeded",
-                )
-                try:
-                    await self._put_outbox(SkillOutboundMessage(
-                        kind="error",
-                        text=result.error or "budget exceeded",
-                        meta=meta,
-                    ))
-                except Exception:  # noqa: BLE001
-                    pass
-                # #1944: like the abort branch (#106) and the success branch,
-                # enqueue a "skill done:" trace so the background skill's
-                # AsyncStackPanel row is removed (terminal="aborted" path:
-                # the strip flashes the ✗ shape before unmounting). Without
-                # this the budget-exceeded background skill ghosts too — the
-                # sibling gap to the success-path ghost.
-                try:
-                    await self._put_outbox(SkillOutboundMessage(
-                        kind="trace", text="skill done: aborted: budget exceeded",
-                        meta=meta,
-                    ))
-                except Exception:  # noqa: BLE001
-                    pass
-            else:
-                self._accumulate(result)
-                self._events.emit(
-                    "skill_run_completed", run_id=run_id, skill=skill_name, status=result.status,
-                )
-                # #1944: a spawned (background) skill's bottom-strip
-                # AsyncStackPanel row is removed by the TUI on the
-                # "skill done:" trace. The abort branch above already
-                # enqueues one directly (#106); the success branch must do
-                # the same — otherwise a successfully-completing background
-                # skill leaves a ghost row with its elapsed counter ticking
-                # forever. Explicit enqueue = completeness-by-construction
-                # (every terminal branch emits "skill done:"); the TUI's
-                # remove is idempotent, so this is safe even if any forwarder
-                # path also delivers one.
-                try:
-                    await self._put_outbox(SkillOutboundMessage(
-                        kind="trace", text="skill done: finished", meta=meta,
-                    ))
-                except Exception:  # noqa: BLE001 — same defense as the abort path
-                    pass
-                _terminal_status = result.status or "finished"
-                _terminal_data = result.data or {}
-        finally:
-            # Guaranteed enqueue on all non-cancelled terminal paths.
-            # _enqueue_skill_completed has its own try/except so it never
-            # raises; the guard avoids a spurious enqueue on CancelledError
-            # (where _terminal_status is still None).
-            if _terminal_status is not None:
-                await self._enqueue_skill_completed(
-                    run_id=run_id, skill=skill_name, chain_id=chain_id,
-                    status=_terminal_status, data=_terminal_data,
-                )
 
 
 __all__ = ["SkillRunner"]

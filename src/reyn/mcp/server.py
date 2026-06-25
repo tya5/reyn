@@ -18,12 +18,7 @@ in-process and ``Session.load_history`` rehydrates from
 FP-0013: ``send_to_agent_impl`` now drives ``session.run_one_iteration()``
 via ``MessageBus.request`` rather than calling ``_handle_user_message``
 inline.  Pumping from the same task eliminates the anyio stdio-starvation
-failure mode (FP-0013 §ADR-A) and subsumes the previous tactical patches:
-  - ``drain_skill_completed_inbox`` (R-A2A-COMPLETION-DRAIN)
-  - ``running_skills`` manual gather (FP-0012)
-These methods and attributes are retained for now (non-destructive migration)
-and will be deleted in a future cleanup wave after ADR-A residual
-verification (subprocess + real stdio probe / anyio CancelledError soak).
+failure mode (FP-0013 §ADR-A).
 
 P7: tool names + tool semantics are OS-level (agent / message). No
 skill-specific strings are baked in — what skills an agent runs in
@@ -201,10 +196,8 @@ async def send_to_agent_impl(
     of the work as it lands in history.
 
     FP-0013: uses ``MessageBus.request`` to pump ``session.run_one_iteration``
-    from this task, eliminating the inline ``_handle_user_message`` bypass and
-    the tactical drains (``drain_skill_completed_inbox``,
-    ``running_skills`` gather).  The inbox is now the single intake
-    channel for every transport surface.
+    from this task, eliminating the inline ``_handle_user_message`` bypass.
+    The inbox is now the single intake channel for every transport surface.
     """
     if not registry.exists(agent_name):
         raise ValueError(
@@ -281,6 +274,9 @@ async def send_to_agent_impl(
     # path can auto-escalate to a Task envelope (= A2A spec-compliant
     # async response) when the timeout fires before quiescence. Empty
     # list when no skill is in flight (the common case).
+    # running_skills is populated by crash-recovery auto-resume
+    # (AutoResumeHandler.spawn_resumed_skill) — those runs are real
+    # background asyncio tasks that A2A callers must be able to observe.
     running_skill_run_ids: list[str] = []
     if not idle:
         running_skills_attr: dict = getattr(session, "running_skills", {})

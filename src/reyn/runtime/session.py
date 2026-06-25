@@ -1515,7 +1515,7 @@ class Session:
         # FP-0019 Wave 1b: SkillRunner — skill task lifecycle service.
         # Owns running_skills / running_skills_started_at / running_skills_chain.
         # Constructed after _interventions (needed for drop_interventions_for_run
-        # callback) and before RouterHostAdapter (which receives spawn_for_router).
+        # callback) and before RouterHostAdapter (which receives run_skill_awaitable).
         self._skill_runner = SkillRunner(
             event_log=self._chat_events,
             agent_name=self.agent_name,
@@ -1525,7 +1525,6 @@ class Session:
             budget=self._budget,
             state_log=self._state_log,
             build_agent_fn=self._build_agent_for_skill_runner,
-            enqueue_skill_completed=self._enqueue_skill_completed,
             accumulate=self._accumulate,
             drop_interventions_for_run=self._drop_interventions_for_run,
             get_skill_registry=self.get_skill_registry,
@@ -3490,11 +3489,6 @@ class Session:
                 await self._handle_agent_request(payload)
             elif kind == "agent_response":
                 await self._handle_agent_response(payload)
-            elif kind == "skill_completed":
-                # FP-0012: a background-spawned skill finished. Inject a
-                # user-role completion message into the existing thread
-                # and run one router LLM turn for narration.
-                await self._handle_skill_completed(payload)
             elif kind in ("task_ready", "task_dependency_aborted"):
                 # #1953 slice 7: the TaskWaker delivered a dep-graph disposition
                 # (a dependent became ready, or a parent must decide recovery). Both
@@ -3540,8 +3534,7 @@ class Session:
         - PRESERVE (a self-continuation / a response to the agent's OWN prior action —
           NOT a new context, so the current execution context must survive): ``hook``
           (the #1800 self-continuation), ``agent_response`` (a reply to a request THIS
-          agent sent), ``skill_completed`` (a skill THIS agent spawned finished). These
-          never switch tasks, so preserving is interleaving-safe.
+          agent sent). These never switch tasks, so preserving is interleaving-safe.
         - RESET→None (a genuinely NEW external context = session-owned creates):
           ``user``, ``agent_request`` (an INCOMING peer ask). An unknown future kind
           falls here — fail-safe to session-owned (a mis-own/leak is worse than an
@@ -4804,16 +4797,6 @@ class Session:
         """Thin delegator — business logic lives in A2AHandler.handle_agent_response."""
         await self._a2a_handler.handle_agent_response(payload)
 
-    async def _handle_skill_completed(self, payload: dict) -> None:
-        """Forwarding → SkillPlanGlue.handle_skill_completed (PR-4)."""
-        await self._skill_plan_glue.handle_skill_completed(payload)
-    async def drain_skill_completed_inbox(
-        self, *, deadline_monotonic: float,
-    ) -> bool:
-        """Forwarding → SkillPlanGlue.drain_skill_completed_inbox (PR-4)."""
-        return await self._skill_plan_glue.drain_skill_completed_inbox(
-            deadline_monotonic=deadline_monotonic,
-        )
     # ── chain timeout (PR18) ───────────────────────────────────────────────────
     # PR-refactor-session-1 wave 2: timer arm/cancel + sleep-and-fire loop are
     # now owned by ChainManager. The session keeps the on-fire callback below
@@ -4984,41 +4967,6 @@ class Session:
     # cli-redesign plan. ``_resolve_run_id`` / ``_resolve_intervention_id``
     # / ``_deliver_answer_to`` stay here as session-state helpers the slash
     # modules call back into.
-
-    async def _enqueue_skill_completed(
-        self,
-        *,
-        run_id: str,
-        skill: str,
-        chain_id: str | None,
-        status: str,
-        data: dict,
-    ) -> None:
-        """FP-0012: enqueue a ``skill_completed`` inbox message so the
-        chat ``run()`` loop picks up the completion on its next iteration.
-
-        Bounded by a try/except — if the session is shutting down (= journal
-        closed) we swallow the error and rely on the outbox already-emitted
-        status/error message for user visibility. The skill_run_completed /
-        skill_run_failed event was emitted by the caller; that's the audit
-        truth (P6). The inbox message is just the narration trigger.
-        """
-        try:
-            await self._put_inbox(
-                "skill_completed",
-                {
-                    "run_id": run_id,
-                    "skill": skill,
-                    "chain_id": chain_id or "",
-                    "status": status,
-                    "data": data,
-                },
-            )
-        except Exception as exc:
-            logger.warning(
-                "skill_completed inbox enqueue failed for run_id=%s skill=%s: %s",
-                run_id, skill, exc,
-            )
 
     # ── RouterLoop helper methods (Wave 3 F1, kept for session callbacks) ──────────
     # _make_router_op_context + 3 helpers remain on Session because the

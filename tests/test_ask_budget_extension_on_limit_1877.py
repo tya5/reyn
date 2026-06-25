@@ -181,9 +181,6 @@ def _make_gate_runner(*, extension_calls: int) -> tuple[SkillRunner, list]:
     async def _put_outbox(msg) -> None:
         await outbox.put(msg)
 
-    async def _enqueue_completed(**kwargs) -> None:
-        pass
-
     runner = SkillRunner(
         event_log=events,
         agent_name="test_agent",
@@ -194,7 +191,6 @@ def _make_gate_runner(*, extension_calls: int) -> tuple[SkillRunner, list]:
         state_log=None,
         build_agent_fn=lambda run_id, skill_name, *, subscribers=None: None,
         put_outbox=_put_outbox,
-        enqueue_skill_completed=_enqueue_completed,
         accumulate=lambda result: None,
         drop_interventions_for_run=lambda run_id: None,
         get_skill_registry=lambda: None,
@@ -208,9 +204,15 @@ def _make_gate_runner(*, extension_calls: int) -> tuple[SkillRunner, list]:
 
 @pytest.mark.asyncio
 async def test_gate_routes_to_ask_when_extension_calls_positive():
-    """Tier 2: exceed + extension_calls>0 → SkillRunner calls ask_budget_extension."""
+    """Tier 2: exceed + extension_calls>0 → SkillRunner calls ask_budget_extension.
+
+    Uses run_skill_awaitable (the live synchronous dispatch path); spawn() was
+    removed in #2104 PR2 — the budget gate under test lives in the shared
+    pre-check block executed by both the old spawn() and the current
+    run_skill_awaitable().
+    """
     runner, ask_calls = _make_gate_runner(extension_calls=3)
-    await runner.spawn({"skill": "s", "input": {}}, chain_id="c1")
+    await runner.run_skill_awaitable({"skill": "s", "input": {}}, chain_id="c1")
     assert ask_calls, "extension_calls>0 must route the exceed to the ask flow"
 
 
@@ -218,5 +220,5 @@ async def test_gate_routes_to_ask_when_extension_calls_positive():
 async def test_gate_hard_refuses_when_extension_calls_zero():
     """Tier 2: exceed + extension_calls==0 → hard refuse, ask NOT called (falsify gate)."""
     runner, ask_calls = _make_gate_runner(extension_calls=0)
-    await runner.spawn({"skill": "s", "input": {}}, chain_id="c1")
+    await runner.run_skill_awaitable({"skill": "s", "input": {}}, chain_id="c1")
     assert ask_calls == [], "extension_calls==0 must short-circuit to a hard refusal"

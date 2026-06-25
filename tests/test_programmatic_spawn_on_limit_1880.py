@@ -75,9 +75,6 @@ def _make_runner(*, budget, ask_returns: bool) -> tuple[SkillRunner, list]:
     async def _put_outbox(msg) -> None:
         pass
 
-    async def _enqueue_completed(**kwargs) -> None:
-        pass
-
     runner = SkillRunner(
         event_log=EventLog(),
         agent_name="test_agent",
@@ -88,7 +85,6 @@ def _make_runner(*, budget, ask_returns: bool) -> tuple[SkillRunner, list]:
         state_log=None,
         build_agent_fn=lambda run_id, skill_name, *, subscribers=None: None,
         put_outbox=_put_outbox,
-        enqueue_skill_completed=_enqueue_completed,
         accumulate=lambda result: None,
         drop_interventions_for_run=lambda run_id: None,
         get_skill_registry=lambda: None,

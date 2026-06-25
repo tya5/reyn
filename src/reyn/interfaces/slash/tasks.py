@@ -2,7 +2,9 @@
 
 Spans both async-task families in one view (#2035, restoring the FP-0012
 "unified" intent after the planner deletion #2018):
-  - **skill runs** — long-running ``@sub_skill`` / ``run_skill`` executions
+  - **skill runs** — long-running ``@sub_skill`` / ``run_skill`` executions,
+    including crash-recovery auto-resumed runs (``AutoResumeHandler`` re-spawns
+    in-flight skill_runs on session start via ``spawn_resumed_skill``).
   - **dynamic tasks** — the Tasks the chat LLM creates via ``task__create``
     (#2026/#2028/#2034), tracked in the session-scoped Task backend.
 
@@ -14,7 +16,7 @@ Sub-commands:
 
 Reads from existing infrastructure (= no new state required):
   - ``session.running_skills`` / ``running_skills_started_at`` /
-    ``running_skills_chain`` for skill runs (PR22)
+    ``running_skills_chain`` for skill runs (PR22), including auto-resumed runs
   - SkillRegistry per-skill snapshot for current_phase
   - ``session.task_backend`` for dynamic tasks (#1953 slice R); ``None`` when
     the session carries no backend, in which case the dynamic section is empty.

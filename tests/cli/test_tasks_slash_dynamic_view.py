@@ -101,7 +101,13 @@ async def test_tasks_list_includes_dynamic_tasks():
 
 @pytest.mark.asyncio
 async def test_tasks_list_shows_both_skill_runs_and_dynamic_tasks():
-    """Tier 2: both sections render when skill runs AND dynamic tasks exist."""
+    """Tier 2: both sections render when skill runs AND dynamic tasks exist.
+
+    ``running_skills`` is populated by crash-recovery auto-resume
+    (``AutoResumeHandler.spawn_resumed_skill``); /tasks must surface those
+    runs alongside dynamic tasks so the operator sees the full in-flight
+    picture after a crash/restart.
+    """
     backend = InMemoryTaskBackend()
     await _seed_tasks(backend)
     session = _CaptureSession(
@@ -122,7 +128,11 @@ async def test_tasks_list_shows_both_skill_runs_and_dynamic_tasks():
 
 @pytest.mark.asyncio
 async def test_tasks_list_no_backend_falls_back_to_skill_only():
-    """Tier 2: ``task_backend`` is None → no dynamic section, skill runs only."""
+    """Tier 2: ``task_backend`` is None → no dynamic section, skill runs only.
+
+    ``running_skills`` entries (e.g. crash-recovery auto-resumed runs) are
+    shown even when no dynamic-task backend is configured.
+    """
     session = _CaptureSession(
         running_skills={"run-skill-xyz": object()},
         task_backend=None,
