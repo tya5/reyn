@@ -76,10 +76,39 @@ def make_adapter(
     session_id: "str | None" = None,
     current_task_id_fn: "object | None" = None,  # #1953 §16: per-turn execution context
     agent_registry: object = None,  # #2103: real AgentRegistry for spawn/topology seams
+    on_limit: object = None,  # #2175: OnLimitConfig for the spawn-limit checkpoint (None → no checkpoint = unattended reject)
+    safety_extensions: "dict | None" = None,  # #2175: shared per-run extension dict
+    intervention_answer: "str | None" = None,  # #2175: interactive-mode bus answer (choice_id, e.g. "yes")
 ) -> RouterHostAdapter:
     """Construct a minimal RouterHostAdapter with real collaborators."""
     if events is None:
         events = EventLog(subscribers=[])
+    # #2175: a REAL on_limit checkpoint (no mock) wrapping handle_limit_exceeded with a
+    # real OnLimitConfig + a real approving/declining bus, so spawn-limit tests exercise
+    # the actual framework. None on_limit + None answer → no checkpoint wired → the host
+    # adapter degrades to unattended (reject) — the C3 hard-deny posture.
+    _ext: dict = safety_extensions if safety_extensions is not None else {}
+    _checkpoint = None
+    if on_limit is not None:
+        from reyn.runtime.limits.limit_handler import handle_limit_exceeded
+
+        class _FixedAnswerBus:  # real callable bus (not a mock)
+            async def request(self, iv):  # noqa: ANN001
+                from reyn.user_intervention import InterventionAnswer
+                return InterventionAnswer(choice_id=intervention_answer)
+
+        _bus = _FixedAnswerBus() if intervention_answer is not None else None
+
+        async def _checkpoint_fn(*, kind, prompt, detail, extension_amount, run_id=None):
+            decision = await handle_limit_exceeded(
+                bus=_bus, on_limit=on_limit, kind=kind, run_id=run_id or "test",
+                prompt=prompt, detail=detail, extension_amount=extension_amount,
+            )
+            if decision.allow_continue:
+                _ext[kind] = _ext.get(kind, 0.0) + decision.extension
+            return decision
+
+        _checkpoint = _checkpoint_fn
     workspace = agent_workspace_dir or Path(".reyn") / "agents" / agent_name
     if memory is None:
         memory = MemoryService(
@@ -110,6 +139,8 @@ def make_adapter(
         memory=memory,
         journal=None,
         agent_registry=agent_registry,
+        handle_chat_limit_checkpoint=_checkpoint,  # #2175
+        safety_extensions=_ext,  # #2175
         skill_enumerate_fn=lambda exclude: [],
         agent_workspace_dir=workspace,
         file_read=null_file_read,

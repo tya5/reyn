@@ -575,33 +575,24 @@ class AgentRegistry:
                 n += 1
         return n
 
-    def spawn_would_exceed_limits(self, parent: str) -> "str | None":
-        """#2103 C3: a reject-reason if an ``agent_spawn`` under ``parent`` would exceed
-        the operator spawn bounds (``safety.spawn.*``), else None. Called by the LLM
-        spawn SEAM (host adapter); the operator CLI create path does NOT call it
-        (authority). ``0`` limits = unlimited (the check is skipped)."""
-        if self._max_spawn_depth and self.spawn_depth(parent) + 1 > self._max_spawn_depth:
-            return (
-                f"spawn-limit: max_depth={self._max_spawn_depth} would be exceeded "
-                f"(parent {parent!r} is at spawn-depth {self.spawn_depth(parent)})"
-            )
-        if self._max_spawn_children and self.spawn_child_count(parent) >= self._max_spawn_children:
-            return (
-                f"spawn-limit: max_children={self._max_spawn_children} would be exceeded "
-                f"(parent {parent!r} already has {self.spawn_child_count(parent)} children)"
-            )
-        return None
+    # #2175: the BASE operator spawn bounds (safety.spawn.*, config-set restart-only).
+    # Exposed so the LLM spawn SEAM (host adapter) can compute the EFFECTIVE limit
+    # (base + the on_limit per-operation extension) and route an exceed through the
+    # safety.on_limit checkpoint — exactly as the a2a_handler does over max_hop_depth +
+    # _safety_extensions (retiring C3's parallel hard-reject helpers). ``0`` = unlimited.
+    # The raw counts (spawn_depth / spawn_child_count above) stay the registry's source
+    # of truth; the effective-limit + checkpoint logic lives at the seam.
 
-    def topology_size_exceeds_limit(self, member_count: int) -> "str | None":
-        """#2103 C3: a reject-reason if a ``topology_create`` with ``member_count`` members
-        would exceed ``max_children`` (the fan-out bound governs topology size too), else
-        None. ``0`` = unlimited."""
-        if self._max_spawn_children and member_count > self._max_spawn_children:
-            return (
-                f"spawn-limit: max_children={self._max_spawn_children} would be exceeded "
-                f"(topology has {member_count} members)"
-            )
-        return None
+    @property
+    def max_spawn_depth(self) -> int:
+        """#2175: the operator base max spawn-lineage depth (0 = unlimited)."""
+        return self._max_spawn_depth
+
+    @property
+    def max_spawn_children(self) -> int:
+        """#2175: the operator base max fan-out — direct children + topology size
+        (0 = unlimited)."""
+        return self._max_spawn_children
 
     async def create_agent(
         self, name: str, *, role: str = "", parent: "str | None" = None

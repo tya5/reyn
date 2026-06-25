@@ -1580,6 +1580,11 @@ class Session:
         # last in __init__ because it receives callbacks that reference self
         # (all of which are bound methods, resolved at call time not here).
         self._router_host = RouterHostAdapter(
+            # #2175: the safety.on_limit checkpoint + the shared per-run extension dict —
+            # so the spawn SEAM (agent_spawn / topology_create) routes spawn-limit exceeds
+            # through the same mode-driven framework as a2a_handler's max_agent_hops.
+            handle_chat_limit_checkpoint=self._handle_chat_limit_checkpoint,
+            safety_extensions=self._safety_extensions,
             # #1092 PR-F1: the chat turn_budget engine (resolved-model, asserted).
             turn_budget_engine=_chat_turn_budget_engine,
             # FP-0050 / #1822 S2: content-threat scan + fence config.

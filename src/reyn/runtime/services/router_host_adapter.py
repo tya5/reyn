@@ -213,6 +213,13 @@ class RouterHostAdapter:
         # config-deny path still raises, interactive prompt path raises
         # the documented RuntimeError telling the caller a bus is needed).
         intervention_bus_factory: Callable[[], Any] | None = None,
+        # #2175: the safety.on_limit checkpoint + the shared per-run extension dict —
+        # injected from Session (mirror the a2a_handler injection) so the spawn SEAM can
+        # route a spawn-limit exceed through the same mode-driven on_limit framework as
+        # max_agent_hops. None → no checkpoint wired (headless/test) → degrade to
+        # unattended (reject), the C3 hard-deny posture.
+        handle_chat_limit_checkpoint: "Callable[..., Any] | None" = None,
+        safety_extensions: "dict[str, float] | None" = None,
         # Issue #364 multi-modal cluster: media-size gate config (reyn.yaml
         # ``multimodal:`` section). Threaded into the OpContext built by
         # ``make_router_op_context`` so router-initiated web_fetch /
@@ -365,6 +372,11 @@ class RouterHostAdapter:
         # interactive (Layer 4) approval flow without crashing on
         # ``intervention_bus is None`` defensive guards.
         self._intervention_bus_factory = intervention_bus_factory
+        # #2175: spawn-limit on_limit checkpoint + the shared extension dict.
+        self._handle_chat_limit_checkpoint = handle_chat_limit_checkpoint
+        self._safety_extensions: "dict[str, float]" = (
+            safety_extensions if safety_extensions is not None else {}
+        )
         # Issue #364: store the gate config so make_router_op_context can
         # thread it into the OpContext for router-initiated binary ops.
         self._multimodal_config = multimodal_config
@@ -962,6 +974,27 @@ class RouterHostAdapter:
             ),
         }
 
+    async def _spawn_limit_checkpoint(
+        self, *, kind: str, prompt: str, detail: str,
+        extension_amount: float, run_id: str,
+    ) -> Any:
+        """#2175: route a spawn-limit exceed through the safety.on_limit checkpoint
+        (mode-driven: unattended=reject / interactive=ask / auto_extend). When no
+        checkpoint is wired (headless / test stub), degrade to UNATTENDED = reject (the
+        C3 hard-deny posture). On allow_continue the Session helper bumps the shared
+        ``_safety_extensions[kind]`` so a same-scope re-check won't re-prompt — the
+        no-self-raise invariant holds (the extension is human/operator-approved, the base
+        stays config-set restart-only)."""
+        if self._handle_chat_limit_checkpoint is None:
+            from reyn.runtime.limits.limit_handler import LimitDecision
+            return LimitDecision(
+                allow_continue=False, extension=0.0, reason="no_checkpoint_unattended",
+            )
+        return await self._handle_chat_limit_checkpoint(
+            kind=kind, prompt=prompt, detail=detail,
+            extension_amount=extension_amount, run_id=run_id,
+        )
+
     async def spawn_agent(self, *, name: str, role: str) -> dict:
         """#2103 B-tool: create a new AGENT under THIS agent (the spawner = parent).
 
@@ -978,12 +1011,66 @@ class RouterHostAdapter:
                 "this context."
             )
         parent = self._agent_name
-        # #2103 C3: operator spawn-tree bound (safety.spawn.*) — reject a spawn that
-        # would exceed max_depth / max_children. LLM-seam only (the operator CLI create
-        # path does not route here → unbounded = authority, consistent with C1).
-        limit_reason = self._registry.spawn_would_exceed_limits(parent)
-        if limit_reason is not None:
-            return {"status": "error", "kind": "spawn_limit_exceeded", "error": limit_reason}
+        # #2175: operator spawn-tree bounds (safety.spawn.*) routed through the
+        # safety.on_limit checkpoint (mode-driven: unattended=reject / interactive=ask the
+        # operator / auto_extend), exactly like a2a_handler's max_agent_hops over
+        # max_hop_depth + _safety_extensions. LLM-seam only (operator CLI create is
+        # unbounded = authority, C1). No-self-raise: the BASE is config-set restart-only;
+        # any extension is human/operator-approved, never LLM. DEPTH and FAN-OUT carry
+        # SEPARATE per-spawner extension keys so an approved widen of one does not silently
+        # widen the other (approval-scoping).
+        base_depth = self._registry.max_spawn_depth
+        if base_depth:
+            cur_depth = self._registry.spawn_depth(parent)
+            eff_depth = base_depth + int(
+                self._safety_extensions.get(f"max_spawn_depth:{parent}", 0.0)
+            )
+            if cur_depth + 1 > eff_depth:
+                decision = await self._spawn_limit_checkpoint(
+                    kind=f"max_spawn_depth:{parent}",
+                    prompt=(
+                        f"Spawn depth {cur_depth + 1} would exceed max_spawn_depth "
+                        f"({eff_depth}). Allow agent {parent!r} to spawn deeper?"
+                    ),
+                    detail=f"parent={parent} depth={cur_depth + 1} cap={eff_depth}",
+                    extension_amount=1.0,
+                    run_id=parent,
+                )
+                if not decision.allow_continue:
+                    return {
+                        "status": "error", "kind": "spawn_limit_exceeded",
+                        "error": (
+                            f"spawn-limit: max_spawn_depth={eff_depth} would be exceeded "
+                            f"(parent {parent!r} at spawn-depth {cur_depth}). "
+                            "→ Raise safety.spawn.max_depth to allow deeper spawn trees."
+                        ),
+                    }
+        base_children = self._registry.max_spawn_children
+        if base_children:
+            cur_children = self._registry.spawn_child_count(parent)
+            eff_children = base_children + int(
+                self._safety_extensions.get(f"max_spawn_fanout:{parent}", 0.0)
+            )
+            if cur_children >= eff_children:
+                decision = await self._spawn_limit_checkpoint(
+                    kind=f"max_spawn_fanout:{parent}",
+                    prompt=(
+                        f"Spawning would give {parent!r} {cur_children + 1} children, "
+                        f"exceeding max_spawn_children ({eff_children}). Allow?"
+                    ),
+                    detail=f"parent={parent} children={cur_children} cap={eff_children}",
+                    extension_amount=1.0,
+                    run_id=parent,
+                )
+                if not decision.allow_continue:
+                    return {
+                        "status": "error", "kind": "spawn_limit_exceeded",
+                        "error": (
+                            f"spawn-limit: max_spawn_children={eff_children} would be "
+                            f"exceeded (parent {parent!r} has {cur_children} children). "
+                            "→ Raise safety.spawn.max_children to allow wider fan-out."
+                        ),
+                    }
         try:
             await self._registry.create_agent(name, role=role, parent=parent)
         except FileExistsError:
@@ -1031,11 +1118,35 @@ class RouterHostAdapter:
             )
         creator = self._agent_name
         members = list(members)
-        # #2103 C3: operator spawn-tree bound (safety.spawn.*) — max_children governs
-        # topology SIZE too (org fan-out). LLM-seam only (operator CLI unbounded).
-        size_reason = self._registry.topology_size_exceeds_limit(len(members))
-        if size_reason is not None:
-            return {"status": "error", "kind": "spawn_limit_exceeded", "error": size_reason}
+        # #2175: max_children governs topology SIZE too (org fan-out), routed through the
+        # on_limit checkpoint. SEPARATE extension key from agent_spawn fan-out (approving a
+        # bigger org ≠ approving more direct children — different intents, Q3). A bulk
+        # create extends by the exact gap so the approval covers this topology.
+        base_children = self._registry.max_spawn_children
+        if base_children:
+            eff_members = base_children + int(
+                self._safety_extensions.get(f"max_topology_members:{creator}", 0.0)
+            )
+            if len(members) > eff_members:
+                decision = await self._spawn_limit_checkpoint(
+                    kind=f"max_topology_members:{creator}",
+                    prompt=(
+                        f"Topology {name!r} has {len(members)} members, exceeding "
+                        f"max_spawn_children ({eff_members}). Allow this org size?"
+                    ),
+                    detail=f"creator={creator} members={len(members)} cap={eff_members}",
+                    extension_amount=float(len(members) - eff_members),
+                    run_id=creator,
+                )
+                if not decision.allow_continue:
+                    return {
+                        "status": "error", "kind": "spawn_limit_exceeded",
+                        "error": (
+                            f"spawn-limit: max_spawn_children={eff_members} would be "
+                            f"exceeded (topology has {len(members)} members). "
+                            "→ Raise safety.spawn.max_children to allow larger orgs."
+                        ),
+                    }
         outside = [
             m for m in members if not self._registry.is_spawn_descendant(m, creator)
         ]
