@@ -20,8 +20,6 @@ Kind coverage:
                               text "✗ <name>: <err>"
 - ``trace``                → dropped (debug noise)
 - ``system``               → author "ℹ system", type "system_message"
-                              (plan_summary / plan_complete /
-                              plan_aborted bridge messages)
 - ``__stream_*__``         → dropped (TUI-only incremental render kinds)
 - ``__end__``              → sentinel, signals drain to stop (returns None)
 - anything else            → author "ℹ system", type "system_message"
