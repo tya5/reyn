@@ -457,6 +457,7 @@ async def _handle_describe_mcp_tool(
 
 LIST_MCP_SERVERS = ToolDefinition(
     name="list_mcp_servers",
+    router_dispatched=True,
     description=_LIST_MCP_SERVERS_DESCRIPTION,
     parameters=_LIST_MCP_SERVERS_PARAMETERS,
     gates=ToolGates(router="allow", phase="allow"),  # Type C closure
@@ -467,6 +468,7 @@ LIST_MCP_SERVERS = ToolDefinition(
 
 LIST_MCP_TOOLS = ToolDefinition(
     name="list_mcp_tools",
+    router_dispatched=True,
     description=_LIST_MCP_TOOLS_DESCRIPTION,
     parameters=_LIST_MCP_TOOLS_PARAMETERS,
     gates=ToolGates(router="allow", phase="allow"),  # Type C closure
@@ -478,6 +480,7 @@ LIST_MCP_TOOLS = ToolDefinition(
 
 CALL_MCP_TOOL = ToolDefinition(
     name="call_mcp_tool",
+    router_dispatched=True,
     description=_CALL_MCP_TOOL_DESCRIPTION,
     parameters=_CALL_MCP_TOOL_PARAMETERS,
     gates=ToolGates(router="allow", phase="allow"),
@@ -490,6 +493,7 @@ CALL_MCP_TOOL = ToolDefinition(
 
 DESCRIBE_MCP_TOOL = ToolDefinition(
     name="describe_mcp_tool",
+    router_dispatched=True,
     description=_DESCRIBE_MCP_TOOL_DESCRIPTION,
     parameters=_DESCRIBE_MCP_TOOL_PARAMETERS,
     gates=ToolGates(router="allow", phase="allow"),

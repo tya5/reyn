@@ -192,6 +192,7 @@ async def _handle_recall(args: Mapping[str, Any], ctx: ToolContext) -> ToolResul
 
 RECALL = ToolDefinition(
     name="recall",
+    router_dispatched=True,
     description=_RECALL_DESCRIPTION,
     parameters=_RECALL_PARAMETERS,
     gates=ToolGates(router="allow", phase="allow"),

@@ -613,6 +613,7 @@ def _regenerate_index(ctx: ToolContext, mem_dir: Path, index_path: Path) -> None
 
 LIST_MEMORY = ToolDefinition(
     name="list_memory",
+    router_dispatched=True,
     description=_LIST_MEMORY_DESCRIPTION,
     parameters=_LIST_MEMORY_PARAMETERS,
     gates=ToolGates(router="allow", phase="allow"),  # Type C closure
@@ -624,6 +625,7 @@ LIST_MEMORY = ToolDefinition(
 
 READ_MEMORY_BODY = ToolDefinition(
     name="read_memory_body",
+    router_dispatched=True,
     description=_READ_MEMORY_BODY_DESCRIPTION,
     parameters=_READ_MEMORY_BODY_PARAMETERS,
     gates=ToolGates(router="allow", phase="allow"),  # Type C closure
@@ -635,6 +637,7 @@ READ_MEMORY_BODY = ToolDefinition(
 
 REMEMBER_SHARED = ToolDefinition(
     name="remember_shared",
+    router_dispatched=True,
     description=_REMEMBER_SHARED_DESCRIPTION,
     parameters=_REMEMBER_SHARED_PARAMETERS,
     gates=ToolGates(router="allow", phase="allow"),  # Type C closure
@@ -645,6 +648,7 @@ REMEMBER_SHARED = ToolDefinition(
 
 REMEMBER_AGENT = ToolDefinition(
     name="remember_agent",
+    router_dispatched=True,
     description=_REMEMBER_AGENT_DESCRIPTION,
     parameters=_REMEMBER_AGENT_PARAMETERS,
     gates=ToolGates(router="allow", phase="allow"),  # Type C closure
@@ -655,6 +659,7 @@ REMEMBER_AGENT = ToolDefinition(
 
 FORGET_MEMORY = ToolDefinition(
     name="forget_memory",
+    router_dispatched=True,
     description=_FORGET_MEMORY_DESCRIPTION,
     parameters=_FORGET_MEMORY_PARAMETERS,
     gates=ToolGates(router="allow", phase="allow"),  # Type C closure

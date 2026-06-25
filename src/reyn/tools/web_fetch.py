@@ -111,6 +111,7 @@ async def _handle(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
 
 WEB_FETCH = ToolDefinition(
     name="web_fetch",
+    router_dispatched=True,
     description=_WEB_FETCH_DESCRIPTION,
     parameters=_WEB_FETCH_PARAMETERS,
     gates=ToolGates(router="allow", phase="allow"),

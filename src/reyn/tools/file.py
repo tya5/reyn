@@ -362,6 +362,7 @@ async def _handle_glob(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
 
 READ_FILE = ToolDefinition(
     name="read_file",
+    router_dispatched=True,
     description=_READ_FILE_DESCRIPTION,
     parameters=_READ_FILE_PARAMETERS,
     gates=ToolGates(router="allow", phase="allow"),
@@ -372,6 +373,7 @@ READ_FILE = ToolDefinition(
 
 WRITE_FILE = ToolDefinition(
     name="write_file",
+    router_dispatched=True,
     description=_WRITE_FILE_DESCRIPTION,
     parameters=_WRITE_FILE_PARAMETERS,
     gates=ToolGates(router="allow", phase="allow"),
@@ -382,6 +384,7 @@ WRITE_FILE = ToolDefinition(
 
 DELETE_FILE = ToolDefinition(
     name="delete_file",
+    router_dispatched=True,
     description=_DELETE_FILE_DESCRIPTION,
     parameters=_DELETE_FILE_PARAMETERS,
     gates=ToolGates(router="allow", phase="allow"),
@@ -392,6 +395,7 @@ DELETE_FILE = ToolDefinition(
 
 EDIT_FILE = ToolDefinition(
     name="edit_file",
+    router_dispatched=True,
     description=_EDIT_FILE_DESCRIPTION,
     parameters=_EDIT_FILE_PARAMETERS,
     gates=ToolGates(router="allow", phase="allow"),
@@ -402,6 +406,7 @@ EDIT_FILE = ToolDefinition(
 
 LIST_DIRECTORY = ToolDefinition(
     name="list_directory",
+    router_dispatched=True,
     description=_LIST_DIRECTORY_DESCRIPTION,
     parameters=_LIST_DIRECTORY_PARAMETERS,
     gates=ToolGates(router="allow", phase="allow"),
@@ -412,6 +417,7 @@ LIST_DIRECTORY = ToolDefinition(
 
 GREP_FILES = ToolDefinition(
     name="grep_files",
+    router_dispatched=True,
     description=_GREP_FILES_DESCRIPTION,
     parameters=_GREP_FILES_PARAMETERS,
     gates=ToolGates(router="allow", phase="allow"),
@@ -422,6 +428,7 @@ GREP_FILES = ToolDefinition(
 
 GLOB_FILES = ToolDefinition(
     name="glob_files",
+    router_dispatched=True,
     description=_GLOB_FILES_DESCRIPTION,
     parameters=_GLOB_FILES_PARAMETERS,
     gates=ToolGates(router="allow", phase="allow"),

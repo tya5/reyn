@@ -1529,6 +1529,7 @@ def _augment_suggestions(
 
 LIST_ACTIONS = ToolDefinition(
     name="list_actions",
+    router_dispatched=True,
     description=_LIST_ACTIONS_DESCRIPTION,
     parameters=_LIST_ACTIONS_PARAMETERS,
     gates=ToolGates(router="allow", phase="deny"),
@@ -1540,6 +1541,7 @@ LIST_ACTIONS = ToolDefinition(
 
 SEARCH_ACTIONS = ToolDefinition(
     name="search_actions",
+    router_dispatched=True,
     description=_SEARCH_ACTIONS_DESCRIPTION,
     parameters=_SEARCH_ACTIONS_PARAMETERS,
     gates=ToolGates(router="allow", phase="deny"),
@@ -1551,6 +1553,7 @@ SEARCH_ACTIONS = ToolDefinition(
 
 DESCRIBE_ACTION = ToolDefinition(
     name="describe_action",
+    router_dispatched=True,
     description=_DESCRIBE_ACTION_DESCRIPTION,
     parameters=_DESCRIBE_ACTION_PARAMETERS,
     gates=ToolGates(router="allow", phase="deny"),
@@ -1562,6 +1565,7 @@ DESCRIBE_ACTION = ToolDefinition(
 
 INVOKE_ACTION = ToolDefinition(
     name="invoke_action",
+    router_dispatched=True,
     description=_INVOKE_ACTION_DESCRIPTION,
     parameters=_INVOKE_ACTION_PARAMETERS,
     gates=ToolGates(router="allow", phase="deny"),

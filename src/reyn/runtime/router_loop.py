@@ -1249,6 +1249,19 @@ def _apply_tool_exclusions(
 # RouterLoop
 # ---------------------------------------------------------------------------
 
+def _derive_registry_dispatch_tools() -> "frozenset[str]":
+    """#2123: the dispatch set DERIVED from the per-tool ``router_dispatched`` flag —
+    the single SoT replacing the old hand-maintained frozenset. Computed once at class
+    definition from the default registry (no cycle: ``reyn.tools`` does not import
+    ``router_loop``)."""
+    from reyn.tools import get_default_registry
+    reg = get_default_registry()
+    return frozenset(
+        d.name for d in (reg.lookup(n) for n in reg.names())
+        if d is not None and d.router_dispatched
+    )
+
+
 class RouterLoop:
     """Drives the chat router via native LLM tool_use.
 
@@ -3293,101 +3306,15 @@ class RouterLoop:
     # RouterCallerState callable fields populated by ``_build_router_caller_state``.
     # Tools NOT in this set fall through to the legacy if/elif tree below; the
     # set expands cluster-by-cluster as Phase 3.5 lands the remaining adapters.
-    REGISTRY_DISPATCH_TOOLS: frozenset[str] = frozenset({
-        # Phase 3 step 2 (commit 649a426)
-        "list_skills", "describe_skill", "list_agents", "describe_agent",
-        "delegate_to_agent",
-        # #2120 (tui live-probe): session_spawn was registered + floored +
-        # advertised (build_tools B2b) but dispatch was missing here → the LLM
-        # called it and hit {"error": "unhandled tool: session_spawn"} (same
-        # advertised-but-not-dispatched class as read_tool_result / recall). Its
-        # registry handler (tools/session_spawn.py) delegates via
-        # RouterCallerState.spawn_session_fn → host.spawn_session.
-        "session_spawn",
-        # #2103 B-tool: agent_spawn — registry handler (tools/agent_spawn.py) delegates
-        # via RouterCallerState.spawn_agent_fn → host.spawn_agent (create_agent(parent)
-        # + OS-set lineage). Dispatched here so the advertised router=allow tool reaches
-        # its handler (the #2120 advertised-but-not-dispatched lesson).
-        "agent_spawn",
-        # #2103 C1: topology_create — registry handler (tools/topology_create.py)
-        # delegates via RouterCallerState.topology_create_fn → host.create_topology
-        # (subtree-restricted member forge-guard + registry.create_topology emit seam).
-        # Dispatched here so the advertised router=allow tool reaches its handler.
-        "topology_create",
-        # Phase 3.5-D — zero-diff handlers (reyn_src + web).
-        # reyn_src handlers are literal copies of RouterHostAdapter helpers;
-        # web handlers delegate to op_runtime.web with a synthesized OpContext
-        # that the read-only handlers don't consult (= behavior preserved).
-        "reyn_src_list", "reyn_src_read",
-        "web_search", "web_fetch",
-        # B49 Step 2 verify (2026-05-22, post-PR #424): `read_tool_result`
-        # was surfaced to the router LLM via `router_tools.build_tools()`
-        # E3, but execution dispatch was missing here. The LLM saw the
-        # tool, called it (= 2/3 shots in N=3 verify), then hit
-        # `{"error": "unhandled tool: read_tool_result"}` → router empty
-        # response → empty reply. Dispatch wiring belongs in the same
-        # registry-path family as web_fetch / read_file / recall.
-        "read_tool_result",
-        # Phase 3.5-A+C — file cluster.  Handlers consume
-        # RouterCallerState.op_context_factory (= host.make_router_op_context)
-        # so op_runtime sees the operator-declared PermissionDecl /
-        # Workspace, matching legacy router-branch behavior.
-        # _normalise_router_tool_result unwraps read_file / list_directory
-        # to the bare-content / bare-list shapes the host adapter returned.
-        "read_file", "write_file", "delete_file", "list_directory",
-        # #1092 PR-B (FD1): phase-side fine file kinds. edit_file / glob_files /
-        # grep_files are registry ToolDefinitions (tools/file.py, registered in
-        # tools/__init__.py) that the chat router never exposed as router tools
-        # (chat uses list_directory), but they are in the phase default
-        # allowed_ops (#1240). When a phase drives RouterLoop via run_loop, its
-        # op catalog advertises these, so _invoke_router_tool must route them
-        # through the same registry path — closing the dispatch gap that the
-        # obviated op-exec seam (ADR-0036) would otherwise have needed a host
-        # hook for. Chat is unaffected (chat build_tools never lists them).
-        "edit_file", "glob_files", "grep_files",
-        # Phase 3.5-B-light — invoke_skill.  Handler delegates via
-        # RouterCallerState.run_skill_fn (= chain_id pre-bound) so PR14
-        # multi-hop chain semantics propagate into nested run_skill /
-        # delegate_to_agent paths.  Defense Layer B (skill-name
-        # validation) is applied inside the handler.
-        "invoke_skill",
-        # Phase 3.5-B-mid — mcp cluster.  Handlers access the
-        # RouterHostAdapter via ctx.router_state.host so the session-
-        # level MCPClient cache is preserved (= no per-call re-handshake
-        # when the LLM repeatedly calls list_mcp_tools / call_mcp_tool).
-        # _normalise_router_tool_result unwraps list_mcp_servers and
-        # list_mcp_tools dict envelopes back to bare list shape.
-        "list_mcp_servers", "list_mcp_tools", "call_mcp_tool", "describe_mcp_tool",
-        # Phase 3.5-B-heavy — memory cluster.  Handlers delegate via
-        # RouterCallerState.{list_memory_fn, read_memory_body_fn,
-        # remember_fn, forget_fn} bound to RouterLoop's private helpers
-        # which consume the agent-aware ``host.get_memory_index()`` /
-        # ``host.memory_path`` paths.  This preserves per-agent memory
-        # privacy that the registry handlers' filesystem-direct fallback
-        # cannot guarantee.
-        "list_memory", "read_memory_body",
-        "remember_shared", "remember_agent", "forget_memory",
-        # H1/H2: RAG tools (ADR-0033 Phase 1, B17-S6-1 / B17-S8-2 fix).
-        # Handlers in src/reyn/tools/recall.py and src/reyn/tools/drop_source.py
-        # delegate to op_runtime.recall / op_runtime.index_drop via execute_op.
-        # OpContext is constructed from ctx.router_state.op_context_factory
-        # (= host.make_router_op_context) so the permission resolver and
-        # intervention_bus are present for the index_drop gate.
-        "recall", "drop_source",
-        # #272/#1128: voluntary history compaction (handler → execute_op → compact op).
-        "compact",
-        # FP-0034 Phase 1: universal catalog wrappers.  Handlers in
-        # src/reyn/tools/universal_catalog.py — list_actions enumerates
-        # via ctx.router_state, describe_action / invoke_action route
-        # via universal_dispatch.  search_actions stays included for
-        # registry-completeness even though router_tools.build_tools
-        # currently excludes it from the LLM-visible tools= list
-        # (= Phase 2 wires the §D14 visibility gate + the real handler;
-        # listing it here is harmless because the catalog already
-        # filters it out before the LLM can call it).
-        "list_actions", "search_actions",
-        "describe_action", "invoke_action",
-    })
+    # #2123: DERIVED from the per-tool ``router_dispatched`` flag (single SoT), not a
+    # hand-maintained frozenset. A tool routing through the unified registry dispatch
+    # path (``_invoke_via_registry``) sets ``router_dispatched=True`` on its
+    # ToolDefinition; this set is computed from those flags at class-definition time.
+    # Kills the 3-place-wiring drift (#2120 advertise-miss / #2122 dispatch-miss /
+    # read_tool_result advertised-but-unhandled): a new router-only tool is dispatch-
+    # wired by one flag, and the cross-seam guard asserts every ADVERTISED bare router
+    # tool carries it. Per-tool rationale now lives on each ToolDefinition.
+    REGISTRY_DISPATCH_TOOLS: "frozenset[str]" = _derive_registry_dispatch_tools()
 
     async def _build_action_embedding_index_background(
         self, idx: Any, provider: Any, model_class: str,

@@ -332,6 +332,17 @@ class ToolDefinition:
     # P7: a generic OS-level bool the tool sets — not a hardcoded tool-name list.
     returns_external_content: bool = False
 
+    # #2123: the tool declares it routes through the unified registry dispatch path
+    # (RouterLoop._invoke_via_registry) — i.e. it belongs in REGISTRY_DISPATCH_TOOLS,
+    # which is DERIVED from this flag (single SoT), not a hand-maintained frozenset.
+    # The drift class this kills: a router-only tool advertised at build_tools but
+    # missing from the dispatch set (→ "unhandled tool"), wired at one seam but not
+    # the others (#2120 / #2122 / read_tool_result). The cross-seam guard asserts
+    # every ADVERTISED bare router tool has this flag. P7: a generic OS-level bool the
+    # tool sets — not a hardcoded tool-name list. False = dispatched elsewhere
+    # (op-runtime / other path) or not router-dispatched.
+    router_dispatched: bool = False
+
     # Per-call schema enrichment hook (= ADR-0026 M4 Phase 3).
     # When set, callers (= build_tools / phase catalog builder) invoke
     # this hook AFTER render_for_router/render_for_phase to inject

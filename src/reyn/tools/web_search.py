@@ -111,6 +111,7 @@ async def _handle(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
 
 WEB_SEARCH = ToolDefinition(
     name="web_search",
+    router_dispatched=True,
     description=_WEB_SEARCH_DESCRIPTION,
     parameters=_WEB_SEARCH_PARAMETERS,
     gates=ToolGates(router="allow", phase="allow"),

@@ -208,6 +208,7 @@ async def _handle(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
 
 INVOKE_SKILL = ToolDefinition(
     name="invoke_skill",
+    router_dispatched=True,
     description=_INVOKE_SKILL_DESCRIPTION,
     parameters=_INVOKE_SKILL_PARAMETERS,
     gates=ToolGates(router="allow", phase="allow"),
