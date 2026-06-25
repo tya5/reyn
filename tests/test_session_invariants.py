@@ -1196,11 +1196,11 @@ async def test_run_skill_awaitable_returns_status_data_no_outbox(
 ):
     """Tier 2: _run_skill_awaitable (= plan-mode blocking path) returns {status, data} and does NOT push to outbox.
 
-    FP-0011 invariant (replaces B4-H1) + FP-0012 scope clarification:
-    _run_skill_awaitable is preserved as the plan-mode blocking call
-    site (sequential step execution needs the result inline). Chat-mode
-    invoke_skill now uses ``_spawn_skill_for_router`` instead — see
-    ``test_spawn_skill_for_router_returns_spawn_ack`` for that contract.
+    FP-0011 invariant (replaces B4-H1): _run_skill_awaitable is the
+    synchronous blocking call site used by both plan-mode step execution
+    and chat-mode invoke_skill (#2104 PR1 skill-unification).
+    The result is returned inline to the caller; the router LLM sees it
+    as the tool_result and narrates from there.
 
     The blocking awaitable's only side effect on success is the
     skill_run_completed event + accumulate; MUST NOT push to outbox /
@@ -1265,90 +1265,22 @@ async def test_run_skill_awaitable_returns_status_data_no_outbox(
     )
 
 
-@pytest.mark.asyncio
-async def test_spawn_skill_for_router_returns_spawn_ack(
-    tmp_path, monkeypatch
-):
-    """Tier 2: FP-0012 — chat-mode router-side invoke_skill returns spawn ack.
-
-    Contract: ``_spawn_skill_for_router`` returns the
-    ``{status: "spawned", run_id, chain_id, skill, note}`` ack
-    immediately (= no blocking on the actual skill task). The skill task
-    is queued via ``running_skills``; completion arrives via the
-    ``skill_completed`` inbox kind, NOT inline.
-
-    Observation: read the return value (= what the LLM sees as
-    tool_result) and ``running_skills`` (= the actual asyncio task
-    bookkeeping). We don't await the skill — the test just verifies the
-    spawn handshake.
-    """
-    monkeypatch.chdir(tmp_path)
-
-    import reyn.runtime.session as session_mod
-
-    dummy_skill_dir = tmp_path / "dummy_skill"
-    dummy_skill_dir.mkdir()
-
-    def _fake_resolve(skill_name):
-        return dummy_skill_dir, tmp_path
-
-    def _fake_load_dsl_skill(path, *, skill_root):
-        return object()
-
-    monkeypatch.setattr(session_mod, "resolve_skill_path", _fake_resolve)
-    monkeypatch.setattr(session_mod, "load_dsl_skill", _fake_load_dsl_skill)
-
-    session = _make_session(tmp_path)
-    session.is_attached = True
-
-    # Fake _build_agent so the spawned task does not actually run a real
-    # skill (= keeps the test lightweight; we cancel the task at the end).
-    class _NeverEndAgent:
-        async def run(self, *_a, **_kw):
-            await asyncio.sleep(60)  # never reached — task is cancelled below
-
-    session._build_agent = lambda **kw: _NeverEndAgent()
-
-    spec = {"skill": "direct_llm", "input": {"type": "llm_request", "data": {}}}
-    ret = await session._spawn_skill_for_router(spec, chain_id="chain-fp0012-001")
-
-    # Spawn-ack contract.
-    assert ret["status"] == "spawned", f"unexpected status: {ret!r}"
-    assert ret["chain_id"] == "chain-fp0012-001"
-    assert ret["skill"] == "direct_llm"
-    assert "run_id" in ret and ret["run_id"]
-    assert "note" in ret and "/tasks" in ret["note"]
-
-    # The asyncio task must be tracked in running_skills under the
-    # returned run_id so /tasks list / /skill discard can reach it.
-    run_id = ret["run_id"]
-    assert run_id in session.running_skills, (
-        f"FP-0012: spawn must register run_id in running_skills; "
-        f"got keys: {list(session.running_skills.keys())}"
-    )
-
-    # Cleanup: cancel the long-sleep task.
-    task = session.running_skills[run_id]
-    task.cancel()
-    try:
-        await task
-    except (asyncio.CancelledError, Exception):  # noqa: BLE001
-        pass
+# ---------------------------------------------------------------------------
+# #2104 PR1: synchronous inline invoke_skill result contract
+# ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_skill_completed_inbox_enqueued_on_finish(tmp_path, monkeypatch):
-    """Tier 2: FP-0012 — _run_one_skill enqueues skill_completed inbox on finish.
+async def test_invoke_skill_returns_synchronous_result(tmp_path, monkeypatch):
+    """Tier 2: #2104 PR1 — chat-mode invoke_skill returns synchronous result, NOT spawn-ack.
 
-    Contract: when a background-spawned skill finishes (terminal status),
-    the ``skill_completed`` inbox kind is appended with the structured
-    payload ``{run_id, skill, chain_id, status, data}`` so the chat
-    ``run()`` loop can drive narration on its next iteration.
+    Contract: run_skill_awaitable is the single invoke path for chat-mode
+    skills. The handler returns ``{status: "finished"|"error", data: ...}``
+    inline — not the spawn-ack ``{status: "spawned", ...}`` that FP-0012
+    produced.
 
-    Observation: read ``session.inbox`` (= public asyncio.Queue) directly
-    after _run_one_skill returns — the message must be present with the
-    expected shape. WAL append is exercised transparently by
-    SnapshotJournal.append_inbox.
+    Falsifiable: assert status != "spawned". If the spawn path were still
+    active, the returned dict would have status=="spawned".
     """
     monkeypatch.chdir(tmp_path)
 
@@ -1358,8 +1290,8 @@ async def test_skill_completed_inbox_enqueued_on_finish(tmp_path, monkeypatch):
     dummy_skill_dir = tmp_path / "dummy_skill"
     dummy_skill_dir.mkdir()
 
-    # FP-0019 Wave 1b: _run_one_skill now lives in SkillRunner, so patch
-    # resolve_skill_path / load_dsl_skill in the skill_runner module.
+    # Patch in the skill_runner module (that is where run_skill_awaitable
+    # calls resolve_skill_path / load_dsl_skill at import time).
     monkeypatch.setattr(
         skill_runner_mod, "resolve_skill_path",
         lambda name: (dummy_skill_dir, tmp_path),
@@ -1372,35 +1304,85 @@ async def test_skill_completed_inbox_enqueued_on_finish(tmp_path, monkeypatch):
     session = _make_session(tmp_path)
     session.is_attached = True
 
-    fake_result = RunResult(
-        data={"path": "reyn/project/foo/skill.md"},
-        status="finished",
-    )
-    # Patch build_agent_fn on SkillRunner (FP-0019 Wave 1b).
+    expected_data = {"result": "skill_done"}
+    fake_result = RunResult(data=expected_data, status="finished")
     session._skill_runner._build_agent_fn = lambda run_id, skill_name, **kw: _FakeAgent(fake_result)
 
-    run_id = "20260510T100000Z_direct_llm_aaaa"
-    session.running_skills_started_at[run_id] = 0.0
-    session.running_skills_chain[run_id] = "chain-fp0012-002"
-
-    # Drain any prior messages so the assertion below sees only what we enqueue.
-    while not session.inbox.empty():
-        session.inbox.get_nowait()
-
-    await session._skill_runner._run_one_skill(
-        run_id, "direct_llm",
-        {"type": "llm_request", "data": {}},
-        chain_id="chain-fp0012-002",
+    spec = {"skill": "some_skill", "input": {"type": "t", "data": {}}}
+    ret = await session._skill_runner.run_skill_awaitable(
+        spec, chain_id="chain-2104-001",
     )
 
-    # The inbox must contain exactly one skill_completed message.
-    kind, payload = await asyncio.wait_for(session.inbox.get(), timeout=1.0)
-    assert kind == "skill_completed", f"expected skill_completed, got {kind!r}"
-    assert payload["run_id"] == run_id
-    assert payload["skill"] == "direct_llm"
-    assert payload["status"] == "finished"
-    assert payload["chain_id"] == "chain-fp0012-002"
-    assert payload["data"] == {"path": "reyn/project/foo/skill.md"}
+    # Contract 1: result is synchronous (not a spawn-ack).
+    assert ret.get("status") != "spawned", (
+        f"#2104: invoke_skill must not return spawn-ack; got status={ret.get('status')!r}"
+    )
+    assert ret == {"status": "finished", "data": expected_data}, (
+        f"#2104: synchronous result shape mismatch; got {ret!r}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_invoke_skill_cancellation_returns_error_result(tmp_path, monkeypatch):
+    """Tier 2: #2104 PR1 Q3 — cancelling the task while run_skill_awaitable is blocking returns an error result.
+
+    Contract: run_skill_awaitable catches CancelledError and returns
+    ``{status: "error", data: {error: "cancelled"}}`` so the router LLM
+    sees a structured error result (NOT a spawn-ack). The awaitable does NOT
+    re-raise, which keeps the synchronous inline path clean.
+
+    Falsifiable: if the cancel were silently swallowed (returning "finished"),
+    the test assertion on status=="error" would fail.
+
+    Note: Ctrl-C / Ctrl-C live TUI verification (full turn cancellation) is
+    flagged for tui-coder and requires tmux live verify — this test covers
+    the asyncio-level cancellation handling only.
+    """
+    monkeypatch.chdir(tmp_path)
+
+    import reyn.skill.skill_runner as skill_runner_mod
+
+    dummy_skill_dir = tmp_path / "dummy_skill"
+    dummy_skill_dir.mkdir()
+
+    monkeypatch.setattr(
+        skill_runner_mod, "resolve_skill_path",
+        lambda name: (dummy_skill_dir, tmp_path),
+    )
+    monkeypatch.setattr(
+        skill_runner_mod, "load_dsl_skill",
+        lambda path, *, skill_root: object(),
+    )
+
+    session = _make_session(tmp_path)
+    session.is_attached = True
+
+    # Build an agent that blocks indefinitely — the cancel must interrupt it.
+    class _NeverDoneAgent:
+        async def run(self, *_a, **_kw):
+            await asyncio.sleep(60)
+
+    session._skill_runner._build_agent_fn = lambda run_id, skill_name, **kw: _NeverDoneAgent()
+
+    spec = {"skill": "some_skill", "input": {"type": "t", "data": {}}}
+
+    async def _call():
+        return await session._skill_runner.run_skill_awaitable(
+            spec, chain_id="chain-2104-cancel",
+        )
+
+    task = asyncio.ensure_future(_call())
+    # Give the task a chance to start and enter the blocking await.
+    await asyncio.sleep(0)
+    task.cancel()
+    # run_skill_awaitable catches CancelledError → structured error result (not re-raise)
+    ret = await asyncio.wait_for(task, timeout=2.0)
+    assert ret["status"] == "error", (
+        f"#2104 Q3: run_skill_awaitable must return status==error on cancel; got {ret!r}"
+    )
+    assert "cancelled" in ret["data"].get("error", ""), (
+        f"#2104 Q3: cancel error data must contain 'cancelled'; got {ret!r}"
+    )
 
 
 # ---------------------------------------------------------------------------

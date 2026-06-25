@@ -1619,7 +1619,6 @@ class Session:
             mcp_list_tools=self._mcp_list_tools,
             mcp_call_tool=self._mcp_call_tool,
             run_skill_awaitable=self._skill_runner.run_skill_awaitable,
-            spawn_skill=self._skill_runner.spawn_for_router,
             send_to_agent=self._send_to_agent,
             put_outbox=self._put_outbox,
             append_history=self._append_history,
@@ -4985,20 +4984,6 @@ class Session:
     # cli-redesign plan. ``_resolve_run_id`` / ``_resolve_intervention_id``
     # / ``_deliver_answer_to`` stay here as session-state helpers the slash
     # modules call back into.
-
-    # ── skill spawn (FP-0019 Wave 1b) ───────────────────────────────────────────
-    # Business logic lives in SkillRunner. Session keeps thin delegating
-    # methods for backward compat with any remaining internal callers.
-
-    async def _spawn_skill_for_router(
-        self, spec: dict, *, chain_id: str
-    ) -> dict:
-        """Forwarding → SkillPlanGlue.spawn_skill_for_router (PR-4)."""
-        return await self._skill_plan_glue.spawn_skill_for_router(spec, chain_id=chain_id)
-
-    async def _spawn_skill(self, spec: dict, *, chain_id: str | None = None) -> None:
-        """Forwarding → SkillPlanGlue.spawn_skill (PR-4)."""
-        await self._skill_plan_glue.spawn_skill(spec, chain_id=chain_id)
 
     async def _enqueue_skill_completed(
         self,

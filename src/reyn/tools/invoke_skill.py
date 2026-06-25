@@ -114,16 +114,13 @@ async def _handle(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
     that the op_runtime fallback path drops.  Defense Layer B
     (= skill name validation against ``available_skills``) is also
     applied here so a hallucinated skill name is rejected before the
-    sub-skill task spawns.
+    sub-skill task runs.
 
-    FP-0012 chat-mode preference: when ``rs.spawn_skill_fn`` is
-    populated (= chat-mode RouterLoop, Session host), prefer the
-    non-blocking spawn path. The handler returns the spawn-ack
-    ``{status: "spawned", run_id, chain_id, note}`` immediately and the
-    background task delivers completion via the ``skill_completed``
-    inbox kind. Blocking phase sub-loop RouterLoops leave ``spawn_skill_fn=None``
-    so their steps keep blocking semantics (= step's LLM sees the actual
-    skill result and can synthesize the next step's input).
+    Skills run synchronously inline (#2104 PR1 skill-unification): the
+    handler blocks until the skill finishes and returns the result directly
+    (``{status: "finished"|"error", data: ...}``). The spawn path
+    (FP-0012) is retired — chat-mode parallelism is handled by
+    session-spawn (#2131) instead.
 
     Fallback (= phase-side dispatch / test sites): build a transient
     RunSkillIROp + minimal OpContext and call op_runtime.run_skill.handle
@@ -133,11 +130,9 @@ async def _handle(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
     rs = ctx.router_state
 
     # Router path — delegate via the populated callable (chain_id bound)
-    if rs is not None and (
-        rs.spawn_skill_fn is not None or rs.run_skill_fn is not None
-    ):
+    if rs is not None and rs.run_skill_fn is not None:
         # Defense Layer B: validate skill name against available_skills
-        # so hallucinated names raise before spawning. Mirrors the
+        # so hallucinated names raise before the skill runs. Mirrors the
         # explicit check in the legacy RouterLoop branch (now removed).
         skill_name = args["name"]
         if rs.available_skills:
@@ -147,13 +142,8 @@ async def _handle(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
                     f"skill {skill_name!r} not found; "
                     f"available: {sorted(available)}"
                 )
-        # FP-0012: prefer non-blocking spawn when chat-mode binding is
-        # active. Blocking sub-loops fall through to run_skill_fn (blocking).
-        if rs.spawn_skill_fn is not None:
-            return await rs.spawn_skill_fn(
-                skill=skill_name,
-                input=args["input"],
-            )
+        # #2104 PR1: synchronous inline execution — run_skill_fn blocks
+        # until the skill finishes and returns the result directly.
         return await rs.run_skill_fn(
             skill=skill_name,
             input=args["input"],

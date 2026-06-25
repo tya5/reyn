@@ -49,17 +49,6 @@ async def null_run_skill(spec, *, chain_id) -> dict:
     return {"status": "finished", "data": {}}
 
 
-async def null_spawn_skill(spec, *, chain_id) -> dict:
-    """FP-0012: spawn-ack stub for adapter tests."""
-    return {
-        "status": "spawned",
-        "run_id": "test-run-id",
-        "chain_id": chain_id,
-        "skill": spec.get("skill", ""),
-        "note": "test stub",
-    }
-
-
 async def null_send_to_agent(*, to, request, depth, chain_id) -> None:
     pass
 
@@ -131,7 +120,6 @@ def make_adapter(
         mcp_list_tools=null_mcp_list_tools,
         mcp_call_tool=null_mcp_call_tool,
         run_skill_awaitable=null_run_skill,
-        spawn_skill=null_spawn_skill,
         send_to_agent=null_send_to_agent,
         put_outbox=null_put_outbox,
         append_history=null_append_history,

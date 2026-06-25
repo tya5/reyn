@@ -164,69 +164,46 @@ def test_user_message_chitchat_appended_to_history(tmp_path, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# Test 2: invoke_skill e2e
+# Test 2: invoke_skill e2e (synchronous — #2104 PR1 skill-unification)
 # ---------------------------------------------------------------------------
 
 def test_user_message_invoke_skill_e2e(tmp_path, monkeypatch):
-    """Tier 1: Session→RouterLoop invoke_skill — round 1 spawns skill (FP-0012 non-blocking) and the router exits on spawn-ack. AsyncMock required for the e2e path.
+    """Tier 1: Session→RouterLoop invoke_skill — synchronous inline result (#2104 PR1).
 
-    Post-H3-ablation contract (= dogfood B32 §4.2 + H3 ablation diagnosis):
-    invoke_skill / invoke_action returning the spawn-ack
-    ``{status: "spawned", run_id, chain_id, note}`` causes the router
-    loop to exit immediately rather than continuing for a second LLM
-    round. The previous behaviour — accumulating the spawn-ack into
-    messages and asking the LLM to compose an acknowledgment — was the
-    race condition observed in B32 W3 S1 (= `(answered)` workaround in
-    llm.py:821 caused the LLM to hallucinate a generic reply before the
-    skill output was available).
+    Contract (#2104 skill-unification): chat-mode invoke_skill now returns
+    the synchronous result ``{status: "finished"|"error", data: ...}``
+    inline, NOT the spawn-ack ``{status: "spawned", ...}``.  The router LLM
+    receives the real skill output as the tool_result and narrates from it
+    directly in the same turn.
 
-    The skill_completed inbox path (= ``_handle_skill_completed``
-    re-engaging the router with the real skill output) is the
-    sanctioned reply path post-H3. That path is exercised by
-    ``test_skill_completed_inbox_enqueued_on_finish`` in
-    test_session_invariants.py.
+    Falsifiable: the key behavioral change is that run_skill_awaitable is
+    called (NOT spawn_skill), and the tool_result visible to round 2 is
+    the synchronous {status: "finished"} dict.
 
-    2026-05-17 N3 update: prior to this revision the spawn-ack turn
-    produced NO agent message at all — the user saw silence between
-    request and the eventual ``[task_completed]``. The OS now emits a
-    deterministic synthetic acknowledgment via ``put_outbox(kind="agent")``
-    before the early-exit. This restores the user-visible feedback
-    without re-introducing the B32 race condition: the message is
-    OS-composed (= not LLM-composed), so it cannot fabricate skill
-    output that hasn't happened yet. See ``_SPAWN_ACK_MSG`` in
-    ``router_loop.py`` for the i18n template.
-
-    Script: round 1 invoke_action returning a spawn-ack; no round 2
-    needed (= router exits on spawn-ack via the H3 check). Mock
-    chat-mode dispatch via ``host.spawn_skill``.
-
-    Assertions: spawn fired; ``invoke_skill_spawn_ack_exit`` event
-    emitted; outbox carries exactly one deterministic OS-composed
-    agent message hinting at ``/tasks``.
+    Script: round 1 LLM calls invoke_action(skill__some_skill); fake
+    run_skill_awaitable returns a finished result; round 2 LLM produces a
+    text reply. Assert: run_skill_awaitable was called; the router completes
+    round 2; result is not a spawn-ack.
     """
     monkeypatch.chdir(tmp_path)
     session = _make_session(tmp_path)
     session.is_attached = True
 
-    spawn_called = {"called": False}
+    run_skill_called = {"called": False}
+    run_skill_result = {"status": "finished", "data": {"answer": "42"}}
+
+    async def fake_run_skill_awaitable(*, skill, input, chain_id):
+        run_skill_called["called"] = True
+        return run_skill_result
 
     rounds = [
         _tool_result([{"name": "invoke_action", "args": {
             "action_name": "skill__some_skill",
             "args": {"input": {"type": "test", "data": {}}},
         }}]),
-        # No round 2: H3 patch exits the loop on spawn-ack.
+        # Round 2: LLM narrates the synchronous skill result.
+        _text_result("The skill finished with answer 42."),
     ]
-
-    async def fake_adapter_spawn_skill(*, skill, input, chain_id):
-        spawn_called["called"] = True
-        return {
-            "status": "spawned",
-            "run_id": "20260510T000000Z_some_skill_aaaa",
-            "chain_id": chain_id,
-            "skill": skill,
-            "note": "Running in the background. I will notify you when it completes. Use /tasks to check progress.",
-        }
 
     call_count = {"n": 0}
 
@@ -236,7 +213,9 @@ def test_user_message_invoke_skill_e2e(tmp_path, monkeypatch):
         return result
 
     monkeypatch.setattr("reyn.runtime.router_loop.call_llm_tools", fake_llm)
-    monkeypatch.setattr(session.router_host, "spawn_skill", fake_adapter_spawn_skill)
+    monkeypatch.setattr(
+        session.router_host, "run_skill_awaitable", fake_run_skill_awaitable,
+    )
     monkeypatch.setattr(
         session.router_host,
         "list_available_skills",
@@ -248,30 +227,19 @@ def test_user_message_invoke_skill_e2e(tmp_path, monkeypatch):
 
     _run(run())
 
-    assert spawn_called["called"], "Skill should have been spawned"
-    # Post-N3 contract: spawn-ack turn emits exactly ONE deterministic
-    # OS-composed agent message hinting at /tasks. The full
-    # narration of the skill output still comes later via the
-    # skill_completed inbox → _handle_skill_completed path; this
-    # message is just the user-visible "your request started" signal.
+    assert run_skill_called["called"], (
+        "#2104: run_skill_awaitable must have been called for synchronous dispatch"
+    )
+    # Synchronous path: the router LLM runs round 2 and produces an agent message.
     msgs = _drain_outbox(session)
     agent_msgs = [m for m in msgs if m.kind == "agent"]
-    (ack,) = agent_msgs
-    assert "/tasks" in ack.text, (
-        f"Spawn-ack message must mention /tasks (the user's only "
-        f"in-flight tracking surface). Got: {ack.text!r}"
-    )
-    assert ack.meta.get("source") == "spawn_ack", (
-        f"Spawn-ack message must carry meta.source='spawn_ack' so "
-        f"downstream consumers can distinguish it from LLM-composed "
-        f"replies. Got meta={ack.meta!r}"
-    )
-    # H3 audit event: the spawn-ack exit must have fired exactly once.
-    emitted = [
-        e for e in session._chat_events.all()
-        if e.type == "invoke_skill_spawn_ack_exit"
-    ]
-    (only_event,) = emitted
+    assert agent_msgs, "Router must emit at least one agent message after synchronous skill result"
+    # The result must NOT be a spawn-ack (= the key behavioral change).
+    for msg in agent_msgs:
+        assert msg.meta.get("source") != "spawn_ack", (
+            "#2104: synchronous path must not emit spawn_ack messages; "
+            f"got meta={msg.meta!r}"
+        )
 
 
 # ---------------------------------------------------------------------------
