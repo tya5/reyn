@@ -1,8 +1,10 @@
 """Config-driven Task backend selection (#1953 slice 3a).
 
-The session factory calls :func:`create_task_backend` to build the session-scoped
-backend it injects into ``Session(task_backend=...)``. The choice is config-driven
-(``in-memory`` for tests / ephemeral, ``sqlite`` for durable) — never hardcoded.
+The session factory calls :func:`create_task_backend` to build the per-session backend
+INSTANCE it injects into ``Session(task_backend=...)`` (each session constructs its own
+backend object — note the sqlite DB FILE it opens is agent-keyed/shared, see below). The
+choice is config-driven (``in-memory`` for tests / ephemeral, ``sqlite`` for durable) —
+never hardcoded.
 
 The sqlite ``path`` is supplied by the caller. NOTE (#2128): the
 ``per_session_sqlite_backend`` path below is AGENT-keyed
@@ -32,7 +34,10 @@ def create_task_backend(kind: str | None = None, *, path: str | None = None):
         return InMemoryTaskBackend()
     if chosen == "sqlite":
         if not path:
-            raise ValueError("sqlite task backend requires a 'path' (session-scoped db)")
+            raise ValueError(
+                "sqlite task backend requires a 'path' "
+                "(#2128: agent-keyed db, shared across the agent's sessions)"
+            )
         return SqliteTaskBackend(path)
     raise ValueError(f"unknown task backend kind: {kind!r} (expected 'sqlite' or 'in-memory')")
 
