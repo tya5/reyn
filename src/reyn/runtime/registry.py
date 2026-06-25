@@ -1169,6 +1169,24 @@ class AgentRegistry:
             created[key] = seq  # a create is unique; last-write-wins is moot
         return created
 
+    def _session_vanished_map(self) -> "dict[tuple[str, str], int]":
+        """#2154: per (agent, sid), the latest ``session_vanished`` seq from the WAL —
+        the destroy-side mirror of the ``session_spawned`` create-cut in
+        ``_created_at_map``. Reconstruction drops a session that vanished at-or-before
+        the cut (it was gone as-of-cut). Empty without a WAL."""
+        vanished: dict[tuple[str, str], int] = {}
+        if self._state_log is None:
+            return vanished
+        for entry in self._state_log.iter_from(0):
+            if entry.get("kind") != "session_vanished":
+                continue
+            name = entry.get("name")
+            sid = entry.get("sid")
+            seq = entry.get("seq")
+            if isinstance(name, str) and isinstance(sid, str) and isinstance(seq, int):
+                vanished[(name, sid)] = seq  # last wins = the latest vanish
+        return vanished
+
     def _drop_agent(self, name: str) -> None:
         """#2103: tear down an agent created after the rewind cut. A post-cut agent
         has NO pre-cut generations → nothing to preserve → a clean drop (vs the
@@ -1317,9 +1335,11 @@ class AgentRegistry:
         — a restore-failure must not leave the dir dropped). The connection-release
         (quiesce + backend close) still happens here, because it MUST precede the
         ``_restore_task_active`` file-swap (that is the lock fix)."""
-        await self.remove_session(name, sid, purge_dir=purge_dir)
+        await self.remove_session(name, sid, purge_dir=purge_dir, record=False)
 
-    async def remove_session(self, name: str, sid: str, *, purge_dir: bool = True) -> bool:
+    async def remove_session(
+        self, name: str, sid: str, *, purge_dir: bool = True, record: bool = True,
+    ) -> bool:
         """#2103 S1bc: tear down a SPAWNED (non-main) session — the single teardown
         seam used by BOTH the rewind as-of-cut DROP (``_drop_session``) AND the
         ephemeral auto-vanish. Quiesces + closes the session's per-session Task backend,
@@ -1386,6 +1406,15 @@ class AgentRegistry:
                 removed = True
         elif self._session_state_dir(name, sid).is_dir():
             removed = True  # dir present; destructive purge deferred to the caller (#2125)
+        # #2154: a GENUINE vanish (ephemeral auto-vanish / explicit removal) emits
+        # session_vanished — the create↔destroy WAL symmetry (the destroy-side mirror
+        # of session_spawned). The rewind-reconstruction caller (_drop_session) passes
+        # record=False: a reconstruction-drop UNDOES history, so recording it would
+        # pollute the append-only WAL and corrupt as-of-cut reconstruction.
+        if removed and record and self._state_log is not None:
+            await self._state_log.append(
+                "session_vanished", entity_kind="session", name=name, sid=sid,
+            )
         return removed
 
     def _surviving_rewind_backend(self) -> "object | None":
@@ -1452,6 +1481,7 @@ class AgentRegistry:
         # it MUST precede _restore_task_active (the lock fix).
         deferred_session_purges: list[tuple[str, str]] = []
         created_at = self._created_at_map()   # #2103: as-of-cut DROP input (empty → no-op)
+        sess_vanished = self._session_vanished_map()  # #2154: as-of-cut session destroy-cut
         # #2103 S2: agent-lifecycle reconstruction (re-materialise / hide / purge) —
         # all inert until S2b emits the events.
         ag_created, ag_archived, ag_purged = self._agent_lifecycle()
@@ -1480,8 +1510,16 @@ class AgentRegistry:
                 continue
             for sid in self._discover_session_ids(name):
                 # A session spawned after the cut → drop just that session.
+                # #2154: OR a session that VANISHED at-or-before the cut (it was gone
+                # as-of-cut) — the destroy-side mirror of the spawn-cut. A genuine
+                # vanish normally already rmtree'd the dir (so discovery won't surface
+                # it); this guard keeps reconstruction correct if a dir SURVIVES its
+                # vanish (a crash mid-rmtree, or a future session re-materialise seam).
                 sess_seq = created_at.get(("session", name, sid))
-                if sess_seq is not None and sess_seq > drop_cut:
+                van_seq = sess_vanished.get((name, sid))
+                spawned_after_cut = sess_seq is not None and sess_seq > drop_cut
+                vanished_by_cut = van_seq is not None and van_seq <= drop_cut
+                if spawned_after_cut or vanished_by_cut:
                     # #2125: detach now (quiesce + close the Task-backend connection
                     # so _restore_task_active doesn't hit "database is locked"); defer
                     # the destructive rmtree until the restores below succeed.
