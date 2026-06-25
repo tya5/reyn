@@ -268,9 +268,9 @@ async def _update_status(op, ctx: OpContext, caller) -> dict:
             )
     elif task.status is TaskState.FAILED:
         # slice 6-ext §C: a non-completed terminal (the assignee declared `failed`)
-        # doesn't satisfy a dependency edge → route the disposition to the parent's
-        # session to decide recovery (the OQ-7/H5 gap-close).
-        await _route_terminal_to_parent(ctx, _backend(ctx), task, disposition="failed")
+        # doesn't satisfy a dependency edge → route the disposition to the task's
+        # REQUESTER to decide recovery (§16; the OQ-7/H5 gap-close, #2107).
+        await _route_terminal_to_requester(ctx, _backend(ctx), task, disposition="failed")
     return _ok("task.update_status", task=task.to_dict())
 
 
@@ -331,47 +331,51 @@ async def _emit_readiness_if_changed(ctx: OpContext, task, before_status, trigge
                 task, fenced_description=_fence_text(ctx, task.description))
 
 
-async def _route_terminal_to_parent(
+async def _route_terminal_to_requester(
     ctx: OpContext, backend, terminal_task, *, disposition: str | None = None,
 ) -> None:
-    """slice 6-ext §C: when a task reaches a non-completed terminal (aborted /
-    failed / cap_exceeded) and has STILL-ALIVE dependents, notify its parent's
-    session to decide recovery (the parent re-wires via ordinary ops — NOT a
-    `decision=` vocabulary, P7).
+    """§16 (#2107): when a task reaches a non-completed terminal (aborted / failed /
+    cap_exceeded) and has STILL-ALIVE dependents, notify its REQUESTER — the §16
+    disposition notify-target (the request-owner) — to decide recovery. The requester
+    re-wires via ordinary task ops (repoint to a substitute / remove the edge / fail
+    them / handle the work itself) — P7, no `decision=` vocabulary.
 
-    ``disposition`` is the **first-class** terminal reason carried in BOTH the P6
-    event and the parent payload (#1953 slice 8 no-conflation invariant): a
-    budget ``cap_exceeded`` must be distinguishable from a genuine error
-    ``failed`` — the parent's recovery differs, and a downstream reader must not
-    misread a cap-hit as an error. Defaults to the task's status value (the abort
-    path) when not given explicitly.
+    The requester is ALWAYS present (every task carries one), so a ROOT task is notified
+    too — this restores §16 and fixes #2107. The prior parent-keyed routing returned
+    early on ``if not parent_id`` (slice 6-ext §C), so a flat self-task plan's mid-task
+    failure SILENTLY DROPPED the recovery wake and left its dependents stuck.
 
-    The wake is via ``OpContext.task_waker`` (slice 7 real driver; None = no-op
-    stub — only the P6 audit fires). Guards: a root task (no parent) and a parent
-    that is itself terminal (its own cascade handles it) route nothing."""
+    Origin-gated to SELF (internal): a self-task's requester is a session → wake it. An
+    EXTERNAL task's requester is an A2A/webhook stakeholder (not a session); its
+    disposition rides the separate webhook channel (the abort-all-dependents + propagate
+    is formalized in §16 S2), so this internal-recovery wake leaves it to the webhook —
+    preserving the prior external behavior.
+
+    ``disposition`` is the **first-class** terminal reason carried in BOTH the P6 event
+    and the requester payload (#1953 slice 8 no-conflation): a budget ``cap_exceeded``
+    must stay distinguishable from a genuine ``failed`` — the recovery differs. Defaults
+    to the task's status value (the abort path) when not given explicitly. The wake is via
+    ``OpContext.task_waker`` (None = no-op stub — only the P6 audit fires)."""
+    if terminal_task.origin is not TaskOrigin.SELF:
+        return  # external → the webhook channel (§16 S2), not an internal session wake
     disp = disposition or terminal_task.status.value
-    parent_id = getattr(terminal_task, "parent_id", None)
-    if not parent_id:
-        return
     deps_on_it = await backend.dependents(terminal_task.task_id)
     stuck = [d for d in deps_on_it if d.status not in TERMINAL_STATES]
     if not stuck:
         return
-    parent = await backend.get(parent_id)
-    if parent is None or parent.status in TERMINAL_STATES:
-        return  # parent-gone guard (the parent's own cascade subsumes this)
+    requester = terminal_task.requester
     events = getattr(ctx, "events", None)
     if events is not None:
         # Generic P6 (P7); NOT a WAL closed-vocab kind (WAL-vs-P6 separation).
         events.emit(
             "task_dependency_aborted", task_id=terminal_task.task_id,
-            disposition=disp, parent_id=parent_id,
-            parent_session=parent.assignee, dependents=[d.task_id for d in stuck],
+            disposition=disp, requester=requester,
+            dependents=[d.task_id for d in stuck],
         )
     waker = getattr(ctx, "task_waker", None)
     if waker is not None:
-        await waker.notify_parent_decide(
-            parent_session=parent.assignee, terminal_task=terminal_task,
+        await waker.notify_requester_decide(
+            requester_session=requester, terminal_task=terminal_task,
             dependents=stuck, disposition=disp,
         )
 
@@ -426,8 +430,10 @@ async def _abort(op, ctx: OpContext, caller) -> dict:
     # UP-notify (2b-2): emit a generic, term-neutral P6 disposition event per
     # aborted task carrying requester + origin. The A2A layer (slice 5) consumes
     # these and fires the external (webhook) channel for origin=external tasks
-    # (the persistent stakeholders); internal requesters need no notify (they own
-    # the tree + the assignee discovers the abort via the terminal-guard).
+    # (the persistent stakeholders). §16 (#2107): internal requesters ARE notified
+    # too — via _route_terminal_to_requester below (the requester's session is woken
+    # to recover stuck dependents). The prior "internal requesters need no notify"
+    # claim left a flat self-task plan's mid-task failure silently stuck.
     events = getattr(ctx, "events", None)
     if events is not None:
         for t in aborted:
@@ -436,10 +442,11 @@ async def _abort(op, ctx: OpContext, caller) -> dict:
                 requester=t.requester, origin=t.origin.value, root=op.task_id,
             )
     root = aborted[0]
-    # slice 6-ext §C: route the aborted root to its parent so a stuck sibling
-    # dependent gets a recovery decision (the OQ-7/H5 gap-close). The cascade's
-    # descendants have an in-subtree (now terminal) parent → the guard skips them.
-    await _route_terminal_to_parent(ctx, _backend(ctx), root, disposition="aborted")
+    # §16 (#2107): route the aborted root to its REQUESTER so a stuck sibling dependent
+    # gets a recovery decision (the OQ-7/H5 gap-close). A root self-task is now notified
+    # (previously dropped on the missing parent_id). The cascade's descendants are
+    # themselves terminal → _route_terminal_to_requester finds no stuck dependents for them.
+    await _route_terminal_to_requester(ctx, _backend(ctx), root, disposition="aborted")
     # #1800 slice 5c: task_end lifecycle hooks for the aborted sub-tree — SYMMETRIC
     # with task_start (at create) + task_end (at COMPLETED): every started task
     # fires an end. ``status="aborted"`` lets an operator discriminate completion

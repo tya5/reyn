@@ -1575,6 +1575,7 @@ class Session:
             # router-dispatched task.* ops hit the assignee/requester CAS gate.
             session_id=self._session_id,
             task_backend=self._task_backend,
+            task_waker=self._task_waker,  # #2107: thread the TaskWaker into the router op-ctx
             hook_dispatcher=self._hook_dispatcher,  # #1800 slice 5c: task_start/end (router path)
             agent_name=self.agent_name,
             agent_role=self._agent_role,

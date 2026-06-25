@@ -516,11 +516,16 @@ whole sub-tree** (DOWN-cascade, §18). There is **no forced cancel** — the
 assignee's in-flight work is rejected by the **terminal-state guard** on
 `update_status` at its next write (so no straggler lands, and a sibling task's
 work is untouched). This is correct under 1:N (a session owns many tasks) and
-needs no cross-session machinery. **UP-notify** (§16): abort emits a generic P6
-`task_disposition` event per aborted task (carrying `task_id` / `requester` /
-`origin` / `disposition`); the A2A layer routes `origin=external` tasks to their
-external (webhook) channel — internal requesters need no notify (they own the
-tree, and the assignee discovers the abort via the terminal guard).
+needs no cross-session machinery. **UP-notify** (§16): a non-completed terminal
+(aborted / failed / cap_exceeded) with **still-alive dependents** notifies the task's
+**requester** (the §16 disposition notify-target — the request-owner) to decide recovery.
+For an `origin=self` (internal) task the requester's **session is woken** (the slice-7
+TaskWaker) so its LLM re-wires the stuck dependents via ordinary task ops (P7 — no
+`decision=` vocabulary); for an `origin=external` task the A2A layer routes it to the
+external (webhook) channel. The requester is always present, so a **root task is notified
+too** (#2107: the prior parent-keyed routing dropped roots). Abort also emits a generic
+P6 `task_disposition` event per aborted task (`task_id` / `requester` / `origin` /
+`disposition`).
 
 **States:** `pending` / `ready` / `in_progress` / `blocked` / `completed` /
 `failed` / `aborted` / `archived`.

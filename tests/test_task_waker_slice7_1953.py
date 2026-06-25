@@ -4,12 +4,12 @@ Turns the dep-graph dispositions slice 6-ext emits into session wakes via the
 canonical wake-triple ``resolve_session → _put_inbox → ensure_session_running``.
 Verified with a real recording registry + recording session (no mocks):
 
-- ``wake_ready_dependent`` / ``notify_parent_decide`` each fire the 3-step triple
+- ``wake_ready_dependent`` / ``notify_requester_decide`` each fire the 3-step triple
   with the right OS-generic inbox kind + message;
 - the op layer wakes through it: a `completed` predecessor wakes its promoted
-  dependents; an `abort` / `failed` wakes the parent; a `repoint` that promotes a
-  dependent (the parent's recovery move) wakes it;
-- the **recovery loop** end-to-end: abort a dep → the parent is woken with
+  dependents; an `abort` / `failed` wakes the REQUESTER (§16); a `repoint` that promotes
+  a dependent (the requester's recovery move) wakes it;
+- the **recovery loop** end-to-end: abort a dep → the REQUESTER is woken with
   ``task_dependency_aborted`` → it repoints the stuck dependent onto a completed
   substitute → the dependent becomes `ready` AND is woken with ``task_ready``.
 """
@@ -81,15 +81,15 @@ async def test_wake_ready_dependent_fires_the_triple():
 
 
 @pytest.mark.asyncio
-async def test_notify_parent_decide_fires_the_triple():
-    """Tier 2: notify_parent_decide wakes the parent session with the disposition
+async def test_notify_requester_decide_fires_the_triple():
+    """Tier 2: notify_requester_decide wakes the requester session with the disposition
     + the stuck dependents."""
     reg = _RecRegistry()
     waker = TaskWaker(reg, "alice")
     terminal = SimpleNamespace(task_id="B", name="do-B", status=TaskState.ABORTED)
     deps = [SimpleNamespace(task_id="A")]
 
-    await waker.notify_parent_decide(parent_session="mcp:mcp", terminal_task=terminal,
+    await waker.notify_requester_decide(requester_session="mcp:mcp", terminal_task=terminal,
                                      dependents=deps)
 
     assert reg.resolved == [("alice", "mcp", "mcp")]
@@ -129,42 +129,44 @@ async def test_completed_wakes_promoted_dependent():
 
 
 @pytest.mark.asyncio
-async def test_abort_wakes_parent():
-    """Tier 2: aborting a task with a stuck dependent wakes the parent."""
+async def test_abort_wakes_requester():
+    """Tier 2: §16 — aborting a task with a stuck dependent wakes the task's REQUESTER."""
     b = InMemoryTaskBackend()
     reg = _RecRegistry()
-    await b.create(_task("P", assignee="a2a:sP", status=TaskState.IN_PROGRESS))
-    await b.create(_task("B", assignee="a2a:sB", parent_id="P", status=TaskState.IN_PROGRESS))
-    await b.create(_task("A", deps=["B"], assignee="a2a:sA", parent_id="P"))
+    await b.create(_task("B", assignee="a2a:sB", requester="a2a:sReq",
+                         status=TaskState.IN_PROGRESS))
+    await b.create(_task("A", deps=["B"], assignee="a2a:sA", requester="a2a:sReq"))
+    # abort is requester-gated → the requester is the caller.
     await taskmod._abort(SimpleNamespace(task_id="B", reason=None),
-                         _ctx(b, TaskWaker(reg, "alice")), "control_ir")
-    assert ("alice", "a2a", "sP") in reg.resolved
-    assert reg.inbox_of("alice", "a2a", "sP")[0][0] == "task_dependency_aborted"
+                         _ctx(b, TaskWaker(reg, "alice"), session_id="a2a:sReq"), "control_ir")
+    assert ("alice", "a2a", "sReq") in reg.resolved
+    assert reg.inbox_of("alice", "a2a", "sReq")[0][0] == "task_dependency_aborted"
 
 
 # ── 3. the recovery loop (end-to-end mechanism) ─────────────────────────────
 
 
 @pytest.mark.asyncio
-async def test_recovery_loop_abort_then_parent_repoint_wakes_both():
-    """Tier 2: the full dep-recovery loop — abort a dep → the parent is woken →
+async def test_recovery_loop_abort_then_requester_repoint_wakes_both():
+    """Tier 2: §16 — the full dep-recovery loop — abort a dep → the REQUESTER is woken →
     it repoints the stuck dependent onto a completed substitute → the dependent
     becomes ready AND is woken (the close-gate at the op-mechanism level)."""
     b = InMemoryTaskBackend()
     reg = _RecRegistry()
     waker = TaskWaker(reg, "alice")
-    await b.create(_task("P", assignee="a2a:sP", status=TaskState.IN_PROGRESS))
-    await b.create(_task("B", assignee="a2a:sB", parent_id="P", status=TaskState.IN_PROGRESS))
-    await b.create(_task("A", deps=["B"], assignee="a2a:sA", parent_id="P"))  # blocked on B
-    await b.create(_task("Bsub", assignee="a2a:sBsub", parent_id="P", status=TaskState.COMPLETED))
-    ctx = _ctx(b, waker)  # requester "req" owns P/B/A/Bsub
+    await b.create(_task("B", assignee="a2a:sB", requester="a2a:sReq",
+                         status=TaskState.IN_PROGRESS))
+    await b.create(_task("A", deps=["B"], assignee="a2a:sA", requester="a2a:sReq"))  # blocked on B
+    await b.create(_task("Bsub", assignee="a2a:sBsub", requester="a2a:sReq",
+                         status=TaskState.COMPLETED))
+    ctx = _ctx(b, waker, session_id="a2a:sReq")  # the requester owns + drives B/A/Bsub
 
-    # 1. abort B → the parent P is woken to decide.
+    # 1. abort B → the REQUESTER is woken to decide.
     await taskmod._abort(SimpleNamespace(task_id="B", reason=None), ctx, "control_ir")
-    assert ("alice", "a2a", "sP") in reg.resolved
-    assert reg.inbox_of("alice", "a2a", "sP")[0][0] == "task_dependency_aborted"
+    assert ("alice", "a2a", "sReq") in reg.resolved
+    assert reg.inbox_of("alice", "a2a", "sReq")[0][0] == "task_dependency_aborted"
 
-    # 2. the parent's recovery move: repoint A from the aborted B onto the
+    # 2. the requester's recovery move: repoint A from the aborted B onto the
     #    completed substitute Bsub → A becomes ready and is woken.
     await taskmod._repoint_dependency(
         SimpleNamespace(task_id="A", from_depends_on="B", to_depends_on="Bsub"),

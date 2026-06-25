@@ -135,3 +135,43 @@ async def test_no_session_context_refuses_rather_than_mask():
     ctx = _tool_ctx(router_state=None)  # no router factory + no phase op_context
     result = await _UPDATE({"task_id": task_id, "status": "x"}, ctx)
     assert result.get("error_kind") == "no_session_context", result
+
+
+@pytest.mark.asyncio
+async def test_router_opctx_threads_task_waker_so_chat_abort_wakes_requester():
+    """Tier 2: #2107 LIVE chat path — make_router_op_context MUST thread the TaskWaker so a
+    chat task__abort actually WAKES the requester. task_waker was the ONE op-ctx field the
+    chat-router builder did not thread (the #1953 wire threaded task_backend but not
+    task_waker), so a live chat recovery wake was silently skipped (ctx.task_waker=None)
+    despite the routing + bare-sid fix being correct. This goes through the REAL
+    make_router_op_context (not a hand-built OpContext). Strip the wire → ctx.task_waker is
+    None → the requester is never woken → RED."""
+    from types import SimpleNamespace
+
+    from reyn.task import Task, TaskState
+    from tests._support.router_host_adapter import make_adapter
+
+    class _RecWaker:
+        def __init__(self) -> None:
+            self.calls: list[dict] = []
+
+        async def notify_requester_decide(self, **kw) -> None:
+            self.calls.append(kw)
+
+    backend = InMemoryTaskBackend()
+    # a self-task plan whose requester is the chat session ("main", _DEFAULT_SID).
+    await backend.create(Task(task_id="t2", name="t2", assignee="main", requester="main",
+                              status=TaskState.IN_PROGRESS, deps=[]))
+    await backend.create(Task(task_id="t3", name="t3", assignee="main", requester="main",
+                              deps=["t2"]))
+
+    waker = _RecWaker()
+    adapter = make_adapter(agent_name="alice", task_backend=backend,
+                           task_waker=waker, session_id="main")
+    ctx = adapter.make_router_op_context()
+
+    assert ctx.task_waker is waker  # the wire — the exact gap make_router_op_context had
+
+    # abort t2 through the REAL router op-ctx → the requester ("main") must be woken.
+    await taskmod._abort(SimpleNamespace(task_id="t2", reason=None), ctx, "control_ir")
+    assert waker.calls and waker.calls[0]["requester_session"] == "main"

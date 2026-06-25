@@ -82,6 +82,9 @@ def make_adapter(
     resolver: ModelResolver | None = None,
     turn_budget_engine: object = None,
     environment_backend: object = None,  # #1477: optional for sandbox-cwd tests
+    task_backend: object = None,  # #1953 / #2107: session-scoped Task backend
+    task_waker: object = None,    # #2107: OS TaskWaker (router task.* terminal → requester wake)
+    session_id: "str | None" = None,
 ) -> RouterHostAdapter:
     """Construct a minimal RouterHostAdapter with real collaborators."""
     if events is None:
@@ -135,4 +138,7 @@ def make_adapter(
         agent_replies_tracker=lambda: _replies,
         turn_budget_engine=turn_budget_engine,
         environment_backend=environment_backend,
+        task_backend=task_backend,
+        task_waker=task_waker,
+        session_id=session_id,
     )

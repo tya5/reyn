@@ -59,6 +59,11 @@ class _RecordingRegistry:
     def resolve_session(self, agent_name: str, transport: str, native_id: str):
         return self.session
 
+    def get_session(self, agent_name: str, sid: str):
+        # #2107: the wake resolves a BARE sid (no "<transport>:") via the (agent, sid)
+        # lookup, not the transport:native partition.
+        return self.session
+
     def ensure_session_running(self, agent_name: str, session_id: str) -> None:
         self.ensure_calls.append(session_id)
 
