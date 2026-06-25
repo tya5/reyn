@@ -12,7 +12,7 @@ This is a **handoff artifact**: the live run executes on a live-LLM-capable sess
 
 - **B-tool surface** (`src/reyn/tools/agent_spawn.py`): router-only ToolDefinition (`gates: router=allow, phase=deny`). Args `{name (required), role}`. Handler → `ctx.router_state.spawn_agent_fn` → host `spawn_agent` → `registry.create_agent(parent=<spawner>)` (the ONE create seam). Returns a spawn-ack; the LLM never supplies the parent (OS-set lineage, forge-guard).
 - **C1 surface (confirmed, #2163):** `topology_create` router-only ToolDefinition (in the #2081 `_delegate` floor — org-design is delegate-allowed). Args `name, kind, members, leader, profiles`. Handler → `rs.topology_create_fn` → `router_loop._topology_create_bound_impl` → `RouterHostAdapter.create_topology(...)` → builds `Topology.new(...)` → **`await registry.create_topology(topo)`** (the #2153 logged emit seam, `registry.py:2784`), NEVER sync `add_topology` (co-verified). A `topology_created` WAL event lands → rewind-durable. Members + profile-binding targets are **subtree-restricted** by a forge-guard (`is_spawn_descendant`): a member must be in the creator's spawn-lineage subtree (no grabbing a stranger agent). C assigns the restrict-only `capability_profile` bindings (the ⊆-parent narrowing); agent-spawn = identity+lineage, topology = capability assignment (clean split).
-- **Event source caveat (verified):** the dogfood runner captures **P6 events** (`.reyn/dogfood/runs/<id>/scenarios/<sid>/events.jsonl`). `agent_created` / `topology_created` are **WAL kinds** (`state_log`), NOT P6 event-log types (`event_schema.py` has `routing_decided`, `chat_turn_completed_inline`, …). ⇒ `must_emit` reliably asserts `routing_decided`; agent/topology creation is verified via the **reply rubric** + a WAL/state post-condition (the latter pending confirmation that the harness can read WAL — see Open Questions).
+- **Event source caveat (verified + live-corrected):** the dogfood runner captures **P6 events** (`.reyn/dogfood/runs/<id>/scenarios/<sid>/events.jsonl`). `agent_created` / `topology_created` are **WAL kinds** (`state_log`), NOT P6 — not assertable via `must_emit`. **Live correction (tui, 2026-06-25):** the direct LLM-tool path emits **`tool_called`** (+ `chat_turn_completed_inline`), and **`routing_decided`=0** (that's a *skill*-routing event, not a direct-tool event). ⇒ `must_emit` uses **`tool_called`**; agent/topology creation is verified via the **reply rubric** + a post-run WAL grep (primary evidence). My earlier `routing_decided` default was wrong and refuted even the verified happy path — see Live-run findings.
 
 ## C review gates to exercise as dogfood angles (per lead, 2026-06-25)
 
@@ -51,7 +51,7 @@ scenarios:
           - reply does NOT claim a capability the spawner lacks (= ⊆-parent honesty; no over-promise)
       events:
         must_emit:
-          - { type: routing_decided, count: ">=1" }   # code-confirmed P6 event
+          - { type: tool_called, count: ">=1" }   # LLM-tool-dispatch P6 (live-confirmed: routing_decided=0 on the direct-tool path)
       outcome_prediction: { verified: 0.6, inconclusive: 0.3, refuted: 0.1, blocked: 0.0 }
 
   # ── 2. agent_spawn — duplicate-name rejection (error path, groundable) ─────
@@ -67,7 +67,7 @@ scenarios:
           - reply does NOT silently fabricate a second 'researcher'
       events:
         must_emit:
-          - { type: routing_decided, count: ">=1" }
+          - { type: tool_called, count: ">=1" }
       outcome_prediction: { verified: 0.55, inconclusive: 0.3, refuted: 0.15, blocked: 0.0 }
 
   # ── 3. topology_create — team wiring  (grounded vs #2163) ──────────────────
@@ -88,7 +88,7 @@ scenarios:
           - reply describes the messaging wiring (writer → researcher) it set up
       events:
         must_emit:
-          - { type: routing_decided, count: ">=2" }   # spawn(s) + topology_create turns
+          - { type: tool_called, count: ">=2" }   # ≥2 tool calls (spawn(s) + topology_create); rubric carries the team-wiring assertion
       outcome_prediction: { verified: 0.5, inconclusive: 0.35, refuted: 0.15, blocked: 0.0 }
 
   # ── 4. topology_create — capability narrowing  (grounded vs #2163) ─────────
@@ -109,7 +109,7 @@ scenarios:
           - reply does NOT grant the child a capability beyond read-only (= no-escalation honesty)
       events:
         must_emit:
-          - { type: routing_decided, count: ">=1" }
+          - { type: tool_called, count: ">=1" }
       outcome_prediction: { verified: 0.45, inconclusive: 0.4, refuted: 0.15, blocked: 0.0 }
 ```
 
@@ -118,10 +118,25 @@ scenarios:
 1. **Data semantic match:** inputs are natural org-design requests (Japanese, matching the existing dogfood corpus tone) that map to spawn/topology intents — not contrived tool-name prompts (avoids the benchmark-tuning soft-cheat: the capability is reachable via the general router path, not advertised for the scenario).
 2. **Tool reachability:** `agent_spawn` is router-allowed (confirmed). `topology_create` reachability PENDING e2e wiring it into the router tool set (mirror of agent_spawn registration in `tools/__init__.py`).
 3. **Rubric measures Reyn behavior, not LLM elaboration:** rubrics assert structural outcomes (agent created / topology wired / narrowed) + honesty guards (no fabricated agent, no over-claimed capability) — not prose quality. The ⊆-parent honesty guard doubles as a weak-tier hallucination check.
-4. **Event infra captures it:** `routing_decided` is code-confirmed P6. Creation events are WAL — see Open Questions; do not over-assert WAL kinds in `must_emit` until the harness's WAL-read support is confirmed.
+4. **Event infra captures it:** `tool_called` is the live-confirmed P6 event for the direct LLM-tool path (`routing_decided`=0 there — skill-routing only). Creation events are WAL (not P6) → verified via rubric + post-run WAL grep, not `must_emit`. Counts kept conservative (`>=1`, `>=2` for the team) so weak-model call-count variance doesn't false-refute; the rubric carries behavior specifics.
 
 ## Open questions / handoff
 
 - **e2e surface — RESOLVED (#2163):** tool `topology_create`, args `name/kind/members/leader/profiles`, routes through `registry.create_topology` (co-verified), emits the WAL `topology_created` (no separate P6 event observed). Members + profile targets subtree-restricted.
-- **harness — RESOLVED (tui-coder, code-confirmed):** the dogfood verifier is **P6-only**. `runner.py` captures the emitted P6 events into `scenarios/<id>/events.jsonl`; there is NO `state_log`/WAL read in the capture path (the `wal.jsonl` ref at `runner.py:46` only CLEARS it between runs). `verify_events` is source-agnostic but is only ever fed the P6 list → `agent_created` / `topology_created` (WAL kinds) are **NOT assertable via `must_emit`** (they'd refute, not match). ⇒ Keep `must_emit: routing_decided` (P6); verify creation via the reply rubric **+ a post-run WAL grep** (`.reyn/.../wal.jsonl` for `topology_created`/`agent_created`) as a primary-evidence post-condition. No scenario YAML change needed.
-- **live session (tui or other live-capable) — handoff:** once #2163 merges, run scenarios 1–2 (real now) and 3–4 (grounded vs #2163); resolve the harness-WAL-read question; report V-rate + a primary-evidence trace. sandbox_2 (net-isolated) cannot run live.
+- **harness — RESOLVED (tui-coder, code-confirmed):** the dogfood verifier is **P6-only**. `runner.py` captures the emitted P6 events into `scenarios/<id>/events.jsonl`; there is NO `state_log`/WAL read in the capture path (the `wal.jsonl` ref at `runner.py:46` only CLEARS it between runs). `verify_events` is source-agnostic but is only ever fed the P6 list → `agent_created` / `topology_created` (WAL kinds) are **NOT assertable via `must_emit`** (they'd refute, not match). ⇒ `must_emit` uses **`tool_called`** (P6, live-confirmed — NOT `routing_decided`, which is 0 on the direct-tool path); verify creation via the reply rubric **+ a post-run WAL grep** as a primary-evidence post-condition.
+- **live session (tui or other live-capable) — handoff:** once #2163 merges, run scenarios 1–2 (real now) and 3–4 (grounded vs #2163); report V-rate + a primary-evidence trace. sandbox_2 (net-isolated) cannot run live.
+
+## Live-run findings (tui-coder, 2026-06-25 — gemini-2.5-flash-lite via proxy)
+
+First live run of scenarios 1–2 (3–4 not run to completion; contract+isolation dominated). Primary evidence: `events.jsonl` type counts + the agent dir + the reply.
+
+- ✅ **Happy path VERIFIED:** `spawn_single_agent` → reply "researcher を作成しました" → `.reyn/agents/researcher` created → `reply_outcome=verified`. The `agent_spawn` LLM-tool path works end-to-end (flash-lite handles tool-calling).
+- 🔧 **`must_emit` corrected → `tool_called`** (applied above): on the direct-tool path `routing_decided`=0, `tool_called`=1, `chat_turn_completed_inline`=1. My `routing_decided` default refuted even the verified happy path (the 0% events-V cause — a contract bug, not a behavior failure).
+- 🔧 **State-isolation requirement (applied to Preconditions):** `--agent default` uses the shared project `.reyn/agents/` (polluted with other sessions' agents) → `spawn_single_agent` hit "already exists"→refuted until manual reset. Scenarios are sequential + collision-sensitive (scenario 2 depends on scenario 1's create) → **require a fresh per-run workspace** (the batch harness's worktree isolation provides it; a manual single-run needs a clean `.reyn` or run-unique agent names).
+- ℹ️ **Transient (honest scoping):** a ~6.5min hang on the first LLM call (0% CPU), NOT reproduced on re-run with identical config → transient proxy/network blip, observed once, not a config bug.
+- **Next:** re-run all 4 with the `tool_called` contract + fresh-workspace isolation; the tool path works so 3–4 should pass.
+
+## Preconditions (live run)
+
+- **Fresh per-run workspace** (batch worktree isolation, or a clean `.reyn/agents/` / run-unique names). Scenarios run sequentially and are collision-sensitive — a polluted shared `.reyn` flips `spawn`→`duplicate` and refutes scenario 1.
+- Members must pre-exist in the creator's spawn-lineage subtree (forge-guard) → topology scenarios spawn agents first, then wire.
