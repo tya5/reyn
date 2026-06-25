@@ -28,7 +28,10 @@ guard). This in-process driver is distinct from the external A2A webhook *sweep*
 """
 from __future__ import annotations
 
+import logging
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 # The OS-generic inbox kinds (P7 — no skill/A2A vocabulary; the run-loop routes
 # them to a router turn). NOT added to the WAL closed vocab (WAL-vs-P6 separation).
@@ -47,12 +50,30 @@ class TaskWaker:
         self._agent_name = agent_name
 
     async def _wake(self, session_id: str, kind: str, text: str, **meta: Any) -> None:
-        """The canonical wake-triple. ``session_id`` is the assignee/parent
-        routing-key ``<transport>:<native_id>``; resolve the sibling session of
-        THIS agent, deliver the OS message, and ensure its run-loop runs (booting
-        a loopless A2A/MCP session; idempotent for a looped one)."""
-        transport, _, native_id = session_id.partition(":")
-        session = self._registry.resolve_session(self._agent_name, transport, native_id)
+        """The canonical wake-triple. Resolve the sibling session of THIS agent that
+        ``session_id`` names, deliver the OS message, and ensure its run-loop runs
+        (booting a loopless A2A/MCP session; idempotent for a looped one).
+
+        ``session_id`` is one of two forms:
+        - a **bare per-session sid** (e.g. ``"main"`` / ``_DEFAULT_SID`` or a spawned uuid)
+          — a self-task / chat requester. Resolved by the ``(agent, sid)`` lookup to the
+          LIVE session. It MUST NOT be partitioned on ``":"`` — ``"main".partition(":")``
+          → transport ``"main"`` / native ``""`` get-or-spawns a PHANTOM session and the
+          real session is never woken (#2107 S1 live-found: the live default-session inbox
+          stayed empty while a phantom got the wake).
+        - a **transport routing-key** ``"<transport>:<native_id>"`` (an A2A / MCP requester)
+          — the get-or-spawn routing-key mapping."""
+        if ":" in session_id:
+            transport, _, native_id = session_id.partition(":")
+            session = self._registry.resolve_session(self._agent_name, transport, native_id)
+        else:
+            session = self._registry.get_session(self._agent_name, session_id)
+            if session is None:
+                logger.warning(
+                    "task wake: no live session %r for agent %r — wake dropped",
+                    session_id, self._agent_name,
+                )
+                return
         await session._put_inbox(kind, {"text": text, "sender": "task:os", "meta": dict(meta)})
         self._registry.ensure_session_running(self._agent_name, session_id)
 

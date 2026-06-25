@@ -131,3 +131,28 @@ async def test_wakes_resolve_distinct_sibling_sessions(tmp_path):
         assert parent is not depA
     finally:
         await _cancel_running(reg)
+
+
+@pytest.mark.asyncio
+async def test_bare_main_sid_requester_wakes_the_live_main_session(tmp_path):
+    """Tier 2: #2107 (S1 live-found) — a self-task / chat requester is the BARE sid "main"
+    (_DEFAULT_SID), NOT a transport:native routing-key. The wake must resolve it to the
+    LIVE main session, not partition "main" into a phantom "main:" routing-key session.
+    Asserts the LIVE main session's own inbox receives the disposition. Falsified by the
+    partition-misroute (the phantom session got it; the live main stayed empty — the
+    deterministic tui repro)."""
+    reg = _make_registry(tmp_path)
+    main = reg.get_or_load("alice")              # the live main session (sid=_DEFAULT_SID)
+    assert main.inbox.empty()                    # nothing queued yet
+    waker = TaskWaker(reg, "alice")
+    terminal = SimpleNamespace(task_id="B", name="do-B", status=TaskState.ABORTED)
+    deps = [SimpleNamespace(task_id="A")]
+    try:
+        await waker.notify_requester_decide(
+            requester_session="main", terminal_task=terminal, dependents=deps)
+        # delivered to the LIVE main session — NOT a phantom "main:" routing-key session.
+        assert not main.inbox.empty()
+        kind, payload = main.inbox.get_nowait()
+        assert kind == "task_dependency_aborted" and "B" in payload["text"]
+    finally:
+        await _cancel_running(reg)
