@@ -33,6 +33,7 @@ from reyn.core.events.event_store import EventStore
 from reyn.core.events.events import EventLog
 from reyn.core.events.snapshot_generations import SnapshotGenerationStore
 from reyn.core.events.state_log import StateLog
+from reyn.hooks.dispatcher import HOOK_INBOX_KIND
 from reyn.llm.model_resolver import ModelResolver
 from reyn.runtime.agent import Agent
 from reyn.runtime.budget.budget import (
@@ -3531,14 +3532,37 @@ class Session:
           closes hole (i) recovery-create). None for a session-requester recovery (a
           top-level request's recovery stays session-owned). NOTE: NOT ``meta.task_id``
           here — that names the FAILED dependent, not the manager.
-        - any other trigger (user / hook): CLEAR (session-owned creates)."""
+
+        Every trigger kind ``run_one_iteration`` can dispatch is classified
+        explicitly (complete-by-construction — §16 B1.5, the iteration-cap orphan
+        tui found: a hook self-continuation while executing T hit the old else→reset
+        and orphaned a post-cap sub-task). The three bands:
+        - SET (a task wake introduces the task context): the two above.
+        - PRESERVE (a self-continuation / a response to the agent's OWN prior action —
+          NOT a new context, so the current execution context must survive): ``hook``
+          (the #1800 self-continuation), ``agent_response`` (a reply to a request THIS
+          agent sent), ``skill_completed`` (a skill THIS agent spawned finished). These
+          never switch tasks, so preserving is interleaving-safe.
+        - RESET→None (a genuinely NEW external context = session-owned creates):
+          ``user``, ``agent_request`` (an INCOMING peer ask). An unknown future kind
+          falls here — fail-safe to session-owned (a mis-own/leak is worse than an
+          orphan); a new self-continuation kind must be added to the PRESERVE set.
+
+        Linger note (B1.5, considered + accepted): a post-completion hook can preserve
+        current=T past T's completion. Functionally harmless — §16 B2's
+        ownership-cascade fires on ABORT (a COMPLETED T is skipped), and a
+        linger-owned sub-task's own recovery still routes to T's assignee. The
+        clear-on-terminal alternative adds op→session coupling for no functional gain,
+        so it is intentionally NOT done."""
         meta = payload.get("meta", {})
         if kind == WAKE_READY_KIND:
             self._current_task_id = meta.get("task_id")
         elif kind == WAKE_REQUESTER_KIND:
             self._current_task_id = meta.get("managing_task_id")
+        elif kind in (HOOK_INBOX_KIND, "agent_response", "skill_completed"):
+            pass  # PRESERVE: self-continuation / response to the agent's own action
         else:
-            self._current_task_id = None
+            self._current_task_id = None  # user / agent_request / unknown → new context
 
     async def _handle_task_wake(self, payload: dict) -> None:
         """#1953 slice 7: surface a Task dep-graph wake (``task_ready`` /
