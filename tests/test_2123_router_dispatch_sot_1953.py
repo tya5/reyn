@@ -21,6 +21,12 @@ from reyn.tools import get_default_registry
 # The pre-#2123 REGISTRY_DISPATCH_TOOLS membership (the hand-maintained frozenset) MINUS
 # `read_tool_result` (#1449 retired dead drift: unregistered + unadvertised → unreachable;
 # removed as zero-behavior-change cleanup). This golden is the no-behavior-change oracle.
+#
+# NOTE: this golden also DOUBLES as a deliberate dispatch-membership gate. A change to any
+# tool's ``router_dispatched`` flag flips the derived set, so this test goes RED — that is
+# the gate WORKING, not a break: update this golden INTENTIONALLY (with the membership
+# change) when adding/removing a dispatch-routed tool, the same way #1822 / #2111 / #1056
+# require deliberate updates to their exhaustiveness lists.
 _EXPECTED_DISPATCH: "frozenset[str]" = frozenset({
     "list_skills", "describe_skill", "list_agents", "describe_agent", "delegate_to_agent",
     "session_spawn", "agent_spawn", "topology_create",
