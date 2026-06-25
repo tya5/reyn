@@ -214,6 +214,38 @@ class CostWarnConfig:
 
 
 @dataclass
+class SpawnConfig:
+    """`safety.spawn:` — operator bounds on the LLM spawn tree (#2103 C3).
+
+    A DoS guard: the LLM spawn primitives (``agent_spawn`` create a child,
+    ``topology_create`` wire an org) must not let an agent mint an unbounded
+    spawn tree. These caps are **operator-set in reyn.yaml** (the restart-only OUT
+    layer) — an LLM has no runtime path to raise its own limit (a self-raisable
+    limit is no limit). Enforced at the LLM spawn SEAMS (host adapter): an operator
+    creating agents via the CLI is unbounded (authority), consistent with the C1
+    subtree forge-guard scope.
+
+    Defense-by-default: non-zero defaults protect out of the box (there is no
+    backward-compat spawn-tree to break — the primitives are new in #2103). Raise
+    them in reyn.yaml when an org legitimately needs a deeper / wider tree.
+
+    Fields:
+        max_depth:
+            Maximum spawn-LINEAGE chain depth (operator-top = 0; a child spawned
+            under it = 1; …). A spawn that would make the new child's depth exceed
+            this is rejected. ``0`` = unlimited.
+        max_children:
+            Maximum FAN-OUT. Governs BOTH (a) the number of direct spawn-children a
+            single parent may have (``agent_spawn``) AND (b) the member count of a
+            ``topology_create``d topology (org size). A spawn/wire that would exceed
+            it is rejected. ``0`` = unlimited.
+    """
+
+    max_depth: int = 10
+    max_children: int = 20
+
+
+@dataclass
 class SafetyConfig:
     """`safety:` — unified, user-facing namespace for stop conditions.
 
@@ -243,6 +275,7 @@ class SafetyConfig:
     timeout: TimeoutConfig = field(default_factory=TimeoutConfig)
     on_limit: OnLimitConfig = field(default_factory=OnLimitConfig)
     threat_scan: ThreatScanConfig = field(default_factory=ThreatScanConfig)
+    spawn: SpawnConfig = field(default_factory=SpawnConfig)  # #2103 C3: spawn-tree bounds
 
 
 @dataclass
@@ -644,8 +677,17 @@ def _build_safety_config(raw: object) -> SafetyConfig:
         block_severity=str(threat_scan_raw.get("block_severity", ts_defaults.block_severity)),
         custom_patterns=list(custom_patterns_raw) if isinstance(custom_patterns_raw, list) else list(ts_defaults.custom_patterns),
     )
+    spawn_raw = raw.get("spawn") or {}
+    if not isinstance(spawn_raw, dict):
+        spawn_raw = {}
+    spawn_defaults = SpawnConfig()
+    spawn = SpawnConfig(
+        max_depth=int(spawn_raw.get("max_depth", spawn_defaults.max_depth)),
+        max_children=int(spawn_raw.get("max_children", spawn_defaults.max_children)),
+    )
     return SafetyConfig(
         loop=loop, timeout=timeout, on_limit=on_limit, threat_scan=threat_scan,
+        spawn=spawn,
     )
 
 
