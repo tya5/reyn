@@ -271,6 +271,7 @@ nav:
           - concepts/multi-agent/multi-agent.md
           - concepts/multi-agent/a2a.md
           - concepts/multi-agent/topology.md
+          - concepts/multi-agent/org-design.md
       - Data & retrieval:
           - concepts/data-retrieval/rag.md
           - concepts/data-retrieval/memory.md
