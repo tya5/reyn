@@ -1420,9 +1420,17 @@ class ReynTUIApp(App):
         # removal) which is TUI-specific and not appropriate to push into
         # the session model.
         #
-        # Skills are now synchronous (chat-mode dispatch via run_skill_awaitable)
-        # so there are no background skill tasks to snapshot at cancel time.
-        cancelled_skills = 0
+        # Snapshot counts + plan_ids BEFORE firing the cancel so the UI
+        # cleanup loops below have stable data (cancel is async; by the
+        # time they run the dicts may have been mutated by the task runner).
+        # running_skills is populated by crash-recovery auto-resume
+        # (AutoResumeHandler.spawn_resumed_skill) — those runs are real
+        # background asyncio tasks that must be counted here.
+        _running_skills_snap = {
+            rid: t for rid, t in getattr(session, "running_skills", {}).items()
+            if not t.done()
+        }
+        cancelled_skills = len(_running_skills_snap)
         _cancel_fn = getattr(session, "cancel_inflight", None)
         if callable(_cancel_fn):
             asyncio.create_task(_cancel_fn())

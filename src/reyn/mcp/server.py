@@ -270,6 +270,20 @@ async def send_to_agent_impl(
             "its task continues in the background; call again to receive the rest.)"
         )
 
+    # B42-NF-W6-2: surface still-running skill run_ids so the A2A sync
+    # path can auto-escalate to a Task envelope (= A2A spec-compliant
+    # async response) when the timeout fires before quiescence. Empty
+    # list when no skill is in flight (the common case).
+    # running_skills is populated by crash-recovery auto-resume
+    # (AutoResumeHandler.spawn_resumed_skill) — those runs are real
+    # background asyncio tasks that A2A callers must be able to observe.
+    running_skill_run_ids: list[str] = []
+    if not idle:
+        running_skills_attr: dict = getattr(session, "running_skills", {})
+        for rid, task in running_skills_attr.items():
+            if not task.done():
+                running_skill_run_ids.append(rid)
+
     # #1649 PART B: detect a limit-abort. The router stamps ``limit_stopped`` on
     # the limit wrap-up / degrade outbox message. A non-TTY run-once / wrapper
     # caller uses this to (a) surface the decision-enabling message even when the
@@ -291,6 +305,7 @@ async def send_to_agent_impl(
         "reply": reply_text,
         "partial": (not idle),
         "agent": agent_name,
+        "running_skill_run_ids": running_skill_run_ids,
         "limit_stopped": limit_stopped,
     }
 
@@ -302,6 +317,9 @@ def _is_quiescent_after_bus(session) -> bool:
     that captures the partial=True case (timeout fired before quiescence).
     """
     if not session.inbox.empty():
+        return False
+    running_skills: dict = getattr(session, "running_skills", {})
+    if any(not t.done() for t in running_skills.values()):
         return False
     return True
 

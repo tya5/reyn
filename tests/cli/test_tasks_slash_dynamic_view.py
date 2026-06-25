@@ -100,14 +100,13 @@ async def test_tasks_list_includes_dynamic_tasks():
 
 
 @pytest.mark.asyncio
-async def test_tasks_list_shows_dynamic_tasks_only_skill_runs_removed(monkeypatch):
-    """Tier 2: skill-runs section is removed (#2104 PR2); dynamic tasks still
-    render when task_backend has tasks.
+async def test_tasks_list_shows_both_skill_runs_and_dynamic_tasks():
+    """Tier 2: both sections render when skill runs AND dynamic tasks exist.
 
-    #2104 PR2 removed the skill-runs section from ``_list_tasks``: with
-    synchronous dispatch, ``running_skills`` only holds auto-resumed skills
-    whose lifecycle is managed by the TUI — there is no separate ``/tasks``
-    display concern for them.  Dynamic-task lines remain the live output.
+    ``running_skills`` is populated by crash-recovery auto-resume
+    (``AutoResumeHandler.spawn_resumed_skill``); /tasks must surface those
+    runs alongside dynamic tasks so the operator sees the full in-flight
+    picture after a crash/restart.
     """
     backend = InMemoryTaskBackend()
     await _seed_tasks(backend)
@@ -119,20 +118,20 @@ async def test_tasks_list_shows_dynamic_tasks_only_skill_runs_removed(monkeypatc
     await _list_tasks(session)
 
     out = session.replies[-1]
-    # Dynamic-task section is present.
+    # Skill-run section still present (existing behavior preserved).
+    assert "Skills:" in out
+    assert "run-skill-xyz" in out
+    # Dynamic-task section added alongside it.
     assert "Tasks:" in out
     assert "build" in out
-    # Skill-runs section is gone (#2104 PR2).
-    assert "Skills:" not in out
-    assert "run-skill-xyz" not in out
 
 
 @pytest.mark.asyncio
-async def test_tasks_list_no_backend_shows_empty(monkeypatch):
-    """Tier 2: ``task_backend`` is None and no dynamic tasks → empty message.
+async def test_tasks_list_no_backend_falls_back_to_skill_only():
+    """Tier 2: ``task_backend`` is None → no dynamic section, skill runs only.
 
-    #2104 PR2 removed the skill-runs section; with no task backend and
-    no dynamic tasks, ``_list_tasks`` emits the "(no running tasks)" message.
+    ``running_skills`` entries (e.g. crash-recovery auto-resumed runs) are
+    shown even when no dynamic-task backend is configured.
     """
     session = _CaptureSession(
         running_skills={"run-skill-xyz": object()},
@@ -142,8 +141,9 @@ async def test_tasks_list_no_backend_shows_empty(monkeypatch):
     await _list_tasks(session)
 
     out = session.replies[-1]
-    assert "(no running tasks)" in out
-    assert "Skills:" not in out
+    assert "Skills:" in out
+    assert "run-skill-xyz" in out
+    assert "Tasks:" not in out
 
 
 @pytest.mark.asyncio

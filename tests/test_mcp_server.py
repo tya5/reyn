@@ -363,6 +363,63 @@ def test_send_to_agent_waits_for_plan_terminal_text(tmp_path, monkeypatch):
     assert result["partial"] is False  # idle by completion
 
 
+def test_send_to_agent_surfaces_running_skill_run_ids(tmp_path, monkeypatch):
+    """Tier 2: ``send_to_agent_impl`` returns ``running_skill_run_ids`` listing
+    any still-running skill tasks when the reply is partial.
+
+    ``running_skills`` is populated by crash-recovery auto-resume
+    (``AutoResumeHandler.spawn_resumed_skill``) — those runs are real
+    background asyncio tasks that must surface in the A2A response so
+    callers can detect async escalation.
+
+    This test fakes ``_handle_user_message`` to leave an in-progress task in
+    ``session.running_skills`` at send_to_agent_impl return time (timeout fires
+    before quiescence), then asserts ``running_skill_run_ids`` is non-empty.
+    """
+    monkeypatch.chdir(tmp_path)
+    registry = _build_registry(tmp_path, [("default", "")])
+
+    long_running_done = asyncio.Event()
+
+    async def _fake_handle_user_message(self, message, *, chain_id):
+        from reyn.runtime.chat_message import ChatMessage
+        self._append_history(ChatMessage(
+            role="user", content=message, ts="2026-05-25T00:00:00",
+            meta={"chain_id": chain_id},
+        ))
+        # A task that never finishes within the test timeout — models a
+        # crash-recovery auto-resumed skill that is still running.
+        async def _never_finishes() -> None:
+            await long_running_done.wait()
+
+        task = asyncio.create_task(_never_finishes())
+        self.running_skills["auto-resumed-run-0001"] = task
+
+    monkeypatch.setattr(
+        Session, "_handle_user_message", _fake_handle_user_message,
+    )
+
+    async def go():
+        try:
+            return await send_to_agent_impl(
+                registry, agent_name="default",
+                message="start crash-resumed skill",
+                timeout=0.2,  # short timeout so we get partial=True
+            )
+        finally:
+            long_running_done.set()  # clean up background task
+
+    result = asyncio.run(go())
+    assert result["partial"] is True, "expected partial (timeout before quiescence)"
+    assert "running_skill_run_ids" in result, (
+        "running_skill_run_ids must be present in send_to_agent result"
+    )
+    assert "auto-resumed-run-0001" in result["running_skill_run_ids"], (
+        f"auto-resumed run must surface in running_skill_run_ids; "
+        f"got: {result['running_skill_run_ids']!r}"
+    )
+
+
 def test_build_server_exposes_documented_tools(tmp_path):
     """Tier 2: build_server registers exactly the documented tools.
     Acts as a P7 detection net — adding a new tool without refreshing
