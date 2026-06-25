@@ -66,6 +66,7 @@ async def _handle(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
 
 AGENT_SPAWN = ToolDefinition(
     name="agent_spawn",
+    router_dispatched=True,
     description=_AGENT_SPAWN_DESCRIPTION,
     parameters=_AGENT_SPAWN_PARAMETERS,
     gates=ToolGates(router="allow", phase="deny"),

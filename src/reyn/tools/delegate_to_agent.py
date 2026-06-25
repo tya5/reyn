@@ -140,6 +140,7 @@ async def _handle(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
 
 DELEGATE_TO_AGENT = ToolDefinition(
     name="delegate_to_agent",
+    router_dispatched=True,
     description=_DELEGATE_TO_AGENT_DESCRIPTION,
     parameters=_DELEGATE_TO_AGENT_PARAMETERS,
     gates=ToolGates(router="allow", phase="deny"),

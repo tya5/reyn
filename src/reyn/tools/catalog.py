@@ -90,6 +90,7 @@ async def _handle_list_skills(args: Mapping[str, Any], ctx: ToolContext) -> Tool
 
 LIST_SKILLS = ToolDefinition(
     name="list_skills",
+    router_dispatched=True,
     description=_LIST_SKILLS_DESCRIPTION,
     parameters=_LIST_SKILLS_PARAMETERS,
     gates=ToolGates(router="allow", phase="allow"),
@@ -145,6 +146,7 @@ async def _handle_describe_skill(args: Mapping[str, Any], ctx: ToolContext) -> T
 
 DESCRIBE_SKILL = ToolDefinition(
     name="describe_skill",
+    router_dispatched=True,
     description=_DESCRIBE_SKILL_DESCRIPTION,
     parameters=_DESCRIBE_SKILL_PARAMETERS,
     gates=ToolGates(router="allow", phase="allow"),
@@ -201,6 +203,7 @@ async def _handle_list_agents(args: Mapping[str, Any], ctx: ToolContext) -> Tool
 
 LIST_AGENTS = ToolDefinition(
     name="list_agents",
+    router_dispatched=True,
     description=_LIST_AGENTS_DESCRIPTION,
     parameters=_LIST_AGENTS_PARAMETERS,
     gates=ToolGates(router="allow", phase="allow"),
@@ -254,6 +257,7 @@ async def _handle_describe_agent(args: Mapping[str, Any], ctx: ToolContext) -> T
 
 DESCRIBE_AGENT = ToolDefinition(
     name="describe_agent",
+    router_dispatched=True,
     description=_DESCRIBE_AGENT_DESCRIPTION,
     parameters=_DESCRIBE_AGENT_PARAMETERS,
     gates=ToolGates(router="allow", phase="allow"),

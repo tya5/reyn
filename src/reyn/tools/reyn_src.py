@@ -245,6 +245,7 @@ async def _handle_grep(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
 
 REYN_SRC_LIST = ToolDefinition(
     name="reyn_src_list",
+    router_dispatched=True,
     description=_REYN_SRC_LIST_DESCRIPTION,
     parameters=_REYN_SRC_LIST_PARAMETERS,
     gates=ToolGates(router="allow", phase="deny"),
@@ -255,6 +256,7 @@ REYN_SRC_LIST = ToolDefinition(
 
 REYN_SRC_READ = ToolDefinition(
     name="reyn_src_read",
+    router_dispatched=True,
     description=_REYN_SRC_READ_DESCRIPTION,
     parameters=_REYN_SRC_READ_PARAMETERS,
     gates=ToolGates(router="allow", phase="deny"),

@@ -124,6 +124,7 @@ async def _handle(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
 
 TOPOLOGY_CREATE = ToolDefinition(
     name="topology_create",
+    router_dispatched=True,
     description=_TOPOLOGY_CREATE_DESCRIPTION,
     parameters=_TOPOLOGY_CREATE_PARAMETERS,
     gates=ToolGates(router="allow", phase="deny"),

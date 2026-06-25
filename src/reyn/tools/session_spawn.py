@@ -84,6 +84,7 @@ async def _handle(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
 
 SESSION_SPAWN = ToolDefinition(
     name="session_spawn",
+    router_dispatched=True,
     description=_SESSION_SPAWN_DESCRIPTION,
     parameters=_SESSION_SPAWN_PARAMETERS,
     gates=ToolGates(router="allow", phase="deny"),

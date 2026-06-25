@@ -105,6 +105,7 @@ async def _handle_drop_source(
 
 DROP_SOURCE = ToolDefinition(
     name="drop_source",
+    router_dispatched=True,
     description=_DROP_SOURCE_DESCRIPTION,
     parameters=_DROP_SOURCE_PARAMETERS,
     gates=ToolGates(router="allow", phase="allow"),

@@ -85,6 +85,7 @@ async def _handle_compact(args: Mapping[str, Any], ctx: ToolContext) -> ToolResu
 
 COMPACT = ToolDefinition(
     name="compact",
+    router_dispatched=True,
     description=_COMPACT_DESCRIPTION,
     parameters=_COMPACT_PARAMETERS,
     gates=ToolGates(router="allow", phase="allow"),
