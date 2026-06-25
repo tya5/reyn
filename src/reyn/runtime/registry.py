@@ -2580,9 +2580,13 @@ class AgentRegistry:
         envelope, never re-grant (structural: one more conjunct in ``all(...)``).
         ``sid=None`` or no file → byte-identical (inert).
 
-        A bound-but-missing or malformed profile file is surfaced (stderr) and
-        skipped — a typo must not silently widen capability, but it also must not
-        crash session construction.
+        **#2103 C2 (gate-6) fail-closed cap-walk:** a DECLARED topology binding whose
+        profile file is ABSENT or MALFORMED is surfaced (stderr) and composes the
+        restrictive ``_delegate`` floor — it FAILS CLOSED, not skips, so a deleted /
+        corrupt narrowing cannot silently widen the member (delete-to-uncap). This is
+        distinct from *no binding declared* (``profile_for`` → None), which correctly
+        skips (present-but-unrestricted). Existence (file present vs absent) is the
+        discriminator, mirroring the lineage #2161 fix. It never crashes construction.
         """
         from reyn.security.permissions.capability_profile import (
             compose_resolved,
@@ -2595,24 +2599,43 @@ class AgentRegistry:
         for topo in self.topologies_for_agent(agent):
             name = topo.profile_for(agent)
             if not name:
+                # No binding DECLARED for this member in this topology → present-but-
+                # unrestricted, nothing to impose (the analog of #2161's present-but-
+                # parent_ctx-None skip). Distinct from a DECLARED-but-unresolvable
+                # binding below, which fails CLOSED.
                 continue
             path = self._capability_profile_dir / f"{name}.yaml"
             if not path.is_file():
+                # #2103 C2 (gate-6, generalising #2161): a binding IS declared (the
+                # member is meant to be NARROWED by {name}) but its profile file is
+                # ABSENT (purged / typo / archived-then-GC'd). FAIL CLOSED — compose the
+                # restrictive _delegate floor, NOT skip. Skipping is the fail-OPEN
+                # escalation: the declared narrowing silently vanishes → the member
+                # resolves WIDER than intended (delete-the-profile-to-uncap-the-member).
+                # Existence (file present vs absent) distinguishes this from the
+                # no-binding-declared skip above. Mirror of the lineage #2161 fix.
                 import sys
                 print(
                     f"warning: capability_profile {name!r} (bound in topology "
-                    f"{topo.name!r}) not found at {path}",
+                    f"{topo.name!r}) not found at {path} — failing closed (floor)",
                     file=sys.stderr,
                 )
+                resolved.append(resolve_profile(load_delegate_profile(self._project_root)))
                 continue
             try:
                 prof = load_capability_profile(path)
             except Exception as e:  # noqa: BLE001 — hand-edited yaml, surface not crash
+                # #2103 C2 (gate-6): a declared binding whose file is PRESENT but
+                # MALFORMED is likewise unresolvable → FAIL CLOSED (floor), not skip — a
+                # corrupt narrowing must not silently widen the member. (It also must
+                # not crash session construction, hence floor-and-continue not raise.)
                 import sys
                 print(
-                    f"warning: skipping malformed capability_profile {path.name}: {e}",
+                    f"warning: malformed capability_profile {path.name}: {e} "
+                    "— failing closed (floor)",
                     file=sys.stderr,
                 )
+                resolved.append(resolve_profile(load_delegate_profile(self._project_root)))
                 continue
             resolved.append(resolve_profile(prof))
 
