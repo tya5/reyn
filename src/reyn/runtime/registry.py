@@ -2006,6 +2006,13 @@ class AgentRegistry:
         Does NOT submit a task — that is the caller (the spawn op), separable from the
         record. Emit no-ops without a WAL."""
         sid = self.spawn_session(name)
+        if mode == "ephemeral":
+            # #2103: mark the live session so it auto-vanishes once its task is done
+            # (Session._maybe_schedule_ephemeral_vanish, via this registry's
+            # remove_session teardown seam). Persistent spawns leave the flag False.
+            ephemeral_session = self._peek_session(name, sid)
+            if ephemeral_session is not None:
+                ephemeral_session._ephemeral = True
         if narrowing:
             import yaml
             cfg_path = self._session_state_dir(name, sid) / "config.yaml"

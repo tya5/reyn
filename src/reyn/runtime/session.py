@@ -931,6 +931,13 @@ class Session:
         # task (a user / hook / recovery turn). Slice B extends the lifetime to a
         # persistent assignment spanning continuation + recovery turns.
         self._current_task_id: "str | None" = None
+        # #2103: a spawned EPHEMERAL session (spawn-time mode="ephemeral") auto-vanishes
+        # once its task is done. Set post-construction by the registry on an ephemeral
+        # spawn; the main session + persistent spawns leave it False. ``_vanish_scheduled``
+        # guards against a double-schedule across turns.
+        self._ephemeral: bool = False
+        self._vanish_scheduled: bool = False
+        self._vanish_task: "asyncio.Task | None" = None
         # #1827 S4b (context-auto): lazily-resolved minimal _untrusted profile
         # ContextualPermission, composed into the per-turn narrowing while
         # untrusted external content is live in context. None until first needed.
@@ -3510,7 +3517,36 @@ class Session:
                 await self._handle_hook_message(payload)
         finally:
             self._turn_idle.set()
+        self._maybe_schedule_ephemeral_vanish()
         return True
+
+    def _maybe_schedule_ephemeral_vanish(self) -> None:
+        """#2103: an ephemeral spawned session auto-vanishes once its task is done —
+        the turn completed and no further trigger is queued (the inbox is drained, so
+        the run-loop is about to idle-block). Schedules a DETACHED teardown via the
+        registry's ``remove_session`` seam (the SAME teardown the rewind as-of-cut drop
+        uses): it quiesces + closes the per-session Task backend, cancels this idle
+        run-loop, drops the session, emits ``session_vanished``, and purges the dir.
+        Detached (not awaited here) because ``remove_session`` cancels THIS run-loop
+        task — running it inline would cancel the caller. Idempotent (the
+        ``_vanish_scheduled`` guard). The main session + persistent spawns are never
+        ``_ephemeral`` → unaffected.
+
+        Boundary (close-review note): "task done" = the inbox is empty at turn end. A
+        spawned ephemeral session that DELEGATES and awaits an ``agent_response`` would
+        have a transiently-empty inbox between turns; the basic isolated-task spawn
+        (the #2103 S1bc use case) does not. A fuller "no awaited work" predicate
+        (pending chains / live §16 tasks) is a follow-on if the await-then-resume
+        ephemeral pattern is exercised."""
+        if (not self._ephemeral or self._vanish_scheduled
+                or self._registry is None or not self.inbox.empty()):
+            return
+        self._vanish_scheduled = True
+        # Keep a strong ref (self._vanish_task) so the task is not GC'd before it runs
+        # (it self-cancels this run-loop, so it is otherwise unreferenced).
+        self._vanish_task = asyncio.create_task(
+            self._registry.remove_session(self.agent_name, self._session_id)
+        )
 
     def _stamp_execution_context(self, kind: str, payload: dict) -> None:
         """#1953 §16 (recursive-request): set the per-turn execution context read by
