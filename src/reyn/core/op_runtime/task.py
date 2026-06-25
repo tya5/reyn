@@ -401,9 +401,17 @@ async def _route_terminal_to_requester(
     # requester by construction → no drift). One hop suffices: an assignee is always
     # a session, never another task. This is the recursive generalization of S1.
     requester_session = requester
+    # §16 B1 (recursive-request): when the requester is a TASK, ``requester`` IS the
+    # managing task-as-request's id (T). Carry it to the wake so the managing session's
+    # recovery turn is stamped with current_task=T → a replacement it creates is OWNED
+    # by T (closes hole (i) recovery-create). None for a session-requester (a top-level
+    # request's recovery stays session-owned). Interleaving-precise: the recovery wake
+    # is task-specific (for T), so stamping current=T cannot leak into another task's turn.
+    managing_task_id = None
     if terminal_task.requester_kind is TaskRequesterKind.TASK:
         owner = await backend.get(requester)
         requester_session = owner.assignee if owner is not None else None
+        managing_task_id = requester
     events = getattr(ctx, "events", None)
     if events is not None:
         # Generic P6 (P7); NOT a WAL closed-vocab kind (WAL-vs-P6 separation). The
@@ -423,7 +431,7 @@ async def _route_terminal_to_requester(
     if waker is not None:
         await waker.notify_requester_decide(
             requester_session=requester_session, terminal_task=terminal_task,
-            dependents=stuck, disposition=disp,
+            dependents=stuck, disposition=disp, managing_task_id=managing_task_id,
         )
 
 

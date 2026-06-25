@@ -219,12 +219,13 @@ class _RecordingWaker:
         self.calls: list[dict] = []
 
     async def notify_requester_decide(self, *, requester_session, terminal_task, dependents,
-                                      disposition=None):
+                                      disposition=None, managing_task_id=None):
         self.calls.append({
             "requester_session": requester_session,
             "terminal_task": terminal_task.task_id,
             "dependents": [d.task_id for d in dependents],
             "disposition": disposition,
+            "managing_task_id": managing_task_id,
         })
 
 
@@ -286,7 +287,8 @@ async def test_op_abort_routes_disposition_to_requester():
                          _opctx(b, events=rec, waker=waker, session_id="req"), "control_ir")
 
     assert waker.calls == [{"requester_session": "req", "terminal_task": "B",
-                            "dependents": ["A"], "disposition": "aborted"}]
+                            "dependents": ["A"], "disposition": "aborted",
+                            "managing_task_id": None}]
     routed = [f for k, f in rec.events if k == "task_dependency_aborted"]
     assert routed and routed[0]["requester"] == "req" and routed[0]["dependents"] == ["A"]
     assert routed[0]["disposition"] == "aborted"
@@ -305,7 +307,8 @@ async def test_op_failed_routes_disposition_to_requester():
     await taskmod._update_status(SimpleNamespace(task_id="B", status="failed"),
                                  _opctx(b, waker=waker, session_id="sB"), "control_ir")
     assert waker.calls == [{"requester_session": "req", "terminal_task": "B",
-                            "dependents": ["A"], "disposition": "failed"}]
+                            "dependents": ["A"], "disposition": "failed",
+                            "managing_task_id": None}]
 
 
 @pytest.mark.asyncio
@@ -321,7 +324,8 @@ async def test_op_abort_root_routes_to_requester():
     await taskmod._abort(SimpleNamespace(task_id="B", reason=None),
                          _opctx(b, waker=waker, session_id="req"), "control_ir")
     assert waker.calls == [{"requester_session": "req", "terminal_task": "B",
-                            "dependents": ["A"], "disposition": "aborted"}]  # #2107: NOT dropped
+                            "dependents": ["A"], "disposition": "aborted",
+                            "managing_task_id": None}]  # #2107: NOT dropped
 
 
 @pytest.mark.asyncio
@@ -338,7 +342,8 @@ async def test_op_abort_with_terminal_parent_still_routes_to_requester():
     await taskmod._abort(SimpleNamespace(task_id="B", reason=None),
                          _opctx(b, waker=waker, session_id="req"), "control_ir")
     assert waker.calls == [{"requester_session": "req", "terminal_task": "B",
-                            "dependents": ["A"], "disposition": "aborted"}]
+                            "dependents": ["A"], "disposition": "aborted",
+                            "managing_task_id": None}]
 
 
 @pytest.mark.asyncio
@@ -360,7 +365,8 @@ async def test_2107_flat_self_task_plan_mid_failure_notifies_requester():
     # the requester ("me") is woken to recover the stuck dependent t3 (t4 sits blocked
     # behind t3, surfaced once t3 is recovered) — NOT dropped.
     assert waker.calls == [{"requester_session": "me", "terminal_task": "t2",
-                            "dependents": ["t3"], "disposition": "aborted"}]
+                            "dependents": ["t3"], "disposition": "aborted",
+                            "managing_task_id": None}]
 
 
 @pytest.mark.asyncio

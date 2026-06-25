@@ -141,12 +141,18 @@ class TaskWaker:
         )
 
     async def notify_requester_decide(self, *, requester_session: str, terminal_task: Any,
-                                      dependents: "list[Any]", disposition: str | None = None) -> None:
+                                      dependents: "list[Any]", disposition: str | None = None,
+                                      managing_task_id: str | None = None) -> None:
         """§16 abort/failed/cap_exceeded-side: wake the REQUESTER (the request-owner) to
         decide recovery for its stuck dependents (it re-wires via ordinary task ops —
         repoint to a substitute / remove the edge / fail / handle itself; P7 — no decision
         vocabulary). ``disposition`` is the first-class terminal reason (#1953 slice 8
-        no-conflation: a budget ``cap_exceeded`` vs a genuine ``failed``)."""
+        no-conflation: a budget ``cap_exceeded`` vs a genuine ``failed``).
+
+        ``managing_task_id`` (§16 B1) is the task-as-request T that OWNS the stuck
+        dependents — set when the requester is a TASK (else None). Carried in the wake
+        meta so the woken managing session stamps current_task=T for its recovery turn
+        (a replacement it creates is then OWNED by T — closes hole (i) recovery-create)."""
         dep_ids = [d.task_id for d in dependents]
         disp = disposition or terminal_task.status.value
         await self._wake(
@@ -157,6 +163,7 @@ class TaskWaker:
             f"to a substitute, remove the dependency, fail them, or handle the work "
             f"yourself).",
             task_id=terminal_task.task_id, dependents=dep_ids, disposition=disp,
+            managing_task_id=managing_task_id,
         )
 
 

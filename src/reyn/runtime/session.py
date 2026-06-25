@@ -70,7 +70,7 @@ from reyn.runtime.services import (
 )
 from reyn.runtime.services.a2a_handler import A2AHandler
 from reyn.runtime.services.chain_manager import _PendingChain
-from reyn.runtime.services.task_wake import WAKE_READY_KIND
+from reyn.runtime.services.task_wake import WAKE_READY_KIND, WAKE_REQUESTER_KIND
 from reyn.runtime.session_buses import AgentRequestBus, ChatInterventionBus
 from reyn.security.permissions.permissions import PermissionResolver
 from reyn.services.compaction.engine import CompactionEngine
@@ -3516,20 +3516,29 @@ class Session:
         """#1953 §16 (recursive-request): set the per-turn execution context read by
         the router op-ctx builders (→ ``OpContext.current_task_id``) so a
         ``task.create`` during this turn derives ownership (requester=<this task>,
-        requester_kind=task).
+        requester_kind=task). Per-turn + interleaving-precise: the context is exactly
+        the task the THIS turn's wake is about, so a session juggling T1/T2 never
+        mis-owns a create.
 
-        A turn the OS woke to EXECUTE an assigned task (``task_ready`` =
-        ``WAKE_READY_KIND``) carries that task_id in its wake meta → stamp it. Every
-        other trigger (user / hook / and the recovery ``task_dependency_aborted``
-        wake) CLEARS it — a per-turn lifetime. The recovery wake is DELIBERATELY
-        excluded: its meta names the FAILED dependent, not the managing
-        task-as-request, so stamping it would mis-own a recovery-create. The
-        recovery-create + multi-turn-execution contexts are closed by slice B's
-        persistent assignment (the SOURCE evolves; this is the set-point seam)."""
-        self._current_task_id = (
-            payload.get("meta", {}).get("task_id")
-            if kind == WAKE_READY_KIND else None
-        )
+        - ``task_ready`` (``WAKE_READY_KIND``, execute-wake): stamp the task to execute
+          (``meta.task_id``). Continuations are re-wakes (a completed sub-task promotes
+          T → ``wake_ready_dependent`` re-stamps current=T on resume), so multi-turn
+          execution is covered.
+        - ``task_dependency_aborted`` (``WAKE_REQUESTER_KIND``, recovery-wake): stamp the
+          MANAGING task-as-request (``meta.managing_task_id`` = T, set by
+          ``notify_requester_decide`` only when the requester is a TASK) — so a
+          REPLACEMENT the managing session creates this turn is owned by T (§16 B1,
+          closes hole (i) recovery-create). None for a session-requester recovery (a
+          top-level request's recovery stays session-owned). NOTE: NOT ``meta.task_id``
+          here — that names the FAILED dependent, not the manager.
+        - any other trigger (user / hook): CLEAR (session-owned creates)."""
+        meta = payload.get("meta", {})
+        if kind == WAKE_READY_KIND:
+            self._current_task_id = meta.get("task_id")
+        elif kind == WAKE_REQUESTER_KIND:
+            self._current_task_id = meta.get("managing_task_id")
+        else:
+            self._current_task_id = None
 
     async def _handle_task_wake(self, payload: dict) -> None:
         """#1953 slice 7: surface a Task dep-graph wake (``task_ready`` /
