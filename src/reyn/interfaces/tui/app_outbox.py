@@ -1339,43 +1339,10 @@ class OutboxRouter:
     def _on_system(
         self, msg: OutboxMessage, conv: ConversationView, header: ReynHeader,
     ) -> None:
-        """`system` — bridge task lifecycle to AsyncStackPanel + default render.
-
-        The task-driven ``decompose`` path emits ``kind="system"`` messages
-        with a ``source`` discriminator in meta (#1953 P3):
-
-          - ``source="task_summary"`` (= ``[task_spawned]`` equivalent for the
-            TUI) — fires when a sub-task starts. Carries ``parent_task_id`` so
-            the AsyncStackPanel can mount a row keyed on the task identity.
-          - ``source="task_complete"`` (= ``[task_completed]`` equivalent) —
-            fires when the task finishes. Row unmounts immediately.
-
-        Other ``kind="system"`` messages (lifecycle markers, slash-command
-        output, attach/detach notices) flow through the default
-        ``conv.render_message`` path unchanged. The task side-effect is
-        ADDITIVE — we always also render the message so the conv pane's
-        existing system-message UX (= dim marker line) stays intact.
+        """`system` — default render of a system message (the dim marker line /
+        slash-command output / attach-detach notice the conv pane already gives
+        system messages).
         """
-        source = (msg.meta or {}).get("source", "")
-        task_id = (msg.meta or {}).get("parent_task_id", "")
-        if task_id:
-            if source == "task_summary":
-                # Compact summary for the bottom strip — the full multi-line
-                # start text already lands in the conv pane via the default
-                # render below.
-                summary = f"task #{str(task_id)[:8]}"
-                try:
-                    conv.add_async_task(str(task_id), summary)
-                except Exception:
-                    pass
-            elif source == "task_complete":
-                try:
-                    conv.remove_async_task(str(task_id))
-                except Exception:
-                    pass
-        # Default render path — preserves the dim marker line / slash
-        # output / attach notice display the conv pane already gives
-        # to system messages.
         conv.render_message(msg)
 
     def _on_trace(
