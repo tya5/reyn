@@ -449,20 +449,46 @@ class AgentRegistry:
             raise ValueError(
                 f"spawn-lineage for {child!r} is immutable "
                 f"(set to {existing!r}; refused re-set to {parent!r})")
+        # cycle-guard (B-core close-review note): the parent must not already be a
+        # DESCENDANT of the child — walking the parent's lineage to the root must not
+        # reach the child. Acyclic-by-construction holds for a fresh spawn (the parent
+        # pre-exists, the child is new), but this makes it explicit + safe under
+        # rewind-reconstruction replay (edges re-recorded in arbitrary order).
+        cursor: "str | None" = parent
+        seen: "set[str]" = set()
+        while cursor is not None and cursor not in seen:
+            if cursor == child:
+                raise ValueError(
+                    f"spawn-lineage cycle rejected: {parent!r} is a descendant of {child!r}")
+            seen.add(cursor)
+            cursor = self._spawn_lineage.get(cursor)
         self._spawn_lineage[child] = parent
 
-    async def create_agent(self, name: str, *, role: str = "") -> AgentProfile:
+    async def create_agent(
+        self, name: str, *, role: str = "", parent: "str | None" = None
+    ) -> AgentProfile:
         """#2103 S2b: the action-layer CREATE seam — create the profile (sync) +
         emit ``agent_created`` so rewind can track / reconstruct / drop the agent
         (the create-side of the as-of-cut lifecycle, #2114/#2117). Every creation
         SURFACE (CLI / web / slash + the spawn op) routes through this ONE seam, so
         no surface can miss the emit (rewind-completeness). Emit no-ops without a
         WAL. The mechanism (sync ``create``) stays separate — the event marks the
-        user/LLM action, not the file write."""
+        user/LLM action, not the file write.
+
+        #2103 B (agent-SPAWN): when ``parent`` is given, record the OS-set immutable
+        spawn lineage (the ⊆-parent cap) AND carry ``parent`` on the agent_created
+        event so a rewind RECONSTRUCTS the lineage. If the lineage were lost on rewind,
+        the reconstructed child would resolve WITHOUT the parent-conjunct = UN-capped =
+        escalation-on-rewind — so the carry+restore is a security linchpin (the emit
+        AND the reconstruction-restore are both verified, the registered-but-unemitted
+        → resurrection hazard class)."""
         profile = self.create(name, role=role)
+        if parent is not None:
+            self._record_spawn_lineage(name, parent)
         if self._state_log is not None:
             await self._state_log.append(
                 "agent_created", entity_kind="agent", name=name, sid="",
+                parent=parent,  # #2103 B: lineage for rewind-reconstruction
                 profile={
                     "name": profile.name,
                     "role": profile.role,
@@ -1210,16 +1236,18 @@ class AgentRegistry:
 
     def _agent_lifecycle(
         self,
-    ) -> "tuple[dict[str, tuple[int, dict]], dict[str, int], set[str]]":
+    ) -> "tuple[dict[str, tuple[int, dict, str | None]], dict[str, int], set[str]]":
         """#2103 S2: one WAL scan → the agent-lifecycle state (created, archived,
         purged):
-        - created: name → (create_seq, profile-payload) from ``agent_created`` (the
-          payload re-materialises the profile on a forward-checkout-past-drop).
+        - created: name → (create_seq, profile-payload, parent) from ``agent_created``
+          (the payload re-materialises the profile on a forward-checkout-past-drop;
+          ``parent`` (#2103 B) rebuilds the spawn lineage as-of-cut so a re-materialised
+          child regains its ⊆-parent cap — else escalation-on-rewind).
         - archived: name → latest ``agent_archived`` seq (the as-of-cut hide hinge).
         - purged: names with an ``agent_purged`` event (fork A: permanent — never
           re-materialised at any cut).
         Empty without a WAL. Inert until S2b emits the events."""
-        created: dict[str, tuple[int, dict]] = {}
+        created: dict[str, tuple[int, dict, "str | None"]] = {}
         archived: dict[str, int] = {}
         purged: set[str] = set()
         if self._state_log is None:
@@ -1232,7 +1260,12 @@ class AgentRegistry:
                 continue
             if kind == "agent_created":
                 payload = entry.get("profile")
-                created[name] = (seq, payload if isinstance(payload, dict) else {})
+                _parent = entry.get("parent")
+                created[name] = (
+                    seq,
+                    payload if isinstance(payload, dict) else {},
+                    _parent if isinstance(_parent, str) else None,
+                )
             elif kind == "agent_archived":
                 archived[name] = seq  # last wins = the latest archival
             elif kind == "agent_purged":
@@ -1489,7 +1522,7 @@ class AgentRegistry:
         # #2103 S2 re-materialise: an agent created ≤ cut, NOT purged, currently
         # ABSENT (dropped at a prior cut) → re-create from its agent_created record
         # so a forward-checkout-past-drop brings it back (the inverse of the drop).
-        for _rname, (_rcseq, _rpayload) in ag_created.items():
+        for _rname, (_rcseq, _rpayload, _rparent) in ag_created.items():
             if _rname in ag_purged:
                 continue  # fork A: purged = permanent, never re-materialised
             if _rcseq <= drop_cut and not (self._dir / _rname).is_dir():
@@ -1534,6 +1567,18 @@ class AgentRegistry:
         # archived-state (rewind-before-archive → active; rewind-after → archived).
         self._reconcile_archived_as_of_cut(ag_archived, drop_cut)
         self._reconcile_topologies_as_of_cut(drop_cut)
+        # #2103 B (the rewind LINCHPIN): rebuild the spawn lineage as-of-cut from the
+        # agent_created records — a re-materialised child REGAINS its ⊆-parent cap and a
+        # dropped/post-cut child's edge is gone. A FULL rebuild (not an incremental
+        # patch) so the lineage deterministically matches the as-of-cut present-agent
+        # set with no stale/missing edge: escalation-on-rewind is precisely a MISSING
+        # edge for a present child (resolved_profile_for would then skip the
+        # parent-conjunct → un-capped). Assigned directly (the WAL is the trusted source;
+        # the forge/cycle guards already ran at spawn time).
+        self._spawn_lineage = {
+            _n: _p for _n, (_s, _payload, _p) in ag_created.items()
+            if _p and _s <= drop_cut and _n not in ag_purged and (self._dir / _n).is_dir()
+        }
         await self._restore_workspace_active(at_or_below=workspace_at_or_below)
         await self._restore_task_active(at_or_below=workspace_at_or_below)
         # #2125 (b)-split: the restores succeeded — NOW perform the deferred destructive
