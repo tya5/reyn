@@ -115,7 +115,7 @@ Reyn はすべての状態変化に対して構造化イベントを発行しま
 | `task_op` | 任意のタスク変更操作が完了したとき（create / update-status / complete / abort） | `op`（op 種類文字列）、`task_id`、op 固有フィールド |
 | `task_readiness` | タスクが `ready` または `blocked` に遷移したとき（OS の再導出で readiness が変化） | `task_id`、`to`（`"ready"` または `"blocked"`）、`trigger`（変化を引き起こした op の task_id） |
 | `task_disposition` | 中断されたサブツリー内の各タスクが終端状態に達したとき | `task_id`、`disposition`（`"aborted"`）、`requester`、`origin`、`root`（ルート abort op の task_id） |
-| `task_dependency_aborted` | タスクの依存先が非完了終端に達し、親セッションが復旧を決定する必要があるとき | `task_id`（終端タスク）、`disposition`、`parent_id`、`parent_session`、`dependents`（stuck 状態の task_id リスト） |
+| `task_dependency_aborted` | タスクの依存先が非完了終端に達し、リクエスターが復旧を決定する必要があるとき（§16） | `task_id`（終端タスク）、`disposition`、`requester`（セッション or タスク id — §16 通知ターゲット）、`dependents`（stuck 状態の task_id リスト） |
 
 ## agent 間メッセージング
 
