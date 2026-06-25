@@ -191,7 +191,26 @@ class AgentRegistry:
         # effective as a restrict-only conjunct → spawned ⊆ parent by construction,
         # recursively (no-escalation-via-spawn). WAL-carried on agent_created for
         # rewind-reconstruction.
-        self._spawn_lineage: "dict[str, str]" = {}
+        #
+        # #2103 C2b (#2166): the edge value is keyed on the parent's stable IDENTITY,
+        # not its reusable name — child → (parent_name, parent_identity). A purged +
+        # name-REUSED parent gets a NEW identity, so the orphan's stored edge identity
+        # mismatches → the edge is STALE → resolved_profile_for #2161-fail-closes and
+        # is_spawn_descendant rejects (fixes both consumers from one identity check;
+        # composes with #2161's absent-parent existence-check). The identity is minted
+        # in create_agent (the spawn seam): the agent_created WAL seq when a state_log
+        # is present, else an in-memory monotonic counter (Q1: every create_agent parent
+        # is identity-tracked → name-reuse always detected for real spawn lineages; a
+        # bare-``create()`` non-spawn parent has no identity → None → #2161 existence
+        # fallback, no false-positive, Q2).
+        self._spawn_lineage: "dict[str, tuple[str, int | None]]" = {}
+        # #2103 C2b: name → its CURRENT stable identity (the create_agent-minted token).
+        # Rebuilt as-of-cut on rewind (_materialize_rewind). A name-reused agent has a
+        # NEW token here, so a stored edge carrying the OLD token reads as stale.
+        self._agent_create_seq: "dict[str, int]" = {}
+        # #2103 C2b: the no-WAL identity source (monotonic; only used when state_log is
+        # None — there is no rewind to reconstruct against in that mode).
+        self._spawn_create_counter: int = 0
         # #2081: delegation policy. ``deny`` narrows an UNBOUND delegate with the
         # restrictive _delegate floor; ``inherit`` (default) = byte-identical to
         # pre-#2081. ``_constructing_as_delegate`` is the transient is_delegate
@@ -441,14 +460,19 @@ class AgentRegistry:
         re-set to a DIFFERENT parent is refused, and a self-link is rejected. Acyclic
         by construction — the parent pre-exists and the child is freshly created, so a
         child can never be an ancestor of its parent. Idempotent on the same parent
-        (rewind-reconstruction may replay the same edge)."""
+        (rewind-reconstruction may replay the same edge).
+
+        #2103 C2b: the edge stores ``(parent_name, parent_identity)`` — the parent's
+        identity FROZEN at spawn time (``_agent_create_seq.get(parent)``; None when the
+        parent was not minted via create_agent, e.g. a bare-``create()`` operator agent).
+        Immutability/cycle compare by NAME (the identity is metadata for staleness)."""
         if child == parent:
             raise ValueError(f"spawn-lineage self-link rejected: {child!r}")
         existing = self._spawn_lineage.get(child)
-        if existing is not None and existing != parent:
+        if existing is not None and existing[0] != parent:
             raise ValueError(
                 f"spawn-lineage for {child!r} is immutable "
-                f"(set to {existing!r}; refused re-set to {parent!r})")
+                f"(set to {existing[0]!r}; refused re-set to {parent!r})")
         # cycle-guard (B-core close-review note): the parent must not already be a
         # DESCENDANT of the child — walking the parent's lineage to the root must not
         # reach the child. Acyclic-by-construction holds for a fresh spawn (the parent
@@ -461,8 +485,9 @@ class AgentRegistry:
                 raise ValueError(
                     f"spawn-lineage cycle rejected: {parent!r} is a descendant of {child!r}")
             seen.add(cursor)
-            cursor = self._spawn_lineage.get(cursor)
-        self._spawn_lineage[child] = parent
+            _edge = self._spawn_lineage.get(cursor)
+            cursor = _edge[0] if _edge is not None else None
+        self._spawn_lineage[child] = (parent, self._agent_create_seq.get(parent))
 
     def is_spawn_descendant(self, agent: str, ancestor: str) -> bool:
         """#2103 C1: True iff ``agent`` is ``ancestor`` itself OR a transitive spawn-
@@ -475,17 +500,32 @@ class AgentRegistry:
         creator, so ``resolved_profile_for``'s live parent-conjunct (B-core) backstops
         the binding (it can only narrow within the member's ⊆-creator envelope, never
         re-grant past it). An agent with no lineage edge (operator-top) is in no one's
-        subtree but its own → an LLM cannot wire a non-descendant peer."""
+        subtree but its own → an LLM cannot wire a non-descendant peer.
+
+        #2103 C2b (#2166): a STALE edge — its parent name was purged + REUSED, so the
+        frozen parent identity no longer matches the current ``_agent_create_seq[name]``
+        — is a dangling link to a GONE identity, NOT a real ancestry. The walk stops at
+        it (returns False), so a name-reused agent is rejected as a forged ancestor (the
+        C1 forge-guard bypass tui found). A None identity (untracked parent) carries no
+        staleness signal → the link is honoured (the #2161 existence-check governs that
+        case at resolve time)."""
         if agent == ancestor:
             return True
-        cursor: "str | None" = self._spawn_lineage.get(agent)
+        cursor: str = agent
         seen: "set[str]" = set()
-        while cursor is not None and cursor not in seen:
-            if cursor == ancestor:
+        while True:
+            edge = self._spawn_lineage.get(cursor)
+            if edge is None:
+                return False
+            pname, pseq = edge
+            if pseq is not None and self._agent_create_seq.get(pname) != pseq:
+                return False  # stale (name-reused parent) → dangling, not a real link
+            if pname == ancestor:
                 return True
-            seen.add(cursor)
-            cursor = self._spawn_lineage.get(cursor)
-        return False
+            if pname in seen:
+                return False
+            seen.add(pname)
+            cursor = pname
 
     async def create_agent(
         self, name: str, *, role: str = "", parent: "str | None" = None
@@ -508,10 +548,16 @@ class AgentRegistry:
         profile = self.create(name, role=role)
         if parent is not None:
             self._record_spawn_lineage(name, parent)
+        # #2103 C2b: the parent's identity FROZEN at this spawn (the same value the edge
+        # stored) — carried on agent_created so a rewind reconstructs the edge with the
+        # parent-identity-AT-SPAWN (not the latest), so a rewind across a purge+name-reuse
+        # does not resurrect this child under the reused parent.
+        parent_seq = self._agent_create_seq.get(parent) if parent is not None else None
         if self._state_log is not None:
-            await self._state_log.append(
+            seq = await self._state_log.append(
                 "agent_created", entity_kind="agent", name=name, sid="",
                 parent=parent,  # #2103 B: lineage for rewind-reconstruction
+                parent_seq=parent_seq,  # #2103 C2b: parent identity-at-spawn (rewind)
                 profile={
                     "name": profile.name,
                     "role": profile.role,
@@ -520,6 +566,14 @@ class AgentRegistry:
                     "allowed_mcp": profile.allowed_mcp,
                 },
             )
+            # #2103 C2b: this agent's stable identity = its agent_created WAL seq.
+            self._agent_create_seq[name] = seq
+        else:
+            # #2103 C2b Q1: no-WAL fallback — a monotonic counter (no rewind to
+            # reconstruct against here), so a create_agent parent is ALWAYS identity-
+            # tracked and name-reuse is detected even without a state_log.
+            self._spawn_create_counter += 1
+            self._agent_create_seq[name] = self._spawn_create_counter
         return profile
 
     def remove(self, name: str, *, purge: bool = False) -> "list[tuple[str, Topology | None]]":
@@ -1277,18 +1331,21 @@ class AgentRegistry:
 
     def _agent_lifecycle(
         self,
-    ) -> "tuple[dict[str, tuple[int, dict, str | None]], dict[str, int], set[str]]":
+    ) -> "tuple[dict[str, tuple[int, dict, str | None, int | None]], dict[str, int], set[str]]":
         """#2103 S2: one WAL scan → the agent-lifecycle state (created, archived,
         purged):
-        - created: name → (create_seq, profile-payload, parent) from ``agent_created``
-          (the payload re-materialises the profile on a forward-checkout-past-drop;
-          ``parent`` (#2103 B) rebuilds the spawn lineage as-of-cut so a re-materialised
-          child regains its ⊆-parent cap — else escalation-on-rewind).
+        - created: name → (create_seq, profile-payload, parent, parent_seq) from
+          ``agent_created`` (the payload re-materialises the profile on a
+          forward-checkout-past-drop; ``parent`` (#2103 B) rebuilds the spawn lineage
+          as-of-cut so a re-materialised child regains its ⊆-parent cap — else
+          escalation-on-rewind; ``parent_seq`` (#2103 C2b) is the parent's identity
+          AT-SPAWN, so the rebuilt edge reads STALE if the parent name was later
+          purged+reused → no resurrection of the child under the reused parent).
         - archived: name → latest ``agent_archived`` seq (the as-of-cut hide hinge).
         - purged: names with an ``agent_purged`` event (fork A: permanent — never
           re-materialised at any cut).
         Empty without a WAL. Inert until S2b emits the events."""
-        created: dict[str, tuple[int, dict, "str | None"]] = {}
+        created: dict[str, tuple[int, dict, "str | None", "int | None"]] = {}
         archived: dict[str, int] = {}
         purged: set[str] = set()
         if self._state_log is None:
@@ -1302,10 +1359,12 @@ class AgentRegistry:
             if kind == "agent_created":
                 payload = entry.get("profile")
                 _parent = entry.get("parent")
+                _parent_seq = entry.get("parent_seq")  # #2103 C2b: parent identity-at-spawn
                 created[name] = (
                     seq,
                     payload if isinstance(payload, dict) else {},
                     _parent if isinstance(_parent, str) else None,
+                    _parent_seq if isinstance(_parent_seq, int) else None,
                 )
             elif kind == "agent_archived":
                 archived[name] = seq  # last wins = the latest archival
@@ -1575,7 +1634,7 @@ class AgentRegistry:
         # #2103 S2 re-materialise: an agent created ≤ cut, NOT purged, currently
         # ABSENT (dropped at a prior cut) → re-create from its agent_created record
         # so a forward-checkout-past-drop brings it back (the inverse of the drop).
-        for _rname, (_rcseq, _rpayload, _rparent) in ag_created.items():
+        for _rname, (_rcseq, _rpayload, _rparent, _rpseq) in ag_created.items():
             if _rname in ag_purged:
                 continue  # fork A: purged = permanent, never re-materialised
             if _rcseq <= drop_cut and not (self._dir / _rname).is_dir():
@@ -1636,8 +1695,20 @@ class AgentRegistry:
         # edge for a present child (resolved_profile_for would then skip the
         # parent-conjunct → un-capped). Assigned directly (the WAL is the trusted source;
         # the forge/cycle guards already ran at spawn time).
+        #
+        # #2103 C2b: rebuild the identity map (name → create_seq) for present-as-of-cut
+        # agents FIRST, so the staleness check has the current identity to compare each
+        # edge's FROZEN parent identity against. The edge keeps the parent identity
+        # AT-SPAWN (the recorded ``parent_seq``, ``_pseq``); if the parent name was later
+        # purged + REUSED, the reused parent's create_seq differs → the edge reads STALE
+        # → resolved_profile_for fail-closes + is_spawn_descendant rejects = no
+        # resurrection of the orphan under the reused parent on a forward checkout.
+        self._agent_create_seq = {
+            _n: _s for _n, (_s, _payload, _p, _pseq) in ag_created.items()
+            if _s <= drop_cut and _n not in ag_purged and (self._dir / _n).is_dir()
+        }
         self._spawn_lineage = {
-            _n: _p for _n, (_s, _payload, _p) in ag_created.items()
+            _n: (_p, _pseq) for _n, (_s, _payload, _p, _pseq) in ag_created.items()
             if _p and _s <= drop_cut and _n not in ag_purged and (self._dir / _n).is_dir()
         }
         await self._restore_workspace_active(at_or_below=workspace_at_or_below)
@@ -2674,18 +2745,27 @@ class AgentRegistry:
         # with its OWN delegate-status (is_delegate=None → its construction transient)
         # at the agent envelope (no sid). A forged/absent lineage simply isn't here
         # (OS-set), so it cannot widen.
-        parent = self._spawn_lineage.get(agent)
-        if parent is not None:
-            if not (self._dir / parent).is_dir():
-                # #2161 (tui-found, pre-merge): the lineage edge points to an ABSENT
-                # parent (purged / archived-then-gone / crash / fs-delete) — the capping
-                # parent is gone, so ⊆-parent CANNOT be verified. FAIL CLOSED: compose
-                # the restrictive _delegate floor (NOT skip — skipping is the fail-open
-                # escalation: purge-the-parent-to-uncap-the-child). This is DISTINCT from
-                # a PRESENT-but-unrestricted parent (parent_ctx is None in the else
-                # branch → correctly skipped, no cap to impose). Checking EXISTENCE (not
-                # just parent_ctx is None) resolves that ambiguity. One seam → covers
-                # every cap-drop cause; the destroy-side mirror of the rewind rebuild.
+        edge = self._spawn_lineage.get(agent)
+        if edge is not None:
+            parent, parent_seq = edge
+            # #2103 C2b (#2166): the stored edge froze the parent's identity at spawn. If
+            # the parent name was purged + REUSED, the current identity differs → the edge
+            # is STALE (it points to a GONE identity, not the live same-named agent). Treat
+            # exactly like an absent parent: FAIL CLOSED. (A None frozen identity = a
+            # parent never minted via create_agent → no staleness signal → the absent-vs-
+            # present existence-check below governs, Q2 — no false-positive.)
+            stale = (
+                parent_seq is not None
+                and self._agent_create_seq.get(parent) != parent_seq
+            )
+            if stale or not (self._dir / parent).is_dir():
+                # #2161 (absent parent) + #2166 (name-reused → stale identity): the capping
+                # parent's identity is gone, so ⊆-parent CANNOT be verified. FAIL CLOSED:
+                # compose the restrictive _delegate floor (NOT skip — skipping is the
+                # fail-open escalation: purge/reuse-the-parent-to-uncap-the-child). DISTINCT
+                # from a PRESENT-but-unrestricted parent (parent_ctx is None in the else
+                # branch → correctly skipped, no cap to impose). One seam covers every
+                # cap-drop cause (purge, name-reuse, crash, fs-delete).
                 resolved.append(resolve_profile(load_delegate_profile(self._project_root)))
             else:
                 parent_ctx, parent_excl = self.resolved_profile_for(parent)
