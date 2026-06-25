@@ -28,8 +28,8 @@ from reyn.core.events.state_log import StateLog
 from reyn.runtime.profile import AgentProfile
 from reyn.runtime.registry import AgentRegistry
 from reyn.runtime.services.task_wake import (
-    WAKE_PARENT_KIND,
     WAKE_READY_KIND,
+    WAKE_REQUESTER_KIND,
     TaskWaker,
 )
 from reyn.runtime.session import Session
@@ -60,7 +60,7 @@ async def _cancel_running(reg: AgentRegistry) -> None:
 
 
 @pytest.mark.asyncio
-async def test_notify_parent_decide_real_wake_triple(tmp_path):
+async def test_notify_requester_decide_real_wake_triple(tmp_path):
     """Tier 2: abort-side wake against the REAL registry+session — resolve yields a
     real (deterministic) Session, the disposition lands on its real inbox, and a
     run-loop boots."""
@@ -70,8 +70,8 @@ async def test_notify_parent_decide_real_wake_triple(tmp_path):
     deps = [SimpleNamespace(task_id="A")]
     before = len(reg.running_tasks())
     try:
-        await waker.notify_parent_decide(
-            parent_session="a2a:ctx-parent", terminal_task=terminal, dependents=deps)
+        await waker.notify_requester_decide(
+            requester_session="a2a:ctx-parent", terminal_task=terminal, dependents=deps)
 
         # real resolve — deterministic: same routing-key → same Session object
         parent = reg.resolve_session("alice", "a2a", "ctx-parent")
@@ -81,7 +81,7 @@ async def test_notify_parent_decide_real_wake_triple(tmp_path):
         # real delivery — the OS message is on the session's own asyncio inbox
         assert parent.inbox.qsize() >= 1
         kind, payload = parent.inbox.get_nowait()
-        assert kind == WAKE_PARENT_KIND
+        assert kind == WAKE_REQUESTER_KIND
         assert "B" in payload["text"] and "stuck" in payload["text"]
     finally:
         await _cancel_running(reg)
@@ -121,8 +121,8 @@ async def test_wakes_resolve_distinct_sibling_sessions(tmp_path):
     ready = SimpleNamespace(task_id="A", name="do-A", assignee="a2a:ctx-A",
                             status=TaskState.READY)
     try:
-        await waker.notify_parent_decide(
-            parent_session="a2a:ctx-parent", terminal_task=terminal,
+        await waker.notify_requester_decide(
+            requester_session="a2a:ctx-parent", terminal_task=terminal,
             dependents=[SimpleNamespace(task_id="A")])
         await waker.wake_ready_dependent(ready)
 

@@ -1,17 +1,18 @@
-"""Tier 1/2: #1953 slice 6-ext — mutable dependency ops + abort/failed→parent routing.
+"""Tier 1/2: #1953 slice 6-ext — mutable dependency ops + abort/failed→REQUESTER routing.
 
 Extends slice 6 with `task.remove_dependency` / `task.repoint_dependency` (the
-parent's recovery moves) over the shared OS-authority readiness primitive
+requester's recovery moves) over the shared OS-authority readiness primitive
 (`_derive_readiness`: promote/demote across the pre-run states only), and routes a
-non-completed terminal (aborted/failed) with still-alive dependents to the parent's
-session (the OQ-7/H5 gap-close; the wake is the slice-7 TaskWaker, stubbed here via
-a recording waker). Real sqlite + in-memory backends; no mocks.
+non-completed terminal (aborted/failed) with still-alive dependents to the task's
+REQUESTER (§16 / #2107; the prior slice-6-ext parent-keyed routing dropped root tasks).
+The wake is the slice-7 TaskWaker, stubbed here via a recording waker. Real sqlite +
+in-memory backends; no mocks.
 
 Falsification per axis (CLEAN-RED): remove promotes a now-satisfied dependent +
 the I-1 last-dep case + idempotent + never-demotes; repoint cycle/dangling rejected
 ATOMICALLY (graph unchanged) + demote + promote + in_progress-untouched; the
-abort/failed routing fires the waker + P6 with the right parent/dependents, and the
-no-parent / parent-terminal guards route nothing.
+abort/failed routing fires the waker + P6 to the right REQUESTER/dependents, a ROOT
+self-task is NOT dropped (#2107), and an EXTERNAL-origin task skips the internal wake.
 """
 from __future__ import annotations
 
@@ -31,9 +32,10 @@ from reyn.task import (
 
 
 def _task(task_id, *, deps=None, status=TaskState.PENDING, assignee="sess",
-          requester="req", parent_id=None):
+          requester="req", parent_id=None, origin=None):
+    kw = {} if origin is None else {"origin": origin}
     return Task(task_id=task_id, name=task_id, assignee=assignee, requester=requester,
-                status=status, deps=list(deps or []), parent_id=parent_id)
+                status=status, deps=list(deps or []), parent_id=parent_id, **kw)
 
 
 @pytest.fixture(params=["inmem", "sqlite"])
@@ -211,15 +213,15 @@ class _Rec:
 
 
 class _RecordingWaker:
-    """A real (non-mock) injectable TaskWaker recording its parent-notify calls."""
+    """A real (non-mock) injectable TaskWaker recording its requester-notify calls (§16)."""
 
     def __init__(self) -> None:
         self.calls: list[dict] = []
 
-    async def notify_parent_decide(self, *, parent_session, terminal_task, dependents,
-                                   disposition=None):
+    async def notify_requester_decide(self, *, requester_session, terminal_task, dependents,
+                                      disposition=None):
         self.calls.append({
-            "parent_session": parent_session,
+            "requester_session": requester_session,
             "terminal_task": terminal_task.task_id,
             "dependents": [d.task_id for d in dependents],
             "disposition": disposition,
@@ -271,59 +273,62 @@ async def test_op_remove_emits_readiness_on_promote():
 
 
 @pytest.mark.asyncio
-async def test_op_abort_routes_disposition_to_parent():
-    """Tier 2: aborting a task with a still-alive sibling dependent routes the
-    disposition to the parent's session (recording waker fired + P6)."""
+async def test_op_abort_routes_disposition_to_requester():
+    """Tier 2: §16 — aborting a task with a still-alive sibling dependent routes the
+    disposition to the task's REQUESTER (not the parent) — recording waker fired + P6."""
     b = InMemoryTaskBackend()
     rec = _Rec()
     waker = _RecordingWaker()
-    await b.create(_task("P", assignee="sP", requester="req", status=TaskState.IN_PROGRESS))
-    await b.create(_task("B", assignee="sB", requester="req", parent_id="P",
-                         status=TaskState.IN_PROGRESS))
-    await b.create(_task("A", deps=["B"], assignee="sA", requester="req", parent_id="P"))
+    await b.create(_task("B", assignee="sB", requester="req", status=TaskState.IN_PROGRESS))
+    await b.create(_task("A", deps=["B"], assignee="sA", requester="req"))
 
     await taskmod._abort(SimpleNamespace(task_id="B", reason=None),
                          _opctx(b, events=rec, waker=waker, session_id="req"), "control_ir")
 
-    assert waker.calls == [{"parent_session": "sP", "terminal_task": "B",
+    assert waker.calls == [{"requester_session": "req", "terminal_task": "B",
                             "dependents": ["A"], "disposition": "aborted"}]
     routed = [f for k, f in rec.events if k == "task_dependency_aborted"]
-    assert routed and routed[0]["parent_session"] == "sP" and routed[0]["dependents"] == ["A"]
+    assert routed and routed[0]["requester"] == "req" and routed[0]["dependents"] == ["A"]
     assert routed[0]["disposition"] == "aborted"
 
 
 @pytest.mark.asyncio
-async def test_op_failed_routes_disposition_to_parent():
-    """Tier 2: a `failed` declaration (assignee) with dependents routes to parent."""
+async def test_op_failed_routes_disposition_to_requester():
+    """Tier 2: §16 — a `failed` declaration (assignee) with dependents routes to the
+    task's REQUESTER."""
     b = InMemoryTaskBackend()
     waker = _RecordingWaker()
-    await b.create(_task("P", assignee="sP", requester="req", status=TaskState.IN_PROGRESS))
-    await b.create(_task("B", assignee="sB", requester="req", parent_id="P",
-                         status=TaskState.IN_PROGRESS))
-    await b.create(_task("A", deps=["B"], assignee="sA", requester="req", parent_id="P"))
+    await b.create(_task("B", assignee="sB", requester="req", status=TaskState.IN_PROGRESS))
+    await b.create(_task("A", deps=["B"], assignee="sA", requester="req"))
 
     # failed is assignee-gated → caller must be B's assignee.
     await taskmod._update_status(SimpleNamespace(task_id="B", status="failed"),
                                  _opctx(b, waker=waker, session_id="sB"), "control_ir")
-    assert waker.calls == [{"parent_session": "sP", "terminal_task": "B",
+    assert waker.calls == [{"requester_session": "req", "terminal_task": "B",
                             "dependents": ["A"], "disposition": "failed"}]
 
 
 @pytest.mark.asyncio
-async def test_op_abort_root_without_parent_routes_nothing():
-    """Tier 2: a root task (no parent) routes nothing on abort."""
+async def test_op_abort_root_routes_to_requester():
+    """Tier 2: §16/#2107 — a ROOT task (no parent) with a stuck dependent DOES route
+    its disposition — to the REQUESTER. The prior parent-keyed routing dropped it (no
+    parent → `if not parent_id: return`), silently stranding a flat self-task plan's
+    dependents. Now the requester (always present) is woken to recover."""
     b = InMemoryTaskBackend()
     waker = _RecordingWaker()
     await b.create(_task("B", assignee="sB", requester="req", status=TaskState.IN_PROGRESS))
-    await b.create(_task("A", deps=["B"], assignee="sA", requester="req"))  # dependent, no common parent
+    await b.create(_task("A", deps=["B"], assignee="sA", requester="req"))  # root, no parent
     await taskmod._abort(SimpleNamespace(task_id="B", reason=None),
                          _opctx(b, waker=waker, session_id="req"), "control_ir")
-    assert waker.calls == []  # B.parent_id is None → no parent to mediate
+    assert waker.calls == [{"requester_session": "req", "terminal_task": "B",
+                            "dependents": ["A"], "disposition": "aborted"}]  # #2107: NOT dropped
 
 
 @pytest.mark.asyncio
-async def test_op_abort_terminal_parent_routes_nothing():
-    """Tier 2: an already-terminal parent routes nothing (its own cascade subsumes)."""
+async def test_op_abort_with_terminal_parent_still_routes_to_requester():
+    """Tier 2: §16 — the parent's state is now IRRELEVANT — recovery keys on the
+    REQUESTER, not the parent. A task whose (vestigial) parent is already terminal still
+    routes its disposition to its requester (the prior parent-gone guard is gone)."""
     b = InMemoryTaskBackend()
     waker = _RecordingWaker()
     await b.create(_task("P", assignee="sP", requester="req", status=TaskState.ARCHIVED))
@@ -332,4 +337,44 @@ async def test_op_abort_terminal_parent_routes_nothing():
     await b.create(_task("A", deps=["B"], assignee="sA", requester="req", parent_id="P"))
     await taskmod._abort(SimpleNamespace(task_id="B", reason=None),
                          _opctx(b, waker=waker, session_id="req"), "control_ir")
-    assert waker.calls == []  # parent-gone guard
+    assert waker.calls == [{"requester_session": "req", "terminal_task": "B",
+                            "dependents": ["A"], "disposition": "aborted"}]
+
+
+@pytest.mark.asyncio
+async def test_2107_flat_self_task_plan_mid_failure_notifies_requester():
+    """Tier 2: §16/#2107 repro — a FLAT self-task plan (t1→t2→t3→t4, all root, no
+    parent) whose middle task is aborted notifies the REQUESTER to recover the stuck
+    dependents — the wake fires; they are NOT silently stranded. The exact #2107 shape
+    (prior parent-keyed routing dropped it on the missing parent_id). Revert the re-key
+    (restore `if not parent_id: return`) → no requester notify → RED."""
+    b = InMemoryTaskBackend()
+    waker = _RecordingWaker()
+    await b.create(_task("t1", assignee="me", requester="me", status=TaskState.COMPLETED))
+    await b.create(_task("t2", deps=["t1"], assignee="me", requester="me",
+                         status=TaskState.IN_PROGRESS))
+    await b.create(_task("t3", deps=["t2"], assignee="me", requester="me"))
+    await b.create(_task("t4", deps=["t3"], assignee="me", requester="me"))
+    await taskmod._abort(SimpleNamespace(task_id="t2", reason=None),
+                         _opctx(b, waker=waker, session_id="me"), "control_ir")
+    # the requester ("me") is woken to recover the stuck dependent t3 (t4 sits blocked
+    # behind t3, surfaced once t3 is recovered) — NOT dropped.
+    assert waker.calls == [{"requester_session": "me", "terminal_task": "t2",
+                            "dependents": ["t3"], "disposition": "aborted"}]
+
+
+@pytest.mark.asyncio
+async def test_external_origin_skips_internal_requester_wake():
+    """Tier 2: §16 S1 boundary — an EXTERNAL-origin terminal task does NOT fire the
+    internal requester-session wake — its disposition rides the separate webhook channel
+    (the abort-all + propagate is §16 S2). S1 preserves the prior external behavior."""
+    from reyn.task.model import TaskOrigin
+    b = InMemoryTaskBackend()
+    waker = _RecordingWaker()
+    await b.create(_task("B", assignee="sB", requester="a2a:client",
+                         origin=TaskOrigin.EXTERNAL, status=TaskState.IN_PROGRESS))
+    await b.create(_task("A", deps=["B"], assignee="sA", requester="a2a:client",
+                         origin=TaskOrigin.EXTERNAL))
+    await taskmod._abort(SimpleNamespace(task_id="B", reason=None),
+                         _opctx(b, waker=waker, session_id="req"), "control_ir")
+    assert waker.calls == []  # external → webhook channel (S2), not an internal session wake

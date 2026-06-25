@@ -9,8 +9,8 @@ slice 6-ext stub) like ``task_backend``.
 Two drivers:
   - ``wake_ready_dependent(task)`` — complete-side: a dependent the OS promoted to
     ``ready`` is woken to continue its work.
-  - ``notify_parent_decide(...)`` — abort/failed-side: the parent of a terminal
-    task with stuck dependents is woken to decide recovery (it re-wires via
+  - ``notify_requester_decide(...)`` — abort/failed-side: the REQUESTER of a terminal
+    task with stuck dependents is woken to decide recovery (§16; it re-wires via
     ordinary task ops — NOT a ``decision=`` vocabulary, P7).
 
 Single-agent scope: a dependency lives WITHIN one decomposition = within one
@@ -33,7 +33,10 @@ from typing import Any
 # The OS-generic inbox kinds (P7 — no skill/A2A vocabulary; the run-loop routes
 # them to a router turn). NOT added to the WAL closed vocab (WAL-vs-P6 separation).
 WAKE_READY_KIND = "task_ready"
-WAKE_PARENT_KIND = "task_dependency_aborted"
+# §16: the requester-decide wake kind. The VALUE stays "task_dependency_aborted" (the
+# stable event-kind contract the run-loop + tui consume); only the constant name drops
+# the stale "parent" vocabulary (recovery now notifies the requester, not a parent).
+WAKE_REQUESTER_KIND = "task_dependency_aborted"
 
 
 class TaskWaker:
@@ -116,18 +119,18 @@ class TaskWaker:
             task_id=task.task_id,
         )
 
-    async def notify_parent_decide(self, *, parent_session: str, terminal_task: Any,
-                                   dependents: "list[Any]", disposition: str | None = None) -> None:
-        """Abort/failed/cap_exceeded-side: wake the parent to decide recovery for
-        its stuck dependents (it re-wires via ordinary task ops — repoint to a
-        substitute / remove the edge / fail / handle itself; P7 — no decision
-        vocabulary). ``disposition`` is the first-class terminal reason (#1953
-        slice 8 no-conflation: a budget ``cap_exceeded`` vs a genuine ``failed``)."""
+    async def notify_requester_decide(self, *, requester_session: str, terminal_task: Any,
+                                      dependents: "list[Any]", disposition: str | None = None) -> None:
+        """§16 abort/failed/cap_exceeded-side: wake the REQUESTER (the request-owner) to
+        decide recovery for its stuck dependents (it re-wires via ordinary task ops —
+        repoint to a substitute / remove the edge / fail / handle itself; P7 — no decision
+        vocabulary). ``disposition`` is the first-class terminal reason (#1953 slice 8
+        no-conflation: a budget ``cap_exceeded`` vs a genuine ``failed``)."""
         dep_ids = [d.task_id for d in dependents]
         disp = disposition or terminal_task.status.value
         await self._wake(
-            parent_session, WAKE_PARENT_KIND,
-            f"[task] A dependency of your sub-tasks reached {disp!r}: task "
+            requester_session, WAKE_REQUESTER_KIND,
+            f"[task] A dependency of your request reached {disp!r}: task "
             f"{terminal_task.task_id!r} ('{terminal_task.name}'). These dependents "
             f"are now stuck: {dep_ids}. Decide recovery using the task ops (repoint "
             f"to a substitute, remove the dependency, fail them, or handle the work "
@@ -136,4 +139,4 @@ class TaskWaker:
         )
 
 
-__all__ = ["TaskWaker", "WAKE_READY_KIND", "WAKE_PARENT_KIND"]
+__all__ = ["TaskWaker", "WAKE_READY_KIND", "WAKE_REQUESTER_KIND"]
