@@ -121,6 +121,7 @@ class SkillPlanGlue:
                 response=error_text,
                 depth=pending.origin_depth,
                 chain_id=chain_id,
+                to_sid=getattr(pending, "origin_sid", None),  # #2130
             )
         except Exception as exc:
             await self._put_outbox(OutboxMessage(

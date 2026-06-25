@@ -933,23 +933,13 @@ class RouterHostAdapter:
                 "session_spawn requires a registry (multi-session host) — unavailable "
                 "in this context."
             )
-        # #2103 S1bc-exec GAP A guard: only the MAIN session may spawn. A spawned
-        # (non-main) session's result would route back by AGENT NAME to the agent's main
-        # session — NOT to this spawning sid — i.e. a silent misroute. Routing to a
-        # specific (agent, sid) is the first-class non-main addressing tracked in #2130;
-        # until then, refuse rather than misroute. Read the LIVE sid (the constructor's
-        # cached session_id is stale for spawned sessions, stamped post-construction).
-        live_sid = self._live_session_id_fn() if self._live_session_id_fn else self._session_id
-        if live_sid not in (None, "main"):  # "main" = registry._DEFAULT_SID (avoid the import cycle)
-            return {
-                "status": "error",
-                "kind": "nested_spawn_unsupported",
-                "error": (
-                    "session_spawn is only available from the main session: a spawned "
-                    "session's result can't yet route back to a non-main spawner "
-                    "(first-class (agent,sid) addressing — #2130)."
-                ),
-            }
+        # #2130: the spawning session's LIVE sid — threaded as ``from_sid`` so the spawned
+        # session's result routes back to THIS specific (agent, sid), not the agent's main
+        # session. Reading the LIVE sid (the constructor's cached session_id is stale for a
+        # spawned session, stamped post-construction). This lifts the #2103 S1bc-exec
+        # non-main-spawn guard: a non-main session may now spawn — its result routes back
+        # correctly by (agent, from_sid). (None / "main" → main-case, byte-identical.)
+        from_sid = self._live_session_id_fn() if self._live_session_id_fn else self._session_id
         sid = await self._registry.spawn_session_recorded(
             self._agent_name, mode=mode, narrowing=narrowing,
         )
@@ -961,7 +951,7 @@ class RouterHostAdapter:
         if session is not None:
             await session.submit_agent_request(
                 from_agent=self._agent_name, request=request, depth=0,
-                chain_id=chain_id,
+                chain_id=chain_id, from_sid=from_sid,
             )
         return {
             "status": "spawned",

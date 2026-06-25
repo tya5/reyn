@@ -304,6 +304,7 @@ class A2AHandler:
 
     async def send_agent_response(
         self, *, to: str, response: str, depth: int, chain_id: str,
+        to_sid: "str | None" = None,
     ) -> None:
         """Route a reply from this agent back to the requester ``to``.
 
@@ -312,6 +313,10 @@ class A2AHandler:
         Empty response is still sent so chains never silently stall.
         chain_id (PR14) carries the same value the original request did so
         the requester can correlate the reply with its pending chain.
+
+        #2130: ``to_sid`` is the REQUESTER's session id, threaded from the original
+        request, so the reply routes back to the SPECIFIC (to, to_sid) session — a non-main
+        spawner gets its result, not the requester agent's main session. None → main-case.
         """
         if depth > self._max_hop_depth:
             return  # silently drop — sender already gave up the chain
@@ -329,7 +334,7 @@ class A2AHandler:
         if responder_sid in (None, "main"):
             responder_sid = None
         await self._send_response_callback(
-            to, self.agent_name, response, depth, chain_id, responder_sid,
+            to, self.agent_name, response, depth, chain_id, responder_sid, to_sid,
         )
 
     def _fence_inbound(self, text: str) -> str:
@@ -365,6 +370,10 @@ class A2AHandler:
         from reyn.runtime.errors import RouterCapExceeded
 
         from_agent = payload.get("from_agent", "")
+        # #2130: the REQUESTER's session id (None for the main-case / external peers) — so
+        # this agent's reply routes back to the SPECIFIC (from_agent, from_sid), threaded
+        # to every send_agent_response below + the pending chain's origin_sid.
+        from_sid = payload.get("from_sid")
         # FP-0050/#1822 S4b (EP5, Class A): fence + scan the untrusted peer
         # request before it enters history (a remote agent is outside the trust
         # boundary; delegate-reply-via-EP5 closes here per the S2 review).
@@ -414,7 +423,7 @@ class A2AHandler:
                     self.agent_name,
                     f"router retry budget exhausted ({exc.count}/{exc.cap})",
                 ),
-                depth=depth, chain_id=chain_id,
+                depth=depth, chain_id=chain_id, to_sid=from_sid,
             )
             return
         except Exception as exc:
@@ -430,7 +439,7 @@ class A2AHandler:
                 response=_no_reply_marker(
                     self.agent_name, f"router error: {exc}"
                 ),
-                depth=depth, chain_id=chain_id,
+                depth=depth, chain_id=chain_id, to_sid=from_sid,
             )
             return
         finally:
@@ -454,6 +463,7 @@ class A2AHandler:
                 waiting_on=waiting_on,
                 origin_agent=from_agent,
                 origin_depth=depth,
+                origin_sid=from_sid,  # #2130: route the chain reply back to (origin_agent, origin_sid)
             )
             self._chains.arm_timeout(
                 chain_id, on_fire=self._on_chain_timeout_fire,
@@ -476,6 +486,7 @@ class A2AHandler:
         # Note: history was already appended by put_outbox; add routing meta.
         await self.send_agent_response(
             to=from_agent, response=reply_text, depth=depth, chain_id=chain_id,
+            to_sid=from_sid,  # #2130: back to the specific (from_agent, from_sid)
         )
 
     async def handle_agent_response(self, payload: dict) -> None:
@@ -645,6 +656,7 @@ class A2AHandler:
                 response=user_text,
                 depth=pending.origin_depth,
                 chain_id=chain_id,
+                to_sid=pending.origin_sid,  # #2130
             )
             self._events.emit(
                 "peer_reply_failed_surfaced",
@@ -675,6 +687,7 @@ class A2AHandler:
                     f"resolving chain",
                 ),
                 depth=pending.origin_depth, chain_id=chain_id,
+                to_sid=pending.origin_sid,  # #2130
             )
             await self._chains.resolve(chain_id)
             return
@@ -692,6 +705,7 @@ class A2AHandler:
                     f"router error during chain resolve: {exc}",
                 ),
                 depth=pending.origin_depth, chain_id=chain_id,
+                to_sid=pending.origin_sid,  # #2130
             )
             await self._chains.resolve(chain_id)
             return
@@ -724,6 +738,7 @@ class A2AHandler:
         await self.send_agent_response(
             to=pending.origin_agent, response=final_reply,
             depth=pending.origin_depth, chain_id=chain_id,
+            to_sid=pending.origin_sid,  # #2130
         )
         await self._chains.resolve(chain_id)
 

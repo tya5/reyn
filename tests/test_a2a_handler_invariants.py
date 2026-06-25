@@ -141,11 +141,12 @@ def _build_handler(
 
     async def _send_response_callback(
         to: str, from_agent: str, response: str, depth: int, chain_id: str,
-        responder_sid: "str | None" = None,
+        responder_sid: "str | None" = None, to_sid: "str | None" = None,  # #2130
     ) -> None:
         responses_sent.append({
             "to": to, "from_agent": from_agent, "response": response,
             "depth": depth, "chain_id": chain_id, "responder_sid": responder_sid,
+            "to_sid": to_sid,
         })
 
     async def _on_chain_timeout_fire(chain_id: str) -> None:
