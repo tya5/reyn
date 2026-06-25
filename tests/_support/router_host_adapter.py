@@ -85,6 +85,7 @@ def make_adapter(
     task_backend: object = None,  # #1953 / #2107: session-scoped Task backend
     task_waker: object = None,    # #2107: OS TaskWaker (router task.* terminal → requester wake)
     session_id: "str | None" = None,
+    current_task_id_fn: "object | None" = None,  # #1953 §16: per-turn execution context
 ) -> RouterHostAdapter:
     """Construct a minimal RouterHostAdapter with real collaborators."""
     if events is None:
@@ -141,4 +142,5 @@ def make_adapter(
         task_backend=task_backend,
         task_waker=task_waker,
         session_id=session_id,
+        current_task_id_fn=current_task_id_fn,
     )

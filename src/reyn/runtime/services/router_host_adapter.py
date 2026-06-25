@@ -116,6 +116,7 @@ class RouterHostAdapter:
         agent_registry: Any,                    # AgentRegistry | None
         record_spawned_task: "Callable[[str, str], None] | None" = None,  # #2103 S1bc-exec
         live_session_id_fn: "Callable[[], str | None] | None" = None,     # #2103 S1bc-exec
+        current_task_id_fn: "Callable[[], str | None] | None" = None,     # #1953 §16
         skill_enumerate_fn: Callable[[set], list],
         agent_workspace_dir: Path,
         # File op callbacks
@@ -320,6 +321,7 @@ class RouterHostAdapter:
         self._registry = agent_registry
         self._record_spawned_task = record_spawned_task   # #2103 S1bc-exec
         self._live_session_id_fn = live_session_id_fn      # #2103 S1bc-exec
+        self._current_task_id_fn = current_task_id_fn      # #1953 §16
         self._skill_enumerate_fn = skill_enumerate_fn
         self._workspace_dir = Path(agent_workspace_dir)
         # File callbacks
@@ -1619,6 +1621,14 @@ class RouterHostAdapter:
             # recovery wake was silently skipped (ctx.task_waker=None).
             task_waker=self._task_waker,
             hook_dispatcher=self._hook_dispatcher,  # #1800 slice 5c
+            # #1953 §16: the per-turn execution context (set by the session in
+            # run_one_iteration). Read via the callback — it varies per turn, so the
+            # fixed init value would be stale (cf. live_session_id_fn). None when the
+            # session is not executing an assigned task → task.create stays
+            # session-owned (the original model).
+            current_task_id=(
+                self._current_task_id_fn() if self._current_task_id_fn else None
+            ),
         )
 
     def _set_cancel_event(self, event: asyncio.Event) -> None:
