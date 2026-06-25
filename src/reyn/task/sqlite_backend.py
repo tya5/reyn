@@ -136,30 +136,48 @@ class SqliteTaskBackend:
             Path(self._db_path).parent / "task-generations"
         )
 
+    @staticmethod
+    def _migrate_columns(conn: sqlite3.Connection) -> None:
+        """Apply all additive column migrations to ``tasks`` that ``CREATE TABLE IF
+        NOT EXISTS`` cannot handle on its own (it does not add missing columns to an
+        already-existing table).  Safe no-op on a current-schema table: the
+        ``PRAGMA table_info`` guard skips any column that already exists.
+
+        Called from ``_open(init_schema=True)`` (first open / schema init) AND from
+        ``restore_to_seq`` (after the file-swap reopen), so every restored generation
+        is brought to the current schema — robust to additive schema evolution by
+        construction."""
+        existing = {r[1] for r in conn.execute("PRAGMA table_info(tasks)").fetchall()}
+        # #1953 slice P2: additive migration for DBs created before tools / result.
+        for col in ("tools", "result"):
+            if col not in existing:
+                conn.execute(f"ALTER TABLE tasks ADD COLUMN {col} TEXT")
+        # #1953 §16 (recursive-request): additive migration for pre-existing DBs —
+        # a row created before this column is a session-owned task by definition
+        # (the only kind that existed), so the 'session' default is correct.
+        if "requester_kind" not in existing:
+            conn.execute(
+                "ALTER TABLE tasks ADD COLUMN requester_kind "
+                "TEXT NOT NULL DEFAULT 'session'")
+        conn.commit()
+
     def _open(self, *, init_schema: bool = False) -> sqlite3.Connection:
         """Open (or reopen, after a restore file-swap) the live connection with
-        the backend's fixed pragmas. ``init_schema`` only on first open — a
-        restored generation already carries the schema."""
+        the backend's fixed pragmas.  ``init_schema=True`` on first open: creates
+        tables (``CREATE TABLE IF NOT EXISTS`` is idempotent) and runs
+        ``_migrate_columns`` to bring any pre-existing DB to the current schema.
+        ``init_schema=False`` (restore path) skips table creation — ``restore_to_seq``
+        calls ``_migrate_columns`` directly on the fresh connection after the file-swap,
+        ensuring every restored generation is at the current schema."""
         conn = sqlite3.connect(self._db_path, check_same_thread=False)
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA journal_mode=WAL")
         conn.execute("PRAGMA busy_timeout=0")
         if init_schema:
             conn.executescript(_SCHEMA)
-            # #1953 slice P2: additive migration for DBs created before the
-            # tools / result columns (CREATE TABLE IF NOT EXISTS won't add them).
-            existing = {r[1] for r in conn.execute("PRAGMA table_info(tasks)").fetchall()}
-            for col in ("tools", "result"):
-                if col not in existing:
-                    conn.execute(f"ALTER TABLE tasks ADD COLUMN {col} TEXT")
-            # #1953 §16 (recursive-request): additive migration for pre-existing DBs —
-            # a row created before this column is a session-owned task by definition
-            # (the only kind that existed), so the 'session' default is correct.
-            if "requester_kind" not in existing:
-                conn.execute(
-                    "ALTER TABLE tasks ADD COLUMN requester_kind "
-                    "TEXT NOT NULL DEFAULT 'session'")
-            conn.commit()
+            # Single-source migration helper — also called from restore_to_seq so
+            # both open and restore paths share the same column-addition logic.
+            self._migrate_columns(conn)
         return conn
 
     def close(self) -> None:
@@ -190,8 +208,11 @@ class SqliteTaskBackend:
         passes the nearest active seq <= the rewind target). Closes the live
         connection, copies the (WAL-less) generation file over the db path, drops
         any stale ``-wal``/``-shm`` side-files so the old WAL is not replayed over
-        the restored copy, then reopens. Re-runnable (idempotent under the
-        rewind keystone). Defensive no-op if the generation is missing."""
+        the restored copy, then reopens with ``_migrate_columns`` so the restored
+        generation is always at the current schema — robust to additive schema
+        evolution between when the generation was snapshotted and now. Re-runnable
+        (idempotent under the rewind keystone). Defensive no-op if the generation
+        is missing."""
         src = self._gens.gen_path(seq)
         async with self._lock:
             if not src.exists():
@@ -203,6 +224,7 @@ class SqliteTaskBackend:
                 if stale.exists():
                     stale.unlink()
             self._conn = self._open()
+            self._migrate_columns(self._conn)
 
     async def generation_seqs(self) -> list[int]:
         async with self._lock:

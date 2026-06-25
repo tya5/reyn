@@ -129,6 +129,10 @@ The WAL (`StateLog`, `.reyn/state/wal.jsonl`) and the P6 audit event log (`Event
 
 Do not conflate or merge the two logs. See [Events](events.md) for details.
 
+### Restore and schema migration
+
+`restore_to_seq` re-runs the schema migration on the restored generation (via the shared `_migrate_columns` helper, the same one `_open` uses on first open), bringing any restored generation to the current schema. This means a generation snapshotted before an additive column was introduced is automatically upgraded on restore — there is no "old schema is frozen in the snapshot" risk. The migration is idempotent: the `PRAGMA table_info` guard skips any column that already exists, so re-running it over a current-schema generation is a safe no-op. Robust to additive schema evolution by construction.
+
 ---
 
 ## Cost and the runtime-only opt-out
