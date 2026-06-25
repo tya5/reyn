@@ -3414,20 +3414,9 @@ class Session:
             # shutdown sentinel
             return False
         kind, payload = trigger
-        # #1953 §16 (recursive-request): stamp this session's current execution
-        # context. A turn the OS woke to EXECUTE an assigned task (``task_ready``)
-        # carries that task_id in its wake meta → set it so ``task.create`` during
-        # this turn derives ownership (requester=<this task>, requester_kind=task).
-        # Every other trigger (user / hook / recovery ``task_dependency_aborted``)
-        # CLEARS it — a per-turn lifetime. NOTE the recovery wake is deliberately
-        # excluded: its meta names the FAILED dependent, not the managing
-        # task-as-request, so stamping it would mis-own a recovery-create. Both the
-        # recovery-create and multi-turn-execution contexts are closed by slice B's
-        # persistent assignment (the SOURCE evolves; this set-point is the seam).
-        self._current_task_id = (
-            payload.get("meta", {}).get("task_id")
-            if kind == WAKE_READY_KIND else None
-        )
+        # #1953 §16 (recursive-request): stamp this session's per-turn execution
+        # context from the trigger (the SOURCE of OpContext.current_task_id).
+        self._stamp_execution_context(kind, payload)
         # #1800 slice 7: the loop valve. Bound hook self-continuation at the
         # SINGLE seam — before any per-turn work (sender attribution / turn_started
         # emit / turn_start dispatch / kind dispatch). A human user turn re-arms
@@ -3522,6 +3511,25 @@ class Session:
         finally:
             self._turn_idle.set()
         return True
+
+    def _stamp_execution_context(self, kind: str, payload: dict) -> None:
+        """#1953 §16 (recursive-request): set the per-turn execution context read by
+        the router op-ctx builders (→ ``OpContext.current_task_id``) so a
+        ``task.create`` during this turn derives ownership (requester=<this task>,
+        requester_kind=task).
+
+        A turn the OS woke to EXECUTE an assigned task (``task_ready`` =
+        ``WAKE_READY_KIND``) carries that task_id in its wake meta → stamp it. Every
+        other trigger (user / hook / and the recovery ``task_dependency_aborted``
+        wake) CLEARS it — a per-turn lifetime. The recovery wake is DELIBERATELY
+        excluded: its meta names the FAILED dependent, not the managing
+        task-as-request, so stamping it would mis-own a recovery-create. The
+        recovery-create + multi-turn-execution contexts are closed by slice B's
+        persistent assignment (the SOURCE evolves; this is the set-point seam)."""
+        self._current_task_id = (
+            payload.get("meta", {}).get("task_id")
+            if kind == WAKE_READY_KIND else None
+        )
 
     async def _handle_task_wake(self, payload: dict) -> None:
         """#1953 slice 7: surface a Task dep-graph wake (``task_ready`` /

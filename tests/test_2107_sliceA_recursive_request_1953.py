@@ -44,7 +44,11 @@ from reyn.core.events.state_log import StateLog
 from reyn.core.op_runtime import task as taskmod
 from reyn.runtime.profile import AgentProfile
 from reyn.runtime.registry import AgentRegistry
-from reyn.runtime.services.task_wake import WAKE_REQUESTER_KIND, TaskWaker
+from reyn.runtime.services.task_wake import (
+    WAKE_READY_KIND,
+    WAKE_REQUESTER_KIND,
+    TaskWaker,
+)
 from reyn.runtime.session import Session
 from reyn.task import InMemoryTaskBackend, SqliteTaskBackend, Task, TaskRequesterKind, TaskState
 
@@ -157,6 +161,37 @@ async def test_failed_subtask_recovery_wakes_managing_session_full_live_path(tmp
         assert u_id in payload["text"]
     finally:
         await _cancel_running(reg)
+
+
+@pytest.mark.asyncio
+async def test_execution_context_threads_through_real_opctx_builder(tmp_path):
+    """Tier 2: the #2134 L3 enumerate-all-builders class, applied to the
+    SOURCE→builder threading. Stamping the session's per-turn execution context (via
+    the real seam, as run_one_iteration does on a ``task_ready`` wake) makes the REAL
+    chat op-ctx builder (``Session._make_router_op_context``) carry
+    ``current_task_id`` — so a router task.create derives ownership. The recovery wake
+    (``task_dependency_aborted``) does NOT stamp (its meta names the failed dependent,
+    not the managing task-as-request) → the build stays session-owned (hole (i),
+    by-design). Asserts on the BUILT ctx (the public builder output), not private
+    state. Falsified by a builder that drops the field (the unit-green/live-broken L3
+    failure that cost 3 misses in #2134)."""
+    state_log = StateLog(tmp_path / "wal.jsonl")
+    s = Session(agent_name="alice", state_log=state_log)
+
+    # execute-wake (task_ready) stamps → the real builder threads it onto the ctx.
+    s._stamp_execution_context(WAKE_READY_KIND, {"meta": {"task_id": "T-exec"}})
+    ctx_exec = s._make_router_op_context()
+    assert ctx_exec.current_task_id == "T-exec"
+
+    # recovery wake (task_dependency_aborted) does NOT stamp → session-owned build.
+    s._stamp_execution_context(WAKE_REQUESTER_KIND, {"meta": {"task_id": "U-failed"}})
+    ctx_recovery = s._make_router_op_context()
+    assert ctx_recovery.current_task_id is None
+
+    # a plain user turn clears it too (per-turn lifetime).
+    s._stamp_execution_context("user", {"text": "hi"})
+    ctx_user = s._make_router_op_context()
+    assert ctx_user.current_task_id is None
 
 
 @pytest.mark.asyncio
