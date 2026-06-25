@@ -9,7 +9,7 @@ audience: [human, agent]
 How an agent's tools are shown to the LLM — and how the LLM's calls are turned
 back into dispatched actions — is a **pluggable scheme**. Reyn ships four, and
 you select one per layer in `reyn.yaml`. The defaults are `enumerate-all` for the
-`chat` layer (#1657) and `universal-category` for `step` / `phase`; any layer can
+`chat` layer and `universal-category` for `step` / `phase`; any layer can
 be switched to another scheme via config.
 
 The key invariant: **the scheme only changes the LLM-facing surface**. Every
@@ -26,13 +26,13 @@ surface (`enumerate-all`, `CodeAct`) let the model invoke without guessing;
 schemes that put the name behind an indirection it must first traverse
 (`universal-category`'s discover→invoke, `retrieval`'s search-first) invite
 name-hallucination on non-hot-list tools. This is why the chat default moved to
-`enumerate-all` (#1657).
+`enumerate-all`.
 
-### `enumerate-all` (chat default, #1657)
+### `enumerate-all` (chat default)
 
 Presents *every* usable tool flatly in the LLM's tool list and dispatches by
 name — the plain, native-JSON baseline with no discovery indirection. **This is
-the default for the `chat` layer** (#1657): flat-listing actions lets the LLM
+the default for the `chat` layer**: flat-listing actions lets the LLM
 invoke them directly, avoiding the `invoke_action` name-hallucination that the
 discover-then-call indirection induced (measured ~30%→100% non-hot-list tool-use
 on the chat path). Leaving `tool_use.chat` unset keeps it.
@@ -70,14 +70,14 @@ catalogues.
 **Use when:** the tool set is **very large** and presenting it in full would cost
 too many tokens — the search narrows the candidates before the call.
 
-**Measured (weak-model 4-way refresh, #1604-followup — internal signal):** retrieval
+**Measured (weak-model 4-way refresh):** retrieval
 is clean on single-step reads and read→transform→write chains, but on **read-heavy
 multi-file** tasks the weak model reads files sequentially and the search→re-present
 per-round overhead makes it slow (timeout-prone) — *correct-but-slow*, a tuning cost,
 not a cognition gap (uncapped, it completes the same task). So retrieval is a
 **catalogue-scaling opt-in, not a weak-default replacement**: `enumerate-all` remains
 the weak-model chat default (highest task-completion and fastest-terminating in the
-comparison; #1657). See the 4-way refresh journal under
+comparison). See the 4-way refresh journal under
 `docs/deep-dives/journal/dogfood/2026-06-17-4way-retrieval-refresh/`.
 
 ### `CodeAct`
@@ -98,7 +98,7 @@ The scheme is chosen independently for each of the three layers an agent runs:
 ```yaml
 # reyn.yaml
 tool_use:
-  chat: enumerate-all         # top-level chat router (default, #1657)
+  chat: enumerate-all         # top-level chat router (default)
   step: universal-category    # plan / skill steps (default)
   phase: universal-category   # OS phases (default)
 ```
