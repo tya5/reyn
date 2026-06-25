@@ -61,7 +61,8 @@ Each Control IR op kind emits its own event:
 | `run_skill_started`, `skill_run_spawned`, `skill_run_failed` | `run_skill` op — `run_skill_started` carries `skill_version_hash: str` (sha256 hex of `skill.md` content at execution time; `"unknown"` if `skill.md` is absent) |
 | `mcp_called`, `mcp_completed`, `mcp_failed` | MCP tool ops |
 | `mcp_server_installed` | `mcp_install` op — `name`, key names only (no values) |
-| `web_search_started`, `web_search_completed`, `web_search_failed`, `web_fetch_started` | search ops |
+| `web_search_started`, `web_search_completed`, `web_search_failed` | web_search ops — `started`: `query`, `backend`; `completed`: adds `result_count`; `failed`: adds `error` |
+| `web_fetch_started`, `web_fetch_completed`, `web_fetch_failed` | web_fetch ops — `started`: `url`; `completed`: `url`, `status_code`, `content_length`, `extractor`; `failed`: `url`, `status` (`"timeout"` or `"error"`), `error` |
 | `embed_progress` | `embed` op (Form B artifact reference only) — `embedded: int`, `skipped: int` cumulative per batch |
 | `recall_embed_failed` | `recall` op — emitted when the embed sub-op fails; `query`, `error` |
 | `index_dropped` | `index_drop` op — `source`, `chunks_dropped: int` |

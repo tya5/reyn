@@ -112,6 +112,8 @@ _EVENT_COLORS: dict[str, str] = {
     "postprocessor_step_failed":    _STATUS_ERROR,
     "tool_executed":               _EVENT_TOOL,
     "web_fetch_started":           _TEXT_MUTED,
+    "web_fetch_completed":         _TEXT_MUTED,
+    "web_fetch_failed":            _STATUS_ERROR,
     "web_search_started":          _TEXT_MUTED,
     "web_search_completed":        _TEXT_MUTED,
     "web_search_failed":           _STATUS_ERROR,
@@ -167,7 +169,8 @@ _FILTER_GROUPS: list[tuple[str, frozenset]] = [
         "tool_called", "tool_returned", "tool_failed", "tool_executed",
         "mcp_called", "mcp_completed", "mcp_failed",
         "mcp_server_installed", "act_executed",
-        "web_fetch_started", "web_search_started",
+        "web_fetch_started", "web_fetch_failed",
+        "web_search_started",
         "web_search_completed", "web_search_failed",
         # #2095 P3: a shell hook ran a command (incl. silent auto-runs).
         "hook_shell_executed",
@@ -203,7 +206,8 @@ _FILTER_GROUPS: list[tuple[str, frozenset]] = [
         "loop_limit_exceeded", "phase_budget_exceeded", "budget_exceeded",
         "recall_embed_failed", "postprocessor_step_failed", "workflow_aborted",
         "phase_failed", "skill_run_failed", "control_ir_failed",
-        "web_search_failed", "normalization_error", "compaction_failed",
+        "web_fetch_failed", "web_search_failed",
+        "normalization_error", "compaction_failed",
         # #1953: a dependency abort leaving live dependents stuck — a
         # recovery-relevant signal, so it also shows under the error filter.
         "task_dependency_aborted",
@@ -380,6 +384,11 @@ def _event_hint(ev: dict) -> str:
         return url + ("…" if was_trunc else "")
     if t == "web_fetch_completed":
         return f"HTTP {d.get('status_code', '')} {d.get('content_length', '')}b"
+    if t == "web_fetch_failed":
+        err, was_trunc = _truncate_to_cells(str(d.get("error", "")), 35)
+        status = d.get("status", "")
+        status_part = f"[{status}] " if status else ""
+        return f"{status_part}{err}" + ("…" if was_trunc else "")
     if t == "web_search_started":
         query, was_trunc = _truncate_to_cells(str(d.get("query", "")), 40)
         return query + ("…" if was_trunc else "")

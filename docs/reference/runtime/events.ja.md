@@ -61,7 +61,8 @@ Reyn はすべての状態変化に対して構造化イベントを発行しま
 | `run_skill_started`、`skill_run_spawned`、`skill_run_failed` | `run_skill` op — `run_skill_started` は `skill_version_hash: str`（実行時の `skill.md` 内容の sha256 hex。`skill.md` が存在しない場合は `"unknown"`）を持つ |
 | `mcp_called`、`mcp_completed`、`mcp_failed` | MCP ツール op |
 | `mcp_server_installed` | `mcp_install` op — `name`、キー名のみ（値は含まない） |
-| `web_search_started`、`web_search_completed`、`web_search_failed`、`web_fetch_started` | 検索 op |
+| `web_search_started`、`web_search_completed`、`web_search_failed` | web_search op — `started`: `query`、`backend`; `completed`: `result_count` を追加; `failed`: `error` を追加 |
+| `web_fetch_started`、`web_fetch_completed`、`web_fetch_failed` | web_fetch op — `started`: `url`; `completed`: `url`、`status_code`、`content_length`、`extractor`; `failed`: `url`、`status`（`"timeout"` または `"error"`）、`error` |
 | `embed_progress` | `embed` op（Form B artifact 参照のみ）— バッチごとの `embedded: int`、`skipped: int` 累積カウント |
 | `recall_embed_failed` | `recall` op — embed サブ op が失敗したとき: `query`、`error` |
 | `index_dropped` | `index_drop` op — `source`、`chunks_dropped: int` |

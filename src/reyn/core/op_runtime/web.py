@@ -326,9 +326,11 @@ async def handle_web_fetch(op: WebFetchIROp, ctx: OpContext, caller: Literal["pr
                     "error": f"too many redirects (exceeded {_ssrf_guard.MAX_REDIRECTS})",
                 }
     except httpx.TimeoutException:
-        return {"kind": "web_fetch", "url": op.url, "status": "timeout",
-                "error": f"request timed out after {op.timeout}s"}
+        _timeout_msg = f"request timed out after {op.timeout}s"
+        ctx.events.emit("web_fetch_failed", url=op.url, status="timeout", error=_timeout_msg)
+        return {"kind": "web_fetch", "url": op.url, "status": "timeout", "error": _timeout_msg}
     except httpx.RequestError as exc:
+        ctx.events.emit("web_fetch_failed", url=op.url, status="error", error=str(exc))
         return {"kind": "web_fetch", "url": op.url, "status": "error", "error": str(exc)}
 
     content_type = response.headers.get("content-type", "")
