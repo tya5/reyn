@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -81,8 +82,21 @@ def _capture_new_keys(test_pattern: str) -> list[dict]:
             # it, so the scan finds nothing and silently no-ops (#2024 bug 1).
             "-s", "--tb=no", "--no-header", "-q",
         ]
+        # #2103: PYTHONPATH the subprocess to THIS worktree's src so the patcher
+        # imports the worktree's ``reyn`` (= the code under test, with the local
+        # changes that cause the rot) and NOT a global editable-install pointing at a
+        # DIFFERENT checkout. Without this the subprocess imports the install's reyn →
+        # no local change → no rot → "finds no missing keys" silently no-ops (the
+        # #1092-class wrong-import-target footgun — the scan must measure the SAME tree
+        # pytest-from-rootdir does).
+        env = {**os.environ}
+        _src = REPO_ROOT / "src"
+        if _src.is_dir():
+            env["PYTHONPATH"] = (
+                f"{_src}{os.pathsep}{env['PYTHONPATH']}" if env.get("PYTHONPATH") else str(_src)
+            )
         result = subprocess.run(
-            cmd, capture_output=True, text=True, cwd=str(REPO_ROOT)
+            cmd, capture_output=True, text=True, cwd=str(REPO_ROOT), env=env,
         )
         return _parse_missing_keys(result.stdout + result.stderr)
     finally:
