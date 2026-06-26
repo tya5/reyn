@@ -272,6 +272,18 @@ class AgentRegistry:
         # restore derives every loaded agent's rewind backend at use-time
         # (``_rewind_backends``), and the prune is disk-driven over on-disk agents — so
         # no per-construction pointer is held (it was multi-AGENT-incorrect: last-wins).
+        # #2180: the agent's Task backend is now registry-OWNED, ONE per agent, built
+        # lazily + cached here (mirrors ``_workspace_store``'s registry-owned-lazy
+        # ownership, per-agent keyed like ``_sessions``). ALL of an agent's sessions
+        # share this single instance via ``task_backend_for`` (the single construction
+        # seam), so the per-instance ``asyncio.Lock`` serialises every write to the
+        # agent-keyed ``tasks.db`` (restores the ``busy_timeout=0`` premise that N
+        # per-session connections broke — #2125) and the ``restore_to_seq`` file-swap
+        # has no sibling connection to strand. Process-lifetime for a live agent (parity
+        # with ``_state_log``/``_workspace_store``, never closed — a bounded per-process
+        # leak, called out, not silently inherited); closed + evicted on agent PURGE /
+        # rewind-drop (``_close_task_backend``); KEPT on archive (recoverable / rewind).
+        self._task_backends: "dict[str, object]" = {}
         # ADR-0038 #1544: FS+exec backend. None / name!="container" → host mode
         # (host subprocess git runner). When container, git runs in-container via
         # backend.run with the container path context (the work-tree is
@@ -669,6 +681,13 @@ class AgentRegistry:
             # runtime PITR generations (rewind-to-before-purge is intentionally
             # unsupported); the real escape hatch for a genuine delete.
             import shutil
+            # #2180: close + evict the agent's shared Task backend BEFORE the rmtree —
+            # this is the LIVE archive_agent(purge=True) teardown path (alongside
+            # _drop_agent + _purge_archived_below). Skipping it would strand a dangling
+            # connection over the deleted inode in ``_task_backends`` AND leave the cache
+            # entry, so a NEW agent reusing this name would get the stale handle and write
+            # to the wrong/deleted file (a name-reuse correctness hazard, not just a leak).
+            self._close_task_backend(name)
             shutil.rmtree(target)
             # PR12: a hard-deleted agent would leave dangling topology references,
             # so drop it from every topology (a team losing its leader / an
@@ -1386,6 +1405,9 @@ class AgentRegistry:
         (they nest under the agent dir). Best-effort, but a failure is LOGGED (not
         silently swallowed) so a stuck teardown is visible (#2114 review note)."""
         import shutil
+        # #2180: close + evict the agent's shared Task backend BEFORE rmtree so its
+        # single connection's handle on tasks.db is released ahead of the dir removal.
+        self._close_task_backend(name)
         try:
             shutil.rmtree(self._dir / name)
         except FileNotFoundError:
@@ -1536,9 +1558,10 @@ class AgentRegistry:
 
         ``purge_dir=False`` (the rewind path) defers the destructive on-disk rmtree to
         the caller, so it runs only AFTER the substrate restores succeed (#2125 atomicity
-        — a restore-failure must not leave the dir dropped). The connection-release
-        (quiesce + backend close) still happens here, because it MUST precede the
-        ``_restore_task_active`` file-swap (that is the lock fix)."""
+        — a restore-failure must not leave the dir dropped). The session is quiesced here
+        (in-flight task writes settle before teardown); #2180: the Task backend is NOT
+        closed on a session drop — it is agent-shared (one connection per agent), closed
+        only on agent teardown, so the surviving sessions keep using it."""
         await self.remove_session(name, sid, purge_dir=purge_dir, record=False)
 
     async def remove_session(
@@ -1546,22 +1569,22 @@ class AgentRegistry:
     ) -> bool:
         """#2103 S1bc: tear down a SPAWNED (non-main) session — the single teardown
         seam used by BOTH the rewind as-of-cut DROP (``_drop_session``) AND the
-        ephemeral auto-vanish. Quiesces + closes the session's per-session Task backend,
-        cancels the ``(name, sid)`` run-loop + forwarder tasks, drops it from the
-        in-memory map, and (``purge_dir``) removes its on-disk per-session state dir
-        (``state/sessions/<enc(sid)>/``). Returns True iff anything was removed.
+        ephemeral auto-vanish. Quiesces the session, cancels the ``(name, sid)`` run-loop +
+        forwarder tasks, drops it from the in-memory map, and (``purge_dir``) removes its
+        on-disk per-session state dir (``state/sessions/<enc(sid)>/``). Returns True iff
+        anything was removed.
 
-        #2125 (the differentiator: rewind-across-spawn): the per-session Task backend is a
-        SEPARATE ``sqlite3`` connection to the agent's shared ``tasks.db`` (one connection
-        per constructed session). Cancelling the run-loop WITHOUT closing that connection
-        left it open → ``_restore_task_active``'s ``restore_to_seq`` file-swap hit
-        "database is locked" (``busy_timeout=0``). So here we mirror the global-rewind
-        stop-world (``cancel_inflight`` + ``await_quiescent``, registry rewind_to 824-829 —
-        idempotent when rewind_to already quiesced; REQUIRED for the ephemeral caller,
-        which has no rewind orchestration) and then ``close()`` the backend — a
-        deterministic rollback of any open ``BEGIN IMMEDIATE`` + lock release. Closing is
-        safe because the backend is a per-session instance (not shared with the surviving
-        sessions, which keep their own connections to the same file).
+        #2180 (supersedes the #2125 per-session close): the Task backend is agent-SHARED —
+        ONE ``sqlite3`` connection per agent (registry-owned via ``task_backend_for``),
+        held by EVERY session of the agent. So this seam must NOT close it: closing on one
+        session's drop would strand every surviving sibling (use-after-close on the shared
+        connection). It only QUIESCES (``cancel_inflight`` + ``await_quiescent``, mirroring
+        the global-rewind stop-world — idempotent when rewind_to already quiesced; REQUIRED
+        for the ephemeral caller, which has no rewind orchestration) so any in-flight
+        ``BEGIN IMMEDIATE`` settles before teardown. The connection is closed only on agent
+        teardown (purge / rewind-drop, ``_close_task_backend``). With one connection ever,
+        the #2125 close-before-restore collapses: ``_restore_task_active`` file-swaps
+        through that single live connection's ``restore_to_seq``.
 
         Full teardown (rmtree) is correct: the global WAL is the durable source — the
         ``session_spawned`` create-record + the session's session_id-routed entries
@@ -1572,8 +1595,16 @@ class AgentRegistry:
         if sid == _DEFAULT_SID:
             raise ValueError("cannot remove the main session via remove_session")
         removed = False
-        # #2125: quiesce + close the per-session Task-backend connection BEFORE teardown
-        # so its SQLite lock releases ahead of any _restore_task_active file-swap.
+        # #2125: quiesce the session BEFORE teardown so any in-flight task write
+        # completes ahead of a teardown / _restore_task_active file-swap.
+        # #2180: do NOT close the Task backend here — it is now agent-SHARED (one
+        # connection per agent, registry-owned via ``task_backend_for``), so closing it
+        # on one session's drop would strand every SURVIVING sibling session of the same
+        # agent (use-after-close on the shared connection). The connection is closed only
+        # on agent teardown (PURGE / rewind-drop) via ``_close_task_backend``. With one
+        # connection ever, the #2125 close-before-restore collapses: ``_restore_task_active``
+        # file-swaps through that single live connection's ``restore_to_seq`` (close →
+        # copy → reopen on the same instance) — no sibling connection to release first.
         session = self._peek_session(name, sid)
         if session is not None:
             cancel_inflight = getattr(session, "cancel_inflight", None)
@@ -1582,10 +1613,6 @@ class AgentRegistry:
             quiesce = getattr(session, "await_quiescent", None)
             if callable(quiesce):
                 await quiesce()
-            tb = getattr(session, "task_backend", None)
-            close = getattr(tb, "close", None) if tb is not None else None
-            if callable(close):
-                close()
         for task_dict in (self._tasks, self._forward_tasks):
             task = task_dict.pop((name, sid), None)
             if task is not None:
@@ -1613,6 +1640,47 @@ class AgentRegistry:
                 "session_vanished", entity_kind="session", name=name, sid=sid,
             )
         return removed
+
+    def task_backend_for(self, name: str) -> "object":
+        """#2180: the agent's SHARED Task backend — ONE per agent, built lazily + cached.
+
+        The SINGLE construction seam for every session of an agent: chat / stdio-MCP
+        session construction routes ``task_backend=`` through here (NOT a direct
+        ``create_task_backend`` / ``SqliteTaskBackend`` over the agent-keyed path — that
+        would open an N+1 connection and silently reintroduce the #2125 cross-connection
+        write race; #2180 removed the per-session helper that did so). Two
+        sessions of one agent therefore get the SAME instance (``is`` identity), so the
+        backend's per-instance ``asyncio.Lock`` serialises ALL of that agent's writes to
+        the agent-keyed ``tasks.db`` and the ``restore_to_seq`` file-swap is the only
+        connection touching the file. Path is registry-relative (``self._dir`` =
+        ``project_root/.reyn/agents``) — agent-keyed, consistent with the agent's other
+        per-agent substrate dirs (snapshots, task-generations). Lazy import avoids an
+        import cycle (task.factory → task.sqlite_backend)."""
+        tb = self._task_backends.get(name)
+        if tb is None:
+            from reyn.task.factory import create_task_backend  # noqa: PLC0415
+            path = self._dir / name / "state" / "tasks.db"
+            tb = create_task_backend("sqlite", path=str(path))
+            self._task_backends[name] = tb
+        return tb
+
+    def _close_task_backend(self, name: str) -> None:
+        """#2180: close + evict the agent's shared Task backend — the agent-teardown
+        half of the lifecycle (PURGE / rewind-drop, NOT last-session-drop, since the
+        backend is agent-shared). Releases the single connection's SQLite lock BEFORE
+        the agent dir is rmtree'd (so the file handle is gone first) and drops the dict
+        entry so a later same-name agent re-builds a fresh connection rather than
+        re-using a closed handle. Best-effort: a close failure is logged, never raised
+        into a teardown/rewind path."""
+        tb = self._task_backends.pop(name, None)
+        if tb is None:
+            return
+        close = getattr(tb, "close", None)
+        if callable(close):
+            try:
+                close()
+            except Exception as e:  # noqa: BLE001 — best-effort; never raise into teardown
+                logger.warning("#2180: close of task backend for agent %r failed: %s", name, e)
 
     def _rewind_backends(self) -> "list[object]":
         """#2128: every LOADED agent's rewind-participating Task backend — ONE per agent.
@@ -1725,9 +1793,10 @@ class AgentRegistry:
                 spawned_after_cut = sess_seq is not None and sess_seq > drop_cut
                 vanished_by_cut = van_seq is not None and van_seq <= drop_cut
                 if spawned_after_cut or vanished_by_cut:
-                    # #2125: detach now (quiesce + close the Task-backend connection
-                    # so _restore_task_active doesn't hit "database is locked"); defer
-                    # the destructive rmtree until the restores below succeed.
+                    # #2125/#2180: detach now (quiesce in-flight writes; the agent-shared
+                    # Task backend is NOT closed on a session drop — one connection per
+                    # agent, so _restore_task_active file-swaps through that single live
+                    # connection); defer the destructive rmtree until the restores succeed.
                     await self._drop_session(name, sid, purge_dir=False)
                     deferred_session_purges.append((name, sid))
                     continue
@@ -1995,6 +2064,10 @@ class AgentRegistry:
                 seq = self._archived_seq(name)
                 if seq is None or seq >= floor:
                     continue
+                # #2180: close + evict the agent's shared Task backend before the hard
+                # rmtree (the archive KEPT it open; purge is the agent-teardown that
+                # closes it). Releases the connection's lock ahead of the dir removal.
+                self._close_task_backend(name)
                 shutil.rmtree(self._dir / name, ignore_errors=True)
                 # Now a permanent hard-delete → drop the (previously preserved)
                 # topology membership so no dangling reference is left behind.
