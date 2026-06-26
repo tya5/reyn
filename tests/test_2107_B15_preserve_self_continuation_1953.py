@@ -31,7 +31,8 @@ from reyn.core.op_runtime import task as taskmod
 from reyn.hooks.dispatcher import HOOK_INBOX_KIND
 from reyn.runtime.services.task_wake import WAKE_READY_KIND
 from reyn.runtime.session import Session
-from reyn.task import InMemoryTaskBackend, TaskRequesterKind
+from reyn.task import InMemoryTaskBackend
+from reyn.task.ref import is_task_ref, make_task_ref
 from tests._support.router_host_adapter import make_adapter
 
 
@@ -62,8 +63,11 @@ async def test_hook_self_continuation_create_is_owned_by_executing_task(tmp_path
     s = _session(tmp_path)
     b = InMemoryTaskBackend()
 
+    # #2186: the executing task's id must be a home-addressable task-ref so the derived
+    # sub-task requester is self-identifying as task-owned (is_task_ref True).
+    t_ref = make_task_ref("main")
     # the session is executing task-as-request T (set by the task_ready wake).
-    s._stamp_execution_context(WAKE_READY_KIND, {"meta": {"task_id": "T-exec"}})
+    s._stamp_execution_context(WAKE_READY_KIND, {"meta": {"task_id": t_ref}})
     # the capped turn ends → a hook self-continuation resumes the SAME execution.
     s._stamp_execution_context(HOOK_INBOX_KIND, {"text": "continue working on T"})
 
@@ -73,8 +77,8 @@ async def test_hook_self_continuation_create_is_owned_by_executing_task(tmp_path
     ctx = adapter.make_router_op_context()
     res = await taskmod._create(_create_op("sub-on-hook"), ctx, "control_ir")
     sub = await b.get(res["task"]["task_id"])
-    assert sub.requester == "T-exec"  # owned by T, not orphaned (RED if hook resets)
-    assert sub.requester_kind is TaskRequesterKind.TASK
+    assert sub.requester == t_ref  # owned by T, not orphaned (RED if hook resets)
+    assert is_task_ref(sub.requester)
 
 
 @pytest.mark.asyncio

@@ -50,7 +50,8 @@ from reyn.runtime.services.task_wake import (
     TaskWaker,
 )
 from reyn.runtime.session import Session
-from reyn.task import InMemoryTaskBackend, SqliteTaskBackend, Task, TaskRequesterKind, TaskState
+from reyn.task import InMemoryTaskBackend, SqliteTaskBackend, Task, TaskState
+from reyn.task.ref import is_task_ref, make_task_ref
 
 
 def _make_registry(tmp_path: Path) -> AgentRegistry:
@@ -101,13 +102,14 @@ async def test_subtask_create_derives_task_ownership_from_execution_context():
     b = InMemoryTaskBackend()
 
     # executing task-as-request T (no waker → no born-startable wake noise).
+    t_ref = make_task_ref("executor")  # home-addressable task-ref for the executing task
     res_sub = await taskmod._create(
-        _create_op("sub"), _ctx(b, session_id="executor", current_task_id="T-id"), "control_ir")
+        _create_op("sub"), _ctx(b, session_id="executor", current_task_id=t_ref), "control_ir")
     assert res_sub["status"] == "ok"
     sub = await b.get(res_sub["task"]["task_id"])
-    # ownership = the executing task, kind=task (the live derivation, not the caller).
-    assert sub.requester == "T-id"
-    assert sub.requester_kind is TaskRequesterKind.TASK
+    # ownership = the executing task, self-identifying as task-owned via the ref form.
+    assert sub.requester == t_ref
+    assert is_task_ref(sub.requester)
     # assignee is still the EXECUTOR SESSION (not the task id — the single-writer CAS).
     assert sub.assignee == "executor"
 
@@ -116,7 +118,7 @@ async def test_subtask_create_derives_task_ownership_from_execution_context():
         _create_op("top"), _ctx(b, session_id="executor", current_task_id=None), "control_ir")
     top = await b.get(res_top["task"]["task_id"])
     assert top.requester == "executor"
-    assert top.requester_kind is TaskRequesterKind.SESSION
+    assert not is_task_ref(top.requester)
 
 
 @pytest.mark.asyncio
@@ -134,16 +136,19 @@ async def test_failed_subtask_recovery_wakes_managing_session_full_live_path(tmp
     b = InMemoryTaskBackend()
 
     # T = the task-as-request, assigned to (executed by) the live managing session.
-    T = Task(task_id="T-req", name="T", assignee="main", requester="a2a:client",
+    # #2186: T's task_id is a home-addressable task-ref so U's requester (= T's id) is
+    # self-identifying as task-owned (is_task_ref True) and the recovery resolves it.
+    t_ref = make_task_ref("main")
+    T = Task(task_id=t_ref, name="T", assignee="main", requester="a2a:client",
              status=TaskState.IN_PROGRESS)
     await b.create(T)
 
     # U = a sub-task created WHILE executing T → owned by T via the live create-path.
     res_u = await taskmod._create(
-        _create_op("U"), _ctx(b, session_id="worker", current_task_id="T-req"), "control_ir")
+        _create_op("U"), _ctx(b, session_id="worker", current_task_id=t_ref), "control_ir")
     u_id = res_u["task"]["task_id"]
     u = await b.get(u_id)
-    assert u.requester == "T-req" and u.requester_kind is TaskRequesterKind.TASK  # live value
+    assert u.requester == t_ref and is_task_ref(u.requester)  # live value, self-identifying
 
     # V depends on U (a still-alive dependent), then U fails → recovery must fire.
     await taskmod._create(
@@ -220,20 +225,3 @@ async def test_adapter_builder_threads_current_task_id_live_router_path():
     assert ctx_none.current_task_id is None
 
 
-@pytest.mark.asyncio
-async def test_requester_kind_task_round_trips_through_sqlite(tmp_path):
-    """Tier 2: the NON-DEFAULT requester_kind=task survives a sqlite set→reload→get
-    (a default 'session' round-trip would pass trivially even if the column were
-    ignored — this proves persistence)."""
-    db = tmp_path / "tasks.db"
-    b = SqliteTaskBackend(db)
-    await b.create(Task(task_id="owned", name="owned", assignee="s", requester="T-owner",
-                        requester_kind=TaskRequesterKind.TASK))
-    b.close()
-
-    reopened = SqliteTaskBackend(db)
-    got = await reopened.get("owned")
-    assert got is not None
-    assert got.requester == "T-owner"
-    assert got.requester_kind is TaskRequesterKind.TASK
-    reopened.close()

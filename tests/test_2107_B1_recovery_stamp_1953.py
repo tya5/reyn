@@ -33,7 +33,8 @@ from reyn.runtime.profile import AgentProfile
 from reyn.runtime.registry import AgentRegistry
 from reyn.runtime.services.task_wake import WAKE_REQUESTER_KIND, TaskWaker
 from reyn.runtime.session import Session
-from reyn.task import InMemoryTaskBackend, Task, TaskRequesterKind, TaskState
+from reyn.task import InMemoryTaskBackend, Task, TaskState
+from reyn.task.ref import is_task_ref, make_task_ref
 from tests._support.router_host_adapter import make_adapter
 
 
@@ -88,13 +89,16 @@ async def test_recovery_create_on_task_as_request_is_owned_by_it_full_live_path(
     b = InMemoryTaskBackend()
 
     # T = the task-as-request, executed by the managing session.
-    await b.create(Task(task_id="T-req", name="T", assignee="main", requester="a2a:client",
+    # #2186: T's task_id is a home-addressable task-ref so U's requester is self-identifying
+    # as task-owned (is_task_ref True) and the recovery resolves T's assignee.
+    t_ref = make_task_ref("main")
+    await b.create(Task(task_id=t_ref, name="T", assignee="main", requester="a2a:client",
                         status=TaskState.IN_PROGRESS))
     # U owned by T (live create-path), a dependent V, then U fails.
     res_u = await taskmod._create(
-        _create_op("U"), _ctx(b, session_id="worker", current_task_id="T-req"), "control_ir")
+        _create_op("U"), _ctx(b, session_id="worker", current_task_id=t_ref), "control_ir")
     u_id = res_u["task"]["task_id"]
-    assert (await b.get(u_id)).requester == "T-req"  # live ownership, not hand-fed
+    assert (await b.get(u_id)).requester == t_ref  # live ownership, not hand-fed
     await taskmod._create(_create_op("V", deps=[u_id]), _ctx(b, session_id="worker"), "control_ir")
     await b.update_status(u_id, TaskState.FAILED, caller_session_id="worker")
 
@@ -105,7 +109,7 @@ async def test_recovery_create_on_task_as_request_is_owned_by_it_full_live_path(
             _ctx(b, waker=waker), b, await b.get(u_id), disposition="failed")
         kind, payload = managing.inbox.get_nowait()
         assert kind == WAKE_REQUESTER_KIND
-        assert payload["meta"]["managing_task_id"] == "T-req"  # B1: the wake carries T
+        assert payload["meta"]["managing_task_id"] == t_ref  # B1: the wake carries T
 
         # the managing session enters its recovery turn → stamps current=T (as
         # run_one_iteration does), then creates a REPLACEMENT through the REAL adapter
@@ -116,8 +120,8 @@ async def test_recovery_create_on_task_as_request_is_owned_by_it_full_live_path(
         rctx = adapter.make_router_op_context()
         res_rep = await taskmod._create(_create_op("U-replacement"), rctx, "control_ir")
         replacement = await b.get(res_rep["task"]["task_id"])
-        assert replacement.requester == "T-req"  # the recovery-create is owned by T
-        assert replacement.requester_kind is TaskRequesterKind.TASK
+        assert replacement.requester == t_ref  # the recovery-create is owned by T
+        assert is_task_ref(replacement.requester)
     finally:
         await _cancel_running(reg)
 
@@ -152,6 +156,6 @@ async def test_session_requester_recovery_stays_session_owned(tmp_path):
                                     current_task_id=managing._current_task_id), "control_ir")
         fix = await b.get(res["task"]["task_id"])
         assert fix.requester == "main"
-        assert fix.requester_kind is TaskRequesterKind.SESSION
+        assert not is_task_ref(fix.requester)
     finally:
         await _cancel_running(reg)

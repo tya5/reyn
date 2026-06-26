@@ -26,7 +26,8 @@ from types import SimpleNamespace
 import pytest
 
 from reyn.core.op_runtime import task as taskmod
-from reyn.task import InMemoryTaskBackend, SqliteTaskBackend, Task, TaskRequesterKind, TaskState
+from reyn.task import InMemoryTaskBackend, SqliteTaskBackend, Task, TaskState
+from reyn.task.ref import is_task_ref, make_task_ref
 
 
 def _create_op(name, *, deps=None):
@@ -62,25 +63,28 @@ async def test_ownership_cascade_aborts_owned_subtasks_recursively(backend):
     """Tier 2: §18 — aborting a task-as-request X archives its whole OWNERSHIP subtree
     recursively (X → owned U → owned-of-U W, depth 2), via the live create-path's
     requester edges. RED if the ownership BFS edge is absent — U/W would survive."""
-    await backend.create(Task(task_id="X", name="X", assignee="sX", requester="client",
+    # #2186: X's task_id is a home-addressable task-ref so the cascade's is_task_ref
+    # check on owned sub-tasks' requester fields recognises X as the task-owner.
+    x_ref = make_task_ref("sX")
+    await backend.create(Task(task_id=x_ref, name="X", assignee="sX", requester="client",
                               status=TaskState.IN_PROGRESS))
     res_u = await taskmod._create(
-        _create_op("U"), _ctx(backend, session_id="sX", current_task_id="X"), "control_ir")
+        _create_op("U"), _ctx(backend, session_id="sX", current_task_id=x_ref), "control_ir")
     u_id = res_u["task"]["task_id"]
     res_w = await taskmod._create(
         _create_op("W"), _ctx(backend, session_id="sU", current_task_id=u_id), "control_ir")
     w_id = res_w["task"]["task_id"]
 
     # live ownership: U is owned by X via the requester edge (the sole decomposition
-    # relation now — parent_id was removed in §16 slice C).
+    # relation now — parent_id was removed in §16 slice C). Self-identifying: is_task_ref.
     u = await backend.get(u_id)
-    assert u.requester == "X" and u.requester_kind is TaskRequesterKind.TASK
+    assert u.requester == x_ref and is_task_ref(u.requester)
     assert (await backend.get(w_id)).requester == u_id
 
-    aborted = await backend.abort("X")
+    aborted = await backend.abort(x_ref)
     ids = {t.task_id for t in aborted}
-    assert {"X", u_id, w_id} <= ids  # the whole ownership subtree, recursively
-    for tid in ("X", u_id, w_id):
+    assert {x_ref, u_id, w_id} <= ids  # the whole ownership subtree, recursively
+    for tid in (x_ref, u_id, w_id):
         assert (await backend.get(tid)).status is TaskState.ARCHIVED
 
 
@@ -91,15 +95,22 @@ async def test_collision_guard_session_requester_is_not_cascaded(backend):
     ``requester_kind==task`` guard disambiguates the uuid collision (a spawned-session
     uuid can equal a task-id uuid — the risk requester_kind exists for). RED if the
     gather drops the marker guard (bare requester==X → S wrongly archived)."""
-    # X = the aborted task; S = a SESSION-requester whose requester string == X's id.
-    await backend.create(Task(task_id="collide", name="X", assignee="sX", requester="root",
+    # X = the aborted task (a task-ref id); S = a task whose requester string is the BARE
+    # label "collide" (a session routing-key — not a task-ref). In the #2186 model the
+    # cascade is collision-safe BY CONSTRUCTION: a task-ref pid cannot be matched by a
+    # bare-string requester (is_task_ref("collide") is False / the sqlite backend's WHERE
+    # requester=? can only match a task-ref pid via an exact string — a bare "collide"
+    # cannot equal a task-ref). S is NOT cascaded because its requester is not a task-ref.
+    x_ref = make_task_ref("sX")
+    await backend.create(Task(task_id=x_ref, name="X", assignee="sX", requester="root",
                               status=TaskState.IN_PROGRESS))
+    # S's requester is the BARE string "collide" (a session id, not a task-ref).
+    # Collision test: "collide" ≠ x_ref, so S is not cascaded (no match in the BFS).
     await backend.create(Task(task_id="S", name="S", assignee="sS", requester="collide",
-                              requester_kind=TaskRequesterKind.SESSION,
                               status=TaskState.IN_PROGRESS))
 
-    aborted = await backend.abort("collide")
+    aborted = await backend.abort(x_ref)
     ids = {t.task_id for t in aborted}
-    assert "collide" in ids
-    assert "S" not in ids  # the marker guard — NOT cascaded despite the id collision
+    assert x_ref in ids
+    assert "S" not in ids  # the marker guard — NOT cascaded (bare requester ≠ task-ref pid)
     assert (await backend.get("S")).status is TaskState.IN_PROGRESS  # survived
