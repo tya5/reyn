@@ -91,6 +91,9 @@ class SkillRegistry:
         # In-memory cache: run_id → SkillSnapshot. Populated on start() /
         # load_active(); cleared on complete().
         self._snapshots: dict[str, SkillSnapshot] = {}
+        # #2068: run_ids whose skill_end already fired this run-SEGMENT (exactly-once
+        # guard; re-armed by start() on each (re)entry).
+        self._ended_run_ids: set[str] = set()
 
     async def _wal_append(self, kind: str, **fields):
         """FP-0043 Stage 5: the single WAL-append chokepoint for this registry.
@@ -185,6 +188,10 @@ class SkillRegistry:
             snap.last_phase_applied_seq = seq
         self._save(snap)
         self._snapshots[run_id] = snap
+        # #2068: a (re)entry begins a fresh run-SEGMENT → re-arm the skill_end
+        # exactly-once guard so this segment's eventual exit fires skill_end (resume
+        # re-enters start(), so each segment gets a matched skill_start/skill_end pair).
+        self._ended_run_ids.discard(run_id)
         # #1800 slice 5c: skill_start lifecycle hooks — fired AFTER the
         # skill_started WAL event (mirrors 5b's emit-then-dispatch). None
         # dispatcher (direct/test construction or no hooks) → no-op.
@@ -274,18 +281,13 @@ class SkillRegistry:
                 agent=self._agent_name,
                 run_id=run_id,
             )
-        # #1800 slice 5c: skill_end lifecycle hooks — after the skill_completed /
-        # skill_discarded WAL event, BEFORE the snapshot teardown so the ctx is
-        # valid. None dispatcher → no-op. NOTE: an interrupted/errored skill run
-        # emits ``skill_run_interrupted`` and BYPASSES complete() (run_orchestrator),
-        # so skill_end fires for success / discarded / WorkflowAborted only — the
-        # interrupt-branch asymmetry is a tracked 5c follow-up (firing skill_end
-        # there needs the dispatcher at the orchestrator branch, a broader change).
-        if self._hook_dispatcher is not None:
-            await self._hook_dispatcher.dispatch(
-                "skill_end",
-                {"point": "skill_end", "run_id": run_id, "status": status},
-            )
+        # #1800 slice 5c / #2068: skill_end lifecycle hook — after the
+        # skill_completed/skill_discarded WAL event, BEFORE the snapshot teardown so the
+        # ctx is valid. Guarded EXACTLY-ONCE per run-segment (a discard pre-fires it before
+        # cancelling the run, so the cancel-unwind's interrupt() defers — see
+        # _dispatch_skill_end + mark_skill_ended). #2068 also fires skill_end on the
+        # interrupt/error paths via interrupt(), closing the start↔end asymmetry.
+        await self._dispatch_skill_end(run_id, status)
         snap_path = self._skills_dir / f"{run_id}.snapshot.json"
         try:
             snap_path.unlink(missing_ok=True)
@@ -302,6 +304,46 @@ class SkillRegistry:
         llm_result_ref.cleanup_for_run(self._state_dir, run_id)
         self._snapshots.pop(run_id, None)
         await self._fire_truncate_hook(trigger=kind)
+
+    # ── #2068: skill_end on EVERY exit (exactly-once per run-segment) ──────
+
+    async def _dispatch_skill_end(self, run_id: str, status: str) -> None:
+        """#2068: fire the ``skill_end`` lifecycle hook EXACTLY ONCE per run-segment.
+
+        ``skill_start`` fires on every (re)entry to ``start()`` (incl. resume), so the
+        symmetric ``skill_end`` fires once per orchestrator run-SEGMENT (entry→exit), on
+        EVERY exit — completion (``complete()``) AND interrupt/error (``interrupt()``).
+        The ``_ended_run_ids`` guard makes it exactly-once within a segment: ``start()``
+        re-arms (discards the run_id), so the next segment fires fresh; a second dispatch
+        in the same segment (e.g. a discard pre-fires ``skill_end`` then the cancel-unwind
+        calls ``interrupt()``) is suppressed. None dispatcher → no-op (the WAL/teardown in
+        the callers still run)."""
+        if run_id in self._ended_run_ids:
+            return
+        self._ended_run_ids.add(run_id)
+        if self._hook_dispatcher is not None:
+            await self._hook_dispatcher.dispatch(
+                "skill_end",
+                {"point": "skill_end", "run_id": run_id, "status": status},
+            )
+
+    async def mark_skill_ended(self, run_id: str, status: str) -> None:
+        """#2068: fire the guarded ``skill_end`` hook WITHOUT ``complete()``'s WAL +
+        snapshot teardown. Used by ``/skill discard`` to fire ``skill_end(status=
+        "discarded")`` + arm the guard BEFORE cancelling the running task — so the
+        cancel-unwind's ``interrupt()`` defers (the hook would otherwise win with
+        "interrupted"), while ``complete(discarded)``'s WAL+unlink still run AFTER the
+        cancel (no re-snapshot race)."""
+        await self._dispatch_skill_end(run_id, status)
+
+    async def interrupt(self, run_id: str) -> None:
+        """#2068: fire ``skill_end(status="interrupted")`` for an interrupted/errored run
+        — the path that previously emitted only ``skill_run_interrupted`` and BYPASSED
+        ``complete()``, so ``skill_end`` never fired (the start↔end asymmetry). Fires the
+        HOOK ONLY: NO ``skill_completed`` WAL (the run stays interrupted) and NO snapshot
+        teardown (``will_resume`` → the snapshot MUST be preserved for the resume-entry).
+        Guarded exactly-once (a discard that pre-fired ``skill_end`` suppresses this)."""
+        await self._dispatch_skill_end(run_id, "interrupted")
 
     # ── intervention await tracking (R-D16) ──────────────────────────────
 
