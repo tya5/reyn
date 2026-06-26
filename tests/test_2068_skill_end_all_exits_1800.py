@@ -11,7 +11,9 @@ Real SkillRegistry + a recording HookDispatcher (the injected seam; no mocks).
 """
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -117,3 +119,53 @@ async def test_start_re_arms_guard_per_segment(tmp_path):
     await reg.start(run_id="r1", skill_name="s", skill_input={})
     await reg.complete(run_id="r1", status="completed")
     assert rec.points == ["skill_start", "skill_end", "skill_start", "skill_end"]
+
+
+@pytest.mark.asyncio
+async def test_discard_handler_end_to_end_fires_one_skill_end_discarded(tmp_path, monkeypatch):
+    """Tier 2: (LOAD-BEARING, handler-level) the REAL /skill discard --force handler, with a
+    RUNNING task whose cancel-unwind finally fires registry.interrupt() (as the orchestrator
+    does), produces EXACTLY ONE skill_end with status="discarded". This exercises the
+    handler's mark-BEFORE-cancel ORDERING against the live cancel-unwind — RED if
+    mark_skill_ended is moved after task.cancel() (the unwind's interrupt() would win with
+    "interrupted"). The registry-API unit test alone would NOT catch that reorder."""
+    from reyn.interfaces.slash import skill as slash_skill
+
+    rec = _RecordingDispatcher()
+    reg = _registry(tmp_path, rec)
+    run_id = "rdisc"
+    await reg.start(run_id=run_id, skill_name="s", skill_input={})
+
+    # a real running task whose finally fires registry.interrupt() on cancel — the exact
+    # cancel-unwind behaviour of run_orchestrator's finally (verified: it calls
+    # registry.interrupt(run_id)). Blocks until cancelled.
+    async def _running_skill() -> None:
+        try:
+            await asyncio.Event().wait()
+        finally:
+            await reg.interrupt(run_id=run_id)
+
+    task = asyncio.ensure_future(_running_skill())
+    await asyncio.sleep(0)  # let it reach the blocked await
+
+    session = SimpleNamespace(
+        get_skill_registry=lambda: reg,
+        running_skills={run_id: task},
+        running_skills_started_at={run_id: 0.0},
+        running_skills_chain={},
+        _drop_interventions_for_run=lambda _rid: None,
+        _registry=None,
+        agent_name="a",
+    )
+    # reply/reply_error are output-only; stub to no-op async (real callables, not mocks).
+    async def _noop_reply(*_a, **_k) -> None:
+        return None
+    monkeypatch.setattr(slash_skill, "reply", _noop_reply)
+    monkeypatch.setattr(slash_skill, "reply_error", _noop_reply)
+
+    await slash_skill._discard_skill_run(session, f"{run_id} --force")
+
+    assert rec.points.count("skill_end") == 1, "exactly one skill_end across the discard"
+    assert rec.statuses() == ["discarded"], (
+        "the user-disposition must win — NOT 'interrupted' from the cancel-unwind"
+    )
