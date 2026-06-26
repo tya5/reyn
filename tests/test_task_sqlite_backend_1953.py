@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import pytest
 
-from reyn.task import SqliteTaskBackend, Task, TaskOrigin, TaskRequesterKind, TaskState
+from reyn.task import SqliteTaskBackend, Task, TaskOrigin, TaskState
 
 
 def _db(tmp_path) -> str:
@@ -134,10 +134,8 @@ async def test_abort_down_cascade_and_sibling_intact(tmp_path):
     backend = SqliteTaskBackend(_db(tmp_path))
     await backend.create(Task(task_id="p", name="p", assignee="A", requester="R"))
     # c1 owned by p, c2 owned by c1 (the recursive-request ownership edge).
-    await backend.create(Task(task_id="c1", name="c1", assignee="A", requester="p",
-                              requester_kind=TaskRequesterKind.TASK))
-    await backend.create(Task(task_id="c2", name="c2", assignee="A", requester="c1",
-                              requester_kind=TaskRequesterKind.TASK))
+    await backend.create(Task(task_id="c1", name="c1", assignee="A", requester="p"))
+    await backend.create(Task(task_id="c2", name="c2", assignee="A", requester="c1"))
     # an unrelated task owned by the SAME assignee session A (1:N) — must survive.
     await backend.create(Task(task_id="sib", name="sib", assignee="A", requester="R"))
 

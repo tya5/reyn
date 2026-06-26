@@ -164,28 +164,31 @@ async def test_abort_emits_disposition_event_per_aborted_task():
     5) routes origin=external to the external (webhook) channel. Falsification (d):
     each aborted task's event carries the correct requester + origin."""
     from reyn.core.events.events import EventLog
-    from reyn.task import InMemoryTaskBackend, Task, TaskOrigin, TaskRequesterKind
+    from reyn.task import InMemoryTaskBackend, Task, TaskOrigin
+    from reyn.task.ref import make_task_ref
 
     backend = InMemoryTaskBackend()
     # external root P (origin=external, persistent external requester X) that OWNS an
-    # internal sub-task C (requester=p, the §16 ownership edge — parent_id removed in
-    # slice C) — abort P cascades to C; both get a disposition event.
-    await backend.create(Task(task_id="p", name="p", assignee="A", requester="X",
+    # internal sub-task C — the §16 ownership edge is ``C.requester == P`` where P is a
+    # home-addressable task-ref (#2186: ownership is self-identifying via the ref form,
+    # no requester_kind). abort P cascades to C; both get a disposition event.
+    p = make_task_ref("A")
+    c = make_task_ref("A")
+    await backend.create(Task(task_id=p, name="p", assignee="A", requester="X",
                               origin=TaskOrigin.EXTERNAL))
-    await backend.create(Task(task_id="c", name="c", assignee="A", requester="p",
-                              requester_kind=TaskRequesterKind.TASK,
+    await backend.create(Task(task_id=c, name="c", assignee="A", requester=p,
                               origin=TaskOrigin.SELF))
     events = EventLog()
     ctx = SimpleNamespace(task_backend=backend, session_id="X", agent_id="x", events=events)
 
-    res = await taskmod._abort(SimpleNamespace(task_id="p", reason=None), ctx, "control_ir")
+    res = await taskmod._abort(SimpleNamespace(task_id=p, reason=None), ctx, "control_ir")
     assert res["status"] == "ok"
 
     disp = {e.data["task_id"]: e.data for e in events.all() if e.type == "task_disposition"}
     # RED if a cascade-aborted task is missing an event, or origin/requester wrong.
-    assert set(disp) == {"p", "c"}
-    assert disp["p"]["origin"] == "external" and disp["p"]["requester"] == "X"
-    assert disp["c"]["origin"] == "self" and disp["c"]["requester"] == "p"
+    assert set(disp) == {p, c}
+    assert disp[p]["origin"] == "external" and disp[p]["requester"] == "X"
+    assert disp[c]["origin"] == "self" and disp[c]["requester"] == p
     assert all(d["disposition"] == "aborted" for d in disp.values())
 
 

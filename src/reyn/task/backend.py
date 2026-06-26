@@ -197,6 +197,8 @@ class InMemoryTaskBackend:
         self._predicates: dict[str, str] = {}
         self._comments: dict[str, list[dict]] = {}
         self._comment_seq = 0
+        # #2186: cross-ledger reverse-reference markers (local_task_id, remote_ref, kind).
+        self._remote_refs: set[tuple[str, str, str]] = set()
 
     def _deps_of(self, node: str) -> list[str]:
         t = self._tasks.get(node)
@@ -322,6 +324,40 @@ class InMemoryTaskBackend:
     async def dependents(self, task_id: str) -> list[Task]:
         """Tasks that depend ON ``task_id`` (reverse edge lookup, §13)."""
         return [t for t in self._tasks.values() if task_id in t.deps]
+
+    # ── #2186 cross-ledger reverse-reference markers (sibling of the sqlite backend) ──
+
+    async def add_remote_ref(
+        self, local_task_id: str, remote_ref: str, kind: str, *, durable: bool = True,
+    ) -> None:
+        """#2186: record a cross-ledger reverse-reference marker. ``durable`` is a no-op
+        here — the in-memory backend has no persistence (the R1 ordering barrier is moot
+        without a crash surface), so it only records the marker."""
+        self._remote_refs.add((local_task_id, remote_ref, kind))
+
+    async def remote_refs(self, local_task_id: str, kind: str) -> list[str]:
+        """#2186: the cross-ledger related refs of ``kind`` ('dependent' | 'child')."""
+        return [r for (lid, r, k) in self._remote_refs
+                if lid == local_task_id and k == kind]
+
+    async def drop_remote_ref(self, local_task_id: str, remote_ref: str, kind: str) -> None:
+        """#2186: drop a (consumed / orphaned) cross-ledger reverse-marker — the wake /
+        abort-time self-heal (strict zero-orphan)."""
+        self._remote_refs.discard((local_task_id, remote_ref, kind))
+
+    async def add_remote_dependency(self, task_id: str, depends_on: str) -> "Task | None":
+        """#2186: record a CROSS-LEDGER forward dep edge (target in another ledger) without
+        the local existence / cycle check; the dependent BLOCKS (the remote dep is not
+        known-completed) until the cross-ledger completion removes the edge."""
+        task = self._tasks.get(task_id)
+        if task is None:
+            return None
+        if depends_on not in task.deps:
+            task.deps.append(depends_on)
+        if task.status in (TaskState.PENDING, TaskState.READY, TaskState.BLOCKED):
+            task.status = TaskState.BLOCKED
+        task.updated_at = _now_iso()
+        return task
 
     async def recompute_readiness(self, completed_task_id: str) -> list[Task]:
         # OS-authority (OQ-3): re-derive readiness for each dependent of the just-

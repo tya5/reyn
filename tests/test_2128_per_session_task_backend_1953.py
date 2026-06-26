@@ -90,24 +90,32 @@ async def test_restore_touches_every_loaded_agents_backend(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_rewind_backends_one_per_agent(tmp_path):
-    """Tier 2: `_rewind_backends` returns ONE backend per loaded agent (the tasks.db is
-    agent-keyed/shared across an agent's sessions, so restoring it N times would redundantly
-    file-swap the shared db + risk the #2125 cross-connection lock)."""
+async def test_rewind_backends_one_per_loaded_session(tmp_path):
+    """Tier 2: #2186 supersedes the #2128 one-per-AGENT model — `_rewind_backends` returns
+    one backend per LOADED SESSION. The tasks.db is now per-SESSION (a task lives in its
+    assignee session's own ledger), so each session's ledger is its own rewind substrate
+    and must be restored independently (per-session FILES dissolve the #2125 lock — no
+    shared-file double-swap). De-duplicated by backend IDENTITY: a session that resolves a
+    sibling's ledger via the cross-ledger resolver shares the instance → restored once."""
     reg = _make_registry(tmp_path)
-    back_a = create_task_backend("sqlite", path=str(tmp_path / "a.db"))
-    back_a2 = create_task_backend("sqlite", path=str(tmp_path / "a.db"))  # 2nd session, same agent
+    # distinct per-session ledgers (one per session, distinct files)
+    back_main = create_task_backend("sqlite", path=str(tmp_path / "main.db"))
+    back_s1 = create_task_backend("sqlite", path=str(tmp_path / "s1.db"))
     back_b = create_task_backend("sqlite", path=str(tmp_path / "b.db"))
     reg._sessions["agenta"] = {
-        "main": SimpleNamespace(task_backend=back_a),
-        "s1": SimpleNamespace(task_backend=back_a2),
+        "main": SimpleNamespace(task_backend=back_main),
+        "s1": SimpleNamespace(task_backend=back_s1),
     }
     reg._sessions["agentb"] = {"main": SimpleNamespace(task_backend=back_b)}
     backs = reg._rewind_backends()
-    # one per AGENT, not one per session: agentb's backend present, and EXACTLY ONE of
-    # agenta's two same-agent session backends (not both → no redundant double file-swap).
-    assert back_b in backs
-    assert (back_a in backs) != (back_a2 in backs)
+    # one per loaded SESSION — every distinct per-session ledger is present (RED on the old
+    # one-per-agent break, which would drop agenta's second session ledger).
+    assert back_main in backs and back_s1 in backs and back_b in backs
+    # id-dedup: the SAME instance shared across two sessions (resolver-shared) is restored
+    # ONCE (no redundant double file-swap of the one connection).
+    reg._sessions["agentc"] = {"main": SimpleNamespace(task_backend=back_b)}
+    deduped = reg._rewind_backends()
+    assert [b for b in deduped if b is back_b] == [back_b]  # appears exactly once
 
 
 # ── prune: covers UNLOADED agents (the Q4 unbounded-growth fix) ──────────────────────
