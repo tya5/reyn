@@ -18,18 +18,16 @@ Still deferred: abort UP-notify (2b-2), cycle-check (slice 6), predicate-eval
 """
 from __future__ import annotations
 
-import uuid
-
 from reyn.task import (
     InMemoryTaskBackend,
     Task,
     TaskCycleError,
     TaskDepNotFoundError,
     TaskOrigin,
-    TaskRequesterKind,
     TaskState,
 )
 from reyn.task.model import TERMINAL_STATES
+from reyn.task.ref import is_task_ref, make_task_ref
 
 from . import register
 from .context import OpContext
@@ -172,13 +170,14 @@ async def _authorize(op_kind: str, ctx: OpContext, backend, task_id: str, role: 
 
 
 async def _create(op, ctx: OpContext, caller) -> dict:
-    # §16 recursive-request: requester + requester_kind are OS-SET from the caller's
-    # EXECUTION context — NEVER an op field, so the LLM cannot mark ownership to
-    # mis-route a later recovery (the §16 security invariant). When the caller is
-    # executing a task-as-request (``ctx.current_task_id`` set by the OS for that
-    # turn), the new sub-task is OWNED by that task (``requester`` = the task id,
-    # ``requester_kind`` = task). Otherwise it is a top-level / session-owned task
-    # (``requester`` = the caller session, kind = session — the original model).
+    # §16 recursive-request: requester is OS-SET from the caller's EXECUTION context —
+    # NEVER an op field, so the LLM cannot mark ownership to mis-route a later recovery
+    # (the §16 security invariant). When the caller is executing a task-as-request
+    # (``ctx.current_task_id`` set by the OS for that turn), the new sub-task is OWNED by
+    # that task (``requester`` = the task's home-addressable ref, self-identifying as a
+    # task owner). Otherwise it is a top-level / session-owned task (``requester`` = the
+    # caller session routing-key). #2186: no stored ``requester_kind`` — the ref form is
+    # self-identifying (``is_task_ref``).
     # cross-session delegation supplies a different ``assignee``; a self-task defaults
     # the assignee to the caller SESSION (the executor — NOT the requester, which is
     # now a task id in the recursive case; a task-id assignee would break the
@@ -188,18 +187,20 @@ async def _create(op, ctx: OpContext, caller) -> dict:
     # (ownership is OS-derived from the execution context, not an op field).
     caller_session = _caller_session(ctx)
     current_task_id = getattr(ctx, "current_task_id", None)
-    if current_task_id:
-        requester = current_task_id
-        requester_kind = TaskRequesterKind.TASK
-    else:
-        requester = caller_session
-        requester_kind = TaskRequesterKind.SESSION
+    # #2186: ``requester`` is a BARE home-addressable reference — no stored kind. When the
+    # caller is executing a task-as-request, ``current_task_id`` is already a
+    # home-addressable task-ref (``task:...``), so it self-identifies as a task owner;
+    # otherwise the requester is the caller's session routing-key. ``is_task_ref`` on the
+    # stored value recovers the kind (the discriminator moved INTO the ref form).
+    requester = current_task_id if current_task_id else caller_session
+    assignee = getattr(op, "assignee", None) or caller_session
     task = Task(
-        task_id=uuid.uuid4().hex,
+        # #2186: the task_id IS the home-addressable reference rooted at the assignee
+        # (the task's home ledger), so any holder resolves its ledger without a lookup.
+        task_id=make_task_ref(assignee),
         name=op.name,
-        assignee=(getattr(op, "assignee", None) or caller_session),
+        assignee=assignee,
         requester=requester,
-        requester_kind=requester_kind,
         origin=TaskOrigin(getattr(op, "origin", "self") or "self"),
         description=op.description,
         created_by=_actor(ctx),
@@ -400,7 +401,11 @@ async def _route_terminal_to_requester(
     # request's recovery stays session-owned). Interleaving-precise: the recovery wake
     # is task-specific (for T), so stamping current=T cannot leak into another task's turn.
     managing_task_id = None
-    if terminal_task.requester_kind is TaskRequesterKind.TASK:
+    # #2186: the requester is a TASK iff its bare reference is a home-addressable task-ref
+    # (``task:...``) — self-identifying, no stored kind. (Cross-ledger: the owner task may
+    # live in another session's ledger; #2186 cross-ledger orchestration routes this
+    # ``get`` to the requester-task's home backend via the home-addressable ref.)
+    if is_task_ref(requester):
         owner = await backend.get(requester)
         requester_session = owner.assignee if owner is not None else None
         managing_task_id = requester

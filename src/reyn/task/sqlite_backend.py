@@ -45,7 +45,6 @@ from reyn.task.model import (
     TaskCycleError,
     TaskDepNotFoundError,
     TaskOrigin,
-    TaskRequesterKind,
     TaskState,
     _now_iso,
 )
@@ -61,7 +60,6 @@ CREATE TABLE IF NOT EXISTS tasks(
   name TEXT NOT NULL,
   assignee TEXT NOT NULL,
   requester TEXT NOT NULL,
-  requester_kind TEXT NOT NULL DEFAULT 'session',
   origin TEXT NOT NULL,
   status TEXT NOT NULL,
   description TEXT,
@@ -80,6 +78,16 @@ CREATE TABLE IF NOT EXISTS task_links(
 );
 -- #1953 slice 6 (OQ-8): reverse (dependents) lookup for readiness recompute.
 CREATE INDEX IF NOT EXISTS idx_task_links_depends_on ON task_links(depends_on);
+-- #2186: cross-ledger reverse-dependent markers. When a dependent X (home-addressable
+-- ref, living in another session's ledger) depends on a LOCAL task ``depends_on``, the
+-- forward edge lives in X's ledger; this marker in the TARGET's ledger lets the target's
+-- terminal disposition find + wake the cross-ledger dependent (the §16 requester-back-ref
+-- reuse). Wake-time self-heal drops a marker whose forward edge no longer exists.
+CREATE TABLE IF NOT EXISTS task_remote_dependents(
+  depends_on TEXT NOT NULL,      -- the LOCAL task being depended upon
+  dependent_ref TEXT NOT NULL,   -- home-addressable ref of the cross-ledger dependent
+  PRIMARY KEY(depends_on, dependent_ref)
+);
 CREATE TABLE IF NOT EXISTS task_runs(
   run_id TEXT PRIMARY KEY,
   task_id TEXT NOT NULL,
@@ -107,7 +115,7 @@ CREATE TABLE IF NOT EXISTS task_comments(
 """
 
 _TASK_COLUMNS = (
-    "task_id, name, assignee, requester, requester_kind, origin, status, description, "
+    "task_id, name, assignee, requester, origin, status, description, "
     "created_by, awaiting_since, tools, result, created_at, updated_at"
 )
 
@@ -151,13 +159,6 @@ class SqliteTaskBackend:
         for col in ("tools", "result"):
             if col not in existing:
                 conn.execute(f"ALTER TABLE tasks ADD COLUMN {col} TEXT")
-        # #1953 §16 (recursive-request): additive migration for pre-existing DBs —
-        # a row created before this column is a session-owned task by definition
-        # (the only kind that existed), so the 'session' default is correct.
-        if "requester_kind" not in existing:
-            conn.execute(
-                "ALTER TABLE tasks ADD COLUMN requester_kind "
-                "TEXT NOT NULL DEFAULT 'session'")
         conn.commit()
 
     def _open(self, *, init_schema: bool = False) -> sqlite3.Connection:
@@ -318,7 +319,6 @@ class SqliteTaskBackend:
             name=row["name"],
             assignee=row["assignee"],
             requester=row["requester"],
-            requester_kind=TaskRequesterKind(row["requester_kind"]),
             origin=TaskOrigin(row["origin"]),
             status=TaskState(row["status"]),
             description=row["description"],
@@ -363,10 +363,10 @@ class SqliteTaskBackend:
             self._conn.execute("BEGIN IMMEDIATE")
             self._conn.execute(
                 f"INSERT INTO tasks({_TASK_COLUMNS}) "
-                f"VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                f"VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (
                     task.task_id, task.name, task.assignee, task.requester,
-                    task.requester_kind.value, task.origin.value, task.status.value,
+                    task.origin.value, task.status.value,
                     task.description, task.created_by, task.awaiting_since,
                     json.dumps(task.tools) if task.tools else None, task.result,
                     task.created_at, task.updated_at,
@@ -566,21 +566,22 @@ class SqliteTaskBackend:
             root_external = origin_row["origin"] == TaskOrigin.EXTERNAL.value
             # BFS the down-cascade closure: this task + every OWNED descendant
             # (§16/§18 ownership forest — a task-as-request owns its sub-tasks). An
-            # edge child→pid is followed when requester=pid AND requester_kind='task'.
-            # The ``requester_kind='task'`` guard is REQUIRED: a session routing-key
-            # can collide with a task-id uuid, so a bare requester=pid would wrongly
-            # cascade a session-requester task; the marker disambiguates →
-            # collision-safe. Acyclic (one requester/task → earlier task) + the in-set
-            # guard → bounded. In-lock BFS (NOT recursive — the lock is not re-entrant).
-            # (The legacy parent_id decomposition tree was removed in §16 slice C —
-            # the requester edge is the sole decomposition relation.)
+            # edge child→pid is followed when requester=pid. #2186: ``pid`` is a
+            # home-addressable task reference (``task:...``), which CANNOT collide with a
+            # session routing-key (a session/external requester is never a task-ref form),
+            # so the bare ``requester=pid`` match is collision-safe BY CONSTRUCTION — the
+            # old ``requester_kind='task'`` guard is subsumed (the kind moved INTO the ref
+            # form). NOTE (#2186 cross-ledger): this BFS is LOCAL to this session's ledger;
+            # a sub-task DELEGATED to another session lives in that session's ledger and is
+            # reached via the cross-ledger ownership cascade (handled at the op layer).
+            # Acyclic (one requester/task → earlier task) + the in-set guard → bounded.
+            # In-lock BFS (NOT recursive — the lock is not re-entrant).
             to_abort: list[str] = [task_id]
             frontier = [task_id]
             while frontier:
                 pid = frontier.pop()
                 for row in self._conn.execute(
-                    "SELECT task_id FROM tasks "
-                    "WHERE requester=? AND requester_kind='task'",
+                    "SELECT task_id FROM tasks WHERE requester=?",
                     (pid,),
                 ).fetchall():
                     child = row["task_id"]

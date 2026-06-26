@@ -82,48 +82,32 @@ class TaskOrigin(str, Enum):
     EXTERNAL = "external"
 
 
-class TaskRequesterKind(str, Enum):
-    """What kind of entity the ``requester`` routing-key names (#1953 §16
-    recursive-request model).
-
-    ``session`` — a session owns the request (the original model: a top-level
-    task requested by a session; ``requester`` is a session routing-key).
-    ``task`` — a *task-as-request* owns this sub-task; ``requester`` is that
-    task's ``task_id``. Recovery routing resolves a ``task`` requester to its
-    ASSIGNEE (the managing session) before waking — the recursive generalization
-    of §16 S1 (route to the requester; if it is a task, resolve to its assignee).
-
-    OS-SET at create from the caller's execution context + IMMUTABLE for the
-    Task's life — no LLM/op sets or mutates it, so it cannot be mis-marked to
-    mis-route a recovery (the §16 security invariant).
-    """
-
-    SESSION = "session"
-    TASK = "task"
-
-
 @dataclass
 class Task:
     """One trackable work-unit.
 
     ``assignee`` is the **session identity** (#1814 routing-key) that owns the
-    Task — the single-writer of ``status``, immutable for the Task's life (no
-    handoff — delegation is sub-task decomposition). Because ``assignee`` is
-    immutable, the single-writer CAS is a fixed equality ``assignee ==
-    caller_session_id`` (no claim token / version needed). ``requester`` is the
-    notify-target on disposition AND the ownership edge (§16 recursive-request: a
-    task-as-request owns its sub-tasks, ``requester_kind=task``) — the sole
-    decomposition relation now (the legacy ``parent_id`` tree was removed in §16
-    slice C; ownership = the requester edge). ``deps`` are depends-on edges (the
-    dependency DAG, §13) — kept here for the in-memory backend; the sqlite backend
-    stores them in a ``task_links`` table.
+    Task — the single-writer of ``status`` AND the task's HOME: the task lives in
+    that session's per-session ledger (#2186 per-session isolation). Immutable for
+    the Task's life (no handoff — delegation is sub-task decomposition); the
+    single-writer CAS is a fixed equality ``assignee == caller_session_id``, kept as
+    defense-in-depth (under per-session ledgers it is subsumed by ledger-locality —
+    an assignee-gated op runs in its own ledger — but the cheap fail-closed equality
+    still guards against a cross-session routing bug delivering a foreign op).
+    ``requester`` is the notify-target on disposition AND the ownership edge (§16
+    recursive-request: a task-as-request owns its sub-tasks) — a **bare
+    home-addressable reference** (#2186): a task reference (``reyn.task.ref``, carrying
+    its home session) when a task-as-request owns this, else a session routing-key /
+    external ref. The kind is SELF-IDENTIFYING from the reference form (no stored
+    ``requester_kind`` — removed in #2186), so it cannot be mis-marked. ``deps`` are
+    depends-on edges (the dependency DAG, §13) — kept here for the in-memory backend;
+    the sqlite backend stores them in a ``task_links`` table.
     """
 
     task_id: str
     name: str
     assignee: str
     requester: str
-    requester_kind: TaskRequesterKind = TaskRequesterKind.SESSION  # §16: session-owned vs task-as-request owned (the ownership edge)
     origin: TaskOrigin = TaskOrigin.SELF
     status: TaskState = TaskState.PENDING
     description: str | None = None
@@ -142,7 +126,6 @@ class Task:
             "name": self.name,
             "assignee": self.assignee,
             "requester": self.requester,
-            "requester_kind": self.requester_kind.value,
             "origin": self.origin.value,
             "status": self.status.value,
             "description": self.description,

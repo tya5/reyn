@@ -3595,10 +3595,10 @@ class Session:
     def _stamp_execution_context(self, kind: str, payload: dict) -> None:
         """#1953 §16 (recursive-request): set the per-turn execution context read by
         the router op-ctx builders (→ ``OpContext.current_task_id``) so a
-        ``task.create`` during this turn derives ownership (requester=<this task>,
-        requester_kind=task). Per-turn + interleaving-precise: the context is exactly
-        the task the THIS turn's wake is about, so a session juggling T1/T2 never
-        mis-owns a create.
+        ``task.create`` during this turn derives ownership (requester=<this task>; a
+        #2186 bare home-addressable task-ref, self-identifying — no requester_kind).
+        Per-turn + interleaving-precise: the context is exactly the task THIS turn's
+        wake is about, so a session juggling T1/T2 never mis-owns a create.
 
         - ``task_ready`` (``WAKE_READY_KIND``, execute-wake): stamp the task to execute
           (``meta.task_id``). Continuations are re-wakes (a completed sub-task promotes

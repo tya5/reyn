@@ -31,10 +31,10 @@ from reyn.task.model import (
     TaskCycleError,
     TaskDepNotFoundError,
     TaskOrigin,
-    TaskRequesterKind,
     TaskState,
     _now_iso,
 )
+from reyn.task.ref import is_task_ref
 
 
 def find_cycle_path(
@@ -380,21 +380,19 @@ class InMemoryTaskBackend:
         root_origin = self._tasks[task_id].origin
         # DOWN-cascade closure: archive this task + every OWNED descendant (§16/§18
         # ownership forest — a task-as-request owns its sub-tasks). An edge child→pid
-        # is followed when requester==pid AND requester_kind==TASK. The
-        # ``requester_kind==TASK`` guard is REQUIRED: a session routing-key
-        # (spawned-session uuid) can collide with a task-id uuid, so a bare
-        # requester==pid would wrongly cascade a session-requester task; the marker
-        # disambiguates → collision-safe. Acyclic (one requester/task, set at create
-        # to an earlier task) + the in-set guard → bounded, no double-abort. (The
-        # legacy parent_id decomposition tree was removed in §16 slice C — the
-        # requester edge is the sole decomposition relation.)
+        # is followed when requester==pid. #2186: ``pid`` is a home-addressable task
+        # reference (``task:...``) which cannot collide with a session/external requester
+        # (never a task-ref form), so the bare ``requester==pid`` match is collision-safe
+        # by construction — the old ``requester_kind==TASK`` guard is subsumed (the kind
+        # moved INTO the ref form; ``is_task_ref`` makes the ownership-edge intent
+        # explicit). Acyclic (one requester/task → earlier task) + the in-set guard →
+        # bounded, no double-abort.
         subtree: list[str] = [task_id]
         frontier = [task_id]
         while frontier:
             pid = frontier.pop()
             for tid, t in self._tasks.items():
-                owned = (t.requester == pid
-                         and t.requester_kind is TaskRequesterKind.TASK)
+                owned = (is_task_ref(t.requester) and t.requester == pid)
                 if owned and tid not in subtree:
                     subtree.append(tid)
                     frontier.append(tid)

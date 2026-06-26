@@ -21,7 +21,6 @@ from reyn.task.model import (
     TaskCycleError,
     TaskDepNotFoundError,
     TaskOrigin,
-    TaskRequesterKind,
     TaskState,
 )
 from reyn.task.sqlite_backend import SqliteTaskBackend
@@ -30,7 +29,6 @@ __all__ = [
     "Task",
     "TaskState",
     "TaskOrigin",
-    "TaskRequesterKind",
     "TERMINAL_STATES",
     "TaskCycleError",
     "TaskDepNotFoundError",

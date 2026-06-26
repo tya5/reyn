@@ -575,10 +575,11 @@ class TaskCreateIROp(BaseModel):
     defaults to the caller (a self-task); a different value delegates cross-session.
 
     Ownership is OS-derived (§16 recursive-request): a sub-task created while a
-    session executes a task-as-request T is owned by T (``requester=T``,
-    ``requester_kind=task``, set from the execution context — never an op field).
-    The legacy ``parent_id`` tree was removed (§16 slice C); ``deps`` are
-    depends-on edges (dependency DAG, §13)."""
+    session executes a task-as-request T is owned by T (``requester=T``, set from the
+    execution context — never an op field). #2186: ``requester`` is a BARE
+    home-addressable reference (a task-ref ``task:...`` self-identifies as a task
+    owner; no stored ``requester_kind``). ``deps`` are depends-on edges (dependency
+    DAG, §13)."""
 
     kind: Literal["task.create"]
     name: str

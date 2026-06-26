@@ -211,13 +211,15 @@ class OpContext:
     # #1953 §16 (recursive-request): the task_id the caller is currently EXECUTING
     # as a task-as-request, when this op-ctx is built for a turn the OS woke to
     # execute an assigned task. ``task.create`` reads this to derive ownership: set
-    # → the new sub-task is owned by this task (``requester=current_task_id``,
-    # ``requester_kind=task``); None → a top-level/session-owned task
-    # (``requester=session_id``, ``requester_kind=session``). OS-SET from the
-    # execution context (NOT an op field — the recursive-request invariant requires
-    # the LLM cannot mark ownership). This is the STABLE seam: its SOURCE evolves
-    # (execute-wake meta now; a persistent session-assignment later) but the
-    # ``_create`` read-side stays fixed. None = not executing a task-as-request.
+    # → the new sub-task is owned by this task (``requester=current_task_id``); None
+    # → a top-level/session-owned task (``requester=session_id``). #2186: the
+    # requester is a BARE home-addressable reference — ``current_task_id`` is itself a
+    # home-addressable task-ref (``task:...``) that self-identifies as a task owner
+    # (no stored ``requester_kind``). OS-SET from the execution context (NOT an op
+    # field — the recursive-request invariant requires the LLM cannot mark ownership).
+    # This is the STABLE seam: its SOURCE evolves (execute-wake meta now; a persistent
+    # session-assignment later) but the ``_create`` read-side stays fixed. None = not
+    # executing a task-as-request.
     current_task_id: "str | None" = None
 
 
