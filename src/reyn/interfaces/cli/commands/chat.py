@@ -456,7 +456,7 @@ def run(args: argparse.Namespace) -> None:
             # (that opened an N+1 connection per session, the #2125 cross-connection write
             # race). The factory closure captures ``registry`` (assigned below), so this
             # resolves at session-construction time.
-            task_backend=registry.task_backend_for(profile.name),
+            task_backend=registry.task_backend,
             events_config=session_cfg.config.events,
             state_log=state_log,
             budget_tracker=budget_tracker,
