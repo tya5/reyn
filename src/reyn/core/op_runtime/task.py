@@ -87,6 +87,29 @@ def _is_cross_ledger(ctx: OpContext, ref_a: "str | None", ref_b: "str | None") -
     return ha is not None and hb is not None and ha != hb
 
 
+async def _cross_ledger_cycle(ctx: OpContext, dependent_ref: str, dep_ref: str) -> bool:
+    """#2186 §13 (deadlock-impossible, preserved cross-ledger): would adding the edge
+    ``dependent → dep`` close a cycle that may SPAN ledgers? BFS from ``dep`` following each
+    task's forward deps across ledgers (resolve each ref's home via the cross-ledger
+    resolver); if ``dependent`` is reachable, the new edge would create a cycle. Bounded —
+    the existing DAG is acyclic, so the reachable set is finite. Reuses the resolver (the
+    dep relation's cross-ledger cycle-check from the signed-off completeness sweep; the
+    local ``find_cycle_path`` cannot span ledgers)."""
+    seen: set[str] = set()
+    frontier = [dep_ref]
+    while frontier:
+        cur = frontier.pop()
+        if cur == dependent_ref:
+            return True
+        if cur in seen:
+            continue
+        seen.add(cur)
+        cur_task = await _ledger_for(ctx, cur).get(cur)
+        if cur_task is not None:
+            frontier.extend(cur_task.deps)
+    return False
+
+
 def _audit(ctx: OpContext, op_kind: str, task_id: str, **fields) -> None:
     """P6 audit emit for a task op (generic type; the backend's own task_events
     stays the source of truth — the WAL ``state_log`` closed vocab is NOT
@@ -283,6 +306,28 @@ async def _create(op, ctx: OpContext, caller) -> dict:
     return _ok("task.create", task=created.to_dict())
 
 
+async def _propagate_cross_ledger_completion(ctx, backend, completed_id, waker) -> None:
+    """#2186: propagate a completed task's satisfaction to its CROSS-LEDGER dependents.
+
+    A cross-ledger dependent's forward dep edge lives in ITS ledger; ``backend`` (the
+    completed task's ledger) only holds the 'dependent' reverse-markers. For each marked
+    cross-ledger dependent: resolve its home ledger, REMOVE the now-satisfied dep edge
+    there (a completed cross-ledger dep no longer blocks → ``remove_dependency`` re-derives
+    that dependent's readiness, promoting it iff its REMAINING deps are satisfied — so a
+    dependent with another still-pending cross-ledger dep correctly stays blocked until
+    that one's completion removes its edge too), wake it if it became READY, then DROP the
+    consumed marker (self-heal — strict zero-orphan; an already-removed edge makes
+    remove_dependency a benign no-op). The wake is sid-routed by the existing TaskWaker."""
+    for dep_ref in await backend.remote_refs(completed_id, "dependent"):
+        x_ledger = _ledger_for(ctx, dep_ref)
+        promoted = await x_ledger.remove_dependency(dep_ref, completed_id)
+        if (promoted is not None and promoted.status is TaskState.READY
+                and waker is not None):
+            await waker.wake_ready_dependent(
+                promoted, fenced_description=_fence_text(ctx, promoted.description))
+        await backend.drop_remote_ref(completed_id, dep_ref, "dependent")
+
+
 async def _update_status(op, ctx: OpContext, caller) -> dict:
     # assignee-gated single-writer: the backend CAS-rejects when ctx.session_id
     # != the immutable assignee (#1814 routing-key). Atomic, so no separate check.
@@ -313,6 +358,9 @@ async def _update_status(op, ctx: OpContext, caller) -> dict:
             if waker is not None:
                 await waker.wake_ready_dependent(
                     p, fenced_description=_fence_text(ctx, p.description))
+        # #2186: the completed task's CROSS-LEDGER dependents (recorded as 'dependent'
+        # reverse-markers in THIS ledger) are out of the local recompute's reach.
+        await _propagate_cross_ledger_completion(ctx, _backend(ctx), op.task_id, waker)
         # #1800 slice 5c: task_end lifecycle hooks — the task reached COMPLETED.
         # None dispatcher → no-op. (Aborted tasks terminate via the separate
         # _abort handler — see the task_end symmetry note there.)
@@ -360,18 +408,21 @@ async def _add_dependency(op, ctx: OpContext, caller) -> dict:
     if denied is not None:
         return denied
     if _is_cross_ledger(ctx, op.task_id, op.depends_on):
-        # #2186 CROSS-LEDGER dep + dep R1 (target-durable-first): the dangerous dangling is
-        # edge-without-target (X thinks it depends on a Y that a crash lost), so make Y (in
-        # B) + its dependent-marker DURABLE before the forward edge in X's ledger (A). The
-        # marker is the reverse index that lets Y's completion wake the cross-ledger X.
-        # (Cross-ledger CYCLE check is not performed here — the local cycle-check can't span
-        # ledgers; a cross-ledger cycle requires mutually-dependent tasks delegated across
-        # sessions, a rare pathology. Flagged to lead as a scope item; intra-ledger cycles
-        # are still caught.)
+        # #2186 CROSS-LEDGER dep. §13: cross-ledger cycle-check FIRST (the resolver-BFS —
+        # the local find_cycle_path can't span ledgers) so the deadlock-impossible invariant
+        # holds cross-ledger too. Then validate Y exists.
         y_ledger = _ledger_for(ctx, op.depends_on)
         if await y_ledger.get(op.depends_on) is None:
             return _edge_error(
                 "task.add_dependency", TaskDepNotFoundError(op.task_id, op.depends_on))
+        if await _cross_ledger_cycle(ctx, op.task_id, op.depends_on):
+            return _edge_error(
+                "task.add_dependency",
+                TaskCycleError(op.task_id, op.depends_on, [op.task_id, op.depends_on]))
+        # dep R1 (target-durable-first): the dangerous dangling is edge-without-target (X
+        # thinks it depends on a Y a crash lost), so make Y (in B) + its dependent-marker
+        # DURABLE before the forward edge in X's ledger (A). The marker is the reverse index
+        # that lets Y's completion wake the cross-ledger X.
         await y_ledger.add_remote_ref(op.depends_on, op.task_id, "dependent", durable=True)
         task = await x_ledger.add_remote_dependency(op.task_id, op.depends_on)
     else:
@@ -534,17 +585,43 @@ async def _repoint_dependency(op, ctx: OpContext, caller) -> dict:
     return _ok("task.repoint_dependency", task=task.to_dict())
 
 
+async def _propagate_cross_ledger_abort(ctx, backend, aborted_ids, reason) -> None:
+    """#2186: cascade an abort to the CROSS-LEDGER owned children of just-aborted local
+    tasks ('child' reverse-markers). For each: resolve the child's home ledger, abort it
+    there (archiving the child + its OWN local sub-tree, and returning that set whose own
+    cross-ledger children RECURSE), then drop the consumed marker (self-heal — an
+    already-gone child makes the abort a benign no-op; strict zero-orphan). The ownership
+    forest is acyclic (a requester edge points to an earlier task) → the recursion
+    terminates."""
+    for tid in aborted_ids:
+        for child_ref in await backend.remote_refs(tid, "child"):
+            child_ledger = _ledger_for(ctx, child_ref)
+            child_aborted = await child_ledger.abort(child_ref, reason=reason)
+            if child_aborted:
+                await _propagate_cross_ledger_abort(
+                    ctx, child_ledger, [t.task_id for t in child_aborted], reason)
+            await backend.drop_remote_ref(tid, child_ref, "child")
+
+
 async def _abort(op, ctx: OpContext, caller) -> dict:
     # requester-gated remove-op (§model abort=delete). Cooperative-terminal
     # (Option B): the backend archives the task + its sub-tree (DOWN-cascade);
     # the assignee's in-flight work is rejected by the terminal state at its next
     # status-write (no forced cancel, no sibling-kill). task.archive is folded in.
-    _task, denied = await _authorize("task.abort", ctx, _backend(ctx), op.task_id, "requester")
+    # #2186: a requester can abort a task it delegated to another session — route to the
+    # task's HOME (assignee) ledger.
+    task_ledger = _ledger_for(ctx, op.task_id)
+    _task, denied = await _authorize("task.abort", ctx, task_ledger, op.task_id, "requester")
     if denied is not None:
         return denied
-    aborted = await _backend(ctx).abort(op.task_id, reason=op.reason)
+    aborted = await task_ledger.abort(op.task_id, reason=op.reason)
     if not aborted:
         return _not_found("task.abort", op.task_id)
+    # #2186: the local abort archived this ledger's owned sub-tree; cascade to the
+    # CROSS-LEDGER owned children (the 'child' reverse-markers) so a delegated sub-task is
+    # not orphaned on the parent's abort (§16 ownership preserved across ledgers).
+    await _propagate_cross_ledger_abort(
+        ctx, task_ledger, [t.task_id for t in aborted], op.reason)
     # UP-notify (2b-2): emit a generic, term-neutral P6 disposition event per
     # aborted task carrying requester + origin. The A2A layer (slice 5) consumes
     # these and fires the external (webhook) channel for origin=external tasks
@@ -564,7 +641,7 @@ async def _abort(op, ctx: OpContext, caller) -> dict:
     # gets a recovery decision (the OQ-7/H5 gap-close). A root self-task is now notified
     # (previously dropped on the missing parent_id). The cascade's descendants are
     # themselves terminal → _route_terminal_to_requester finds no stuck dependents for them.
-    await _route_terminal_to_requester(ctx, _backend(ctx), root, disposition="aborted")
+    await _route_terminal_to_requester(ctx, task_ledger, root, disposition="aborted")
     # #1800 slice 5c: task_end lifecycle hooks for the aborted sub-tree — SYMMETRIC
     # with task_start (at create) + task_end (at COMPLETED): every started task
     # fires an end. ``status="aborted"`` lets an operator discriminate completion
