@@ -69,8 +69,8 @@ from reyn.runtime.services import (
     RouterHostAdapter,
     SnapshotJournal,
 )
-from reyn.runtime.services.a2a_handler import A2AHandler
 from reyn.runtime.services.chain_manager import _PendingChain
+from reyn.runtime.services.inter_agent_messaging import InterAgentMessaging
 from reyn.runtime.services.task_wake import WAKE_READY_KIND, WAKE_REQUESTER_KIND
 from reyn.runtime.session_buses import AgentRequestBus, ChatInterventionBus
 from reyn.security.permissions.permissions import PermissionResolver
@@ -1582,7 +1582,7 @@ class Session:
         self._router_host = RouterHostAdapter(
             # #2175: the safety.on_limit checkpoint + the shared per-run extension dict —
             # so the spawn SEAM (agent_spawn / topology_create) routes spawn-limit exceeds
-            # through the same mode-driven framework as a2a_handler's max_agent_hops.
+            # through the same mode-driven framework as inter_agent_messaging's max_agent_hops.
             handle_chat_limit_checkpoint=self._handle_chat_limit_checkpoint,
             safety_extensions=self._safety_extensions,
             # #1092 PR-F1: the chat turn_budget engine (resolved-model, asserted).
@@ -1829,14 +1829,14 @@ class Session:
             launcher=self._skill_runner.spawn_resumed_skill,
         )
 
-        # FP-0019 Wave 2 part 2: A2AHandler — agent-to-agent messaging service.
+        # FP-0019 Wave 2 part 2: InterAgentMessaging — agent-to-agent messaging service.
         # Extracts _send_to_agent / _send_agent_response / _handle_agent_request /
         # _handle_agent_response / _resolve_pending_chain from Session.
-        # Hybrid design (案 C): A2AHandler owns agent-side logic; transport-side
+        # Hybrid design (案 C): InterAgentMessaging owns agent-side logic; transport-side
         # routing handled by FP-0013 RoutingLayer via send_request_callback /
         # send_response_callback injection.
 
-        self._a2a_handler = A2AHandler(
+        self._inter_agent_messaging = InterAgentMessaging(
             event_log=self._chat_events,
             chain_manager=self._chains,
             agent_name=self.agent_name,
@@ -1845,7 +1845,7 @@ class Session:
             output_language=self.output_language,
             # FP-0050/#1822 S4b (EP5): fence untrusted inbound peer text.
             threat_scan=self._safety.threat_scan,
-            append_history=self._append_history_for_a2a_handler,
+            append_history=self._append_history_for_inter_agent_messaging,
             put_outbox=self._put_outbox,
             handle_chat_limit_checkpoint=self._handle_chat_limit_checkpoint,
             run_router_loop=lambda text, cid: self._run_router_loop(text, cid),
@@ -2772,12 +2772,12 @@ class Session:
             content=text, ts=ts, meta=meta,
         ))
 
-    def _append_history_for_a2a_handler(
+    def _append_history_for_inter_agent_messaging(
         self, role: str, text: str, ts: str, meta: dict,
     ) -> None:
-        """Adapter callback injected into A2AHandler.
+        """Adapter callback injected into InterAgentMessaging.
 
-        A2AHandler uses the same ``(role, text, ts, meta)`` signature as
+        InterAgentMessaging uses the same ``(role, text, ts, meta)`` signature as
         InterventionHandler.  This adapter bridges to Session._append_history
         (which takes a ChatMessage).
         """
@@ -2789,7 +2789,7 @@ class Session:
     # ── A2A transport callbacks (FP-0019 Wave 2 part 2) ─────────────────────────
     # Session-side wrappers that perform registry topology checks and the
     # actual submit_agent_request / submit_agent_response transport calls.
-    # A2AHandler delegates here after its own depth / guard logic; these
+    # InterAgentMessaging delegates here after its own depth / guard logic; these
     # callbacks are the FP-0013 RoutingLayer integration seam.
 
     async def _a2a_send_request(
@@ -3214,7 +3214,7 @@ class Session:
         **Internal API — plugin authors should NOT call directly**
         (FP-0041 plugins-api). Use ``reyn.gateway.api.push_to_agent``
         instead; this signature may change between Reyn versions.
-        Other internal Reyn modules (= A2AHandler, MCP handler,
+        Other internal Reyn modules (= InterAgentMessaging, MCP handler,
         InterventionHandler, ChatLifecycleForwarder) keep calling
         this directly because they manage their own additional state
         machines (= chain_id / request_id / etc.) on top.
@@ -4854,7 +4854,7 @@ class Session:
         return answer
 
     # ── agent-to-agent messaging (PR11 / PR14) ──────────────────────────────────
-    # FP-0019 Wave 2 part 2: business logic extracted to A2AHandler service.
+    # FP-0019 Wave 2 part 2: business logic extracted to InterAgentMessaging service.
     # Session keeps thin delegators here so existing internal call sites
     # (_on_chain_timeout_fire, _on_chain_peer_discarded, RouterHostAdapter
     # send_to_agent callback) continue to resolve without changes.
@@ -4862,8 +4862,8 @@ class Session:
     async def _send_to_agent(
         self, *, to: str, request: str, depth: int, chain_id: str,
     ) -> None:
-        """Thin delegator — business logic lives in A2AHandler.send_to_agent."""
-        await self._a2a_handler.send_to_agent(
+        """Thin delegator — business logic lives in InterAgentMessaging.send_to_agent."""
+        await self._inter_agent_messaging.send_to_agent(
             to=to, request=request, depth=depth, chain_id=chain_id,
         )
 
@@ -4871,18 +4871,18 @@ class Session:
         self, *, to: str, response: str, depth: int, chain_id: str,
         to_sid: "str | None" = None,
     ) -> None:
-        """Thin delegator — business logic lives in A2AHandler.send_agent_response."""
-        await self._a2a_handler.send_agent_response(
+        """Thin delegator — business logic lives in InterAgentMessaging.send_agent_response."""
+        await self._inter_agent_messaging.send_agent_response(
             to=to, response=response, depth=depth, chain_id=chain_id, to_sid=to_sid,
         )
 
     async def _handle_agent_request(self, payload: dict) -> None:
-        """Thin delegator — business logic lives in A2AHandler.handle_agent_request."""
-        await self._a2a_handler.handle_agent_request(payload)
+        """Thin delegator — business logic lives in InterAgentMessaging.handle_agent_request."""
+        await self._inter_agent_messaging.handle_agent_request(payload)
 
     async def _handle_agent_response(self, payload: dict) -> None:
-        """Thin delegator — business logic lives in A2AHandler.handle_agent_response."""
-        await self._a2a_handler.handle_agent_response(payload)
+        """Thin delegator — business logic lives in InterAgentMessaging.handle_agent_response."""
+        await self._inter_agent_messaging.handle_agent_response(payload)
 
     # ── chain timeout (PR18) ───────────────────────────────────────────────────
     # PR-refactor-session-1 wave 2: timer arm/cancel + sleep-and-fire loop are
