@@ -73,6 +73,7 @@ def make_adapter(
     environment_backend: object = None,  # #1477: optional for sandbox-cwd tests
     task_backend: object = None,  # #1953 / #2107: session-scoped Task backend
     task_waker: object = None,    # #2107: OS TaskWaker (router task.* terminal → requester wake)
+    task_backend_resolver: object = None,  # #2186
     session_id: "str | None" = None,
     current_task_id_fn: "object | None" = None,  # #1953 §16: per-turn execution context
     agent_registry: object = None,  # #2103: real AgentRegistry for spawn/topology seams
@@ -161,6 +162,7 @@ def make_adapter(
         environment_backend=environment_backend,
         task_backend=task_backend,
         task_waker=task_waker,
+        task_backend_resolver=task_backend_resolver,  # #2186
         session_id=session_id,
         current_task_id_fn=current_task_id_fn,
     )

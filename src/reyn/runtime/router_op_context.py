@@ -69,6 +69,7 @@ def build_router_op_context(
     session_id: str | None = None,
     task_backend: Any = None,
     task_waker: Any = None,  # #2107: OS TaskWaker so a router task.* terminal wakes the requester
+    task_backend_resolver: Any = None,  # #2186
     hook_dispatcher: Any = None,  # #1800 slice 5c: the Session's HookDispatcher
     current_task_id: str | None = None,  # #1953 §16: the task this turn is executing → task.create ownership
 ) -> Any:
@@ -151,6 +152,7 @@ def build_router_op_context(
         session_id=session_id,
         task_backend=task_backend,
         task_waker=task_waker,  # #2107: a router task.* terminal wakes the requester
+        task_backend_resolver=task_backend_resolver,  # #2186
         hook_dispatcher=hook_dispatcher,  # #1800 slice 5c: task_start/end dispatch
         current_task_id=current_task_id,  # #1953 §16: ownership-derivation context
     )

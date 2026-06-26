@@ -855,6 +855,7 @@ class Session:
         contextual_permission: "object | None" = None,  # #1827 S3: per-session capability_profile narrowing (ContextualPermission); from registry.resolved_profile_for; None = byte-identical
         task_backend: "object | None" = None,  # #1953 slice 3a: session-scoped Task backend instance (injected by the session factory); None → op-runtime in-memory fallback
         task_waker: "object | None" = None,  # #1953 slice 7: the OS TaskWaker driver (injected by the session factory); None → op-runtime no-op stub
+        task_backend_resolver: "object | None" = None,  # #2186
         router_max_iterations: int = 5,  # #187: per-message tool-call budget for the MAIN chat loop (interactive=5; one-shot autonomous SWE sets higher)
         non_interactive: bool = False,  # #1439 Fix #1: run-once (piped, no TTY) — no user to ask, so the SP directs proceed-with-assumption instead of clarifying
         # FP-0043 Stage 5: the conversation session id this Session records WAL
@@ -924,6 +925,7 @@ class Session:
         # falls back to its in-memory backend (tests / direct construction).
         self._task_backend = task_backend
         self._task_waker = task_waker  # #1953 slice 7
+        self._task_backend_resolver = task_backend_resolver  # #2186
         # #1953 §16 (recursive-request): the task_id this session is currently
         # EXECUTING as a task-as-request, set per-turn from an execute-wake's meta
         # (run_one_iteration). Read by the router op-ctx builders so task.create
@@ -1596,6 +1598,7 @@ class Session:
             session_id=self._session_id,
             task_backend=self._task_backend,
             task_waker=self._task_waker,  # #2107: thread the TaskWaker into the router op-ctx
+            task_backend_resolver=self._task_backend_resolver,  # #2186
             hook_dispatcher=self._hook_dispatcher,  # #1800 slice 5c: task_start/end (router path)
             agent_name=self.agent_name,
             agent_role=self._agent_role,
@@ -3997,6 +4000,7 @@ class Session:
             contextual_permission=self._contextual_permission,  # #1912: narrow skill execution too
             task_backend=self._task_backend,  # #1953 slice 3a: session-scoped Task backend
             task_waker=self._task_waker,  # #1953 slice 7: the OS TaskWaker driver
+            task_backend_resolver=self._task_backend_resolver,  # #2186
             task_session_id=self._session_id,  # #1953 slice 3: caller session identity (single-writer key)
             hook_dispatcher=self._hook_dispatcher,  # #1800 slice 5c: task_start/end (phase path)
             mcp_servers=mcp_servers,

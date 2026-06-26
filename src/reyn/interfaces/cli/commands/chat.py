@@ -457,6 +457,7 @@ def run(args: argparse.Namespace) -> None:
             # race). The factory closure captures ``registry`` (assigned below), so this
             # resolves at session-construction time.
             task_backend=registry.task_backend_for(profile.name),
+            task_backend_resolver=registry.task_backend_resolver_for(profile.name),  # #2186
             events_config=session_cfg.config.events,
             state_log=state_log,
             budget_tracker=budget_tracker,

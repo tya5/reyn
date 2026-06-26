@@ -100,12 +100,15 @@ def build_scoped_chat_session(
     # construction) → the op-runtime no-op stub.
     _registry = base.get("registry")
     task_waker = None
+    task_backend_resolver = None  # #2186
     if _registry is not None:
         from reyn.runtime.services.task_wake import TaskWaker  # noqa: PLC0415
         task_waker = TaskWaker(_registry, base["agent_name"])
+        task_backend_resolver = _registry.task_backend_resolver_for(base["agent_name"])  # #2186
     return Session(
         agent=agent,
         task_waker=task_waker,
+        task_backend_resolver=task_backend_resolver,  # #2186
         environment_backend=environment_backend,
         sandbox_backend=sandbox_backend,
         workspace_base_dir=workspace_base_dir,

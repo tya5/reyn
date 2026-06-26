@@ -116,6 +116,7 @@ class PreprocessorExecutor:
         contextual_permission: "object | None" = None,  # #1912b: per-session capability narrowing → run_op/iterate gate
         task_backend: "object | None" = None,  # #1953 slice 3a: session-scoped Task backend
         task_waker: "object | None" = None,  # #1953 slice 7: the OS TaskWaker driver
+        task_backend_resolver: "object | None" = None,  # #2186
         hook_dispatcher: "object | None" = None,  # #1800 slice 5c: the HookDispatcher
         session_id: "str | None" = None,  # #1953 slice 3: caller session identity (single-writer key)
     ) -> None:
@@ -151,6 +152,7 @@ class PreprocessorExecutor:
         self._contextual_permission = contextual_permission  # #1912b
         self._task_backend = task_backend  # #1953 slice 3a
         self._task_waker = task_waker  # #1953 slice 7
+        self._task_backend_resolver = task_backend_resolver  # #2186
         self._hook_dispatcher = hook_dispatcher  # #1800 slice 5c
         self._task_session_id = session_id  # #1953 slice 3
 
@@ -201,6 +203,7 @@ class PreprocessorExecutor:
             contextual_permission=self._contextual_permission,  # #1912b
             task_backend=self._task_backend,  # #1953 slice 3a
             task_waker=self._task_waker,  # #1953 slice 7
+            task_backend_resolver=self._task_backend_resolver,  # #2186
             hook_dispatcher=self._hook_dispatcher,  # #1800 slice 5c
             session_id=self._task_session_id,  # #1953 slice 3
         )

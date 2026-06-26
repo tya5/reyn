@@ -147,6 +147,7 @@ class RouterHostAdapter:
         session_id: str | None = None,
         task_backend: Any = None,
         task_waker: Any = None,  # #1953 slice 7 / #2107: the OS TaskWaker for the router op-ctx
+        task_backend_resolver: Any = None,  # #2186
         hook_dispatcher: Any = None,  # #1800 slice 5c: the Session's HookDispatcher
         # FP-0034 Phase 2 step 1: ActionEmbeddingIndex + EmbeddingProvider
         # for search_actions.  When all three are set (= operator configured
@@ -286,6 +287,7 @@ class RouterHostAdapter:
         self._session_id = session_id  # #1953 dynamic-wire: task.* CAS gate key
         self._task_backend = task_backend  # #1953 dynamic-wire: session-scoped Task backend
         self._task_waker = task_waker  # #1953 slice 7 / #2107: OS TaskWaker for router task ops
+        self._task_backend_resolver = task_backend_resolver  # #2186
         self._hook_dispatcher = hook_dispatcher  # #1800 slice 5c: task_start/end dispatch
         self._turn_budget_engine = turn_budget_engine
         self._turn_cancel_fn = turn_cancel_fn  # #1468
@@ -1813,6 +1815,7 @@ class RouterHostAdapter:
             # (task_backend was #1953-wired here; task_waker was not), so the live chat
             # recovery wake was silently skipped (ctx.task_waker=None).
             task_waker=self._task_waker,
+            task_backend_resolver=self._task_backend_resolver,  # #2186
             hook_dispatcher=self._hook_dispatcher,  # #1800 slice 5c
             # #1953 §16: the per-turn execution context (set by the session in
             # run_one_iteration). Read via the callback — it varies per turn, so the

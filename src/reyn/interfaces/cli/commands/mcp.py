@@ -421,6 +421,7 @@ def run_serve(args: argparse.Namespace) -> None:
             # seam (ONE connection per agent) — NOT a direct per_session_sqlite_backend
             # (the N+1-connection #2125 race). The factory closure captures ``registry``.
             task_backend=registry.task_backend_for(profile.name),
+            task_backend_resolver=registry.task_backend_resolver_for(profile.name),  # #2186
             events_config=session_cfg.config.events,
             state_log=state_log,
             budget_tracker=budget_tracker,
