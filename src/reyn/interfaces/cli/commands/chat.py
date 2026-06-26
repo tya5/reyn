@@ -335,7 +335,6 @@ def run(args: argparse.Namespace) -> None:
     from reyn.runtime.registry import DEFAULT_AGENT_NAME, AgentRegistry
     from reyn.runtime.scoped_session_factory import build_scoped_chat_session
     from reyn.security.permissions.permissions import PermissionResolver
-    from reyn.task import per_session_sqlite_backend  # #1953 slice R
 
     session_cfg = InvocationContext.from_args(args)
     from reyn.interfaces.cli.credentials_check import verify_credentials_or_exit
@@ -450,9 +449,14 @@ def run(args: argparse.Namespace) -> None:
             registry=registry,  # back-reference for :agents / :attach + PR11 messaging
             allowed_skills=profile.allowed_skills,
             allowed_mcp=profile.allowed_mcp,
-            # #1953 slice R, I-5=(A): per-session sqlite Task backend → in-session
-            # task.* ops are durable + rewind with the session (local single-tenant).
-            task_backend=per_session_sqlite_backend(profile.name),
+            # #1953 slice R, I-5=(A): sqlite Task backend → in-session task.* ops are
+            # durable + rewind with the session (local single-tenant).
+            # #2180: the agent's SHARED backend (ONE connection per agent) via the
+            # registry's single construction seam — NOT a direct per_session_sqlite_backend
+            # (that opened an N+1 connection per session, the #2125 cross-connection write
+            # race). The factory closure captures ``registry`` (assigned below), so this
+            # resolves at session-construction time.
+            task_backend=registry.task_backend_for(profile.name),
             events_config=session_cfg.config.events,
             state_log=state_log,
             budget_tracker=budget_tracker,

@@ -168,47 +168,43 @@ async def test_rewind_restore_failure_does_not_drop_the_session_dir(tmp_path) ->
 
 
 @pytest.mark.asyncio
-async def test_remove_session_closes_dropped_backend_restore_uses_survivor(tmp_path) -> None:
-    """Tier 2: #2125 + #2128 — remove_session CLOSES the dropped session's per-session
-    Task-backend (a separate sqlite connection to the agent's shared tasks.db), releasing
-    its lock. With #2128, _restore_task_active derives the rewind backends from the CURRENT
-    loaded sessions (``_rewind_backends``), so the dropped session is simply no longer
-    iterated — restore touches the survivor, never the now-closed dropped handle (no
-    re-point pointer needed; the #2125 interim is subsumed). Strip the close() → restore on
-    a still-open shared file is fine; the load-bearing property is that the dropped session
-    is OUT of the derive set."""
-    import sqlite3
-
+async def test_remove_session_keeps_shared_backend_open_survivor_usable(tmp_path) -> None:
+    """Tier 2: #2180 REVERSES the #2125 per-session close-on-drop. The Task backend is now
+    agent-SHARED — ONE instance/connection per agent (registry-owned via ``task_backend_for``),
+    so every session of the agent holds the SAME backend object. remove_session must therefore
+    NOT close it: closing on one session's drop would strand every SURVIVING sibling session
+    (use-after-close on the shared connection). After the drop the survivor keeps the SAME open
+    instance + the restore still works through it. RED if remove_session re-introduces the
+    close() (the survivor's read / the restore would raise ProgrammingError on a closed db)."""
     from reyn.task.factory import create_task_backend
 
     reg = _make_registry(tmp_path)
-    db = tmp_path / "tasks.db"
-    survivor_backend = create_task_backend("sqlite", path=str(db))
-    dropped_backend = create_task_backend("sqlite", path=str(db))  # 2nd connection, same file
+    db = tmp_path / "worker_tasks.db"
+    shared_backend = create_task_backend("sqlite", path=str(db))  # the ONE agent backend
 
     async def _noop() -> None:
         return None
 
+    # both sessions hold the SAME shared instance — the (A) agent-shared model.
     main = SimpleNamespace(
-        task_backend=survivor_backend, cancel_inflight=_noop, await_quiescent=_noop,
+        task_backend=shared_backend, cancel_inflight=_noop, await_quiescent=_noop,
     )
     spawned = SimpleNamespace(
-        task_backend=dropped_backend, cancel_inflight=_noop, await_quiescent=_noop,
+        task_backend=shared_backend, cancel_inflight=_noop, await_quiescent=_noop,
     )
     reg._sessions["worker"] = {"main": main, "s1": spawned}
     _make_session_dir(reg, "worker", "s1")
-    # a captured generation on the SURVIVOR at an active WAL seq → _restore_task_active
-    # has real work that touches the backend's connection (else it no-ops without probing).
+    # a captured generation at an active WAL seq → _restore_task_active has real work that
+    # touches the backend's connection (else it no-ops without probing).
     seq = await _put(reg.state_log, "worker", "x")
-    await survivor_backend.snapshot_generation(seq)
+    await shared_backend.snapshot_generation(seq)
 
     await reg.remove_session("worker", "s1")
 
-    # the dropped backend's connection is closed (a public DB read now raises) → lock released.
-    with pytest.raises(sqlite3.ProgrammingError):
-        await dropped_backend.get("any-task-id")
-    # #2128: _restore_task_active derives from the loaded sessions — only the survivor
-    # remains, so its generation is restored without error and the closed dropped backend
-    # is never touched (it's out of _sessions). A path that still reached the dropped
-    # connection would raise ProgrammingError inside restore_to_seq.
+    # the shared backend is STILL OPEN — the survivor can read/write through it (a closed
+    # connection would raise ProgrammingError here).
+    assert await shared_backend.get("any-task-id") is None
+    # #2128 + #2180: _restore_task_active derives from the loaded sessions (now resolving to
+    # the ONE shared instance) and restores through that still-open connection — no sibling
+    # to strand, the #2125 close-before-restore collapses to "one connection ever".
     await reg._restore_task_active(at_or_below=seq)
