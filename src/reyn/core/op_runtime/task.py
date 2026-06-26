@@ -27,7 +27,7 @@ from reyn.task import (
     TaskState,
 )
 from reyn.task.model import TERMINAL_STATES
-from reyn.task.ref import is_task_ref, make_task_ref
+from reyn.task.ref import home_sid_of, is_task_ref, make_task_ref
 
 from . import register
 from .context import OpContext
@@ -55,6 +55,36 @@ def resolve_task_backend(ctx: "OpContext | None"):
     present, else the in-memory fallback. Lets non-op callers (the ``decompose``
     dispatch binding) reach the same backend the task ops use."""
     return _backend(ctx)
+
+
+def _ledger_for(ctx: OpContext, ref: "str | None"):
+    """#2186: the per-session ledger that a home-addressable task ``ref`` lives in.
+
+    Resolves ``home_sid(ref)`` via ``ctx.task_backend_resolver`` to that session's
+    backend — the seam for cross-ledger ops (a requester-gated op on a task whose HOME
+    differs from the caller). Falls back to the caller's own backend when: the ref has no
+    home (a session/external ref), the home IS the caller (intra-ledger / self-task), no
+    resolver is wired (direct/test/single-session), or the resolver returns None (the home
+    session has no live backend). Fail-safe: never raises — an unresolvable cross-ledger ref
+    degrades to the caller's ledger (the op then no-ops / not-found rather than mis-writing)."""
+    home = home_sid_of(ref)
+    resolver = getattr(ctx, "task_backend_resolver", None)
+    if home is not None and home != _caller_session(ctx) and resolver is not None:
+        try:
+            resolved = resolver(home)
+        except Exception:  # noqa: BLE001 — a resolver failure degrades to the caller's ledger
+            resolved = None
+        if resolved is not None:
+            return resolved
+    return _backend(ctx)
+
+
+def _is_cross_ledger(ctx: OpContext, ref_a: "str | None", ref_b: "str | None") -> bool:
+    """#2186: True iff two home-addressable refs live in DIFFERENT session ledgers — the
+    R1-barrier trigger (a pure parse-and-compare of the encoded home sids, lookup-free).
+    A non-task ref (no home) is treated as same-ledger (not a cross-ledger task edge)."""
+    ha, hb = home_sid_of(ref_a), home_sid_of(ref_b)
+    return ha is not None and hb is not None and ha != hb
 
 
 def _audit(ctx: OpContext, op_kind: str, task_id: str, **fields) -> None:
@@ -206,8 +236,22 @@ async def _create(op, ctx: OpContext, caller) -> dict:
         created_by=_actor(ctx),
         deps=list(op.deps),
     )
+    # #2186 INVERTED ownership R1: a cross-ledger DELEGATED sub-task owned by a task
+    # (requester is a task-ref whose home ledger differs from the child's assignee ledger)
+    # must have its OWNER-MARKER durable in the owner's ledger BEFORE the child is created
+    # in the assignee's ledger — so a crash never leaves a child without its owner-marker
+    # (the orphan direction; the parent's abort would then miss it). Marker-durable-first
+    # (the inverse of the dep R1's target-durable-first). The benign survivor (marker
+    # without child → abort no-op) is self-healed at abort time.
+    if is_task_ref(requester) and _is_cross_ledger(ctx, requester, task.task_id):
+        await _ledger_for(ctx, requester).add_remote_ref(
+            requester, task.task_id, "child", durable=True)
     try:
-        created = await _backend(ctx).create(task)
+        # #2186: the create WRITES to the task's HOME = the assignee's ledger (a delegated
+        # task lives where its assignee executes it). For a self-task this is the caller's
+        # own ledger. Born-with deps are validated in that home ledger (intra-ledger; an
+        # explicit cross-ledger dep uses task.add_dependency, which carries its own R1).
+        created = await _ledger_for(ctx, task.task_id).create(task)
     except (TaskCycleError, TaskDepNotFoundError) as err:
         # A born-with dependency is dangling or cycle-forming (OQ-1/OQ-4/OQ-5).
         return _edge_error("task.create", err)
@@ -288,7 +332,11 @@ async def _update_status(op, ctx: OpContext, caller) -> dict:
 
 async def _get(op, ctx: OpContext, caller) -> dict:
     # requester-gated: the requester polls its task's status (§model requester-IF).
-    task, denied = await _authorize("task.get", ctx, _backend(ctx), op.task_id, "requester")
+    # #2186: resolve the task's HOME ledger from its home-addressable ref — a requester can
+    # poll a task it delegated to another session (home=assignee≠caller). Intra-ledger /
+    # self → the caller's own backend.
+    task, denied = await _authorize(
+        "task.get", ctx, _ledger_for(ctx, op.task_id), op.task_id, "requester")
     if denied is not None:
         return denied
     return _ok("task.get", task=_fence_view(ctx, task.to_dict()))
@@ -305,15 +353,33 @@ async def _list(op, ctx: OpContext, caller) -> dict:
 
 async def _add_dependency(op, ctx: OpContext, caller) -> dict:
     # requester-gated: the decomposing requester owns the dependency topology (§13).
+    # #2186: X (the dependent, op.task_id) lives in its HOME ledger; authorize there.
+    x_ledger = _ledger_for(ctx, op.task_id)
     _task, denied = await _authorize(
-        "task.add_dependency", ctx, _backend(ctx), op.task_id, "requester")
+        "task.add_dependency", ctx, x_ledger, op.task_id, "requester")
     if denied is not None:
         return denied
-    try:
-        task = await _backend(ctx).add_dependency(op.task_id, op.depends_on)
-    except (TaskCycleError, TaskDepNotFoundError) as err:
-        # OQ-1/OQ-4/OQ-5: dangling or cycle-forming edge → decision-enabling dict.
-        return _edge_error("task.add_dependency", err)
+    if _is_cross_ledger(ctx, op.task_id, op.depends_on):
+        # #2186 CROSS-LEDGER dep + dep R1 (target-durable-first): the dangerous dangling is
+        # edge-without-target (X thinks it depends on a Y that a crash lost), so make Y (in
+        # B) + its dependent-marker DURABLE before the forward edge in X's ledger (A). The
+        # marker is the reverse index that lets Y's completion wake the cross-ledger X.
+        # (Cross-ledger CYCLE check is not performed here — the local cycle-check can't span
+        # ledgers; a cross-ledger cycle requires mutually-dependent tasks delegated across
+        # sessions, a rare pathology. Flagged to lead as a scope item; intra-ledger cycles
+        # are still caught.)
+        y_ledger = _ledger_for(ctx, op.depends_on)
+        if await y_ledger.get(op.depends_on) is None:
+            return _edge_error(
+                "task.add_dependency", TaskDepNotFoundError(op.task_id, op.depends_on))
+        await y_ledger.add_remote_ref(op.depends_on, op.task_id, "dependent", durable=True)
+        task = await x_ledger.add_remote_dependency(op.task_id, op.depends_on)
+    else:
+        try:
+            task = await x_ledger.add_dependency(op.task_id, op.depends_on)
+        except (TaskCycleError, TaskDepNotFoundError) as err:
+            # OQ-1/OQ-4/OQ-5: dangling or cycle-forming edge → decision-enabling dict.
+            return _edge_error("task.add_dependency", err)
     if task is None:
         return _not_found("task.add_dependency", op.task_id)
     _audit(ctx, "task.add_dependency", op.task_id, depends_on=op.depends_on)

@@ -191,6 +191,18 @@ class OpContext:
     # inject a recording waker to verify the call-site fires.
     task_waker: "object | None" = None
 
+    # #2186: the cross-ledger Task-backend RESOLVER (parallel to task_waker; threaded
+    # down the same Session → router / kernel chain). A callable ``resolve(sid) -> backend
+    # | None`` that returns the per-session Task backend for ``sid`` of THIS agent — the
+    # seam by which a requester-gated op reaches a task whose HOME (assignee) ledger
+    # differs from the caller's: cross-ledger create routes the write to the assignee's
+    # ledger, and get/abort/foreign add_dependency resolve a home-addressable ref's
+    # ``home_sid`` to its ledger. None = no resolver (direct/test construction or
+    # single-session callers) → cross-ledger ops fall back to the caller's own backend
+    # (correct for the intra-ledger / self-task case). Mirrors how ``task_waker`` carries
+    # the registry+agent for cross-SESSION wakes — this carries it for cross-LEDGER reads.
+    task_backend_resolver: "object | None" = None
+
     # #1800 slice 5c: the awaited HookDispatcher (the Session's instance, with the
     # loaded hooks registry + the _put_inbox/_stage/_run_shell seams from 5b),
     # threaded down the SAME Session → router / kernel chain as task_waker. The
