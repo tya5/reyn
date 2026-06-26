@@ -181,6 +181,24 @@ async def test_agent_drop_closes_and_evicts_backend(tmp_path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_purge_via_remove_closes_and_evicts_backend(tmp_path) -> None:
+    """Tier 2: (the THIRD agent-teardown path — lead-caught) ``remove(name, purge=True)``,
+    the live ``archive_agent(purge=True)`` hard-delete, closes + evicts the agent's shared
+    backend BEFORE its rmtree — alongside ``_drop_agent`` + ``_purge_archived_below``.
+    Without the close, the warmed cache entry keeps a dangling handle over the deleted inode
+    AND is never evicted → a NEW agent reusing the name gets the stale handle and writes to
+    the wrong/deleted file (a name-reuse correctness hazard, not just a leak). RED on the
+    version missing the line-684 close. Asserts closed (ProgrammingError) + evicted (a
+    re-create rebuilds a fresh instance)."""
+    reg = _registry(tmp_path)
+    first = reg.task_backend_for("worker")  # warm it (also creates the agent dir)
+    reg.remove("worker", purge=True)  # the hard-delete escape hatch
+    with pytest.raises(sqlite3.ProgrammingError):
+        await first.get("anything")  # closed → handle released ahead of the rmtree
+    assert reg.task_backend_for("worker") is not first  # evicted → rebuilt fresh
+
+
+@pytest.mark.asyncio
 async def test_concurrent_creates_through_shared_instance_all_land(tmp_path) -> None:
     """Tier 2: (A)'s one shared instance serialises concurrent writes on its single
     ``asyncio.Lock`` — N concurrent ``create``s through the agent's backend ALL land (no
