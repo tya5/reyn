@@ -115,12 +115,16 @@ def _registry(tmp_path: Path, *, backend_kind: str):
 
     state_log = StateLog(tmp_path / ".reyn" / "wal.jsonl")
     holder: dict[str, object] = {}
+    reg_holder: dict[str, object] = {}
 
     def _factory(profile: AgentProfile) -> Session:
         state = tmp_path / ".reyn" / "agents" / profile.name / "state"
         snap = state / "snapshot.json"
         if backend_kind == "sqlite":
-            tb: object | None = SqliteTaskBackend(state / "tasks.db")
+            # #2187 S1: the session uses the registry's GLOBAL Task backend (the production
+            # wiring) — the rewind restores THAT one (``_rewind_backends`` = the global), so
+            # the session's backend + the rewound backend are the same instance.
+            tb: object | None = reg_holder["reg"].task_backend
         elif backend_kind == "inmem":
             tb = InMemoryTaskBackend()
         else:
@@ -132,6 +136,7 @@ def _registry(tmp_path: Path, *, backend_kind: str):
         )
 
     reg = AgentRegistry(project_root=tmp_path, session_factory=_factory, state_log=state_log)
+    reg_holder["reg"] = reg
     AgentProfile.new("alpha", role="").save(tmp_path / ".reyn" / "agents" / "alpha")
     sess = reg.get_or_load("alpha")
     sess.register_intervention_listener("test")

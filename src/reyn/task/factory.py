@@ -4,13 +4,13 @@ A caller builds a Task backend via :func:`create_task_backend` — config-driven
 (``in-memory`` for tests / ephemeral, ``sqlite`` for durable), never hardcoded. The
 sqlite ``path`` is supplied by the caller.
 
-#2180: the AGENT-keyed sqlite backend (``.reyn/agents/<name>/state/tasks.db`` — one db
-file per AGENT, SHARED across that agent's sessions) is constructed at exactly ONE seam,
-``AgentRegistry.task_backend_for``, which holds a SINGLE ``SqliteTaskBackend`` per agent
-(one connection). Sessions get that shared instance — they never construct an agent-keyed
-backend directly (a direct construction would open an N+1 connection and reintroduce the
-#2125 cross-connection write race). The earlier per-session ``per_session_sqlite_backend``
-helper that built N instances over the shared file was removed in #2180.
+#2187 S1: the sqlite Task backend is GLOBAL (``.reyn/state/tasks.db`` — ONE db file per
+process, task ⊥ agent/session), constructed at exactly ONE seam, the
+``AgentRegistry.task_backend`` property, which holds a SINGLE ``SqliteTaskBackend`` (one
+connection). Every session gets that one instance — they never construct a backend
+directly (a direct construction would open an N+1 connection and reintroduce the #2125
+cross-connection write race). This reverts the #2180 per-AGENT / #2186 per-SESSION splits
+(a task is first-class, referenced by an owner, not living in a session — #2187 §2).
 """
 from __future__ import annotations
 
