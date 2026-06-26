@@ -2825,18 +2825,38 @@ class Session:
         await target.submit_agent_request(
             from_agent=from_agent, request=request,
             depth=depth, chain_id=chain_id,
+            # #2130: thread THIS delegating session's sid so the peer's reply routes back
+            # to (from_agent, from_sid) — a non-main session that DELEGATES (not just spawns)
+            # gets its reply, not the agent's main. "main" → the default path (byte-identical;
+            # the _a2a_send_response branch treats absent/"main" as the unchanged main-case).
+            # In-process delegation only; a cross-process external peer that doesn't echo
+            # from_sid degrades to None→main (safe).
+            from_sid=self._session_id,
         )
 
     async def _a2a_send_response(
         self,
         to: str, from_agent: str, response: str, depth: int, chain_id: str,
-        responder_sid: "str | None" = None,
+        responder_sid: "str | None" = None, to_sid: "str | None" = None,
     ) -> None:
-        """Transport callback: submit agent_response to ``to``.
+        """Transport callback: submit agent_response to ``to`` (#2130: at ``to_sid``).
 
         Silently drops when the target no longer exists (race on shutdown).
         ``responder_sid`` (#2103 S1bc-exec) carries the responder's own sid when it is a
         spawned session, so the receiver can correlate the result to its spawn record.
+
+        #2130 first-class (agent, sid) routing: ``to_sid`` is the REQUESTER's session id.
+        - absent / "main" → the DEFAULT path, byte-identical to pre-#2130: ``get_or_load``
+          (disk-loads a cold main) + ``ensure_running`` (run() + the user-facing forwarder).
+          This serves the classic peer-A2A case where ``to``'s main may be unloaded.
+        - a non-main sid → deliver to that SPECIFIC spawned (spawner) session via the
+          in-memory ``get_session`` (the spawner is always warm at result-route time — its
+          run-loop idles on a pending chain that suppresses ephemeral-vanish; and
+          ``get_or_load`` cannot reconstruct a non-main sid from disk anyway). No forwarder
+          is needed (inbound arrives via inbox+run(); the forwarder is user-facing-output
+          only, and a non-main session has none). FAIL-SAFE: a gone spawner (get_session
+          None) is LOGGED + DROPPED — never a fallback to main, which would re-introduce the
+          very misroute #2130 fixes (a logged drop > a silent misroute).
         """
         if self._registry is None:
             # #2103 S1bc-exec hardening: a result-routing path that silently no-ops on an
@@ -2849,8 +2869,21 @@ class Session:
             return
         if not self._registry.exists(to):
             return
-        target = self._registry.get_or_load(to)
-        await self._registry.ensure_running(to)
+        if to_sid is not None and to_sid != "main":  # "main" = registry._DEFAULT_SID (no import cycle)
+            # #2130 spawner-sid delivery: the specific non-main session, in-memory only.
+            target = self._registry.get_session(to, to_sid)
+            if target is None:
+                logger.warning(
+                    "a2a response to (%r, %r) dropped: the spawner session is no longer "
+                    "loaded (fail-safe — NOT routed to main, which would misroute)",
+                    to, to_sid,
+                )
+                return
+            self._registry.ensure_session_running(to, to_sid)
+        else:
+            # default / main-case: UNCHANGED (cold-load + forwarder) — byte-identical.
+            target = self._registry.get_or_load(to)
+            await self._registry.ensure_running(to)
         await target.submit_agent_response(
             from_agent=from_agent, response=response,
             depth=depth, chain_id=chain_id, responder_sid=responder_sid,
@@ -2891,10 +2924,15 @@ class Session:
 
     async def submit_agent_request(
         self, *, from_agent: str, request: str, depth: int, chain_id: str,
+        from_sid: "str | None" = None,
     ) -> None:
         await self._put_inbox("agent_request", {
             "from_agent": from_agent, "request": request, "depth": depth,
             "chain_id": chain_id,
+            # #2130: the REQUESTER's session id — so this request's response routes back to
+            # the specific (from_agent, from_sid), not the requester agent's main session.
+            # None → main-case (byte-identical to pre-#2130).
+            "from_sid": from_sid,
         })
 
     async def submit_agent_response(
@@ -4831,10 +4869,11 @@ class Session:
 
     async def _send_agent_response(
         self, *, to: str, response: str, depth: int, chain_id: str,
+        to_sid: "str | None" = None,
     ) -> None:
         """Thin delegator — business logic lives in A2AHandler.send_agent_response."""
         await self._a2a_handler.send_agent_response(
-            to=to, response=response, depth=depth, chain_id=chain_id,
+            to=to, response=response, depth=depth, chain_id=chain_id, to_sid=to_sid,
         )
 
     async def _handle_agent_request(self, payload: dict) -> None:
@@ -4891,6 +4930,7 @@ class Session:
                 response=error_text,
                 depth=pending.origin_depth,
                 chain_id=chain_id,
+                to_sid=pending.origin_sid,  # #2130
             )
         except Exception as exc:  # noqa: BLE001 — never wedge the loop
             await self._put_outbox(OutboxMessage(
