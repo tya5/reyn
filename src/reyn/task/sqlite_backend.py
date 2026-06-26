@@ -136,6 +136,10 @@ _TASK_COLUMNS = (
     "created_by, awaiting_since, tools, result, created_at, updated_at"
 )
 
+# #2186: the per-session home-addressable schema generation. A db at a lower/unset
+# user_version is a pre-#2186 (old-format) db → clean-break wiped on first open.
+_SCHEMA_VERSION = 2
+
 
 class SqliteTaskBackend:
     """Durable Task backend backed by a single sqlite database.
@@ -191,11 +195,35 @@ class SqliteTaskBackend:
         conn.execute("PRAGMA journal_mode=WAL")
         conn.execute("PRAGMA busy_timeout=0")
         if init_schema:
+            # #2186 clean-break (owner standing: no compat / no migration): a pre-#2186 db
+            # at this path (agent-shared, bare-uuid task_ids, requester_kind column) is
+            # INCOMPATIBLE with the home-addressable per-session model and is DISCARDED — no
+            # old-format read, no half-old-half-new ledger. Gate on user_version so the wipe
+            # is a one-time cutover (a brand-new or already-v2 db is untouched).
+            self._clean_break_if_stale(conn)
             conn.executescript(_SCHEMA)
             # Single-source migration helper — also called from restore_to_seq so
             # both open and restore paths share the same column-addition logic.
             self._migrate_columns(conn)
         return conn
+
+    @staticmethod
+    def _clean_break_if_stale(conn: sqlite3.Connection) -> None:
+        """#2186: one-time clean-break wipe of a pre-#2186 (old-format) Task db. Gated on
+        ``PRAGMA user_version``: anything not at ``_SCHEMA_VERSION`` is wiped (DROP the task
+        tables) and re-stamped, so the subsequent ``CREATE TABLE`` builds the new schema
+        fresh. A brand-new db (no tables) makes the DROPs a no-op; an already-current db
+        (user_version == _SCHEMA_VERSION) skips the wipe entirely. No old-format READ — only
+        the structural version gate decides — honouring the owner's no-compat/no-migration
+        clean-break (old in-flight tasks are abandoned on cutover)."""
+        version = conn.execute("PRAGMA user_version").fetchone()[0]
+        if version == _SCHEMA_VERSION:
+            return
+        for tbl in ("tasks", "task_links", "task_runs", "task_events",
+                    "task_comments", "task_remote_refs"):
+            conn.execute(f"DROP TABLE IF EXISTS {tbl}")
+        conn.execute(f"PRAGMA user_version={_SCHEMA_VERSION}")
+        conn.commit()
 
     def close(self) -> None:
         self._conn.close()

@@ -1641,67 +1641,86 @@ class AgentRegistry:
             )
         return removed
 
-    def task_backend_for(self, name: str) -> "object":
-        """#2180: the agent's SHARED Task backend — ONE per agent, built lazily + cached.
+    def task_backend_for(self, name: str, sid: str = _DEFAULT_SID) -> "object":
+        """#2186: the PER-SESSION Task backend — ONE per (agent, sid), built lazily + cached.
 
-        The SINGLE construction seam for every session of an agent: chat / stdio-MCP
-        session construction routes ``task_backend=`` through here (NOT a direct
-        ``create_task_backend`` / ``SqliteTaskBackend`` over the agent-keyed path — that
-        would open an N+1 connection and silently reintroduce the #2125 cross-connection
-        write race; #2180 removed the per-session helper that did so). Two
-        sessions of one agent therefore get the SAME instance (``is`` identity), so the
-        backend's per-instance ``asyncio.Lock`` serialises ALL of that agent's writes to
-        the agent-keyed ``tasks.db`` and the ``restore_to_seq`` file-swap is the only
-        connection touching the file. Path is registry-relative (``self._dir`` =
-        ``project_root/.reyn/agents``) — agent-keyed, consistent with the agent's other
-        per-agent substrate dirs (snapshots, task-generations). Lazy import avoids an
-        import cycle (task.factory → task.sqlite_backend)."""
-        tb = self._task_backends.get(name)
+        Supersedes #2180's per-AGENT sharing: a task lives in its assignee/executing
+        session's OWN ledger (per-session isolation). The SINGLE construction seam: chat /
+        stdio-MCP session construction routes ``task_backend=`` through here for the
+        session's own sid; the cross-ledger op resolver routes a foreign-home op through
+        here for the target's sid. Path is the session's own state dir
+        (``_session_state_dir(name, sid)/tasks.db`` — ``main`` keeps the flat
+        ``state/tasks.db``; a spawned session nests under ``state/sessions/<enc(sid)>/``),
+        so each session's ledger + its sibling ``task-generations/`` participate in the
+        rewind capture/restore/prune triad keyed per-(name, sid) (mirrors ``_store_for``).
+        Per-session FILES dissolve the #2125/#2180 cross-connection lock by construction
+        (one connection per file). Keyed by ``(name, sid)``. Lazy import avoids an import
+        cycle (task.factory → task.sqlite_backend). The backend's open does the #2186
+        clean-break wipe of any pre-#2186 (old-format) db at its path (no migration)."""
+        key = (name, sid)
+        tb = self._task_backends.get(key)
         if tb is None:
             from reyn.task.factory import create_task_backend  # noqa: PLC0415
-            path = self._dir / name / "state" / "tasks.db"
+            path = self._session_state_dir(name, sid) / "tasks.db"
             tb = create_task_backend("sqlite", path=str(path))
-            self._task_backends[name] = tb
+            self._task_backends[key] = tb
         return tb
 
-    def _close_task_backend(self, name: str) -> None:
-        """#2180: close + evict the agent's shared Task backend — the agent-teardown
-        half of the lifecycle (PURGE / rewind-drop, NOT last-session-drop, since the
-        backend is agent-shared). Releases the single connection's SQLite lock BEFORE
-        the agent dir is rmtree'd (so the file handle is gone first) and drops the dict
-        entry so a later same-name agent re-builds a fresh connection rather than
-        re-using a closed handle. Best-effort: a close failure is logged, never raised
-        into a teardown/rewind path."""
-        tb = self._task_backends.pop(name, None)
-        if tb is None:
-            return
-        close = getattr(tb, "close", None)
-        if callable(close):
-            try:
-                close()
-            except Exception as e:  # noqa: BLE001 — best-effort; never raise into teardown
-                logger.warning("#2180: close of task backend for agent %r failed: %s", name, e)
+    def task_backend_resolver_for(self, name: str):
+        """#2186: a cross-ledger backend resolver bound to ``name`` — ``resolve(sid) ->
+        backend`` returning the per-session ledger for ``sid`` of THIS agent. Threaded onto
+        ``OpContext.task_backend_resolver`` (parallel to the TaskWaker) so a requester-gated
+        op can reach a task whose HOME (assignee) ledger differs from the caller's. Closes
+        over the agent name; delegates to ``task_backend_for(name, sid)`` (same lazy cache
+        + per-session keying), so a resolved foreign ledger is the SAME instance the foreign
+        session uses (no N+1 connection)."""
+        return lambda sid: self.task_backend_for(name, sid)
+
+    def _close_task_backend(self, name: str, sid: "str | None" = None) -> None:
+        """#2186: close + evict per-session Task backend(s). ``sid=None`` closes EVERY
+        loaded session's ledger of the agent (agent-teardown: PURGE / rewind-drop — release
+        every connection's SQLite lock BEFORE the agent dir is rmtree'd, and drop the cache
+        entries so a later same-name agent rebuilds fresh, not a closed handle). A specific
+        ``sid`` closes just that session's ledger (per-session drop). Best-effort: a close
+        failure is logged, never raised into a teardown/rewind path."""
+        keys = [(name, sid)] if sid is not None else [
+            k for k in list(self._task_backends) if k[0] == name
+        ]
+        for key in keys:
+            tb = self._task_backends.pop(key, None)
+            if tb is None:
+                continue
+            close = getattr(tb, "close", None)
+            if callable(close):
+                try:
+                    close()
+                except Exception as e:  # noqa: BLE001 — best-effort; never raise into teardown
+                    logger.warning(
+                        "#2186: close of task backend %r failed: %s", key, e)
 
     def _rewind_backends(self) -> "list[object]":
-        """#2128: every LOADED agent's rewind-participating Task backend — ONE per agent.
+        """#2186: every LOADED session's rewind-participating Task backend — ONE per
+        (agent, sid).
 
-        Replaces the single ``_task_backend`` pointer (multi-session/multi-AGENT
-        incorrect: it held only the last-constructed session's backend, so the rewind
-        RESTORE reached only one agent). The ``tasks.db`` is agent-keyed + shared across
-        an agent's sessions, so one backend per agent covers that agent's file; restoring
-        via N session-objects would redundantly file-swap the shared db (the #2125
-        cross-connection lock). Derived at use-time from the CURRENT loaded sessions, so a
-        dropped session is no longer iterated — no dangling/closed handle (subsumes the
-        #2125 re-point). Restore needs a LIVE backend (it mutates the live connection), so
-        this is loaded-derived; the disk-driven prune (over on-disk agents) is separate.
-        """
+        Supersedes #2128's one-per-AGENT (the per-agent ``break``): the ``tasks.db`` is now
+        per-SESSION (a task lives in its assignee session's own ledger), so EACH loaded
+        session's ledger is its own rewind substrate and must be restored independently to
+        the shared-WAL cut. Per-session FILES → no cross-connection file-swap contention
+        (the #2125 hazard is dissolved by construction). Derived at use-time from the CURRENT
+        loaded sessions, so a dropped session is no longer iterated — no dangling/closed
+        handle. De-duplicated by backend identity (a session may resolve a sibling's ledger
+        via the cross-ledger resolver, so the same instance can appear under two sessions —
+        restore it once). Restore needs a LIVE backend (it mutates the live connection); the
+        disk-driven prune (over on-disk sessions) is separate."""
         out: "list[object]" = []
+        seen: set[int] = set()
         for sessions in self._sessions.values():
             for session in sessions.values():
                 tb = getattr(session, "task_backend", None)
-                if tb is not None and getattr(tb, "supports_rewind", False):
+                if (tb is not None and getattr(tb, "supports_rewind", False)
+                        and id(tb) not in seen):
+                    seen.add(id(tb))
                     out.append(tb)
-                    break  # one per agent — the file is shared across its sessions
         return out
 
     def _purge_session_dir(self, name: str, sid: str) -> bool:
@@ -2020,17 +2039,19 @@ class AgentRegistry:
                 # not just main — per-session generation dirs now exist.
                 for sid in self._discover_session_ids(name):
                     self._store_for(name, sid).prune_below(floor)  # SnapshotGenerationStore (sync)
-                # #2128: prune the agent's (agent-keyed) Task-substrate generations on the
-                # SAME boundary, DISK-driven so UNLOADED agents are covered too — the old
-                # single ``_task_backend`` pointer reached only the last-loaded agent,
-                # leaving every other agent's task-gen DBs unbounded. The store is a
-                # standalone no-connection class (pure unlink of task-gen-<seq>.db below
-                # the floor), so this never touches a loaded agent's live tasks.db
-                # connection. ``is_dir()`` guard FIRST — the store ctor mkdir's the dir,
-                # so without it a non-rewind agent would get an empty task-generations/.
-                task_gen_dir = self._dir / name / "state" / "task-generations"
-                if task_gen_dir.is_dir():
-                    SqliteTaskGenerationStore(task_gen_dir).prune_below(floor)  # sync, pure-fs
+                    # #2186: prune the SESSION's (per-session) Task-substrate generations on
+                    # the SAME boundary — the task-gen dir is the sibling of the session's
+                    # own tasks.db (``_session_state_dir(name, sid)/task-generations``), so
+                    # the prune is now keyed per-(name, sid), inside the same disk-driven
+                    # session loop the SnapshotGenerationStore prune uses (the capture /
+                    # restore / prune triad is all per-session now). Standalone
+                    # no-connection store (pure unlink of task-gen-<seq>.db below the floor)
+                    # → never touches a live tasks.db connection. ``is_dir()`` guard FIRST —
+                    # the store ctor mkdir's the dir, so without it a non-rewind session
+                    # would get an empty task-generations/.
+                    task_gen_dir = self._session_state_dir(name, sid) / "task-generations"
+                    if task_gen_dir.is_dir():
+                        SqliteTaskGenerationStore(task_gen_dir).prune_below(floor)  # sync, pure-fs
             ws = self.workspace_store
             if ws is not None:
                 await ws.prune_below(floor)
@@ -2387,6 +2408,19 @@ class AgentRegistry:
         existing_skill_registry = getattr(session, "_skill_registry", None)
         if existing_skill_registry is not None:
             existing_skill_registry.set_session_id(new_sid)
+        # #2186: re-bind the session's per-session Task backend to its NOW-live sid (the
+        # spawned session was constructed before its real sid was stamped — the #2130
+        # live-sid lesson). Mirror the journal/skill_registry live-sid rebinds above. BOTH
+        # refs must move: ``_task_backend`` (the op-path ledger) AND
+        # ``_journal.set_task_backend`` (the CAPTURE seam — ``cut_generation`` snapshots
+        # the journal's backend at each WAL boundary; without this rebind a spawned
+        # session's ledger would never be captured → time-travel breaks for it). A
+        # backend that doesn't carry per-session rewind (None / opt-out) is left as-is.
+        new_backend = self.task_backend_for(name, new_sid)
+        session._task_backend = new_backend
+        set_tb = getattr(session._journal, "set_task_backend", None)
+        if callable(set_tb):
+            set_tb(new_backend)
         # FP-0043 Stage 5: re-key the spawned session's persistence to its OWN
         # per-session location so it does NOT collide with the agent's "main"
         # snapshot.json / generations. Derived from the session's own base (the
