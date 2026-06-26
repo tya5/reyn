@@ -171,6 +171,34 @@ async def test_non_main_spawn_is_now_allowed_guard_lifted(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_non_main_delegation_reply_routes_to_delegating_sid_not_main(tmp_path, monkeypatch):
+    """Tier 2: (LOAD-BEARING, #2130 delegation leg) a NON-MAIN session that DELEGATES to a
+    peer (not spawns) gets the peer's reply routed back to ITS (agent, sid), NOT the agent's
+    main — _a2a_send_request threads the delegating session's sid as from_sid. RED if the
+    delegation path is name-only (the reply lands on main)."""
+    monkeypatch.setattr("reyn.runtime.router_loop.call_llm_tools", _scripted_llm())
+    reg = _registry(tmp_path)
+    reg.create("peer")
+    main = reg.get_or_load("worker")  # the delegator agent's main (must NOT get the reply)
+    x_sid = await reg.spawn_session_recorded("worker", mode="persistent")
+    x = reg.ensure_session_running("worker", x_sid)  # the NON-MAIN delegating session
+    assert x is not None and x_sid != "main"
+
+    # X delegates to peer (from the non-main session) → peer replies → routes to (worker, x_sid).
+    await x._a2a_send_request(
+        to="peer", from_agent="worker", request="do the thing", depth=1, chain_id="cdel",
+    )
+
+    # the peer's reply (an inbound agent_response, framed "from=peer") lands on X, not main.
+    entry_x, _ = await _find_history(x, "from=peer")
+    assert entry_x is not None, "the peer's reply did NOT reach the non-main delegating session"
+    assert not any(
+        "from=peer" in (m.content if isinstance(m.content, str) else str(m.content))
+        for m in main.history
+    ), "the peer's reply leaked to main (the delegation misroute #2130 also fixes)"
+
+
+@pytest.mark.asyncio
 async def test_default_path_loads_cold_main_and_starts_forwarder(tmp_path):
     """Tier 2: (LOAD-BEARING byte-identical leg, #2130) a reply with NO to_sid (the
     default/main case) keeps the existing get_or_load + ensure_running semantics — it

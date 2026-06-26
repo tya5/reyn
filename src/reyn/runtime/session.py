@@ -2825,6 +2825,13 @@ class Session:
         await target.submit_agent_request(
             from_agent=from_agent, request=request,
             depth=depth, chain_id=chain_id,
+            # #2130: thread THIS delegating session's sid so the peer's reply routes back
+            # to (from_agent, from_sid) — a non-main session that DELEGATES (not just spawns)
+            # gets its reply, not the agent's main. "main" → the default path (byte-identical;
+            # the _a2a_send_response branch treats absent/"main" as the unchanged main-case).
+            # In-process delegation only; a cross-process external peer that doesn't echo
+            # from_sid degrades to None→main (safe).
+            from_sid=self._session_id,
         )
 
     async def _a2a_send_response(
