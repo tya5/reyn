@@ -78,15 +78,32 @@ CREATE TABLE IF NOT EXISTS task_links(
 );
 -- #1953 slice 6 (OQ-8): reverse (dependents) lookup for readiness recompute.
 CREATE INDEX IF NOT EXISTS idx_task_links_depends_on ON task_links(depends_on);
--- #2186: cross-ledger reverse-dependent markers. When a dependent X (home-addressable
--- ref, living in another session's ledger) depends on a LOCAL task ``depends_on``, the
--- forward edge lives in X's ledger; this marker in the TARGET's ledger lets the target's
--- terminal disposition find + wake the cross-ledger dependent (the §16 requester-back-ref
--- reuse). Wake-time self-heal drops a marker whose forward edge no longer exists.
-CREATE TABLE IF NOT EXISTS task_remote_dependents(
-  depends_on TEXT NOT NULL,      -- the LOCAL task being depended upon
-  dependent_ref TEXT NOT NULL,   -- home-addressable ref of the cross-ledger dependent
-  PRIMARY KEY(depends_on, dependent_ref)
+-- #2186: cross-ledger reverse-reference markers — the local index that makes a
+-- cross-ledger relation discoverable from THIS ledger (the parent/target has no forward
+-- list across ledgers). ``kind`` is an EXPLICIT marker (collision-safe by construction):
+--   'dependent' — a cross-ledger DEPENDENT (``remote_ref``) depends on this LOCAL task
+--      (``local_task_id``); on this task reaching terminal, wake the dependent (dep
+--      reverse-edge propagation). The forward edge lives in the dependent's ledger.
+--   'child'     — a cross-ledger OWNED sub-task (``remote_ref``) is owned by this LOCAL
+--      task (``local_task_id`` = the requester/owner); on this task's abort, cascade the
+--      abort to the child (§16 ownership). The ``requester`` edge lives in the child's
+--      ledger.
+-- ``remote_ref`` is a home-addressable task-ref → its home ledger is resolvable lookup-free
+-- to route the wake/abort. Disposition/abort self-heals a stale marker (the cross-ledger
+-- forward edge / requester no longer exists) by dropping it inline.
+-- NOTE (#2186, do not conflate): this ``kind`` is a RELATION-TYPE discriminator on the
+-- internal marker index (dependent vs child — they DISPOSE differently: dependent →
+-- wake-on-completion, child → abort-on-parent-abort). It is ORTHOGONAL to the REMOVED
+-- ``requester_kind`` (which was the requester's ENTITY-type session/task/external, now
+-- subsumed by the self-identifying home-addressable ref). Different axis: entity-type on
+-- the task = gone; relation-type on this disposition-routing index = a necessary, distinct
+-- discriminator (the explicit-kind-marker discipline, applied where two relations must be
+-- disambiguated rather than collision-matched).
+CREATE TABLE IF NOT EXISTS task_remote_refs(
+  local_task_id TEXT NOT NULL,   -- the LOCAL task the relation points at
+  remote_ref TEXT NOT NULL,      -- home-addressable ref of the cross-ledger related task
+  kind TEXT NOT NULL,            -- 'dependent' | 'child' (explicit collision-safe marker)
+  PRIMARY KEY(local_task_id, remote_ref, kind)
 );
 CREATE TABLE IF NOT EXISTS task_runs(
   run_id TEXT PRIMARY KEY,
@@ -523,6 +540,93 @@ class SqliteTaskBackend:
             except Exception:
                 self._conn.rollback()
                 raise
+            return self._fetch(task_id)
+
+    # ── #2186 cross-ledger reverse-reference markers ─────────────────────────
+
+    async def add_remote_ref(
+        self, local_task_id: str, remote_ref: str, kind: str, *, durable: bool = True,
+    ) -> None:
+        """#2186: record a cross-ledger reverse-reference marker in THIS ledger — the
+        local index that makes a cross-ledger relation discoverable from here (the
+        parent/target has no forward list across ledgers). ``kind`` is 'dependent'
+        (``remote_ref`` depends on ``local_task_id`` → wake it on completion) or 'child'
+        (``remote_ref`` is owned by ``local_task_id`` → abort it on parent abort).
+
+        ``durable=True`` runs a ``wal_checkpoint(FULL)`` after commit so the marker AND
+        every prior committed write in this ledger are power-loss-durable BEFORE the
+        caller proceeds to the cross-ledger forward write — the R1 ordering barrier
+        (cross-ledger edges only): dep → the TARGET (+ its dependent-marker) durable before
+        the forward edge in the dependent's ledger; ownership → the owner-MARKER durable
+        before the child is created in the assignee's ledger. The dangling that can survive
+        a crash is thus always the BENIGN direction (a marker without its forward edge /
+        child → a no-op wake / abort, self-healed inline)."""
+        async with self._lock:
+            self._conn.execute("BEGIN IMMEDIATE")
+            self._conn.execute(
+                "INSERT OR IGNORE INTO task_remote_refs(local_task_id, remote_ref, kind) "
+                "VALUES (?,?,?)",
+                (local_task_id, remote_ref, kind),
+            )
+            self._conn.commit()
+            if durable:
+                # Flush the WAL to the main db → power-loss-durable (the task db runs
+                # synchronous=NORMAL, so a bare commit is app-crash- but not
+                # power-loss-durable until a checkpoint). Sole connection per session →
+                # no checkpoint contention.
+                self._conn.execute("PRAGMA wal_checkpoint(FULL)")
+
+    async def remote_refs(self, local_task_id: str, kind: str) -> list[str]:
+        """#2186: the home-addressable refs of this LOCAL task's cross-ledger related
+        tasks of ``kind`` — the discovery set for a cross-ledger wake ('dependent') or
+        abort-cascade ('child')."""
+        async with self._lock:
+            return [
+                r["remote_ref"] for r in self._conn.execute(
+                    "SELECT remote_ref FROM task_remote_refs WHERE local_task_id=? AND kind=?",
+                    (local_task_id, kind),
+                ).fetchall()
+            ]
+
+    async def drop_remote_ref(self, local_task_id: str, remote_ref: str, kind: str) -> None:
+        """#2186: drop a stale cross-ledger reverse-marker (the wake/abort-time self-heal:
+        the cross-ledger forward edge / requester no longer exists → the marker is an
+        orphan → drop it so it can't fire a second benign no-op). Strict zero-orphan."""
+        async with self._lock:
+            self._conn.execute("BEGIN IMMEDIATE")
+            self._conn.execute(
+                "DELETE FROM task_remote_refs WHERE local_task_id=? AND remote_ref=? AND kind=?",
+                (local_task_id, remote_ref, kind),
+            )
+            self._conn.commit()
+
+    async def add_remote_dependency(self, task_id: str, depends_on: str) -> "Task | None":
+        """#2186: record a CROSS-LEDGER forward dep edge (``task_id`` depends on
+        ``depends_on``, which lives in ANOTHER ledger) in THIS (the dependent's) ledger,
+        WITHOUT the local existence / cycle check (the target is remote — the op layer
+        validated its existence cross-ledger + wrote the R1-durable dependent-marker in the
+        target's ledger first). A fresh cross-ledger dep is not-yet-known-completed, so the
+        dependent is BLOCKED here; it is re-derived (and promoted) when the cross-ledger
+        completion wakes it (the op layer resolves the remote dep's status via the
+        resolver at that point). ``None`` if ``task_id`` is absent."""
+        async with self._lock:
+            if not self._exists(task_id):
+                return None
+            self._conn.execute("BEGIN IMMEDIATE")
+            self._conn.execute(
+                "INSERT OR IGNORE INTO task_links(task_id, depends_on) VALUES (?,?)",
+                (task_id, depends_on),
+            )
+            # A new cross-ledger dep can only block (a completion would arrive via the
+            # cross-ledger wake, never silently) — re-block pre-run states.
+            self._conn.execute(
+                "UPDATE tasks SET status=?, updated_at=? "
+                "WHERE task_id=? AND status IN (?,?,?)",
+                (TaskState.BLOCKED.value, _now_iso(), task_id,
+                 TaskState.PENDING.value, TaskState.READY.value, TaskState.BLOCKED.value),
+            )
+            self._emit(task_id, "dependency_added", depends_on=depends_on, cross_ledger=True)
+            self._conn.commit()
             return self._fetch(task_id)
 
     async def recompute_readiness(self, completed_task_id: str) -> list[Task]:
