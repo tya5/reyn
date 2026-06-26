@@ -1,13 +1,20 @@
-"""A2AHandler — agent-to-agent messaging logic.
+"""InterAgentMessaging — inter-agent messaging logic.
+
+#2187 S0: renamed from ``A2AHandler`` — this is the INTERNAL inter-agent
+coordination mechanism (agent ↔ agent messaging), NOT the external "A2A"
+protocol (the ``/a2a`` JSON-RPC + Agent Cards transport interop, which keeps
+the A2A name). Internal coordination is complete via this messaging + tasks;
+A2A is purely external interop.
 
 Extracted from Session (FP-0019 Wave 2 part 2, final).  Owns the
-agent-side of the A2A protocol: inbox handling for ``agent_request`` /
+agent-side of inter-agent messaging: inbox handling for ``agent_request`` /
 ``agent_response``, pending-chain lifecycle, and multi-hop relay
-coordination.
+coordination. (The ``agent_request`` / ``agent_response`` payload kinds keep
+their names — they are the internal message types, unchanged by this rename.)
 
 Transport-side routing (AgentRef → other-agent inbox) is handled by
 the FP-0013 RoutingLayer via the injected ``send_request_callback`` and
-``send_response_callback``.  A2AHandler is transport-agnostic: it
+``send_response_callback``.  InterAgentMessaging is transport-agnostic: it
 constructs the payload but delegates the actual put to callbacks, which
 makes it compatible with both the existing session-registry transport
 and the FP-0013 RoutingLayer's ``AgentRef`` handler.
@@ -104,7 +111,7 @@ _PEER_REPLY_FAILED_MSG: dict[str, str] = {
 # Imported locally to avoid circular import; this mirrors session.py's pattern.
 
 
-class A2AHandler:
+class InterAgentMessaging:
     """Agent-to-agent messaging service.
 
     Extracted from Session (FP-0019 Wave 2 part 2).
@@ -150,15 +157,15 @@ class A2AHandler:
     send_request_callback:
         Async callable ``(to, from_agent, request, depth, chain_id) -> None``.
         Session-side wrapper that validates topology + performs the actual
-        ``submit_agent_request`` transport call.  A2AHandler only calls this
+        ``submit_agent_request`` transport call.  InterAgentMessaging only calls this
         after depth/self-message/existence guards pass.
     send_response_callback:
         Async callable ``(to, from_agent, response, depth, chain_id) -> None``.
         Session-side wrapper for the actual ``submit_agent_response`` transport
-        call.  A2AHandler calls this after the depth-drop guard passes.
+        call.  InterAgentMessaging calls this after the depth-drop guard passes.
     on_chain_timeout_fire:
         Async callable ``(chain_id) -> None`` — invoked by ChainManager when a
-        chain's watchdog fires.  Stays in Session; A2AHandler only passes
+        chain's watchdog fires.  Stays in Session; InterAgentMessaging only passes
         it as ``on_fire`` to ``chain_manager.arm_timeout``.
     """
 
@@ -297,7 +304,7 @@ class A2AHandler:
         # Delegate the actual transport call (topology check + submit) to
         # the session-side callback.  This is the FP-0013 RoutingLayer
         # integration point: the callback can be replaced with a RoutingLayer
-        # AgentRef handler without changing A2AHandler.
+        # AgentRef handler without changing InterAgentMessaging.
         await self._send_request_callback(
             to, self.agent_name, request, depth, chain_id,
         )
@@ -748,10 +755,10 @@ class A2AHandler:
         """User-facing wrap-up when the per-turn router cap is reached.
 
         Delegates to Session._emit_router_cap_exhausted_user (injected at
-        construction) so both the SkillPlanGlue and A2AHandler paths call a
+        construction) so both the SkillPlanGlue and InterAgentMessaging paths call a
         single implementation — zero drift by construction (#1538).
         """
         await self._emit_router_cap_exhausted_fn(exc, chain_id=chain_id)
 
 
-__all__ = ["A2AHandler"]
+__all__ = ["InterAgentMessaging"]

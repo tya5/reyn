@@ -108,7 +108,7 @@ _MAX_REPRESENT_ROUNDS = 64
 # the SP TASK_SPAWNED rule un-anchored for the agent path. Now mirrors
 # the skill / plan format: `[task_spawned] kind=agent ...` header +
 # user-facing trailer. Pairs with the `[task_completed] kind=agent
-# ...` injection on peer reply receipt (see a2a_handler).
+# ...` injection on peer reply receipt (see inter_agent_messaging).
 _AGENT_SPAWN_ACK_MSG: dict[str, str] = {
     "ja": (
         "ピアエージェントにリクエストを送信しました。"

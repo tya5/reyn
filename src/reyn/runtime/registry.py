@@ -587,7 +587,7 @@ class AgentRegistry:
     # #2175: the BASE operator spawn bounds (safety.spawn.*, config-set restart-only).
     # Exposed so the LLM spawn SEAM (host adapter) can compute the EFFECTIVE limit
     # (base + the on_limit per-operation extension) and route an exceed through the
-    # safety.on_limit checkpoint — exactly as the a2a_handler does over max_hop_depth +
+    # safety.on_limit checkpoint — exactly as the inter_agent_messaging does over max_hop_depth +
     # _safety_extensions (retiring C3's parallel hard-reject helpers). ``0`` = unlimited.
     # The raw counts (spawn_depth / spawn_child_count above) stay the registry's source
     # of truth; the effective-limit + checkpoint logic lives at the seam.

@@ -214,7 +214,7 @@ class RouterHostAdapter:
         # the documented RuntimeError telling the caller a bus is needed).
         intervention_bus_factory: Callable[[], Any] | None = None,
         # #2175: the safety.on_limit checkpoint + the shared per-run extension dict —
-        # injected from Session (mirror the a2a_handler injection) so the spawn SEAM can
+        # injected from Session (mirror the inter_agent_messaging injection) so the spawn SEAM can
         # route a spawn-limit exceed through the same mode-driven on_limit framework as
         # max_agent_hops. None → no checkpoint wired (headless/test) → degrade to
         # unattended (reject), the C3 hard-deny posture.
@@ -1003,7 +1003,7 @@ class RouterHostAdapter:
         parent = self._agent_name
         # #2175: operator spawn-tree bounds (safety.spawn.*) routed through the
         # safety.on_limit checkpoint (mode-driven: unattended=reject / interactive=ask the
-        # operator / auto_extend), exactly like a2a_handler's max_agent_hops over
+        # operator / auto_extend), exactly like inter_agent_messaging's max_agent_hops over
         # max_hop_depth + _safety_extensions. LLM-seam only (operator CLI create is
         # unbounded = authority, C1). No-self-raise: the BASE is config-set restart-only;
         # any extension is human/operator-approved, never LLM. DEPTH and FAN-OUT carry

@@ -88,7 +88,7 @@ async def test_main_spawn_result_routes_back_correlated_as_spawned_session(tmp_p
 
     chain_id = "chain-spawn-verify-1"
     # The spawned session completes + routes the result back (the run-loop's completion
-    # call, a2a_handler:451) through the real registry routing. send_agent_response tags
+    # call, inter_agent_messaging:451) through the real registry routing. send_agent_response tags
     # responder_sid=<the spawned session's own sid> automatically.
     await spawned._send_agent_response(
         to="worker", response="TASK RESULT: did the thing", depth=0, chain_id=chain_id,
