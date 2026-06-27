@@ -129,9 +129,13 @@ Pauses the phase and asks the user. The OS prints the question, reads stdin, and
 {
   "kind": "ask_user",
   "question": "Which model do you want to target?",
-  "suggestions": ["light", "standard", "strong"]
+  "suggestions": ["light", "standard", "strong"],
+  "options": ["light", "standard", "strong"],
+  "required": true
 }
 ```
+
+`suggestions` are free-text hints (the user may still type anything). `options` (PR-F3, #2233) is a **closed selectable set** — when non-empty, the frontend renders a **selector** over exactly those answers (empty → free-text input). `required` (default `true`) — when `false`, the user may dismiss without answering.
 
 ## `run_skill`
 
