@@ -384,11 +384,14 @@ async def test_c_staging_durable_during_drain_wait(tmp_path) -> None:
     # stage it durably, then block waiting for a trigger (Decision A).
     drain_task = asyncio.create_task(session._drain_to_wake())
 
-    # Yield control briefly to let the drain task consume the C and call
-    # record_next_turn_context_staged.  Multiple yields improve reliability
-    # across different event-loop scheduling policies.
-    for _ in range(10):
-        await asyncio.sleep(0)
+    # Wait until the drain has DURABLY staged the C. The WAL append fsyncs OFF the event
+    # loop (#1765), so it completes on a worker thread — a fixed yield count (await sleep(0))
+    # would race that async fsync. Poll the durable condition instead (the same wait-for-
+    # condition discipline #1751 adopted when fsync moved off-loop).
+    for _ in range(400):
+        if any(e.get("kind") == "next_turn_context_staged" for e in _wal_events(tmp_path)):
+            break
+        await asyncio.sleep(0.005)
 
     # While _drain_to_wake is still blocking (no trigger sent), verify
     # durability: WAL + snapshot must already contain the staged entry.

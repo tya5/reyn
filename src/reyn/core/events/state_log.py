@@ -26,6 +26,18 @@ like LLM calls live in the audit log under `.reyn/events/`):
 
 Per P7: this is OS-level generic infrastructure — `kind` strings and
 field names live here, not in any skill/domain code.
+
+Off-loop durability (#1765 Step 1a). The fsync runs OFF the event loop via the shared
+`DurabilityWorker` (so a slow disk no longer freezes the loop — TUI repaint + other
+sessions keep running DURING the fsync), yet `append` still returns only once durable: the
+per-append crash-recovery contract is UNCHANGED (no relaxed-durability window — that is the
+deferred Step 2). The off-loop fsync would reopen the #1751 surface (a lockless `iter_from`
+reading a written-but-not-yet-fsync'd entry) — closed structurally by `_inflight_seq`: the
+worker marks the seq it is fsyncing right now, and `iter_from` skips exactly that one entry
+(a single-entry exclusion, NOT a durable ceiling, so cross-instance reads of a process-shared
+WAL + recovery still see every durable entry). The seq is assigned + the worker write
+submitted under the lock, so seq order = file order, and `truncate_below` (also under the
+lock) never overlaps a write.
 """
 from __future__ import annotations
 
@@ -108,11 +120,24 @@ WAL_EVENT_KINDS = (
 class StateLog:
     """Single-file WAL. Process-shared; ownership lives in AgentRegistry."""
 
-    def __init__(self, path: Path) -> None:
+    def __init__(self, path: Path, worker: "DurabilityWorker | None" = None) -> None:
         self._path = Path(path)
         self._path.parent.mkdir(parents=True, exist_ok=True)
         self._lock = asyncio.Lock()
         self._counter = self._scan_max_seq()
+        # #1765 Step 1a: the off-loop durability worker (shared with other substrates so all
+        # durable writes serialise at one point — the cross-substrate ordering). `_inflight_seq`
+        # is the seq THIS log's worker is writing RIGHT NOW (between its file-write and its
+        # fsync-ack) — the only non-durable entry. `iter_from` skips it, so the #1751
+        # lockless-read surface (a concurrent read of a written-but-not-yet-fsync'd entry) is
+        # closed structurally, WITHOUT a per-instance durable ceiling: a stale ceiling would
+        # wrongly hide entries durably written by ANOTHER StateLog on the same file (the WAL is
+        # process-shared) or already on disk at open. None = nothing in flight (a read at
+        # recovery / between appends sees every durable entry). A caller may inject a shared
+        # worker; else this log owns one.
+        from reyn.core.events.durability_worker import DurabilityWorker  # noqa: PLC0415
+        self._worker = worker if worker is not None else DurabilityWorker()
+        self._inflight_seq: "int | None" = None
         # Generic post-append observers (#1560). Each is invoked AFTER a durable
         # append (post-fsync, outside the lock) with `(kind, seq, fields)`. The
         # WAL stays workspace/feature-agnostic (P7) — observers carry all domain
@@ -129,10 +154,17 @@ class StateLog:
         return self._counter
 
     async def append(self, kind: str, **fields) -> int:
-        """Append a new entry, fsync, return its seq.
+        """Append a new entry, fsync (off the event loop), return its seq.
 
         `kind` must be one of WAL_EVENT_KINDS — caught at write time so a
         typo doesn't silently fragment the recovery vocabulary.
+
+        The seq is assigned under the lock; the worker write+fsync is submitted while the
+        lock is held (so the seq order = the file write order, and `truncate_below` — which
+        also holds the lock — never overlaps a write). `append` returns only after its entry
+        is durable: the per-append crash-recovery contract is unchanged, but the loop is free
+        during the (off-loop) fsync. Post-append observers fire after the durable write,
+        outside the lock (best-effort, #1560).
         """
         if kind not in WAL_EVENT_KINDS:
             raise ValueError(f"unknown WAL event kind: {kind!r}")
@@ -143,34 +175,48 @@ class StateLog:
                 "seq": seq,
                 "ts": datetime.now().isoformat(),
                 "kind": kind,
-                **fields,
             }
-            payload = json.dumps(entry, ensure_ascii=False) + "\n"
-            # Defensive: if the previous run crashed mid-write, the file may
-            # end without a newline. Probe the last byte before appending so
-            # our new entry starts on its own line — the torn fragment still
-            # parses as garbage and gets skipped on replay.
-            need_lead_newline = self._needs_lead_newline()
-            with self._path.open("a", encoding="utf-8") as f:
-                if need_lead_newline:
-                    f.write("\n")
-                f.write(payload)
-                f.flush()
-                # fsync synchronously so the append is durable before it returns
-                # (the fsync-per-append recovery contract). Kept ON the event loop
-                # deliberately: a synchronous fsync does not yield, so each append
-                # is event-loop-atomic — there is no intra-append suspension point
-                # at which another coroutine could interleave. (#1751 briefly moved
-                # this off-loop via ``asyncio.to_thread`` to unblock TUI repaint,
-                # but that opened a new intra-append concurrency surface; reverted —
-                # the TUI latency is addressed in the UI layer instead.)
-                os.fsync(f.fileno())
-        # Post-append observers fire AFTER the durable write and OUTSIDE the lock
-        # (#1560): durability is already secured, so a slow/failing observer
-        # neither weakens crash-recovery nor serializes other appends. Best-effort
-        # — failures are swallowed, so the append's result is never blocked.
+            entry.update(fields)
+            await self._worker.submit(self._durable_wal_write(entry))
         await self._fire_post_append(kind, seq, fields)
         return seq
+
+    def _durable_wal_write(self, entry: dict):
+        """Build the durable-write task for `entry` (run by the DurabilityWorker, serially).
+        Writes the line, fsyncs OFF the event loop, then bumps `_durable_seq` — strictly
+        AFTER the fsync, so `iter_from` (seq <= `_durable_seq`) never exposes a non-durable
+        entry. No lock here: the submitting `append` holds `self._lock` across the submit, so
+        this runs exclusively (serialised with other appends + `truncate_below`)."""
+        async def _task() -> None:
+            # Mark this entry in-flight BEFORE it appears in the file, so a concurrent
+            # `iter_from` during the fsync skips it (it is written but not yet durable);
+            # cleared only AFTER the fsync, when it is durable + readable.
+            self._inflight_seq = entry["seq"]
+            try:
+                payload = json.dumps(entry, ensure_ascii=False) + "\n"
+                # Defensive lead-newline (a prior run may have crashed mid-write so the file
+                # ends without a newline): start on our own line; the torn fragment parses as
+                # garbage + is skipped on replay.
+                need_lead_newline = self._needs_lead_newline()
+                with self._path.open("a", encoding="utf-8") as f:
+                    if need_lead_newline:
+                        f.write("\n")
+                    f.write(payload)
+                    f.flush()
+                    await asyncio.to_thread(os.fsync, f.fileno())
+            finally:
+                self._inflight_seq = None
+        return _task
+
+    async def submit_durable(self, do_durable_write) -> None:
+        """#1765 Step 1a: submit a durable write from ANOTHER substrate (e.g. a snapshot
+        save) to the SAME worker, so it serialises with WAL writes — the single cross-substrate
+        ordering point. Blocking (awaits durability), like `append`."""
+        await self._worker.submit(do_durable_write)
+
+    async def aclose(self) -> None:
+        """Drain + stop the durability worker (graceful shutdown — no in-flight write lost)."""
+        await self._worker.aclose()
 
     def register_post_append(self, cb) -> None:
         """Register a generic post-append observer ``cb(kind, seq, fields)``.
@@ -215,13 +261,22 @@ class StateLog:
             return False
 
     def iter_from(self, min_seq: int) -> Iterator[dict]:
-        """Yield WAL entries with `seq >= min_seq`, in file order.
+        """Yield WAL entries with `seq >= min_seq`, in file order, EXCEPT this log's
+        currently-in-flight entry (written but not yet fsync'd).
 
         Bad lines (parse errors, partial writes from a crash) are skipped
         silently — recovery should be best-effort from whatever survived.
+
+        #1765 Step 1a: while this log's worker is fsyncing entry N, N is in the file but not
+        yet durable; `_inflight_seq == N` makes `iter_from` skip it, so a concurrent read never
+        exposes a non-durable entry (the #1751 lockless-read surface, closed structurally) —
+        `iter_from` stays a plain sync generator. Only that one in-flight entry is excluded:
+        every other on-disk entry IS durable (this log's earlier appends, another StateLog's
+        appends on the same shared file, or pre-existing entries), so reads + recovery see them.
         """
         if not self._path.is_file():
             return
+        inflight = self._inflight_seq
         with self._path.open("r", encoding="utf-8") as f:
             for line in f:
                 line = line.strip()
@@ -236,6 +291,8 @@ class StateLog:
                 seq = entry.get("seq")
                 if not isinstance(seq, int):
                     continue
+                if seq == inflight:
+                    break  # the in-flight (non-durable) entry — the seq-ordered tail
                 if seq < min_seq:
                     continue
                 yield entry
