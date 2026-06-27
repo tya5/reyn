@@ -332,6 +332,10 @@ class AskUserIROp(BaseModel):
     kind: Literal["ask_user"]
     question: str
     suggestions: list[str] = Field(default_factory=list)
+    # F3 (region framework): a closed set of selectable answers. Empty → free-text
+    # (current behaviour). Non-empty → the user picks one (rendered as a selector
+    # in the inline CUI region; typed by number on the stdin / --cui path).
+    options: list[str] = Field(default_factory=list)
     required: bool = True
 
 

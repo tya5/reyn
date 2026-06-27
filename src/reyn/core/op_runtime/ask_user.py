@@ -12,10 +12,23 @@ from __future__ import annotations
 from typing import Literal
 
 from reyn.schemas.models import AskUserIROp
-from reyn.user_intervention import UserIntervention
+from reyn.user_intervention import InterventionChoice, UserIntervention
 
 from . import register
 from .context import OpContext
+
+
+def _options_to_choices(options: list[str]) -> list[InterventionChoice]:
+    """Pure: map free-text ask_user options to selectable choices.
+
+    ``id`` is the option text (so the answer is the option itself), ``label`` is
+    ``[N] <option>``, and ``hotkey`` is the 1-based number — the stdin / --cui
+    path types the number, the inline region selects with ↑↓.
+    """
+    return [
+        InterventionChoice(id=opt, label=f"[{i + 1}] {opt}", hotkey=str(i + 1))
+        for i, opt in enumerate(options)
+    ]
 
 
 async def handle(op: AskUserIROp, ctx: OpContext, caller: Literal["preprocessor", "control_ir"]) -> dict:
@@ -26,10 +39,13 @@ async def handle(op: AskUserIROp, ctx: OpContext, caller: Literal["preprocessor"
             "for chat) when constructing the SkillRuntime."
         )
 
+    choices = _options_to_choices(op.options or [])
     iv = UserIntervention(
         kind="ask_user",
         prompt=op.question,
         suggestions=op.suggestions or [],
+        choices=choices,
+        input_type="select" if choices else "",
         skill_name=ctx.skill_name or None,
         run_id=None,  # set by chat session if it tracks runs; CLI ignores
     )
@@ -42,10 +58,13 @@ async def handle(op: AskUserIROp, ctx: OpContext, caller: Literal["preprocessor"
         question=op.question,
         intervention_id=iv.id,
         suggestions=op.suggestions or [],
+        options=op.options or [],
     )
 
     answer = await ctx.intervention_bus.request(iv)
-    text = answer.text or ""
+    # A selected option resolves with choice_id (= the option text); free-text
+    # resolves with text.
+    text = answer.choice_id or answer.text or ""
     if not text and not op.required:
         text = ""
 
