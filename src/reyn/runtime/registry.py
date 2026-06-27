@@ -910,6 +910,9 @@ class AgentRegistry:
             self._state_log.iter_from(0),
             is_active=lambda s: is_active_seq(self._state_log, s),
         )
+        # #2187 Stage 4: the recovery RE-READ seam — the binding is restored above; now
+        # re-read the CURRENT backend task-state (the external master, not rewound).
+        await self._reconcile_subscriptions_after_recovery()
 
         # 1. Load snapshots — main (legacy path) + per-session (spawned).
         # FP-0043 Stage 5: ``snapshots`` (name → MAIN AgentSnapshot) is the
@@ -1313,6 +1316,33 @@ class AgentRegistry:
         SubscriptionRegistry current. Applies each durable subscription WAL append
         (non-subscription kinds are ignored by ``apply``)."""
         self._task_subscriptions.apply(kind, seq, fields)
+
+    async def _reconcile_subscriptions_after_recovery(self) -> "list[str]":
+        """#2187 Stage 4: the recovery RE-READ seam (the backend-master recovery model:
+        re-subscribe, then re-read the current external task-state, catching up by
+        re-reading). The subscription (the Reyn-internal binding) is already restored by
+        the WAL replay in ``restore_all``; the backend is the external MASTER of
+        task-STATE and is NOT rewound — so on recovery the binding may name a task whose
+        backend state moved (or vanished) while Reyn was down.
+
+        Stage 4 establishes the seam + a coherence pass: it returns the STALE bindings —
+        subscriptions whose task the backend no longer holds (the external master dropped
+        it) — and logs a summary. The FULL reconciliation — diff the re-read state against
+        the binding and RE-PUBLISH the missed state-change events to the re-subscribed
+        session (via ``publish_task_event``) / prune the stale bindings — is Stage 5: the
+        typed-state lifecycle drives WHICH events to re-deliver, so it is built there, on
+        this seam (the returned stale set is its input)."""
+        task_ids = self._task_subscriptions.task_ids()
+        if not task_ids:
+            return []
+        backend = self.task_backend  # the durable external master (built lazily)
+        stale = [tid for tid in task_ids if await backend.get(tid) is None]
+        if stale:
+            logger.info(
+                "#2187 recovery re-read: %d/%d subscription(s) name a task with no "
+                "backend state (stale binding — the external master dropped it); "
+                "Stage 5 reconciliation resolves these.", len(stale), len(task_ids))
+        return stale
 
     async def _on_wal_append_capture(self, kind: str, seq: int, fields: dict) -> None:
         """Generic WAL post-append observer: per-step act-turn workspace capture.
