@@ -9,6 +9,7 @@ the input and output sides funnel through the registry.
 from __future__ import annotations
 
 import asyncio
+import logging
 import sys
 
 from prompt_toolkit import PromptSession
@@ -20,6 +21,8 @@ from prompt_toolkit.patch_stdout import patch_stdout
 from reyn.runtime.registry import AgentRegistry  # #312 PR-A: registry stays in the runtime pkg
 
 from .renderer import ChatRenderer
+
+logger = logging.getLogger(__name__)
 
 
 async def _input_loop(
@@ -106,10 +109,20 @@ async def _output_loop(
         # before output and redrawn after — required for ANSI/Rich to render
         # cleanly without corrupting the prompt.
         # On a pipe: print plainly, no prompt redraw, no cursor escapes.
-        if is_tty and get_app_or_none() is not None:
-            await run_in_terminal(lambda m=msg: renderer.message(m))
-        else:
-            renderer.message(msg)
+        #
+        # Contain a single message's render failure: this loop is the sole
+        # consumer of repl_outbox, so an uncaught exception here would end the
+        # loop, trip run_repl's FIRST_COMPLETED wait, and tear down the whole
+        # REPL for one bad message. Log and continue instead (CancelledError is
+        # BaseException, so shutdown cancellation still propagates). reply_seen
+        # is still signalled below so the input pacing gate never hangs.
+        try:
+            if is_tty and get_app_or_none() is not None:
+                await run_in_terminal(lambda m=msg: renderer.message(m))
+            else:
+                renderer.message(msg)
+        except Exception:
+            logger.exception("output loop: render failed for message kind=%r", msg.kind)
         # Signal end-of-turn for the input loop's pacing gate. "agent" is
         # the canonical reply kind; "skill_done" / "error" also count as
         # turn-terminal so a skill-launch chat or a failed router round
