@@ -79,6 +79,7 @@ def test_union_validates_every_task_kind():
         "task.heartbeat": {"kind": "task.heartbeat", "task_id": "t"},
         "task.register_unblock_predicate": {"kind": "task.register_unblock_predicate", "task_id": "t", "predicate": "x"},
         "task.comment": {"kind": "task.comment", "task_id": "t", "body": "hi"},
+        "task.assign": {"kind": "task.assign", "task_id": "t", "assignee": "s"},
     }
     # every kind has a sample (forces this test to grow with the op-set)
     assert set(samples) == _TASK_KINDS

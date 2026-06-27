@@ -12,13 +12,15 @@ Concurrency (part-4 Option A, lead-confirmed):
   - writes open an explicit ``BEGIN IMMEDIATE`` transaction (WAL writer-upgrade
     deadlock avoidance — reyn's first use, so explicit).
 
-Single-writer is a **fixed-equality CAS on ``assignee``** (the settled model,
-#1953): a Task is owned by its **assignee session** (the #1814 per-contextId
-routing-key) and ``assignee`` is immutable, so ``update_status`` succeeds only
-when ``assignee == caller_session_id`` (``OpContext.session_id``); otherwise
-``rowcount == 0`` → the write is rejected. No claim token / version is needed
-(the key is fixed at create) — the backend ``asyncio.Lock`` serialises writers
-and the immutable assignee key makes a single writer structural.
+Single-writer: a Task is owned by its **assignee session** (the #1814 per-contextId
+routing-key) — the single writer of ``status``. Under #2187 backend-master the assignee
+is a **rebindable WAL subscription binding** (NOT an immutable field; it may be ``None``
+= UNASSIGNED, and is changed via ``record_rebound`` — claim / reassign / re-queue,
+§27-31). The ownership CAS (caller == the CURRENT hydrated assignee) is enforced at the
+OP layer against that binding; the backend (the state master) enforces only the
+terminal-state guard here (a terminal task → ``rowcount == 0`` → rejected). The backend
+``asyncio.Lock`` serialises writers (single-writer is structural under the per-task
+invariant); the binding itself is not a column here (it lives in the WAL).
 
 We deliberately do NOT copy ``SqliteIndexBackend``'s per-op fresh-connection +
 unguarded blocking ``conn.execute`` (PR-N7 on-loop-blocking hazard); only its
@@ -345,7 +347,10 @@ class SqliteTaskBackend:
             # derivation, not a post-hoc flip (OQ-2). Deps-less tasks (the A2A create
             # path) keep their requested status.
             status = task.status
-            if task.deps:
+            # An UNASSIGNED task (§27-31 pending-assignment queue) is not startable
+            # regardless of deps — it stays UNASSIGNED until claimed; the deps-derived
+            # READY/BLOCKED is computed at assignment (``mark_assigned``).
+            if status is not TaskState.UNASSIGNED and task.deps:
                 dep_statuses = [
                     (self._conn.execute(
                         "SELECT status FROM tasks WHERE task_id=?", (dep,)
@@ -443,6 +448,35 @@ class SqliteTaskBackend:
                 )
             self._emit(task_id, "status_changed", status=status, by=caller_session_id)
             self._conn.commit()
+            return self._fetch(task_id)
+
+    async def mark_assigned(self, task_id: str) -> Task | None:
+        # #2187 §27-31: an UNASSIGNED task just gained an assignee (the binding is recorded
+        # in the WAL by the op layer) → OS-derive its now-startable status (READY if all
+        # deps satisfied, else BLOCKED). No-op for a non-UNASSIGNED task. Returns the
+        # hydrated task (assignee reflects the just-rebound binding).
+        async with self._lock:
+            row = self._conn.execute(
+                "SELECT status FROM tasks WHERE task_id=?", (task_id,)
+            ).fetchone()
+            if row is None:
+                return None
+            if row["status"] == TaskState.UNASSIGNED.value:
+                dep_statuses = [
+                    (self._conn.execute(
+                        "SELECT status FROM tasks WHERE task_id=?", (dep,)
+                    ).fetchone() or {"status": None})["status"]
+                    for dep in self._deps(task_id)
+                ]
+                satisfied = all(s == TaskState.DONE.value for s in dep_statuses)
+                new = TaskState.READY.value if satisfied else TaskState.BLOCKED.value
+                self._conn.execute("BEGIN IMMEDIATE")
+                self._conn.execute(
+                    "UPDATE tasks SET status=?, updated_at=? WHERE task_id=?",
+                    (new, _now_iso(), task_id),
+                )
+                self._emit(task_id, "assigned", status=new)
+                self._conn.commit()
             return self._fetch(task_id)
 
     async def add_dependency(self, task_id: str, depends_on: str) -> Task | None:

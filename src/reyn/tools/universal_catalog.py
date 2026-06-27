@@ -650,7 +650,7 @@ def _enumerate_category(category: str, ctx: ToolContext) -> list[dict[str, str]]
     if category in (
         "file", "web", "memory_operation", "reyn_source", "rag_operation",
         "multi_agent", "validation",
-        # #1953 dynamic-wire: the 11 task.* ops have static qualified names in
+        # #1953 dynamic-wire: the 12 task.* ops have static qualified names in
         # _OPERATION_RULES (task__create/…) → enumerate them here too. Without
         # this, task ops were DISPATCH-wired (invoke_action) but NOT ENUMERATED
         # → unreachable on the enumerate-all production-default scheme + empty

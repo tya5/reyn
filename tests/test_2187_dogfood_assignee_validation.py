@@ -9,9 +9,11 @@ dropped"). The fix REJECTS the create up-front with a decision-enabling error, s
 orphan can never form. A self-task (assignee == caller, the live caller) is not
 checked; the check is opt-in (skipped without a waker).
 
-(Symptom ② — omitted assignee → self-default — is the correct self-task default; the
-delegate-intent-omit variant is a model-usage issue tracked for the subsequent
-pending-assignment feature, not this PR.)
+(Symptom ② — omitted assignee → self-default — now applies ONLY to an OWNED sub-task
+(self-decomposition); a TOP-LEVEL omitted assignee is UNASSIGNED (the §27-31
+pending-assignment queue) — see ``test_2187_pending_assignment_queue.py``. The None
+assignee of an unassigned task is never an orphan (no delegation target), so the guard
+skips it too.)
 """
 from __future__ import annotations
 
@@ -44,11 +46,12 @@ class _StubWaker:
             await self.wake_assigned(task, **kwargs)
 
 
-def _ctx(*, waker=None, caller="s1"):
+def _ctx(*, waker=None, caller="s1", current_task_id=None):
     return SimpleNamespace(
         session_id=caller, agent_id="agentA", events=None,
         task_backend=InMemoryTaskBackend(), task_waker=waker,
-        task_subscription_writer=None, current_task_id=None, hook_dispatcher=None)
+        task_subscription_writer=None, current_task_id=current_task_id,
+        hook_dispatcher=None)
 
 
 def _create_op(name="t", *, assignee=None):
@@ -77,11 +80,12 @@ async def test_delegate_to_live_assignee_ok():
 
 
 @pytest.mark.asyncio
-async def test_self_task_skips_the_check():
-    """Tier 2: a self-task (omitted assignee → the caller) is NOT checked — the caller
-    is the live session making the op; self-decomposition is the common, correct path."""
-    ctx = _ctx(waker=_StubWaker(live=set()))  # even with NO session registered as live
-    res = await taskmod._create(_create_op(assignee=None), ctx, "s1")  # omitted → self
+async def test_owned_subtask_self_default_skips_the_check():
+    """Tier 2: an OWNED sub-task (current_task_id set) with omitted assignee → the caller
+    (self-decomposition, the surviving self-default) is NOT checked — the caller is the live
+    session making the op. (A top-level omitted assignee → UNASSIGNED, covered separately.)"""
+    ctx = _ctx(waker=_StubWaker(live=set()), current_task_id="parentTask")  # no live session
+    res = await taskmod._create(_create_op(assignee=None), ctx, "s1")  # owned → self (caller)
     assert res["status"] == "ok", res
     assert (await ctx.task_backend.get(res["task"]["task_id"])).assignee == "s1"
 

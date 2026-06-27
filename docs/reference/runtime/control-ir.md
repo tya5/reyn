@@ -44,6 +44,7 @@ Control IR is the list of side-effect operations the LLM may emit alongside its 
 | `task.heartbeat` | Liveness / unblock-predicate trigger for a blocked Task | assignee-gated |
 | `task.register_unblock_predicate` | Register a deterministic unblock predicate | assignee-gated |
 | `task.comment` | Append a comment to a Task's thread | none |
+| `task.assign` | Assign a session to a Task (§27-31 pending-assignment queue): claim an UNASSIGNED task or reassign an assigned one; rebinds the WAL subscription + OS-derives the now-startable status + wakes the new assignee | UNASSIGNED → any session may claim; assigned → current-assignee-gated (owner hand-off) |
 
 ## Common envelope
 
@@ -494,21 +495,34 @@ kinds); like any op, each is also subject to the per-session contextual gate.
 **Roles.** A Task is owned by two session identities (the per-contextId
 routing-key): the **requester** (origin / assigner / disposition notify-target —
 the caller of `task.create`, set by the OS, not an op field) and the **assignee**
-(the worker session, the single-writer of `status`, **immutable** — no handoff;
-delegation is sub-task decomposition via `task.create` — sub-task ownership is OS-derived from the execution context (§16 recursive-request model), never an op field).
-`assignee` defaults to the caller (a self-task); a different value delegates
-cross-session (requester=A → assignee=B). One session can be the assignee of many
-Tasks (1 : N).
+(the worker session, the single-writer of `status`). Under #2187 backend-master the
+assignee is a **rebindable WAL subscription binding** (§27-31), not an immutable field:
+it may be **`None` (UNASSIGNED — the pending-assignment queue)** and is changed via
+`task.assign` (claim / owner-initiated hand-off / re-queue). On `task.create`: an explicit
+`assignee` delegates (or self-assigns); an **owned sub-task** (created while executing a
+task — OS-derived ownership, §16) with no `assignee` defaults to the caller (the
+decomposition continuation); a **top-level** task with no `assignee` is **UNASSIGNED**
+(it waits in the queue until claimed). One session can be the assignee of many Tasks (1 : N).
 
-**Single-writer** is a backend **fixed-equality CAS** `assignee == caller
-session_id` (`OpContext.session_id`, threaded by the OS — not an op field, so it
-cannot be forged). The assignee is immutable, so no claim token / version is
-needed; a non-assignee write is rejected. This is **not** a permission gate (the
-permission system is resource-scoped, no caller identity at op-exec).
+**Single-writer** is an op-layer CAS `caller session_id == the CURRENT (hydrated) assignee`
+(`OpContext.session_id`, threaded by the OS — not an op field, so it cannot be forged),
+checked against the rebindable WAL binding; a non-assignee write is rejected. This is
+**not** a permission gate (the permission system is resource-scoped, no caller identity at
+op-exec). The single-writer invariant (one writer per task) keeps the read-then-check
+race-free without a claim token / version.
+
+**Pending-assignment queue (§27-31).** A top-level `task.create` with no `assignee`
+produces an **UNASSIGNED** task (no binding, no execute-wake) that sits in the queue —
+listed by `task.list status=unassigned`. `task.assign` then binds a session: an UNASSIGNED
+task may be **claimed by any session**; an already-assigned task may be **reassigned only by
+its current assignee** (owner-initiated hand-off — others request a change via conversation).
+Assignment rebinds the WAL subscription, OS-derives the now-startable status
+(READY / BLOCKED-by-deps), and wakes the new assignee to execute.
 
 **Role-based op authority (P5).** Each op is gated on the caller's `session_id`:
 *assignee-gated* — `update_status` / `heartbeat` / `register_unblock_predicate`;
-*requester-gated* — `create` / `add_dependency` / `get` / `abort`. A violation
+*requester-gated* — `create` / `add_dependency` / `get` / `abort`; `assign` is
+**current-assignee-gated for a reassign but open for an UNASSIGNED claim**. A violation
 returns a `role_denied` result.
 
 **`abort` = delete (cooperative-terminal).** `task.abort` is the requester's
@@ -528,8 +542,10 @@ too** (#2107: the prior parent-keyed routing dropped roots). Abort also emits a 
 P6 `task_disposition` event per aborted task (`task_id` / `requester` / `origin` /
 `disposition`).
 
-**States:** `pending` / `ready` / `in_progress` / `blocked` / `completed` /
-`failed` / `aborted` / `archived`.
+**States (7-state, #2187 §3.4):** `unassigned` (no assignee — the pending-assignment
+queue) / `blocked` (deps not all terminal) / `ready` (assigned, startable) / `running` /
+`done` / `failed` / `aborted`. Soft-delete (`archived_at`) is an orthogonal retention
+marker, not a state.
 
 **Dependency DAG (§13).** `task.add_dependency` and `task.create(deps=[...])` add
 depends-on edges through a **shared edge-guard** (completeness): the `depends_on`

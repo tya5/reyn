@@ -5,14 +5,16 @@ implement (id / status / assignee / requester / links / fields). ``InMemoryTaskB
 is the test / ephemeral backend; the durable sqlite backend lives in
 ``sqlite_backend.py``. Later slices layer cascades, cycle-checks, and budget on top.
 
-Single-writer (settled model, #1953): a Task is owned by its **assignee session**
-(the #1814 per-contextId routing-key), and ``assignee`` is immutable — so the
-single-writer CAS is a **fixed equality** ``assignee == caller_session_id``, NOT
-a permission gate (the permission system is resource-scoped, no caller identity
-at op-exec) and NOT a skill-run claim (a multi-turn Task spans many skill-runs,
-so no one run owns it). ``caller_session_id`` is ``OpContext.session_id``,
-threaded down the runtime chain. No claim token / version is needed (the key is
-fixed at create). A non-assignee write raises ``PermissionError``.
+Single-writer: a Task is owned by its **assignee session** (the #1814 per-contextId
+routing-key) — the single writer of ``status``. Under #2187 backend-master the assignee
+is a **rebindable WAL subscription binding** (NOT an immutable field): it may be ``None``
+(UNASSIGNED — the pending-assignment queue, §27-31) and changed via ``record_rebound``
+(claim / owner-initiated reassign / re-queue), append-only so it stays P6/rewind-clean.
+The single-writer CAS is therefore ``caller_session_id == the CURRENT (hydrated) assignee``
+— a read-then-check against the live WAL binding, enforced at the OP layer (NOT a
+resource-scoped permission gate, and NOT a skill-run claim — a multi-turn Task spans many
+skill-runs, so no one run owns it). ``caller_session_id`` is ``OpContext.session_id``,
+threaded down the runtime chain. A non-assignee write is denied at the op layer.
 
 Enforcement deferred to later slices:
   - abort 3-step (``cancel_inflight → await_quiescent → terminal`` + seq-fence,
@@ -92,9 +94,18 @@ class TaskBackend(Protocol):
     async def update_status(
         self, task_id: str, status: str, *, caller_session_id: str | None = None
     ) -> Task | None:
-        """Transition status. Single-writer CAS: succeeds only when ``caller_session_id
-        == task.assignee`` (immutable assignee, fixed equality); a non-assignee
-        caller raises ``PermissionError``. Returns None for an unknown task."""
+        """Transition status. The single-writer ownership CAS (caller == the task's
+        CURRENT assignee) is enforced at the OP layer against the rebindable WAL
+        subscription (#2187); the backend (the state master) applies the request and
+        enforces only the terminal-state guard. Returns None for an unknown task."""
+        ...
+
+    async def mark_assigned(self, task_id: str) -> Task | None:
+        """#2187 §27-31 pending-assignment: an UNASSIGNED task just gained an assignee
+        (the binding is recorded in the WAL by the op layer) → OS-derive its now-startable
+        status (READY if all deps satisfied, else BLOCKED). Idempotent / no-op for a task
+        that is not UNASSIGNED (a reassigned in-flight task keeps its status). Returns the
+        hydrated task (assignee reflects the just-rebound binding). None for unknown task."""
         ...
 
     async def add_dependency(self, task_id: str, depends_on: str) -> Task | None:
@@ -225,12 +236,26 @@ class InMemoryTaskBackend:
         # not ALL already completed is OS-derived `blocked` at birth (§13). This is
         # an initial-status derivation, not a post-hoc status flip (OQ-2) — deps-less
         # tasks (e.g. the A2A create path) keep their requested status.
-        if task.deps and not all(
+        # An UNASSIGNED task (§27-31 pending-assignment queue) is not startable
+        # regardless of deps — it stays UNASSIGNED until claimed; the deps-derived
+        # READY/BLOCKED status is computed at assignment (``mark_assigned``).
+        if task.status is not TaskState.UNASSIGNED and task.deps and not all(
             self._tasks[d].status == TaskState.DONE for d in task.deps
         ):
             task.status = TaskState.BLOCKED
         self._tasks[task.task_id] = task
         return task
+
+    async def mark_assigned(self, task_id: str) -> Task | None:
+        task = self._tasks.get(task_id)
+        if task is None:
+            return None
+        if task.status is TaskState.UNASSIGNED:
+            task.status = (
+                TaskState.READY if self._all_deps_satisfied(task) else TaskState.BLOCKED
+            )
+            task.updated_at = _now_iso()
+        return self._hydrate_binding(task)
 
     async def get(self, task_id: str) -> Task | None:
         return self._hydrate_binding(self._tasks.get(task_id))

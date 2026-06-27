@@ -703,6 +703,17 @@ class TaskCommentIROp(BaseModel):
     body: str
 
 
+class TaskAssignIROp(BaseModel):
+    """Assign a session to a task (#2187 §27-31, the pending-assignment queue). An
+    UNASSIGNED task may be claimed by anyone; an assigned task may be reassigned only
+    by its current owner (the assignee) — the op layer gates this. Rebinds the
+    WAL subscription (``record_rebound``) and re-derives the now-startable status."""
+
+    kind: Literal["task.assign"]
+    task_id: str
+    assignee: str  # the (agent,session) routing-key to bind as the new executor
+
+
 # ── Op-kind registry — the single source for the Control IR op surface ───────
 # #1983: OP_KIND_MODEL_MAP is co-located HERE (relocated from
 # op_runtime/registry.py) so the ControlIROp union, ALL_OP_KINDS, and
@@ -753,6 +764,7 @@ OP_KIND_MODEL_MAP: dict[str, type[BaseModel]] = {
     "task.heartbeat": TaskHeartbeatIROp,
     "task.register_unblock_predicate": TaskRegisterUnblockPredicateIROp,
     "task.comment": TaskCommentIROp,
+    "task.assign": TaskAssignIROp,
 }
 
 # Frozenset of op kinds — DSL linter, OP_PURITY coverage, contextual gate.

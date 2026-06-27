@@ -2,7 +2,7 @@
 
 #2026 wired the task category into the DISPATCH (universal_dispatch._OPERATION_RULES,
 the invoke_action routing) but NOT into the ENUMERATION (the static-category tuple
-in `_enumerate_category`). So the 11 task ops resolved via invoke_action but were
+in `_enumerate_category`). So the 12 task ops resolved via invoke_action but were
 INVISIBLE to the catalog — the construction-forwarding-gap class: dispatch wired,
 enumeration not.
 
@@ -24,7 +24,7 @@ _TASK_OPS = {
     "task__create", "task__update_status", "task__get", "task__list",
     "task__add_dependency", "task__remove_dependency", "task__repoint_dependency",
     "task__abort", "task__heartbeat", "task__register_unblock_predicate",
-    "task__comment",
+    "task__comment", "task__assign",
 }
 
 
@@ -39,9 +39,9 @@ def _ctx() -> SimpleNamespace:
     return SimpleNamespace(router_state=RouterCallerState())
 
 
-def test_enumerate_all_flat_catalog_includes_the_11_task_ops():
+def test_enumerate_all_flat_catalog_includes_the_12_task_ops():
     """Tier 2: DEFECT A — the flat catalog (`catalog_entries`, the enumerate-all
-    projection any scheme renders) includes all 11 task ops, so they are reachable
+    projection any scheme renders) includes all 12 task ops, so they are reachable
     on the production-default scheme, not just via the invoke_action dispatch."""
     names = {e["name"] for e in catalog_entries(_ctx())}
     missing = _TASK_OPS - names
@@ -49,8 +49,8 @@ def test_enumerate_all_flat_catalog_includes_the_11_task_ops():
 
 
 @pytest.mark.asyncio
-async def test_list_actions_task_category_returns_the_11():
-    """Tier 2: DEFECT B — list_actions(category=['task']) returns the 11 task ops
+async def test_list_actions_task_category_returns_the_12():
+    """Tier 2: DEFECT B — list_actions(category=['task']) returns the 12 task ops
     (not empty). Pure _OPERATION_RULES lookup, no embedding — env-independent
     (resolves tui's Stage-2 caveat by the root cause)."""
     res = await _handle_list_actions({"category": ["task"], "limit": 50}, _ctx())

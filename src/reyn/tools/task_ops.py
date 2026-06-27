@@ -25,6 +25,7 @@ from typing import Any, Mapping
 from reyn.schemas.models import (
     TaskAbortIROp,
     TaskAddDependencyIROp,
+    TaskAssignIROp,
     TaskCommentIROp,
     TaskCreateIROp,
     TaskGetIROp,
@@ -42,11 +43,13 @@ from reyn.tools.types import ToolContext, ToolDefinition, ToolGates, ToolResult
 # form (set in universal_dispatch._OPERATION_RULES → this ToolDefinition).
 _TASK_OPS: tuple[tuple[str, type, str], ...] = (
     ("task.create", TaskCreateIROp,
-     "Create a sub-task. Defaults to a self-task (you are the assignee); set "
-     "`assignee` to delegate to another session. `deps` are depends-on task ids "
-     "(the task is born blocked until they complete). A task you create while "
-     "executing a task is automatically owned by it. Use to decompose a complex "
-     "request into trackable units."),
+     "Create a task. While you are EXECUTING a task, a task you create is automatically "
+     "owned by it (a sub-task) and — if you omit `assignee` — assigned to you to execute. "
+     "For a TOP-LEVEL task: omitting `assignee` leaves it UNASSIGNED (it waits in the "
+     "pending-assignment queue until a session claims it via task.assign); to execute it "
+     "YOURSELF, set `assignee` to your own session; set it to another session to delegate. "
+     "`deps` are depends-on task ids (born blocked until they complete). Use to decompose a "
+     "complex request into trackable units."),
     ("task.update_status", TaskUpdateStatusIROp,
      "Declare a status transition on a task you are the ASSIGNEE of (the single "
      "writer). Terminal tasks reject writes."),
@@ -75,6 +78,12 @@ _TASK_OPS: tuple[tuple[str, type, str], ...] = (
     ("task.comment", TaskCommentIROp,
      "Append a comment to a task's thread (durable inter-agent / human-in-the-loop "
      "protocol)."),
+    ("task.assign", TaskAssignIROp,
+     "Assign a session to a task. An UNASSIGNED task (in the pending-assignment queue) "
+     "may be CLAIMED by anyone — set `assignee` to the session that will execute it. An "
+     "already-assigned task may be reassigned ONLY by its current assignee (owner-initiated "
+     "hand-off; others must request it via conversation). The new assignee is woken to "
+     "execute it."),
 )
 
 
@@ -143,7 +152,7 @@ def _make_handler(op_kind: str, model: type):
 
 
 def build_task_tool_definitions() -> list[ToolDefinition]:
-    """The 11 task-op ToolDefinitions (router + phase callable)."""
+    """The 12 task-op ToolDefinitions (router + phase callable)."""
     defs: list[ToolDefinition] = []
     for op_kind, model, description in _TASK_OPS:
         defs.append(ToolDefinition(

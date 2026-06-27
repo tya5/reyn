@@ -159,6 +159,7 @@ OP_PURITY: dict[str, OpPurity] = {
     "task.heartbeat": OpPurity.side_effect,
     "task.register_unblock_predicate": OpPurity.side_effect,
     "task.comment": OpPurity.side_effect,
+    "task.assign": OpPurity.side_effect,
 }
 
 
@@ -200,7 +201,7 @@ COARSE_TO_FINE: dict[str, frozenset[str]] = {
         "task.create", "task.update_status", "task.get", "task.list",
         "task.add_dependency", "task.remove_dependency", "task.repoint_dependency",
         "task.abort", "task.heartbeat",
-        "task.register_unblock_predicate", "task.comment",
+        "task.register_unblock_predicate", "task.comment", "task.assign",
     }),
 }
 
