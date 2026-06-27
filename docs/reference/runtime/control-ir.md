@@ -542,8 +542,10 @@ too** (#2107: the prior parent-keyed routing dropped roots). Abort also emits a 
 P6 `task_disposition` event per aborted task (`task_id` / `requester` / `origin` /
 `disposition`).
 
-**States:** `pending` / `ready` / `in_progress` / `blocked` / `completed` /
-`failed` / `aborted` / `archived`.
+**States (7-state, #2187 §3.4):** `unassigned` (no assignee — the pending-assignment
+queue) / `blocked` (deps not all terminal) / `ready` (assigned, startable) / `running` /
+`done` / `failed` / `aborted`. Soft-delete (`archived_at`) is an orthogonal retention
+marker, not a state.
 
 **Dependency DAG (§13).** `task.add_dependency` and `task.create(deps=[...])` add
 depends-on edges through a **shared edge-guard** (completeness): the `depends_on`
