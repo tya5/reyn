@@ -151,9 +151,13 @@ class SqliteTaskBackend:
         record for, so the stored-column value is the fallback. No-op when there
         is no reader."""
         if task is not None and self._subscription_reader is not None:
-            a = self._subscription_reader.assignee_of(task.task_id)
-            if a is not None:
-                task.assignee = a
+            if self._subscription_reader.exists(task.task_id):
+                # The record is authoritative — apply its assignee even when None (an
+                # explicit unbind → UNASSIGNED, #2226). A bare ``assignee_of() is None``
+                # check had fallen back to the stored placeholder, so a re-queued task
+                # kept reading its OLD binding. A non-existent record (direct construction
+                # / no writer) keeps the stored value (the fallback).
+                task.assignee = self._subscription_reader.assignee_of(task.task_id)
             r = self._subscription_reader.requester_of(task.task_id)
             if r is not None:
                 task.requester = r
