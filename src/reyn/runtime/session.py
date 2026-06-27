@@ -1432,9 +1432,14 @@ class Session:
             async def request(self, iv):  # type: ignore[no-untyped-def]
                 return await _session_dispatch(iv)
 
-        from reyn.llm.llm import set_budget_limit_context
-        set_budget_limit_context(
+        from reyn.llm.llm import set_llm_call_limit_context
+        # #2210: publish the per-call timeout/retries so the chat ROUTER path (which passes
+        # no explicit timeout to call_llm_tools) bounds each call + routes a persistent hang
+        # through on_limit. Same source as the kernel (`safety.timeout.*`), no double-manage.
+        set_llm_call_limit_context(
             _ChatBudgetBus(), self._on_limit, self.agent_name, self._non_interactive,
+            llm_call_timeout=self._safety.timeout.llm_call_seconds,
+            llm_max_retries=self._safety.timeout.llm_max_retries,
         )
         # Issue #162: surface session-level lifecycle events (compaction
         # today; attach/detach + budget warnings as growth) into the

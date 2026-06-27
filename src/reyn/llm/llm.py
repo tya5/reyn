@@ -11,7 +11,7 @@ import weakref
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
-from typing import TYPE_CHECKING, Coroutine, TypeVar, Union
+from typing import TYPE_CHECKING, Coroutine, NamedTuple, TypeVar, Union
 
 import httpx
 
@@ -645,19 +645,42 @@ def _resolved_retry_config():
 # place it binds the limit framework (mirrors set_llm_request_event_log /
 # set_router_config). UNSET → the budget gate FAILS CLOSED (deny / unattended) — no
 # policy context means no silent allow (owner + safety-critical requirement).
-_budget_limit_context_var: "contextvars.ContextVar[tuple | None]" = contextvars.ContextVar(
-    "reyn_budget_limit_context", default=None,
+class LLMCallLimitContext(NamedTuple):
+    """The ambient per-LLM-call policy context (#1868 budget gate + #2210 timeout gate).
+
+    Carries the safety/limit policy the per-LLM-call gates route a limit-exceed through:
+    ``bus`` / ``on_limit`` / ``run_id`` / ``non_interactive`` (the budget-exceed +
+    timeout-exhaustion → ``handle_limit_exceeded`` channel) PLUS the per-call HTTP bounds
+    ``llm_call_timeout`` / ``llm_max_retries`` (#2210: the router path passes no explicit
+    ``timeout`` to ``call_llm_tools`` and reads these from here — the kernel path passes
+    its own explicit values and is unaffected). ``None`` timeout/retries = not published
+    (the explicit-param caller, or a context set without the #2210 fields)."""
+
+    bus: object
+    on_limit: object
+    run_id: object
+    non_interactive: bool
+    llm_call_timeout: "float | None" = None
+    llm_max_retries: "int | None" = None
+
+
+_llm_call_limit_context_var: "contextvars.ContextVar[LLMCallLimitContext | None]" = (
+    contextvars.ContextVar("reyn_llm_call_limit_context", default=None)
 )
 
 
-def set_budget_limit_context(
+def set_llm_call_limit_context(
     bus: object, on_limit: object, run_id: object, non_interactive: bool = False,
+    llm_call_timeout: "float | None" = None, llm_max_retries: "int | None" = None,
 ) -> "contextvars.Token":
-    """#1868: publish the budget-exceed policy context (bus / on_limit / run_id /
-    non_interactive) the per-LLM-call cost gate routes through. Set by the runtime
-    at construction; propagates into the run's tasks. Returns the token so a caller
-    MAY reset for a nested scope."""
-    return _budget_limit_context_var.set((bus, on_limit, run_id, non_interactive))
+    """#1868/#2210: publish the per-LLM-call policy context (bus / on_limit / run_id /
+    non_interactive + the per-call timeout / retries). The cost gate (budget exceed) and
+    the timeout gate (persistent provider hang) both route through it; the router path
+    also reads ``llm_call_timeout`` / ``llm_max_retries`` for its ``call_llm_tools`` call.
+    Set by the runtime at construction; propagates into the run's tasks. Returns the token
+    so a caller MAY reset for a nested scope."""
+    return _llm_call_limit_context_var.set(LLMCallLimitContext(
+        bus, on_limit, run_id, non_interactive, llm_call_timeout, llm_max_retries))
 
 
 async def _budget_exceed_allows_continue(check: object, budget_agent: object) -> bool:
@@ -665,25 +688,77 @@ async def _budget_exceed_allows_continue(check: object, budget_agent: object) ->
     policy (``handle_limit_exceeded``). Returns True if the over-budget call may
     proceed (interactive-approved or bounded auto-extend), False to deny (the caller
     then raises ``BudgetExceeded`` — today's behavior). The ambient policy context
-    is set by ``set_budget_limit_context``; **UNSET → fail-closed deny** (no policy
+    is set by ``set_llm_call_limit_context``; **UNSET → fail-closed deny** (no policy
     = no silent allow). BudgetLedger accounting is unchanged — only the exceed→
     response path is unified; an allowed call is still recorded by construction."""
-    ctx = _budget_limit_context_var.get()
+    ctx = _llm_call_limit_context_var.get()
     if ctx is None:
         return False  # fail-closed: no policy context → deny (= unattended)
-    bus, on_limit, run_id, non_interactive = ctx
     from reyn.runtime.budget.budget import format_refusal_message
     from reyn.runtime.limits.limit_handler import handle_limit_exceeded
     dimension = getattr(check, "hard_dimension", None) or "budget"
     decision = await handle_limit_exceeded(
-        bus=bus,
-        on_limit=on_limit,
+        bus=ctx.bus,
+        on_limit=ctx.on_limit,
         kind=f"cost.{dimension}",  # dimension-in-kind (#1868 Q4): own auto_extend counter + audit
-        run_id=str(run_id or ""),
+        run_id=str(ctx.run_id or ""),
         prompt=format_refusal_message(check, agent=budget_agent),
         detail=(f"agent={budget_agent}" if budget_agent else ""),
         extension_amount=1.0,  # allow ONE over-cap call past the gate (bounded by auto_extend_times)
-        non_interactive=bool(non_interactive),
+        non_interactive=bool(ctx.non_interactive),
+    )
+    return bool(decision.allow_continue)
+
+
+def _is_llm_timeout_exc(exc: BaseException) -> bool:
+    """#2210: True for a per-call HTTP TIMEOUT (a hung/slow provider) — ``litellm`` Timeout or
+    an ``httpx`` read timeout, the timeout subset of ``_is_retryable_exc``. Used to route ONLY
+    a persistent timeout through the on_limit policy (other infra errors surface as-is).
+    ``litellm`` is lazy-imported (this module avoids a module-level ``import litellm``)."""
+    import litellm  # noqa: PLC0415
+    return isinstance(exc, (litellm.exceptions.Timeout, httpx.ReadTimeout))
+
+
+def _resolve_llm_call_bounds(
+    timeout: "float | None", max_retries: int
+) -> "tuple[float | None, int]":
+    """#2210: resolve the per-call HTTP bounds for ``call_llm_tools``. An EXPLICIT
+    ``timeout`` (the kernel path threads it via the LLMCallRecorder) WINS — returned as-is,
+    so the kernel behaviour is unchanged (regression-impossible by construction). Only a
+    ``None`` timeout (the router path, which passes no timeout) falls back to the ambient
+    per-LLM-call policy context (same ``safety.timeout.*`` source). No context → stays
+    ``None`` (litellm default — the pre-#2210 behaviour, no worse)."""
+    if timeout is None:
+        ctx = _llm_call_limit_context_var.get()
+        if ctx is not None:
+            timeout = ctx.llm_call_timeout
+            if ctx.llm_max_retries is not None:
+                max_retries = ctx.llm_max_retries
+    return timeout, max_retries
+
+
+async def _llm_timeout_allows_continue(model: object, detail: str) -> bool:
+    """#2210: route a persistent LLM-call TIMEOUT (the per-call HTTP timeout + Router/Reyn
+    retries all exhausted = a hung/slow provider) through the SAME limit framework the
+    budget gate uses (``handle_limit_exceeded`` + ``safety.on_limit``), instead of a bare
+    error. Returns True if the caller may RETRY once more (a fresh timeout window —
+    interactive-approved, or bounded ``auto_extend`` within ``auto_extend_times`` so a hung
+    provider cannot retry forever), False to give up and surface the timeout (clean
+    turn-end). UNSET context → fail-closed (no retry; surface the timeout)."""
+    ctx = _llm_call_limit_context_var.get()
+    if ctx is None:
+        return False  # fail-closed: no policy context → surface the timeout
+    from reyn.runtime.limits.limit_handler import handle_limit_exceeded
+    decision = await handle_limit_exceeded(
+        bus=ctx.bus,
+        on_limit=ctx.on_limit,
+        kind="timeout.llm_call",  # own auto_extend counter + audit namespace
+        run_id=str(ctx.run_id or ""),
+        prompt=(f"The model provider ({model}) is not responding — the request timed out "
+                "after the configured retries. Retry, or stop?"),
+        detail=detail,
+        extension_amount=1.0,  # one more timeout window per approval (bounded by auto_extend_times)
+        non_interactive=bool(ctx.non_interactive),
     )
     return bool(decision.allow_continue)
 
@@ -2173,6 +2248,12 @@ async def call_llm_tools(
         # No thinking kwargs: disabled by default on all providers
         **extra,
     }
+    # #2210: an EXPLICIT timeout (the kernel path threads `safety.timeout.llm_call_seconds`
+    # via the LLMCallRecorder) WINS and is used as-is — zero kernel regression. Only the
+    # router path, which passes no `timeout`, falls back to the ambient per-LLM-call policy
+    # context (same `safety.timeout.*` source). Without that wiring a hung provider hung the
+    # whole turn.
+    timeout, max_retries = _resolve_llm_call_bounds(timeout, max_retries)
     if timeout is not None:
         call_kwargs["timeout"] = timeout
     call_kwargs["num_retries"] = max_retries
@@ -2206,7 +2287,24 @@ async def call_llm_tools(
             routing=_routing,  # #309 per-class api_base/provider (else global wins)
         )
 
-    response = await _llm_call_with_retry(_tools_call, effective_model, event_log)
+    # #2210 HIGH layer: when the per-call HTTP timeout + the Router/Reyn retries are ALL
+    # exhausted (a persistently hung/slow provider), `_llm_call_with_retry` re-raises the
+    # litellm `Timeout`. Route it through the safety on_limit policy (the SAME framework the
+    # budget gate + phase/chain timeouts use) instead of a bare error: on approval (bounded
+    # `auto_extend` within `auto_extend_times`, or interactive yes) retry once more with a
+    # fresh timeout window; otherwise surface the timeout (the turn ends cleanly, not hangs).
+    while True:
+        try:
+            response = await _llm_call_with_retry(_tools_call, effective_model, event_log)
+            break
+        except Exception as _exc:
+            # Only a persistent TIMEOUT routes through on_limit; any other error surfaces
+            # as-is (unchanged). ``_llm_timeout_allows_continue`` False (on_limit deny / bound
+            # exhausted / no context) → re-raise = clean turn-end.
+            if not _is_llm_timeout_exc(_exc):
+                raise
+            if not await _llm_timeout_allows_continue(effective_model, str(_exc)):
+                raise
 
     msg = response.choices[0].message
     usage = _extract_usage(response) or TokenUsage()

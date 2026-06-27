@@ -174,8 +174,14 @@ class OSRuntime:
         # one unified limit policy covers budget too) so the per-LLM-call cost gate
         # (LLMCallRecorder) routes through the 3-mode framework. NOT guarded: bus /
         # run_id are per-run, so a child runtime correctly re-binds its own context.
-        from reyn.llm.llm import set_budget_limit_context
-        set_budget_limit_context(self._intervention_bus, self._on_limit, run_id, False)
+        from reyn.llm.llm import set_llm_call_limit_context
+        # #2210: publish the per-call timeout/retries too. The kernel path also passes the
+        # timeout EXPLICITLY to call_llm_tools (via the LLMCallRecorder), so it uses that
+        # directly and these ambient values are the router-path fallback — same source
+        # (`safety.timeout.llm_call_seconds` / `llm_max_retries`), no double-management.
+        set_llm_call_limit_context(
+            self._intervention_bus, self._on_limit, run_id, False,
+            llm_call_timeout=self._llm_timeout, llm_max_retries=self._llm_max_retries)
         self._state_log = state_log
         self._skill_registry = skill_registry
         # PR-skill-resume D3b-3: optional ResumePlan for forward-replay

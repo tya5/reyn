@@ -60,7 +60,7 @@ def _isolated_secrets(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
 
 @pytest.fixture(autouse=True)
 def _isolate_budget_limit_context():
-    """Reset ``reyn.llm.llm._budget_limit_context_var`` after every test.
+    """Reset ``reyn.llm.llm._llm_call_limit_context_var`` after every test.
 
     Root fix for the Python-3.12 CI suite hang (#1800-7 diagnostic, PR #2062).
     The over-budget pre-check in ``call_llm`` / ``call_llm_tools`` raises
@@ -69,14 +69,14 @@ def _isolate_budget_limit_context():
     returns True and the call proceeds to ``recorded_acompletion`` → a real
     network call → on Linux an infinite ``EpollSelector.poll(timeout=-1)`` that
     hangs the whole ``-n auto`` job to its timeout. A test that calls
-    ``set_budget_limit_context`` without resetting its token leaks the contextvar
+    ``set_llm_call_limit_context`` without resetting its token leaks the contextvar
     SET; under pytest-xdist a co-located over-quota test then bypasses the
     pre-check (the necessary condition). The hang is Linux-only (epoll), so it
     never reproduced on macOS. Resetting per-test makes the pre-check
     deterministically fail-close — leaker-agnostic, protects the whole class."""
     yield
-    from reyn.llm.llm import _budget_limit_context_var
-    _budget_limit_context_var.set(None)
+    from reyn.llm.llm import _llm_call_limit_context_var
+    _llm_call_limit_context_var.set(None)
 
 # ── Marker registration ────────────────────────────────────────────────────────
 
