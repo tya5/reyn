@@ -252,8 +252,10 @@ _CC_ERR = "#f97066"
 _SPINNER = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
 
 # Per-kind leading marker for the inline CC-style stream. The agent / skill /
-# intervention lines lead with ⏺; tool/trace detail lines lead with ⎿.
+# intervention lines lead with ⏺; tool/trace detail lines lead with ⎿; the user's
+# own submitted line is echoed with the > input marker.
 _CC_MARKER = {
+    "user": " > ",
     "agent": " ⏺ ",
     "status": " · ",
     "error": " ✗ ",
@@ -359,6 +361,10 @@ def format_inline_message(msg: OutboxMessage):
     marker = _CC_MARKER.get(kind)
     if marker is None:
         return Text(text)
+    if kind == "user":
+        # The user's own submitted line, echoed into the scrollback (the inline
+        # input field clears on submit, so without this the message vanishes).
+        return Text.assemble((marker, _CC_ACCENT), (text, _CC_DIM))
     if kind == "agent":
         return Text.assemble((marker, _CC_ACCENT), (text, ""))
     if kind == "status":
