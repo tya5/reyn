@@ -47,6 +47,17 @@ _CHIPS = ["model", "agents", "skills", "cost", "ctx"]
 _ACTIONABLE = frozenset({"model"})
 
 
+def is_actionable_picker(label: str, model_classes) -> bool:
+    """Pure: whether a chip's open dropdown is an actionable picker right now.
+
+    The model chip is a picker only when it actually has classes to pick; with
+    none configured its dropdown is the read-only current-model fallback, which
+    has no selectable rows — so no cursor must be drawn on it (otherwise the
+    fallback lines look selectable but Enter does nothing).
+    """
+    return label in _ACTIONABLE and bool(model_classes)
+
+
 def model_switch_text(model_classes: list, row: int) -> str | None:
     """Pure: the slash command a model-picker Enter submits for the row.
 
@@ -217,7 +228,7 @@ async def run_inline_input(registry, renderer) -> None:
         snap = _snapshot(registry)
         if snap is None:
             return []
-        actionable = _CHIPS[menu["sel"]] in _ACTIONABLE
+        actionable = is_actionable_picker(_CHIPS[menu["sel"]], snap["model_classes"])
         out: list = []
         for i, ln in enumerate(_current_dropdown_lines(snap)):
             if i:

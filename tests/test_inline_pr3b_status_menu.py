@@ -9,9 +9,18 @@ from __future__ import annotations
 
 from reyn.interfaces.inline.app import (
     dropdown_lines,
+    is_actionable_picker,
     model_switch_text,
     status_chips,
 )
+
+
+def test_model_chip_is_a_picker_only_with_classes() -> None:
+    """Tier 2: the model dropdown is an actionable picker (gets a cursor) only
+    when it has classes to pick; with none it's the read-only fallback."""
+    assert is_actionable_picker("model", ["light", "standard"]) is True
+    assert is_actionable_picker("model", []) is False  # fallback, no cursor
+    assert is_actionable_picker("agents", ["default"]) is False  # not actionable
 
 
 def test_status_chips_has_five_labelled_values() -> None:
