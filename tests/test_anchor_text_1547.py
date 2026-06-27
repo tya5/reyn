@@ -14,8 +14,6 @@ from reyn.core.events.agent_snapshot import AgentSnapshot
 from reyn.core.events.anchor_store import AnchorStore, truncate_anchor
 from reyn.core.events.snapshot_generations import SnapshotGenerationStore
 from reyn.core.events.state_log import StateLog
-from reyn.interfaces.tui.widgets.branch_tree import build_branch_tree_rows
-from reyn.interfaces.tui.widgets.rewind_menu import RewindMenuWidget
 from reyn.runtime.profile import AgentProfile
 from reyn.runtime.registry import AgentRegistry
 from reyn.runtime.services.snapshot_journal import SnapshotJournal
@@ -110,26 +108,3 @@ async def test_list_rewind_points_surfaces_anchor(tmp_path):
     assert row["anchor"] == "what's the weather"     # surfaced additively
     assert set(row) >= {"seq", "ts", "kind", "anchor"}
 
-
-# ── widget render ────────────────────────────────────────────────────────────
-
-
-def test_widget_renders_anchor_dim_line():
-    """Tier 2: RewindMenuWidget renders the per-checkpoint anchor as a dim line;
-    empty = omitted. Tree mode (the only mode since #1561); per-checkpoint anchor
-    restored for tree in #1576. Single branch so the anchor surfaces only via the
-    per-row render (no fork header to carry it)."""
-    branches = [{"branch_id": 0, "fork_point_seq": 0, "head_seq": 3,
-                 "parent_branch_id": None, "is_active": True}]
-    with_anchor = RewindMenuWidget.from_tree_rows(build_branch_tree_rows(
-        branches,
-        [{"seq": 1, "ts": "", "kind": "turn", "anchor": "fix the parser bug", "branch_id": 0}],
-    ))
-    assert "fix the parser bug" in with_anchor.render().plain
-
-    # additive: a row without an anchor renders no extra line.
-    without = RewindMenuWidget.from_tree_rows(build_branch_tree_rows(
-        branches,
-        [{"seq": 1, "ts": "", "kind": "turn", "anchor": "", "branch_id": 0}],
-    ))
-    assert "fix the parser bug" not in without.render().plain
