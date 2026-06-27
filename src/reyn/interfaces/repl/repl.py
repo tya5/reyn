@@ -120,7 +120,7 @@ async def _output_loop(
 
 def _simple_status(text: str):
     """Build a status OutboxMessage for inline rendering (no async needed)."""
-    from .outbox import OutboxMessage
+    from reyn.runtime.outbox import OutboxMessage
     return OutboxMessage(kind="status", text=text)
 
 
