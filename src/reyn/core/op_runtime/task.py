@@ -141,6 +141,29 @@ def _not_found(kind: str, task_id: str) -> dict:
     return {"kind": kind, "status": "error", "error": f"task {task_id!r} not found"}
 
 
+def _open_children_error(task_id: str, counts) -> dict:
+    """Decision-enabling error (#2187 §3.4, 5c completion-join): a task may not reach
+    DONE while it still owns open (non-terminal) children — the whole decomposition
+    tree must complete first. NOT a raised exception: the LLM gets the structured
+    error and decides (wait — it is re-woken by the child_settled reconcile when its
+    children settle — or abort the children), exactly like ``_reject_unknown_assignee``."""
+    return {
+        "kind": "task.update_status",
+        "status": "error",
+        "error": {
+            "kind": "open_children",
+            "message": (
+                f"Cannot complete task {task_id!r}: {counts.awaited} awaited "
+                f"+ {counts.background} background child task(s) are still open. Wait "
+                f"for them to finish (you will be re-woken when they settle), or abort "
+                f"them — then complete."
+            ),
+            "awaited": counts.awaited,
+            "background": counts.background,
+        },
+    }
+
+
 def _edge_error(op_kind: str, err: Exception) -> dict:
     """Decision-enabling error result for a rejected dependency edge (#1953 slice
     6, OQ-5): a structured ``status="error"`` dict (the edge + cycle path), NOT a
@@ -306,6 +329,16 @@ async def _update_status(op, ctx: OpContext, caller) -> dict:
         "task.update_status", ctx, _backend(ctx), op.task_id, "assignee")
     if denied is not None:
         return denied
+    # #2187 §3.4 (5c) completion-join: RUNNING → DONE only when the decomposition tree
+    # is complete (no open child of EITHER link type — awaited gates execution, but the
+    # final DONE requires the whole tree terminal). Attempting DONE with open children
+    # returns a DECISION-ENABLING error (the parent waits — it is re-woken by the
+    # child_settled reconcile when its children settle — or aborts them); the LLM is not
+    # stopped. The check is the task's OWN children, before the backend applies DONE.
+    if op.status == TaskState.DONE.value:
+        counts = await _backend(ctx).open_child_counts(op.task_id)
+        if counts.awaited + counts.background > 0:
+            return _open_children_error(op.task_id, counts)
     task = await _backend(ctx).update_status(op.task_id, op.status)
     if task is None:
         return _not_found("task.update_status", op.task_id)
@@ -340,11 +373,19 @@ async def _update_status(op, ctx: OpContext, caller) -> dict:
                 "task_end",
                 {"point": "task_end", "task_id": task.task_id, "status": "done"},
             )
+        # #2187 §3.5 (5c): a DONE *decomposition child* (requester_kind=TASK) reconciles
+        # its PARENT (the child_settled waker — the parent's awaited/total counts may have
+        # crossed 0). A top-level DONE (requester_kind=SESSION) has no decomposition parent
+        # and must NOT route to the requester (DONE is not a recovery trigger — only the
+        # DAG promotion above applies, as before 5c).
+        if task.requester_kind is TaskRequesterKind.TASK:
+            await _settle_terminal(ctx, _backend(ctx), task, disposition="done")
     elif task.status is TaskState.FAILED:
         # slice 6-ext §C: a non-completed terminal (the assignee declared `failed`)
         # doesn't satisfy a dependency edge → route the disposition to the task's
-        # REQUESTER to decide recovery (§16; the OQ-7/H5 gap-close, #2107).
-        await _route_terminal_to_requester(ctx, _backend(ctx), task, disposition="failed")
+        # OWNER to decide recovery (§16; the OQ-7/H5 gap-close, #2107). #2187 5c: the
+        # requester_kind-exclusive routing (TASK→child_settled, SESSION→requester).
+        await _settle_terminal(ctx, _backend(ctx), task, disposition="failed")
     return _ok("task.update_status", task=task.to_dict())
 
 
@@ -402,6 +443,61 @@ async def _emit_readiness_if_changed(ctx: OpContext, task, before_status, trigge
         if waker is not None:
             await waker.publish_task_event(  # #2187 Stage 4: pub/sub seam ("ready")
                 "ready", task, fenced_description=_fence_text(ctx, task.description))
+
+
+async def _settle_terminal(ctx: OpContext, backend, task, *, disposition: str) -> None:
+    """Route a task's terminal transition to its OWNER, EXCLUSIVELY by requester_kind
+    (#2187 §3.5, 5c) — so no owner is double-woken by construction:
+
+    - ``requester_kind=TASK`` (a decomposition child): wake the PARENT's managing
+      session via the ``child_settled`` reconcile-wake. ONE wake subsumes both
+      dependent-recovery (it carries the disposition + the child's stuck dependents)
+      AND completion-driving (the parent's open-child counts). Mutually-exclusive
+      firing (decision 3 — ``total`` subsumes ``awaited``): ``total==0`` → the parent
+      may complete; ``elif awaited==0`` → the parent is unblocked, continue; ``elif``
+      the child failed/aborted → recover its stuck dependents; ``else`` the parent is
+      still blocked on awaited children with no failure → no wake (§3.5: it idles).
+      A phantom parent (binding present, backend row absent) → audit + drop the wake
+      (the 5d reconciliation domain). A ``requester_kind=TASK`` task is always
+      SELF-origin (a sub-task is internal), so there is no EXTERNAL-webhook path here.
+    - ``requester_kind=SESSION`` (a top-level request): the existing requester
+      recovery (``_route_terminal_to_requester`` — unchanged, incl. EXTERNAL)."""
+    if task.requester_kind is not TaskRequesterKind.TASK:
+        await _route_terminal_to_requester(ctx, backend, task, disposition=disposition)
+        return
+    events = getattr(ctx, "events", None)
+    parent = await backend.get(task.requester)
+    if parent is None:
+        # phantom parent — no managing session to wake (the 5d reconciliation domain).
+        if events is not None:
+            events.emit("task_child_settled", task_id=task.task_id,
+                        parent=task.requester, disposition=disposition, reason="phantom")
+        return
+    counts = await backend.open_child_counts(parent.task_id)
+    failed = disposition != TaskState.DONE.value
+    if counts.awaited + counts.background == 0:
+        reason = "final_completion"
+    elif counts.awaited == 0:
+        reason = "continue"
+    elif failed:
+        reason = "recovery"
+    else:
+        reason = None  # still blocked on awaited children, no failure → the parent idles
+    if events is not None:
+        # Generic P6 audit (P7; NOT a WAL closed-vocab kind).
+        events.emit("task_child_settled", task_id=task.task_id, parent=parent.task_id,
+                    disposition=disposition, reason=reason or "idle",
+                    awaited=counts.awaited, background=counts.background)
+    if reason is None:
+        return
+    stuck = [d.task_id for d in await backend.dependents(task.task_id)
+             if d.status not in TERMINAL_STATES]
+    waker = getattr(ctx, "task_waker", None)
+    if waker is not None:
+        await waker.publish_task_event(
+            "child_settled", parent, child_task=task, disposition=disposition,
+            reason=reason, awaited=counts.awaited, background=counts.background,
+            stuck_dependents=stuck)
 
 
 async def _route_terminal_to_requester(
@@ -555,11 +651,12 @@ async def _abort(op, ctx: OpContext, caller) -> dict:
                 requester=t.requester, origin=t.origin.value, root=op.task_id,
             )
     root = aborted[0]
-    # §16 (#2107): route the aborted root to its REQUESTER so a stuck sibling dependent
-    # gets a recovery decision (the OQ-7/H5 gap-close). A root self-task is now notified
+    # §16 (#2107): route the aborted root to its OWNER so a stuck sibling dependent gets
+    # a recovery decision (the OQ-7/H5 gap-close). A root self-task is now notified
     # (previously dropped on the missing parent_id). The cascade's descendants are
-    # themselves terminal → _route_terminal_to_requester finds no stuck dependents for them.
-    await _route_terminal_to_requester(ctx, _backend(ctx), root, disposition="aborted")
+    # themselves terminal → no stuck dependents for them. #2187 5c: requester_kind-
+    # exclusive routing (TASK→child_settled reconcile, SESSION→requester recovery).
+    await _settle_terminal(ctx, _backend(ctx), root, disposition="aborted")
     # #1800 slice 5c: task_end lifecycle hooks for the aborted sub-tree — SYMMETRIC
     # with task_start (at create) + task_end (at COMPLETED): every started task
     # fires an end. ``status="aborted"`` lets an operator discriminate completion
