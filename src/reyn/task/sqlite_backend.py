@@ -38,9 +38,11 @@ from pathlib import Path
 from reyn.task.backend import find_cycle_path
 from reyn.task.model import (
     TERMINAL_STATES,
+    ChildCounts,
     Task,
     TaskCycleError,
     TaskDepNotFoundError,
+    TaskLinkType,
     TaskOrigin,
     TaskRequesterKind,
     TaskState,
@@ -72,6 +74,10 @@ CREATE TABLE IF NOT EXISTS tasks(
   -- #2187: soft-delete retention marker, orthogonal to the lifecycle `status`
   -- (set alongside ABORTED by abort(); the list hidden-filter keys on it).
   archived_at TEXT,
+  -- #2187 §3.5: this child's decomposition-link type to its parent (awaited /
+  -- background). CONTENT (like deps), marked at create. NULL on a pre-5b row →
+  -- the AWAITED default in _row_to_task.
+  link_type TEXT,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
@@ -110,7 +116,7 @@ CREATE TABLE IF NOT EXISTS task_comments(
 
 _TASK_COLUMNS = (
     "task_id, name, origin, status, description, "
-    "created_by, awaiting_since, tools, result, archived_at, created_at, updated_at"
+    "created_by, awaiting_since, tools, result, archived_at, link_type, created_at, updated_at"
 )
 
 
@@ -166,7 +172,7 @@ class SqliteTaskBackend:
         existing = {r[1] for r in conn.execute("PRAGMA table_info(tasks)").fetchall()}
         # #1953 slice P2: additive migration for DBs created before tools / result.
         # #2187: archived_at (the soft-delete retention marker) for pre-#2187 DBs.
-        for col in ("tools", "result", "archived_at"):
+        for col in ("tools", "result", "archived_at", "link_type"):
             if col not in existing:
                 conn.execute(f"ALTER TABLE tasks ADD COLUMN {col} TEXT")
         # #2187 backend-master (2c-iii): the task BINDING moved to the WAL-derived
@@ -284,6 +290,7 @@ class SqliteTaskBackend:
             assignee="",
             requester="",
             requester_kind=TaskRequesterKind.SESSION,
+            link_type=TaskLinkType(row["link_type"]) if row["link_type"] else TaskLinkType.AWAITED,
             origin=TaskOrigin(row["origin"]),
             status=TaskState(row["status"]),
             description=row["description"],
@@ -302,6 +309,27 @@ class SqliteTaskBackend:
             f"SELECT {_TASK_COLUMNS} FROM tasks WHERE task_id=?", (task_id,)
         ).fetchone()
         return self._hydrate_binding(self._row_to_task(row)) if row is not None else None
+
+    def _children_of(self, pid: str) -> list[Task]:
+        """Direct decomposition children of ``pid`` — IN-LOCK, no re-lock (the
+        shared primitive the in-lock abort cascade and the public ``children_of``
+        both build on; the public method adds the lock). The collision-safe
+        ownership filter (#2187 5b, finding D): the candidate set is the
+        WAL-subscription's task ids (the binding authority — no binding columns),
+        kept only when ``requester==pid AND requester_kind=="task"``; the ``task``
+        marker is REQUIRED because a session routing-key uuid can collide with a
+        task-id uuid. No reader (direct/test construction) → no owned children."""
+        reader = self._subscription_reader
+        if reader is None:
+            return []
+        out: list[Task] = []
+        for tid in reader.task_ids():
+            if (reader.requester_of(tid) == pid
+                    and reader.requester_kind_of(tid) == "task"):
+                t = self._fetch(tid)
+                if t is not None:
+                    out.append(t)
+        return out
 
     # ── TaskBackend contract ────────────────────────────────────────────────
 
@@ -329,12 +357,12 @@ class SqliteTaskBackend:
             self._conn.execute("BEGIN IMMEDIATE")
             self._conn.execute(
                 f"INSERT INTO tasks({_TASK_COLUMNS}) "
-                f"VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+                f"VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (
                     task.task_id, task.name, task.origin.value, task.status.value,
                     task.description, task.created_by, task.awaiting_since,
                     json.dumps(task.tools) if task.tools else None, task.result,
-                    task.archived_at, task.created_at, task.updated_at,
+                    task.archived_at, task.link_type.value, task.created_at, task.updated_at,
                 ),
             )
             for dep in task.deps:
@@ -543,26 +571,19 @@ class SqliteTaskBackend:
             # (The legacy parent_id decomposition tree was removed in §16 slice C —
             # the requester edge is the sole decomposition relation.)
             #
-            # #2187 backend-master (2c-iii): the requester edge is now the WAL-derived
-            # SUBSCRIPTION binding, not a column — the closure walks the reader. No
-            # reader (direct/test construction) → no owned children to follow (the
-            # binding columns are gone), so the cascade aborts the root only.
-            reader = self._subscription_reader
+            # #2187 backend-master (2c-iii): the requester edge is the WAL-derived
+            # SUBSCRIPTION binding, not a column — the closure walks ``_children_of``
+            # (the in-lock, no-relock shared decomposition primitive that applies the
+            # collision-safe ``requester_kind=='task'`` guard EXACTLY — finding D, 5b).
+            # No reader (direct/test) → no owned children → the cascade aborts the root.
             to_abort: list[str] = [task_id]
             frontier = [task_id]
-            while frontier and reader is not None:
+            while frontier:
                 pid = frontier.pop()
-                for tid in reader.task_ids():
-                    # collision-safety: requester match AND the requester_kind=='task'
-                    # marker (a session routing-key uuid can collide with a task-id
-                    # uuid; the marker disambiguates). Preserved EXACTLY.
-                    if (
-                        reader.requester_of(tid) == pid
-                        and reader.requester_kind_of(tid) == "task"
-                        and tid not in to_abort
-                    ):
-                        to_abort.append(tid)
-                        frontier.append(tid)
+                for child in self._children_of(pid):
+                    if child.task_id not in to_abort:
+                        to_abort.append(child.task_id)
+                        frontier.append(child.task_id)
             # #2107 S2 (origin-split): an EXTERNAL terminal's dep-DAG DEPENDENTS can't be
             # recovered — the external requester gives up (no in-session re-wire; that is
             # the SELF path's requester wake, §16 S1). Abort them too, transitively (a dep
@@ -602,6 +623,26 @@ class SqliteTaskBackend:
             self._conn.commit()
             return [t for t in (self._fetch(tid) for tid in to_abort) if t is not None]
 
+    async def children_of(self, pid: str) -> list[Task]:
+        """Direct decomposition children of ``pid`` (#2187 5b) — the public,
+        lock-acquiring wrapper over the in-lock ``_children_of`` primitive."""
+        async with self._lock:
+            return self._children_of(pid)
+
+    async def open_child_counts(self, pid: str) -> ChildCounts:
+        """Open (non-terminal) child counts of ``pid`` split by link type (#2187
+        §3.4) — derived on-demand from the children's durable states. The
+        completion-join and waker reconciler read it."""
+        async with self._lock:
+            awaited = background = 0
+            for child in self._children_of(pid):
+                if child.status in TERMINAL_STATES:
+                    continue
+                if child.link_type is TaskLinkType.BACKGROUND:
+                    background += 1
+                else:
+                    awaited += 1
+            return ChildCounts(awaited=awaited, background=background)
 
     async def set_result(self, task_id: str, result: str) -> Task | None:
         async with self._lock:

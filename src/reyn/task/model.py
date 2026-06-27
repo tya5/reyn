@@ -9,6 +9,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
+from typing import NamedTuple
 
 
 def _now_iso() -> str:
@@ -106,6 +107,32 @@ class TaskRequesterKind(str, Enum):
     TASK = "task"
 
 
+class TaskLinkType(str, Enum):
+    """The child→parent decomposition-link type (#2187 §3.5).
+
+    ``awaited`` — the parent BLOCKS on this child (needs its result): it gates the
+    parent's completion (counts toward ``N_awaited``). ``background`` — the parent
+    CONTINUES its own work alongside this child and never blocks on it (parallel).
+    Marked at child creation, durable — the per-child wake-behaviour policy (#2187
+    §4). Meaningful only for a decomposition child (``requester_kind=task``); a
+    top-level task carries the default but it is never consulted.
+    """
+
+    AWAITED = "awaited"
+    BACKGROUND = "background"
+
+
+class ChildCounts(NamedTuple):
+    """Open-child counts split by decomposition-link type (#2187 §3.4) — the derived
+    dimension over a task's children. ``awaited`` children gate the parent's
+    completion (RUNNING→DONE only when ``awaited + background == 0``); both reach the
+    waker reconciler. Derived on-demand from the children's durable states, never
+    separately stored."""
+
+    awaited: int
+    background: int
+
+
 @dataclass
 class Task:
     """One trackable work-unit.
@@ -128,6 +155,7 @@ class Task:
     assignee: str
     requester: str
     requester_kind: TaskRequesterKind = TaskRequesterKind.SESSION  # §16: session-owned vs task-as-request owned (the ownership edge)
+    link_type: TaskLinkType = TaskLinkType.AWAITED  # #2187 §3.5: this child's decomposition-link to its parent (awaited gates the parent; background runs parallel). CONTENT (backend column, like deps) — NOT the WAL binding. Meaningful only when requester_kind=task.
     origin: TaskOrigin = TaskOrigin.SELF
     status: TaskState = TaskState.READY
     description: str | None = None
@@ -148,6 +176,7 @@ class Task:
             "assignee": self.assignee,
             "requester": self.requester,
             "requester_kind": self.requester_kind.value,
+            "link_type": self.link_type.value,
             "origin": self.origin.value,
             "status": self.status.value,
             "archived_at": self.archived_at,

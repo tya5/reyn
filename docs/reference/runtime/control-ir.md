@@ -33,7 +33,7 @@ Control IR is the list of side-effect operations the LLM may emit alongside its 
 | `judge_output` | LLM scorer: rubric + threshold + `on_fail` policy | none (LLM cost) |
 | `skill_resolve` | Resolve a skill name to its on-disk path (read-only) | none |
 | `compact` | Voluntarily compact the conversation/phase history (advisory) | none (LLM cost; the mandatory `retry_loop` backstop is independent) |
-| `task.create` | Create a Task (`deps` for ordering; sub-task ownership is OS-derived from execution context — §16) | requester-gated (caller becomes requester) |
+| `task.create` | Create a Task (`deps` for ordering; `link_type` `awaited`/`background` sets whether a sub-task gates the parent's completion — §2187; sub-task ownership is OS-derived from execution context — §16) | requester-gated (caller becomes requester) |
 | `task.update_status` | Declare a status transition | assignee-gated (single-writer CAS on `assignee == caller session_id`) |
 | `task.get` | Read one Task record | requester-gated |
 | `task.list` | List Tasks (filter by assignee / requester / status); `requester=<task-id>` lists sub-tasks owned by that task | none (filtered read) |
@@ -485,7 +485,8 @@ kinds); like any op, each is also subject to the per-session contextual gate.
 ```json
 { "kind": "task.create", "name": "ship-feature" }
 { "kind": "task.create", "name": "sub", "deps": ["<other-id>"] }
-{ "kind": "task.update_status", "task_id": "<id>", "status": "in_progress" }
+{ "kind": "task.create", "name": "bg-sub", "link_type": "background" }
+{ "kind": "task.update_status", "task_id": "<id>", "status": "running" }
 { "kind": "task.add_dependency", "task_id": "<id>", "depends_on": "<other-id>" }
 { "kind": "task.abort", "task_id": "<id>" }
 ```

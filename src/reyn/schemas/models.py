@@ -585,6 +585,11 @@ class TaskCreateIROp(BaseModel):
     assignee: str | None = None  # default: the caller's own session (self-task)
     description: str | None = None
     deps: list[str] = Field(default_factory=list)  # depends-on task_ids (DAG, §13)
+    # #2187 §3.5 (5b): the decomposition-link type when this is a sub-task — `awaited`
+    # gates the parent's completion (the parent blocks on the result), `background`
+    # runs parallel (never blocks). Default awaited (the safe, blocking default);
+    # consulted only when the OS derives requester_kind=task.
+    link_type: Literal["awaited", "background"] = "awaited"
 
 
 class TaskUpdateStatusIROp(BaseModel):
