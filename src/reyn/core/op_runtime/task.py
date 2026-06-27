@@ -68,6 +68,30 @@ def _audit(ctx: OpContext, op_kind: str, task_id: str, **fields) -> None:
         events.emit("task_op", op=op_kind, task_id=task_id, **fields)
 
 
+def _reject_unknown_assignee(ctx: OpContext, assignee, caller_session) -> "dict | None":
+    """#2187 dogfood-fix (#45): a decision-enabling error result when a DELEGATED
+    assignee (≠ the caller) does not resolve to a live session of the agent — delegating
+    to a non-existent (agent, session) would silently orphan the task (its execute-wake
+    is dropped). None = ok / self-task (assignee == caller, the live caller) / no waker
+    wired (direct construction / tests — the opt-in contract)."""
+    waker = getattr(ctx, "task_waker", None)
+    if waker is None or assignee == caller_session:
+        return None
+    if not waker.resolves(assignee):
+        return {
+            "kind": "task.create", "status": "error",
+            "error": {
+                "kind": "unknown_assignee",
+                "message": (
+                    f"task.create rejected: assignee {assignee!r} is not a live session "
+                    f"of agent {getattr(ctx, 'agent_id', None)!r} — cannot delegate to a "
+                    f"non-existent (agent, session); the task would be orphaned."
+                ),
+            },
+        }
+    return None
+
+
 async def _record_subscribed(ctx: OpContext, created) -> None:
     """#2187 backend-master: append the ``task_subscribed`` binding (the Reyn-internal
     task↔session subscription) to the WAL. No-op when the OpContext carries no
@@ -217,6 +241,13 @@ async def _create(op, ctx: OpContext, caller) -> dict:
         created_by=_actor(ctx),
         deps=list(op.deps),
     )
+    # #2187 dogfood-fix (#45): reject a delegation to a NON-EXISTENT (agent, session)
+    # BEFORE creating anything — a bare-sid assignee that names no live session would
+    # have its execute-wake silently dropped (the orphan root cause). Self-task /
+    # no-waker → no check (opt-in).
+    denied = _reject_unknown_assignee(ctx, task.assignee, caller_session)
+    if denied is not None:
+        return denied
     try:
         created = await _backend(ctx).create(task)
     except (TaskCycleError, TaskDepNotFoundError) as err:
