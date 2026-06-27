@@ -137,7 +137,7 @@ async def test_failed_subtask_recovery_wakes_managing_session_full_live_path(tmp
 
     # T = the task-as-request, assigned to (executed by) the live managing session.
     T = Task(task_id="T-req", name="T", assignee="main", requester="a2a:client",
-             status=TaskState.IN_PROGRESS)
+             status=TaskState.RUNNING)
     await b.create(T)
 
     # U = a sub-task created WHILE executing T → owned by T via the live create-path.

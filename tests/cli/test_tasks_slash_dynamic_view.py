@@ -62,7 +62,7 @@ async def _seed_tasks(backend: InMemoryTaskBackend) -> None:
         name="plan",
         assignee="sess-1",
         requester="req",
-        status=TaskState.IN_PROGRESS,
+        status=TaskState.RUNNING,
     )
     await backend.create(plan)
     build = Task(
@@ -92,7 +92,7 @@ async def test_tasks_list_includes_dynamic_tasks():
     # Each dynamic task surfaces name + short (8-char) id + status.
     assert "plan" in out
     assert "plan-aaa" in out  # task_id[:8]
-    assert "status: in_progress" in out
+    assert "status: running" in out
     assert "build" in out
     assert "build-bb" in out  # task_id[:8]
     # The dependency edge is summarised by the depended-on short id.
@@ -149,28 +149,30 @@ async def test_tasks_list_no_backend_falls_back_to_skill_only():
 @pytest.mark.asyncio
 async def test_tasks_list_shows_completed_hides_only_archived():
     """Tier 2: the Tasks section shows the full plan WITH status (#2036) — a
-    COMPLETED task is SHOWN (so the user sees "done" progress + deps to it stay
-    intact); only an ARCHIVED (user-dismissed) task is hidden. The split is
-    intentional vs the skill-runs section's running-only filter."""
+    DONE task is SHOWN (so the user sees "done" progress + deps to it stay
+    intact); only a SOFT-DELETED task (``archived_at`` set, #2187 — the orthogonal
+    retention marker abort() sets) is hidden. The split is intentional vs the
+    skill-runs section's running-only filter."""
     backend = InMemoryTaskBackend()
     # deps-less tasks → the backend honors the given status (no readiness derive).
     await backend.create(Task(
         task_id="done-cccccccc-0003", name="done-step", assignee="sess-1",
-        requester="req", status=TaskState.COMPLETED,
+        requester="req", status=TaskState.DONE,
     ))
     await backend.create(Task(
         task_id="arch-dddddddd-0004", name="archived-step", assignee="sess-1",
-        requester="req", status=TaskState.ARCHIVED,
+        requester="req", status=TaskState.ABORTED,
+        archived_at="2026-01-01T00:00:00+00:00",  # #2187: the soft-delete marker → hidden
     ))
     session = _CaptureSession(task_backend=backend)
 
     await _list_tasks(session)
 
     out = session.replies[-1]
-    # COMPLETED task surfaces WITH its status (progress visibility).
+    # DONE task surfaces WITH its status (progress visibility).
     assert "done-step" in out
-    assert "status: completed" in out
-    # ARCHIVED task is hidden.
+    assert "status: done" in out
+    # SOFT-DELETED task (archived_at set) is hidden.
     assert "archived-step" not in out
     assert "arch-ddd" not in out
 

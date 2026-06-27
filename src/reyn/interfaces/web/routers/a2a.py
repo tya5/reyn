@@ -706,7 +706,7 @@ async def _escalate_to_task(
             )
             # #1981 P2: reflect the terminal onto the canonical Task (assignee CAS,
             # race-safe — an A2A Cancel that archived first wins via terminal-guard).
-            await _reflect_task_status(task_backend, monitor_task_id, "completed")
+            await _reflect_task_status(task_backend, monitor_task_id, "done")
         except Exception as exc:  # noqa: BLE001
             logger.exception("a2a auto-escalation monitor raised")
             run_registry.update(monitor_task_id, status="failed", error=str(exc))
@@ -910,7 +910,7 @@ async def _handle_answer_injection(
         # #1981 P3: reflect the answered state onto the canonical Task
         # (blocked → in_progress) so GetTask leaves input-required, matching the
         # RunEntry mirror. The iv resolution itself stays Session-owned.
-        await _reflect_task_status(task_backend, task_id, "in_progress")
+        await _reflect_task_status(task_backend, task_id, "running")
         result = {"task_id": task_id, "answered": True}
     else:
         result = {
@@ -1156,7 +1156,7 @@ async def _create_a2a_task(
             assignee=a2a_session_id(context_id),
             requester="external",
             origin=TaskOrigin.EXTERNAL,
-            status=TaskState.IN_PROGRESS,
+            status=TaskState.RUNNING,
         )
     )
     if webhook_url and webhook_registry is not None:
@@ -1259,7 +1259,7 @@ async def _handle_async_mode(
                 status="completed",
                 result=result.get("reply", ""),
             )
-            await _reflect_task_status(task_backend, run_id, "completed")
+            await _reflect_task_status(task_backend, run_id, "done")
             if webhook_url:
                 from reyn.interfaces.web.notifications import post_webhook  # noqa: PLC0415
                 await post_webhook(

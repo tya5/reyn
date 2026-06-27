@@ -26,7 +26,7 @@ _SEED_COUNTER = [0]
 
 
 async def _seed(backend: InMemoryTaskBackend, session_id: str, n: int, *,
-                status: TaskState = TaskState.IN_PROGRESS):
+                status: TaskState = TaskState.RUNNING):
     """Create ``n`` Tasks assigned to ``session_id`` (the contextId's session),
     with globally-unique task_ids + deterministic strictly-increasing created_at
     so the keyset order is fully known across multiple seed calls."""
@@ -104,10 +104,10 @@ async def test_tasks_list_filters_by_status():
     """Tier 2: status narrows the set (matched against the Task-state vocab)."""
     backend = InMemoryTaskBackend()
     sid = a2a_session_id("ctx-st")
-    done = {t.task_id for t in await _seed(backend, sid, 2, status=TaskState.COMPLETED)}
-    await _seed(backend, sid, 3, status=TaskState.IN_PROGRESS)
+    done = {t.task_id for t in await _seed(backend, sid, 2, status=TaskState.DONE)}
+    await _seed(backend, sid, 3, status=TaskState.RUNNING)
 
-    result = await _list(backend, "alice", contextId="ctx-st", status="completed")
+    result = await _list(backend, "alice", contextId="ctx-st", status="done")
     returned = {t["id"] for t in result["tasks"]}
 
     assert returned == done

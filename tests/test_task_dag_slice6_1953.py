@@ -35,7 +35,7 @@ from reyn.task import (
 from reyn.task.backend import find_cycle_path
 
 
-def _task(task_id, *, deps=None, status=TaskState.PENDING, assignee="sess", requester="req"):
+def _task(task_id, *, deps=None, status=TaskState.READY, assignee="sess", requester="req"):
     return Task(task_id=task_id, name=task_id, assignee=assignee, requester=requester,
                 status=status, deps=list(deps or []))
 
@@ -123,7 +123,7 @@ async def test_dangling_dep_rejected_on_create(backend):
 async def test_create_with_incomplete_deps_is_born_blocked(backend):
     """Tier 2b: a task born with not-all-completed deps is OS-derived blocked."""
     await backend.create(_task("d"))  # pending, not completed
-    await backend.create(_task("a", deps=["d"], status=TaskState.PENDING))
+    await backend.create(_task("a", deps=["d"], status=TaskState.READY))
     assert (await backend.get("a")).status is TaskState.BLOCKED
 
 
@@ -131,8 +131,8 @@ async def test_create_with_incomplete_deps_is_born_blocked(backend):
 async def test_create_without_deps_keeps_requested_status(backend):
     """Tier 2b: a deps-less create keeps its requested status (the A2A path is
     unaffected — OQ-2: birth-derivation only fires when deps are present)."""
-    await backend.create(_task("a", status=TaskState.IN_PROGRESS))
-    assert (await backend.get("a")).status is TaskState.IN_PROGRESS
+    await backend.create(_task("a", status=TaskState.RUNNING))
+    assert (await backend.get("a")).status is TaskState.RUNNING
 
 
 @pytest.mark.asyncio
@@ -140,9 +140,9 @@ async def test_create_with_already_completed_deps_not_blocked(backend):
     """Tier 2b: if every born-with dep is already completed, the task is not
     born-blocked (nothing to wait for)."""
     await backend.create(_task("d", assignee="sd"))
-    await backend.update_status("d", "completed", caller_session_id="sd")
-    await backend.create(_task("a", deps=["d"], status=TaskState.PENDING))
-    assert (await backend.get("a")).status is TaskState.PENDING
+    await backend.update_status("d", "done", caller_session_id="sd")
+    await backend.create(_task("a", deps=["d"], status=TaskState.READY))
+    assert (await backend.get("a")).status is TaskState.READY
 
 
 # ── completion-driven readiness (OQ-3) ──────────────────────────────────────
@@ -155,7 +155,7 @@ async def test_completed_predecessor_promotes_satisfied_dependent(backend):
     await backend.create(_task("d", assignee="sd"))
     await backend.create(_task("a", deps=["d"]))
     assert (await backend.get("a")).status is TaskState.BLOCKED
-    await backend.update_status("d", "completed", caller_session_id="sd")
+    await backend.update_status("d", "done", caller_session_id="sd")
     promoted = await backend.recompute_readiness("d")
     assert [t.task_id for t in promoted] == ["a"]
     assert (await backend.get("a")).status is TaskState.READY
@@ -167,7 +167,7 @@ async def test_partially_satisfied_dependent_stays_blocked(backend):
     await backend.create(_task("d1", assignee="s1"))
     await backend.create(_task("d2", assignee="s2"))
     await backend.create(_task("a", deps=["d1", "d2"]))
-    await backend.update_status("d1", "completed", caller_session_id="s1")
+    await backend.update_status("d1", "done", caller_session_id="s1")
     promoted = await backend.recompute_readiness("d1")
     assert promoted == []
     assert (await backend.get("a")).status is TaskState.BLOCKED
@@ -180,7 +180,7 @@ async def test_recompute_is_os_authority_no_assignee_session(backend):
     session, yet the OS promotes it with no session context."""
     await backend.create(_task("d", assignee="sd"))
     await backend.create(_task("a", deps=["d"], assignee="sa"))
-    await backend.update_status("d", "completed", caller_session_id="sd")
+    await backend.update_status("d", "done", caller_session_id="sd")
     promoted = await backend.recompute_readiness("d")  # no caller identity at all
     assert [t.task_id for t in promoted] == ["a"]
 
@@ -193,7 +193,7 @@ async def test_readiness_and_edges_persist_across_sqlite_reload(tmp_path):
     b = SqliteTaskBackend(path)
     await b.create(_task("d", assignee="sd"))
     await b.create(_task("a", deps=["d"]))
-    await b.update_status("d", "completed", caller_session_id="sd")
+    await b.update_status("d", "done", caller_session_id="sd")
     await b.recompute_readiness("d")
     b.close()
 
@@ -282,7 +282,7 @@ async def test_op_update_status_completion_drives_readiness_and_emits_p6():
     await b.create(_task("a", deps=["d"], assignee="sa"))
     # Complete d (ctx.session_id must equal d's assignee for the CAS).
     res = await taskmod._update_status(
-        SimpleNamespace(task_id="d", status="completed"),
+        SimpleNamespace(task_id="d", status="done"),
         _opctx(b, events=rec, session_id="sd"), "control_ir")
     assert res["status"] == "ok"
     # a was promoted → exactly one task_readiness event for a (behavioral, not a
@@ -301,7 +301,7 @@ async def test_op_update_status_non_completion_does_not_recompute():
     await b.create(_task("d", assignee="sd"))
     await b.create(_task("a", deps=["d"], assignee="sa"))
     await taskmod._update_status(
-        SimpleNamespace(task_id="d", status="in_progress"),
+        SimpleNamespace(task_id="d", status="running"),
         _opctx(b, events=rec, session_id="sd"), "control_ir")
     assert [k for k, _ in rec.events if k == "task_readiness"] == []
     assert (await b.get("a")).status is TaskState.BLOCKED

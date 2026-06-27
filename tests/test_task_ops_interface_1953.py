@@ -69,7 +69,7 @@ def test_union_validates_every_task_kind():
     adapter = TypeAdapter(ControlIROp)
     samples = {
         "task.create": {"kind": "task.create", "name": "n"},
-        "task.update_status": {"kind": "task.update_status", "task_id": "t", "status": "in_progress"},
+        "task.update_status": {"kind": "task.update_status", "task_id": "t", "status": "running"},
         "task.get": {"kind": "task.get", "task_id": "t"},
         "task.list": {"kind": "task.list"},
         "task.add_dependency": {"kind": "task.add_dependency", "task_id": "t", "depends_on": "u"},
@@ -150,12 +150,12 @@ async def test_update_status_single_writer_is_assignee_session():
 
     # the assignee session (session_id == assignee) may write.
     updated = await taskmod._update_status(
-        SimpleNamespace(task_id=task_id, status="in_progress", reason=None),
+        SimpleNamespace(task_id=task_id, status="running", reason=None),
         SimpleNamespace(session_id="sess-A", agent_id="a", events=None, task_backend=backend),
         "control_ir",
     )
     assert updated["status"] == "ok"
-    assert updated["task"]["status"] == "in_progress"
+    assert updated["task"]["status"] == "running"
 
     # RED if the single-writer CAS is dropped: a non-assignee session is rejected — now
     # the op-layer returns a "denied" result (the gate moved from a backend raise to the
@@ -214,12 +214,12 @@ async def test_abort_archives_and_rejects_assignee_straggler():
     aborted = await taskmod._abort(
         SimpleNamespace(task_id=task_id, reason="don't need it"),
         SimpleNamespace(session_id="R", agent_id="r", events=None), "control_ir")
-    assert aborted["task"]["status"] == "archived"
+    assert aborted["task"]["status"] == "aborted"
 
     # the assignee's straggler write is rejected by the terminal state.
     with pytest.raises(PermissionError):
         await taskmod._update_status(
-            SimpleNamespace(task_id=task_id, status="completed", reason=None),
+            SimpleNamespace(task_id=task_id, status="done", reason=None),
             SimpleNamespace(session_id="A", agent_id="a", events=None), "control_ir")
 
 

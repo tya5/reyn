@@ -42,7 +42,7 @@ class _RecordingPoster:
 async def _archived(backend, task_id, ctx, origin):
     """Seed an archived task assigned to the context's session."""
     await backend.create(Task(task_id=task_id, name="n", assignee=a2a_session_id(ctx),
-                              requester="ext", origin=origin, status=TaskState.ARCHIVED))
+                              requester="ext", origin=origin, status=TaskState.ABORTED))
 
 
 @pytest.mark.asyncio

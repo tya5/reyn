@@ -38,7 +38,7 @@ from reyn.task import InMemoryTaskBackend, Task, TaskOrigin, TaskState  # noqa: 
 from reyn.user_intervention import UserIntervention  # noqa: E402
 
 
-def _a2a_task(task_id, ctx, status=TaskState.IN_PROGRESS):
+def _a2a_task(task_id, ctx, status=TaskState.RUNNING):
     return Task(task_id=task_id, name="n", assignee=a2a_session_id(ctx),
                 requester="external", origin=TaskOrigin.EXTERNAL, status=status)
 
@@ -105,7 +105,7 @@ def test_sse_closes_when_task_is_terminal_even_if_runentry_running():
     backend = InMemoryTaskBackend()
     loop = asyncio.new_event_loop()
     loop.run_until_complete(
-        backend.create(_a2a_task(entry.run_id, "ctx-sse", status=TaskState.ARCHIVED)))
+        backend.create(_a2a_task(entry.run_id, "ctx-sse", status=TaskState.ABORTED)))
 
     client = _sse_client(registry, backend)
     try:
@@ -174,9 +174,9 @@ async def test_reflect_blocked_task_to_in_progress():
     tb = InMemoryTaskBackend()
     await tb.create(_a2a_task("t-ans", "ctx-ans", status=TaskState.BLOCKED))
 
-    await a2a_mod._reflect_task_status(tb, "t-ans", "in_progress")
+    await a2a_mod._reflect_task_status(tb, "t-ans", "running")
 
-    assert (await tb.get("t-ans")).status is TaskState.IN_PROGRESS
+    assert (await tb.get("t-ans")).status is TaskState.RUNNING
 
 
 @pytest.mark.asyncio
@@ -184,9 +184,9 @@ async def test_reflect_status_on_terminal_task_is_swallowed():
     """Tier 2: reflecting onto an already-archived (cancelled) Task is rejected by
     the terminal-guard and swallowed — the abort wins (race-safe)."""
     tb = InMemoryTaskBackend()
-    await tb.create(_a2a_task("t-term", "ctx-t", status=TaskState.IN_PROGRESS))
+    await tb.create(_a2a_task("t-term", "ctx-t", status=TaskState.RUNNING))
     await tb.abort("t-term")  # A2A Cancel archived it first
 
     # Must not raise even though the Task is terminal.
     await a2a_mod._reflect_task_status(tb, "t-term", "blocked")
-    assert (await tb.get("t-term")).status is TaskState.ARCHIVED
+    assert (await tb.get("t-term")).status is TaskState.ABORTED

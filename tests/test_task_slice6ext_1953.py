@@ -31,7 +31,7 @@ from reyn.task import (
 )
 
 
-def _task(task_id, *, deps=None, status=TaskState.PENDING, assignee="sess",
+def _task(task_id, *, deps=None, status=TaskState.READY, assignee="sess",
           requester="req", origin=None):
     kw = {} if origin is None else {"origin": origin}
     return Task(task_id=task_id, name=task_id, assignee=assignee, requester=requester,
@@ -49,7 +49,7 @@ def backend(request, tmp_path):
 
 
 async def _complete(backend, task_id, assignee):
-    await backend.update_status(task_id, "completed", caller_session_id=assignee)
+    await backend.update_status(task_id, "done", caller_session_id=assignee)
 
 
 # ── remove_dependency ───────────────────────────────────────────────────────
@@ -84,9 +84,9 @@ async def test_remove_last_dep_readies_i1(backend):
 @pytest.mark.asyncio
 async def test_remove_is_idempotent_on_missing_edge(backend):
     """Tier 2: removing an absent edge is a no-op (no raise, no status flip)."""
-    await backend.create(_task("a", status=TaskState.IN_PROGRESS))
+    await backend.create(_task("a", status=TaskState.RUNNING))
     task = await backend.remove_dependency("a", "never-there")
-    assert task is not None and task.status is TaskState.IN_PROGRESS
+    assert task is not None and task.status is TaskState.RUNNING
 
 
 @pytest.mark.asyncio
@@ -150,7 +150,7 @@ async def test_repoint_demotes_when_new_edge_unsatisfied(backend):
     await _complete(backend, "x", "sx")
     await backend.create(_task("y", assignee="sy"))         # incomplete
     await backend.create(_task("a", deps=["x"]))            # x completed → PENDING (pre-run, demotable)
-    assert (await backend.get("a")).status is TaskState.PENDING
+    assert (await backend.get("a")).status is TaskState.READY
 
     await backend.repoint_dependency("a", "x", "y")         # now depends on incomplete y
     assert (await backend.get("a")).status is TaskState.BLOCKED
@@ -164,13 +164,13 @@ async def test_derive_readiness_leaves_in_progress_untouched(backend):
     await _complete(backend, "x", "sx")
     await backend.create(_task("y", assignee="sy"))         # incomplete
     await backend.create(_task("a", deps=["x"], assignee="sa"))
-    await backend.update_status("a", "in_progress", caller_session_id="sa")
-    assert (await backend.get("a")).status is TaskState.IN_PROGRESS
+    await backend.update_status("a", "running", caller_session_id="sa")
+    assert (await backend.get("a")).status is TaskState.RUNNING
 
     await backend.repoint_dependency("a", "x", "y")         # new incomplete dep
     # untouched: the assignee owns the run, OS does not yank it back to blocked.
     a = await backend.get("a")
-    assert a.status is TaskState.IN_PROGRESS and a.deps == ["y"]
+    assert a.status is TaskState.RUNNING and a.deps == ["y"]
 
 
 @pytest.mark.asyncio
@@ -191,7 +191,7 @@ async def test_repoint_persists_across_sqlite_reload(tmp_path):
     b = SqliteTaskBackend(path)
     await b.create(_task("x", assignee="sx"))
     await b.create(Task(task_id="y", name="y", assignee="sy", requester="r",
-                        status=TaskState.COMPLETED))
+                        status=TaskState.DONE))
     await b.create(_task("a", deps=["x"]))                  # born-blocked
     await b.repoint_dependency("a", "x", "y")               # → ready (y completed)
     b.close()
@@ -287,7 +287,7 @@ async def test_op_abort_routes_disposition_to_requester():
     b = InMemoryTaskBackend()
     rec = _Rec()
     waker = _RecordingWaker()
-    await b.create(_task("B", assignee="sB", requester="req", status=TaskState.IN_PROGRESS))
+    await b.create(_task("B", assignee="sB", requester="req", status=TaskState.RUNNING))
     await b.create(_task("A", deps=["B"], assignee="sA", requester="req"))
 
     await taskmod._abort(SimpleNamespace(task_id="B", reason=None),
@@ -307,7 +307,7 @@ async def test_op_failed_routes_disposition_to_requester():
     task's REQUESTER."""
     b = InMemoryTaskBackend()
     waker = _RecordingWaker()
-    await b.create(_task("B", assignee="sB", requester="req", status=TaskState.IN_PROGRESS))
+    await b.create(_task("B", assignee="sB", requester="req", status=TaskState.RUNNING))
     await b.create(_task("A", deps=["B"], assignee="sA", requester="req"))
 
     # failed is assignee-gated → caller must be B's assignee.
@@ -326,7 +326,7 @@ async def test_op_abort_root_routes_to_requester():
     dependents. Now the requester (always present) is woken to recover."""
     b = InMemoryTaskBackend()
     waker = _RecordingWaker()
-    await b.create(_task("B", assignee="sB", requester="req", status=TaskState.IN_PROGRESS))
+    await b.create(_task("B", assignee="sB", requester="req", status=TaskState.RUNNING))
     await b.create(_task("A", deps=["B"], assignee="sA", requester="req"))  # root, no parent
     await taskmod._abort(SimpleNamespace(task_id="B", reason=None),
                          _opctx(b, waker=waker, session_id="req"), "control_ir")
@@ -344,9 +344,9 @@ async def test_2107_flat_self_task_plan_mid_failure_notifies_requester():
     (restore `if not parent_id: return`) → no requester notify → RED."""
     b = InMemoryTaskBackend()
     waker = _RecordingWaker()
-    await b.create(_task("t1", assignee="me", requester="me", status=TaskState.COMPLETED))
+    await b.create(_task("t1", assignee="me", requester="me", status=TaskState.DONE))
     await b.create(_task("t2", deps=["t1"], assignee="me", requester="me",
-                         status=TaskState.IN_PROGRESS))
+                         status=TaskState.RUNNING))
     await b.create(_task("t3", deps=["t2"], assignee="me", requester="me"))
     await b.create(_task("t4", deps=["t3"], assignee="me", requester="me"))
     await taskmod._abort(SimpleNamespace(task_id="t2", reason=None),
@@ -367,7 +367,7 @@ async def test_external_origin_skips_internal_requester_wake():
     b = InMemoryTaskBackend()
     waker = _RecordingWaker()
     await b.create(_task("B", assignee="sB", requester="a2a:client",
-                         origin=TaskOrigin.EXTERNAL, status=TaskState.IN_PROGRESS))
+                         origin=TaskOrigin.EXTERNAL, status=TaskState.RUNNING))
     await b.create(_task("A", deps=["B"], assignee="sA", requester="a2a:client",
                          origin=TaskOrigin.EXTERNAL))
     await taskmod._abort(SimpleNamespace(task_id="B", reason=None),

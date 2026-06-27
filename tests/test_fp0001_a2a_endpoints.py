@@ -87,7 +87,7 @@ def test_get_task_returns_a2a_envelope_from_task_backend() -> None:
     backend = InMemoryTaskBackend()
     asyncio.new_event_loop().run_until_complete(
         backend.create(Task(task_id="t-1", name="n", assignee="a2a:ctx-7",
-                            requester="r", status=TaskState.IN_PROGRESS)))
+                            requester="r", status=TaskState.RUNNING)))
     client = _make_client_with_registry(RunRegistry(), task_backend=backend)
     try:
         r = client.get("/a2a/tasks/t-1")
@@ -136,7 +136,7 @@ def test_cancel_task_aborts_task_in_backend() -> None:
     loop = asyncio.new_event_loop()
     loop.run_until_complete(
         backend.create(Task(task_id="t-1", name="n", assignee="a2a:ctx-1",
-                            requester="r", status=TaskState.IN_PROGRESS)))
+                            requester="r", status=TaskState.RUNNING)))
     client = _make_client_with_registry(RunRegistry(), task_backend=backend)
     try:
         r = client.post("/a2a/tasks/t-1/cancel")
@@ -148,7 +148,7 @@ def test_cancel_task_aborts_task_in_backend() -> None:
 
         # backend task is archived (the abort terminal).
         refreshed = loop.run_until_complete(backend.get("t-1"))
-        assert refreshed is not None and refreshed.status is TaskState.ARCHIVED
+        assert refreshed is not None and refreshed.status is TaskState.ABORTED
     finally:
         _restore_overrides()
 

@@ -26,12 +26,12 @@ from reyn.task import InMemoryTaskBackend, SqliteTaskBackend, Task, TaskState
 from reyn.task.model import TaskOrigin
 
 
-def _ext(task_id, *, deps=None, status=TaskState.PENDING, assignee="a2a:ctx-1"):
+def _ext(task_id, *, deps=None, status=TaskState.READY, assignee="a2a:ctx-1"):
     return Task(task_id=task_id, name=task_id, assignee=assignee, requester="a2a:ctx-1",
                 origin=TaskOrigin.EXTERNAL, status=status, deps=list(deps or []))
 
 
-def _self(task_id, *, deps=None, status=TaskState.PENDING):
+def _self(task_id, *, deps=None, status=TaskState.READY):
     return Task(task_id=task_id, name=task_id, assignee="main", requester="main",
                 origin=TaskOrigin.SELF, status=status, deps=list(deps or []))
 
@@ -54,14 +54,14 @@ async def test_external_abort_cascades_to_transitive_dependents(backend):
     """Tier 2: aborting an EXTERNAL task archives its TRANSITIVE dep-DAG dependents
     (X ← Y ← Z) — they can't be recovered, so they give up with it. Catches the direct
     backend.abort triggers (A2A cancel / agent abort / /tasks kill) by construction."""
-    await backend.create(_ext("X", status=TaskState.IN_PROGRESS))
+    await backend.create(_ext("X", status=TaskState.RUNNING))
     await backend.create(_ext("Y", deps=["X"]))
     await backend.create(_ext("Z", deps=["Y"]))
 
     await backend.abort("X")
 
     for tid in ("X", "Y", "Z"):
-        assert (await backend.get(tid)).status is TaskState.ARCHIVED
+        assert (await backend.get(tid)).status is TaskState.ABORTED
 
 
 @pytest.mark.asyncio
@@ -69,13 +69,13 @@ async def test_internal_abort_does_not_cascade_to_dependents(backend):
     """Tier 2: origin-split — a SELF (internal) abort does NOT abort its dependents (they
     recover via the requester wake, §16 S1). Strip the origin gate → the dependent would
     be wrongly archived → RED."""
-    await backend.create(_self("X", status=TaskState.IN_PROGRESS))
+    await backend.create(_self("X", status=TaskState.RUNNING))
     await backend.create(_self("Y", deps=["X"]))
 
     await backend.abort("X")
 
-    assert (await backend.get("X")).status is TaskState.ARCHIVED
-    assert (await backend.get("Y")).status is not TaskState.ARCHIVED  # NOT cascaded
+    assert (await backend.get("X")).status is TaskState.ABORTED
+    assert (await backend.get("Y")).status is not TaskState.ABORTED  # NOT cascaded
 
 
 @pytest.mark.asyncio
@@ -93,8 +93,8 @@ async def test_external_failed_path_aborts_dependents_via_route(backend):
     await taskmod._route_terminal_to_requester(ctx, backend, terminal, disposition="failed")
 
     assert (await backend.get("X")).status is TaskState.FAILED  # X itself stays failed
-    assert (await backend.get("Y")).status is TaskState.ARCHIVED
-    assert (await backend.get("Z")).status is TaskState.ARCHIVED
+    assert (await backend.get("Y")).status is TaskState.ABORTED
+    assert (await backend.get("Z")).status is TaskState.ABORTED
 
 
 # ── the LIVE path: the REAL cancel_task endpoint → archived → the REAL sweep → webhooks ──
@@ -112,7 +112,7 @@ async def test_live_cancel_endpoint_cascades_then_sweep_fires_webhooks(tmp_path)
     from reyn.interfaces.web.routers.a2a import cancel_task
 
     backend = InMemoryTaskBackend()
-    await backend.create(_ext("X", status=TaskState.IN_PROGRESS))
+    await backend.create(_ext("X", status=TaskState.RUNNING))
     await backend.create(_ext("Y", deps=["X"]))
     await backend.create(_ext("Z", deps=["Y"]))
 
@@ -122,7 +122,7 @@ async def test_live_cancel_endpoint_cascades_then_sweep_fires_webhooks(tmp_path)
     # the REAL cancel endpoint (the A2A client's remove-op) — direct backend.abort.
     await cancel_task("X", task_backend=backend)
     for tid in ("X", "Y", "Z"):
-        assert (await backend.get(tid)).status is TaskState.ARCHIVED  # the cascade
+        assert (await backend.get(tid)).status is TaskState.ABORTED  # the cascade
 
     posted: list[dict] = []
 

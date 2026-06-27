@@ -210,7 +210,7 @@ class InMemoryTaskBackend:
         # an initial-status derivation, not a post-hoc status flip (OQ-2) — deps-less
         # tasks (e.g. the A2A create path) keep their requested status.
         if task.deps and not all(
-            self._tasks[d].status == TaskState.COMPLETED for d in task.deps
+            self._tasks[d].status == TaskState.DONE for d in task.deps
         ):
             task.status = TaskState.BLOCKED
         self._tasks[task.task_id] = task
@@ -274,7 +274,7 @@ class InMemoryTaskBackend:
         # A dep is satisfied when it exists + is completed. No deps → vacuously
         # satisfied (the #1953 slice 6-ext I-1 case: an ordering-free task is ready).
         return all(
-            d in self._tasks and self._tasks[d].status == TaskState.COMPLETED
+            d in self._tasks and self._tasks[d].status == TaskState.DONE
             for d in task.deps
         )
 
@@ -291,14 +291,14 @@ class InMemoryTaskBackend:
         graph → promote-only (``allow_demote=False``, consistent with the OQ-2
         pure-topology rule that a mere edge change does not re-block a non-blocked
         task); ``repoint`` is a material re-wire → full re-derive (``allow_demote=True``)."""
-        if task.status not in (TaskState.PENDING, TaskState.READY, TaskState.BLOCKED):
+        if task.status not in (TaskState.READY, TaskState.BLOCKED):
             return None
         satisfied = self._all_deps_satisfied(task)
         if satisfied and task.status is TaskState.BLOCKED:
             task.status = TaskState.READY
             task.updated_at = _now_iso()
             return "ready"
-        if allow_demote and not satisfied and task.status in (TaskState.PENDING, TaskState.READY):
+        if allow_demote and not satisfied and task.status is TaskState.READY:
             task.status = TaskState.BLOCKED
             task.updated_at = _now_iso()
             return "blocked"
@@ -395,9 +395,14 @@ class InMemoryTaskBackend:
                     subtree.append(tid)
                     frontier.append(tid)
         aborted: list[Task] = []
+        now = _now_iso()
         for tid in subtree:
-            self._tasks[tid].status = TaskState.ARCHIVED
-            self._tasks[tid].updated_at = _now_iso()
+            self._tasks[tid].status = TaskState.ABORTED
+            # #2187: soft-delete is the orthogonal retention dimension (archived_at),
+            # not a state — abort sets BOTH the ABORTED lifecycle state and the
+            # retention marker (preserves the hidden-from-list UX of the old ARCHIVED).
+            self._tasks[tid].archived_at = now
+            self._tasks[tid].updated_at = now
             aborted.append(self._tasks[tid])
         # #2107 S2 (origin-split): an EXTERNAL terminal's dep-DAG DEPENDENTS can't be
         # recovered — the external requester gives up (no in-session re-wire; that is the

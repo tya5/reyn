@@ -69,6 +69,9 @@ CREATE TABLE IF NOT EXISTS tasks(
   unblock_predicate TEXT,
   tools TEXT,
   result TEXT,
+  -- #2187: soft-delete retention marker, orthogonal to the lifecycle `status`
+  -- (set alongside ABORTED by abort(); the list hidden-filter keys on it).
+  archived_at TEXT,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
@@ -107,7 +110,7 @@ CREATE TABLE IF NOT EXISTS task_comments(
 
 _TASK_COLUMNS = (
     "task_id, name, origin, status, description, "
-    "created_by, awaiting_since, tools, result, created_at, updated_at"
+    "created_by, awaiting_since, tools, result, archived_at, created_at, updated_at"
 )
 
 
@@ -162,7 +165,8 @@ class SqliteTaskBackend:
         schema evolution by construction."""
         existing = {r[1] for r in conn.execute("PRAGMA table_info(tasks)").fetchall()}
         # #1953 slice P2: additive migration for DBs created before tools / result.
-        for col in ("tools", "result"):
+        # #2187: archived_at (the soft-delete retention marker) for pre-#2187 DBs.
+        for col in ("tools", "result", "archived_at"):
             if col not in existing:
                 conn.execute(f"ALTER TABLE tasks ADD COLUMN {col} TEXT")
         # #2187 backend-master (2c-iii): the task BINDING moved to the WAL-derived
@@ -233,7 +237,7 @@ class SqliteTaskBackend:
             row = self._conn.execute(
                 "SELECT status FROM tasks WHERE task_id=?", (d,)
             ).fetchone()
-            if row is None or row["status"] != TaskState.COMPLETED.value:
+            if row is None or row["status"] != TaskState.DONE.value:
                 return False
         return True
 
@@ -252,16 +256,12 @@ class SqliteTaskBackend:
         if row is None:
             return None
         status = row["status"]
-        if status not in (
-            TaskState.PENDING.value, TaskState.READY.value, TaskState.BLOCKED.value
-        ):
+        if status not in (TaskState.READY.value, TaskState.BLOCKED.value):
             return None
         satisfied = self._all_deps_completed(task_id)
         if satisfied and status == TaskState.BLOCKED.value:
             new = TaskState.READY.value
-        elif allow_demote and not satisfied and status in (
-            TaskState.PENDING.value, TaskState.READY.value
-        ):
+        elif allow_demote and not satisfied and status == TaskState.READY.value:
             new = TaskState.BLOCKED.value
         else:
             return None
@@ -289,6 +289,7 @@ class SqliteTaskBackend:
             description=row["description"],
             created_by=row["created_by"],
             awaiting_since=row["awaiting_since"],
+            archived_at=row["archived_at"],
             deps=self._deps(row["task_id"]),
             tools=json.loads(row["tools"]) if row["tools"] else [],
             result=row["result"],
@@ -322,18 +323,18 @@ class SqliteTaskBackend:
                     ).fetchone() or {"status": None})["status"]
                     for dep in task.deps
                 ]
-                if not all(s == TaskState.COMPLETED.value for s in dep_statuses):
+                if not all(s == TaskState.DONE.value for s in dep_statuses):
                     status = TaskState.BLOCKED
             task.status = status
             self._conn.execute("BEGIN IMMEDIATE")
             self._conn.execute(
                 f"INSERT INTO tasks({_TASK_COLUMNS}) "
-                f"VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                f"VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
                 (
                     task.task_id, task.name, task.origin.value, task.status.value,
                     task.description, task.created_by, task.awaiting_since,
                     json.dumps(task.tools) if task.tools else None, task.result,
-                    task.created_at, task.updated_at,
+                    task.archived_at, task.created_at, task.updated_at,
                 ),
             )
             for dep in task.deps:
@@ -588,10 +589,14 @@ class SqliteTaskBackend:
                             to_abort.append(dep)
                             dep_frontier.append(dep)
             self._conn.execute("BEGIN IMMEDIATE")
+            now = _now_iso()
             for tid in to_abort:
+                # #2187: abort sets BOTH the ABORTED lifecycle state and archived_at
+                # (the orthogonal soft-delete retention marker — preserves the
+                # hidden-from-list UX of the old ARCHIVED state).
                 self._conn.execute(
-                    "UPDATE tasks SET status=?, updated_at=? WHERE task_id=?",
-                    (TaskState.ARCHIVED.value, _now_iso(), tid),
+                    "UPDATE tasks SET status=?, archived_at=?, updated_at=? WHERE task_id=?",
+                    (TaskState.ABORTED.value, now, now, tid),
                 )
                 self._emit(tid, "aborted", root=task_id)
             self._conn.commit()
