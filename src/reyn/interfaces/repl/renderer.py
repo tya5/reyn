@@ -281,6 +281,46 @@ def _summarize_args(args) -> str:
     return _short(args)
 
 
+def summarize_tool_result(tool, result) -> str:
+    """Human one-line summary of a tool result (CC-style, e.g. ``Read 42 lines``).
+
+    Best-effort per tool name / result shape; ALWAYS degrades gracefully — any
+    unrecognised shape (or an error reading it) falls back to a truncated repr,
+    so it never raises and never loses the result entirely.
+    """
+    try:
+        return _summarize_result(tool, result)
+    except Exception:
+        return _short(result, 80)
+
+
+def _summarize_result(tool, result) -> str:
+    t = (tool or "").lower()
+    if result is None or result == "":
+        return "done"
+    if isinstance(result, list):
+        n = len(result)
+        word = "result" if "search" in t else "item"
+        return f"{n} {word}{'' if n == 1 else 's'}"
+    if isinstance(result, dict):
+        op = result.get("op")
+        path = result.get("path")
+        status = result.get("status")
+        if op == "read" or ("read" in t and "content" in result):
+            content = result.get("content")
+            if isinstance(content, str):
+                lines = content.count("\n") + (1 if content else 0)
+                more = " (truncated)" if status == "truncated" else ""
+                return f"Read {lines} lines{more}"
+        if op in ("write", "create"):
+            return f"Wrote {path}" if path else "Wrote file"
+        if op == "edit":
+            return f"Edited {path}" if path else "Edited file"
+        if status:
+            return str(status)
+    return _short(result, 80)
+
+
 def format_inline_message(msg: OutboxMessage):
     """Pure formatter: OutboxMessage → rich Text (the inline CC-style line).
 
@@ -302,9 +342,8 @@ def format_inline_message(msg: OutboxMessage):
             (" ⏺ ", _CC_ACCENT), (tool, "bold"), (f"({args})", _CC_DIM)
         )
     if kind == "tool_call_completed":
-        return Text.assemble(
-            ("   ⎿ ", _CC_DIM), (_short(meta.get("result"), 80), _CC_DIM)
-        )
+        summary = summarize_tool_result(meta.get("tool"), meta.get("result"))
+        return Text.assemble(("   ⎿ ", _CC_DIM), (summary, _CC_DIM))
     if kind == "tool_call_failed":
         err = meta.get("error_message") or meta.get("error_kind") or msg.text
         return Text.assemble(
@@ -379,7 +418,7 @@ class InlineChatRenderer(ChatRenderer):
         elapsed = int(time.monotonic() - self._think_start)
         return HTML(
             f'<style fg="{_CC_ACCENT}">{frame}</style> '
-            f'<style fg="{_CC_DIM}">Working… {elapsed}s · esc to interrupt</style>'
+            f'<style fg="{_CC_DIM}">Working… {elapsed}s</style>'
         )
 
     def uses_app_input(self) -> bool:
