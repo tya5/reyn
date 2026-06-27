@@ -256,11 +256,18 @@ async def _create(op, ctx: OpContext, caller) -> dict:
 
 
 async def _update_status(op, ctx: OpContext, caller) -> dict:
-    # assignee-gated single-writer: the backend CAS-rejects when ctx.session_id
-    # != the immutable assignee (#1814 routing-key). Atomic, so no separate check.
-    task = await _backend(ctx).update_status(
-        op.task_id, op.status, caller_session_id=_caller_session(ctx)
-    )
+    # #2187 backend-master: the single-writer CAS is OP-LAYER ownership-gating — the
+    # caller must be the task's CURRENT assignee (the WAL-subscription binding, hydrated
+    # onto the fetched task; mutable, so this is the current owner not a frozen one).
+    # _authorize does exactly that assignee-check. Read-then-request is safe under the
+    # single-writer invariant (one writer per task) + WAL ordering. The backend (the
+    # task-state MASTER) then APPLIES the request — its only gate is the terminal-check
+    # (a state-validity rule: no transition out of a terminal state), NOT the binding.
+    _bound, denied = await _authorize(
+        "task.update_status", ctx, _backend(ctx), op.task_id, "assignee")
+    if denied is not None:
+        return denied
+    task = await _backend(ctx).update_status(op.task_id, op.status)
     if task is None:
         return _not_found("task.update_status", op.task_id)
     _audit(ctx, "task.update_status", op.task_id, status=op.status)

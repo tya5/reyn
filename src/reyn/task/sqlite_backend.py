@@ -370,30 +370,28 @@ class SqliteTaskBackend:
     ) -> Task | None:
         async with self._lock:
             self._conn.execute("BEGIN IMMEDIATE")
-            # Single-writer CAS + terminal-guard: only the assignee may write, and
-            # only to a non-terminal task. rowcount == 0 → no such task, a
-            # non-assignee caller, or a terminal task (incl. the abort straggler-
-            # reject — Option B, #1953). Distinguish for a decision-enabling error.
+            # #2187 backend-master: the backend is the task-state MASTER — it APPLIES the
+            # status request and enforces only the STATE-VALIDITY rule: no transition OUT
+            # of a terminal state (the abort straggler-reject, Option B #1953). The
+            # single-writer OWNERSHIP CAS (caller == assignee) is now OP-LAYER gating
+            # against the WAL-subscription (the binding lives in the WAL, not here);
+            # ``caller_session_id`` is recorded in the audit projection but NOT gated on.
+            # rowcount == 0 → no such task, or a terminal task.
             cur = self._conn.execute(
                 "UPDATE tasks SET status=?, updated_at=? "
-                f"WHERE task_id=? AND assignee=? AND status NOT IN ({_TERMINAL_PLACEHOLDERS})",
-                (status, _now_iso(), task_id, caller_session_id, *_TERMINAL_VALUES),
+                f"WHERE task_id=? AND status NOT IN ({_TERMINAL_PLACEHOLDERS})",
+                (status, _now_iso(), task_id, *_TERMINAL_VALUES),
             )
             if cur.rowcount == 0:
                 self._conn.rollback()
                 row = self._conn.execute(
-                    "SELECT assignee, status FROM tasks WHERE task_id=?", (task_id,)
+                    "SELECT status FROM tasks WHERE task_id=?", (task_id,)
                 ).fetchone()
                 if row is None:
                     return None
-                if row["status"] in _TERMINAL_VALUES:
-                    raise PermissionError(
-                        f"task {task_id!r} status-write rejected: task is terminal "
-                        f"({row['status']}) — no further transitions (e.g. post-abort straggler)"
-                    )
                 raise PermissionError(
-                    f"task {task_id!r} status-write rejected: caller "
-                    f"{caller_session_id!r} is not the assignee (single-writer)"
+                    f"task {task_id!r} status-write rejected: task is terminal "
+                    f"({row['status']}) — no further transitions (e.g. post-abort straggler)"
                 )
             self._emit(task_id, "status_changed", status=status, by=caller_session_id)
             self._conn.commit()

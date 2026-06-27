@@ -241,13 +241,10 @@ class InMemoryTaskBackend:
         task = self._tasks.get(task_id)
         if task is None:
             return None
-        # Single-writer CAS: only the assignee session may write (fixed equality).
-        if task.assignee != caller_session_id:
-            raise PermissionError(
-                f"task {task_id!r} status-write rejected: caller "
-                f"{caller_session_id!r} is not the assignee {task.assignee!r} "
-                f"(single-writer)"
-            )
+        # #2187 backend-master: the backend is the task-state MASTER — it APPLIES the
+        # request + enforces only the STATE-VALIDITY terminal-guard below. The
+        # single-writer OWNERSHIP CAS (caller == assignee) is now OP-LAYER gating against
+        # the WAL-subscription; ``caller_session_id`` is accepted (audit) but not gated.
         # Terminal-guard: a terminal task takes no further transitions — this is
         # the abort straggler-reject (Option B, #1953): an assignee write after
         # the requester aborts the task is rejected, so no straggler lands.
