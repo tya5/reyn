@@ -133,7 +133,9 @@ async def test_no_session_context_refuses_rather_than_mask():
     backend = InMemoryTaskBackend()
     task_id = await _task_assigned_to(backend, "sess-B")
     ctx = _tool_ctx(router_state=None)  # no router factory + no phase op_context
-    result = await _UPDATE({"task_id": task_id, "status": "x"}, ctx)
+    # a VALID status (the op Literal now constrains it, #2187 followup) so the op passes
+    # arg-validation and the test exercises the no-session-context refusal.
+    result = await _UPDATE({"task_id": task_id, "status": "running"}, ctx)
     assert result.get("error_kind") == "no_session_context", result
 
 

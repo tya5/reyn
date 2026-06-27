@@ -47,6 +47,7 @@ from reyn.task.model import (
     TaskRequesterKind,
     TaskState,
     _now_iso,
+    require_valid_status,
 )
 
 # Terminal status values (no further transitions) — used by the update_status
@@ -410,6 +411,11 @@ class SqliteTaskBackend:
     async def update_status(
         self, task_id: str, status: str, *, caller_session_id: str | None = None
     ) -> Task | None:
+        # #2187 followup data-integrity: reject an invalid status BEFORE the write — the
+        # master never stores a non-member. The dogfood found a weak model emitting the
+        # stale "completed", written raw here (no validation) → corrupted the read
+        # (TaskState(row) ValueError). Covers paths that bypass the op Literal.
+        require_valid_status(status)
         async with self._lock:
             self._conn.execute("BEGIN IMMEDIATE")
             # #2187 backend-master: the backend is the task-state MASTER — it APPLIES the

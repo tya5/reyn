@@ -601,7 +601,13 @@ class TaskUpdateStatusIROp(BaseModel):
 
     kind: Literal["task.update_status"]
     task_id: str
-    status: str
+    # #2187 followup: the assignee-SETTABLE lifecycle transitions only (running = start,
+    # done = complete, failed = declare failure). A `Literal` (not a bare str) so the OS
+    # injects the valid values to the LLM (P8) and Control-IR validation REJECTS an
+    # invalid/stale value — a weak model emitting the pre-#2187 "completed" (or any other
+    # string) is caught at op-validation, never written. `aborted` is a separate op
+    # (`task.abort`); `unassigned`/`blocked`/`ready` are OS-derived, never assignee-set.
+    status: Literal["running", "done", "failed"]
     reason: str | None = None
 
 
