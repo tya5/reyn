@@ -17,6 +17,22 @@ def test_file_read_reports_line_count() -> None:
     assert out == "Read 3 lines"
 
 
+def test_read_with_none_content_no_status_is_clean_not_raw_repr() -> None:
+    """Tier 2: a read result whose content is None and carries no status gets a
+    clean note, not a raw-dict dump."""
+    out = summarize_tool_result("file__read", {"op": "read", "content": None})
+    assert out == "Read (no content)"
+    assert "{" not in out and "None" not in out
+
+
+def test_read_with_none_content_but_status_shows_status() -> None:
+    """Tier 2: a read that errored (content None) still surfaces its status."""
+    out = summarize_tool_result(
+        "file__read", {"op": "read", "content": None, "status": "error"}
+    )
+    assert out == "error"
+
+
 def test_file_read_truncated_is_flagged() -> None:
     """Tier 2: a truncated read says so."""
     out = summarize_tool_result(
