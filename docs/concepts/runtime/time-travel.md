@@ -116,6 +116,14 @@ shadow-git commit  (workspace substrate)
 
 This pair is the unit that `checkout(seq)` restores atomically. The pairing is by seq: the snapshot and the shadow-git commit carry the same seq tag, so rewind can locate both with one lookup.
 
+### Task subscriptions and the backend at rewind
+
+Time-travel rewinds two substrates atomically — the runtime snapshot and the workspace. Task-related state splits across two planes with different rewind behaviour:
+
+**What gets rewound (Reyn-internal):** The task↔session binding — which session is the `assignee`, which is the `requester` — is recorded in the WAL as `task_subscribed` and `task_rebound` entries. Because it lives in the WAL (StateLog), it is part of the runtime substrate and is rewound to the target seq along with conversation state. After rewind the binding reflects who owned each task at seq N.
+
+**What does NOT get rewound (external master):** The task backend (sqlite by default) is the external master of task state — `status`, DAG, and content. External systems cannot be wound back, so Reyn does not attempt to. On recovery and after rewind, Reyn re-reads the backend's current task-state to re-adapt: the binding is at the past point; the task-state is the live present. This is what keeps the external world clean — Reyn's internal trajectory can branch and replay, but a Jira issue's state or a completed task's result is never silently reverted.
+
 ### WAL vs audit-event separation
 
 The WAL (`StateLog`, `.reyn/state/wal.jsonl`) and the P6 audit event log (`EventStore`, `.reyn/events/<run_id>.jsonl`) are **separate logs with different contracts**:

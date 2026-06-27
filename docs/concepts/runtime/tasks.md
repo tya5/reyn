@@ -20,9 +20,10 @@ into sub-tasks") plus the catalog, not by a forced mode.
 ## The model
 
 - **Work-unit identity.** Each Task has a `task_id`, a `name`, an optional
-  `description`, and a `status` (the lifecycle: pending → in_progress →
-  completed / failed, plus `blocked` while dependencies are unmet and
-  aborted/archived on removal).
+  `description`, and a `status` (lifecycle: `unassigned` → `ready` → `running`
+  → `done` / `failed`; `blocked` while deps are unmet; `aborted` on abort.
+  `archived_at` is a retention field on the task record — set alongside `aborted`
+  by abort — not a lifecycle state).
 - **Requester vs assignee.** The **requester** is the session that created the
   Task (the notify-target). The **assignee** is the single worker session and is
   **immutable** for the Task's life (no hand-off). `assignee` defaults to the
@@ -37,6 +38,19 @@ into sub-tasks") plus the catalog, not by a forced mode.
   OS-derived `blocked`; readiness is recomputed (never written directly) as deps
   complete. Edges are existence- and cycle-checked. The requester can `repoint` a
   dependent at a substitute — the primary recovery move.
+- **Child link type and completion-join.** A decomposition child carries a
+  `link_type` (`awaited` or `background`). `awaited` means the parent needs that
+  child's result and blocks on it — it gates the parent's `running → done`
+  transition. `background` means the parent continues in parallel and never waits.
+  A task transitions `running → done` only when both `awaited` and `background`
+  open-child counts reach zero (the completion-join gate).
+- **Backend as external state master.** The task backend (sqlite by default) is the
+  external master of task state — it holds each task's `status`, DAG, and content.
+  Reyn acts as a client: it sends state-change requests to the backend and
+  subscribes to the state-change events the backend publishes. The task↔session
+  binding (`assignee`, `requester`) is Reyn-internal and lives in the WAL
+  (StateLog), not in the backend — that binding is what gets rewound on
+  time-travel, while the backend's task-state is re-read as current external truth.
 
 ## The ops
 
@@ -53,7 +67,7 @@ refuses rather than run a session-less context that would mask the gate).
 | `task.get` / `task.list` | — | Read one record / list (by assignee / requester / status); `requester=<task-id>` lists sub-tasks owned by that task |
 | `task.add_dependency` / `task.remove_dependency` | requester | Add / drop a depends-on edge |
 | `task.repoint_dependency` | requester | Atomically repoint an edge to a substitute (cycle-checked first) |
-| `task.abort` | requester | Archive a Task + its sub-tree (cooperative-terminal, down-cascade) |
+| `task.abort` | requester | Move a Task and its sub-tree to `aborted` and set `archived_at` (cooperative-terminal, down-cascade) |
 | `task.heartbeat` | assignee | Liveness + unblock-predicate evaluation trigger |
 | `task.register_unblock_predicate` | assignee | Register a deterministic (no-LLM) unblock predicate |
 | `task.comment` | — | Append to the Task's thread (inter-agent / human-in-the-loop) |

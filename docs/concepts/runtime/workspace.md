@@ -18,6 +18,8 @@ The workspace is the single source of truth for everything reyn produces during 
 | Event log | `.reyn/events/<run_id>.jsonl` |
 | Eval reports | `.reyn/eval-results/<skill>/<timestamp>.json` |
 
+**Out of scope — task state and subscription binding.** Task lifecycle state (`status`, DAG, content) lives in the external task backend (sqlite by default), not the workspace. The task↔session binding (`assignee`, `requester`) lives in the WAL (StateLog). Neither is workspace state. See [Tasks](tasks.md) for the backend-master model.
+
 ## Why a single source
 
 Two consequences fall out of having one workspace:
