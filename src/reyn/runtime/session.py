@@ -1931,6 +1931,20 @@ class Session:
     def _accumulate(self, result) -> None:
         self._budget.accumulate(result)
 
+    def subscribe_chat_events(self, cb: "Callable[..., None]") -> None:
+        """Register ``cb`` for this session's chat events (narrow public API).
+
+        Encapsulates the internal EventLog so UI callers (e.g. the inline CUI
+        working indicator) subscribe without reaching into ``_chat_events``.
+        ``cb`` receives an ``Event`` (``.type`` / ``.data``) synchronously on the
+        session loop. Pair with :meth:`unsubscribe_chat_events`.
+        """
+        self._chat_events.add_subscriber(cb)
+
+    def unsubscribe_chat_events(self, cb: "Callable[..., None]") -> bool:
+        """Remove a callback registered via :meth:`subscribe_chat_events`."""
+        return self._chat_events.remove_subscriber(cb)
+
     @property
     def total_usage(self):
         return self._budget.total_usage

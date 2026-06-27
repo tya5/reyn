@@ -44,7 +44,13 @@ async def _input_loop(
         try:
             if is_tty:
                 with patch_stdout():
-                    text = await prompt_session.prompt_async(renderer.prompt_text())
+                    text = await prompt_session.prompt_async(
+                        renderer.prompt_text(),
+                        # Animated working indicator while a turn runs. None when
+                        # idle (default base renderer) → no toolbar shown.
+                        bottom_toolbar=renderer.bottom_toolbar,
+                        refresh_interval=0.1,
+                    )
             else:
                 # Piped / scripted stdin: skip prompt_toolkit entirely. It
                 # otherwise emits cursor-movement escapes (`\x1b[1A\x1b[K`)
@@ -129,7 +135,19 @@ async def run_repl(registry: AgentRegistry, renderer: ChatRenderer) -> None:
         raise RuntimeError("run_repl requires an attached agent; call registry.attach() first")
 
     history_path = attached.workspace_dir / ".input_history"
-    prompt_session: PromptSession[str] = PromptSession(history=FileHistory(str(history_path)))
+    from prompt_toolkit.styles import Style
+    prompt_session: PromptSession[str] = PromptSession(
+        history=FileHistory(str(history_path)),
+        # Render the working-indicator toolbar as a dim status line, not the
+        # default heavy reversed bar.
+        style=Style.from_dict({"bottom-toolbar": "noreverse bg:default"}),
+    )
+
+    # Drive the renderer's working indicator from the attached session's turn
+    # lifecycle (turn_started → spinner, turn_completed → idle) via the narrow
+    # subscribe API. Single-agent scope for now; agent-switch re-subscription is
+    # a follow-up.
+    attached.subscribe_chat_events(renderer.on_chat_event)
 
     renderer.banner(attached.agent_name)
 
@@ -152,6 +170,7 @@ async def run_repl(registry: AgentRegistry, renderer: ChatRenderer) -> None:
             {inputs, outputs}, return_when=asyncio.FIRST_COMPLETED,
         )
     finally:
+        attached.unsubscribe_chat_events(renderer.on_chat_event)
         inputs.cancel()
         outputs.cancel()
         await asyncio.gather(inputs, outputs, return_exceptions=True)

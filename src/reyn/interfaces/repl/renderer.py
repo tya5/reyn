@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import sys
+import time
 from io import StringIO
 
 from prompt_toolkit.formatted_text import HTML, AnyFormattedText
@@ -73,6 +74,22 @@ class ChatRenderer:
 
     def cost_summary(self, usage: TokenUsage, cost_usd: float | None) -> None:
         """Render token totals + estimated cost on shutdown."""
+
+    def on_chat_event(self, event) -> None:
+        """Hook for live session events (default no-op).
+
+        `run_repl` subscribes this to the attached session via
+        `Session.subscribe_chat_events`. Override to drive a working indicator.
+        Called synchronously on the session loop with an `Event` (`.type`/`.data`).
+        """
+
+    def bottom_toolbar(self):
+        """Optional prompt_toolkit bottom-toolbar content (default None = none).
+
+        Re-evaluated on every prompt refresh; return a live spinner here to
+        animate a working indicator while a turn runs.
+        """
+        return None
 
 
 class ConsoleChatRenderer(ChatRenderer):
@@ -224,6 +241,9 @@ _CC_DIM = "#6b7280"
 _CC_DONE = "#7ee787"
 _CC_ERR = "#f97066"
 
+# Braille spinner frames for the working indicator (bottom toolbar).
+_SPINNER = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
+
 # Per-kind leading marker for the inline CC-style stream. The agent / skill /
 # intervention lines lead with ⏺; tool/trace detail lines lead with ⎿.
 _CC_MARKER = {
@@ -236,6 +256,24 @@ _CC_MARKER = {
 }
 
 
+def _short(v, n: int = 60) -> str:
+    """Collapse whitespace and truncate any value to a one-line summary."""
+    if v is None:
+        return ""
+    s = v if isinstance(v, str) else repr(v)
+    s = " ".join(s.split())
+    return s if len(s) <= n else s[: n - 1] + "…"
+
+
+def _summarize_args(args) -> str:
+    """Compact ``k=v`` summary of a tool's args dict (or a bare value)."""
+    if not args:
+        return ""
+    if isinstance(args, dict):
+        return _short(", ".join(f"{k}={_short(v, 24)}" for k, v in args.items()))
+    return _short(args)
+
+
 def format_inline_message(msg: OutboxMessage):
     """Pure formatter: OutboxMessage → rich Text (the inline CC-style line).
 
@@ -244,7 +282,29 @@ def format_inline_message(msg: OutboxMessage):
     """
     from rich.text import Text
     kind = msg.kind
-    text = f"{_meta_prefix(msg.meta)}{msg.text}"
+    meta = msg.meta or {}
+
+    # Tool-call rows. The tool_call_* OutboxMessages arrive already in the pipe
+    # (ChatLifecycleForwarder); meta carries tool / args / result / error.
+    # PR2 renders every tool call; a noise filter (skip low-level read ops) is a
+    # tracked follow-up if dogfood shows it's too chatty (see #2198).
+    if kind == "tool_call_started":
+        tool = str(meta.get("tool", msg.text))
+        args = _summarize_args(meta.get("args"))
+        return Text.assemble(
+            (" ⏺ ", _CC_ACCENT), (tool, "bold"), (f"({args})", _CC_DIM)
+        )
+    if kind == "tool_call_completed":
+        return Text.assemble(
+            ("   ⎿ ", _CC_DIM), (_short(meta.get("result"), 80), _CC_DIM)
+        )
+    if kind == "tool_call_failed":
+        err = meta.get("error_message") or meta.get("error_kind") or msg.text
+        return Text.assemble(
+            ("   ⎿ ✗ ", _CC_ERR), (_short(err, 80), _CC_ERR)
+        )
+
+    text = f"{_meta_prefix(meta)}{msg.text}"
     marker = _CC_MARKER.get(kind)
     if marker is None:
         return Text(text)
@@ -285,6 +345,33 @@ class InlineChatRenderer(ChatRenderer):
             highlight=False, file=self._buffer, force_terminal=True,
         )
         self._transient_active = False
+        # Working-indicator state, driven by on_chat_event (turn_started/completed).
+        self._thinking = False
+        self._think_start = 0.0
+
+    def on_chat_event(self, event) -> None:
+        etype = getattr(event, "type", None)
+        if etype == "turn_started":
+            self._thinking = True
+            self._think_start = time.monotonic()
+        elif etype in ("turn_completed", "turn_cancelled"):
+            self._thinking = False
+
+    def bottom_toolbar(self):
+        """Animated working indicator while a turn runs (spinner + elapsed).
+
+        Re-evaluated on each prompt refresh; returns None when idle so no bar
+        shows. The frame is derived from the wall clock so it advances smoothly
+        regardless of refresh jitter.
+        """
+        if not self._thinking:
+            return None
+        frame = _SPINNER[int(time.monotonic() * 8) % len(_SPINNER)]
+        elapsed = int(time.monotonic() - self._think_start)
+        return HTML(
+            f'<style fg="{_CC_ACCENT}">{frame}</style> '
+            f'<style fg="{_CC_DIM}">Working… {elapsed}s · esc to interrupt</style>'
+        )
 
     def _flush(self) -> None:
         s = self._buffer.getvalue()
