@@ -149,26 +149,22 @@ async def run_repl(registry: AgentRegistry, renderer: ChatRenderer) -> None:
 
     history_path = attached.workspace_dir / ".input_history"
 
-    # Drive the renderer's working indicator from the attached session's turn
-    # lifecycle (turn_started → spinner, turn_completed → idle) via the narrow
-    # subscribe API. Single-agent scope for now; agent-switch re-subscription is
-    # a follow-up. Used by both input paths (app working row / toolbar spinner).
-    attached.subscribe_chat_events(renderer.on_chat_event)
-
-    # Register the REPL as the session's intervention listener so ask_user /
-    # cost-warn confirm / permission prompts actually surface and can be answered
-    # (the session is built with enforce_listener_presence=True, so without a
-    # registered listener every intervention short-circuits to an empty answer =
-    # silent auto-refuse). DEFAULT_CHAT_CHANNEL_ID ("tui") mirrors the listener the
-    # Textual TUI registered before the inline cutover and the chainlit mount.
-    # Single-agent scope (same as the chat-events subscription above); agent-switch
-    # re-registration is the shared follow-up. AttributeError-guarded for stripped
-    # test sessions.
+    # Bind the front-end listeners that must follow the FOCUSED session across
+    # agent switches, via the registry (it re-wires them on every /attach):
+    #  - the renderer's working-indicator chat-event callback (turn_started →
+    #    spinner, turn_settled → idle), used by both input paths, and
+    #  - the intervention listener channel so ask_user / cost-warn confirm /
+    #    permission prompts surface and can be answered. The session is built with
+    #    enforce_listener_presence=True, so without a registered listener every
+    #    intervention short-circuits to an empty answer (a silent auto-refuse);
+    #    DEFAULT_CHAT_CHANNEL_ID ("tui") mirrors the Textual TUI / chainlit mount.
+    # Binding here (not a direct subscribe to `attached`) is what makes both
+    # follow a `/attach <other>` instead of stranding on the initial session.
     from reyn.runtime.session import DEFAULT_CHAT_CHANNEL_ID
-    try:
-        attached.register_intervention_listener(DEFAULT_CHAT_CHANNEL_ID)
-    except AttributeError:
-        pass
+    registry.bind_focus_listeners(
+        on_chat_event=renderer.on_chat_event,
+        intervention_channel=DEFAULT_CHAT_CHANNEL_ID,
+    )
 
     renderer.banner(attached.agent_name)
 
@@ -206,11 +202,9 @@ async def run_repl(registry: AgentRegistry, renderer: ChatRenderer) -> None:
             {inputs, outputs}, return_when=asyncio.FIRST_COMPLETED,
         )
     finally:
-        attached.unsubscribe_chat_events(renderer.on_chat_event)
-        try:
-            attached.unregister_intervention_listener(DEFAULT_CHAT_CHANNEL_ID)
-        except AttributeError:
-            pass
+        # Unwire from the LIVE attached session (handles a switch before quit),
+        # then clear the binding.
+        registry.unbind_focus_listeners()
         inputs.cancel()
         outputs.cancel()
         await asyncio.gather(inputs, outputs, return_exceptions=True)
