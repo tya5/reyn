@@ -88,7 +88,7 @@ _NOT_EXTERNAL = {
     "task.create", "task.update_status", "task.get", "task.list",
     "task.add_dependency", "task.remove_dependency", "task.repoint_dependency",
     "task.abort", "task.heartbeat", "task.register_unblock_predicate",
-    "task.comment",
+    "task.comment", "task.assign",
 }
 
 

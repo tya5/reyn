@@ -67,7 +67,7 @@ _REGISTRY_WIRED_KINDS: frozenset[str] = frozenset({
     # compaction_unavailable rather than silently no-op'ing. Dispatch path is
     # registry-wired either way → classified here.
     "compact",
-    # #1953 dynamic-wire item-1: the 11 task.* ops now have router+phase
+    # #1953 dynamic-wire item-1: the 12 task.* ops now have router+phase
     # ToolDefinitions (tools/task_ops.py, single-source from the IROp models),
     # registered in get_default_registry → registry-wired (router-callable via
     # invoke_action task__*). Moved from _LEGACY_ONLY_KINDS by item-1.
@@ -82,6 +82,7 @@ _REGISTRY_WIRED_KINDS: frozenset[str] = frozenset({
     "task.heartbeat",
     "task.register_unblock_predicate",
     "task.comment",
+    "task.assign",
 })
 
 # Coarse op kinds that intentionally still dispatch via the legacy

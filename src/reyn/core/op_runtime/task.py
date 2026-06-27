@@ -74,9 +74,12 @@ def _reject_unknown_assignee(ctx: OpContext, assignee, caller_session) -> "dict 
     assignee (≠ the caller) does not resolve to a live session of the agent — delegating
     to a non-existent (agent, session) would silently orphan the task (its execute-wake
     is dropped). None = ok / self-task (assignee == caller, the live caller) / no waker
-    wired (direct construction / tests — the opt-in contract)."""
+    wired (direct construction / tests — the opt-in contract). ``assignee is None`` =
+    an INTENTIONALLY-UNASSIGNED task (the pending-assignment queue, §27-31) — there is
+    no delegation target to validate, so it is never an orphan (it sits in the queue
+    until claimed); skip the check (distinct from a non-existent delegated pair)."""
     waker = getattr(ctx, "task_waker", None)
-    if waker is None or assignee == caller_session:
+    if waker is None or assignee is None or assignee == caller_session:
         return None
     if not waker.resolves(assignee):
         return {
@@ -217,8 +220,10 @@ def _role_denied(op_kind: str, task_id: str, role: str, caller: str | None) -> d
 
 async def _authorize(op_kind: str, ctx: OpContext, backend, task_id: str, role: str):
     """Fetch the task + enforce role-based authority (P5): the caller's session_id
-    must equal the task's ``role`` (``assignee`` or ``requester``). Both roles are
-    immutable (set at create), so the read-then-check is race-free.
+    must equal the task's ``role`` (``assignee`` or ``requester``). The fetched task is
+    hydrated from the WAL subscription, so the ``assignee`` check is against the CURRENT
+    (rebindable, #2187) binding — and the single-writer invariant keeps the read-then-check
+    race-free (one writer per task); ``requester`` is immutable (set at create).
 
     Returns ``(task, None)`` when authorized, else ``(None, <result-dict>)`` (a
     not-found or a role-denied result for the handler to return verbatim)."""
@@ -254,10 +259,24 @@ async def _create(op, ctx: OpContext, caller) -> dict:
     else:
         requester = caller_session
         requester_kind = TaskRequesterKind.SESSION
+    # §3.2/§27-31 owner resolution: an EXPLICIT op.assignee delegates (or self-assigns);
+    # an owned decomposition sub-task (current_task_id set) defaults to the caller (the
+    # decomposing session executes it); a top-level create with NO assignee is UNASSIGNED
+    # — it sits in the pending-assignment queue until claimed (status UNASSIGNED, no
+    # binding, no execute-wake). The legacy "empty → self-task (caller)" default now
+    # applies ONLY to owned sub-tasks (the decomposition continuation).
+    op_assignee = getattr(op, "assignee", None)
+    if op_assignee:
+        assignee, born_status = op_assignee, TaskState.READY
+    elif current_task_id:
+        assignee, born_status = caller_session, TaskState.READY
+    else:
+        assignee, born_status = None, TaskState.UNASSIGNED
     task = Task(
         task_id=uuid.uuid4().hex,
         name=op.name,
-        assignee=(getattr(op, "assignee", None) or caller_session),
+        assignee=assignee,
+        status=born_status,
         requester=requester,
         requester_kind=requester_kind,
         # #2187 §3.5 (5b): the decomposition-link type (awaited gates the parent's
@@ -698,6 +717,48 @@ async def _comment(op, ctx: OpContext, caller) -> dict:
     return _ok("task.comment", task_id=op.task_id, comment_id=comment_id)
 
 
+async def _assign(op, ctx: OpContext, caller) -> dict:
+    """Assign a session to a task (#2187 §27-31, the pending-assignment queue). Gate: an
+    UNASSIGNED task may be CLAIMED by anyone; an assigned task may be REASSIGNED only by
+    its current owner (the assignee) — owner-initiated hand-off, no concurrent yank. Then
+    rebind the WAL subscription (``record_rebound``), OS-derive the now-startable status,
+    and wake the new assignee to execute."""
+    backend = _backend(ctx)
+    task = await backend.get(op.task_id)
+    if task is None:
+        return _not_found("task.assign", op.task_id)
+    caller_session = _caller_session(ctx)
+    # Gate: UNASSIGNED (no current assignee, hydrated) → anyone may claim; an assigned
+    # task → only its CURRENT assignee may reassign (the mutable-ownership hand-off rule).
+    # A falsy assignee = unassigned, uniformly across backends (InMemory stores None; the
+    # sqlite _row_to_task placeholder is "" — both mean "no binding" before hydrate).
+    if task.assignee and caller_session != task.assignee:
+        return _role_denied("task.assign", op.task_id, "assignee", caller_session)
+    # The new (agent, session) must resolve to a live session — the same orphan guard as
+    # create (a bare-sid assignee whose execute-wake would otherwise be silently dropped).
+    denied = _reject_unknown_assignee(ctx, op.assignee, caller_session)
+    if denied is not None:
+        return {**denied, "kind": "task.assign"}
+    # Rebind the Reyn-internal WAL subscription (append-only, P6/rewind-clean). The #1560
+    # post-append observer applies it to the live registry, so the next hydrate reads it.
+    writer = getattr(ctx, "task_subscription_writer", None)
+    if writer is not None:
+        await writer.record_rebound(op.task_id, assignee=op.assignee)
+    # OS-derive the now-startable status (UNASSIGNED → READY / BLOCKED); no-op otherwise.
+    assigned = await backend.mark_assigned(op.task_id)
+    if assigned is None:
+        return _not_found("task.assign", op.task_id)
+    _audit(ctx, "task.assign", op.task_id, assignee=op.assignee,
+           status=assigned.status.value)
+    # Wake the new assignee to execute when the task is startable/active (READY now, or a
+    # mid-flight RUNNING hand-off). A BLOCKED task is woken later when its deps clear.
+    waker = getattr(ctx, "task_waker", None)
+    if waker is not None and assigned.status in (TaskState.READY, TaskState.RUNNING):
+        await waker.publish_task_event(
+            "assigned", assigned, fenced_description=_fence_text(ctx, assigned.description))
+    return _ok("task.assign", task=assigned.to_dict())
+
+
 register("task.create", _create)
 register("task.update_status", _update_status)
 register("task.get", _get)
@@ -709,3 +770,4 @@ register("task.abort", _abort)
 register("task.heartbeat", _heartbeat)
 register("task.register_unblock_predicate", _register_unblock_predicate)
 register("task.comment", _comment)
+register("task.assign", _assign)

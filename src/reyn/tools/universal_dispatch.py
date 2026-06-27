@@ -283,7 +283,7 @@ _OPERATION_RULES: Final[dict[str, tuple[str, Callable[[str, Mapping[str, Any]], 
     "rag_operation__recall":      ("recall",       _passthrough_args),
     "rag_operation__drop_source": ("drop_source",  _passthrough_args),
 
-    # task category (#1953 dynamic-wire): the 11 task.* control-IR ops. Each
+    # task category (#1953 dynamic-wire): the 12 task.* control-IR ops. Each
     # maps to the same-named ToolDefinition (tools/task_ops.py) whose handler
     # bridges to execute_op via a real-session OpContext (assignee/requester CAS).
     "task__create":                     ("task.create",                     _passthrough_args),
@@ -297,6 +297,7 @@ _OPERATION_RULES: Final[dict[str, tuple[str, Callable[[str, Mapping[str, Any]], 
     "task__heartbeat":                  ("task.heartbeat",                  _passthrough_args),
     "task__register_unblock_predicate": ("task.register_unblock_predicate", _passthrough_args),
     "task__comment":                    ("task.comment",                    _passthrough_args),
+    "task__assign":                     ("task.assign",                     _passthrough_args),
 
     # Issue #879 — single ``mcp`` category. 2026-05-25 install-surface
     # refactor: split ``mcp__install_server`` into 3 verbs along the

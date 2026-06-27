@@ -150,6 +150,7 @@ def test_category_map_complete_vs_op_purity():
         "task.get", "task.list", "task.create", "task.update_status",
         "task.add_dependency", "task.remove_dependency", "task.repoint_dependency",
         "task.abort", "task.heartbeat", "task.register_unblock_predicate", "task.comment",
+        "task.assign",
     }
     uncovered = gateway_relevant - classified - acknowledged
     assert not uncovered, (

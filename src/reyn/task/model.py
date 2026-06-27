@@ -154,11 +154,14 @@ class ChildCounts(NamedTuple):
 class Task:
     """One trackable work-unit.
 
-    ``assignee`` is the **session identity** (#1814 routing-key) that owns the
-    Task — the single-writer of ``status``, immutable for the Task's life (no
-    handoff — delegation is sub-task decomposition). Because ``assignee`` is
-    immutable, the single-writer CAS is a fixed equality ``assignee ==
-    caller_session_id`` (no claim token / version needed). ``requester`` is the
+    ``assignee`` is the **session identity** (#1814 routing-key) currently bound to
+    execute the Task — the single-writer of ``status``. Under #2187 backend-master the
+    binding is a **rebindable WAL subscription**, NOT an immutable field: it may be
+    ``None`` (UNASSIGNED — the pending-assignment queue, §27-31) and changed via
+    ``record_rebound`` (claim an UNASSIGNED task / owner-initiated reassign / re-queue),
+    append-only so it stays P6/rewind-clean. The single-writer CAS is therefore
+    ``caller_session_id == the CURRENT (hydrated) assignee`` — a read-then-check against
+    the live WAL binding, not a birth-fixed equality. ``requester`` is the
     notify-target on disposition AND the ownership edge (§16 recursive-request: a
     task-as-request owns its sub-tasks, ``requester_kind=task``) — the sole
     decomposition relation now (the legacy ``parent_id`` tree was removed in §16
@@ -169,7 +172,7 @@ class Task:
 
     task_id: str
     name: str
-    assignee: str
+    assignee: str | None  # the bound executor session (#2187 rebindable binding); None = UNASSIGNED (pending-assignment queue, §27-31)
     requester: str
     requester_kind: TaskRequesterKind = TaskRequesterKind.SESSION  # §16: session-owned vs task-as-request owned (the ownership edge)
     link_type: TaskLinkType = TaskLinkType.AWAITED  # #2187 §3.5: this child's decomposition-link to its parent (awaited gates the parent; background runs parallel). CONTENT (backend column, like deps) — NOT the WAL binding. Meaningful only when requester_kind=task.

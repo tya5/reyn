@@ -607,6 +607,7 @@ _ROUTE_CONTRACT_SAMPLES: list[tuple[str, dict[str, Any]]] = [
     ("task__heartbeat",                  {"task_id": "t1"}),
     ("task__register_unblock_predicate", {"task_id": "t1", "predicate": "x>0"}),
     ("task__comment",                    {"task_id": "t1", "body": "note"}),
+    ("task__assign",                     {"task_id": "t1", "assignee": "s1"}),
 ]
 
 
