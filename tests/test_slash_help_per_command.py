@@ -10,7 +10,7 @@ inside the input bar, not from a chat-pane help recall).
 This PR extends ``/help`` with an optional ``<cmd>`` arg:
 
   /help          → existing full list
-  /help find     → focused panel for /find
+  /help image    → focused panel for /image
   /help quit     → focused panel showing /quit + alias /exit
   /help xxxx     → "unknown" branch with suggest_for_unknown
                    suggestions (= matches the in-input
@@ -44,27 +44,22 @@ def test_render_focus_known_command_has_summary() -> None:
     """Tier 2: a known command's focus panel includes its summary."""
     from reyn.interfaces.slash.help import _render_command_focus
 
-    panel = _render_command_focus("find")
-    assert "/find" in panel
-    assert "Search the conv pane" in panel
+    panel = _render_command_focus("image")
+    assert "/image" in panel
+    assert "Send an image" in panel
 
 
 def test_render_focus_known_command_with_usage_includes_usage_line() -> None:
-    """Tier 2: when ``cmd.usage`` is set (= /find / /save / /copy / /attach
-    from PR #552), the focus panel surfaces it on its own row.
-
-    The /find usage string was expanded in PR #561 (regex + case opt-in
-    flags) from ``/find <query>`` to ``/find [-r|-c|-rc] <query>``.
-    Pin only that the usage row is present and contains the placeholder,
-    not the exact flag syntax (= avoids re-pinning on every /find
-    evolution).
+    """Tier 2: when ``cmd.usage`` is set, the focus panel surfaces it on its own
+    row. ``/image`` carries ``usage="/image <path>"``; pin that the usage row is
+    present and contains the placeholder, not the exact syntax.
     """
     from reyn.interfaces.slash.help import _render_command_focus
 
-    panel = _render_command_focus("find")
+    panel = _render_command_focus("image")
     assert "usage:" in panel
-    assert "/find" in panel
-    assert "<query>" in panel
+    assert "/image" in panel
+    assert "<path>" in panel
 
 
 def test_render_focus_without_usage_omits_usage_line() -> None:

@@ -33,8 +33,8 @@ CompleterFn = Callable[..., list[str]]
 # picker-hint footer line (the dim ``↳ <message>`` sub-row shown once the
 # user types ``/<cmd> ``). Returning ``None`` (or "") means "show nothing
 # right now" — the command owns both the message text and its visibility
-# condition (e.g. /find only surfaces its Tab-recall affordance when there
-# is history to recall). The picker owns the ``↳`` chrome + styling.
+# condition (e.g. surface a recall affordance only when there is history
+# to recall). The picker owns the ``↳`` chrome + styling.
 TabFooterFn = Callable[[], "str | None"]
 
 
@@ -56,7 +56,7 @@ class SlashCommand:
     # behavior, backward-compatible for all existing commands).
     # Convention: ``/<name> <args>`` with ``<arg>`` for required and
     # ``[arg]`` for optional, matching the slash tradition (e.g.
-    # ``/find <query>``, ``/copy [N|list]``).
+    # ``/image <path>``, ``/copy [N|list]``).
     usage: str = ""
     # Optional docs paths for ``/help <cmd>`` focus mode. When non-empty,
     # the focus panel appends a ``  see also: <path1>, <path2>`` footer
@@ -69,8 +69,8 @@ class SlashCommand:
     # mode renders a dim ``  ↳ <message>`` sub-row below the summary/usage,
     # where ``<message>`` is whatever this callable returns. The callable
     # returns ``None`` (or "") to render nothing — letting the command gate
-    # the footer on runtime state (e.g. /find shows its Tab-recall hint only
-    # when history is non-empty). Defaults to ``None`` so every command
+    # the footer on runtime state (e.g. show a recall hint only when there is
+    # history to recall). Defaults to ``None`` so every command
     # without an explicit footer behaves exactly as before. Keeping the
     # message + its visibility inside the command (not the widget) is what
     # makes the picker generic: it never hardcodes a command name.
@@ -130,7 +130,7 @@ def suggest_for_unknown(cmd: str, *, names: list[str] | None = None) -> list[str
     import difflib
     all_names = names if names is not None else REGISTRY.names()
     # Prefix-biased ranking: exact-prefix matches surface before
-    # edit-distance matches so typing ``/fi`` reliably suggests ``/find``
+    # edit-distance matches so typing ``/im`` reliably suggests ``/image``
     # rather than a distantly-similar name that happens to score higher
     # in difflib. Dedup by seen-set; insertion order preserved.
     seen: set[str] = set()
@@ -242,7 +242,6 @@ from reyn.interfaces.slash import copy as _copy_mod  # noqa: E402, F401
 from reyn.interfaces.slash import cost_inline as _cost_inline_mod  # noqa: E402, F401
 from reyn.interfaces.slash import docs_filter as _docs_filter_mod  # noqa: E402, F401
 from reyn.interfaces.slash import donut as _donut_mod  # noqa: E402, F401
-from reyn.interfaces.slash import find as _find_mod  # noqa: E402, F401
 from reyn.interfaces.slash import help as _help_mod  # noqa: E402, F401
 from reyn.interfaces.slash import image as _image_mod  # noqa: E402, F401
 from reyn.interfaces.slash import matrix as _matrix_mod  # noqa: E402, F401
@@ -253,7 +252,6 @@ from reyn.interfaces.slash import quit as _quit_mod  # noqa: E402, F401
 from reyn.interfaces.slash import reload as _reload_mod  # noqa: E402, F401
 from reyn.interfaces.slash import reset as _reset_mod  # noqa: E402, F401
 from reyn.interfaces.slash import rewind as _rewind_mod  # noqa: E402, F401
-from reyn.interfaces.slash import save as _save_mod  # noqa: E402, F401
 from reyn.interfaces.slash import session as _session_mod  # noqa: E402, F401
 from reyn.interfaces.slash import skill as _skill_mod  # noqa: E402, F401
 from reyn.interfaces.slash import skills as _skills_mod  # noqa: E402, F401
