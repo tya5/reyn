@@ -1,25 +1,21 @@
 """/copy — copy an agent reply to the system clipboard.
 
-The TUI captures mouse events for its own widget interactions, which breaks
-terminal-native click-and-drag selection. Most terminals offer a modifier-
-key bypass (Option/Fn/Shift drag) but that's an awkward two-handed gesture
-when you just want to grab a response.
-
-ConversationView keeps a bounded ring of the most recent agent replies, so
-this command can target older ones too — not just the latest. The argument
-selects which reply (1 = newest, 2 = one before that, …).
+The inline CUI's output loop keeps a bounded ring of the most recent agent
+replies, so this command can target older ones too — not just the latest. The
+argument selects which reply (1 = newest, 2 = one before that, …).
 
 This command sends a sentinel ``__copy_last_reply__`` OutboxMessage with the
-parsed argument in ``text``; the TUI app intercepts it, fetches the right
-reply via ``ConversationView.reply_at(n)``, and pipes to the platform
-clipboard (``pbcopy`` / ``xclip`` / ``wl-copy`` / ``clip``).
+parsed argument in ``text``; the output loop intercepts it, picks the right
+reply from its ring, and pipes it to the platform clipboard (``pbcopy`` /
+``wl-copy`` / ``xclip`` / ``xsel`` / ``clip``), rendering the result as a
+status line.
 
 Usage::
 
     /copy            # copy the most recent agent reply
     /copy 2          # copy the reply before that (one turn back)
     /copy 3          # ... two turns back
-    /copy list       # show what's currently buffered
+    /copy list       # show how many replies are currently buffered
 """
 from __future__ import annotations
 
