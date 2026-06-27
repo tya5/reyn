@@ -1299,6 +1299,10 @@ class Session:
             self._build_hook_registry(_boot_in_set),
             put_inbox=self._put_inbox,
             stage_next_turn_context=self._stage_next_turn_context,
+            # #2072: route a push whose `session` names a different session to THAT session
+            # (cross-session); `current_session_id` keeps a self/unnamed push local.
+            cross_session_put=self._cross_session_hook_put,
+            current_session_id=self._session_id,
             sandbox_config=self._sandbox_config,
             sandbox_backend=self._sandbox_backend,
             # #2095: route a not-yet-allowlisted shell-hook's consent prompt
@@ -3255,6 +3259,33 @@ class Session:
     # SnapshotJournal; pending_chains lifecycle moved to ChainManager.
     # The methods below are thin delegators kept for the session-internal
     # call sites (inbox enqueue + dequeue, restoration orchestration).
+
+    async def _cross_session_hook_put(
+        self, target_session_id: str, kind: str, payload: dict, *, wake: bool
+    ) -> None:
+        """#2072: deliver a hook push to ANOTHER session of this agent (cross-session push).
+
+        The canonical wake-triple (``resolve_session`` / ``get_session`` → ``_put_inbox`` →
+        ``ensure_session_running``) — the same pattern TaskWaker / webhook_routing use. A
+        ``transport:native`` target resolves via ``resolve_session``; a bare sid via
+        ``get_session``. A target naming no live session is logged + dropped (the push is
+        best-effort — a cross-session push to an absent peer must never crash the source run).
+        Only a ``wake`` push boots the target's run-loop; a passive ride-along waits for the
+        target's next turn."""
+        reg = self._registry
+        if ":" in target_session_id:
+            transport, _, native = target_session_id.partition(":")
+            target = reg.resolve_session(self.agent_name, transport, native)
+        else:
+            target = reg.get_session(self.agent_name, target_session_id)
+        if target is None:
+            logger.warning(
+                "cross-session hook push: no live session %r for agent %r — dropped",
+                target_session_id, self.agent_name)
+            return
+        await target._put_inbox(kind, payload)
+        if wake:
+            reg.ensure_session_running(self.agent_name, target_session_id)
 
     async def _put_inbox(self, kind: str, payload: dict) -> str:
         """Append `inbox_put` to WAL via journal, then queue on the async
