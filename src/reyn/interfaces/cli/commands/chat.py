@@ -218,6 +218,36 @@ def _reset_project_state(project_root: Path, *, confirm: bool = True) -> bool:
     return True
 
 
+def _setup_interactive_logging(project_root: Path) -> None:
+    """Route root-logger output to .reyn/logs/reyn.log for the interactive CUI.
+
+    The inline CUI owns the terminal; a log record reaching a StreamHandler
+    (stderr) would print into the live chat region — at best noise (litellm
+    warnings), at worst an alarming full traceback from a caught error. Sending
+    logs to a file keeps the UI clean while preserving them for debugging. Called
+    once, before load_project_context (which may emit WARNING records), so the
+    file handler is in place before the first log call.
+    """
+    import logging
+    log_dir = project_root / ".reyn" / "logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    logging.basicConfig(
+        filename=str(log_dir / "reyn.log"),
+        level=logging.WARNING,
+        format="%(asctime)s %(name)s %(levelname)s %(message)s",
+        force=True,  # safe: the interactive path has no prior logging setup
+    )
+    # litellm prints its own banners ("Give Feedback / Get Help", "LiteLLM.Info")
+    # directly to stderr on a provider error — NOT via logging, so the file
+    # redirect above does not catch them. Suppress them so a provider error
+    # surfaces as just our clean classified message, not a wall of litellm noise.
+    try:
+        import litellm
+        litellm.suppress_debug_info = True
+    except Exception:  # noqa: BLE001 — best-effort; never block startup on this
+        pass
+
+
 def run(args: argparse.Namespace) -> None:
     from reyn.config import _find_project_root, load_project_context
     from reyn.core.events.state_log import StateLog
@@ -241,6 +271,16 @@ def run(args: argparse.Namespace) -> None:
     safety = session_cfg.safety_for(args)
 
     project_root = _find_project_root(Path.cwd()) or Path.cwd()
+
+    # The interactive inline CUI owns the terminal as a live region. Route the
+    # root logger to a file so library warnings and caught-exception tracebacks
+    # (e.g. an LLM APIConnectionError that session.py logs via logger.exception)
+    # don't leak into — and corrupt/alarm — the chat UI. --cui / non-TTY keep
+    # logging on stderr (debuggable / pipeable). Set before config load so early
+    # WARNING records are captured. (Restores the redirect the Textual TUI had;
+    # dropped in the inline-CUI cutover #2195.)
+    if not getattr(args, "cui", False) and sys.stdin.isatty():
+        _setup_interactive_logging(project_root)
 
     # PR-resume-ux β U3: handle --reset before constructing state_log so
     # we don't open a freshly-written WAL just to delete it.
