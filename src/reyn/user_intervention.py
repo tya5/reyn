@@ -77,6 +77,10 @@ class UserIntervention:
     detail: str = ""                                                   # optional second-line context
     choices: list[InterventionChoice] = field(default_factory=list)
     suggestions: list[str] = field(default_factory=list)               # ask_user only
+    # HTML-like input type a typed-input UI renders by (text / select / confirm /
+    # grant-deny / …). "" = infer from shape (no choices → free text; choices →
+    # a closed-set selector). Backward-compatible: existing callers leave it "".
+    input_type: str = ""
     run_id: str | None = None
     skill_name: str | None = None
     # issue #268: identifies the channel that initiated this intervention
@@ -94,6 +98,17 @@ class UserIntervention:
     def __post_init__(self) -> None:
         if self.future is None:
             self.future = _make_placeholder_future()
+
+    @property
+    def effective_input_type(self) -> str:
+        """The input type a UI should render by, inferring when unset.
+
+        Explicit ``input_type`` wins; otherwise a closed-set (has ``choices``) is
+        a ``select`` and an empty one is free ``text``.
+        """
+        if self.input_type:
+            return self.input_type
+        return "select" if self.choices else "text"
 
     def to_dict(self) -> dict:
         """Serialize persistent fields for crash-recovery storage.
@@ -117,6 +132,8 @@ class UserIntervention:
             "skill_name": self.skill_name,
             "id": self.id,
         }
+        if self.input_type:
+            out["input_type"] = self.input_type
         if self.origin_channel_id is not None:
             out["origin_channel_id"] = self.origin_channel_id
         return out
@@ -141,6 +158,7 @@ class UserIntervention:
             detail=data.get("detail", ""),
             choices=choices,
             suggestions=list(data.get("suggestions") or []),
+            input_type=data.get("input_type", ""),
             run_id=data.get("run_id"),
             skill_name=data.get("skill_name"),
             origin_channel_id=data.get("origin_channel_id"),

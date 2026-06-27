@@ -4350,6 +4350,19 @@ class Session:
         """Thin wrapper → InterventionHandler.maybe_answer."""
         return await self._intervention_handler.maybe_answer(text)
 
+    async def answer_oldest_intervention_choice(self, choice_id: str) -> bool:
+        """Deliver a chosen choice id to the oldest pending intervention.
+
+        The inline region selector calls this when the user picks a choice: the
+        id is authoritative (bypasses text/hotkey ``match_choice``), reusing the
+        same ``choice_id_override`` path A2A peer answers use. Returns False when
+        nothing is pending. A public UI seam for closed-set typed-input.
+        """
+        iv = self._interventions.head()
+        if iv is None:
+            return False
+        return await self._deliver_answer_to(iv, "", choice_id_override=choice_id)
+
     async def _deliver_answer_to(
         self,
         iv: UserIntervention,

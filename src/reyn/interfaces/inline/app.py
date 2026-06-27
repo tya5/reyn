@@ -17,6 +17,7 @@ actionable model picker (selecting a class) is a follow-up.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 
@@ -36,6 +37,7 @@ from prompt_toolkit.layout.controls import BufferControl, FormattedTextControl
 from prompt_toolkit.layout.dimension import Dimension
 from prompt_toolkit.patch_stdout import patch_stdout
 
+from reyn.interfaces.inline.intervention_region import build_intervention_element
 from reyn.interfaces.inline.region import Region
 from reyn.interfaces.repl.renderer import _CC_ACCENT, _CC_DIM, _CC_DONE, _SPINNER
 
@@ -163,10 +165,12 @@ async def run_inline_input(registry, renderer) -> None:
     # app.exit() — the second raises "Return value already set". _quit checks+sets
     # this before its first await, so only one ever runs to app.exit().
     quitting: dict = {}
-    # Above-input interactive region (framework skeleton): hosts typed-input
-    # interventions / command UIs in later slices. Zero consumers here, so it has
-    # no elements → not visible → collapses → inert (existing behaviour unchanged).
+    # Above-input interactive region: hosts the active closed-set intervention
+    # (confirm / select / grant-deny) as a selectable list, poll-driven off the
+    # session head (like the status chips). Free-text interventions keep using the
+    # input field, so they get no element. Empty region collapses (inert).
     above_region = Region()
+    iv_holder: dict = {"iv_id": None}  # which intervention the region is showing
 
     def _working_frags() -> list:
         return working_line(
@@ -381,6 +385,48 @@ async def run_inline_input(registry, renderer) -> None:
     def _region_esc(event) -> None:
         event.app.layout.focus(input_win)
 
+    async def _deliver_choice(choice_id: str) -> None:
+        s = registry.attached_session()
+        if s is not None:
+            try:
+                await s.answer_oldest_intervention_choice(choice_id)
+            except Exception:
+                logger.exception("inline: delivering intervention choice failed")
+
+    def _sync_intervention_region() -> None:
+        """Sync the above-region with the session's head closed-set intervention.
+
+        Poll-driven (like the status chips). When a new closed-set intervention is
+        pending, register a selector element + auto-focus it; when it resolves /
+        is gone, clear it and hand focus back to the input. Inert when nothing is
+        pending — same as an empty region.
+        """
+        s = registry.attached_session()
+        head = s.interventions.head() if s is not None else None
+        head_id = head.id if (head is not None and getattr(head, "choices", None)) else None
+        if head_id == iv_holder["iv_id"]:
+            return
+        above_region.clear()
+        iv_holder["iv_id"] = head_id
+        if head_id is None:
+            app.layout.focus(input_win)
+            return
+        element = build_intervention_element(
+            head, lambda cid: app.create_background_task(_deliver_choice(cid))
+        )
+        if element is not None:
+            above_region.register(element)
+            app.layout.focus(above_region_win)
+
+    async def _intervention_poll() -> None:
+        while True:
+            await asyncio.sleep(0.15)
+            try:
+                _sync_intervention_region()
+                app.invalidate()
+            except Exception:
+                logger.exception("inline: intervention region poll failed")
+
     body = HSplit(
         [working, above_region_box, top_rule, inputrow, bottom_rule, status_win,
          dropdown]
@@ -395,8 +441,12 @@ async def run_inline_input(registry, renderer) -> None:
     # above the live input region instead of corrupting it — mirrors the
     # PromptSession path. Renderer output (sys.__stdout__ via run_in_terminal in
     # _output_loop) is unaffected.
-    with patch_stdout():
-        await app.run_async()
+    poll_task = asyncio.create_task(_intervention_poll())
+    try:
+        with patch_stdout():
+            await app.run_async()
+    finally:
+        poll_task.cancel()
 
 
 async def _submit(registry, text: str) -> None:
