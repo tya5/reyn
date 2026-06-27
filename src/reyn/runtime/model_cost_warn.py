@@ -36,7 +36,7 @@ def maybe_emit_model_cost_warn(
     the trigger context (``"session_start"`` vs ``"model_override"``).
     """
     try:
-        cost_warn_cfg = session._config.cost_warn
+        cost_warn_cfg = session._cost_warn_config
         if not cost_warn_cfg.enabled:
             return
 
@@ -99,7 +99,7 @@ async def maybe_block_high_cost_model(
     The *explicit* non-interactive case above is the one place this fails closed.
     """
     try:
-        cost_warn_cfg = session._config.cost_warn
+        cost_warn_cfg = session._cost_warn_config
         if not cost_warn_cfg.enabled or not cost_warn_cfg.block_on_high_cost:
             return True
 

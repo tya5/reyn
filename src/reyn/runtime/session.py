@@ -17,6 +17,7 @@ from pathlib import Path
 
 from reyn.config import (  # noqa: F401
     ActionRetrievalConfig,
+    CostWarnConfig,
     EmbeddingConfig,
     EventsConfig,
     MultimodalConfig,
@@ -805,6 +806,11 @@ class Session:
         allowed_skills: list[str] | None = None,
         allowed_mcp: list[str] | None = None,
         events_config: EventsConfig | None = None,
+        # #2230: the resolved ``cost_warn:`` config so the high-cost model warn /
+        # block actually fires in production. Without it the session had no
+        # config to read and the gate silently no-op'd (fail-open). None →
+        # defaults (warn-only, block off) = the head-less / scripted equivalent.
+        cost_warn_config: CostWarnConfig | None = None,
         state_log: StateLog | None = None,
         budget_tracker: BudgetTracker | None = None,
         snapshot_path: "Path | None" = None,
@@ -1210,6 +1216,10 @@ class Session:
 
         # PR20: per-chat rotation policy. Defaults match EventsConfig.
         self._events_config = events_config or EventsConfig()
+        # #2230: read by model_cost_warn's warn/block gates. Always set (default
+        # when unthreaded) so the read can't AttributeError into a silent
+        # fail-open — the production bug this fixes.
+        self._cost_warn_config = cost_warn_config or CostWarnConfig()
 
         # PR21: WAL + per-agent snapshot for crash recovery. state_log is
         # process-shared (owned by AgentRegistry); when None, persistence

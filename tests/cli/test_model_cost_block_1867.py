@@ -69,13 +69,13 @@ class _FakeSession:
         non_interactive: bool = False,
         checkpoint_allows: bool = True,
     ) -> None:
-        self._config = type("Cfg", (), {
-            "cost_warn": CostWarnConfig(
-                enabled=True,
-                model_threshold_per_1m_input_usd=threshold,
-                block_on_high_cost=block,
-            ),
-        })()
+        # #2230: the production attribute the gate reads (was a fabricated
+        # ``_config`` wrapper that masked the unwired-in-production bug).
+        self._cost_warn_config = CostWarnConfig(
+            enabled=True,
+            model_threshold_per_1m_input_usd=threshold,
+            block_on_high_cost=block,
+        )
         self._resolver = _FakeResolver()
         self._chat_events = _FakeEventLog()
         self._non_interactive = non_interactive

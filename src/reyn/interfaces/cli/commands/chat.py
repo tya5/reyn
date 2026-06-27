@@ -412,6 +412,7 @@ def run(args: argparse.Namespace) -> None:
             # resolves at session-construction time.
             task_backend=registry.task_backend,
             events_config=session_cfg.config.events,
+            cost_warn_config=session_cfg.config.cost_warn,  # #2230: wire the warn/block gate
             state_log=state_log,
             budget_tracker=budget_tracker,
             hooks_config=session_cfg.config.hooks,  # #1800 slice 5b (pass-through, not bundled)

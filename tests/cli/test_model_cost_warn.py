@@ -211,12 +211,11 @@ class _FakeSession:
     """Minimal session duck-type for maybe_emit_model_cost_warn."""
     def __init__(self, *, enabled: bool = True, threshold: float = 0.0) -> None:
         from reyn.config.chat import CostWarnConfig
-        self._config = type("Cfg", (), {
-            "cost_warn": CostWarnConfig(
-                enabled=enabled,
-                model_threshold_per_1m_input_usd=threshold,
-            ),
-        })()
+        # #2230: read off the production attribute (de-fabricated from _config).
+        self._cost_warn_config = CostWarnConfig(
+            enabled=enabled,
+            model_threshold_per_1m_input_usd=threshold,
+        )
         self._resolver = _FakeResolver()
         self._chat_events = _FakeEventLog()
 
