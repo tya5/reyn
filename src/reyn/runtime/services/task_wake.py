@@ -52,6 +52,13 @@ TASK_EVENT_READY = "ready"
 TASK_EVENT_ASSIGNED = "assigned"
 TASK_EVENT_TERMINAL = "terminal"
 TASK_EVENT_CHILD_SETTLED = "child_settled"
+# #2187 Stage 5d: the one-shot RECOVERY reconcile wake — delivered to a RUNNING task's
+# own owner (assignee) after a recovery/rewind, to RESUME it (re-read + act). Distinct
+# from child_settled (which wakes a PARENT about a child); here the task's owner resumes
+# the task itself.
+TASK_EVENT_RECOVERY_RESUME = "recovery_resume"
+
+WAKE_RECOVERY_KIND = "task_recovery_resume"
 
 
 class TaskWaker:
@@ -226,6 +233,21 @@ class TaskWaker:
             dependents=stuck_dependents,
         )
 
+    async def wake_recovery_resume(self, task: Any) -> None:
+        """#2187 §3.6 (5d): the one-shot RECOVERY reconcile wake — the task's own owner
+        (``task.assignee``) is woken to RESUME the task after a recovery/rewind (its
+        awaited children settled, or a child failed, while Reyn was down). The owner
+        re-reads the task's current state and acts (continue / complete — the
+        completion-join gate enforces correctness — / recover); an owner with nothing to
+        do simply yields (one-shot, not a loop)."""
+        await self._wake(
+            task.assignee, WAKE_RECOVERY_KIND,
+            f"[task] Recovery: resume task {task.task_id!r} ('{task.name}') — re-read its "
+            f"current state (its children settled, or a child failed, while you were "
+            f"down) and continue, complete, or recover via the task ops.",
+            task_id=task.task_id,
+        )
+
     async def publish_task_event(self, event_type: str, task: Any, **kwargs: Any) -> None:
         """#2187 Stage 4: the SINGLE publish → deliver seam. A task STATE-CHANGE event is
         delivered to the SUBSCRIBED session (the assignee or requester binding) via the
@@ -247,12 +269,14 @@ class TaskWaker:
             await self.notify_requester_decide(terminal_task=task, **kwargs)
         elif event_type == TASK_EVENT_CHILD_SETTLED:
             await self.wake_parent_on_child_settled(task, **kwargs)
+        elif event_type == TASK_EVENT_RECOVERY_RESUME:
+            await self.wake_recovery_resume(task)
         else:
             raise ValueError(f"unknown task event_type: {event_type!r}")
 
 
 __all__ = [
     "TASK_EVENT_ASSIGNED", "TASK_EVENT_READY", "TASK_EVENT_TERMINAL",
-    "TASK_EVENT_CHILD_SETTLED",
-    "TaskWaker", "WAKE_READY_KIND", "WAKE_REQUESTER_KIND",
+    "TASK_EVENT_CHILD_SETTLED", "TASK_EVENT_RECOVERY_RESUME",
+    "TaskWaker", "WAKE_READY_KIND", "WAKE_REQUESTER_KIND", "WAKE_RECOVERY_KIND",
 ]
