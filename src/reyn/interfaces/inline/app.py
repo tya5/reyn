@@ -38,8 +38,11 @@ from prompt_toolkit.layout.dimension import Dimension
 from prompt_toolkit.patch_stdout import patch_stdout
 
 from reyn.interfaces.inline.intervention_region import build_intervention_element
-from reyn.interfaces.inline.region import Region
-from reyn.interfaces.inline.region_command import build_rewind_command_ui
+from reyn.interfaces.inline.region import DetailElement, Region
+from reyn.interfaces.inline.region_command import (
+    CommandUIElement,
+    build_rewind_command_ui,
+)
 from reyn.interfaces.repl.renderer import _CC_ACCENT, _CC_DIM, _CC_DONE, _SPINNER
 
 logger = logging.getLogger(__name__)
@@ -62,16 +65,39 @@ def is_actionable_picker(label: str, model_classes) -> bool:
     return label in _ACTIONABLE and bool(model_classes)
 
 
-def model_switch_text(model_classes: list, row: int) -> str | None:
-    """Pure: the slash command a model-picker Enter submits for the row.
+def build_status_dropdown_element(label: str, *, snapshot_fn, on_submit):
+    """Build the region element for an opened status chip's dropdown.
 
-    Returns ``/model <class>`` for an in-range row, or None (out of range /
-    empty list) so the caller submits nothing. The switch itself — cost-warn
-    confirm, budget rebuild — is the existing ``/model`` slash path.
+    The model chip with configured classes → a :class:`CommandUIElement` picker
+    (each row submits ``/model <class>`` through the normal slash path — cost-warn
+    confirm + budget rebuild reused), so it shares the region's selection
+    mechanism with the /rewind picker and interventions. Every other chip (and
+    the model chip with no classes) → a read-only :class:`DetailElement` whose
+    rows are recomputed live from ``snapshot_fn`` (so cost / ctx / agents stay
+    current while the panel is open) and carry no cursor.
     """
-    if 0 <= row < len(model_classes):
-        return f"/model {model_classes[row]}"
-    return None
+    snap = snapshot_fn()
+    classes = list(snap["model_classes"]) if snap else []
+    if is_actionable_picker(label, classes):
+        rows = dropdown_lines(
+            label, model=snap["model"], agent_names=snap["agent_names"],
+            attached_name=snap["attached_name"], skill_run_ids=snap["skill_run_ids"],
+            usage=snap["usage"], cost_usd=snap["cost_usd"], model_classes=classes,
+        )
+        submit_texts = [f"/model {c}" for c in classes]
+        return CommandUIElement(rows, submit_texts, on_submit)
+
+    def detail_lines() -> list:
+        s = snapshot_fn()
+        if s is None:
+            return []
+        return dropdown_lines(
+            label, model=s["model"], agent_names=s["agent_names"],
+            attached_name=s["attached_name"], skill_run_ids=s["skill_run_ids"],
+            usage=s["usage"], cost_usd=s["cost_usd"], model_classes=s["model_classes"],
+        )
+
+    return DetailElement(detail_lines)
 
 
 def working_line(thinking: bool, think_start: float, now: float) -> list:
@@ -158,9 +184,15 @@ async def run_inline_input(registry, renderer) -> None:
     attached = registry.attached_session()
     history = FileHistory(str(attached.workspace_dir / ".input_history"))
     buf = Buffer(multiline=False, history=history)
-    # sel: which chip; open: detail/picker shown; row: cursor within an
-    # actionable picker (model). row is reset to 0 when a picker opens.
-    menu = {"sel": 0, "open": False, "row": 0}
+    # sel: which chip; open: detail/picker shown. The dropdown's selectable
+    # cursor lives in `menu_region` (the below-input Region hosting the opened
+    # chip's element), not here — the same selection mechanism as the above-input
+    # region (interventions / the /rewind picker), unified in F5.
+    menu = {"sel": 0, "open": False}
+    # Below-input region: hosts the opened chip's dropdown as a region element —
+    # a CommandUIElement model picker (selectable) or a read-only DetailElement
+    # (live detail, no cursor). Empty (cleared) while the menu is closed.
+    menu_region = Region()
     # Guards against a second quit (rapid Ctrl-C / `/quit` then Ctrl-C) racing the
     # first: shutdown has a grace window, so two _quit tasks could both reach
     # app.exit() — the second raises "Return value already set". _quit checks+sets
@@ -193,15 +225,6 @@ async def run_inline_input(registry, renderer) -> None:
     )
     input_win = Window(BufferControl(buffer=buf), height=1)
     inputrow = VSplit([prompt_sym, input_win])
-
-    def _current_dropdown_lines(snap) -> list:
-        label = _CHIPS[menu["sel"]]
-        return dropdown_lines(
-            label, model=snap["model"], agent_names=snap["agent_names"],
-            attached_name=snap["attached_name"],
-            skill_run_ids=snap["skill_run_ids"], usage=snap["usage"],
-            cost_usd=snap["cost_usd"], model_classes=snap["model_classes"],
-        )
 
     def status_fragments() -> list:
         snap = _snapshot(registry)
@@ -237,16 +260,16 @@ async def run_inline_input(registry, renderer) -> None:
     )
 
     def dropdown_frags() -> list:
-        snap = _snapshot(registry)
-        if snap is None:
-            return []
-        actionable = is_actionable_picker(_CHIPS[menu["sel"]], snap["model_classes"])
+        # The opened chip's element lives in menu_region; render its live rows.
+        # The focus cursor is drawn only on a selectable row (the model picker) —
+        # a read-only DetailElement reports cursor_on_selectable False, so its
+        # detail panel shows no highlight, exactly as before.
+        draw_cursor = menu_region.cursor_on_selectable
         out: list = []
-        for i, ln in enumerate(_current_dropdown_lines(snap)):
+        for i, ln in enumerate(menu_region.lines()):
             if i:
                 out.append(("", "\n"))
-            if actionable and i == menu["row"]:
-                # picker cursor: reverse-highlight the selectable row
+            if draw_cursor and i == menu_region.cursor:
                 out.append((f"fg:#0d0f12 bg:{_CC_ACCENT} bold", f" {ln} "))
             else:
                 style = _CC_DONE if ln.startswith("▸") else _CC_DIM
@@ -254,10 +277,7 @@ async def run_inline_input(registry, renderer) -> None:
         return out
 
     def dropdown_height() -> Dimension:
-        snap = _snapshot(registry)
-        if snap is None:
-            return Dimension.exact(0)
-        return Dimension.exact(len(_current_dropdown_lines(snap)))
+        return Dimension.exact(len(menu_region.lines()))
 
     dropdown = ConditionalContainer(
         Window(FormattedTextControl(dropdown_frags), height=dropdown_height),
@@ -310,30 +330,59 @@ async def run_inline_input(registry, renderer) -> None:
         event.app.layout.focus(status_win)
 
     def _actionable_open() -> bool:
-        return menu["open"] and _CHIPS[menu["sel"]] in _ACTIONABLE
+        # Open AND the opened chip's element is the selectable model picker (a
+        # CommandUIElement). Mirrors build_status_dropdown_element: only the model
+        # chip WITH configured classes builds a picker — every other chip (and the
+        # model chip with none) is a read-only DetailElement.
+        if not menu["open"]:
+            return False
+        snap = _snapshot(registry)
+        classes = snap["model_classes"] if snap else []
+        return is_actionable_picker(_CHIPS[menu["sel"]], classes)
+
+    def _menu_submit(text: str) -> None:
+        # A picker row was selected → close the menu and run /model <class> via the
+        # normal slash path (cost-warn confirm + budget rebuild reused).
+        _menu_close()
+        app.create_background_task(_submit(registry, text))
+
+    def _menu_open() -> None:
+        # Build the opened chip's element fresh and host it in menu_region. The
+        # picker rows are static (classes); a read-only panel's lines stay live.
+        menu["open"] = True
+        menu_region.clear()
+        menu_region.register(
+            build_status_dropdown_element(
+                _CHIPS[menu["sel"]],
+                snapshot_fn=lambda: _snapshot(registry),
+                on_submit=_menu_submit,
+            )
+        )
+
+    def _menu_close() -> None:
+        menu["open"] = False
+        menu_region.clear()
 
     @kb.add("up", filter=has_focus(status_win))
     def _menu_up(event) -> None:
-        # In an open picker, ↑ moves the cursor up; at the top row it closes.
-        if _actionable_open() and menu["row"] > 0:
-            menu["row"] -= 1
+        # In an open picker, ↑ moves the cursor up; at the top row it closes. A
+        # read-only panel has no cursor, so ↑ simply closes it.
+        if _actionable_open() and not menu_region.at_first_selectable:
+            menu_region.navigate(-1)
         elif menu["open"]:
-            menu["open"] = False
+            _menu_close()
         else:
             event.app.layout.focus(input_win)
 
     @kb.add("down", filter=has_focus(status_win))
     def _menu_down(event) -> None:
         if _actionable_open():
-            snap = _snapshot(registry)
-            n = len(snap["model_classes"]) if snap else 0
-            if n:
-                menu["row"] = min(menu["row"] + 1, n - 1)
+            menu_region.navigate(1)
 
     @kb.add("escape", filter=has_focus(status_win))
     def _menu_esc(event) -> None:
         if menu["open"]:
-            menu["open"] = False
+            _menu_close()
         else:
             event.app.layout.focus(input_win)
 
@@ -349,19 +398,15 @@ async def run_inline_input(registry, renderer) -> None:
 
     @kb.add("enter", filter=has_focus(status_win))
     def _menu_enter(event) -> None:
-        # Read-only chip: enter toggles the detail panel. Actionable picker:
-        # when open, enter applies the cursor row via the existing /model slash
-        # path (cost-warn + budget rebuild reused); when closed, it opens.
+        # Read-only chip: enter toggles the detail panel. Actionable picker: when
+        # open, enter applies the cursor row (region.select → on_submit → /model
+        # via the slash path); when closed, it opens the dropdown.
         if _actionable_open():
-            snap = _snapshot(registry)
-            classes = snap["model_classes"] if snap else []
-            text = model_switch_text(classes, menu["row"])
-            if text is not None:
-                event.app.create_background_task(_submit(registry, text))
-            menu["open"] = False
+            menu_region.select()
+        elif menu["open"]:
+            _menu_close()
         else:
-            menu["open"] = not menu["open"]
-            menu["row"] = 0
+            _menu_open()
 
     @kb.add("c-c")
     @kb.add("c-d")

@@ -8,11 +8,23 @@ these decoupled from the Session.
 from __future__ import annotations
 
 from reyn.interfaces.inline.app import (
+    build_status_dropdown_element,
     dropdown_lines,
     is_actionable_picker,
-    model_switch_text,
     status_chips,
 )
+
+
+def _snap(**over):
+    """A status snapshot dict (build_status_dropdown_element's input)."""
+    base = {
+        "model": "standard",
+        "model_classes": ["light", "standard", "strong"],
+        "agent_names": ["default"], "attached_name": "default",
+        "skill_run_ids": [], "usage": (0, 0, 0), "cost_usd": 0.0,
+    }
+    base.update(over)
+    return base
 
 
 def test_model_chip_is_a_picker_only_with_classes() -> None:
@@ -104,11 +116,44 @@ def test_model_picker_lists_classes_marking_current() -> None:
     assert not any("change with" in ln for ln in lines)
 
 
-def test_model_switch_text_for_selected_row() -> None:
-    """Tier 2: the picker's Enter submits the existing /model slash for the
-    cursor row; an out-of-range row submits nothing."""
-    classes = ["light", "standard", "strong"]
-    assert model_switch_text(classes, 0) == "/model light"
-    assert model_switch_text(classes, 2) == "/model strong"
-    assert model_switch_text(classes, 3) is None
-    assert model_switch_text([], 0) is None
+def test_model_picker_element_submits_model_slash_on_select() -> None:
+    """Tier 2: F5 — the model chip with classes builds a selectable picker
+    element (a region CommandUIElement); selecting row N submits ``/model
+    <classN>`` through the slash path, sharing the region's selection mechanism
+    with the /rewind picker."""
+    submitted: list[str] = []
+    el = build_status_dropdown_element(
+        "model", snapshot_fn=_snap, on_submit=submitted.append,
+    )
+    assert any(ln.startswith("▸") and "standard" in ln for ln in el.lines())
+    el.on_select(0)
+    el.on_select(2)
+    assert submitted == ["/model light", "/model strong"]
+    el.on_select(9)  # out of range → no submit
+    assert submitted == ["/model light", "/model strong"]
+
+
+def test_read_only_chip_builds_non_selectable_live_detail() -> None:
+    """Tier 2: F5 — a non-picker chip builds a read-only DetailElement — no
+    cursor (selectable=False), inert on select, rows recomputed live from the
+    snapshot so the panel reflects current values while open."""
+    box = {"snap": _snap(cost_usd=0.01, usage=(100, 5, 105))}
+    el = build_status_dropdown_element(
+        "cost", snapshot_fn=lambda: box["snap"], on_submit=lambda _t: None,
+    )
+    assert el.selectable is False
+    assert any("total 105" in ln for ln in el.lines())
+    el.on_select(0)  # inert — no exception, nothing to submit
+    box["snap"] = _snap(cost_usd=0.02, usage=(200, 9, 209))
+    assert any("total 209" in ln for ln in el.lines())  # live
+
+
+def test_model_chip_without_classes_is_read_only_fallback() -> None:
+    """Tier 2: F5 — the model chip with no configured classes builds the
+    read-only fallback (non-selectable), not a picker."""
+    el = build_status_dropdown_element(
+        "model", snapshot_fn=lambda: _snap(model_classes=[]),
+        on_submit=lambda _t: None,
+    )
+    assert getattr(el, "selectable", True) is False
+    assert any("/model" in ln for ln in el.lines())
