@@ -1174,11 +1174,20 @@ class AgentRegistry:
         if self._state_log is None:
             return []
 
+        # #2236: compute the WAL retention floor using the SAME source as
+        # checkout() (lines 1044–1048) so the list and the checkout guard
+        # agree by construction.  Points below this floor would always be
+        # rejected by checkout — advertising them is misleading.
+        oldest = next(iter(self._state_log.iter_from(1)), None)
+        oldest_seq: int | None = oldest.get("seq") if oldest else None
+
         # Union of generation boundary seqs across every known agent. Default =
         # active branch only (1f); include_abandoned = all branches (Phase-2 tree).
         seqs: set[int] = set()
         for name in self.list_names():
             for s in self._store_for(name).seqs():
+                if oldest_seq is not None and s < oldest_seq:
+                    continue  # #2236: truncated out of WAL — not reachable
                 if include_abandoned or is_active_seq(self._state_log, s):
                     seqs.add(s)
         if not seqs:
@@ -1187,7 +1196,7 @@ class AgentRegistry:
         # One pass over the WAL to map boundary seq → (ts, kind). The audit
         # EventStore is NOT consulted — keeping WAL and audit decoupled.
         wal_at: dict[int, dict] = {}
-        for entry in self._state_log.iter_from(1):
+        for entry in self._state_log.iter_from(oldest_seq if oldest_seq is not None else 1):
             s = entry.get("seq")
             if isinstance(s, int) and s in seqs:
                 wal_at[s] = entry
