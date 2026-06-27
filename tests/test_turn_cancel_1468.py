@@ -114,6 +114,30 @@ async def test_turn_cancelled_event_emitted() -> None:
 
 
 @pytest.mark.asyncio
+async def test_cancel_surfaces_interrupted_ack_not_max_iterations_error() -> None:
+    """Tier 2: #1468 — a user cancel surfaces a "turn interrupted" acknowledgement
+    on the outbox, NOT the max_iterations error. Regression: the _loop_cancelled
+    branch copy-pasted the max_iterations error text, so every cancel consumer
+    (inline esc + web ws cancel) saw a misleading "exceeded max iterations" line."""
+    host = _CancellableHost()
+    host.arm_cancel_after(0)  # cancel at the first iteration boundary
+    llm = _ScriptedLLM([text_result("unreached")])
+    loop = _loop(host, llm)
+    await loop.run_loop(
+        messages=[{"role": "user", "content": "hi"}],
+        tools=[],
+        _univ_enabled=False,
+    )
+    # A cancel acknowledgement was surfaced (status, not error)...
+    ack = [m for m in host.outbox if "interrupted" in m["text"].lower()]
+    assert ack, f"expected a 'turn interrupted' ack, got {host.outbox}"
+    assert ack[0]["kind"] == "status"
+    # ...and NOT the misleading max_iterations error (the copy-paste bug).
+    assert not any("max iteration" in m["text"].lower() for m in host.outbox)
+    assert not any(m["kind"] == "error" for m in host.outbox)
+
+
+@pytest.mark.asyncio
 async def test_cancel_after_one_iteration_allows_first_llm_call() -> None:
     """Tier 2: #1468 — cancel armed after iteration 1 lets the first LLM call
     complete (= cooperative: cancel fires at boundary, not mid-call).

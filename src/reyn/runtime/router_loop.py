@@ -2470,15 +2470,16 @@ class RouterLoop:
                 continue  # re-enter inner for loop with extended limit
          break  # no extension granted or no on_limit — exit outer while
 
-        # Cancelled path (user-initiated): canned decision-enabling error.
+        # Cancelled path (user-initiated esc / cancel_inflight): an acknowledgement,
+        # not an error. This branch previously emitted the max_iterations error
+        # text by copy-paste — a bug every cancel consumer hit (inline esc + web
+        # ws cancel). max_iterations exhaustion takes the limit-deny / on_limit
+        # path below (where _loop_cancelled is False), never this branch, so this
+        # message is cancel-only.
         if _loop_cancelled:
             await self.host.put_outbox(
-                kind="error",
-                text=(
-                    f"Router loop exceeded max iterations ({self.max_iterations}). "
-                    f"Configure safety.on_limit.mode=interactive or auto_extend to "
-                    f"extend, or increase safety.loop.max_router_iterations."
-                ),
+                kind="status",
+                text="✗ turn interrupted",
                 meta={"chain_id": self.chain_id},
             )
             return self._total_usage
