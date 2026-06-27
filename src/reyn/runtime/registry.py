@@ -971,10 +971,16 @@ class AgentRegistry:
         # unchanged); a spawned session is recreated via spawn_session(name, sid)
         # — which re-applies the S5 path fixup — then re-adopts its state. Its
         # run-loop starts lazily on attach_session (S4a), so no auto-run here.
+        # #2187 5d: a session with a recovery-ACTIONABLE subscription MUST be instantiated
+        # even with an empty snapshot — else a delegate that consumed its inbox then
+        # crashed (RUNNING task, empty inbox) would never be re-woken (finding 3). Bounded:
+        # only §3.6-actionable tasks (an awaited>0 idle parent is NOT instantiated).
+        recovery_work = await self._compute_recovery_work()
         for (name, sid), snap in all_snaps.items():
             if (not snap.inbox
                     and not snap.pending_chains
-                    and not snap.outstanding_interventions):
+                    and not snap.outstanding_interventions
+                    and sid not in recovery_work):
                 continue
             if sid == _DEFAULT_SID:
                 session = self.get_or_load(name)
@@ -987,6 +993,9 @@ class AgentRegistry:
                 if session is not None:
                     session.restore_state(snap)
 
+        # #2187 §3.6 (5d): the RE-DELIVERY half — now that the actionable sessions are
+        # live, re-publish their missed events through each session's OWN production waker.
+        await self._redeliver_recovery_wakes(recovery_work)
         return snapshots
 
     # ── Global rewind (ADR-0038 Stage 1c-2, D2 consistent-cut) ──────────────
@@ -1318,31 +1327,99 @@ class AgentRegistry:
         self._task_subscriptions.apply(kind, seq, fields)
 
     async def _reconcile_subscriptions_after_recovery(self) -> "list[str]":
-        """#2187 Stage 4: the recovery RE-READ seam (the backend-master recovery model:
-        re-subscribe, then re-read the current external task-state, catching up by
-        re-reading). The subscription (the Reyn-internal binding) is already restored by
-        the WAL replay in ``restore_all``; the backend is the external MASTER of
-        task-STATE and is NOT rewound — so on recovery the binding may name a task whose
-        backend state moved (or vanished) while Reyn was down.
+        """#2187 recovery RE-READ + PRUNE (the backend-master recovery model: re-subscribe,
+        then re-read the current external task-state). The subscription (the Reyn-internal
+        binding) is already restored by the WAL replay in ``restore_all``; the backend is
+        the external MASTER of task-STATE and is NOT rewound — so on recovery the binding
+        may name a task whose backend state moved (or vanished) while Reyn was down.
 
-        Stage 4 establishes the seam + a coherence pass: it returns the STALE bindings —
-        subscriptions whose task the backend no longer holds (the external master dropped
-        it) — and logs a summary. The FULL reconciliation — diff the re-read state against
-        the binding and RE-PUBLISH the missed state-change events to the re-subscribed
-        session (via ``publish_task_event``) / prune the stale bindings — is Stage 5: the
-        typed-state lifecycle drives WHICH events to re-deliver, so it is built there, on
-        this seam (the returned stale set is its input)."""
+        Stage 5d — the PRUNE half (runs here, BEFORE session instantiation, since it needs
+        no live session): re-read each binding; a STALE one (the backend no longer holds
+        the task — the master dropped it) is PRUNED from the live registry (live-only,
+        self-healing — see ``SubscriptionRegistry.prune``). The RE-DELIVERY half (waking
+        the re-subscribed session for its actionable tasks, §3.6) runs AFTER session
+        instantiation, via each live session's own waker — ``_redeliver_recovery_wakes``.
+        Returns the pruned (stale) task ids (for the log / tests)."""
         task_ids = self._task_subscriptions.task_ids()
         if not task_ids:
             return []
         backend = self.task_backend  # the durable external master (built lazily)
         stale = [tid for tid in task_ids if await backend.get(tid) is None]
+        for tid in stale:
+            self._task_subscriptions.prune(tid)
         if stale:
             logger.info(
-                "#2187 recovery re-read: %d/%d subscription(s) name a task with no "
-                "backend state (stale binding — the external master dropped it); "
-                "Stage 5 reconciliation resolves these.", len(stale), len(task_ids))
+                "#2187 recovery reconcile: pruned %d/%d stale subscription(s) (the "
+                "external master no longer holds the task).", len(stale), len(task_ids))
         return stale
+
+    async def _recovery_action(self, backend, task) -> "str | None":
+        """#2187 §3.6 (5d): the 7-state recovery wake predicate → the ``publish_task_event``
+        event to re-deliver to the task's owner on recovery, or ``None`` (no wake).
+
+        - ``UNASSIGNED`` (no subscriber) / ``BLOCKED`` (DAG-driven, woken by the readiness
+          promote, not the subscription) / terminal (``DONE``/``FAILED``/``ABORTED``) → None.
+        - ``READY`` → ``ready`` (the assignee resumes execution).
+        - ``RUNNING`` → ``recovery_resume`` iff ``N_awaited == 0`` (the awaited children
+          settled while down → continue/complete) OR a child ``FAILED`` (recover); else
+          None (still blocked on running awaited children → idle, no busy-loop)."""
+        from reyn.runtime.services.task_wake import (  # noqa: PLC0415
+            TASK_EVENT_READY,
+            TASK_EVENT_RECOVERY_RESUME,
+        )
+        from reyn.task import TaskState  # noqa: PLC0415
+
+        if task.status is TaskState.READY:
+            return TASK_EVENT_READY
+        if task.status is TaskState.RUNNING:
+            counts = await backend.open_child_counts(task.task_id)
+            if counts.awaited == 0:
+                return TASK_EVENT_RECOVERY_RESUME
+            children = await backend.children_of(task.task_id)
+            if any(c.status is TaskState.FAILED for c in children):
+                return TASK_EVENT_RECOVERY_RESUME
+        return None
+
+    async def _compute_recovery_work(self) -> "dict[str, list]":
+        """#2187 5d: group the recovery-ACTIONABLE subscriptions by assignee sid
+        ``{sid → [(task, event), ...]}`` from the current backend state. Drives BOTH the
+        step-5 instantiate widening (a session with an actionable task MUST be
+        instantiated to be re-woken — finding 3: else a delegate that consumed its inbox
+        then crashed never resumes = "org builds but doesn't run" recurs after crash) AND
+        the re-delivery. Stale bindings are already pruned; an UNASSIGNED binding has no
+        owner."""
+        subs = self._task_subscriptions
+        backend = self.task_backend
+        out: "dict[str, list]" = {}
+        for tid in subs.task_ids():
+            assignee = subs.assignee_of(tid)
+            if assignee is None:
+                continue
+            task = await backend.get(tid)
+            if task is None:
+                continue
+            action = await self._recovery_action(backend, task)
+            if action is not None:
+                out.setdefault(assignee, []).append((task, action))
+        return out
+
+    async def _redeliver_recovery_wakes(self, recovery_work: dict) -> None:
+        """#2187 §3.6 (5d) re-delivery — AFTER session instantiation, via each LIVE
+        session's OWN ``task_waker`` (the production per-agent waker → delivery-equivalent
+        BY CONSTRUCTION; the session holds its agent_name, so no separate resolution, no
+        divergent path). Session-driven: for each live session, re-publish its actionable
+        tasks' events through the SAME ``publish_task_event`` seam production uses."""
+        if not recovery_work:
+            return
+        for _name, session in self._iter_named_sessions():
+            work = recovery_work.get(getattr(session, "_session_id", None))
+            if not work:
+                continue
+            waker = getattr(session, "_task_waker", None)
+            if waker is None:
+                continue
+            for task, event in work:
+                await waker.publish_task_event(event, task)
 
     async def _on_wal_append_capture(self, kind: str, seq: int, fields: dict) -> None:
         """Generic WAL post-append observer: per-step act-turn workspace capture.

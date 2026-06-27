@@ -120,6 +120,15 @@ class SubscriptionRegistry:
         """The UNASSIGNED tasks (no assignee) — the pending-assignment queue."""
         return [tid for tid, rec in self._subs.items() if rec.assignee is None]
 
+    def prune(self, task_id: str) -> bool:
+        """Drop a binding from the LIVE registry (#2187 5d recovery reconciliation) —
+        used when the backend (the task-STATE master) no longer holds the task, so the
+        subscription is STALE. Live-only (no WAL event): the reconciliation re-runs on
+        every recovery, so a still-stale binding is re-pruned (idempotent self-heal); an
+        un-deleted task re-binds on its next ``task_subscribed`` — durable freezing would
+        be wrong under backend-master. Returns True if a binding was removed."""
+        return self._subs.pop(task_id, None) is not None
+
 
 class SubscriptionWriter:
     """The op-layer seam that appends the task SUBSCRIPTION WAL kinds — the Reyn-internal
