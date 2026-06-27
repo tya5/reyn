@@ -323,6 +323,15 @@ async def run_inline_input(registry, renderer) -> None:
         if stripped in ("/quit", "/exit"):
             event.app.create_background_task(_quit(registry, event.app, quitting))
         else:
+            # Echo the submitted line into the scrollback BEFORE the turn runs.
+            # The live input field is cleared on submit (buf.reset above), so
+            # without this the user's own message never appears in the
+            # conversation (only the agent reply does). kind="user" persists (not
+            # a transient status), and the output loop drains the outbox FIFO, so
+            # it lands just above the agent reply — mirroring the PromptSession
+            # path, where the typed line stays committed in the terminal.
+            from reyn.runtime.outbox import OutboxMessage
+            registry.repl_outbox.put_nowait(OutboxMessage(kind="user", text=stripped))
             event.app.create_background_task(_submit(registry, stripped))
 
     @kb.add("down", filter=has_focus(input_win))

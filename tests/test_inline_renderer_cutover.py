@@ -26,6 +26,15 @@ def _plain(kind: str, text: str, meta: dict | None = None) -> str:
     ).plain
 
 
+def test_user_echo_leads_with_input_marker_and_keeps_text() -> None:
+    """Tier 2: the user's own submitted line is echoed with the > input marker
+    and its text — so the message stays visible in the conversation after the
+    inline input field clears on submit."""
+    out = _plain("user", "what files changed?")
+    assert ">" in out
+    assert "what files changed?" in out
+
+
 def test_agent_line_leads_with_dot_marker_and_keeps_text() -> None:
     """Tier 2: an agent message renders with the ⏺ marker and its text."""
     out = _plain("agent", "hello world")
