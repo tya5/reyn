@@ -171,12 +171,12 @@ def _list_skill_lines(session: "Session") -> list[str]:
 
 # Dynamic Tasks are PERSISTENT trackable work-units (the point of the
 # dynamic-task model), so the Tasks section shows the FULL plan WITH status —
-# active + completed + failed + aborted — so the user sees progress ("3/6 done")
-# and deps referencing completed tasks stay intact. Only ``archived`` (the
-# user-dismissed state) is hidden. NB the skill-runs section keeps its own
-# running-only filter (ephemeral runs, not trackable plans = different
-# semantics); the split is intentional (#2036 review).
-_HIDDEN_TASK_STATUSES = frozenset({"archived"})
+# active + completed + failed — so the user sees progress ("3/6 done") and deps
+# referencing completed tasks stay intact. Only SOFT-DELETED tasks (``archived_at``
+# set — abort dismisses a task by setting it alongside the ABORTED lifecycle state,
+# #2187) are hidden. NB the skill-runs section keeps its own running-only filter
+# (ephemeral runs, not trackable plans = different semantics); the split is
+# intentional (#2036 review).
 
 
 async def _list_dynamic_task_lines(session: "Session") -> list[str]:
@@ -184,9 +184,9 @@ async def _list_dynamic_task_lines(session: "Session") -> list[str]:
 
     Reads ``session.task_backend`` (#1953 slice R). Returns ``[]`` when the
     session carries no backend. Shows the full plan WITH status (active +
-    completed + failed + aborted) so the user sees progress + intact deps; only
-    ``archived`` tasks are hidden. Each task is formatted in the same idiom as
-    ``_list_skill_lines``.
+    completed + failed) so the user sees progress + intact deps; only
+    SOFT-DELETED tasks (``archived_at`` set, #2187) are hidden. Each task is
+    formatted in the same idiom as ``_list_skill_lines``.
     """
     backend = getattr(session, "task_backend", None)
     if backend is None:
@@ -195,7 +195,7 @@ async def _list_dynamic_task_lines(session: "Session") -> list[str]:
     lines: list[str] = []
     for task in tasks:
         status = getattr(task.status, "value", task.status)
-        if status in _HIDDEN_TASK_STATUSES:
+        if getattr(task, "archived_at", None) is not None:  # soft-deleted (retention) — hidden
             continue
         deps = list(getattr(task, "deps", []) or [])
         if deps:

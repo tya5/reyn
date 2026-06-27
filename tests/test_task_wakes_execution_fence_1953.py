@@ -201,5 +201,5 @@ async def test_dep_completion_wakes_dependent_with_full_fenced_description():
     reg.session.inbox.clear()  # ignore create-time activity; assert on the wake below
     # the dep's assignee (req-sess) completes it → drives readiness → wakes dependent.
     await taskmod._update_status(
-        SimpleNamespace(task_id=dep_id, status="completed"), ctx, "control_ir")
+        SimpleNamespace(task_id=dep_id, status="done"), ctx, "control_ir")
     _assert_executes_and_fences(_last_wake_text(reg))

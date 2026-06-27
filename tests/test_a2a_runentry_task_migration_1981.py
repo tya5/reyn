@@ -9,7 +9,7 @@ that still read/wrote RunEntry directly:
     an A2A Cancel (which archives the Task without touching `RunEntry.status`)
     closes the stream (it would otherwise hang forever).
   - **P3 reflect** — an ask_user dispatch reflects the Task → `blocked`, and an
-    answer reflects it → `in_progress`, keeping GetTask coherent with the
+    answer reflects it → `running`, keeping GetTask coherent with the
     RunEntry input-required mirror. The iv resolution itself stays Session-owned
     (#292 α).
 
@@ -38,7 +38,7 @@ from reyn.task import InMemoryTaskBackend, Task, TaskOrigin, TaskState  # noqa: 
 from reyn.user_intervention import UserIntervention  # noqa: E402
 
 
-def _a2a_task(task_id, ctx, status=TaskState.IN_PROGRESS):
+def _a2a_task(task_id, ctx, status=TaskState.RUNNING):
     return Task(task_id=task_id, name="n", assignee=a2a_session_id(ctx),
                 requester="external", origin=TaskOrigin.EXTERNAL, status=status)
 
@@ -90,7 +90,7 @@ def _sse_client(run_registry, task_backend):
 
 
 def test_sse_closes_when_task_is_terminal_even_if_runentry_running():
-    """Tier 2: #1981 P1 — an archived Task (A2A Cancel) closes the SSE stream even
+    """Tier 2: #1981 P1 — an aborted Task (A2A Cancel) closes the SSE stream even
     though `RunEntry.status` is still "running" (Cancel never touches it). Reading
     the RunEntry alone (pre-#1981) would loop forever; the test completing proves
     the Task authority is consulted."""
@@ -105,7 +105,7 @@ def test_sse_closes_when_task_is_terminal_even_if_runentry_running():
     backend = InMemoryTaskBackend()
     loop = asyncio.new_event_loop()
     loop.run_until_complete(
-        backend.create(_a2a_task(entry.run_id, "ctx-sse", status=TaskState.ARCHIVED)))
+        backend.create(_a2a_task(entry.run_id, "ctx-sse", status=TaskState.ABORTED)))
 
     client = _sse_client(registry, backend)
     try:
@@ -163,30 +163,30 @@ async def test_iv_dispatch_without_task_backend_is_noop():
     assert rr.get(entry.run_id).status == "input-required"
 
 
-# ── P3: answer reflects Task → in_progress (mechanism) ──────────────────────
+# ── P3: answer reflects Task → running (mechanism) ──────────────────────
 
 
 @pytest.mark.asyncio
-async def test_reflect_blocked_task_to_in_progress():
+async def test_reflect_blocked_task_to_running():
     """Tier 2: #1981 P3 — the reflection helper moves a blocked Task →
-    in_progress on answer (the assignee's own status write). RED if the blocked→
-    in_progress reflection is dropped (GetTask would stay input-required)."""
+    running on answer (the assignee's own status write). RED if the blocked→
+    running reflection is dropped (GetTask would stay input-required)."""
     tb = InMemoryTaskBackend()
     await tb.create(_a2a_task("t-ans", "ctx-ans", status=TaskState.BLOCKED))
 
-    await a2a_mod._reflect_task_status(tb, "t-ans", "in_progress")
+    await a2a_mod._reflect_task_status(tb, "t-ans", "running")
 
-    assert (await tb.get("t-ans")).status is TaskState.IN_PROGRESS
+    assert (await tb.get("t-ans")).status is TaskState.RUNNING
 
 
 @pytest.mark.asyncio
 async def test_reflect_status_on_terminal_task_is_swallowed():
-    """Tier 2: reflecting onto an already-archived (cancelled) Task is rejected by
+    """Tier 2: reflecting onto an already-aborted (cancelled) Task is rejected by
     the terminal-guard and swallowed — the abort wins (race-safe)."""
     tb = InMemoryTaskBackend()
-    await tb.create(_a2a_task("t-term", "ctx-t", status=TaskState.IN_PROGRESS))
-    await tb.abort("t-term")  # A2A Cancel archived it first
+    await tb.create(_a2a_task("t-term", "ctx-t", status=TaskState.RUNNING))
+    await tb.abort("t-term")  # A2A Cancel aborted it first
 
     # Must not raise even though the Task is terminal.
     await a2a_mod._reflect_task_status(tb, "t-term", "blocked")
-    assert (await tb.get("t-term")).status is TaskState.ARCHIVED
+    assert (await tb.get("t-term")).status is TaskState.ABORTED

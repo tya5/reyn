@@ -106,7 +106,7 @@ async def test_assignee_update_status_via_invoke_action_allowed():
     backend = InMemoryTaskBackend()
     task_id = await _task_assigned_to(backend, "sess-B")
     ctx = _router_ctx(_op_ctx("sess-B", backend))  # caller == assignee
-    result = await _UPDATE({"task_id": task_id, "status": "in_progress"}, ctx)
+    result = await _UPDATE({"task_id": task_id, "status": "running"}, ctx)
     assert result.get("status") == "ok", result
 
 
@@ -120,7 +120,7 @@ async def test_none_session_id_masks_and_rejects_even_the_assignee():
     backend = InMemoryTaskBackend()
     task_id = await _task_assigned_to(backend, "sess-B")
     ctx = _router_ctx(_op_ctx(None, backend))  # the mask: session_id is None
-    result = await _UPDATE({"task_id": task_id, "status": "in_progress"}, ctx)
+    result = await _UPDATE({"task_id": task_id, "status": "running"}, ctx)
     assert result.get("status") == "denied", result
 
 
@@ -167,7 +167,7 @@ async def test_router_opctx_threads_task_waker_so_chat_abort_wakes_requester():
     backend = InMemoryTaskBackend()
     # a self-task plan whose requester is the chat session ("main", _DEFAULT_SID).
     await backend.create(Task(task_id="t2", name="t2", assignee="main", requester="main",
-                              status=TaskState.IN_PROGRESS, deps=[]))
+                              status=TaskState.RUNNING, deps=[]))
     await backend.create(Task(task_id="t3", name="t3", assignee="main", requester="main",
                               deps=["t2"]))
 

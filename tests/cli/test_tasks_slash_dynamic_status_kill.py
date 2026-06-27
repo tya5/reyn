@@ -50,7 +50,7 @@ async def _seed_task(backend: InMemoryTaskBackend) -> str:
         name="ingest_raw_csv",
         assignee="sess-1",
         requester="req",
-        status=TaskState.IN_PROGRESS,
+        status=TaskState.RUNNING,
     )
     await backend.create(task)
     return task.task_id
@@ -70,7 +70,7 @@ async def test_tasks_status_resolves_dynamic_task() -> None:
     out = session.replies[-1]
     assert "no task matches" not in out
     assert "ingest_raw_csv" in out
-    assert "in_progress" in out
+    assert "running" in out
 
 
 @pytest.mark.asyncio
@@ -86,7 +86,7 @@ async def test_tasks_kill_aborts_dynamic_task() -> None:
     # The real backend transitioned the task out of the runnable set.
     task = await backend.get(task_id)
     assert task is not None
-    assert getattr(task.status, "value", task.status) == "archived"
+    assert getattr(task.status, "value", task.status) == "aborted"
 
 
 @pytest.mark.asyncio

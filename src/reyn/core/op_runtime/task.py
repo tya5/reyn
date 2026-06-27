@@ -264,12 +264,12 @@ async def _create(op, ctx: OpContext, caller) -> dict:
     # EXECUTE it now (the create-time counterpart of the dep-completion wake). A
     # born deps-less op-created task is PENDING (the default kept by the backend);
     # only a born-BLOCKED task (unmet deps) carries BLOCKED — so "born-ready" =
-    # not-blocked = PENDING|READY. A self-task (assignee == requester) needs no
+    # not-blocked = READY. A self-task (assignee == requester) needs no
     # wake (the creator is the executor); a born-BLOCKED task is woken later when
     # its deps clear (recompute_readiness → wake_ready_dependent).
     waker = getattr(ctx, "task_waker", None)
     if (waker is not None
-            and created.status in (TaskState.PENDING, TaskState.READY)
+            and created.status is TaskState.READY
             and created.assignee != created.requester):
         # #2187 Stage 4: publish the state-change through the single pub/sub seam
         # (event_type "assigned"; delivered to the assignee subscriber to execute).
@@ -304,11 +304,11 @@ async def _update_status(op, ctx: OpContext, caller) -> dict:
     if task is None:
         return _not_found("task.update_status", op.task_id)
     _audit(ctx, "task.update_status", op.task_id, status=op.status)
-    # OQ-3: a predecessor reaching `completed` drives DAG readiness (OS scheduling,
+    # OQ-3: a predecessor reaching `done` drives DAG readiness (OS scheduling,
     # P3) — recompute its dependents and flip any fully-satisfied one blocked→ready
-    # via the OS-authority backend method (no assignee CAS). `completed` only;
-    # failed/aborted/archived deps don't satisfy an edge (H5/OQ-7 → slice 7).
-    if task.status is TaskState.COMPLETED:
+    # via the OS-authority backend method (no assignee CAS). `done` only;
+    # failed/aborted deps don't satisfy an edge (H5/OQ-7 → slice 7).
+    if task.status is TaskState.DONE:
         promoted = await _backend(ctx).recompute_readiness(op.task_id)
         events = getattr(ctx, "events", None)
         waker = getattr(ctx, "task_waker", None)
@@ -325,14 +325,14 @@ async def _update_status(op, ctx: OpContext, caller) -> dict:
             if waker is not None:
                 await waker.publish_task_event(  # #2187 Stage 4: pub/sub seam ("ready")
                     "ready", p, fenced_description=_fence_text(ctx, p.description))
-        # #1800 slice 5c: task_end lifecycle hooks — the task reached COMPLETED.
+        # #1800 slice 5c: task_end lifecycle hooks — the task reached DONE.
         # None dispatcher → no-op. (Aborted tasks terminate via the separate
         # _abort handler — see the task_end symmetry note there.)
         hook_dispatcher = getattr(ctx, "hook_dispatcher", None)
         if hook_dispatcher is not None:
             await hook_dispatcher.dispatch(
                 "task_end",
-                {"point": "task_end", "task_id": task.task_id, "status": "completed"},
+                {"point": "task_end", "task_id": task.task_id, "status": "done"},
             )
     elif task.status is TaskState.FAILED:
         # slice 6-ext §C: a non-completed terminal (the assignee declared `failed`)

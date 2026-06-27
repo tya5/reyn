@@ -92,10 +92,10 @@ async def test_update_status_single_writer_is_assignee_session(tmp_path):
     await backend.create(Task(task_id="t", name="n", assignee="sess-A", requester="r"))
 
     # The assignee session writes freely (any number of turns — no claim/version).
-    s1 = await backend.update_status("t", "in_progress", caller_session_id="sess-A")
-    assert s1 is not None and s1.status is TaskState.IN_PROGRESS
-    s2 = await backend.update_status("t", "completed", caller_session_id="sess-A")
-    assert s2 is not None and s2.status is TaskState.COMPLETED
+    s1 = await backend.update_status("t", "running", caller_session_id="sess-A")
+    assert s1 is not None and s1.status is TaskState.RUNNING
+    s2 = await backend.update_status("t", "done", caller_session_id="sess-A")
+    assert s2 is not None and s2.status is TaskState.DONE
 
     # A non-assignee session is rejected — single-writer CAS holds.
     with pytest.raises(PermissionError):
@@ -103,7 +103,7 @@ async def test_update_status_single_writer_is_assignee_session(tmp_path):
 
     # State is unchanged by the rejected write.
     after = await backend.get("t")
-    assert after is not None and after.status is TaskState.COMPLETED
+    assert after is not None and after.status is TaskState.DONE
     backend.close()
 
 
@@ -111,7 +111,7 @@ async def test_update_status_single_writer_is_assignee_session(tmp_path):
 async def test_update_status_unknown_task_returns_none(tmp_path):
     """Tier 2: update on a missing task returns None (not a CAS reject)."""
     backend = SqliteTaskBackend(_db(tmp_path))
-    assert await backend.update_status("nope", "in_progress", caller_session_id="x") is None
+    assert await backend.update_status("nope", "running", caller_session_id="x") is None
     backend.close()
 
 
@@ -131,7 +131,7 @@ async def test_awaiting_and_abort_persist_and_emit_events(tmp_path):
     got = await reopened.get("t")
     assert got is not None
     assert got.awaiting_since == 999.0
-    assert got.status is TaskState.ARCHIVED  # abort = delete → archived
+    assert got.status is TaskState.ABORTED  # abort = delete → archived
 
     kinds = [e["kind"] for e in await reopened.events("t")]
     assert kinds == ["created", "awaiting_set", "aborted"]
@@ -162,10 +162,10 @@ async def test_abort_down_cascade_and_sibling_intact(tmp_path):
     # whole sub-tree archived (recursive, leaf-terminal).
     for tid in ("p", "c1", "c2"):
         t = await backend.get(tid)
-        assert t is not None and t.status is TaskState.ARCHIVED, tid
+        assert t is not None and t.status is TaskState.ABORTED, tid
     # RED if abort whole-session-cancelled: the sibling task A also owns is intact.
     sib = await backend.get("sib")
-    assert sib is not None and sib.status is TaskState.PENDING
+    assert sib is not None and sib.status is TaskState.READY
     backend.close()
 
 

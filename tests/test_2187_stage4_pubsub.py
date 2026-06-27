@@ -40,7 +40,7 @@ class _RoutingWaker(TaskWaker):
 
 
 def _task(tid):
-    return Task(task_id=tid, name=tid, assignee="s1", requester="s1", status=TaskState.PENDING)
+    return Task(task_id=tid, name=tid, assignee="s1", requester="s1", status=TaskState.READY)
 
 
 @pytest.mark.asyncio

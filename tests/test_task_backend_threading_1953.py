@@ -124,7 +124,7 @@ async def test_cas_reject_end_to_end_through_op_layer(tmp_path: Path):
 
     # the assignee session writes.
     ok = await taskmod._update_status(
-        SimpleNamespace(task_id=task_id, status="in_progress", reason=None), ctx_a, "control_ir")
+        SimpleNamespace(task_id=task_id, status="running", reason=None), ctx_a, "control_ir")
     assert ok["status"] == "ok"
 
     # a non-assignee session is rejected by the CAS — now the op-layer returns a

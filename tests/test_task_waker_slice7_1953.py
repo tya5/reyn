@@ -24,7 +24,7 @@ from reyn.runtime.services.task_wake import TaskWaker
 from reyn.task import InMemoryTaskBackend, Task, TaskState
 
 
-def _task(task_id, *, deps=None, status=TaskState.PENDING, assignee="sess",
+def _task(task_id, *, deps=None, status=TaskState.READY, assignee="sess",
           requester="req"):
     return Task(task_id=task_id, name=task_id, assignee=assignee, requester=requester,
                 status=status, deps=list(deps or []))
@@ -121,7 +121,7 @@ async def test_completed_wakes_promoted_dependent():
     reg = _RecRegistry()
     await b.create(_task("d", assignee="a2a:sd"))
     await b.create(_task("a", deps=["d"], assignee="a2a:sa"))  # born-blocked
-    await taskmod._update_status(SimpleNamespace(task_id="d", status="completed"),
+    await taskmod._update_status(SimpleNamespace(task_id="d", status="done"),
                                  _ctx(b, TaskWaker(reg, "alice"), session_id="a2a:sd"),
                                  "control_ir")
     assert ("alice", "a2a", "sa") in reg.resolved
@@ -134,7 +134,7 @@ async def test_abort_wakes_requester():
     b = InMemoryTaskBackend()
     reg = _RecRegistry()
     await b.create(_task("B", assignee="a2a:sB", requester="a2a:sReq",
-                         status=TaskState.IN_PROGRESS))
+                         status=TaskState.RUNNING))
     await b.create(_task("A", deps=["B"], assignee="a2a:sA", requester="a2a:sReq"))
     # abort is requester-gated → the requester is the caller.
     await taskmod._abort(SimpleNamespace(task_id="B", reason=None),
@@ -155,10 +155,10 @@ async def test_recovery_loop_abort_then_requester_repoint_wakes_both():
     reg = _RecRegistry()
     waker = TaskWaker(reg, "alice")
     await b.create(_task("B", assignee="a2a:sB", requester="a2a:sReq",
-                         status=TaskState.IN_PROGRESS))
+                         status=TaskState.RUNNING))
     await b.create(_task("A", deps=["B"], assignee="a2a:sA", requester="a2a:sReq"))  # blocked on B
     await b.create(_task("Bsub", assignee="a2a:sBsub", requester="a2a:sReq",
-                         status=TaskState.COMPLETED))
+                         status=TaskState.DONE))
     ctx = _ctx(b, waker, session_id="a2a:sReq")  # the requester owns + drives B/A/Bsub
 
     # 1. abort B → the REQUESTER is woken to decide.
