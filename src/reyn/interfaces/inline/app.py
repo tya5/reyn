@@ -17,6 +17,7 @@ actionable model picker (selecting a class) is a follow-up.
 """
 from __future__ import annotations
 
+import logging
 import time
 
 from prompt_toolkit.application import Application, get_app
@@ -36,6 +37,8 @@ from prompt_toolkit.layout.dimension import Dimension
 from prompt_toolkit.patch_stdout import patch_stdout
 
 from reyn.interfaces.repl.renderer import _CC_ACCENT, _CC_DIM, _CC_DONE, _SPINNER
+
+logger = logging.getLogger(__name__)
 
 # Status-row chips, in display order.
 _CHIPS = ["model", "agents", "skills", "cost", "ctx"]
@@ -143,6 +146,11 @@ async def run_inline_input(registry, renderer) -> None:
     # sel: which chip; open: detail/picker shown; row: cursor within an
     # actionable picker (model). row is reset to 0 when a picker opens.
     menu = {"sel": 0, "open": False, "row": 0}
+    # Guards against a second quit (rapid Ctrl-C / `/quit` then Ctrl-C) racing the
+    # first: shutdown has a grace window, so two _quit tasks could both reach
+    # app.exit() — the second raises "Return value already set". _quit checks+sets
+    # this before its first await, so only one ever runs to app.exit().
+    quitting: dict = {}
 
     def _working_frags() -> list:
         return working_line(
@@ -248,7 +256,7 @@ async def run_inline_input(registry, renderer) -> None:
         # plain text, intervention answers, other slash — flows through
         # submit_user_text and routes inside the session unchanged.
         if stripped in ("/quit", "/exit"):
-            event.app.create_background_task(_quit(registry, event.app))
+            event.app.create_background_task(_quit(registry, event.app, quitting))
         else:
             event.app.create_background_task(_submit(registry, stripped))
 
@@ -314,7 +322,7 @@ async def run_inline_input(registry, renderer) -> None:
     @kb.add("c-d")
     @kb.add("c-q")
     def _quit_key(event) -> None:
-        event.app.create_background_task(_quit(registry, event.app))
+        event.app.create_background_task(_quit(registry, event.app, quitting))
 
     body = HSplit([working, top_rule, inputrow, bottom_rule, status_win, dropdown])
     app: Application = Application(
@@ -333,10 +341,32 @@ async def run_inline_input(registry, renderer) -> None:
 
 async def _submit(registry, text: str) -> None:
     s = registry.attached_session()
-    if s is not None:
+    if s is None:
+        return
+    # Launched as a background task, so an uncaught error here goes to asyncio's
+    # exception handler (invisible above the live app) and the user sees the input
+    # field clear with no response — a silent failure. Contain it: log + surface a
+    # visible error line via the outbox the output loop already drains.
+    try:
         await s.submit_user_text(text)
+    except Exception:
+        logger.exception("inline submit failed")
+        try:
+            from reyn.runtime.outbox import OutboxMessage
+            registry.repl_outbox.put_nowait(
+                OutboxMessage(kind="error", text="input could not be submitted (see logs)")
+            )
+        except Exception:
+            pass
 
 
-async def _quit(registry, app) -> None:
+async def _quit(registry, app, state: dict) -> None:
+    # Idempotent: shutdown has a grace window, so a second quit (rapid Ctrl-C /
+    # `/quit` then Ctrl-C) could race the first to app.exit() ("Return value
+    # already set"). The check+set is synchronous (before the first await), so in
+    # the single-threaded loop only the first task proceeds to app.exit().
+    if state.get("quitting"):
+        return
+    state["quitting"] = True
     await registry.shutdown()
     app.exit()
