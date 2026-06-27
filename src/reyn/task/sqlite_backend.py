@@ -56,9 +56,11 @@ _SCHEMA = """
 CREATE TABLE IF NOT EXISTS tasks(
   task_id TEXT PRIMARY KEY,
   name TEXT NOT NULL,
-  assignee TEXT NOT NULL,
-  requester TEXT NOT NULL,
-  requester_kind TEXT NOT NULL DEFAULT 'session',
+  -- #2187 backend-master: the task BINDING (assignee/requester/requester_kind)
+  -- lives in the WAL-derived SubscriptionRegistry (the binding authority), not
+  -- here. The backend stores CONTENT + the dependency DAG + task STATE only and
+  -- reads the binding THROUGH the injected subscription_reader. (No binding
+  -- columns — _migrate_columns drops them from pre-2c-iii dbs.)
   origin TEXT NOT NULL,
   status TEXT NOT NULL,
   description TEXT,
@@ -104,7 +106,7 @@ CREATE TABLE IF NOT EXISTS task_comments(
 """
 
 _TASK_COLUMNS = (
-    "task_id, name, assignee, requester, requester_kind, origin, status, description, "
+    "task_id, name, origin, status, description, "
     "created_by, awaiting_since, tools, result, created_at, updated_at"
 )
 
@@ -163,13 +165,15 @@ class SqliteTaskBackend:
         for col in ("tools", "result"):
             if col not in existing:
                 conn.execute(f"ALTER TABLE tasks ADD COLUMN {col} TEXT")
-        # #1953 §16 (recursive-request): additive migration for pre-existing DBs —
-        # a row created before this column is a session-owned task by definition
-        # (the only kind that existed), so the 'session' default is correct.
-        if "requester_kind" not in existing:
-            conn.execute(
-                "ALTER TABLE tasks ADD COLUMN requester_kind "
-                "TEXT NOT NULL DEFAULT 'session'")
+        # #2187 backend-master (2c-iii): the task BINDING moved to the WAL-derived
+        # SubscriptionRegistry (the binding authority). Drop the now-unused binding
+        # columns from a pre-2c-iii db — they are NOT NULL, so a binding-less INSERT
+        # would violate the constraint. SQLite ≥ 3.35 DROP COLUMN; the columns are
+        # not indexed/constrained so the drop is clean. The WAL subscription replay
+        # is the source for the existing rows' binding (recovery == live).
+        for col in ("assignee", "requester", "requester_kind"):
+            if col in existing:
+                conn.execute(f"ALTER TABLE tasks DROP COLUMN {col}")
         conn.commit()
 
     def _open(self, *, init_schema: bool = False) -> sqlite3.Connection:
@@ -269,12 +273,17 @@ class SqliteTaskBackend:
         return new
 
     def _row_to_task(self, row: sqlite3.Row) -> Task:
+        # #2187 backend-master (2c-iii): no binding columns — the Task is
+        # reconstructed with a PLACEHOLDER binding (empty assignee/requester,
+        # default SESSION kind); callers overlay the WAL-derived binding (the
+        # authority) via _hydrate_binding. _row_to_task itself stays pure
+        # content + DAG + state.
         return Task(
             task_id=row["task_id"],
             name=row["name"],
-            assignee=row["assignee"],
-            requester=row["requester"],
-            requester_kind=TaskRequesterKind(row["requester_kind"]),
+            assignee="",
+            requester="",
+            requester_kind=TaskRequesterKind.SESSION,
             origin=TaskOrigin(row["origin"]),
             status=TaskState(row["status"]),
             description=row["description"],
@@ -319,10 +328,9 @@ class SqliteTaskBackend:
             self._conn.execute("BEGIN IMMEDIATE")
             self._conn.execute(
                 f"INSERT INTO tasks({_TASK_COLUMNS}) "
-                f"VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                f"VALUES (?,?,?,?,?,?,?,?,?,?,?)",
                 (
-                    task.task_id, task.name, task.assignee, task.requester,
-                    task.requester_kind.value, task.origin.value, task.status.value,
+                    task.task_id, task.name, task.origin.value, task.status.value,
                     task.description, task.created_by, task.awaiting_since,
                     json.dumps(task.tools) if task.tools else None, task.result,
                     task.created_at, task.updated_at,
@@ -348,22 +356,27 @@ class SqliteTaskBackend:
         requester: str | None = None,
         status: str | None = None,
     ) -> list[Task]:
+        # #2187 backend-master (2c-iii): the binding (assignee/requester) is no
+        # longer a column, so it cannot be an SQL WHERE clause — only the
+        # backend-owned ``status`` stays SQL. The binding filters are applied
+        # POST-fetch against the hydrated binding (the WAL-derived authority).
         clauses: list[str] = []
         params: list[object] = []
-        for col, val in (
-            ("assignee", assignee), ("requester", requester),
-            ("status", status),
-        ):
-            if val is not None:
-                clauses.append(f"{col}=?")
-                params.append(val)
+        if status is not None:
+            clauses.append("status=?")
+            params.append(status)
         where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
         async with self._lock:
             rows = self._conn.execute(
                 f"SELECT {_TASK_COLUMNS} FROM tasks{where} ORDER BY created_at, task_id",
                 params,
             ).fetchall()
-            return [self._hydrate_binding(self._row_to_task(r)) for r in rows]
+            tasks = [self._hydrate_binding(self._row_to_task(r)) for r in rows]
+        if assignee is not None:
+            tasks = [t for t in tasks if t.assignee == assignee]
+        if requester is not None:
+            tasks = [t for t in tasks if t.requester == requester]
+        return tasks
 
     async def update_status(
         self, task_id: str, status: str, *, caller_session_id: str | None = None
@@ -528,19 +541,27 @@ class SqliteTaskBackend:
             # guard → bounded. In-lock BFS (NOT recursive — the lock is not re-entrant).
             # (The legacy parent_id decomposition tree was removed in §16 slice C —
             # the requester edge is the sole decomposition relation.)
+            #
+            # #2187 backend-master (2c-iii): the requester edge is now the WAL-derived
+            # SUBSCRIPTION binding, not a column — the closure walks the reader. No
+            # reader (direct/test construction) → no owned children to follow (the
+            # binding columns are gone), so the cascade aborts the root only.
+            reader = self._subscription_reader
             to_abort: list[str] = [task_id]
             frontier = [task_id]
-            while frontier:
+            while frontier and reader is not None:
                 pid = frontier.pop()
-                for row in self._conn.execute(
-                    "SELECT task_id FROM tasks "
-                    "WHERE requester=? AND requester_kind='task'",
-                    (pid,),
-                ).fetchall():
-                    child = row["task_id"]
-                    if child not in to_abort:
-                        to_abort.append(child)
-                        frontier.append(child)
+                for tid in reader.task_ids():
+                    # collision-safety: requester match AND the requester_kind=='task'
+                    # marker (a session routing-key uuid can collide with a task-id
+                    # uuid; the marker disambiguates). Preserved EXACTLY.
+                    if (
+                        reader.requester_of(tid) == pid
+                        and reader.requester_kind_of(tid) == "task"
+                        and tid not in to_abort
+                    ):
+                        to_abort.append(tid)
+                        frontier.append(tid)
             # #2107 S2 (origin-split): an EXTERNAL terminal's dep-DAG DEPENDENTS can't be
             # recovered — the external requester gives up (no in-session re-wire; that is
             # the SELF path's requester wake, §16 S1). Abort them too, transitively (a dep

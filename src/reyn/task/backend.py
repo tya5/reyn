@@ -373,13 +373,24 @@ class InMemoryTaskBackend:
         # to an earlier task) + the in-set guard → bounded, no double-abort. (The
         # legacy parent_id decomposition tree was removed in §16 slice C — the
         # requester edge is the sole decomposition relation.)
+        #
+        # #2187 backend-master (2c-iii): the requester binding is now the WAL-derived
+        # SUBSCRIPTION authority — the cascade PREFERS the reader (requester_of /
+        # requester_kind_of) when one is wired; the stored Task fields are the
+        # no-reader fallback (direct/test construction). The ``requester_kind=='task'``
+        # marker guard is preserved EXACTLY in both paths.
+        reader = self._subscription_reader
         subtree: list[str] = [task_id]
         frontier = [task_id]
         while frontier:
             pid = frontier.pop()
             for tid, t in self._tasks.items():
-                owned = (t.requester == pid
-                         and t.requester_kind is TaskRequesterKind.TASK)
+                if reader is not None:
+                    owned = (reader.requester_of(tid) == pid
+                             and reader.requester_kind_of(tid) == "task")
+                else:
+                    owned = (t.requester == pid
+                             and t.requester_kind is TaskRequesterKind.TASK)
                 if owned and tid not in subtree:
                     subtree.append(tid)
                     frontier.append(tid)
