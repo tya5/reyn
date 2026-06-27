@@ -135,10 +135,12 @@ class AgentSnapshot:
             ),
         )
 
-    def save(self, path: Path) -> None:
-        path = Path(path)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = path.with_suffix(path.suffix + ".tmp")
+    def serialize(self) -> str:
+        """Serialise to a JSON string — SYNCHRONOUS, so it captures a consistent view of the
+        mutable state (inbox / chains / …) at the call instant. #1765 1a-ii splits this from
+        the durable write so an off-loop save snapshots the state here (sync) and only the
+        write+fsync runs off the event loop, with no risk of the state being mutated mid-write.
+        """
         payload = {
             "version": SNAPSHOT_VERSION,
             "session_id": self.session_id,  # FP-0043 S5 (additive; legacy load → "main")
@@ -150,11 +152,24 @@ class AgentSnapshot:
             "buffered_intervention_answers": self.buffered_intervention_answers,
             "next_turn_context": self.next_turn_context,
         }
+        return json.dumps(payload, ensure_ascii=False, indent=2)
+
+    @staticmethod
+    def write_durable(path: Path, data: str) -> None:
+        """Atomically + durably write pre-serialised snapshot ``data`` (tmp → fsync → rename).
+        Pure I/O (no mutable-state access), so it is safe to run OFF the event loop (#1765)."""
+        path = Path(path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix(path.suffix + ".tmp")
         with tmp.open("w", encoding="utf-8") as f:
-            json.dump(payload, f, ensure_ascii=False, indent=2)
+            f.write(data)
             f.flush()
             os.fsync(f.fileno())
         tmp.replace(path)
+
+    def save(self, path: Path) -> None:
+        """Synchronous atomic save (serialise + durable write). Unchanged contract."""
+        self.write_durable(path, self.serialize())
 
     # ── replay (apply WAL entries to this snapshot) ─────────────────────
 

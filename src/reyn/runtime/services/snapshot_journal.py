@@ -5,6 +5,7 @@ All WAL-recorded mutations go through here; in-memory readers go via the
 """
 from __future__ import annotations
 
+import asyncio
 import uuid
 from pathlib import Path
 
@@ -156,7 +157,7 @@ class SnapshotJournal:
             self._snapshot.inbox.append({
                 "id": msg_id, "kind": kind, "payload": full_payload,
             })
-            self.save()
+            await self.save()
         return msg_id
 
     async def consume_inbox(self, *, msg_id: str) -> None:
@@ -174,7 +175,7 @@ class SnapshotJournal:
         self._snapshot.inbox = [
             m for m in self._snapshot.inbox if m.get("id") != msg_id
         ]
-        self.save()
+        await self.save()
 
     async def record_chain_register(self, *, chain_id: str, fields: dict) -> None:
         """Append ``chain_register`` to WAL and create the pending_chains entry.
@@ -194,7 +195,7 @@ class SnapshotJournal:
             "chain_id": chain_id,
             **{k: (list(v) if k == "waiting_on" else v) for k, v in fields.items()},
         }
-        self.save()
+        await self.save()
 
     async def record_chain_update(self, *, chain_id: str, fields: dict) -> None:
         """Append ``chain_update`` to WAL and update waiting_on in snapshot.
@@ -213,7 +214,7 @@ class SnapshotJournal:
         if chain is not None:
             waiting_on = fields.get("waiting_on", [])
             chain["waiting_on"] = list(waiting_on)
-        self.save()
+        await self.save()
 
     async def record_chain_resolve(self, *, chain_id: str) -> None:
         """Append ``chain_resolve`` to WAL and remove the pending_chains entry.
@@ -227,7 +228,7 @@ class SnapshotJournal:
         )
         self._snapshot.applied_seq = seq
         self._snapshot.pending_chains.pop(chain_id, None)
-        self.save()
+        await self.save()
 
     async def record_chain_timeout_fired(self, *, chain_id: str) -> None:
         """Append ``chain_timeout_fired`` to WAL and remove the pending_chains entry.
@@ -241,7 +242,7 @@ class SnapshotJournal:
         )
         self._snapshot.applied_seq = seq
         self._snapshot.pending_chains.pop(chain_id, None)
-        self.save()
+        await self.save()
 
     # ── intervention persistence (PR-intervention-link L2) ────────────────
 
@@ -268,7 +269,7 @@ class SnapshotJournal:
         )
         self._snapshot.applied_seq = seq
         self._snapshot.outstanding_interventions[intervention_id] = iv_dict
-        self.save()
+        await self.save()
 
     async def record_intervention_resolved(
         self, *, intervention_id: str,
@@ -287,7 +288,7 @@ class SnapshotJournal:
         )
         self._snapshot.applied_seq = seq
         self._snapshot.outstanding_interventions.pop(intervention_id, None)
-        self.save()
+        await self.save()
 
     async def record_intervention_answer_buffered(
         self, *, run_id: str, text: str, choice_id: str | None,
@@ -313,7 +314,7 @@ class SnapshotJournal:
         self._snapshot.buffered_intervention_answers[run_id] = {
             "text": text, "choice_id": choice_id,
         }
-        self.save()
+        await self.save()
 
     async def record_intervention_answer_consumed(
         self, *, run_id: str,
@@ -336,7 +337,7 @@ class SnapshotJournal:
         )
         self._snapshot.applied_seq = seq
         self._snapshot.buffered_intervention_answers.pop(run_id, None)
-        self.save()
+        await self.save()
 
     async def record_next_turn_context_staged(
         self, *, kind: str, payload: dict,
@@ -357,7 +358,7 @@ class SnapshotJournal:
         )
         self._snapshot.applied_seq = seq
         self._snapshot.next_turn_context.append(entry)
-        self.save()
+        await self.save()
 
     async def record_next_turn_context_cleared(self) -> None:
         """Append ``next_turn_context_cleared`` to WAL + clear the buffer (#1800-4b).
@@ -374,7 +375,7 @@ class SnapshotJournal:
         )
         self._snapshot.applied_seq = seq
         self._snapshot.next_turn_context.clear()
-        self.save()
+        await self.save()
 
     # ── restore / persist ─────────────────────────────────────────────────
 
@@ -384,15 +385,40 @@ class SnapshotJournal:
         Mirrors the WAL/snapshot install portion of
         ``Session.restore_state`` (the asyncio queue repopulation and
         chain timeout re-arming remain the session's responsibility).
+
+        Persists synchronously: restore is a one-shot recovery write (not the hot
+        per-mutation path), so it keeps the original sync save rather than forcing an
+        async restore path. The off-loop routing (#1765 1a-ii) is for the frequent
+        per-mutation ``save()`` that would otherwise freeze the loop.
         """
         self._snapshot = snapshot
-        self.save()
-
-    def save(self) -> None:
-        """Persist the current snapshot to disk (atomic write via AgentSnapshot.save).
-
-        Mirrors ``Session._save_snapshot``.  Follows the existing
-        convention: no try/except — let I/O errors propagate (there is no
-        error-suppression in the original implementation).
-        """
         self._snapshot.save(self._snapshot_path)
+
+    async def save(self) -> None:
+        """Persist the current snapshot to disk (atomic write via AgentSnapshot).
+
+        #1765 Step 1a-ii: the snapshot is SERIALISED synchronously here — capturing a
+        consistent view of the mutable state (inbox / chains / …) at this instant — and only
+        the durable write+fsync is routed OFF the event loop, through the SAME serial
+        DurabilityWorker as the WAL (``state_log.submit_durable``). Two guarantees follow:
+
+        * **Loop-free fsync** — the snapshot fsync no longer freezes the event loop.
+        * **WAL → snapshot ordering** — every mutation method awaits its WAL append (durable)
+          BEFORE awaiting this save, and the worker is serial FIFO, so the snapshot's
+          ``applied_seq`` becomes durable only AFTER the WAL seq it records
+          (``applied_seq`` ≤ durable WAL seq). A crash can never leave a durable snapshot
+          pointing at a non-durable WAL entry.
+
+        No WAL (``state_log is None``: tests / non-chat) → the original synchronous save, so
+        the no-persistence contract is byte-identical. No try/except — I/O errors propagate
+        (unchanged from the original)."""
+        if self._state_log is None:
+            self._snapshot.save(self._snapshot_path)
+            return
+        data = self._snapshot.serialize()  # sync: consistent state captured before any await
+        path = self._snapshot_path
+
+        async def _write() -> None:
+            await asyncio.to_thread(AgentSnapshot.write_durable, path, data)
+
+        await self._state_log.submit_durable(_write)
