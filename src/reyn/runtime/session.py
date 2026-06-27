@@ -5062,7 +5062,20 @@ class Session:
         # read-only, best-effort — the try/except ensures a CPython internals
         # change never breaks slash dispatch).
         pre_size = self.outbox.qsize()
-        await slash_cmd.handler(self, args)
+        try:
+            await slash_cmd.handler(self, args)
+        except Exception:
+            # A slash handler raising must not kill the session run loop: run()'s
+            # `while await run_one_iteration()` has no `except`, so an uncaught
+            # error here ends session.run() and silently drops every later inbox
+            # message (the front-end keeps accepting input but never replies).
+            # Surface a clean error and treat the command as consumed so the loop
+            # continues. (CancelledError is BaseException → shutdown still cancels.)
+            logger.exception("slash handler /%s failed", cmd)
+            await self._put_outbox(OutboxMessage(
+                kind="error", text=f"/{cmd} failed (see logs)",
+            ))
+            return True
         try:
             new_items = list(self.outbox._queue)[pre_size:]  # type: ignore[attr-defined]
             had_error = any(
