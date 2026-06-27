@@ -1500,6 +1500,11 @@ class Session:
             # in test / headless contexts.
             enforce_listener_presence=True,
         )
+        # F4: a one-shot command-UI request (e.g. the /rewind checkpoint picker)
+        # that a front-end renders as a selector. The inline CUI region polls it
+        # (like it polls the head intervention); the plain --cui path renders a
+        # text fallback. None = nothing pending. A dict carries {"kind", ...}.
+        self._pending_command_ui: dict | None = None
 
         # FP-0019 Wave 2 part 1: InterventionHandler — ask_user dispatch service.
         # Extracted from Session.  Session keeps thin wrappers on
@@ -2133,6 +2138,17 @@ class Session:
         instance is set once in ``__init__`` and never re-bound.
         """
         return self._interventions
+
+    @property
+    def pending_command_ui(self) -> dict | None:
+        """F4: a pending command-UI request (e.g. the /rewind picker) for a
+        front-end to render, or None. The inline region polls this; --cui renders
+        a text fallback. Set by the producing slash handler, cleared on consume."""
+        return self._pending_command_ui
+
+    def set_pending_command_ui(self, payload: dict | None) -> None:
+        """Set (or clear, with None) the pending command-UI request."""
+        self._pending_command_ui = payload
 
     @property
     def chains(self) -> "ChainManager":

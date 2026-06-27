@@ -33,9 +33,17 @@ class _CapturingSession:
         self.agent_name = "test"
         self._registry = registry
         self.outbox_msgs: list = []
+        self._pending_command_ui = None
 
     async def _put_outbox(self, msg) -> None:
         self.outbox_msgs.append(msg)
+
+    @property
+    def pending_command_ui(self):
+        return self._pending_command_ui
+
+    def set_pending_command_ui(self, payload) -> None:
+        self._pending_command_ui = payload
 
 
 def _no_factory(_profile):
@@ -63,12 +71,35 @@ def test_rewind_is_registered() -> None:
     assert "seq" in cmd.usage.lower()
 
 
+class _StubRewindRegistry:
+    def list_rewind_points(self, **_kw):
+        return [{"seq": 42, "kind": "turn"}, {"seq": 38, "kind": "turn"}]
+
+
 @pytest.mark.asyncio
-async def test_bare_rewind_emits_menu_sentinel() -> None:
-    """Tier 2: bare /rewind emits the __rewind_menu__ sentinel (opens the picker)."""
-    session = _CapturingSession()
+async def test_bare_rewind_opens_picker_via_command_ui_and_text_fallback() -> None:
+    """Tier 2: bare /rewind (F4) publishes a command-UI request (the inline region
+    selector) AND a __rewind_list__ text fallback (the --cui path)."""
+    session = _CapturingSession(registry=_StubRewindRegistry())
     await _handler().handler(session, "")
-    assert [m.kind for m in session.outbox_msgs] == ["__rewind_menu__"]
+    assert session.pending_command_ui == {
+        "kind": "rewind",
+        "points": [{"seq": 42, "kind": "turn"}, {"seq": 38, "kind": "turn"}],
+    }
+    assert [m.kind for m in session.outbox_msgs] == ["__rewind_list__"]
+    assert "seq 42" in session.outbox_msgs[0].text
+
+
+@pytest.mark.asyncio
+async def test_bare_rewind_with_no_checkpoints_replies() -> None:
+    """Tier 2: bare /rewind with no rewind points → a clear message, no picker."""
+    class _Empty:
+        def list_rewind_points(self, **_kw):
+            return []
+    session = _CapturingSession(registry=_Empty())
+    await _handler().handler(session, "")
+    assert session.pending_command_ui is None
+    assert any("no earlier checkpoints" in m.text for m in session.outbox_msgs)
 
 
 @pytest.mark.asyncio
