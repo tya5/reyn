@@ -228,6 +228,13 @@ class _RecordingWaker:
             "managing_task_id": managing_task_id,
         })
 
+    async def publish_task_event(self, event_type, task, **kwargs):
+        """#2187 Stage 4: mirror TaskWaker.publish_task_event's dispatch — the op now
+        publishes through the single seam; route the terminal event to the recorded
+        requester-notify (this stub records only the §16 requester-decide path)."""
+        if event_type == "terminal":
+            await self.notify_requester_decide(terminal_task=task, **kwargs)
+
 
 def _opctx(backend, *, events=None, waker=None, session_id="req"):
     return SimpleNamespace(session_id=session_id, agent_id="a",

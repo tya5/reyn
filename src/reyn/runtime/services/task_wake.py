@@ -41,6 +41,15 @@ WAKE_READY_KIND = "task_ready"
 # the stale "parent" vocabulary (recovery now notifies the requester, not a parent).
 WAKE_REQUESTER_KIND = "task_dependency_aborted"
 
+# #2187 Stage 4: the task STATE-CHANGE event vocabulary the single publish→deliver seam
+# (``TaskWaker.publish_task_event``) routes on. ``ready``/``assigned`` deliver to the
+# ASSIGNEE subscriber (execute); ``terminal`` delivers to the REQUESTER subscriber
+# (decide recovery). This is the existing local set — an external backend may extend it
+# at integration time.
+TASK_EVENT_READY = "ready"
+TASK_EVENT_ASSIGNED = "assigned"
+TASK_EVENT_TERMINAL = "terminal"
+
 
 class TaskWaker:
     """Wakes a sibling session (same agent) on a dep-graph disposition (#1953 sl.7)."""
@@ -180,5 +189,30 @@ class TaskWaker:
             managing_task_id=managing_task_id,
         )
 
+    async def publish_task_event(self, event_type: str, task: Any, **kwargs: Any) -> None:
+        """#2187 Stage 4: the SINGLE publish → deliver seam. A task STATE-CHANGE event is
+        delivered to the SUBSCRIBED session (the assignee or requester binding) via the
+        local waker delivery. The local op publishes here on a state change (the existing
+        per-event waker calls, now routed through one path); an external backend
+        (Jira / A2A webhook) plugs into the SAME seam — external-ready (the full external
+        integration + catch-up reconciliation is subsequent). Routes by ``event_type`` to
+        the existing delivery (the local pub/sub formalized; behaviour unchanged):
+        - ``ready`` / ``assigned`` → the ASSIGNEE subscriber executes the task;
+        - ``terminal`` → the REQUESTER subscriber decides recovery for its stuck
+          dependents (``kwargs``: requester_session / dependents / disposition /
+          managing_task_id). The event vocabulary is the existing local set; an external
+          backend may extend it at integration time."""
+        if event_type == TASK_EVENT_READY:
+            await self.wake_ready_dependent(task, **kwargs)
+        elif event_type == TASK_EVENT_ASSIGNED:
+            await self.wake_assigned(task, **kwargs)
+        elif event_type == TASK_EVENT_TERMINAL:
+            await self.notify_requester_decide(terminal_task=task, **kwargs)
+        else:
+            raise ValueError(f"unknown task event_type: {event_type!r}")
 
-__all__ = ["TaskWaker", "WAKE_READY_KIND", "WAKE_REQUESTER_KIND"]
+
+__all__ = [
+    "TASK_EVENT_ASSIGNED", "TASK_EVENT_READY", "TASK_EVENT_TERMINAL",
+    "TaskWaker", "WAKE_READY_KIND", "WAKE_REQUESTER_KIND",
+]

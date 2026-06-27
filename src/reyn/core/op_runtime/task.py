@@ -271,8 +271,10 @@ async def _create(op, ctx: OpContext, caller) -> dict:
     if (waker is not None
             and created.status in (TaskState.PENDING, TaskState.READY)
             and created.assignee != created.requester):
-        await waker.wake_assigned(
-            created, fenced_description=_fence_text(ctx, created.description))
+        # #2187 Stage 4: publish the state-change through the single pub/sub seam
+        # (event_type "assigned"; delivered to the assignee subscriber to execute).
+        await waker.publish_task_event(
+            "assigned", created, fenced_description=_fence_text(ctx, created.description))
     # #1800 slice 5c: task_start lifecycle hooks — the task has been created
     # (backend.create + the P6 audit). None dispatcher (direct/test construction
     # or no hooks) → no-op.
@@ -321,8 +323,8 @@ async def _update_status(op, ctx: OpContext, caller) -> dict:
             # item 4: deliver the full description as fenced DATA (the trusted-OS
             # execute framing lives in the waker).
             if waker is not None:
-                await waker.wake_ready_dependent(
-                    p, fenced_description=_fence_text(ctx, p.description))
+                await waker.publish_task_event(  # #2187 Stage 4: pub/sub seam ("ready")
+                    "ready", p, fenced_description=_fence_text(ctx, p.description))
         # #1800 slice 5c: task_end lifecycle hooks — the task reached COMPLETED.
         # None dispatcher → no-op. (Aborted tasks terminate via the separate
         # _abort handler — see the task_end symmetry note there.)
@@ -392,8 +394,8 @@ async def _emit_readiness_if_changed(ctx: OpContext, task, before_status, trigge
     if task.status is TaskState.READY:
         waker = getattr(ctx, "task_waker", None)
         if waker is not None:
-            await waker.wake_ready_dependent(
-                task, fenced_description=_fence_text(ctx, task.description))
+            await waker.publish_task_event(  # #2187 Stage 4: pub/sub seam ("ready")
+                "ready", task, fenced_description=_fence_text(ctx, task.description))
 
 
 async def _route_terminal_to_requester(
@@ -476,8 +478,11 @@ async def _route_terminal_to_requester(
         return
     waker = getattr(ctx, "task_waker", None)
     if waker is not None:
-        await waker.notify_requester_decide(
-            requester_session=requester_session, terminal_task=terminal_task,
+        # #2187 Stage 4: publish the terminal state-change through the single pub/sub
+        # seam (delivered to the requester subscriber to decide recovery).
+        await waker.publish_task_event(
+            "terminal", terminal_task,
+            requester_session=requester_session,
             dependents=stuck, disposition=disp, managing_task_id=managing_task_id,
         )
 

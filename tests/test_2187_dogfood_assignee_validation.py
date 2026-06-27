@@ -37,6 +37,12 @@ class _StubWaker:
     async def wake_assigned(self, *a, **k) -> None:
         pass
 
+    async def publish_task_event(self, event_type, task, **kwargs) -> None:
+        # #2187 Stage 4: the op publishes through the single seam; route the assigned
+        # event to wake_assigned (the born-startable delegated-task wake).
+        if event_type == "assigned":
+            await self.wake_assigned(task, **kwargs)
+
 
 def _ctx(*, waker=None, caller="s1"):
     return SimpleNamespace(
