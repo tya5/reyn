@@ -60,6 +60,12 @@ from .profile import PROFILE_FILENAME, AgentProfile
 from .topology import TOPOLOGY_DIRNAME, Topology, _validate_topology_name
 
 DEFAULT_AGENT_NAME = "default"
+
+# shutdown() grace window: how long to let session.run loops drain cooperatively
+# (notice the shutdown sentinel at a turn boundary) before hard-cancelling any
+# that are still stuck — e.g. blocked mid-LLM-call on a slow/hung provider, which
+# never reaches the boundary to see the sentinel. Keeps /quit from hanging.
+_SHUTDOWN_GRACE_S = 3.0
 # FP-0043 Stage 3: the implicit per-agent session id. Single-session paths
 # resolve to this id, keeping N=1 behaviour byte-identical. Spawned sessions get
 # generated ids (Stage 4 routes inbound messages to non-default sessions).
@@ -2696,18 +2702,38 @@ class AgentRegistry:
         return out
 
     async def shutdown(self) -> None:
-        """Best-effort: stop all loaded sessions, then await tasks."""
+        """Best-effort: stop all loaded sessions, then await/cancel their tasks.
+
+        Cooperative first: each session.run loop notices the shutdown sentinel
+        (agent.shutdown) at its next turn boundary; a short grace window lets a
+        non-stuck session drain that way (the common idle / fast-turn /quit is
+        unaffected — the sentinel is processed well within the grace). Any run
+        task still alive after the grace is *stuck* — e.g. blocked mid-LLM-call on
+        a slow/hung provider that never reaches the boundary to see the sentinel —
+        so it is hard-cancelled. The CancelledError lands on the `acompletion`
+        await (a safe cancel point: completed turns already wrote their WAL /
+        history inline, and the cancelled turn simply didn't complete — no partial
+        write), so shutdown always returns instead of hanging on /quit.
+        """
         for name, agent in self._iter_named_sessions():
             try:
                 await agent.shutdown()
             except Exception as exc:
                 logger.warning("agent shutdown failed for %r: %s", name, exc)
-        # Cancel forwarders so they don't block on a queue that won't refill
+        # Cancel forwarders so they don't block on a queue that won't refill.
         for t in self._forward_tasks.values():
             if not t.done():
                 t.cancel()
-        if self.running_tasks():
-            await asyncio.gather(*self.running_tasks(), return_exceptions=True)
+        tasks = self.running_tasks()
+        if not tasks:
+            return
+        # Cooperative grace, then hard-cancel any straggler (cancelled forwarders
+        # finish immediately; a stuck session.run lands in `pending`).
+        _done, pending = await asyncio.wait(tasks, timeout=_SHUTDOWN_GRACE_S)
+        for t in pending:
+            t.cancel()
+        if pending:
+            await asyncio.gather(*pending, return_exceptions=True)
 
     def loaded_names(self) -> list[str]:
         return list(self._sessions.keys())
