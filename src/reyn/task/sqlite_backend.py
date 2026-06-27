@@ -32,13 +32,10 @@ from __future__ import annotations
 
 import asyncio
 import json
-import os
-import shutil
 import sqlite3
 from pathlib import Path
 
 from reyn.task.backend import find_cycle_path
-from reyn.task.generation_store import SqliteTaskGenerationStore
 from reyn.task.model import (
     TERMINAL_STATES,
     Task,
@@ -115,25 +112,17 @@ _TASK_COLUMNS = (
 class SqliteTaskBackend:
     """Durable Task backend backed by a single sqlite database.
 
-    Opts INTO session-rewind participation (#1953 slice R): the durable db file
-    is captured per WAL boundary via ``VACUUM INTO`` and restored by replacing
-    the file — symmetric with ``WorkspaceVersionStore`` (the runtime + workspace
-    substrates). The rewind generations are a separate filesystem mechanism from
-    the WAL ``state_log`` (P7: no new WAL kind) and from crash-recovery (the dep
-    graph + decision-ops stay WAL-durable in the live db independent of them)."""
-
-    #: #1953 slice R — this backend's durable state can be rewound (opt-in).
-    supports_rewind: bool = True
+    The Task backend is the EXTERNAL MASTER of task-state (#2187): it is NOT
+    rewound by time-travel — Reyn rewinds only its internal trajectory (the
+    runtime snapshot + workspace substrates), never the external task tracker.
+    The dep graph + decision-ops stay WAL-durable in the live db, independent of
+    any rewind."""
 
     def __init__(self, db_path: str | Path) -> None:
         self._db_path = str(db_path)
         Path(self._db_path).parent.mkdir(parents=True, exist_ok=True)
         self._conn = self._open(init_schema=True)
         self._lock = asyncio.Lock()
-        # Sibling directory holding the per-generation full-DB copies.
-        self._gens = SqliteTaskGenerationStore(
-            Path(self._db_path).parent / "task-generations"
-        )
 
     @staticmethod
     def _migrate_columns(conn: sqlite3.Connection) -> None:
@@ -142,10 +131,9 @@ class SqliteTaskBackend:
         already-existing table).  Safe no-op on a current-schema table: the
         ``PRAGMA table_info`` guard skips any column that already exists.
 
-        Called from ``_open(init_schema=True)`` (first open / schema init) AND from
-        ``restore_to_seq`` (after the file-swap reopen), so every restored generation
-        is brought to the current schema — robust to additive schema evolution by
-        construction."""
+        Called from ``_open(init_schema=True)`` (first open / schema init), so a
+        pre-existing DB is brought to the current schema — robust to additive
+        schema evolution by construction."""
         existing = {r[1] for r in conn.execute("PRAGMA table_info(tasks)").fetchall()}
         # #1953 slice P2: additive migration for DBs created before tools / result.
         for col in ("tools", "result"):
@@ -161,77 +149,21 @@ class SqliteTaskBackend:
         conn.commit()
 
     def _open(self, *, init_schema: bool = False) -> sqlite3.Connection:
-        """Open (or reopen, after a restore file-swap) the live connection with
-        the backend's fixed pragmas.  ``init_schema=True`` on first open: creates
-        tables (``CREATE TABLE IF NOT EXISTS`` is idempotent) and runs
-        ``_migrate_columns`` to bring any pre-existing DB to the current schema.
-        ``init_schema=False`` (restore path) skips table creation — ``restore_to_seq``
-        calls ``_migrate_columns`` directly on the fresh connection after the file-swap,
-        ensuring every restored generation is at the current schema."""
+        """Open the live connection with the backend's fixed pragmas.
+        ``init_schema=True`` on first open: creates tables (``CREATE TABLE IF NOT
+        EXISTS`` is idempotent) and runs ``_migrate_columns`` to bring any
+        pre-existing DB to the current schema."""
         conn = sqlite3.connect(self._db_path, check_same_thread=False)
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA journal_mode=WAL")
         conn.execute("PRAGMA busy_timeout=0")
         if init_schema:
             conn.executescript(_SCHEMA)
-            # Single-source migration helper — also called from restore_to_seq so
-            # both open and restore paths share the same column-addition logic.
             self._migrate_columns(conn)
         return conn
 
     def close(self) -> None:
         self._conn.close()
-
-    # ── Rewind substrate (#1953 slice R) ─────────────────────────────────────
-
-    async def snapshot_generation(self, seq: int) -> None:
-        """Capture a full point-in-time copy of the db keyed by the WAL boundary
-        ``seq``. Idempotent (a boundary already captured is left intact). The
-        ``async with self._lock`` guarantees no ``BEGIN IMMEDIATE`` is open, so
-        ``VACUUM INTO`` (which cannot run inside a transaction) is legal here; it
-        produces a fully-checkpointed, WAL-less single-file copy that includes
-        committed WAL frames. Published via tmp→rename for atomicity (a crash
-        mid-copy leaves only a ``.tmp`` the next prune sweeps)."""
-        dest = self._gens.gen_path(seq)
-        async with self._lock:
-            if dest.exists():
-                return
-            tmp = dest.with_suffix(dest.suffix + ".tmp")
-            if tmp.exists():
-                tmp.unlink()
-            self._conn.execute("VACUUM INTO ?", (str(tmp),))
-            os.replace(tmp, dest)
-
-    async def restore_to_seq(self, seq: int) -> None:
-        """Replace the live db with the generation captured at ``seq`` (the OS
-        passes the nearest active seq <= the rewind target). Closes the live
-        connection, copies the (WAL-less) generation file over the db path, drops
-        any stale ``-wal``/``-shm`` side-files so the old WAL is not replayed over
-        the restored copy, then reopens with ``_migrate_columns`` so the restored
-        generation is always at the current schema — robust to additive schema
-        evolution between when the generation was snapshotted and now. Re-runnable
-        (idempotent under the rewind keystone). Defensive no-op if the generation
-        is missing."""
-        src = self._gens.gen_path(seq)
-        async with self._lock:
-            if not src.exists():
-                return
-            self._conn.close()
-            shutil.copy2(src, self._db_path)
-            for side in ("-wal", "-shm"):
-                stale = Path(self._db_path + side)
-                if stale.exists():
-                    stale.unlink()
-            self._conn = self._open()
-            self._migrate_columns(self._conn)
-
-    async def generation_seqs(self) -> list[int]:
-        async with self._lock:
-            return self._gens.seqs()
-
-    async def prune_generations_below(self, min_keep_seq: int) -> int:
-        async with self._lock:
-            return self._gens.prune_below(min_keep_seq)
 
     # ── helpers ─────────────────────────────────────────────────────────────
 

@@ -1577,9 +1577,8 @@ class AgentRegistry:
         (``cancel_inflight`` + ``await_quiescent``, mirroring the global-rewind stop-world —
         idempotent when rewind_to already quiesced; REQUIRED for the ephemeral caller, which
         has no rewind orchestration) so any in-flight ``BEGIN IMMEDIATE`` settles before
-        teardown. With one global connection, the #2125 close-before-restore is moot:
-        ``_restore_task_active`` file-swaps through that single live connection's
-        ``restore_to_seq``.
+        teardown. The Task backend is the EXTERNAL MASTER of task-state (#2187) and is NOT
+        rewound by time-travel.
 
         Full teardown (rmtree) is correct: the global WAL is the durable source — the
         ``session_spawned`` create-record + the session's session_id-routed entries
@@ -1591,12 +1590,10 @@ class AgentRegistry:
             raise ValueError("cannot remove the main session via remove_session")
         removed = False
         # #2125: quiesce the session BEFORE teardown so any in-flight task write
-        # completes ahead of a teardown / _restore_task_active file-swap.
+        # completes ahead of teardown.
         # #2187 S1: do NOT close the Task backend here — it is GLOBAL (one process-wide
         # connection, registry-owned via the ``task_backend`` property), shared across all
         # sessions + process-lifetime, so a per-session/per-agent teardown never closes it.
-        # With one global connection, the #2125 close-before-restore is moot:
-        # ``_restore_task_active`` file-swaps through that single live connection.
         session = self._peek_session(name, sid)
         if session is not None:
             cancel_inflight = getattr(session, "cancel_inflight", None)
@@ -1613,10 +1610,6 @@ class AgentRegistry:
                     task.cancel()
         if self._sessions.get(name, {}).pop(sid, None) is not None:
             removed = True
-        # #2128: no single-pointer re-point needed — _restore_task_active derives the
-        # rewind backends from the CURRENT loaded sessions at use-time, so a dropped
-        # session is simply no longer iterated (no dangling/closed-handle hazard). This
-        # subsumes the #2125 interim re-point.
         if purge_dir:
             if self._purge_session_dir(name, sid):
                 removed = True
@@ -1639,8 +1632,7 @@ class AgentRegistry:
         lazily. The SINGLE construction seam for every session (chat / stdio-MCP / spawned)
         — they all route ``task_backend=`` through here, so there is ONE connection in this
         process (the #2180 single-connection pattern, now keyed globally not per-agent: the
-        per-instance ``asyncio.Lock`` serialises every write + the ``restore_to_seq``
-        file-swap is the only connection touching the file). Path is the global
+        per-instance ``asyncio.Lock`` serialises every write). Path is the global
         ``project_root/.reyn/state/tasks.db`` (the same db the A2A/web server uses — a
         first-class global task store, task ⊥ agent/session). Lazy import avoids an import
         cycle (task.factory → task.sqlite_backend)."""
@@ -1655,22 +1647,6 @@ class AgentRegistry:
     # are likewise never closed mid-run); a global store is not closed on any one agent's
     # purge/drop (it outlives them), and an open sqlite connection does not block the
     # agent-dir rmtree (POSIX unlink-while-open). Closed on process exit.
-
-    def _rewind_backends(self) -> "list[object]":
-        """#2187 S1: the GLOBAL Task backend, if built + rewind-participating — ONE per
-        process.
-
-        Supersedes the #2128 per-AGENT derivation: there is now a single global
-        ``tasks.db`` (task ⊥ agent/session), so the rewind restores that ONE backend. This
-        is a pure per-agent → global RELOCATION — the generation MECHANISM
-        (``snapshot_generation`` / ``restore_to_seq`` driven by ``_restore_task_active``)
-        is unchanged. Uses the field (NOT the lazy ``task_backend`` property) so a registry
-        with no task activity yields ``[]`` (nothing to restore) instead of building an
-        empty db. Restore needs a LIVE backend (it mutates the live connection)."""
-        tb = self._task_backend
-        if tb is not None and getattr(tb, "supports_rewind", False):
-            return [tb]
-        return []
 
     def _purge_session_dir(self, name: str, sid: str) -> bool:
         """#2125: the destructive half of session teardown — rmtree the per-session
@@ -1717,9 +1693,8 @@ class AgentRegistry:
         agents: list[str] = []
         # #2125 (b)-split atomicity: collect the post-cut sessions whose destructive
         # on-disk rmtree is DEFERRED until AFTER the substrate restores succeed (a
-        # restore-failure must not leave the dirs dropped). The connection-release
-        # (quiesce + Task-backend close) still happens inline at drop time below —
-        # it MUST precede _restore_task_active (the lock fix).
+        # restore-failure must not leave the dirs dropped). The quiesce still happens
+        # inline at drop time below.
         deferred_session_purges: list[tuple[str, str]] = []
         created_at = self._created_at_map()   # #2103: as-of-cut DROP input (empty → no-op)
         sess_vanished = self._session_vanished_map()  # #2154: as-of-cut session destroy-cut
@@ -1761,9 +1736,8 @@ class AgentRegistry:
                 spawned_after_cut = sess_seq is not None and sess_seq > drop_cut
                 vanished_by_cut = van_seq is not None and van_seq <= drop_cut
                 if spawned_after_cut or vanished_by_cut:
-                    # #2125/#2180: detach now (quiesce in-flight writes; the agent-shared
-                    # Task backend is NOT closed on a session drop — one connection per
-                    # agent, so _restore_task_active file-swaps through that single live
+                    # #2125/#2180: detach now (quiesce in-flight writes; the global Task
+                    # backend is NOT closed on a session drop — one process-wide
                     # connection); defer the destructive rmtree until the restores succeed.
                     await self._drop_session(name, sid, purge_dir=False)
                     deferred_session_purges.append((name, sid))
@@ -1814,7 +1788,6 @@ class AgentRegistry:
             if _p and _s <= drop_cut and _n not in ag_purged and (self._dir / _n).is_dir()
         }
         await self._restore_workspace_active(at_or_below=workspace_at_or_below)
-        await self._restore_task_active(at_or_below=workspace_at_or_below)
         # #2125 (b)-split: the restores succeeded — NOW perform the deferred destructive
         # rmtree of the dropped post-cut session dirs. Reaching here means no restore
         # raised (a restore-failure propagates before this), so the drop is committed
@@ -1842,32 +1815,6 @@ class AgentRegistry:
         ]
         if active:
             await ws.restore_to_seq(max(active))
-
-    async def _restore_task_active(self, *, at_or_below: int) -> None:
-        """Restore the Task substrate to the nearest ACTIVE generation
-        <= ``at_or_below`` — byte-mirror of ``_restore_workspace_active`` (same
-        ``is_active_seq`` honor; the rewind active-interval logic is WAL-derived
-        and substrate-agnostic, so it is shared, not re-implemented).
-
-        #1953 slice R, I-5=(A): only a rewind-participating per-session backend is
-        attached here (local cli/chat); the A2A/web process-singleton is not
-        threaded into this path, so it no-ops there (its tasks stay durable but
-        un-rewound — the cross-session fan-out is tracked in #1997). No-ops when
-        no backend is attached (e.g. crash-recovery before any session loads, so
-        crash-recovery stays untouched) or when the backend opts out of rewind.
-
-        #2128: restore EVERY loaded agent's rewind backend (``_rewind_backends`` — one
-        per agent), not a single last-constructed pointer, so a multi-AGENT rewind
-        restores all of them. Restore mutates the live connection, so it is loaded-
-        derived (an unloaded agent isn't running; its db isn't live to restore).
-        """
-        for tb in self._rewind_backends():
-            active = [
-                s for s in await tb.generation_seqs()
-                if s <= at_or_below and is_active_seq(self._state_log, s)
-            ]
-            if active:
-                await tb.restore_to_seq(max(active))
 
     async def recover_rewind_if_needed(self) -> dict | None:
         """Re-materialise both substrates as-of-N after a crash mid-rewind (1d).
@@ -1982,21 +1929,11 @@ class AgentRegistry:
         the store (#1544 — no host-PATH git_available pre-gate).
         """
         try:
-            from reyn.task.generation_store import SqliteTaskGenerationStore
             for name in self.list_names():
                 # FP-0043 S5: prune EVERY session's runtime-snapshot generations (main +
-                # spawned) — these stay PER-SESSION (the runtime-snapshot substrate is
-                # unchanged by S1; only the Task substrate goes global).
+                # spawned) — these stay PER-SESSION (the runtime-snapshot substrate).
                 for sid in self._discover_session_ids(name):
                     self._store_for(name, sid).prune_below(floor)  # SnapshotGenerationStore (sync)
-            # #2187 S1: prune the GLOBAL Task-substrate generations ONCE on the same boundary
-            # (was #2128 per-agent — there is now a single global ``tasks.db`` at
-            # ``.reyn/state/``, so one ``task-generations`` dir). Standalone no-connection
-            # store (pure unlink of task-gen-<seq>.db below the floor) → never touches the
-            # live connection. ``is_dir()`` guard FIRST (the store ctor mkdir's the dir).
-            global_task_gen_dir = self._project_root / ".reyn" / "state" / "task-generations"
-            if global_task_gen_dir.is_dir():
-                SqliteTaskGenerationStore(global_task_gen_dir).prune_below(floor)  # sync, pure-fs
             ws = self.workspace_store
             if ws is not None:
                 await ws.prune_below(floor)
@@ -2313,10 +2250,6 @@ class AgentRegistry:
         attach_anchor = getattr(session, "attach_anchor_store", None)
         if anchors is not None and callable(attach_anchor):
             attach_anchor(anchors)
-        # #2128: no per-construction pointer set — the session's rewind backend is
-        # reachable via ``session.task_backend`` and derived at use-time by
-        # ``_rewind_backends`` (the restore path) keyed by the loaded sessions, so a
-        # multi-AGENT registry restores EVERY agent's backend, not just the last one.
         return session
 
     def spawn_session(self, name: str, sid: "str | None" = None) -> str:
