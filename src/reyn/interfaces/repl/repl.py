@@ -155,6 +155,21 @@ async def run_repl(registry: AgentRegistry, renderer: ChatRenderer) -> None:
     # a follow-up. Used by both input paths (app working row / toolbar spinner).
     attached.subscribe_chat_events(renderer.on_chat_event)
 
+    # Register the REPL as the session's intervention listener so ask_user /
+    # cost-warn confirm / permission prompts actually surface and can be answered
+    # (the session is built with enforce_listener_presence=True, so without a
+    # registered listener every intervention short-circuits to an empty answer =
+    # silent auto-refuse). DEFAULT_CHAT_CHANNEL_ID ("tui") mirrors the listener the
+    # Textual TUI registered before the inline cutover and the chainlit mount.
+    # Single-agent scope (same as the chat-events subscription above); agent-switch
+    # re-registration is the shared follow-up. AttributeError-guarded for stripped
+    # test sessions.
+    from reyn.runtime.session import DEFAULT_CHAT_CHANNEL_ID
+    try:
+        attached.register_intervention_listener(DEFAULT_CHAT_CHANNEL_ID)
+    except AttributeError:
+        pass
+
     renderer.banner(attached.agent_name)
 
     # `set` = "no reply pending" (the input loop's pacing gate is open).
@@ -192,6 +207,10 @@ async def run_repl(registry: AgentRegistry, renderer: ChatRenderer) -> None:
         )
     finally:
         attached.unsubscribe_chat_events(renderer.on_chat_event)
+        try:
+            attached.unregister_intervention_listener(DEFAULT_CHAT_CHANNEL_ID)
+        except AttributeError:
+            pass
         inputs.cancel()
         outputs.cancel()
         await asyncio.gather(inputs, outputs, return_exceptions=True)
