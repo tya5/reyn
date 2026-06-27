@@ -1968,6 +1968,15 @@ class Session:
     def model(self) -> str:
         return self._model_override if self._model_override is not None else self._agent.model
 
+    def known_model_classes(self) -> list[str]:
+        """Operator-configured model classes selectable via ``/model <class>``.
+
+        The same list ``/model`` (no-arg) prints under ``available:``. Lets a UI
+        offer an actionable model picker without reaching into the resolver; the
+        switch itself stays the ``/model`` slash path (cost-warn + budget rebuild).
+        """
+        return self._resolver.known_classes()
+
     def _rebuild_turn_budget_engine_for_model(self) -> None:
         """#1752: rebuild the chat turn_budget engine for the active model.
 
