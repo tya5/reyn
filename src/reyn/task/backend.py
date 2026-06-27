@@ -36,6 +36,7 @@ from reyn.task.model import (
     TaskRequesterKind,
     TaskState,
     _now_iso,
+    require_valid_status,
 )
 
 
@@ -253,6 +254,9 @@ class InMemoryTaskBackend:
     async def update_status(
         self, task_id: str, status: str, *, caller_session_id: str | None = None
     ) -> Task | None:
+        # #2187 followup data-integrity: reject an invalid status BEFORE any write — the
+        # master never stores a non-member (covers paths that bypass the op Literal).
+        new_status = require_valid_status(status)
         task = self._tasks.get(task_id)
         if task is None:
             return None
@@ -268,7 +272,7 @@ class InMemoryTaskBackend:
                 f"task {task_id!r} status-write rejected: task is terminal "
                 f"({task.status.value}) — no further transitions (e.g. post-abort straggler)"
             )
-        task.status = TaskState(status)
+        task.status = new_status
         task.updated_at = _now_iso()
         return task
 

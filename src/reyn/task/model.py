@@ -45,6 +45,23 @@ TERMINAL_STATES: frozenset[TaskState] = frozenset(
 )
 
 
+def require_valid_status(status: str) -> "TaskState":
+    """Validate ``status`` is a member of the 7-state ``TaskState`` (#2187 followup).
+
+    The backend is the task-state MASTER — it must NEVER store an invalid status. A weak
+    model that emits a stale ``"completed"`` (the pre-#2187 value) or any non-member is
+    caught HERE, not silently written to corrupt the read (the dogfood found a sqlite
+    write that stored a raw invalid string). The op-layer ``Literal`` constrains the LLM
+    path; this is the universal data-integrity guard for EVERY write path (op / A2A /
+    direct / test). Returns the ``TaskState``; raises ``ValueError`` listing the valid
+    values otherwise."""
+    try:
+        return TaskState(status)
+    except ValueError:
+        valid = ", ".join(repr(s.value) for s in TaskState)
+        raise ValueError(f"invalid task status {status!r} — must be one of: {valid}") from None
+
+
 class TaskDepNotFoundError(Exception):
     """A dependency edge references a ``depends_on`` task that does not exist
     (#1953 slice 6, OQ-1). A dangling dep is an instant latent deadlock, so the
