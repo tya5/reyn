@@ -44,11 +44,14 @@ WAKE_REQUESTER_KIND = "task_dependency_aborted"
 # #2187 Stage 4: the task STATE-CHANGE event vocabulary the single publish→deliver seam
 # (``TaskWaker.publish_task_event``) routes on. ``ready``/``assigned`` deliver to the
 # ASSIGNEE subscriber (execute); ``terminal`` delivers to the REQUESTER subscriber
-# (decide recovery). This is the existing local set — an external backend may extend it
+# (decide recovery). #2187 Stage 5c: ``child_settled`` delivers to a decomposition
+# PARENT's managing session (its assignee) when a child settles — the §3.5 waker
+# reconciler. This is the existing local set — an external backend may extend it
 # at integration time.
 TASK_EVENT_READY = "ready"
 TASK_EVENT_ASSIGNED = "assigned"
 TASK_EVENT_TERMINAL = "terminal"
+TASK_EVENT_CHILD_SETTLED = "child_settled"
 
 
 class TaskWaker:
@@ -189,6 +192,40 @@ class TaskWaker:
             managing_task_id=managing_task_id,
         )
 
+    async def wake_parent_on_child_settled(
+        self, parent: Any, *, child_task: Any, disposition: str, reason: str,
+        awaited: int, background: int, stuck_dependents: "list[str]",
+    ) -> None:
+        """#2187 §3.5 (5c): a decomposition child of ``parent`` settled — wake the
+        parent's managing session (``parent.assignee``). ONE wake subsumes recovery +
+        completion-driving (the requester_kind-exclusive routing). ``reason``:
+        ``final_completion`` (all children terminal → the parent may complete),
+        ``continue`` (awaited children cleared → the parent is unblocked), ``recovery``
+        (a child failed/aborted → recover its stuck dependents). The parent acts via
+        ordinary task ops (complete / continue / repoint / abort) — P7, no decision
+        vocabulary."""
+        lines = [
+            f"[task] A child of your task {parent.task_id!r} ('{parent.name}') settled: "
+            f"task {child_task.task_id!r} ('{child_task.name}') reached {disposition!r}."
+        ]
+        if stuck_dependents:
+            lines.append(
+                f"These dependents are now stuck: {stuck_dependents} — recover via task "
+                f"ops (repoint to a substitute, remove the edge, fail them, or handle the "
+                f"work yourself)."
+            )
+        lines.append(f"Your open children now: {awaited} awaited + {background} background.")
+        if reason == "final_completion":
+            lines.append("All children are terminal — you may now complete this task.")
+        elif reason == "continue":
+            lines.append("The awaited children have cleared — continue your work.")
+        await self._wake(
+            parent.assignee, WAKE_REQUESTER_KIND, " ".join(lines),
+            task_id=parent.task_id, child_task_id=child_task.task_id,
+            disposition=disposition, reason=reason, awaited=awaited, background=background,
+            dependents=stuck_dependents,
+        )
+
     async def publish_task_event(self, event_type: str, task: Any, **kwargs: Any) -> None:
         """#2187 Stage 4: the SINGLE publish → deliver seam. A task STATE-CHANGE event is
         delivered to the SUBSCRIBED session (the assignee or requester binding) via the
@@ -208,11 +245,14 @@ class TaskWaker:
             await self.wake_assigned(task, **kwargs)
         elif event_type == TASK_EVENT_TERMINAL:
             await self.notify_requester_decide(terminal_task=task, **kwargs)
+        elif event_type == TASK_EVENT_CHILD_SETTLED:
+            await self.wake_parent_on_child_settled(task, **kwargs)
         else:
             raise ValueError(f"unknown task event_type: {event_type!r}")
 
 
 __all__ = [
     "TASK_EVENT_ASSIGNED", "TASK_EVENT_READY", "TASK_EVENT_TERMINAL",
+    "TASK_EVENT_CHILD_SETTLED",
     "TaskWaker", "WAKE_READY_KIND", "WAKE_REQUESTER_KIND",
 ]
