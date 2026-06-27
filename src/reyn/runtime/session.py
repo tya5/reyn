@@ -80,6 +80,7 @@ from reyn.skill.skill_paths import SkillNotFoundError, resolve_skill_path, stdli
 from reyn.skill.skill_registry import SkillRegistry
 from reyn.skill.skill_runner import SkillRunner
 from reyn.skill.skill_runtime import SkillRuntime
+from reyn.task.subscription import SubscriptionWriter
 from reyn.user_intervention import (
     InterventionAnswer,
     InterventionChoice,
@@ -1252,6 +1253,8 @@ class Session:
         # from this session also need it so dispatch_tool can emit step
         # events into the same WAL.
         self._state_log = state_log
+        # #2187 backend-master: the Task SUBSCRIPTION writer (the Reyn-internal task↔session binding WRITE seam), threaded down the same chain as task_waker.
+        self._task_subscription_writer = SubscriptionWriter(state_log) if state_log is not None else None
         # PR-intervention-link L6: in-memory buffer of answers from
         # restored-then-resolved interventions, keyed by run_id. The first
         # bus.request from the resuming skill at that run_id consumes the
@@ -1590,6 +1593,7 @@ class Session:
             session_id=self._session_id,
             task_backend=self._task_backend,
             task_waker=self._task_waker,  # #2107: thread the TaskWaker into the router op-ctx
+            task_subscription_writer=self._task_subscription_writer,  # #2187 backend-master: the Task subscription WAL writer
             hook_dispatcher=self._hook_dispatcher,  # #1800 slice 5c: task_start/end (router path)
             agent_name=self.agent_name,
             agent_role=self._agent_role,
@@ -3989,6 +3993,7 @@ class Session:
             contextual_permission=self._contextual_permission,  # #1912: narrow skill execution too
             task_backend=self._task_backend,  # #1953 slice 3a: session-scoped Task backend
             task_waker=self._task_waker,  # #1953 slice 7: the OS TaskWaker driver
+            task_subscription_writer=self._task_subscription_writer,  # #2187 backend-master: the Task subscription WAL writer
             task_session_id=self._session_id,  # #1953 slice 3: caller session identity (single-writer key)
             hook_dispatcher=self._hook_dispatcher,  # #1800 slice 5c: task_start/end (phase path)
             mcp_servers=mcp_servers,

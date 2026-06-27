@@ -68,6 +68,18 @@ def _audit(ctx: OpContext, op_kind: str, task_id: str, **fields) -> None:
         events.emit("task_op", op=op_kind, task_id=task_id, **fields)
 
 
+async def _record_subscribed(ctx: OpContext, created) -> None:
+    """#2187 backend-master: append the ``task_subscribed`` binding (the Reyn-internal
+    task↔session subscription) to the WAL. No-op when the OpContext carries no
+    subscription writer (direct construction / tests / no state_log) — the opt-in
+    contract, same as ``task_waker``."""
+    writer = getattr(ctx, "task_subscription_writer", None)
+    if writer is not None:
+        await writer.record_subscribed(
+            created.task_id, assignee=created.assignee, requester=created.requester,
+            requester_kind=created.requester_kind.value)
+
+
 def _ok(kind: str, **data) -> dict:
     return {"kind": kind, "status": "ok", **data}
 
@@ -210,6 +222,11 @@ async def _create(op, ctx: OpContext, caller) -> dict:
     except (TaskCycleError, TaskDepNotFoundError) as err:
         # A born-with dependency is dangling or cycle-forming (OQ-1/OQ-4/OQ-5).
         return _edge_error("task.create", err)
+    # #2187 backend-master: append the task↔session BINDING to the WAL (the Reyn-internal
+    # SUBSCRIPTION — the assignee that executes it + the requester parent that owns it).
+    # The backend holds task-STATE (the external master); this binding is what Reyn owns +
+    # rewinds, so it lives in the WAL.
+    await _record_subscribed(ctx, created)
     _audit(ctx, "task.create", created.task_id, status=created.status.value,
            assignee=created.assignee)
     # WAKES (item 5): a born-startable DELEGATED task → wake the assignee to
