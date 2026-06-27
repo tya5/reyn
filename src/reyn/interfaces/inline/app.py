@@ -36,6 +36,7 @@ from prompt_toolkit.layout.controls import BufferControl, FormattedTextControl
 from prompt_toolkit.layout.dimension import Dimension
 from prompt_toolkit.patch_stdout import patch_stdout
 
+from reyn.interfaces.inline.region import Region
 from reyn.interfaces.repl.renderer import _CC_ACCENT, _CC_DIM, _CC_DONE, _SPINNER
 
 logger = logging.getLogger(__name__)
@@ -162,6 +163,10 @@ async def run_inline_input(registry, renderer) -> None:
     # app.exit() — the second raises "Return value already set". _quit checks+sets
     # this before its first await, so only one ever runs to app.exit().
     quitting: dict = {}
+    # Above-input interactive region (framework skeleton): hosts typed-input
+    # interventions / command UIs in later slices. Zero consumers here, so it has
+    # no elements → not visible → collapses → inert (existing behaviour unchanged).
+    above_region = Region()
 
     def _working_frags() -> list:
         return working_line(
@@ -254,6 +259,28 @@ async def run_inline_input(registry, renderer) -> None:
         ),
     )
 
+    def above_region_frags() -> list:
+        out: list = []
+        for i, ln in enumerate(above_region.lines()):
+            if i:
+                out.append(("", "\n"))
+            if i == above_region.cursor:
+                out.append((f"fg:#0d0f12 bg:{_CC_ACCENT} bold", f" {ln} "))
+            else:
+                out.append((f"fg:{_CC_DIM}", f"   {ln}"))
+        return out
+
+    def above_region_height() -> Dimension:
+        return Dimension.exact(len(above_region.lines()))
+
+    above_region_win = Window(
+        FormattedTextControl(above_region_frags, focusable=True),
+        height=above_region_height,
+    )
+    above_region_box = ConditionalContainer(
+        above_region_win, filter=Condition(lambda: above_region.visible)
+    )
+
     kb = KeyBindings()
 
     @kb.add("enter", filter=has_focus(input_win))
@@ -335,7 +362,29 @@ async def run_inline_input(registry, renderer) -> None:
     def _quit_key(event) -> None:
         event.app.create_background_task(_quit(registry, event.app, quitting))
 
-    body = HSplit([working, top_rule, inputrow, bottom_rule, status_win, dropdown])
+    # Above-region focus navigation (inert until a consumer registers an element,
+    # since the region stays invisible + unfocusable while empty). ↑↓ move the
+    # cursor, enter activates the focused row, esc returns to the input.
+    @kb.add("up", filter=has_focus(above_region_win))
+    def _region_up(event) -> None:
+        above_region.navigate(-1)
+
+    @kb.add("down", filter=has_focus(above_region_win))
+    def _region_down(event) -> None:
+        above_region.navigate(1)
+
+    @kb.add("enter", filter=has_focus(above_region_win))
+    def _region_select(event) -> None:
+        above_region.select()
+
+    @kb.add("escape", filter=has_focus(above_region_win))
+    def _region_esc(event) -> None:
+        event.app.layout.focus(input_win)
+
+    body = HSplit(
+        [working, above_region_box, top_rule, inputrow, bottom_rule, status_win,
+         dropdown]
+    )
     app: Application = Application(
         layout=Layout(body, focused_element=input_win),
         key_bindings=kb,
