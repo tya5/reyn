@@ -271,19 +271,12 @@ def run(args: argparse.Namespace) -> None:
     from reyn.runtime.scoped_session_factory import build_scoped_chat_session
     from reyn.security.permissions.permissions import PermissionResolver
 
-    session_cfg = InvocationContext.from_args(args)
-    from reyn.interfaces.cli.credentials_check import verify_credentials_or_exit
-    verify_credentials_or_exit(session_cfg, args)
-    # ``model`` (= tier key like "standard" / "strong") drives Session's
-    # ModelResolver. ``resolved_model`` (= the litellm string like
-    # "openai/gemini-2.5-flash-lite") is what the header should surface so
-    # the user can see which model their requests actually go to.
-    model, resolved_model = session_cfg.model_for(args)
-    output_language = session_cfg.output_language_for(args)
-    safety = session_cfg.safety_for(args)
-
+    # Compute the interactive-CUI gate and install the log redirect BEFORE any
+    # config load, so config-time WARNING records (malformed reyn.yaml, embedding-
+    # class reconciliation, …) are captured into the log file instead of leaking
+    # into the chat UI — the same class as #2208, closing the remaining
+    # pre-redirect window. project_root + is_interactive have no config dependency.
     project_root = _find_project_root(Path.cwd()) or Path.cwd()
-
     # The inline CUI owns the terminal as a live region, which needs BOTH a TTY
     # stdin (to read keys) AND a TTY stdout (to render the bottom live region).
     # With stdout piped/redirected (e.g. `reyn chat | tee`) the prompt_toolkit
@@ -296,15 +289,24 @@ def run(args: argparse.Namespace) -> None:
         stdin_isatty=sys.stdin.isatty(),
         stdout_isatty=sys.stdout.isatty(),
     )
-
     # Route the root logger to a file so library warnings and caught-exception
     # tracebacks (e.g. an LLM APIConnectionError that session.py logs via
     # logger.exception) don't leak into — and corrupt/alarm — the chat UI.
-    # --cui / non-TTY keep logging on stderr (debuggable / pipeable). Set before
-    # config load so early WARNING records are captured. (Restores the redirect
-    # the Textual TUI had; dropped in the inline-CUI cutover #2195.)
+    # --cui / non-TTY keep logging on stderr (debuggable / pipeable). (Restores
+    # the redirect the Textual TUI had; dropped in the inline-CUI cutover #2195.)
     if is_interactive:
         _setup_interactive_logging(project_root)
+
+    session_cfg = InvocationContext.from_args(args)
+    from reyn.interfaces.cli.credentials_check import verify_credentials_or_exit
+    verify_credentials_or_exit(session_cfg, args)
+    # ``model`` (= tier key like "standard" / "strong") drives Session's
+    # ModelResolver. ``resolved_model`` (= the litellm string like
+    # "openai/gemini-2.5-flash-lite") is what the header should surface so
+    # the user can see which model their requests actually go to.
+    model, resolved_model = session_cfg.model_for(args)
+    output_language = session_cfg.output_language_for(args)
+    safety = session_cfg.safety_for(args)
 
     # PR-resume-ux β U3: handle --reset before constructing state_log so
     # we don't open a freshly-written WAL just to delete it.
