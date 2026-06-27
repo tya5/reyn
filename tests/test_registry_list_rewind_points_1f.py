@@ -130,3 +130,74 @@ def test_list_rewind_points_empty_without_wal(tmp_path) -> None:
     """Tier 2: no WAL → empty list (no crash)."""
     reg = AgentRegistry(project_root=tmp_path, session_factory=_no_factory)
     assert reg.list_rewind_points() == []
+
+
+@pytest.mark.asyncio
+async def test_list_rewind_points_excludes_truncated_seqs(tmp_path) -> None:
+    """Tier 2: #2236 — WAL-truncated checkpoint seqs are NOT advertised.
+
+    After truncation the checkout path rejects seqs below the oldest retained
+    seq with RewindBeyondRetentionError.  list_rewind_points() must agree by
+    construction — it must NEVER return a seq that checkout() would reject.
+
+    Setup mirrors the bug report: checkpoint generation at seq 1, then several
+    more WAL entries are appended (so seq 1 is no longer the highest), then
+    truncate below seq 2 so seq 1 is genuinely dropped.  list_rewind_points()
+    must NOT include seq 1 in its output.
+
+    Note: truncate_below() preserves the single highest seq even when it
+    falls below the requested floor (to avoid resetting the counter), so the
+    test ensures the WAL has entries above the truncation floor.
+    """
+    reg = _make_registry(tmp_path)
+    _seed_agent(tmp_path, "alpha")
+    log = reg.state_log
+
+    s1 = await log.append("inbox_consume", target="alpha", msg_id="m1")  # seq 1 — gen recorded
+    s2 = await log.append("inbox_consume", target="alpha", msg_id="m2")  # seq 2 — no gen
+    s3 = await log.append("inbox_consume", target="alpha", msg_id="m3")  # seq 3 — no gen
+    # Only record a generation at s1; s2 and s3 are plain WAL entries that
+    # act as the "above-floor" anchor so truncate_below(2) actually drops s1.
+    _record_gen(reg, "alpha", s1)
+
+    # Drop seq 1; oldest kept becomes seq 2.  s2 and s3 remain as the watermark.
+    await log.truncate_below(2)
+
+    rows = reg.list_rewind_points()
+    listed_seqs = [r["seq"] for r in rows]
+    assert s1 not in listed_seqs, (
+        f"truncated seq {s1} must not be advertised "
+        f"(oldest kept is now >= {s2}); got {listed_seqs}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_list_rewind_points_keeps_seqs_at_or_above_wal_floor(tmp_path) -> None:
+    """Tier 2: #2236 — seqs at or above the WAL floor remain advertised after truncation.
+
+    Partial truncation: only seqs strictly below the floor are dropped; seqs
+    at the floor or above remain reachable by checkout() and must still appear
+    in list_rewind_points().
+    """
+    reg = _make_registry(tmp_path)
+    _seed_agent(tmp_path, "alpha")
+    log = reg.state_log
+
+    s1 = await log.append("inbox_consume", target="alpha", msg_id="m1")  # will be truncated
+    s2 = await log.append("inbox_consume", target="alpha", msg_id="m2")  # oldest kept (gen)
+    s3 = await log.append("inbox_consume", target="alpha", msg_id="m3")  # above floor (gen)
+    # Also add a plain WAL entry at s4 so s3 is not the highest seq and
+    # truncate_below can freely drop s1 without the watermark-preservation
+    # heuristic interfering with s2 or s3.
+    await log.append("inbox_consume", target="alpha", msg_id="m4")       # seq 4 — no gen
+    for s in (s1, s2, s3):
+        _record_gen(reg, "alpha", s)
+
+    # Drop seq 1; oldest kept = seq 2.
+    await log.truncate_below(2)
+
+    rows = reg.list_rewind_points()
+    listed_seqs = [r["seq"] for r in rows]
+    assert s1 not in listed_seqs, f"truncated seq {s1} must not be advertised"
+    assert s2 in listed_seqs, f"seq {s2} at WAL floor must still be advertised"
+    assert s3 in listed_seqs, f"seq {s3} above WAL floor must still be advertised"
