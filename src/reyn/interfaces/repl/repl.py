@@ -135,18 +135,11 @@ async def run_repl(registry: AgentRegistry, renderer: ChatRenderer) -> None:
         raise RuntimeError("run_repl requires an attached agent; call registry.attach() first")
 
     history_path = attached.workspace_dir / ".input_history"
-    from prompt_toolkit.styles import Style
-    prompt_session: PromptSession[str] = PromptSession(
-        history=FileHistory(str(history_path)),
-        # Render the working-indicator toolbar as a dim status line, not the
-        # default heavy reversed bar.
-        style=Style.from_dict({"bottom-toolbar": "noreverse bg:default"}),
-    )
 
     # Drive the renderer's working indicator from the attached session's turn
     # lifecycle (turn_started → spinner, turn_completed → idle) via the narrow
     # subscribe API. Single-agent scope for now; agent-switch re-subscription is
-    # a follow-up.
+    # a follow-up. Used by both input paths (app working row / toolbar spinner).
     attached.subscribe_chat_events(renderer.on_chat_event)
 
     renderer.banner(attached.agent_name)
@@ -157,9 +150,24 @@ async def run_repl(registry: AgentRegistry, renderer: ChatRenderer) -> None:
     reply_seen: asyncio.Event = asyncio.Event()
     reply_seen.set()
 
-    inputs = asyncio.create_task(
-        _input_loop(registry, prompt_session, renderer, reply_seen)
-    )
+    # Interactive TTY inline renderer → its own rule-bar Application input
+    # driver. --cui / non-TTY (pipe / script) keep the PromptSession `_input_loop`
+    # (plain invariance + the piped reply_seen pacing). _output_loop is shared:
+    # run_in_terminal prints above whichever input is live.
+    if renderer.uses_app_input() and sys.stdin.isatty():
+        from reyn.interfaces.inline.app import run_inline_input
+        inputs = asyncio.create_task(run_inline_input(registry, renderer))
+    else:
+        from prompt_toolkit.styles import Style
+        prompt_session: PromptSession[str] = PromptSession(
+            history=FileHistory(str(history_path)),
+            # Working-indicator toolbar as a dim status line, not the default
+            # heavy reversed bar.
+            style=Style.from_dict({"bottom-toolbar": "noreverse bg:default"}),
+        )
+        inputs = asyncio.create_task(
+            _input_loop(registry, prompt_session, renderer, reply_seen)
+        )
     outputs = asyncio.create_task(
         _output_loop(registry, renderer, reply_seen)
     )

@@ -1,0 +1,70 @@
+"""Tier 2: inline app input driver — working-row fragments + input-path routing flag.
+
+The Application itself is an interactive driver verified live (e2e); here we pin
+the pure fragment builder and the renderer capability flag that selects the app
+input path. Assertions are on public return values, not whitespace/private state.
+"""
+from __future__ import annotations
+
+from datetime import datetime, timezone
+
+from reyn.interfaces.inline.app import working_line
+from reyn.interfaces.repl.renderer import (
+    ChatRenderer,
+    ConsoleChatRenderer,
+    InlineChatRenderer,
+)
+from reyn.schemas.models import Event
+
+
+def _evt(t: str) -> Event:
+    return Event(type=t, timestamp=datetime.now(timezone.utc), data={})
+
+
+def test_working_line_idle_is_empty() -> None:
+    """Tier 2: no working row when a turn is not running."""
+    assert working_line(False, 0.0, 5.0) == []
+
+
+def test_working_line_running_has_spinner_and_label() -> None:
+    """Tier 2: while running, the row carries a spinner glyph + 'Working…'."""
+    frags = working_line(True, 0.0, 3.0)
+    text = "".join(t for _, t in frags)
+    assert "Working" in text
+    assert "3s" in text          # elapsed = now - start
+    assert text.strip()[0] not in ("W",)  # a spinner glyph leads, not the label
+
+
+def test_working_line_elapsed_tracks_now_minus_start() -> None:
+    """Tier 2: elapsed seconds = floor(now - think_start)."""
+    text = "".join(t for _, t in working_line(True, 10.0, 17.4))
+    assert "7s" in text
+
+
+def test_working_line_never_negative_elapsed() -> None:
+    """Tier 2: a clock skew (now < start) clamps elapsed to 0, not negative."""
+    text = "".join(t for _, t in working_line(True, 10.0, 9.0))
+    assert "0s" in text
+    assert "-" not in text
+
+
+def test_inline_renderer_selects_app_input() -> None:
+    """Tier 2: the interactive inline renderer drives input via its own app."""
+    assert InlineChatRenderer().uses_app_input() is True
+
+
+def test_plain_renderers_keep_promptsession_path() -> None:
+    """Tier 2: plain / base renderers stay on the PromptSession _input_loop."""
+    assert ConsoleChatRenderer().uses_app_input() is False
+    assert ChatRenderer().uses_app_input() is False
+
+
+def test_turn_settled_clears_indicator_after_short_circuit_turn() -> None:
+    """Tier 2: turn_settled clears the working indicator even when no
+    turn_completed fired (slash / intervention short-circuit paths)."""
+    r = InlineChatRenderer()
+    r.on_chat_event(_evt("turn_started"))
+    assert r.bottom_toolbar() is not None
+    # A slash turn ends with turn_settled (no turn_completed) — must clear.
+    r.on_chat_event(_evt("turn_settled"))
+    assert r.bottom_toolbar() is None
