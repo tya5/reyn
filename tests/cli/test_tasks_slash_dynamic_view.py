@@ -54,7 +54,7 @@ class _CaptureSession:
 async def _seed_tasks(backend: InMemoryTaskBackend) -> None:
     """Two dynamic tasks with a real dependency: ``build`` -> depends on ``plan``.
 
-    ``plan`` is IN_PROGRESS; ``build`` is born with a dep on the not-yet-completed
+    ``plan`` is RUNNING; ``build`` is born with a dep on the not-yet-done
     ``plan`` so the backend derives it as BLOCKED (both non-terminal → both shown).
     """
     plan = Task(
@@ -147,7 +147,7 @@ async def test_tasks_list_no_backend_falls_back_to_skill_only():
 
 
 @pytest.mark.asyncio
-async def test_tasks_list_shows_completed_hides_only_archived():
+async def test_tasks_list_shows_done_hides_soft_deleted():
     """Tier 2: the Tasks section shows the full plan WITH status (#2036) — a
     DONE task is SHOWN (so the user sees "done" progress + deps to it stay
     intact); only a SOFT-DELETED task (``archived_at`` set, #2187 — the orthogonal

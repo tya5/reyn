@@ -705,7 +705,7 @@ async def _escalate_to_task(
                 result=narration or "(no narration captured)",
             )
             # #1981 P2: reflect the terminal onto the canonical Task (assignee CAS,
-            # race-safe — an A2A Cancel that archived first wins via terminal-guard).
+            # race-safe — an A2A Cancel that aborted first wins via terminal-guard).
             await _reflect_task_status(task_backend, monitor_task_id, "done")
         except Exception as exc:  # noqa: BLE001
             logger.exception("a2a auto-escalation monitor raised")
@@ -908,7 +908,7 @@ async def _handle_answer_injection(
         # the public-status mirror.
         run_registry.update(task_id, status="running")
         # #1981 P3: reflect the answered state onto the canonical Task
-        # (blocked → in_progress) so GetTask leaves input-required, matching the
+        # (blocked → running) so GetTask leaves input-required, matching the
         # RunEntry mirror. The iv resolution itself stays Session-owned.
         await _reflect_task_status(task_backend, task_id, "running")
         result = {"task_id": task_id, "answered": True}
@@ -1096,15 +1096,15 @@ class _A2AProgressBridge:
 async def _reflect_task_status(task_backend, task_id: str, status: str) -> None:
     """Reflect the A2A execution's status onto the canonical Task (#1953 slice 5b
     terminal reflection, generalized for #1981 to drive the interactive
-    ``blocked`` / ``in_progress`` transitions too).
+    ``blocked`` / ``running`` transitions too).
 
     The single-writer is the Task's **assignee session** (the run executes on it),
     so the immutable ``assignee`` read off the Task IS the CAS caller — this is the
     assignee's own status write, not a foreign one (single-writer hygiene). Used
-    for: terminal (completed / failed) on run end, ``blocked`` on ask_user
-    dispatch, ``in_progress`` on answer.
+    for: terminal (done / failed) on run end, ``blocked`` on ask_user
+    dispatch, ``running`` on answer.
 
-    Best-effort and **race-safe**: if an A2A ``Cancel`` already archived the Task,
+    Best-effort and **race-safe**: if an A2A ``Cancel`` already aborted the Task,
     the terminal-guard rejects this write (``PermissionError``) — the abort wins
     and the disposition sweep, not this reflection, notifies the requester. A
     missing backend, unknown task, or assignee-less task is a no-op. Reflection is
@@ -1186,7 +1186,7 @@ async def _handle_async_mode(
     its terminal outcome onto the Task. The single-writer of the Task's status is
     the assignee session (``a2a_session_id(context_id)``), which is exactly the
     session the background ``_run`` executes on — so the reflection update passes
-    the fixed-equality CAS. An A2A ``Cancel`` that archived the Task first wins:
+    the fixed-equality CAS. An A2A ``Cancel`` that aborted the Task first wins:
     the reflection is then rejected by the terminal-guard (race-safe).
     """
     from reyn.interfaces.web.a2a_intervention import A2AInterventionBus  # noqa: PLC0415
@@ -1313,7 +1313,7 @@ async def get_task(
 ) -> dict:
     """A2A GetTask — poll a Task's status from the Task backend (#1953 slice 5a).
     Returns the spec A2A Task envelope (Task-vocab state). The path param is the
-    ``task_id``. A terminal/archived task returns its envelope (status=canceled),
+    ``task_id``. A terminal task returns its envelope (an aborted task → status=canceled),
     a tombstone rather than 404; a genuinely-unknown id is 404."""
     task = await task_backend.get(run_id)
     if task is None:
