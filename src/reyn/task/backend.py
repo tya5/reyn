@@ -27,9 +27,11 @@ from typing import Callable, Protocol
 
 from reyn.task.model import (
     TERMINAL_STATES,
+    ChildCounts,
     Task,
     TaskCycleError,
     TaskDepNotFoundError,
+    TaskLinkType,
     TaskOrigin,
     TaskRequesterKind,
     TaskState,
@@ -141,6 +143,19 @@ class TaskBackend(Protocol):
         ...
 
     async def abort(self, task_id: str, reason: str | None = None) -> list[Task]: ...
+
+    async def children_of(self, pid: str) -> list[Task]:
+        """Direct decomposition children of ``pid`` (#2187 5b) — the collision-safe
+        ownership walk (``requester==pid AND requester_kind=="task"``, finding D),
+        through the WAL-subscription binding authority. The shared primitive under
+        the abort DOWN-cascade and the open-child counts."""
+        ...
+
+    async def open_child_counts(self, pid: str) -> ChildCounts:
+        """Open (non-terminal) child counts of ``pid`` split by link type (#2187
+        §3.4) — derived on-demand from the children's durable states. The
+        completion-join and the waker reconciler read it."""
+        ...
 
     async def set_awaiting(self, task_id: str, awaiting_since: float | None) -> Task | None: ...
 
@@ -374,26 +389,18 @@ class InMemoryTaskBackend:
         # legacy parent_id decomposition tree was removed in §16 slice C — the
         # requester edge is the sole decomposition relation.)
         #
-        # #2187 backend-master (2c-iii): the requester binding is now the WAL-derived
-        # SUBSCRIPTION authority — the cascade PREFERS the reader (requester_of /
-        # requester_kind_of) when one is wired; the stored Task fields are the
-        # no-reader fallback (direct/test construction). The ``requester_kind=='task'``
-        # marker guard is preserved EXACTLY in both paths.
-        reader = self._subscription_reader
+        # #2187 backend-master (2c-iii): the requester binding is the WAL-derived
+        # SUBSCRIPTION authority — the closure walks ``children_of`` (which prefers
+        # the reader, falls back to the stored Task fields, and applies the
+        # collision-safe ``requester_kind=='task'`` guard EXACTLY — finding D, 5b).
         subtree: list[str] = [task_id]
         frontier = [task_id]
         while frontier:
             pid = frontier.pop()
-            for tid, t in self._tasks.items():
-                if reader is not None:
-                    owned = (reader.requester_of(tid) == pid
-                             and reader.requester_kind_of(tid) == "task")
-                else:
-                    owned = (t.requester == pid
-                             and t.requester_kind is TaskRequesterKind.TASK)
-                if owned and tid not in subtree:
-                    subtree.append(tid)
-                    frontier.append(tid)
+            for child in await self.children_of(pid):
+                if child.task_id not in subtree:
+                    subtree.append(child.task_id)
+                    frontier.append(child.task_id)
         aborted: list[Task] = []
         now = _now_iso()
         for tid in subtree:
@@ -420,6 +427,44 @@ class InMemoryTaskBackend:
                     if dep.status not in TERMINAL_STATES:
                         aborted.extend(await self.abort(dep.task_id, reason=reason))
         return aborted
+
+    async def children_of(self, pid: str) -> list[Task]:
+        """Direct decomposition children of ``pid`` — the tasks it OWNS (#2187 5b,
+        finding D). The collision-safe ownership filter: an edge child→pid is
+        followed only when ``requester==pid AND requester_kind=="task"``. The
+        ``task`` marker is REQUIRED — a session routing-key (spawned-session uuid)
+        can collide with a task-id uuid, so a bare requester match would wrongly
+        include a session-requester task. Prefers the WAL-subscription reader (the
+        binding authority); the stored Task fields are the no-reader fallback
+        (direct/test construction). The shared decomposition-walk primitive: the
+        abort DOWN-cascade and the open-child counts both build on it."""
+        reader = self._subscription_reader
+        out: list[Task] = []
+        for tid, t in self._tasks.items():
+            if reader is not None:
+                owned = (reader.requester_of(tid) == pid
+                         and reader.requester_kind_of(tid) == "task")
+            else:
+                owned = (t.requester == pid
+                         and t.requester_kind is TaskRequesterKind.TASK)
+            if owned:
+                out.append(t)
+        return out
+
+    async def open_child_counts(self, pid: str) -> ChildCounts:
+        """Open (non-terminal) child counts of ``pid`` split by link type (#2187
+        §3.4) — derived on-demand from the children's durable states, never stored.
+        ``awaited`` children gate the parent's completion; ``background`` run
+        parallel. The completion-join (5c) and the waker reconciler read this."""
+        awaited = background = 0
+        for child in await self.children_of(pid):
+            if child.status in TERMINAL_STATES:
+                continue
+            if child.link_type is TaskLinkType.BACKGROUND:
+                background += 1
+            else:
+                awaited += 1
+        return ChildCounts(awaited=awaited, background=background)
 
     async def set_result(self, task_id: str, result: str) -> Task | None:
         task = self._tasks.get(task_id)

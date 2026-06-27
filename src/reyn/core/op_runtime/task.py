@@ -25,6 +25,7 @@ from reyn.task import (
     Task,
     TaskCycleError,
     TaskDepNotFoundError,
+    TaskLinkType,
     TaskOrigin,
     TaskRequesterKind,
     TaskState,
@@ -236,6 +237,11 @@ async def _create(op, ctx: OpContext, caller) -> dict:
         assignee=(getattr(op, "assignee", None) or caller_session),
         requester=requester,
         requester_kind=requester_kind,
+        # #2187 §3.5 (5b): the decomposition-link type (awaited gates the parent's
+        # completion; background runs parallel). Marked at create, durable. Default
+        # AWAITED (the safe, blocking default); consulted only for a sub-task
+        # (requester_kind=TASK), unused on a top-level task.
+        link_type=TaskLinkType(getattr(op, "link_type", None) or "awaited"),
         origin=TaskOrigin(getattr(op, "origin", "self") or "self"),
         description=op.description,
         created_by=_actor(ctx),
