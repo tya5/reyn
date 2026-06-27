@@ -76,7 +76,6 @@ While a session is active, lines starting with `/` are intercepted and never rou
 | `/cost-inline` | Toggle per-turn cost suffix in conversation |
 | `/docs-filter [<substring>]` | Filter the docs tab by substring (empty = clear) |
 | `/exit` | Exit the chat (alias: `/quit`, Ctrl+D) |
-| `/find <query>` | Search the conv pane for a substring |
 | `/help [<cmd>]` | Slash command help — list all, or focus on one |
 | `/image <path>` | Attach an image to the next user message (multimodal input) |
 | `/list` | List running skills and pending interventions |
@@ -86,7 +85,6 @@ While a session is active, lines starting with `/` are intercepted and never rou
 | `/quit` | Exit the chat (alias: `/exit`, Ctrl+D) |
 | `/reset confirm` | Reset in-flight skill state (snapshots + WAL; audit logs preserved) |
 | `/rewind [seq]` | Time-travel to an earlier checkpoint — no arg opens the picker menu; `seq` jumps directly (see [Time-travel](../../concepts/runtime/time-travel.md) · [How-to](../../guide/for-users/time-travel.md)) |
-| `/save [path]` | Save the conv pane to a file (auto-names if path omitted) |
 | `/session new \| switch <sid> \| list` | Open / switch / list conversation sessions for the attached agent (see [Sessions](../../concepts/multi-agent/sessions.md)) |
 | `/skill list` | Show active skill runs (id, name, current phase + parent lineage) |
 | `/skill discard <run_id>` | Abort a specific skill run + cleanup |
@@ -95,7 +93,7 @@ While a session is active, lines starting with `/` are intercepted and never rou
 | `/tasks status <prefix>` | Show current phase + elapsed for a specific skill run |
 | `/tasks kill <prefix>` | Cancel a specific skill run; prefix matches against skill run_ids |
 
-`/list` / `/cancel` / `/answer` are foundational — they let multiple skill runs and interventions coexist without blocking the prompt. `/agents` / `/attach` / `/agent` are the multi-agent workflow primitives. `/skill` is the crash-recovery operator command that surfaces the per-skill-run lifecycle: inspect what is running or abort a stuck run. `/tasks` is the unified entry point for skill runs — the LLM also points users at `/tasks` after a skill is spawned. `/copy`, `/find`, and `/save` are conversation-pane utilities; `/image` enables multimodal input.
+`/list` / `/cancel` / `/answer` are foundational — they let multiple skill runs and interventions coexist without blocking the prompt. `/agents` / `/attach` / `/agent` are the multi-agent workflow primitives. `/skill` is the crash-recovery operator command that surfaces the per-skill-run lifecycle: inspect what is running or abort a stuck run. `/tasks` is the unified entry point for skill runs — the LLM also points users at `/tasks` after a skill is spawned. `/copy` is a conversation-pane utility; `/image` enables multimodal input.
 
 ## Multi-agent behavior
 
