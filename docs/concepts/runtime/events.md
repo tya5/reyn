@@ -31,6 +31,10 @@ Three big buckets, plus a few smaller ones:
 
 The full taxonomy lives in the [events reference](../../reference/runtime/events.md).
 
+### Task subscription events — WAL, not audit log
+
+Task↔session binding changes (`task_subscribed`, `task_rebound`) are recorded in the **WAL** (StateLog, `.reyn/state/wal.jsonl`) — not in the P6 audit event log. The WAL is the crash-recovery and time-travel substrate; the audit log is the per-run trace. They are separate logs with different durability contracts (see [Time-travel](time-travel.md) — *WAL vs audit-event separation*). Do not look for `task_subscribed` in the audit log; it is not there.
+
 ## What an event is
 
 Every event has a stable envelope:
