@@ -7,7 +7,7 @@ rows, and dispatches select to the owning element. An empty region collapses
 """
 from __future__ import annotations
 
-from reyn.interfaces.inline.region import Region
+from reyn.interfaces.inline.region import DetailElement, Region
 
 
 class _Element:
@@ -79,3 +79,50 @@ def test_unregister_and_clear_collapse_the_region() -> None:
     region.clear()
     assert region.visible is False
     assert region.lines() == []
+
+
+def test_detail_element_is_live_and_non_selectable() -> None:
+    """Tier 2: F5 — DetailElement re-reads its provider on every lines() call (so
+    a status panel stays live) and is non-selectable with an inert on_select."""
+    box = {"rows": ["cost $0.01", "total 105"]}
+    el = DetailElement(lambda: box["rows"])
+    assert el.selectable is False
+    assert el.lines() == ["cost $0.01", "total 105"]
+    el.on_select(0)  # inert — no error, no state
+    box["rows"] = ["cost $0.02"]
+    assert el.lines() == ["cost $0.02"]  # live
+
+
+def test_navigate_skips_non_selectable_rows() -> None:
+    """Tier 2: F5 — the cursor steps over read-only (DetailElement) rows and never
+    lands on one; a read-only-only region cannot be navigated."""
+    ro = Region()
+    ro.register(DetailElement(lambda: ["info-a", "info-b"]))
+    assert ro.cursor_on_selectable is False
+    ro.navigate(1)
+    assert ro.cursor_on_selectable is False  # no selectable target to move to
+
+    mixed = Region()
+    mixed.register(DetailElement(lambda: ["detail-0"]))   # flat row 0 (read-only)
+    mixed.register(_Element(["pick-0", "pick-1"]))        # flat rows 1, 2 (selectable)
+    # the cursor resets to the first SELECTABLE row, skipping the detail row
+    assert mixed.cursor == 1
+    assert mixed.cursor_on_selectable is True
+    mixed.navigate(1)
+    assert mixed.cursor == 2
+    mixed.navigate(-5)            # clamps at the first selectable row, not row 0
+    assert mixed.cursor == 1
+    assert mixed.at_first_selectable is True
+
+
+def test_select_inert_until_a_selectable_row_exists() -> None:
+    """Tier 2: F5 — select on a read-only-only region is a no-op; once a
+    selectable element is added the cursor reaches it and select fires."""
+    el = _Element(["x"])
+    region = Region()
+    region.register(DetailElement(lambda: ["d0"]))
+    region.select()              # only a detail row → nothing activated
+    assert el.selected == []
+    region.register(el)          # cursor resets onto the selectable row
+    region.select()
+    assert el.selected == [0]
