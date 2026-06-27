@@ -148,42 +148,6 @@ class TaskBackend(Protocol):
 
     async def add_comment(self, task_id: str, author: str, body: str) -> str | None: ...
 
-    # ── Rewind substrate (#1953 slice R) ─────────────────────────────────────
-    # A backend opts INTO session-rewind participation by setting
-    # ``supports_rewind = True`` and implementing per-generation snapshot/restore.
-    # The OS captures a generation at every WAL boundary seq (``SnapshotJournal.
-    # cut_generation``) and restores the nearest *active* generation <= the rewind
-    # target (``_materialize_rewind``) — symmetric with ``WorkspaceVersionStore``
-    # (the runtime + workspace substrates). A backend whose state cannot be
-    # rewound (in-memory; external trackers like gh-issue/jira) leaves
-    # ``supports_rewind = False`` and the OS skips it (opt-out).
-    supports_rewind: bool
-
-    async def snapshot_generation(self, seq: int) -> None:
-        """Capture a full point-in-time generation keyed by the WAL boundary
-        ``seq``. Idempotent for a given seq. No-op when ``supports_rewind`` is
-        False."""
-        ...
-
-    async def restore_to_seq(self, seq: int) -> None:
-        """Restore backend state to the generation captured at ``seq`` — the OS
-        passes the nearest active seq <= the rewind target. No-op when
-        ``supports_rewind`` is False."""
-        ...
-
-    async def generation_seqs(self) -> list[int]:
-        """Seqs of all captured generations, ascending — the OS resolves the
-        nearest *active* one <= the rewind target (``is_active_seq``, symmetric
-        with ``WorkspaceVersionStore.seqs``). Empty when ``supports_rewind`` is
-        False."""
-        ...
-
-    async def prune_generations_below(self, min_keep_seq: int) -> int:
-        """Drop generations older than ``min_keep_seq`` (WAL-truncation
-        piggyback, bounds storage). Returns the count removed. No-op when
-        ``supports_rewind`` is False."""
-        ...
-
 
 class InMemoryTaskBackend:
     """Process-local dict-backed backend (slice 1 stub + the ``in-memory``
@@ -191,12 +155,36 @@ class InMemoryTaskBackend:
     is the first durable backend. Single-threaded async; no locking needed
     because slice 1 does not yet enforce CAS."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, subscription_reader=None) -> None:
         self._tasks: dict[str, Task] = {}
         # slice-1 stub stores for ops whose enforcement lands later.
         self._predicates: dict[str, str] = {}
         self._comments: dict[str, list[dict]] = {}
         self._comment_seq = 0
+        # #2187 backend-master: the WAL-derived SUBSCRIPTION reader (the binding
+        # authority — assignee/requester/requester_kind). The backend holds
+        # task-STATE; the binding is hydrated THROUGH this reader. None =
+        # direct/test construction (the stored columns stand, the additive 2c-i
+        # fallback).
+        self._subscription_reader = subscription_reader
+
+    def _hydrate_binding(self, task: "Task | None") -> "Task | None":
+        """#2187 backend-master (2c-i): overlay the WAL-derived binding
+        (assignee/requester/requester_kind) onto a Task before returning it (the
+        read-through). Additive — overlays ONLY a field the reader HAS a record
+        for, so the stored-column value is the fallback. No-op when there is no
+        reader."""
+        if task is not None and self._subscription_reader is not None:
+            a = self._subscription_reader.assignee_of(task.task_id)
+            if a is not None:
+                task.assignee = a
+            r = self._subscription_reader.requester_of(task.task_id)
+            if r is not None:
+                task.requester = r
+            rk = self._subscription_reader.requester_kind_of(task.task_id)
+            if rk is not None:
+                task.requester_kind = TaskRequesterKind(rk)
+        return task
 
     def _deps_of(self, node: str) -> list[str]:
         t = self._tasks.get(node)
@@ -229,7 +217,7 @@ class InMemoryTaskBackend:
         return task
 
     async def get(self, task_id: str) -> Task | None:
-        return self._tasks.get(task_id)
+        return self._hydrate_binding(self._tasks.get(task_id))
 
     async def list(
         self,
@@ -238,7 +226,7 @@ class InMemoryTaskBackend:
         requester: str | None = None,
         status: str | None = None,
     ) -> list[Task]:
-        out = list(self._tasks.values())
+        out = [self._hydrate_binding(t) for t in self._tasks.values()]
         if assignee is not None:
             out = [t for t in out if t.assignee == assignee]
         if requester is not None:
@@ -253,13 +241,10 @@ class InMemoryTaskBackend:
         task = self._tasks.get(task_id)
         if task is None:
             return None
-        # Single-writer CAS: only the assignee session may write (fixed equality).
-        if task.assignee != caller_session_id:
-            raise PermissionError(
-                f"task {task_id!r} status-write rejected: caller "
-                f"{caller_session_id!r} is not the assignee {task.assignee!r} "
-                f"(single-writer)"
-            )
+        # #2187 backend-master: the backend is the task-state MASTER — it APPLIES the
+        # request + enforces only the STATE-VALIDITY terminal-guard below. The
+        # single-writer OWNERSHIP CAS (caller == assignee) is now OP-LAYER gating against
+        # the WAL-subscription; ``caller_session_id`` is accepted (audit) but not gated.
         # Terminal-guard: a terminal task takes no further transitions — this is
         # the abort straggler-reject (Option B, #1953): an assignee write after
         # the requester aborts the task is rejected, so no straggler lands.
@@ -388,13 +373,24 @@ class InMemoryTaskBackend:
         # to an earlier task) + the in-set guard → bounded, no double-abort. (The
         # legacy parent_id decomposition tree was removed in §16 slice C — the
         # requester edge is the sole decomposition relation.)
+        #
+        # #2187 backend-master (2c-iii): the requester binding is now the WAL-derived
+        # SUBSCRIPTION authority — the cascade PREFERS the reader (requester_of /
+        # requester_kind_of) when one is wired; the stored Task fields are the
+        # no-reader fallback (direct/test construction). The ``requester_kind=='task'``
+        # marker guard is preserved EXACTLY in both paths.
+        reader = self._subscription_reader
         subtree: list[str] = [task_id]
         frontier = [task_id]
         while frontier:
             pid = frontier.pop()
             for tid, t in self._tasks.items():
-                owned = (t.requester == pid
-                         and t.requester_kind is TaskRequesterKind.TASK)
+                if reader is not None:
+                    owned = (reader.requester_of(tid) == pid
+                             and reader.requester_kind_of(tid) == "task")
+                else:
+                    owned = (t.requester == pid
+                             and t.requester_kind is TaskRequesterKind.TASK)
                 if owned and tid not in subtree:
                     subtree.append(tid)
                     frontier.append(tid)
@@ -452,20 +448,3 @@ class InMemoryTaskBackend:
             {"id": comment_id, "author": author, "body": body, "ts": _now_iso()}
         )
         return comment_id
-
-    # ── Rewind substrate (#1953 slice R): opt-out ────────────────────────────
-    # In-memory state is ephemeral and process-local — it cannot be rewound, so
-    # this backend declares supports_rewind=False and no-ops the substrate hooks.
-    supports_rewind: bool = False
-
-    async def snapshot_generation(self, seq: int) -> None:
-        return None
-
-    async def restore_to_seq(self, seq: int) -> None:
-        return None
-
-    async def generation_seqs(self) -> list[int]:
-        return []
-
-    async def prune_generations_below(self, min_keep_seq: int) -> int:
-        return 0

@@ -77,6 +77,20 @@ class TaskWaker:
         await session._put_inbox(kind, {"text": text, "sender": "task:os", "meta": dict(meta)})
         self._registry.ensure_session_running(self._agent_name, session_id)
 
+    def resolves(self, session_id: str) -> bool:
+        """#2187 backend-master (dogfood-fix #45): does ``session_id`` (an assignee)
+        resolve to a REAL session of THIS agent? task.create rejects a delegation to a
+        non-existent (agent, session) using this — the #45 orphan root cause: a bare-sid
+        assignee that names no live session has its execute-wake SILENTLY DROPPED (see
+        ``_wake``: ``get_session`` → None → "wake dropped"), so the task is never run.
+        Same resolution as ``_wake``, WITHOUT delivering or spawning:
+        - a bare per-session sid must name a LIVE session (``get_session`` non-None);
+        - a ``<transport>:<native_id>`` routing-key is a valid get-or-spawn A2A/MCP
+          target by construction → accepted."""
+        if ":" in session_id:
+            return True
+        return self._registry.get_session(self._agent_name, session_id) is not None
+
     @staticmethod
     def _execute_message(task: Any, *, lead_in: str, fenced_description: str | None) -> str:
         """Build the wake text as a TRUSTED OS execution instruction (#1953 WAKES).

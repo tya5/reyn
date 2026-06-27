@@ -27,6 +27,8 @@ import pytest
 
 from reyn.core.op_runtime import task as taskmod
 from reyn.task import InMemoryTaskBackend, SqliteTaskBackend, Task, TaskRequesterKind, TaskState
+from reyn.task.subscription import SubscriptionRegistry
+from tests._support.task_subscription import SubscriptionBackend
 
 
 def _create_op(name, *, deps=None):
@@ -42,12 +44,17 @@ def _ctx(backend, *, session_id, current_task_id=None):
 
 @pytest.fixture(params=["inmem", "sqlite"])
 def backend(request, tmp_path):
+    # #2187 backend-master: the ownership (requester) edge the cascade follows is the
+    # WAL-derived SUBSCRIPTION binding (not a column) — wire each backend's read-through to
+    # a SubscriptionRegistry + record each create's binding to it via the op-mimic wrapper,
+    # so the down-cascade walks the real binding (whether the op or a direct create made it).
+    cp = SubscriptionRegistry()
     if request.param == "inmem":
-        yield InMemoryTaskBackend()
+        yield SubscriptionBackend(InMemoryTaskBackend(subscription_reader=cp), cp)
     else:
-        b = SqliteTaskBackend(tmp_path / "tasks.db")
-        yield b
-        b.close()
+        real = SqliteTaskBackend(tmp_path / "tasks.db", subscription_reader=cp)
+        yield SubscriptionBackend(real, cp)
+        real.close()
 
 
 @pytest.fixture(autouse=True)

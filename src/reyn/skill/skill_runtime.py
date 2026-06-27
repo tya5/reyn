@@ -56,6 +56,7 @@ class SkillRuntime:
         contextual_permission: "object | None" = None,  # #1912: per-session capability narrowing → phase/control-IR gates (None = byte-identical)
         task_backend: "object | None" = None,  # #1953 slice 3a: session-scoped Task backend
         task_waker: "object | None" = None,  # #1953 slice 7: the OS TaskWaker driver
+        task_subscription_writer: "object | None" = None,  # #2187 backend-master: the Task subscription WAL writer
         hook_dispatcher: "object | None" = None,  # #1800 slice 5c: task_start/end (phase path)
         task_session_id: "str | None" = None,  # #1953 slice 3: caller session identity (Task single-writer key)
         mcp_servers: dict | None = None,
@@ -100,6 +101,7 @@ class SkillRuntime:
         self._contextual_permission = contextual_permission
         self._task_backend = task_backend  # #1953 slice 3a
         self._task_waker = task_waker  # #1953 slice 7
+        self._task_subscription_writer = task_subscription_writer  # #2187 backend-master: the Task subscription WAL writer
         self._hook_dispatcher = hook_dispatcher  # #1800 slice 5c
         self._task_session_id = task_session_id  # #1953 slice 3
         self._resolver = resolver or ModelResolver({})
@@ -327,6 +329,7 @@ class SkillRuntime:
             contextual_permission=self._contextual_permission,  # #1912
             task_backend=self._task_backend,  # #1953 slice 3a
             task_waker=self._task_waker,  # #1953 slice 7
+            task_subscription_writer=self._task_subscription_writer,  # #2187 backend-master: the Task subscription WAL writer
             hook_dispatcher=self._hook_dispatcher,  # #1800 slice 5c
             task_session_id=self._task_session_id,  # #1953 slice 3
 

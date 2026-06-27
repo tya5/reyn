@@ -68,6 +68,42 @@ def _audit(ctx: OpContext, op_kind: str, task_id: str, **fields) -> None:
         events.emit("task_op", op=op_kind, task_id=task_id, **fields)
 
 
+def _reject_unknown_assignee(ctx: OpContext, assignee, caller_session) -> "dict | None":
+    """#2187 dogfood-fix (#45): a decision-enabling error result when a DELEGATED
+    assignee (≠ the caller) does not resolve to a live session of the agent — delegating
+    to a non-existent (agent, session) would silently orphan the task (its execute-wake
+    is dropped). None = ok / self-task (assignee == caller, the live caller) / no waker
+    wired (direct construction / tests — the opt-in contract)."""
+    waker = getattr(ctx, "task_waker", None)
+    if waker is None or assignee == caller_session:
+        return None
+    if not waker.resolves(assignee):
+        return {
+            "kind": "task.create", "status": "error",
+            "error": {
+                "kind": "unknown_assignee",
+                "message": (
+                    f"task.create rejected: assignee {assignee!r} is not a live session "
+                    f"of agent {getattr(ctx, 'agent_id', None)!r} — cannot delegate to a "
+                    f"non-existent (agent, session); the task would be orphaned."
+                ),
+            },
+        }
+    return None
+
+
+async def _record_subscribed(ctx: OpContext, created) -> None:
+    """#2187 backend-master: append the ``task_subscribed`` binding (the Reyn-internal
+    task↔session subscription) to the WAL. No-op when the OpContext carries no
+    subscription writer (direct construction / tests / no state_log) — the opt-in
+    contract, same as ``task_waker``."""
+    writer = getattr(ctx, "task_subscription_writer", None)
+    if writer is not None:
+        await writer.record_subscribed(
+            created.task_id, assignee=created.assignee, requester=created.requester,
+            requester_kind=created.requester_kind.value)
+
+
 def _ok(kind: str, **data) -> dict:
     return {"kind": kind, "status": "ok", **data}
 
@@ -205,11 +241,23 @@ async def _create(op, ctx: OpContext, caller) -> dict:
         created_by=_actor(ctx),
         deps=list(op.deps),
     )
+    # #2187 dogfood-fix (#45): reject a delegation to a NON-EXISTENT (agent, session)
+    # BEFORE creating anything — a bare-sid assignee that names no live session would
+    # have its execute-wake silently dropped (the orphan root cause). Self-task /
+    # no-waker → no check (opt-in).
+    denied = _reject_unknown_assignee(ctx, task.assignee, caller_session)
+    if denied is not None:
+        return denied
     try:
         created = await _backend(ctx).create(task)
     except (TaskCycleError, TaskDepNotFoundError) as err:
         # A born-with dependency is dangling or cycle-forming (OQ-1/OQ-4/OQ-5).
         return _edge_error("task.create", err)
+    # #2187 backend-master: append the task↔session BINDING to the WAL (the Reyn-internal
+    # SUBSCRIPTION — the assignee that executes it + the requester parent that owns it).
+    # The backend holds task-STATE (the external master); this binding is what Reyn owns +
+    # rewinds, so it lives in the WAL.
+    await _record_subscribed(ctx, created)
     _audit(ctx, "task.create", created.task_id, status=created.status.value,
            assignee=created.assignee)
     # WAKES (item 5): a born-startable DELEGATED task → wake the assignee to
@@ -239,11 +287,18 @@ async def _create(op, ctx: OpContext, caller) -> dict:
 
 
 async def _update_status(op, ctx: OpContext, caller) -> dict:
-    # assignee-gated single-writer: the backend CAS-rejects when ctx.session_id
-    # != the immutable assignee (#1814 routing-key). Atomic, so no separate check.
-    task = await _backend(ctx).update_status(
-        op.task_id, op.status, caller_session_id=_caller_session(ctx)
-    )
+    # #2187 backend-master: the single-writer CAS is OP-LAYER ownership-gating — the
+    # caller must be the task's CURRENT assignee (the WAL-subscription binding, hydrated
+    # onto the fetched task; mutable, so this is the current owner not a frozen one).
+    # _authorize does exactly that assignee-check. Read-then-request is safe under the
+    # single-writer invariant (one writer per task) + WAL ordering. The backend (the
+    # task-state MASTER) then APPLIES the request — its only gate is the terminal-check
+    # (a state-validity rule: no transition out of a terminal state), NOT the binding.
+    _bound, denied = await _authorize(
+        "task.update_status", ctx, _backend(ctx), op.task_id, "assignee")
+    if denied is not None:
+        return denied
+    task = await _backend(ctx).update_status(op.task_id, op.status)
     if task is None:
         return _not_found("task.update_status", op.task_id)
     _audit(ctx, "task.update_status", op.task_id, status=op.status)

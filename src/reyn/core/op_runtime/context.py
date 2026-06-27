@@ -191,6 +191,15 @@ class OpContext:
     # inject a recording waker to verify the call-site fires.
     task_waker: "object | None" = None
 
+    # #2187 backend-master: the Task SUBSCRIPTION writer (a SubscriptionWriter; parallel
+    # to task_backend / task_waker, threaded down the SAME Session → SkillRuntime →
+    # OSRuntime chain). The mutating task ops (create / reassign) call it to append the
+    # task↔session BINDING to the WAL (the Reyn-internal subscription — what Reyn owns +
+    # rewinds; the backend keeps task-STATE). None = no-op (direct/test construction or
+    # no state_log) → the op skips the append (the opt-in contract). Tests inject a
+    # recording writer to verify the binding append.
+    task_subscription_writer: "object | None" = None
+
     # #1800 slice 5c: the awaited HookDispatcher (the Session's instance, with the
     # loaded hooks registry + the _put_inbox/_stage/_run_shell seams from 5b),
     # threaded down the SAME Session → router / kernel chain as task_waker. The

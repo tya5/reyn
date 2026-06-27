@@ -94,6 +94,14 @@ WAL_EVENT_KINDS = (
     "topology_created",
     "topology_updated",
     "topology_removed",
+    # #2187 backend-master: the Task SUBSCRIPTION (the Reyn-internal task↔session
+    # binding — assignee + requester). The backend is the external MASTER of task-STATE
+    # (status/content/DAG, NOT in the WAL); the WAL holds only what Reyn owns + rewinds:
+    # session + subscription. ``task_subscribed`` = a task's initial binding;
+    # ``task_rebound`` = the assignee binding changed (reassign / unbind). Applied to the
+    # live SubscriptionRegistry (subscription.py) — as-of-cut reconstruction by replay.
+    "task_subscribed",
+    "task_rebound",
 )
 
 

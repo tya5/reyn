@@ -80,6 +80,7 @@ from reyn.skill.skill_paths import SkillNotFoundError, resolve_skill_path, stdli
 from reyn.skill.skill_registry import SkillRegistry
 from reyn.skill.skill_runner import SkillRunner
 from reyn.skill.skill_runtime import SkillRuntime
+from reyn.task.subscription import SubscriptionWriter
 from reyn.user_intervention import (
     InterventionAnswer,
     InterventionChoice,
@@ -1235,12 +1236,6 @@ class Session:
             generation_store=self._generation_store,
             session_id=session_id,  # FP-0043 S5: per-session WAL routing
         )
-        # #1953 slice R: hand the journal this session's Task backend so
-        # cut_generation captures the task db at each WAL boundary (opt-in — a
-        # non-rewinding backend is skipped there). I-5=(A): only a per-session
-        # backend is threaded here (build_scoped_chat_session); the A2A/web
-        # process-singleton is never given to a session, so it never rewinds.
-        self._journal.set_task_backend(self._task_backend)
         # ADR-0038 Stage 1c: turn-idle event for quiescence. Set = no turn in
         # flight; cleared while run_one_iteration processes a turn. Lets a global
         # rewind await all in-flight WAL appends settling (await_quiescent) before
@@ -1258,6 +1253,8 @@ class Session:
         # from this session also need it so dispatch_tool can emit step
         # events into the same WAL.
         self._state_log = state_log
+        # #2187 backend-master: the Task SUBSCRIPTION writer (the Reyn-internal task↔session binding WRITE seam), threaded down the same chain as task_waker.
+        self._task_subscription_writer = SubscriptionWriter(state_log) if state_log is not None else None
         # PR-intervention-link L6: in-memory buffer of answers from
         # restored-then-resolved interventions, keyed by run_id. The first
         # bus.request from the resuming skill at that run_id consumes the
@@ -1596,6 +1593,7 @@ class Session:
             session_id=self._session_id,
             task_backend=self._task_backend,
             task_waker=self._task_waker,  # #2107: thread the TaskWaker into the router op-ctx
+            task_subscription_writer=self._task_subscription_writer,  # #2187 backend-master: the Task subscription WAL writer
             hook_dispatcher=self._hook_dispatcher,  # #1800 slice 5c: task_start/end (router path)
             agent_name=self.agent_name,
             agent_role=self._agent_role,
@@ -2393,13 +2391,11 @@ class Session:
 
     @property
     def task_backend(self) -> "object | None":
-        """Read-only accessor for this session's Task backend (#1953 slice R).
+        """Read-only accessor for this session's Task backend (#1953 slice 3a).
 
-        The registry pulls it at construction (``_construct_session``) so the
-        rewind/recovery restore (``_restore_task_active``) has a handle to the
-        same per-session backend the capture seam (cut_generation) snapshots.
-        None when the session carries no backend (op-runtime in-memory fallback).
-        """
+        The registry hands the GLOBAL backend in at construction
+        (``_construct_session``). None when the session carries no backend
+        (op-runtime in-memory fallback)."""
         return self._task_backend
 
     def iter_applied_seqs(
@@ -3997,6 +3993,7 @@ class Session:
             contextual_permission=self._contextual_permission,  # #1912: narrow skill execution too
             task_backend=self._task_backend,  # #1953 slice 3a: session-scoped Task backend
             task_waker=self._task_waker,  # #1953 slice 7: the OS TaskWaker driver
+            task_subscription_writer=self._task_subscription_writer,  # #2187 backend-master: the Task subscription WAL writer
             task_session_id=self._session_id,  # #1953 slice 3: caller session identity (single-writer key)
             hook_dispatcher=self._hook_dispatcher,  # #1800 slice 5c: task_start/end (phase path)
             mcp_servers=mcp_servers,
