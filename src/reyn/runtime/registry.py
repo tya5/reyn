@@ -260,6 +260,14 @@ class AgentRegistry:
         self._tasks: dict[tuple[str, str], asyncio.Task] = {}         # (name,sid) -> session.run() task
         self._forward_tasks: dict[tuple[str, str], asyncio.Task] = {} # (name,sid) -> outbox forwarder
         self._attached: "tuple[str, str] | None" = None              # (name, sid) focus
+        # Focus-following front-end listeners (REPL/CUI): a chat-event callback
+        # (working indicator) and an intervention listener channel (ask_user) that
+        # must follow the attached session across agent switches. None until a
+        # front-end binds them; wired to the attached session on bind and re-wired
+        # on every attach so a `/attach <other>` doesn't strand them on the old
+        # session. Generic session-level listeners (not skill-specific).
+        self._focus_chat_listener: "Callable[..., None] | None" = None
+        self._focus_intervention_channel: str | None = None
         # WAL truncation throttle (skill resume design). monotonic ts of last
         # successful truncation attempt; ``None`` means no throttle is active.
         self._last_truncation_ts: float | None = None
@@ -2550,6 +2558,54 @@ class AgentRegistry:
             self._tasks[key] = asyncio.create_task(session.run())
         return session
 
+    def bind_focus_listeners(
+        self,
+        *,
+        on_chat_event: "Callable[..., None] | None" = None,
+        intervention_channel: str | None = None,
+    ) -> None:
+        """Bind front-end listeners that follow the focused (attached) session.
+
+        The interactive REPL/CUI binds its working-indicator chat-event callback
+        and its intervention listener channel here ONCE; the registry wires them
+        to the currently-attached session now and re-wires them on every
+        subsequent ``attach`` / ``attach_session`` so an agent switch never
+        strands them on the old session. Idempotent per front-end (one binding).
+        """
+        self._focus_chat_listener = on_chat_event
+        self._focus_intervention_channel = intervention_channel
+        self._wire_focus_listeners(self.attached_session())
+
+    def unbind_focus_listeners(self) -> None:
+        """Unwire the focus listeners from the live attached session and clear
+        the binding (front-end teardown). Uses the CURRENT attached session, so a
+        switch before teardown unwires the right one."""
+        self._unwire_focus_listeners(self.attached_session())
+        self._focus_chat_listener = None
+        self._focus_intervention_channel = None
+
+    def _wire_focus_listeners(self, session: "object | None") -> None:
+        if session is None:
+            return
+        if self._focus_chat_listener is not None:
+            session.subscribe_chat_events(self._focus_chat_listener)
+        if self._focus_intervention_channel is not None:
+            try:
+                session.register_intervention_listener(self._focus_intervention_channel)
+            except AttributeError:
+                pass
+
+    def _unwire_focus_listeners(self, session: "object | None") -> None:
+        if session is None:
+            return
+        if self._focus_chat_listener is not None:
+            session.unsubscribe_chat_events(self._focus_chat_listener)
+        if self._focus_intervention_channel is not None:
+            try:
+                session.unregister_intervention_listener(self._focus_intervention_channel)
+            except AttributeError:
+                pass
+
     async def attach(self, name: str) -> "object":
         """Switch the attached agent to `name`. Loads + starts session.run()
         and the outbox forwarder for the new agent if not already running.
@@ -2565,8 +2621,14 @@ class AgentRegistry:
                 # from the old session start dropping at the source
                 # (`Session._put_outbox` filters status/trace).
                 old_session.is_attached = False
+                # Move any focus-following front-end listeners off the old session.
+                self._unwire_focus_listeners(old_session)
 
         new_session.is_attached = True
+        if old != key:
+            # First attach or a genuine switch: wire the focus listeners to the
+            # now-focused session (no-op if no front-end bound any).
+            self._wire_focus_listeners(new_session)
         # Boot session.run() + forwarder on first attach. Keep them alive
         # across detach/re-attach cycles — shutdown drains via `running_tasks()`.
         if key not in self._tasks or self._tasks[key].done():
@@ -2606,7 +2668,10 @@ class AgentRegistry:
             old_session = self._peek_session(old[0], old[1])
             if old_session is not None:
                 old_session.is_attached = False
+                self._unwire_focus_listeners(old_session)
         target.is_attached = True
+        if old != key:
+            self._wire_focus_listeners(target)
         if key not in self._tasks or self._tasks[key].done():
             self._tasks[key] = asyncio.create_task(target.run())
         if key not in self._forward_tasks or self._forward_tasks[key].done():
