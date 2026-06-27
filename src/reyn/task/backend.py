@@ -155,12 +155,36 @@ class InMemoryTaskBackend:
     is the first durable backend. Single-threaded async; no locking needed
     because slice 1 does not yet enforce CAS."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, subscription_reader=None) -> None:
         self._tasks: dict[str, Task] = {}
         # slice-1 stub stores for ops whose enforcement lands later.
         self._predicates: dict[str, str] = {}
         self._comments: dict[str, list[dict]] = {}
         self._comment_seq = 0
+        # #2187 backend-master: the WAL-derived SUBSCRIPTION reader (the binding
+        # authority — assignee/requester/requester_kind). The backend holds
+        # task-STATE; the binding is hydrated THROUGH this reader. None =
+        # direct/test construction (the stored columns stand, the additive 2c-i
+        # fallback).
+        self._subscription_reader = subscription_reader
+
+    def _hydrate_binding(self, task: "Task | None") -> "Task | None":
+        """#2187 backend-master (2c-i): overlay the WAL-derived binding
+        (assignee/requester/requester_kind) onto a Task before returning it (the
+        read-through). Additive — overlays ONLY a field the reader HAS a record
+        for, so the stored-column value is the fallback. No-op when there is no
+        reader."""
+        if task is not None and self._subscription_reader is not None:
+            a = self._subscription_reader.assignee_of(task.task_id)
+            if a is not None:
+                task.assignee = a
+            r = self._subscription_reader.requester_of(task.task_id)
+            if r is not None:
+                task.requester = r
+            rk = self._subscription_reader.requester_kind_of(task.task_id)
+            if rk is not None:
+                task.requester_kind = TaskRequesterKind(rk)
+        return task
 
     def _deps_of(self, node: str) -> list[str]:
         t = self._tasks.get(node)
@@ -193,7 +217,7 @@ class InMemoryTaskBackend:
         return task
 
     async def get(self, task_id: str) -> Task | None:
-        return self._tasks.get(task_id)
+        return self._hydrate_binding(self._tasks.get(task_id))
 
     async def list(
         self,
@@ -202,7 +226,7 @@ class InMemoryTaskBackend:
         requester: str | None = None,
         status: str | None = None,
     ) -> list[Task]:
-        out = list(self._tasks.values())
+        out = [self._hydrate_binding(t) for t in self._tasks.values()]
         if assignee is not None:
             out = [t for t in out if t.assignee == assignee]
         if requester is not None:

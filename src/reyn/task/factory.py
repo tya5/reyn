@@ -20,7 +20,9 @@ from reyn.task.sqlite_backend import SqliteTaskBackend
 _DEFAULT_KIND = "sqlite"
 
 
-def create_task_backend(kind: str | None = None, *, path: str | None = None):
+def create_task_backend(
+    kind: str | None = None, *, path: str | None = None, subscription_reader=None,
+):
     """Build a Task backend by ``kind``.
 
     - ``"sqlite"`` (default) → :class:`SqliteTaskBackend` at ``path`` (required).
@@ -28,15 +30,20 @@ def create_task_backend(kind: str | None = None, *, path: str | None = None):
 
     Unknown kinds raise ``ValueError`` (fail-loud — no silent fallback that would
     mask a misconfigured backend).
+
+    ``subscription_reader`` (#2187 backend-master, 2c-i): the WAL-derived
+    SubscriptionRegistry the backend hydrates the binding (assignee/requester/
+    requester_kind) through. Passed by the registry's ``task_backend`` seam; None
+    for direct/test construction (the stored columns stand, additive fallback).
     """
     chosen = (kind or _DEFAULT_KIND).strip().lower()
     if chosen in ("in-memory", "in_memory", "memory"):
-        return InMemoryTaskBackend()
+        return InMemoryTaskBackend(subscription_reader=subscription_reader)
     if chosen == "sqlite":
         if not path:
             raise ValueError(
                 "sqlite task backend requires a 'path' "
                 "(#2128: agent-keyed db, shared across the agent's sessions)"
             )
-        return SqliteTaskBackend(path)
+        return SqliteTaskBackend(path, subscription_reader=subscription_reader)
     raise ValueError(f"unknown task backend kind: {kind!r} (expected 'sqlite' or 'in-memory')")

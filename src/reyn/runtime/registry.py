@@ -1675,7 +1675,14 @@ class AgentRegistry:
         if self._task_backend is None:
             from reyn.task.factory import create_task_backend  # noqa: PLC0415
             path = self._project_root / ".reyn" / "state" / "tasks.db"
-            self._task_backend = create_task_backend("sqlite", path=str(path))
+            self._task_backend = create_task_backend(
+                "sqlite",
+                path=str(path),
+                # #2187 backend-master (2c-i): inject the WAL-derived
+                # SubscriptionRegistry so the backend hydrates the binding
+                # (assignee/requester/requester_kind) through it.
+                subscription_reader=self._task_subscriptions,
+            )
         return self._task_backend
 
     # #2187 S1: the #2180 per-agent ``_close_task_backend`` is removed — the global Task

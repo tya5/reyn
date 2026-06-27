@@ -118,11 +118,35 @@ class SqliteTaskBackend:
     The dep graph + decision-ops stay WAL-durable in the live db, independent of
     any rewind."""
 
-    def __init__(self, db_path: str | Path) -> None:
+    def __init__(self, db_path: str | Path, *, subscription_reader=None) -> None:
         self._db_path = str(db_path)
         Path(self._db_path).parent.mkdir(parents=True, exist_ok=True)
         self._conn = self._open(init_schema=True)
         self._lock = asyncio.Lock()
+        # #2187 backend-master: the WAL-derived SUBSCRIPTION reader (the binding
+        # authority — assignee/requester/requester_kind). The backend holds
+        # task-STATE; the binding is hydrated THROUGH this reader. None =
+        # direct/test construction (the stored columns stand, the additive 2c-i
+        # fallback).
+        self._subscription_reader = subscription_reader
+
+    def _hydrate_binding(self, task: "Task | None") -> "Task | None":
+        """#2187 backend-master (2c-i): overlay the WAL-derived binding
+        (assignee/requester/requester_kind) onto a Task reconstructed from a row
+        (the read-through). Additive — overlays ONLY a field the reader HAS a
+        record for, so the stored-column value is the fallback. No-op when there
+        is no reader."""
+        if task is not None and self._subscription_reader is not None:
+            a = self._subscription_reader.assignee_of(task.task_id)
+            if a is not None:
+                task.assignee = a
+            r = self._subscription_reader.requester_of(task.task_id)
+            if r is not None:
+                task.requester = r
+            rk = self._subscription_reader.requester_kind_of(task.task_id)
+            if rk is not None:
+                task.requester_kind = TaskRequesterKind(rk)
+        return task
 
     @staticmethod
     def _migrate_columns(conn: sqlite3.Connection) -> None:
@@ -267,7 +291,7 @@ class SqliteTaskBackend:
         row = self._conn.execute(
             f"SELECT {_TASK_COLUMNS} FROM tasks WHERE task_id=?", (task_id,)
         ).fetchone()
-        return self._row_to_task(row) if row is not None else None
+        return self._hydrate_binding(self._row_to_task(row)) if row is not None else None
 
     # ── TaskBackend contract ────────────────────────────────────────────────
 
@@ -339,7 +363,7 @@ class SqliteTaskBackend:
                 f"SELECT {_TASK_COLUMNS} FROM tasks{where} ORDER BY created_at, task_id",
                 params,
             ).fetchall()
-            return [self._row_to_task(r) for r in rows]
+            return [self._hydrate_binding(self._row_to_task(r)) for r in rows]
 
     async def update_status(
         self, task_id: str, status: str, *, caller_session_id: str | None = None
