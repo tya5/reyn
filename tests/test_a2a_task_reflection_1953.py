@@ -27,7 +27,7 @@ from reyn.task import InMemoryTaskBackend, Task, TaskOrigin, TaskState
 def _a2a_task(backend, task_id, sid):
     return backend.create(
         Task(task_id=task_id, name="n", assignee=sid, requester="external",
-             origin=TaskOrigin.EXTERNAL, status=TaskState.IN_PROGRESS)
+             origin=TaskOrigin.EXTERNAL, status=TaskState.RUNNING)
     )
 
 
@@ -39,10 +39,10 @@ async def test_completed_run_reflects_onto_task():
     sid = a2a_session_id("ctx-r")
     await _a2a_task(backend, "t-1", sid)
 
-    await _reflect_task_status(backend, "t-1", "completed")
+    await _reflect_task_status(backend, "t-1", "done")
 
     refreshed = await backend.get("t-1")
-    assert refreshed is not None and refreshed.status is TaskState.COMPLETED
+    assert refreshed is not None and refreshed.status is TaskState.DONE
 
 
 @pytest.mark.asyncio
@@ -55,10 +55,10 @@ async def test_reflection_after_abort_is_swallowed_and_abort_wins():
     await _a2a_task(backend, "t-1", sid)
 
     aborted = await backend.abort("t-1")  # requester cancels first → archived
-    assert aborted and aborted[0].status is TaskState.ARCHIVED
+    assert aborted and aborted[0].status is TaskState.ABORTED
 
     # Must NOT raise even though the Task is terminal (best-effort reflection).
-    await _reflect_task_status(backend, "t-1", "completed")
+    await _reflect_task_status(backend, "t-1", "done")
 
     refreshed = await backend.get("t-1")
-    assert refreshed is not None and refreshed.status is TaskState.ARCHIVED
+    assert refreshed is not None and refreshed.status is TaskState.ABORTED

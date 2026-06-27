@@ -87,7 +87,7 @@ def test_get_task_returns_a2a_envelope_from_task_backend() -> None:
     backend = InMemoryTaskBackend()
     asyncio.new_event_loop().run_until_complete(
         backend.create(Task(task_id="t-1", name="n", assignee="a2a:ctx-7",
-                            requester="r", status=TaskState.IN_PROGRESS)))
+                            requester="r", status=TaskState.RUNNING)))
     client = _make_client_with_registry(RunRegistry(), task_backend=backend)
     try:
         r = client.get("/a2a/tasks/t-1")
@@ -95,7 +95,7 @@ def test_get_task_returns_a2a_envelope_from_task_backend() -> None:
         body = r.json()
         assert body["kind"] == "task"
         assert body["id"] == "t-1"
-        assert body["status"]["state"] == "working"  # in_progress → working
+        assert body["status"]["state"] == "working"  # running → working
         assert body["contextId"] == "ctx-7"
         assert "run_id" not in body
     finally:
@@ -126,8 +126,8 @@ def test_get_task_returns_404_for_unknown_run() -> None:
 
 def test_cancel_task_aborts_task_in_backend() -> None:
     """Tier 2: (#1953 slice 5a) POST /a2a/tasks/{task_id}/cancel = the external
-    requester's remove-op → task.abort (cooperative-terminal → archived). The
-    response is the archived Task's A2A envelope (status=canceled)."""
+    requester's remove-op → task.abort (cooperative-terminal → aborted). The
+    response is the aborted Task's A2A envelope (status=canceled)."""
     import asyncio
 
     from reyn.task import InMemoryTaskBackend, Task, TaskState
@@ -136,7 +136,7 @@ def test_cancel_task_aborts_task_in_backend() -> None:
     loop = asyncio.new_event_loop()
     loop.run_until_complete(
         backend.create(Task(task_id="t-1", name="n", assignee="a2a:ctx-1",
-                            requester="r", status=TaskState.IN_PROGRESS)))
+                            requester="r", status=TaskState.RUNNING)))
     client = _make_client_with_registry(RunRegistry(), task_backend=backend)
     try:
         r = client.post("/a2a/tasks/t-1/cancel")
@@ -144,11 +144,11 @@ def test_cancel_task_aborts_task_in_backend() -> None:
         body = r.json()
         assert body["kind"] == "task"
         assert body["id"] == "t-1"
-        assert body["status"]["state"] == "canceled"  # archived → canceled
+        assert body["status"]["state"] == "canceled"  # aborted → canceled
 
-        # backend task is archived (the abort terminal).
+        # backend task is aborted (the abort terminal).
         refreshed = loop.run_until_complete(backend.get("t-1"))
-        assert refreshed is not None and refreshed.status is TaskState.ARCHIVED
+        assert refreshed is not None and refreshed.status is TaskState.ABORTED
     finally:
         _restore_overrides()
 

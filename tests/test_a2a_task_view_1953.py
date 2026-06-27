@@ -35,12 +35,12 @@ def test_map_targets_are_legal_a2a_states():
 
 def test_key_state_mappings():
     """Tier 2: the load-bearing mappings (Task vocab → A2A), incl. the interim
-    blocked→input-required (slice 7 splits it) and abort=delete archived→canceled."""
-    assert task_state_to_a2a("in_progress") == "working"
-    assert task_state_to_a2a("completed") == "completed"
+    blocked→input-required (slice 7 splits it) and abort→canceled (#2187: soft-delete
+    is the orthogonal archived_at marker, not a state)."""
+    assert task_state_to_a2a("running") == "working"
+    assert task_state_to_a2a("done") == "completed"
     assert task_state_to_a2a("failed") == "failed"
     assert task_state_to_a2a("aborted") == "canceled"
-    assert task_state_to_a2a("archived") == "canceled"
     assert task_state_to_a2a("blocked") == "input-required"  # interim (slice 7)
     # unknown → safe non-terminal default.
     assert task_state_to_a2a("some-future-state") == "working"
@@ -50,7 +50,7 @@ def test_to_a2a_task_envelope_shape():
     """Tier 2: the envelope = {kind:task, id, status:{state,timestamp}, contextId}
     with contextId recovered from the assignee's session_id (A2A reverse map)."""
     task = Task(task_id="t-1", name="n", assignee="a2a:ctx-7", requester="r",
-                origin=TaskOrigin.EXTERNAL, status=TaskState.IN_PROGRESS)
+                origin=TaskOrigin.EXTERNAL, status=TaskState.RUNNING)
     env = to_a2a_task(task)
     assert env["kind"] == "task"
     assert env["id"] == "t-1"

@@ -67,8 +67,9 @@ def register(sub) -> None:
         action="store_true",
         default=False,
         help=(
-            "Use plain console output (no TUI). "
-            "Useful for piping output, debugging, or headless environments."
+            "Force plain console output (no inline CUI / ANSI). "
+            "Useful for piping output, scripting, debugging, or headless "
+            "environments. The interactive default is the inline CUI."
         ),
     )
     p.add_argument(
@@ -149,16 +150,6 @@ def register(sub) -> None:
             "list_actions + every scheme's action list + dispatch."
         ),
     )
-    p.add_argument(
-        "--banner",
-        action="store_true",
-        default=False,
-        help=(
-            "Show the ASCII-art startup banner (gradient REYN logo + agent / "
-            "model info, neofetch style). Off by default for instant input "
-            "focus on daily use."
-        ),
-    )
     # B25-S5-1: eager embedding-index build flag.
     p.add_argument(
         "--eager-embedding-build",
@@ -170,25 +161,6 @@ def register(sub) -> None:
             "the LLM from the very first call. Default lazy background "
             "build leaves search_actions hidden until Turn 2. Recommended "
             "for dogfood / scripted runs against fresh .reyn/ workspaces."
-        ),
-    )
-    # Issue #276 Phase A — TUI thin client mode connecting to a remote
-    # `reyn web` server. When set, the local Session / AgentRegistry
-    # / state restore are skipped; the TUI streams from
-    # ``ws://<host>[:port]/ws/chat/<agent>``. Right panel features that
-    # depend on local files (events / memory / pending) render
-    # "remote — limited" placeholders per #276 Phase C-(b) scoped
-    # disable; full parity via REST is future work (Phase C-(a)).
-    p.add_argument(
-        "--connect",
-        metavar="WS_URL",
-        default=None,
-        help=(
-            "Connect to a remote `reyn web` server over WebSocket "
-            "(e.g. --connect ws://localhost:8080). The positional "
-            "agent_name selects which agent on the server. Requires "
-            "`pip install reyn[web]`. Right panel features that need "
-            "local file access render in 'remote — limited' v1 mode."
         ),
     )
     # #1289: per-frontend container-chat — same --env-backend surface as `reyn run`.
@@ -246,86 +218,7 @@ def _reset_project_state(project_root: Path, *, confirm: bool = True) -> bool:
     return True
 
 
-def _run_connect_mode(args: argparse.Namespace, base_url: str) -> None:
-    """Issue #276 Phase A — connect to a remote `reyn web` server.
-
-    Skips local Session / AgentRegistry / state restore. The TUI
-    streams frames from ``ws://<host>[:port]/ws/chat/<agent_name>``;
-    user input is forwarded to the server as ``user_message`` frames.
-
-    Right-panel features that need local file access (events / memory
-    / pending) surface "remote — limited" placeholders via each tab's
-    existing remote-mode handling (e.g. PR #280 Pending tab
-    ``remote_mode=True``). Phase C-(a) future iteration via REST
-    will lift the limit; v1 takes the scoped-disable path per the
-    #276 owner decision.
-    """
-    from reyn.interfaces.tui.app import run_tui
-    from reyn.interfaces.tui.ws_client import connect as ws_connect
-    from reyn.llm.llm import run_async
-
-    agent_name = args.agent_name or "default"
-    # No project root probe — remote mode doesn't read local .reyn/
-    # state. Use cwd so any path-shaped attribute access on the
-    # registry resolves to *something* sensible.
-    project_root = Path.cwd()
-
-    async def _main() -> None:
-        try:
-            registry = await ws_connect(
-                base_url, agent_name, project_root=project_root,
-            )
-        except ImportError as exc:
-            print(f"Error: {exc}", file=sys.stderr)
-            sys.exit(1)
-        except ConnectionError as exc:
-            print(f"Error: {exc}", file=sys.stderr)
-            sys.exit(2)
-        try:
-            await run_tui(
-                registry,
-                agent_name=agent_name,
-                # Model / budget unknown in remote mode — the server
-                # owns them. Show empty fields rather than guessing.
-                model="",
-                budget_tracker=None,
-                banner=getattr(args, "banner", False),
-            )
-        finally:
-            await registry.shutdown()
-
-    run_async(_main())
-
-
-def _setup_pre_tui_logging(project_root: Path) -> None:
-    """Route root-logger output to .reyn/logs/reyn.log before TUI launches.
-
-    Textual owns the terminal during a TUI session. Any log record that reaches
-    a StreamHandler(stderr) would be written directly to the raw terminal,
-    corrupting the Textual display. This is called once, before load_project_context
-    (which may emit WARNING-level records), so the file handler is in place before
-    the first log call.
-    """
-    import logging
-    log_dir = project_root / ".reyn" / "logs"
-    log_dir.mkdir(parents=True, exist_ok=True)
-    logging.basicConfig(
-        filename=str(log_dir / "reyn.log"),
-        level=logging.WARNING,
-        format="%(asctime)s %(name)s %(levelname)s %(message)s",
-        force=True,  # safe: TUI path has no prior logging setup
-    )
-
-
 def run(args: argparse.Namespace) -> None:
-    # Issue #276 Phase A — TUI thin client mode short-circuits before
-    # any local session / state setup. Bifurcates at the top of run()
-    # so the local-mode block stays untouched (= backwards-compat 100%).
-    connect_url = getattr(args, "connect", None)
-    if connect_url:
-        _run_connect_mode(args, connect_url)
-        return
-
     from reyn.config import _find_project_root, load_project_context
     from reyn.core.events.state_log import StateLog
     from reyn.interfaces.repl.repl import run_repl
@@ -335,7 +228,6 @@ def run(args: argparse.Namespace) -> None:
     from reyn.runtime.registry import DEFAULT_AGENT_NAME, AgentRegistry
     from reyn.runtime.scoped_session_factory import build_scoped_chat_session
     from reyn.security.permissions.permissions import PermissionResolver
-    from reyn.task import per_session_sqlite_backend  # #1953 slice R
 
     session_cfg = InvocationContext.from_args(args)
     from reyn.interfaces.cli.credentials_check import verify_credentials_or_exit
@@ -349,11 +241,6 @@ def run(args: argparse.Namespace) -> None:
     safety = session_cfg.safety_for(args)
 
     project_root = _find_project_root(Path.cwd()) or Path.cwd()
-
-    # Redirect root-logger to file before config load so pre-TUI log records
-    # (e.g. _reconcile_embedding_class warnings) don't leak to the raw terminal.
-    if not getattr(args, "cui", False) and sys.stdin.isatty():
-        _setup_pre_tui_logging(project_root)
 
     # PR-resume-ux β U3: handle --reset before constructing state_log so
     # we don't open a freshly-written WAL just to delete it.
@@ -450,9 +337,14 @@ def run(args: argparse.Namespace) -> None:
             registry=registry,  # back-reference for :agents / :attach + PR11 messaging
             allowed_skills=profile.allowed_skills,
             allowed_mcp=profile.allowed_mcp,
-            # #1953 slice R, I-5=(A): per-session sqlite Task backend → in-session
-            # task.* ops are durable + rewind with the session (local single-tenant).
-            task_backend=per_session_sqlite_backend(profile.name),
+            # #1953 slice R, I-5=(A): sqlite Task backend → in-session task.* ops are
+            # durable + rewind with the session (local single-tenant).
+            # #2180: the agent's SHARED backend (ONE connection per agent) via the
+            # registry's single construction seam — NOT a direct per_session_sqlite_backend
+            # (that opened an N+1 connection per session, the #2125 cross-connection write
+            # race). The factory closure captures ``registry`` (assigned below), so this
+            # resolves at session-construction time.
+            task_backend=registry.task_backend,
             events_config=session_cfg.config.events,
             state_log=state_log,
             budget_tracker=budget_tracker,
@@ -476,7 +368,7 @@ def run(args: argparse.Namespace) -> None:
             # #1439 Fix #1: run-once pipes stdin (no TTY) → the SP proceeds with an
             # assumption instead of asking a clarifying question nobody can answer
             # (13398). Interactive `reyn chat` (TTY) → False = byte-identical. Same
-            # isatty() signal already feeds perm_resolver (interactive=) + use_tui.
+            # isatty() signal already feeds perm_resolver (interactive=) + is_interactive.
             non_interactive=not sys.stdin.isatty(),
             # #1289: same backend instance to both seams (single-shared-sandbox).
             environment_backend=env_backend,
@@ -521,7 +413,7 @@ def run(args: argparse.Namespace) -> None:
         )
         sys.exit(1)
 
-    use_tui = not getattr(args, "cui", False) and sys.stdin.isatty()
+    is_interactive = not getattr(args, "cui", False) and sys.stdin.isatty()
     skip_restore = getattr(args, "no_restore", False)
     if skip_restore:
         print(
@@ -543,58 +435,43 @@ def run(args: argparse.Namespace) -> None:
             print(f"\nSchema version mismatch: {e}\n", file=sys.stderr)
             return False
 
-    if use_tui:
-        from reyn.interfaces.tui.app import run_tui
+    from reyn.interfaces.repl.repl import run_repl
 
-        async def _main_tui() -> None:
-            if not skip_restore:
-                if not await _safe_restore():
-                    sys.exit(1)
-            await registry.attach(name)
-            await run_tui(
-                registry,
-                agent_name=name,
-                model=resolved_model,
-                budget_tracker=budget_tracker,
-                banner=getattr(args, "banner", False),
-                no_restore=skip_restore,
-            )
+    from ..logger_factory import make_chat_renderer, make_inline_renderer
 
-        run_async(_main_tui())
-    else:
-        from reyn.interfaces.repl.repl import run_repl
+    # Interactive TTY (no --cui) → Claude Code-style inline CUI, the default
+    # human-facing surface. --cui or a non-TTY (pipe / script / run-once) →
+    # plain console output. Both drive the same run_repl loop; only the
+    # renderer differs.
+    renderer = make_inline_renderer() if is_interactive else make_chat_renderer()
 
-        from ..logger_factory import make_chat_renderer
+    async def _main_chat() -> None:
+        # PR21: replay WAL into per-agent snapshots before any new state
+        # changes happen. Agents with restored state get their inbox /
+        # pending_chains repopulated and their main loop started here.
+        # PR-resume-ux β U3: --no-restore skips this for debugging.
+        # PR-resume-ux β U4: clean exit on schema version mismatch.
+        if not skip_restore:
+            if not await _safe_restore():
+                sys.exit(1)
+        await registry.attach(name)
+        # #187: one-shot mode (`reyn run-once`). The scoped session built above
+        # (grant / exclude_tools / env_backend / high router_max_iterations) is
+        # now ATTACHED in the registry. Instead of the line-by-line REPL, read
+        # the WHOLE stdin as a single user message and drive the agent to
+        # completion via send_to_agent_impl — the same programmatic drive MCP /
+        # A2A use (registry.get_or_load returns this attached scoped session, no
+        # fresh unscoped build), then print the final reply and exit.
+        if getattr(args, "once", False):
+            _once_result = await _run_once(registry, name)
+            sys.stdout.write((_once_result.get("reply", "") or "") + "\n")
+            # #1649: a limit-abort must propagate a non-zero exit so a
+            # non-TTY wrapper/CI detects the runaway-stop (vs a clean reply).
+            # The decision-enabling message is already in the reply above
+            # (never silent). exit(2) distinguishes it from arg/usage errors.
+            if _once_result.get("limit_stopped"):
+                sys.exit(2)
+            return
+        await run_repl(registry, renderer=renderer)
 
-        renderer = make_chat_renderer()
-
-        async def _main_cui() -> None:
-            # PR21: replay WAL into per-agent snapshots before any new state
-            # changes happen. Agents with restored state get their inbox /
-            # pending_chains repopulated and their main loop started here.
-            # PR-resume-ux β U3: --no-restore skips this for debugging.
-            # PR-resume-ux β U4: clean exit on schema version mismatch.
-            if not skip_restore:
-                if not await _safe_restore():
-                    sys.exit(1)
-            await registry.attach(name)
-            # #187: one-shot mode (`reyn run-once`). The scoped session built above
-            # (grant / exclude_tools / env_backend / high router_max_iterations) is
-            # now ATTACHED in the registry. Instead of the line-by-line REPL, read
-            # the WHOLE stdin as a single user message and drive the agent to
-            # completion via send_to_agent_impl — the same programmatic drive MCP /
-            # A2A use (registry.get_or_load returns this attached scoped session, no
-            # fresh unscoped build), then print the final reply and exit.
-            if getattr(args, "once", False):
-                _once_result = await _run_once(registry, name)
-                sys.stdout.write((_once_result.get("reply", "") or "") + "\n")
-                # #1649: a limit-abort must propagate a non-zero exit so a
-                # non-TTY wrapper/CI detects the runaway-stop (vs a clean reply).
-                # The decision-enabling message is already in the reply above
-                # (never silent). exit(2) distinguishes it from arg/usage errors.
-                if _once_result.get("limit_stopped"):
-                    sys.exit(2)
-                return
-            await run_repl(registry, renderer=renderer)
-
-        run_async(_main_cui())
+    run_async(_main_chat())

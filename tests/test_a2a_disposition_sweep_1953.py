@@ -1,13 +1,13 @@
 """Tier 2: #1953 slice 5a-2 — A2A disposition sweep (backend-derived webhook).
 
-The periodic sweep notifies the external requester of every archived
+The periodic sweep notifies the external requester of every aborted
 ``origin=external`` Task via its registered webhook, exactly once, retrying
 failures, bounded by construction. Real Task backend + a real recording poster
 (no mocks). The webhook channel map is A2A-owned (P7 — never on the Task).
 
 Falsification:
-- (a) an archived external task with a registered webhook → fires once;
-- (b) an archived self-origin task → never fires;
+- (a) an aborted external task with a registered webhook → fires once;
+- (b) an aborted self-origin task → never fires;
 - (c) a second sweep pass → no re-fire (notified-set);
 - (d) a failed POST → not notified → retried next sweep;
 - (e) the notified-set self-prunes hard-deleted task_ids (bounded);
@@ -39,19 +39,19 @@ class _RecordingPoster:
         return SimpleNamespace(ok=self._ok)
 
 
-async def _archived(backend, task_id, ctx, origin):
-    """Seed an archived task assigned to the context's session."""
+async def _aborted(backend, task_id, ctx, origin):
+    """Seed an aborted task assigned to the context's session."""
     await backend.create(Task(task_id=task_id, name="n", assignee=a2a_session_id(ctx),
-                              requester="ext", origin=origin, status=TaskState.ARCHIVED))
+                              requester="ext", origin=origin, status=TaskState.ABORTED))
 
 
 @pytest.mark.asyncio
 async def test_sweep_fires_for_external_and_not_for_self():
-    """Tier 2: an archived external task with a registered webhook fires (a);
-    an archived self-origin task never fires (b)."""
+    """Tier 2: an aborted external task with a registered webhook fires (a);
+    an aborted self-origin task never fires (b)."""
     backend = InMemoryTaskBackend()
-    await _archived(backend, "ext-1", "ctx-a", TaskOrigin.EXTERNAL)
-    await _archived(backend, "self-1", "ctx-b", TaskOrigin.SELF)
+    await _aborted(backend, "ext-1", "ctx-a", TaskOrigin.EXTERNAL)
+    await _aborted(backend, "self-1", "ctx-b", TaskOrigin.SELF)
     reg = A2AWebhookRegistry()
     reg.register_webhook("ctx-a", "https://client.example/hook")
     reg.register_webhook("ctx-b", "https://client.example/hook")  # self still excluded
@@ -71,7 +71,7 @@ async def test_sweep_fires_for_external_and_not_for_self():
 async def test_sweep_does_not_refire_on_second_pass():
     """Tier 2: (c): a notified task is not re-fired on the next sweep."""
     backend = InMemoryTaskBackend()
-    await _archived(backend, "ext-1", "ctx-a", TaskOrigin.EXTERNAL)
+    await _aborted(backend, "ext-1", "ctx-a", TaskOrigin.EXTERNAL)
     reg = A2AWebhookRegistry()
     reg.register_webhook("ctx-a", "https://client.example/hook")
     poster = _RecordingPoster()
@@ -89,7 +89,7 @@ async def test_sweep_retries_failed_post():
     """Tier 2: (d): a failed POST leaves the task un-notified → retried next sweep
     (§24 forward-progress with retry)."""
     backend = InMemoryTaskBackend()
-    await _archived(backend, "ext-1", "ctx-a", TaskOrigin.EXTERNAL)
+    await _aborted(backend, "ext-1", "ctx-a", TaskOrigin.EXTERNAL)
     reg = A2AWebhookRegistry()
     reg.register_webhook("ctx-a", "https://client.example/hook")
 
@@ -107,7 +107,7 @@ async def test_sweep_skips_context_without_registered_webhook():
     """Tier 2: an external task whose context has no webhook (e.g. pre-5b) is
     skipped (no channel) — no crash, no notify."""
     backend = InMemoryTaskBackend()
-    await _archived(backend, "ext-1", "ctx-a", TaskOrigin.EXTERNAL)
+    await _aborted(backend, "ext-1", "ctx-a", TaskOrigin.EXTERNAL)
     reg = A2AWebhookRegistry()  # no webhook registered
     poster = _RecordingPoster()
 
@@ -120,7 +120,7 @@ async def test_reconcile_prunes_hard_deleted_notified():
     """Tier 2: (e): the notified-set self-prunes a task_id no longer present
     (hard-deleted) — bounded by construction."""
     backend = InMemoryTaskBackend()
-    await _archived(backend, "ext-1", "ctx-a", TaskOrigin.EXTERNAL)
+    await _aborted(backend, "ext-1", "ctx-a", TaskOrigin.EXTERNAL)
     reg = A2AWebhookRegistry()
     reg.register_webhook("ctx-a", "https://client.example/hook")
     reg.mark_notified("gone-task")  # a task no longer in the backend

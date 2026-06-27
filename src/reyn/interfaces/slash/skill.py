@@ -195,6 +195,16 @@ async def _discard_skill_run(session: "Session", args: str) -> None:
         await reply(session, warning)
         return
 
+    # #2068: fire skill_end(status="discarded") + arm the exactly-once guard BEFORE
+    # cancelling the running task. The cancel-unwind runs the skill's run() finally (→
+    # the orchestrator interrupt branch → registry.interrupt()) DURING `await task`,
+    # BEFORE step 3's complete(discarded); without this pre-fire the hook would win with
+    # status="interrupted" for a user-discard (a regression). Pre-firing makes the
+    # unwind's interrupt() defer (guard armed), so the hook gets the correct "discarded".
+    # HOOK-ONLY here — the WAL skill_discarded + snapshot unlink stay in complete() at
+    # step 3 (AFTER the cancel → no re-snapshot race).
+    await reg.mark_skill_ended(run_id, "discarded")
+
     # 1. Cancel the asyncio.Task if mid-session
     task = session.running_skills.get(run_id)
     if task is not None and not task.done():

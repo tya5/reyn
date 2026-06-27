@@ -106,8 +106,10 @@ async def sweep_dispositions(task_backend, registry: A2AWebhookRegistry, *, post
     # production; tests inject a real recording callable (no mocks).
     post = post_fn if post_fn is not None else post_webhook
 
-    archived = await task_backend.list(status="archived")
-    external = [t for t in archived if t.origin == TaskOrigin.EXTERNAL]
+    # #2187: the sweep is a LIFECYCLE signal (abort → A2A canceled notify), so it
+    # keys on the ABORTED state — not the orthogonal archived_at retention marker.
+    aborted = await task_backend.list(status="aborted")
+    external = [t for t in aborted if t.origin == TaskOrigin.EXTERNAL]
     registry.reconcile_notified({t.task_id for t in external})
 
     fired = 0

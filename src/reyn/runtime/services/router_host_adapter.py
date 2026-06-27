@@ -147,6 +147,7 @@ class RouterHostAdapter:
         session_id: str | None = None,
         task_backend: Any = None,
         task_waker: Any = None,  # #1953 slice 7 / #2107: the OS TaskWaker for the router op-ctx
+        task_subscription_writer: Any = None,  # #2187 backend-master: the Task subscription WAL writer
         hook_dispatcher: Any = None,  # #1800 slice 5c: the Session's HookDispatcher
         # FP-0034 Phase 2 step 1: ActionEmbeddingIndex + EmbeddingProvider
         # for search_actions.  When all three are set (= operator configured
@@ -214,7 +215,7 @@ class RouterHostAdapter:
         # the documented RuntimeError telling the caller a bus is needed).
         intervention_bus_factory: Callable[[], Any] | None = None,
         # #2175: the safety.on_limit checkpoint + the shared per-run extension dict —
-        # injected from Session (mirror the a2a_handler injection) so the spawn SEAM can
+        # injected from Session (mirror the inter_agent_messaging injection) so the spawn SEAM can
         # route a spawn-limit exceed through the same mode-driven on_limit framework as
         # max_agent_hops. None → no checkpoint wired (headless/test) → degrade to
         # unattended (reject), the C3 hard-deny posture.
@@ -286,6 +287,7 @@ class RouterHostAdapter:
         self._session_id = session_id  # #1953 dynamic-wire: task.* CAS gate key
         self._task_backend = task_backend  # #1953 dynamic-wire: session-scoped Task backend
         self._task_waker = task_waker  # #1953 slice 7 / #2107: OS TaskWaker for router task ops
+        self._task_subscription_writer = task_subscription_writer  # #2187 backend-master: the Task subscription WAL writer
         self._hook_dispatcher = hook_dispatcher  # #1800 slice 5c: task_start/end dispatch
         self._turn_budget_engine = turn_budget_engine
         self._turn_cancel_fn = turn_cancel_fn  # #1468
@@ -933,23 +935,13 @@ class RouterHostAdapter:
                 "session_spawn requires a registry (multi-session host) — unavailable "
                 "in this context."
             )
-        # #2103 S1bc-exec GAP A guard: only the MAIN session may spawn. A spawned
-        # (non-main) session's result would route back by AGENT NAME to the agent's main
-        # session — NOT to this spawning sid — i.e. a silent misroute. Routing to a
-        # specific (agent, sid) is the first-class non-main addressing tracked in #2130;
-        # until then, refuse rather than misroute. Read the LIVE sid (the constructor's
-        # cached session_id is stale for spawned sessions, stamped post-construction).
-        live_sid = self._live_session_id_fn() if self._live_session_id_fn else self._session_id
-        if live_sid not in (None, "main"):  # "main" = registry._DEFAULT_SID (avoid the import cycle)
-            return {
-                "status": "error",
-                "kind": "nested_spawn_unsupported",
-                "error": (
-                    "session_spawn is only available from the main session: a spawned "
-                    "session's result can't yet route back to a non-main spawner "
-                    "(first-class (agent,sid) addressing — #2130)."
-                ),
-            }
+        # #2130: the spawning session's LIVE sid — threaded as ``from_sid`` so the spawned
+        # session's result routes back to THIS specific (agent, sid), not the agent's main
+        # session. Reading the LIVE sid (the constructor's cached session_id is stale for a
+        # spawned session, stamped post-construction). This lifts the #2103 S1bc-exec
+        # non-main-spawn guard: a non-main session may now spawn — its result routes back
+        # correctly by (agent, from_sid). (None / "main" → main-case, byte-identical.)
+        from_sid = self._live_session_id_fn() if self._live_session_id_fn else self._session_id
         sid = await self._registry.spawn_session_recorded(
             self._agent_name, mode=mode, narrowing=narrowing,
         )
@@ -961,7 +953,7 @@ class RouterHostAdapter:
         if session is not None:
             await session.submit_agent_request(
                 from_agent=self._agent_name, request=request, depth=0,
-                chain_id=chain_id,
+                chain_id=chain_id, from_sid=from_sid,
             )
         return {
             "status": "spawned",
@@ -1013,7 +1005,7 @@ class RouterHostAdapter:
         parent = self._agent_name
         # #2175: operator spawn-tree bounds (safety.spawn.*) routed through the
         # safety.on_limit checkpoint (mode-driven: unattended=reject / interactive=ask the
-        # operator / auto_extend), exactly like a2a_handler's max_agent_hops over
+        # operator / auto_extend), exactly like inter_agent_messaging's max_agent_hops over
         # max_hop_depth + _safety_extensions. LLM-seam only (operator CLI create is
         # unbounded = authority, C1). No-self-raise: the BASE is config-set restart-only;
         # any extension is human/operator-approved, never LLM. DEPTH and FAN-OUT carry
@@ -1823,6 +1815,7 @@ class RouterHostAdapter:
             # (task_backend was #1953-wired here; task_waker was not), so the live chat
             # recovery wake was silently skipped (ctx.task_waker=None).
             task_waker=self._task_waker,
+            task_subscription_writer=self._task_subscription_writer,  # #2187 backend-master: the Task subscription WAL writer
             hook_dispatcher=self._hook_dispatcher,  # #1800 slice 5c
             # #1953 §16: the per-turn execution context (set by the session in
             # run_one_iteration). Read via the callback — it varies per turn, so the

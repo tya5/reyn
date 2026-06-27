@@ -216,3 +216,111 @@ class RichChatRenderer(ChatRenderer):
         self._console.print(Rule(f"cost {cost_str}", style="dim"))
         self._console.print(f"[dim]  prompt {p}  completion {c}  total {t}[/dim]")
         self._flush()
+
+
+# Claude Code-style accent palette (matches the validated mock).
+_CC_ACCENT = "#d97757"  # terracotta
+_CC_DIM = "#6b7280"
+_CC_DONE = "#7ee787"
+_CC_ERR = "#f97066"
+
+# Per-kind leading marker for the inline CC-style stream. The agent / skill /
+# intervention lines lead with ⏺; tool/trace detail lines lead with ⎿.
+_CC_MARKER = {
+    "agent": " ⏺ ",
+    "status": " · ",
+    "error": " ✗ ",
+    "intervention": " ⏺ ",
+    "trace": "   ⎿ ",
+    "skill_done": " ⏺ ",
+}
+
+
+def format_inline_message(msg: OutboxMessage):
+    """Pure formatter: OutboxMessage → rich Text (the inline CC-style line).
+
+    Kept separate from rendering so the kind→marker+text mapping is testable on
+    the public `.plain` surface without driving a live terminal.
+    """
+    from rich.text import Text
+    kind = msg.kind
+    text = f"{_meta_prefix(msg.meta)}{msg.text}"
+    marker = _CC_MARKER.get(kind)
+    if marker is None:
+        return Text(text)
+    if kind == "agent":
+        return Text.assemble((marker, _CC_ACCENT), (text, ""))
+    if kind == "status":
+        return Text.assemble((marker, _CC_DIM), (text, _CC_DIM))
+    if kind == "error":
+        return Text.assemble((marker, _CC_ERR), (text, _CC_ERR))
+    if kind == "intervention":
+        return Text.assemble((marker, _CC_ACCENT), (text, "bold"))
+    if kind == "trace":
+        return Text.assemble((marker, _CC_DIM), (text, _CC_DIM))
+    # skill_done
+    return Text.assemble((marker, _CC_DONE), (text, ""))
+
+
+class InlineChatRenderer(ChatRenderer):
+    """Claude Code-style inline renderer — the default interactive `reyn chat`
+    backend (TTY, no `--cui`).
+
+    Renders each OutboxMessage to stdout above the prompt_toolkit prompt via the
+    same StringIO+`run_in_terminal` pattern as RichChatRenderer (the call site
+    in `_output_loop` wraps each `message()` in `run_in_terminal`, so raw ANSI
+    reaches the terminal without corrupting the prompt). Conversation history
+    stays in the terminal's own scrollback; only the prompt is live below.
+
+    PR1 (cutover) scope: `⏺`/`⎿` symbols + terracotta accent + per-kind
+    formatting. The rule-sandwiched input bar, navigable status menu, and
+    in-conversation animations land in follow-up PRs (a custom prompt_toolkit
+    Application that replaces the PromptSession input).
+    """
+
+    def __init__(self) -> None:
+        from rich.console import Console
+        self._buffer = StringIO()
+        self._console = Console(
+            highlight=False, file=self._buffer, force_terminal=True,
+        )
+        self._transient_active = False
+
+    def _flush(self) -> None:
+        s = self._buffer.getvalue()
+        self._buffer.seek(0)
+        self._buffer.truncate()
+        if not s:
+            return
+        sys.__stdout__.write(s)
+        sys.__stdout__.flush()
+
+    def _clear_transient(self) -> None:
+        if self._transient_active:
+            sys.__stdout__.write(_CLEAR_PREV_LINE)
+            sys.__stdout__.flush()
+            self._transient_active = False
+
+    def banner(self, agent_name: str) -> None:
+        self._console.print(f"[{_CC_DIM}]· {agent_name} · /quit to exit ·[/]\n")
+        self._flush()
+
+    def message(self, msg: OutboxMessage) -> None:
+        self._clear_transient()
+        self._console.print(format_inline_message(msg))
+        self._flush()
+        self._transient_active = msg.kind in _TRANSIENT_KINDS
+
+    def prompt_text(self) -> AnyFormattedText:
+        return HTML(f'<style fg="{_CC_ACCENT}"><b>&gt;</b></style> ')
+
+    def cost_summary(self, usage: TokenUsage, cost_usd: float | None) -> None:
+        self._clear_transient()
+        from rich.rule import Rule
+        p, c, t = usage.prompt_tokens, usage.completion_tokens, usage.total_tokens
+        cost_str = f"${cost_usd:.4f}" if cost_usd is not None else "--"
+        self._console.print(Rule(f"cost {cost_str}", style=_CC_DIM))
+        self._console.print(
+            f"[{_CC_DIM}]  prompt {p}  completion {c}  total {t}[/]"
+        )
+        self._flush()

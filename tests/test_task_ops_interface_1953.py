@@ -24,6 +24,8 @@ from reyn.core.op_runtime.contextual_gate import _OP_KIND_ALIASES
 from reyn.core.op_runtime.registry import OP_PURITY
 from reyn.schemas.models import ALL_OP_KINDS, OP_KIND_MODEL_MAP, ControlIROp
 from reyn.task import InMemoryTaskBackend, Task, TaskState
+from reyn.task.subscription import SubscriptionRegistry
+from tests._support.task_subscription import SubscriptionBackend
 
 _TASK_KINDS = frozenset(k for k in ALL_OP_KINDS if k.startswith("task."))
 
@@ -67,7 +69,7 @@ def test_union_validates_every_task_kind():
     adapter = TypeAdapter(ControlIROp)
     samples = {
         "task.create": {"kind": "task.create", "name": "n"},
-        "task.update_status": {"kind": "task.update_status", "task_id": "t", "status": "in_progress"},
+        "task.update_status": {"kind": "task.update_status", "task_id": "t", "status": "running"},
         "task.get": {"kind": "task.get", "task_id": "t"},
         "task.list": {"kind": "task.list"},
         "task.add_dependency": {"kind": "task.add_dependency", "task_id": "t", "depends_on": "u"},
@@ -131,30 +133,39 @@ async def test_create_then_get_via_handlers():
 async def test_update_status_single_writer_is_assignee_session():
     """Tier 2: update_status keys the single-writer on the caller's session_id ==
     the (immutable) assignee — the assignee session writes, a non-assignee is
-    rejected (settled #1953 model; run_id/current_run_id retired)."""
+    rejected (settled #1953 model; run_id/current_run_id retired). #2187 backend-master:
+    the CAS is the OP-LAYER gate (the op's _authorize reads the assignee from the
+    WAL-subscription binding), returning a decision-enabling "denied" — not a backend raise."""
+    # Wire the create + reads through a #2187 subscription-backed backend so the op's
+    # _authorize reads the real (WAL-subscription) binding the op-mimic recorded.
+    cp = SubscriptionRegistry()
+    backend = SubscriptionBackend(InMemoryTaskBackend(subscription_reader=cp), cp)
     created = await taskmod._create(
         SimpleNamespace(name="n", assignee="sess-A", requester="alice",
                         origin="self", description=None, deps=[]),
-        _ctx(), "control_ir",
+        SimpleNamespace(session_id="alice", agent_id="a", events=None, task_backend=backend),
+        "control_ir",
     )
     task_id = created["task"]["task_id"]
 
     # the assignee session (session_id == assignee) may write.
     updated = await taskmod._update_status(
-        SimpleNamespace(task_id=task_id, status="in_progress", reason=None),
-        SimpleNamespace(session_id="sess-A", agent_id="a", events=None),
+        SimpleNamespace(task_id=task_id, status="running", reason=None),
+        SimpleNamespace(session_id="sess-A", agent_id="a", events=None, task_backend=backend),
         "control_ir",
     )
     assert updated["status"] == "ok"
-    assert updated["task"]["status"] == "in_progress"
+    assert updated["task"]["status"] == "running"
 
-    # RED if the single-writer CAS is dropped: a non-assignee session is rejected.
-    with pytest.raises(PermissionError):
-        await taskmod._update_status(
-            SimpleNamespace(task_id=task_id, status="failed", reason=None),
-            SimpleNamespace(session_id="sess-B", agent_id="b", events=None),
-            "control_ir",
-        )
+    # RED if the single-writer CAS is dropped: a non-assignee session is rejected — now
+    # the op-layer returns a "denied" result (the gate moved from a backend raise to the
+    # op's _authorize binding-check). Same reject semantics preserved.
+    denied = await taskmod._update_status(
+        SimpleNamespace(task_id=task_id, status="failed", reason=None),
+        SimpleNamespace(session_id="sess-B", agent_id="b", events=None, task_backend=backend),
+        "control_ir",
+    )
+    assert denied["status"] == "denied"
 
 
 @pytest.mark.asyncio
@@ -203,12 +214,12 @@ async def test_abort_archives_and_rejects_assignee_straggler():
     aborted = await taskmod._abort(
         SimpleNamespace(task_id=task_id, reason="don't need it"),
         SimpleNamespace(session_id="R", agent_id="r", events=None), "control_ir")
-    assert aborted["task"]["status"] == "archived"
+    assert aborted["task"]["status"] == "aborted"
 
     # the assignee's straggler write is rejected by the terminal state.
     with pytest.raises(PermissionError):
         await taskmod._update_status(
-            SimpleNamespace(task_id=task_id, status="completed", reason=None),
+            SimpleNamespace(task_id=task_id, status="done", reason=None),
             SimpleNamespace(session_id="A", agent_id="a", events=None), "control_ir")
 
 
@@ -223,11 +234,17 @@ async def test_handlers_return_error_for_unknown_task():
 # ── role-based op authority (P5) ────────────────────────────────────────────
 
 
-async def _make_cross_session_task(requester="R", assignee="A"):
-    """Create a task with requester=R (the caller) and assignee=A (cross-session)."""
+async def _make_cross_session_task(requester="R", assignee="A", *, backend=None):
+    """Create a task with requester=R (the caller) and assignee=A (cross-session).
+    When ``backend`` is given (a #2187 subscription-wired backend), the create lands
+    there and the binding is recorded to its subscription (so the op-layer role-gate
+    reads the real WAL-subscription binding); else the module fallback is used."""
+    ctx = SimpleNamespace(session_id=requester, agent_id="x", events=None)
+    if backend is not None:
+        ctx.task_backend = backend
     created = await taskmod._create(
         SimpleNamespace(name="n", assignee=assignee, description=None, deps=[]),
-        SimpleNamespace(session_id=requester, agent_id="x", events=None), "control_ir",
+        ctx, "control_ir",
     )
     assert created["task"]["requester"] == requester
     assert created["task"]["assignee"] == assignee
@@ -260,14 +277,20 @@ async def test_requester_gated_ops_reject_non_requester():
 async def test_assignee_gated_ops_reject_non_assignee():
     """Tier 2: update_status / heartbeat / register_unblock_predicate are
     assignee-gated — the requester (non-assignee) is denied. RED if the gate drops."""
-    task_id = await _make_cross_session_task(requester="R", assignee="A")
-    req_ctx = SimpleNamespace(session_id="R", agent_id="r", events=None)
-    assignee_ctx = SimpleNamespace(session_id="A", agent_id="a", events=None)
+    # #2187 backend-master: wire a subscription-backed backend so the op's _authorize
+    # reads the real (WAL-subscription) binding the op-mimic recorded on create.
+    cp = SubscriptionRegistry()
+    backend = SubscriptionBackend(InMemoryTaskBackend(subscription_reader=cp), cp)
+    task_id = await _make_cross_session_task(requester="R", assignee="A", backend=backend)
+    req_ctx = SimpleNamespace(session_id="R", agent_id="r", events=None, task_backend=backend)
+    assignee_ctx = SimpleNamespace(session_id="A", agent_id="a", events=None, task_backend=backend)
 
-    # update_status: backend CAS raises PermissionError for the non-assignee.
-    with pytest.raises(PermissionError):
-        await taskmod._update_status(
-            SimpleNamespace(task_id=task_id, status="failed", reason=None), req_ctx, "control_ir")
+    # update_status: the op-layer CAS now returns a "denied" result for the non-assignee
+    # (the gate moved from a backend PermissionError raise to the op's _authorize binding-
+    # check). Same reject semantics preserved.
+    denied = await taskmod._update_status(
+        SimpleNamespace(task_id=task_id, status="failed", reason=None), req_ctx, "control_ir")
+    assert denied["status"] == "denied"
     # heartbeat / register: handler role-gate → denied for the non-assignee.
     for handler, op in (
         (taskmod._heartbeat, SimpleNamespace(task_id=task_id)),

@@ -1,18 +1,18 @@
 """Tier 2: #1538 — A2A router_cap-exhausted path delivers LLM wrap-up (not canned).
 
-Before #1538, A2AHandler._emit_router_cap_exhausted_user was a standalone
+Before #1538, InterAgentMessaging._emit_router_cap_exhausted_user was a standalone
 canned-only implementation: it emitted a static _ROUTER_RETRY_EXHAUSTED_MSG
 without attempting the LLM force-close wrap-up that Session site C (#1496)
 produces. The tui-coder trace confirmed that router_cap fires exclusively on
 the a2a path (no-reset accumulation) — site C was dead code.
 
-After #1538, A2AHandler receives `emit_router_cap_exhausted_fn` injected from
-Session at construction. Both SkillPlanGlue and A2AHandler paths call the
+After #1538, InterAgentMessaging receives `emit_router_cap_exhausted_fn` injected from
+Session at construction. Both SkillPlanGlue and InterAgentMessaging paths call the
 single Session._emit_router_cap_exhausted_user — zero drift by construction.
 
 Invariants pinned:
 
-1. (wiring gate) A2AHandler._emit_router_cap_exhausted_user delegates to the
+1. (wiring gate) InterAgentMessaging._emit_router_cap_exhausted_user delegates to the
    injected callback with (exc, chain_id=...). The old canned path is removed.
 2. (LLM wrap-up reachable) When a scripted LLM returns wrap-up content,
    Session._emit_router_cap_exhausted_user emits an outbox message with
@@ -23,7 +23,7 @@ Invariants pinned:
    live proof that the a2a accumulation path (no-reset) reaches the
    wrap-up, not just compositional reasoning (#1538 definitive closure).
 
-No mocks — real A2AHandler + real Session + real scripted LLM callable.
+No mocks — real InterAgentMessaging + real Session + real scripted LLM callable.
 """
 from __future__ import annotations
 
@@ -36,8 +36,8 @@ from reyn.config import LoopConfig, OnLimitConfig, SafetyConfig
 from reyn.llm.llm import LLMToolCallResult
 from reyn.llm.pricing import TokenUsage
 from reyn.runtime.errors import RouterCapExceeded
-from reyn.runtime.services.a2a_handler import A2AHandler
 from reyn.runtime.services.chain_manager import ChainManager
+from reyn.runtime.services.inter_agent_messaging import InterAgentMessaging
 from reyn.runtime.session import Session
 from tests._support.router_loop import FakeEventLog
 
@@ -99,8 +99,8 @@ class _ScriptedWrapupLLM:
         )
 
 
-def _make_a2a_handler(emit_fn: _RecordingEmit) -> A2AHandler:
-    """Construct a minimal A2AHandler wired with the recording emit callback."""
+def _make_inter_agent_messaging(emit_fn: _RecordingEmit) -> InterAgentMessaging:
+    """Construct a minimal InterAgentMessaging wired with the recording emit callback."""
     events = FakeEventLog()
     chain_mgr = ChainManager(
         journal=_FakeJournal(),
@@ -121,7 +121,7 @@ def _make_a2a_handler(emit_fn: _RecordingEmit) -> A2AHandler:
     async def _noop_callback(*_a: Any, **_kw: Any) -> None:
         pass
 
-    return A2AHandler(
+    return InterAgentMessaging(
         event_log=events,
         chain_manager=chain_mgr,
         agent_name="test-agent",
@@ -149,7 +149,7 @@ def _make_a2a_handler(emit_fn: _RecordingEmit) -> A2AHandler:
 
 @pytest.mark.asyncio
 async def test_a2a_emit_router_cap_delegates_to_injected_fn() -> None:
-    """Tier 2: A2AHandler._emit_router_cap_exhausted_user delegates to the
+    """Tier 2: InterAgentMessaging._emit_router_cap_exhausted_user delegates to the
     injected emit_router_cap_exhausted_fn callback — the old standalone canned
     implementation is replaced by a thin forwarder (#1538 wiring gate).
 
@@ -157,7 +157,7 @@ async def test_a2a_emit_router_cap_delegates_to_injected_fn() -> None:
     _emit_router_cap_exhausted_user is called on the a2a handler.
     """
     recording = _RecordingEmit()
-    handler = _make_a2a_handler(recording)
+    handler = _make_inter_agent_messaging(recording)
     exc = RouterCapExceeded(count=3, cap=3, last_reason="test turn")
 
     await handler._emit_router_cap_exhausted_user(exc, chain_id="chain-a2a")
@@ -170,7 +170,7 @@ async def test_a2a_emit_router_cap_delegates_to_injected_fn() -> None:
 
 @pytest.mark.asyncio
 async def test_a2a_router_cap_wrapup_produces_limit_stopped_meta() -> None:
-    """Tier 2: Session._emit_router_cap_exhausted_user (the fn A2AHandler
+    """Tier 2: Session._emit_router_cap_exhausted_user (the fn InterAgentMessaging
     delegates to) emits an outbox message with meta["limit_stopped"] is True
     when the scripted LLM returns wrap-up content.
 

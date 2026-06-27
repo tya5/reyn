@@ -88,7 +88,7 @@ async def test_main_spawn_result_routes_back_correlated_as_spawned_session(tmp_p
 
     chain_id = "chain-spawn-verify-1"
     # The spawned session completes + routes the result back (the run-loop's completion
-    # call, a2a_handler:451) through the real registry routing. send_agent_response tags
+    # call, inter_agent_messaging:451) through the real registry routing. send_agent_response tags
     # responder_sid=<the spawned session's own sid> automatically.
     await spawned._send_agent_response(
         to="worker", response="TASK RESULT: did the thing", depth=0, chain_id=chain_id,
@@ -130,19 +130,123 @@ async def test_unrecorded_sid_falls_back_to_kind_agent(tmp_path, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_non_main_spawn_is_guarded_no_silent_misroute(tmp_path):
-    """Tier 2: S1bc-exec GAP A guard — a NON-MAIN session calling session_spawn is refused
-    (explicit error), not silently misrouted to main. The host reads the LIVE sid (the
-    cached one is stale for spawned sessions)."""
+async def test_response_routes_to_non_main_spawner_sid_not_main(tmp_path):
+    """Tier 2: (LOAD-BEARING, #2130) a response addressed to a NON-MAIN (spawner) sid
+    routes to THAT specific session, NOT the agent's main. RED on the name-only delivery
+    (get_or_load(to) → main): main would get it + the spawner would not."""
+    reg = _registry(tmp_path)
+    main = reg.get_or_load("worker")  # the agent's main (must NOT receive a non-main reply)
+    x_sid = await reg.spawn_session_recorded("worker", mode="persistent")
+    spawner_x = reg.ensure_session_running("worker", x_sid)  # the non-main spawner, loaded
+    assert spawner_x is not None and x_sid != "main"
+
+    # route a reply to (worker, x_sid) — the #2130 (agent, sid) delivery (main is just the
+    # test's sender vehicle; only to_sid selects the target session).
+    await main._send_agent_response(
+        to="worker", response="RESULT FOR X", depth=0, chain_id="cx", to_sid=x_sid,
+    )
+
+    entry_x, _ = await _find_history(spawner_x, "RESULT FOR X")
+    assert entry_x is not None, "the reply did NOT reach the non-main spawner session"
+    assert not any(
+        "RESULT FOR X" in (m.content if isinstance(m.content, str) else str(m.content))
+        for m in main.history
+    ), "the reply leaked to main (the misroute #2130 fixes)"
+
+
+@pytest.mark.asyncio
+async def test_non_main_spawn_is_now_allowed_guard_lifted(tmp_path):
+    """Tier 2: (#2130) the #2103 S1bc-exec non-main-spawn GUARD is LIFTED — a non-main
+    session may now spawn (its result routes back to (agent, from_sid)). RED if the guard
+    still refuses with nested_spawn_unsupported."""
     reg = _registry(tmp_path)
     main = reg.get_or_load("worker")
     host = main._router_host
-    # simulate the host belonging to a non-main (spawned) session via the live-sid fn.
     host._live_session_id_fn = lambda: "abc12345"  # a non-main sid
     result = await host.spawn_session(
         request="nested", mode="persistent", narrowing=None, chain_id="c3",
     )
-    assert result["status"] == "error" and result["kind"] == "nested_spawn_unsupported"
+    assert result["status"] == "spawned" and "sid" in result
+    assert result.get("kind") != "nested_spawn_unsupported"
+
+
+@pytest.mark.asyncio
+async def test_non_main_delegation_reply_routes_to_delegating_sid_not_main(tmp_path, monkeypatch):
+    """Tier 2: (LOAD-BEARING, #2130 delegation leg) a NON-MAIN session that DELEGATES to a
+    peer (not spawns) gets the peer's reply routed back to ITS (agent, sid), NOT the agent's
+    main — _a2a_send_request threads the delegating session's sid as from_sid. RED if the
+    delegation path is name-only (the reply lands on main)."""
+    monkeypatch.setattr("reyn.runtime.router_loop.call_llm_tools", _scripted_llm())
+    reg = _registry(tmp_path)
+    reg.create("peer")
+    main = reg.get_or_load("worker")  # the delegator agent's main (must NOT get the reply)
+    x_sid = await reg.spawn_session_recorded("worker", mode="persistent")
+    x = reg.ensure_session_running("worker", x_sid)  # the NON-MAIN delegating session
+    assert x is not None and x_sid != "main"
+
+    # X delegates to peer (from the non-main session) → peer replies → routes to (worker, x_sid).
+    await x._a2a_send_request(
+        to="peer", from_agent="worker", request="do the thing", depth=1, chain_id="cdel",
+    )
+
+    # the peer's reply (an inbound agent_response, framed "from=peer") lands on X, not main.
+    entry_x, _ = await _find_history(x, "from=peer")
+    assert entry_x is not None, "the peer's reply did NOT reach the non-main delegating session"
+    assert not any(
+        "from=peer" in (m.content if isinstance(m.content, str) else str(m.content))
+        for m in main.history
+    ), "the peer's reply leaked to main (the delegation misroute #2130 also fixes)"
+
+
+@pytest.mark.asyncio
+async def test_default_path_loads_cold_main_and_starts_forwarder(tmp_path):
+    """Tier 2: (LOAD-BEARING byte-identical leg, #2130) a reply with NO to_sid (the
+    default/main case) keeps the existing get_or_load + ensure_running semantics — it
+    LOADS a COLD/unloaded main from disk and starts its forwarder. RED if the default path
+    were switched to the get-only get_session (a cold/unloaded main would be silently
+    DROPPED, never loaded — a warm-main test would not catch this)."""
+    reg = _registry(tmp_path)
+    reg.create("sender")
+    sender = reg.get_or_load("sender")
+    assert reg.get_session("worker") is None  # worker's main is COLD (not loaded)
+
+    await sender._send_agent_response(
+        to="worker", response="COLD MAIN DELIVERY", depth=0, chain_id="cm",  # to_sid=None → default
+    )
+
+    # the cold main was LOADED (get_or_load) — get_session-only would have DROPPED it.
+    # Loading proves the DEFAULT branch (get_or_load(to) + ensure_running(to)) executed as
+    # one unit, so ensure_running (which starts the run-loop + the user-facing forwarder)
+    # ran too — the forwarder-start is covered transitively (no private-state assert).
+    target_main = reg.get_session("worker")
+    assert target_main is not None, "the cold main was NOT loaded (it would be dropped)"
+    entry, _ = await _find_history(target_main, "COLD MAIN DELIVERY")
+    assert entry is not None
+
+
+@pytest.mark.asyncio
+async def test_gone_spawner_sid_drops_does_not_fallback_to_main(tmp_path, caplog):
+    """Tier 2: (the FAIL-SAFE, #2130) a reply to a non-main sid whose session is NOT loaded
+    (gone spawner) is DROPPED (logged), NOT routed to main — a fallback-to-main would
+    re-introduce the very misroute #2130 fixes. The fail-safe warning is the drop evidence;
+    main's run-loop runs so a fallback WOULD land in its history. RED if it falls back to
+    main (the warning wouldn't fire + the result would reach main)."""
+    import logging
+    reg = _registry(tmp_path)
+    main = await reg.ensure_running("worker")  # main's run-loop active → a fallback WOULD process
+    with caplog.at_level(logging.WARNING, logger="reyn.runtime.session"):
+        await main._send_agent_response(
+            to="worker", response="ORPHAN RESULT", depth=0, chain_id="co", to_sid="goneSid999",
+        )
+        await asyncio.sleep(0.2)  # give a (hypothetical) fallback time to land in history
+    # the fail-safe fired (drop), NOT a fallback-to-main delivery:
+    assert any(
+        "the spawner session is no longer loaded" in r.getMessage() for r in caplog.records
+    ), "the fail-safe drop warning did not fire (a fallback-to-main would skip it)"
+    assert not any(
+        "ORPHAN RESULT" in (m.content if isinstance(m.content, str) else str(m.content))
+        for m in main.history
+    ), "the orphan reply reached main (a silent misroute — the fail-safe must DROP)"
 
 
 @pytest.mark.asyncio

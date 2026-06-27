@@ -600,6 +600,9 @@ class RunOrchestrator:
                             exc_type=exc_type.__name__ if exc_type else "unknown",
                             will_resume=True,
                         )
+                        # #2068: fire the skill_end hook on the __post__-resume interrupt
+                        # path too (hook-only; snapshot preserved for resume).
+                        await self._skill_registry.interrupt(run_id=self._run_id)
 
         artifact_path: str | None = self._workspace.store_artifact(
             "_input", artifact, skill_name=self._skill.name, visit=1
@@ -902,3 +905,10 @@ class RunOrchestrator:
                         exc_type=exc_type.__name__,
                         will_resume=True,
                     )
+                    # #2068: also fire the skill_end lifecycle hook (the audit event
+                    # above stays; this is the start↔end hook symmetry). interrupt()
+                    # is hook-only — it does NOT WAL skill_completed or unlink the
+                    # snapshot (will_resume → the snapshot is preserved for resume).
+                    # Guarded exactly-once (a /skill discard pre-fires skill_end
+                    # before the cancel-unwind, so this defers).
+                    await self._skill_registry.interrupt(run_id=self._run_id)

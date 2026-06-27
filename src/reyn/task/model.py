@@ -9,6 +9,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
+from typing import NamedTuple
 
 
 def _now_iso() -> str:
@@ -16,27 +17,31 @@ def _now_iso() -> str:
 
 
 class TaskState(str, Enum):
-    """Lifecycle states (#1953 §0-Q1).
+    """Lifecycle — 7 base states (#2187 §3.4).
 
-    ``ready`` = DAG-unblocked but not yet started; ``archived`` = soft-deleted
-    (WAL-window auto-purge eligible, §24). A2A mapping lives in the A2A layer:
-    ready→submitted, in_progress→working, blocked→input-required/auth-required,
-    completed→completed, failed→failed, aborted→canceled, archived→(internal).
+    ``unassigned`` = no assignee yet (the pending-assignment queue); ``blocked`` =
+    DAG deps not all terminal; ``ready`` = DAG-unblocked + assigned but not yet
+    started; ``running`` = the assignee is executing; ``done``/``failed``/``aborted``
+    are terminal. "Waiting on children" / "deciding" are NOT base states — they are
+    derived from the open-child counts (``N_awaited``/``N_background``) over a
+    ``running`` task (#2187 §3.4). Soft-delete is the orthogonal retention dimension
+    (``Task.archived_at``), not a state. A2A mapping lives in the A2A layer:
+    ready→submitted, running→working, blocked→input-required/auth-required,
+    done→completed, failed→failed, aborted→canceled.
     """
 
-    PENDING = "pending"
-    READY = "ready"
-    IN_PROGRESS = "in_progress"
+    UNASSIGNED = "unassigned"
     BLOCKED = "blocked"
-    COMPLETED = "completed"
+    READY = "ready"
+    RUNNING = "running"
+    DONE = "done"
     FAILED = "failed"
     ABORTED = "aborted"
-    ARCHIVED = "archived"
 
 
 # Terminal states never transition further (single-writer is moot once here).
 TERMINAL_STATES: frozenset[TaskState] = frozenset(
-    {TaskState.COMPLETED, TaskState.FAILED, TaskState.ABORTED, TaskState.ARCHIVED}
+    {TaskState.DONE, TaskState.FAILED, TaskState.ABORTED}
 )
 
 
@@ -102,6 +107,32 @@ class TaskRequesterKind(str, Enum):
     TASK = "task"
 
 
+class TaskLinkType(str, Enum):
+    """The child→parent decomposition-link type (#2187 §3.5).
+
+    ``awaited`` — the parent BLOCKS on this child (needs its result): it gates the
+    parent's completion (counts toward ``N_awaited``). ``background`` — the parent
+    CONTINUES its own work alongside this child and never blocks on it (parallel).
+    Marked at child creation, durable — the per-child wake-behaviour policy (#2187
+    §4). Meaningful only for a decomposition child (``requester_kind=task``); a
+    top-level task carries the default but it is never consulted.
+    """
+
+    AWAITED = "awaited"
+    BACKGROUND = "background"
+
+
+class ChildCounts(NamedTuple):
+    """Open-child counts split by decomposition-link type (#2187 §3.4) — the derived
+    dimension over a task's children. ``awaited`` children gate the parent's
+    completion (RUNNING→DONE only when ``awaited + background == 0``); both reach the
+    waker reconciler. Derived on-demand from the children's durable states, never
+    separately stored."""
+
+    awaited: int
+    background: int
+
+
 @dataclass
 class Task:
     """One trackable work-unit.
@@ -124,11 +155,13 @@ class Task:
     assignee: str
     requester: str
     requester_kind: TaskRequesterKind = TaskRequesterKind.SESSION  # §16: session-owned vs task-as-request owned (the ownership edge)
+    link_type: TaskLinkType = TaskLinkType.AWAITED  # #2187 §3.5: this child's decomposition-link to its parent (awaited gates the parent; background runs parallel). CONTENT (backend column, like deps) — NOT the WAL binding. Meaningful only when requester_kind=task.
     origin: TaskOrigin = TaskOrigin.SELF
-    status: TaskState = TaskState.PENDING
+    status: TaskState = TaskState.READY
     description: str | None = None
     created_by: str | None = None  # audit provenance (§0-Q3); operative notify = requester
     awaiting_since: float | None = None  # R-D16 WAL-floor exclusion (set while blocked)
+    archived_at: str | None = None  # soft-delete retention marker (#2187): orthogonal to the lifecycle state — set alongside ABORTED by abort(); the §24 purge-window + the list hidden-filter key on it
     deps: list[str] = field(default_factory=list)  # depends-on task_ids (DAG, §13)
     tools: list[str] = field(default_factory=list)  # narrowed tool set for the exec engine (#1953 slice P2)
     result: str | None = None  # exec-layer output captured on completion (#1953 slice P2)
@@ -143,8 +176,10 @@ class Task:
             "assignee": self.assignee,
             "requester": self.requester,
             "requester_kind": self.requester_kind.value,
+            "link_type": self.link_type.value,
             "origin": self.origin.value,
             "status": self.status.value,
+            "archived_at": self.archived_at,
             "description": self.description,
             "created_by": self.created_by,
             "awaiting_since": self.awaiting_since,

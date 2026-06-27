@@ -195,13 +195,13 @@ Session も同様に `chat/services/` 配下のサービスに分解されてい
 - `skill_runner.py`
 - `budget_gateway.py`、`chain_manager.py`、`intervention_registry.py`、
   `memory_service.py`、`router_host_adapter.py`、`snapshot_journal.py`
-- `a2a_handler.py`、`intervention_handler.py`、`auto_resume_handler.py`
+- `inter_agent_messaging.py`、`intervention_handler.py`、`auto_resume_handler.py`
 
 ### トランスポートとエージェントスコーピング
 
 エージェントが「何をできるか」に影響を与えるように見える 2 つの概念は、異なるレイヤーで機能しており、混同してはなりません。
 
-**トランスポート**（`a2a_handler.py`、MCP）は、メッセージがセッションに届く仕組み — ワイヤープロトコルです。A2A はタスクを `Session` に届け、MCP はツール呼び出し結果を届けます。どちらも能力を付与・制限するものではなく、ルーティング機構にすぎません。
+**トランスポート**（`inter_agent_messaging.py`、MCP）は、メッセージがセッションに届く仕組み — ワイヤープロトコルです。A2A はタスクを `Session` に届け、MCP はツール呼び出し結果を届けます。どちらも能力を付与・制限するものではなく、ルーティング機構にすぎません。
 
 **エージェントスコーピング**は、`Session` の構築時にそのパラメータ（`env_backend`（サンドボックスプロファイル）、`exclude_tools`（ツール抑制）、パーミッション付与）によって決まります。これらが、どのトランスポートが届けたかに関わらず、セッションが受信メッセージに対して何を許可されるかを規定します。
 

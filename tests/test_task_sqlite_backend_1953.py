@@ -17,6 +17,8 @@ from __future__ import annotations
 import pytest
 
 from reyn.task import SqliteTaskBackend, Task, TaskOrigin, TaskRequesterKind, TaskState
+from reyn.task.subscription import SubscriptionRegistry
+from tests._support.task_subscription import SubscriptionBackend
 
 
 def _db(tmp_path) -> str:
@@ -27,7 +29,12 @@ def _db(tmp_path) -> str:
 async def test_nondefault_task_round_trips_across_reload_from_disk(tmp_path):
     """Tier 2: a fully non-default task survives a close + reopen from disk."""
     path = _db(tmp_path)
-    backend = SqliteTaskBackend(path)
+    # #2187 backend-master: the binding is the WAL-derived SUBSCRIPTION (not a column),
+    # so wire the backend's read-through to a SubscriptionRegistry + record each create's
+    # binding to it via the op-mimic wrapper. The content/DAG survives the sqlite reload;
+    # the binding survives via this control plane (separate from the sqlite db).
+    cp = SubscriptionRegistry()
+    backend = SubscriptionBackend(SqliteTaskBackend(path, subscription_reader=cp), cp)
     # #1953 slice 6 (OQ-1): deps must reference existing tasks — create them first.
     await backend.create(Task(task_id="d-1", name="d1", assignee="bob", requester="alice"))
     await backend.create(Task(task_id="d-2", name="d2", assignee="bob", requester="alice"))
@@ -41,8 +48,10 @@ async def test_nondefault_task_round_trips_across_reload_from_disk(tmp_path):
     await backend.create(task)
     backend.close()
 
-    # Reopen a fresh backend on the same file — durability, not in-memory cache.
-    reopened = SqliteTaskBackend(path)
+    # Reopen a fresh backend on the same file — durability, not in-memory cache. Wire the
+    # SAME control plane to the reopened backend: the binding survives via the subscription
+    # (which is in-process here, mirroring the WAL surviving a backend reload).
+    reopened = SqliteTaskBackend(path, subscription_reader=cp)
     got = await reopened.get("t-1")
     assert got is not None
     # RED if any non-default field is dropped on write or read.
@@ -61,7 +70,10 @@ async def test_nondefault_task_round_trips_across_reload_from_disk(tmp_path):
 @pytest.mark.asyncio
 async def test_list_filters_persist(tmp_path):
     """Tier 2: list filters work against the persisted rows."""
-    backend = SqliteTaskBackend(_db(tmp_path))
+    # #2187 backend-master: the assignee/requester filter filters the HYDRATED binding
+    # (the WAL-subscription, not a stored column) — wire the subscription read-through.
+    cp = SubscriptionRegistry()
+    backend = SubscriptionBackend(SqliteTaskBackend(_db(tmp_path), subscription_reader=cp), cp)
     await backend.create(Task(task_id="a", name="a", assignee="bob", requester="r"))
     await backend.create(Task(task_id="b", name="b", assignee="carol", requester="r"))
 
@@ -80,10 +92,10 @@ async def test_update_status_single_writer_is_assignee_session(tmp_path):
     await backend.create(Task(task_id="t", name="n", assignee="sess-A", requester="r"))
 
     # The assignee session writes freely (any number of turns — no claim/version).
-    s1 = await backend.update_status("t", "in_progress", caller_session_id="sess-A")
-    assert s1 is not None and s1.status is TaskState.IN_PROGRESS
-    s2 = await backend.update_status("t", "completed", caller_session_id="sess-A")
-    assert s2 is not None and s2.status is TaskState.COMPLETED
+    s1 = await backend.update_status("t", "running", caller_session_id="sess-A")
+    assert s1 is not None and s1.status is TaskState.RUNNING
+    s2 = await backend.update_status("t", "done", caller_session_id="sess-A")
+    assert s2 is not None and s2.status is TaskState.DONE
 
     # A non-assignee session is rejected — single-writer CAS holds.
     with pytest.raises(PermissionError):
@@ -91,7 +103,7 @@ async def test_update_status_single_writer_is_assignee_session(tmp_path):
 
     # State is unchanged by the rejected write.
     after = await backend.get("t")
-    assert after is not None and after.status is TaskState.COMPLETED
+    assert after is not None and after.status is TaskState.DONE
     backend.close()
 
 
@@ -99,7 +111,7 @@ async def test_update_status_single_writer_is_assignee_session(tmp_path):
 async def test_update_status_unknown_task_returns_none(tmp_path):
     """Tier 2: update on a missing task returns None (not a CAS reject)."""
     backend = SqliteTaskBackend(_db(tmp_path))
-    assert await backend.update_status("nope", "in_progress", caller_session_id="x") is None
+    assert await backend.update_status("nope", "running", caller_session_id="x") is None
     backend.close()
 
 
@@ -119,7 +131,7 @@ async def test_awaiting_and_abort_persist_and_emit_events(tmp_path):
     got = await reopened.get("t")
     assert got is not None
     assert got.awaiting_since == 999.0
-    assert got.status is TaskState.ARCHIVED  # abort = delete → archived
+    assert got.status is TaskState.ABORTED  # abort = delete → archived
 
     kinds = [e["kind"] for e in await reopened.events("t")]
     assert kinds == ["created", "awaiting_set", "aborted"]
@@ -131,7 +143,11 @@ async def test_abort_down_cascade_and_sibling_intact(tmp_path):
     """Tier 2: aborting a task-as-request archives its whole OWNERSHIP sub-tree
     (DOWN-cascade via the requester edge, §16 slice C — parent_id removed), while an
     unrelated sibling task is untouched (proof there is no whole-session cancel)."""
-    backend = SqliteTaskBackend(_db(tmp_path))
+    # #2187 backend-master: the ownership (requester) edge the cascade follows is the
+    # WAL-derived SUBSCRIPTION binding, not a column — wire the subscription read-through so
+    # the down-cascade walks the real binding.
+    cp = SubscriptionRegistry()
+    backend = SubscriptionBackend(SqliteTaskBackend(_db(tmp_path), subscription_reader=cp), cp)
     await backend.create(Task(task_id="p", name="p", assignee="A", requester="R"))
     # c1 owned by p, c2 owned by c1 (the recursive-request ownership edge).
     await backend.create(Task(task_id="c1", name="c1", assignee="A", requester="p",
@@ -146,10 +162,10 @@ async def test_abort_down_cascade_and_sibling_intact(tmp_path):
     # whole sub-tree archived (recursive, leaf-terminal).
     for tid in ("p", "c1", "c2"):
         t = await backend.get(tid)
-        assert t is not None and t.status is TaskState.ARCHIVED, tid
+        assert t is not None and t.status is TaskState.ABORTED, tid
     # RED if abort whole-session-cancelled: the sibling task A also owns is intact.
     sib = await backend.get("sib")
-    assert sib is not None and sib.status is TaskState.PENDING
+    assert sib is not None and sib.status is TaskState.READY
     backend.close()
 
 

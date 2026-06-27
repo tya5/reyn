@@ -106,7 +106,7 @@ async def test_assignee_update_status_via_invoke_action_allowed():
     backend = InMemoryTaskBackend()
     task_id = await _task_assigned_to(backend, "sess-B")
     ctx = _router_ctx(_op_ctx("sess-B", backend))  # caller == assignee
-    result = await _UPDATE({"task_id": task_id, "status": "in_progress"}, ctx)
+    result = await _UPDATE({"task_id": task_id, "status": "running"}, ctx)
     assert result.get("status") == "ok", result
 
 
@@ -120,7 +120,7 @@ async def test_none_session_id_masks_and_rejects_even_the_assignee():
     backend = InMemoryTaskBackend()
     task_id = await _task_assigned_to(backend, "sess-B")
     ctx = _router_ctx(_op_ctx(None, backend))  # the mask: session_id is None
-    result = await _UPDATE({"task_id": task_id, "status": "in_progress"}, ctx)
+    result = await _UPDATE({"task_id": task_id, "status": "running"}, ctx)
     assert result.get("status") == "denied", result
 
 
@@ -158,10 +158,16 @@ async def test_router_opctx_threads_task_waker_so_chat_abort_wakes_requester():
         async def notify_requester_decide(self, **kw) -> None:
             self.calls.append(kw)
 
+        async def publish_task_event(self, event_type, task, **kwargs) -> None:
+            # #2187 Stage 4: the op publishes through the single seam; route the
+            # terminal event to the recorded requester-notify.
+            if event_type == "terminal":
+                await self.notify_requester_decide(terminal_task=task, **kwargs)
+
     backend = InMemoryTaskBackend()
     # a self-task plan whose requester is the chat session ("main", _DEFAULT_SID).
     await backend.create(Task(task_id="t2", name="t2", assignee="main", requester="main",
-                              status=TaskState.IN_PROGRESS, deps=[]))
+                              status=TaskState.RUNNING, deps=[]))
     await backend.create(Task(task_id="t3", name="t3", assignee="main", requester="main",
                               deps=["t2"]))
 

@@ -24,6 +24,8 @@ from reyn.core.op_runtime import task as taskmod
 from reyn.data.workspace.workspace import Workspace
 from reyn.security.permissions.permissions import PermissionDecl
 from reyn.task import SqliteTaskBackend, create_task_backend
+from reyn.task.subscription import SubscriptionRegistry
+from tests._support.task_subscription import SubscriptionBackend
 
 
 def _events_workspace():
@@ -75,7 +77,11 @@ async def test_handler_uses_threaded_sqlite_backend(tmp_path: Path):
     """Tier 2: a task op with a sqlite backend on the ctx lands in sqlite, not the
     in-memory fallback."""
     taskmod.reset_backend_for_test()  # ensure the fallback is empty
-    backend = SqliteTaskBackend(str(tmp_path / "tasks.db"))
+    # #2187 backend-master: the assignee is the WAL-derived SUBSCRIPTION binding (not a
+    # column) — wire the backend's read-through + record the create's binding via the
+    # op-mimic wrapper, so the assertion below reads the real binding (hydrated on get).
+    cp = SubscriptionRegistry()
+    backend = SubscriptionBackend(SqliteTaskBackend(str(tmp_path / "tasks.db"), subscription_reader=cp), cp)
     ctx = SimpleNamespace(task_backend=backend, session_id="sess-1", agent_id="alice", events=None)
 
     created = await taskmod._create(
@@ -87,6 +93,7 @@ async def test_handler_uses_threaded_sqlite_backend(tmp_path: Path):
 
     # The task landed in the threaded sqlite backend — proving the handler used
     # ctx.task_backend (had it used the in-memory fallback, sqlite would be empty).
+    # The binding (assignee) is hydrated from the subscription the op-mimic recorded.
     got = await backend.get(task_id)
     assert got is not None
     assert got.assignee == "bob"
@@ -97,7 +104,13 @@ async def test_handler_uses_threaded_sqlite_backend(tmp_path: Path):
 async def test_cas_reject_end_to_end_through_op_layer(tmp_path: Path):
     """Tier 2: the single-writer CAS holds through the op handler — only the
     assignee session (ctx.session_id == assignee) can write."""
-    backend = SqliteTaskBackend(str(tmp_path / "tasks.db"))
+    # #2187 backend-master: the CAS is now OP-LAYER ownership-gating — the op's _authorize
+    # reads the assignee from the WAL-subscription binding (hydrated on the fetched task) and
+    # returns a "denied" result for a non-assignee (no backend PermissionError raise). Wire
+    # the backend's read-through + record the binding via the op-mimic wrapper so _authorize
+    # reads the real binding.
+    cp = SubscriptionRegistry()
+    backend = SubscriptionBackend(SqliteTaskBackend(str(tmp_path / "tasks.db"), subscription_reader=cp), cp)
     # ctx_a's session is the assignee; ctx_b is a different session.
     ctx_a = SimpleNamespace(task_backend=backend, session_id="sess-A", agent_id="a", events=None)
     ctx_b = SimpleNamespace(task_backend=backend, session_id="sess-B", agent_id="b", events=None)
@@ -111,14 +124,15 @@ async def test_cas_reject_end_to_end_through_op_layer(tmp_path: Path):
 
     # the assignee session writes.
     ok = await taskmod._update_status(
-        SimpleNamespace(task_id=task_id, status="in_progress", reason=None), ctx_a, "control_ir")
+        SimpleNamespace(task_id=task_id, status="running", reason=None), ctx_a, "control_ir")
     assert ok["status"] == "ok"
 
-    # a non-assignee session is rejected by the CAS (the handler raises, mirroring
-    # the backend contract; execute_op surfaces this as a "denied" result).
-    with pytest.raises(PermissionError):
-        await taskmod._update_status(
-            SimpleNamespace(task_id=task_id, status="failed", reason=None), ctx_b, "control_ir")
+    # a non-assignee session is rejected by the CAS — now the op-layer returns a
+    # decision-enabling "denied" result (the single-writer gate moved from the backend
+    # raise to the op's _authorize binding-check). Same accept/reject semantics preserved.
+    denied = await taskmod._update_status(
+        SimpleNamespace(task_id=task_id, status="failed", reason=None), ctx_b, "control_ir")
+    assert denied["status"] == "denied"
     backend.close()
 
 

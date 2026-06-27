@@ -89,7 +89,7 @@ async def test_recovery_create_on_task_as_request_is_owned_by_it_full_live_path(
 
     # T = the task-as-request, executed by the managing session.
     await b.create(Task(task_id="T-req", name="T", assignee="main", requester="a2a:client",
-                        status=TaskState.IN_PROGRESS))
+                        status=TaskState.RUNNING))
     # U owned by T (live create-path), a dependent V, then U fails.
     res_u = await taskmod._create(
         _create_op("U"), _ctx(b, session_id="worker", current_task_id="T-req"), "control_ir")
@@ -134,7 +134,7 @@ async def test_session_requester_recovery_stays_session_owned(tmp_path):
 
     # a flat self-task plan whose requester is the session "main" (the S1 path).
     await b.create(Task(task_id="b2", name="b2", assignee="main", requester="main",
-                        status=TaskState.IN_PROGRESS))
+                        status=TaskState.RUNNING))
     await b.create(Task(task_id="b3", name="b3", assignee="main", requester="main", deps=["b2"]))
     await b.update_status("b2", TaskState.FAILED, caller_session_id="main")
 

@@ -263,7 +263,7 @@ Session is similarly decomposed into services under `chat/services/`:
 - `skill_runner.py`
 - `budget_gateway.py`, `chain_manager.py`, `intervention_registry.py`,
   `memory_service.py`, `router_host_adapter.py`, `snapshot_journal.py`
-- `a2a_handler.py`, `intervention_handler.py`, `auto_resume_handler.py`
+- `inter_agent_messaging.py`, `intervention_handler.py`, `auto_resume_handler.py`
 
 ### LLM org-design tools
 
@@ -289,7 +289,7 @@ See [Concepts: LLM org-design tools](../multi-agent/org-design.md).
 
 Two concepts that appear to affect what an agent "can do" operate at different layers and must not be conflated:
 
-**Transport** (`a2a_handler.py`, MCP) is how messages arrive at the session — the wire protocol. A2A delivers a task to `Session`; MCP delivers a tool invocation result. Neither grants nor restricts capabilities; they are routing mechanisms only.
+**Transport** (`inter_agent_messaging.py`, MCP) is how messages arrive at the session — the wire protocol. A2A delivers a task to `Session`; MCP delivers a tool invocation result. Neither grants nor restricts capabilities; they are routing mechanisms only.
 
 **Agent scoping** is established at `Session` construction time through its parameters: `env_backend` (sandbox profile), `exclude_tools` (tool suppression), and permission grants. These determine what the session is allowed to do with incoming messages, regardless of which transport delivered them.
 

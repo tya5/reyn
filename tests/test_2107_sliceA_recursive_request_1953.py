@@ -51,6 +51,8 @@ from reyn.runtime.services.task_wake import (
 )
 from reyn.runtime.session import Session
 from reyn.task import InMemoryTaskBackend, SqliteTaskBackend, Task, TaskRequesterKind, TaskState
+from reyn.task.subscription import SubscriptionRegistry
+from tests._support.task_subscription import SubscriptionBackend
 
 
 def _make_registry(tmp_path: Path) -> AgentRegistry:
@@ -135,7 +137,7 @@ async def test_failed_subtask_recovery_wakes_managing_session_full_live_path(tmp
 
     # T = the task-as-request, assigned to (executed by) the live managing session.
     T = Task(task_id="T-req", name="T", assignee="main", requester="a2a:client",
-             status=TaskState.IN_PROGRESS)
+             status=TaskState.RUNNING)
     await b.create(T)
 
     # U = a sub-task created WHILE executing T → owned by T via the live create-path.
@@ -223,15 +225,20 @@ async def test_adapter_builder_threads_current_task_id_live_router_path():
 @pytest.mark.asyncio
 async def test_requester_kind_task_round_trips_through_sqlite(tmp_path):
     """Tier 2: the NON-DEFAULT requester_kind=task survives a sqlite set→reload→get
-    (a default 'session' round-trip would pass trivially even if the column were
+    (a default 'session' round-trip would pass trivially even if the binding were
     ignored — this proves persistence)."""
+    # #2187 backend-master: requester_kind is the WAL-derived SUBSCRIPTION binding (not a
+    # column) — it round-trips through the subscription, hydrated onto the reloaded task.
     db = tmp_path / "tasks.db"
-    b = SqliteTaskBackend(db)
+    cp = SubscriptionRegistry()
+    b = SubscriptionBackend(SqliteTaskBackend(db, subscription_reader=cp), cp)
     await b.create(Task(task_id="owned", name="owned", assignee="s", requester="T-owner",
                         requester_kind=TaskRequesterKind.TASK))
     b.close()
 
-    reopened = SqliteTaskBackend(db)
+    # Reopen wired to the SAME control plane (the binding survives via the subscription,
+    # separate from the sqlite db) — the requester_kind=task hydrates onto the reloaded task.
+    reopened = SqliteTaskBackend(db, subscription_reader=cp)
     got = await reopened.get("owned")
     assert got is not None
     assert got.requester == "T-owner"

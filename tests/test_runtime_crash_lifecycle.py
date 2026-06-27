@@ -284,3 +284,66 @@ def test_runtime_error_preserves_snapshot(tmp_path: Path):
     ]
     assert interrupted
     assert interrupted[0].data["exc_type"] == "RuntimeError"
+
+
+# ---------------------------------------------------------------------------
+# #2068: skill_end fires on the interrupt/error exits too (via interrupt())
+# ---------------------------------------------------------------------------
+
+
+class _RecordingDispatcher:
+    """A real recording HookDispatcher stand-in (the injected seam; no mock)."""
+
+    def __init__(self) -> None:
+        self.dispatched: "list[tuple[str, dict]]" = []
+
+    async def dispatch(self, point: str, template_vars: dict) -> None:
+        self.dispatched.append((point, template_vars))
+
+    @property
+    def points(self) -> "list[str]":
+        return [p for (p, _v) in self.dispatched]
+
+
+def _setup_with_dispatcher(tmp_path: Path):
+    state_dir = tmp_path / ".reyn" / "agents" / "alpha" / "state"
+    state_dir.mkdir(parents=True, exist_ok=True)
+    log = StateLog(tmp_path / ".reyn" / "wal.jsonl")
+    rec = _RecordingDispatcher()
+    registry = SkillRegistry(
+        agent_name="alpha", agent_state_dir=state_dir, state_log=log, hook_dispatcher=rec,
+    )
+    snap_path = state_dir / "skills" / f"{_RUN_ID}.snapshot.json"
+    return registry, log, snap_path, rec
+
+
+def test_cancelled_error_fires_skill_end_interrupted(tmp_path: Path):
+    """Tier 2: #2068 (LOAD-BEARING) — CancelledError → the finally interrupt-branch fires
+    skill_end (status="interrupted") via registry.interrupt(), closing the start↔end
+    asymmetry, while the snapshot stays preserved. RED before #2068 (skill_start with no
+    matching skill_end)."""
+    registry, log, snap_path, rec = _setup_with_dispatcher(tmp_path)
+    rt = _StubRuntime(
+        _make_skill(), skill_registry=registry, state_log=log,
+        raise_on_first_phase=asyncio.CancelledError(),
+    )
+    with pytest.raises(asyncio.CancelledError):
+        asyncio.run(rt.run({"type": "input", "data": {}}))
+    assert "skill_start" in rec.points and "skill_end" in rec.points
+    end_vars = [v for (p, v) in rec.dispatched if p == "skill_end"]
+    assert end_vars and end_vars[0]["status"] == "interrupted"
+    assert snap_path.exists()  # preserved (interrupt() is hook-only, no unlink)
+
+
+def test_runtime_error_fires_skill_end_interrupted(tmp_path: Path):
+    """Tier 2: #2068 — generic RuntimeError → skill_end(status="interrupted") fires too."""
+    registry, log, snap_path, rec = _setup_with_dispatcher(tmp_path)
+    rt = _StubRuntime(
+        _make_skill(), skill_registry=registry, state_log=log,
+        raise_on_first_phase=RuntimeError("transient blip"),
+    )
+    with pytest.raises(RuntimeError, match="transient blip"):
+        asyncio.run(rt.run({"type": "input", "data": {}}))
+    end_vars = [v for (p, v) in rec.dispatched if p == "skill_end"]
+    assert end_vars and end_vars[0]["status"] == "interrupted"
+    assert snap_path.exists()

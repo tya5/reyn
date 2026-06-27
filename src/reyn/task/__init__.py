@@ -14,12 +14,13 @@ sqlite (slice 2), single-writer CAS + P6 events (slice 3), and the rest follow.
 from __future__ import annotations
 
 from reyn.task.backend import InMemoryTaskBackend, TaskBackend
-from reyn.task.factory import create_task_backend, per_session_sqlite_backend
+from reyn.task.factory import create_task_backend
 from reyn.task.model import (
     TERMINAL_STATES,
     Task,
     TaskCycleError,
     TaskDepNotFoundError,
+    TaskLinkType,
     TaskOrigin,
     TaskRequesterKind,
     TaskState,
@@ -31,6 +32,7 @@ __all__ = [
     "TaskState",
     "TaskOrigin",
     "TaskRequesterKind",
+    "TaskLinkType",
     "TERMINAL_STATES",
     "TaskCycleError",
     "TaskDepNotFoundError",
@@ -38,5 +40,4 @@ __all__ = [
     "InMemoryTaskBackend",
     "SqliteTaskBackend",
     "create_task_backend",
-    "per_session_sqlite_backend",
 ]

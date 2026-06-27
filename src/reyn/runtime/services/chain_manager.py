@@ -48,6 +48,10 @@ class _PendingChain:
     origin_depth: int
     original_request: str
     waiting_on: set[str] = field(default_factory=set)
+    # #2130: the origin's session id — so the resolved chain reply routes back to the
+    # specific (origin_agent, origin_sid), not the origin agent's main session. None →
+    # main-case (user-initiated / external peer / pre-#2130 journal entries).
+    origin_sid: "str | None" = None
 
 
 # ── Journal protocol ──────────────────────────────────────────────────────────
@@ -137,6 +141,7 @@ class ChainManager:
         waiting_on: set[str] | None = None,
         origin_agent: str = "",
         origin_depth: int = 0,
+        origin_sid: "str | None" = None,
     ) -> _PendingChain:
         """Register a new pending chain and persist it via the journal.
 
@@ -165,6 +170,7 @@ class ChainManager:
             origin_depth=origin_depth or depth,
             original_request=original_text,
             waiting_on=set(waiting_on or []),
+            origin_sid=origin_sid,
         )
         self._chains[chain_id] = chain
 
@@ -174,6 +180,7 @@ class ChainManager:
             "original_request": chain.original_request,
             "waiting_on": sorted(chain.waiting_on),
             "from_user": from_user,
+            "origin_sid": chain.origin_sid,  # #2130
         }
         await self._journal.record_chain_register(chain_id=chain_id, fields=fields)
         return chain
@@ -350,5 +357,6 @@ class ChainManager:
                 origin_depth=int(chain_dict["origin_depth"]),
                 original_request=chain_dict["original_request"],
                 waiting_on=set(chain_dict.get("waiting_on", [])),
+                origin_sid=chain_dict.get("origin_sid"),  # #2130 (None for pre-#2130 entries)
             )
             self.arm_timeout(cid, on_fire=on_fire)

@@ -1,6 +1,6 @@
-"""Tier 2: OS invariant tests for A2AHandler.
+"""Tier 2: OS invariant tests for InterAgentMessaging.
 
-Tests the extracted A2AHandler service class (FP-0019 Wave 2 part 2) in
+Tests the extracted InterAgentMessaging service class (FP-0019 Wave 2 part 2) in
 isolation using real instances — no mocks, no MagicMock / AsyncMock.
 
 Invariants exercised:
@@ -12,7 +12,7 @@ Invariants exercised:
 
 Policy compliance (docs/deep-dives/contributing/testing.ja.md):
 - No unittest.mock / MagicMock / AsyncMock / patch usage.
-- Real A2AHandler + ChainManager + SnapshotJournal instances wired with
+- Real InterAgentMessaging + ChainManager + SnapshotJournal instances wired with
   plain async / sync stub callbacks.
 - Observed via: stub callback lists, ChainManager.get(), EventLog subscriber.
 - Each test docstring's first line declares its Tier.
@@ -29,8 +29,8 @@ from reyn.core.events.event_store import EventStore
 from reyn.core.events.events import EventLog
 from reyn.core.events.state_log import StateLog
 from reyn.runtime.outbox import OutboxMessage
-from reyn.runtime.services.a2a_handler import A2AHandler
 from reyn.runtime.services.chain_manager import ChainManager
+from reyn.runtime.services.inter_agent_messaging import InterAgentMessaging
 from reyn.runtime.services.snapshot_journal import SnapshotJournal
 
 # ---------------------------------------------------------------------------
@@ -53,8 +53,8 @@ def _build_handler(
     # Each callable receives (text, chain_id) and may append to
     # router_delegations / router_replies tracked by the test.
     router_actions: list | None = None,
-) -> tuple[A2AHandler, ChainManager, dict[str, list]]:
-    """Build a wired A2AHandler for testing.
+) -> tuple[InterAgentMessaging, ChainManager, dict[str, list]]:
+    """Build a wired InterAgentMessaging for testing.
 
     Returns ``(handler, chain_manager, trackers)`` where ``trackers`` holds
     mutable lists for capturing side-effects:
@@ -141,17 +141,18 @@ def _build_handler(
 
     async def _send_response_callback(
         to: str, from_agent: str, response: str, depth: int, chain_id: str,
-        responder_sid: "str | None" = None,
+        responder_sid: "str | None" = None, to_sid: "str | None" = None,  # #2130
     ) -> None:
         responses_sent.append({
             "to": to, "from_agent": from_agent, "response": response,
             "depth": depth, "chain_id": chain_id, "responder_sid": responder_sid,
+            "to_sid": to_sid,
         })
 
     async def _on_chain_timeout_fire(chain_id: str) -> None:
         pass  # no-op for tests
 
-    handler = A2AHandler(
+    handler = InterAgentMessaging(
         event_log=event_log,
         chain_manager=chain_manager,
         agent_name=agent_name,

@@ -32,18 +32,17 @@ from __future__ import annotations
 
 import asyncio
 import json
-import os
-import shutil
 import sqlite3
 from pathlib import Path
 
 from reyn.task.backend import find_cycle_path
-from reyn.task.generation_store import SqliteTaskGenerationStore
 from reyn.task.model import (
     TERMINAL_STATES,
+    ChildCounts,
     Task,
     TaskCycleError,
     TaskDepNotFoundError,
+    TaskLinkType,
     TaskOrigin,
     TaskRequesterKind,
     TaskState,
@@ -59,9 +58,11 @@ _SCHEMA = """
 CREATE TABLE IF NOT EXISTS tasks(
   task_id TEXT PRIMARY KEY,
   name TEXT NOT NULL,
-  assignee TEXT NOT NULL,
-  requester TEXT NOT NULL,
-  requester_kind TEXT NOT NULL DEFAULT 'session',
+  -- #2187 backend-master: the task BINDING (assignee/requester/requester_kind)
+  -- lives in the WAL-derived SubscriptionRegistry (the binding authority), not
+  -- here. The backend stores CONTENT + the dependency DAG + task STATE only and
+  -- reads the binding THROUGH the injected subscription_reader. (No binding
+  -- columns — _migrate_columns drops them from pre-2c-iii dbs.)
   origin TEXT NOT NULL,
   status TEXT NOT NULL,
   description TEXT,
@@ -70,6 +71,13 @@ CREATE TABLE IF NOT EXISTS tasks(
   unblock_predicate TEXT,
   tools TEXT,
   result TEXT,
+  -- #2187: soft-delete retention marker, orthogonal to the lifecycle `status`
+  -- (set alongside ABORTED by abort(); the list hidden-filter keys on it).
+  archived_at TEXT,
+  -- #2187 §3.5: this child's decomposition-link type to its parent (awaited /
+  -- background). CONTENT (like deps), marked at create. NULL on a pre-5b row →
+  -- the AWAITED default in _row_to_task.
+  link_type TEXT,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
@@ -107,33 +115,49 @@ CREATE TABLE IF NOT EXISTS task_comments(
 """
 
 _TASK_COLUMNS = (
-    "task_id, name, assignee, requester, requester_kind, origin, status, description, "
-    "created_by, awaiting_since, tools, result, created_at, updated_at"
+    "task_id, name, origin, status, description, "
+    "created_by, awaiting_since, tools, result, archived_at, link_type, created_at, updated_at"
 )
 
 
 class SqliteTaskBackend:
     """Durable Task backend backed by a single sqlite database.
 
-    Opts INTO session-rewind participation (#1953 slice R): the durable db file
-    is captured per WAL boundary via ``VACUUM INTO`` and restored by replacing
-    the file — symmetric with ``WorkspaceVersionStore`` (the runtime + workspace
-    substrates). The rewind generations are a separate filesystem mechanism from
-    the WAL ``state_log`` (P7: no new WAL kind) and from crash-recovery (the dep
-    graph + decision-ops stay WAL-durable in the live db independent of them)."""
+    The Task backend is the EXTERNAL MASTER of task-state (#2187): it is NOT
+    rewound by time-travel — Reyn rewinds only its internal trajectory (the
+    runtime snapshot + workspace substrates), never the external task tracker.
+    The dep graph + decision-ops stay WAL-durable in the live db, independent of
+    any rewind."""
 
-    #: #1953 slice R — this backend's durable state can be rewound (opt-in).
-    supports_rewind: bool = True
-
-    def __init__(self, db_path: str | Path) -> None:
+    def __init__(self, db_path: str | Path, *, subscription_reader=None) -> None:
         self._db_path = str(db_path)
         Path(self._db_path).parent.mkdir(parents=True, exist_ok=True)
         self._conn = self._open(init_schema=True)
         self._lock = asyncio.Lock()
-        # Sibling directory holding the per-generation full-DB copies.
-        self._gens = SqliteTaskGenerationStore(
-            Path(self._db_path).parent / "task-generations"
-        )
+        # #2187 backend-master: the WAL-derived SUBSCRIPTION reader (the binding
+        # authority — assignee/requester/requester_kind). The backend holds
+        # task-STATE; the binding is hydrated THROUGH this reader. None =
+        # direct/test construction (the stored columns stand, the additive 2c-i
+        # fallback).
+        self._subscription_reader = subscription_reader
+
+    def _hydrate_binding(self, task: "Task | None") -> "Task | None":
+        """#2187 backend-master (2c-i): overlay the WAL-derived binding
+        (assignee/requester/requester_kind) onto a Task reconstructed from a row
+        (the read-through). Additive — overlays ONLY a field the reader HAS a
+        record for, so the stored-column value is the fallback. No-op when there
+        is no reader."""
+        if task is not None and self._subscription_reader is not None:
+            a = self._subscription_reader.assignee_of(task.task_id)
+            if a is not None:
+                task.assignee = a
+            r = self._subscription_reader.requester_of(task.task_id)
+            if r is not None:
+                task.requester = r
+            rk = self._subscription_reader.requester_kind_of(task.task_id)
+            if rk is not None:
+                task.requester_kind = TaskRequesterKind(rk)
+        return task
 
     @staticmethod
     def _migrate_columns(conn: sqlite3.Connection) -> None:
@@ -142,96 +166,42 @@ class SqliteTaskBackend:
         already-existing table).  Safe no-op on a current-schema table: the
         ``PRAGMA table_info`` guard skips any column that already exists.
 
-        Called from ``_open(init_schema=True)`` (first open / schema init) AND from
-        ``restore_to_seq`` (after the file-swap reopen), so every restored generation
-        is brought to the current schema — robust to additive schema evolution by
-        construction."""
+        Called from ``_open(init_schema=True)`` (first open / schema init), so a
+        pre-existing DB is brought to the current schema — robust to additive
+        schema evolution by construction."""
         existing = {r[1] for r in conn.execute("PRAGMA table_info(tasks)").fetchall()}
         # #1953 slice P2: additive migration for DBs created before tools / result.
-        for col in ("tools", "result"):
+        # #2187: archived_at (the soft-delete retention marker) for pre-#2187 DBs.
+        for col in ("tools", "result", "archived_at", "link_type"):
             if col not in existing:
                 conn.execute(f"ALTER TABLE tasks ADD COLUMN {col} TEXT")
-        # #1953 §16 (recursive-request): additive migration for pre-existing DBs —
-        # a row created before this column is a session-owned task by definition
-        # (the only kind that existed), so the 'session' default is correct.
-        if "requester_kind" not in existing:
-            conn.execute(
-                "ALTER TABLE tasks ADD COLUMN requester_kind "
-                "TEXT NOT NULL DEFAULT 'session'")
+        # #2187 backend-master (2c-iii): the task BINDING moved to the WAL-derived
+        # SubscriptionRegistry (the binding authority). Drop the now-unused binding
+        # columns from a pre-2c-iii db — they are NOT NULL, so a binding-less INSERT
+        # would violate the constraint. SQLite ≥ 3.35 DROP COLUMN; the columns are
+        # not indexed/constrained so the drop is clean. The WAL subscription replay
+        # is the source for the existing rows' binding (recovery == live).
+        for col in ("assignee", "requester", "requester_kind"):
+            if col in existing:
+                conn.execute(f"ALTER TABLE tasks DROP COLUMN {col}")
         conn.commit()
 
     def _open(self, *, init_schema: bool = False) -> sqlite3.Connection:
-        """Open (or reopen, after a restore file-swap) the live connection with
-        the backend's fixed pragmas.  ``init_schema=True`` on first open: creates
-        tables (``CREATE TABLE IF NOT EXISTS`` is idempotent) and runs
-        ``_migrate_columns`` to bring any pre-existing DB to the current schema.
-        ``init_schema=False`` (restore path) skips table creation — ``restore_to_seq``
-        calls ``_migrate_columns`` directly on the fresh connection after the file-swap,
-        ensuring every restored generation is at the current schema."""
+        """Open the live connection with the backend's fixed pragmas.
+        ``init_schema=True`` on first open: creates tables (``CREATE TABLE IF NOT
+        EXISTS`` is idempotent) and runs ``_migrate_columns`` to bring any
+        pre-existing DB to the current schema."""
         conn = sqlite3.connect(self._db_path, check_same_thread=False)
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA journal_mode=WAL")
         conn.execute("PRAGMA busy_timeout=0")
         if init_schema:
             conn.executescript(_SCHEMA)
-            # Single-source migration helper — also called from restore_to_seq so
-            # both open and restore paths share the same column-addition logic.
             self._migrate_columns(conn)
         return conn
 
     def close(self) -> None:
         self._conn.close()
-
-    # ── Rewind substrate (#1953 slice R) ─────────────────────────────────────
-
-    async def snapshot_generation(self, seq: int) -> None:
-        """Capture a full point-in-time copy of the db keyed by the WAL boundary
-        ``seq``. Idempotent (a boundary already captured is left intact). The
-        ``async with self._lock`` guarantees no ``BEGIN IMMEDIATE`` is open, so
-        ``VACUUM INTO`` (which cannot run inside a transaction) is legal here; it
-        produces a fully-checkpointed, WAL-less single-file copy that includes
-        committed WAL frames. Published via tmp→rename for atomicity (a crash
-        mid-copy leaves only a ``.tmp`` the next prune sweeps)."""
-        dest = self._gens.gen_path(seq)
-        async with self._lock:
-            if dest.exists():
-                return
-            tmp = dest.with_suffix(dest.suffix + ".tmp")
-            if tmp.exists():
-                tmp.unlink()
-            self._conn.execute("VACUUM INTO ?", (str(tmp),))
-            os.replace(tmp, dest)
-
-    async def restore_to_seq(self, seq: int) -> None:
-        """Replace the live db with the generation captured at ``seq`` (the OS
-        passes the nearest active seq <= the rewind target). Closes the live
-        connection, copies the (WAL-less) generation file over the db path, drops
-        any stale ``-wal``/``-shm`` side-files so the old WAL is not replayed over
-        the restored copy, then reopens with ``_migrate_columns`` so the restored
-        generation is always at the current schema — robust to additive schema
-        evolution between when the generation was snapshotted and now. Re-runnable
-        (idempotent under the rewind keystone). Defensive no-op if the generation
-        is missing."""
-        src = self._gens.gen_path(seq)
-        async with self._lock:
-            if not src.exists():
-                return
-            self._conn.close()
-            shutil.copy2(src, self._db_path)
-            for side in ("-wal", "-shm"):
-                stale = Path(self._db_path + side)
-                if stale.exists():
-                    stale.unlink()
-            self._conn = self._open()
-            self._migrate_columns(self._conn)
-
-    async def generation_seqs(self) -> list[int]:
-        async with self._lock:
-            return self._gens.seqs()
-
-    async def prune_generations_below(self, min_keep_seq: int) -> int:
-        async with self._lock:
-            return self._gens.prune_below(min_keep_seq)
 
     # ── helpers ─────────────────────────────────────────────────────────────
 
@@ -273,7 +243,7 @@ class SqliteTaskBackend:
             row = self._conn.execute(
                 "SELECT status FROM tasks WHERE task_id=?", (d,)
             ).fetchone()
-            if row is None or row["status"] != TaskState.COMPLETED.value:
+            if row is None or row["status"] != TaskState.DONE.value:
                 return False
         return True
 
@@ -292,16 +262,12 @@ class SqliteTaskBackend:
         if row is None:
             return None
         status = row["status"]
-        if status not in (
-            TaskState.PENDING.value, TaskState.READY.value, TaskState.BLOCKED.value
-        ):
+        if status not in (TaskState.READY.value, TaskState.BLOCKED.value):
             return None
         satisfied = self._all_deps_completed(task_id)
         if satisfied and status == TaskState.BLOCKED.value:
             new = TaskState.READY.value
-        elif allow_demote and not satisfied and status in (
-            TaskState.PENDING.value, TaskState.READY.value
-        ):
+        elif allow_demote and not satisfied and status == TaskState.READY.value:
             new = TaskState.BLOCKED.value
         else:
             return None
@@ -313,17 +279,24 @@ class SqliteTaskBackend:
         return new
 
     def _row_to_task(self, row: sqlite3.Row) -> Task:
+        # #2187 backend-master (2c-iii): no binding columns — the Task is
+        # reconstructed with a PLACEHOLDER binding (empty assignee/requester,
+        # default SESSION kind); callers overlay the WAL-derived binding (the
+        # authority) via _hydrate_binding. _row_to_task itself stays pure
+        # content + DAG + state.
         return Task(
             task_id=row["task_id"],
             name=row["name"],
-            assignee=row["assignee"],
-            requester=row["requester"],
-            requester_kind=TaskRequesterKind(row["requester_kind"]),
+            assignee="",
+            requester="",
+            requester_kind=TaskRequesterKind.SESSION,
+            link_type=TaskLinkType(row["link_type"]) if row["link_type"] else TaskLinkType.AWAITED,
             origin=TaskOrigin(row["origin"]),
             status=TaskState(row["status"]),
             description=row["description"],
             created_by=row["created_by"],
             awaiting_since=row["awaiting_since"],
+            archived_at=row["archived_at"],
             deps=self._deps(row["task_id"]),
             tools=json.loads(row["tools"]) if row["tools"] else [],
             result=row["result"],
@@ -335,7 +308,28 @@ class SqliteTaskBackend:
         row = self._conn.execute(
             f"SELECT {_TASK_COLUMNS} FROM tasks WHERE task_id=?", (task_id,)
         ).fetchone()
-        return self._row_to_task(row) if row is not None else None
+        return self._hydrate_binding(self._row_to_task(row)) if row is not None else None
+
+    def _children_of(self, pid: str) -> list[Task]:
+        """Direct decomposition children of ``pid`` — IN-LOCK, no re-lock (the
+        shared primitive the in-lock abort cascade and the public ``children_of``
+        both build on; the public method adds the lock). The collision-safe
+        ownership filter (#2187 5b, finding D): the candidate set is the
+        WAL-subscription's task ids (the binding authority — no binding columns),
+        kept only when ``requester==pid AND requester_kind=="task"``; the ``task``
+        marker is REQUIRED because a session routing-key uuid can collide with a
+        task-id uuid. No reader (direct/test construction) → no owned children."""
+        reader = self._subscription_reader
+        if reader is None:
+            return []
+        out: list[Task] = []
+        for tid in reader.task_ids():
+            if (reader.requester_of(tid) == pid
+                    and reader.requester_kind_of(tid) == "task"):
+                t = self._fetch(tid)
+                if t is not None:
+                    out.append(t)
+        return out
 
     # ── TaskBackend contract ────────────────────────────────────────────────
 
@@ -357,19 +351,18 @@ class SqliteTaskBackend:
                     ).fetchone() or {"status": None})["status"]
                     for dep in task.deps
                 ]
-                if not all(s == TaskState.COMPLETED.value for s in dep_statuses):
+                if not all(s == TaskState.DONE.value for s in dep_statuses):
                     status = TaskState.BLOCKED
             task.status = status
             self._conn.execute("BEGIN IMMEDIATE")
             self._conn.execute(
                 f"INSERT INTO tasks({_TASK_COLUMNS}) "
-                f"VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                f"VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (
-                    task.task_id, task.name, task.assignee, task.requester,
-                    task.requester_kind.value, task.origin.value, task.status.value,
+                    task.task_id, task.name, task.origin.value, task.status.value,
                     task.description, task.created_by, task.awaiting_since,
                     json.dumps(task.tools) if task.tools else None, task.result,
-                    task.created_at, task.updated_at,
+                    task.archived_at, task.link_type.value, task.created_at, task.updated_at,
                 ),
             )
             for dep in task.deps:
@@ -392,52 +385,55 @@ class SqliteTaskBackend:
         requester: str | None = None,
         status: str | None = None,
     ) -> list[Task]:
+        # #2187 backend-master (2c-iii): the binding (assignee/requester) is no
+        # longer a column, so it cannot be an SQL WHERE clause — only the
+        # backend-owned ``status`` stays SQL. The binding filters are applied
+        # POST-fetch against the hydrated binding (the WAL-derived authority).
         clauses: list[str] = []
         params: list[object] = []
-        for col, val in (
-            ("assignee", assignee), ("requester", requester),
-            ("status", status),
-        ):
-            if val is not None:
-                clauses.append(f"{col}=?")
-                params.append(val)
+        if status is not None:
+            clauses.append("status=?")
+            params.append(status)
         where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
         async with self._lock:
             rows = self._conn.execute(
                 f"SELECT {_TASK_COLUMNS} FROM tasks{where} ORDER BY created_at, task_id",
                 params,
             ).fetchall()
-            return [self._row_to_task(r) for r in rows]
+            tasks = [self._hydrate_binding(self._row_to_task(r)) for r in rows]
+        if assignee is not None:
+            tasks = [t for t in tasks if t.assignee == assignee]
+        if requester is not None:
+            tasks = [t for t in tasks if t.requester == requester]
+        return tasks
 
     async def update_status(
         self, task_id: str, status: str, *, caller_session_id: str | None = None
     ) -> Task | None:
         async with self._lock:
             self._conn.execute("BEGIN IMMEDIATE")
-            # Single-writer CAS + terminal-guard: only the assignee may write, and
-            # only to a non-terminal task. rowcount == 0 → no such task, a
-            # non-assignee caller, or a terminal task (incl. the abort straggler-
-            # reject — Option B, #1953). Distinguish for a decision-enabling error.
+            # #2187 backend-master: the backend is the task-state MASTER — it APPLIES the
+            # status request and enforces only the STATE-VALIDITY rule: no transition OUT
+            # of a terminal state (the abort straggler-reject, Option B #1953). The
+            # single-writer OWNERSHIP CAS (caller == assignee) is now OP-LAYER gating
+            # against the WAL-subscription (the binding lives in the WAL, not here);
+            # ``caller_session_id`` is recorded in the audit projection but NOT gated on.
+            # rowcount == 0 → no such task, or a terminal task.
             cur = self._conn.execute(
                 "UPDATE tasks SET status=?, updated_at=? "
-                f"WHERE task_id=? AND assignee=? AND status NOT IN ({_TERMINAL_PLACEHOLDERS})",
-                (status, _now_iso(), task_id, caller_session_id, *_TERMINAL_VALUES),
+                f"WHERE task_id=? AND status NOT IN ({_TERMINAL_PLACEHOLDERS})",
+                (status, _now_iso(), task_id, *_TERMINAL_VALUES),
             )
             if cur.rowcount == 0:
                 self._conn.rollback()
                 row = self._conn.execute(
-                    "SELECT assignee, status FROM tasks WHERE task_id=?", (task_id,)
+                    "SELECT status FROM tasks WHERE task_id=?", (task_id,)
                 ).fetchone()
                 if row is None:
                     return None
-                if row["status"] in _TERMINAL_VALUES:
-                    raise PermissionError(
-                        f"task {task_id!r} status-write rejected: task is terminal "
-                        f"({row['status']}) — no further transitions (e.g. post-abort straggler)"
-                    )
                 raise PermissionError(
-                    f"task {task_id!r} status-write rejected: caller "
-                    f"{caller_session_id!r} is not the assignee (single-writer)"
+                    f"task {task_id!r} status-write rejected: task is terminal "
+                    f"({row['status']}) — no further transitions (e.g. post-abort straggler)"
                 )
             self._emit(task_id, "status_changed", status=status, by=caller_session_id)
             self._conn.commit()
@@ -574,19 +570,20 @@ class SqliteTaskBackend:
             # guard → bounded. In-lock BFS (NOT recursive — the lock is not re-entrant).
             # (The legacy parent_id decomposition tree was removed in §16 slice C —
             # the requester edge is the sole decomposition relation.)
+            #
+            # #2187 backend-master (2c-iii): the requester edge is the WAL-derived
+            # SUBSCRIPTION binding, not a column — the closure walks ``_children_of``
+            # (the in-lock, no-relock shared decomposition primitive that applies the
+            # collision-safe ``requester_kind=='task'`` guard EXACTLY — finding D, 5b).
+            # No reader (direct/test) → no owned children → the cascade aborts the root.
             to_abort: list[str] = [task_id]
             frontier = [task_id]
             while frontier:
                 pid = frontier.pop()
-                for row in self._conn.execute(
-                    "SELECT task_id FROM tasks "
-                    "WHERE requester=? AND requester_kind='task'",
-                    (pid,),
-                ).fetchall():
-                    child = row["task_id"]
-                    if child not in to_abort:
-                        to_abort.append(child)
-                        frontier.append(child)
+                for child in self._children_of(pid):
+                    if child.task_id not in to_abort:
+                        to_abort.append(child.task_id)
+                        frontier.append(child.task_id)
             # #2107 S2 (origin-split): an EXTERNAL terminal's dep-DAG DEPENDENTS can't be
             # recovered — the external requester gives up (no in-session re-wire; that is
             # the SELF path's requester wake, §16 S1). Abort them too, transitively (a dep
@@ -613,15 +610,39 @@ class SqliteTaskBackend:
                             to_abort.append(dep)
                             dep_frontier.append(dep)
             self._conn.execute("BEGIN IMMEDIATE")
+            now = _now_iso()
             for tid in to_abort:
+                # #2187: abort sets BOTH the ABORTED lifecycle state and archived_at
+                # (the orthogonal soft-delete retention marker — preserves the
+                # hidden-from-list UX of the old ARCHIVED state).
                 self._conn.execute(
-                    "UPDATE tasks SET status=?, updated_at=? WHERE task_id=?",
-                    (TaskState.ARCHIVED.value, _now_iso(), tid),
+                    "UPDATE tasks SET status=?, archived_at=?, updated_at=? WHERE task_id=?",
+                    (TaskState.ABORTED.value, now, now, tid),
                 )
                 self._emit(tid, "aborted", root=task_id)
             self._conn.commit()
             return [t for t in (self._fetch(tid) for tid in to_abort) if t is not None]
 
+    async def children_of(self, pid: str) -> list[Task]:
+        """Direct decomposition children of ``pid`` (#2187 5b) — the public,
+        lock-acquiring wrapper over the in-lock ``_children_of`` primitive."""
+        async with self._lock:
+            return self._children_of(pid)
+
+    async def open_child_counts(self, pid: str) -> ChildCounts:
+        """Open (non-terminal) child counts of ``pid`` split by link type (#2187
+        §3.4) — derived on-demand from the children's durable states. The
+        completion-join and waker reconciler read it."""
+        async with self._lock:
+            awaited = background = 0
+            for child in self._children_of(pid):
+                if child.status in TERMINAL_STATES:
+                    continue
+                if child.link_type is TaskLinkType.BACKGROUND:
+                    background += 1
+                else:
+                    awaited += 1
+            return ChildCounts(awaited=awaited, background=background)
 
     async def set_result(self, task_id: str, result: str) -> Task | None:
         async with self._lock:

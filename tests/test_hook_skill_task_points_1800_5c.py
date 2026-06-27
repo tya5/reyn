@@ -96,7 +96,7 @@ async def test_task_create_fires_task_start():
 
 @pytest.mark.asyncio
 async def test_task_update_status_completed_fires_task_end():
-    """Tier 2: a real _update_status → COMPLETED fires task_end (status completed)."""
+    """Tier 2: a real _update_status → DONE fires task_end (status done)."""
     rec = _RecordingDispatcher()
     backend = InMemoryTaskBackend()
     ctx = _task_ctx(backend, rec)
@@ -108,10 +108,10 @@ async def test_task_update_status_completed_fires_task_end():
     tid = created["task"]["task_id"]
 
     await taskmod._update_status(
-        SimpleNamespace(task_id=tid, status="completed"), ctx, "control_ir")
+        SimpleNamespace(task_id=tid, status="done"), ctx, "control_ir")
 
     end = [(p, v) for (p, v) in rec.dispatched if p == "task_end"]
-    assert end and end[-1][1]["status"] == "completed"
+    assert end and end[-1][1]["status"] == "done"
 
 
 @pytest.mark.asyncio

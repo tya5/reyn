@@ -23,14 +23,13 @@ from reyn.task.model import TaskState
 # lie), while only **external-input / auth** blocks map to
 # ``input-required`` / ``auth-required`` (H3).
 _TASK_STATE_TO_A2A: dict[str, str] = {
-    "pending": "submitted",
+    "unassigned": "submitted",
     "ready": "submitted",
-    "in_progress": "working",
+    "running": "working",
     "blocked": "input-required",   # interim — see note above (slice 7)
-    "completed": "completed",
+    "done": "completed",
     "failed": "failed",
-    "aborted": "canceled",
-    "archived": "canceled",        # abort = delete → archived → A2A canceled
+    "aborted": "canceled",         # abort (soft-delete is the orthogonal archived_at marker, not a state)
 }
 
 # The legal A2A TaskState values this mapper may emit (drift guard for the

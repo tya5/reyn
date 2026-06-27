@@ -41,6 +41,18 @@ WAKE_READY_KIND = "task_ready"
 # the stale "parent" vocabulary (recovery now notifies the requester, not a parent).
 WAKE_REQUESTER_KIND = "task_dependency_aborted"
 
+# #2187 Stage 4: the task STATE-CHANGE event vocabulary the single publish→deliver seam
+# (``TaskWaker.publish_task_event``) routes on. ``ready``/``assigned`` deliver to the
+# ASSIGNEE subscriber (execute); ``terminal`` delivers to the REQUESTER subscriber
+# (decide recovery). #2187 Stage 5c: ``child_settled`` delivers to a decomposition
+# PARENT's managing session (its assignee) when a child settles — the §3.5 waker
+# reconciler. This is the existing local set — an external backend may extend it
+# at integration time.
+TASK_EVENT_READY = "ready"
+TASK_EVENT_ASSIGNED = "assigned"
+TASK_EVENT_TERMINAL = "terminal"
+TASK_EVENT_CHILD_SETTLED = "child_settled"
+
 
 class TaskWaker:
     """Wakes a sibling session (same agent) on a dep-graph disposition (#1953 sl.7)."""
@@ -76,6 +88,20 @@ class TaskWaker:
                 return
         await session._put_inbox(kind, {"text": text, "sender": "task:os", "meta": dict(meta)})
         self._registry.ensure_session_running(self._agent_name, session_id)
+
+    def resolves(self, session_id: str) -> bool:
+        """#2187 backend-master (dogfood-fix #45): does ``session_id`` (an assignee)
+        resolve to a REAL session of THIS agent? task.create rejects a delegation to a
+        non-existent (agent, session) using this — the #45 orphan root cause: a bare-sid
+        assignee that names no live session has its execute-wake SILENTLY DROPPED (see
+        ``_wake``: ``get_session`` → None → "wake dropped"), so the task is never run.
+        Same resolution as ``_wake``, WITHOUT delivering or spawning:
+        - a bare per-session sid must name a LIVE session (``get_session`` non-None);
+        - a ``<transport>:<native_id>`` routing-key is a valid get-or-spawn A2A/MCP
+          target by construction → accepted."""
+        if ":" in session_id:
+            return True
+        return self._registry.get_session(self._agent_name, session_id) is not None
 
     @staticmethod
     def _execute_message(task: Any, *, lead_in: str, fenced_description: str | None) -> str:
@@ -166,5 +192,67 @@ class TaskWaker:
             managing_task_id=managing_task_id,
         )
 
+    async def wake_parent_on_child_settled(
+        self, parent: Any, *, child_task: Any, disposition: str, reason: str,
+        awaited: int, background: int, stuck_dependents: "list[str]",
+    ) -> None:
+        """#2187 §3.5 (5c): a decomposition child of ``parent`` settled — wake the
+        parent's managing session (``parent.assignee``). ONE wake subsumes recovery +
+        completion-driving (the requester_kind-exclusive routing). ``reason``:
+        ``final_completion`` (all children terminal → the parent may complete),
+        ``continue`` (awaited children cleared → the parent is unblocked), ``recovery``
+        (a child failed/aborted → recover its stuck dependents). The parent acts via
+        ordinary task ops (complete / continue / repoint / abort) — P7, no decision
+        vocabulary."""
+        lines = [
+            f"[task] A child of your task {parent.task_id!r} ('{parent.name}') settled: "
+            f"task {child_task.task_id!r} ('{child_task.name}') reached {disposition!r}."
+        ]
+        if stuck_dependents:
+            lines.append(
+                f"These dependents are now stuck: {stuck_dependents} — recover via task "
+                f"ops (repoint to a substitute, remove the edge, fail them, or handle the "
+                f"work yourself)."
+            )
+        lines.append(f"Your open children now: {awaited} awaited + {background} background.")
+        if reason == "final_completion":
+            lines.append("All children are terminal — you may now complete this task.")
+        elif reason == "continue":
+            lines.append("The awaited children have cleared — continue your work.")
+        await self._wake(
+            parent.assignee, WAKE_REQUESTER_KIND, " ".join(lines),
+            task_id=parent.task_id, child_task_id=child_task.task_id,
+            disposition=disposition, reason=reason, awaited=awaited, background=background,
+            dependents=stuck_dependents,
+        )
 
-__all__ = ["TaskWaker", "WAKE_READY_KIND", "WAKE_REQUESTER_KIND"]
+    async def publish_task_event(self, event_type: str, task: Any, **kwargs: Any) -> None:
+        """#2187 Stage 4: the SINGLE publish → deliver seam. A task STATE-CHANGE event is
+        delivered to the SUBSCRIBED session (the assignee or requester binding) via the
+        local waker delivery. The local op publishes here on a state change (the existing
+        per-event waker calls, now routed through one path); an external backend
+        (Jira / A2A webhook) plugs into the SAME seam — external-ready (the full external
+        integration + catch-up reconciliation is subsequent). Routes by ``event_type`` to
+        the existing delivery (the local pub/sub formalized; behaviour unchanged):
+        - ``ready`` / ``assigned`` → the ASSIGNEE subscriber executes the task;
+        - ``terminal`` → the REQUESTER subscriber decides recovery for its stuck
+          dependents (``kwargs``: requester_session / dependents / disposition /
+          managing_task_id). The event vocabulary is the existing local set; an external
+          backend may extend it at integration time."""
+        if event_type == TASK_EVENT_READY:
+            await self.wake_ready_dependent(task, **kwargs)
+        elif event_type == TASK_EVENT_ASSIGNED:
+            await self.wake_assigned(task, **kwargs)
+        elif event_type == TASK_EVENT_TERMINAL:
+            await self.notify_requester_decide(terminal_task=task, **kwargs)
+        elif event_type == TASK_EVENT_CHILD_SETTLED:
+            await self.wake_parent_on_child_settled(task, **kwargs)
+        else:
+            raise ValueError(f"unknown task event_type: {event_type!r}")
+
+
+__all__ = [
+    "TASK_EVENT_ASSIGNED", "TASK_EVENT_READY", "TASK_EVENT_TERMINAL",
+    "TASK_EVENT_CHILD_SETTLED",
+    "TaskWaker", "WAKE_READY_KIND", "WAKE_REQUESTER_KIND",
+]

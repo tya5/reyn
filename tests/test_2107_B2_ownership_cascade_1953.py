@@ -27,6 +27,8 @@ import pytest
 
 from reyn.core.op_runtime import task as taskmod
 from reyn.task import InMemoryTaskBackend, SqliteTaskBackend, Task, TaskRequesterKind, TaskState
+from reyn.task.subscription import SubscriptionRegistry
+from tests._support.task_subscription import SubscriptionBackend
 
 
 def _create_op(name, *, deps=None):
@@ -42,12 +44,17 @@ def _ctx(backend, *, session_id, current_task_id=None):
 
 @pytest.fixture(params=["inmem", "sqlite"])
 def backend(request, tmp_path):
+    # #2187 backend-master: the ownership (requester) edge the cascade follows is the
+    # WAL-derived SUBSCRIPTION binding (not a column) — wire each backend's read-through to
+    # a SubscriptionRegistry + record each create's binding to it via the op-mimic wrapper,
+    # so the down-cascade walks the real binding (whether the op or a direct create made it).
+    cp = SubscriptionRegistry()
     if request.param == "inmem":
-        yield InMemoryTaskBackend()
+        yield SubscriptionBackend(InMemoryTaskBackend(subscription_reader=cp), cp)
     else:
-        b = SqliteTaskBackend(tmp_path / "tasks.db")
-        yield b
-        b.close()
+        real = SqliteTaskBackend(tmp_path / "tasks.db", subscription_reader=cp)
+        yield SubscriptionBackend(real, cp)
+        real.close()
 
 
 @pytest.fixture(autouse=True)
@@ -63,7 +70,7 @@ async def test_ownership_cascade_aborts_owned_subtasks_recursively(backend):
     recursively (X → owned U → owned-of-U W, depth 2), via the live create-path's
     requester edges. RED if the ownership BFS edge is absent — U/W would survive."""
     await backend.create(Task(task_id="X", name="X", assignee="sX", requester="client",
-                              status=TaskState.IN_PROGRESS))
+                              status=TaskState.RUNNING))
     res_u = await taskmod._create(
         _create_op("U"), _ctx(backend, session_id="sX", current_task_id="X"), "control_ir")
     u_id = res_u["task"]["task_id"]
@@ -81,7 +88,7 @@ async def test_ownership_cascade_aborts_owned_subtasks_recursively(backend):
     ids = {t.task_id for t in aborted}
     assert {"X", u_id, w_id} <= ids  # the whole ownership subtree, recursively
     for tid in ("X", u_id, w_id):
-        assert (await backend.get(tid)).status is TaskState.ARCHIVED
+        assert (await backend.get(tid)).status is TaskState.ABORTED
 
 
 @pytest.mark.asyncio
@@ -93,13 +100,13 @@ async def test_collision_guard_session_requester_is_not_cascaded(backend):
     gather drops the marker guard (bare requester==X → S wrongly archived)."""
     # X = the aborted task; S = a SESSION-requester whose requester string == X's id.
     await backend.create(Task(task_id="collide", name="X", assignee="sX", requester="root",
-                              status=TaskState.IN_PROGRESS))
+                              status=TaskState.RUNNING))
     await backend.create(Task(task_id="S", name="S", assignee="sS", requester="collide",
                               requester_kind=TaskRequesterKind.SESSION,
-                              status=TaskState.IN_PROGRESS))
+                              status=TaskState.RUNNING))
 
     aborted = await backend.abort("collide")
     ids = {t.task_id for t in aborted}
     assert "collide" in ids
     assert "S" not in ids  # the marker guard — NOT cascaded despite the id collision
-    assert (await backend.get("S")).status is TaskState.IN_PROGRESS  # survived
+    assert (await backend.get("S")).status is TaskState.RUNNING  # survived

@@ -69,8 +69,8 @@ from reyn.runtime.services import (
     RouterHostAdapter,
     SnapshotJournal,
 )
-from reyn.runtime.services.a2a_handler import A2AHandler
 from reyn.runtime.services.chain_manager import _PendingChain
+from reyn.runtime.services.inter_agent_messaging import InterAgentMessaging
 from reyn.runtime.services.task_wake import WAKE_READY_KIND, WAKE_REQUESTER_KIND
 from reyn.runtime.session_buses import AgentRequestBus, ChatInterventionBus
 from reyn.security.permissions.permissions import PermissionResolver
@@ -80,6 +80,7 @@ from reyn.skill.skill_paths import SkillNotFoundError, resolve_skill_path, stdli
 from reyn.skill.skill_registry import SkillRegistry
 from reyn.skill.skill_runner import SkillRunner
 from reyn.skill.skill_runtime import SkillRuntime
+from reyn.task.subscription import SubscriptionWriter
 from reyn.user_intervention import (
     InterventionAnswer,
     InterventionChoice,
@@ -1235,12 +1236,6 @@ class Session:
             generation_store=self._generation_store,
             session_id=session_id,  # FP-0043 S5: per-session WAL routing
         )
-        # #1953 slice R: hand the journal this session's Task backend so
-        # cut_generation captures the task db at each WAL boundary (opt-in — a
-        # non-rewinding backend is skipped there). I-5=(A): only a per-session
-        # backend is threaded here (build_scoped_chat_session); the A2A/web
-        # process-singleton is never given to a session, so it never rewinds.
-        self._journal.set_task_backend(self._task_backend)
         # ADR-0038 Stage 1c: turn-idle event for quiescence. Set = no turn in
         # flight; cleared while run_one_iteration processes a turn. Lets a global
         # rewind await all in-flight WAL appends settling (await_quiescent) before
@@ -1258,6 +1253,8 @@ class Session:
         # from this session also need it so dispatch_tool can emit step
         # events into the same WAL.
         self._state_log = state_log
+        # #2187 backend-master: the Task SUBSCRIPTION writer (the Reyn-internal task↔session binding WRITE seam), threaded down the same chain as task_waker.
+        self._task_subscription_writer = SubscriptionWriter(state_log) if state_log is not None else None
         # PR-intervention-link L6: in-memory buffer of answers from
         # restored-then-resolved interventions, keyed by run_id. The first
         # bus.request from the resuming skill at that run_id consumes the
@@ -1582,7 +1579,7 @@ class Session:
         self._router_host = RouterHostAdapter(
             # #2175: the safety.on_limit checkpoint + the shared per-run extension dict —
             # so the spawn SEAM (agent_spawn / topology_create) routes spawn-limit exceeds
-            # through the same mode-driven framework as a2a_handler's max_agent_hops.
+            # through the same mode-driven framework as inter_agent_messaging's max_agent_hops.
             handle_chat_limit_checkpoint=self._handle_chat_limit_checkpoint,
             safety_extensions=self._safety_extensions,
             # #1092 PR-F1: the chat turn_budget engine (resolved-model, asserted).
@@ -1596,6 +1593,7 @@ class Session:
             session_id=self._session_id,
             task_backend=self._task_backend,
             task_waker=self._task_waker,  # #2107: thread the TaskWaker into the router op-ctx
+            task_subscription_writer=self._task_subscription_writer,  # #2187 backend-master: the Task subscription WAL writer
             hook_dispatcher=self._hook_dispatcher,  # #1800 slice 5c: task_start/end (router path)
             agent_name=self.agent_name,
             agent_role=self._agent_role,
@@ -1829,14 +1827,14 @@ class Session:
             launcher=self._skill_runner.spawn_resumed_skill,
         )
 
-        # FP-0019 Wave 2 part 2: A2AHandler — agent-to-agent messaging service.
+        # FP-0019 Wave 2 part 2: InterAgentMessaging — agent-to-agent messaging service.
         # Extracts _send_to_agent / _send_agent_response / _handle_agent_request /
         # _handle_agent_response / _resolve_pending_chain from Session.
-        # Hybrid design (案 C): A2AHandler owns agent-side logic; transport-side
+        # Hybrid design (案 C): InterAgentMessaging owns agent-side logic; transport-side
         # routing handled by FP-0013 RoutingLayer via send_request_callback /
         # send_response_callback injection.
 
-        self._a2a_handler = A2AHandler(
+        self._inter_agent_messaging = InterAgentMessaging(
             event_log=self._chat_events,
             chain_manager=self._chains,
             agent_name=self.agent_name,
@@ -1845,7 +1843,7 @@ class Session:
             output_language=self.output_language,
             # FP-0050/#1822 S4b (EP5): fence untrusted inbound peer text.
             threat_scan=self._safety.threat_scan,
-            append_history=self._append_history_for_a2a_handler,
+            append_history=self._append_history_for_inter_agent_messaging,
             put_outbox=self._put_outbox,
             handle_chat_limit_checkpoint=self._handle_chat_limit_checkpoint,
             run_router_loop=lambda text, cid: self._run_router_loop(text, cid),
@@ -2393,13 +2391,11 @@ class Session:
 
     @property
     def task_backend(self) -> "object | None":
-        """Read-only accessor for this session's Task backend (#1953 slice R).
+        """Read-only accessor for this session's Task backend (#1953 slice 3a).
 
-        The registry pulls it at construction (``_construct_session``) so the
-        rewind/recovery restore (``_restore_task_active``) has a handle to the
-        same per-session backend the capture seam (cut_generation) snapshots.
-        None when the session carries no backend (op-runtime in-memory fallback).
-        """
+        The registry hands the GLOBAL backend in at construction
+        (``_construct_session``). None when the session carries no backend
+        (op-runtime in-memory fallback)."""
         return self._task_backend
 
     def iter_applied_seqs(
@@ -2463,7 +2459,7 @@ class Session:
                 project_root = getattr(registry, "_project_root", None)
 
             if project_root is not None:
-                from reyn.interfaces.tui.widgets.right_panel.agents_tab import (
+                from reyn.runtime.agent_skill_runs import (
                     _recent_skill_runs_for_agent,
                 )
                 running_run_ids = set(self.running_skills.keys())
@@ -2772,12 +2768,12 @@ class Session:
             content=text, ts=ts, meta=meta,
         ))
 
-    def _append_history_for_a2a_handler(
+    def _append_history_for_inter_agent_messaging(
         self, role: str, text: str, ts: str, meta: dict,
     ) -> None:
-        """Adapter callback injected into A2AHandler.
+        """Adapter callback injected into InterAgentMessaging.
 
-        A2AHandler uses the same ``(role, text, ts, meta)`` signature as
+        InterAgentMessaging uses the same ``(role, text, ts, meta)`` signature as
         InterventionHandler.  This adapter bridges to Session._append_history
         (which takes a ChatMessage).
         """
@@ -2789,7 +2785,7 @@ class Session:
     # ── A2A transport callbacks (FP-0019 Wave 2 part 2) ─────────────────────────
     # Session-side wrappers that perform registry topology checks and the
     # actual submit_agent_request / submit_agent_response transport calls.
-    # A2AHandler delegates here after its own depth / guard logic; these
+    # InterAgentMessaging delegates here after its own depth / guard logic; these
     # callbacks are the FP-0013 RoutingLayer integration seam.
 
     async def _a2a_send_request(
@@ -2825,18 +2821,38 @@ class Session:
         await target.submit_agent_request(
             from_agent=from_agent, request=request,
             depth=depth, chain_id=chain_id,
+            # #2130: thread THIS delegating session's sid so the peer's reply routes back
+            # to (from_agent, from_sid) — a non-main session that DELEGATES (not just spawns)
+            # gets its reply, not the agent's main. "main" → the default path (byte-identical;
+            # the _a2a_send_response branch treats absent/"main" as the unchanged main-case).
+            # In-process delegation only; a cross-process external peer that doesn't echo
+            # from_sid degrades to None→main (safe).
+            from_sid=self._session_id,
         )
 
     async def _a2a_send_response(
         self,
         to: str, from_agent: str, response: str, depth: int, chain_id: str,
-        responder_sid: "str | None" = None,
+        responder_sid: "str | None" = None, to_sid: "str | None" = None,
     ) -> None:
-        """Transport callback: submit agent_response to ``to``.
+        """Transport callback: submit agent_response to ``to`` (#2130: at ``to_sid``).
 
         Silently drops when the target no longer exists (race on shutdown).
         ``responder_sid`` (#2103 S1bc-exec) carries the responder's own sid when it is a
         spawned session, so the receiver can correlate the result to its spawn record.
+
+        #2130 first-class (agent, sid) routing: ``to_sid`` is the REQUESTER's session id.
+        - absent / "main" → the DEFAULT path, byte-identical to pre-#2130: ``get_or_load``
+          (disk-loads a cold main) + ``ensure_running`` (run() + the user-facing forwarder).
+          This serves the classic peer-A2A case where ``to``'s main may be unloaded.
+        - a non-main sid → deliver to that SPECIFIC spawned (spawner) session via the
+          in-memory ``get_session`` (the spawner is always warm at result-route time — its
+          run-loop idles on a pending chain that suppresses ephemeral-vanish; and
+          ``get_or_load`` cannot reconstruct a non-main sid from disk anyway). No forwarder
+          is needed (inbound arrives via inbox+run(); the forwarder is user-facing-output
+          only, and a non-main session has none). FAIL-SAFE: a gone spawner (get_session
+          None) is LOGGED + DROPPED — never a fallback to main, which would re-introduce the
+          very misroute #2130 fixes (a logged drop > a silent misroute).
         """
         if self._registry is None:
             # #2103 S1bc-exec hardening: a result-routing path that silently no-ops on an
@@ -2849,8 +2865,21 @@ class Session:
             return
         if not self._registry.exists(to):
             return
-        target = self._registry.get_or_load(to)
-        await self._registry.ensure_running(to)
+        if to_sid is not None and to_sid != "main":  # "main" = registry._DEFAULT_SID (no import cycle)
+            # #2130 spawner-sid delivery: the specific non-main session, in-memory only.
+            target = self._registry.get_session(to, to_sid)
+            if target is None:
+                logger.warning(
+                    "a2a response to (%r, %r) dropped: the spawner session is no longer "
+                    "loaded (fail-safe — NOT routed to main, which would misroute)",
+                    to, to_sid,
+                )
+                return
+            self._registry.ensure_session_running(to, to_sid)
+        else:
+            # default / main-case: UNCHANGED (cold-load + forwarder) — byte-identical.
+            target = self._registry.get_or_load(to)
+            await self._registry.ensure_running(to)
         await target.submit_agent_response(
             from_agent=from_agent, response=response,
             depth=depth, chain_id=chain_id, responder_sid=responder_sid,
@@ -2891,10 +2920,15 @@ class Session:
 
     async def submit_agent_request(
         self, *, from_agent: str, request: str, depth: int, chain_id: str,
+        from_sid: "str | None" = None,
     ) -> None:
         await self._put_inbox("agent_request", {
             "from_agent": from_agent, "request": request, "depth": depth,
             "chain_id": chain_id,
+            # #2130: the REQUESTER's session id — so this request's response routes back to
+            # the specific (from_agent, from_sid), not the requester agent's main session.
+            # None → main-case (byte-identical to pre-#2130).
+            "from_sid": from_sid,
         })
 
     async def submit_agent_response(
@@ -3176,7 +3210,7 @@ class Session:
         **Internal API — plugin authors should NOT call directly**
         (FP-0041 plugins-api). Use ``reyn.gateway.api.push_to_agent``
         instead; this signature may change between Reyn versions.
-        Other internal Reyn modules (= A2AHandler, MCP handler,
+        Other internal Reyn modules (= InterAgentMessaging, MCP handler,
         InterventionHandler, ChatLifecycleForwarder) keep calling
         this directly because they manage their own additional state
         machines (= chain_id / request_id / etc.) on top.
@@ -3959,6 +3993,7 @@ class Session:
             contextual_permission=self._contextual_permission,  # #1912: narrow skill execution too
             task_backend=self._task_backend,  # #1953 slice 3a: session-scoped Task backend
             task_waker=self._task_waker,  # #1953 slice 7: the OS TaskWaker driver
+            task_subscription_writer=self._task_subscription_writer,  # #2187 backend-master: the Task subscription WAL writer
             task_session_id=self._session_id,  # #1953 slice 3: caller session identity (single-writer key)
             hook_dispatcher=self._hook_dispatcher,  # #1800 slice 5c: task_start/end (phase path)
             mcp_servers=mcp_servers,
@@ -4816,7 +4851,7 @@ class Session:
         return answer
 
     # ── agent-to-agent messaging (PR11 / PR14) ──────────────────────────────────
-    # FP-0019 Wave 2 part 2: business logic extracted to A2AHandler service.
+    # FP-0019 Wave 2 part 2: business logic extracted to InterAgentMessaging service.
     # Session keeps thin delegators here so existing internal call sites
     # (_on_chain_timeout_fire, _on_chain_peer_discarded, RouterHostAdapter
     # send_to_agent callback) continue to resolve without changes.
@@ -4824,26 +4859,27 @@ class Session:
     async def _send_to_agent(
         self, *, to: str, request: str, depth: int, chain_id: str,
     ) -> None:
-        """Thin delegator — business logic lives in A2AHandler.send_to_agent."""
-        await self._a2a_handler.send_to_agent(
+        """Thin delegator — business logic lives in InterAgentMessaging.send_to_agent."""
+        await self._inter_agent_messaging.send_to_agent(
             to=to, request=request, depth=depth, chain_id=chain_id,
         )
 
     async def _send_agent_response(
         self, *, to: str, response: str, depth: int, chain_id: str,
+        to_sid: "str | None" = None,
     ) -> None:
-        """Thin delegator — business logic lives in A2AHandler.send_agent_response."""
-        await self._a2a_handler.send_agent_response(
-            to=to, response=response, depth=depth, chain_id=chain_id,
+        """Thin delegator — business logic lives in InterAgentMessaging.send_agent_response."""
+        await self._inter_agent_messaging.send_agent_response(
+            to=to, response=response, depth=depth, chain_id=chain_id, to_sid=to_sid,
         )
 
     async def _handle_agent_request(self, payload: dict) -> None:
-        """Thin delegator — business logic lives in A2AHandler.handle_agent_request."""
-        await self._a2a_handler.handle_agent_request(payload)
+        """Thin delegator — business logic lives in InterAgentMessaging.handle_agent_request."""
+        await self._inter_agent_messaging.handle_agent_request(payload)
 
     async def _handle_agent_response(self, payload: dict) -> None:
-        """Thin delegator — business logic lives in A2AHandler.handle_agent_response."""
-        await self._a2a_handler.handle_agent_response(payload)
+        """Thin delegator — business logic lives in InterAgentMessaging.handle_agent_response."""
+        await self._inter_agent_messaging.handle_agent_response(payload)
 
     # ── chain timeout (PR18) ───────────────────────────────────────────────────
     # PR-refactor-session-1 wave 2: timer arm/cancel + sleep-and-fire loop are
@@ -4891,6 +4927,7 @@ class Session:
                 response=error_text,
                 depth=pending.origin_depth,
                 chain_id=chain_id,
+                to_sid=pending.origin_sid,  # #2130
             )
         except Exception as exc:  # noqa: BLE001 — never wedge the loop
             await self._put_outbox(OutboxMessage(
