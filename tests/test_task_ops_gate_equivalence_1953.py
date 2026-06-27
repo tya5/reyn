@@ -158,6 +158,12 @@ async def test_router_opctx_threads_task_waker_so_chat_abort_wakes_requester():
         async def notify_requester_decide(self, **kw) -> None:
             self.calls.append(kw)
 
+        async def publish_task_event(self, event_type, task, **kwargs) -> None:
+            # #2187 Stage 4: the op publishes through the single seam; route the
+            # terminal event to the recorded requester-notify.
+            if event_type == "terminal":
+                await self.notify_requester_decide(terminal_task=task, **kwargs)
+
     backend = InMemoryTaskBackend()
     # a self-task plan whose requester is the chat session ("main", _DEFAULT_SID).
     await backend.create(Task(task_id="t2", name="t2", assignee="main", requester="main",
