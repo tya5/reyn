@@ -218,6 +218,18 @@ def _reset_project_state(project_root: Path, *, confirm: bool = True) -> bool:
     return True
 
 
+def _inline_interactive(*, cui: bool, stdin_isatty: bool, stdout_isatty: bool) -> bool:
+    """Whether the inline CUI is the surface for this run.
+
+    True only when not ``--cui`` and BOTH std streams are TTYs: the inline CUI
+    reads keys from stdin and renders a live region to stdout, so a piped/
+    redirected stdout (``reyn chat | tee``) must fall back to the plain renderer
+    rather than write cursor/ANSI escapes into the pipe. The single source for
+    both the log redirect and the renderer choice so they never diverge.
+    """
+    return not cui and stdin_isatty and stdout_isatty
+
+
 def _setup_interactive_logging(project_root: Path) -> None:
     """Route root-logger output to .reyn/logs/reyn.log for the interactive CUI.
 
@@ -272,14 +284,26 @@ def run(args: argparse.Namespace) -> None:
 
     project_root = _find_project_root(Path.cwd()) or Path.cwd()
 
-    # The interactive inline CUI owns the terminal as a live region. Route the
-    # root logger to a file so library warnings and caught-exception tracebacks
-    # (e.g. an LLM APIConnectionError that session.py logs via logger.exception)
-    # don't leak into — and corrupt/alarm — the chat UI. --cui / non-TTY keep
-    # logging on stderr (debuggable / pipeable). Set before config load so early
-    # WARNING records are captured. (Restores the redirect the Textual TUI had;
-    # dropped in the inline-CUI cutover #2195.)
-    if not getattr(args, "cui", False) and sys.stdin.isatty():
+    # The inline CUI owns the terminal as a live region, which needs BOTH a TTY
+    # stdin (to read keys) AND a TTY stdout (to render the bottom live region).
+    # With stdout piped/redirected (e.g. `reyn chat | tee`) the prompt_toolkit
+    # Application would write cursor/ANSI escapes into the pipe, so fall back to
+    # the plain renderer there. This single predicate gates BOTH the log redirect
+    # and the renderer choice (below) so "inline CUI active ⟺ logging redirected"
+    # stays invariant — they must not diverge.
+    is_interactive = _inline_interactive(
+        cui=getattr(args, "cui", False),
+        stdin_isatty=sys.stdin.isatty(),
+        stdout_isatty=sys.stdout.isatty(),
+    )
+
+    # Route the root logger to a file so library warnings and caught-exception
+    # tracebacks (e.g. an LLM APIConnectionError that session.py logs via
+    # logger.exception) don't leak into — and corrupt/alarm — the chat UI.
+    # --cui / non-TTY keep logging on stderr (debuggable / pipeable). Set before
+    # config load so early WARNING records are captured. (Restores the redirect
+    # the Textual TUI had; dropped in the inline-CUI cutover #2195.)
+    if is_interactive:
         _setup_interactive_logging(project_root)
 
     # PR-resume-ux β U3: handle --reset before constructing state_log so
@@ -453,7 +477,8 @@ def run(args: argparse.Namespace) -> None:
         )
         sys.exit(1)
 
-    is_interactive = not getattr(args, "cui", False) and sys.stdin.isatty()
+    # is_interactive computed once above (TTY stdin AND stdout, no --cui) so the
+    # renderer choice and the log redirect can never diverge.
     skip_restore = getattr(args, "no_restore", False)
     if skip_restore:
         print(
