@@ -28,7 +28,7 @@ class InterventionElement:
         self,
         iv_id: str,
         choices: list[tuple[str, str]],
-        on_choose: Callable[[str], None],
+        on_choose: Callable[[str, str], None],
     ) -> None:
         # choices: [(choice_id, label), ...]
         self._iv_id = iv_id
@@ -44,10 +44,11 @@ class InterventionElement:
 
     def on_select(self, row: int) -> None:
         if 0 <= row < len(self._choices):
-            self._on_choose(self._choices[row][0])
+            choice_id, label = self._choices[row]
+            self._on_choose(choice_id, label)
 
 
-def build_intervention_element(iv, on_choose: Callable[[str], None]):
+def build_intervention_element(iv, on_choose: Callable[[str, str], None]):
     """Build an :class:`InterventionElement` for a closed-set intervention, or
     None for a free-text one (no choices → handled by the input field).
 

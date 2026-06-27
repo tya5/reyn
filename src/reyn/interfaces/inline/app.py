@@ -385,14 +385,6 @@ async def run_inline_input(registry, renderer) -> None:
     def _region_esc(event) -> None:
         event.app.layout.focus(input_win)
 
-    async def _deliver_choice(choice_id: str) -> None:
-        s = registry.attached_session()
-        if s is not None:
-            try:
-                await s.answer_oldest_intervention_choice(choice_id)
-            except Exception:
-                logger.exception("inline: delivering intervention choice failed")
-
     def _sync_intervention_region() -> None:
         """Sync the above-region with the session's head closed-set intervention.
 
@@ -412,7 +404,10 @@ async def run_inline_input(registry, renderer) -> None:
             app.layout.focus(input_win)
             return
         element = build_intervention_element(
-            head, lambda cid: app.create_background_task(_deliver_choice(cid))
+            head,
+            lambda cid, label: app.create_background_task(
+                _deliver_intervention_choice(registry, cid, label)
+            ),
         )
         if element is not None:
             above_region.register(element)
@@ -447,6 +442,34 @@ async def run_inline_input(registry, renderer) -> None:
             await app.run_async()
     finally:
         poll_task.cancel()
+
+
+async def _deliver_intervention_choice(registry, choice_id: str, label: str) -> None:
+    """Deliver a region-selected intervention choice + echo it to scrollback.
+
+    The chosen choice id is delivered authoritatively (choice_id_override). On
+    success, a uniform ``answered: <label>`` line is put on the outbox so EVERY
+    resolved intervention leaves a trace in the conversation — not just the ones
+    (like permission) whose side effect happens to be visible. ask_user /
+    safety-limit interventions otherwise vanish from scrollback on resolution.
+    """
+    s = registry.attached_session()
+    if s is None:
+        return
+    try:
+        delivered = await s.answer_oldest_intervention_choice(choice_id)
+    except Exception:
+        logger.exception("inline: delivering intervention choice failed")
+        return
+    if delivered:
+        from reyn.runtime.outbox import OutboxMessage
+        # kind="intervention" (not "status") so the echo PERSISTS in scrollback:
+        # "status"/"trace" are transient (cleared by the next message), and the
+        # intervention_resolved event fires right after, so a status echo would be
+        # erased before the user sees it.
+        registry.repl_outbox.put_nowait(
+            OutboxMessage(kind="intervention", text=f"answered: {label}")
+        )
 
 
 async def _submit(registry, text: str) -> None:

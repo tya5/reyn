@@ -14,6 +14,7 @@ from types import SimpleNamespace
 import pytest
 
 from reyn.core.events.state_log import StateLog
+from reyn.interfaces.inline.app import _deliver_intervention_choice
 from reyn.interfaces.inline.intervention_region import (
     InterventionElement,
     build_intervention_element,
@@ -31,27 +32,29 @@ def _iv(choices: list[tuple[str, str]]):
 
 def test_element_rows_are_choice_labels() -> None:
     """Tier 2: the element's selectable rows are the choice labels."""
-    el = InterventionElement("iv1", [("yes", "[y]es"), ("no", "[n]o")], lambda c: None)
+    el = InterventionElement(
+        "iv1", [("yes", "[y]es"), ("no", "[n]o")], lambda c, lbl: None
+    )
     assert el.lines() == ["[y]es", "[n]o"]
     assert el.iv_id == "iv1"
 
 
-def test_select_delivers_the_chosen_choice_id() -> None:
-    """Tier 2: selecting a row fires on_choose with that row's choice id."""
-    chosen: list[str] = []
+def test_select_delivers_the_chosen_choice_id_and_label() -> None:
+    """Tier 2: selecting a row fires on_choose with that row's (id, label)."""
+    chosen: list[tuple[str, str]] = []
     el = InterventionElement(
-        "iv1", [("yes", "[y]es"), ("no", "[n]o")], chosen.append
+        "iv1", [("yes", "[y]es"), ("no", "[n]o")], lambda c, lbl: chosen.append((c, lbl))
     )
     el.on_select(1)
-    assert chosen == ["no"]
+    assert chosen == [("no", "[n]o")]
     el.on_select(99)  # out of range → no delivery
-    assert chosen == ["no"]
+    assert chosen == [("no", "[n]o")]
 
 
 def test_build_element_for_closed_set_and_none_for_free_text() -> None:
     """Tier 2: a closed-set iv builds an element; a free-text iv (no choices)
     builds None (it uses the input field instead)."""
-    el = build_intervention_element(_iv([("a", "[a]"), ("b", "[b]")]), lambda c: None)
+    el = build_intervention_element(_iv([("a", "[a]"), ("b", "[b]")]), lambda c, lbl: None)
     assert el is not None
     assert el.lines() == ["[a]", "[b]"]
     assert build_intervention_element(_iv([]), lambda c: None) is None
@@ -112,3 +115,43 @@ async def test_answer_oldest_intervention_choice_delivers_authoritatively(
     assert delivered is True
     answer = await asyncio.wait_for(task, timeout=2.0)
     assert answer.choice_id == "no"
+
+
+class _AnsweringSession:
+    def __init__(self, *, ok: bool) -> None:
+        self._ok = ok
+        self.delivered: list[str] = []
+
+    async def answer_oldest_intervention_choice(self, choice_id: str) -> bool:
+        self.delivered.append(choice_id)
+        return self._ok
+
+
+@pytest.mark.asyncio
+async def test_deliver_choice_echoes_answer_to_scrollback() -> None:
+    """Tier 2: a delivered choice is sent authoritatively AND a uniform
+    'answered: <label>' status line is put on the outbox (so every resolved
+    intervention leaves a scrollback trace, not just permission's side effect)."""
+    session = _AnsweringSession(ok=True)
+    queue: asyncio.Queue = asyncio.Queue()
+    registry = SimpleNamespace(attached_session=lambda: session, repl_outbox=queue)
+
+    await _deliver_intervention_choice(registry, "just_path", "[j]ust this path always")
+
+    assert session.delivered == ["just_path"]  # authoritative id delivered
+    msg = queue.get_nowait()
+    # persistent kind (not the transient "status", which the next message erases)
+    assert msg.kind == "intervention"
+    assert "answered:" in msg.text
+    assert "[j]ust this path always" in msg.text
+
+
+@pytest.mark.asyncio
+async def test_deliver_choice_no_echo_when_nothing_delivered() -> None:
+    """Tier 2: no echo when delivery reports nothing resolved (no false trace)."""
+    queue: asyncio.Queue = asyncio.Queue()
+    registry = SimpleNamespace(
+        attached_session=lambda: _AnsweringSession(ok=False), repl_outbox=queue
+    )
+    await _deliver_intervention_choice(registry, "x", "lbl")
+    assert queue.empty()
