@@ -487,10 +487,10 @@ REYN_LLM_RECORD=1 python -m pytest tests/ -v
 
 ---
 
-## Before you push — the three CI gates
+## Before you push — the four CI gates
 
 A green `pytest` run is **not** a green CI run. `.github/workflows/test.yml` runs
-three *separate* gates; run all three locally on your diff before calling a PR
+four *separate* gates; run all four locally on your diff before calling a PR
 ready:
 
 1. **pytest** — from the repo root (not a subset path) so collection matches CI:
@@ -511,11 +511,18 @@ ready:
    ```bash
    python scripts/test_tier_audit.py --strict <changed_test_files>
    ```
+4. **module-docstring gate** — `scripts/verify_module_docstrings.py` on each
+   new or modified source file under `src/`. Fails when a module docstring
+   contains narrative prose (implementation history, PR references, change log
+   entries). On PR events CI scopes this to changed files only; run locally the
+   same way:
+   ```bash
+   python scripts/verify_module_docstrings.py <changed_src_files>
+   ```
 
 A green `pytest` alone has shipped PRs that CI then bounced on ruff (`I001`) or
 the tier audit (a `len(...) == 1` format pin). Report scope honestly: say
-"pytest passed" if that is all you ran — "suite passed" implies the lint and
-audit gates too.
+"pytest passed" if that is all you ran — "suite passed" implies all four gates.
 
 ---
 
