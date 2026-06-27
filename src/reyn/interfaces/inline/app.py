@@ -39,6 +39,7 @@ from prompt_toolkit.patch_stdout import patch_stdout
 
 from reyn.interfaces.inline.intervention_region import build_intervention_element
 from reyn.interfaces.inline.region import Region
+from reyn.interfaces.inline.region_command import build_rewind_command_ui
 from reyn.interfaces.repl.renderer import _CC_ACCENT, _CC_DIM, _CC_DONE, _SPINNER
 
 logger = logging.getLogger(__name__)
@@ -170,7 +171,9 @@ async def run_inline_input(registry, renderer) -> None:
     # session head (like the status chips). Free-text interventions keep using the
     # input field, so they get no element. Empty region collapses (inert).
     above_region = Region()
-    iv_holder: dict = {"iv_id": None}  # which intervention the region is showing
+    # What the region is currently showing: "iv:<id>" (intervention) or
+    # "cmd:<id>" (command-UI) or None. Lets the poll skip rebuilding each tick.
+    region_holder: dict = {"key": None}
 
     def _working_frags() -> list:
         return working_line(
@@ -385,42 +388,56 @@ async def run_inline_input(registry, renderer) -> None:
     def _region_esc(event) -> None:
         event.app.layout.focus(input_win)
 
-    def _sync_intervention_region() -> None:
-        """Sync the above-region with the session's head closed-set intervention.
+    def _show(element, key: str) -> None:
+        above_region.clear()
+        region_holder["key"] = key
+        above_region.register(element)
+        app.layout.focus(above_region_win)
 
-        Poll-driven (like the status chips). When a new closed-set intervention is
-        pending, register a selector element + auto-focus it; when it resolves /
-        is gone, clear it and hand focus back to the input. Inert when nothing is
-        pending — same as an empty region.
+    def _cmd_submit(text: str) -> None:
+        s = registry.attached_session()
+        if s is not None:
+            s.set_pending_command_ui(None)  # consume the request
+        app.create_background_task(_submit(registry, text))
+
+    def _sync_region() -> None:
+        """Sync the above-region with the session's pending UI: the head closed-set
+        intervention (priority — it blocks a turn), else a command-UI request (the
+        /rewind picker etc.). Poll-driven, like the status chips. Inert when
+        nothing is pending — same as an empty region.
         """
         s = registry.attached_session()
         head = s.interventions.head() if s is not None else None
-        head_id = head.id if (head is not None and getattr(head, "choices", None)) else None
-        if head_id == iv_holder["iv_id"]:
+        if head is not None and getattr(head, "choices", None):
+            key = f"iv:{head.id}"
+            if key != region_holder["key"]:
+                _show(build_intervention_element(
+                    head,
+                    lambda cid, label: app.create_background_task(
+                        _deliver_intervention_choice(registry, cid, label)
+                    ),
+                ), key)
             return
-        above_region.clear()
-        iv_holder["iv_id"] = head_id
-        if head_id is None:
+        cmd = s.pending_command_ui if s is not None else None
+        if cmd is not None and cmd.get("kind") == "rewind":
+            key = f"cmd:{id(cmd)}"
+            if key != region_holder["key"]:
+                _show(build_rewind_command_ui(cmd.get("points") or [], _cmd_submit), key)
+            return
+        # Nothing pending → collapse the region and return focus to the input.
+        if region_holder["key"] is not None:
+            above_region.clear()
+            region_holder["key"] = None
             app.layout.focus(input_win)
-            return
-        element = build_intervention_element(
-            head,
-            lambda cid, label: app.create_background_task(
-                _deliver_intervention_choice(registry, cid, label)
-            ),
-        )
-        if element is not None:
-            above_region.register(element)
-            app.layout.focus(above_region_win)
 
     async def _intervention_poll() -> None:
         while True:
             await asyncio.sleep(0.15)
             try:
-                _sync_intervention_region()
+                _sync_region()
                 app.invalidate()
             except Exception:
-                logger.exception("inline: intervention region poll failed")
+                logger.exception("inline: region poll failed")
 
     body = HSplit(
         [working, above_region_box, top_rule, inputrow, bottom_rule, status_win,

@@ -164,6 +164,15 @@ async def _output_loop(
             # /copy sentinel: resolve + copy, then render the result as a status
             # line instead of the (unhandled) sentinel — no more silent no-op.
             msg = await _handle_copy_sentinel(recent_replies, msg.text)
+        elif msg.kind == "__rewind_list__":
+            # /rewind picker (F4): the inline path shows a ↑↓ region selector
+            # (driven by session.pending_command_ui), so skip the text list there;
+            # the plain --cui path renders it as the fallback.
+            if renderer.uses_app_input():
+                continue
+            from reyn.runtime.outbox import OutboxMessage
+            # persistent kind (not transient "status") so the list stays readable
+            msg = OutboxMessage(kind="intervention", text=msg.text)
         # On a real terminal: wrap in run_in_terminal so the prompt is cleared
         # before output and redrawn after — required for ANSI/Rich to render
         # cleanly without corrupting the prompt.

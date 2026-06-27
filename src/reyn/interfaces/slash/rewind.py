@@ -26,9 +26,25 @@ from reyn.runtime.outbox import OutboxMessage
 async def rewind_cmd(session: "object", args: str) -> None:
     arg = (args or "").strip()
 
-    # Bare /rewind → open the picker via the TUI (sentinel routed by app_outbox).
+    # Bare /rewind → open the checkpoint picker. F4: publish a command-UI request
+    # the front-end renders (the inline CUI region as a selector, --cui as a text
+    # list). Replaces a dead __rewind_menu__ sentinel that no inline handler
+    # consumed (a silent no-op before this).
     if not arg:
-        await session._put_outbox(OutboxMessage(kind="__rewind_menu__", text=""))
+        registry = getattr(session, "_registry", None)
+        points = registry.list_rewind_points() if registry is not None else []
+        if not points:
+            await reply(session, "/rewind: no earlier checkpoints to rewind to")
+            return
+        # Inline CUI: the region polls this and shows a ↑↓ selector.
+        session.set_pending_command_ui({"kind": "rewind", "points": points})
+        # --cui fallback: a text list (the output loop renders this only on the
+        # plain path; the inline path skips it since the region shows a selector).
+        lines = ["rewind to a checkpoint with /rewind <seq>:"]
+        lines += [f"  seq {p.get('seq')} · {p.get('kind', '?')}" for p in points]
+        await session._put_outbox(
+            OutboxMessage(kind="__rewind_list__", text="\n".join(lines))
+        )
         return
 
     # /rewind <N> → direct rewind to WAL seq N.
