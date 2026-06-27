@@ -62,10 +62,19 @@ class HookDispatcher:
         consent_bus: Any = None,
         consent_gate: "Callable[[], bool] | None" = None,
         emit_event: "Callable[..., Any] | None" = None,
+        cross_session_put: "Callable[..., Any] | None" = None,
+        current_session_id: "str | None" = None,
     ) -> None:
         self._registry = registry
         self._put_inbox = put_inbox
         self._stage_next_turn_context = stage_next_turn_context
+        # #2072: cross-session push routing. ``cross_session_put(target_sid, kind, payload,
+        # wake=...)`` delivers a push to ANOTHER session's inbox (the canonical wake-triple);
+        # ``current_session_id`` identifies THIS session so a push naming it (or naming none)
+        # stays local. None ``cross_session_put`` (e.g. unit tests / no registry) → the push
+        # always stays local — the pre-#2072 behaviour, no-op-equivalent.
+        self._cross_session_put = cross_session_put
+        self._current_session_id = current_session_id
         self._run_shell = run_shell
         self._sandbox_config = sandbox_config
         self._sandbox_backend = sandbox_backend
@@ -171,6 +180,17 @@ class HookDispatcher:
         # else the lifecycle point (slice-5b default) — the ``[hook:<name>]``
         # system-role prefix (shared E + C renderer).
         payload = {"name": hook.name or point, "text": resolved.message}
+        # #2072: cross-session push. A ``resolved.session`` naming a DIFFERENT session routes
+        # to THAT session's inbox (the canonical wake-triple); ``wake`` rides in the payload
+        # so the target processes it the same way the current session would (wake → triggers a
+        # turn; else → a passive ride-along on the target's next turn). No target / same
+        # session / no cross-session capability → the local path below (unchanged).
+        target = resolved.session.strip() if resolved.session else None
+        if (target and self._cross_session_put is not None
+                and target != self._current_session_id):
+            await self._cross_session_put(
+                target, HOOK_INBOX_KIND, {**payload, "wake": resolved.wake}, wake=resolved.wake)
+            return
         if resolved.wake:
             # E — a turn trigger (self-continuation): _put_inbox wake=True →
             # _drain_to_wake treats it as the trigger → _handle_hook_message.
@@ -195,11 +215,9 @@ def _parse_shell_push(stdout: str | None) -> ResolvedPush | None:
     WARNING and return ``None`` so the dispatcher skips the push and the run
     proceeds — symmetric with ``render_push``'s ``push_when=False`` safety net.
 
-    ``session`` is parsed and carried on the ``ResolvedPush`` for uniformity with
-    ``template_push`` (forward-compat). Cross-session routing is **not wired** in
-    this slice — the dispatcher pushes to the current session and ignores
-    ``resolved.session``, so a ``session`` value is a no-op today (tracked
-    follow-up), exactly as for ``template_push``.
+    ``session`` is parsed and carried on the ``ResolvedPush`` and (since #2072) ROUTED:
+    a ``session`` naming a different live session delivers the push to THAT session's
+    inbox (cross-session), exactly as for ``template_push``; ``null``/empty stays local.
     """
     if not stdout or not stdout.strip():
         return None
