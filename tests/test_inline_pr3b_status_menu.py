@@ -1,12 +1,17 @@
-"""Tier 2: inline status-menu pure builders — chips + read-only dropdown lines.
+"""Tier 2: inline status-menu pure builders — chips + dropdown lines + picker.
 
 The navigable menu / focus handling is interactive (verified live, e2e); here we
-pin the pure data→display mapping that feeds the status row and each chip's
-read-only dropdown. Plain-value inputs keep these decoupled from the Session.
+pin the pure data→display mapping that feeds the status row, each chip's detail
+dropdown, and the model picker's row→/model command. Plain-value inputs keep
+these decoupled from the Session.
 """
 from __future__ import annotations
 
-from reyn.interfaces.inline.app import dropdown_lines, status_chips
+from reyn.interfaces.inline.app import (
+    dropdown_lines,
+    model_switch_text,
+    status_chips,
+)
 
 
 def test_status_chips_has_five_labelled_values() -> None:
@@ -64,7 +69,8 @@ def test_cost_dropdown_shows_token_breakdown() -> None:
 
 
 def test_model_dropdown_shows_current_and_change_hint() -> None:
-    """Tier 2: model panel shows the current class + how to change it."""
+    """Tier 2: with no configured classes, model panel falls back to the current
+    class + how to change it."""
     lines = dropdown_lines(
         "model", model="flash-lite", agent_names=[], attached_name=None,
         skill_run_ids=[], usage=(0, 0, 0), cost_usd=0.0,
@@ -72,3 +78,28 @@ def test_model_dropdown_shows_current_and_change_hint() -> None:
     joined = " ".join(lines)
     assert "flash-lite" in joined
     assert "/model" in joined
+
+
+def test_model_picker_lists_classes_marking_current() -> None:
+    """Tier 2: with configured classes, the model panel is a picker — one row
+    per class, the current class marked ▸, others not."""
+    lines = dropdown_lines(
+        "model", model="standard", agent_names=[], attached_name=None,
+        skill_run_ids=[], usage=(0, 0, 0), cost_usd=0.0,
+        model_classes=["light", "standard", "strong"],
+    )
+    assert any(ln.startswith("▸") and "standard" in ln for ln in lines)
+    assert any("light" in ln and not ln.startswith("▸") for ln in lines)
+    assert any("strong" in ln and not ln.startswith("▸") for ln in lines)
+    # the picker (one row per class), not the no-classes fallback hint
+    assert not any("change with" in ln for ln in lines)
+
+
+def test_model_switch_text_for_selected_row() -> None:
+    """Tier 2: the picker's Enter submits the existing /model slash for the
+    cursor row; an out-of-range row submits nothing."""
+    classes = ["light", "standard", "strong"]
+    assert model_switch_text(classes, 0) == "/model light"
+    assert model_switch_text(classes, 2) == "/model strong"
+    assert model_switch_text(classes, 3) is None
+    assert model_switch_text([], 0) is None

@@ -39,6 +39,21 @@ from reyn.interfaces.repl.renderer import _CC_ACCENT, _CC_DIM, _CC_DONE, _SPINNE
 
 # Status-row chips, in display order.
 _CHIPS = ["model", "agents", "skills", "cost", "ctx"]
+# Chips whose dropdown is an actionable picker (↑↓ a row, enter applies) rather
+# than a read-only detail panel. Today only the model picker.
+_ACTIONABLE = frozenset({"model"})
+
+
+def model_switch_text(model_classes: list, row: int) -> str | None:
+    """Pure: the slash command a model-picker Enter submits for the row.
+
+    Returns ``/model <class>`` for an in-range row, or None (out of range /
+    empty list) so the caller submits nothing. The switch itself — cost-warn
+    confirm, budget rebuild — is the existing ``/model`` slash path.
+    """
+    if 0 <= row < len(model_classes):
+        return f"/model {model_classes[row]}"
+    return None
 
 
 def working_line(thinking: bool, think_start: float, now: float) -> list:
@@ -71,11 +86,14 @@ def status_chips(model: str, n_agents: int, n_skills: int, cost_usd: float,
 
 
 def dropdown_lines(label: str, *, model: str, agent_names: list, attached_name,
-                   skill_run_ids: list, usage: tuple, cost_usd: float) -> list:
-    """Pure: read-only detail lines for an opened status chip.
+                   skill_run_ids: list, usage: tuple, cost_usd: float,
+                   model_classes: list | None = None) -> list:
+    """Pure: detail/picker lines for an opened status chip.
 
-    Lines starting with ``▸`` mark the focused/attached entry. `usage` is
-    ``(prompt, completion, total)`` token counts.
+    Lines starting with ``▸`` mark the focused/attached/current entry. `usage` is
+    ``(prompt, completion, total)`` token counts. For ``model`` the lines are the
+    selectable classes (current marked ``▸``); with no configured classes it
+    falls back to the read-only current-model hint.
     """
     if label == "agents":
         if not agent_names:
@@ -90,7 +108,9 @@ def dropdown_lines(label: str, *, model: str, agent_names: list, attached_name,
             f"cost ${cost_usd:.4f}",
         ]
     if label == "model":
-        return [f"current: {model}", "change with /model"]
+        if not model_classes:
+            return [f"current: {model}", "change with /model"]
+        return [f"▸ {c}" if c == model else f"  {c}" for c in model_classes]
     return ["(no detail)"]
 
 
@@ -102,6 +122,7 @@ def _snapshot(registry):
     u = s.total_usage
     return {
         "model": s.model,
+        "model_classes": list(s.known_model_classes()),
         "agent_names": list(registry.loaded_names()),
         "attached_name": registry.attached_name,
         "skill_run_ids": list(s.running_skills.keys()),
@@ -119,7 +140,9 @@ async def run_inline_input(registry, renderer) -> None:
     attached = registry.attached_session()
     history = FileHistory(str(attached.workspace_dir / ".input_history"))
     buf = Buffer(multiline=False, history=history)
-    menu = {"sel": 0, "open": False}
+    # sel: which chip; open: detail/picker shown; row: cursor within an
+    # actionable picker (model). row is reset to 0 when a picker opens.
+    menu = {"sel": 0, "open": False, "row": 0}
 
     def _working_frags() -> list:
         return working_line(
@@ -146,7 +169,7 @@ async def run_inline_input(registry, renderer) -> None:
             label, model=snap["model"], agent_names=snap["agent_names"],
             attached_name=snap["attached_name"],
             skill_run_ids=snap["skill_run_ids"], usage=snap["usage"],
-            cost_usd=snap["cost_usd"],
+            cost_usd=snap["cost_usd"], model_classes=snap["model_classes"],
         )
 
     def status_fragments() -> list:
@@ -169,6 +192,8 @@ async def run_inline_input(registry, renderer) -> None:
             frags.append(("", " "))
         if not focused:
             hint = "  [↓ menu · ↑ history · /quit]"
+        elif menu["open"] and _CHIPS[menu["sel"]] in _ACTIONABLE:
+            hint = "  [↑↓ select · enter switch · esc close]"
         elif menu["open"]:
             hint = "  [esc / ↑ close]"
         else:
@@ -184,12 +209,17 @@ async def run_inline_input(registry, renderer) -> None:
         snap = _snapshot(registry)
         if snap is None:
             return []
+        actionable = _CHIPS[menu["sel"]] in _ACTIONABLE
         out: list = []
         for i, ln in enumerate(_current_dropdown_lines(snap)):
             if i:
                 out.append(("", "\n"))
-            style = _CC_DONE if ln.startswith("▸") else _CC_DIM
-            out.append((f"fg:{style}", f"   {ln}"))
+            if actionable and i == menu["row"]:
+                # picker cursor: reverse-highlight the selectable row
+                out.append((f"fg:#0d0f12 bg:{_CC_ACCENT} bold", f" {ln} "))
+            else:
+                style = _CC_DONE if ln.startswith("▸") else _CC_DIM
+                out.append((f"fg:{style}", f"   {ln}"))
         return out
 
     def dropdown_height() -> Dimension:
@@ -226,12 +256,26 @@ async def run_inline_input(registry, renderer) -> None:
     def _to_menu(event) -> None:
         event.app.layout.focus(status_win)
 
+    def _actionable_open() -> bool:
+        return menu["open"] and _CHIPS[menu["sel"]] in _ACTIONABLE
+
     @kb.add("up", filter=has_focus(status_win))
     def _menu_up(event) -> None:
-        if menu["open"]:
+        # In an open picker, ↑ moves the cursor up; at the top row it closes.
+        if _actionable_open() and menu["row"] > 0:
+            menu["row"] -= 1
+        elif menu["open"]:
             menu["open"] = False
         else:
             event.app.layout.focus(input_win)
+
+    @kb.add("down", filter=has_focus(status_win))
+    def _menu_down(event) -> None:
+        if _actionable_open():
+            snap = _snapshot(registry)
+            n = len(snap["model_classes"]) if snap else 0
+            if n:
+                menu["row"] = min(menu["row"] + 1, n - 1)
 
     @kb.add("escape", filter=has_focus(status_win))
     def _menu_esc(event) -> None:
@@ -252,7 +296,19 @@ async def run_inline_input(registry, renderer) -> None:
 
     @kb.add("enter", filter=has_focus(status_win))
     def _menu_enter(event) -> None:
-        menu["open"] = not menu["open"]
+        # Read-only chip: enter toggles the detail panel. Actionable picker:
+        # when open, enter applies the cursor row via the existing /model slash
+        # path (cost-warn + budget rebuild reused); when closed, it opens.
+        if _actionable_open():
+            snap = _snapshot(registry)
+            classes = snap["model_classes"] if snap else []
+            text = model_switch_text(classes, menu["row"])
+            if text is not None:
+                event.app.create_background_task(_submit(registry, text))
+            menu["open"] = False
+        else:
+            menu["open"] = not menu["open"]
+            menu["row"] = 0
 
     @kb.add("c-c")
     @kb.add("c-d")
