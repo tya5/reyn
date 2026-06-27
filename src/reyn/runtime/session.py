@@ -2459,7 +2459,7 @@ class Session:
                 project_root = getattr(registry, "_project_root", None)
 
             if project_root is not None:
-                from reyn.interfaces.tui.widgets.right_panel.agents_tab import (
+                from reyn.runtime.agent_skill_runs import (
                     _recent_skill_runs_for_agent,
                 )
                 running_run_ids = set(self.running_skills.keys())
