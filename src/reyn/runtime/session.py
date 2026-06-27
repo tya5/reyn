@@ -3564,6 +3564,14 @@ class Session:
                 await self._handle_hook_message(payload)
         finally:
             self._turn_idle.set()
+            # Symmetric turn-end lifecycle event. turn_completed fires only on
+            # the router path; turn_settled fires for EVERY turn kind (including
+            # slash / intervention short-circuits that return before the router),
+            # giving UI working-indicators driven by turn_started a reliable
+            # clear signal regardless of how the turn ended.
+            self._chat_events.emit(
+                "turn_settled", kind=kind, chain_id=payload.get("chain_id"),
+            )
         self._maybe_schedule_ephemeral_vanish()
         return True
 

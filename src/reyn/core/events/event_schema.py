@@ -72,4 +72,10 @@ EVENT_AUDIT_REQUIREMENTS: dict[str, frozenset[str]] = {
     #   the turn_end lifecycle hook (slice 5b). chain_id matches the turn's
     #   chain_id for cross-agent tracing.
     "turn_completed": frozenset({"chain_id"}),
+    # turn_settled: emitted in Session.run_one_iteration()'s finally for EVERY
+    #   turn kind (including slash / intervention short-circuits that return
+    #   before the router). Unlike turn_completed (router path only), this is the
+    #   reliable "the turn is done" signal for UI working-indicators. kind mirrors
+    #   turn_started; chain_id may be absent for non-user triggers.
+    "turn_settled": frozenset({"kind"}),
 }

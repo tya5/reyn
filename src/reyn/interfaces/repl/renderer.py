@@ -91,6 +91,13 @@ class ChatRenderer:
         """
         return None
 
+    def uses_app_input(self) -> bool:
+        """Whether this renderer drives input via its own prompt_toolkit
+        Application (rule-bar input) instead of the default PromptSession
+        `_input_loop`. Default False → the plain PromptSession path is used.
+        """
+        return False
+
 
 class ConsoleChatRenderer(ChatRenderer):
     _PREFIX = {
@@ -354,7 +361,9 @@ class InlineChatRenderer(ChatRenderer):
         if etype == "turn_started":
             self._thinking = True
             self._think_start = time.monotonic()
-        elif etype in ("turn_completed", "turn_cancelled"):
+        # turn_settled fires for every turn kind (incl. slash short-circuits);
+        # turn_completed/turn_cancelled are kept as belt-and-suspenders.
+        elif etype in ("turn_settled", "turn_completed", "turn_cancelled"):
             self._thinking = False
 
     def bottom_toolbar(self):
@@ -372,6 +381,11 @@ class InlineChatRenderer(ChatRenderer):
             f'<style fg="{_CC_ACCENT}">{frame}</style> '
             f'<style fg="{_CC_DIM}">Working… {elapsed}s · esc to interrupt</style>'
         )
+
+    def uses_app_input(self) -> bool:
+        # Interactive inline drives input via its own rule-bar Application
+        # (reyn.interfaces.inline.app.run_inline_input) on a TTY.
+        return True
 
     def _flush(self) -> None:
         s = self._buffer.getvalue()
