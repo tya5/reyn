@@ -54,6 +54,7 @@ from reyn.core.events.snapshot_generations import checkout as _append_reset_reco
 from reyn.core.events.state_log import StateLog
 from reyn.core.events.workspace_op_content_log import WorkspaceOpContentLog
 from reyn.core.events.workspace_version_store import WorkspaceVersionStore
+from reyn.task.subscription import SubscriptionRegistry
 
 from .profile import PROFILE_FILENAME, AgentProfile
 from .topology import TOPOLOGY_DIRNAME, Topology, _validate_topology_name
@@ -285,6 +286,16 @@ class AgentRegistry:
         # stage is the data-plane relocation only — the #2128 rewind/generation MECHANISM
         # is unchanged, just single-backend.)
         self._task_backend: "object | None" = None
+        # #2187 backend-master: the live Task SUBSCRIPTION registry (the Reyn-internal
+        # task↔session binding — assignee + requester). WAL-derived (the SAME live-state
+        # pattern the reverted (A) used for STATUS, now applied to the CORRECT target:
+        # the binding is what Reyn owns + rewinds; task-STATE stays in the backend, the
+        # external master). The #1560 post-append observer keeps it live; restore_all
+        # rebuilds it by replay (recovery / rewind). Registered whenever a WAL exists
+        # (core, not opt-in like the act-turn capture below).
+        self._task_subscriptions = SubscriptionRegistry()
+        if state_log is not None:
+            state_log.register_post_append(self._on_wal_append_subscription)
         # ADR-0038 #1544: FS+exec backend. None / name!="container" → host mode
         # (host subprocess git runner). When container, git runs in-container via
         # backend.run with the container path context (the work-tree is
@@ -888,6 +899,18 @@ class AgentRegistry:
         # 0. crash-mid-rewind recovery (no-op without an active reset-record).
         await self.recover_rewind_if_needed()
 
+        # #2187 backend-master: rebuild the live Task SUBSCRIPTION registry (the
+        # Reyn-internal task↔session binding) by replaying the WAL. ``is_active_seq``
+        # skips abandoned rewind-branch segments (the SAME active-branch predicate the
+        # workspace/runtime restore honours), so a restart after a rewind reconstructs
+        # the active branch's bindings — a prior rewind's undone (re)binding is not
+        # resurrected. The backend's task-STATE is the current external truth (re-read,
+        # not rewound) — only Reyn's own subscription is replayed.
+        self._task_subscriptions.replay(
+            self._state_log.iter_from(0),
+            is_active=lambda s: is_active_seq(self._state_log, s),
+        )
+
         # 1. Load snapshots — main (legacy path) + per-session (spawned).
         # FP-0043 Stage 5: ``snapshots`` (name → MAIN AgentSnapshot) is the
         # returned back-compat view; ``all_snaps`` ((name, sid) → AgentSnapshot)
@@ -1277,6 +1300,19 @@ class AgentRegistry:
             root = self._workspace_state_dir or (self._project_root / ".reyn")
             self._op_content_log = WorkspaceOpContentLog(root / "op-content-log.jsonl")
         return self._op_content_log
+
+    @property
+    def task_subscriptions(self) -> SubscriptionRegistry:
+        """#2187 backend-master: the live Task SUBSCRIPTION registry (the Reyn-internal
+        task↔session binding). The op-layer gates requests against this (single-writer /
+        role / abort-cascade); the backend is the external master of task-STATE."""
+        return self._task_subscriptions
+
+    async def _on_wal_append_subscription(self, kind: str, seq: int, fields: dict) -> None:
+        """#2187 backend-master: the #1560 post-append observer that keeps the live
+        SubscriptionRegistry current. Applies each durable subscription WAL append
+        (non-subscription kinds are ignored by ``apply``)."""
+        self._task_subscriptions.apply(kind, seq, fields)
 
     async def _on_wal_append_capture(self, kind: str, seq: int, fields: dict) -> None:
         """Generic WAL post-append observer: per-step act-turn workspace capture.
