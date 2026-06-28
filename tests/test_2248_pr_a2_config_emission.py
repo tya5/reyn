@@ -1,11 +1,11 @@
-"""Tier 2: OS invariant — #2248 PR-A2 config-recovery emission (end-to-end, REAL producer).
+"""Tier 2: OS invariant — #2259 config-recovery emission (end-to-end, REAL producer).
 
 A real config op (``mcp_drop_server``) — handed a ``state_log`` via its OpContext (the
-production wiring: session → RouterHostAdapter → ToolContext → adapter → OpContext) — emits a
-``config_changed`` WAL event carrying the FULL post-mutation mcp registry content after it
-persists ``.reyn/mcp.yaml``. ``AgentRegistry._reconcile_config_as_of_cut`` then reverts the
-registry on a rewind. This proves config-recovery with a REAL producer (not a test-only
-``record_config_change`` call): drop a server → it's in the WAL → rewind → it's back.
+production wiring: session → RouterHostAdapter → ToolContext → adapter → OpContext) — records a
+full-state config GENERATION carrying the FULL post-mutation mcp registry content after it
+persists ``.reyn/config/mcp.yaml``. ``AgentRegistry._reconcile_config_as_of_cut`` then reverts
+the registry on a rewind. This proves config-recovery with a REAL producer (not a test-only
+``record_config_generation`` call): drop a server → its generation is recorded → rewind → it's back.
 
 Real PermissionResolver + StateLog + AgentRegistry + on-disk yaml (no mocks).
 """
@@ -16,7 +16,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from reyn.core.events.config_recovery import record_config_change
+from reyn.core.events.config_recovery import record_config_generation
 from reyn.core.events.state_log import StateLog
 from reyn.core.op_runtime.context import OpContext
 from reyn.runtime.registry import AgentRegistry
@@ -41,11 +41,11 @@ def _no_factory(_profile):
 
 
 @pytest.mark.asyncio
-async def test_real_mcp_drop_emits_config_changed_and_rewind_restores(tmp_path):
-    """Tier 2: a REAL mcp_drop op (state_log threaded into OpContext) emits config_changed
-    with the full post-drop mcp content; a rewind to before the drop reconstructs the dropped
-    server from the WAL. RED if the op didn't emit (config invisible to replay) or reconstruct
-    trusted the on-disk post-drop yaml."""
+async def test_real_mcp_drop_records_generation_and_rewind_restores(tmp_path):
+    """Tier 2: a REAL mcp_drop op (state_log threaded into OpContext) records a config
+    generation with the full post-drop mcp content; a rewind to before the drop reconstructs the
+    dropped server from the generation. RED if the op didn't record (config invisible to recovery)
+    or reconstruct trusted the on-disk post-drop yaml."""
     from reyn.core.op_runtime.mcp_drop_server import handle as drop_handle
 
     state_log = StateLog(tmp_path / ".reyn" / "wal.jsonl")
@@ -56,9 +56,11 @@ async def test_real_mcp_drop_emits_config_changed_and_rewind_restores(tmp_path):
         "brave": {"command": "uvx", "args": ["brave-mcp"]},
     }}}
     mcp_path.write_text(yaml.dump(two_servers), encoding="utf-8")
-    # the prior install's config_changed (pre-drop state) — the seq we rewind to:
-    await record_config_change(state_log, "config/mcp.yaml", two_servers)
+    # the prior install's generation (pre-drop state) — the seq we rewind to:
+    await record_config_generation(state_log, str(mcp_path), two_servers)
     cut = state_log.current_seq
+    # bump the WAL head so the drop's generation is filed at a DISTINCT seq > cut.
+    await state_log.append("inbox_put", n=0)
 
     resolver = PermissionResolver(
         config_permissions={}, project_root=tmp_path, interactive=False,
@@ -85,16 +87,17 @@ async def test_real_mcp_drop_emits_config_changed_and_rewind_restores(tmp_path):
     result = await drop_handle(op=op, ctx=ctx, caller="control_ir")
     assert result["status"] == "ok"
 
-    # 1) the REAL op emitted config_changed carrying the FULL post-drop registry state.
-    [ev] = [e for e in state_log.iter_from(cut + 1) if e.get("kind") == "config_changed"]
-    assert ev["path"] == "config/mcp.yaml"
-    assert set(ev["content"]["mcp"]["servers"]) == {"filesystem"}
+    # 1) the REAL op recorded a generation carrying the FULL post-drop registry state, AND the
+    #    live yaml dropped brave. The generation reconstructs the post-drop state as-of-now.
     assert "brave" not in yaml.safe_load(mcp_path.read_text(encoding="utf-8"))["mcp"]["servers"]
-
-    # 2) rewind to before the drop → reconstruct restores brave from the WAL truth.
     reg = AgentRegistry(
         project_root=tmp_path, session_factory=_no_factory, state_log=state_log,
     )
+    reg._reconcile_config_as_of_cut(state_log.current_seq)
+    post_drop = yaml.safe_load(mcp_path.read_text(encoding="utf-8"))["mcp"]["servers"]
+    assert set(post_drop) == {"filesystem"}, "the op's generation reconstructs the post-drop state"
+
+    # 2) rewind to before the drop → reconstruct restores brave from the generation truth.
     reg._reconcile_config_as_of_cut(cut)
     restored = yaml.safe_load(mcp_path.read_text(encoding="utf-8"))["mcp"]["servers"]
     assert set(restored) == {"filesystem", "brave"}, "rewind reconstructs the dropped server"

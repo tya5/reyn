@@ -1,11 +1,12 @@
-"""Tier 2: OS invariant — #2248 PR-A config-registry rewind-reconstruction.
+"""Tier 2: OS invariant — #2259 config-registry rewind-reconstruction (generation model).
 
-Recovery-core `.reyn/config` registries become rewind-durable: `record_config_change` emits a
-`config_changed` WAL event carrying the registry's `.reyn`-relative path + its FULL
-post-mutation content. `_reconcile_config_as_of_cut` reconstructs each WAL-tracked config path
-AS-OF-CUT (latest-≤-cut wins, full content, no delta-fold) — so the `.yaml` is a DERIVED
-projection re-materialised from the WAL truth, never an independent source of truth (the #2248
-load-bearing invariant). Mirrors the topology-lifecycle model.
+Recovery-core `.reyn/config` registries are rewind-durable: `record_config_change` records a
+full-state config GENERATION keyed by the WAL head, filed under the registry's `.reyn`-relative
+path. `_reconcile_config_as_of_cut` reconstructs each generation-tracked config path AS-OF-CUT
+(latest-≤-cut wins, full content, no delta-fold) — so the `.yaml` is a DERIVED projection
+re-materialised from the generation truth, never an independent source of truth (the #2259
+load-bearing invariant). Each generation is a truncation-surviving base (unlike the former
+`config_changed` WAL event the truncation could drop).
 
 Real AgentRegistry + StateLog + on-disk yaml (no mocks).
 """
@@ -37,12 +38,14 @@ def _read_yaml(p: Path):
 
 @pytest.mark.asyncio
 async def test_config_reconstructs_to_latest_at_or_below_cut(tmp_path):
-    """Tier 2: per config path the LATEST config_changed with seq ≤ cut wins — the yaml is
+    """Tier 2: per config path the LATEST generation with seq ≤ cut wins — the yaml is
     re-materialised to that FULL content, NOT the on-disk (post-cut) state. RED if reconcile
-    trusted the on-disk yaml as the source of truth, or used the absolute-latest event."""
+    trusted the on-disk yaml as the source of truth, or used the absolute-latest generation."""
     reg = _make_registry(tmp_path)
     await reg.record_config_change("config/mcp.yaml", {"mcp": {"servers": {"a": {"command": "x"}}}})
     cut = reg.state_log.current_seq
+    # bump the WAL head so the later mutation files a DISTINCT generation (seq > cut):
+    await reg.state_log.append("inbox_put", n=0)
     # a later mutation (after the cut) — the live on-disk state the op would have written:
     await reg.record_config_change("config/mcp.yaml", {"mcp": {"servers": {"a": {}, "b": {}}}})
     p = tmp_path / ".reyn" / "config" / "mcp.yaml"
@@ -52,47 +55,37 @@ async def test_config_reconstructs_to_latest_at_or_below_cut(tmp_path):
     reg._reconcile_config_as_of_cut(cut)
 
     assert _read_yaml(p) == {"mcp": {"servers": {"a": {"command": "x"}}}}, \
-        "yaml must be re-materialised from the WAL event ≤ cut, not the live post-cut state"
+        "yaml must be re-materialised from the generation ≤ cut, not the live post-cut state"
 
 
 @pytest.mark.asyncio
 async def test_config_path_first_written_after_cut_is_removed(tmp_path):
-    """Tier 2: a config path whose FIRST config_changed is AFTER the cut did not exist
+    """Tier 2: a config path whose FIRST generation is AFTER the cut did not exist
     as-of-cut → reconcile removes its yaml. RED if a registry created after a rewind point
     survived a rewind to before it existed."""
     reg = _make_registry(tmp_path)
-    await reg.record_config_change("config/cron.yaml", {"cron": {"jobs": [{"name": "j"}]}})  # seq 1 > cut 0
+    # bump the head so the only generation is filed at seq > 0 (the cut below).
+    await reg.state_log.append("inbox_put", n=0)
+    await reg.record_config_change("config/cron.yaml", {"cron": {"jobs": [{"name": "j"}]}})
     p = tmp_path / ".reyn" / "config" / "cron.yaml"
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(yaml.dump({"cron": {"jobs": [{"name": "j"}]}}), encoding="utf-8")
 
-    reg._reconcile_config_as_of_cut(0)  # cut BEFORE the only config event
+    reg._reconcile_config_as_of_cut(0)  # cut BEFORE the only generation
 
     assert not p.exists(), "a config path first written after the cut is removed on reconstruct"
 
 
 @pytest.mark.asyncio
-async def test_record_config_change_emits_durable_wal_event(tmp_path):
-    """Tier 2: record_config_change appends a durable config_changed carrying path+content
-    (the recovery truth). RED if the seam didn't WAL the change — config would be invisible to
-    replay = a silent recovery gap."""
+async def test_record_config_change_records_durable_generation(tmp_path):
+    """Tier 2: record_config_change writes a durable full-state generation carrying the content
+    (the recovery truth) reconstructable as-of-cut. RED if the seam didn't record the change —
+    config would be invisible to reconstruct = a silent recovery gap."""
     reg = _make_registry(tmp_path)
     await reg.record_config_change("config/hooks.yaml", {"hooks": [{"on": "turn_start"}]})
+    cut = reg.state_log.current_seq
 
-    [entry] = [e for e in reg.state_log.iter_from(0) if e.get("kind") == "config_changed"]
-    assert entry["path"] == "config/hooks.yaml"
-    assert entry["content"] == {"hooks": [{"on": "turn_start"}]}
-
-
-@pytest.mark.asyncio
-async def test_config_changed_does_not_corrupt_agent_snapshot(tmp_path):
-    """Tier 2: config_changed is config-set state, NOT AgentSnapshot STATE — apply_events
-    no-ops it (uniform with topology_*). RED if it leaked into snapshot replay."""
-    from reyn.core.events.agent_snapshot import AgentSnapshot
-
-    snap = AgentSnapshot.empty("a")
-    snap.apply_events([
-        {"seq": 1, "kind": "config_changed", "path": "mcp.yaml", "content": {"mcp": {}}},
-    ])
-    assert snap.inbox == [] and snap.pending_chains == {}, \
-        "config_changed must not mutate AgentSnapshot state"
+    p = tmp_path / ".reyn" / "config" / "hooks.yaml"
+    reg._reconcile_config_as_of_cut(cut)
+    assert _read_yaml(p) == {"hooks": [{"on": "turn_start"}]}, \
+        "the recorded generation must reconstruct the content as-of-cut"

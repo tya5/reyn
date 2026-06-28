@@ -1,12 +1,12 @@
-"""Config-recovery emit helper — the single producer-side seam for ``config_changed``.
+"""Config-recovery producer seam — record a config registry as a truncation-surviving snapshot.
 
-#2248 PR-A2. A recovery-core `.reyn/config` registry (mcp / cron / hooks / approvals /
-index-sources) is reconstructed by WAL replay (``AgentRegistry._reconcile_config_as_of_cut``).
-The producer side is this one helper: a dedicated config op calls it AFTER persisting its
-`.yaml`, passing the registry's `.reyn`-relative path + its FULL post-mutation content, so the
-yaml becomes a derived projection and the WAL event is the recovery truth. Centralised here so
-every emit site (and the registry's own ``record_config_change``) shares one format — the
-config-change vocabulary lives in exactly one place.
+#2259 PR-1. A recovery-core `.reyn/config` registry (mcp / cron / hooks / index-sources) is
+reconstructed by restoring the latest config GENERATION ≤ the rewind target. The producer
+side is this one helper: a dedicated config op calls it AFTER persisting its `.yaml`, passing
+the persisted absolute path + its FULL post-mutation content; the helper writes a full-state
+generation keyed by the current WAL head (a base that survives WAL truncation — unlike the
+former `config_changed` WAL event, which the truncation could silently drop). Centralised
+here so every emit site shares one path-key + seq-key convention.
 """
 from __future__ import annotations
 
@@ -18,12 +18,10 @@ if TYPE_CHECKING:
 
 
 def reyn_relative_path(path) -> str | None:
-    """The portion of a config path BELOW the project ``.reyn/`` dir — the key a
-    ``config_changed`` event uses (reconstruct writes ``content`` back to
-    ``<.reyn>/<rel>``). E.g. ``…/.reyn/mcp.yaml`` → ``mcp.yaml``;
-    ``…/.reyn/config/mcp.yaml`` → ``config/mcp.yaml`` (robust across the #2248 §6 reorg).
-    None when the path is not under a ``.reyn/`` dir (operator-owned / out of recovery-core
-    → not WAL-tracked)."""
+    """The portion of a config path BELOW the project ``.reyn/`` dir — the key a config
+    generation is filed under (reconstruct restores ``content`` back to ``<.reyn>/<rel>``).
+    E.g. ``…/.reyn/config/mcp.yaml`` → ``config/mcp.yaml``. None when the path is not under a
+    ``.reyn/`` dir (operator-owned / out of recovery-core → not tracked)."""
     parts = Path(path).parts
     if ".reyn" not in parts:
         return None
@@ -32,12 +30,35 @@ def reyn_relative_path(path) -> str | None:
     return "/".join(rel) if rel else None
 
 
-async def record_config_change(
-    state_log: "StateLog | None", rel_path: str, content: dict,
+def reyn_root(path) -> "Path | None":
+    """The ``.reyn/`` directory an absolute config path lives under (the generation-store
+    anchor: generations go in ``<.reyn>/config/generations/``)."""
+    p = Path(path)
+    for ancestor in (p, *p.parents):
+        if ancestor.name == ".reyn":
+            return ancestor
+    return None
+
+
+def config_generations_dir(reyn_dir: "Path") -> "Path":
+    """The config-generation store directory under a ``.reyn/`` dir."""
+    return Path(reyn_dir) / "config" / "generations"
+
+
+async def record_config_generation(
+    state_log: "StateLog | None", config_abs_path, content: dict,
 ) -> None:
-    """Emit a durable ``config_changed`` for the registry at ``rel_path`` (`.reyn`-relative)
-    carrying its FULL post-mutation ``content``. No-op when ``state_log`` is None (the opt-in /
-    non-persistence contract — tests / non-chat). Call it AFTER the `.yaml` is persisted."""
+    """Record the FULL config state as a generation keyed by the current WAL head — the
+    truncation-surviving recovery base for this registry. No-op when ``state_log`` is None
+    (the opt-in / non-persistence contract) or the path is not under ``.reyn/``. Call it
+    AFTER the `.yaml` is persisted. (Async to match the call sites; the write is synchronous.)"""
     if state_log is None:
         return
-    await state_log.append("config_changed", path=rel_path, content=content)
+    rel = reyn_relative_path(config_abs_path)
+    root = reyn_root(config_abs_path)
+    if rel is None or root is None:
+        return
+    from reyn.core.events.config_generations import ConfigGenerationStore  # noqa: PLC0415
+    ConfigGenerationStore(config_generations_dir(root)).record(
+        rel, content, state_log.current_seq,
+    )

@@ -1532,57 +1532,42 @@ class AgentRegistry:
                 topo.save(path)
                 self._topologies[name] = topo
 
-    async def record_config_change(self, rel_path: str, content: dict) -> None:
-        """#2248 PR-A: WAL the full post-mutation content of a recovery-core config
-        registry, keyed by its `.reyn`-relative path. The single emission chokepoint for
-        config recovery (mirrors `_emit_topology`): a dedicated config op calls this AFTER
-        persisting its `.yaml`, so the registry is reconstructable by WAL replay. The yaml
-        on disk is thus a DERIVED projection — `content` here is the recovery truth.
-        No-op without a WAL (the opt-in / test contract). Delegates to the shared
-        producer-side seam so every emit site uses one format (#2248 PR-A2)."""
-        from reyn.core.events.config_recovery import (  # noqa: PLC0415
-            record_config_change as _emit,
-        )
-        await _emit(self._state_log, rel_path, content)
+    def _config_generation_store(self):
+        """The config-as-snapshot generation store (#2259 PR-1). Full-state config
+        generations under ``.reyn/config/generations/`` — truncation-surviving bases (they
+        replace the truncatable `config_changed` WAL event that lost config below the floor)."""
+        from reyn.core.events.config_generations import ConfigGenerationStore  # noqa: PLC0415
+        from reyn.core.events.config_recovery import config_generations_dir  # noqa: PLC0415
+        return ConfigGenerationStore(config_generations_dir(self._project_root / ".reyn"))
 
-    def _config_lifecycle(self) -> "dict[str, list[tuple[int, dict]]]":
-        """#2248 PR-A: one WAL scan → per config relative-path, its ordered
-        ``(seq, content)`` from ``config_changed`` events (content = the FULL registry
-        state at that point). WAL-sourced only (never the rotated audit log). Only paths
-        that appear here are WAL-tracked → only these are touched by reconstruction; an
-        operator-owned / pre-feature yaml with no event is invisible and left alone. Empty
-        without a WAL."""
-        events: dict[str, list[tuple[int, dict]]] = {}
+    async def record_config_change(self, rel_path: str, content: dict) -> None:
+        """#2259 PR-1: record the FULL post-mutation content of a recovery-core config
+        registry as a truncation-surviving generation keyed by the current WAL head. A
+        dedicated config op calls this AFTER persisting its `.yaml`; the yaml is a derived
+        projection — the generation is the recovery base (it survives WAL truncation, unlike
+        the former `config_changed` event). No-op without a WAL (the opt-in / test contract)."""
         if self._state_log is None:
-            return events
-        for entry in self._state_log.iter_from(0):
-            if entry.get("kind") != "config_changed":
-                continue
-            path = entry.get("path")
-            seq = entry.get("seq")
-            content = entry.get("content")
-            if not isinstance(path, str) or not isinstance(seq, int):
-                continue
-            events.setdefault(path, []).append((seq, content if isinstance(content, dict) else {}))
-        return events
+            return
+        self._config_generation_store().record(
+            rel_path, content, self._state_log.current_seq,
+        )
 
     def _reconcile_config_as_of_cut(self, cut: int) -> None:
-        """#2248 PR-A: reconstruct the recovery-core config registries as-of-cut from the
-        ``config_changed`` WAL (WAL-sourced only). Per WAL-tracked path, the LATEST event
-        with seq ≤ cut decides the on-disk content (latest-≤-cut wins, FULL state, no
-        delta-fold — uniform with `_reconcile_topologies_as_of_cut`). A path whose first
-        event is AFTER the cut didn't exist as-of-cut → removed. Only WAL-tracked paths are
-        touched; inert without events. The yaml is a derived projection re-materialised
-        here from the recovery truth."""
+        """#2259 PR-1: reconstruct the recovery-core config registries as-of-cut from the
+        config GENERATIONS (truncation-surviving, full-state). Per registry, restore the
+        LATEST generation with seq ≤ cut (each generation is complete — no forward-replay). A
+        registry whose first generation is AFTER the cut didn't exist as-of-cut → removed.
+        Only generation-tracked registries are touched (operator-owned / pre-feature yaml with
+        no generation is left alone). This survives WAL truncation — the bug the former
+        event-replay reconstruct had (config_changed below the floor was lost)."""
         import yaml  # noqa: PLC0415 — local, matching the file convention
 
-        for rel_path, evs in self._config_lifecycle().items():
-            latest = max(
-                (e for e in evs if e[0] <= cut), key=lambda e: e[0], default=None,
-            )
+        store = self._config_generation_store()
+        for rel_path in store.paths():
+            latest = store.latest_at_or_below(rel_path, cut)
             abs_path = (self._project_root / ".reyn" / rel_path).resolve()
             if latest is None:
-                # First written after the cut → didn't exist as-of-cut → drop.
+                # First generation after the cut → didn't exist as-of-cut → drop.
                 if abs_path.is_file():
                     abs_path.unlink()
             else:
@@ -1819,8 +1804,8 @@ class AgentRegistry:
         # archived-state (rewind-before-archive → active; rewind-after → archived).
         self._reconcile_archived_as_of_cut(ag_archived, drop_cut)
         self._reconcile_topologies_as_of_cut(drop_cut)
-        # #2248 PR-A: rebuild the recovery-core config registries (mcp/cron/hooks/…)
-        # as-of-cut from the config_changed WAL — same latest-≤-cut-wins model as topology.
+        # #2259 PR-1: rebuild the recovery-core config registries (mcp/cron/hooks/…)
+        # as-of-cut from the config GENERATIONS — same latest-≤-cut-wins model as topology.
         self._reconcile_config_as_of_cut(drop_cut)
         # #2103 B (the rewind LINCHPIN): rebuild the spawn lineage as-of-cut from the
         # agent_created records — a re-materialised child REGAINS its ⊆-parent cap and a
@@ -1976,6 +1961,10 @@ class AgentRegistry:
             anchors = self.anchor_store
             if anchors is not None:
                 anchors.prune_below(floor)                  # AnchorStore (sync)
+            # #2259 PR-1: GC config generations on the SAME boundary — but the store keeps,
+            # per registry, the nearest gen BELOW the floor (the truncation-surviving base),
+            # so config-as-of-floor stays reconstructable (the bug the event-replay had).
+            self._config_generation_store().prune_below(floor)
         except Exception as e:  # noqa: BLE001 — defensive; never fail caller
             logger.warning("Stage 1e generation GC failed (floor=%d): %s", floor, e)
         # #1954 slice 2: WAL-window-bounded auto-purge of archived agents — run

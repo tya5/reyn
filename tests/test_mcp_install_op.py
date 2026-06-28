@@ -210,7 +210,7 @@ async def test_mcp_yaml_write_requires_explicit_decl_recovery_core(tmp_path):
     """Tier 2: #2248 PR-C SUPERSEDES #571 protect-at-use for the mcp config — writing the
     install target ``.reyn/config/mcp.yaml`` now REQUIRES an explicit file.write declaration:
     it is under the recovery-core ``config/`` prefix, so a decl-less write is denied (a raw
-    write would change config WITHOUT the ``config_changed`` WAL event = a recovery gap). The
+    write would change config WITHOUT recording the config generation = a recovery gap). The
     dedicated mcp_install op supplies that explicit decl + writes via its own write_text, so
     the legit path is unaffected (see test_permission_gate_passes_with_explicit_decl).
     ``.reyn/approvals.yaml`` (top-level persist) likewise requires an explicit grant."""
