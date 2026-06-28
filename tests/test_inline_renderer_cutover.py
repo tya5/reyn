@@ -67,6 +67,18 @@ def test_wrapped_agent_body_hang_indents_clear_of_the_gutter() -> None:
     assert all(("⏺" not in c) or c.startswith("⏺") for c in lines)
 
 
+def test_long_unbreakable_token_folds_instead_of_truncating() -> None:
+    """Tier 2: a long unbreakable token (path / identifier / URL) folds onto a
+    continuation line rather than being cropped at the right edge with an ellipsis.
+    rich Table columns default to overflow='ellipsis'; the body column overrides to
+    'fold' so the whole token survives — its tail is still present and no '…' crop
+    marker appears."""
+    token = "/x/" + "segment_" * 12 + "TOKENTAIL"
+    out = _plain("agent", f"Path: {token}", width=40)
+    assert "…" not in out                 # not ellipsis-truncated
+    assert "TOKENTAIL" in out             # the token tail survived the fold
+
+
 def test_user_line_carries_a_background_block() -> None:
     """Tier 2: the user's own line gets a background block (CC-style 'you said
     this' design); the plain agent line does not."""
