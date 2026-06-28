@@ -21,6 +21,7 @@ from reyn.interfaces.repl.renderer import (
     ConsoleChatRenderer,
     InlineChatRenderer,
     format_inline_message,
+    wants_separator,
 )
 from reyn.runtime.outbox import OutboxMessage
 
@@ -74,11 +75,11 @@ def test_user_line_carries_a_background_block() -> None:
 
 
 def test_user_echo_leads_with_input_marker_and_keeps_text() -> None:
-    """Tier 2: the user's own submitted line is echoed with the > input marker
-    and its text — so the message stays visible in the conversation after the
-    inline input field clears on submit."""
+    """Tier 2: the user's own submitted line is echoed with the ❯ input marker
+    (same chevron CC uses for the prompt) and its text — so the message stays
+    visible in the conversation after the inline input field clears on submit."""
     out = _plain("user", "what files changed?")
-    assert ">" in out
+    assert "❯" in out
     assert "what files changed?" in out
 
 
@@ -119,13 +120,26 @@ def test_intervention_keeps_question_text() -> None:
 
 def test_kinds_use_distinct_markers() -> None:
     """Tier 2: message kinds carry distinct glyphs so the eye separates them — the
-    assistant ⏺ is not reused for an intervention (◆) or a finished skill (✓)."""
+    assistant ⏺ is not reused for an intervention (◆), a finished skill (✓), or a
+    tool invocation (▸)."""
     agent = _plain("agent", "x")
     interv = _plain("intervention", "x")
     done = _plain("skill_done", "x")
+    tool = _plain("tool_call_started", "", {"tool": "Bash", "args": {}})
     assert "⏺" in agent
     assert "◆" in interv and "⏺" not in interv
     assert "✓" in done and "⏺" not in done
+    assert "▸" in tool and "⏺" not in tool
+
+
+def test_wants_separator_between_blocks_not_before_nested_or_first() -> None:
+    """Tier 2: a blank line separates top-level message blocks (but not before the
+    first), and never before a nested ⎿ detail row (tool result / trace) — so a
+    tool call and its result stay grouped."""
+    assert wants_separator("agent", seen_message=False) is False          # first
+    assert wants_separator("agent", seen_message=True) is True            # block gap
+    assert wants_separator("tool_call_completed", seen_message=True) is False  # nested
+    assert wants_separator("trace", seen_message=True) is False           # nested detail
 
 
 def test_unknown_kind_renders_text_without_marker() -> None:

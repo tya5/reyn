@@ -252,7 +252,7 @@ async def run_inline_input(registry, renderer) -> None:
     top_rule = Window(height=1, char="─", style=f"fg:{_CC_DIM}")
     bottom_rule = Window(height=1, char="─", style=f"fg:{_CC_DIM}")
     prompt_sym = Window(
-        FormattedTextControl([(f"fg:{_CC_ACCENT} bold", "> ")]), width=2, height=1
+        FormattedTextControl([(f"fg:{_CC_ACCENT} bold", "❯ ")]), width=2, height=1
     )
     input_win = Window(BufferControl(buffer=buf), height=1)
     inputrow = VSplit([prompt_sym, input_win])
