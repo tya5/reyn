@@ -87,6 +87,11 @@ same rewind path (WAL replay + snapshot generations — see
   - `.reyn/config/<x>.yaml` — the agent-edited registries. Each mutation goes through a
     dedicated op that emits a `config_changed` WAL event; the `.yaml` is a derived
     projection of that event, re-materialised on rewind.
+  - `.reyn/state/agent_identity/<name>@<seq>.json` — per-agent identity + frozen spawn
+    lineage, recorded as a full-state generation at `create_agent` (#2259 PR-1b). A
+    truncation-surviving base (like the config generations): the `agent_created` WAL event is
+    dropped below the floor, so rewind reconstructs the ⊆-parent cap from the generation, not
+    the event — without it a long-lived agent's child runs un-capped on rewind.
 - **Derived** (reconstructable from the authoritative state — NOT write-gated):
   - `.reyn/agents/<name>/state/`: `snapshot.json`, `generations/gen-<seq>.json`,
     `sessions/<sid>/…`. Snapshots sit under a `state/` segment but are **derived** — a
