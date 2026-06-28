@@ -1,11 +1,16 @@
 """Tier 2: inline CC-style renderer — kind→marker+text contract + factory wiring.
 
 The inline renderer is the default interactive `reyn chat` surface after the
-Textual cutover. These assert the OutboxMessage→line mapping on the public
-`.plain` surface (markers present, text preserved, meta prefix applied) — not
-exact whitespace, so formatting tweaks don't break the test.
+Textual cutover. Each message renders as a 2-cell marker gutter + a wrapping body
+column (the agent body as markdown); these assert the rendered-text contract
+(markers present, text preserved, meta prefix applied, gutter reserved on wrap,
+markdown parsed) — not exact whitespace, so formatting tweaks don't break them.
 """
 from __future__ import annotations
+
+import io
+
+from rich.console import Console
 
 from reyn.interfaces.cli.logger_factory import (
     make_chat_renderer,
@@ -20,10 +25,52 @@ from reyn.interfaces.repl.renderer import (
 from reyn.runtime.outbox import OutboxMessage
 
 
-def _plain(kind: str, text: str, meta: dict | None = None) -> str:
-    return format_inline_message(
-        OutboxMessage(kind=kind, text=text, meta=meta or {})
-    ).plain
+def _plain(kind: str, text: str, meta: dict | None = None, *, width: int = 80) -> str:
+    """Render a message to plain text. The renderable is now a gutter grid (not a
+    bare Text), so we render it through a Console to assert the marker/body
+    contract on the visible output."""
+    console = Console(width=width, file=io.StringIO(), color_system=None)
+    console.print(format_inline_message(OutboxMessage(kind=kind, text=text, meta=meta or {})))
+    return console.file.getvalue()
+
+
+def _render_ansi(kind: str, text: str, *, width: int = 30) -> str:
+    """Render with truecolor ANSI on, to assert styling (e.g. the user-input
+    background block emits a ``48;2;`` background SGR)."""
+    console = Console(width=width, file=io.StringIO(), force_terminal=True,
+                      color_system="truecolor")
+    console.print(format_inline_message(OutboxMessage(kind=kind, text=text)))
+    return console.file.getvalue()
+
+
+def test_agent_body_renders_markdown_not_raw_source() -> None:
+    """Tier 2: the agent (LLM) body renders as markdown — **bold** becomes styled
+    text (the ** source is consumed) and list items become bullets, like CC."""
+    out = _plain("agent", "Some **bold** words:\n- one\n- two")
+    assert "**" not in out          # markdown parsed, not shown as raw source
+    assert "bold" in out
+    assert "one" in out and "two" in out
+    assert "•" in out               # list rendered as bullets
+
+
+def test_wrapped_agent_body_hang_indents_clear_of_the_gutter() -> None:
+    """Tier 2: a wrapped body continues INDENTED in the body column, never bleeding
+    back into the 2-cell marker gutter (the reserved-gutter contract)."""
+    out = _plain("agent", "word " * 40, width=40)
+    lines = [ln for ln in out.split("\n") if ln.strip()]
+    # a wrapped continuation line exists, indented into the body column with no
+    # marker → the long body did wrap AND hang-indented clear of the gutter
+    assert any(c.startswith("  ") and "⏺" not in c for c in lines)
+    # the marker only ever LEADS a line (it never appears inside the body / in the
+    # gutter of a continuation line)
+    assert all(("⏺" not in c) or c.startswith("⏺") for c in lines)
+
+
+def test_user_line_carries_a_background_block() -> None:
+    """Tier 2: the user's own line gets a background block (CC-style 'you said
+    this' design); the plain agent line does not."""
+    assert "48;2;" in _render_ansi("user", "my message")      # bg SGR present
+    assert "48;2;" not in _render_ansi("agent", "plain reply")  # none on agent
 
 
 def test_user_echo_leads_with_input_marker_and_keeps_text() -> None:
