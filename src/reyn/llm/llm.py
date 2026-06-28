@@ -3,7 +3,6 @@ import contextvars
 import json
 import logging
 import os
-import random
 import re
 import sys
 import uuid
@@ -835,11 +834,13 @@ def _backoff_s(attempt: int) -> float:
     ``attempt`` is 0-indexed (attempt 0 = first retry, after initial call fails).
     Min 0.0 — never negative on a negative index.
     """
-    base = min(_LLM_RETRY_BASE_S * (2 ** attempt), _LLM_RETRY_MAX_BACKOFF_S)
-    if _resolved_retry_config().jitter:
-        # Equal jitter: half fixed + half random. Range [base/2, base].
-        return base / 2 + random.uniform(0, base / 2)
-    return base
+    # #2259 PR-2a: the timing curve is the shared `backoff_s` formula (one formula across the
+    # LLM-call + durable-write retry paths); the LLM path injects its base/cap + config jitter.
+    from reyn.core.retry import backoff_s  # noqa: PLC0415
+    return backoff_s(
+        attempt, base_s=_LLM_RETRY_BASE_S, max_s=_LLM_RETRY_MAX_BACKOFF_S,
+        jitter=_resolved_retry_config().jitter,
+    )
 
 
 def _extract_retry_after(exc: BaseException) -> float | None:
