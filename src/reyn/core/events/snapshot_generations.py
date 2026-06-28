@@ -372,9 +372,11 @@ def reconstruct(
 
     With no rewind records every seq is active, so this is identical to the
     Stage-1a behavior (backward compatible). Crash recovery is
-    ``reconstruct(head)`` where ``head = state_log.current_seq`` — which, after a
-    rewind, yields the current active-branch state (and collapses to as-of-N when
-    the rewind reset-record is itself head).
+    ``reconstruct(head)`` where ``head = state_log.last_durable_seq`` (#2259 PR-2b:
+    the DURABLE watermark, not the live ``current_seq`` — recovery operates only on
+    durable state, so the un-durable tail is cleanly dropped = recover-to-last-durable)
+    — which, after a rewind, yields the current active-branch state (and collapses to
+    as-of-N when the rewind reset-record is itself head).
     """
     abandoned = _abandoned_intervals(_rewind_records(state_log))
     is_active = _make_is_active(abandoned)
