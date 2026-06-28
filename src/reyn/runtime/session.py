@@ -780,6 +780,14 @@ def enumerate_available_skills(exclude: set[str]) -> list[dict]:
     return results
 
 
+class DurabilityHaltError(RuntimeError):
+    """#2259 PR-3: raised when an operation is submitted to an agent whose durability has FAILED
+    persistently (a §4-retry-exhausted fire-and-forget durable write — disk full / dead). The agent
+    has FAIL-STOPPED: it no longer accepts operations, because in-memory state must not race ahead
+    of a dead disk (the owner's "no silent unbounded loss"). The raise IS the operator-surface — the
+    caller sees it synchronously on their next op, not only a CRITICAL log they would scroll past."""
+
+
 class Session:
     def __init__(
         self,
@@ -1263,6 +1271,10 @@ class Session:
         # from this session also need it so dispatch_tool can emit step
         # events into the same WAL.
         self._state_log = state_log
+        # #2259 PR-3: set when the session FAIL-STOPS (e.g. "durability_failure"); None while
+        # running. The fail-stop reason is in-memory (durability is dead → it cannot be a durable
+        # event) and is the operator-visible state paired with the DurabilityHaltError raise.
+        self._halted_reason: "str | None" = None
         # #2187 backend-master: the Task SUBSCRIPTION writer (the Reyn-internal task↔session binding WRITE seam), threaded down the same chain as task_waker.
         self._task_subscription_writer = SubscriptionWriter(state_log) if state_log is not None else None
         # PR-intervention-link L6: in-memory buffer of answers from
@@ -3278,6 +3290,26 @@ class Session:
         if wake:
             reg.ensure_session_running(self.agent_name, target_session_id)
 
+    @property
+    def halted_reason(self) -> "str | None":
+        """#2259 PR-3: the fail-stop reason (e.g. ``"durability_failure"``) once the session has
+        halted; ``None`` while running. The operator-visible in-memory state paired with the
+        ``DurabilityHaltError`` raise (durability is dead → the reason cannot be a durable event)."""
+        return self._halted_reason
+
+    def _fail_stop_if_durability_dead(self) -> None:
+        """#2259 PR-3: the fail-stop ACCEPT-edge guard. Raise ``DurabilityHaltError`` (recording the
+        halt reason first, so it surfaces consistently with the process-edge) when durability has
+        FAILED persistently — the agent stops accepting operations rather than accept one whose
+        durable record will never land."""
+        if self._state_log is not None and self._state_log.durability_failed:
+            self._halted_reason = "durability_failure"
+            raise DurabilityHaltError(
+                f"agent '{self.agent_name}' halted: persistent durability failure — the agent "
+                "stopped accepting operations to avoid silent unbounded loss (in-memory state must "
+                "not race ahead of a dead disk)"
+            )
+
     async def _put_inbox(self, kind: str, payload: dict) -> str:
         """Append `inbox_put` to WAL via journal, then queue on the async
         inbox. Returns the assigned message id (also stamped into payload
@@ -3291,6 +3323,10 @@ class Session:
         this directly because they manage their own additional state
         machines (= chain_id / request_id / etc.) on top.
         """
+        # #2259 PR-3: fail-stop ACCEPT-edge. If durability has failed persistently, REJECT the op
+        # rather than accept one whose durable record will never land — the raise is the operator's
+        # synchronous signal (more than the CRITICAL log). Pairs with the run-loop process-edge halt.
+        self._fail_stop_if_durability_dead()
         msg_id = await self._journal.append_inbox(kind=kind, payload=payload)
         full_payload = {**payload, "_msg_id": msg_id}
         await self.inbox.put((kind, full_payload))
@@ -3526,6 +3562,13 @@ class Session:
         ``run_one_iteration`` receives ``ride_alongs`` for 4a contract
         compatibility but no longer re-stages them.
         """
+        # #2259 PR-3: fail-stop PROCESS-edge. If durability has failed persistently, HALT before
+        # processing the next op — in-memory state must not advance into a dead disk (the owner's
+        # "no silent unbounded loss"). Returns False = run()'s while-loop exits. Pairs with the
+        # _put_inbox accept-edge raise (both read the latched health-signal).
+        if self._state_log is not None and self._state_log.durability_failed:
+            self._halted_reason = "durability_failure"
+            return False
         # #1800 slice 4a/4b: drain up to the first wake=true trigger.
         # ride_alongs holds wake=false C messages accumulated before the
         # trigger.  They are already staged durably by _drain_to_wake (4b);

@@ -189,6 +189,13 @@ class StateLog:
         return self._last_durable_seq
 
     @property
+    def durability_failed(self) -> bool:
+        """#2259 PR-3: True once a fire-and-forget durable write failed PERSISTENTLY (§4-exhausted)
+        — the worker's latched health-signal. The session fail-stops on this (rejects new ops +
+        halts the run loop) so in-memory state cannot race ahead of a dead disk."""
+        return self._worker.durability_failed
+
+    @property
     def last_truncate_stats(self) -> dict:
         """#2259 PR-2b: the stats of the most recent `truncate_below` (dropped / kept /
         min_kept_seq / max_kept_seq). Since truncate is fire-and-forget, read this AFTER `flush`
