@@ -242,16 +242,11 @@ async def handle(
             del existing["mcp"]
     _write_yaml_config(config_path, existing)
 
-    # #2248 PR-A2: WAL the FULL post-state so the mcp registry recovers via replay (the
-    # yaml is a derived projection). Keyed by the `.reyn`-relative path; skipped when the
-    # target is outside the project `.reyn` (operator-owned) or there is no WAL.
-    from reyn.core.events.config_recovery import (  # noqa: PLC0415
-        record_config_change,
-        reyn_relative_path,
-    )
-    _rel = reyn_relative_path(config_path)
-    if _rel is not None:
-        await record_config_change(getattr(ctx, "state_log", None), _rel, existing)
+    # #2259 PR-1: record the FULL post-state as a truncation-surviving config generation so
+    # the mcp registry recovers (the yaml is a derived projection). The helper guards
+    # internally — no-op when there is no WAL or the path is outside the project `.reyn`.
+    from reyn.core.events.config_recovery import record_config_generation  # noqa: PLC0415
+    await record_config_generation(getattr(ctx, "state_log", None), config_path, existing)
 
     # ── 5. Clean up secrets when requested ─────────────────────────────
     cleared_keys: list[str] = []

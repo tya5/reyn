@@ -485,8 +485,8 @@ class PermissionResolver:
             return {}
 
     def _persist(self, key: str, approved: bool) -> None:
-        # #2248: approvals.yaml is PERSIST, not recovery-core — so NO `config_changed` emit
-        # here (unlike mcp/cron/hooks/index). Approvals are a USER-authored security decision
+        # #2248: approvals.yaml is PERSIST, not recovery-core — so NO config generation
+        # recorded here (unlike mcp/cron/hooks/index). Approvals are a USER-authored security decision
         # (granted via a permission prompt; revoked via the web/CLI surfaces) — never
         # agent-authored — so a rewind must NOT revert them; they survive rewind like
         # `memory/`. Owner-confirmed reclassification (config → persist).

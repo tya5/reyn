@@ -287,11 +287,11 @@ class ToolContext:
     # session). None in non-session/test contexts → the tool falls back to the
     # process-wide get_active_hot_reloader().
     hot_reloader: Any | None = None
-    # #2248 PR-A2: the process-shared WAL (StateLog), threaded from the calling
+    # #2259 PR-1: the process-shared WAL (StateLog), threaded from the calling
     # session so a recovery-core config tool handler (cron / hooks) — and the
-    # OpContext it builds for an op handler (mcp_install / index_drop) — can emit a
-    # ``config_changed`` event after persisting its `.yaml`. None in non-session /
-    # test contexts → the handler skips the emit (the opt-in contract).
+    # OpContext it builds for an op handler (mcp_install / index_drop) — can record a
+    # config GENERATION (keyed by the WAL head) after persisting its `.yaml`. None in
+    # non-session / test contexts → the handler skips it (the opt-in contract).
     state_log: Any | None = None                     # StateLog | None
 
 

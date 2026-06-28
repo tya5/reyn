@@ -558,8 +558,8 @@ class RouterLoopHost(RouterLoopCore, Protocol):
 
     @property
     def state_log(self) -> Any:
-        """The process-shared WAL (StateLog) or None — #2248 PR-A2: threaded into the
-        ToolContext so a recovery-core config tool emits ``config_changed``."""
+        """The process-shared WAL (StateLog) or None — #2259 PR-1: threaded into the
+        ToolContext so a recovery-core config tool records a config generation."""
         ...
 
     def list_available_skills(self) -> list[dict]:

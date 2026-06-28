@@ -259,10 +259,10 @@ def test_canonical_protected_lists_stay_in_sync():
 async def test_mcp_cron_config_reprotected_by_recovery_core_prefix(tmp_path, monkeypatch):
     """Tier 2: #2248 PR-C SUPERSEDES the #571 protect-at-use carve-out for config files.
     Post-PR-A2 ``.reyn/config/`` is RECOVERY-CORE: a raw file.write to config/mcp.yaml would
-    change config WITHOUT emitting the ``config_changed`` WAL event (= a recovery gap — the
-    change wouldn't be reconstructed/reverted on rewind). So §4 re-protects the whole
+    change config WITHOUT recording the config generation (= a recovery gap — the change
+    wouldn't be reconstructed/reverted on rewind). So §4 re-protects the whole
     ``config/`` prefix: a raw broad-zone write is now DENIED on both enforcement paths,
-    forcing the dedicated WAL-emitting op (mcp_install/drop, cron_register — which declare
+    forcing the dedicated generation-recording op (mcp_install/drop, cron_register — which declare
     the path explicitly). The #571 "use-gate makes the carve-out redundant" judgment is
     obsolete now that config is recovery-core.
 

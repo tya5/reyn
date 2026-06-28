@@ -108,11 +108,11 @@ class OpContext:
     # (e.g. chat router, CLI commands).
     run_id: str | None = None
 
-    # #2248 PR-A2: the process-shared WAL, threaded so a recovery-core config op
-    # (mcp_install / mcp_drop / index_drop) can emit a ``config_changed`` event after
-    # persisting its `.yaml` — making the yaml a derived projection of the WAL truth.
-    # None outside a persistence-enabled chat/skill context (tests / non-chat) → the op
-    # skips the emit (the opt-in contract, same as the dispatcher's step-event gate).
+    # #2259 PR-1: the process-shared WAL, threaded so a recovery-core config op
+    # (mcp_install / mcp_drop / index_drop) can record a config GENERATION (keyed by the
+    # WAL head) after persisting its `.yaml` — making the yaml a derived projection of the
+    # generation truth. None outside a persistence-enabled chat/skill context (tests /
+    # non-chat) → the op skips it (the opt-in contract, same as the step-event gate).
     state_log: "StateLog | None" = None
 
     # FP-0022 follow-up: declarative SSL config for web_fetch and MCP registry.

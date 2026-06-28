@@ -181,16 +181,11 @@ def _write_dynamic_cron(path: Path, data: dict) -> None:
 
 
 async def _emit_cron_config_change(ctx: ToolContext, path: Path, data: dict) -> None:
-    """#2248 PR-A2: WAL the FULL post-mutation cron registry so it recovers via
-    replay (the yaml is a derived projection). Keyed by the `.reyn`-relative path;
-    skipped when outside the project `.reyn` or there is no WAL."""
-    from reyn.core.events.config_recovery import (  # noqa: PLC0415
-        record_config_change,
-        reyn_relative_path,
-    )
-    _rel = reyn_relative_path(path)
-    if _rel is not None:
-        await record_config_change(getattr(ctx, "state_log", None), _rel, data)
+    """#2259 PR-1: record the FULL post-mutation cron registry as a truncation-surviving
+    config generation so it recovers (the yaml is a derived projection). The helper guards
+    internally — no-op when there is no WAL or the path is outside the project `.reyn`."""
+    from reyn.core.events.config_recovery import record_config_generation  # noqa: PLC0415
+    await record_config_generation(getattr(ctx, "state_log", None), path, data)
 
 
 def _jobs_list(data: dict) -> list:
