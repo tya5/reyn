@@ -109,6 +109,7 @@ class RouterHostAdapter:
         resolver: Any,                          # ModelResolver
         memory: Any,                            # MemoryService
         journal: Any,                           # SnapshotJournal
+        state_log: Any = None,                  # StateLog | None — #2248 PR-A2 (config emit)
         agent_registry: Any,                    # AgentRegistry | None
         record_spawned_task: "Callable[[str, str], None] | None" = None,  # #2103 S1bc-exec
         live_session_id_fn: "Callable[[], str | None] | None" = None,     # #2103 S1bc-exec
@@ -322,6 +323,7 @@ class RouterHostAdapter:
         self._resolver = resolver
         self._memory = memory
         self._journal = journal
+        self._state_log = state_log  # #2248 PR-A2: WAL for config_changed emit
         self._registry = agent_registry
         self._record_spawned_task = record_spawned_task   # #2103 S1bc-exec
         self._live_session_id_fn = live_session_id_fn      # #2103 S1bc-exec
@@ -534,6 +536,12 @@ class RouterHostAdapter:
     def events(self) -> Any:
         """EventLog for dispatch_tool events."""
         return self._events
+
+    @property
+    def state_log(self) -> Any:
+        """The process-shared WAL (StateLog) or None — #2248 PR-A2: threaded into the
+        ToolContext so a recovery-core config tool emits ``config_changed``."""
+        return self._state_log
 
     @property
     def permission_resolver(self) -> Any:

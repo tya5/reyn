@@ -129,6 +129,19 @@ class SourceManifest:
         ``None`` before the first load; updated on each cache miss /
         reload. Tests probe this to verify the cache-freshness contract."""
         return self._loaded_mtime
+
+    @property
+    def path(self) -> Path:
+        """The ``sources.yaml`` file SSoT path this manifest persists to
+        (#2248 PR-A2: the config-recovery emit site needs the persisted path)."""
+        return self._path
+
+    async def snapshot(self) -> dict[str, Any]:
+        """The FULL on-disk registry content — the same ``{name: entry.to_dict()}``
+        shape ``_atomic_write`` persists to ``sources.yaml`` (#2248 PR-A2: the
+        config-recovery emit needs the full post-mutation content, not a delta)."""
+        entries = await self.get_all()
+        return {name: entry.to_dict() for name, entry in entries.items()}
     def _is_cache_stale(self) -> bool:
         """Return True if sources.yaml has changed since the cache was loaded.
 
