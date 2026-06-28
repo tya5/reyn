@@ -114,6 +114,13 @@ WAL_EVENT_KINDS = (
     # live SubscriptionRegistry (subscription.py) — as-of-cut reconstruction by replay.
     "task_subscribed",
     "task_rebound",
+    # NEW (#2248 PR-A) — config registry change for recovery-core `.reyn/config/`
+    # (mcp / cron / hooks / approvals / index-sources). Carries the registry's relative
+    # path + its FULL post-mutation content (re-materialisable, latest-≤-cut-wins, no
+    # delta-fold — uniform with topology_*). OS-level + P7-safe: `path`/`content` are
+    # opaque (the OS writes `content` to `<.reyn>/<path>` on reconstruct, no registry
+    # semantics). apply_events no-ops it (config-set state, not AgentSnapshot STATE).
+    "config_changed",
 )
 
 
