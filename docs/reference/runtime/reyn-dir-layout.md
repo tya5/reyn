@@ -84,35 +84,36 @@ same rewind path (WAL replay + snapshot generations — see
   - `.reyn/state/wal.jsonl` — the append-only, seq'd WAL: the complete event history
     everything else is replayed from. Also `.reyn/state/tasks.db`,
     `.reyn/state/budget_ledger.jsonl`.
-  - `.reyn/config/<x>.yaml` — the agent-edited registries. Each mutation goes through a
-    dedicated op that emits a `config_changed` WAL event; the `.yaml` is a derived
-    projection of that event, re-materialised on rewind.
+  - `.reyn/config/<x>.yaml` — the agent-edited config registries. Each mutation goes
+    through a dedicated op that writes a **full-state config generation** (seq-keyed,
+    truncation-surviving); the `.yaml` is materialised from the generation at the target
+    seq on rewind.
   - `.reyn/state/agent_identity/<name>@<seq>.json` — per-agent identity + frozen spawn
-    lineage, recorded as a full-state generation at `create_agent` (#2259 PR-1b). A
-    truncation-surviving base (like the config generations): the `agent_created` WAL event is
-    dropped below the floor, so rewind reconstructs the ⊆-parent cap from the generation, not
-    the event — without it a long-lived agent's child runs un-capped on rewind.
+    lineage, recorded as a **full-state generation** (seq-keyed, truncation-surviving).
+    The WAL event is dropped below the truncation floor, so rewind reconstructs the
+    ⊆-parent cap from the generation — without it a long-lived agent's child runs
+    un-capped on rewind.
 - **Derived** (reconstructable from the authoritative state — NOT write-gated):
   - `.reyn/agents/<name>/state/`: `snapshot.json`, `generations/gen-<seq>.json`,
-    `sessions/<sid>/…`. Snapshots sit under a `state/` segment but are **derived** — a
-    snapshot is re-materialised from WAL replay (fall back to an earlier generation, or
-    replay from genesis). A corrupted snapshot is therefore *recoverable*, not data loss —
-    the same reconstructability logic as `cache/`. (This is why the write-gate, below,
-    covers only the authoritative tier.)
+    `sessions/<sid>/…`. Runtime snapshots are seq-keyed generations reconstructable from
+    WAL replay (fall back to an earlier generation, or replay from genesis). A corrupted
+    snapshot is *recoverable*, not data loss — the same reconstructability logic as
+    `cache/`. Agent-identity and lineage are likewise stored as seq-keyed generation
+    snapshots (truncation-surviving, same generation-store pattern as config). (This is
+    why the write-gate, below, covers only the authoritative tier.)
 
 ## The recovery-core write-gate (the rule you hit as a skill author)
 
 **A raw `file.write` to `.reyn/config/` or `.reyn/state/` is DENIED.** The
 **authoritative** recovery-core (the WAL at `.reyn/state/` + the `.reyn/config/` registries —
-see [above](#recovery-core)) must be mutated through a **dedicated op that emits a WAL
-event** — never a generic `file.write` — so the change is captured in the recovery replay
-stream (otherwise a rewind could not reconstruct or revert it). The directory boundary *is*
-the write-gate boundary. (The *derived* per-agent snapshots under `.reyn/agents/<name>/state/`
-are reconstructable from the WAL, so they are not write-gated — a corrupted snapshot is
+see [above](#recovery-core)) must be mutated through a **dedicated op** — never a generic
+`file.write` — so the change lands in the recovery stream (WAL entry or config generation)
+and can be reconstructed or reverted on rewind. The directory boundary *is* the write-gate
+boundary. (The *derived* per-agent snapshots under `.reyn/agents/<name>/state/` are
+reconstructable from the WAL, so they are not write-gated — a corrupted snapshot is
 recoverable, not data loss.)
 
-To change config, call the dedicated op (which writes the `.yaml` **and** emits
-`config_changed`):
+To change config, call the dedicated op (which writes the `.yaml` as a **new config generation**):
 
 - MCP servers → `mcp_install` / `mcp_drop_server`
 - cron → `cron_register` / `cron_unregister` / `cron_enable`
@@ -131,7 +132,7 @@ Ask the two recovery-core questions:
    reconstructs?** → **recovery-core**: put it under `state/` (and write it through a
    WAL-emitting durable path or a dedicated op — never a raw `file.write`). If it's a
    config-style registry the agent mutates, put it under `config/` and give it a dedicated
-   op that emits `config_changed`.
+   op that writes a config generation (full-state, seq-keyed).
 2. Otherwise pick the exclusion that fits:
    - rebuildable from other state → `cache/`
    - a write-only forensic record → `events/` (or a sibling audit dir)
