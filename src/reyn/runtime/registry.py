@@ -613,11 +613,25 @@ class AgentRegistry:
         # parent-identity-AT-SPAWN (not the latest), so a rewind across a purge+name-reuse
         # does not resurrect this child under the reused parent.
         parent_seq = self._agent_create_seq.get(parent) if parent is not None else None
+        # #2259 PR-2b + #2103 C2b(b): the agent's stable identity is an IN-MEMORY ID assigned
+        # SYNCHRONOUSLY at spawn — NOT the WAL seq (now worker-assigned async, so unavailable
+        # synchronously; a child spawn must read the parent's identity NOW for the ⊆-parent cap).
+        # The worker links id↔seq in the durable `agent_created` record, and the identity
+        # generation (keyed by the durable worker seq, truncation-surviving) stores this id as
+        # ``create_seq`` — so rewind reconstructs identity/lineage from the gen (the owner-
+        # corrected model: no consumer reads a live/non-durable seq).
+        self._spawn_create_counter += 1
+        agent_id = self._spawn_create_counter
+        self._agent_create_seq[name] = agent_id
         if self._state_log is not None:
-            seq = await self._state_log.append(
+            # Non-blocking (the blocking-invariant): append_nowait + the identity-gen job are a
+            # synchronous pair (no await between → atomic enqueue; the gen job is FIFO-after the
+            # agent_created WAL job, so it stamps the gen at that durable seq, invariant #2).
+            self._state_log.append_nowait(
                 "agent_created", entity_kind="agent", name=name, sid="",
                 parent=parent,  # #2103 B: lineage for rewind-reconstruction
                 parent_seq=parent_seq,  # #2103 C2b: parent identity-at-spawn (rewind)
+                agent_id=agent_id,  # #2259 PR-2b: the in-memory identity (links to the seq)
                 profile={
                     "name": profile.name,
                     "role": profile.role,
@@ -626,19 +640,7 @@ class AgentRegistry:
                     "allowed_mcp": profile.allowed_mcp,
                 },
             )
-            # #2103 C2b: this agent's stable identity = its agent_created WAL seq.
-            self._agent_create_seq[name] = seq
-            # #2259 PR-1b: ALSO persist identity + lineage as a truncation-surviving
-            # generation — the `agent_created` event above is dropped when the WAL is
-            # truncated below the floor, which would lose the ⊆-parent cap on rewind
-            # (escalation-on-rewind). The generation is the recovery base for identity.
-            self._record_agent_identity_generation(name, seq)
-        else:
-            # #2103 C2b Q1: no-WAL fallback — a monotonic counter (no rewind to
-            # reconstruct against here), so a create_agent parent is ALWAYS identity-
-            # tracked and name-reuse is detected even without a state_log.
-            self._spawn_create_counter += 1
-            self._agent_create_seq[name] = self._spawn_create_counter
+            self._record_agent_identity_generation(name)
         return profile
 
     def remove(self, name: str, *, purge: bool = False) -> "list[tuple[str, Topology | None]]":
@@ -1557,22 +1559,35 @@ class AgentRegistry:
             self._project_root / ".reyn" / "state" / "agent_identity",
         )
 
-    def _record_agent_identity_generation(self, name: str, seq: int) -> None:
-        """#2259 PR-1b: persist ``name``'s identity (``create_seq``) + frozen spawn edge as a
-        truncation-surviving generation keyed by its create seq, so a rewind reconstructs the
-        ⊆-parent cap from the generation — NOT from the `agent_created` WAL event, which
-        truncation drops (a dropped lineage edge → resolved_profile_for skips the parent-conjunct
-        → child runs UN-capped). No-op without a WAL (no rewind to reconstruct against)."""
+    def _record_agent_identity_generation(self, name: str) -> None:
+        """#2259 PR-1b + PR-2b: persist ``name``'s identity (``create_seq`` = its in-memory id) +
+        frozen spawn edge as a truncation-surviving generation, keyed by the DURABLE
+        ``agent_created`` WAL seq — so a rewind reconstructs the ⊆-parent cap from the generation,
+        NOT from the `agent_created` WAL event (truncation drops it → escalation-on-rewind).
+
+        PR-2b: the keying seq is assigned in the worker (seq-in-worker), so the gen record runs
+        in a worker job that reads ``last_assigned_seq`` (= the paired ``agent_created`` append's
+        seq, FIFO-before this job). No await between the append_nowait + this call → atomic pair
+        (invariant #2). No-op without a WAL."""
         if self._state_log is None:
             return
         edge = self._spawn_lineage.get(name)
-        self._agent_identity_generation_store().record(
-            name,
-            create_seq=self._agent_create_seq.get(name, seq),
-            spawn_parent=edge[0] if edge else None,
-            spawn_parent_seq=edge[1] if edge else None,
-            seq=seq,
-        )
+        create_id = self._agent_create_seq.get(name, 0)
+        spawn_parent = edge[0] if edge else None
+        spawn_parent_seq = edge[1] if edge else None
+        log = self._state_log
+        store = self._agent_identity_generation_store()
+
+        async def _record() -> None:
+            store.record(
+                name,
+                create_seq=create_id,
+                spawn_parent=spawn_parent,
+                spawn_parent_seq=spawn_parent_seq,
+                seq=log.last_assigned_seq,
+            )
+
+        log.submit_durable_nowait(_record)
 
     def _agent_identity_as_of_cut(
         self, cut: int,

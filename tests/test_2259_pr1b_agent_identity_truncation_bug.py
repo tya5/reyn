@@ -129,8 +129,10 @@ async def test_identity_generation_survives_but_post_cut_child_is_undone(tmp_pat
     log = reg.state_log
 
     await reg.create_agent("parent_a")
+    await log.flush()  # #2259 PR-2b: create_agent is async — drain so current_seq + gen are durable
     cut = log.current_seq  # rewind target = just after P exists, before C is spawned
     await reg.create_agent("child_a", parent="parent_a")
+    await log.flush()
 
     # rewind to BEFORE C was spawned → C did not exist as-of-cut → undone (dropped).
     await reg._materialize_rewind(reconstruct_seq=log.current_seq, workspace_at_or_below=cut)
