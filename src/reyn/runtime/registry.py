@@ -209,9 +209,11 @@ class AgentRegistry:
         # mismatches → the edge is STALE → resolved_profile_for #2161-fail-closes and
         # is_spawn_descendant rejects (fixes both consumers from one identity check;
         # composes with #2161's absent-parent existence-check). The identity is minted
-        # in create_agent (the spawn seam): the agent_created WAL seq when a state_log
-        # is present, else an in-memory monotonic counter (Q1: every create_agent parent
-        # is identity-tracked → name-reuse always detected for real spawn lineages; a
+        # in create_agent (the spawn seam) as an IN-MEMORY monotonic counter (#2259 PR-2b
+        # owner (b) model: agent identity = in-memory id synced at spawn; the WAL seq is now
+        # worker-assigned async + unavailable synchronously, so the counter IS the identity —
+        # the worker links id↔seq in the durable agent_created record). (Q1: every create_agent
+        # parent is identity-tracked → name-reuse always detected for real spawn lineages; a
         # bare-``create()`` non-spawn parent has no identity → None → #2161 existence
         # fallback, no false-positive, Q2).
         self._spawn_lineage: "dict[str, tuple[str, int | None]]" = {}
@@ -219,8 +221,10 @@ class AgentRegistry:
         # Rebuilt as-of-cut on rewind (_materialize_rewind). A name-reused agent has a
         # NEW token here, so a stored edge carrying the OLD token reads as stale.
         self._agent_create_seq: "dict[str, int]" = {}
-        # #2103 C2b: the no-WAL identity source (monotonic; only used when state_log is
-        # None — there is no rewind to reconstruct against in that mode).
+        # #2103 C2b + #2259 PR-2b: the monotonic in-memory identity source — now the identity
+        # for EVERY create_agent (the WAL seq is worker-assigned async, so the in-memory id is
+        # what a child reads synchronously at spawn for the ⊆-parent cap; the worker links
+        # id↔seq in the durable agent_created record + the truncation-surviving identity gen).
         self._spawn_create_counter: int = 0
         # #2081: delegation policy. ``deny`` narrows an UNBOUND delegate with the
         # restrictive _delegate floor; ``inherit`` (default) = byte-identical to

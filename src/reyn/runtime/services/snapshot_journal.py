@@ -73,17 +73,18 @@ class SnapshotJournal:
         log = self._state_log  # local so the funnel replace doesn't recurse into this call
         return await log.append(kind, session_id=self._session_id, **fields)
 
-    def _wal_append_nowait(self, kind: str, **fields) -> "int | None":
-        """#2259 PR-2b: the NON-BLOCKING WAL-append chokepoint — assigns the seq synchronously +
-        fire-and-forgets the durable write. Same session-tagging funnel as `_wal_append`. Returns
-        the assigned seq (sync), but the caller does NOT depend on it: the paired `save_nowait`
-        reads `state_log.last_assigned_seq` to stamp the snapshot. Pairs with `save_nowait` —
-        called back-to-back with NO await between, so the (WAL, snapshot) enqueue is atomic on the
-        loop (invariant #2). No-op without a WAL."""
+    def _wal_append_nowait(self, kind: str, **fields) -> None:
+        """#2259 PR-2b: the NON-BLOCKING WAL-append chokepoint — fire-and-forgets the durable write
+        through the worker. Same session-tagging funnel as `_wal_append`. Returns nothing: the seq
+        is assigned IN the worker's WAL job (seq-in-worker — never synchronously on the loop, so no
+        durable artifact can reference a not-yet-durable seq). The paired `save_nowait` reads
+        `state_log.last_assigned_seq` (the seq this WAL job assigned) to stamp the snapshot. Pairs
+        with `save_nowait` — called back-to-back with NO await between, so the (WAL, snapshot) enqueue
+        is atomic on the loop (invariant #2). No-op without a WAL."""
         if self._state_log is None:
-            return None
+            return
         log = self._state_log
-        return log.append_nowait(kind, session_id=self._session_id, **fields)
+        log.append_nowait(kind, session_id=self._session_id, **fields)
 
     def set_session_id(self, session_id: str) -> None:
         """FP-0043 Stage 5: set the conversation session id post-construction
