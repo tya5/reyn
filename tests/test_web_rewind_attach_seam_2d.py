@@ -65,10 +65,12 @@ async def test_web_path_session_checkout_restores_runtime(tmp_path) -> None:
     session._loop_driver = _FakeTurnDriver(session, tmp_path, {"A": "v1", "B": "v2"})
 
     await session._run_router_loop("A", "c1")
+    await session._journal.flush()  # #2259 PR-2b: drain before durable read
     seq_a = session.current_snapshot.applied_seq
     await session._run_router_loop("B", "c1")
 
     # Web checkout (the unified primitive) to seq A → the runtime substrate reverts.
+    await session._journal.flush()  # #2259 PR-2b: drain before durable read
     await reg.checkout(seq_a)
     markers = [m["payload"]["turn"] for m in session.current_snapshot.inbox]
     assert markers == ["A"]                                            # runtime reverted
@@ -92,6 +94,7 @@ async def test_web_path_session_records_anchor_for_picker(tmp_path) -> None:
     session._loop_driver = _FakeTurnDriver(session, tmp_path, {"A": "v1"})
 
     await session._run_router_loop("A", "c1")
+    await session._journal.flush()  # #2259 PR-2b: drain before durable read
     seq_a = session.current_snapshot.applied_seq
 
     # The anchor store (auto-attached) recorded this boundary — both the
