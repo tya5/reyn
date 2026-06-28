@@ -23,11 +23,14 @@ import time
 
 from prompt_toolkit.application import Application, get_app
 from prompt_toolkit.buffer import Buffer
-from prompt_toolkit.filters import Condition, has_focus
+from prompt_toolkit.completion import Completer, Completion
+from prompt_toolkit.filters import Condition, has_completions, has_focus
 from prompt_toolkit.history import FileHistory
 from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.layout import (
     ConditionalContainer,
+    Float,
+    FloatContainer,
     HSplit,
     Layout,
     VSplit,
@@ -35,6 +38,7 @@ from prompt_toolkit.layout import (
 )
 from prompt_toolkit.layout.controls import BufferControl, FormattedTextControl
 from prompt_toolkit.layout.dimension import Dimension
+from prompt_toolkit.layout.menus import CompletionsMenu
 from prompt_toolkit.patch_stdout import patch_stdout
 
 from reyn.interfaces.inline.intervention_region import build_intervention_element
@@ -44,8 +48,32 @@ from reyn.interfaces.inline.region_command import (
     build_rewind_command_ui,
 )
 from reyn.interfaces.repl.renderer import _CC_ACCENT, _CC_DIM, _CC_DONE, _SPINNER
+from reyn.interfaces.slash import slash_command_completions
 
 logger = logging.getLogger(__name__)
+
+
+class _SlashCompleter(Completer):
+    """Autocomplete a leading ``/command`` token from the slash registry.
+
+    Only the command word is completed — once a space is typed (args begin) the
+    completer goes quiet, so ``/model standard`` doesn't keep suggesting commands.
+    Each completion shows ``/name`` with the command's one-line summary as meta.
+    """
+
+    def get_completions(self, document, complete_event):
+        text = document.text_before_cursor
+        if not text.startswith("/") or " " in text:
+            return
+        prefix = text[1:]
+        for name, summary in slash_command_completions(prefix):
+            yield Completion(
+                name, start_position=-len(prefix),
+                display=f"/{name}", display_meta=summary,
+            )
+
+
+_SLASH_COMPLETER = _SlashCompleter()
 
 # Status-row chips, in display order.
 _CHIPS = ["model", "agents", "skills", "cost", "ctx"]
@@ -183,7 +211,10 @@ async def run_inline_input(registry, renderer) -> None:
     """
     attached = registry.attached_session()
     history = FileHistory(str(attached.workspace_dir / ".input_history"))
-    buf = Buffer(multiline=False, history=history)
+    buf = Buffer(
+        multiline=False, history=history,
+        completer=_SLASH_COMPLETER, complete_while_typing=True,
+    )
     # sel: which chip; open: detail/picker shown. The dropdown's selectable
     # cursor lives in `menu_region` (the below-input Region hosting the opened
     # chip's element), not here — the same selection mechanism as the above-input
@@ -334,9 +365,17 @@ async def run_inline_input(registry, renderer) -> None:
             registry.repl_outbox.put_nowait(OutboxMessage(kind="user", text=stripped))
             event.app.create_background_task(_submit(registry, stripped))
 
-    @kb.add("down", filter=has_focus(input_win))
-    def _to_menu(event) -> None:
-        event.app.layout.focus(status_win)
+    @kb.add("down", filter=has_focus(input_win) & ~has_completions)
+    def _down(event) -> None:
+        # With text in the box, ↓ is history navigation (forward, shell-like) so
+        # it doesn't yank focus away mid-edit. With an empty box, ↓ drops into the
+        # status menu (its discoverable affordance). ↑ stays history either way.
+        # Gated on ~has_completions so that while the slash menu is open ↓ falls
+        # through to the default binding (navigate the completion list).
+        if buf.text:
+            buf.history_forward()
+        else:
+            event.app.layout.focus(status_win)
 
     def _actionable_open() -> bool:
         # Open AND the opened chip's element is the selectable model picker (a
@@ -497,8 +536,17 @@ async def run_inline_input(registry, renderer) -> None:
         [working, above_region_box, top_rule, inputrow, bottom_rule, status_win,
          dropdown]
     )
+    # FloatContainer so the slash-command completions menu can float at the cursor
+    # (typing `/` opens it; ↑↓ navigate, Tab/Enter accept — see _SlashCompleter).
+    root = FloatContainer(
+        content=body,
+        floats=[Float(
+            xcursor=True, ycursor=True,
+            content=CompletionsMenu(max_height=8, scroll_offset=1),
+        )],
+    )
     app: Application = Application(
-        layout=Layout(body, focused_element=input_win),
+        layout=Layout(root, focused_element=input_win),
         key_bindings=kb,
         full_screen=False,
         refresh_interval=0.1,
