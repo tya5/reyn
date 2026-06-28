@@ -243,10 +243,12 @@ class RichChatRenderer(ChatRenderer):
 
 
 # Claude Code-style accent palette (matches the validated mock).
-_CC_ACCENT = "#d97757"  # terracotta
-_CC_DIM = "#6b7280"
-_CC_DONE = "#7ee787"
-_CC_ERR = "#f97066"
+_CC_ACCENT = "#d97757"  # terracotta — the assistant
+_CC_DIM = "#6b7280"     # low-importance / ambient text
+_CC_DONE = "#7ee787"    # green — completion
+_CC_ERR = "#f97066"     # red — failure
+_CC_WARN = "#e3b341"    # amber — an intervention that needs the user to act
+_CC_USER = "#6cb6ff"    # cool blue — the user's own input marker (vs warm assistant)
 # Subtle background block behind the user's own submitted line (CC styles the
 # user input differently from agent output — a faint highlighted block).
 _CC_USER_BG = "#2b2f37"
@@ -259,14 +261,21 @@ _SPINNER = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
 # body hang-indents into the body column and never bleeds into the gutter. The
 # agent (LLM) body is rendered as markdown (body_style then unused). Tool-result /
 # trace ⎿ rows nest one level under the parent body column (2-space indent + ⎿).
+#
+# Glyph + colour vary by kind so the eye distinguishes them at a glance, and the
+# body colour encodes importance: HIGH-importance kinds (agent reply, an
+# intervention that needs an answer, an error) keep full-strength body text, while
+# low-importance / ambient kinds (a finished skill, status, trace, tool detail)
+# dim their body text. Distinct glyphs: ⏺ assistant · ◆ needs-you · ✗ error ·
+# ✓ done · > you · · status · ⎿ detail.
 _KIND_LINE = {
-    "user":         ("> ",   _CC_ACCENT, _CC_DIM),
-    "agent":        ("⏺ ",   _CC_ACCENT, ""),
-    "status":       ("· ",   _CC_DIM,    _CC_DIM),
-    "error":        ("✗ ",   _CC_ERR,    _CC_ERR),
-    "intervention": ("⏺ ",   _CC_ACCENT, "bold"),
-    "trace":        ("  ⎿ ", _CC_DIM,    _CC_DIM),
-    "skill_done":   ("⏺ ",   _CC_DONE,   ""),
+    "user":         ("> ",   _CC_USER,   _CC_DIM),   # your input  (cool, + bg block)
+    "agent":        ("⏺ ",   _CC_ACCENT, ""),        # LLM reply   [HIGH] markdown body
+    "intervention": ("◆ ",   _CC_WARN,   "bold"),    # needs you   [HIGH] amber + bold
+    "error":        ("✗ ",   _CC_ERR,    _CC_ERR),   # failure     [HIGH] red
+    "skill_done":   ("✓ ",   _CC_DONE,   _CC_DIM),   # completed   [low]  dim body
+    "status":       ("· ",   _CC_DIM,    _CC_DIM),   # ambient     [low]
+    "trace":        ("  ⎿ ", _CC_DIM,    _CC_DIM),   # detail      [low]  nested
 }
 
 

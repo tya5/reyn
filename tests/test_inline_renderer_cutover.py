@@ -103,10 +103,11 @@ def test_trace_line_uses_corner_marker() -> None:
     assert "phase started" in out
 
 
-def test_skill_done_leads_with_dot_marker() -> None:
-    """Tier 2: a skill_done line leads with the ⏺ marker."""
+def test_skill_done_leads_with_check_marker() -> None:
+    """Tier 2: a finished skill leads with the ✓ completion marker (distinct from
+    the ⏺ assistant marker), and keeps its text."""
     out = _plain("skill_done", "skill finished")
-    assert "⏺" in out
+    assert "✓" in out
     assert "skill finished" in out
 
 
@@ -114,6 +115,17 @@ def test_intervention_keeps_question_text() -> None:
     """Tier 2: an intervention line preserves the question text."""
     out = _plain("intervention", "Which file?")
     assert "Which file?" in out
+
+
+def test_kinds_use_distinct_markers() -> None:
+    """Tier 2: message kinds carry distinct glyphs so the eye separates them — the
+    assistant ⏺ is not reused for an intervention (◆) or a finished skill (✓)."""
+    agent = _plain("agent", "x")
+    interv = _plain("intervention", "x")
+    done = _plain("skill_done", "x")
+    assert "⏺" in agent
+    assert "◆" in interv and "⏺" not in interv
+    assert "✓" in done and "⏺" not in done
 
 
 def test_unknown_kind_renders_text_without_marker() -> None:
