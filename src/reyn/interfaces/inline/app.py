@@ -139,10 +139,71 @@ def _agent_expansion(snap, dispatch):
     return CommandUIElement(rows, cmds, dispatch)
 
 
+def _build_task_tree(task_dicts: list[dict]) -> list[dict]:
+    """Build a nested task tree from a flat list of Task.to_dict() projections.
+
+    Roots are tasks whose requester_kind is not "task" or whose requester is
+    not the task_id of any task in the input. Children are tasks with
+    requester_kind == "task" and requester == parent task_id. Siblings are
+    sorted by task_id for determinism. Cycles are guarded by tracking visited
+    task_ids so no task appears twice.
+    """
+    by_id: dict[str, dict] = {d["task_id"]: d for d in task_dicts}
+    task_ids: frozenset[str] = frozenset(by_id)
+
+    def _is_root(d: dict) -> bool:
+        return d.get("requester_kind") != "task" or d.get("requester") not in task_ids
+
+    def _children_of(parent_id: str, visited: set[str]) -> list[dict]:
+        kids = [
+            d for d in task_dicts
+            if d.get("requester_kind") == "task"
+            and d.get("requester") == parent_id
+            and d["task_id"] not in visited
+        ]
+        kids.sort(key=lambda d: d["task_id"])
+        result = []
+        for k in kids:
+            visited.add(k["task_id"])
+            result.append({
+                "task_id": k["task_id"],
+                "name": k["name"],
+                "status": k["status"],
+                "children": _children_of(k["task_id"], visited),
+            })
+        return result
+
+    roots = sorted(
+        [d for d in task_dicts if _is_root(d)],
+        key=lambda d: d["task_id"],
+    )
+    visited: set[str] = {d["task_id"] for d in roots}
+    return [
+        {
+            "task_id": r["task_id"],
+            "name": r["name"],
+            "status": r["status"],
+            "children": _children_of(r["task_id"], visited),
+        }
+        for r in roots
+    ]
+
+
 def _task_expansion(snap, dispatch):
-    # Phase 1: count only. Phase 3 = task tree.
-    n = snap.get("task_count", 0)
-    return DetailElement(lambda: [f"{n} active task{'' if n == 1 else 's'}"])
+    # Phase 3: task tree. Depth-first indented rows (2 spaces per depth).
+    tree = snap.get("task_tree") or []
+    if not tree:
+        return DetailElement(lambda: ["(no active tasks)"])
+
+    def _rows(nodes: list[dict], depth: int) -> list[str]:
+        out = []
+        for node in nodes:
+            out.append(f"{'  ' * depth}{node['status']}  {node['name']}")
+            out.extend(_rows(node["children"], depth + 1))
+        return out
+
+    rows = _rows(tree, 0)
+    return DetailElement(lambda: rows)
 
 
 _CHIP_SPECS = [
@@ -170,7 +231,7 @@ def working_line(thinking: bool, think_start: float, now: float) -> list:
     ]
 
 
-def _snapshot(registry):
+def _snapshot(registry, task_cache=None):
     """Read live status values off the attached session via sync accessors."""
     s = registry.attached_session()
     if s is None:
@@ -204,7 +265,8 @@ def _snapshot(registry):
         "cost_usd": s.total_cost_usd,
         "cost_total": cost_total,
         "cost_agent": cost_agent,
-        "task_count": 0,
+        "task_count": task_cache["count"] if task_cache else 0,
+        "task_tree": task_cache["tree"] if task_cache else [],
     }
 
 
@@ -225,6 +287,9 @@ async def run_inline_input(registry, renderer) -> None:
     # chip's element), not here — the same selection mechanism as the above-input
     # region (interventions / the /rewind picker), unified in F5.
     menu = {"sel": 0, "open": False}
+    # Async-polled task cache: updated every ~1 s by _task_poll; read by
+    # _snapshot so the status bar and dropdown reflect live active tasks.
+    task_cache: dict = {"tree": [], "count": 0}
     # Below-input region: hosts the opened chip's dropdown as a region element —
     # a CommandUIElement model picker (selectable) or a read-only DetailElement
     # (live detail, no cursor). Empty (cleared) while the menu is closed.
@@ -263,7 +328,7 @@ async def run_inline_input(registry, renderer) -> None:
     inputrow = VSplit([prompt_sym, input_win])
 
     def status_fragments() -> list:
-        snap = _snapshot(registry)
+        snap = _snapshot(registry, task_cache)
         if snap is None:
             return [(f"fg:{_CC_DIM}", " /quit to exit · ↑ history")]
         focused = get_app().layout.has_focus(status_win)
@@ -404,7 +469,7 @@ async def run_inline_input(registry, renderer) -> None:
         spec = _CHIP_SPECS[menu["sel"]]
         menu_region.clear()
         if spec.expansion is not None:
-            el = spec.expansion(_snapshot(registry), _menu_submit)
+            el = spec.expansion(_snapshot(registry, task_cache), _menu_submit)
             menu_region.register(el)
         menu["open"] = True
 
@@ -524,6 +589,18 @@ async def run_inline_input(registry, renderer) -> None:
             region_holder["key"] = None
             app.layout.focus(input_win)
 
+    async def _task_poll() -> None:
+        while True:
+            await asyncio.sleep(1.0)
+            try:
+                tasks = await registry.task_backend.list()
+                dicts = [t.to_dict() for t in tasks]
+                active = [d for d in dicts if d["status"] not in ("done", "failed", "aborted")]
+                task_cache["tree"] = _build_task_tree(active)
+                task_cache["count"] = len(active)
+            except Exception:
+                logger.debug("task poll failed", exc_info=True)
+
     async def _intervention_poll() -> None:
         while True:
             await asyncio.sleep(0.15)
@@ -557,11 +634,13 @@ async def run_inline_input(registry, renderer) -> None:
     # PromptSession path. Renderer output (sys.__stdout__ via run_in_terminal in
     # _output_loop) is unaffected.
     poll_task = asyncio.create_task(_intervention_poll())
+    task_poll_task = asyncio.create_task(_task_poll())
     try:
         with patch_stdout():
             await app.run_async()
     finally:
         poll_task.cancel()
+        task_poll_task.cancel()
 
 
 async def _deliver_intervention_choice(registry, choice_id: str, label: str) -> None:

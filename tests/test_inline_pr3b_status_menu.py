@@ -10,6 +10,7 @@ from __future__ import annotations
 from reyn.interfaces.inline.app import (
     _CHIP_SPECS,
     _agent_expansion,
+    _build_task_tree,
     _cost_expansion,
     _model_expansion,
     _task_expansion,
@@ -30,6 +31,7 @@ def _snap(**over):
         "usage": (0, 0, 0),
         "cost_usd": 0.0,
         "task_count": 0,
+        "task_tree": [],
     }
     base.update(over)
     return base
@@ -297,24 +299,91 @@ def test_agent_expansion_empty_tree_returns_detail_element() -> None:
 
 
 # ---------------------------------------------------------------------------
+# _build_task_tree
+# ---------------------------------------------------------------------------
+
+_ROOT_DICT = {
+    "task_id": "t-root",
+    "name": "Root Task",
+    "status": "running",
+    "requester": "session-1",
+    "requester_kind": "session",
+}
+_CHILD_DICT = {
+    "task_id": "t-child",
+    "name": "Child Task",
+    "status": "ready",
+    "requester": "t-root",
+    "requester_kind": "task",
+}
+
+
+def test_build_task_tree_child_nests_under_root() -> None:
+    """Tier 2: a task with requester_kind='task' and requester=<root id> nests under root."""
+    tree = _build_task_tree([_ROOT_DICT, _CHILD_DICT])
+    assert tree, "expected at least one root node"
+    root = next((n for n in tree if n["task_id"] == "t-root"), None)
+    assert root is not None
+    child_ids = [c["task_id"] for c in root["children"]]
+    assert "t-child" in child_ids
+
+
+def test_build_task_tree_session_owned_task_is_root() -> None:
+    """Tier 2: a task with requester_kind='session' appears at the top level (is a root)."""
+    tree = _build_task_tree([_ROOT_DICT])
+    root_ids = [n["task_id"] for n in tree]
+    assert "t-root" in root_ids
+
+
+def test_build_task_tree_returns_plain_dicts() -> None:
+    """Tier 2: _build_task_tree returns plain dicts; mutating the result does not raise."""
+    tree = _build_task_tree([_ROOT_DICT, _CHILD_DICT])
+    assert tree
+    node = tree[0]
+    assert isinstance(node, dict)
+    # Mutating should be fine — plain dict, not a frozen dataclass or Task instance.
+    node["_test_key"] = "ok"
+
+
+# ---------------------------------------------------------------------------
 # _task_expansion
 # ---------------------------------------------------------------------------
 
 
-def test_task_expansion_is_detail_element() -> None:
-    """Tier 2: _task_expansion returns a read-only DetailElement."""
-    snap = _snap(task_count=2)
+def test_task_expansion_empty_tree_is_detail_element() -> None:
+    """Tier 2: _task_expansion with empty task_tree returns a non-selectable DetailElement."""
+    snap = _snap(task_tree=[])
     el = _task_expansion(snap, lambda _: None)
     assert isinstance(el, DetailElement)
     assert el.selectable is False
 
 
-def test_task_expansion_shows_count_and_pluralises() -> None:
-    """Tier 2: task expansion line includes the count; plural for N≠1."""
-    snap_1 = _snap(task_count=1)
-    el_1 = _task_expansion(snap_1, lambda _: None)
-    assert "1 active task" in " ".join(el_1.lines())
-    # plural
-    snap_3 = _snap(task_count=3)
-    el_3 = _task_expansion(snap_3, lambda _: None)
-    assert "tasks" in " ".join(el_3.lines())
+def test_task_expansion_empty_tree_shows_no_active_tasks_message() -> None:
+    """Tier 2: empty task_tree expansion contains a 'no active task' message."""
+    snap = _snap(task_tree=[])
+    el = _task_expansion(snap, lambda _: None)
+    joined = " ".join(el.lines())
+    assert "no active task" in joined
+
+
+def test_task_expansion_populated_shows_parent_and_child_names() -> None:
+    """Tier 2: populated task_tree renders both parent and child task names."""
+    tree = _build_task_tree([_ROOT_DICT, _CHILD_DICT])
+    snap = _snap(task_tree=tree)
+    el = _task_expansion(snap, lambda _: None)
+    joined = " ".join(el.lines())
+    assert "Root Task" in joined
+    assert "Child Task" in joined
+
+
+def test_task_expansion_child_row_more_indented_than_parent() -> None:
+    """Tier 2: in a populated tree, the child row has more leading whitespace than the root."""
+    tree = _build_task_tree([_ROOT_DICT, _CHILD_DICT])
+    snap = _snap(task_tree=tree)
+    el = _task_expansion(snap, lambda _: None)
+    rows = el.lines()
+    root_row = next(r for r in rows if "Root Task" in r)
+    child_row = next(r for r in rows if "Child Task" in r)
+    root_indent = len(root_row) - len(root_row.lstrip())
+    child_indent = len(child_row) - len(child_row.lstrip())
+    assert child_indent > root_indent
