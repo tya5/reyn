@@ -165,7 +165,12 @@ def test_run_calls_skill_registry_start_complete(tmp_path, monkeypatch):
         skill_registry=registry,
         state_log=state_log,
     )
-    result = asyncio.run(rt.run({"type": "input", "data": {}}))
+
+    async def _go():
+        r = await rt.run({"type": "input", "data": {}})
+        await state_log.flush()  # #2259 PR-2b: drain async skill WAL writes in-context
+        return r
+    result = asyncio.run(_go())
     assert result.ok, f"expected finished, got {result.status}"
 
     # After clean exit the snapshot file must be gone (complete() removes it)
