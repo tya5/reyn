@@ -93,12 +93,16 @@ async def test_concurrent_2agent_rewind_is_global_consistent_cut(tmp_path):
     reg, alpha, beta = _two_agent_registry(tmp_path)
 
     await alpha._run_router_loop("a1", "c1")
+    await alpha._journal.flush()  # #2259 PR-2b: drain before rewind/read
     seq_a1 = alpha.current_snapshot.applied_seq
     await beta._run_router_loop("b1", "c1")
+    await beta._journal.flush()  # #2259 PR-2b: drain before rewind/read
     seq_b1 = beta.current_snapshot.applied_seq
     await alpha._run_router_loop("a2", "c1")
+    await alpha._journal.flush()  # #2259 PR-2b: drain before rewind/read
     seq_a2 = alpha.current_snapshot.applied_seq
     await beta._run_router_loop("b2", "c1")
+    await beta._journal.flush()  # #2259 PR-2b: drain before rewind/read
 
     # interleaved, distinct global seqs (the owner's "different boundary seqs").
     assert seq_a1 < seq_b1 < seq_a2
@@ -128,6 +132,7 @@ async def test_both_agents_resume_after_concurrent_rewind(tmp_path):
     reg, alpha, beta = _two_agent_registry(tmp_path)
 
     await alpha._run_router_loop("a1", "c1")
+    await alpha._journal.flush()  # #2259 PR-2b: drain before rewind/read
     seq_a1 = alpha.current_snapshot.applied_seq
     await beta._run_router_loop("b1", "c1")          # > seq_a1, abandoned by the rewind
 
@@ -137,7 +142,9 @@ async def test_both_agents_resume_after_concurrent_rewind(tmp_path):
 
     # both resume through the real loop on the post-rewind active branch.
     await alpha._run_router_loop("a3", "c1")
+    await alpha._journal.flush()  # #2259 PR-2b: drain before rewind/read
     await beta._run_router_loop("b3", "c1")
+    await beta._journal.flush()  # #2259 PR-2b: drain before rewind/read
     assert _markers(alpha.current_snapshot) == ["a1", "a3"]
     assert _markers(beta.current_snapshot) == ["b3"]
 
@@ -163,6 +170,7 @@ async def test_single_agent_inflight_skill_plan_intervention_drained_by_rewind(t
     state_log = reg.state_log
 
     await alpha._run_router_loop("a1", "c1")
+    await alpha._journal.flush()  # #2259 PR-2b: drain before rewind/read
     seq_a1 = alpha.current_snapshot.applied_seq
 
     # Inject in-flight, append-capable tasks parked BEFORE their append (in-flight

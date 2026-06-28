@@ -186,6 +186,7 @@ async def test_two_simultaneous_delegations_both_resolve(tmp_path: Path):
     assert not sess_a.chains.has(chain_ac)
 
     # WAL must have two chain_register and two chain_resolve events.
+    await sess_a._journal.flush()  # #2259 PR-2b: drain async WAL writes before the read
     wal_entries = list(state_log.iter_from(0))
     register_events = [e for e in wal_entries if e.get("kind") == "chain_register"]
     resolve_events = [e for e in wal_entries if e.get("kind") == "chain_resolve"]

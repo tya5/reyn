@@ -29,6 +29,8 @@ Design invariants:
 """
 from __future__ import annotations
 
+import asyncio
+import copy
 import logging
 import time
 from pathlib import Path
@@ -106,6 +108,15 @@ class SkillRegistry:
         log = self._state_log  # local so the funnel replace doesn't recurse here
         return await log.append(kind, session_id=self._session_id, **fields)
 
+    def _wal_append_nowait(self, kind: str, **fields):
+        """#2259 PR-2b: the NON-BLOCKING WAL-append chokepoint (no-return) — assigns the seq in
+        the worker, fire-and-forgets the write. Pairs with ``_save_nowait`` (called back-to-back,
+        no await between → atomic enqueue, invariant #2). No-op without a WAL."""
+        if self._state_log is None:
+            return None
+        log = self._state_log
+        return log.append_nowait(kind, session_id=self._session_id, **fields)
+
     def set_session_id(self, session_id: str) -> None:
         """FP-0043 Stage 5: set the conversation session id post-construction
         (spawn_session, before the spawned session's run-loop goes live)."""
@@ -173,7 +184,9 @@ class SkillRegistry:
         snap = SkillSnapshot.empty(run_id, skill_name, skill_input)
         snap.parent_run_id = parent_run_id
         if self._state_log is not None:
-            seq = await self._wal_append(
+            # #2259 PR-2b: non-blocking pair — append_nowait + save_nowait (no await between, so
+            # the WAL + skill-snapshot enqueue is atomic; the seqs are stamped in the save job).
+            self._wal_append_nowait(
                 "skill_started",
                 target=self._agent_name,
                 agent=self._agent_name,
@@ -182,11 +195,7 @@ class SkillRegistry:
                 skill_input=skill_input,
                 parent_run_id=parent_run_id,
             )
-            snap.applied_seq = seq
-            # Stamp the phase-window watermark too: anything before this
-            # seq is irrelevant to this run (run hadn't started yet).
-            snap.last_phase_applied_seq = seq
-        self._save(snap)
+        self._save_nowait(snap)
         self._snapshots[run_id] = snap
         # #2068: a (re)entry begins a fresh run-SEGMENT → re-arm the skill_end
         # exactly-once guard so this segment's eventual exit fires skill_end (resume
@@ -228,7 +237,7 @@ class SkillRegistry:
             )
             return
         if self._state_log is not None:
-            seq = await self._wal_append(
+            self._wal_append_nowait(
                 "skill_phase_advanced",
                 target=self._agent_name,
                 agent=self._agent_name,
@@ -236,13 +245,11 @@ class SkillRegistry:
                 next_phase=next_phase,
                 last_phase_artifact_path=last_phase_artifact_path,
             )
-            snap.applied_seq = seq
-            snap.last_phase_applied_seq = seq
         snap.current_phase = next_phase
         snap.history.append(next_phase)
         snap.visit_counts[next_phase] = snap.visit_counts.get(next_phase, 0) + 1
         snap.last_phase_artifact_path = last_phase_artifact_path
-        self._save(snap)
+        self._save_nowait(snap)  # #2259 PR-2b: non-blocking pair (seqs stamped in the save job)
         await self._fire_truncate_hook(trigger="skill_phase_advanced")
 
     async def complete(
@@ -275,7 +282,7 @@ class SkillRegistry:
                 f"expected 'completed' or 'discarded'",
             )
         if self._state_log is not None:
-            await self._wal_append(
+            self._wal_append_nowait(  # #2259 PR-2b: non-blocking (WAL-only; snapshot torn down)
                 kind,
                 target=self._agent_name,
                 agent=self._agent_name,
@@ -289,13 +296,24 @@ class SkillRegistry:
         # interrupt/error paths via interrupt(), closing the start↔end asymmetry.
         await self._dispatch_skill_end(run_id, status)
         snap_path = self._skills_dir / f"{run_id}.snapshot.json"
-        try:
-            snap_path.unlink(missing_ok=True)
-        except OSError as e:
-            logger.warning(
-                "complete: cannot remove skill snapshot %s: %s",
-                snap_path, e,
-            )
+
+        def _unlink_snap() -> None:
+            try:
+                snap_path.unlink(missing_ok=True)
+            except OSError as e:
+                logger.warning(
+                    "complete: cannot remove skill snapshot %s: %s", snap_path, e,
+                )
+
+        if self._state_log is not None:
+            # #2259 PR-2b: route the delete through the worker so it runs FIFO-AFTER any queued
+            # save_nowait for this run — else a not-yet-drained start/advance save would re-create
+            # the file after this delete (the same serialization the WAL-then-snapshot pair has).
+            async def _delete_job() -> None:
+                _unlink_snap()
+            self._state_log.submit_durable_nowait(_delete_job)
+        else:
+            _unlink_snap()
         # R-D10: also remove the per-run llm_results/ side directory, if
         # any large LLM responses were written to disk during this run.
         # Lifecycle is bound to the snapshot — deleting them together
@@ -376,7 +394,7 @@ class SkillRegistry:
             return
         snap.awaiting_since = time.monotonic()
         snap.awaiting_intervention_id = intervention_id
-        self._save(snap)
+        self._persist_nowait(snap)  # #2259 PR-2b: through the worker (no race, no seq re-stamp)
 
     def clear_awaiting(self, *, run_id: str) -> None:
         """Reset awaiting state — called when an intervention is resolved.
@@ -396,7 +414,7 @@ class SkillRegistry:
             return
         snap.awaiting_since = None
         snap.awaiting_intervention_id = None
-        self._save(snap)
+        self._persist_nowait(snap)  # #2259 PR-2b: through the worker (no race, no seq re-stamp)
 
     # ── read access ──────────────────────────────────────────────────────
 
@@ -464,3 +482,46 @@ class SkillRegistry:
     def _save(self, snap: SkillSnapshot) -> None:
         path = self._skills_dir / f"{snap.skill_run_id}.snapshot.json"
         snap.save(path)
+
+    def _save_nowait(self, snap: SkillSnapshot) -> None:
+        """#2259 PR-2b: persist the skill snapshot NON-BLOCKING — fire-and-forget, stamping
+        ``applied_seq`` + ``last_phase_applied_seq`` from the worker-assigned seq in the durable
+        job (paired with ``_wal_append_nowait``). Captures the payload SYNC (serialize-sync-at-
+        submit), and sets the in-memory seqs AFTER the durable write — the truncate floor reads
+        ``last_phase_applied_seq``, so it must lag-toward-durable (never ahead). No WAL → sync save."""
+        if self._state_log is None:
+            self._save(snap)
+            return
+        path = self._skills_dir / f"{snap.skill_run_id}.snapshot.json"
+        payload = copy.deepcopy(snap.to_payload())
+        log = self._state_log
+
+        async def _write() -> None:
+            seq = log.last_assigned_seq
+            payload["applied_seq"] = seq
+            payload["last_phase_applied_seq"] = seq
+            await asyncio.to_thread(
+                SkillSnapshot.write_durable, path, SkillSnapshot.serialize_payload(payload),
+            )
+            snap.applied_seq = seq
+            snap.last_phase_applied_seq = seq
+
+        log.submit_durable_nowait(_write)
+
+    def _persist_nowait(self, snap: SkillSnapshot) -> None:
+        """#2259 PR-2b: persist a snapshot-only update (no paired WAL append → no seq change)
+        through the worker, NON-BLOCKING. Routes the write through the SAME serial worker as the
+        WAL/save jobs so it never races a concurrent ``_save_nowait`` writing the same file; does
+        NOT re-stamp applied_seq (there is no new event). No WAL → sync save."""
+        if self._state_log is None:
+            self._save(snap)
+            return
+        path = self._skills_dir / f"{snap.skill_run_id}.snapshot.json"
+        payload = copy.deepcopy(snap.to_payload())
+
+        async def _write() -> None:
+            await asyncio.to_thread(
+                SkillSnapshot.write_durable, path, SkillSnapshot.serialize_payload(payload),
+            )
+
+        self._state_log.submit_durable_nowait(_write)

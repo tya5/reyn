@@ -50,6 +50,7 @@ async def test_consume_inbox_no_wal_is_noop(tmp_path):
     j = make_journal(tmp_path, with_state_log=False)
     # should not raise
     await j.consume_inbox(msg_id="deadbeef")
+    await j.flush()  # #2259 PR-2b: durability is async
     assert j.snapshot.applied_seq == 0
 
 
@@ -70,6 +71,7 @@ async def test_chain_methods_no_wal_are_noops(tmp_path):
     await j.record_chain_update(chain_id="c1", fields={"waiting_on": []})
     await j.record_chain_resolve(chain_id="c1")
     await j.record_chain_timeout_fired(chain_id="c1")
+    await j.flush()  # #2259 PR-2b: durability is async
     assert j.snapshot.applied_seq == 0
 
 
@@ -88,6 +90,7 @@ async def test_append_inbox_returns_msg_id_and_updates_snapshot(tmp_path):
     assert entry["id"] == msg_id
     assert entry["kind"] == "user_message"
     assert entry["payload"]["_msg_id"] == msg_id
+    await j.flush()  # #2259 PR-2b: durability is async
     assert j.snapshot.applied_seq >= 1
 
 
@@ -101,6 +104,7 @@ async def test_consume_inbox_removes_entry_from_snapshot(tmp_path):
     await j.consume_inbox(msg_id=msg_id)
 
     assert j.snapshot.inbox == []
+    await j.flush()  # #2259 PR-2b: durability is async
     assert j.snapshot.applied_seq >= 2
 
 
@@ -122,6 +126,7 @@ async def test_chain_register_adds_to_pending_chains(tmp_path):
     assert chain["chain_id"] == "chain-1"
     assert chain["origin_agent"] == "root"
     assert chain["waiting_on"] == ["child_a", "child_b"]
+    await j.flush()  # #2259 PR-2b: durability is async
     assert j.snapshot.applied_seq >= 1
 
 
@@ -198,6 +203,7 @@ async def test_install_replaces_snapshot_and_persists(tmp_path):
 
     j.install(external)
 
+    await j.flush()  # #2259 PR-2b: durability is async
     assert j.snapshot.applied_seq == 42
     assert j.snapshot.inbox[0]["id"] == "aabbccdd"
     assert snapshot_path.exists()
@@ -212,6 +218,7 @@ async def test_save_writes_snapshot_to_disk(tmp_path):
     snapshot_path = tmp_path / "snapshot.json"
 
     await j.append_inbox(kind="user_message", payload={"x": 1})
+    await j.flush()  # #2259 PR-2b: the durable snapshot write is async
     # save() is called internally; check it round-trips correctly
     persisted = json.loads(snapshot_path.read_text())
     assert persisted["inbox"] != []
@@ -225,10 +232,12 @@ async def test_applied_seq_monotonically_increases(tmp_path):
     seqs: list[int] = []
 
     await j.append_inbox(kind="msg", payload={})
+    await j.flush()  # #2259 PR-2b: durability (+ applied_seq stamp) is async
     seqs.append(j.snapshot.applied_seq)
 
     msg_id = j.snapshot.inbox[0]["id"]
     await j.consume_inbox(msg_id=msg_id)
+    await j.flush()
     seqs.append(j.snapshot.applied_seq)
 
     await j.record_chain_register(
@@ -240,9 +249,11 @@ async def test_applied_seq_monotonically_increases(tmp_path):
             "waiting_on": ["x"],
         },
     )
+    await j.flush()
     seqs.append(j.snapshot.applied_seq)
 
     await j.record_chain_resolve(chain_id="cx")
+    await j.flush()
     seqs.append(j.snapshot.applied_seq)
 
     # strict monotonic increase
@@ -280,5 +291,6 @@ async def test_cut_generation_records_runtime_generation_at_boundary_seq(tmp_pat
     journal.snapshot.applied_seq = seq   # simulate the boundary snapshot
 
     await journal.cut_generation()
+    await journal.flush()  # #2259 PR-2b: the gen-record runs in a worker job
 
-    assert seq in gen_store.seqs()        # runtime generation recorded (sync gen store)
+    assert seq in gen_store.seqs()        # runtime generation recorded at the worker-assigned seq

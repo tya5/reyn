@@ -305,6 +305,7 @@ def test_postprocessor_mid_run_discard_notifies_upstream(
         # Allow the async notify path to propagate to A
         for _ in range(5):
             await asyncio.sleep(0)
+        await state_log.flush()  # #2259 PR-2b: drain async WAL writes in-context
 
     asyncio.run(go())
 

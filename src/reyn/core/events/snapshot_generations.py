@@ -54,6 +54,15 @@ class SnapshotGenerationStore:
         snapshot.save(path)  # tmp → fsync → rename
         return path
 
+    def record_payload(self, payload: dict, seq: int) -> Path:
+        """#2259 PR-2b: record a pre-captured payload dict (with ``applied_seq`` stamped to
+        ``seq``) as the generation at ``seq`` — the worker-job counterpart of ``record``. So
+        ``cut_generation`` captures content SYNC + stamps the worker-assigned seq in the durable
+        job (content + applied_seq consistent, never a live-ahead-of-durable gen)."""
+        path = self._path_for(seq)
+        AgentSnapshot.write_durable(path, AgentSnapshot.serialize_payload(payload))
+        return path
+
     def seqs(self) -> list[int]:
         """Sorted list of generation boundary seqs present on disk."""
         if not self._dir.is_dir():
@@ -241,7 +250,7 @@ def list_branches(state_log: StateLog) -> list[Branch]:
     branch owning N (active or an enclosing dead branch → nesting). Returns the
     active branch first, then dead branches ascending by id. Empty WAL → [].
     """
-    head = state_log.current_seq
+    head = state_log.last_durable_seq  # #2259 PR-2b: durable head (operates on durable state)
     if head <= 0:
         return []
     abandoned = _abandoned_intervals(_rewind_records(state_log))
@@ -363,9 +372,11 @@ def reconstruct(
 
     With no rewind records every seq is active, so this is identical to the
     Stage-1a behavior (backward compatible). Crash recovery is
-    ``reconstruct(head)`` where ``head = state_log.current_seq`` — which, after a
-    rewind, yields the current active-branch state (and collapses to as-of-N when
-    the rewind reset-record is itself head).
+    ``reconstruct(head)`` where ``head = state_log.last_durable_seq`` (#2259 PR-2b:
+    the DURABLE watermark, not the live ``current_seq`` — recovery operates only on
+    durable state, so the un-durable tail is cleanly dropped = recover-to-last-durable)
+    — which, after a rewind, yields the current active-branch state (and collapses to
+    as-of-N when the rewind reset-record is itself head).
     """
     abandoned = _abandoned_intervals(_rewind_records(state_log))
     is_active = _make_is_active(abandoned)

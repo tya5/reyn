@@ -96,6 +96,7 @@ def test_discard_action_calls_skill_registry_complete(tmp_path: Path):
         remaining = await coord.apply_decisions(
             [decision], skill_registry=registry,
         )
+        await log.flush()  # #2259 PR-2b: drain async skill WAL writes
         return remaining
 
     remaining = asyncio.run(go())
@@ -286,9 +287,11 @@ def test_apply_decisions_mixed_batch(tmp_path: Path):
             ResumeDecision(plan=_plan(run_id="run_b"), action="discard"),
             ResumeDecision(plan=_plan(run_id="run_c"), action="retry"),
         ]
-        return await coord.apply_decisions(
+        remaining = await coord.apply_decisions(
             decisions, skill_registry=registry,
         )
+        await log.flush()  # #2259 PR-2b: drain async skill WAL writes
+        return remaining
 
     remaining = asyncio.run(go())
     actions = [d.action for d in remaining]

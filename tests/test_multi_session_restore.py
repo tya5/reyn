@@ -100,6 +100,7 @@ async def test_multi_session_restore_is_per_session_independent(tmp_path, monkey
     await spawned1.journal.record_intervention_dispatched(
         intervention_id="iv_spawn", iv_dict=_iv_dict("iv_spawn", "rS"),
     )
+    await main1.journal.flush()  # #2259 PR-2b: drain async WAL+snapshot (shared worker → both)
 
     # per-session snapshots persist to DISTINCT paths (no collision).
     main_path = agent_dir / "state" / "snapshot.json"

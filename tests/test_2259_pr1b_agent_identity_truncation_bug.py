@@ -83,7 +83,9 @@ async def test_child_parent_cap_survives_wal_truncation_of_agent_created(tmp_pat
         await log.append("inbox_put", n=i)
 
     # GC truncates the WAL below floor 100 → the agents' agent_created@{1,2} are GONE.
-    stats = await log.truncate_below(100)
+    await log.truncate_below(100)
+    await log.flush()
+    stats = log.last_truncate_stats
     assert stats["dropped"] >= 2, "the early agent_created events should have been truncated"
     # The SAME-boundary generation GC runs too — it must KEEP the identity base below floor
     # (prune-KEEPS-BASE); a drop-all-below GC here would re-introduce the bug.
@@ -127,8 +129,10 @@ async def test_identity_generation_survives_but_post_cut_child_is_undone(tmp_pat
     log = reg.state_log
 
     await reg.create_agent("parent_a")
+    await log.flush()  # #2259 PR-2b: create_agent is async — drain so current_seq + gen are durable
     cut = log.current_seq  # rewind target = just after P exists, before C is spawned
     await reg.create_agent("child_a", parent="parent_a")
+    await log.flush()
 
     # rewind to BEFORE C was spawned → C did not exist as-of-cut → undone (dropped).
     await reg._materialize_rewind(reconstruct_seq=log.current_seq, workspace_at_or_below=cut)

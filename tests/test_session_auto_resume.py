@@ -174,10 +174,12 @@ def test_auto_resume_discards_skill_with_discard_policy(tmp_path: Path, monkeypa
     from reyn.config import SkillResumeConfig
 
     async def go():
-        return await session._auto_resume_active_skills(
+        result = await session._auto_resume_active_skills(
             launcher=fake_launcher,
             config=SkillResumeConfig(default="discard_skill"),
         )
+        await session._journal.flush()  # #2259 PR-2b: drain async WAL+snapshot-delete in-context
+        return result
 
     decisions = asyncio.run(go())
     # No remaining decisions returned (all discarded)

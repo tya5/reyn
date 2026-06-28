@@ -86,9 +86,11 @@ async def test_live_fork_checkout_back_follows_lineage_runtime(tmp_path):
 
     # turn A → runtime [A]; genuine cut_generation @ seqA.
     await session._run_router_loop("turn A", "c1")
+    await session._journal.flush()  # #2259 PR-2b: drain before durable read
     seq_a = session.current_snapshot.applied_seq
     # turn B → runtime [A, B]; auto-captures @ seqB.
     await session._run_router_loop("turn B", "c1")
+    await session._journal.flush()  # #2259 PR-2b: drain before durable read
     seq_b = session.current_snapshot.applied_seq
 
     # pre-fork sanity: the runtime substrate at B.
@@ -101,6 +103,7 @@ async def test_live_fork_checkout_back_follows_lineage_runtime(tmp_path):
     # ── turn C: a REAL turn through the production loop on the post-undo branch ──
     # (genuine new coverage — the session must be live-usable after a rewind).
     await session._run_router_loop("turn C", "c1")
+    await session._journal.flush()  # #2259 PR-2b: drain before durable read
     seq_c = session.current_snapshot.applied_seq
     assert _turn_markers(session.current_snapshot) == ["turn A", "turn C"]
 

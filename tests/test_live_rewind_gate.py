@@ -88,6 +88,7 @@ async def test_live_rewind_reverts_runtime_to_as_of_n(tmp_path):
 
     # turn A → runtime [A]; genuine cut_generation auto-captures @ seqA.
     await session._run_router_loop("turn A", "c1")
+    await session._journal.flush()  # #2259 PR-2b: drain async WAL+snapshot+gen (applied_seq durable)
     seq_a = session.current_snapshot.applied_seq
     # turn B → runtime [A, B]; auto-captures @ seqB.
     await session._run_router_loop("turn B", "c1")
@@ -96,6 +97,7 @@ async def test_live_rewind_reverts_runtime_to_as_of_n(tmp_path):
     assert _turn_markers(session.current_snapshot) == ["turn A", "turn B"]
 
     # ── global rewind to the turn-A checkpoint ──
+    await session._journal.flush()  # #2259 PR-2b: WAL+gens durable before the rewind reads them
     await reg.rewind_to(seq_a)
 
     # runtime substrate, DISK location: persisted snapshot is as-of-A.

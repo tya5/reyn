@@ -30,8 +30,19 @@ def _registry(tmp_path: Path) -> tuple[SkillRegistry, StateLog, Path]:
     return reg, sl, state_dir
 
 
+def _run_durable(reg, coro):
+    """#2259 PR-2b: run a skill-registry op + flush its worker in-context (try/finally) so the
+    op's async WAL+snapshot writes drain before the (sync) test asserts their durable effect."""
+    async def _go():
+        try:
+            return await coro
+        finally:
+            await reg._state_log.flush()
+    return asyncio.run(_go())
+
+
 def _start_skill(reg: SkillRegistry, run_id: str = "run_disc") -> None:
-    asyncio.run(reg.start(
+    _run_durable(reg, reg.start(
         run_id=run_id, skill_name="demo",
         skill_input={"type": "input", "data": {}},
     ))
@@ -41,7 +52,7 @@ def test_complete_with_status_discarded_emits_skill_discarded(tmp_path):
     """Tier 2: status='discarded' → WAL ``skill_discarded`` event (not ``skill_completed``)."""
     reg, sl, _ = _registry(tmp_path)
     _start_skill(reg)
-    asyncio.run(reg.complete(run_id="run_disc", status="discarded"))
+    _run_durable(reg, reg.complete(run_id="run_disc", status="discarded"))
 
     events = list(sl.iter_from(0))
     discarded = [e for e in events if e["kind"] == "skill_discarded"]
@@ -60,7 +71,7 @@ def test_complete_default_status_still_emits_skill_completed(tmp_path):
     """Tier 2: backward compat — no status param → skill_completed (existing behavior)."""
     reg, sl, _ = _registry(tmp_path)
     _start_skill(reg, run_id="run_normal")
-    asyncio.run(reg.complete(run_id="run_normal"))
+    _run_durable(reg, reg.complete(run_id="run_normal"))
 
     events = list(sl.iter_from(0))
     completed = [e for e in events if e["kind"] == "skill_completed"]
@@ -74,7 +85,7 @@ def test_complete_with_status_discarded_deletes_snapshot_file(tmp_path):
     snap_path = state_dir / "skills" / "run_to_unlink.snapshot.json"
     assert snap_path.is_file(), "start must have written the snapshot"
 
-    asyncio.run(reg.complete(run_id="run_to_unlink", status="discarded"))
+    _run_durable(reg, reg.complete(run_id="run_to_unlink", status="discarded"))
 
     assert not snap_path.exists(), "discard must remove the per-skill snapshot file"
 
@@ -121,4 +132,4 @@ def test_complete_status_invalid_raises(tmp_path):
     reg, _, _ = _registry(tmp_path)
     _start_skill(reg, run_id="run_typo")
     with pytest.raises(ValueError, match="status"):
-        asyncio.run(reg.complete(run_id="run_typo", status="discard"))  # typo
+        _run_durable(reg, reg.complete(run_id="run_typo", status="discard"))  # typo

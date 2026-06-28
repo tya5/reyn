@@ -127,15 +127,11 @@ class SkillSnapshot:
             parent_run_id=data.get("parent_run_id"),
         )
 
-    def save(self, path: Path) -> None:
-        """Persist atomically: write to ``.tmp``, fsync, rename.
-
-        A mid-write crash leaves the previous file intact.
-        """
-        path = Path(path)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = path.with_suffix(path.suffix + ".tmp")
-        payload = {
+    def to_payload(self) -> dict:
+        """The serialisable payload dict. #2259 PR-2b: ``_save_nowait`` deep-copies this for a
+        consistent sync capture, then stamps ``applied_seq`` + ``last_phase_applied_seq`` from
+        the worker-assigned seq in the durable job (the seq is not known on the task loop)."""
+        return {
             "version": SKILL_SNAPSHOT_VERSION,
             "skill_run_id": self.skill_run_id,
             "skill_name": self.skill_name,
@@ -151,8 +147,27 @@ class SkillSnapshot:
             "last_committed_step_id": self.last_committed_step_id,
             "parent_run_id": self.parent_run_id,
         }
+
+    @staticmethod
+    def write_durable(path: Path, data: str) -> None:
+        """Atomically + durably write pre-serialised ``data`` (tmp → fsync → rename). Pure I/O
+        (no mutable-state access), so it is safe to run OFF the event loop (#2259 PR-2b)."""
+        path = Path(path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix(path.suffix + ".tmp")
         with tmp.open("w", encoding="utf-8") as f:
-            json.dump(payload, f, ensure_ascii=False, indent=2)
+            f.write(data)
             f.flush()
             os.fsync(f.fileno())
         tmp.replace(path)
+
+    @staticmethod
+    def serialize_payload(payload: dict) -> str:
+        return json.dumps(payload, ensure_ascii=False, indent=2)
+
+    def save(self, path: Path) -> None:
+        """Persist atomically: write to ``.tmp``, fsync, rename.
+
+        A mid-write crash leaves the previous file intact.
+        """
+        self.write_durable(path, self.serialize_payload(self.to_payload()))

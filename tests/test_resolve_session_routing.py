@@ -124,6 +124,7 @@ async def test_resolve_session_path_round_trip_arbitrary_native_id(tmp_path, mon
     await s.journal.record_intervention_dispatched(
         intervention_id="iv1", iv_dict=_iv_dict("iv1"),
     )
+    await s.journal.flush()  # #2259 PR-2b: drain async WAL+snapshot (durable before restart)
 
     # the '/' in native_id must NOT have created a nested dir tree (the failure mode
     # the encoding prevents) — verbatim it would be sessions/webhook:a/b:c/.

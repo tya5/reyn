@@ -183,9 +183,11 @@ def test_e2e_chatsession_auto_resume_completes_crashed_skill(tmp_path: Path, mon
         assert rt.executed_phases == ["review"]
 
     async def go():
-        return await session._auto_resume_active_skills(
+        result = await session._auto_resume_active_skills(
             launcher=stub_launcher,
         )
+        await session._journal.flush()  # #2259 PR-2b: drain async WAL+snapshot in-context
+        return result
 
     decisions = asyncio.run(go())
 

@@ -157,6 +157,7 @@ def test_journal_records_consumed_event(tmp_path: Path):
             run_id="run_x", text="hello", choice_id=None,
         )
         await journal.record_intervention_answer_consumed(run_id="run_x")
+        await journal.flush()  # #2259 PR-2b: drain the async WAL writes in-context
 
     asyncio.run(go())
 

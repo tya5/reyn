@@ -51,7 +51,9 @@ async def test_config_survives_wal_truncation_below_its_seq(tmp_path):
     )
 
     # GC truncates the WAL below floor 100 (= min agent applied_seq) → config_changed@1 GONE.
-    stats = await sl.truncate_below(100)
+    await sl.truncate_below(100)
+    await sl.flush()
+    stats = sl.last_truncate_stats
     assert stats["dropped"] >= 1, "the early config_changed should have been truncated"
 
     # rewind to cut=1: config should reconstruct to {A} (its state as-of seq 1).

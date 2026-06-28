@@ -119,6 +119,7 @@ async def _run_n_turns_then_shutdown(
     except asyncio.TimeoutError:
         run_task.cancel()
         await asyncio.gather(run_task, return_exceptions=True)
+    await session._journal.flush()  # #2259 PR-2b: drain async WAL+snapshot before the sync read
 
 
 # ---------------------------------------------------------------------------
@@ -250,6 +251,7 @@ async def test_c_staging_persist_and_restore(tmp_path) -> None:
     )
 
     # Verify the snapshot file contains the staged entry.
+    await session._journal.flush()  # #2259 PR-2b: drain async snapshot write before the load
     snapshot_on_disk = AgentSnapshot.load(
         session.agent_name, session._snapshot_path,
     )

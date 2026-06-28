@@ -43,7 +43,9 @@ def test_truncate_drops_below_min_keep_seq(tmp_path):
         for i in range(1, 11):
             await log.append("inbox_put", target=f"agent_{i}", payload={"i": i})
         # Drop seq 1..4, keep 5..10
-        return await log.truncate_below(5)
+        await log.truncate_below(5)
+        await log.flush()
+        return log.last_truncate_stats
 
     stats = asyncio.run(setup_and_truncate())
 
@@ -63,7 +65,12 @@ def test_truncate_noop_when_min_keep_seq_le_one(tmp_path):
     async def go():
         for i in range(1, 6):
             await log.append("inbox_put", target=f"a{i}", payload={})
-        return await log.truncate_below(1), await log.truncate_below(0)
+        # min_keep_seq <= 1 is a no-op → last_truncate_stats set synchronously (no worker).
+        await log.truncate_below(1)
+        s1 = log.last_truncate_stats
+        await log.truncate_below(0)
+        s0 = log.last_truncate_stats
+        return s1, s0
 
     (s1, s0) = asyncio.run(go())
     assert s1 == {"dropped": 0, "kept": 0, "min_kept_seq": None, "max_kept_seq": None}
@@ -83,7 +90,9 @@ def test_truncate_preserves_highest_seq_as_watermark(tmp_path):
         for i in range(1, 6):
             await log.append("inbox_put", target=f"a{i}", payload={})
         # Caller asks to drop everything (min_keep_seq beyond all existing seqs).
-        return await log.truncate_below(100)
+        await log.truncate_below(100)
+        await log.flush()
+        return log.last_truncate_stats
 
     stats = asyncio.run(go())
 
@@ -107,6 +116,7 @@ def test_truncate_counter_survives_restart(tmp_path):
             await log.append("inbox_put", target=f"a{i}", payload={})
         # Drop 1..7, keep 8..10
         await log.truncate_below(8)
+        await log.flush()
 
     asyncio.run(go1())
 
@@ -136,6 +146,7 @@ def test_truncate_atomic_no_partial_state_on_disk(tmp_path):
         for i in range(1, 6):
             await log.append("inbox_put", target=f"a{i}", payload={})
         await log.truncate_below(3)
+        await log.flush()
 
     asyncio.run(go())
 
@@ -162,7 +173,9 @@ def test_truncate_skips_torn_lines(tmp_path):
         f.write('{"seq": 9, "kind": "in')  # torn — no closing brace, no newline
 
     async def truncate():
-        return await log.truncate_below(2)
+        await log.truncate_below(2)
+        await log.flush()
+        return log.last_truncate_stats
 
     stats = asyncio.run(truncate())
     survivors = _read_all(path)
@@ -178,7 +191,9 @@ def test_truncate_on_missing_file_is_noop(tmp_path):
     log = StateLog(path)
 
     async def go():
-        return await log.truncate_below(5)
+        await log.truncate_below(5)
+        await log.flush()
+        return log.last_truncate_stats
 
     stats = asyncio.run(go())
     assert stats == {"dropped": 0, "kept": 0,
@@ -194,6 +209,7 @@ def test_truncate_then_iter_from_returns_only_survivors(tmp_path):
         for i in range(1, 8):
             await log.append("inbox_put", target=f"a{i}", payload={"i": i})
         await log.truncate_below(4)
+        await log.flush()
 
     asyncio.run(go())
     seen = list(log.iter_from(0))

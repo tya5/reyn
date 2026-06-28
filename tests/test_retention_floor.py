@@ -155,6 +155,7 @@ async def test_retained_checkpoints_reconstructable_across_rewind(tmp_path):
     # keep last 2 checkpoints (2, 4); the rewind record @3 sits within [floor, head]
     assert floor == 2
     await log.truncate_below(floor)
+    await log.flush()
 
     # active-branch reconstruct at head: a (kept) + d (post-rewind), b abandoned.
     assert _ids(reconstruct(AGENT, store, log, log.current_seq)) == ["a", "d"]

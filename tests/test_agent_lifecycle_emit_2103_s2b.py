@@ -54,6 +54,7 @@ async def test_create_agent_emits_agent_created_with_config(tmp_path):
     carrying the profile config — the record rewind re-materialises from."""
     reg = _make_registry(tmp_path)
     await reg.create_agent("helper", role="my role")
+    await reg._state_log.flush()  # #2259 PR-2b: create_agent's agent_created append is async
 
     assert _agent_dir(tmp_path, "helper").is_dir()
     created = _events(reg, "agent_created")

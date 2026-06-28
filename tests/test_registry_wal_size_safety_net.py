@@ -235,6 +235,7 @@ def test_size_safety_net_protects_active_skill_events(tmp_path: Path):
         # Size-triggered truncate
         result = await registry.maybe_truncate_for_size(threshold_bytes=50_000)
         assert result is not None, "expected size-triggered truncate to run"
+        await registry._state_log.flush()  # #2259 PR-2b: truncate is fire-and-forget
         # Floor = min(10_000, 50) + 1 = 51. Events with seq < 51 dropped,
         # seq >= 51 kept (active skill protection).
         events = list(registry._state_log.iter_from(0))
@@ -244,9 +245,11 @@ def test_size_safety_net_protects_active_skill_events(tmp_path: Path):
             f"active skill floor (51) violated; min kept seq = {min(kept_seqs)}"
         )
         # And events below the floor really were dropped (= we inflated way more
-        # than 50 entries, so dropping below 51 must have removed dozens).
-        assert result["dropped"] > 0, (
-            f"expected drops below floor; stats={result}"
+        # than 50 entries, so dropping below 51 must have removed dozens). #2259 PR-2b:
+        # truncate is fire-and-forget, so read the stats from last_truncate_stats post-flush.
+        stats = registry._state_log.last_truncate_stats
+        assert stats["dropped"] > 0, (
+            f"expected drops below floor; stats={stats}"
         )
 
     asyncio.run(go())

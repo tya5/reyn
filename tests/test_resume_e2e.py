@@ -221,8 +221,13 @@ def test_e2e_crash_during_phase2_then_resume_to_completion(tmp_path, monkeypatch
     rt1 = _CrashAfterFirstPhase(
         skill, skill_registry=registry, state_log=state_log,
     )
+    async def _go1():
+        try:
+            await rt1.run({"type": "input", "data": {"x": 1}})
+        finally:
+            await state_log.flush()  # #2259 PR-2b: drain phase writes before the crash assertions
     with pytest.raises(RuntimeError, match="simulated crash"):
-        asyncio.run(rt1.run({"type": "input", "data": {"x": 1}}))
+        asyncio.run(_go1())
 
     # WAL invariants post-crash (R-D1):
     #   - skill_started + skill_phase_advanced are in the WAL
@@ -267,7 +272,12 @@ def test_e2e_crash_during_phase2_then_resume_to_completion(tmp_path, monkeypatch
         skill_registry=registry2,
         state_log=state_log2,
     )
-    result = asyncio.run(rt2.run({"type": "input", "data": {"x": 1}}))
+    async def _go2():
+        try:
+            return await rt2.run({"type": "input", "data": {"x": 1}})
+        finally:
+            await state_log2.flush()  # #2259 PR-2b: drain resume writes before the read
+    result = asyncio.run(_go2())
 
     assert isinstance(result, RunResult)
     assert result.ok, f"expected finished, got {result.status}"

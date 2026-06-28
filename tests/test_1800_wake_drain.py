@@ -98,6 +98,7 @@ async def _run_n_turns_then_shutdown(
     except asyncio.TimeoutError:
         run_task.cancel()
         await asyncio.gather(run_task, return_exceptions=True)
+    await session._journal.flush()  # #2259 PR-2b: drain async WAL+snapshot before the sync read
 
 
 # ---------------------------------------------------------------------------
@@ -328,6 +329,7 @@ async def test_drain_to_wake_inbox_consume_per_message(tmp_path) -> None:
 
     assert trigger is not None
 
+    await session._journal.flush()  # #2259 PR-2b: drain async WAL writes before the read
     events = _wal_events(tmp_path)
     consume_events = [e for e in events if e.get("kind") == "inbox_consume"]
 
@@ -389,6 +391,7 @@ async def test_drain_to_wake_only_wake_false_then_trigger_arrives(
     )
 
     # WAL must record inbox_consume for all 3 messages (2 ride-alongs + 1 trigger).
+    await session._journal.flush()  # #2259 PR-2b: drain async WAL writes before the read
     events = _wal_events(tmp_path)
     consume_events = [e for e in events if e.get("kind") == "inbox_consume"]
     n_consume = len(consume_events)

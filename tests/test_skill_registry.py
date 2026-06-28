@@ -54,9 +54,11 @@ def test_start_appends_skill_started_and_creates_snapshot(tmp_path):
     reg, log = _make_registry(tmp_path)
 
     async def go():
-        return await reg.start(
+        snap = await reg.start(
             run_id="run_a", skill_name="demo", skill_input={"x": 1},
         )
+        await log.flush()  # #2259 PR-2b: drain async WAL+snapshot (applied_seq stamped)
+        return snap
 
     snap = asyncio.run(go())
     assert snap.skill_run_id == "run_a"
@@ -110,6 +112,7 @@ def test_advance_phase_updates_snapshot_and_appends_event(tmp_path):
             run_id="r", next_phase="review",
             last_phase_artifact_path="ws/v2.json",
         )
+        await log.flush()  # #2259 PR-2b: drain async WAL+snapshot
         return reg.get("r")
 
     snap = asyncio.run(go())
@@ -163,6 +166,7 @@ def test_complete_appends_event_and_removes_snapshot(tmp_path):
     async def go():
         await reg.start(run_id="r", skill_name="s", skill_input={})
         await reg.complete(run_id="r")
+        await log.flush()  # #2259 PR-2b: drain async WAL + snapshot delete
 
     asyncio.run(go())
     assert _wal_kinds(log) == ["skill_started", "skill_completed"]
@@ -194,12 +198,13 @@ def test_complete_unknown_run_id_still_appends_event(tmp_path):
 
 def test_load_active_repopulates_cache_from_disk(tmp_path):
     """Tier 2: load_active() rehydrates the in-memory cache from on-disk snapshots."""
-    reg, _ = _make_registry(tmp_path)
+    reg, log = _make_registry(tmp_path)
 
     async def setup():
         await reg.start(run_id="r1", skill_name="s", skill_input={"x": 1})
         await reg.start(run_id="r2", skill_name="s", skill_input={"x": 2})
         await reg.advance_phase(run_id="r1", next_phase="draft")
+        await log.flush()  # #2259 PR-2b: drain async snapshots before the restart reads them
 
     asyncio.run(setup())
 
@@ -225,10 +230,11 @@ def test_load_active_skips_corrupt_snapshot(tmp_path):
     appears in the cache. This test pins that behavior so later refactors
     can decide whether to harden it.
     """
-    reg, _ = _make_registry(tmp_path)
+    reg, log = _make_registry(tmp_path)
 
     async def setup():
         await reg.start(run_id="good", skill_name="s", skill_input={})
+        await log.flush()  # #2259 PR-2b: drain async snapshot before the restart reads it
 
     asyncio.run(setup())
 

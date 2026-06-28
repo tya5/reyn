@@ -73,10 +73,12 @@ async def test_rewind_reverts_runtime_not_workspace(tmp_path) -> None:
     (tmp_path / _WS_FILE).write_text("vB", encoding="utf-8")
 
     await session._run_router_loop("A", "c1")
+    await session._journal.flush()  # #2259 PR-2b: drain before durable read
     seq_a = session.current_snapshot.applied_seq
     await session._run_router_loop("B", "c1")
 
     # Runtime checkout works (consistent-cut on the runtime substrate alone).
+    await session._journal.flush()  # #2259 PR-2b: drain before durable read
     await reg.checkout(seq_a)
     markers = [m["payload"]["turn"] for m in session.current_snapshot.inbox]
     assert markers == ["A"]                                  # runtime reverted
