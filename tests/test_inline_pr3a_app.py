@@ -48,6 +48,21 @@ def test_working_line_never_negative_elapsed() -> None:
     assert "-" not in text
 
 
+def test_working_line_has_a_moving_shimmer_crest() -> None:
+    """Tier 2: the label carries a bright shimmer crest whose position sweeps with
+    the clock (it animates), not a static dim line."""
+    def crest_char(now: float):
+        # The crest is the lone bold fragment among the label characters.
+        for style, text in working_line(True, 0.0, now):
+            if "bold" in style and text.strip():
+                return text
+        return None
+    c0 = crest_char(0.0)    # head at char 0
+    c1 = crest_char(0.10)   # head advances → crest on a later char
+    assert c0 is not None and c1 is not None  # a crest exists (shimmer present)
+    assert c0 != c1                            # and it moved (animated)
+
+
 def test_inline_renderer_selects_app_input() -> None:
     """Tier 2: the interactive inline renderer drives input via its own app."""
     assert InlineChatRenderer().uses_app_input() is True
