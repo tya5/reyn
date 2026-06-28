@@ -28,11 +28,12 @@ def _plain(kind: str, text: str, meta: dict) -> str:
     return console.file.getvalue()
 
 
-def test_tool_started_shows_dot_tool_and_args() -> None:
-    """Tier 2: tool_call_started → ⏺ marker + tool name + arg summary."""
+def test_tool_started_shows_invoke_marker_tool_and_args() -> None:
+    """Tier 2: tool_call_started → ▸ invocation marker (distinct from the ⏺
+    assistant reply) + tool name + arg summary."""
     out = _plain("tool_call_started", "read_file",
                  {"tool": "read_file", "args": {"path": "docs/x.md"}})
-    assert "⏺" in out
+    assert "▸" in out
     assert "read_file" in out
     assert "docs/x.md" in out
 

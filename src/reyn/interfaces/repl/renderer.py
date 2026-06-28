@@ -242,13 +242,15 @@ class RichChatRenderer(ChatRenderer):
         self._flush()
 
 
-# Claude Code-style accent palette (matches the validated mock).
-_CC_ACCENT = "#d97757"  # terracotta — the assistant
-_CC_DIM = "#6b7280"     # low-importance / ambient text
+# Claude Code-style palette. Default is plain text (_CC_TEXT); colour is reserved
+# to signal STATE — error (red), needs-action (amber), done (green), ambient/low
+# (dim) — so a coloured glyph always means "something to notice".
+_CC_TEXT = "default"    # terminal default fg — normal text + markers (no forced colour)
+_CC_DIM = "#6b7280"     # low-importance / ambient
 _CC_DONE = "#7ee787"    # green — completion
 _CC_ERR = "#f97066"     # red — failure
 _CC_WARN = "#e3b341"    # amber — an intervention that needs the user to act
-_CC_USER = "#6cb6ff"    # cool blue — the user's own input marker (vs warm assistant)
+_CC_ACCENT = "#d97757"  # terracotta — spinner / accents
 # Subtle background block behind the user's own submitted line (CC styles the
 # user input differently from agent output — a faint highlighted block).
 _CC_USER_BG = "#2b2f37"
@@ -262,21 +264,43 @@ _SPINNER = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
 # agent (LLM) body is rendered as markdown (body_style then unused). Tool-result /
 # trace ⎿ rows nest one level under the parent body column (2-space indent + ⎿).
 #
-# Glyph + colour vary by kind so the eye distinguishes them at a glance, and the
-# body colour encodes importance: HIGH-importance kinds (agent reply, an
-# intervention that needs an answer, an error) keep full-strength body text, while
-# low-importance / ambient kinds (a finished skill, status, trace, tool detail)
-# dim their body text. Distinct glyphs: ⏺ assistant · ◆ needs-you · ✗ error ·
-# ✓ done · > you · · status · ⎿ detail.
+# Glyphs are distinct per kind so the eye separates them; colour is reserved for
+# STATE — default terminal fg (_CC_TEXT), then amber=needs-you, red=error,
+# green=done, dim=ambient/low — so a coloured glyph always signals something to
+# notice. Distinct glyphs: ⏺ assistant · ❯ you · ▸ tool · ◆ needs-you · ✗ error ·
+# ✓ done · · status · ⎿ detail.
 _KIND_LINE = {
-    "user":         ("> ",   _CC_USER,   _CC_DIM),   # your input  (cool, + bg block)
-    "agent":        ("⏺ ",   _CC_ACCENT, ""),        # LLM reply   [HIGH] markdown body
-    "intervention": ("◆ ",   _CC_WARN,   "bold"),    # needs you   [HIGH] amber + bold
-    "error":        ("✗ ",   _CC_ERR,    _CC_ERR),   # failure     [HIGH] red
-    "skill_done":   ("✓ ",   _CC_DONE,   _CC_DIM),   # completed   [low]  dim body
-    "status":       ("· ",   _CC_DIM,    _CC_DIM),   # ambient     [low]
+    "user":         ("❯ ",   _CC_TEXT,   _CC_DIM),   # your input  (default fg, + bg block)
+    "agent":        ("⏺ ",   _CC_TEXT,   _CC_TEXT),  # normal reply — terminal default fg
+    "intervention": ("◆ ",   _CC_WARN,   "bold"),    # needs you   — amber
+    "error":        ("✗ ",   _CC_ERR,    _CC_ERR),   # error       — red
+    "skill_done":   ("✓ ",   _CC_DONE,   _CC_DIM),   # done        — green glyph, dim body
+    "status":       ("· ",   _CC_DIM,    _CC_DIM),   # ambient     — dim
     "trace":        ("  ⎿ ", _CC_DIM,    _CC_DIM),   # detail      [low]  nested
 }
+
+# ⎿ detail rows nest under the line above them, so no blank-line separator goes
+# before these — a tool call and its result stay grouped as one block.
+_NESTED_KINDS = frozenset({"tool_call_completed", "tool_call_failed", "trace"})
+
+
+def wants_separator(kind: str, seen_message: bool) -> bool:
+    """Pure: whether a blank line should precede this message in the scrollback.
+
+    One blank line separates top-level message blocks for breathing room, but not:
+    - before the very first message;
+    - before a nested ⎿ detail row (it belongs to the block above it);
+    - before a TRANSIENT status/trace line. A transient is cleared in place by the
+      next message, so a separator before it would be orphaned as a stray blank.
+      This is what made an agent reply show two blanks: the per-turn "thinking…"
+      status got a separator, was cleared, and left its blank behind — then the
+      reply added its own. Skipping transients leaves exactly one.
+    """
+    return (
+        seen_message
+        and kind not in _NESTED_KINDS
+        and kind not in _TRANSIENT_KINDS
+    )
 
 
 def _short(v, n: int = 60) -> str:
@@ -386,13 +410,13 @@ def format_inline_message(msg: OutboxMessage):
     kind = msg.kind
     meta = msg.meta or {}
 
-    # Tool-call rows. The ⎿ result / failure rows nest one level under the ⏺ call
-    # (2-space indent), so they read as sub-items of the call above them.
+    # Tool-call rows. ▸ marks an invocation (distinct from the ⏺ assistant reply);
+    # the ⎿ result / failure rows nest one level under it (2-space indent).
     if kind == "tool_call_started":
         tool = str(meta.get("tool", msg.text))
         args = _summarize_args(meta.get("args"))
         body = Text.assemble((tool, "bold"), (f"({args})", _CC_DIM))
-        return _gutter_grid("⏺ ", _CC_ACCENT, body)
+        return _gutter_grid("▸ ", _CC_TEXT, body)
     if kind == "tool_call_completed":
         summary = summarize_tool_result(meta.get("tool"), meta.get("result"))
         return _gutter_grid("  ⎿ ", _CC_DIM, Text(summary, style=_CC_DIM))
@@ -442,6 +466,9 @@ class InlineChatRenderer(ChatRenderer):
             highlight=False, file=self._buffer, force_terminal=True,
         )
         self._transient_active = False
+        # True once any message has been rendered → drives the blank-line separator
+        # between message blocks (none before the first).
+        self._seen_message = False
         # Working-indicator state, driven by on_chat_event (turn_started/completed).
         self._thinking = False
         self._think_start = 0.0
@@ -498,12 +525,15 @@ class InlineChatRenderer(ChatRenderer):
 
     def message(self, msg: OutboxMessage) -> None:
         self._clear_transient()
+        if wants_separator(msg.kind, self._seen_message):
+            self._console.print()  # blank line between message blocks
         self._console.print(format_inline_message(msg))
+        self._seen_message = True
         self._flush()
         self._transient_active = msg.kind in _TRANSIENT_KINDS
 
     def prompt_text(self) -> AnyFormattedText:
-        return HTML(f'<style fg="{_CC_ACCENT}"><b>&gt;</b></style> ')
+        return HTML(f'<style fg="{_CC_ACCENT}"><b>❯</b></style> ')
 
     def cost_summary(self, usage: TokenUsage, cost_usd: float | None) -> None:
         self._clear_transient()

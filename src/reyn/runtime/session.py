@@ -3910,9 +3910,12 @@ class Session:
             "user_message_received", text=text, chain_id=chain_id,
             media_block_count=len(attached_media),
         )
-        await self._put_outbox(OutboxMessage(
-            kind="status", text="thinking…", meta={"chain_id": chain_id},
-        ))
+        # NOTE: no "thinking…" status is emitted here. The turn-in-progress signal
+        # is the event-driven working indicator (turn_started → turn_settled, via
+        # ChatRenderer.on_chat_event), so a separate "thinking…" status line is a
+        # redundant double-display (the inline CUI showed both "· thinking…" and
+        # the "Working…" spinner). It was also the source of an orphaned blank line
+        # before each reply (a cleared transient leaving its separator behind).
 
         # Reset the per-turn router cap counter at the top of each fresh
         # user turn. Subsequent in-chain re-invocations (agent_response on
