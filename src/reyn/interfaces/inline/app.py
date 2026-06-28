@@ -20,6 +20,8 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from dataclasses import dataclass
+from typing import Callable
 
 from prompt_toolkit.application import Application, get_app
 from prompt_toolkit.buffer import Buffer
@@ -75,57 +77,66 @@ class _SlashCompleter(Completer):
 
 _SLASH_COMPLETER = _SlashCompleter()
 
-# Status-row chips, in display order.
-_CHIPS = ["model", "agents", "skills", "cost", "ctx"]
-# Chips whose dropdown is an actionable picker (↑↓ a row, enter applies) rather
-# than a read-only detail panel. Today only the model picker.
-_ACTIONABLE = frozenset({"model"})
 
+@dataclass(frozen=True)
+class ChipSpec:
+    """One status-bar chip: label + live value + optional expansion element.
 
-def is_actionable_picker(label: str, model_classes) -> bool:
-    """Pure: whether a chip's open dropdown is an actionable picker right now.
-
-    The model chip is a picker only when it actually has classes to pick; with
-    none configured its dropdown is the read-only current-model fallback, which
-    has no selectable rows — so no cursor must be drawn on it (otherwise the
-    fallback lines look selectable but Enter does nothing).
+    The status bar renders by iterating the registered specs, so a new chip is one
+    spec — no per-chip branching in the renderer or key bindings. ``expansion`` is
+    called with ``(snapshot, dispatch)`` and returns a region element (DetailElement
+    / CommandUIElement / future Tree/Toggle), or None for a value-only chip.
     """
-    return label in _ACTIONABLE and bool(model_classes)
+
+    key: str
+    label: str
+    value: Callable[[dict], str]
+    expansion: "Callable[[dict, Callable[[str], None]], object] | None" = None
 
 
-def build_status_dropdown_element(label: str, *, snapshot_fn, on_submit):
-    """Build the region element for an opened status chip's dropdown.
+def _model_expansion(snap, dispatch):
+    classes = list(snap.get("model_classes") or [])
+    if not classes:
+        return DetailElement(lambda: [f"current: {snap['model']}", "change with /model"])
+    model = snap["model"]
+    rows = [f"▸ {c}" if c == model else f"  {c}" for c in classes]
+    return CommandUIElement(rows, [f"/model {c}" for c in classes], dispatch)
 
-    The model chip with configured classes → a :class:`CommandUIElement` picker
-    (each row submits ``/model <class>`` through the normal slash path — cost-warn
-    confirm + budget rebuild reused), so it shares the region's selection
-    mechanism with the /rewind picker and interventions. Every other chip (and
-    the model chip with no classes) → a read-only :class:`DetailElement` whose
-    rows are recomputed live from ``snapshot_fn`` (so cost / ctx / agents stay
-    current while the panel is open) and carry no cursor.
-    """
-    snap = snapshot_fn()
-    classes = list(snap["model_classes"]) if snap else []
-    if is_actionable_picker(label, classes):
-        rows = dropdown_lines(
-            label, model=snap["model"], agent_names=snap["agent_names"],
-            attached_name=snap["attached_name"], skill_run_ids=snap["skill_run_ids"],
-            usage=snap["usage"], cost_usd=snap["cost_usd"], model_classes=classes,
-        )
-        submit_texts = [f"/model {c}" for c in classes]
-        return CommandUIElement(rows, submit_texts, on_submit)
 
-    def detail_lines() -> list:
-        s = snapshot_fn()
-        if s is None:
-            return []
-        return dropdown_lines(
-            label, model=s["model"], agent_names=s["agent_names"],
-            attached_name=s["attached_name"], skill_run_ids=s["skill_run_ids"],
-            usage=s["usage"], cost_usd=s["cost_usd"], model_classes=s["model_classes"],
-        )
+def _cost_expansion(snap, dispatch):
+    def lines():
+        p, c, t = snap["usage"]
+        return [
+            f"total    ${snap['cost_usd']:.4f}",
+            f"tokens   prompt {p} · completion {c} · total {t}",
+        ]
+    return DetailElement(lines)
 
-    return DetailElement(detail_lines)
+
+def _agent_expansion(snap, dispatch):
+    # Phase 1: read-only agent list. Phase 2 = agent/session tree + attach switch.
+    def lines():
+        names = snap["agent_names"]
+        if not names:
+            return ["(none)"]
+        attached = snap["attached_name"]
+        return [f"▸ {n}" if n == attached else f"  {n}" for n in names]
+    return DetailElement(lines)
+
+
+def _task_expansion(snap, dispatch):
+    # Phase 1: count only. Phase 3 = task tree.
+    n = snap.get("task_count", 0)
+    return DetailElement(lambda: [f"{n} active task{'' if n == 1 else 's'}"])
+
+
+_CHIP_SPECS = [
+    ChipSpec("model", "model", lambda s: str(s["model"]), _model_expansion),
+    ChipSpec("cost",  "cost",  lambda s: f"${s['cost_usd']:.4f}", _cost_expansion),
+    ChipSpec("agent", "agent", lambda s: str(s["attached_name"] or "—"), _agent_expansion),
+    ChipSpec("task",  "task",  lambda s: str(s.get("task_count", 0)), _task_expansion),
+    ChipSpec("more",  "",      lambda s: "…", None),   # overflow submenu — Phase 5
+]
 
 
 def working_line(thinking: bool, think_start: float, now: float) -> list:
@@ -144,48 +155,6 @@ def working_line(thinking: bool, think_start: float, now: float) -> list:
     ]
 
 
-def status_chips(model: str, n_agents: int, n_skills: int, cost_usd: float,
-                 total_tokens: int) -> list:
-    """Pure: (label, value) status chips from plain live values."""
-    ctx = f"{total_tokens // 1000}k" if total_tokens >= 1000 else str(total_tokens)
-    return [
-        ("model", str(model)),
-        ("agents", str(n_agents)),
-        ("skills", str(n_skills)),
-        ("cost", f"${cost_usd:.4f}"),
-        ("ctx", ctx),
-    ]
-
-
-def dropdown_lines(label: str, *, model: str, agent_names: list, attached_name,
-                   skill_run_ids: list, usage: tuple, cost_usd: float,
-                   model_classes: list | None = None) -> list:
-    """Pure: detail/picker lines for an opened status chip.
-
-    Lines starting with ``▸`` mark the focused/attached/current entry. `usage` is
-    ``(prompt, completion, total)`` token counts. For ``model`` the lines are the
-    selectable classes (current marked ``▸``); with no configured classes it
-    falls back to the read-only current-model hint.
-    """
-    if label == "agents":
-        if not agent_names:
-            return ["(none)"]
-        return [f"▸ {n}" if n == attached_name else f"  {n}" for n in agent_names]
-    if label == "skills":
-        return [f"  {r}" for r in skill_run_ids] or ["(no running skills)"]
-    if label in ("cost", "ctx"):
-        p, c, t = usage
-        return [
-            f"prompt {p}", f"completion {c}", f"total {t}",
-            f"cost ${cost_usd:.4f}",
-        ]
-    if label == "model":
-        if not model_classes:
-            return [f"current: {model}", "change with /model"]
-        return [f"▸ {c}" if c == model else f"  {c}" for c in model_classes]
-    return ["(no detail)"]
-
-
 def _snapshot(registry):
     """Read live status values off the attached session via sync accessors."""
     s = registry.attached_session()
@@ -200,6 +169,7 @@ def _snapshot(registry):
         "skill_run_ids": list(s.running_skills.keys()),
         "usage": (u.prompt_tokens, u.completion_tokens, u.total_tokens),
         "cost_usd": s.total_cost_usd,
+        "task_count": 0,
     }
 
 
@@ -261,23 +231,26 @@ async def run_inline_input(registry, renderer) -> None:
         snap = _snapshot(registry)
         if snap is None:
             return [(f"fg:{_CC_DIM}", " /quit to exit · ↑ history")]
-        chips = status_chips(
-            snap["model"], len(snap["agent_names"]), len(snap["skill_run_ids"]),
-            snap["cost_usd"], snap["usage"][2],
-        )
         focused = get_app().layout.has_focus(status_win)
         frags: list = []
-        for i, (label, val) in enumerate(chips):
-            open_mark = " ▾" if (focused and menu["open"] and i == menu["sel"]) else ""
-            text = f" {label} {val}{open_mark} "
-            if focused and i == menu["sel"]:
+        for i, spec in enumerate(_CHIP_SPECS):
+            val = spec.value(snap)
+            if spec.label:
+                text = f" {spec.label} {val} "
+            else:
+                text = f" {val} "
+            selected = focused and i == menu["sel"]
+            if selected and menu["open"]:
+                text = text.rstrip() + " ▾ "
+            if selected:
                 frags.append((f"fg:#0d0f12 bg:{_CC_ACCENT} bold", text))
             else:
                 frags.append((f"fg:{_CC_DIM}", text))
-            frags.append(("", " "))
+            if i < len(_CHIP_SPECS) - 1:
+                frags.append((f"fg:{_CC_DIM}", "│"))
         if not focused:
             hint = "  [↓ menu · ↑ history · /quit]"
-        elif menu["open"] and _CHIPS[menu["sel"]] in _ACTIONABLE:
+        elif menu["open"] and menu_region.cursor_on_selectable:
             hint = "  [↑↓ select · enter switch · esc close]"
         elif menu["open"]:
             hint = "  [esc / ↑ close]"
@@ -379,14 +352,10 @@ async def run_inline_input(registry, renderer) -> None:
 
     def _actionable_open() -> bool:
         # Open AND the opened chip's element is the selectable model picker (a
-        # CommandUIElement). Mirrors build_status_dropdown_element: only the model
-        # chip WITH configured classes builds a picker — every other chip (and the
-        # model chip with none) is a read-only DetailElement.
-        if not menu["open"]:
-            return False
-        snap = _snapshot(registry)
-        classes = snap["model_classes"] if snap else []
-        return is_actionable_picker(_CHIPS[menu["sel"]], classes)
+        # CommandUIElement). Check the live menu_region cursor state — a selectable
+        # element (CommandUIElement with classes) reports True; a read-only
+        # DetailElement always reports False.
+        return menu["open"] and menu_region.cursor_on_selectable
 
     def _menu_submit(text: str) -> None:
         # A picker row was selected → close the menu and run /model <class> via the
@@ -397,15 +366,12 @@ async def run_inline_input(registry, renderer) -> None:
     def _menu_open() -> None:
         # Build the opened chip's element fresh and host it in menu_region. The
         # picker rows are static (classes); a read-only panel's lines stay live.
-        menu["open"] = True
+        spec = _CHIP_SPECS[menu["sel"]]
         menu_region.clear()
-        menu_region.register(
-            build_status_dropdown_element(
-                _CHIPS[menu["sel"]],
-                snapshot_fn=lambda: _snapshot(registry),
-                on_submit=_menu_submit,
-            )
-        )
+        if spec.expansion is not None:
+            el = spec.expansion(_snapshot(registry), _menu_submit)
+            menu_region.register(el)
+        menu["open"] = True
 
     def _menu_close() -> None:
         menu["open"] = False
@@ -437,12 +403,12 @@ async def run_inline_input(registry, renderer) -> None:
     @kb.add("left", filter=has_focus(status_win))
     def _menu_left(event) -> None:
         if not menu["open"]:
-            menu["sel"] = (menu["sel"] - 1) % len(_CHIPS)
+            menu["sel"] = (menu["sel"] - 1) % len(_CHIP_SPECS)
 
     @kb.add("right", filter=has_focus(status_win))
     def _menu_right(event) -> None:
         if not menu["open"]:
-            menu["sel"] = (menu["sel"] + 1) % len(_CHIPS)
+            menu["sel"] = (menu["sel"] + 1) % len(_CHIP_SPECS)
 
     @kb.add("enter", filter=has_focus(status_win))
     def _menu_enter(event) -> None:
