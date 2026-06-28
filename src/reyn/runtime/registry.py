@@ -1709,6 +1709,66 @@ class AgentRegistry:
                 topo.save(path)
                 self._topologies[name] = topo
 
+    async def record_config_change(self, rel_path: str, content: dict) -> None:
+        """#2248 PR-A: WAL the full post-mutation content of a recovery-core config
+        registry, keyed by its `.reyn`-relative path. The single emission chokepoint for
+        config recovery (mirrors `_emit_topology`): a dedicated config op calls this AFTER
+        persisting its `.yaml`, so the registry is reconstructable by WAL replay. The yaml
+        on disk is thus a DERIVED projection — `content` here is the recovery truth.
+        No-op without a WAL (the opt-in / test contract)."""
+        if self._state_log is None:
+            return
+        await self._state_log.append("config_changed", path=rel_path, content=content)
+
+    def _config_lifecycle(self) -> "dict[str, list[tuple[int, dict]]]":
+        """#2248 PR-A: one WAL scan → per config relative-path, its ordered
+        ``(seq, content)`` from ``config_changed`` events (content = the FULL registry
+        state at that point). WAL-sourced only (never the rotated audit log). Only paths
+        that appear here are WAL-tracked → only these are touched by reconstruction; an
+        operator-owned / pre-feature yaml with no event is invisible and left alone. Empty
+        without a WAL."""
+        events: dict[str, list[tuple[int, dict]]] = {}
+        if self._state_log is None:
+            return events
+        for entry in self._state_log.iter_from(0):
+            if entry.get("kind") != "config_changed":
+                continue
+            path = entry.get("path")
+            seq = entry.get("seq")
+            content = entry.get("content")
+            if not isinstance(path, str) or not isinstance(seq, int):
+                continue
+            events.setdefault(path, []).append((seq, content if isinstance(content, dict) else {}))
+        return events
+
+    def _reconcile_config_as_of_cut(self, cut: int) -> None:
+        """#2248 PR-A: reconstruct the recovery-core config registries as-of-cut from the
+        ``config_changed`` WAL (WAL-sourced only). Per WAL-tracked path, the LATEST event
+        with seq ≤ cut decides the on-disk content (latest-≤-cut wins, FULL state, no
+        delta-fold — uniform with `_reconcile_topologies_as_of_cut`). A path whose first
+        event is AFTER the cut didn't exist as-of-cut → removed. Only WAL-tracked paths are
+        touched; inert without events. The yaml is a derived projection re-materialised
+        here from the recovery truth."""
+        import yaml  # noqa: PLC0415 — local, matching the file convention
+
+        for rel_path, evs in self._config_lifecycle().items():
+            latest = max(
+                (e for e in evs if e[0] <= cut), key=lambda e: e[0], default=None,
+            )
+            abs_path = (self._project_root / ".reyn" / rel_path).resolve()
+            if latest is None:
+                # First written after the cut → didn't exist as-of-cut → drop.
+                if abs_path.is_file():
+                    abs_path.unlink()
+            else:
+                abs_path.parent.mkdir(parents=True, exist_ok=True)
+                abs_path.write_text(
+                    yaml.dump(
+                        latest[1], allow_unicode=True, default_flow_style=False,
+                    ),
+                    encoding="utf-8",
+                )
+
     async def _drop_session(self, name: str, sid: str, *, purge_dir: bool = True) -> None:
         """#2103 S1bc: tear down a single spawned session created after the rewind cut
         (the primitive's seam, now wired). Delegates to ``remove_session`` — the single
@@ -1936,6 +1996,9 @@ class AgentRegistry:
         # archived-state (rewind-before-archive → active; rewind-after → archived).
         self._reconcile_archived_as_of_cut(ag_archived, drop_cut)
         self._reconcile_topologies_as_of_cut(drop_cut)
+        # #2248 PR-A: rebuild the recovery-core config registries (mcp/cron/hooks/…)
+        # as-of-cut from the config_changed WAL — same latest-≤-cut-wins model as topology.
+        self._reconcile_config_as_of_cut(drop_cut)
         # #2103 B (the rewind LINCHPIN): rebuild the spawn lineage as-of-cut from the
         # agent_created records — a re-materialised child REGAINS its ⊆-parent cap and a
         # dropped/post-cut child's edge is gone. A FULL rebuild (not an incremental
