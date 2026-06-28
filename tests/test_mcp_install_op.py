@@ -206,24 +206,21 @@ def _run(coro):
 
 
 @pytest.mark.asyncio
-async def test_mcp_yaml_write_is_default_granted_protect_at_use(tmp_path):
-    """Tier 2: #571 protect-at-use / #1316 — writing the mcp install target
-    ``.reyn/mcp.yaml`` needs NO explicit file.write declaration: it sits in the
-    default project write zone (removed from the protected carve-out because
-    writing it is inert without ``require_mcp`` at call time; the install-side
-    grant is ``permissions.mcp``, the use-side gate is ``require_mcp``). The
-    carved-out ``.reyn/approvals.yaml`` still requires an explicit grant.
-
-    (Pre-#1316, an mcp test with project_root ≠ cwd saw the mcp.yaml write DENIED
-    via the cwd-zone divergence — that latent bug is fixed; production
-    cwd=project_root always default-granted it, so this is production-faithful,
-    not a loosening.)"""
+async def test_mcp_yaml_write_requires_explicit_decl_recovery_core(tmp_path):
+    """Tier 2: #2248 PR-C SUPERSEDES #571 protect-at-use for the mcp config — writing the
+    install target ``.reyn/config/mcp.yaml`` now REQUIRES an explicit file.write declaration:
+    it is under the recovery-core ``config/`` prefix, so a decl-less write is denied (a raw
+    write would change config WITHOUT the ``config_changed`` WAL event = a recovery gap). The
+    dedicated mcp_install op supplies that explicit decl + writes via its own write_text, so
+    the legit path is unaffected (see test_permission_gate_passes_with_explicit_decl).
+    ``.reyn/approvals.yaml`` (top-level persist) likewise requires an explicit grant."""
     resolver = _make_resolver(tmp_path)  # project_root = tmp_path
-    # mcp.yaml under project_root/.reyn = default write zone → granted (no decl)
-    await resolver.require_file_write(
-        PermissionDecl(), str(tmp_path / ".reyn" / "config" / "mcp.yaml"), "mcp_install_test"
-    )
-    # contrast: the approval store IS carved out → still needs an explicit grant
+    # mcp.yaml under config/ = recovery-core prefix → a decl-less write is DENIED.
+    with pytest.raises(PermissionError):
+        await resolver.require_file_write(
+            PermissionDecl(), str(tmp_path / ".reyn" / "config" / "mcp.yaml"), "mcp_install_test"
+        )
+    # the approval store IS carved out → also needs an explicit grant
     with pytest.raises(PermissionError):
         await resolver.require_file_write(
             PermissionDecl(), str(tmp_path / ".reyn" / "approvals.yaml"), "t"

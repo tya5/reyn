@@ -81,15 +81,28 @@ _DEFAULT_WRITE_ZONES = (".reyn",)
 # python step write one via the broad ``.reyn/`` default zone bypasses the
 # corresponding gate. The narrow exception preserves the broad ``.reyn/``
 # write zone for everything else (= chunkers, cursors, scratch state).
+# #2248 PR-C: recovery-core write-gate prefixes. A file.write under these prefixes is
+# NOT silently allowed by the broad ``.reyn/`` default zone — it must go through a
+# dedicated op that emits a WAL event (mcp_install/drop, cron_register, index_drop write
+# their `config/*.yaml` via an EXPLICIT file.write declaration; WAL/snapshot/tasks under
+# `state/` use their own durable paths, never a raw file.write). A generic PREFIX rule
+# (P7-clean — "deny raw file.write under the recovery-core prefixes", not a filename
+# list): the directory boundary IS the write-gate boundary. ``config/index/sources.yaml``
+# (formerly an explicit entry) is now covered by the ``config/`` prefix.
+_RECOVERY_CORE_WRITE_PREFIXES = (
+    ".reyn/config/",
+    ".reyn/state/",
+)
+
 _CANONICAL_PROTECTED_WRITE_PATHS = (
-    ".reyn/config/index/sources.yaml",
     # #1199 security fix: the persisted approval store. It is written ONLY via
     # the gated approval-decision mechanism (``_persist`` — which also emits the
-    # state_change audit signal). Without this carve-out it sits in the broad
-    # ``.reyn/`` default write zone, so a safe-mode file.write could inject an
-    # approval directly: bypassing the user-approval gate + the audit, and (since
-    # approvals load once into ``self._saved`` at startup) silently activating a
-    # never-approved grant on the NEXT run = approval-audit bypass.
+    # state_change audit signal). It is TOP-LEVEL (persist, #2248 A2-cont — not under
+    # the config/ recovery-core prefix), so it needs this explicit carve-out: without
+    # it a safe-mode file.write could inject an approval directly, bypassing the
+    # user-approval gate + the audit, and (since approvals load once into
+    # ``self._saved`` at startup) silently activating a never-approved grant on the
+    # NEXT run = approval-audit bypass.
     ".reyn/approvals.yaml",
 )
 
@@ -122,6 +135,23 @@ def _is_canonical_protected_write(path_str: str, base: "Path | None" = None) -> 
     return False
 
 
+def _is_under_recovery_core_prefix(path_str: str, base: "Path | None" = None) -> bool:
+    """#2248 PR-C: True if ``path_str`` is under a recovery-core write-gate prefix
+    (``.reyn/config/`` or ``.reyn/state/``). Such a write must NOT be silently allowed by
+    the broad ``.reyn/`` default zone — it goes through a dedicated WAL-emitting op (which
+    declares the path explicitly) rather than a raw ``file.write``."""
+    base = base or Path.cwd()
+    p = Path(path_str).expanduser()
+    resolved = (base / p).resolve() if not p.is_absolute() else p.resolve()
+    for prefix in _RECOVERY_CORE_WRITE_PREFIXES:
+        try:
+            resolved.relative_to((base / prefix).resolve())
+            return True
+        except ValueError:
+            pass
+    return False
+
+
 def _in_default_write_zone(path_str: str, base: "Path | None" = None) -> bool:
     """Return True if path falls within a default-granted write zone (.reyn/).
 
@@ -134,7 +164,9 @@ def _in_default_write_zone(path_str: str, base: "Path | None" = None) -> bool:
     downstream use-gate makes the config carve-out redundant).
     """
     base = base or Path.cwd()
-    if _is_canonical_protected_write(path_str, base):
+    if _is_canonical_protected_write(path_str, base) or _is_under_recovery_core_prefix(
+        path_str, base,
+    ):
         return False
     p = Path(path_str).expanduser()
     resolved = (base / p).resolve() if not p.is_absolute() else p.resolve()
