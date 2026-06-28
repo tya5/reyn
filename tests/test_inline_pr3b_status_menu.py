@@ -1,159 +1,222 @@
-"""Tier 2: inline status-menu pure builders — chips + dropdown lines + picker.
+"""Tier 2: ChipSpec framework — spec registry + expansion builders.
 
-The navigable menu / focus handling is interactive (verified live, e2e); here we
-pin the pure data→display mapping that feeds the status row, each chip's detail
-dropdown, and the model picker's row→/model command. Plain-value inputs keep
-these decoupled from the Session.
+The status bar is now declarative: each chip is a ``ChipSpec`` with a key,
+label, value function, and optional expansion builder. Tests exercise the
+public surface (``_CHIP_SPECS``, ``_model_expansion``, ``_cost_expansion``,
+``_agent_expansion``, ``_task_expansion``) using real instances; no mocks.
 """
 from __future__ import annotations
 
 from reyn.interfaces.inline.app import (
-    build_status_dropdown_element,
-    dropdown_lines,
-    is_actionable_picker,
-    status_chips,
+    _CHIP_SPECS,
+    _agent_expansion,
+    _cost_expansion,
+    _model_expansion,
+    _task_expansion,
 )
+from reyn.interfaces.inline.region import DetailElement
+from reyn.interfaces.inline.region_command import CommandUIElement
 
 
 def _snap(**over):
-    """A status snapshot dict (build_status_dropdown_element's input)."""
+    """A status snapshot dict covering all chip value/expansion inputs."""
     base = {
         "model": "standard",
         "model_classes": ["light", "standard", "strong"],
-        "agent_names": ["default"], "attached_name": "default",
-        "skill_run_ids": [], "usage": (0, 0, 0), "cost_usd": 0.0,
+        "agent_names": ["default"],
+        "attached_name": "default",
+        "skill_run_ids": [],
+        "usage": (0, 0, 0),
+        "cost_usd": 0.0,
+        "task_count": 0,
     }
     base.update(over)
     return base
 
 
-def test_model_chip_is_a_picker_only_with_classes() -> None:
-    """Tier 2: the model dropdown is an actionable picker (gets a cursor) only
-    when it has classes to pick; with none it's the read-only fallback."""
-    assert is_actionable_picker("model", ["light", "standard"]) is True
-    assert is_actionable_picker("model", []) is False  # fallback, no cursor
-    assert is_actionable_picker("agents", ["default"]) is False  # not actionable
+# ---------------------------------------------------------------------------
+# Registry contract
+# ---------------------------------------------------------------------------
 
 
-def test_status_chips_has_five_labelled_values() -> None:
-    """Tier 2: the status row exposes model/agents/skills/cost/ctx with values."""
-    chips = status_chips("flash-lite", 2, 1, 0.0123, 12800)
-    labels = [lbl for lbl, _ in chips]
-    assert labels == ["model", "agents", "skills", "cost", "ctx"]
-    by = dict(chips)
-    assert by["model"] == "flash-lite"
-    assert by["agents"] == "2"
-    assert by["skills"] == "1"
-    assert by["cost"] == "$0.0123"
+def test_chip_specs_has_required_keys_in_order() -> None:
+    """Tier 2: the registry exposes model/cost/agent/task/more in that order."""
+    keys = [s.key for s in _CHIP_SPECS]
+    assert keys == ["model", "cost", "agent", "task", "more"]
 
 
-def test_ctx_abbreviates_thousands_but_not_small_counts() -> None:
-    """Tier 2: ctx shows 'Nk' at >=1000 tokens, the raw count below."""
-    assert dict(status_chips("m", 0, 0, 0.0, 12800))["ctx"] == "12k"
-    assert dict(status_chips("m", 0, 0, 0.0, 500))["ctx"] == "500"
+def test_model_chip_value_returns_model_name() -> None:
+    """Tier 2: the model chip's value() returns the model string."""
+    spec = next(s for s in _CHIP_SPECS if s.key == "model")
+    assert spec.value(_snap(model="flash-lite")) == "flash-lite"
 
 
-def test_agents_dropdown_marks_attached() -> None:
-    """Tier 2: the agents panel marks the attached agent with ▸."""
-    lines = dropdown_lines(
-        "agents", model="m", agent_names=["default", "researcher"],
-        attached_name="default", skill_run_ids=[], usage=(0, 0, 0), cost_usd=0.0,
-    )
-    assert any(ln.startswith("▸") and "default" in ln for ln in lines)
-    assert any("researcher" in ln and not ln.startswith("▸") for ln in lines)
+def test_cost_chip_value_returns_formatted_dollars() -> None:
+    """Tier 2: the cost chip's value() returns a dollar-formatted string."""
+    spec = next(s for s in _CHIP_SPECS if s.key == "cost")
+    result = spec.value(_snap(cost_usd=0.0123))
+    assert result.startswith("$")
+    assert "0123" in result or "0.0123" in result
 
 
-def test_skills_dropdown_lists_runs_or_empty_message() -> None:
-    """Tier 2: skills panel lists run ids, or a clear empty message."""
-    lines = dropdown_lines(
-        "skills", model="m", agent_names=[], attached_name=None,
-        skill_run_ids=["run_abcd", "run_ef01"], usage=(0, 0, 0), cost_usd=0.0,
-    )
-    assert any("run_abcd" in ln for ln in lines)
-    empty = dropdown_lines(
-        "skills", model="m", agent_names=[], attached_name=None,
-        skill_run_ids=[], usage=(0, 0, 0), cost_usd=0.0,
-    )
-    assert any("no running skills" in ln for ln in empty)
+def test_agent_chip_value_returns_attached_name() -> None:
+    """Tier 2: the agent chip's value() returns the attached agent name."""
+    spec = next(s for s in _CHIP_SPECS if s.key == "agent")
+    assert spec.value(_snap(attached_name="researcher")) == "researcher"
 
 
-def test_cost_dropdown_shows_token_breakdown() -> None:
-    """Tier 2: cost/ctx panel shows the prompt/completion/total breakdown."""
-    lines = dropdown_lines(
-        "cost", model="m", agent_names=[], attached_name=None,
-        skill_run_ids=[], usage=(100, 5, 105), cost_usd=0.01,
-    )
-    joined = " ".join(lines)
-    assert "prompt 100" in joined
-    assert "completion 5" in joined
-    assert "total 105" in joined
+def test_agent_chip_value_returns_dash_when_none() -> None:
+    """Tier 2: the agent chip's value() returns '—' when no agent is attached."""
+    spec = next(s for s in _CHIP_SPECS if s.key == "agent")
+    assert spec.value(_snap(attached_name=None)) == "—"
 
 
-def test_model_dropdown_shows_current_and_change_hint() -> None:
-    """Tier 2: with no configured classes, model panel falls back to the current
-    class + how to change it."""
-    lines = dropdown_lines(
-        "model", model="flash-lite", agent_names=[], attached_name=None,
-        skill_run_ids=[], usage=(0, 0, 0), cost_usd=0.0,
-    )
-    joined = " ".join(lines)
+def test_task_chip_value_returns_count_string() -> None:
+    """Tier 2: the task chip's value() returns the task count as a string."""
+    spec = next(s for s in _CHIP_SPECS if s.key == "task")
+    assert spec.value(_snap(task_count=3)) == "3"
+    assert spec.value(_snap(task_count=0)) == "0"
+
+
+def test_more_chip_has_no_expansion() -> None:
+    """Tier 2: the 'more' chip has no expansion (Phase 5 placeholder)."""
+    spec = next(s for s in _CHIP_SPECS if s.key == "more")
+    assert spec.expansion is None
+
+
+# ---------------------------------------------------------------------------
+# _model_expansion
+# ---------------------------------------------------------------------------
+
+
+def test_model_expansion_with_classes_is_command_ui() -> None:
+    """Tier 2: with classes, _model_expansion returns a CommandUIElement picker."""
+    submitted: list[str] = []
+    snap = _snap(model="standard", model_classes=["light", "standard", "strong"])
+    el = _model_expansion(snap, submitted.append)
+    assert isinstance(el, CommandUIElement)
+
+
+def test_model_expansion_picker_submits_slash_model_on_select() -> None:
+    """Tier 2: selecting row N in the model picker submits '/model <classN>'."""
+    submitted: list[str] = []
+    snap = _snap(model="standard", model_classes=["light", "standard", "strong"])
+    el = _model_expansion(snap, submitted.append)
+    el.on_select(0)
+    el.on_select(2)
+    assert submitted == ["/model light", "/model strong"]
+
+
+def test_model_expansion_picker_out_of_range_does_not_submit() -> None:
+    """Tier 2: on_select with an out-of-range index does not call the callback."""
+    submitted: list[str] = []
+    snap = _snap(model="standard", model_classes=["light", "standard"])
+    el = _model_expansion(snap, submitted.append)
+    el.on_select(9)
+    assert submitted == []
+
+
+def test_model_expansion_picker_marks_current_with_arrow() -> None:
+    """Tier 2: the current model row starts with ▸; others do not."""
+    snap = _snap(model="standard", model_classes=["light", "standard", "strong"])
+    el = _model_expansion(snap, lambda _: None)
+    rows = el.lines()
+    assert any(r.startswith("▸") and "standard" in r for r in rows)
+    assert any("light" in r and not r.startswith("▸") for r in rows)
+    assert any("strong" in r and not r.startswith("▸") for r in rows)
+
+
+def test_model_expansion_without_classes_is_detail_element() -> None:
+    """Tier 2: with no classes, _model_expansion returns a non-selectable DetailElement."""
+    snap = _snap(model="flash-lite", model_classes=[])
+    el = _model_expansion(snap, lambda _: None)
+    assert isinstance(el, DetailElement)
+    assert el.selectable is False
+
+
+def test_model_expansion_without_classes_shows_current_and_hint() -> None:
+    """Tier 2: the no-classes fallback detail shows the model name and /model hint."""
+    snap = _snap(model="flash-lite", model_classes=[])
+    el = _model_expansion(snap, lambda _: None)
+    joined = " ".join(el.lines())
     assert "flash-lite" in joined
     assert "/model" in joined
 
 
-def test_model_picker_lists_classes_marking_current() -> None:
-    """Tier 2: with configured classes, the model panel is a picker — one row
-    per class, the current class marked ▸, others not."""
-    lines = dropdown_lines(
-        "model", model="standard", agent_names=[], attached_name=None,
-        skill_run_ids=[], usage=(0, 0, 0), cost_usd=0.0,
-        model_classes=["light", "standard", "strong"],
-    )
-    assert any(ln.startswith("▸") and "standard" in ln for ln in lines)
-    assert any("light" in ln and not ln.startswith("▸") for ln in lines)
-    assert any("strong" in ln and not ln.startswith("▸") for ln in lines)
-    # the picker (one row per class), not the no-classes fallback hint
-    assert not any("change with" in ln for ln in lines)
+# ---------------------------------------------------------------------------
+# _cost_expansion
+# ---------------------------------------------------------------------------
 
 
-def test_model_picker_element_submits_model_slash_on_select() -> None:
-    """Tier 2: F5 — the model chip with classes builds a selectable picker
-    element (a region CommandUIElement); selecting row N submits ``/model
-    <classN>`` through the slash path, sharing the region's selection mechanism
-    with the /rewind picker."""
-    submitted: list[str] = []
-    el = build_status_dropdown_element(
-        "model", snapshot_fn=_snap, on_submit=submitted.append,
-    )
-    assert any(ln.startswith("▸") and "standard" in ln for ln in el.lines())
-    el.on_select(0)
-    el.on_select(2)
-    assert submitted == ["/model light", "/model strong"]
-    el.on_select(9)  # out of range → no submit
-    assert submitted == ["/model light", "/model strong"]
-
-
-def test_read_only_chip_builds_non_selectable_live_detail() -> None:
-    """Tier 2: F5 — a non-picker chip builds a read-only DetailElement — no
-    cursor (selectable=False), inert on select, rows recomputed live from the
-    snapshot so the panel reflects current values while open."""
-    box = {"snap": _snap(cost_usd=0.01, usage=(100, 5, 105))}
-    el = build_status_dropdown_element(
-        "cost", snapshot_fn=lambda: box["snap"], on_submit=lambda _t: None,
-    )
+def test_cost_expansion_is_detail_element() -> None:
+    """Tier 2: _cost_expansion returns a read-only DetailElement."""
+    snap = _snap(cost_usd=0.01, usage=(100, 5, 105))
+    el = _cost_expansion(snap, lambda _: None)
+    assert isinstance(el, DetailElement)
     assert el.selectable is False
-    assert any("total 105" in ln for ln in el.lines())
-    el.on_select(0)  # inert — no exception, nothing to submit
-    box["snap"] = _snap(cost_usd=0.02, usage=(200, 9, 209))
-    assert any("total 209" in ln for ln in el.lines())  # live
 
 
-def test_model_chip_without_classes_is_read_only_fallback() -> None:
-    """Tier 2: F5 — the model chip with no configured classes builds the
-    read-only fallback (non-selectable), not a picker."""
-    el = build_status_dropdown_element(
-        "model", snapshot_fn=lambda: _snap(model_classes=[]),
-        on_submit=lambda _t: None,
-    )
-    assert getattr(el, "selectable", True) is False
-    assert any("/model" in ln for ln in el.lines())
+def test_cost_expansion_shows_total_cost_and_token_breakdown() -> None:
+    """Tier 2: cost expansion lines contain a total cost line and a token line."""
+    snap = _snap(cost_usd=0.0123, usage=(200, 9, 209))
+    el = _cost_expansion(snap, lambda _: None)
+    lines = el.lines()
+    joined = " ".join(lines)
+    assert "0.0123" in joined
+    assert "prompt 200" in joined
+    assert "completion 9" in joined
+    assert "total 209" in joined
+
+
+# ---------------------------------------------------------------------------
+# _agent_expansion
+# ---------------------------------------------------------------------------
+
+
+def test_agent_expansion_is_detail_element() -> None:
+    """Tier 2: _agent_expansion returns a read-only DetailElement."""
+    snap = _snap(agent_names=["default"], attached_name="default")
+    el = _agent_expansion(snap, lambda _: None)
+    assert isinstance(el, DetailElement)
+    assert el.selectable is False
+
+
+def test_agent_expansion_marks_attached_agent() -> None:
+    """Tier 2: the attached agent row starts with ▸; others do not."""
+    snap = _snap(agent_names=["default", "researcher"], attached_name="default")
+    el = _agent_expansion(snap, lambda _: None)
+    rows = el.lines()
+    assert any(r.startswith("▸") and "default" in r for r in rows)
+    assert any("researcher" in r and not r.startswith("▸") for r in rows)
+
+
+def test_agent_expansion_empty_shows_none_message() -> None:
+    """Tier 2: with no agents, the expansion shows a '(none)' line."""
+    snap = _snap(agent_names=[], attached_name=None)
+    el = _agent_expansion(snap, lambda _: None)
+    rows = el.lines()
+    assert any("none" in r for r in rows)
+
+
+# ---------------------------------------------------------------------------
+# _task_expansion
+# ---------------------------------------------------------------------------
+
+
+def test_task_expansion_is_detail_element() -> None:
+    """Tier 2: _task_expansion returns a read-only DetailElement."""
+    snap = _snap(task_count=2)
+    el = _task_expansion(snap, lambda _: None)
+    assert isinstance(el, DetailElement)
+    assert el.selectable is False
+
+
+def test_task_expansion_shows_count_and_pluralises() -> None:
+    """Tier 2: task expansion line includes the count; plural for N≠1."""
+    snap_1 = _snap(task_count=1)
+    el_1 = _task_expansion(snap_1, lambda _: None)
+    assert "1 active task" in " ".join(el_1.lines())
+    # plural
+    snap_3 = _snap(task_count=3)
+    el_3 = _task_expansion(snap_3, lambda _: None)
+    assert "tasks" in " ".join(el_3.lines())
