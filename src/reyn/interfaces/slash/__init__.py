@@ -160,6 +160,25 @@ def suggest_for_unknown(cmd: str, *, names: list[str] | None = None) -> list[str
     return out
 
 
+def slash_command_completions(
+    prefix: str, *, commands: "list[SlashCommand] | None" = None
+) -> list[tuple[str, str]]:
+    """``(name, summary)`` pairs for the inline ``/`` autocomplete.
+
+    Returns non-hidden commands whose name starts with ``prefix`` (the text typed
+    after the leading ``/``), sorted by name. Hidden commands (donut / matrix /
+    zen) are still dispatchable by name but never surface in the completion menu.
+    Pure (no I/O) so it's directly testable.
+    """
+    cmds = commands if commands is not None else REGISTRY.all_commands()
+    out = [
+        (c.name, c.summary)
+        for c in cmds
+        if not c.hidden and c.name.startswith(prefix)
+    ]
+    return sorted(out)
+
+
 # ── decorator ──────────────────────────────────────────────────────────────
 
 
