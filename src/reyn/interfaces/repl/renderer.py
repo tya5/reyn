@@ -375,13 +375,18 @@ def _gutter_grid(gutter: str, gutter_style: str, body, *, row_style: str = "",
     that wraps back to column 0. ``row_style`` paints a background behind the whole
     line; ``expand`` stretches the body column to the full width so that background
     fills the line edge-to-edge (the user-input block).
+
+    The body column sets ``overflow="fold"`` so a long unbreakable token (a path,
+    identifier, hash, URL) folds onto the next line instead of being truncated at
+    the right edge with an ellipsis — rich Table columns default to
+    ``overflow="ellipsis"``, which would crop such tokens.
     """
     from rich.table import Table
     from rich.text import Text
     g = Text(gutter, style=gutter_style)
     grid = Table.grid(padding=0, expand=expand)
     grid.add_column(width=g.cell_len, no_wrap=True)
-    grid.add_column(ratio=1 if expand else None)
+    grid.add_column(ratio=1 if expand else None, overflow="fold")
     grid.add_row(g, body, style=row_style or None)
     return grid
 
