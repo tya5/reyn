@@ -206,12 +206,51 @@ def _task_expansion(snap, dispatch):
     return DetailElement(lambda: rows)
 
 
+def _more_expansion(snap, dispatch):
+    """Read-only overflow panel: cron jobs / mcp servers / hooks from config.
+
+    Renders a sectioned listing — one header per category (always shown, even
+    when the section is empty) with indented item rows. No actions, no dispatch
+    calls — purely informational. Toggles are a separate OS-lane design (#2285).
+    """
+    cron_jobs = snap.get("cron_jobs") or []
+    mcp_servers = snap.get("mcp_servers") or []
+    hooks = snap.get("hooks") or []
+
+    lines: list[str] = []
+
+    lines.append(f"cron  ({len(cron_jobs)})")
+    if cron_jobs:
+        for j in cron_jobs:
+            marker = "on" if j["enabled"] else "off"
+            lines.append(f"  [{marker}] {j['name']}  {j['schedule']}")
+    else:
+        lines.append("  (none)")
+
+    lines.append(f"mcp  ({len(mcp_servers)})")
+    if mcp_servers:
+        for s in mcp_servers:
+            lines.append(f"  {s['name']}")
+    else:
+        lines.append("  (none)")
+
+    lines.append(f"hooks  ({len(hooks)})")
+    if hooks:
+        for h in hooks:
+            lines.append(f"  {h['label']}")
+    else:
+        lines.append("  (none)")
+
+    captured = lines[:]
+    return DetailElement(lambda: captured)
+
+
 _CHIP_SPECS = [
     ChipSpec("model", "model", lambda s: str(s["model"]), _model_expansion),
     ChipSpec("cost",  "cost",  lambda s: f"${s['cost_usd']:.4f}", _cost_expansion),
     ChipSpec("agent", "agent", lambda s: str(s["attached_name"] or "—"), _agent_expansion),
     ChipSpec("task",  "task",  lambda s: str(s.get("task_count", 0)), _task_expansion),
-    ChipSpec("more",  "",      lambda s: "…", None),   # overflow submenu — Phase 5
+    ChipSpec("more",  "",      lambda s: "…", _more_expansion),   # overflow submenu — Phase 5a
 ]
 
 
@@ -231,7 +270,71 @@ def working_line(thinking: bool, think_start: float, now: float) -> list:
     ]
 
 
-def _snapshot(registry, task_cache=None):
+def _extract_cron_jobs(config) -> list[dict]:
+    """Extract cron job dicts from config. Returns [] on any missing/malformed section."""
+    cron = getattr(config, "cron", None)
+    jobs = getattr(cron, "jobs", None) if cron is not None else None
+    if not jobs:
+        return []
+    result = []
+    for j in jobs:
+        try:
+            result.append({
+                "name": j.name,
+                "schedule": j.schedule,
+                "enabled": bool(j.enabled),
+            })
+        except Exception:  # noqa: BLE001
+            pass
+    return result
+
+
+def _extract_mcp_servers(config) -> list[dict]:
+    """Extract mcp server name dicts from config. Returns [] on any missing/malformed section."""
+    mcp = getattr(config, "mcp", None)
+    if mcp is None:
+        return []
+    # mcp may be a dict with a "servers" sub-key, or a flat {name: cfg} dict.
+    if isinstance(mcp, dict):
+        servers = mcp.get("servers", None)
+        if isinstance(servers, dict):
+            source = servers
+        else:
+            # Flat dict — values should be dicts (server configs).
+            source = {k: v for k, v in mcp.items() if isinstance(v, dict)}
+    else:
+        return []
+    return [{"name": name} for name in source]
+
+
+def _extract_hooks(config) -> list[dict]:
+    """Extract hook label dicts from config. Returns [] on any missing/malformed section."""
+    hooks_raw = getattr(config, "hooks", None)
+    if not hooks_raw:
+        return []
+    result = []
+    _HOOK_EVENT_KEYS = frozenset({
+        "event", "hook", "on", "trigger", "type", "name", "hook_point",
+    })
+    for i, entry in enumerate(hooks_raw):
+        try:
+            if isinstance(entry, dict):
+                # Best-effort label: prefer a hook-point/event-ish key.
+                label_key = next(
+                    (k for k in _HOOK_EVENT_KEYS if k in entry), None
+                )
+                if label_key is None:
+                    label_key = next(iter(entry), None)
+                label = str(entry[label_key])[:40] if label_key else f"hook {i}"
+            else:
+                label = str(entry)[:40]
+        except Exception:  # noqa: BLE001
+            label = f"hook {i}"
+        result.append({"label": label})
+    return result
+
+
+def _snapshot(registry, task_cache=None, config=None):
     """Read live status values off the attached session via sync accessors."""
     s = registry.attached_session()
     if s is None:
@@ -267,14 +370,22 @@ def _snapshot(registry, task_cache=None):
         "cost_agent": cost_agent,
         "task_count": task_cache["count"] if task_cache else 0,
         "task_tree": task_cache["tree"] if task_cache else [],
+        "cron_jobs": _extract_cron_jobs(config) if config is not None else [],
+        "mcp_servers": _extract_mcp_servers(config) if config is not None else [],
+        "hooks": _extract_hooks(config) if config is not None else [],
     }
 
 
-async def run_inline_input(registry, renderer) -> None:
+async def run_inline_input(registry, renderer, config=None) -> None:
     """Run the interactive inline input Application until the user quits.
 
     Returns on quit (Ctrl-C/D/Q or /quit /exit) so run_repl can tear down (cost
     summary) via its FIRST_COMPLETED wait.
+
+    ``config`` is the loaded ReynConfig (or None), threaded read-only into
+    ``_snapshot`` so the ``…`` overflow chip can list cron jobs / mcp servers /
+    hooks. When None (--cui / non-inline path) the overflow panel shows empty
+    sections — backward-compatible.
     """
     attached = registry.attached_session()
     history = FileHistory(str(attached.workspace_dir / ".input_history"))
@@ -328,7 +439,7 @@ async def run_inline_input(registry, renderer) -> None:
     inputrow = VSplit([prompt_sym, input_win])
 
     def status_fragments() -> list:
-        snap = _snapshot(registry, task_cache)
+        snap = _snapshot(registry, task_cache, config)
         if snap is None:
             return [(f"fg:{_CC_DIM}", " /quit to exit · ↑ history")]
         focused = get_app().layout.has_focus(status_win)
@@ -469,7 +580,7 @@ async def run_inline_input(registry, renderer) -> None:
         spec = _CHIP_SPECS[menu["sel"]]
         menu_region.clear()
         if spec.expansion is not None:
-            el = spec.expansion(_snapshot(registry, task_cache), _menu_submit)
+            el = spec.expansion(_snapshot(registry, task_cache, config), _menu_submit)
             menu_region.register(el)
         menu["open"] = True
 

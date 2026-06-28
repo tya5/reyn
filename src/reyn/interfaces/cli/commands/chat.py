@@ -540,6 +540,6 @@ def run(args: argparse.Namespace) -> None:
             if _once_result.get("limit_stopped"):
                 sys.exit(2)
             return
-        await run_repl(registry, renderer=renderer)
+        await run_repl(registry, renderer=renderer, config=session_cfg.config)
 
     run_async(_main_chat())
