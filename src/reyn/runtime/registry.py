@@ -1715,10 +1715,12 @@ class AgentRegistry:
         config recovery (mirrors `_emit_topology`): a dedicated config op calls this AFTER
         persisting its `.yaml`, so the registry is reconstructable by WAL replay. The yaml
         on disk is thus a DERIVED projection — `content` here is the recovery truth.
-        No-op without a WAL (the opt-in / test contract)."""
-        if self._state_log is None:
-            return
-        await self._state_log.append("config_changed", path=rel_path, content=content)
+        No-op without a WAL (the opt-in / test contract). Delegates to the shared
+        producer-side seam so every emit site uses one format (#2248 PR-A2)."""
+        from reyn.core.events.config_recovery import (  # noqa: PLC0415
+            record_config_change as _emit,
+        )
+        await _emit(self._state_log, rel_path, content)
 
     def _config_lifecycle(self) -> "dict[str, list[tuple[int, dict]]]":
         """#2248 PR-A: one WAL scan → per config relative-path, its ordered

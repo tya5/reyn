@@ -16,6 +16,7 @@ if TYPE_CHECKING:
 
     from reyn.config import MultimodalConfig, SandboxConfig, WebConfig
     from reyn.core.events.events import EventLog
+    from reyn.core.events.state_log import StateLog
     from reyn.data.workspace.media_store import MediaStore
     from reyn.data.workspace.workspace import Workspace
     from reyn.llm.model_resolver import ModelResolver
@@ -106,6 +107,13 @@ class OpContext:
     # run scope. None when the OpContext is created outside a run scope
     # (e.g. chat router, CLI commands).
     run_id: str | None = None
+
+    # #2248 PR-A2: the process-shared WAL, threaded so a recovery-core config op
+    # (mcp_install / mcp_drop / index_drop) can emit a ``config_changed`` event after
+    # persisting its `.yaml` — making the yaml a derived projection of the WAL truth.
+    # None outside a persistence-enabled chat/skill context (tests / non-chat) → the op
+    # skips the emit (the opt-in contract, same as the dispatcher's step-event gate).
+    state_log: "StateLog | None" = None
 
     # FP-0022 follow-up: declarative SSL config for web_fetch and MCP registry.
     # Defaults to WebConfig() (= no override, falls through to env-var chain).

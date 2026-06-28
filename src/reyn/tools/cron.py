@@ -180,6 +180,19 @@ def _write_dynamic_cron(path: Path, data: dict) -> None:
     )
 
 
+async def _emit_cron_config_change(ctx: ToolContext, path: Path, data: dict) -> None:
+    """#2248 PR-A2: WAL the FULL post-mutation cron registry so it recovers via
+    replay (the yaml is a derived projection). Keyed by the `.reyn`-relative path;
+    skipped when outside the project `.reyn` or there is no WAL."""
+    from reyn.core.events.config_recovery import (  # noqa: PLC0415
+        record_config_change,
+        reyn_relative_path,
+    )
+    _rel = reyn_relative_path(path)
+    if _rel is not None:
+        await record_config_change(getattr(ctx, "state_log", None), _rel, data)
+
+
 def _jobs_list(data: dict) -> list:
     """Extract the cron.jobs list from a parsed yaml dict, defensive."""
     cron = data.get("cron", {})
@@ -270,7 +283,9 @@ async def _handle_cron_register(
             out_jobs.append(j)
     if not replaced:
         out_jobs.append(new_entry)
-    _write_dynamic_cron(path, _set_jobs_list(data, out_jobs))
+    written = _set_jobs_list(data, out_jobs)
+    _write_dynamic_cron(path, written)
+    await _emit_cron_config_change(ctx, path, written)
 
     # Live update if a scheduler is registered.
     from reyn.runtime.cron import CronJob, get_active_scheduler
@@ -306,7 +321,9 @@ async def _handle_cron_unregister(
     ]
     removed = len(out_jobs) < len(jobs)
     if removed:
-        _write_dynamic_cron(path, _set_jobs_list(data, out_jobs))
+        written = _set_jobs_list(data, out_jobs)
+        _write_dynamic_cron(path, written)
+        await _emit_cron_config_change(ctx, path, written)
 
     from reyn.runtime.cron import get_active_scheduler
     sched = get_active_scheduler()
@@ -397,7 +414,9 @@ async def _set_enabled(
         else:
             out_jobs.append(j)
     if found:
-        _write_dynamic_cron(path, _set_jobs_list(data, out_jobs))
+        written = _set_jobs_list(data, out_jobs)
+        _write_dynamic_cron(path, written)
+        await _emit_cron_config_change(ctx, path, written)
 
     from reyn.runtime.cron import get_active_scheduler
     sched = get_active_scheduler()

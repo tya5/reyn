@@ -96,6 +96,7 @@ async def _handle_drop_source(
             ),
             permission_resolver=ctx.permission_resolver,
             skill_name="drop_source",
+            state_log=getattr(ctx, "state_log", None),  # #2248 PR-A2: config_changed emit
             intervention_bus=None,
             subscribers=getattr(ctx.events, "subscribers", []),
         )

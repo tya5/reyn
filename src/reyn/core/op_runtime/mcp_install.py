@@ -519,6 +519,17 @@ async def handle(
 
     _write_yaml_config(config_path, existing)
 
+    # #2248 PR-A2: WAL the FULL post-state so the mcp registry recovers via replay (the
+    # yaml is a derived projection of this event). Keyed by the `.reyn`-relative path;
+    # skipped when the target is outside the project `.reyn` (operator-owned) or no WAL.
+    from reyn.core.events.config_recovery import (  # noqa: PLC0415
+        record_config_change,
+        reyn_relative_path,
+    )
+    _rel = reyn_relative_path(config_path)
+    if _rel is not None:
+        await record_config_change(getattr(ctx, "state_log", None), _rel, existing)
+
     installed_path = str(config_path)
 
     # ── 6. Emit mcp_server_installed event (P6) ───────────────────────────────

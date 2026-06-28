@@ -556,6 +556,12 @@ class RouterLoopHost(RouterLoopCore, Protocol):
         """EventLog (has .emit(type: str, **data)) for tool dispatch events."""
         ...
 
+    @property
+    def state_log(self) -> Any:
+        """The process-shared WAL (StateLog) or None — #2248 PR-A2: threaded into the
+        ToolContext so a recovery-core config tool emits ``config_changed``."""
+        ...
+
     def list_available_skills(self) -> list[dict]:
         """Each entry: {name, description, routing?, category?}"""
         ...
@@ -2976,6 +2982,7 @@ class RouterLoop:
             # instead of resolver=None (→ literal "standard" → litellm BadRequestError).
             resolver=getattr(self.host, "resolver", None),
             hot_reloader=getattr(self.host, "hot_reloader", None),  # #2073 S3
+            state_log=getattr(self.host, "state_log", None),  # #2248 PR-A2 (config emit)
         )
         return [
             {
@@ -3354,6 +3361,7 @@ class RouterLoop:
                 # #1673: thread the config-aware resolver (see the sibling sites).
                 resolver=getattr(self.host, "resolver", None),
                 hot_reloader=getattr(self.host, "hot_reloader", None),  # #2073 S3
+                state_log=getattr(self.host, "state_log", None),  # #2248 PR-A2 (config emit)
             )
             list_actions_def = get_default_registry().lookup("list_actions")
             if list_actions_def is None:
@@ -3607,6 +3615,7 @@ class RouterLoop:
             # instead of resolver=None (→ literal "standard" → litellm BadRequestError).
             resolver=getattr(self.host, "resolver", None),
             hot_reloader=getattr(self.host, "hot_reloader", None),  # #2073 S3
+            state_log=getattr(self.host, "state_log", None),  # #2248 PR-A2 (config emit)
         )
         result = await invoke_tool(get_default_registry(), name, args, tool_ctx)
         return self._normalise_router_tool_result(name, result)

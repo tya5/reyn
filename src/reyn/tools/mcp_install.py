@@ -124,6 +124,7 @@ async def _handle_mcp_install_op(
             permission_decl=synth_decl,
             permission_resolver=ctx.permission_resolver,
             skill_name="mcp_install",
+            state_log=getattr(ctx, "state_log", None),  # #2248 PR-A2: config_changed emit
         )
 
     return await mcp_install_handle(op=op, ctx=legacy_ctx, caller="control_ir")

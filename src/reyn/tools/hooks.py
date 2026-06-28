@@ -170,6 +170,17 @@ async def _handle_hooks_add(args: Mapping[str, Any], ctx: ToolContext) -> ToolRe
     data["hooks"] = hooks
     _write_hooks(path, data)
 
+    # #2248 PR-A2: WAL the FULL post-mutation hooks registry so it recovers via
+    # replay (the yaml is a derived projection). Keyed by the `.reyn`-relative path;
+    # skipped when outside the project `.reyn` or there is no WAL.
+    from reyn.core.events.config_recovery import (  # noqa: PLC0415
+        record_config_change,
+        reyn_relative_path,
+    )
+    _rel = reyn_relative_path(path)
+    if _rel is not None:
+        await record_config_change(getattr(ctx, "state_log", None), _rel, data)
+
     # Schedule the reload — the HotReloader applies the S2b hooks seam at the turn
     # boundary (1 turn = 1 config snapshot; never mid-turn).
     # Per-session route (#2073 S3): reload THIS calling session's reloader (multi-agent

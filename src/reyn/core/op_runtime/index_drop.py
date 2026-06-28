@@ -73,6 +73,19 @@ async def handle(
     drop_result = await backend.drop(op.source)
     removed_from_manifest = await manifest.remove(op.source)
 
+    # #2248 PR-A2: WAL the FULL post-drop sources registry so it recovers via replay
+    # (the yaml is a derived projection). Keyed by the `.reyn`-relative path; skipped
+    # when outside the project `.reyn` (operator-owned) or there is no WAL.
+    from reyn.core.events.config_recovery import (  # noqa: PLC0415
+        record_config_change,
+        reyn_relative_path,
+    )
+    _rel = reyn_relative_path(manifest.path)
+    if _rel is not None:
+        await record_config_change(
+            getattr(ctx, "state_log", None), _rel, await manifest.snapshot(),
+        )
+
     # Emit P6 event (audit trail)
     ctx.events.emit(
         "index_dropped",
