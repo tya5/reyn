@@ -265,13 +265,13 @@ _SPINNER = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
 # trace ⎿ rows nest one level under the parent body column (2-space indent + ⎿).
 #
 # Glyphs are distinct per kind so the eye separates them; colour is reserved for
-# STATE — default near-white (_CC_TEXT), then amber=needs-you, red=error,
+# STATE — default terminal fg (_CC_TEXT), then amber=needs-you, red=error,
 # green=done, dim=ambient/low — so a coloured glyph always signals something to
 # notice. Distinct glyphs: ⏺ assistant · ❯ you · ▸ tool · ◆ needs-you · ✗ error ·
 # ✓ done · · status · ⎿ detail.
 _KIND_LINE = {
-    "user":         ("❯ ",   _CC_TEXT,   _CC_DIM),   # your input  (white, + bg block)
-    "agent":        ("⏺ ",   _CC_TEXT,   _CC_TEXT),  # normal reply — default white
+    "user":         ("❯ ",   _CC_TEXT,   _CC_DIM),   # your input  (default fg, + bg block)
+    "agent":        ("⏺ ",   _CC_TEXT,   _CC_TEXT),  # normal reply — terminal default fg
     "intervention": ("◆ ",   _CC_WARN,   "bold"),    # needs you   — amber
     "error":        ("✗ ",   _CC_ERR,    _CC_ERR),   # error       — red
     "skill_done":   ("✓ ",   _CC_DONE,   _CC_DIM),   # done        — green glyph, dim body
