@@ -2740,6 +2740,26 @@ class AgentRegistry:
     def loaded_names(self) -> list[str]:
         return list(self._sessions.keys())
 
+    def session_tree(self) -> "list[dict]":
+        """Snapshot of the agent→session tree for the status-bar agent menu.
+
+        A read-only, freshly-built copy (no handle to live registry state): agents in
+        load order, each with its sessions (sids, sorted) and which (agent, sid) is the
+        current attach focus.
+        """
+        out: list[dict] = []
+        for name in self.loaded_names():
+            sids = sorted((self._sessions.get(name) or {}).keys())
+            out.append({
+                "agent": name,
+                "attached": self._attached is not None and self._attached[0] == name,
+                "sessions": [
+                    {"sid": sid, "attached": self._attached == (name, sid)}
+                    for sid in sids
+                ],
+            })
+        return out
+
     def iter_other_agents(self, self_name: str) -> list[dict]:
         """List `{name, role}` for every agent except `self_name`.
 
