@@ -283,7 +283,9 @@ mindmap
 #### Crash Recovery
 | Feature | Description | Documentation |
 |---------|-------------|---------------|
-| WAL state log | `step_started` / `step_completed` / `step_failed` written to `.reyn/state/wal.jsonl` (`StateLog`); fsync'd per append (synchronous durability for recovery). Truncatable after snapshot. **Not** the audit trail — see Event System (P6). | [Skill Resume](concepts/skills/skill-resume.md) |
+| `.reyn/` layout + recovery-core classification | Which `.reyn/` subtrees are recovery-core (`state/` + `config/`) vs persist / audit / cache / outside; the recovery-core write-gate (mutate config via dedicated ops, never raw `file.write`) | [.reyn/ directory layout](reference/runtime/reyn-dir-layout.md) |
+| Config recovery (`config_changed`) | Config registries (`.reyn/config/`: mcp/cron/hooks/index) reconstruct by replaying `config_changed` WAL events emitted by their dedicated ops; the `.yaml` is a derived projection | [.reyn/ directory layout](reference/runtime/reyn-dir-layout.md) |
+| WAL state log | `step_started` / `step_completed` / `step_failed` written to `.reyn/state/wal.jsonl` (`StateLog`); fsync'd per append (off the event loop via the shared DurabilityWorker). Truncatable after snapshot. **Not** the audit trail — see Event System (P6). | [Skill Resume](concepts/skills/skill-resume.md) |
 | Forward-replay resume | `SkillResumeAnalyzer` reconstructs run state from state log | [Skill Resume](concepts/skills/skill-resume.md) |
 | `CommittedStep` memo | Replay recorded op results on resume without re-invoking | [Skill Resume](concepts/skills/skill-resume.md) |
 | World-op bypass | Transient ops (web_search, web_fetch) re-execute fresh on resume | [Skill Resume](concepts/skills/skill-resume.md) |

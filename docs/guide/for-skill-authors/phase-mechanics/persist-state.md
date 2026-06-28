@@ -12,15 +12,11 @@ applies_to: [.reyn/, reyn.yaml]
 ## What lives under `.reyn/`
 
 `.reyn/` is an **opaque runtime-state directory** — treat it as tool-managed, not human-edited.
-
-| Path | Purpose | Default git status |
-|------|---------|--------------------|
-| `.reyn/approvals.yaml` | Saved permission approvals | gitignore |
-| `.reyn/events/` | Per-run event JSONL logs | gitignore |
-| `.reyn/agents/` | Per-agent profiles, chat history, state | gitignore |
-| `.reyn/eval-results/` | Eval results per skill | gitignore |
-| `.reyn/memory/` | Project-scoped memory | depends on the team |
-| `.reyn/state/` | WAL + budget ledger (crash recovery) | gitignore |
+The full per-subtree inventory + classification (recovery-core `state/`+`config/`, persist
+`memory/`+`approvals.yaml`, audit `events/`, derived `cache/`, operator-owned outside) is the
+canonical **[The `.reyn/` directory layout](../../../reference/runtime/reyn-dir-layout.md)** —
+including the **recovery-core write-gate** (mutate config via the dedicated ops, never a raw
+`file.write` to `.reyn/config/` or `.reyn/state/`).
 
 `reyn.yaml` (the project config) is checked in. Personal overrides go in
 `reyn.local.yaml` (gitignored, project root) — not in `.reyn/config.yaml`.
