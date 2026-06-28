@@ -72,6 +72,18 @@ class SnapshotJournal:
         log = self._state_log  # local so the funnel replace doesn't recurse into this call
         return await log.append(kind, session_id=self._session_id, **fields)
 
+    def _wal_append_nowait(self, kind: str, **fields) -> "int | None":
+        """#2259 PR-2b: the NON-BLOCKING WAL-append chokepoint — assigns the seq synchronously +
+        fire-and-forgets the durable write. Same session-tagging funnel as `_wal_append`. Returns
+        the assigned seq (sync), but the caller does NOT depend on it: the paired `save_nowait`
+        reads `state_log.last_assigned_seq` to stamp the snapshot. Pairs with `save_nowait` —
+        called back-to-back with NO await between, so the (WAL, snapshot) enqueue is atomic on the
+        loop (invariant #2). No-op without a WAL."""
+        if self._state_log is None:
+            return None
+        log = self._state_log
+        return log.append_nowait(kind, session_id=self._session_id, **fields)
+
     def set_session_id(self, session_id: str) -> None:
         """FP-0043 Stage 5: set the conversation session id post-construction
         (spawn_session uses this for a spawned session, before its run-loop goes
@@ -422,3 +434,30 @@ class SnapshotJournal:
             await asyncio.to_thread(AgentSnapshot.write_durable, path, data)
 
         await self._state_log.submit_durable(_write)
+
+    def save_nowait(self) -> None:
+        """#2259 PR-2b: persist the snapshot NON-BLOCKING — the fire-and-forget counterpart of
+        `save()`, paired with `_wal_append_nowait`.
+
+        SYNCHRONOUS (no await): (1) stamp `applied_seq` from `state_log.last_assigned_seq` — the
+        seq the PAIRED `_wal_append_nowait` just assigned (read here, with no await between the
+        two enqueues, so it is THIS mutation's WAL seq, never a later one — invariant #2);
+        (2) serialize a CONSISTENT view of the mutable state at this instant (serialize-sync-at-
+        submit, criterion #3); (3) fire-and-forget the durable write through the SAME serial
+        worker, AFTER the WAL append (FIFO → snapshot.applied_seq becomes durable only after its
+        WAL seq — the FIFO lag, criterion #1; a crash mid-pair → recovery replays the WAL entry
+        onto the prior snapshot = consistent prefix, criterion #2).
+
+        No WAL (`state_log is None`: tests / non-chat) → the original synchronous save (the
+        in-memory `applied_seq` is left as the caller set it)."""
+        if self._state_log is None:
+            self._snapshot.save(self._snapshot_path)
+            return
+        self._snapshot.applied_seq = self._state_log.last_assigned_seq
+        data = self._snapshot.serialize()  # sync: consistent state + the stamped applied_seq
+        path = self._snapshot_path
+
+        async def _write() -> None:
+            await asyncio.to_thread(AgentSnapshot.write_durable, path, data)
+
+        self._state_log.submit_durable_nowait(_write)
