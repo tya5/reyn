@@ -244,6 +244,7 @@ async def test_chain_register_emits_wal_event(tmp_path, monkeypatch):
         "chain_id": "chain-reg-001",
     })
 
+    await session._journal.flush()  # #2259 PR-2b: drain async WAL writes
     events = _wal_events(tmp_path)
     register_events = [e for e in events if e.get("kind") == "chain_register"]
 
@@ -324,6 +325,7 @@ async def test_chain_resolve_clears_snapshot_and_emits_resolve(tmp_path, monkeyp
     )
 
     # WAL must have register before resolve (intermediate updates are OK).
+    await session._journal.flush()  # #2259 PR-2b: drain async WAL writes
     events = _wal_events(tmp_path)
     kinds = [e.get("kind") for e in events if e.get("chain_id") == "chain-res-001"]
     assert "chain_register" in kinds, f"chain_register missing from WAL: {kinds}"
@@ -396,6 +398,7 @@ async def test_chain_timeout_fires_upstream_error_and_emits_event(tmp_path, monk
     await asyncio.sleep(0.2)
 
     # WAL must contain chain_register → chain_timeout_fired.
+    await session._journal.flush()  # #2259 PR-2b: drain async WAL writes
     events = _wal_events(tmp_path)
     chain_events = [
         e for e in events if e.get("chain_id") == "chain-timeout-001"
@@ -530,6 +533,7 @@ async def test_inbox_put_consume_emits_wal_events_with_monotonic_seq(tmp_path, m
 
     await _run_one_turn()
 
+    await session._journal.flush()  # #2259 PR-2b: drain async WAL writes
     events = _wal_events(tmp_path)
     put_events = [e for e in events if e.get("kind") == "inbox_put"]
     consume_events = [e for e in events if e.get("kind") == "inbox_consume"]
@@ -584,6 +588,7 @@ async def test_shutdown_signal_bypasses_wal(tmp_path, monkeypatch):
 
     await _run_with_shutdown()
 
+    await session._journal.flush()  # #2259 PR-2b: drain async WAL writes
     events = _wal_events(tmp_path)
     shutdown_put = [
         e for e in events
@@ -823,6 +828,7 @@ async def test_p6_chain_state_changes_emit_events(tmp_path, monkeypatch):
     assert resolved_chain is not None, "resolve must return the chain"
 
     # ── WAL read: verify P6 invariant ─────────────────────────────────────
+    await session._journal.flush()  # #2259 PR-2b: drain async WAL writes
     wal_entries = _wal_events(tmp_path)
     kinds_present = {e["kind"] for e in wal_entries}
     required_kinds = {"inbox_put", "inbox_consume", "chain_register", "chain_resolve"}
