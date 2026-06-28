@@ -53,6 +53,16 @@ def test_chip_specs_has_required_keys_in_order() -> None:
     assert keys == ["model", "cost", "agent", "task", "more"]
 
 
+def test_chips_carry_per_item_value_colours() -> None:
+    """Tier 2: each chip has a value_color (the value renders bold in that colour),
+    and they vary per item so the eye separates the chips (owner: bold + per-item
+    colour). Not asserting exact hex — just that they're set and differ."""
+    by = {s.key: s.value_color for s in _CHIP_SPECS}
+    assert all(by.values())                  # every chip has a colour
+    assert by["model"] != by["agent"]        # per-item variation, not uniform
+    assert by["cost"] != by["task"]
+
+
 def test_model_chip_value_returns_model_name() -> None:
     """Tier 2: the model chip's value() returns the model string."""
     spec = next(s for s in _CHIP_SPECS if s.key == "model")

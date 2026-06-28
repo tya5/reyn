@@ -251,6 +251,7 @@ _CC_DONE = "#7ee787"    # green — completion
 _CC_ERR = "#f97066"     # red — failure
 _CC_WARN = "#e3b341"    # amber — an intervention that needs the user to act
 _CC_ACCENT = "#d97757"  # terracotta — spinner / accents
+_CC_COOL = "#6cb6ff"    # cool blue — a secondary accent (status-bar agent value)
 # Subtle background block behind the user's own submitted line (CC styles the
 # user input differently from agent output — a faint highlighted block).
 _CC_USER_BG = "#2b2f37"
