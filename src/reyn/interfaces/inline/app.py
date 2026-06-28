@@ -164,19 +164,22 @@ def _snapshot(registry):
     if s is None:
         return None
     u = s.total_usage
-    # Cost breakdown (all via public sync accessors): total across loaded agents,
-    # the attached agent, and the attached session.
-    cost_total = 0.0
-    for name in registry.loaded_names():
-        agent_sess = registry.get_session(name)
-        if agent_sess is not None:
-            cost_total += agent_sess.total_cost_usd
-    attached_sess = (
-        registry.get_session(registry.attached_name)
-        if registry.attached_name else None
-    )
+    # Cost breakdown (all via public sync accessors). Sum across ALL sessions
+    # (every sid), not just each agent's "main" — a spawned sub-session accrues
+    # cost too. Nested: session ≤ agent (all the attached agent's sids) ≤ total
+    # (all agents, all sids).
+    def _agent_cost(name: str) -> float:
+        total = 0.0
+        for sid in registry.session_ids(name):
+            sess = registry.get_session(name, sid)
+            if sess is not None:
+                total += sess.total_cost_usd
+        return total
+
+    cost_total = sum(_agent_cost(name) for name in registry.loaded_names())
     cost_agent = (
-        attached_sess.total_cost_usd if attached_sess is not None else s.total_cost_usd
+        _agent_cost(registry.attached_name)
+        if registry.attached_name else s.total_cost_usd
     )
     return {
         "model": s.model,
