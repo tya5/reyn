@@ -595,8 +595,13 @@ def test_workflow_aborted_error_removes_snapshot(tmp_path, monkeypatch):
         skill_registry=registry,
         state_log=state_log,
     )
+    async def _go():
+        try:
+            await rt.run({"type": "in_art", "data": {}})
+        finally:
+            await state_log.flush()  # #2259 PR-2b: drain the async snapshot-delete on abort
     with pytest.raises(WorkflowAbortedError):
-        asyncio.run(rt.run({"type": "in_art", "data": {}}))
+        asyncio.run(_go())
 
     # Snapshot must be removed (WorkflowAbortedError = skill decided to abort,
     # not a transient crash — per ADR-0013 / R-D1).

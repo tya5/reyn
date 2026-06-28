@@ -125,7 +125,9 @@ async def test_skill_discard_completes_with_discarded_status(tmp_path, monkeypat
     )
     assert consumed is True
 
+    await session._journal.flush()  # #2259 PR-2b: drain async WAL writes
     log = StateLog(tmp_path / "state.wal")
+    await session._journal.flush()  # #2259 PR-2b: drain async WAL writes
     events = list(log.iter_from(0))
     discarded = [e for e in events if e["kind"] == "skill_discarded"]
     assert discarded, "expected at least one skill_discarded event"
@@ -155,7 +157,9 @@ async def test_skill_discard_without_force_is_confirmation_only(tmp_path, monkey
     assert consumed is True
 
     # WAL must NOT contain a skill_discarded event yet
+    await session._journal.flush()  # #2259 PR-2b: drain async WAL writes
     log = StateLog(tmp_path / "state.wal")
+    await session._journal.flush()  # #2259 PR-2b: drain async WAL writes
     events = list(log.iter_from(0))
     discarded = [e for e in events if e["kind"] == "skill_discarded"]
     assert discarded == [], (
@@ -232,7 +236,9 @@ async def test_skill_discard_force_flag_order_independent(tmp_path, monkeypatch)
     )
     assert consumed is True
 
+    await session._journal.flush()  # #2259 PR-2b: drain async WAL writes
     log = StateLog(tmp_path / "state.wal")
+    await session._journal.flush()  # #2259 PR-2b: drain async WAL writes
     events = list(log.iter_from(0))
     discarded = [e for e in events if e["kind"] == "skill_discarded"]
     assert discarded, "expected at least one skill_discarded event"
@@ -315,7 +321,9 @@ async def test_skill_discard_drops_interventions(tmp_path, monkeypatch):
     for _ in range(3):
         await asyncio.sleep(0)
 
+    await session._journal.flush()  # #2259 PR-2b: drain async WAL writes
     log = StateLog(tmp_path / "state.wal")
+    await session._journal.flush()  # #2259 PR-2b: drain async WAL writes
     events = list(log.iter_from(0))
     resolved = [e for e in events if e["kind"] == "intervention_resolved"]
     assert any(e["intervention_id"] == iv.id for e in resolved), (
