@@ -196,49 +196,47 @@ class StateLog:
         (off-loop) fsync. Post-append observers fire in the durable-write job, after the fsync
         (best-effort, #1560).
         """
-        seq, entry, kind, fields = self._assign_entry(kind, fields)
-        await self._worker.submit(self._durable_wal_write(entry, kind, fields))
-        return seq
-
-    def append_nowait(self, kind: str, **fields) -> int:
-        """#2259 PR-2b: append NON-BLOCKING — assign the seq synchronously (so `current_seq`
-        is immediately correct) and fire-and-forget the durable WRITE (the relaxed-durability
-        window: the in-memory mutation already happened on the task loop, durability catches up
-        async). Returns the assigned seq (available synchronously — the seq IS sync; only
-        durability is deferred), but the journal mutation does NOT depend on it for correctness:
-        it pairs a synchronous ``save_nowait`` that reads ``last_assigned_seq``. SYNCHRONOUS
-        enqueue, so an (append_nowait, save_nowait) pair with no ``await`` between is atomic on
-        the loop (no concurrent mutation interleaves → the snapshot reads THIS append's seq)."""
-        seq, entry, kind, fields = self._assign_entry(kind, fields)
-        self._worker.submit_nowait(self._durable_wal_write(entry, kind, fields))
-        return seq
-
-    def _assign_entry(self, kind: str, fields: dict):
-        """Synchronously assign the next seq + build the WAL entry (no await — atomic on the
-        loop, so the counter never races + `current_seq` is correct immediately). Shared by the
-        blocking `append` and the non-blocking `append_nowait`."""
         if kind not in WAL_EVENT_KINDS:
             raise ValueError(f"unknown WAL event kind: {kind!r}")
-        self._counter += 1
-        seq = self._counter
-        self._last_assigned_seq = seq
-        entry = {"seq": seq, "ts": datetime.now().isoformat(), "kind": kind}
-        entry.update(fields)
-        return seq, entry, kind, fields
+        holder: dict = {}
+        await self._worker.submit(self._wal_write_job(kind, fields, holder))
+        return holder["seq"]
 
-    def _durable_wal_write(self, entry: dict, kind: str, fields: dict):
-        """Build the durable-write task for `entry` (run by the DurabilityWorker, serially —
-        the single serial venue, so no lock). Writes the line, fsyncs OFF the event loop, then
-        advances `_last_durable_seq` — strictly AFTER the fsync, so the watermark never names a
-        non-durable entry. `_inflight_seq` (the one entry mid-fsync — the worker is serial, so
-        only ever one) keeps `iter_from` from exposing it. Post-append observers fire here, after
-        the durable write (so they fire post-fsync for BOTH the blocking + fire-and-forget paths,
-        with the assigned seq)."""
+    def append_nowait(self, kind: str, **fields) -> None:
+        """#2259 PR-2b: append NON-BLOCKING + NO-RETURN. The seq is assigned IN the worker (the
+        WAL job, serial → monotonic = durability order), NEVER on the task loop — so no consumer
+        can key a durable artifact at a not-yet-durable seq (the hole the sync-seq had; the owner
+        caught it). The paired ``save_nowait``'s snapshot job reads ``last_assigned_seq`` (set by
+        the WAL job, which the worker's FIFO runs first). SYNCHRONOUS enqueue, so an
+        (append_nowait, save_nowait) pair with NO ``await`` between is atomic on the loop — no
+        concurrent mutation's WAL job interleaves between the pair → ``snap_N`` reads ``WAL_N``'s
+        seq, never a later one (invariant #2). The hot path NEVER awaits durability (the
+        blocking-invariant: submit-and-proceed)."""
+        if kind not in WAL_EVENT_KINDS:
+            raise ValueError(f"unknown WAL event kind: {kind!r}")
+        self._worker.submit_nowait(self._wal_write_job(kind, fields, None))
+
+    def _wal_write_job(self, kind: str, fields: dict, holder: "dict | None"):
+        """The durable WAL-write job (run by the DurabilityWorker, serially — the single serial
+        venue, so no lock). At drain it ASSIGNS the seq (``++_counter`` — serial, so monotonic =
+        durability order, never racing) and sets ``_last_assigned_seq`` (the paired snapshot job,
+        FIFO-after, reads it to stamp ``applied_seq``); writes the line + fsyncs OFF the loop;
+        then advances ``_last_durable_seq`` strictly AFTER the fsync (the watermark never names a
+        non-durable entry). ``_inflight_seq`` (the one entry mid-fsync — the worker is serial, so
+        only ever one) keeps ``iter_from`` from exposing it. Post-append observers fire after the
+        durable write. A blocking ``append`` passes a per-call ``holder`` to receive the seq."""
         async def _task() -> None:
+            self._counter += 1
+            seq = self._counter
+            self._last_assigned_seq = seq
+            if holder is not None:
+                holder["seq"] = seq
+            entry = {"seq": seq, "ts": datetime.now().isoformat(), "kind": kind}
+            entry.update(fields)
             # Mark this entry in-flight BEFORE it appears in the file, so a concurrent
-            # `iter_from` during the fsync skips it (it is written but not yet durable);
-            # cleared only AFTER the fsync, when it is durable + readable.
-            self._inflight_seq = entry["seq"]
+            # `iter_from` during the fsync skips it (written but not yet durable); cleared
+            # only AFTER the fsync, when it is durable + readable.
+            self._inflight_seq = seq
             try:
                 payload = json.dumps(entry, ensure_ascii=False) + "\n"
                 # Defensive lead-newline (a prior run may have crashed mid-write so the file
@@ -253,8 +251,8 @@ class StateLog:
                     await asyncio.to_thread(os.fsync, f.fileno())
             finally:
                 self._inflight_seq = None
-            self._last_durable_seq = entry["seq"]  # durable now → the watermark advances
-            await self._fire_post_append(kind, entry["seq"], fields)
+            self._last_durable_seq = seq  # durable now → the watermark advances
+            await self._fire_post_append(kind, seq, fields)
         return _task
 
     async def submit_durable(self, do_durable_write) -> None:

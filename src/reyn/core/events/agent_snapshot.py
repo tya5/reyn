@@ -135,13 +135,12 @@ class AgentSnapshot:
             ),
         )
 
-    def serialize(self) -> str:
-        """Serialise to a JSON string — SYNCHRONOUS, so it captures a consistent view of the
-        mutable state (inbox / chains / …) at the call instant. #1765 1a-ii splits this from
-        the durable write so an off-loop save snapshots the state here (sync) and only the
-        write+fsync runs off the event loop, with no risk of the state being mutated mid-write.
-        """
-        payload = {
+    def to_payload(self) -> dict:
+        """The serialisable payload dict (references to the live mutable state). ``serialize``
+        json.dumps this immediately (so it is a consistent capture). #2259 PR-2b's ``save_nowait``
+        deep-copies it for a CONSISTENT sync capture and stamps ``applied_seq`` from the
+        worker-assigned WAL seq in the durable job (the seq is not known on the task loop)."""
+        return {
             "version": SNAPSHOT_VERSION,
             "session_id": self.session_id,  # FP-0043 S5 (additive; legacy load → "main")
             "applied_seq": self.applied_seq,
@@ -152,6 +151,19 @@ class AgentSnapshot:
             "buffered_intervention_answers": self.buffered_intervention_answers,
             "next_turn_context": self.next_turn_context,
         }
+
+    def serialize(self) -> str:
+        """Serialise to a JSON string — SYNCHRONOUS, so it captures a consistent view of the
+        mutable state (inbox / chains / …) at the call instant. #1765 1a-ii splits this from
+        the durable write so an off-loop save snapshots the state here (sync) and only the
+        write+fsync runs off the event loop, with no risk of the state being mutated mid-write.
+        """
+        return json.dumps(self.to_payload(), ensure_ascii=False, indent=2)
+
+    @staticmethod
+    def serialize_payload(payload: dict) -> str:
+        """Serialise a pre-captured payload dict (#2259 PR-2b: ``save_nowait`` stamps the
+        worker-assigned ``applied_seq`` into a deep-copied payload, then serialises here)."""
         return json.dumps(payload, ensure_ascii=False, indent=2)
 
     @staticmethod

@@ -6,6 +6,7 @@ All WAL-recorded mutations go through here; in-memory readers go via the
 from __future__ import annotations
 
 import asyncio
+import copy
 import uuid
 from pathlib import Path
 
@@ -439,25 +440,31 @@ class SnapshotJournal:
         """#2259 PR-2b: persist the snapshot NON-BLOCKING — the fire-and-forget counterpart of
         `save()`, paired with `_wal_append_nowait`.
 
-        SYNCHRONOUS (no await): (1) stamp `applied_seq` from `state_log.last_assigned_seq` — the
-        seq the PAIRED `_wal_append_nowait` just assigned (read here, with no await between the
-        two enqueues, so it is THIS mutation's WAL seq, never a later one — invariant #2);
-        (2) serialize a CONSISTENT view of the mutable state at this instant (serialize-sync-at-
-        submit, criterion #3); (3) fire-and-forget the durable write through the SAME serial
-        worker, AFTER the WAL append (FIFO → snapshot.applied_seq becomes durable only after its
-        WAL seq — the FIFO lag, criterion #1; a crash mid-pair → recovery replays the WAL entry
-        onto the prior snapshot = consistent prefix, criterion #2).
+        (1) DEEP-COPY the payload SYNCHRONOUSLY (serialize-sync-at-submit, criterion #3 — a
+        consistent view of the mutable state at this instant, immune to a later in-place mutation
+        e.g. `chain["waiting_on"]=…`); (2) in the durable JOB, stamp `applied_seq` from
+        `state_log.last_assigned_seq` — the seq the PAIRED `_wal_append_nowait`'s WAL job assigned
+        IN THE WORKER. The pair was enqueued atomically (the journal mutation calls
+        `_wal_append_nowait` then `save_nowait` with NO await between), so the worker's FIFO runs
+        WAL_N then snap_N with no other WAL job between → snap_N reads WAL_N's seq, never a later
+        one (invariant #2), and the seq is worker-assigned (a durable WAL seq, never a non-durable
+        sync value — the hole the sync-seq had). (3) fire-and-forget through the SAME serial worker
+        AFTER the WAL append (FIFO lag → applied_seq ≤ durable-WAL-seq, criterion #1; a crash
+        mid-pair → recovery replays the WAL entry onto the prior snapshot = consistent prefix,
+        criterion #2). The hot path NEVER awaits durability (the blocking-invariant).
 
-        No WAL (`state_log is None`: tests / non-chat) → the original synchronous save (the
-        in-memory `applied_seq` is left as the caller set it)."""
+        No WAL (`state_log is None`: tests / non-chat) → the original synchronous save."""
         if self._state_log is None:
             self._snapshot.save(self._snapshot_path)
             return
-        self._snapshot.applied_seq = self._state_log.last_assigned_seq
-        data = self._snapshot.serialize()  # sync: consistent state + the stamped applied_seq
+        payload = copy.deepcopy(self._snapshot.to_payload())  # sync consistent capture
         path = self._snapshot_path
+        log = self._state_log
 
         async def _write() -> None:
-            await asyncio.to_thread(AgentSnapshot.write_durable, path, data)
+            payload["applied_seq"] = log.last_assigned_seq  # worker-assigned seq, read in the job
+            await asyncio.to_thread(
+                AgentSnapshot.write_durable, path, AgentSnapshot.serialize_payload(payload),
+            )
 
-        self._state_log.submit_durable_nowait(_write)
+        log.submit_durable_nowait(_write)
