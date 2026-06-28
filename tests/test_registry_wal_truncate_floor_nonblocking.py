@@ -212,10 +212,12 @@ def test_truncate_wal_if_eligible_uses_in_memory_floor(tmp_path):
     async def go():
         for i in range(1, 12):  # seqs 1..11
             await registry.state_log.append("inbox_put", target=f"a{i}", payload={})
-        return await registry.truncate_wal_if_eligible()
+        triggered = await registry.truncate_wal_if_eligible()
+        await registry.state_log.flush()  # #2259 PR-2b: truncate is fire-and-forget
+        return triggered, registry.state_log.last_truncate_stats
 
-    stats = asyncio.run(go())
-    assert stats is not None, "truncate must fire when floor > 1"
+    triggered, stats = asyncio.run(go())
+    assert triggered is not None, "truncate must fire when floor > 1"
     # floor = 9 → keep seqs 9..11 (3 entries), drop 1..8 (8 entries)
     assert stats["dropped"] == 8
     assert stats["kept"] == 3

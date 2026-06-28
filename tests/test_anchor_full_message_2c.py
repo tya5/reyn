@@ -88,6 +88,7 @@ async def test_cut_generation_captures_full_message(tmp_path):
     journal.snapshot.applied_seq = seq
 
     await journal.cut_generation(anchor="trunc…", full_message="the full original message")
+    await journal.flush()  # #2259 PR-2b: the cut_generation anchor capture runs in a worker job
     assert anchors.get(seq) == "trunc…"
     assert anchors.get_full(seq) == "the full original message"
 
