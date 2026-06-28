@@ -28,7 +28,7 @@ Everything else is excluded, by one of four reasons:
 | **cache** (derived) | rebuilt after restore | `cache/` (`index/`, `action_index/`, `registry-cache/`, `*_cursor`) |
 | **outside** (operator/user-owned) | not Reyn-managed for time-travel | `reyn.yaml`, `secrets.env`, `oauth_tokens.json`, `capability_profiles/` |
 
-## Canonical layout (post-#2248)
+## Canonical layout
 
 ```
 .reyn/
@@ -61,10 +61,11 @@ Everything else is excluded, by one of four reasons:
 **operator/user-owned** and live under the project root / `.reyn/` but are **outside**
 Reyn's time-travel — they are never captured or reverted.
 
-### Move map (#2248 — clean break, no migration)
+### Move map (clean break, no migration)
 
 The reorg has **no backward-compat shim**: old top-level paths simply stop being
-read/written. Anyone with a pre-#2248 `.reyn/` should know things moved:
+read/written. Anyone with an older `.reyn/` (config files directly under `.reyn/`, caches
+mixed in at the top level) should know things moved:
 
 | Was | Now |
 |---|---|
