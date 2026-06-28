@@ -49,7 +49,7 @@ async def test_real_mcp_drop_emits_config_changed_and_rewind_restores(tmp_path):
     from reyn.core.op_runtime.mcp_drop_server import handle as drop_handle
 
     state_log = StateLog(tmp_path / ".reyn" / "wal.jsonl")
-    mcp_path = tmp_path / ".reyn" / "mcp.yaml"
+    mcp_path = tmp_path / ".reyn" / "config" / "mcp.yaml"
     mcp_path.parent.mkdir(parents=True, exist_ok=True)
     two_servers = {"mcp": {"servers": {
         "filesystem": {"command": "npx", "args": ["-y", "@mcp/fs"]},
@@ -57,7 +57,7 @@ async def test_real_mcp_drop_emits_config_changed_and_rewind_restores(tmp_path):
     }}}
     mcp_path.write_text(yaml.dump(two_servers), encoding="utf-8")
     # the prior install's config_changed (pre-drop state) — the seq we rewind to:
-    await record_config_change(state_log, "mcp.yaml", two_servers)
+    await record_config_change(state_log, "config/mcp.yaml", two_servers)
     cut = state_log.current_seq
 
     resolver = PermissionResolver(
@@ -87,7 +87,7 @@ async def test_real_mcp_drop_emits_config_changed_and_rewind_restores(tmp_path):
 
     # 1) the REAL op emitted config_changed carrying the FULL post-drop registry state.
     [ev] = [e for e in state_log.iter_from(cut + 1) if e.get("kind") == "config_changed"]
-    assert ev["path"] == "mcp.yaml"
+    assert ev["path"] == "config/mcp.yaml"
     assert set(ev["content"]["mcp"]["servers"]) == {"filesystem"}
     assert "brave" not in yaml.safe_load(mcp_path.read_text(encoding="utf-8"))["mcp"]["servers"]
 

@@ -52,7 +52,7 @@ permissions:
     # straight into reyn.api.safe.embed_index (provider-direct embed+index) —
     # no intermediate JSONL file. Source reads go through reyn.api.safe.file;
     # PID identity + liveness through reyn.api.safe.process; embed+index writes
-    # land under .reyn/index/<source>/ (default write zone). No out-of-zone
+    # land under .reyn/cache/index/<source>/ (default write zone). No out-of-zone
     # file.write grant is needed (the old `artifacts` grant is dropped).
     - module: ./chunkers_safe.py
       function: write_chunks_with_lock
@@ -119,7 +119,7 @@ the LLM has decided the chunking strategy.
      splits into chunks per strategy, and **streams** the chunks into
      `reyn.api.safe.embed_index.embed_and_index` — which embeds them provider-direct
      and writes the vectors to `SqliteIndexBackend`
-     (`.reyn/index/<source>/index.db`), then updates `SourceManifest`. No
+     (`.reyn/cache/index/<source>/index.db`), then updates `SourceManifest`. No
      intermediate file (#1303 Stage I folds the old `embed` + `index_write`
      run-ops into this step). Resume = DB-as-checkpoint: already-indexed
      `content_hash`es are skipped before embedding.
@@ -200,7 +200,7 @@ postprocessor does not run — no API calls are made.
 
 ## Concurrent lock (UX gap fix D)
 
-`write_chunks_with_lock` acquires `.reyn/index/<source>/.lock` before
+`write_chunks_with_lock` acquires `.reyn/cache/index/<source>/.lock` before
 processing. Concurrent `index_docs` runs for the same source are rejected
 with a `SourceLockedError` (= clear error message listing the holder PID).
 

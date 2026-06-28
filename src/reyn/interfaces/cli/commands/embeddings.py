@@ -56,11 +56,11 @@ class ClassRow:
 def _resolve_action_index_dir(project_root: Path) -> Path:
     """Return the directory the action index SQLite lives in.
 
-    Mirrors the convention RouterLoop uses: ``<project>/.reyn/action_index/``.
+    Mirrors the convention RouterLoop uses: ``<project>/.reyn/cache/action_index/``.
     The presence of the directory is the source of truth for "has been
     built at least once"; the absence is a clean state.
     """
-    return project_root / ".reyn" / "action_index"
+    return project_root / ".reyn" / "cache" / "action_index"
 
 
 def _resolve_st_cache_dir() -> Path:
@@ -339,7 +339,7 @@ def run_rebuild(args: argparse.Namespace) -> None:
 def run_clear(args: argparse.Namespace) -> None:
     """``reyn embeddings clear`` — wipe action index + sentence-transformers cache.
 
-    Aggressive: removes the entire ``.reyn/action_index/`` directory
+    Aggressive: removes the entire ``.reyn/cache/action_index/`` directory
     AND the sentence-transformers HF model cache resolved per the
     REYN_CACHE_DIR / XDG_CACHE_HOME precedence. Useful for "the cache
     is corrupted" or "I want to switch backends and reclaim disk".
@@ -425,7 +425,7 @@ def register(sub: Any) -> None:
         "clear",
         help="Wipe the action index and the local model cache directory",
         description=(
-            "Remove .reyn/action_index/ AND the sentence-transformers "
+            "Remove .reyn/cache/action_index/ AND the sentence-transformers "
             "model cache directory. Aggressive: useful for cache "
             "corruption or backend swap reclamation."
         ),

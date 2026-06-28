@@ -41,11 +41,11 @@ async def test_config_reconstructs_to_latest_at_or_below_cut(tmp_path):
     re-materialised to that FULL content, NOT the on-disk (post-cut) state. RED if reconcile
     trusted the on-disk yaml as the source of truth, or used the absolute-latest event."""
     reg = _make_registry(tmp_path)
-    await reg.record_config_change("mcp.yaml", {"mcp": {"servers": {"a": {"command": "x"}}}})
+    await reg.record_config_change("config/mcp.yaml", {"mcp": {"servers": {"a": {"command": "x"}}}})
     cut = reg.state_log.current_seq
     # a later mutation (after the cut) — the live on-disk state the op would have written:
-    await reg.record_config_change("mcp.yaml", {"mcp": {"servers": {"a": {}, "b": {}}}})
-    p = tmp_path / ".reyn" / "mcp.yaml"
+    await reg.record_config_change("config/mcp.yaml", {"mcp": {"servers": {"a": {}, "b": {}}}})
+    p = tmp_path / ".reyn" / "config" / "mcp.yaml"
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(yaml.dump({"mcp": {"servers": {"a": {}, "b": {}}}}), encoding="utf-8")
 
@@ -61,8 +61,8 @@ async def test_config_path_first_written_after_cut_is_removed(tmp_path):
     as-of-cut → reconcile removes its yaml. RED if a registry created after a rewind point
     survived a rewind to before it existed."""
     reg = _make_registry(tmp_path)
-    await reg.record_config_change("cron.yaml", {"cron": {"jobs": [{"name": "j"}]}})  # seq 1 > cut 0
-    p = tmp_path / ".reyn" / "cron.yaml"
+    await reg.record_config_change("config/cron.yaml", {"cron": {"jobs": [{"name": "j"}]}})  # seq 1 > cut 0
+    p = tmp_path / ".reyn" / "config" / "cron.yaml"
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(yaml.dump({"cron": {"jobs": [{"name": "j"}]}}), encoding="utf-8")
 
@@ -77,10 +77,10 @@ async def test_record_config_change_emits_durable_wal_event(tmp_path):
     (the recovery truth). RED if the seam didn't WAL the change — config would be invisible to
     replay = a silent recovery gap."""
     reg = _make_registry(tmp_path)
-    await reg.record_config_change("hooks.yaml", {"hooks": [{"on": "turn_start"}]})
+    await reg.record_config_change("config/hooks.yaml", {"hooks": [{"on": "turn_start"}]})
 
     [entry] = [e for e in reg.state_log.iter_from(0) if e.get("kind") == "config_changed"]
-    assert entry["path"] == "hooks.yaml"
+    assert entry["path"] == "config/hooks.yaml"
     assert entry["content"] == {"hooks": [{"on": "turn_start"}]}
 
 

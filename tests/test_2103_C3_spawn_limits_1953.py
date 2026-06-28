@@ -40,7 +40,9 @@ def test_safety_spawn_is_restart_only_not_self_raisable():
     assert "reyn.yaml" not in _HOT_RELOAD_FILES
     assert "reyn.local.yaml" not in _HOT_RELOAD_FILES
     # the hot-reload set is the narrow IN-layer (mcp/cron/hooks) — none carry safety.*
-    assert set(_HOT_RELOAD_FILES) == {"mcp.yaml", "cron.yaml", "hooks.yaml"}
+    assert set(_HOT_RELOAD_FILES) == {
+        "config/mcp.yaml", "config/cron.yaml", "config/hooks.yaml",
+    }
 
 
 def test_config_loader_parses_safety_spawn():

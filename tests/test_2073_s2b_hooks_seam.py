@@ -97,8 +97,8 @@ async def test_boot_layers_startup_and_runtime(tmp_path: Path, monkeypatch) -> N
     .reyn/hooks.yaml runtime hook (active from session start, mirroring .reyn/mcp.yaml).
     Dispatching turn_end fires both (observed via the inbox)."""
     monkeypatch.chdir(tmp_path)
-    (tmp_path / ".reyn").mkdir()
-    (tmp_path / ".reyn" / "hooks.yaml").write_text(_HOOK.format(msg="runtime"), encoding="utf-8")
+    (tmp_path / ".reyn" / "config").mkdir(parents=True)
+    (tmp_path / ".reyn" / "config" / "hooks.yaml").write_text(_HOOK.format(msg="runtime"), encoding="utf-8")
     session = _make_session(
         tmp_path,
         hooks_config=[{"on": "turn_end", "template_push": {"message": "startup", "wake": True}}],
@@ -115,15 +115,15 @@ async def test_reapply_recombines_runtime_preserving_startup(tmp_path: Path, mon
     from reyn.config.loader import load_hot_reload_config
 
     monkeypatch.chdir(tmp_path)
-    (tmp_path / ".reyn").mkdir()
-    (tmp_path / ".reyn" / "hooks.yaml").write_text(_HOOK.format(msg="runtime_v1"), encoding="utf-8")
+    (tmp_path / ".reyn" / "config").mkdir(parents=True)
+    (tmp_path / ".reyn" / "config" / "hooks.yaml").write_text(_HOOK.format(msg="runtime_v1"), encoding="utf-8")
     session = _make_session(
         tmp_path,
         hooks_config=[{"on": "turn_end", "template_push": {"message": "startup", "wake": True}}],
     )
 
     # operator/LLM-op rewrites the runtime layer; reapply at the boundary
-    (tmp_path / ".reyn" / "hooks.yaml").write_text(_HOOK.format(msg="runtime_v2"), encoding="utf-8")
+    (tmp_path / ".reyn" / "config" / "hooks.yaml").write_text(_HOOK.format(msg="runtime_v2"), encoding="utf-8")
     changed = await session._reapply_hooks(load_hot_reload_config(tmp_path))
     assert changed is True
 
@@ -141,14 +141,14 @@ async def test_reapply_handles_runtime_removal(tmp_path: Path, monkeypatch) -> N
     from reyn.config.loader import load_hot_reload_config
 
     monkeypatch.chdir(tmp_path)
-    (tmp_path / ".reyn").mkdir()
-    (tmp_path / ".reyn" / "hooks.yaml").write_text(_HOOK.format(msg="runtime"), encoding="utf-8")
+    (tmp_path / ".reyn" / "config").mkdir(parents=True)
+    (tmp_path / ".reyn" / "config" / "hooks.yaml").write_text(_HOOK.format(msg="runtime"), encoding="utf-8")
     session = _make_session(
         tmp_path,
         hooks_config=[{"on": "turn_end", "template_push": {"message": "startup", "wake": True}}],
     )
 
-    (tmp_path / ".reyn" / "hooks.yaml").write_text("hooks: []\n", encoding="utf-8")  # runtime removed
+    (tmp_path / ".reyn" / "config" / "hooks.yaml").write_text("hooks: []\n", encoding="utf-8")  # runtime removed
     await session._reapply_hooks(load_hot_reload_config(tmp_path))
 
     await session._hook_dispatcher.dispatch("turn_end", {})
@@ -162,9 +162,9 @@ async def test_boot_resilience_malformed_runtime_degrades_to_startup(tmp_path: P
     boot degrades to the reyn.yaml startup hooks only (a loud warning), so the agent
     can't brick its own boot by writing a bad runtime layer."""
     monkeypatch.chdir(tmp_path)
-    (tmp_path / ".reyn").mkdir()
+    (tmp_path / ".reyn" / "config").mkdir(parents=True)
     # malformed: a hook with no scheme (template_push/shell_exec/shell_push) → load_hooks raises
-    (tmp_path / ".reyn" / "hooks.yaml").write_text(
+    (tmp_path / ".reyn" / "config" / "hooks.yaml").write_text(
         "hooks:\n  - on: turn_end\n", encoding="utf-8",
     )
     # construction must NOT raise (the bug was: unguarded boot load_hooks crashes here)

@@ -1128,7 +1128,7 @@ class Session:
                 )
                 self._embedding_model_class = self._action_retrieval.embedding_class
                 self._action_embedding_index = ActionEmbeddingIndex(
-                    persist_dir=Path(".reyn") / "action_index",
+                    persist_dir=Path(".reyn") / "cache" / "action_index",
                 )
             except Exception:
                 # If provider construction fails for any reason (= missing

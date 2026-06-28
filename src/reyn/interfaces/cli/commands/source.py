@@ -216,7 +216,7 @@ async def _cmd_rm_async(args: argparse.Namespace) -> int:
     # #571 collapse arc Phase 5: explicit list axis replaces the
     # former index_drop bool axis. CLI is the operator-trusted entry
     # point; session-approve the canonical manifest path up-front.
-    canonical_manifest = ".reyn/index/sources.yaml"
+    canonical_manifest = ".reyn/config/index/sources.yaml"
     perm_resolver.session_approve_path(
         canonical_manifest, "reyn_source_rm", "file.write",
     )
@@ -284,7 +284,7 @@ def _make_cli_workspace(workspace_root: Path):
     """Build the workspace object that OpContext expects.
 
     The index_drop handler accesses ``workspace.base_dir`` to locate the
-    SQLite backend under ``.reyn/index/<source>/index.db``. We use the real
+    SQLite backend under ``.reyn/cache/index/<source>/index.db``. We use the real
     Workspace class when possible, falling back to a minimal duck-typed
     object for hermetic test environments.
     """

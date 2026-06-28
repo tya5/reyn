@@ -77,12 +77,12 @@ def write_chunks_with_lock(artifact: dict) -> dict:
 
     Receives the artifact after ``extract_and_split`` has placed the ordered
     file list at ``data.chunk_list``. Acquires the source-level lock under
-    ``.reyn/index/<source>/.lock`` (= default-zone write), reads each source
+    ``.reyn/cache/index/<source>/.lock`` (= default-zone write), reads each source
     file's content (= default-zone read, granted by ``preprocessor_executor``
     via CWD), splits into chunks per strategy, and **streams** the chunks
     straight into :func:`reyn.api.safe.embed_index.embed_and_index` — which embeds
     them provider-direct and writes the vectors to
-    ``.reyn/index/<source>/index.db`` (default-zone write) — then releases the
+    ``.reyn/cache/index/<source>/index.db`` (default-zone write) — then releases the
     lock. There is no intermediate ``<cwd>/artifacts/*.jsonl`` file: the old
     ``embed`` + ``index_write`` run-ops are folded into this one step.
 
@@ -123,11 +123,11 @@ def write_chunks_with_lock(artifact: dict) -> dict:
             file_paths.append(fp)
             seen.add(fp)
 
-    # Lock path: ".reyn/index/<source>/.lock" via plain string join (pathlib
+    # Lock path: ".reyn/cache/index/<source>/.lock" via plain string join (pathlib
     # is not on the safe-mode import allowlist). The .reyn/ tree is the
     # default write zone, so no extra skill.md declaration is needed for
     # the lock itself.
-    lock_dir = f".reyn/index/{source}"
+    lock_dir = f".reyn/cache/index/{source}"
     lock_path = f"{lock_dir}/.lock"
 
     _safe_file.mkdir(lock_dir, parents=True, exist_ok=True)

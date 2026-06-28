@@ -82,7 +82,7 @@ _DEFAULT_WRITE_ZONES = (".reyn",)
 # corresponding gate. The narrow exception preserves the broad ``.reyn/``
 # write zone for everything else (= chunkers, cursors, scratch state).
 _CANONICAL_PROTECTED_WRITE_PATHS = (
-    ".reyn/index/sources.yaml",
+    ".reyn/config/index/sources.yaml",
     # #1199 security fix: the persisted approval store. It is written ONLY via
     # the gated approval-decision mechanism (``_persist`` — which also emits the
     # state_change audit signal). Without this carve-out it sits in the broad

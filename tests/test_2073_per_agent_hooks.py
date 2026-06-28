@@ -41,8 +41,8 @@ def _make_session(tmp_path: Path, *, hooks_config=None) -> Session:
 
 
 def _write_runtime(tmp_path: Path, msg: str) -> None:
-    (tmp_path / ".reyn").mkdir(exist_ok=True)
-    (tmp_path / ".reyn" / "hooks.yaml").write_text(_HOOK.format(msg=msg), encoding="utf-8")
+    (tmp_path / ".reyn" / "config").mkdir(parents=True, exist_ok=True)
+    (tmp_path / ".reyn" / "config" / "hooks.yaml").write_text(_HOOK.format(msg=msg), encoding="utf-8")
 
 
 def _write_per_agent(tmp_path: Path, msg: str) -> Path:
@@ -170,8 +170,8 @@ async def test_bad_runtime_keeps_startup_and_per_agent(tmp_path: Path, monkeypat
     on its own)."""
     monkeypatch.chdir(tmp_path)
     # malformed global runtime: a hook with no scheme → load_hooks raises
-    (tmp_path / ".reyn").mkdir()
-    (tmp_path / ".reyn" / "hooks.yaml").write_text("hooks:\n  - on: turn_end\n", encoding="utf-8")
+    (tmp_path / ".reyn" / "config").mkdir(parents=True)
+    (tmp_path / ".reyn" / "config" / "hooks.yaml").write_text("hooks:\n  - on: turn_end\n", encoding="utf-8")
     _write_per_agent(tmp_path, "agent")  # a GOOD per-agent layer
 
     session = _make_session(tmp_path, hooks_config=_STARTUP)  # must NOT raise

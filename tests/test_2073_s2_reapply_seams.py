@@ -53,8 +53,8 @@ async def test_bad_in_set_is_rejected_no_seam_runs(tmp_path: Path) -> None:
     """Tier 2: validate-before-apply rollback — a malformed .reyn/cron.yaml is
     rejected whole: the registered seam is NOT called and no config_reloaded is
     emitted (the live config is unchanged)."""
-    reyn_dir = tmp_path / ".reyn"
-    reyn_dir.mkdir()
+    reyn_dir = tmp_path / ".reyn" / "config"
+    reyn_dir.mkdir(parents=True)
     # valid YAML, structurally bad (a named cron job missing its schedule — survives
     # the loader's job-list merge but fails validate)
     (reyn_dir / "cron.yaml").write_text("cron:\n  jobs:\n    - name: j1\n", encoding="utf-8")

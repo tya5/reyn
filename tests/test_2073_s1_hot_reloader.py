@@ -30,8 +30,8 @@ def test_load_hot_reload_config_reads_only_in_set(tmp_path: Path) -> None:
         "permissions:\n  shell: deny\nbudget:\n  daily_usd: 5\n", encoding="utf-8",
     )
     # IN-set: .reyn/mcp.yaml
-    reyn_dir = tmp_path / ".reyn"
-    reyn_dir.mkdir()
+    reyn_dir = tmp_path / ".reyn" / "config"
+    reyn_dir.mkdir(parents=True)
     (reyn_dir / "mcp.yaml").write_text(
         "mcp:\n  servers:\n    fs:\n      type: stdio\n", encoding="utf-8",
     )
@@ -102,8 +102,8 @@ async def test_idempotent_within_turn(tmp_path: Path) -> None:
 async def test_seams_called_with_in_set_and_isolated(tmp_path: Path) -> None:
     """Tier 2: each registered seam is called with the re-read IN-set; a raising seam
     is isolated (recorded under `failed`, never breaks the apply)."""
-    reyn_dir = tmp_path / ".reyn"
-    reyn_dir.mkdir()
+    reyn_dir = tmp_path / ".reyn" / "config"
+    reyn_dir.mkdir(parents=True)
     (reyn_dir / "mcp.yaml").write_text("mcp:\n  servers: {}\n", encoding="utf-8")
     hr = HotReloader(project_root=tmp_path, events=EventLog())
     seen: dict = {}

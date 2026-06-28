@@ -71,11 +71,11 @@ async def test_index_drop_emits_config_changed_full_sources(tmp_path):
         for e in state_log.iter_from(before + 1)
         if e.get("kind") == "config_changed"
     ]
-    assert ev["path"] == "index/sources.yaml"
+    assert ev["path"] == "config/index/sources.yaml"
     assert set(ev["content"]) == {"docs"}
     assert ev["content"]["docs"]["description"] == "user docs"
     # the yaml is a derived projection of the same content
     on_disk = yaml.safe_load(
-        (tmp_path / ".reyn" / "index" / "sources.yaml").read_text(encoding="utf-8")
+        (tmp_path / ".reyn" / "config" / "index" / "sources.yaml").read_text(encoding="utf-8")
     )
     assert ev["content"] == on_disk

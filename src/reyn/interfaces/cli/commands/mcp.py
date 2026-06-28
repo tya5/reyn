@@ -822,7 +822,7 @@ def _run_install_from_source(
     # #571 collapse arc Phase 5: explicit list axes replace the
     # former mcp_install bool axis. CLI is the operator-trusted entry
     # point, so we session-approve the canonical config path up-front.
-    canonical_config = ".reyn/mcp.yaml"
+    canonical_config = ".reyn/config/mcp.yaml"
     perm_resolver.session_approve_path(
         canonical_config, "mcp_install_source", "file.write",
     )

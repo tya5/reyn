@@ -34,8 +34,8 @@ needs **no** extra wiring:
 
 - **workspace_root** defaults to ``Path.cwd()``. The chunker subprocess runs
   in the workspace, and ``cwd == workspace`` is the established contract — the
-  chunker already writes ``.reyn/index/<source>/.lock`` relative to cwd. All
-  index writes land under ``<cwd>/.reyn/index/`` (the default write zone), so
+  chunker already writes ``.reyn/cache/index/<source>/.lock`` relative to cwd. All
+  index writes land under ``<cwd>/.reyn/cache/index/`` (the default write zone), so
   the safe-mode step needs no out-of-zone declaration.
 - **provider / embedding config** come from ``REYN_EMBEDDING_PROVIDER`` +
   ``load_config().embedding`` (byte-identical to the old embed op).

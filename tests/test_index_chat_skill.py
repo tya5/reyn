@@ -382,7 +382,7 @@ def test_resolve_chat_scan_context_no_files(tmp_path, monkeypatch):
 
 
 def test_resolve_chat_scan_context_reads_cursor(tmp_path, monkeypatch):
-    """Tier 2: resolve_chat_scan_context reads .reyn/index/chat_cursor when present."""
+    """Tier 2: resolve_chat_scan_context reads .reyn/cache/chat_cursor when present."""
     cursor_ts = "2026-06-10T09:00:00Z"
     cursor_path = tmp_path / ".reyn" / "index" / "chat_cursor"
     cursor_path.parent.mkdir(parents=True)
@@ -495,13 +495,13 @@ def test_run_collect_chat_chunks_resume_skips_reembed(tmp_path, monkeypatch):
 
 
 def test_run_advance_chat_cursor_writes_correct_value(tmp_path, monkeypatch):
-    """Tier 2: run_advance_chat_cursor advances .reyn/index/chat_cursor from chat_chunk_stats."""
+    """Tier 2: run_advance_chat_cursor advances .reyn/cache/chat_cursor from chat_chunk_stats."""
     monkeypatch.chdir(str(tmp_path))
     (tmp_path / ".reyn" / "index").mkdir(parents=True)
 
     import reyn.stdlib.skills.index_chat.chunkers as ck
     orig_cursor = ck._CURSOR_FILE
-    ck._CURSOR_FILE = ".reyn/index/chat_cursor"
+    ck._CURSOR_FILE = ".reyn/cache/chat_cursor"
     try:
         artifact = {
             "data": {
@@ -519,7 +519,7 @@ def test_run_advance_chat_cursor_writes_correct_value(tmp_path, monkeypatch):
     assert result["new_cursor"] == "2026-06-15T10:00:00Z"
     assert result["indexed_turns"] == 3
     assert result["sources_updated"] == ["chat"]
-    assert read_chat_cursor(".reyn/index/chat_cursor") == "2026-06-15T10:00:00Z"
+    assert read_chat_cursor(".reyn/cache/chat_cursor") == "2026-06-15T10:00:00Z"
 
 
 def test_run_collect_and_cursor_end_to_end(tmp_path, monkeypatch):

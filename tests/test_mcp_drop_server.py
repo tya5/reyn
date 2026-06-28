@@ -122,7 +122,7 @@ def _phase5_drop_decl(resolver: PermissionResolver, tmp_path: Path) -> Permissio
     Builds an explicit ``file.write`` decl for ``.reyn/mcp.yaml`` and
     session-approves it so ``require_file_write`` passes.
     """
-    canonical = str(tmp_path / ".reyn" / "mcp.yaml")
+    canonical = str(tmp_path / ".reyn" / "config" / "mcp.yaml")
     resolver.session_approve_path(canonical, "test_mcp_drop_server", "file.write")
     return PermissionDecl(file_write=[{"path": canonical, "scope": "just_path"}])
 

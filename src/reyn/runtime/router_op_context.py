@@ -32,9 +32,9 @@ from typing import Any
 # LLM-emitted mcp_install / index_drop / mcp_drop_server ops pass the uniform
 # permission gates without per-op prompts (#571 collapse arc).
 _CANONICAL_WRITE_PATHS = (
-    ".reyn/mcp.yaml",
-    ".reyn/cron.yaml",
-    ".reyn/index/sources.yaml",
+    ".reyn/config/mcp.yaml",
+    ".reyn/config/cron.yaml",
+    ".reyn/config/index/sources.yaml",
 )
 
 

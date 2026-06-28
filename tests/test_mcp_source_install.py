@@ -218,7 +218,7 @@ def _phase5_source_install_decl(resolver: PermissionResolver) -> PermissionDecl:
     secret.write (= #571 Phase 6) covers any isSecret env vars the
     source resolver surfaces.
     """
-    canonical_config = str(resolver._project_root / ".reyn" / "mcp.yaml")
+    canonical_config = str(resolver._project_root / ".reyn" / "config" / "mcp.yaml")
     resolver.session_approve_path(canonical_config, "mcp_install_source_test", "file.write")
     return PermissionDecl(
         file_write=[{"path": canonical_config, "scope": "just_path"}],
@@ -274,7 +274,7 @@ def test_source_npm_skips_registry_and_installs(tmp_path, monkeypatch):
     # Config file written. issue #319: server key is the prefix-stripped
     # short form. issue #318: ``type: stdio`` is present so the loader
     # accepts the entry without manual edit.
-    config_path = tmp_path / ".reyn" / "mcp.yaml"
+    config_path = tmp_path / ".reyn" / "config" / "mcp.yaml"
     assert config_path.exists()
     import yaml
     written = yaml.safe_load(config_path.read_text(encoding="utf-8"))
@@ -307,7 +307,7 @@ def test_source_pypi_skips_registry_and_installs(tmp_path, monkeypatch):
     assert result["runtime"] == "uvx"
 
     import yaml
-    config_path = tmp_path / ".reyn" / "mcp.yaml"
+    config_path = tmp_path / ".reyn" / "config" / "mcp.yaml"
     written = yaml.safe_load(config_path.read_text(encoding="utf-8"))
     servers = written["mcp"]["servers"]
     assert "my-mcp-server" in servers
@@ -333,7 +333,7 @@ def test_source_invalid_specifier_returns_error(tmp_path):
     assert result["status"] == "error"
     assert "Source resolution failed" in result["error"]
     # Config file must NOT have been written
-    config_path = tmp_path / ".reyn" / "mcp.yaml"
+    config_path = tmp_path / ".reyn" / "config" / "mcp.yaml"
     assert not config_path.exists()
 
 
@@ -385,7 +385,7 @@ def test_source_github_known_installs_npm(tmp_path, monkeypatch):
     assert result["runtime"] == "npx"
 
     import yaml
-    config_path = tmp_path / ".reyn" / "mcp.yaml"
+    config_path = tmp_path / ".reyn" / "config" / "mcp.yaml"
     written = yaml.safe_load(config_path.read_text(encoding="utf-8"))
     servers = written["mcp"]["servers"]
     # issue #319: prefix-stripped short key.

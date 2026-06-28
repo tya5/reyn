@@ -45,14 +45,14 @@ async def handle(
     workspace_root = ctx.workspace.base_dir
 
     # Permission gate (#571 collapse arc Phase 5): the skill must
-    # declare ``file.write: [.reyn/index/sources.yaml]``. The
+    # declare ``file.write: [.reyn/config/index/sources.yaml]``. The
     # bool-axis ``require_index_drop`` per-source prompt is removed;
     # per-source granularity is not preserved (= drop is destructive
     # and the per-source distinction was operator-UX rather than
     # security).
     if ctx.permission_resolver is not None:
         sandbox_policy = sandbox_policy_from_ctx(ctx)
-        sources_yaml = workspace_root / ".reyn" / "index" / "sources.yaml"
+        sources_yaml = workspace_root / ".reyn" / "config" / "index" / "sources.yaml"
         await ctx.permission_resolver.require_file_write(
             ctx.permission_decl, str(sources_yaml), ctx.skill_name,
             sandbox_policy=sandbox_policy,
@@ -61,7 +61,7 @@ async def handle(
         # not just the manifest, so the destructive drop respects the phase
         # sandbox write_paths cap (S3.1c-2 ∩). The SQLite/dir removal stays
         # host-direct; the gate fires before backend.drop opens/removes it.
-        source_dir = workspace_root / ".reyn" / "index" / op.source
+        source_dir = workspace_root / ".reyn" / "cache" / "index" / op.source
         await ctx.permission_resolver.require_file_write(
             ctx.permission_decl, str(source_dir), ctx.skill_name,
             sandbox_policy=sandbox_policy,

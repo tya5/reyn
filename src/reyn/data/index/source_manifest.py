@@ -1,6 +1,6 @@
 """SourceManifest singleton + sources.yaml file SSoT (ADR-0033 Phase 1).
 
-Registry of indexed sources. File SSoT under ``<workspace_root>/.reyn/index/sources.yaml``
+Registry of indexed sources. File SSoT under ``<workspace_root>/.reyn/config/index/sources.yaml``
 with a per-process in-memory cache. Singleton per workspace via
 ``get_source_manifest(workspace_root)``.
 """
@@ -115,7 +115,7 @@ class SourceManifest:
 
     def __init__(self, workspace_root: Path) -> None:
         self._workspace_root = workspace_root
-        self._path = workspace_root / ".reyn" / "index" / "sources.yaml"
+        self._path = workspace_root / ".reyn" / "config" / "index" / "sources.yaml"
         self._cache: dict[str, SourceEntry] | None = None
         self._loaded_mtime: float | None = None
         self._lock = asyncio.Lock()  # async safety for concurrent updates
@@ -291,11 +291,11 @@ class SourceManifest:
     async def acquire_source_lock(self, name: str) -> AsyncIterator[None]:
         """Async context manager for source-level advisory lock (UX gap fix D).
 
-        Writes a marker file at ``.reyn/index/<name>/.lock`` with PID + timestamp.
+        Writes a marker file at ``.reyn/cache/index/<name>/.lock`` with PID + timestamp.
         Raises ``SourceLockedError`` if the source is currently being indexed by
         a live process.  Stale locks (dead PID) are reaped automatically.
         """
-        lock_path = self._workspace_root / ".reyn" / "index" / name / ".lock"
+        lock_path = self._workspace_root / ".reyn" / "cache" / "index" / name / ".lock"
         lock_path.parent.mkdir(parents=True, exist_ok=True)
 
         # Check if an existing lock is held by a live process

@@ -64,7 +64,7 @@ async def test_hooks_add_writes_in_set_only_not_reyn_yaml(tmp_path: Path) -> Non
     result = await _handle_hooks_add({"on": "turn_end", "message": "hi"}, _ctx(tmp_path))
 
     assert result["status"] == "ok"
-    assert (tmp_path / ".reyn" / "hooks.yaml").exists()           # IN-set written
+    assert (tmp_path / ".reyn" / "config" / "hooks.yaml").exists()           # IN-set written
     assert (tmp_path / "reyn.yaml").read_text() == out_before     # OUT-set untouched
 
 
@@ -105,7 +105,7 @@ async def test_hooks_add_rejects_invalid_hook_no_write(tmp_path: Path) -> None:
     error and writes nothing."""
     result = await _handle_hooks_add({"on": "not_a_point", "message": "hi"}, _ctx(tmp_path))
     assert result["status"] == "error"
-    assert not (tmp_path / ".reyn" / "hooks.yaml").exists()
+    assert not (tmp_path / ".reyn" / "config" / "hooks.yaml").exists()
 
 
 @pytest.mark.asyncio
@@ -116,7 +116,7 @@ async def test_hooks_add_dedups_idempotent(tmp_path: Path) -> None:
     again = await _handle_hooks_add({"on": "turn_end", "message": "hi"}, _ctx(tmp_path))
     assert again["added"] is False
     import yaml
-    data = yaml.safe_load((tmp_path / ".reyn" / "hooks.yaml").read_text())
+    data = yaml.safe_load((tmp_path / ".reyn" / "config" / "hooks.yaml").read_text())
     assert [h.get("on", h.get(True)) for h in data["hooks"]] == ["turn_end"]  # single entry
 
 

@@ -39,7 +39,7 @@ def test_load_config_reads_dynamic_mcp_yaml(tmp_path, monkeypatch):
     # Plant a reyn.yaml so _find_project_root finds tmp_path.
     _write_yaml(tmp_path / "reyn.yaml", "model: standard\n")
     _write_yaml(
-        tmp_path / ".reyn" / "mcp.yaml",
+        tmp_path / ".reyn" / "config" / "mcp.yaml",
         "mcp:\n  servers:\n    sqlite:\n      type: stdio\n      command: npx\n",
     )
 
@@ -67,7 +67,7 @@ def test_load_config_dynamic_mcp_yaml_overrides_reyn_yaml(tmp_path, monkeypatch)
         "mcp:\n  servers:\n    git:\n      type: stdio\n      command: old-cmd\n",
     )
     _write_yaml(
-        tmp_path / ".reyn" / "mcp.yaml",
+        tmp_path / ".reyn" / "config" / "mcp.yaml",
         "mcp:\n  servers:\n    git:\n      type: stdio\n      command: new-cmd\n",
     )
 
@@ -93,7 +93,7 @@ def test_load_config_dynamic_mcp_yaml_and_reyn_yaml_servers_union(
         "mcp:\n  servers:\n    legacy:\n      type: stdio\n      command: legacy-cmd\n",
     )
     _write_yaml(
-        tmp_path / ".reyn" / "mcp.yaml",
+        tmp_path / ".reyn" / "config" / "mcp.yaml",
         "mcp:\n  servers:\n    fresh:\n      type: stdio\n      command: fresh-cmd\n",
     )
 
@@ -139,7 +139,7 @@ def test_mcp_install_scope_to_path_returns_dot_reyn_mcp_yaml(tmp_path):
 
     for scope in ("local", "project", "user", ""):
         result = _scope_to_path(scope, tmp_path)
-        assert result == tmp_path / ".reyn" / "mcp.yaml", (
+        assert result == tmp_path / ".reyn" / "config" / "mcp.yaml", (
             f"scope={scope!r} should resolve to .reyn/mcp.yaml, "
             f"got {result}"
         )
@@ -160,7 +160,7 @@ def test_mcp_drop_detects_dynamic_scope_first(tmp_path):
         "mcp:\n  servers:\n    git:\n      type: stdio\n      command: old\n",
     )
     _write_yaml(
-        tmp_path / ".reyn" / "mcp.yaml",
+        tmp_path / ".reyn" / "config" / "mcp.yaml",
         "mcp:\n  servers:\n    git:\n      type: stdio\n      command: new\n",
     )
 
@@ -199,7 +199,7 @@ def test_mcp_drop_scope_to_path_dynamic_returns_dot_reyn_mcp_yaml(tmp_path):
     """
     from reyn.core.op_runtime.mcp_drop_server import _scope_to_path
 
-    assert _scope_to_path("dynamic", tmp_path) == tmp_path / ".reyn" / "mcp.yaml"
+    assert _scope_to_path("dynamic", tmp_path) == tmp_path / ".reyn" / "config" / "mcp.yaml"
 
 
 def test_mcp_drop_legacy_scopes_unchanged(tmp_path):

@@ -215,7 +215,7 @@ def test_load_config_reads_dynamic_cron_yaml(tmp_path, monkeypatch):
 
     _write_yaml(tmp_path / "reyn.yaml", "model: standard\n")
     _write_yaml(
-        tmp_path / ".reyn" / "cron.yaml",
+        tmp_path / ".reyn" / "config" / "cron.yaml",
         "cron:\n  jobs:\n"
         "    - name: dynamic_job\n      to: my_agent\n      message: hi\n"
         "      schedule: '0 9 * * *'\n",
@@ -244,7 +244,7 @@ def test_load_config_unions_legacy_and_dynamic_cron_jobs(tmp_path, monkeypatch):
         "      schedule: '0 * * * *'\n",
     )
     _write_yaml(
-        tmp_path / ".reyn" / "cron.yaml",
+        tmp_path / ".reyn" / "config" / "cron.yaml",
         "cron:\n  jobs:\n"
         "    - name: dynamic_job\n      to: my_agent\n      message: hi\n"
         "      schedule: '0 9 * * *'\n",
@@ -274,7 +274,7 @@ def test_load_config_dynamic_cron_yaml_overrides_legacy_on_name_collision(
         "      schedule: '0 * * * *'\n",
     )
     _write_yaml(
-        tmp_path / ".reyn" / "cron.yaml",
+        tmp_path / ".reyn" / "config" / "cron.yaml",
         "cron:\n  jobs:\n"
         "    - name: shared\n      to: new_agent\n      message: replaced\n"
         "      schedule: '0 9 * * *'\n",

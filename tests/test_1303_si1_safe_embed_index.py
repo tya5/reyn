@@ -179,7 +179,7 @@ async def test_workspace_defaults_to_cwd(tmp_path: Path, monkeypatch) -> None:
     ei._set_context(provider_name="counting_fake")  # provider only, ws=cwd
     monkeypatch.chdir(tmp_path)
     await ei.embed_and_index_async([_chunk("cwd chunk", 0)], source="d", model="standard")
-    assert (tmp_path / ".reyn" / "index" / "d" / "index.db").exists()
+    assert (tmp_path / ".reyn" / "cache" / "index" / "d" / "index.db").exists()
 
 
 @pytest.mark.asyncio
@@ -192,5 +192,5 @@ async def test_set_context_overrides_cwd(tmp_path: Path, monkeypatch) -> None:
     ei._set_context(workspace_root=other, provider_name="counting_fake")
     monkeypatch.chdir(tmp_path)
     await ei.embed_and_index_async([_chunk("override chunk", 0)], source="d", model="standard")
-    assert (other / ".reyn" / "index" / "d" / "index.db").exists()
-    assert not (tmp_path / ".reyn" / "index" / "d" / "index.db").exists()
+    assert (other / ".reyn" / "cache" / "index" / "d" / "index.db").exists()
+    assert not (tmp_path / ".reyn" / "cache" / "index" / "d" / "index.db").exists()

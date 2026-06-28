@@ -152,7 +152,7 @@ def _migrate_mcp(*, dry_run: bool = False) -> None:
         project_root / "reyn.local.yaml",
         Path.home() / ".reyn" / "config.yaml",
     ]
-    dynamic_path = project_root / ".reyn" / "mcp.yaml"
+    dynamic_path = project_root / ".reyn" / "config" / "mcp.yaml"
 
     def _read(p: Path) -> dict:
         if not p.exists():
@@ -207,9 +207,9 @@ def _migrate_mcp(*, dry_run: bool = False) -> None:
             src_label = str(src)
         moved = sorted(src_servers.keys())
         print(f"  from {src_label}: {len(moved)} server(s) → {', '.join(moved)}")
-    print("  → into .reyn/mcp.yaml (existing entries preserved)")
+    print("  → into .reyn/config/mcp.yaml (existing entries preserved)")
     print(
-        f"  total servers in .reyn/mcp.yaml after migration: "
+        f"  total servers in .reyn/config/mcp.yaml after migration: "
         f"{len(merged_dynamic)}"
     )
 

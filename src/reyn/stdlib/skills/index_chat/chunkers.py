@@ -15,7 +15,7 @@ Postprocessor entry points (called by the skill harness with artifact dict):
 
 Design note: the chat-turn chunker logic was first written in
 `index_events/chunkers.py` (#1821 improvement-1).  index_chat is a *separate
-skill* with its own dedicated cursor (``.reyn/index/chat_cursor``) and its own
+skill* with its own dedicated cursor (``.reyn/cache/chat_cursor``) and its own
 ``"chat"`` RAG source.  The chunker code here is intentionally self-contained
 because skill .py modules are loaded via spec_from_file_location (not as Python
 packages) and cannot import across skill boundaries.
@@ -45,7 +45,7 @@ from reyn.api.safe import file as _safe_file
 _EPOCH_ISO = "1970-01-01T00:00:00Z"
 
 #: Cursor file for the chat index (separate from events_cursor).
-_CURSOR_FILE = ".reyn/index/chat_cursor"
+_CURSOR_FILE = ".reyn/cache/chat_cursor"
 
 #: Root for chat event JSONL files (relative to workspace; patchable in tests).
 _CHAT_EVENTS_DIR = ".reyn/events/agents"
@@ -293,7 +293,7 @@ def run_collect_chat_chunks(artifact: dict) -> dict:
 
 
 def run_advance_chat_cursor(artifact: dict) -> dict:
-    """Postprocessor python step: advance .reyn/index/chat_cursor.
+    """Postprocessor python step: advance .reyn/cache/chat_cursor.
 
     Reads the max turn timestamp from ``data.chat_chunk_stats`` (computed
     inline by run_collect_chat_chunks while streaming), then calls

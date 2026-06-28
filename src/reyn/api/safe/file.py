@@ -99,7 +99,7 @@ _context_initialised: bool = False
 # modules because this one runs in the python-harness subprocess where
 # importing the parent's permissions module is not always available.
 _CANONICAL_PROTECTED_WRITE_PATHS = (
-    ".reyn/index/sources.yaml",
+    ".reyn/config/index/sources.yaml",
     ".reyn/approvals.yaml",
 )
 

@@ -1,13 +1,13 @@
 """Hooks ToolDefinitions — #2073 S3 (the LLM-op self-reload trigger).
 
 ``hooks_add`` — the agent adds a push hook at an agent-lifecycle point, written to
-the RUNTIME hooks layer (``.reyn/hooks.yaml``) and applied at the next turn boundary
+the RUNTIME hooks layer (``.reyn/config/hooks.yaml``) and applied at the next turn boundary
 via the S2b hooks reapply seam. The crown-jewel of config hot-reload: the agent
 expands its own hooks (autonomous capability-expansion), bounded by the safety
 trifecta + the existing hook safeguards:
 
 - **Write-gate by construction**: the tool writes ONLY the hardcoded
-  ``.reyn/hooks.yaml`` (the IN-set runtime layer). It takes the hook CONTENT, never a
+  ``.reyn/config/hooks.yaml`` (the IN-set runtime layer). It takes the hook CONTENT, never a
   path, so it is *structurally impossible* to aim at ``reyn.yaml`` (the restart-only
   OUT-set: security / budget / the loop valve).
 - **validate-before-apply** (S2b) rejects a malformed reload; **boot-resilience**
@@ -33,7 +33,7 @@ _HOOK_POINTS = [
 _HOOKS_ADD_DESCRIPTION = (
     "Add a push hook at an agent-lifecycle point (e.g. a turn_end self-continuation, "
     "or a context-inject). The hook is written to your runtime hooks layer "
-    "(.reyn/hooks.yaml) and applied at the next turn boundary — it joins your existing "
+    "(.reyn/config/hooks.yaml) and applied at the next turn boundary — it joins your existing "
     "hooks additively. Use for self-directed continuation or recurring injected "
     "context. Cannot touch startup config (reyn.yaml is restart-only)."
 )
@@ -70,16 +70,16 @@ _HOOKS_ADD_PARAMETERS: dict[str, Any] = {
 }
 
 
-# ── Storage helpers (= .reyn/hooks.yaml read/write) ─────────────────────────
+# ── Storage helpers (= .reyn/config/hooks.yaml read/write) ─────────────────────────
 
 
 def _hooks_yaml_path(ctx: ToolContext) -> Path:
-    """The canonical ``.reyn/hooks.yaml`` path under the project root (HARDCODED —
+    """The canonical ``.reyn/config/hooks.yaml`` path under the project root (HARDCODED —
     the write target is never derived from LLM input)."""
     root = getattr(ctx.workspace, "root", None) or getattr(ctx.workspace, "base_dir", None)
     if root is None:
         root = Path.cwd()
-    return Path(root) / ".reyn" / "hooks.yaml"
+    return Path(root) / ".reyn" / "config" / "hooks.yaml"
 
 
 def _normalize_on(h: object) -> object:
@@ -119,7 +119,7 @@ def _hooks_list(data: dict) -> list:
 
 
 async def _gate(ctx: ToolContext) -> None:
-    """Permission gate: ``require_file_write`` against the canonical .reyn/hooks.yaml.
+    """Permission gate: ``require_file_write`` against the canonical .reyn/config/hooks.yaml.
     TOOL-level authorisation already happened at skill-startup (``require_tool``
     against the skill's ``permissions.tool``) + the #2074 capability profile. No-op
     in unit-test contexts (``ctx.permission_resolver`` is None)."""
@@ -136,7 +136,7 @@ async def _gate(ctx: ToolContext) -> None:
 
 
 async def _handle_hooks_add(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
-    """Add a push hook to the runtime layer (.reyn/hooks.yaml) + schedule a reload."""
+    """Add a push hook to the runtime layer (.reyn/config/hooks.yaml) + schedule a reload."""
     on = str(args["on"])
     message = str(args["message"])
     wake = bool(args.get("wake", True))
@@ -160,7 +160,7 @@ async def _handle_hooks_add(args: Mapping[str, Any], ctx: ToolContext) -> ToolRe
 
     await _gate(ctx)
 
-    # Persist to the FIXED .reyn/hooks.yaml (structurally cannot target reyn.yaml).
+    # Persist to the FIXED .reyn/config/hooks.yaml (structurally cannot target reyn.yaml).
     path = _hooks_yaml_path(ctx)
     data = _read_hooks(path)
     hooks = _hooks_list(data)

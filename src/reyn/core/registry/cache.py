@@ -25,7 +25,7 @@ _TTL_SECONDS = 24 * 3600  # 24 h
 
 
 def _cache_dir() -> Path:
-    return Path.home() / ".reyn" / "registry-cache"
+    return Path.home() / ".reyn" / "cache" / "registry-cache"
 
 
 def _key_to_path(key: str) -> Path:

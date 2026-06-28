@@ -63,13 +63,13 @@ async def test_hooks_add_emits_config_changed_full_content(tmp_path):
         for e in state_log.iter_from(before + 1)
         if e.get("kind") == "config_changed"
     ]
-    assert ev["path"] == "hooks.yaml"
+    assert ev["path"] == "config/hooks.yaml"
     hooks = ev["content"]["hooks"]
     [hook] = [h for h in hooks if h.get("name") == "loop"]
     assert hook["on"] == "turn_end"
     assert hook["template_push"]["message"] == "keep going"
     # the yaml is a derived projection of the same content
     on_disk = yaml.safe_load(
-        (tmp_path / ".reyn" / "hooks.yaml").read_text(encoding="utf-8")
+        (tmp_path / ".reyn" / "config" / "hooks.yaml").read_text(encoding="utf-8")
     )
     assert ev["content"] == on_disk

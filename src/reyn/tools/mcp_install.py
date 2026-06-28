@@ -104,7 +104,7 @@ async def _handle_mcp_install_op(
         # the registry host). Pre-approves via session so the runtime
         # require_file_write check passes silently — the tool itself
         # was already authorised via the calling skill's permissions.tool.
-        canonical_config = ".reyn/mcp.yaml"
+        canonical_config = ".reyn/config/mcp.yaml"
         registry_host = "registry.modelcontextprotocol.io"
         synth_decl = PermissionDecl(
             file_write=[{"path": canonical_config, "scope": "just_path"}],

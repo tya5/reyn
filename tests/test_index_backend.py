@@ -174,7 +174,7 @@ async def test_drop_removes_db_dir_and_returns_count(tmp_path: Path) -> None:
     ]
     await backend.write("src1", chunks, mode="append")
 
-    source_dir = tmp_path / ".reyn" / "index" / "src1"
+    source_dir = tmp_path / ".reyn" / "cache" / "index" / "src1"
     assert source_dir.exists()
 
     result = await backend.drop("src1")
@@ -228,7 +228,7 @@ async def test_wal_mode_enabled(tmp_path: Path) -> None:
     chunk = _make_chunk("wal test", [1.0, 0.0], content_hash="wal1")
     await backend.write("src1", [chunk], mode="append")
 
-    db_file = tmp_path / ".reyn" / "index" / "src1" / "index.db"
+    db_file = tmp_path / ".reyn" / "cache" / "index" / "src1" / "index.db"
     assert db_file.exists()
 
     conn = sqlite3.connect(str(db_file))

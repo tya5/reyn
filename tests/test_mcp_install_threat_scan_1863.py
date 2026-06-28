@@ -140,7 +140,7 @@ def _make_ctx(tmp_path: Path, threat_scan: object | None) -> OpContext:
         project_root=tmp_path,
         interactive=True,
     )
-    canonical = str(tmp_path / ".reyn" / "mcp.yaml")
+    canonical = str(tmp_path / ".reyn" / "config" / "mcp.yaml")
     resolver.session_approve_path(canonical, "mcp_install_threat_test", "file.write")
     decl = PermissionDecl(
         file_write=[{"path": canonical, "scope": "just_path"}],
@@ -182,7 +182,7 @@ def test_handle_blocks_matching_install_and_writes_no_config(tmp_path, monkeypat
 
     assert result["status"] == "blocked", f"expected blocked, got {result!r}"
     assert "test_block_id" in result["error"]
-    assert not (tmp_path / ".reyn" / "mcp.yaml").exists(), (
+    assert not (tmp_path / ".reyn" / "config" / "mcp.yaml").exists(), (
         "a blocked install must not write the server config"
     )
 
@@ -196,7 +196,7 @@ def test_handle_passes_legit_install(tmp_path, monkeypatch) -> None:
     result = asyncio.run(mcp_install_handle(_npm_op(), ctx, "control_ir"))
 
     assert result["status"] == "ok", f"expected ok for legit install, got {result!r}"
-    assert (tmp_path / ".reyn" / "mcp.yaml").exists()
+    assert (tmp_path / ".reyn" / "config" / "mcp.yaml").exists()
 
 
 def test_handle_disabled_scan_does_not_block(tmp_path, monkeypatch) -> None:

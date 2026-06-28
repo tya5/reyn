@@ -77,14 +77,14 @@ async def test_cron_register_emits_config_changed_full_content(tmp_path):
     assert result["status"] == "ok"
 
     [ev] = _config_changed(state_log, before)
-    assert ev["path"] == "cron.yaml"
+    assert ev["path"] == "config/cron.yaml"
     jobs = ev["content"]["cron"]["jobs"]
     [job] = [j for j in jobs if j.get("name") == "morning_news"]
     assert job["to"] == "news_agent"
     assert job["schedule"] == "0 9 * * *"
     # the yaml is a derived projection of the same content
     on_disk = yaml.safe_load(
-        (tmp_path / ".reyn" / "cron.yaml").read_text(encoding="utf-8")
+        (tmp_path / ".reyn" / "config" / "cron.yaml").read_text(encoding="utf-8")
     )
     assert ev["content"] == on_disk
 
@@ -110,7 +110,7 @@ async def test_cron_disable_emits_full_post_state(tmp_path):
     await _set_enabled({"name": "weekly"}, ctx, enabled=False)
 
     [ev] = _config_changed(state_log, before)
-    assert ev["path"] == "cron.yaml"
+    assert ev["path"] == "config/cron.yaml"
     [job] = [j for j in ev["content"]["cron"]["jobs"] if j["name"] == "weekly"]
     assert job["enabled"] is False
 
@@ -136,6 +136,6 @@ async def test_cron_unregister_emits_full_post_state(tmp_path):
     await _handle_cron_unregister({"name": "gone"}, ctx)
 
     [ev] = _config_changed(state_log, before)
-    assert ev["path"] == "cron.yaml"
+    assert ev["path"] == "config/cron.yaml"
     names = [j.get("name") for j in ev["content"]["cron"]["jobs"]]
     assert "gone" not in names

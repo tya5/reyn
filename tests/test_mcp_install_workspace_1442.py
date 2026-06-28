@@ -179,5 +179,5 @@ def test_chat_path_uses_factory_workspace_not_cwd(tmp_path, monkeypatch):
     assert _resolve_write_root(op_ctx.workspace) == tmp_path.resolve()
     assert _resolve_write_root(op_ctx.workspace) != Path.cwd()
     # the install-specific decl was overridden onto the factory's ctx.
-    assert op_ctx.permission_decl.file_write == [{"path": ".reyn/mcp.yaml"}]
+    assert op_ctx.permission_decl.file_write == [{"path": ".reyn/config/mcp.yaml"}]
     assert op_ctx.skill_name == "mcp__install_registry"

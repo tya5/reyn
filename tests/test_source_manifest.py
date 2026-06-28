@@ -145,7 +145,7 @@ async def test_atomic_write_survives_orphaned_tmp(tmp_path: Path):
     and the final sources.yaml must reflect the new state.
     """
     m = _manifest(tmp_path)
-    sources_path = tmp_path / ".reyn" / "index" / "sources.yaml"
+    sources_path = tmp_path / ".reyn" / "config" / "index" / "sources.yaml"
     tmp_write_path = sources_path.with_suffix(".yaml.tmp")
 
     # Plant a stale .tmp (simulated crash artifact)
@@ -217,7 +217,7 @@ def test_get_source_manifest_returns_same_instance(tmp_path: Path):
 async def test_acquire_source_lock_refuses_when_alive_pid_holds(tmp_path: Path):
     """Tier 2: second acquire raises SourceLockedError when held by alive PID."""
     m = _manifest(tmp_path)
-    lock_path = tmp_path / ".reyn" / "index" / "src" / ".lock"
+    lock_path = tmp_path / ".reyn" / "cache" / "index" / "src" / ".lock"
     lock_path.parent.mkdir(parents=True, exist_ok=True)
 
     # Write a lock held by our own (live) PID
@@ -237,7 +237,7 @@ async def test_acquire_source_lock_refuses_when_alive_pid_holds(tmp_path: Path):
 async def test_acquire_source_lock_reaps_stale_lock(tmp_path: Path):
     """Tier 2: stale lock (dead PID) is overwritten and lock is acquired."""
     m = _manifest(tmp_path)
-    lock_path = tmp_path / ".reyn" / "index" / "ghost" / ".lock"
+    lock_path = tmp_path / ".reyn" / "cache" / "index" / "ghost" / ".lock"
     lock_path.parent.mkdir(parents=True, exist_ok=True)
 
     # Use a PID that is virtually guaranteed to be non-existent
@@ -288,7 +288,7 @@ async def test_get_all_picks_up_external_writes(tmp_path: Path):
     assert "a" in await m.get_all()
 
     # Simulate an external write (another process rewrote sources.yaml directly)
-    yaml_path = tmp_path / ".reyn" / "index" / "sources.yaml"
+    yaml_path = tmp_path / ".reyn" / "config" / "index" / "sources.yaml"
     payload = yaml.safe_load(yaml_path.read_text()) or {}
     payload["b"] = {
         "description": "B",
@@ -314,7 +314,7 @@ async def test_format_for_prompt_picks_up_external_writes(tmp_path: Path):
     await m.upsert(_entry("first", description="First", chunk_count=5))
 
     # Direct external write adds "second"
-    yaml_path = tmp_path / ".reyn" / "index" / "sources.yaml"
+    yaml_path = tmp_path / ".reyn" / "config" / "index" / "sources.yaml"
     payload = yaml.safe_load(yaml_path.read_text()) or {}
     payload["second"] = {
         "description": "Second source",
@@ -344,7 +344,7 @@ async def test_internal_writes_dont_trigger_spurious_reload(tmp_path: Path):
     m = _manifest(tmp_path)
     await m.upsert(_entry("x", chunk_count=1))
 
-    yaml_path = tmp_path / ".reyn" / "index" / "sources.yaml"
+    yaml_path = tmp_path / ".reyn" / "config" / "index" / "sources.yaml"
     file_mtime = yaml_path.stat().st_mtime
 
     # _loaded_mtime must match the file we just wrote
@@ -366,7 +366,7 @@ async def test_get_all_handles_file_deleted_externally(tmp_path: Path):
     assert "z" in await m.get_all()
 
     # Another process deletes the file
-    yaml_path = tmp_path / ".reyn" / "index" / "sources.yaml"
+    yaml_path = tmp_path / ".reyn" / "config" / "index" / "sources.yaml"
     yaml_path.unlink()
 
     result = await m.get_all()

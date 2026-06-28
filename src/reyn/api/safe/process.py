@@ -3,7 +3,7 @@
 Safe-mode python bans ``import os``, but a small subset of os surface is
 needed by stdlib skills — specifically PID identity for advisory locks
 (``index_docs.write_chunks_with_lock`` records its own PID in
-``.reyn/index/<source>/.lock`` and checks holder liveness on next
+``.reyn/cache/index/<source>/.lock`` and checks holder liveness on next
 acquire).
 
 The two functions here are *ambient* in the same sense as ``time`` and

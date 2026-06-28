@@ -47,7 +47,7 @@ def _scope_to_path(scope: str, project_root: Path) -> Path:
     """Resolve the target config file path for the given scope.
 
     Issue #470 (2026-05-22): for the NEW dynamic registry location
-    (``"dynamic"``), this returns ``.reyn/mcp.yaml``. Legacy scopes
+    (``"dynamic"``), this returns ``.reyn/config/mcp.yaml``. Legacy scopes
     are retained so ``_detect_scope`` can walk older config files
     that still carry ``mcp.servers`` from before the separation.
 
@@ -57,7 +57,7 @@ def _scope_to_path(scope: str, project_root: Path) -> Path:
     remain droppable via the legacy paths.
     """
     if scope == "dynamic":
-        return project_root / ".reyn" / "mcp.yaml"
+        return project_root / ".reyn" / "config" / "mcp.yaml"
     if scope == "local":
         return project_root / "reyn.local.yaml"
     if scope == "project":
@@ -93,7 +93,7 @@ def _detect_scope(server: str, project_root: Path) -> str | None:
     """Walk scope tiers to find the first that contains ``server``.
 
     Returns the scope name or None when the server is absent from all.
-    Issue #470 (2026-05-22): ``"dynamic"`` (= ``.reyn/mcp.yaml``) is
+    Issue #470 (2026-05-22): ``"dynamic"`` (= ``.reyn/config/mcp.yaml``) is
     queried first because that's the canonical location for new
     installs. Older hand-edited entries in ``reyn.yaml`` /
     ``reyn.local.yaml`` / ``~/.reyn/config.yaml`` remain droppable
@@ -213,7 +213,7 @@ async def handle(
     config_path = _scope_to_path(scope, project_root)
 
     # ── 2. Permission gate (#571 collapse arc Phase 5) ─────────────────
-    # The skill must declare ``file.write: [.reyn/mcp.yaml]``. The
+    # The skill must declare ``file.write: [.reyn/config/mcp.yaml]``. The
     # bool-axis ``require_mcp_drop_server`` per-server prompt is
     # removed — per-server granularity in mutations is operator-
     # config-level concern, not per-op runtime concern.
