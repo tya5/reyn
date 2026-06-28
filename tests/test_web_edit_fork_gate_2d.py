@@ -80,8 +80,10 @@ async def test_web_edit_makes_new_fork_original_inactive(tmp_path) -> None:
     )
 
     await session._run_router_loop("A", "c1")
+    await session._journal.flush()  # #2259 PR-2b: drain before durable read
     seq_a = session.current_snapshot.applied_seq
     await session._run_router_loop("B", "c1")
+    await session._journal.flush()  # #2259 PR-2b: drain before durable read
     seq_b = session.current_snapshot.applied_seq
 
     # Resolve the edit target for B: predecessor TURN = A.
@@ -119,12 +121,15 @@ async def test_web_edit_cross_fork_point_resolves_parent_turn(tmp_path) -> None:
     )
 
     await session._run_router_loop("A", "c1")
+    await session._journal.flush()  # #2259 PR-2b: drain before durable read
     seq_a = session.current_snapshot.applied_seq
     await session._run_router_loop("B", "c1")
+    await session._journal.flush()  # #2259 PR-2b: drain before durable read
 
     # Fork: rewind to A, then run C → C is the FIRST turn of a new branch off A.
     await reg.checkout(seq_a)
     await session._run_router_loop("C", "c1")
+    await session._journal.flush()  # #2259 PR-2b: drain before durable read
     seq_c = session.current_snapshot.applied_seq
 
     info = resolve_edit_target(reg, seq_c)
@@ -144,6 +149,7 @@ async def test_web_edit_first_turn_rejected(tmp_path) -> None:
     session._loop_driver = _FakeTurnDriver(session, tmp_path, {"A": "vA"})
 
     await session._run_router_loop("A", "c1")
+    await session._journal.flush()  # #2259 PR-2b: drain before durable read
     seq_a = session.current_snapshot.applied_seq
 
     info = resolve_edit_target(reg, seq_a)
