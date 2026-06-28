@@ -158,16 +158,28 @@ def working_line(thinking: bool, think_start: float, now: float) -> list:
     """Pure: working-row fragments while a turn runs (empty list when idle).
 
     The spinner frame derives from `now` so it advances smoothly regardless of
-    refresh jitter; elapsed is whole seconds since `think_start`.
+    refresh jitter; elapsed is whole seconds since `think_start`. The label carries
+    a shimmer — a bright crest sweeping left→right across the text (a moving light)
+    over a dim base, also clock-driven so it animates on each refresh.
     """
     if not thinking:
         return []
     frame = _SPINNER[int(now * 8) % len(_SPINNER)]
     elapsed = max(0, int(now - think_start))
-    return [
-        (f"fg:{_CC_ACCENT}", f" {frame} "),
-        (f"fg:{_CC_DIM}", f"Working… {elapsed}s"),
-    ]
+    label = f"Working… {elapsed}s"
+    frags = [(f"fg:{_CC_ACCENT}", f" {frame} ")]
+    # The crest sweeps across the label then pauses in a short trailing gap before
+    # restarting, so the light reads as a repeating left→right pass.
+    head = int(now * 16) % (len(label) + 6)
+    for i, ch in enumerate(label):
+        offset = head - i
+        if offset == 0:
+            frags.append((f"fg:{_CC_ACCENT} bold", ch))   # bright crest
+        elif offset == 1:
+            frags.append((f"fg:{_CC_ACCENT}", ch))         # trailing glow
+        else:
+            frags.append((f"fg:{_CC_DIM}", ch))            # dim base
+    return frags
 
 
 def _snapshot(registry):
