@@ -1,7 +1,7 @@
 """Tier 2: #2093 — the SessionFactoryConfig bundle is a byte-identical consolidation.
 
-The five session-factory sites previously threaded 11 uniform, config-derived args by
-hand into build_scoped_chat_session (8) + AgentRegistry (3) — a per-arg propagation gap
+The five session-factory sites previously threaded the uniform, config-derived args by
+hand into build_scoped_chat_session (8) + AgentRegistry — a per-arg propagation gap
 that twice silently missed a site (sandbox_config, delegation_capability_default). The
 bundle's ``from_config`` is now the single mapping point.
 
@@ -31,9 +31,7 @@ def test_from_config_maps_each_field_to_its_config_source() -> None:
     assert fc.retry_config is config.llm.retry
     assert fc.tool_calls_op_loop_skills is config.tool_calls_op_loop_skills
     assert fc.chat_tool_use_scheme == config.tool_use.chat
-    # AgentRegistry uniform config (3)
-    assert fc.workspace_capture == config.time_travel.workspace_capture
-    assert fc.act_turn_capture == config.time_travel.act_turn_capture
+    # AgentRegistry uniform config
     assert fc.delegation_capability_default == config.delegation.capability_default
 
 

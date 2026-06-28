@@ -80,9 +80,7 @@ _BUNDLED_UNIFORM = frozenset({
     "retry_config",  # #1835
     "tool_calls_op_loop_skills",
     "chat_tool_use_scheme",  # #1593 PR-2
-    # → AgentRegistry (3) — where delegation_capability_default drifted (#2081)
-    "workspace_capture",
-    "act_turn_capture",
+    # → AgentRegistry — where delegation_capability_default drifted (#2081)
     "delegation_capability_default",
 })
 
@@ -110,8 +108,8 @@ def test_registry_gets_the_bundle_wherever_the_session_factory_does() -> None:
     """Tier 2: #2093 — by-CONSTRUCTION on the AgentRegistry side too. A production
     factory file calls ``build_scoped_chat_session(factory_config=…)``; it MUST also
     pass ``factory_config`` to its ``AgentRegistry(…)`` — otherwise the registry's
-    uniform config args (workspace_capture / act_turn_capture /
-    delegation_capability_default — the EXACT arg #2093 protects) silently default.
+    uniform config args (delegation_capability_default — the EXACT arg #2093
+    protects) silently default.
 
     The ``build_scoped_chat_session(factory_config=)`` call is the production-factory
     signal, so the 60+ test/utility ``AgentRegistry`` callers (which never call

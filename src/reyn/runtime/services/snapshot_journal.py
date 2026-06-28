@@ -46,7 +46,7 @@ class SnapshotJournal:
         # onto every WAL append (session_id=) so replay routes entries to the right
         # per-session AgentSnapshot; default "main" = byte-identical single session.
         # Set post-construction by spawn_session for spawned sessions (set_session_id)
-        # — mirroring the _workspace_store/_anchor_store post-construction pattern.
+        # — mirroring the _anchor_store post-construction pattern.
         self._session_id = session_id
         self._snapshot_path = Path(snapshot_path)
         self._state_log = state_log
@@ -54,11 +54,6 @@ class SnapshotJournal:
         # non-chat), generation cuts are no-ops and the single snapshot.json
         # path is unchanged (no behavior change).
         self._generation_store = generation_store
-        # ADR-0038 Stage 1d: the workspace half of a generation. Set post-
-        # construction by the registry (the single shared shadow-git store) so
-        # cut_generation captures workspace files at the SAME boundary as the
-        # runtime snapshot. None → no workspace versioning (capture is skipped).
-        self._workspace_store = None
         # #1547: per-checkpoint anchor text (truncated last user message). Set
         # post-construction by the registry. None → no anchor capture.
         self._anchor_store = None
@@ -79,7 +74,7 @@ class SnapshotJournal:
     def set_session_id(self, session_id: str) -> None:
         """FP-0043 Stage 5: set the conversation session id post-construction
         (spawn_session uses this for a spawned session, before its run-loop goes
-        live — mirroring set_workspace_store). The in-memory snapshot's session_id
+        live — mirroring set_anchor_store). The in-memory snapshot's session_id
         is updated too so its save() + apply routing stay consistent."""
         self._session_id = session_id
         self._snapshot.session_id = session_id
@@ -101,14 +96,6 @@ class SnapshotJournal:
         generation cuts become no-ops (unchanged from the no-store default)."""
         self._generation_store = generation_store
 
-    def set_workspace_store(self, workspace_store) -> None:
-        """Attach the shared workspace shadow-git store (ADR-0038 Stage 1d).
-
-        Injected by the registry after session construction so the capture seam
-        (cut_generation) and the rewind/recovery restore use the SAME git-dir.
-        """
-        self._workspace_store = workspace_store
-
     def set_anchor_store(self, anchor_store) -> None:
         """Attach the shared per-checkpoint anchor store (#1547).
 
@@ -118,15 +105,13 @@ class SnapshotJournal:
         self._anchor_store = anchor_store
 
     async def cut_generation(self, anchor: str = "", full_message: str = "") -> None:
-        """Record the current snapshot as a PITR generation (ADR-0038 Stage 1a/1d).
+        """Record the current snapshot as a PITR generation (ADR-0038 Stage 1a).
 
         Called at user-facing checkpoint boundaries (turn / plan-step) — a
-        single seam so cuts are neither missed nor doubled. Records BOTH
-        substrates tied at the boundary seq (= ``snapshot.applied_seq``, a WAL
-        seq): the runtime AgentSnapshot generation AND (Stage 1d) the workspace
-        shadow-git commit. Additive to the per-mutation ``save()``. No-op when no
-        generation store / WAL is configured; workspace capture is skipped when
-        no workspace store is attached (or git is unavailable — handled there).
+        single seam so cuts are neither missed nor doubled. Records the runtime
+        AgentSnapshot generation tied at the boundary seq (= ``snapshot.applied_seq``,
+        a WAL seq). Additive to the per-mutation ``save()``. No-op when no
+        generation store / WAL is configured.
 
         ``anchor`` (#1547): the truncated last user message for the rewind-timeline
         preview, captured against the same boundary seq. Empty / no anchor store →
@@ -138,8 +123,6 @@ class SnapshotJournal:
         if self._generation_store is None or self._state_log is None:
             return
         self._generation_store.record(self._snapshot)
-        if self._workspace_store is not None:
-            await self._workspace_store.capture(self._snapshot.applied_seq)
         if self._anchor_store is not None and anchor:
             self._anchor_store.capture(
                 self._snapshot.applied_seq, anchor, full=full_message,

@@ -18,7 +18,7 @@ Submodules (#1682 grouping, by domain concern not yaml-key shape):
     chat       — Reasoning/Chat/Loop/Compaction/Timeout/OnLimit/Safety
     embedding  — Embedding/SkillSearch/ActionRetrieval
     media      — Voice/Multimodal/Web/WebFetch
-    execution  — Plan/SkillResume/SelfImprovement/TimeTravel/ToolUse
+    execution  — Plan/SkillResume/SelfImprovement/ToolUse
     infra      — Agent/Auth/Sandbox/Events/Eval/Cron/Python
 """
 # Commit 1 (#1682 #3): all definitions still live in `root`; the submodule split

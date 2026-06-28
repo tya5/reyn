@@ -44,7 +44,6 @@ from reyn.config.embedding import (
 from reyn.config.execution import (
     SelfImprovementConfig,
     SkillResumeConfig,
-    TimeTravelConfig,
     ToolUseConfig,
 )
 from reyn.config.infra import (
@@ -218,10 +217,6 @@ class ReynConfig:
     # Skill resume policy (PR-skill-resume) — how to handle ambiguous
     # steps on restart.
     skill_resume: SkillResumeConfig = field(default_factory=SkillResumeConfig)
-    # #1582 — time-travel cost knobs. ``time_travel.workspace_capture: false``
-    # selects runtime-only rewind (skip the per-boundary shadow-git capture, the
-    # largest constant cost). Default-on (full-fidelity rewind). Extensible block.
-    time_travel: TimeTravelConfig = field(default_factory=TimeTravelConfig)
     # #1593 — per-layer tool-use scheme selector (chat/step/phase). Default all
     # universal-category (today's behaviour); generalizes universal_wrappers_enabled.
     tool_use: ToolUseConfig = field(default_factory=ToolUseConfig)

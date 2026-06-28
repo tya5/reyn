@@ -7,19 +7,18 @@ WAL → a single reset-record is a global consistent-cut across every agent;
 This gate exercises the multi-agent path end-to-end.
 
 The load-bearing assertion: rewinding to **one** agent's boundary seq correctly cuts
-**every** agent's runtime AND the single shared workspace to the consistent
-global-seq state — i.e. the cut is global, not per-agent. A per-agent (non-global)
-rewind would leave the other agent's post-cut turns live and the workspace
-inconsistent → this test would fail.
+**every** agent's runtime to the consistent global-seq state — i.e. the cut is
+global, not per-agent. A per-agent (non-global) rewind would leave the other agent's
+post-cut turns live → this test would fail.
 
-Real AgentRegistry + 2 real Sessions (shared state_log + workspace) + git; a
-no-LLM ``_FakeTurnDriver`` drives the real ``_run_router_loop`` so genuine
-``cut_generation`` fires (only the file write is simulated). No mocks.
+Real AgentRegistry + 2 real Sessions (shared state_log); a no-LLM
+``_FakeTurnDriver`` drives the real ``_run_router_loop`` so genuine
+``cut_generation`` fires. Rewind is WAL+snapshot based (git-independent, #2248).
+No mocks.
 """
 from __future__ import annotations
 
 import asyncio
-import shutil
 from pathlib import Path
 
 import pytest
@@ -30,17 +29,10 @@ from reyn.runtime.profile import AgentProfile
 from reyn.runtime.registry import AgentRegistry
 from reyn.runtime.session import Session
 
-pytestmark = pytest.mark.skipif(
-    shutil.which("git") is None, reason="git required for the workspace substrate",
-)
-
-_WS_FILE = "code.py"
-
 
 class _FakeTurnDriver:
-    """No-LLM driver: writes the SHARED workspace file (keyed by user_text) + a
-    runtime inbox marker, so the real ``_run_router_loop`` runs and its genuine
-    ``cut_generation`` fires. Only the write is simulated."""
+    """No-LLM driver: appends a runtime inbox marker per turn, so the real
+    ``_run_router_loop`` runs and its genuine ``cut_generation`` fires."""
 
     def __init__(self, session: Session, ws_root: Path, content: dict[str, str]) -> None:
         self._session = session
@@ -48,7 +40,6 @@ class _FakeTurnDriver:
         self._content = content
 
     async def run_turn(self, user_text: str, chain_id: str) -> None:
-        (self._ws / _WS_FILE).write_text(self._content[user_text], encoding="utf-8")
         await self._session._journal.append_inbox(
             kind="user_message", payload={"turn": user_text},
         )
@@ -74,7 +65,7 @@ def _two_agent_registry(tmp_path: Path):
     reg = AgentRegistry(project_root=tmp_path, session_factory=_factory, state_log=state_log)
     for name in ("alpha", "beta"):
         AgentProfile.new(name, role="").save(tmp_path / ".reyn" / "agents" / name)
-    alpha = reg.get_or_load("alpha")   # web/TUI seam → attaches shared workspace + anchor stores
+    alpha = reg.get_or_load("alpha")   # web/TUI seam → attaches the shared anchor store
     beta = reg.get_or_load("beta")
     for s, content in (
         (alpha, {"a1": "A1", "a2": "A2", "a3": "A3"}),
@@ -91,11 +82,10 @@ def _snap_path(tmp_path: Path, name: str) -> Path:
 
 @pytest.mark.asyncio
 async def test_concurrent_2agent_rewind_is_global_consistent_cut(tmp_path):
-    """Tier 2: rewinding to ONE agent's boundary cuts EVERY agent + the workspace.
+    """Tier 2: rewinding to ONE agent's boundary cuts EVERY agent (global cut).
 
     Interleaved global seqs: a1 < b1 < a2 < b2. Rewind to **beta's** first boundary
     (seq_b1) — a seq that is NOT alpha's boundary. The global consistent-cut must:
-      - workspace → the as-of-seq_b1 state (last write ≤ seq_b1 = beta's B1)
       - alpha runtime → [a1] (alpha's a2 at seq_a2 > seq_b1 is abandoned — the
         cross-agent cut: alpha is cut even though seq_b1 is beta's boundary)
       - beta runtime → [b1] (beta's b2 abandoned)
@@ -112,15 +102,12 @@ async def test_concurrent_2agent_rewind_is_global_consistent_cut(tmp_path):
 
     # interleaved, distinct global seqs (the owner's "different boundary seqs").
     assert seq_a1 < seq_b1 < seq_a2
-    assert (tmp_path / _WS_FILE).read_text(encoding="utf-8") == "B2"          # pre-rewind head
     assert _markers(alpha.current_snapshot) == ["a1", "a2"]
     assert _markers(beta.current_snapshot) == ["b1", "b2"]
 
     # ── global rewind to BETA's first boundary ──
     await reg.rewind_to(seq_b1)
 
-    # workspace: the consistent global-seq state as-of seq_b1 (beta's B1).
-    assert (tmp_path / _WS_FILE).read_text(encoding="utf-8") == "B1"
     # alpha cut too (a2 > seq_b1 abandoned) — even though seq_b1 is BETA's boundary.
     assert _markers(alpha.current_snapshot) == ["a1"]
     assert _markers(AgentSnapshot.load("alpha", _snap_path(tmp_path, "alpha"))) == ["a1"]
@@ -153,7 +140,6 @@ async def test_both_agents_resume_after_concurrent_rewind(tmp_path):
     await beta._run_router_loop("b3", "c1")
     assert _markers(alpha.current_snapshot) == ["a1", "a3"]
     assert _markers(beta.current_snapshot) == ["b3"]
-    assert (tmp_path / _WS_FILE).read_text(encoding="utf-8") == "B3"   # last post-rewind write
 
 
 # ── single-agent internal concurrency (owner follow-up): await_quiescent coverage ──

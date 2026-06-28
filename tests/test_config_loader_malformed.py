@@ -81,12 +81,12 @@ def test_valid_models_still_loads(tmp_path) -> None:
 def test_fail_loud_sections_still_raise_clear_error(tmp_path) -> None:
     """Tier 2: the intentional fail-loud sections are NOT made lenient.
 
-    `time_travel` (a cost/durability knob) deliberately raises a clear
+    `tool_use` (a behavior-selecting block) deliberately raises a clear
     'must be a mapping' ValueError on a malformed value — the resilience guard
     must not silence that distinct convention. Falsification: if the guard were
     over-applied to the builders, this would load instead of raising.
     """
     import pytest
-    (tmp_path / "reyn.yaml").write_text("time_travel: not-a-dict\n", encoding="utf-8")
+    (tmp_path / "reyn.yaml").write_text("tool_use: not-a-dict\n", encoding="utf-8")
     with pytest.raises(ValueError, match="must be a mapping"):
         load_config(tmp_path)

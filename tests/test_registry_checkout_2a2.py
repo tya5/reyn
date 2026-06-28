@@ -8,15 +8,14 @@ undoes to an active-branch seq. `rewind_to` is now the active-node special case
 
 The load-bearing case is the full-path round-trip (abandoned → checkout →
 continue → checkout-back) exercised through the REAL registry: reconstruct +
-workspace restore + session re-adopt. It proves the elegant property verified at
-the interval layer — because `reconstruct` / `_materialize_rewind` /
-`_restore_workspace_active` all recompute `is_active` from the full reset-record
-chain, a single guard-lifted reset-record expresses branch-switch with no new
-persisted field, and both substrates follow the *target's* lineage.
+session re-adopt. It proves the elegant property verified at the interval layer —
+because `reconstruct` / `_materialize_rewind` recompute `is_active` from the full
+reset-record chain, a single guard-lifted reset-record expresses branch-switch
+with no new persisted field, and the runtime substrate follows the *target's*
+lineage.
 """
 from __future__ import annotations
 
-import shutil
 from pathlib import Path
 
 import pytest
@@ -26,8 +25,6 @@ from reyn.core.events.snapshot_generations import RewindIntoAbandonedError, rewi
 from reyn.core.events.state_log import StateLog
 from reyn.runtime.profile import AgentProfile
 from reyn.runtime.registry import AgentRegistry
-
-_needs_git = pytest.mark.skipif(shutil.which("git") is None, reason="git not on PATH")
 
 
 def _no_factory(_profile):
@@ -93,47 +90,6 @@ async def test_checkout_back_revives_lineage_runtime(tmp_path):
     res4 = await reg.checkout(4)
     assert res4["target_n"] == 4
     assert _inbox_ids(tmp_path, "alpha") == ["a1", "a3"]   # lineage swapped back, no a2 leakage
-
-
-@_needs_git
-@pytest.mark.asyncio
-async def test_checkout_back_revives_lineage_two_substrate(tmp_path):
-    """Tier 2: the SAME round-trip drives BOTH substrates (workspace + runtime).
-
-    Workspace (real shadow-git) and runtime snapshot both follow the target
-    branch on each checkout — `_restore_workspace_active` honours the recomputed
-    `is_active`, so the file content tracks the revived lineage (v2 then v3),
-    never the just-left active one.
-    """
-    reg = _make_registry(tmp_path)
-    _seed_agent(tmp_path, "alpha")
-    log = reg.state_log
-    ws = reg.workspace_store
-    code = tmp_path / "code.py"
-
-    code.write_text("v1", encoding="utf-8")
-    await _put(log, "alpha", "a1")          # seq 1
-    await ws.capture(1)
-    code.write_text("v2", encoding="utf-8")
-    await _put(log, "alpha", "a2")          # seq 2
-    await ws.capture(2)
-
-    await reg.rewind_to(1)                    # seq 3 — undo to v1 / [a1]
-    assert code.read_text(encoding="utf-8") == "v1"
-
-    code.write_text("v3", encoding="utf-8")
-    await _put(log, "alpha", "a3")          # seq 4
-    await ws.capture(4)                       # active continuation = v3 / [a1,a3]
-
-    # checkout to the abandoned a2 lineage → workspace v2, inbox [a1,a2].
-    await reg.checkout(2)
-    assert code.read_text(encoding="utf-8") == "v2"
-    assert _inbox_ids(tmp_path, "alpha") == ["a1", "a2"]
-
-    # checkout back to the (now abandoned) a3 lineage → workspace v3, inbox [a1,a3].
-    await reg.checkout(4)
-    assert code.read_text(encoding="utf-8") == "v3"
-    assert _inbox_ids(tmp_path, "alpha") == ["a1", "a3"]
 
 
 # ── rewind_to = active-node special case (equivalence + preserved guard) ───────

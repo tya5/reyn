@@ -37,9 +37,7 @@ class SessionFactoryConfig:
     retry_config: Any
     tool_calls_op_loop_skills: "list[str] | None"
     chat_tool_use_scheme: str
-    # ── AgentRegistry uniform config (5) ────────────────────────────────────
-    workspace_capture: bool
-    act_turn_capture: bool
+    # ── AgentRegistry uniform config (3) ────────────────────────────────────
     delegation_capability_default: str
     # #2103 C3: operator spawn-tree bounds (safety.spawn.*) — the LLM spawn seams
     # enforce these; 0 = unlimited.
@@ -59,8 +57,6 @@ class SessionFactoryConfig:
             retry_config=config.llm.retry,
             tool_calls_op_loop_skills=config.tool_calls_op_loop_skills,
             chat_tool_use_scheme=config.tool_use.chat,
-            workspace_capture=config.time_travel.workspace_capture,
-            act_turn_capture=config.time_travel.act_turn_capture,
             delegation_capability_default=config.delegation.capability_default,
             max_spawn_depth=config.safety.spawn.max_depth,
             max_spawn_children=config.safety.spawn.max_children,

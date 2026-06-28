@@ -125,67 +125,6 @@ class SkillResumeConfig:
 
 
 @dataclass
-class TimeTravelConfig:
-    """``time_travel:`` — time-travel (rewind/resume) cost knobs (#1582).
-
-    ADR-0038 ships time-travel always-on. ``workspace_capture`` is the opt-out
-    for its **largest** constant cost: the per-boundary shadow-git capture
-    (``git add -A`` + commit + tag at every turn / plan-step; in container mode a
-    ``docker exec`` per boundary). Setting it ``false`` selects **runtime-only
-    rewind** — the registry attaches no workspace store, so ``cut_generation``
-    skips the workspace capture while the runtime substrate (AgentSnapshot
-    generations + WAL) is untouched. Rewind/checkout then restore agent /
-    conversation state but NOT repo files (same framing as act-turn rewind).
-
-    Default ``true`` (capture-on): the full-fidelity rewind UX stays the default;
-    opt-out is a first-class documented escape for large workspaces / container
-    runs / no-file-rewind use. Run-level (read at registry construction) — not a
-    mid-session toggle, which would leave captured-while-on generations
-    non-restorable after a flip-off. Extensible block (the #1560 op-granular tier
-    is intended to ride sibling keys here).
-    """
-
-    workspace_capture: bool = True
-    # #1560 — opt-in per-step (act-turn) workspace capture (default OFF). When on,
-    # each `step_completed` inside a skill run records a write-tree snapshot in the
-    # op-content-log so act-turn rewind can restore mid-run workspace state. High
-    # frequency (per op), so opt-in by default per the perf policy. Gated by
-    # `workspace_capture` (the Tier-1 store) — off there ⇒ this is a no-op too.
-    act_turn_capture: bool = False
-
-
-def _build_time_travel_config(raw: object) -> TimeTravelConfig:
-    """Parse ``time_travel:`` from reyn.yaml. None / missing / empty → defaults.
-
-    Each known key accepts a bool; a missing key keeps its default
-    (``workspace_capture`` true, ``act_turn_capture`` false). A non-mapping block
-    or non-bool value is a config error (fail loud rather than silently
-    mis-defaulting a cost/durability knob).
-    """
-    if raw is None:
-        return TimeTravelConfig()
-    if not isinstance(raw, dict):
-        raise ValueError(
-            f"time_travel must be a mapping, got {type(raw).__name__}"
-        )
-
-    def _bool(key: str, default: bool) -> bool:
-        if key not in raw:
-            return default
-        val = raw[key]
-        if not isinstance(val, bool):
-            raise ValueError(
-                f"time_travel.{key} must be a bool, got {type(val).__name__}"
-            )
-        return val
-
-    return TimeTravelConfig(
-        workspace_capture=_bool("workspace_capture", True),
-        act_turn_capture=_bool("act_turn_capture", False),
-    )
-
-
-@dataclass
 class ToolUseConfig:
     """``tool_use:`` — the tool-use scheme per layer (#1593).
 

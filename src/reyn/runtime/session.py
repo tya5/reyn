@@ -2315,16 +2315,6 @@ class Session:
         task.add_done_callback(self._inflight_wal_tasks.discard)
         return task
 
-    def attach_workspace_store(self, workspace_store) -> None:
-        """Attach the shared workspace shadow-git store (ADR-0038 Stage 1d).
-
-        The registry injects its single ``WorkspaceVersionStore`` after building
-        this session so the journal's ``cut_generation`` captures workspace files
-        at each boundary against the same git-dir the registry's rewind/recovery
-        restores from.
-        """
-        self._journal.set_workspace_store(workspace_store)
-
     def attach_anchor_store(self, anchor_store) -> None:
         """Attach the shared per-checkpoint anchor store (#1547).
 
@@ -2347,7 +2337,7 @@ class Session:
         enforced (``_contextual_permission`` is set once at construction from the
         ``sid=None`` resolution). The registry calls this right after spawn-recording,
         BEFORE the session's run-loop reads these into the live tool gate, so the first
-        turn already gates against the narrowing. Mirrors ``attach_workspace_store``: a
+        turn already gates against the narrowing. Mirrors ``attach_anchor_store``: a
         registry-driven post-construct injection.
 
         ``contextual_permission`` is the FULL ``resolved_profile_for(name, sid=sid)``

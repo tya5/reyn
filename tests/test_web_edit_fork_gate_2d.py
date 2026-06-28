@@ -13,12 +13,12 @@ must be proven is that the chainlit-free ``resolve_edit_target`` +
   fork target to the PARENT's fork-point turn (not None, not a same-branch miss).
 
 Plus the genesis guard (first turn → reject, decision B). Real AgentRegistry +
-Session + StateLog + git; a no-LLM ``_FakeTurnDriver`` drives the real
-``_run_router_loop`` so genuine ``cut_generation`` / fork records fire. No mocks.
+Session + StateLog; a no-LLM ``_FakeTurnDriver`` drives the real
+``_run_router_loop`` so genuine ``cut_generation`` / fork records fire. Rewind/
+checkout are WAL+snapshot based (git-independent, #2248). No mocks.
 """
 from __future__ import annotations
 
-import shutil
 from pathlib import Path
 
 import pytest
@@ -33,17 +33,11 @@ from reyn.runtime.profile import AgentProfile
 from reyn.runtime.registry import AgentRegistry
 from reyn.runtime.session import Session
 
-pytestmark = pytest.mark.skipif(
-    shutil.which("git") is None, reason="git required for the workspace substrate",
-)
-
-_WS_FILE = "code.py"
-
 
 class _FakeTurnDriver:
-    """No-LLM driver: writes the turn's workspace file (keyed by user_text) +
-    appends a runtime inbox marker, so the real ``_run_router_loop`` runs and its
-    genuine ``cut_generation`` / fork records fire. Only the write is simulated."""
+    """No-LLM driver: appends a runtime inbox marker per turn, so the real
+    ``_run_router_loop`` runs and its genuine ``cut_generation`` / fork records
+    fire."""
 
     def __init__(self, session: Session, ws_root: Path, content: dict[str, str]) -> None:
         self._session = session
@@ -51,7 +45,6 @@ class _FakeTurnDriver:
         self._content = content
 
     async def run_turn(self, user_text: str, chain_id: str) -> None:
-        (self._ws / _WS_FILE).write_text(self._content[user_text], encoding="utf-8")
         await self._session._journal.append_inbox(
             kind="user_message", payload={"turn": user_text},
         )
@@ -78,10 +71,9 @@ def _make_registry(tmp_path: Path) -> AgentRegistry:
 @pytest.mark.asyncio
 async def test_web_edit_makes_new_fork_original_inactive(tmp_path) -> None:
     """Tier 2: editing turn B (web path) re-runs from B's predecessor (A) as a new
-    fork — the edited turn is active, the original B is on an abandoned branch,
-    and the workspace reflects the edited content."""
+    fork — the edited turn is active and the original B is on an abandoned branch."""
     reg = _make_registry(tmp_path)
-    session = await reg.attach("alpha")           # web path (attach → get_or_load auto-attach)
+    session = await reg.attach("alpha")           # web path (attach → get_or_load)
     session.register_intervention_listener("test")
     session._loop_driver = _FakeTurnDriver(
         session, tmp_path, {"A": "vA", "B": "vB", "B-edited": "vB2"},
@@ -91,7 +83,6 @@ async def test_web_edit_makes_new_fork_original_inactive(tmp_path) -> None:
     seq_a = session.current_snapshot.applied_seq
     await session._run_router_loop("B", "c1")
     seq_b = session.current_snapshot.applied_seq
-    assert (tmp_path / _WS_FILE).read_text(encoding="utf-8") == "vB"
 
     # Resolve the edit target for B: predecessor TURN = A.
     info = resolve_edit_target(reg, seq_b)
@@ -99,11 +90,10 @@ async def test_web_edit_makes_new_fork_original_inactive(tmp_path) -> None:
     assert info["fork_target"] == seq_a
 
     # Submit the edited message = checkout(A) → enqueue "B-edited" on the
-    # reset-in-place attached session. checkout already reverted the workspace +
-    # abandoned B before the new turn runs.
+    # reset-in-place attached session. checkout already abandoned B before the new
+    # turn runs.
     result = await handle_rewind_edit_submit(reg, info["fork_target"], "B-edited")
     assert result == ""                                            # success drains via outbox
-    assert (tmp_path / _WS_FILE).read_text(encoding="utf-8") == "vA"   # checked out to A
     assert not is_active_seq(reg.state_log, seq_b)                 # original B abandoned
 
     # Drain the inbox through the real consumer (the production web loop does
@@ -112,7 +102,6 @@ async def test_web_edit_makes_new_fork_original_inactive(tmp_path) -> None:
     # step (the markers dispatch as no-ops; the "user" submission runs the turn).
     while session.inbox.qsize() > 0:
         await session.run_one_iteration()
-    assert (tmp_path / _WS_FILE).read_text(encoding="utf-8") == "vB2"   # edited turn ran
     assert is_active_seq(reg.state_log, session.current_snapshot.applied_seq)  # new fork active
     assert not is_active_seq(reg.state_log, seq_b)                 # original B still abandoned
 

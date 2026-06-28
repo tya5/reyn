@@ -373,14 +373,13 @@ def _get_registry():
             project_root=root,
             session_factory=_session_factory,
             state_log=state_log,
-            # #2093: the uniform reyn.yaml-derived registry config (workspace_capture /
-            # act_turn_capture / delegation_capability_default) — one bundle, so a new
-            # one can't be missed here (the delegation_capability_default #2081 drift).
+            # #2093: the uniform reyn.yaml-derived registry config
+            # (delegation_capability_default) — one bundle, so a new one can't be
+            # missed here (the delegation_capability_default #2081 drift).
             factory_config=SessionFactoryConfig.from_config(config),
-            # #1544: container shadow-git. ``_scoped`` is local to the session
-            # factory above; fetch the overrides at this scope via the accessor.
+            # ``_scoped`` is local to the session factory above; fetch the overrides
+            # at this scope via the accessor.
             environment_backend=get_cli_scoped_overrides().environment_backend,
-            # #1557 gap-#1: shadow git-dir under --state-dir (same accessor scope).
             workspace_state_dir=get_cli_scoped_overrides().workspace_state_dir,
         )
         registry_ref.append(registry)
