@@ -76,9 +76,10 @@ async def test_op_visible_in_memory_before_durable(tmp_path):
 # ---------------------------------------------------------------------------
 
 
-def _make_registry(tmp_path: Path, wal: Path) -> AgentRegistry:
+def _make_registry(tmp_path: Path, wal: Path) -> tuple[AgentRegistry, StateLog]:
     """A registry whose sessions share one WAL (= production wiring). A fresh registry over the
-    SAME project_root + wal simulates a process restart."""
+    SAME project_root + wal simulates a process restart. Returns the shared StateLog too so the
+    caller can ``aclose`` it (cancel the worker drainer) at the end — clean teardown, no leak."""
     state_log = StateLog(wal)
 
     def _factory(profile: AgentProfile) -> Session:
@@ -86,9 +87,10 @@ def _make_registry(tmp_path: Path, wal: Path) -> AgentRegistry:
         s.register_intervention_listener("test")  # satisfy the listener-presence guard
         return s
 
-    return AgentRegistry(
+    reg = AgentRegistry(
         project_root=tmp_path, session_factory=_factory, state_log=state_log,
     )
+    return reg, state_log
 
 
 def _iv_dict(iv_id: str, run_id: str) -> dict:
@@ -113,7 +115,7 @@ async def _build_durable_state_wal_ahead(tmp_path: Path, wal: Path) -> None:
     (iv_wal2, iv_wal3) that are durable IN THE WAL but past the snapshot's applied_seq (the
     FIFO-lag window: the WAL runs ahead of the snapshot). So a WAL truncation visibly drops a real
     op on recovery, rather than passing vacuously off the snapshot."""
-    reg = _make_registry(tmp_path, wal)
+    reg, state_log = _make_registry(tmp_path, wal)
     main = reg.get_or_load("alpha")
     # durable base: a full (WAL + snapshot) pair, flushed → snapshot.applied_seq = iv_base's seq.
     await main.journal.record_intervention_dispatched(
@@ -130,6 +132,7 @@ async def _build_durable_state_wal_ahead(tmp_path: Path, wal: Path) -> None:
         intervention_id="iv_wal3", iv_dict=_iv_dict("iv_wal3", "r3"),
     )
     await main.journal.flush()
+    await state_log.aclose()  # clean teardown: cancel the worker drainer (data already durable)
 
 
 def _wal_lines(wal: Path) -> list[str]:
@@ -140,7 +143,7 @@ async def _restore_ivids(tmp_path: Path, wal: Path) -> list[str]:
     """A fresh registry (= restart) over the same project_root + WAL → restore_all → the restored
     main session's active intervention ids. Flushes the save-back so the durable snapshot is
     consistent for any subsequent restart."""
-    reg = _make_registry(tmp_path, wal)
+    reg, state_log = _make_registry(tmp_path, wal)
     await reg.restore_all()
     for _ in range(3):  # let restore_state's re-enqueue tasks register the interventions
         await asyncio.sleep(0)
@@ -148,6 +151,7 @@ async def _restore_ivids(tmp_path: Path, wal: Path) -> list[str]:
     ids = [] if main is None else _active_iv_ids(main)
     if main is not None:
         await main.journal.flush()  # drain restore_all's async snapshot save-back
+    await state_log.aclose()  # clean teardown: cancel the worker drainer
     return ids
 
 
@@ -202,3 +206,45 @@ async def test_restore_all_consistent_prefix_from_torn_midline_wal_truncation(tm
     assert set(restored_again) == {"iv_base", "iv_wal2"}, (
         f"re-restart must be idempotent (a consistent prefix is a fixed point); got {restored_again}"
     )
+
+
+# ---------------------------------------------------------------------------
+# B — durability_failed consumer (fail-stop + operator-surface)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_durability_failure_fail_stops_and_surfaces(tmp_path):
+    """Tier 2: B — a persistent (§4-exhausted) fire-and-forget durable-write failure latches the
+    worker health-signal; the session FAIL-STOPS — rejects new ops at the accept-edge (`_put_inbox`
+    raises ``DurabilityHaltError`` = the synchronous operator-surface) AND halts the run loop
+    (process-edge → stops in-memory advancing) — never silently keeps racing ahead of a dead disk
+    (the owner's "no silent unbounded loss"). RED if the consumer is absent (the op is accepted /
+    the loop keeps running)."""
+    from reyn.core.events.durability_worker import DurabilityWorker
+    from reyn.runtime.session import DurabilityHaltError, Session
+
+    worker = DurabilityWorker(max_write_attempts=1)  # fail-fast: no slow backoff in the test
+    log = StateLog(tmp_path / "wal.jsonl", worker=worker)
+    session = Session(agent_name="alpha", state_log=log)
+    try:
+        assert not log.durability_failed, "health-signal clear before any failure"
+
+        # inject a persistent fire-and-forget durable-write failure (§4-exhausted, no submitter).
+        async def _boom() -> None:
+            raise OSError("simulated disk death")
+
+        log.submit_durable_nowait(_boom)
+        await log.flush()  # drain → retry-exhaust → latch (never swallowed)
+        assert log.durability_failed, "the §4-exhausted fire-and-forget failure must latch the health-signal"
+
+        # (a) accept-edge: `_put_inbox` REJECTS new ops with DurabilityHaltError (= operator-surface).
+        with pytest.raises(DurabilityHaltError):
+            await session._put_inbox("user", {"text": "after disk death"})
+
+        # (b) process-edge: the run loop HALTS (stops advancing in-memory) + records the reason.
+        cont = await session.run_one_iteration()
+        assert cont is False, "the run loop must halt on durability failure (no further in-memory advance)"
+        assert session.halted_reason == "durability_failure"
+    finally:
+        await log.aclose()  # clean teardown: cancel the worker drainer
