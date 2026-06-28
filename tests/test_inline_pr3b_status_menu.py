@@ -168,6 +168,20 @@ def test_cost_expansion_shows_total_cost_and_token_breakdown() -> None:
     assert "total 209" in joined
 
 
+def test_cost_expansion_breaks_down_total_agent_session() -> None:
+    """Tier 2: cost expansion shows distinct total / agent / session amounts when
+    multiple agents/sessions accrue cost (total across agents ≥ the attached
+    session). Each level renders its own dollar amount, not one collapsed total."""
+    snap = _snap(cost_usd=0.0100, cost_agent=0.0100, cost_total=0.0750)
+    lines = _cost_expansion(snap, lambda _: None).lines()
+    by_label = {ln.split()[0]: ln for ln in lines if ln.split()}
+    assert {"total", "agent", "session"} <= set(by_label)
+    assert "0.0750" in by_label["total"]      # sum across loaded agents
+    assert "0.0100" in by_label["session"]    # the attached session
+    # the breakdown is not collapsed: total reflects the cross-agent sum
+    assert by_label["total"] != by_label["session"]
+
+
 # ---------------------------------------------------------------------------
 # _agent_expansion
 # ---------------------------------------------------------------------------

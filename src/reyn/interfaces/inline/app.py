@@ -106,8 +106,11 @@ def _model_expansion(snap, dispatch):
 def _cost_expansion(snap, dispatch):
     def lines():
         p, c, t = snap["usage"]
+        session = snap["cost_usd"]
         return [
-            f"total    ${snap['cost_usd']:.4f}",
+            f"total    ${snap.get('cost_total', session):.4f}",
+            f"agent    ${snap.get('cost_agent', session):.4f}",
+            f"session  ${session:.4f}",
             f"tokens   prompt {p} · completion {c} · total {t}",
         ]
     return DetailElement(lines)
@@ -161,6 +164,23 @@ def _snapshot(registry):
     if s is None:
         return None
     u = s.total_usage
+    # Cost breakdown (all via public sync accessors). Sum across ALL sessions
+    # (every sid), not just each agent's "main" — a spawned sub-session accrues
+    # cost too. Nested: session ≤ agent (all the attached agent's sids) ≤ total
+    # (all agents, all sids).
+    def _agent_cost(name: str) -> float:
+        total = 0.0
+        for sid in registry.session_ids(name):
+            sess = registry.get_session(name, sid)
+            if sess is not None:
+                total += sess.total_cost_usd
+        return total
+
+    cost_total = sum(_agent_cost(name) for name in registry.loaded_names())
+    cost_agent = (
+        _agent_cost(registry.attached_name)
+        if registry.attached_name else s.total_cost_usd
+    )
     return {
         "model": s.model,
         "model_classes": list(s.known_model_classes()),
@@ -169,6 +189,8 @@ def _snapshot(registry):
         "skill_run_ids": list(s.running_skills.keys()),
         "usage": (u.prompt_tokens, u.completion_tokens, u.total_tokens),
         "cost_usd": s.total_cost_usd,
+        "cost_total": cost_total,
+        "cost_agent": cost_agent,
         "task_count": 0,
     }
 
