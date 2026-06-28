@@ -453,12 +453,11 @@ class PermissionResolver:
             return {}
 
     def _persist(self, key: str, approved: bool) -> None:
-        # #2248 A2-cont: config-recovery (`config_changed`) emit is deliberately NOT wired
-        # here. Approvals are USER-authored (granted in response to a permission prompt) —
-        # not agent-authored like mcp/cron/hooks/index — so they likely belong in the
-        # PERSIST category (survive rewind, never silently un-granted), NOT recovery-core.
-        # Provenance + the rewind-semantics decision are under review before any emit; this
-        # is the logged gap, not a silent cap. See #2248.
+        # #2248: approvals.yaml is PERSIST, not recovery-core — so NO `config_changed` emit
+        # here (unlike mcp/cron/hooks/index). Approvals are a USER-authored security decision
+        # (granted via a permission prompt; revoked via the web/CLI surfaces) — never
+        # agent-authored — so a rewind must NOT revert them; they survive rewind like
+        # `memory/`. Owner-confirmed reclassification (config → persist).
         self._saved[key] = approved
         self._session[key] = approved
         try:
