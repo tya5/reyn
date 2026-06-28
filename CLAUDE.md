@@ -234,6 +234,9 @@ and run the checklist below before continuing:
 - **Why constrain the LLM (P4)**: `docs/concepts/architecture/llm-as-decision-engine.md`
 - **Workspace** (P5): `docs/concepts/runtime/workspace.md`
 - **Events / replay** (P6): `docs/concepts/runtime/events.md`
+- **`.reyn/` directory layout** (what's recovery-core vs persist/audit/cache/outside, the
+  recovery-core write-gate, where new subsystem data goes):
+  `docs/reference/runtime/reyn-dir-layout.md`
 - **Permission model**: `docs/concepts/runtime/permission-model.md`
 - **Input handling, ask_user, Phase Preprocessor (run_op / iterate / validate
   / lint_plan / python)**: read the corresponding stdlib skill (`skill_router`,

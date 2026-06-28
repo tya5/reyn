@@ -11,37 +11,11 @@ Per-project state. Location: `<project_root>/.reyn/` — fixed. (There is no `st
 
 ## Layout
 
-```
-.reyn/
-├── approvals.yaml                          # persistent permission approvals
-├── events/                                 # all event JSONL logs
-│   ├── direct/                             # skill runs from `reyn run`
-│   │   └── skill_runs/<YYYY-MM>/
-│   │       └── <ts>_<skill>.jsonl
-│   └── agents/<name>/                      # skill runs + chat events from an agent
-│       ├── skill_runs/<YYYY-MM>/
-│       │   └── <ts>_<skill>.jsonl
-│       └── chat/<YYYY-MM>/                 # chat session events (rotated by size/age)
-│           └── <ts>.jsonl
-├── agents/<name>/                          # per-agent workspace (one dir per agent)
-│   ├── profile.yaml                        # agent name, role, allowed_skills
-│   ├── history.jsonl                       # append-only conversation log
-│   ├── memory/                             # agent-scoped memory
-│   │   ├── MEMORY.md
-│   │   └── <name>.md
-│   └── state/                              # WAL skill-run snapshots
-│       └── skills/<run_id>.snapshot.json
-├── skill-versions/<name>/                  # skill version snapshots
-│   └── v<N>.md
-├── eval-results/<skill>/                   # `reyn eval run` result files
-│   └── <timestamp>.jsonl
-├── state/                                  # process-global persistent state
-│   ├── budget_ledger.jsonl                 # durable budget ledger (daily/monthly/per-agent + spawn caps)
-│   └── budget_state.json                   # throttled best-effort cache over the ledger
-└── memory/                                 # project-scope memory
-    ├── MEMORY.md
-    └── <name>.md
-```
+The canonical `.reyn/` directory layout — every subtree, the recovery-core /
+persist / audit / cache / outside classification, and the recovery-core write-gate — is
+documented in **[The `.reyn/` directory layout](../runtime/reyn-dir-layout.md)**. See there
+for the full tree and "where a new subsystem puts its data". This page covers `--state-dir`
+routing specifically.
 
 **Note:** `.reyn/config.yaml` has been removed.
 Personal config overrides now live in `reyn.local.yaml` (gitignored, project root).
