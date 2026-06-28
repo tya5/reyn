@@ -52,8 +52,6 @@ from reyn.core.events.snapshot_generations import (
 )
 from reyn.core.events.snapshot_generations import checkout as _append_reset_record
 from reyn.core.events.state_log import StateLog
-from reyn.core.events.workspace_op_content_log import WorkspaceOpContentLog
-from reyn.core.events.workspace_version_store import WorkspaceVersionStore
 from reyn.task.subscription import SubscriptionRegistry
 
 from .profile import PROFILE_FILENAME, AgentProfile
@@ -154,8 +152,6 @@ class AgentRegistry:
         retention_policy: RetentionPolicy | None = None,
         environment_backend: "object | None" = None,
         workspace_state_dir: "Path | None" = None,
-        workspace_capture: bool = True,
-        act_turn_capture: bool = False,
         delegation_capability_default: str = "inherit",
         max_spawn_depth: int = 0,
         max_spawn_children: int = 0,
@@ -176,13 +172,11 @@ class AgentRegistry:
         """
         # #2093: when the shared SessionFactoryConfig bundle is provided (the 5
         # frontend factory sites pass it), it SUPPLIES the uniform config-derived args
-        # (workspace_capture / act_turn_capture / delegation_capability_default) — so a
-        # new one is added in one place (the bundle) and can't be missed at a site
-        # (delegation_capability_default was the drift). The individual params remain
-        # for the utility / test callers (which use defaults), keeping them unchanged.
+        # (delegation_capability_default) — so a new one is added in one place (the
+        # bundle) and can't be missed at a site (delegation_capability_default was the
+        # drift). The individual params remain for the utility / test callers (which use
+        # defaults), keeping them unchanged.
         if factory_config is not None:
-            workspace_capture = factory_config.workspace_capture
-            act_turn_capture = factory_config.act_turn_capture
             delegation_capability_default = factory_config.delegation_capability_default
             max_spawn_depth = factory_config.max_spawn_depth
             max_spawn_children = factory_config.max_spawn_children
@@ -277,12 +271,6 @@ class AgentRegistry:
         self._rewind_in_progress: bool = False
         # ADR-0038 Stage 1e (D5): retention window. None → live (current).
         self._retention_policy = retention_policy or RetentionPolicy()
-        # ADR-0038 Stage 1d: the workspace half of a generation. One shadow-git
-        # for the (single-SSoT) workspace, git-dir under .reyn (out of the
-        # tracked tree). Host-mode worktree = project_root; container mode is a
-        # tracked follow-up (#1544). Lazily built so non-chat / no-WAL callers
-        # never touch git.
-        self._workspace_store: WorkspaceVersionStore | None = None
         # #2187 S1: the Task backend is GLOBAL — ONE per process, registry-owned, built
         # lazily here. Reverts the #2180 per-AGENT / #2186 per-SESSION splits: a task is
         # first-class (task ⊥ agent/session, #2187 §2), so its store is a single global db
@@ -294,7 +282,7 @@ class AgentRegistry:
         # #2125/#2180 cross-connection concerns stay dissolved by construction). The A2A/web
         # server (a separate process) opens its own connection to the same global db;
         # sqlite multi-process file-locking handles that. Process-lifetime (parity with
-        # ``_state_log``/``_workspace_store``, never closed mid-run); the per-agent
+        # ``_state_log``, never closed mid-run); the per-agent
         # close-on-PURGE the #2180 split needed is gone — a global db outlives any one
         # agent's teardown. (S2 moves task STATE into the global WAL control-plane; this
         # stage is the data-plane relocation only — the #2128 rewind/generation MECHANISM
@@ -305,40 +293,10 @@ class AgentRegistry:
         # pattern the reverted (A) used for STATUS, now applied to the CORRECT target:
         # the binding is what Reyn owns + rewinds; task-STATE stays in the backend, the
         # external master). The #1560 post-append observer keeps it live; restore_all
-        # rebuilds it by replay (recovery / rewind). Registered whenever a WAL exists
-        # (core, not opt-in like the act-turn capture below).
+        # rebuilds it by replay (recovery / rewind). Registered whenever a WAL exists.
         self._task_subscriptions = SubscriptionRegistry()
         if state_log is not None:
             state_log.register_post_append(self._on_wal_append_subscription)
-        # ADR-0038 #1544: FS+exec backend. None / name!="container" → host mode
-        # (host subprocess git runner). When container, git runs in-container via
-        # backend.run with the container path context (the work-tree is
-        # container-side; host git can't reach it).
-        self._environment_backend = environment_backend
-        # ADR-0038 #1557 (gap-#1): host-side OS-state dir (--state-dir). When set,
-        # the shadow git-dir lives under it (a first-class member of the persisted
-        # OS-state set, alongside events/artifacts — one persistence switch) rather
-        # than at project_root/.reyn. None → default project_root/.reyn location.
-        self._workspace_state_dir = workspace_state_dir
-        # #1582: time-travel cost opt-out. False → "runtime-only rewind": the
-        # workspace store is never built/attached, so cut_generation skips the
-        # per-boundary shadow-git capture (the largest constant cost) while the
-        # runtime substrate (AgentSnapshot generations + WAL) is untouched. The
-        # existing None-guards (attach / capture / restore / prune) make this
-        # coherent by construction. Run-level (construction-time), like
-        # retention_policy — not a mid-session toggle.
-        self._workspace_capture = workspace_capture
-        # #1560: opt-in per-step (act-turn) workspace capture (default off). When
-        # on, a generic post-append observer on the WAL captures a write-tree
-        # snapshot at each ``step_completed`` into the op-content-log, so act-turn
-        # rewind can restore mid-skill-run workspace state (restore = PR-2). The
-        # callback is registered ONLY when on, so default users pay zero per-append
-        # cost (the WAL's observer list stays empty). Gated additionally by the
-        # Tier-1 workspace store (off / None → no-op).
-        self._act_turn_capture = act_turn_capture
-        self._op_content_log: "WorkspaceOpContentLog | None" = None
-        if act_turn_capture and state_log is not None:
-            state_log.register_post_append(self._on_wal_append_capture)
         # #1547: per-checkpoint anchor text (rewind-timeline preview). One global
         # store keyed by WAL seq; lazily built. None when no WAL.
         self._anchor_store: AnchorStore | None = None
@@ -1043,12 +1001,12 @@ class AgentRegistry:
         latest-first ``_abandoned_intervals`` machinery (a newer record subsumes
         an intervening one when its R falls inside the new interval, and an older
         abandonment resurrects when the subsuming record is itself later
-        abandoned). Because ``reconstruct`` / ``_materialize_rewind`` /
-        ``_restore_workspace_active`` all recompute ``is_active`` from the full
-        chain, both substrates follow the *target's* lineage automatically.
+        abandoned). Because ``reconstruct`` / ``_materialize_rewind`` recompute
+        ``is_active`` from the full chain, the runtime substrate follows the
+        *target's* lineage automatically.
 
-        Architecture-enforced global cut (D2): one global single-seq WAL + one
-        workspace SSoT ⇒ one reset-record moves *every* agent atomically:
+        Architecture-enforced global cut (D2): one global single-seq WAL ⇒ one
+        reset-record moves *every* agent atomically:
 
           1. retention guard — reject a target truncated out of the WAL (1e).
           2. all-cancel  — ``cancel_inflight`` on every loaded session.
@@ -1059,8 +1017,7 @@ class AgentRegistry:
           5. reconstruct every KNOWN agent as-of the target lineage (honoring the
              recomputed is_active) + persist a **self-contained** snapshot at
              ``applied_seq = R`` (``restore_all`` replays only > R); loaded
-             sessions reset (``reset_for_rewind``) + re-adopt; the workspace is
-             restored to the nearest active generation ``<= seq``.
+             sessions reset (``reset_for_rewind``) + re-adopt.
 
         ``_rewind_in_progress`` gates compaction for the whole window.
         """
@@ -1269,74 +1226,6 @@ class AgentRegistry:
         return lineage_predecessor(self._state_log, turn_cps, seq)
 
     @property
-    def workspace_store(self) -> WorkspaceVersionStore | None:
-        """The shadow-git workspace store (ADR-0038 1d), lazily built.
-
-        ``None`` when there is no WAL (non-chat / tests that opt out), OR when
-        ``workspace_capture`` is disabled (#1582 runtime-only rewind — the opt-out
-        for the per-boundary shadow-git capture cost). Host-mode worktree =
-        ``project_root``; git-dir under ``.reyn`` (or ``--state-dir``, #1557).
-        Container mode is a tracked follow-up (#1544).
-        """
-        if not self._workspace_capture:
-            return None
-        if self._state_log is None:
-            return None
-        if self._workspace_store is None:
-            self._workspace_store = self._build_workspace_store()
-        return self._workspace_store
-
-    def _build_workspace_store(self) -> WorkspaceVersionStore:
-        """Build the workspace store for the active environment (#1544).
-
-        Host (default): a host subprocess git runner over the host git-dir.
-        Container (``environment_backend.name == "container"``): git runs
-        in-container via ``backend.run`` with the CONTAINER path context, while
-        the small FS surface (init dir + ``info/exclude``) stays on the host
-        git-dir — which in mount-mode is the bind-mount source, so the write is
-        visible in-container. (Attach/baked mode has no bind-mount → host FS and
-        container git diverge → degrades; attach-mode persistence is a tracked
-        follow-up, #1544 checklist.)
-
-        #1557 gap-#1: the host git-dir is routed under ``workspace_state_dir``
-        (``--state-dir``) when provided, so the workspace-version history persists
-        alongside the rest of the host-side OS state (one switch); otherwise it
-        defaults to ``project_root/.reyn``. (Container persistence *modes* — bind-
-        mount injection / attach-sync — remain the deferred #1557 follow-up.)
-        """
-        host_git_root = self._workspace_state_dir or (self._project_root / ".reyn")
-        host_git_dir = host_git_root / "workspace-shadow.git"
-        backend = self._environment_backend
-        if backend is not None and getattr(backend, "name", "") == "container":
-            from reyn.core.events.workspace_version_store import _ContainerGitRunner
-
-            repo_dir = str(getattr(backend, "repo_dir", "/workspace"))
-            runner = _ContainerGitRunner(
-                backend,
-                git_dir=f"{repo_dir}/.reyn/workspace-shadow.git",
-                work_tree=repo_dir,
-            )
-            return WorkspaceVersionStore(
-                self._project_root, host_git_dir, git_runner=runner,
-            )
-        return WorkspaceVersionStore(self._project_root, host_git_dir)
-
-    @property
-    def op_content_log(self) -> "WorkspaceOpContentLog | None":
-        """The op-granular (act-turn) content log (#1560), lazily built.
-
-        ``None`` when act-turn capture is off or there is no WAL. Lives beside the
-        shadow git-dir (under ``--state-dir`` when set, #1557) — the same root as
-        the boundary generations, so the persistence switch covers both.
-        """
-        if not self._act_turn_capture or self._state_log is None:
-            return None
-        if self._op_content_log is None:
-            root = self._workspace_state_dir or (self._project_root / ".reyn")
-            self._op_content_log = WorkspaceOpContentLog(root / "op-content-log.jsonl")
-        return self._op_content_log
-
-    @property
     def task_subscriptions(self) -> SubscriptionRegistry:
         """#2187 backend-master: the live Task SUBSCRIPTION registry (the Reyn-internal
         task↔session binding). The op-layer gates requests against this (single-writer /
@@ -1443,72 +1332,6 @@ class AgentRegistry:
                 continue
             for task, event in work:
                 await waker.publish_task_event(event, task)
-
-    async def _on_wal_append_capture(self, kind: str, seq: int, fields: dict) -> None:
-        """Generic WAL post-append observer: per-step act-turn workspace capture.
-
-        Fires only for ``step_completed`` (the act-turn step boundary, whose seq is
-        ``CommittedStep.seq``). Gated by the Tier-1 workspace store: when workspace
-        capture is off (``workspace_store is None``), this is a no-op too (one
-        switch). Captures a bare ``write-tree`` snapshot and records ``(seq,
-        tree_sha)``. Best-effort — runs on the swallow-safe observer path, so any
-        failure here never affects the WAL append (the store/log already swallow).
-        """
-        if kind != "step_completed":
-            return
-        ws = self.workspace_store
-        log = self.op_content_log
-        if ws is None or log is None:
-            return
-        tree_sha = await ws.capture_tree()
-        if tree_sha is not None:
-            # #1560 PR-3: pin the tree as a gc-root BEFORE logging it (the bare
-            # write-tree is otherwise unreachable → auto-gc'd). Ref-before-append
-            # gives the strict invariant "logged ⇒ gc-protected": any entry the
-            # restore reads is guaranteed to have a surviving tree. Dropped at prune.
-            await ws.ref_op_tree(seq, tree_sha)
-            log.append(seq, tree_sha)
-
-    async def restore_workspace_to_act_turn(self, target_seq: int) -> str | None:
-        """Restore the workspace to the act-turn (per-op) state as-of ``target_seq``.
-
-        The workspace half of an act-turn rewind (#1560 PR-2), the coherent
-        counterpart to ``SkillResumeCoordinator.plan_for_act_turn_rewind`` (which
-        truncates the runtime memo at ``target_seq``). Because the op-content-log is
-        keyed by ``op_seq == CommittedStep.seq``, the SAME ``target_seq`` restores
-        both substrates: runtime memo[≤K] (coordinator) ⊗ workspace tree[≤K] (here).
-
-        Lineage resolution is the caller's job (the op-content-log is branch-agnostic
-        — capture is always current-branch): pick the latest op-tree with
-        ``op_seq <= target_seq`` that is **is_active** (skipping abandoned-interval
-        op-trees, mirroring ``_restore_workspace_active`` for generations), then
-        ``read-tree`` it. Falls back to the nearest **boundary** generation
-        (``_restore_workspace_active``) when no active op-tree ``<= target_seq``
-        exists (act-turn capture was off for that span / pre-feature). No-op when
-        act-turn capture or the workspace store is disabled (Tier-1 #1582 / no WAL).
-        Returns the restored tree sha (op-tree path) or ``None``.
-        """
-        if self._state_log is None:
-            return None
-        log = self.op_content_log
-        ws = self.workspace_store
-        if log is None or ws is None:
-            return None
-        # is_active-honoring: the branch-agnostic op-content-log may hold op-trees
-        # from abandoned intervals; skip them (same lineage rule as the boundary
-        # restore) and take the latest active op-tree at-or-below the target.
-        active = [
-            e for e in log.entries()
-            if int(e["op_seq"]) <= target_seq
-            and is_active_seq(self._state_log, int(e["op_seq"]))
-        ]
-        if active:
-            tree_sha = max(active, key=lambda e: int(e["op_seq"]))["tree_sha"]
-            return await ws.restore_tree(tree_sha)
-        # boundary fallback: no act-turn op-tree on the active lineage <= target →
-        # the nearest active generation (today's behaviour) — strictly additive.
-        await self._restore_workspace_active(at_or_below=target_seq)
-        return None
 
     @property
     def anchor_store(self) -> AnchorStore | None:
@@ -1878,8 +1701,8 @@ class AgentRegistry:
         return self._task_backend
 
     # #2187 S1: the #2180 per-agent ``_close_task_backend`` is removed — the global Task
-    # backend is PROCESS-LIFETIME (parity with ``_state_log`` / ``_workspace_store``, which
-    # are likewise never closed mid-run); a global store is not closed on any one agent's
+    # backend is PROCESS-LIFETIME (parity with ``_state_log``, which is
+    # likewise never closed mid-run); a global store is not closed on any one agent's
     # purge/drop (it outlives them), and an open sqlite connection does not block the
     # agent-dir rmtree (POSIX unlink-while-open). Closed on process exit.
 
@@ -1905,26 +1728,24 @@ class AgentRegistry:
     async def _materialize_rewind(
         self, *, reconstruct_seq: int, workspace_at_or_below: int,
     ) -> list[str]:
-        """Bring BOTH substrates to the active branch as-of ``reconstruct_seq``.
+        """Bring the runtime substrate to the active branch as-of ``reconstruct_seq``.
 
         Idempotent — shared by ``rewind_to`` (right after the reset-record) and
         crash ``recover_rewind_if_needed`` (at restart). Per agent: ``reconstruct``
         as-of the active branch + persist a self-contained snapshot pinned to
         ``reconstruct_seq`` (so ``restore_all`` replays only beyond it); loaded
-        sessions are reset + re-adopt it. Then the workspace substrate is
-        restored to the nearest **active** generation ``<= workspace_at_or_below``.
+        sessions are reset + re-adopt it.
 
         ``reconstruct_seq`` is the WAL head at call time (= R in rewind_to, =
-        current head in recovery); ``workspace_at_or_below`` is ``target_n`` in
-        rewind_to (= gen-N) or head in recovery (= latest active gen, keeping
-        post-rewind workspace work). Returns the agents materialised.
+        current head in recovery); ``workspace_at_or_below`` is the as-of-cut DROP
+        boundary = ``target_n`` in rewind_to or head in recovery. Returns the agents
+        materialised.
         """
         # FP-0043 Stage 5: the runtime snapshot is reconstructed PER SESSION (each
         # (name, sid) from its own generations + session_id-routed WAL delta), so a
         # global cut moves every session of every agent to the target — consistent
-        # with the D2 whole-world invariant. The workspace substrate stays global
-        # (one SSoT per agent) and is restored once below. Session discovery is from
-        # disk (this is shared with crash-recovery, where sessions are not loaded).
+        # with the D2 whole-world invariant. Session discovery is from disk (this is
+        # shared with crash-recovery, where sessions are not loaded).
         agents: list[str] = []
         # #2125 (b)-split atomicity: collect the post-cut sessions whose destructive
         # on-disk rmtree is DEFERRED until AFTER the substrate restores succeed (a
@@ -2025,34 +1846,14 @@ class AgentRegistry:
             _n: (_p, _pseq) for _n, (_s, _payload, _p, _pseq) in ag_created.items()
             if _p and _s <= drop_cut and _n not in ag_purged and (self._dir / _n).is_dir()
         }
-        await self._restore_workspace_active(at_or_below=workspace_at_or_below)
-        # #2125 (b)-split: the restores succeeded — NOW perform the deferred destructive
-        # rmtree of the dropped post-cut session dirs. Reaching here means no restore
-        # raised (a restore-failure propagates before this), so the drop is committed
-        # only alongside a successful restore (no half-applied "dirs dropped despite
-        # checkout failed" state).
+        # #2125 (b)-split: the runtime reconstruction succeeded — NOW perform the
+        # deferred destructive rmtree of the dropped post-cut session dirs. Reaching
+        # here means no reconstruction raised (a failure propagates before this), so the
+        # drop is committed only alongside a successful reconstruction (no half-applied
+        # "dirs dropped despite checkout failed" state).
         for _purge_name, _purge_sid in deferred_session_purges:
             self._purge_session_dir(_purge_name, _purge_sid)
         return agents
-
-    async def _restore_workspace_active(self, *, at_or_below: int) -> None:
-        """Restore the workspace to the nearest ACTIVE generation <= ``at_or_below``.
-
-        Honors is_active (mirrors ``reconstruct`` for runtime): gen-tags in an
-        abandoned segment ``(N, R)`` are skipped, so a crash-after-rewind-before-
-        any-post-rewind-capture never restores the undone-future workspace. Git
-        absence degrades at exec time inside the store (#1544 — no git_available()
-        pre-gate, which would test the host PATH meaninglessly in container mode).
-        """
-        ws = self.workspace_store
-        if ws is None:
-            return
-        active = [
-            s for s in await ws.seqs()
-            if s <= at_or_below and is_active_seq(self._state_log, s)
-        ]
-        if active:
-            await ws.restore_to_seq(max(active))
 
     async def recover_rewind_if_needed(self) -> dict | None:
         """Re-materialise both substrates as-of-N after a crash mid-rewind (1d).
@@ -2151,20 +1952,19 @@ class AgentRegistry:
         # Stamp success so throttle gates the next attempt. (We don't gate
         # on dropped==0 — even a no-op rewrite resets the throttle window.)
         self._last_truncation_ts = now
-        # ADR-0038 Stage 1e (D5): GC generations + workspace blobs on the SAME
-        # boundary (Q3 piggyback). prune_below(floor) drops only what is below the
-        # (retention-clamped) WAL floor — generations >= floor stay reconstructable,
-        # so this never drops rewind history within the retention window.
+        # ADR-0038 Stage 1e (D5): GC generations on the SAME boundary (Q3 piggyback).
+        # prune_below(floor) drops only what is below the (retention-clamped) WAL
+        # floor — generations >= floor stay reconstructable, so this never drops
+        # rewind history within the retention window.
         await self._prune_generations_below(floor)
         return stats
 
     async def _prune_generations_below(self, floor: int) -> None:
-        """Drop snapshot + workspace generations below ``floor`` (Stage 1e GC).
+        """Drop snapshot generations below ``floor`` (Stage 1e GC).
 
         ``floor`` is the truncation floor (already retention-clamped), so a
         generation at-or-above it stays reconstructable. Defensive — never raises
-        into the truncation hot path. Workspace GC degrades at exec time inside
-        the store (#1544 — no host-PATH git_available pre-gate).
+        into the truncation hot path.
         """
         try:
             for name in self.list_names():
@@ -2172,26 +1972,14 @@ class AgentRegistry:
                 # spawned) — these stay PER-SESSION (the runtime-snapshot substrate).
                 for sid in self._discover_session_ids(name):
                     self._store_for(name, sid).prune_below(floor)  # SnapshotGenerationStore (sync)
-            ws = self.workspace_store
-            if ws is not None:
-                await ws.prune_below(floor)
-            # #1560 PR-3: act-turn op-content-log GC on the same boundary — drop
-            # entries below the floor + unref the out-window op-trees (so auto-gc
-            # reclaims them, the same bounded lifecycle generations get).
-            op_log = self.op_content_log
-            if op_log is not None:
-                op_log.prune_below(floor)                   # WorkspaceOpContentLog (sync)
-                if ws is not None:
-                    await ws.unref_op_trees_below(floor)
-            # #1547: anchors GC'd on the same boundary as generations/blobs.
+            # #1547: anchors GC'd on the same boundary as generations.
             anchors = self.anchor_store
             if anchors is not None:
                 anchors.prune_below(floor)                  # AnchorStore (sync)
         except Exception as e:  # noqa: BLE001 — defensive; never fail caller
             logger.warning("Stage 1e generation GC failed (floor=%d): %s", floor, e)
         # #1954 slice 2: WAL-window-bounded auto-purge of archived agents — run
-        # OUTSIDE the generation-GC try so a workspace-git hiccup above never
-        # blocks reclaiming archived state.
+        # OUTSIDE the generation-GC try so a hiccup above never
         await self._purge_archived_below(floor)
 
     async def _purge_archived_below(self, floor: int) -> None:
@@ -2475,13 +2263,6 @@ class AgentRegistry:
             session = self._factory(profile)
         finally:
             self._constructing_as_delegate = _prev_delegate
-        # ADR-0038 Stage 1d: hand the session the single shared workspace
-        # shadow-git store so cut_generation captures the workspace at each
-        # boundary against the same git-dir the registry's rewind/recovery uses.
-        ws = self.workspace_store
-        attach = getattr(session, "attach_workspace_store", None)
-        if ws is not None and callable(attach):
-            attach(ws)
         # #1547: hand the session the shared anchor store so cut_generation
         # records the rewind-timeline preview text at each boundary.
         anchors = self.anchor_store

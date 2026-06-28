@@ -142,9 +142,9 @@ async def test_remove_session_unknown_is_noop(tmp_path) -> None:
 @pytest.mark.asyncio
 async def test_rewind_restore_failure_does_not_drop_the_session_dir(tmp_path) -> None:
     """Tier 2: #2125 atomicity — the destructive per-session rmtree is DEFERRED until the
-    substrate restores succeed. A restore-failure must NOT leave the dir dropped (tui's
-    'dirs dropped despite checkout failed'). Without the (b)-split (rmtree inline at drop),
-    the dir would be gone despite the failed restore → RED."""
+    as-of-cut reconstruction succeeds. A reconstruction-failure must NOT leave the dir
+    dropped (tui's 'dirs dropped despite checkout failed'). Without the (b)-split (rmtree
+    inline at drop), the dir would be gone despite the failed reconstruction → RED."""
     reg = _make_registry(tmp_path)
     _seed_agent(tmp_path, "worker")
     victim_dir = _make_session_dir(reg, "worker", "task1")
@@ -152,18 +152,19 @@ async def test_rewind_restore_failure_does_not_drop_the_session_dir(tmp_path) ->
     await _put(log, "worker", "pre")              # seq 1 (the rewind target)
     await _spawn_event(log, "worker", "task1")    # seq 2 — spawned AFTER the cut
 
-    async def _boom(*, at_or_below: int) -> None:
-        raise RuntimeError("simulated restore failure")
+    def _boom(_drop_cut: int) -> None:
+        raise RuntimeError("simulated reconstruction failure")
 
-    # real callable (not a mock) — the restore raises mid-_materialize_rewind, AFTER the
-    # post-cut session was detached but BEFORE the deferred rmtree.
-    reg._restore_workspace_active = _boom  # type: ignore[method-assign]
+    # real callable (not a mock) — an as-of-cut reconcile step raises mid-
+    # _materialize_rewind, AFTER the post-cut session was detached but BEFORE the
+    # deferred rmtree, exercising the deferred-purge atomicity window.
+    reg._reconcile_config_as_of_cut = _boom  # type: ignore[method-assign]
 
-    with pytest.raises(RuntimeError, match="simulated restore failure"):
+    with pytest.raises(RuntimeError, match="simulated reconstruction failure"):
         await reg.rewind_to(1)
 
     assert victim_dir.exists(), (
-        "#2125: a failed restore must not commit the destructive session drop"
+        "#2125: a failed reconstruction must not commit the destructive session drop"
     )
 
 

@@ -21,7 +21,6 @@ from reyn.config.embedding import (  # #1682 #3 cross-section
 from reyn.config.execution import (  # #1682 #3 cross-section
     _build_self_improvement_config,
     _build_skill_resume_config,
-    _build_time_travel_config,
     _build_tool_use_config,
 )
 from reyn.config.infra import (  # #1682 #3 cross-section
@@ -472,7 +471,6 @@ def load_config(cwd: Path | None = None) -> ReynConfig:
         events=_build_events_config(merged.get("events")),
         cost=cost,
         skill_resume=_build_skill_resume_config(merged.get("skill_resume")),
-        time_travel=_build_time_travel_config(merged.get("time_travel")),
         tool_use=_build_tool_use_config(merged.get("tool_use")),
         voice=_build_voice_config(merged.get("voice")),
         embedding=_build_embedding_config(merged.get("embedding")),

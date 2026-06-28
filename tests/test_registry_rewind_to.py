@@ -9,7 +9,6 @@ floor-clamp (choice (b)), and the no-compaction-during-window guard.
 """
 from __future__ import annotations
 
-import shutil
 from pathlib import Path
 
 import pytest
@@ -20,8 +19,6 @@ from reyn.core.events.state_log import StateLog
 from reyn.runtime.profile import AgentProfile
 from reyn.runtime.registry import AgentRegistry
 from reyn.runtime.session import Session
-
-_needs_git = pytest.mark.skipif(shutil.which("git") is None, reason="git not on PATH")
 
 
 def _no_factory(_profile):
@@ -196,61 +193,30 @@ async def test_rewind_to_drives_loaded_session_to_as_of_n_zero_residue(tmp_path)
     assert snap.applied_seq == result["reset_seq"]
 
 
-# ── two-substrate (workspace) coverage (ADR-0038 Stage 1d) ────────────────────
+# ── crash-mid-rewind recovery (runtime substrate; WAL+snapshot, git-independent) ──
 
 
-@_needs_git
-@pytest.mark.asyncio
-async def test_rewind_to_restores_workspace_to_active_gen(tmp_path):
-    """Tier 2: rewind_to restores the workspace substrate to the as-of-N generation."""
-    reg = _make_registry(tmp_path)
-    _seed_agent(tmp_path, "alpha")
-    log = reg.state_log
-    ws = reg.workspace_store
-
-    (tmp_path / "code.py").write_text("v1", encoding="utf-8")
-    await _put(log, "alpha", "a1")          # seq 1
-    await ws.capture(1)
-    (tmp_path / "code.py").write_text("v2", encoding="utf-8")
-    await _put(log, "alpha", "a2")          # seq 2
-    await ws.capture(2)
-
-    await reg.rewind_to(1)
-
-    assert (tmp_path / "code.py").read_text(encoding="utf-8") == "v1"   # workspace as-of-N
-
-
-@_needs_git
 @pytest.mark.asyncio
 async def test_recover_rewind_restores_active_gen_not_abandoned(tmp_path):
-    """Tier 2: crash mid-rewind ⇒ recovery brings BOTH substrates to as-of-N.
+    """Tier 2: crash mid-rewind ⇒ recovery brings the runtime substrate to as-of-N.
 
-    Simulates a crash AFTER the reset-record is fsync'd but BEFORE materialisation
-    (workspace still at the undone-future v2, no post-rewind capture). Recovery
-    must restore the workspace to the ACTIVE gen-1 (v1) — NOT the abandoned gen-2
-    tag (the highest raw tag <= head) — and re-materialise the runtime snapshot.
+    Simulates a crash AFTER the reset-record is fsync'd but BEFORE materialisation.
+    Recovery must re-materialise the runtime snapshot to the ACTIVE branch as-of-N —
+    NOT the abandoned future.
     """
     reg = _make_registry(tmp_path)
     _seed_agent(tmp_path, "alpha")
     log = reg.state_log
-    ws = reg.workspace_store
 
-    (tmp_path / "code.py").write_text("v1", encoding="utf-8")
-    await _put(log, "alpha", "a1")          # seq 1  (active, gen-1 = v1)
-    await ws.capture(1)
-    (tmp_path / "code.py").write_text("v2", encoding="utf-8")
-    await _put(log, "alpha", "a2")          # seq 2  (will be abandoned, gen-2 = v2)
-    await ws.capture(2)
+    await _put(log, "alpha", "a1")          # seq 1  (active)
+    await _put(log, "alpha", "a2")          # seq 2  (will be abandoned)
 
     # reset-record appended (rewind to 1), then crash BEFORE materialisation.
-    R = await rewind(log, target_n=1)       # seq 3 — abandons (1, 3) incl. gen-2@2
-    assert (tmp_path / "code.py").read_text(encoding="utf-8") == "v2"   # pre-recovery
+    R = await rewind(log, target_n=1)       # seq 3 — abandons (1, 3)
 
     result = await reg.recover_rewind_if_needed()
 
     assert result is not None and result["recovered_target_n"] == 1
-    # workspace: ACTIVE gen-1 (v1), NOT the abandoned gen-2 tag.
-    assert (tmp_path / "code.py").read_text(encoding="utf-8") == "v1"
     # runtime: self-contained snapshot re-materialised as-of-N (applied_seq = head).
     snap = AgentSnapshot.load("alpha", _snap_path(tmp_path, "alpha"))
     assert _inbox_ids(snap) == ["a1"]       # a2 (abandoned future) not present
@@ -266,34 +232,35 @@ async def test_recover_rewind_is_noop_without_reset_record(tmp_path):
     assert await reg.recover_rewind_if_needed() is None
 
 
-@_needs_git
 @pytest.mark.asyncio
 async def test_restore_all_triggers_crash_recovery(tmp_path):
     """Tier 2: restore_all (production startup seam) TRIGGERS crash-mid-rewind recovery.
 
     Wiring proof — recovery must run via ``restore_all`` (the path the 3 startup
     sites call), NOT only via a direct ``recover_rewind_if_needed`` call. Simulate
-    a crash mid-rewind (reset-record present, workspace still at the undone-future
-    v2), then call ``restore_all``: the workspace must be restored to the ACTIVE
-    gen-N (v1). Events target an unseeded agent so no non-empty snapshot pulls in
-    the session factory.
+    a crash mid-rewind (reset-record present), then call ``restore_all``: the
+    persisted runtime snapshot must be re-materialised to the ACTIVE gen-N. Events
+    target an unseeded agent so no non-empty snapshot pulls in the session factory.
     """
     reg = _make_registry(tmp_path)          # only the auto 'default' agent (empty)
     log = reg.state_log
-    ws = reg.workspace_store
 
-    (tmp_path / "code.py").write_text("v1", encoding="utf-8")
     await _put(log, "ghost", "g1")          # seq 1 (advances seq; 'ghost' not in list_names)
-    await ws.capture(1)
-    (tmp_path / "code.py").write_text("v2", encoding="utf-8")
-    await _put(log, "ghost", "g2")          # seq 2
-    await ws.capture(2)
-    await rewind(log, target_n=1)           # seq 3 — abandons (1,3); crash before materialise
-    assert (tmp_path / "code.py").read_text(encoding="utf-8") == "v2"   # pre-recovery
+    await _put(log, "ghost", "g2")          # seq 2 (abandoned future)
+    R = await rewind(log, target_n=1)       # seq 3 — abandons (1,3); crash before materialise
+
+    # pre-recovery: the active-branch rewind target is outstanding.
+    from reyn.core.events.snapshot_generations import active_rewind_target
+    assert active_rewind_target(log) == 1
 
     await reg.restore_all()                 # production seam — must trigger recovery
 
-    assert (tmp_path / "code.py").read_text(encoding="utf-8") == "v1"   # recovered to active gen-N
+    # the recovery re-materialised the 'default' agent's snapshot self-contained at
+    # the reset-record head (applied_seq = R) — the observable proof recovery ran via
+    # restore_all (a direct recover_rewind_if_needed would do the same; not calling it
+    # at all leaves applied_seq at 0).
+    snap = AgentSnapshot.load("default", _snap_path(tmp_path, "default"))
+    assert snap.applied_seq == R
 
 
 # ── Stage 1e: retention clamp + GC + window guard ─────────────────────────────
