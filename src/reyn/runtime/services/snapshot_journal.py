@@ -136,11 +136,33 @@ class SnapshotJournal:
         """
         if self._generation_store is None or self._state_log is None:
             return
-        self._generation_store.record(self._snapshot)
-        if self._anchor_store is not None and anchor:
-            self._anchor_store.capture(
-                self._snapshot.applied_seq, anchor, full=full_message,
-            )
+        # #2259 PR-2b: capture the content SYNC (consistent at this boundary), then record the
+        # generation in a worker job that stamps applied_seq from the worker-assigned seq — so
+        # the gen is (content-at-cut, seq-at-cut), never a live snapshot whose content is AHEAD
+        # of its (last-durable) applied_seq (which a rewind would replay+double-apply). The job
+        # is FIFO-after the pre-cut mutations' WAL jobs and before any post-cut one, so
+        # last_assigned_seq = the last pre-cut mutation's seq, matching the captured content.
+        payload = copy.deepcopy(self._snapshot.to_payload())
+        store = self._generation_store
+        log = self._state_log
+        anchor_store = self._anchor_store
+
+        async def _record() -> None:
+            seq = log.last_assigned_seq
+            payload["applied_seq"] = seq
+            store.record_payload(payload, seq)
+            if anchor_store is not None and anchor:
+                anchor_store.capture(seq, anchor, full=full_message)
+
+        log.submit_durable_nowait(_record)
+
+    async def flush(self) -> None:
+        """#2259 PR-2b: drain every enqueued durable write (WAL + snapshot + gen) for this
+        journal's worker, WITHOUT closing it — a barrier so a caller (or test) can observe a
+        fire-and-forget mutation's durable effect (applied_seq stamped, snapshot/gen on disk).
+        No-op without a WAL."""
+        if self._state_log is not None:
+            await self._state_log.flush()
 
     # ── public read access ────────────────────────────────────────────────
 
@@ -162,15 +184,14 @@ class SnapshotJournal:
         msg_id = uuid.uuid4().hex[:8]
         full_payload = {**payload, "_msg_id": msg_id}
         if self._state_log is not None:
-            seq = await self._wal_append(
+            self._wal_append_nowait(
                 "inbox_put", target=self._agent_name,
                 msg_id=msg_id, msg_kind=kind, payload=full_payload,
             )
-            self._snapshot.applied_seq = seq
             self._snapshot.inbox.append({
                 "id": msg_id, "kind": kind, "payload": full_payload,
             })
-            await self.save()
+            self.save_nowait()
         return msg_id
 
     async def consume_inbox(self, *, msg_id: str) -> None:
@@ -181,14 +202,13 @@ class SnapshotJournal:
         """
         if self._state_log is None or msg_id is None:
             return
-        seq = await self._wal_append(
+        self._wal_append_nowait(
             "inbox_consume", agent=self._agent_name, msg_id=msg_id,
         )
-        self._snapshot.applied_seq = seq
         self._snapshot.inbox = [
             m for m in self._snapshot.inbox if m.get("id") != msg_id
         ]
-        await self.save()
+        self.save_nowait()
 
     async def record_chain_register(self, *, chain_id: str, fields: dict) -> None:
         """Append ``chain_register`` to WAL and create the pending_chains entry.
@@ -199,16 +219,15 @@ class SnapshotJournal:
         """
         if self._state_log is None:
             return
-        seq = await self._wal_append(
+        self._wal_append_nowait(
             "chain_register", agent=self._agent_name, chain_id=chain_id,
             **fields,
         )
-        self._snapshot.applied_seq = seq
         self._snapshot.pending_chains[chain_id] = {
             "chain_id": chain_id,
             **{k: (list(v) if k == "waiting_on" else v) for k, v in fields.items()},
         }
-        await self.save()
+        self.save_nowait()
 
     async def record_chain_update(self, *, chain_id: str, fields: dict) -> None:
         """Append ``chain_update`` to WAL and update waiting_on in snapshot.
@@ -218,16 +237,15 @@ class SnapshotJournal:
         """
         if self._state_log is None:
             return
-        seq = await self._wal_append(
+        self._wal_append_nowait(
             "chain_update", agent=self._agent_name, chain_id=chain_id,
             **fields,
         )
-        self._snapshot.applied_seq = seq
         chain = self._snapshot.pending_chains.get(chain_id)
         if chain is not None:
             waiting_on = fields.get("waiting_on", [])
             chain["waiting_on"] = list(waiting_on)
-        await self.save()
+        self.save_nowait()
 
     async def record_chain_resolve(self, *, chain_id: str) -> None:
         """Append ``chain_resolve`` to WAL and remove the pending_chains entry.
@@ -236,12 +254,11 @@ class SnapshotJournal:
         """
         if self._state_log is None:
             return
-        seq = await self._wal_append(
+        self._wal_append_nowait(
             "chain_resolve", agent=self._agent_name, chain_id=chain_id,
         )
-        self._snapshot.applied_seq = seq
         self._snapshot.pending_chains.pop(chain_id, None)
-        await self.save()
+        self.save_nowait()
 
     async def record_chain_timeout_fired(self, *, chain_id: str) -> None:
         """Append ``chain_timeout_fired`` to WAL and remove the pending_chains entry.
@@ -250,12 +267,11 @@ class SnapshotJournal:
         """
         if self._state_log is None:
             return
-        seq = await self._wal_append(
+        self._wal_append_nowait(
             "chain_timeout_fired", agent=self._agent_name, chain_id=chain_id,
         )
-        self._snapshot.applied_seq = seq
         self._snapshot.pending_chains.pop(chain_id, None)
-        await self.save()
+        self.save_nowait()
 
     # ── intervention persistence (PR-intervention-link L2) ────────────────
 
@@ -274,15 +290,14 @@ class SnapshotJournal:
         """
         if self._state_log is None:
             return
-        seq = await self._wal_append(
+        self._wal_append_nowait(
             "intervention_dispatched",
             target=self._agent_name,
             intervention_id=intervention_id,
             iv_dict=iv_dict,
         )
-        self._snapshot.applied_seq = seq
         self._snapshot.outstanding_interventions[intervention_id] = iv_dict
-        await self.save()
+        self.save_nowait()
 
     async def record_intervention_resolved(
         self, *, intervention_id: str,
@@ -294,14 +309,13 @@ class SnapshotJournal:
         """
         if self._state_log is None:
             return
-        seq = await self._wal_append(
+        self._wal_append_nowait(
             "intervention_resolved",
             target=self._agent_name,
             intervention_id=intervention_id,
         )
-        self._snapshot.applied_seq = seq
         self._snapshot.outstanding_interventions.pop(intervention_id, None)
-        await self.save()
+        self.save_nowait()
 
     async def record_intervention_answer_buffered(
         self, *, run_id: str, text: str, choice_id: str | None,
@@ -316,18 +330,17 @@ class SnapshotJournal:
         """
         if self._state_log is None:
             return
-        seq = await self._wal_append(
+        self._wal_append_nowait(
             "intervention_answer_buffered",
             target=self._agent_name,
             run_id=run_id,
             text=text,
             choice_id=choice_id,
         )
-        self._snapshot.applied_seq = seq
         self._snapshot.buffered_intervention_answers[run_id] = {
             "text": text, "choice_id": choice_id,
         }
-        await self.save()
+        self.save_nowait()
 
     async def record_intervention_answer_consumed(
         self, *, run_id: str,
@@ -343,14 +356,13 @@ class SnapshotJournal:
         """
         if self._state_log is None:
             return
-        seq = await self._wal_append(
+        self._wal_append_nowait(
             "intervention_answer_consumed",
             target=self._agent_name,
             run_id=run_id,
         )
-        self._snapshot.applied_seq = seq
         self._snapshot.buffered_intervention_answers.pop(run_id, None)
-        await self.save()
+        self.save_nowait()
 
     async def record_next_turn_context_staged(
         self, *, kind: str, payload: dict,
@@ -364,14 +376,13 @@ class SnapshotJournal:
         if self._state_log is None:
             return
         entry = {"kind": kind, "payload": payload}
-        seq = await self._wal_append(
+        self._wal_append_nowait(
             "next_turn_context_staged",
             target=self._agent_name,
             entry=entry,
         )
-        self._snapshot.applied_seq = seq
         self._snapshot.next_turn_context.append(entry)
-        await self.save()
+        self.save_nowait()
 
     async def record_next_turn_context_cleared(self) -> None:
         """Append ``next_turn_context_cleared`` to WAL + clear the buffer (#1800-4b).
@@ -382,13 +393,12 @@ class SnapshotJournal:
         """
         if self._state_log is None:
             return
-        seq = await self._wal_append(
+        self._wal_append_nowait(
             "next_turn_context_cleared",
             target=self._agent_name,
         )
-        self._snapshot.applied_seq = seq
         self._snapshot.next_turn_context.clear()
-        await self.save()
+        self.save_nowait()
 
     # ── restore / persist ─────────────────────────────────────────────────
 
@@ -460,11 +470,19 @@ class SnapshotJournal:
         payload = copy.deepcopy(self._snapshot.to_payload())  # sync consistent capture
         path = self._snapshot_path
         log = self._state_log
+        snapshot = self._snapshot
 
         async def _write() -> None:
-            payload["applied_seq"] = log.last_assigned_seq  # worker-assigned seq, read in the job
+            seq = log.last_assigned_seq  # worker-assigned seq, read in the job (after the WAL job)
+            payload["applied_seq"] = seq
             await asyncio.to_thread(
                 AgentSnapshot.write_durable, path, AgentSnapshot.serialize_payload(payload),
             )
+            # #2259 PR-2b: track the DURABLE seq on the in-memory snapshot AFTER the write — the
+            # truncate floor (`compute_truncate_floor` → min agent applied_seq) reads this in-memory
+            # value, so it must equal the last-DURABLE seq (never ahead of durability, or the floor
+            # could drop a WAL entry a not-yet-durable snapshot still needs). Set post-write = lags
+            # toward durable = conservative + correct. Atomic int assign on the loop (no race).
+            snapshot.applied_seq = seq
 
         log.submit_durable_nowait(_write)

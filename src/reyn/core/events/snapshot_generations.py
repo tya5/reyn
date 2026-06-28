@@ -54,6 +54,15 @@ class SnapshotGenerationStore:
         snapshot.save(path)  # tmp → fsync → rename
         return path
 
+    def record_payload(self, payload: dict, seq: int) -> Path:
+        """#2259 PR-2b: record a pre-captured payload dict (with ``applied_seq`` stamped to
+        ``seq``) as the generation at ``seq`` — the worker-job counterpart of ``record``. So
+        ``cut_generation`` captures content SYNC + stamps the worker-assigned seq in the durable
+        job (content + applied_seq consistent, never a live-ahead-of-durable gen)."""
+        path = self._path_for(seq)
+        AgentSnapshot.write_durable(path, AgentSnapshot.serialize_payload(payload))
+        return path
+
     def seqs(self) -> list[int]:
         """Sorted list of generation boundary seqs present on disk."""
         if not self._dir.is_dir():

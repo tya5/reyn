@@ -71,6 +71,7 @@ async def test_snapshot_save_keeps_event_loop_free(tmp_path, monkeypatch):
 
     ticker = asyncio.create_task(_ticker())
     await j.append_inbox(kind="msg", payload={"text": "hi"})
+    await j.flush()  # #2259 PR-2b: drain the fire-and-forget slow save (off-loop → ticker runs)
     assert ticks > 0, "the loop must keep running during the slow off-loop snapshot write"
     await ticker
     await sl.aclose()
@@ -102,6 +103,7 @@ async def test_snapshot_durable_only_after_its_wal_seq(tmp_path, monkeypatch):
                 "original_request": "r", "waiting_on": ["x"]},
     )
     await j.consume_inbox(msg_id=j.snapshot.inbox[0]["id"] if j.snapshot.inbox else "none")
+    await j.flush()  # #2259 PR-2b: drain the async WAL+snapshot writes (collect observations)
 
     assert observations, "snapshot saves must have run through the off-loop write"
     for applied_seq, wal_at_write in observations:

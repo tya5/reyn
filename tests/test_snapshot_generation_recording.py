@@ -43,6 +43,7 @@ async def test_cut_generation_records_current_snapshot(tmp_path):
     await journal.append_inbox(kind="user", payload={"text": "hi"})
     assert store.seqs() == []          # state change alone does not cut
     await journal.cut_generation()           # turn boundary
+    await journal.flush()              # #2259 PR-2b: the gen-record runs in a worker job
     seq = journal.snapshot.applied_seq
     assert store.seqs() == [seq]
     assert store.load(seq) == journal.snapshot
@@ -60,7 +61,12 @@ async def test_reconstruct_head_equals_live_snapshot(tmp_path):
     await journal.append_inbox(kind="user", payload={"text": "a"})
     await journal.cut_generation()
     await journal.append_inbox(kind="user", payload={"text": "b"})  # past the gen
-    rebuilt = reconstruct(AGENT, store, log, log.current_seq)
+    # #2259 PR-2b: under relaxed durability, reconstruct gives the recover-to-last-durable
+    # prefix; the live snapshot is ahead until drained. So FLUSH, then reconstruct at the
+    # durable head == live (the consistent-prefix parity; "reconstruct(current_seq) == live"
+    # was the synchronous-durability assumption, correctly retired).
+    await journal.flush()
+    rebuilt = reconstruct(AGENT, store, log, log.last_durable_seq)
     assert rebuilt == journal.snapshot
 
 
@@ -75,4 +81,5 @@ async def test_no_store_is_noop_no_behavior_change(tmp_path):
     assert store is None
     await journal.append_inbox(kind="user", payload={"text": "x"})
     await journal.cut_generation()  # must not raise
+    await journal.flush()  # #2259 PR-2b: the snapshot save is async
     assert (tmp_path / "snapshot.json").is_file()
