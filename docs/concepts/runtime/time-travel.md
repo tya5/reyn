@@ -96,11 +96,11 @@ Act-turn rewind (intra-turn granularity) uses `SkillResumeCoordinator.plan_for_a
 
 ### Boundary generation
 
-At every checkpoint boundary, Reyn writes an **AgentSnapshot** — the runtime state at that seq (inbox, message history, plan state, WAL-derived config). There is no workspace commit; the boundary artifact is a single runtime snapshot. `checkout(seq)` locates the snapshot at or before the target seq, then replays WAL events forward to reach the exact target state.
+At every checkpoint boundary, Reyn writes an **AgentSnapshot** — the runtime state at that seq (inbox, message history, plan state). There is no workspace commit; the boundary artifact is a single runtime snapshot. `checkout(seq)` locates the snapshot at or before the target seq, then replays WAL events forward to reach the exact target state. Config state is reconstructed from its own generation store (see [`.reyn/` directory layout](../../reference/runtime/reyn-dir-layout.md#recovery-core)).
 
 ### Task subscriptions and the backend at rewind
 
-Time-travel rewinds the runtime substrate — the agent's conversation state and WAL-derived config. Task-related state splits into what lives inside the runtime substrate and what lives in the external backend:
+Time-travel rewinds the runtime substrate — the agent's conversation state. Task-related state splits into what lives inside the runtime substrate and what lives in the external backend:
 
 **What gets rewound (Reyn-internal):** The task↔session binding — which session is the `assignee`, which is the `requester` — is recorded in the WAL as `task_subscribed` and `task_rebound` entries. Because it lives in the WAL (StateLog), it is part of the runtime substrate and is rewound to the target seq along with conversation state. After rewind the binding reflects who owned each task at seq N.
 
