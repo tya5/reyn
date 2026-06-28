@@ -183,6 +183,16 @@ Three rules then keep multi-session work coherent:
 
    In one line: **broker = hint, PR = contract**.
 
+4. **Closing-keyword caution (sub-PR arcs).** GitHub `closes/fixes/resolves #N`
+   keywords match **literally** regardless of sentence context — a sub-PR body
+   containing `closes #X` auto-closes `#X` on merge even if the sentence reads
+   "this PR partially closes #X". For sub-PRs in a multi-PR arc, use `part of
+   #X` or `toward #X`. Only the final PR that actually completes the umbrella
+   issue should use `Closes #X`.
+   **Reviewer recovery angle:** an unexpected issue auto-close triggered by a
+   sub-PR merge is almost always a closing-keyword false positive. Reopen the
+   issue and verify the arc is not half-done before assuming completion.
+
 ## Pre-conclusion observation checklist (READ BEFORE WRITING ANY FINDING / 結論)
 
 **Active trigger**: when you are about to write any of the following — **STOP**
