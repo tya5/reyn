@@ -132,14 +132,16 @@ def test_kinds_use_distinct_markers() -> None:
     assert "▸" in tool and "⏺" not in tool
 
 
-def test_wants_separator_between_blocks_not_before_nested_or_first() -> None:
+def test_wants_separator_skips_first_nested_and_transient() -> None:
     """Tier 2: a blank line separates top-level message blocks (but not before the
-    first), and never before a nested ⎿ detail row (tool result / trace) — so a
-    tool call and its result stay grouped."""
-    assert wants_separator("agent", seen_message=False) is False          # first
-    assert wants_separator("agent", seen_message=True) is True            # block gap
+    first); never before a nested ⎿ detail row (tool result), nor before a
+    TRANSIENT status/trace — a transient is cleared in place, so a separator before
+    it would orphan as a stray blank (the old 2-blank-before-reply bug)."""
+    assert wants_separator("agent", seen_message=False) is False           # first
+    assert wants_separator("agent", seen_message=True) is True             # block gap
     assert wants_separator("tool_call_completed", seen_message=True) is False  # nested
-    assert wants_separator("trace", seen_message=True) is False           # nested detail
+    assert wants_separator("status", seen_message=True) is False           # transient
+    assert wants_separator("trace", seen_message=True) is False            # transient+nested
 
 
 def test_unknown_kind_renders_text_without_marker() -> None:

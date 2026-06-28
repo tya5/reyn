@@ -245,7 +245,7 @@ class RichChatRenderer(ChatRenderer):
 # Claude Code-style palette. Default is plain text (_CC_TEXT); colour is reserved
 # to signal STATE — error (red), needs-action (amber), done (green), ambient/low
 # (dim) — so a coloured glyph always means "something to notice".
-_CC_TEXT = "#e6edf3"    # default near-white — normal text + markers
+_CC_TEXT = "default"    # terminal default fg — normal text + markers (no forced colour)
 _CC_DIM = "#6b7280"     # low-importance / ambient
 _CC_DONE = "#7ee787"    # green — completion
 _CC_ERR = "#f97066"     # red — failure
@@ -287,11 +287,20 @@ _NESTED_KINDS = frozenset({"tool_call_completed", "tool_call_failed", "trace"})
 def wants_separator(kind: str, seen_message: bool) -> bool:
     """Pure: whether a blank line should precede this message in the scrollback.
 
-    One blank line separates top-level message blocks (user / agent / tool call /
-    status / …) for breathing room, but never before a nested ⎿ detail row (which
-    belongs to the block above it) or before the very first message.
+    One blank line separates top-level message blocks for breathing room, but not:
+    - before the very first message;
+    - before a nested ⎿ detail row (it belongs to the block above it);
+    - before a TRANSIENT status/trace line. A transient is cleared in place by the
+      next message, so a separator before it would be orphaned as a stray blank.
+      This is what made an agent reply show two blanks: the per-turn "thinking…"
+      status got a separator, was cleared, and left its blank behind — then the
+      reply added its own. Skipping transients leaves exactly one.
     """
-    return seen_message and kind not in _NESTED_KINDS
+    return (
+        seen_message
+        and kind not in _NESTED_KINDS
+        and kind not in _TRANSIENT_KINDS
+    )
 
 
 def _short(v, n: int = 60) -> str:
