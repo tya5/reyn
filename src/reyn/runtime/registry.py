@@ -628,6 +628,11 @@ class AgentRegistry:
             )
             # #2103 C2b: this agent's stable identity = its agent_created WAL seq.
             self._agent_create_seq[name] = seq
+            # #2259 PR-1b: ALSO persist identity + lineage as a truncation-surviving
+            # generation — the `agent_created` event above is dropped when the WAL is
+            # truncated below the floor, which would lose the ⊆-parent cap on rewind
+            # (escalation-on-rewind). The generation is the recovery base for identity.
+            self._record_agent_identity_generation(name, seq)
         else:
             # #2103 C2b Q1: no-WAL fallback — a monotonic counter (no rewind to
             # reconstruct against here), so a create_agent parent is ALWAYS identity-
@@ -1540,6 +1545,56 @@ class AgentRegistry:
         from reyn.core.events.config_recovery import config_generations_dir  # noqa: PLC0415
         return ConfigGenerationStore(config_generations_dir(self._project_root / ".reyn"))
 
+    def _agent_identity_generation_store(self):
+        """The agent-identity-as-snapshot generation store (#2259 PR-1b). Per-agent full-state
+        identity + frozen lineage under ``.reyn/state/agent_identity/`` — truncation-surviving
+        bases (they replace the truncatable `agent_created` WAL event that lost identity/lineage
+        below the floor → escalation-on-rewind). Same pattern as the config store (PR-1)."""
+        from reyn.core.events.agent_identity_generations import (  # noqa: PLC0415
+            AgentIdentityGenerationStore,
+        )
+        return AgentIdentityGenerationStore(
+            self._project_root / ".reyn" / "state" / "agent_identity",
+        )
+
+    def _record_agent_identity_generation(self, name: str, seq: int) -> None:
+        """#2259 PR-1b: persist ``name``'s identity (``create_seq``) + frozen spawn edge as a
+        truncation-surviving generation keyed by its create seq, so a rewind reconstructs the
+        ⊆-parent cap from the generation — NOT from the `agent_created` WAL event, which
+        truncation drops (a dropped lineage edge → resolved_profile_for skips the parent-conjunct
+        → child runs UN-capped). No-op without a WAL (no rewind to reconstruct against)."""
+        if self._state_log is None:
+            return
+        edge = self._spawn_lineage.get(name)
+        self._agent_identity_generation_store().record(
+            name,
+            create_seq=self._agent_create_seq.get(name, seq),
+            spawn_parent=edge[0] if edge else None,
+            spawn_parent_seq=edge[1] if edge else None,
+            seq=seq,
+        )
+
+    def _agent_identity_as_of_cut(
+        self, cut: int,
+    ) -> "dict[str, tuple[int, str | None, int | None]]":
+        """#2259 PR-1b: per-agent identity + frozen lineage as-of-cut from the truncation-
+        surviving generations — the latest generation ≤ cut per agent. Returns
+        ``{name: (create_seq, spawn_parent, spawn_parent_seq)}``. The rewind rebuild prefers
+        this (survives truncation) over the `agent_created` WAL scan."""
+        store = self._agent_identity_generation_store()
+        out: dict[str, tuple[int, str | None, int | None]] = {}
+        for name in store.names():
+            latest = store.latest_at_or_below(name, cut)
+            if latest is None:
+                continue  # first generation after the cut → didn't exist as-of-cut
+            _seq, data = latest
+            out[name] = (
+                int(data.get("create_seq", _seq)),
+                data.get("spawn_parent"),
+                data.get("spawn_parent_seq"),
+            )
+        return out
+
     async def record_config_change(self, rel_path: str, content: dict) -> None:
         """#2259 PR-1: record the FULL post-mutation content of a recovery-core config
         registry as a truncation-surviving generation keyed by the current WAL head. A
@@ -1823,13 +1878,23 @@ class AgentRegistry:
         # purged + REUSED, the reused parent's create_seq differs → the edge reads STALE
         # → resolved_profile_for fail-closes + is_spawn_descendant rejects = no
         # resurrection of the orphan under the reused parent on a forward checkout.
+        #
+        # #2259 PR-1b: identity/lineage comes from the truncation-surviving per-agent
+        # GENERATIONS (latest ≤ cut), with the `agent_created` WAL scan as a fallback for
+        # any agent without a generation. The WAL event is truncated below the floor — so a
+        # long-lived agent's edge would be LOST if rebuilt from the WAL alone, dropping its
+        # ⊆-parent cap on rewind (escalation-on-rewind). The generation is the recovery base.
+        identity = self._agent_identity_as_of_cut(drop_cut)
+        for _n, (_s, _payload, _p, _pseq) in ag_created.items():
+            if _s <= drop_cut:
+                identity.setdefault(_n, (_s, _p, _pseq))
         self._agent_create_seq = {
-            _n: _s for _n, (_s, _payload, _p, _pseq) in ag_created.items()
-            if _s <= drop_cut and _n not in ag_purged and (self._dir / _n).is_dir()
+            _n: _cs for _n, (_cs, _p, _pseq) in identity.items()
+            if _n not in ag_purged and (self._dir / _n).is_dir()
         }
         self._spawn_lineage = {
-            _n: (_p, _pseq) for _n, (_s, _payload, _p, _pseq) in ag_created.items()
-            if _p and _s <= drop_cut and _n not in ag_purged and (self._dir / _n).is_dir()
+            _n: (_p, _pseq) for _n, (_cs, _p, _pseq) in identity.items()
+            if _p and _n not in ag_purged and (self._dir / _n).is_dir()
         }
         # #2125 (b)-split: the runtime reconstruction succeeded — NOW perform the
         # deferred destructive rmtree of the dropped post-cut session dirs. Reaching
@@ -1965,6 +2030,10 @@ class AgentRegistry:
             # per registry, the nearest gen BELOW the floor (the truncation-surviving base),
             # so config-as-of-floor stays reconstructable (the bug the event-replay had).
             self._config_generation_store().prune_below(floor)
+            # #2259 PR-1b: GC agent-identity generations on the same boundary, with the SAME
+            # prune-KEEPS-BASE crux — keep the nearest identity gen BELOW the floor per agent,
+            # so the ⊆-parent cap stays reconstructable on a rewind to the floor.
+            self._agent_identity_generation_store().prune_below(floor)
         except Exception as e:  # noqa: BLE001 — defensive; never fail caller
             logger.warning("Stage 1e generation GC failed (floor=%d): %s", floor, e)
         # #1954 slice 2: WAL-window-bounded auto-purge of archived agents — run
