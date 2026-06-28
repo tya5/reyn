@@ -138,6 +138,17 @@ def _setup(tmp_path: Path) -> tuple[SkillRegistry, StateLog, Path]:
     return registry, log, snap_path
 
 
+def _run_durable(rt, log, msg):
+    """#2259 PR-2b: run the runtime + flush its worker in-context so the run's async WAL+snapshot
+    writes drain before the (sync) test asserts their durable effect."""
+    async def _go():
+        try:
+            return await rt.run(msg)
+        finally:
+            await log.flush()  # drain even on error/interrupt (snapshot-preserve cases)
+    return asyncio.run(_go())
+
+
 # ---------------------------------------------------------------------------
 # complete() called: normal exit / deliberate abort / budget exceeded
 # ---------------------------------------------------------------------------
@@ -149,7 +160,7 @@ def test_normal_completion_calls_complete(tmp_path: Path):
     rt = _StubRuntime(
         _make_skill(), skill_registry=registry, state_log=log,
     )
-    result = asyncio.run(rt.run({"type": "input", "data": {}}))
+    result = _run_durable(rt, log, {"type": "input", "data": {}})
 
     assert isinstance(result, RunResult) and result.ok
     kinds = [e["kind"] for e in log.iter_from(0)]
@@ -174,7 +185,7 @@ def test_workflow_aborted_calls_complete(tmp_path: Path):
     )
 
     with pytest.raises(WorkflowAbortedError):
-        asyncio.run(rt.run({"type": "input", "data": {}}))
+        _run_durable(rt, log, {"type": "input", "data": {}})
 
     kinds = [e["kind"] for e in log.iter_from(0)]
     assert "skill_completed" in kinds
@@ -196,7 +207,7 @@ def test_budget_exceeded_calls_complete(tmp_path: Path):
         ),
     )
 
-    result = asyncio.run(rt.run({"type": "input", "data": {}}))
+    result = _run_durable(rt, log, {"type": "input", "data": {}})
     assert result.status == "budget_exceeded"
     kinds = [e["kind"] for e in log.iter_from(0)]
     assert "skill_completed" in kinds
@@ -221,7 +232,7 @@ def test_cancelled_error_preserves_snapshot(tmp_path: Path):
     )
 
     with pytest.raises(asyncio.CancelledError):
-        asyncio.run(rt.run({"type": "input", "data": {}}))
+        _run_durable(rt, log, {"type": "input", "data": {}})
 
     kinds = [e["kind"] for e in log.iter_from(0)]
     assert "skill_completed" not in kinds, (
@@ -247,7 +258,7 @@ def test_keyboard_interrupt_preserves_snapshot(tmp_path: Path):
     )
 
     with pytest.raises(KeyboardInterrupt):
-        asyncio.run(rt.run({"type": "input", "data": {}}))
+        _run_durable(rt, log, {"type": "input", "data": {}})
 
     kinds = [e["kind"] for e in log.iter_from(0)]
     assert "skill_completed" not in kinds
@@ -274,7 +285,7 @@ def test_runtime_error_preserves_snapshot(tmp_path: Path):
     )
 
     with pytest.raises(RuntimeError, match="transient blip"):
-        asyncio.run(rt.run({"type": "input", "data": {}}))
+        _run_durable(rt, log, {"type": "input", "data": {}})
 
     kinds = [e["kind"] for e in log.iter_from(0)]
     assert "skill_completed" not in kinds
@@ -328,7 +339,7 @@ def test_cancelled_error_fires_skill_end_interrupted(tmp_path: Path):
         raise_on_first_phase=asyncio.CancelledError(),
     )
     with pytest.raises(asyncio.CancelledError):
-        asyncio.run(rt.run({"type": "input", "data": {}}))
+        _run_durable(rt, log, {"type": "input", "data": {}})
     assert "skill_start" in rec.points and "skill_end" in rec.points
     end_vars = [v for (p, v) in rec.dispatched if p == "skill_end"]
     assert end_vars and end_vars[0]["status"] == "interrupted"
@@ -343,7 +354,7 @@ def test_runtime_error_fires_skill_end_interrupted(tmp_path: Path):
         raise_on_first_phase=RuntimeError("transient blip"),
     )
     with pytest.raises(RuntimeError, match="transient blip"):
-        asyncio.run(rt.run({"type": "input", "data": {}}))
+        _run_durable(rt, log, {"type": "input", "data": {}})
     end_vars = [v for (p, v) in rec.dispatched if p == "skill_end"]
     assert end_vars and end_vars[0]["status"] == "interrupted"
     assert snap_path.exists()
