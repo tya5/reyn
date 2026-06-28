@@ -384,12 +384,15 @@ async def test_c_staging_durable_during_drain_wait(tmp_path) -> None:
     # stage it durably, then block waiting for a trigger (Decision A).
     drain_task = asyncio.create_task(session._drain_to_wake())
 
-    # Wait until the drain has DURABLY staged the C. The WAL append fsyncs OFF the event
-    # loop (#1765), so it completes on a worker thread — a fixed yield count (await sleep(0))
-    # would race that async fsync. Poll the durable condition instead (the same wait-for-
-    # condition discipline #1751 adopted when fsync moved off-loop).
+    # Wait until the drain has DURABLY staged the C. Both the WAL append AND the snapshot
+    # save fsync OFF the event loop (#1765 1a-i/1a-ii) on a worker thread, and the snapshot
+    # save lands strictly AFTER the WAL append — so polling the WAL event would break in the
+    # sub-step gap before the off-loop snapshot save completes, racing the n_snap assertion
+    # below. Poll the STRONGER condition the test actually asserts — the on-disk snapshot
+    # holding the entry — which implies the WAL is already durable too (the wait-for-condition
+    # discipline #1751 adopted when fsync moved off-loop).
     for _ in range(400):
-        if any(e.get("kind") == "next_turn_context_staged" for e in _wal_events(tmp_path)):
+        if AgentSnapshot.load(session.agent_name, session._snapshot_path).next_turn_context:
             break
         await asyncio.sleep(0.005)
 
