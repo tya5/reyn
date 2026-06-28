@@ -48,10 +48,17 @@ def config_generations_dir(reyn_dir: "Path") -> "Path":
 async def record_config_generation(
     state_log: "StateLog | None", config_abs_path, content: dict,
 ) -> None:
-    """Record the FULL config state as a generation keyed by the current WAL head — the
-    truncation-surviving recovery base for this registry. No-op when ``state_log`` is None
-    (the opt-in / non-persistence contract) or the path is not under ``.reyn/``. Call it
-    AFTER the `.yaml` is persisted. (Async to match the call sites; the write is synchronous.)"""
+    """Record the FULL config state as a generation keyed by the DURABLE WAL head
+    (``last_durable_seq``) — the truncation-surviving recovery base for this registry. #2259
+    PR-2b: keyed at the DURABLE watermark, not the live ``current_seq`` — a config op has no WAL
+    entry of its own (it emits a P6 audit event, not ``state_log.append``), so it tags the
+    durable WAL position it is consistent with; keying at a non-durable seq would let a crash
+    leave the config-gen referencing a WAL position past the durable tail (a hole, the truncation
+    class). Two config ops between WAL entries share the same durable seq → the 2nd overwrites
+    the 1st at ``{rel}@{seq}.yaml``; harmless because config-gen stores FULL post-state (the
+    latest write at that seq is the complete correct config; no distinct rewind target is lost).
+    No-op when ``state_log`` is None (the opt-in / non-persistence contract) or the path is not
+    under ``.reyn/``. Call it AFTER the `.yaml` is persisted."""
     if state_log is None:
         return
     rel = reyn_relative_path(config_abs_path)
@@ -60,5 +67,5 @@ async def record_config_generation(
         return
     from reyn.core.events.config_generations import ConfigGenerationStore  # noqa: PLC0415
     ConfigGenerationStore(config_generations_dir(root)).record(
-        rel, content, state_log.current_seq,
+        rel, content, state_log.last_durable_seq,
     )

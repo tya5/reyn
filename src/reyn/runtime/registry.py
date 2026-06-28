@@ -689,7 +689,7 @@ class AgentRegistry:
             # _default_topology) skip archived members so it stays dormant. The
             # WAL-window GC hard-purges + cascades once the archival seq leaves the
             # window (slice 2).
-            seq = self._state_log.current_seq if self._state_log is not None else 0
+            seq = self._state_log.last_durable_seq if self._state_log is not None else 0
             (target / ARCHIVED_MARKER).write_text(str(seq), encoding="utf-8")
         return []  # archive does not cascade — topology membership preserved (#1954)
 
@@ -1056,7 +1056,7 @@ class AgentRegistry:
             for session in sessions:
                 await session.await_quiescent()
             # 4. single global reset-record; supersedes = prior active head (audit).
-            prior_head = self._state_log.current_seq
+            prior_head = self._state_log.last_durable_seq
             reset_seq = await _append_reset_record(
                 self._state_log, target_seq=seq, supersedes=prior_head,
             )
@@ -1604,7 +1604,7 @@ class AgentRegistry:
         if self._state_log is None:
             return
         self._config_generation_store().record(
-            rel_path, content, self._state_log.current_seq,
+            rel_path, content, self._state_log.last_durable_seq,
         )
 
     def _reconcile_config_as_of_cut(self, cut: int) -> None:
@@ -1920,7 +1920,7 @@ class AgentRegistry:
         target = active_rewind_target(self._state_log)
         if target is None:
             return None
-        head = self._state_log.current_seq
+        head = self._state_log.last_durable_seq
         agents = await self._materialize_rewind(
             reconstruct_seq=head, workspace_at_or_below=head,
         )

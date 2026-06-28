@@ -241,7 +241,7 @@ def list_branches(state_log: StateLog) -> list[Branch]:
     branch owning N (active or an enclosing dead branch → nesting). Returns the
     active branch first, then dead branches ascending by id. Empty WAL → [].
     """
-    head = state_log.current_seq
+    head = state_log.last_durable_seq  # #2259 PR-2b: durable head (operates on durable state)
     if head <= 0:
         return []
     abandoned = _abandoned_intervals(_rewind_records(state_log))
