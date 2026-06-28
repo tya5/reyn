@@ -32,7 +32,7 @@ preprocessor:
           description: '"append" or "replace" — from input or defaulted.'
         cursor_exists:
           type: boolean
-          description: Whether .reyn/index/chat_cursor was found on disk.
+          description: Whether .reyn/cache/chat_cursor was found on disk.
         cursor_value:
           type: [string, "null"]
           description: Raw chat cursor file contents (null if absent).

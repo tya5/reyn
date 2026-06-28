@@ -224,7 +224,7 @@ class ActionEmbeddingIndex:
         when ``action_retrieval.embedding_class`` is configured.
       - ``search_actions`` handler delegates to ``query()`` when
         ``is_ready()`` returns True; otherwise returns an empty result.
-      - ``persist_dir`` points to ``.reyn/action_index/``; pass None
+      - ``persist_dir`` points to ``.reyn/cache/action_index/``; pass None
         to stay fully in-memory (= Phase 2 step 1 behaviour, tests).
     """
 

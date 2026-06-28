@@ -149,7 +149,7 @@ def _phase5_install_decl(resolver: PermissionResolver) -> PermissionDecl:
     the registry response). Session-approves the file path so the
     ``require_file_write`` check passes without an interactive prompt.
     """
-    canonical_config = str(resolver._project_root / ".reyn" / "mcp.yaml")
+    canonical_config = str(resolver._project_root / ".reyn" / "config" / "mcp.yaml")
     resolver.session_approve_path(canonical_config, "mcp_install_test", "file.write")
     return PermissionDecl(
         file_write=[{"path": canonical_config, "scope": "just_path"}],
@@ -221,7 +221,7 @@ async def test_mcp_yaml_write_is_default_granted_protect_at_use(tmp_path):
     resolver = _make_resolver(tmp_path)  # project_root = tmp_path
     # mcp.yaml under project_root/.reyn = default write zone → granted (no decl)
     await resolver.require_file_write(
-        PermissionDecl(), str(tmp_path / ".reyn" / "mcp.yaml"), "mcp_install_test"
+        PermissionDecl(), str(tmp_path / ".reyn" / "config" / "mcp.yaml"), "mcp_install_test"
     )
     # contrast: the approval store IS carved out → still needs an explicit grant
     with pytest.raises(PermissionError):
@@ -322,7 +322,7 @@ def test_env_overrides_skip_prompt_and_persist_secret(tmp_path, monkeypatch):
     # Issue #470 (2026-05-22): write target is now ``.reyn/mcp.yaml``
     # regardless of the op's ``scope`` arg — separating dynamic MCP
     # registry from static deployment config.
-    config_path = tmp_path / ".reyn" / "mcp.yaml"
+    config_path = tmp_path / ".reyn" / "config" / "mcp.yaml"
     assert config_path.exists()
     import yaml
     written = yaml.safe_load(config_path.read_text(encoding="utf-8"))
@@ -344,7 +344,7 @@ def test_save_secret_blocked_when_secret_write_not_declared(tmp_path, monkeypatc
     """
     monkeypatch.setattr("shutil.which", lambda _cmd: "/usr/bin/npx")
     resolver = _make_resolver(tmp_path)
-    canonical_config = str(resolver._project_root / ".reyn" / "mcp.yaml")
+    canonical_config = str(resolver._project_root / ".reyn" / "config" / "mcp.yaml")
     resolver.session_approve_path(canonical_config, "mcp_install_test", "file.write")
     decl = PermissionDecl(
         file_write=[{"path": canonical_config, "scope": "just_path"}],
@@ -436,7 +436,7 @@ def test_install_writes_to_dynamic_mcp_yaml_regardless_of_scope(tmp_path, monkey
         with _patch_registry_get(_FILESYSTEM_SERVER_RESPONSE):
             result = _run(mcp_install_handle(op, ctx, "control_ir"))
 
-        expected_path = tmp_path / ".reyn" / "mcp.yaml"
+        expected_path = tmp_path / ".reyn" / "config" / "mcp.yaml"
         assert result["status"] == "ok"
         assert result["installed_path"] == str(expected_path), (
             f"scope={scope!r} should write to .reyn/mcp.yaml; got {result['installed_path']}"

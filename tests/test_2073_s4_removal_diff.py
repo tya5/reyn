@@ -68,8 +68,8 @@ async def test_boot_seeded_runtime_job_is_removable(tmp_path: Path, monkeypatch)
     """Tier 2: a runtime job present at boot (.reyn/cron.yaml) is tracked, so removing
     it from the file + reloading unschedules it (the boot-seed of the removal-diff)."""
     monkeypatch.chdir(tmp_path)
-    (tmp_path / ".reyn").mkdir()
-    (tmp_path / ".reyn" / "cron.yaml").write_text(
+    (tmp_path / ".reyn" / "config").mkdir(parents=True)
+    (tmp_path / ".reyn" / "config" / "cron.yaml").write_text(
         "cron:\n  jobs:\n    - name: boot_job\n      schedule: '* * * * *'\n"
         "      to: x\n      message: b\n",
         encoding="utf-8",

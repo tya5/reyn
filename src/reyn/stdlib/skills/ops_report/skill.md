@@ -33,7 +33,7 @@ permissions:
   file:
     read:
       - ".reyn/events/"
-      - ".reyn/index/"
+      - ".reyn/cache/index/"
   python:
     # FP-0042 Phase 2.6 (2026-05-23): all 5 python steps run mode: safe.
     # File reads + stat go through reyn.api.safe.file; ``glob.glob`` covers

@@ -184,7 +184,7 @@ def test_write_chunks_lock_released_on_success(sandbox: Path):
     )
     _C.write_chunks_with_lock(artifact)
 
-    lock_path = sandbox / ".reyn" / "index" / "release_test" / ".lock"
+    lock_path = sandbox / ".reyn" / "cache" / "index" / "release_test" / ".lock"
     assert not lock_path.exists()
 
 
@@ -206,7 +206,7 @@ def test_write_chunks_lock_released_on_error(sandbox: Path):
     with pytest.raises(Exception, match="embed boom"):
         _C.write_chunks_with_lock(artifact)
 
-    lock_path = sandbox / ".reyn" / "index" / "err_test" / ".lock"
+    lock_path = sandbox / ".reyn" / "cache" / "index" / "err_test" / ".lock"
     assert not lock_path.exists()
 
 
@@ -219,7 +219,7 @@ def test_write_chunks_blocks_when_holder_alive(sandbox: Path):
     """Tier 2: a pre-existing lock with the current PID (= alive) blocks
     the new run with a RuntimeError mentioning the holder."""
     source = "concurrent_test"
-    lock_dir = sandbox / ".reyn" / "index" / source
+    lock_dir = sandbox / ".reyn" / "cache" / "index" / source
     lock_dir.mkdir(parents=True)
     lock_path = lock_dir / ".lock"
     lock_path.write_text(
@@ -239,7 +239,7 @@ def test_write_chunks_blocks_when_holder_alive(sandbox: Path):
 def test_write_chunks_reaps_stale_lock(sandbox: Path):
     """Tier 2: a lock with a dead PID is reaped; the run completes."""
     source = "stale_test"
-    lock_dir = sandbox / ".reyn" / "index" / source
+    lock_dir = sandbox / ".reyn" / "cache" / "index" / source
     lock_dir.mkdir(parents=True)
     lock_path = lock_dir / ".lock"
     # PID 2_000_000_000 is past any plausible kernel.pid_max.
@@ -261,7 +261,7 @@ def test_write_chunks_reaps_stale_lock(sandbox: Path):
 def test_write_chunks_takes_over_corrupted_lock(sandbox: Path):
     """Tier 2: a corrupted lock (= invalid JSON) is taken over silently."""
     source = "corrupt_test"
-    lock_dir = sandbox / ".reyn" / "index" / source
+    lock_dir = sandbox / ".reyn" / "cache" / "index" / source
     lock_dir.mkdir(parents=True)
     lock_path = lock_dir / ".lock"
     lock_path.write_text("not valid json {{", encoding="utf-8")

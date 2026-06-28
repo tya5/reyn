@@ -18,7 +18,7 @@ cursor update uses the new ``reyn.api.safe.file.write_atomic`` primitive. The
 event-files glob covers ``.reyn/events/`` (= default-zone read), the chunks
 JSONL output goes to ``artifacts/event_chunks.jsonl`` (= granted via
 ``permissions.file.write: artifacts`` in skill.md), and the cursor file at
-``.reyn/index/events_cursor`` is in the default write zone.
+``.reyn/cache/events_cursor`` is in the default write zone.
 
 Path manipulation uses plain string operations because ``pathlib`` is not
 on the safe-mode import allowlist. The single-character path separator
@@ -50,7 +50,7 @@ _ERROR_EXCERPT_MAX = 200
 _EPOCH_ISO = "1970-01-01T00:00:00Z"
 
 # Preprocessor constants (used by resolve_scan_context; patchable in tests)
-_CURSOR_FILE = ".reyn/index/events_cursor"
+_CURSOR_FILE = ".reyn/cache/events_cursor"
 _EVENTS_DIR = ".reyn/events"
 
 # POSIX stat-mode constants (= stat.S_IFMT / S_IFREG). Hard-coded because
@@ -329,7 +329,7 @@ def run_collect_chunks(artifact: dict) -> dict:
 
 
 def run_advance_cursor(artifact: dict) -> dict:
-    """Postprocessor python step: advance .reyn/index/events_cursor.
+    """Postprocessor python step: advance .reyn/cache/events_cursor.
 
     Reads the max completed_at from ``data.chunk_stats`` (computed inline by
     run_collect_chunks while it streamed the chunks — #1303 Stage I removed the
@@ -352,7 +352,7 @@ def run_advance_cursor(artifact: dict) -> dict:
     skipped_runs = int(chunk_stats.get("skipped_runs") or 0)
     filtered_runs = int(chunk_stats.get("filtered_runs") or 0)
 
-    cursor_path = ".reyn/index/events_cursor"
+    cursor_path = ".reyn/cache/events_cursor"
     new_cursor = str(chunk_stats.get("max_completed_at") or "")
     if not new_cursor:
         existing = read_cursor(cursor_path)

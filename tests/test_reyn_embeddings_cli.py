@@ -118,7 +118,7 @@ def test_status_rows_attribute_count_to_on_disk_class_only(
     matches the recorded meta.model_class. Other rows show 0 / "(never)".
     """
     monkeypatch.chdir(tmp_path)
-    index_dir = tmp_path / ".reyn" / "action_index"
+    index_dir = tmp_path / ".reyn" / "cache" / "action_index"
     _write_index_db(
         index_dir,
         class_name="local-mini",
@@ -187,7 +187,7 @@ def test_rebuild_removes_index_files_when_present(
 ) -> None:
     """Tier 2: rebuild drops index.db + WAL sidecars + .build.lock."""
     monkeypatch.chdir(tmp_path)
-    index_dir = tmp_path / ".reyn" / "action_index"
+    index_dir = tmp_path / ".reyn" / "cache" / "action_index"
     _write_index_db(index_dir, "standard", {"file__read": [0.1, 0.2]})
     (index_dir / ".build.lock").write_text("{}", encoding="utf-8")
     run_rebuild(Namespace(name=None))
@@ -238,7 +238,7 @@ def test_rebuild_known_class_name_notes_shared_cache(
     emits a clear note about the shared cache being wiped.
     """
     monkeypatch.chdir(tmp_path)
-    index_dir = tmp_path / ".reyn" / "action_index"
+    index_dir = tmp_path / ".reyn" / "cache" / "action_index"
     _write_index_db(index_dir, "local-mini", {"file__read": [0.1, 0.2]})
     run_rebuild(Namespace(name="local-mini"))
     out = capsys.readouterr().out
@@ -261,7 +261,7 @@ def test_clear_removes_index_dir_and_st_cache_dir(
     # without touching the developer's real ~/.cache.
     monkeypatch.setenv("REYN_CACHE_DIR", str(tmp_path / "reyn-cache"))
     monkeypatch.chdir(tmp_path)
-    index_dir = tmp_path / ".reyn" / "action_index"
+    index_dir = tmp_path / ".reyn" / "cache" / "action_index"
     _write_index_db(index_dir, "standard", {"file__read": [0.1, 0.2]})
     st_cache = tmp_path / "reyn-cache" / "sentence-transformers"
     st_cache.mkdir(parents=True)

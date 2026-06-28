@@ -193,7 +193,7 @@ async def _handle_mcp_install_registry(
         }
 
     decl = PermissionDecl()
-    decl.file_write = [{"path": ".reyn/mcp.yaml"}]
+    decl.file_write = [{"path": ".reyn/config/mcp.yaml"}]
     decl.http_get = [{"host": "registry.modelcontextprotocol.io"}]
     decl.secret_write = ["*"]
 
@@ -326,7 +326,7 @@ async def _handle_mcp_install_package(
         }
 
     decl = PermissionDecl()
-    decl.file_write = [{"path": ".reyn/mcp.yaml"}]
+    decl.file_write = [{"path": ".reyn/config/mcp.yaml"}]
     decl.secret_write = ["*"]
 
     # #1442 follow-up: single-source bridge (see _handle_mcp_install_registry) —
@@ -433,7 +433,7 @@ async def _handle_mcp_install_local(
     config_path = _scope_to_path("local", project_root)
 
     decl = PermissionDecl()
-    decl.file_write = [{"path": ".reyn/mcp.yaml"}]
+    decl.file_write = [{"path": ".reyn/config/mcp.yaml"}]
     resolver = getattr(rs, "permission_resolver", None) if rs is not None else None
     if resolver is not None:
         await resolver.require_file_write(decl, str(config_path), "mcp__install_local")

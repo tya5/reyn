@@ -3,7 +3,7 @@ description: |
   Input for the index_events skill.
 
   Specifies an optional lower-bound timestamp (since) and optional skill
-  filter. If since is null, the cursor file .reyn/index/events_cursor is
+  filter. If since is null, the cursor file .reyn/cache/events_cursor is
   read by the preprocessor to determine the effective lower bound.
 schema:
   type: object

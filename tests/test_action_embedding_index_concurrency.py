@@ -115,7 +115,7 @@ def test_same_catalog_same_class_remains_idempotent(tmp_path: Path) -> None:
 def test_disk_load_rejects_model_class_mismatch(tmp_path: Path) -> None:
     """Tier 2: cross-process cache reuse blocked when model class differs.
 
-    Mirrors the scenario where two reyn processes share .reyn/action_index/
+    Mirrors the scenario where two reyn processes share .reyn/cache/action_index/
     but configured against different embedding classes. The first process
     persists vectors tagged with its class; the second loads, sees the
     mismatch, and rebuilds with its own provider rather than serving

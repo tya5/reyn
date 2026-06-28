@@ -1414,7 +1414,7 @@ def test_router_op_context_declares_canonical_file_write_paths(tmp_path, monkeyp
         for entry in ctx.permission_decl.file_write
         if isinstance(entry, dict) and entry.get("path")
     }
-    for canonical in (".reyn/mcp.yaml", ".reyn/cron.yaml", ".reyn/index/sources.yaml"):
+    for canonical in (".reyn/config/mcp.yaml", ".reyn/config/cron.yaml", ".reyn/config/index/sources.yaml"):
         assert canonical in declared_paths, (
             f"#571 Phase 5: router op context must declare file.write for "
             f"{canonical!r} so the corresponding op handler's "

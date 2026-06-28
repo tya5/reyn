@@ -1,6 +1,6 @@
 """SqliteIndexBackend — per-source SQLite index with numpy cosine similarity.
 
-Storage layout: <workspace_root>/.reyn/index/<source>/index.db
+Storage layout: <workspace_root>/.reyn/cache/index/<source>/index.db
 WAL mode enabled for concurrent readers.
 """
 from __future__ import annotations
@@ -50,7 +50,7 @@ _BATCH_SIZE = 500
 
 
 def _db_path(workspace_root: Path, source: str) -> Path:
-    return workspace_root / ".reyn" / "index" / source / "index.db"
+    return workspace_root / ".reyn" / "cache" / "index" / source / "index.db"
 
 
 def _within_paths(path: Path, roots: "list[str]") -> bool:
@@ -106,7 +106,7 @@ class SqliteIndexBackend:
     """SQLite-backed index backend (ADR-0033 Phase 1).
 
     Each logical source maps to an isolated SQLite database file at
-    <workspace_root>/.reyn/index/<source>/index.db.
+    <workspace_root>/.reyn/cache/index/<source>/index.db.
 
     Args:
         workspace_root: Root directory of the Reyn workspace.  Defaults to
@@ -335,7 +335,7 @@ class SqliteIndexBackend:
     # ------------------------------------------------------------------
 
     async def drop(self, source: str) -> DropResult:
-        source_dir = self._root / ".reyn" / "index" / source
+        source_dir = self._root / ".reyn" / "cache" / "index" / source
         if not source_dir.exists():
             return DropResult(removed=False, chunks_dropped=0)
 

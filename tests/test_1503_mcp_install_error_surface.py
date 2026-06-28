@@ -58,7 +58,7 @@ def _make_resolver(tmp_path: Path) -> PermissionResolver:
 
 
 def _make_source_decl(resolver: PermissionResolver) -> PermissionDecl:
-    canonical_config = str(resolver._project_root / ".reyn" / "mcp.yaml")
+    canonical_config = str(resolver._project_root / ".reyn" / "config" / "mcp.yaml")
     resolver.session_approve_path(canonical_config, "mcp_install_test", "file.write")
     return PermissionDecl(
         file_write=[{"path": canonical_config, "scope": "just_path"}],
@@ -157,7 +157,7 @@ class TestBug1GitHubUnknownRuntimeGuard:
 
         # mcp.yaml must not exist (nothing was written) OR it must not contain
         # an empty server entry for the web-search server name.
-        config_path = tmp_path / ".reyn" / "mcp.yaml"
+        config_path = tmp_path / ".reyn" / "config" / "mcp.yaml"
         if config_path.exists():
             import yaml
             written = yaml.safe_load(config_path.read_text(encoding="utf-8"))

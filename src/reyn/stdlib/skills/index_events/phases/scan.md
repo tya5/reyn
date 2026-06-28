@@ -37,7 +37,7 @@ preprocessor:
           description: '"append" or "replace" — from input or defaulted.'
         cursor_exists:
           type: boolean
-          description: Whether .reyn/index/events_cursor was found on disk.
+          description: Whether .reyn/cache/events_cursor was found on disk.
         cursor_value:
           type: [string, "null"]
           description: Raw cursor file contents (null if absent).

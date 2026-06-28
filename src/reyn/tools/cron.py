@@ -22,12 +22,12 @@ LLM call shape (= invoke_action wrapper category):
 
 Persistence + live update:
 
-  All mutating handlers persist to ``.reyn/cron.yaml`` (= #470 invariant
+  All mutating handlers persist to ``.reyn/config/cron.yaml`` (= #470 invariant
   align, runtime-mutable). When a live ``CronScheduler`` is registered
   via ``set_active_scheduler``, the handler also calls
   ``add_job`` / ``remove_job`` / ``set_enabled`` so the next fire reflects
   the change without restart. When no live scheduler exists (= CLI
-  subcommand context, or scheduler not yet booted), the .reyn/cron.yaml
+  subcommand context, or scheduler not yet booted), the .reyn/config/cron.yaml
   write still happens; the next ``reyn web`` boot loads it.
 
 Permission gating:
@@ -60,7 +60,7 @@ _CRON_UNREGISTER_DESCRIPTION = (
 
 _CRON_LIST_DESCRIPTION = (
     "List all currently-registered cron jobs (= both reyn.yaml legacy "
-    "and .reyn/cron.yaml dynamic entries, unioned). Returns job name, "
+    "and .reyn/config/cron.yaml dynamic entries, unioned). Returns job name, "
     "target, message/skill, schedule, enabled state, and next-run time."
 )
 
@@ -139,11 +139,11 @@ _CRON_LIST_PARAMETERS: dict[str, Any] = {
 }
 
 
-# ── Storage helpers (= .reyn/cron.yaml read/write) ────────────────────
+# ── Storage helpers (= .reyn/config/cron.yaml read/write) ────────────────────
 
 
 def _dynamic_cron_yaml_path(ctx: ToolContext) -> Path:
-    """Resolve the path to ``.reyn/cron.yaml`` under the project root.
+    """Resolve the path to ``.reyn/config/cron.yaml`` under the project root.
 
     Falls back to ``Path.cwd() / .reyn / cron.yaml`` when the workspace
     doesn't expose a root attribute (= defensive against test stubs).
@@ -153,11 +153,11 @@ def _dynamic_cron_yaml_path(ctx: ToolContext) -> Path:
     )
     if root is None:
         root = Path.cwd()
-    return Path(root) / ".reyn" / "cron.yaml"
+    return Path(root) / ".reyn" / "config" / "cron.yaml"
 
 
 def _read_dynamic_cron(path: Path) -> dict:
-    """Read ``.reyn/cron.yaml`` (or empty dict when absent / malformed)."""
+    """Read ``.reyn/config/cron.yaml`` (or empty dict when absent / malformed)."""
     if not path.exists():
         return {}
     try:
@@ -169,7 +169,7 @@ def _read_dynamic_cron(path: Path) -> dict:
 
 
 def _write_dynamic_cron(path: Path, data: dict) -> None:
-    """Write ``data`` as YAML to ``.reyn/cron.yaml``, creating parents."""
+    """Write ``data`` as YAML to ``.reyn/config/cron.yaml``, creating parents."""
     import yaml
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
@@ -224,7 +224,7 @@ async def _gate(ctx: ToolContext, job_name: str) -> None:
       the LLM is permitted to invoke it (= operator authorisation
       happens at skill-startup time via ``require_tool``).
     - The runtime gate here is the standard ``require_file_write``
-      against the canonical ``.reyn/cron.yaml`` path. Since the tool
+      against the canonical ``.reyn/config/cron.yaml`` path. Since the tool
       is OS-internal (= no per-tool skill frontmatter), we synthesise
       a minimal PermissionDecl listing the canonical path explicitly
       and route it through ``session_approve_path`` once per resolver
@@ -262,7 +262,7 @@ async def _handle_cron_register(
 
     await _gate(ctx, name)
 
-    # Persist to .reyn/cron.yaml.
+    # Persist to .reyn/config/cron.yaml.
     path = _dynamic_cron_yaml_path(ctx)
     data = _read_dynamic_cron(path)
     jobs = _jobs_list(data)
@@ -347,7 +347,7 @@ async def _handle_cron_list(
 
     Prefers the live scheduler's view when registered (= includes
     last_run_* runtime fields). Falls back to file-only read of
-    ``.reyn/cron.yaml`` + reyn.yaml legacy union when no scheduler is
+    ``.reyn/config/cron.yaml`` + reyn.yaml legacy union when no scheduler is
     active (= e.g. invoked at boot before scheduler is up, or in
     test).
     """
@@ -362,7 +362,7 @@ async def _handle_cron_list(
             "jobs": rows,
         }
 
-    # Fallback: read .reyn/cron.yaml + reyn.yaml cron.jobs union via
+    # Fallback: read .reyn/config/cron.yaml + reyn.yaml cron.jobs union via
     # config.load_config (= same path the scheduler would use on boot).
     try:
         from reyn.config import load_config

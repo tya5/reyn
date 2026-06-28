@@ -356,7 +356,7 @@ def load_config(cwd: Path | None = None) -> ReynConfig:
         # Shape: ``{"mcp": {"servers": {<name>: {<entry>}}}}`` — same
         # as the section in reyn.yaml, so ``_merge`` handles it
         # without special-casing.
-        dynamic_mcp = _load_yaml(project_root / ".reyn" / "mcp.yaml")
+        dynamic_mcp = _load_yaml(project_root / ".reyn" / "config" / "mcp.yaml")
         merged = _merge(merged, dynamic_mcp)
 
         # FP-0041 #489 PR-B: dynamic cron registry separated from static
@@ -368,7 +368,7 @@ def load_config(cwd: Path | None = None) -> ReynConfig:
         # ``reyn.yaml`` cron jobs.
         # Shape: ``{"cron": {"jobs": [...]}}`` — same as reyn.yaml
         # cron section. Job-list union via _merge's cron handling.
-        dynamic_cron = _load_yaml(project_root / ".reyn" / "cron.yaml")
+        dynamic_cron = _load_yaml(project_root / ".reyn" / "config" / "cron.yaml")
         merged = _merge(merged, dynamic_cron)
 
         # ADR-0031: <project>/.reyn/config.yaml is DEPRECATED (removed from
@@ -504,7 +504,9 @@ def load_config(cwd: Path | None = None) -> ReynConfig:
 # permission / sandbox / budget / the loop valve / state-coupled runtime) is loaded
 # ONCE at startup by ``load_config`` and is restart-only; the file-split IS the
 # write-gate boundary (owner-confirmed #2073). Keep this list narrow + explicit.
-_HOT_RELOAD_FILES: tuple[str, ...] = ("mcp.yaml", "cron.yaml", "hooks.yaml")
+_HOT_RELOAD_FILES: tuple[str, ...] = (
+    "config/mcp.yaml", "config/cron.yaml", "config/hooks.yaml",
+)
 
 
 def load_hot_reload_config(project_root: "Path | None" = None) -> dict:

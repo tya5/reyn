@@ -71,7 +71,7 @@ def test_migrate_no_legacy_entries_is_noop(project, capsys):
     out = capsys.readouterr().out
     assert "nothing to migrate" in out.lower()
     # No .reyn/mcp.yaml created.
-    assert not (project / ".reyn" / "mcp.yaml").exists()
+    assert not (project / ".reyn" / "config" / "mcp.yaml").exists()
 
 
 # ── full migration ────────────────────────────────────────────────────
@@ -91,7 +91,7 @@ def test_migrate_moves_reyn_yaml_servers_to_dynamic(project, capsys):
 
     # Target file written with the entry.
     import yaml
-    dyn = yaml.safe_load((project / ".reyn" / "mcp.yaml").read_text())
+    dyn = yaml.safe_load((project / ".reyn" / "config" / "mcp.yaml").read_text())
     assert "sqlite" in dyn["mcp"]["servers"]
     assert dyn["mcp"]["servers"]["sqlite"]["command"] == "npx"
 
@@ -125,7 +125,7 @@ def test_migrate_moves_from_both_reyn_yaml_and_local(project, capsys):
     _run_migrate()
 
     import yaml
-    dyn = yaml.safe_load((project / ".reyn" / "mcp.yaml").read_text())
+    dyn = yaml.safe_load((project / ".reyn" / "config" / "mcp.yaml").read_text())
     servers = dyn["mcp"]["servers"]
     assert "sqlite" in servers
     assert "git" in servers
@@ -148,14 +148,14 @@ def test_migrate_preserves_existing_dynamic_entries(project, capsys):
         "mcp:\n  servers:\n    git:\n      type: stdio\n      command: old-cmd\n",
     )
     _write_yaml(
-        project / ".reyn" / "mcp.yaml",
+        project / ".reyn" / "config" / "mcp.yaml",
         "mcp:\n  servers:\n    git:\n      type: stdio\n      command: new-cmd\n",
     )
 
     _run_migrate()
 
     import yaml
-    dyn = yaml.safe_load((project / ".reyn" / "mcp.yaml").read_text())
+    dyn = yaml.safe_load((project / ".reyn" / "config" / "mcp.yaml").read_text())
     # Existing dynamic entry wins.
     assert dyn["mcp"]["servers"]["git"]["command"] == "new-cmd"
     # Legacy source stripped regardless.
@@ -187,7 +187,7 @@ def test_migrate_dry_run_does_not_write_files(project, capsys):
     src = yaml.safe_load((project / "reyn.yaml").read_text())
     assert "mcp" in src
     assert "sqlite" in src["mcp"]["servers"]
-    assert not (project / ".reyn" / "mcp.yaml").exists()
+    assert not (project / ".reyn" / "config" / "mcp.yaml").exists()
 
 
 # ── side-key preservation ──────────────────────────────────────────────

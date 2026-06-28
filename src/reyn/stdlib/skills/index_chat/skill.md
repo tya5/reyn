@@ -12,7 +12,7 @@ description: |
   Scans ``.reyn/events/agents/<name>/chat/**/*.jsonl`` for
   ``user_message_received`` events.  Each user turn becomes one searchable
   chunk in the ``"chat"`` RAG source.  Incremental via
-  ``.reyn/index/chat_cursor`` — separate from the events cursor so
+  ``.reyn/cache/chat_cursor`` — separate from the events cursor so
   ``index_events`` and ``index_chat`` can run independently without interfering.
 
   Use ``recall --sources chat`` (or ``sources: ["chat"]`` in a recall op) to
@@ -70,7 +70,7 @@ postprocessor:
           written:        {type: integer, minimum: 0}
           skipped_write:  {type: integer, minimum: 0}
           max_turn_ts:    {type: string}
-    # Step 2: advance .reyn/index/chat_cursor to the max turn timestamp of
+    # Step 2: advance .reyn/cache/chat_cursor to the max turn timestamp of
     # the indexed batch.
     - type: python
       module: ./chunkers.py
@@ -98,8 +98,8 @@ Each `user_message_received` event becomes one chunk.  Turn-outcome metadata
 (`inline_reply`, `routing`, `spawned`) is annotated on the chunk so recall
 results carry context about what the user's message triggered.
 
-Incremental via `.reyn/index/chat_cursor` — a cursor **separate** from
-`.reyn/index/events_cursor` used by `index_events`.  Running both skills
+Incremental via `.reyn/cache/chat_cursor` — a cursor **separate** from
+`.reyn/cache/events_cursor` used by `index_events`.  Running both skills
 independently is safe and recommended: `index_events` handles skill-run history,
 `index_chat` handles conversation history.
 
@@ -118,9 +118,9 @@ independently is safe and recommended: `index_events` handles skill-run history,
      events since the cursor, and **streams** the chunks into
      `reyn.api.safe.embed_index.embed_and_index` — which embeds them
      provider-direct and writes vectors to the `chat` index source
-     (`.reyn/index/chat/index.db`), tracking the max `turn_ts`
+     (`.reyn/cache/index/chat/index.db`), tracking the max `turn_ts`
    - `run_advance_chat_cursor` (python step, safe): writes the max `turn_ts`
-     (from `data.chat_chunk_stats`) to `.reyn/index/chat_cursor`
+     (from `data.chat_chunk_stats`) to `.reyn/cache/chat_cursor`
 
 ## Input
 
@@ -135,7 +135,7 @@ reyn run index_chat --input '{"mode": "replace"}'
 `index_chat_summary` with:
 - `indexed_turns` — user turns indexed in this invocation
 - `skipped_turns` — turns skipped (no user_message_received event)
-- `new_cursor` — ISO timestamp written to `.reyn/index/chat_cursor`
+- `new_cursor` — ISO timestamp written to `.reyn/cache/chat_cursor`
 
 ## Recall pattern
 

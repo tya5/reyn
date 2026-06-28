@@ -118,7 +118,7 @@ async def _handle_mcp_drop_server_op(
     else:
         # #571 collapse arc Phase 5: synthesize a PermissionDecl with
         # the explicit file.write entry the op handler now requires.
-        canonical_config = ".reyn/mcp.yaml"
+        canonical_config = ".reyn/config/mcp.yaml"
         synth_decl = PermissionDecl(
             file_write=[{"path": canonical_config, "scope": "just_path"}],
         )

@@ -79,7 +79,7 @@ async def handle(
     # it, with the phase sandbox_policy ∩, same shape as S3.1c-2). Closes the
     # hole where a sandbox read_paths cap could not constrain index reads.
     if ctx.permission_resolver is not None:
-        db_path = workspace_root / ".reyn" / "index" / op.source / "index.db"
+        db_path = workspace_root / ".reyn" / "cache" / "index" / op.source / "index.db"
         await ctx.permission_resolver.require_file_read(
             ctx.permission_decl, str(db_path), ctx.skill_name,
             sandbox_policy=sandbox_policy_from_ctx(ctx),

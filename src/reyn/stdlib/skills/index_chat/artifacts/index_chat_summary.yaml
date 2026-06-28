@@ -6,7 +6,7 @@ description: |
 
   Fields reflect the incremental processing results: how many user turns
   were indexed, skipped (no user_message_received event), plus the new cursor
-  timestamp written to .reyn/index/chat_cursor.
+  timestamp written to .reyn/cache/chat_cursor.
 schema:
   type: object
   required: [chat_cursor_result]
@@ -29,7 +29,7 @@ schema:
         new_cursor:
           type: string
           description: |
-            ISO-8601 timestamp written to .reyn/index/chat_cursor after
+            ISO-8601 timestamp written to .reyn/cache/chat_cursor after
             this run. Equals the maximum turn_ts of all indexed turns, or
             the previous cursor value if no new turns were indexed.
         sources_updated:

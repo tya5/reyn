@@ -31,7 +31,7 @@ def _phase5_index_drop_decl(resolver: PermissionResolver, tmp_path: Path) -> Per
     Builds the explicit ``file.write`` decl for the canonical manifest
     path and session-approves it so ``require_file_write`` passes.
     """
-    canonical = str(tmp_path / ".reyn" / "index" / "sources.yaml")
+    canonical = str(tmp_path / ".reyn" / "config" / "index" / "sources.yaml")
     resolver.session_approve_path(canonical, "test_op_index_drop", "file.write")
     return PermissionDecl(file_write=[{"path": canonical, "scope": "just_path"}])
 

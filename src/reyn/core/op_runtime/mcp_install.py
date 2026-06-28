@@ -87,7 +87,7 @@ def _scope_to_path(scope: str, project_root: Path) -> Path:
     """
     # Scope arg ignored — single canonical target for dynamic registry.
     _ = scope  # noqa: F841 — retained on signature for CLI compat
-    return project_root / ".reyn" / "mcp.yaml"
+    return project_root / ".reyn" / "config" / "mcp.yaml"
 
 
 def _resolve_write_root(workspace: object) -> Path:

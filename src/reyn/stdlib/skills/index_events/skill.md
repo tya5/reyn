@@ -9,7 +9,7 @@ description: |
   Phase 2 (Skill.postprocessor): deterministic chunk → provider-direct
   embed+index → cursor-advance pipeline; LLM is not involved.
 
-  Incremental via .reyn/index/events_cursor — only new runs (since last index)
+  Incremental via .reyn/cache/events_cursor — only new runs (since last index)
   are processed on each invocation. Failed runs carry truncated error summaries.
 entry: scan
 final_output: scan_plan
@@ -34,9 +34,9 @@ permissions:
     # File reads / writes / stat / glob go through reyn.api.safe.file; the
     # atomic cursor update uses reyn.api.safe.file.write_atomic. Event-file
     # reads under .reyn/events/ + cursor reads/writes under
-    # .reyn/index/events_cursor are inside the default zones. #1303 Stage I:
+    # .reyn/cache/events_cursor are inside the default zones. #1303 Stage I:
     # run_collect_chunks now streams chunks into reyn.api.safe.embed_index (which
-    # writes under .reyn/index/, default zone) — no out-of-zone JSONL output,
+    # writes under .reyn/cache/index/, default zone) — no out-of-zone JSONL output,
     # so the old file.write:artifacts grant is dropped.
     - module: ./chunkers.py
       function: resolve_scan_context
@@ -99,7 +99,7 @@ required_credentials: []
 into the existing RAG infrastructure (ADR-0033). The chunker streams runs into
 `reyn.api.safe.embed_index` (provider-direct embed+index; #1303 Stage I folded the
 old `embed` / `index_write` run-ops) and `recall` reads it back. Incremental
-via `.reyn/index/events_cursor`.
+via `.reyn/cache/events_cursor`.
 
 ## Execution flow
 
@@ -114,11 +114,11 @@ via `.reyn/index/events_cursor`.
      cursor, groups events by run boundary, and **streams** the chunks into
      `reyn.api.safe.embed_index.embed_and_index` — which embeds them provider-direct
      and writes the vectors to the `events` index source
-     (`.reyn/index/events/index.db`), tracking the max `completed_at`. No
+     (`.reyn/cache/index/events/index.db`), tracking the max `completed_at`. No
      intermediate file (#1303 Stage I folds the old `embed` + `index_write`
      run-ops into this step). Resume = DB-as-checkpoint.
    - `run_advance_cursor` (python step, safe): writes the max `completed_at`
-     (from `data.chunk_stats`) to `.reyn/index/events_cursor`
+     (from `data.chunk_stats`) to `.reyn/cache/events_cursor`
 
 ## Input
 
@@ -134,7 +134,7 @@ reyn run index_events --input '{"skills": ["my_skill"], "mode": "replace"}'
 - `indexed_runs` — complete runs indexed in this invocation
 - `skipped_runs` — incomplete runs (no completion event) deferred to next pass
 - `filtered_runs` — runs excluded by since / skill_filter
-- `new_cursor` — ISO timestamp written to `.reyn/index/events_cursor`
+- `new_cursor` — ISO timestamp written to `.reyn/cache/events_cursor`
 
 ## Recall pattern (Component C)
 

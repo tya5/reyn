@@ -614,7 +614,7 @@ def test_run_advance_cursor_uses_chunk_stats_max(tmp_path, monkeypatch):
     result = run_advance_cursor(artifact)
     assert result["new_cursor"] == "2026-05-15T10:00:00Z"
     assert result["indexed_runs"] == 2
-    assert read_cursor(".reyn/index/events_cursor") == "2026-05-15T10:00:00Z"
+    assert read_cursor(".reyn/cache/events_cursor") == "2026-05-15T10:00:00Z"
 
 
 
