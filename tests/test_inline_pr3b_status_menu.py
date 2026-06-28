@@ -25,6 +25,7 @@ def _snap(**over):
         "model_classes": ["light", "standard", "strong"],
         "agent_names": ["default"],
         "attached_name": "default",
+        "session_tree": [],
         "skill_run_ids": [],
         "usage": (0, 0, 0),
         "cost_usd": 0.0,
@@ -183,33 +184,116 @@ def test_cost_expansion_breaks_down_total_agent_session() -> None:
 
 
 # ---------------------------------------------------------------------------
-# _agent_expansion
+# _agent_expansion  (Phase 2: agent/session tree + attach/switch on select)
 # ---------------------------------------------------------------------------
 
+_TREE_SNAP = [
+    {
+        "agent": "default",
+        "attached": True,
+        "sessions": [
+            {"sid": "main", "attached": True},
+            {"sid": "sub1", "attached": False},
+        ],
+    },
+    {
+        "agent": "researcher",
+        "attached": False,
+        "sessions": [
+            {"sid": "main", "attached": False},
+        ],
+    },
+]
 
-def test_agent_expansion_is_detail_element() -> None:
-    """Tier 2: _agent_expansion returns a read-only DetailElement."""
-    snap = _snap(agent_names=["default"], attached_name="default")
+
+def test_agent_expansion_with_tree_is_command_ui() -> None:
+    """Tier 2: with a non-empty session_tree, _agent_expansion returns a CommandUIElement."""
+    snap = _snap(session_tree=_TREE_SNAP)
     el = _agent_expansion(snap, lambda _: None)
-    assert isinstance(el, DetailElement)
-    assert el.selectable is False
+    assert isinstance(el, CommandUIElement)
 
 
-def test_agent_expansion_marks_attached_agent() -> None:
-    """Tier 2: the attached agent row starts with ▸; others do not."""
-    snap = _snap(agent_names=["default", "researcher"], attached_name="default")
+def test_agent_expansion_rows_include_agents_and_sessions() -> None:
+    """Tier 2: rows contain agent names and indented session sids."""
+    snap = _snap(session_tree=_TREE_SNAP)
+    el = _agent_expansion(snap, lambda _: None)
+    rows = el.lines()
+    joined = " ".join(rows)
+    assert "default" in joined
+    assert "researcher" in joined
+    assert "sub1" in joined
+    # session rows are indented
+    assert any("main" in r and r.startswith("    ") for r in rows)
+
+
+def test_agent_expansion_attached_agent_marked_with_arrow() -> None:
+    """Tier 2: the attached agent row starts with ▸; unattached agents do not."""
+    snap = _snap(session_tree=_TREE_SNAP)
     el = _agent_expansion(snap, lambda _: None)
     rows = el.lines()
     assert any(r.startswith("▸") and "default" in r for r in rows)
     assert any("researcher" in r and not r.startswith("▸") for r in rows)
 
 
-def test_agent_expansion_empty_shows_none_message() -> None:
-    """Tier 2: with no agents, the expansion shows a '(none)' line."""
-    snap = _snap(agent_names=[], attached_name=None)
+def test_agent_expansion_attached_session_marked_with_arrow() -> None:
+    """Tier 2: the attached session row carries ▸; others do not."""
+    snap = _snap(session_tree=_TREE_SNAP)
     el = _agent_expansion(snap, lambda _: None)
     rows = el.lines()
-    assert any("none" in r for r in rows)
+    # "main" under "default" is attached → must have ▸ in its row
+    main_rows = [r for r in rows if "main" in r and "default" not in r]
+    assert any("▸" in r for r in main_rows)
+
+
+def test_agent_expansion_selecting_agent_row_submits_attach(tmp_path) -> None:
+    """Tier 2: selecting an agent row submits /attach <agent>."""
+    submitted: list[str] = []
+    snap = _snap(session_tree=_TREE_SNAP)
+    el = _agent_expansion(snap, submitted.append)
+    # Row 0 is the "default" agent row.
+    el.on_select(0)
+    assert submitted == ["/attach default"]
+
+
+def test_agent_expansion_selecting_attached_session_submits_switch(tmp_path) -> None:
+    """Tier 2: selecting a session row under the attached agent submits /session switch."""
+    submitted: list[str] = []
+    snap = _snap(session_tree=_TREE_SNAP)
+    el = _agent_expansion(snap, submitted.append)
+    rows = el.lines()
+    # Find the index of the "main" session row under default (first agent).
+    main_idx = next(i for i, r in enumerate(rows) if "main" in r and r.startswith("    "))
+    submitted.clear()
+    el.on_select(main_idx)
+    assert submitted == ["/session switch main"]
+
+
+def test_agent_expansion_selecting_non_attached_agent_session_submits_attach(tmp_path) -> None:
+    """Tier 2: selecting a session of a non-attached agent submits /attach <agent>."""
+    submitted: list[str] = []
+    snap = _snap(session_tree=_TREE_SNAP)
+    el = _agent_expansion(snap, submitted.append)
+    rows = el.lines()
+    # Find researcher's session row (last row in the tree).
+    researcher_sess_idx = next(
+        i for i, r in enumerate(rows)
+        if "main" in r and r.startswith("    ") and
+        # researcher is after default's rows; find the one NOT in the default block.
+        # We look for the last "main" session row.
+        i > next(j for j, rr in enumerate(rows) if "researcher" in rr)
+    )
+    submitted.clear()
+    el.on_select(researcher_sess_idx)
+    assert submitted == ["/attach researcher"]
+
+
+def test_agent_expansion_empty_tree_returns_detail_element() -> None:
+    """Tier 2: empty session_tree → a non-selectable DetailElement with '(no agents)'."""
+    snap = _snap(session_tree=[])
+    el = _agent_expansion(snap, lambda _: None)
+    assert isinstance(el, DetailElement)
+    assert el.selectable is False
+    assert any("no agents" in r for r in el.lines())
 
 
 # ---------------------------------------------------------------------------

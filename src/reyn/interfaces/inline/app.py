@@ -117,14 +117,26 @@ def _cost_expansion(snap, dispatch):
 
 
 def _agent_expansion(snap, dispatch):
-    # Phase 1: read-only agent list. Phase 2 = agent/session tree + attach switch.
-    def lines():
-        names = snap["agent_names"]
-        if not names:
-            return ["(none)"]
-        attached = snap["attached_name"]
-        return [f"▸ {n}" if n == attached else f"  {n}" for n in names]
-    return DetailElement(lines)
+    # Phase 2: agent/session tree; selecting a row attaches / switches.
+    tree = snap.get("session_tree") or []
+    rows: list[str] = []
+    cmds: list[str] = []
+    for agent in tree:
+        amark = "▸" if agent["attached"] else " "
+        rows.append(f"{amark} {agent['agent']}")
+        cmds.append(f"/attach {agent['agent']}")
+        for sess in agent["sessions"]:
+            smark = "▸" if sess["attached"] else " "
+            rows.append(f"    {smark} {sess['sid']}")
+            # switch the session when its agent is already attached; otherwise
+            # attach the agent first (the user can then switch session).
+            if agent["attached"]:
+                cmds.append(f"/session switch {sess['sid']}")
+            else:
+                cmds.append(f"/attach {agent['agent']}")
+    if not rows:
+        return DetailElement(lambda: ["(no agents)"])
+    return CommandUIElement(rows, cmds, dispatch)
 
 
 def _task_expansion(snap, dispatch):
@@ -186,6 +198,7 @@ def _snapshot(registry):
         "model_classes": list(s.known_model_classes()),
         "agent_names": list(registry.loaded_names()),
         "attached_name": registry.attached_name,
+        "session_tree": registry.session_tree(),
         "skill_run_ids": list(s.running_skills.keys()),
         "usage": (u.prompt_tokens, u.completion_tokens, u.total_tokens),
         "cost_usd": s.total_cost_usd,
