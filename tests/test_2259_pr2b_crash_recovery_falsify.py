@@ -13,6 +13,7 @@ Real StateLog + SnapshotGenerationStore + SnapshotJournal + reconstruct (no mock
 """
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 
 import pytest
@@ -86,6 +87,54 @@ async def test_crash_before_wal_durable_loses_the_undurable_tail(tmp_path):
         f"prefix, recover-to-last-durable); got {texts}"
     )
     await journal.flush()  # clean up the pending job
+
+
+@pytest.mark.asyncio
+async def test_concurrent_journals_each_snapshot_keyed_to_own_wal_seq(tmp_path):
+    """Tier 2: invariant #2 under CONCURRENCY — two journals sharing one durability worker mutate
+    interleaved; each journal's snapshot.applied_seq == the seq of ITS OWN last WAL entry, never a
+    peer's interleaved entry. The (`_wal_append_nowait`, `save_nowait`) pair is enqueued with no
+    await between, so the worker can never slot a peer's WAL job between a journal's pair → the snap
+    job's `last_assigned_seq` read is always its own paired WAL seq. RED if a save_nowait stamped
+    applied_seq from a peer's interleaved last_assigned_seq."""
+    log = StateLog(tmp_path / "shared.wal")
+    store_a = SnapshotGenerationStore("a1", tmp_path / "gen_a")
+    store_b = SnapshotGenerationStore("a2", tmp_path / "gen_b")
+    ja = SnapshotJournal(
+        agent_name="a1", snapshot_path=tmp_path / "a1.json",
+        state_log=log, generation_store=store_a,
+    )
+    jb = SnapshotJournal(
+        agent_name="a2", snapshot_path=tmp_path / "a2.json",
+        state_log=log, generation_store=store_b,
+    )
+
+    async def hammer(journal, tag):
+        for i in range(6):
+            await journal.append_inbox(kind="user", payload={"text": f"{tag}{i}"})
+            await asyncio.sleep(0)  # yield so the two streams interleave on the shared worker
+
+    await asyncio.gather(hammer(ja, "a"), hammer(jb, "b"))
+    await log.flush()
+
+    entries = list(log.iter_from(0))
+    a_seqs = [e["seq"] for e in entries if e.get("target") == "a1"]
+    b_seqs = [e["seq"] for e in entries if e.get("target") == "a2"]
+    assert a_seqs and b_seqs and set(a_seqs).isdisjoint(b_seqs)
+    # confirm the streams TRULY interleaved on the shared WAL (not a-block then b-block) — else the
+    # cross-contamination window never opened and the test would pass vacuously.
+    order = [e["target"] for e in entries if e.get("target") in ("a1", "a2")]
+    assert "a1" in order[:3] and "a2" in order[:3], f"streams did not interleave: {order}"
+
+    # each journal's snapshot is keyed to its OWN last WAL entry — no peer seq bled across the pair.
+    assert ja.snapshot.applied_seq == max(a_seqs), (
+        f"a1 snapshot applied_seq={ja.snapshot.applied_seq} must == a1's own last WAL seq "
+        f"{max(a_seqs)} (no cross-contamination from a2's interleaved pair)"
+    )
+    assert jb.snapshot.applied_seq == max(b_seqs), (
+        f"a2 snapshot applied_seq={jb.snapshot.applied_seq} must == a2's own last WAL seq "
+        f"{max(b_seqs)}"
+    )
 
 
 @pytest.mark.asyncio
