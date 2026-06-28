@@ -348,6 +348,7 @@ async def test_rewind_to_rejects_target_truncated_out_of_wal(tmp_path):
     await _put(log, "alpha", "b")          # seq 2
     await _put(log, "alpha", "c")          # seq 3
     await log.truncate_below(3)            # drop seq 1, 2; oldest kept = 3
+    await log.flush()                      # #2259 PR-2b: truncate is fire-and-forget
 
     with pytest.raises(RewindBeyondRetentionError):
         await reg.rewind_to(2)             # seq 2 truncated → outside retention window

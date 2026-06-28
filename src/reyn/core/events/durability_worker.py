@@ -195,6 +195,23 @@ class DurabilityWorker:
                 )
                 attempt += 1
 
+    async def flush(self) -> None:
+        """#2259 PR-2b: wait until every currently-enqueued durable write has DRAINED — WITHOUT
+        closing the worker (it stays usable). For any caller that must observe a fire-and-forget
+        write's effect (e.g. a test asserting a truncate's result, or a deliberate barrier).
+        Same loop-guard as ``aclose``; a no-op if never used or called on a different loop."""
+        if self._queue is None or self._loop is None:
+            return
+        try:
+            running = asyncio.get_running_loop()
+        except RuntimeError:
+            running = None
+        if running is not self._loop:
+            return
+        if not self._queue.empty():
+            self._kick()
+        await self._queue.join()
+
     async def aclose(self) -> None:
         """Graceful shutdown. Drain every enqueued task (no in-flight write lost), then stop. The
         self-terminating drainer may already have exited, so KICK it if the queue is non-empty,

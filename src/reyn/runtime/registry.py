@@ -1995,7 +1995,9 @@ class AgentRegistry:
         if floor <= 0:
             return None
         try:
-            stats = await self._state_log.truncate_below(floor)
+            # #2259 PR-2b: fire-and-forget (the GC does not await the worker); the rewrite +
+            # any failure are handled in the worker (stats on last_truncate_stats, post-drain).
+            await self._state_log.truncate_below(floor)
         except Exception as e:  # noqa: BLE001 — defensive; never fail caller
             logger.warning("WAL truncation: rewrite failed (floor=%d): %s", floor, e)
             return None
@@ -2007,7 +2009,10 @@ class AgentRegistry:
         # floor — generations >= floor stay reconstructable, so this never drops
         # rewind history within the retention window.
         await self._prune_generations_below(floor)
-        return stats
+        # #2259 PR-2b: truncate is fire-and-forget, so this returns the last-recorded stats
+        # (a non-None dict = "truncation triggered"; the actual rewrite drains in the worker).
+        # The caller only uses not-None as the trigger signal (we don't gate on dropped==0).
+        return self._state_log.last_truncate_stats
 
     async def _prune_generations_below(self, floor: int) -> None:
         """Drop snapshot generations below ``floor`` (Stage 1e GC).

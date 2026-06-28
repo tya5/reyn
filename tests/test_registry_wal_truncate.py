@@ -230,10 +230,12 @@ def test_truncate_eligible_drops_below_floor_and_returns_stats(tmp_path):
         # Append 10 WAL entries
         for i in range(1, 11):
             await registry.state_log.append("inbox_put", target=f"a{i}", payload={})
-        return await registry.truncate_wal_if_eligible()
+        triggered = await registry.truncate_wal_if_eligible()
+        await registry.state_log.flush()  # #2259 PR-2b: truncate is fire-and-forget
+        return triggered, registry.state_log.last_truncate_stats
 
-    stats = asyncio.run(go())
-    assert stats is not None
+    triggered, stats = asyncio.run(go())
+    assert triggered is not None  # truncation was triggered
     # alpha applied_seq=8 → floor = 9; drop seq 1..8, keep 9, 10
     assert stats["dropped"] == 8
     assert stats["kept"] == 2
@@ -311,14 +313,18 @@ def test_truncate_advances_seqs_across_active_skill_completion(tmp_path):
         for i in range(1, 21):
             await registry.state_log.append("inbox_put", target=f"a{i}", payload={})
         # First truncation: floor = min(10, 3) + 1 = 4 → drop 1..3
-        first = await registry.truncate_wal_if_eligible()
+        await registry.truncate_wal_if_eligible()
+        await registry.state_log.flush()  # #2259 PR-2b: truncate is fire-and-forget
+        first = registry.state_log.last_truncate_stats
         # Skill phase-advances to seq 15 — replace the watermark in the shim
         # (mirrors SkillRegistry.advance_phase mutating its in-memory snapshot).
         shim._seqs = [10, 15]
         # Wait past throttle window
         registry._last_truncation_ts = None
         # Second truncation: floor = min(10, 15) + 1 = 11 → drop 4..10
-        second = await registry.truncate_wal_if_eligible()
+        await registry.truncate_wal_if_eligible()
+        await registry.state_log.flush()
+        second = registry.state_log.last_truncate_stats
         return first, second
 
     first, second = asyncio.run(go())

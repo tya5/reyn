@@ -162,6 +162,7 @@ async def test_list_rewind_points_excludes_truncated_seqs(tmp_path) -> None:
 
     # Drop seq 1; oldest kept becomes seq 2.  s2 and s3 remain as the watermark.
     await log.truncate_below(2)
+    await log.flush()
 
     rows = reg.list_rewind_points()
     listed_seqs = [r["seq"] for r in rows]
@@ -195,6 +196,7 @@ async def test_list_rewind_points_keeps_seqs_at_or_above_wal_floor(tmp_path) -> 
 
     # Drop seq 1; oldest kept = seq 2.
     await log.truncate_below(2)
+    await log.flush()
 
     rows = reg.list_rewind_points()
     listed_seqs = [r["seq"] for r in rows]

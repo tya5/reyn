@@ -83,7 +83,9 @@ async def test_child_parent_cap_survives_wal_truncation_of_agent_created(tmp_pat
         await log.append("inbox_put", n=i)
 
     # GC truncates the WAL below floor 100 → the agents' agent_created@{1,2} are GONE.
-    stats = await log.truncate_below(100)
+    await log.truncate_below(100)
+    await log.flush()
+    stats = log.last_truncate_stats
     assert stats["dropped"] >= 2, "the early agent_created events should have been truncated"
     # The SAME-boundary generation GC runs too — it must KEEP the identity base below floor
     # (prune-KEEPS-BASE); a drop-all-below GC here would re-introduce the bug.

@@ -139,6 +139,12 @@ class StateLog:
         # outrun durability. Both seed from the recovered max (every scanned entry is durable).
         self._last_assigned_seq = self._counter
         self._last_durable_seq = self._counter
+        # #2259 PR-2b: truncate_below is FIRE-AND-FORGET (the blocking-invariant), so its stats
+        # are recorded here (post-drain readable via `last_truncate_stats` / after `flush`)
+        # instead of returned — the caller doesn't wait on the worker.
+        self._last_truncate_stats: dict = {
+            "dropped": 0, "kept": 0, "min_kept_seq": None, "max_kept_seq": None,
+        }
         # #1765 Step 1a: the off-loop durability worker (shared with other substrates so all
         # durable writes serialise at one point — the cross-substrate ordering). `_inflight_seq`
         # is the seq THIS log's worker is writing RIGHT NOW (between its file-write and its
@@ -181,6 +187,19 @@ class StateLog:
         in-memory `current_seq`), so truncation can never outrun durability (drop a WAL entry a
         not-yet-durable snapshot still needs)."""
         return self._last_durable_seq
+
+    @property
+    def last_truncate_stats(self) -> dict:
+        """#2259 PR-2b: the stats of the most recent `truncate_below` (dropped / kept /
+        min_kept_seq / max_kept_seq). Since truncate is fire-and-forget, read this AFTER `flush`
+        (or `aclose`) to observe a truncate's result — it is not returned synchronously."""
+        return self._last_truncate_stats
+
+    async def flush(self) -> None:
+        """#2259 PR-2b: wait until every enqueued durable write (WAL appends, snapshot saves,
+        a truncate rewrite) has drained — without closing the worker. A barrier for callers that
+        must observe a fire-and-forget write's durable effect (tests; deliberate sync points)."""
+        await self._worker.flush()
 
     async def append(self, kind: str, **fields) -> int:
         """Append a new entry, fsync (off the event loop), return its seq — BLOCKING (awaits
@@ -352,7 +371,7 @@ class StateLog:
                     continue
                 yield entry
 
-    async def truncate_below(self, min_keep_seq: int) -> dict:
+    async def truncate_below(self, min_keep_seq: int) -> None:
         """Atomically rewrite the WAL keeping only entries with ``seq >= min_keep_seq``.
 
         Drop policy: ``seq < min_keep_seq`` entries are dropped. Caller computes
@@ -367,25 +386,28 @@ class StateLog:
           3. A mid-rewrite crash leaves the original ``wal.jsonl`` intact
              — incomplete ``.tmp`` is ignored at next startup.
 
-        Returns a stats dict ``{"dropped": int, "kept": int, "min_kept_seq":
-        int|None, "max_kept_seq": int|None}``. ``min_keep_seq <= 1`` is a
-        no-op (everything would be kept).
+        Records a stats dict on ``last_truncate_stats`` (``{"dropped", "kept",
+        "min_kept_seq", "max_kept_seq"}``) — read it after ``flush`` (the rewrite is
+        fire-and-forget). ``min_keep_seq <= 1`` is a no-op (everything would be kept).
 
-        #2259 PR-2b crash safety: the rewrite runs as a WORKER job (the single serial venue),
-        so it is FIFO-serialised with every WAL write job — no append's write overlaps the
-        rename. The rewrite itself runs off the event loop (``to_thread``). ``truncate_below``
-        awaits the job (blocking — the caller needs the stats).
+        #2259 PR-2b: FIRE-AND-FORGET (the blocking-invariant — the GC caller does not await the
+        worker). The rewrite runs as a worker job (FIFO-serialised with every WAL write job — no
+        append's write overlaps the rename — and off the event loop via ``to_thread``); a failure
+        is handled by the worker's §4 retry → health-signal (no caller to raise to). The stats
+        land on ``last_truncate_stats`` (read after ``flush``), not a return value.
         """
         if min_keep_seq <= 1:
-            return {"dropped": 0, "kept": 0,
-                    "min_kept_seq": None, "max_kept_seq": None}
-        result: dict = {}
+            self._last_truncate_stats = {
+                "dropped": 0, "kept": 0, "min_kept_seq": None, "max_kept_seq": None,
+            }
+            return
 
         async def _job() -> None:
-            result.update(await asyncio.to_thread(self._do_truncate, min_keep_seq))
+            self._last_truncate_stats = await asyncio.to_thread(
+                self._do_truncate, min_keep_seq,
+            )
 
-        await self._worker.submit(_job)
-        return result
+        self._worker.submit_nowait(_job)
 
     def _do_truncate(self, min_keep_seq: int) -> dict:
         """The synchronous WAL rewrite (run off-loop, serialised by the worker — see
