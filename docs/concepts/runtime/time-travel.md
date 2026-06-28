@@ -63,7 +63,7 @@ Each checkpoint stores an **AgentSnapshot** — a point-in-time snapshot of the 
 1. The snapshot at or before the target seq is located.
 2. The WAL (`StateLog`, `.reyn/state/wal.jsonl`) events between the snapshot and the target seq are applied as a diff — replaying only the delta, not the full history.
 
-The WAL is a **synchronous-durability log** (fsync'd per append), separate from the P6 audit event log. See [Events](events.md) for the WAL vs audit-event distinction.
+The WAL is an **fsync-per-append log**: each entry is durably written via `DurabilityWorker` off the task loop. Task-loop writes are fire-and-forget except `step_started`, which blocks until durable (durable-before-side-effect invariant). Recovery restores to the last durable entry; an un-durable tail at crash is a consistent-prefix loss. Separate from the P6 audit event log — see [Events](events.md) for the WAL vs audit-event distinction.
 
 ### Global single-seq WAL and consistent-cut
 
@@ -113,9 +113,9 @@ The WAL (`StateLog`, `.reyn/state/wal.jsonl`) and the P6 audit event log (`Event
 | | WAL (StateLog) | Audit log (EventStore) |
 |--|--|--|
 | Purpose | Crash recovery and time-travel reconstruct | Audit trail and replay |
-| Durability | fsync per append (synchronous) | Rotation-based (not per-append fsync) |
+| Durability | fsync per append (via `DurabilityWorker`; `step_started` blocks task loop, others FAF) | Rotation-based (not per-append fsync) |
 | Lifecycle | Truncatable after snapshot | Append-only, rotation-based |
-| Unification | **Prohibited** — sync durability requirements differ | — |
+| Unification | **Prohibited** — durability-contract requirements differ | — |
 
 Do not conflate or merge the two logs. See [Events](events.md) for details.
 
