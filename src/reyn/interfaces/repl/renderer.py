@@ -247,21 +247,26 @@ _CC_ACCENT = "#d97757"  # terracotta
 _CC_DIM = "#6b7280"
 _CC_DONE = "#7ee787"
 _CC_ERR = "#f97066"
+# Subtle background block behind the user's own submitted line (CC styles the
+# user input differently from agent output — a faint highlighted block).
+_CC_USER_BG = "#2b2f37"
 
 # Braille spinner frames for the working indicator (bottom toolbar).
 _SPINNER = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
 
-# Per-kind leading marker for the inline CC-style stream. The agent / skill /
-# intervention lines lead with ⏺; tool/trace detail lines lead with ⎿; the user's
-# own submitted line is echoed with the > input marker.
-_CC_MARKER = {
-    "user": " > ",
-    "agent": " ⏺ ",
-    "status": " · ",
-    "error": " ✗ ",
-    "intervention": " ⏺ ",
-    "trace": "   ⎿ ",
-    "skill_done": " ⏺ ",
+# Per-kind line layout: (gutter, gutter_style, body_style). A CC-style 2-cell
+# marker gutter (glyph + space) sits in its own column so a wrapped / multi-line
+# body hang-indents into the body column and never bleeds into the gutter. The
+# agent (LLM) body is rendered as markdown (body_style then unused). Tool-result /
+# trace ⎿ rows nest one level under the parent body column (2-space indent + ⎿).
+_KIND_LINE = {
+    "user":         ("> ",   _CC_ACCENT, _CC_DIM),
+    "agent":        ("⏺ ",   _CC_ACCENT, ""),
+    "status":       ("· ",   _CC_DIM,    _CC_DIM),
+    "error":        ("✗ ",   _CC_ERR,    _CC_ERR),
+    "intervention": ("⏺ ",   _CC_ACCENT, "bold"),
+    "trace":        ("  ⎿ ", _CC_DIM,    _CC_DIM),
+    "skill_done":   ("⏺ ",   _CC_DONE,   ""),
 }
 
 
@@ -328,55 +333,81 @@ def _summarize_result(tool, result) -> str:
     return _short(result, 80)
 
 
-def format_inline_message(msg: OutboxMessage):
-    """Pure formatter: OutboxMessage → rich Text (the inline CC-style line).
+def _gutter_grid(gutter: str, gutter_style: str, body, *, row_style: str = "",
+                 expand: bool = False):
+    """A 2-column grid: a reserved marker gutter + a wrapping body column.
 
-    Kept separate from rendering so the kind→marker+text mapping is testable on
-    the public `.plain` surface without driving a live terminal.
+    Continuation lines of a wrapped / multi-line body stay in the body column, so
+    the CC-style gutter (glyph + space) is never bled into — unlike a single Text
+    that wraps back to column 0. ``row_style`` paints a background behind the whole
+    line; ``expand`` stretches the body column to the full width so that background
+    fills the line edge-to-edge (the user-input block).
+    """
+    from rich.table import Table
+    from rich.text import Text
+    g = Text(gutter, style=gutter_style)
+    grid = Table.grid(padding=0, expand=expand)
+    grid.add_column(width=g.cell_len, no_wrap=True)
+    grid.add_column(ratio=1 if expand else None)
+    grid.add_row(g, body, style=row_style or None)
+    return grid
+
+
+def _body_renderable(kind: str, text: str, body_style: str):
+    """The body cell: markdown for agent (LLM) output, a styled Text otherwise."""
+    from rich.markdown import Markdown
+    from rich.text import Text
+    if kind == "agent":
+        # Render the LLM reply as markdown (headings / bold / lists / code) like
+        # Claude Code, instead of showing the raw markdown source.
+        return Markdown(text or "")
+    return Text(text, style=body_style)
+
+
+def format_inline_message(msg: OutboxMessage):
+    """Pure formatter: OutboxMessage → a rich renderable (the inline CC-style line).
+
+    A 2-cell marker gutter (glyph + space) sits in its own column; the body wraps
+    in a second column so multi-line / wrapped output hang-indents under the body
+    and never bleeds into the gutter. The agent (LLM) body renders as markdown; the
+    user's own line gets a faint background block. Kept separate from rendering so
+    the mapping stays testable.
     """
     from rich.text import Text
     kind = msg.kind
     meta = msg.meta or {}
 
-    # Tool-call rows. The tool_call_* OutboxMessages arrive already in the pipe
-    # (ChatLifecycleForwarder); meta carries tool / args / result / error.
-    # PR2 renders every tool call; a noise filter (skip low-level read ops) is a
-    # tracked follow-up if dogfood shows it's too chatty (see #2198).
+    # Tool-call rows. The ⎿ result / failure rows nest one level under the ⏺ call
+    # (2-space indent), so they read as sub-items of the call above them.
     if kind == "tool_call_started":
         tool = str(meta.get("tool", msg.text))
         args = _summarize_args(meta.get("args"))
-        return Text.assemble(
-            (" ⏺ ", _CC_ACCENT), (tool, "bold"), (f"({args})", _CC_DIM)
-        )
+        body = Text.assemble((tool, "bold"), (f"({args})", _CC_DIM))
+        return _gutter_grid("⏺ ", _CC_ACCENT, body)
     if kind == "tool_call_completed":
         summary = summarize_tool_result(meta.get("tool"), meta.get("result"))
-        return Text.assemble(("   ⎿ ", _CC_DIM), (summary, _CC_DIM))
+        return _gutter_grid("  ⎿ ", _CC_DIM, Text(summary, style=_CC_DIM))
     if kind == "tool_call_failed":
         err = meta.get("error_message") or meta.get("error_kind") or msg.text
-        return Text.assemble(
-            ("   ⎿ ✗ ", _CC_ERR), (_short(err, 80), _CC_ERR)
-        )
+        return _gutter_grid("  ⎿ ", _CC_ERR, Text(f"✗ {_short(err, 80)}", style=_CC_ERR))
 
-    text = f"{_meta_prefix(meta)}{msg.text}"
-    marker = _CC_MARKER.get(kind)
-    if marker is None:
-        return Text(text)
+    line = _KIND_LINE.get(kind)
+    if line is None:
+        return Text(f"{_meta_prefix(meta)}{msg.text}")
+    gutter, gutter_style, body_style = line
+    # A provenance prefix ([skill#id]) is kept inline (rare for agent replies); it
+    # renders as literal text inside the agent markdown body.
+    body_text = f"{_meta_prefix(meta)}{msg.text}"
     if kind == "user":
-        # The user's own submitted line, echoed into the scrollback (the inline
-        # input field clears on submit, so without this the message vanishes).
-        return Text.assemble((marker, _CC_ACCENT), (text, _CC_DIM))
-    if kind == "agent":
-        return Text.assemble((marker, _CC_ACCENT), (text, ""))
-    if kind == "status":
-        return Text.assemble((marker, _CC_DIM), (text, _CC_DIM))
-    if kind == "error":
-        return Text.assemble((marker, _CC_ERR), (text, _CC_ERR))
-    if kind == "intervention":
-        return Text.assemble((marker, _CC_ACCENT), (text, "bold"))
-    if kind == "trace":
-        return Text.assemble((marker, _CC_DIM), (text, _CC_DIM))
-    # skill_done
-    return Text.assemble((marker, _CC_DONE), (text, ""))
+        # The user's own submitted line: echoed into scrollback (the inline input
+        # clears on submit) AND given a faint background block so it reads as a
+        # distinct "you said this" line, like Claude Code.
+        bg = f"on {_CC_USER_BG}"
+        return _gutter_grid(
+            gutter, f"{gutter_style} {bg}",
+            Text(body_text, style=f"{body_style} {bg}"), row_style=bg, expand=True,
+        )
+    return _gutter_grid(gutter, gutter_style, _body_renderable(kind, body_text, body_style))
 
 
 class InlineChatRenderer(ChatRenderer):

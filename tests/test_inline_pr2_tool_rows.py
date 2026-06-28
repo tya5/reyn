@@ -6,7 +6,10 @@ public surfaces (`.plain`, `bottom_toolbar()`), not whitespace or private state.
 """
 from __future__ import annotations
 
+import io
 from datetime import datetime, timezone
+
+from rich.console import Console
 
 from reyn.interfaces.repl.renderer import (
     InlineChatRenderer,
@@ -17,9 +20,12 @@ from reyn.schemas.models import Event
 
 
 def _plain(kind: str, text: str, meta: dict) -> str:
-    return format_inline_message(
-        OutboxMessage(kind=kind, text=text, meta=meta)
-    ).plain
+    """Render a message to plain text — the renderable is now a gutter grid (not a
+    bare Text), so we render it to assert the marker/content contract. Wide width
+    avoids wrapping confounding the one-line assertions."""
+    console = Console(width=120, file=io.StringIO(), color_system=None)
+    console.print(format_inline_message(OutboxMessage(kind=kind, text=text, meta=meta)))
+    return console.file.getvalue()
 
 
 def test_tool_started_shows_dot_tool_and_args() -> None:
@@ -52,9 +58,9 @@ def test_long_result_is_truncated_to_one_line() -> None:
     """Tier 2: an overlong / multiline result is collapsed to a one-line summary."""
     out = _plain("tool_call_completed", "web_search",
                  {"tool": "web_search", "result": "x" * 500 + "\nsecond line"})
-    assert "\n" not in out          # collapsed to one line
-    assert "…" in out               # and truncated
-    assert "second line" not in out  # the tail past the cap is dropped
+    assert out.strip().count("\n") == 0  # collapsed to one rendered line
+    assert "…" in out                    # and truncated
+    assert "second line" not in out      # the tail past the cap is dropped
 
 
 def test_started_with_no_args_renders_empty_parens() -> None:
