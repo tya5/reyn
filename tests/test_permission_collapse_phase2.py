@@ -53,15 +53,15 @@ def test_other_reyn_paths_still_in_default_zone(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     for rel in (
         ".reyn/cache/events_cursor",
-        ".reyn/index/chunks.jsonl",
+        ".reyn/cache/index/chunks.jsonl",
         # #1199: .reyn/approvals.yaml MOVED to the protected set (was here) —
         # see test_require_file_write_rejects_approvals_yaml.
         ".reyn/events.jsonl",
         ".reyn/scratch/anything.txt",
-        # realignment: mcp.yaml + cron.yaml REMOVED from the carve-out
-        # (protect-at-use) — they are now ordinary default-zone writes.
-        ".reyn/config/mcp.yaml",
-        ".reyn/config/cron.yaml",
+        # #2248 PR-C: memory/ (persist) is NOT under a recovery-core prefix → still
+        # default-granted. (config/ + state/ are now prefix-protected — see
+        # test_2248_prc_write_gate_prefix; mcp.yaml/cron.yaml moved there in PR-B.)
+        ".reyn/memory/note.md",
     ):
         assert _in_default_write_zone(rel) is True, (
             f"{rel!r} should remain in the default write zone (non-canonical)"
@@ -242,24 +242,33 @@ def test_canonical_protected_lists_stay_in_sync():
     permissions module, so the constant is duplicated. This drift-guard pins
     them equal, so any future add/remove of a protected path must touch BOTH
     copies. Closes the recurrence class behind the #1199 gap, where
-    approvals.yaml was added to the parent list only.
+    approvals.yaml was added to the parent list only. #2248 PR-C: the same
+    drift-guard now also pins the recovery-core PREFIX lists in sync.
     """
     from reyn.api.safe.file import _CANONICAL_PROTECTED_WRITE_PATHS as safe_paths
+    from reyn.api.safe.file import _RECOVERY_CORE_WRITE_PREFIXES as safe_prefixes
+    from reyn.security.permissions.permissions import (
+        _RECOVERY_CORE_WRITE_PREFIXES as perm_prefixes,
+    )
 
     assert _CANONICAL_PROTECTED_WRITE_PATHS == safe_paths
+    assert perm_prefixes == safe_prefixes
 
 
 @pytest.mark.asyncio
-async def test_mcp_cron_now_allowed_after_carveout_removal(tmp_path, monkeypatch):
-    """Tier 2: realignment — .reyn/mcp.yaml and .reyn/cron.yaml are removed from the
-    carve-out (protect-at-use), so a broad-zone write to them is ALLOWED on both
-    enforcement paths. Safety holds downstream: using a server passes require_mcp
-    (op_runtime/mcp.py) and cron jobs fire only under a user-launched, op-gated
-    scheduler — so writing the config alone grants nothing usable.
+async def test_mcp_cron_config_reprotected_by_recovery_core_prefix(tmp_path, monkeypatch):
+    """Tier 2: #2248 PR-C SUPERSEDES the #571 protect-at-use carve-out for config files.
+    Post-PR-A2 ``.reyn/config/`` is RECOVERY-CORE: a raw file.write to config/mcp.yaml would
+    change config WITHOUT emitting the ``config_changed`` WAL event (= a recovery gap — the
+    change wouldn't be reconstructed/reverted on rewind). So §4 re-protects the whole
+    ``config/`` prefix: a raw broad-zone write is now DENIED on both enforcement paths,
+    forcing the dedicated WAL-emitting op (mcp_install/drop, cron_register — which declare
+    the path explicitly). The #571 "use-gate makes the carve-out redundant" judgment is
+    obsolete now that config is recovery-core.
 
-    Falsification contrast: .reyn/approvals.yaml (no downstream use-gate) is still
-    DENIED via the same broad zone — the removal is specific to mcp/cron, not a
-    blanket relaxation.
+    No legit op blocked: the dedicated ops write via their own write_text + an EXPLICIT
+    file.write decl, so they pass (proven in test_2248_prc_write_gate_prefix). approvals.yaml
+    (top-level persist) stays protected via its explicit carve-out.
     """
     monkeypatch.chdir(tmp_path)
     resolver = PermissionResolver(config_permissions={}, project_root=tmp_path)
@@ -271,14 +280,15 @@ async def test_mcp_cron_now_allowed_after_carveout_removal(tmp_path, monkeypatch
     )
 
     for rel in (".reyn/config/mcp.yaml", ".reyn/config/cron.yaml"):
-        # permissions.py path: no explicit decl needed — now in the default zone.
-        assert _in_default_write_zone(rel) is True
-        assert _is_canonical_protected_write(rel) is False
-        await resolver.require_file_write(PermissionDecl(), rel, "skill_x")
-        # safe.file enforcement path: broad-zone prefix match is enough now.
-        safe_file._check_write(str(tmp_path / rel))
+        # permissions.py path: no longer in the default zone → a decl-less write is denied.
+        assert _in_default_write_zone(rel) is False
+        with pytest.raises(PermissionError, match="was not approved"):
+            await resolver.require_file_write(PermissionDecl(), rel, "skill_x")
+        # safe.file enforcement path: broad-zone prefix match is NOT enough now.
+        with pytest.raises(PermissionError):
+            safe_file._check_write(str(tmp_path / rel))
 
-    # contrast: approvals.yaml remains protected on both paths.
+    # contrast: approvals.yaml (top-level persist) remains protected on both paths.
     with pytest.raises(PermissionError, match="was not approved"):
         await resolver.require_file_write(PermissionDecl(), ".reyn/approvals.yaml", "skill_x")
     with pytest.raises(PermissionError, match="canonical protected path"):

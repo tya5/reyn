@@ -94,12 +94,18 @@ _context_initialised: bool = False
 # permissions.py gate alone did not cover this enforcement path.
 #
 # Mirrors ``reyn.security.permissions.permissions._CANONICAL_PROTECTED_WRITE_PATHS``
-# — keep the two lists in sync (drift-guarded by
+# AND ``_RECOVERY_CORE_WRITE_PREFIXES`` — keep BOTH in sync (drift-guarded by
 # ``test_canonical_protected_lists_stay_in_sync``). They live in two
 # modules because this one runs in the python-harness subprocess where
 # importing the parent's permissions module is not always available.
+# #2248 PR-C: the recovery-core prefixes (config/index/sources.yaml is now covered by
+# the config/ prefix); approvals.yaml stays an explicit top-level entry (persist).
+_RECOVERY_CORE_WRITE_PREFIXES = (
+    ".reyn/config/",
+    ".reyn/state/",
+)
+
 _CANONICAL_PROTECTED_WRITE_PATHS = (
-    ".reyn/config/index/sources.yaml",
     ".reyn/approvals.yaml",
 )
 
@@ -189,6 +195,20 @@ def _is_canonical_protected_write(path: str) -> bool:
     return False
 
 
+def _is_under_recovery_core_prefix(path: str) -> bool:
+    """#2248 PR-C: True if ``path`` is under a recovery-core write-gate prefix
+    (``.reyn/config/`` or ``.reyn/state/``) — a raw file.write there requires an explicit
+    declaration (the dedicated WAL-emitting ops provide it), never the broad ``.reyn/``
+    default zone. Mirrors ``permissions._is_under_recovery_core_prefix``."""
+    abs_path = _os.path.realpath(path)
+    cwd = _os.getcwd()
+    for prefix in _RECOVERY_CORE_WRITE_PREFIXES:
+        root = _os.path.realpath(_os.path.join(cwd, prefix))
+        if abs_path == root or abs_path.startswith(root + _os.sep):
+            return True
+    return False
+
+
 def _is_explicitly_listed(path: str, allowed: tuple[str, ...]) -> bool:
     """Return True iff ``path`` exactly matches one of ``allowed`` entries.
 
@@ -208,9 +228,10 @@ def _check_write(path: str) -> None:
             "reyn.api.safe.file: permission context not initialised "
             f"(write attempted: {path!r})."
         )
-    # #571 collapse arc Phase 2: canonical protected paths require an
-    # explicit listing (= not the broad ``.reyn/`` parent-dir match).
-    if _is_canonical_protected_write(path):
+    # #571 collapse arc Phase 2 / #2248 PR-C: canonical protected paths AND any path
+    # under a recovery-core prefix (config/, state/) require an explicit listing
+    # (= not the broad ``.reyn/`` parent-dir match) — forcing the dedicated-op path.
+    if _is_canonical_protected_write(path) or _is_under_recovery_core_prefix(path):
         if not _is_explicitly_listed(path, _write_paths):
             raise PermissionError(
                 f"reyn.api.safe.file: write to {path!r} requires an explicit "
