@@ -125,8 +125,20 @@ class StateLog:
     def __init__(self, path: Path, worker: "DurabilityWorker | None" = None) -> None:
         self._path = Path(path)
         self._path.parent.mkdir(parents=True, exist_ok=True)
-        self._lock = asyncio.Lock()
         self._counter = self._scan_max_seq()
+        # #2259 PR-2b: the seq COUNTER is assigned SYNCHRONOUSLY on the event loop (so
+        # `current_seq` is immediately correct for the 7 synchronous consumers — config-gen
+        # keying etc.; an async-assigned seq would key a config gen at a stale head and re-open
+        # the PR-1 truncation bug), and only the WAL WRITE is async (off-loop, fire-and-forget
+        # via the worker). No `asyncio.Lock`: the worker is the SINGLE serial venue — every WAL
+        # write AND `truncate_below` runs as a worker job, so they serialise by FIFO (the seq
+        # increment itself is sync-atomic, no await across it). `_last_assigned_seq` = the seq
+        # the most recent append assigned (the paired snapshot save reads it to stamp
+        # applied_seq); `_last_durable_seq` = the highest seq DURABLY written (set after fsync) —
+        # the (a)=(ii) durable watermark the truncate floor + cut_generation read so they never
+        # outrun durability. Both seed from the recovered max (every scanned entry is durable).
+        self._last_assigned_seq = self._counter
+        self._last_durable_seq = self._counter
         # #1765 Step 1a: the off-loop durability worker (shared with other substrates so all
         # durable writes serialise at one point — the cross-substrate ordering). `_inflight_seq`
         # is the seq THIS log's worker is writing RIGHT NOW (between its file-write and its
@@ -155,40 +167,73 @@ class StateLog:
     def current_seq(self) -> int:
         return self._counter
 
+    @property
+    def last_assigned_seq(self) -> int:
+        """#2259 PR-2b: the seq the most recent append assigned (sync). A paired
+        ``save_nowait`` reads this (with no ``await`` between the two enqueues) to stamp the
+        snapshot's ``applied_seq`` — so the snapshot records exactly its WAL entry's seq."""
+        return self._last_assigned_seq
+
+    @property
+    def last_durable_seq(self) -> int:
+        """#2259 PR-2b: the (a)=(ii) durable watermark — the highest seq DURABLY written
+        (advanced after each fsync). The truncate floor + cut_generation read this (never the
+        in-memory `current_seq`), so truncation can never outrun durability (drop a WAL entry a
+        not-yet-durable snapshot still needs)."""
+        return self._last_durable_seq
+
     async def append(self, kind: str, **fields) -> int:
-        """Append a new entry, fsync (off the event loop), return its seq.
+        """Append a new entry, fsync (off the event loop), return its seq — BLOCKING (awaits
+        durability). The non-blocking counterpart is `append_nowait`.
 
         `kind` must be one of WAL_EVENT_KINDS — caught at write time so a
         typo doesn't silently fragment the recovery vocabulary.
 
-        The seq is assigned under the lock; the worker write+fsync is submitted while the
-        lock is held (so the seq order = the file write order, and `truncate_below` — which
-        also holds the lock — never overlaps a write). `append` returns only after its entry
-        is durable: the per-append crash-recovery contract is unchanged, but the loop is free
-        during the (off-loop) fsync. Post-append observers fire after the durable write,
-        outside the lock (best-effort, #1560).
+        #2259 PR-2b: the seq is assigned SYNCHRONOUSLY (sync-atomic on the loop — no lock; the
+        worker is the single serial venue serialising the write + `truncate_below`), then the
+        write+fsync runs in the worker. `append` AWAITS it, so its per-append crash-recovery
+        contract is unchanged (returns only once durable) while the loop is free during the
+        (off-loop) fsync. Post-append observers fire in the durable-write job, after the fsync
+        (best-effort, #1560).
         """
-        if kind not in WAL_EVENT_KINDS:
-            raise ValueError(f"unknown WAL event kind: {kind!r}")
-        async with self._lock:
-            self._counter += 1
-            seq = self._counter
-            entry = {
-                "seq": seq,
-                "ts": datetime.now().isoformat(),
-                "kind": kind,
-            }
-            entry.update(fields)
-            await self._worker.submit(self._durable_wal_write(entry))
-        await self._fire_post_append(kind, seq, fields)
+        seq, entry, kind, fields = self._assign_entry(kind, fields)
+        await self._worker.submit(self._durable_wal_write(entry, kind, fields))
         return seq
 
-    def _durable_wal_write(self, entry: dict):
-        """Build the durable-write task for `entry` (run by the DurabilityWorker, serially).
-        Writes the line, fsyncs OFF the event loop, then bumps `_durable_seq` — strictly
-        AFTER the fsync, so `iter_from` (seq <= `_durable_seq`) never exposes a non-durable
-        entry. No lock here: the submitting `append` holds `self._lock` across the submit, so
-        this runs exclusively (serialised with other appends + `truncate_below`)."""
+    def append_nowait(self, kind: str, **fields) -> int:
+        """#2259 PR-2b: append NON-BLOCKING — assign the seq synchronously (so `current_seq`
+        is immediately correct) and fire-and-forget the durable WRITE (the relaxed-durability
+        window: the in-memory mutation already happened on the task loop, durability catches up
+        async). Returns the assigned seq (available synchronously — the seq IS sync; only
+        durability is deferred), but the journal mutation does NOT depend on it for correctness:
+        it pairs a synchronous ``save_nowait`` that reads ``last_assigned_seq``. SYNCHRONOUS
+        enqueue, so an (append_nowait, save_nowait) pair with no ``await`` between is atomic on
+        the loop (no concurrent mutation interleaves → the snapshot reads THIS append's seq)."""
+        seq, entry, kind, fields = self._assign_entry(kind, fields)
+        self._worker.submit_nowait(self._durable_wal_write(entry, kind, fields))
+        return seq
+
+    def _assign_entry(self, kind: str, fields: dict):
+        """Synchronously assign the next seq + build the WAL entry (no await — atomic on the
+        loop, so the counter never races + `current_seq` is correct immediately). Shared by the
+        blocking `append` and the non-blocking `append_nowait`."""
+        if kind not in WAL_EVENT_KINDS:
+            raise ValueError(f"unknown WAL event kind: {kind!r}")
+        self._counter += 1
+        seq = self._counter
+        self._last_assigned_seq = seq
+        entry = {"seq": seq, "ts": datetime.now().isoformat(), "kind": kind}
+        entry.update(fields)
+        return seq, entry, kind, fields
+
+    def _durable_wal_write(self, entry: dict, kind: str, fields: dict):
+        """Build the durable-write task for `entry` (run by the DurabilityWorker, serially —
+        the single serial venue, so no lock). Writes the line, fsyncs OFF the event loop, then
+        advances `_last_durable_seq` — strictly AFTER the fsync, so the watermark never names a
+        non-durable entry. `_inflight_seq` (the one entry mid-fsync — the worker is serial, so
+        only ever one) keeps `iter_from` from exposing it. Post-append observers fire here, after
+        the durable write (so they fire post-fsync for BOTH the blocking + fire-and-forget paths,
+        with the assigned seq)."""
         async def _task() -> None:
             # Mark this entry in-flight BEFORE it appears in the file, so a concurrent
             # `iter_from` during the fsync skips it (it is written but not yet durable);
@@ -208,6 +253,8 @@ class StateLog:
                     await asyncio.to_thread(os.fsync, f.fileno())
             finally:
                 self._inflight_seq = None
+            self._last_durable_seq = entry["seq"]  # durable now → the watermark advances
+            await self._fire_post_append(kind, entry["seq"], fields)
         return _task
 
     async def submit_durable(self, do_durable_write) -> None:
@@ -215,6 +262,14 @@ class StateLog:
         save) to the SAME worker, so it serialises with WAL writes — the single cross-substrate
         ordering point. Blocking (awaits durability), like `append`."""
         await self._worker.submit(do_durable_write)
+
+    def submit_durable_nowait(self, do_durable_write) -> None:
+        """#2259 PR-2b: submit a durable write from another substrate (a snapshot save)
+        FIRE-AND-FORGET — the non-blocking counterpart of `submit_durable`. Used by
+        `save_nowait` so the (WAL append_nowait, snapshot save_nowait) pair is two synchronous
+        enqueues with no await between (atomic on the loop). Serialises with WAL writes (same
+        worker, FIFO = durability order)."""
+        self._worker.submit_nowait(do_durable_write)
 
     async def aclose(self) -> None:
         """Drain + stop the durability worker (graceful shutdown — no in-flight write lost)."""
@@ -318,85 +373,98 @@ class StateLog:
         int|None, "max_kept_seq": int|None}``. ``min_keep_seq <= 1`` is a
         no-op (everything would be kept).
 
-        Crash safety: holds ``self._lock`` for the duration so concurrent
-        ``append`` calls are serialized — the rename is safe even on
-        platforms where ``rename`` over an open handle would fail (we don't
-        keep the destination open).
+        #2259 PR-2b crash safety: the rewrite runs as a WORKER job (the single serial venue),
+        so it is FIFO-serialised with every WAL write job — no append's write overlaps the
+        rename. The rewrite itself runs off the event loop (``to_thread``). ``truncate_below``
+        awaits the job (blocking — the caller needs the stats).
         """
         if min_keep_seq <= 1:
             return {"dropped": 0, "kept": 0,
                     "min_kept_seq": None, "max_kept_seq": None}
-        async with self._lock:
-            if not self._path.is_file():
-                return {"dropped": 0, "kept": 0,
-                        "min_kept_seq": None, "max_kept_seq": None}
-            # Two-pass: first pass identifies the highest seq actually present
-            # so we never drop *all* entries (next-startup ``_scan_max_seq``
-            # would reset the counter and re-issue already-used seqs into the
-            # audit log). Second pass writes survivors + the watermark entry.
-            highest_seq: int | None = None
-            with self._path.open("r", encoding="utf-8") as src:
-                for line in src:
-                    raw = line.strip()
-                    if not raw:
-                        continue
-                    try:
-                        entry = json.loads(raw)
-                    except json.JSONDecodeError:
-                        continue
-                    if not isinstance(entry, dict):
-                        continue
-                    seq = entry.get("seq")
-                    if not isinstance(seq, int):
-                        continue
-                    if highest_seq is None or seq > highest_seq:
-                        highest_seq = seq
-            # Effective floor: never drop the highest seq present, even if
-            # caller asked us to. This preserves the counter watermark.
-            effective_floor = min_keep_seq
-            if highest_seq is not None and effective_floor > highest_seq:
-                effective_floor = highest_seq
+        result: dict = {}
 
-            tmp = self._path.with_suffix(self._path.suffix + ".tmp")
-            dropped = 0
-            kept = 0
-            min_kept: int | None = None
-            max_kept: int | None = None
-            with self._path.open("r", encoding="utf-8") as src, \
-                    tmp.open("w", encoding="utf-8") as dst:
-                for line in src:
-                    raw = line.strip()
-                    if not raw:
-                        continue
-                    try:
-                        entry = json.loads(raw)
-                    except json.JSONDecodeError:
-                        # Torn fragment from prior crash — drop on rewrite.
-                        dropped += 1
-                        continue
-                    if not isinstance(entry, dict):
-                        dropped += 1
-                        continue
-                    seq = entry.get("seq")
-                    if not isinstance(seq, int):
-                        dropped += 1
-                        continue
-                    if seq < effective_floor:
-                        dropped += 1
-                        continue
-                    dst.write(raw + "\n")
-                    kept += 1
-                    if min_kept is None or seq < min_kept:
-                        min_kept = seq
-                    if max_kept is None or seq > max_kept:
-                        max_kept = seq
-                dst.flush()
-                os.fsync(dst.fileno())
-            tmp.replace(self._path)
-            # Counter (next-seq source) must remain ≥ max seq ever issued;
-            # truncation does NOT reset it (would re-issue dropped seqs).
-            return {"dropped": dropped, "kept": kept,
-                    "min_kept_seq": min_kept, "max_kept_seq": max_kept}
+        async def _job() -> None:
+            result.update(await asyncio.to_thread(self._do_truncate, min_keep_seq))
+
+        await self._worker.submit(_job)
+        return result
+
+    def _do_truncate(self, min_keep_seq: int) -> dict:
+        """The synchronous WAL rewrite (run off-loop, serialised by the worker — see
+        `truncate_below`). Two-pass: identify the highest seq present (never drop ALL entries —
+        that would let `_scan_max_seq` reset the counter + re-issue used seqs), then write the
+        survivors to a `.tmp` and atomically rename. A mid-rewrite crash leaves the original
+        intact (the incomplete `.tmp` is ignored at next startup)."""
+        if not self._path.is_file():
+            return {"dropped": 0, "kept": 0,
+                    "min_kept_seq": None, "max_kept_seq": None}
+        # Two-pass: first pass identifies the highest seq actually present
+        # so we never drop *all* entries (next-startup ``_scan_max_seq``
+        # would reset the counter and re-issue already-used seqs into the
+        # audit log). Second pass writes survivors + the watermark entry.
+        highest_seq: int | None = None
+        with self._path.open("r", encoding="utf-8") as src:
+            for line in src:
+                raw = line.strip()
+                if not raw:
+                    continue
+                try:
+                    entry = json.loads(raw)
+                except json.JSONDecodeError:
+                    continue
+                if not isinstance(entry, dict):
+                    continue
+                seq = entry.get("seq")
+                if not isinstance(seq, int):
+                    continue
+                if highest_seq is None or seq > highest_seq:
+                    highest_seq = seq
+        # Effective floor: never drop the highest seq present, even if
+        # caller asked us to. This preserves the counter watermark.
+        effective_floor = min_keep_seq
+        if highest_seq is not None and effective_floor > highest_seq:
+            effective_floor = highest_seq
+
+        tmp = self._path.with_suffix(self._path.suffix + ".tmp")
+        dropped = 0
+        kept = 0
+        min_kept: int | None = None
+        max_kept: int | None = None
+        with self._path.open("r", encoding="utf-8") as src, \
+                tmp.open("w", encoding="utf-8") as dst:
+            for line in src:
+                raw = line.strip()
+                if not raw:
+                    continue
+                try:
+                    entry = json.loads(raw)
+                except json.JSONDecodeError:
+                    # Torn fragment from prior crash — drop on rewrite.
+                    dropped += 1
+                    continue
+                if not isinstance(entry, dict):
+                    dropped += 1
+                    continue
+                seq = entry.get("seq")
+                if not isinstance(seq, int):
+                    dropped += 1
+                    continue
+                if seq < effective_floor:
+                    dropped += 1
+                    continue
+                dst.write(raw + "\n")
+                kept += 1
+                if min_kept is None or seq < min_kept:
+                    min_kept = seq
+                if max_kept is None or seq > max_kept:
+                    max_kept = seq
+            dst.flush()
+            os.fsync(dst.fileno())
+        tmp.replace(self._path)
+        # Counter (next-seq source) must remain ≥ max seq ever issued;
+        # truncation does NOT reset it (would re-issue dropped seqs).
+        return {"dropped": dropped, "kept": kept,
+                "min_kept_seq": min_kept, "max_kept_seq": max_kept}
 
     def _scan_max_seq(self) -> int:
         """Initialize the counter from the highest seq present in the WAL.

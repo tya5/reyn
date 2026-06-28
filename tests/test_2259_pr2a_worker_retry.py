@@ -130,6 +130,43 @@ async def test_fifo_preserved_across_a_retrying_task():
     await w.aclose()
 
 
+@pytest.mark.asyncio
+async def test_submit_nowait_is_non_blocking_and_eventually_persists():
+    """Tier 2: #2259 PR-2b — `submit_nowait` returns BEFORE the durable write runs
+    (fire-and-forget = the relaxed-durability window), and the write still happens (drained
+    serially). RED if submit_nowait awaited the write (defeating the non-blocking win)."""
+    w = DurabilityWorker()
+    ran = asyncio.Event()
+
+    async def _slow() -> None:
+        await asyncio.sleep(0.05)
+        ran.set()
+
+    w.submit_nowait(_slow)
+    assert not ran.is_set(), "submit_nowait must return before the write runs (non-blocking)"
+    await w.aclose()  # drains the fire-and-forget job
+    assert ran.is_set(), "the fire-and-forget write must still have run (drained on aclose)"
+
+
+@pytest.mark.asyncio
+async def test_fire_and_forget_persistent_failure_latches_health_signal():
+    """Tier 2: #2259 PR-2b — a fire-and-forget write that fails PERSISTENTLY (§4-exhausted) has
+    no submitter to raise to, so it must latch `durability_failed` (health-signal escalation),
+    NOT be silently swallowed (the owner's no-silent-unbounded-loss: in-memory must not race
+    ahead while durability is silently dead). RED if the failure vanished (flag stays False)."""
+    w = _fast_worker(max_attempts=2)
+
+    async def _always_fail() -> None:
+        raise OSError("disk full")
+
+    assert w.durability_failed is False
+    w.submit_nowait(_always_fail)
+    await w.aclose()  # drains the fire-and-forget job (which fails persistently)
+    assert w.durability_failed is True, (
+        "a persistent fire-and-forget failure must latch the health-signal, not be swallowed"
+    )
+
+
 def test_loop_teardown_with_inflight_write_does_not_hang():
     """Tier 2: ``asyncio.run`` teardown (``_cancel_all_tasks``) must TERMINATE the background
     drainer even when it is cancelled MID-WRITE — the drainer must propagate ``CancelledError``,
