@@ -25,12 +25,9 @@ Each checkpoint has a monotonically increasing **sequence number** (seq). The se
 
 ### Rewind
 
-`/rewind` rewinds the agent to a past checkpoint. Both substrates are rewound atomically:
+`/rewind` rewinds the agent to a past checkpoint, restoring the **runtime substrate** — the agent's conversation state and skill-run execution memo — to the snapshot at the target seq.
 
-1. **Runtime substrate** — the agent's conversation state and skill-run execution memo are restored to the snapshot at the target seq.
-2. **Workspace substrate** — the workspace files are restored to the shadow-git `as-of-N` state at that seq.
-
-The rewind is **atomic**: either both substrates revert or neither does. There is no intermediate state where the conversation is at seq K while the files are at seq K+5.
+Reyn time-travels its own `.reyn/` state only. User workspace files remain at HEAD. See [`.reyn/` directory layout](../../reference/runtime/reyn-dir-layout.md#recovery-core) for the full recovery-core classification.
 
 ### Append-only history
 
@@ -38,7 +35,7 @@ Reyn never rewrites history. When you rewind to a past checkpoint (seq **N**):
 
 - A reset-record is appended at a **new seq R** (beyond the current tip) carrying target **N**; that record becomes the new tip, and the agent state is restored **as-of-N**.
 - History before N is preserved.
-- Turns and workspace states in **`(N, R)`** become **abandoned** on the current branch — reachable via the branch tree, not erased.
+- Turns in **`(N, R)`** become **abandoned** on the current branch — reachable via the branch tree, not erased.
 
 This means rewind is always recoverable: you can navigate back to an abandoned future by switching branches.
 
@@ -53,7 +50,7 @@ The `checkout(seq)` primitive implements both: if the target seq is on the activ
 
 ### Act-turn rewind
 
-For finer granularity, within a live skill run you can rewind to an **act-turn boundary** (a step within the current turn) without touching the workspace. This is a runtime-only operation using the Ghost-Replay mechanism: the committed-step memo is truncated at the target seq, and on relaunch steps before the target replay as ghosts (0 tokens, recorded results replayed), while steps after the target re-execute. The workspace reflects the last boundary generation, not mid-step file state.
+For finer granularity, within a live skill run you can rewind to an **act-turn boundary** (a step within the current turn). This is a runtime-only operation using the Ghost-Replay mechanism: the committed-step memo is truncated at the target seq, and on relaunch steps before the target replay as ghosts (0 tokens, recorded results replayed), while steps after the target re-execute. User workspace files are unaffected.
 
 ---
 
@@ -72,7 +69,7 @@ The WAL is a **synchronous-durability log** (fsync'd per append), separate from 
 
 All WAL events share a **global single sequence namespace**. A consistent-cut rewind at seq N is well-defined: "the state of every substrate at the moment before seq N+1 was written". The global seq makes the cut precise — there is no per-substrate clock to reconcile.
 
-The cut is also **process-global across Sessions and Agents**: because there is one WAL and one workspace SSoT, a single reset-record moves *every* loaded [Session](../multi-agent/sessions.md) and Agent to the target seq atomically — rewind is not scoped to one Session. Per-Session granularity lives in **persistence** (snapshots are re-keyed per Session) and crash-recovery replay, not in the rewind operation itself.
+The cut is also **process-global across Sessions and Agents**: because there is one WAL, a single reset-record moves *every* loaded [Session](../multi-agent/sessions.md) and Agent to the target seq atomically — rewind is not scoped to one Session. Per-Session granularity lives in **persistence** (snapshots are re-keyed per Session) and crash-recovery replay, not in the rewind operation itself.
 
 ### Append-only reset-record and branch state
 
@@ -91,34 +88,19 @@ The branch registry tracks all fork lineages: when a fork-switch creates a new b
 
 `is_active_seq` is **not** equivalent to `seq ≤ tip` — a seq can be ≤ the current tip but still be in an abandoned interval from a prior rewind. Activeness is derived from the reset-record chain, not from position relative to tip.
 
-At rewind and fork-switch, both the runtime reconstruct and the workspace restore honor `is_active` (following the correct fork-lineage path for the target branch).
-
-### Shadow-git workspace versioning
-
-The workspace substrate uses a **shadow git repository** for content-addressed versioning. At each boundary seq, the current file tree is committed as a shadow-git generation. Rewinding to seq N restores the workspace to the shadow-git commit corresponding to the largest generation ≤ N. This makes workspace rewind O(changed files) rather than a full replay of all file operations.
-
-Container-mode: when the container environment backend is active, the shadow-git `as-of-N` restore operates inside the container filesystem.
+At rewind and fork-switch, the runtime reconstruct honors `is_active` (following the correct fork-lineage path for the target branch).
 
 ### Act-turn Ghost-Replay
 
 Act-turn rewind (intra-turn granularity) uses `SkillResumeCoordinator.plan_for_act_turn_rewind`: the `SkillResumeAnalyzer` builds the full `ResumePlan`, then `committed_steps` are filtered to `seq ≤ target_seq`. On relaunch via `OSRuntime.run(resume_plan=...)`, steps in the memo replay as ghosts (0 LLM tokens); steps beyond the cutoff re-execute. This reuses the existing crash-resume dispatch path — no new runtime wiring.
 
-### 2-substrate generation at boundary seq
+### Boundary generation
 
-At every checkpoint boundary, Reyn generates a **paired generation**:
-
-```
-AgentSnapshot  (runtime substrate)
-    ⊗
-shadow-git commit  (workspace substrate)
-    at  boundary seq N
-```
-
-This pair is the unit that `checkout(seq)` restores atomically. The pairing is by seq: the snapshot and the shadow-git commit carry the same seq tag, so rewind can locate both with one lookup.
+At every checkpoint boundary, Reyn writes an **AgentSnapshot** — the runtime state at that seq (inbox, message history, plan state, WAL-derived config). There is no workspace commit; the boundary artifact is a single runtime snapshot. `checkout(seq)` locates the snapshot at or before the target seq, then replays WAL events forward to reach the exact target state.
 
 ### Task subscriptions and the backend at rewind
 
-Time-travel rewinds two substrates atomically — the runtime snapshot and the workspace. Task-related state splits across two planes with different rewind behaviour:
+Time-travel rewinds the runtime substrate — the agent's conversation state and WAL-derived config. Task-related state splits into what lives inside the runtime substrate and what lives in the external backend:
 
 **What gets rewound (Reyn-internal):** The task↔session binding — which session is the `assignee`, which is the `requester` — is recorded in the WAL as `task_subscribed` and `task_rebound` entries. Because it lives in the WAL (StateLog), it is part of the runtime substrate and is rewound to the target seq along with conversation state. After rewind the binding reflects who owned each task at seq N.
 
@@ -145,29 +127,14 @@ Do not conflate or merge the two logs. See [Events](events.md) for details.
 
 ---
 
-## Cost and the runtime-only opt-out
+## Cost
 
-Time-travel is on by default and carries a constant per-boundary cost. The three contributors, largest first:
+Time-travel is on by default and carries a constant per-boundary cost. The two contributors:
 
-1. **Workspace shadow-git capture** (the largest). At every checkpoint boundary — *every turn and every plan-step* — the workspace is committed as a shadow-git generation: a `git add -A` (which stats the whole work-tree) + `commit` + `tag`. In container mode each of these is a `docker exec` into the container. This is what makes a rewind able to restore *repo files*.
-2. **WAL fsync-per-append** — synchronous durability so a crash loses nothing (see the WAL table above).
-3. **AgentSnapshot generation** — the runtime half of each paired generation.
+1. **WAL fsync-per-append** — synchronous durability so a crash loses nothing (see the WAL table above).
+2. **AgentSnapshot generation** — the runtime snapshot written at each checkpoint boundary.
 
-### When to opt out
-
-The workspace capture is the one cost you can shed without weakening crash recovery, via `time_travel.workspace_capture: false` (reyn.yaml — see the [config reference](../../reference/config/reyn-yaml.md#time_travel-block)). It is worth considering when:
-
-- the workspace is **large** (so `git add -A` per boundary is expensive),
-- you run in a **container** (each capture is a `docker exec` round-trip), or
-- you only ever rewind to **re-run from a past point**, never to inspect *the repo as it was* at that point.
-
-Setting it `false` selects **runtime-only rewind**: the registry attaches no workspace store, so the boundary capture is skipped entirely. Rewind, `/rewind`, the fork picker, branching, and checkout all still work — they restore the **runtime** substrate (agent + conversation state) but leave the working tree untouched. This is the same fidelity that **act-turn rewind** already offers ("re-run from step K with memoized history", not "the repo as it was mid-step K").
-
-WAL fsync (2) is deliberately **not** made opt-out — weakening crash durability is a separate trade-off the project does not offer here.
-
-### Why it is coherent (not a special mode)
-
-Runtime-only rewind needs no special code path. The two substrates are independent — `reconstruct` derives the consistent cut purely from the WAL + AgentSnapshot generations + `is_active`, with no workspace dependency — and every workspace seam (attach, capture, restore, retention-prune) already short-circuits when no workspace store is present. So `workspace_capture: false` simply means "don't attach the workspace store," and the existing guards make the rest coherent by construction. The setting is **run-level** (read at startup), not a mid-session toggle, so a generation captured while it was on is never left half-restorable after a flip.
+Both are the price of crash-recovery and time-travel fidelity; neither is optional.
 
 ---
 
@@ -177,9 +144,9 @@ Runtime-only rewind needs no special code path. The two substrates are independe
 |--|--|--|
 | Trigger | Automatic on unexpected failure | User-initiated (`/rewind`) |
 | Direction | Forward-replay to resume | Backward to a past checkpoint |
-| Workspace | Not rewound | Rewound to as-of-N |
+| Workspace | Not rewound | Not rewound (`.reyn/` state only — git-free) |
 | Branching | None | Fork / branch tree |
-| Mechanism | `SkillResumeAnalyzer` + WAL forward-replay | PITR snapshot + WAL-diff + shadow-git |
+| Mechanism | `SkillResumeAnalyzer` + WAL forward-replay | PITR snapshot + WAL-diff reconstruct, git-free |
 | Design | [ADR-0002](../../deep-dives/decisions/0002-forward-replay-resume.md) | [ADR-0038 draft](https://github.com/tya5/reyn/pull/1536) |
 
 ## See also
