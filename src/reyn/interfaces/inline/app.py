@@ -49,7 +49,14 @@ from reyn.interfaces.inline.region_command import (
     CommandUIElement,
     build_rewind_command_ui,
 )
-from reyn.interfaces.repl.renderer import _CC_ACCENT, _CC_DIM, _CC_DONE, _SPINNER
+from reyn.interfaces.repl.renderer import (
+    _CC_ACCENT,
+    _CC_COOL,
+    _CC_DIM,
+    _CC_DONE,
+    _CC_WARN,
+    _SPINNER,
+)
 from reyn.interfaces.slash import slash_command_completions
 
 logger = logging.getLogger(__name__)
@@ -92,6 +99,9 @@ class ChipSpec:
     label: str
     value: Callable[[dict], str]
     expansion: "Callable[[dict, Callable[[str], None]], object] | None" = None
+    # Colour for the chip's (bold) value text; the label stays dim. Per-chip so the
+    # eye separates them at a glance.
+    value_color: str = _CC_DIM
 
 
 def _model_expansion(snap, dispatch):
@@ -246,11 +256,16 @@ def _more_expansion(snap, dispatch):
 
 
 _CHIP_SPECS = [
-    ChipSpec("model", "model", lambda s: str(s["model"]), _model_expansion),
-    ChipSpec("cost",  "cost",  lambda s: f"${s['cost_usd']:.4f}", _cost_expansion),
-    ChipSpec("agent", "agent", lambda s: str(s["attached_name"] or "—"), _agent_expansion),
-    ChipSpec("task",  "task",  lambda s: str(s.get("task_count", 0)), _task_expansion),
-    ChipSpec("more",  "",      lambda s: "…", _more_expansion),   # overflow submenu — Phase 5a
+    ChipSpec("model", "model", lambda s: str(s["model"]), _model_expansion,
+             value_color=_CC_ACCENT),
+    ChipSpec("cost",  "cost",  lambda s: f"${s['cost_usd']:.4f}", _cost_expansion,
+             value_color=_CC_DONE),
+    ChipSpec("agent", "agent", lambda s: str(s["attached_name"] or "—"), _agent_expansion,
+             value_color=_CC_COOL),
+    ChipSpec("task",  "task",  lambda s: str(s.get("task_count", 0)), _task_expansion,
+             value_color=_CC_WARN),
+    ChipSpec("more",  "",      lambda s: "…", _more_expansion,
+             value_color=_CC_DIM),
 ]
 
 
@@ -458,17 +473,18 @@ async def run_inline_input(registry, renderer, config=None) -> None:
         frags: list = []
         for i, spec in enumerate(_CHIP_SPECS):
             val = spec.value(snap)
-            if spec.label:
-                text = f" {spec.label} {val} "
-            else:
-                text = f" {val} "
             selected = focused and i == menu["sel"]
-            if selected and menu["open"]:
-                text = text.rstrip() + " ▾ "
             if selected:
-                frags.append((f"fg:#0d0f12 bg:{_CC_ACCENT} bold", text))
+                # the focused chip is reverse-highlighted as one block.
+                mark = " ▾" if menu["open"] else ""
+                label = f" {spec.label} " if spec.label else " "
+                frags.append((f"fg:#0d0f12 bg:{_CC_ACCENT} bold", f"{label}{val}{mark} "))
             else:
-                frags.append((f"fg:{_CC_DIM}", text))
+                # label stays dim; the value is bold in the chip's own colour, so
+                # the eye separates the chips at a glance.
+                frags.append((f"fg:{_CC_DIM}", f" {spec.label} " if spec.label else " "))
+                frags.append((f"fg:{spec.value_color} bold", val))
+                frags.append((f"fg:{_CC_DIM}", " "))
             if i < len(_CHIP_SPECS) - 1:
                 frags.append((f"fg:{_CC_DIM}", "│"))
         if not focused:
