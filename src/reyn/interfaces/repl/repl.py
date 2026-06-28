@@ -205,11 +205,16 @@ def _simple_status(text: str):
     return OutboxMessage(kind="status", text=text)
 
 
-async def run_repl(registry: AgentRegistry, renderer: ChatRenderer) -> None:
+async def run_repl(registry: AgentRegistry, renderer: ChatRenderer, *, config=None) -> None:
     """Attach to the default agent (or pre-attached one) and run the REPL.
 
     Caller is expected to have called `await registry.attach(name)` before
     invoking this function so the user lands on a known agent.
+
+    ``config`` is the loaded ReynConfig (or None). When supplied it is threaded
+    read-only to ``run_inline_input`` so the ``…`` overflow chip can surface
+    cron / mcp / hooks state. The --cui / non-TTY path is not affected (it uses
+    ``_input_loop`` and never receives ``config``).
     """
     attached = registry.attached_session()
     if attached is None:
@@ -248,7 +253,7 @@ async def run_repl(registry: AgentRegistry, renderer: ChatRenderer) -> None:
     # run_in_terminal prints above whichever input is live.
     if renderer.uses_app_input() and sys.stdin.isatty():
         from reyn.interfaces.inline.app import run_inline_input
-        inputs = asyncio.create_task(run_inline_input(registry, renderer))
+        inputs = asyncio.create_task(run_inline_input(registry, renderer, config))
     else:
         from prompt_toolkit.styles import Style
         prompt_session: PromptSession[str] = PromptSession(

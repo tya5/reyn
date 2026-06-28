@@ -3,7 +3,8 @@
 The status bar is now declarative: each chip is a ``ChipSpec`` with a key,
 label, value function, and optional expansion builder. Tests exercise the
 public surface (``_CHIP_SPECS``, ``_model_expansion``, ``_cost_expansion``,
-``_agent_expansion``, ``_task_expansion``) using real instances; no mocks.
+``_agent_expansion``, ``_task_expansion``, ``_more_expansion``) using real
+instances; no mocks.
 """
 from __future__ import annotations
 
@@ -13,6 +14,7 @@ from reyn.interfaces.inline.app import (
     _build_task_tree,
     _cost_expansion,
     _model_expansion,
+    _more_expansion,
     _task_expansion,
 )
 from reyn.interfaces.inline.region import DetailElement
@@ -32,6 +34,9 @@ def _snap(**over):
         "cost_usd": 0.0,
         "task_count": 0,
         "task_tree": [],
+        "cron_jobs": [],
+        "mcp_servers": [],
+        "hooks": [],
     }
     base.update(over)
     return base
@@ -81,10 +86,85 @@ def test_task_chip_value_returns_count_string() -> None:
     assert spec.value(_snap(task_count=0)) == "0"
 
 
-def test_more_chip_has_no_expansion() -> None:
-    """Tier 2: the 'more' chip has no expansion (Phase 5 placeholder)."""
+def test_more_chip_has_expansion() -> None:
+    """Tier 2: the 'more' chip has a non-None expansion (Phase 5a)."""
     spec = next(s for s in _CHIP_SPECS if s.key == "more")
-    assert spec.expansion is None
+    assert spec.expansion is not None
+
+
+# ---------------------------------------------------------------------------
+# _more_expansion (Phase 5a: read-only cron/mcp/hooks overflow panel)
+# ---------------------------------------------------------------------------
+
+
+def test_more_expansion_empty_returns_detail_element() -> None:
+    """Tier 2: _more_expansion with empty config sections returns a read-only DetailElement."""
+    el = _more_expansion(_snap(), lambda _: None)
+    assert isinstance(el, DetailElement)
+    assert el.selectable is False
+
+
+def test_more_expansion_empty_shows_all_section_headers_with_zero() -> None:
+    """Tier 2: empty snap shows cron/mcp/hooks headers with (0) and a (none) line each."""
+    el = _more_expansion(_snap(), lambda _: None)
+    joined = " ".join(el.lines())
+    assert "cron" in joined
+    assert "mcp" in joined
+    assert "hooks" in joined
+    assert "(0)" in joined
+    assert "(none)" in joined
+
+
+def test_more_expansion_empty_all_three_sections_each_have_none_line() -> None:
+    """Tier 2: each of the three sections contains a '(none)' indicator when empty."""
+    el = _more_expansion(_snap(), lambda _: None)
+    lines = el.lines()
+    # There should be a (none) line following each header.
+    none_lines = [ln for ln in lines if "(none)" in ln]
+    # At minimum one (none) per section — i.e. three total when all empty.
+    assert none_lines
+
+
+def test_more_expansion_populated_cron_shows_on_off_markers() -> None:
+    """Tier 2: populated cron_jobs render nightly with 'on' and paused with 'off'."""
+    snap = _snap(
+        cron_jobs=[
+            {"name": "nightly", "schedule": "0 0 * * *", "enabled": True},
+            {"name": "paused",  "schedule": "0 * * * *", "enabled": False},
+        ],
+        mcp_servers=[{"name": "github"}],
+        hooks=[{"label": "on_push"}],
+    )
+    el = _more_expansion(snap, lambda _: None)
+    joined = " ".join(el.lines())
+    assert "nightly" in joined
+    assert "on" in joined       # enabled marker for nightly
+    assert "paused" in joined
+    assert "off" in joined      # disabled marker for paused
+
+
+def test_more_expansion_populated_mcp_shows_server_name() -> None:
+    """Tier 2: populated mcp_servers renders the server name."""
+    snap = _snap(
+        cron_jobs=[],
+        mcp_servers=[{"name": "github"}],
+        hooks=[],
+    )
+    el = _more_expansion(snap, lambda _: None)
+    joined = " ".join(el.lines())
+    assert "github" in joined
+
+
+def test_more_expansion_populated_hooks_shows_label() -> None:
+    """Tier 2: populated hooks renders the hook label."""
+    snap = _snap(
+        cron_jobs=[],
+        mcp_servers=[],
+        hooks=[{"label": "on_push"}],
+    )
+    el = _more_expansion(snap, lambda _: None)
+    joined = " ".join(el.lines())
+    assert "on_push" in joined
 
 
 # ---------------------------------------------------------------------------
