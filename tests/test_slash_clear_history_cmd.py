@@ -150,3 +150,34 @@ async def test_clear_history_confirm_nothing_to_clear() -> None:
     await clear_history_cmd(session, "confirm")
     text = session.reply_text()
     assert "nothing" in text.lower() or "empty" in text.lower()
+
+
+class _FailingPath:
+    """Stub Path that raises OSError on unlink — simulates a write-protected file."""
+
+    def unlink(self, missing_ok: bool = False) -> None:
+        raise OSError("permission denied")
+
+
+@pytest.mark.asyncio
+async def test_clear_history_disk_fail_leaves_memory_intact() -> None:
+    """Tier 2: when history_path.unlink() fails, in-memory history must NOT be cleared.
+
+    Falsification (old code): the old ordering cleared memory BEFORE the disk
+    deletion attempt.  Under the old code this test would fail because history
+    would be empty even though the disk write failed — a partial-clear that
+    causes history to silently reload on next startup.
+    """
+    history: list = ["turn1", "turn2"]
+    session = _FakeSession(history=history, history_path=_FailingPath())
+    await clear_history_cmd(session, "confirm")
+
+    # Memory must be unchanged — disk failed so nothing was committed.
+    assert history == ["turn1", "turn2"], (
+        "in-memory history was cleared even though disk deletion failed; "
+        "old code cleared memory first then returned on OSError, leaving "
+        "history empty in-memory but history.jsonl intact on disk — "
+        "next startup would silently reload old turns"
+    )
+    # Must have emitted an error reply (not a success).
+    assert session.error_text(), "expected an error reply when unlink raises OSError"
