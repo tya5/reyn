@@ -36,7 +36,7 @@ from reyn.interfaces.slash import suggest_for_unknown
 # even as new slash commands land in the real registry.
 _FIXTURE_NAMES = sorted([
     "agent", "agents", "answer", "attach", "budget", "cancel",
-    "copy", "cost", "cost-inline", "docs-filter", "exit", "expand",
+    "copy", "cost", "exit", "expand",
     "help", "image", "list", "memory", "pending", "plan", "quit",
     "restore", "tasks", "zen",
 ])
