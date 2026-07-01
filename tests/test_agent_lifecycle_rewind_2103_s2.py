@@ -18,6 +18,7 @@ from pathlib import Path
 
 import pytest
 
+from reyn.core.events.snapshot_generations import rewind
 from reyn.core.events.state_log import StateLog
 from reyn.runtime.profile import AgentProfile
 from reyn.runtime.registry import ARCHIVED_MARKER, AgentRegistry
@@ -66,13 +67,14 @@ async def test_dropped_agent_rematerialised_from_agent_created(tmp_path):
     reg = _make_registry(tmp_path)
     _seed_agent(tmp_path, "helper", role="my role")
     log = reg.state_log
-    await _emit_created(log, "helper", role="my role")   # seq 1
+    create_seq = await _emit_created(log, "helper", role="my role")   # seq 1
+    R = await rewind(log, target_n=create_seq)                         # seq 2 = R
 
     reg._drop_agent("helper")                             # simulate prior-cut drop
     assert not _agent_dir(tmp_path, "helper").exists()
 
     await reg._materialize_rewind(
-        reconstruct_seq=log.current_seq, workspace_at_or_below=1,  # cut ≥ create
+        reconstruct_seq=R, workspace_at_or_below=create_seq,  # cut ≥ create
     )
 
     assert _agent_dir(tmp_path, "helper").is_dir()        # re-materialised
@@ -80,21 +82,40 @@ async def test_dropped_agent_rematerialised_from_agent_created(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_archived_state_reconciled_as_of_cut(tmp_path):
-    """Tier 2: the .archived tombstone is rewritten to the as-of-cut archived-state —
-    rewind-before-archive → active (cleared); rewind-after → archived (present)."""
+async def test_archived_state_reconciled_as_of_cut_before_archive(tmp_path):
+    """Tier 2: rewind-before-archive → active (marker cleared).
+
+    Archive at seq 2 is in the abandoned interval (1, 3) → ``is_active_seq``=False
+    → marker is NOT written (agent active as-of-target N=1).
+    """
     reg = _make_registry(tmp_path)
     _seed_agent(tmp_path, "a")
     log = reg.state_log
-    await _emit_created(log, "a")        # seq 1
-    await _emit_archived(log, "a")       # seq 2
+    n_seq = await _emit_created(log, "a")   # seq 1 = N
+    await _emit_archived(log, "a")          # seq 2 (in abandoned interval (1, 3))
+    R = await rewind(log, target_n=n_seq)  # seq 3 = R
 
-    # cut before the archive → active (marker cleared).
-    await reg._materialize_rewind(reconstruct_seq=log.current_seq, workspace_at_or_below=1)
+    await reg._materialize_rewind(reconstruct_seq=R, workspace_at_or_below=n_seq)
+
     assert not (_agent_dir(tmp_path, "a") / ARCHIVED_MARKER).exists()
 
-    # cut at/after the archive → archived (marker present).
-    await reg._materialize_rewind(reconstruct_seq=log.current_seq, workspace_at_or_below=2)
+
+@pytest.mark.asyncio
+async def test_archived_state_reconciled_as_of_cut_after_archive(tmp_path):
+    """Tier 2: rewind-after-archive → still archived (marker present).
+
+    Archive at seq 2 with target N=2: abandoned interval is (2, 3) — seq 2 is NOT
+    in the strict-open interval → ``is_active_seq``=True → marker written.
+    """
+    reg = _make_registry(tmp_path)
+    _seed_agent(tmp_path, "a")
+    log = reg.state_log
+    await _emit_created(log, "a")            # seq 1
+    n_seq = await _emit_archived(log, "a")   # seq 2 = N (target)
+    R = await rewind(log, target_n=n_seq)   # seq 3 = R; interval (2, 3) is empty
+
+    await reg._materialize_rewind(reconstruct_seq=R, workspace_at_or_below=n_seq)
+
     assert (_agent_dir(tmp_path, "a") / ARCHIVED_MARKER).is_file()
 
 
@@ -105,11 +126,12 @@ async def test_purged_agent_is_permanent_never_rematerialised(tmp_path):
     reg = _make_registry(tmp_path)
     _seed_agent(tmp_path, "v")
     log = reg.state_log
-    await _emit_created(log, "v")        # seq 1
-    await _emit_purged(log, "v")         # seq 2
+    n_seq = await _emit_created(log, "v")    # seq 1 = N
+    await _emit_purged(log, "v")             # seq 2
+    R = await rewind(log, target_n=n_seq)   # seq 3 = R
 
     # cut BEFORE the purge (1) — fork A still drops it (out-of-time-travel).
-    await reg._materialize_rewind(reconstruct_seq=log.current_seq, workspace_at_or_below=1)
+    await reg._materialize_rewind(reconstruct_seq=R, workspace_at_or_below=n_seq)
     assert not _agent_dir(tmp_path, "v").exists()
 
 
@@ -120,9 +142,10 @@ async def test_agent_without_lifecycle_events_unaffected(tmp_path):
     reg = _make_registry(tmp_path)
     _seed_agent(tmp_path, "keep")
     log = reg.state_log
-    await log.append("inbox_put", target="keep", msg_id="x", msg_kind="user",
-                     payload={"text": "x"})           # seq 1 (non-lifecycle)
+    n_seq = await log.append("inbox_put", target="keep", msg_id="x", msg_kind="user",
+                              payload={"text": "x"})  # seq 1 (non-lifecycle)
+    R = await rewind(log, target_n=n_seq)             # seq 2 = R
 
-    await reg._materialize_rewind(reconstruct_seq=log.current_seq, workspace_at_or_below=1)
+    await reg._materialize_rewind(reconstruct_seq=R, workspace_at_or_below=n_seq)
 
     assert _agent_dir(tmp_path, "keep").is_dir()       # untouched

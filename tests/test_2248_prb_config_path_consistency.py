@@ -17,6 +17,7 @@ import pytest
 import yaml
 
 from reyn.core.events.config_recovery import record_config_generation, reyn_relative_path
+from reyn.core.events.snapshot_generations import rewind
 from reyn.core.events.state_log import StateLog
 from reyn.core.op_runtime.context import OpContext
 from reyn.runtime.registry import AgentRegistry
@@ -113,6 +114,9 @@ async def test_real_mcp_drop_writes_config_subdir_keyed_path_and_rewind_restores
     assert not (tmp_path / ".reyn" / "mcp.yaml").exists(), "no old-path generation write-back"
 
     # 3) rewind reconstructs to the SAME new path from the generation truth (no old-path resurrection).
+    # Production invariant: _reconcile_config_as_of_cut is always called from _materialize_rewind
+    # which has an active rewind record. Add one here so is_active_seq gates correctly.
+    await rewind(state_log, target_n=cut)
     reg._reconcile_config_as_of_cut(cut)
     restored = yaml.safe_load(mcp_path.read_text(encoding="utf-8"))["mcp"]["servers"]
     assert set(restored) == {"filesystem", "brave"}, "rewind reconstructs at .reyn/config/mcp.yaml"

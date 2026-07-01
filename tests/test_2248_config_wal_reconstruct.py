@@ -17,6 +17,7 @@ from pathlib import Path
 import pytest
 import yaml
 
+from reyn.core.events.snapshot_generations import rewind
 from reyn.core.events.state_log import StateLog
 from reyn.runtime.registry import AgentRegistry
 
@@ -48,6 +49,10 @@ async def test_config_reconstructs_to_latest_at_or_below_cut(tmp_path):
     await reg.state_log.append("inbox_put", n=0)
     # a later mutation (after the cut) — the live on-disk state the op would have written:
     await reg.record_config_change("config/mcp.yaml", {"mcp": {"servers": {"a": {}, "b": {}}}})
+    # Rewind to cut: puts the post-cut generation in the abandoned interval (cut, R),
+    # so is_active_seq correctly excludes it. Production invariant: _reconcile_config_as_of_cut
+    # is only called from _materialize_rewind which always has an active rewind record.
+    await rewind(reg.state_log, target_n=cut)
     p = tmp_path / ".reyn" / "config" / "mcp.yaml"
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(yaml.dump({"mcp": {"servers": {"a": {}, "b": {}}}}), encoding="utf-8")
@@ -67,6 +72,9 @@ async def test_config_path_first_written_after_cut_is_removed(tmp_path):
     # bump the head so the only generation is filed at seq > 0 (the cut below).
     await reg.state_log.append("inbox_put", n=0)
     await reg.record_config_change("config/cron.yaml", {"cron": {"jobs": [{"name": "j"}]}})
+    # Rewind to 0: the only generation (seq > 0) lands in the abandoned interval (0, R).
+    # Production invariant: _reconcile_config_as_of_cut always has an active rewind record.
+    await rewind(reg.state_log, target_n=0)
     p = tmp_path / ".reyn" / "config" / "cron.yaml"
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(yaml.dump({"cron": {"jobs": [{"name": "j"}]}}), encoding="utf-8")

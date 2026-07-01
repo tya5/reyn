@@ -1494,20 +1494,27 @@ class AgentRegistry:
         )
         prof.save(self._dir / name)
 
-    def _reconcile_archived_as_of_cut(
-        self, archived: "dict[str, int]", cut: int,
-    ) -> None:
+    def _reconcile_archived_as_of_cut(self, archived: "dict[str, int]") -> None:
         """#2103 S2: rewrite each present agent's ``.archived`` tombstone to the
-        as-of-cut archived-state — archived iff its latest ``agent_archived`` seq ≤
-        cut. So rewind-before-archive → active (marker cleared); rewind-after →
-        archived (marker present). Inert when no ``agent_archived`` events exist
-        (the #1954 file-only tombstone is left untouched)."""
+        as-of-cut archived-state, using ``is_active_seq`` as the canonical predicate:
+
+        • Pre-target (aseq ≤ N): ``is_active_seq=True`` → write marker (was archived).
+        • Abandoned branch (N < aseq < R): ``is_active_seq=False`` → clear marker
+          (agent was active as-of-target; the archival is on the discarded branch).
+        • Post-rewind active (aseq > R): ``is_active_seq=True`` → write marker (the
+          archival happened after the completed rewind and must be preserved).
+
+        The single-cut ``aseq ≤ N`` had a symmetric gap: a post-rewind archive
+        (aseq > R > N) gave aseq > N → marker unlinked → agent un-archived on crash
+        recovery. Both production callers guarantee a rewind record exists (see
+        comment at the ``drop_cut`` assignment above). Inert when no ``agent_archived``
+        events exist (the #1954 file-only tombstone is left untouched)."""
         for name, aseq in archived.items():
             target = self._dir / name
             if not target.is_dir():
                 continue
             marker = target / ARCHIVED_MARKER
-            if aseq <= cut:
+            if self._state_log is not None and is_active_seq(self._state_log, aseq):
                 marker.write_text(str(aseq), encoding="utf-8")
             elif marker.is_file():
                 marker.unlink()
@@ -1539,16 +1546,26 @@ class AgentRegistry:
 
     def _reconcile_topologies_as_of_cut(self, cut: int) -> None:
         """#2103 Piece-2: reconstruct the topology config-set as-of-cut from the
-        lifecycle WAL (WAL-sourced only — never the rotated audit log). Per WAL-tracked
-        topology name, the LATEST event with seq ≤ cut decides: created/updated → exists
-        with that FULL config; removed (or no event ≤ cut, i.e. created-after-cut) →
+        lifecycle WAL (WAL-sourced only — never the rotated audit log). The LATEST
+        ACTIVE event decides per WAL-tracked topology name: created/updated → exists
+        with that FULL config; removed (or no active event, i.e. created-after-cut) →
         gone. Reconcile both the on-disk YAML and the in-memory ``_topologies`` map.
         MUST-2: ONLY WAL-tracked names are touched — untracked/pre-WAL topologies are
-        never created, mutated, or deleted here. Inert without lifecycle events."""
+        never created, mutated, or deleted here. Inert without lifecycle events.
+
+        #2405: ``is_active_seq`` replaces the former ``e[0] ≤ cut`` filter — same
+        symmetric gap as vanish/archive: post-rewind active mutations (seq > R) were
+        excluded, reverting topology state to as-of-N on crash recovery."""
         for name, evs in self._topology_lifecycle().items():
-            latest = max(
-                (e for e in evs if e[0] <= cut), key=lambda e: e[0], default=None,
-            )
+            if self._state_log is not None:
+                latest = max(
+                    (e for e in evs if is_active_seq(self._state_log, e[0])),
+                    key=lambda e: e[0], default=None,
+                )
+            else:
+                latest = max(
+                    (e for e in evs if e[0] <= cut), key=lambda e: e[0], default=None,
+                )
             path = self._topology_dir / f"{name}.yaml"
             if latest is None or latest[1] == "topology_removed":
                 # Didn't exist as-of-cut (created-after-cut OR removed-≤-cut) → drop.
@@ -1624,7 +1641,17 @@ class AgentRegistry:
         """#2259 PR-1b: per-agent identity + frozen lineage as-of-cut from the truncation-
         surviving generations — the latest generation ≤ cut per agent. Returns
         ``{name: (create_seq, spawn_parent, spawn_parent_seq)}``. The rewind rebuild prefers
-        this (survives truncation) over the `agent_created` WAL scan."""
+        this (survives truncation) over the `agent_created` WAL scan.
+
+        #2405: ``≤ cut`` here is INTENTIONAL — unlike topology/config (which change
+        post-rewind and must use ``is_active_seq``), agent identity is SET ONCE at spawn
+        and never mutated. ``cut = drop_cut = N`` recovers the truncation-surviving
+        pre-N lineage (the security linchpin for ⊆-parent caps after WAL truncation).
+        Post-rewind active agents (C' > R) are NEW entities whose first generation is at
+        seq > R > N — not "updated" versions of pre-N agents. Their identity is not
+        established as-of-N and is set fresh when first accessed via ``spawn_recorded``
+        (line 654). The WAL-scan fallback at the call site (``ag_created`` loop) uses
+        the same ``≤ drop_cut`` for the same reason."""
         store = self._agent_identity_generation_store()
         out: dict[str, tuple[int, str | None, int | None]] = {}
         for name in store.names():
@@ -1654,16 +1681,24 @@ class AgentRegistry:
     def _reconcile_config_as_of_cut(self, cut: int) -> None:
         """#2259 PR-1: reconstruct the recovery-core config registries as-of-cut from the
         config GENERATIONS (truncation-surviving, full-state). Per registry, restore the
-        LATEST generation with seq ≤ cut (each generation is complete — no forward-replay). A
-        registry whose first generation is AFTER the cut didn't exist as-of-cut → removed.
+        LATEST ACTIVE generation (each generation is complete — no forward-replay). A
+        registry with no active generation didn't exist on the active branch → removed.
         Only generation-tracked registries are touched (operator-owned / pre-feature yaml with
         no generation is left alone). This survives WAL truncation — the bug the former
-        event-replay reconstruct had (config_changed below the floor was lost)."""
+        event-replay reconstruct had (config_changed below the floor was lost).
+
+        #2405: ``is_active_seq``-based ``latest_active`` replaces ``latest_at_or_below(cut=N)``
+        — same symmetric gap as topology/vanish/archive: post-rewind active config generations
+        (seq > R) were excluded, reverting config to as-of-N on crash recovery."""
         import yaml  # noqa: PLC0415 — local, matching the file convention
 
         store = self._config_generation_store()
         for rel_path in store.paths():
-            latest = store.latest_at_or_below(rel_path, cut)
+            latest = (
+                store.latest_active(rel_path, self._state_log)
+                if self._state_log is not None
+                else store.latest_at_or_below(rel_path, cut)
+            )
             abs_path = (self._project_root / ".reyn" / rel_path).resolve()
             if latest is None:
                 # First generation after the cut → didn't exist as-of-cut → drop.
@@ -1841,31 +1876,48 @@ class AgentRegistry:
         # #2103 S2: agent-lifecycle reconstruction (re-materialise / hide / purge) —
         # all inert until S2b emits the events.
         ag_created, ag_archived, ag_purged = self._agent_lifecycle()
-        # #2103: the existence cut is the rewind TARGET (``workspace_at_or_below`` =
-        # target_n), NOT ``reconstruct_seq`` (= R, the reset-record head). An entity
-        # whose create-seq > target didn't exist as-of-target → drop it. In crash
-        # recovery ``workspace_at_or_below`` = head, so create-seq > head is never
-        # true → no spurious drops (recovery reconstructs the present, not a rewind).
+        # #2103: the existence predicate is ``is_active_seq``: an entity whose
+        # create-seq is on an ABANDONED branch didn't exist as-of-target → drop it.
+        # ``is_active_seq`` correctly handles BOTH call sites:
+        #   • ``rewind_to`` (live, no post-R agents) — agents in (N, R) are inactive.
+        #   • ``recover_rewind_if_needed`` (crash recovery) — same inactive interval;
+        #     post-rewind active agents at C' > R are IS active, so NOT dropped.
+        # Using the single-cut ``agent_seq > drop_cut`` would drop post-rewind active
+        # agents (C' > R > N = drop_cut) on a crash after a completed rewind.
+        # ``vanished_by_cut`` and ``_reconcile_archived_as_of_cut`` use the SAME predicate:
+        #   V ≤ N OR V > R (both ``is_active_seq=True``) → drop / write marker
+        #   N < V < R (``is_active_seq=False``) → keep / clear marker
+        # Both production callers guarantee a rewind record exists before calling here
+        # (rewind_to appends it at line 1091 before line 1095; recover_rewind_if_needed
+        # gates on active_rewind_target is not None at line 2011 before line 2014).
         drop_cut = workspace_at_or_below
-        # #2103 S2 re-materialise: an agent created ≤ cut, NOT purged, currently
+        # #2103 S2 re-materialise: an agent on the ACTIVE branch, NOT purged, currently
         # ABSENT (dropped at a prior cut) → re-create from its agent_created record
         # so a forward-checkout-past-drop brings it back (the inverse of the drop).
         for _rname, (_rcseq, _rpayload, _rparent, _rpseq) in ag_created.items():
             if _rname in ag_purged:
                 continue  # fork A: purged = permanent, never re-materialised
-            if _rcseq <= drop_cut and not (self._dir / _rname).is_dir():
+            _is_active = (
+                self._state_log is None or is_active_seq(self._state_log, _rcseq)
+            )
+            if _is_active and not (self._dir / _rname).is_dir():
                 self._rematerialise_agent(_rname, _rpayload)
         for name in self.list_names():
-            # An agent created after the cut — OR purged (fork A: permanent) — is
+            # An agent on an ABANDONED branch — OR purged (fork A: permanent) — is
             # torn down (subsumes its nested sessions) instead of reconstructed.
             # Reversible (create case): a forward-checkout past the create
             # re-materialises it from the agent_created WAL record (the pass above).
             agent_seq = created_at.get(("agent", name, ""))
-            if name in ag_purged or (agent_seq is not None and agent_seq > drop_cut):
+            _on_abandoned = (
+                agent_seq is not None
+                and self._state_log is not None
+                and not is_active_seq(self._state_log, agent_seq)
+            )
+            if name in ag_purged or _on_abandoned:
                 self._drop_agent(name)
                 continue
             for sid in self._discover_session_ids(name):
-                # A session spawned after the cut → drop just that session.
+                # A session on an abandoned branch → drop just that session.
                 # #2154: OR a session that VANISHED at-or-before the cut (it was gone
                 # as-of-cut) — the destroy-side mirror of the spawn-cut. A genuine
                 # vanish normally already rmtree'd the dir (so discovery won't surface
@@ -1873,8 +1925,16 @@ class AgentRegistry:
                 # vanish (a crash mid-rmtree, or a future session re-materialise seam).
                 sess_seq = created_at.get(("session", name, sid))
                 van_seq = sess_vanished.get((name, sid))
-                spawned_after_cut = sess_seq is not None and sess_seq > drop_cut
-                vanished_by_cut = van_seq is not None and van_seq <= drop_cut
+                spawned_after_cut = (
+                    sess_seq is not None
+                    and self._state_log is not None
+                    and not is_active_seq(self._state_log, sess_seq)
+                )
+                vanished_by_cut = (
+                    van_seq is not None
+                    and self._state_log is not None
+                    and is_active_seq(self._state_log, van_seq)
+                )
                 if spawned_after_cut or vanished_by_cut:
                     # #2125/#2180: detach now (quiesce in-flight writes; the global Task
                     # backend is NOT closed on a session drop — one process-wide
@@ -1901,7 +1961,7 @@ class AgentRegistry:
                 agents.append(name if sid == _DEFAULT_SID else f"{name}/{sid}")
         # #2103 S2: rewrite present agents' .archived tombstones to the as-of-cut
         # archived-state (rewind-before-archive → active; rewind-after → archived).
-        self._reconcile_archived_as_of_cut(ag_archived, drop_cut)
+        self._reconcile_archived_as_of_cut(ag_archived)
         self._reconcile_topologies_as_of_cut(drop_cut)
         # #2259 PR-1: rebuild the recovery-core config registries (mcp/cron/hooks/…)
         # as-of-cut from the config GENERATIONS — same latest-≤-cut-wins model as topology.
@@ -1966,7 +2026,7 @@ class AgentRegistry:
             return None
         head = self._state_log.last_durable_seq
         agents = await self._materialize_rewind(
-            reconstruct_seq=head, workspace_at_or_below=head,
+            reconstruct_seq=head, workspace_at_or_below=target,
         )
         return {"recovered_target_n": target, "head": head, "agents": agents}
 

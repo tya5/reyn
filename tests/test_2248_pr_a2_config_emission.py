@@ -17,6 +17,7 @@ import pytest
 import yaml
 
 from reyn.core.events.config_recovery import record_config_generation
+from reyn.core.events.snapshot_generations import rewind as _wal_rewind
 from reyn.core.events.state_log import StateLog
 from reyn.core.op_runtime.context import OpContext
 from reyn.runtime.registry import AgentRegistry
@@ -98,6 +99,11 @@ async def test_real_mcp_drop_records_generation_and_rewind_restores(tmp_path):
     assert set(post_drop) == {"filesystem"}, "the op's generation reconstructs the post-drop state"
 
     # 2) rewind to before the drop → reconstruct restores brave from the generation truth.
+    # Add a rewind record targeting cut so the post-drop generation lands in the abandoned
+    # interval (cut, R) and is correctly excluded by is_active_seq. Production invariant:
+    # _reconcile_config_as_of_cut is always called from _materialize_rewind, which has an
+    # active rewind record by construction.
+    await _wal_rewind(state_log, target_n=cut)
     reg._reconcile_config_as_of_cut(cut)
     restored = yaml.safe_load(mcp_path.read_text(encoding="utf-8"))["mcp"]["servers"]
     assert set(restored) == {"filesystem", "brave"}, "rewind reconstructs the dropped server"

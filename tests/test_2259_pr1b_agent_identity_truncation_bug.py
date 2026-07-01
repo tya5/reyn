@@ -21,6 +21,7 @@ from pathlib import Path
 
 import pytest
 
+from reyn.core.events.snapshot_generations import rewind
 from reyn.core.events.state_log import StateLog
 from reyn.runtime.registry import AgentRegistry
 from reyn.security.permissions.effective import ContextualPermission, tool_contextually_denied
@@ -135,7 +136,10 @@ async def test_identity_generation_survives_but_post_cut_child_is_undone(tmp_pat
     await log.flush()
 
     # rewind to BEFORE C was spawned → C did not exist as-of-cut → undone (dropped).
-    await reg._materialize_rewind(reconstruct_seq=log.current_seq, workspace_at_or_below=cut)
+    # Production invariant: _materialize_rewind always has an active rewind record.
+    # Add one so is_active_seq correctly marks child_a's post-cut create-seq as abandoned.
+    R = await rewind(log, target_n=cut)
+    await reg._materialize_rewind(reconstruct_seq=R, workspace_at_or_below=cut)
 
     assert not (tmp_path / ".reyn" / "agents" / "child_a").is_dir(), (
         "a child created AFTER the cut must be undone on rewind (not resurrected from its "

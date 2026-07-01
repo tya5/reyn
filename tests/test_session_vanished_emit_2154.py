@@ -26,6 +26,7 @@ from pathlib import Path
 
 import pytest
 
+from reyn.core.events.snapshot_generations import rewind
 from reyn.core.events.state_log import StateLog
 from reyn.runtime.profile import AgentProfile
 from reyn.runtime.registry import AgentRegistry
@@ -115,16 +116,22 @@ async def test_session_vanished_before_cut_reconstructs_gone(tmp_path):
 
 @pytest.mark.asyncio
 async def test_session_vanished_after_cut_survives_reconstruction(tmp_path):
-    """Tier 2: the cut boundary — a session whose session_vanished is AFTER the cut
-    still existed as-of-cut, so reconstruction must NOT drop it for the vanish
-    (latest-≤-cut-wins: a future vanish does not apply)."""
+    """Tier 2: the cut boundary — a session whose session_vanished is in the ABANDONED
+    interval (N < V < R) still existed as-of-cut, so reconstruction must NOT drop it.
+
+    ``is_active_seq(V)`` is False for V in the abandoned interval → ``vanished_by_cut``
+    is False → session is reconstructed (not dropped).  The vanish is on the discarded
+    branch; the session was alive as-of-target N.
+    """
     reg = _make_registry(tmp_path)
     reg.get_or_load("alice")
     log = reg.state_log
     sid = await reg.spawn_session_recorded("alice", mode="persistent")
-    cut = log.current_seq                                     # cut = after the spawn
-    await log.append("session_vanished", entity_kind="session", name="alice", sid=sid)  # > cut
+    cut = log.current_seq                                          # cut = N (after spawn)
+    await log.append("session_vanished", entity_kind="session",
+                     name="alice", sid=sid)                        # V = cut+1 (abandoned)
+    R = await rewind(log, target_n=cut)                            # R = cut+2; V in (N, R)
 
-    await reg._materialize_rewind(reconstruct_seq=log.current_seq, workspace_at_or_below=cut)
+    await reg._materialize_rewind(reconstruct_seq=R, workspace_at_or_below=cut)
 
-    assert sid in reg.session_ids("alice")                    # existed as-of-cut → kept
+    assert sid in reg.session_ids("alice")                         # existed as-of-cut → kept
