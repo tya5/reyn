@@ -25,52 +25,11 @@ if TYPE_CHECKING:
     pass
 
 
-# ── Standalone helpers (moved from session.py) ────────────────────────────────
-
-_INTERRUPTED_TOOL_RESULT = json.dumps(
-    {"status": "error", "error": {"kind": "interrupted",
-                                   "message": "Tool execution was interrupted."}},
-)
-
-
-def _repair_dangling_tool_calls(messages: list[dict]) -> list[dict]:
-    """Synthesize error tool_results for any unanswered tool_calls.
-
-    A crash or ctrl-c between the role=assistant+tool_calls append and the
-    corresponding role=tool appends leaves the history in an API-invalid state:
-    every provider requires a tool_result for every tool_call_id. This repair
-    pass ensures the LLM wire format satisfies the pairing invariant without
-    mutating the on-disk history (the caller passes the already-serialised
-    message list, not the raw ChatMessage history).
-
-    Walk: for each assistant message carrying tool_calls, consume the
-    immediately-following role=tool messages, then inject synthetic error
-    results for every tool_call_id that has no matching role=tool entry.
-    """
-    result: list[dict] = []
-    i = 0
-    while i < len(messages):
-        m = messages[i]
-        result.append(m)
-        if m.get("role") == "assistant" and m.get("tool_calls"):
-            needed: set[str] = {
-                tc["id"]
-                for tc in m["tool_calls"]
-                if tc.get("id")
-            }
-            i += 1
-            while i < len(messages) and messages[i].get("role") == "tool":
-                needed.discard(messages[i].get("tool_call_id"))
-                result.append(messages[i])
-                i += 1
-            for tc_id in needed:
-                result.append(
-                    {"role": "tool", "tool_call_id": tc_id,
-                     "content": _INTERRUPTED_TOOL_RESULT}
-                )
-        else:
-            i += 1
-    return result
+# #2287 follow-up: the tool_call ↔ tool_result pairing repair moved OUT of this per-segment builder
+# to the single provider chokepoint (``reyn.llm.wire_format.repair_tool_call_pairing`` in
+# ``recorded_acompletion``). Per-segment repair was pair-blind across the head/bridge/tail assembly:
+# an intact pair split by the bridge was duplicate-synthesized. The chokepoint repair sees the FULL
+# assembled wire list, so it is the correct single place for the guarantee.
 
 
 def _is_force_close_consolidation(summary: Any) -> bool:
@@ -374,9 +333,7 @@ class RouterHistoryBuffer:
                 ts=_fc_summary.ts,
             )]
             return self._bound_wire_reasoning(
-                _repair_dangling_tool_calls(
-                    [self._serialise_turn(m) for m in (_bridge + _post)]
-                )
+                [self._serialise_turn(m) for m in (_bridge + _post)]
             )
 
         effective_trigger, head_budget, tail_budget = self._resolve_budgets()
@@ -419,9 +376,7 @@ class RouterHistoryBuffer:
         # are materialised to data URLs **at this boundary** so storage
         # stays light and the LLM sees the inline form it expects.
         return self._bound_wire_reasoning(
-            _repair_dangling_tool_calls(
-                [self._serialise_turn(m) for m in selected]
-            )
+            [self._serialise_turn(m) for m in selected]
         )
 
     def decompose_history_for_retry(
@@ -485,9 +440,7 @@ class RouterHistoryBuffer:
                 summary_dict = structured
         head = [self._serialise_turn(m) for m in head_msgs]
         raw_middle = [self._serialise_turn(m) for m in raw_middle_msgs]
-        tail = _repair_dangling_tool_calls(
-            [self._serialise_turn(m) for m in tail_msgs]
-        )
+        tail = [self._serialise_turn(m) for m in tail_msgs]
         # #1652/②: bound native reasoning across the ordered carriers (the strip
         # is in-place, so the shared dicts in head/raw_middle/tail are bounded).
         self._bound_wire_reasoning(head + raw_middle + tail)
