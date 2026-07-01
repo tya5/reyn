@@ -131,6 +131,12 @@ async def test_deliver_answer_appends_intervention_resolved(tmp_path, monkeypatc
     # finally clause where ``record_intervention_resolved`` fires.
     await asyncio.gather(task, return_exceptions=True)
 
+    # #2279: ``record_intervention_resolved`` is a FIRE-AND-FORGET WAL append (async-decoupled
+    # durability, #2259) — drain the worker so the raw file read below is deterministic. The
+    # pre-existing ``wait_until`` polls the IN-MEMORY pending state, NOT the resolved WAL event, so
+    # it is a FALSE barrier here; ``flush()`` is the bounded-by-construction one (root of the 3.12
+    # flake: the read raced the append's durability).
+    await session._journal.flush()
     events = _wal_events(tmp_path)
     resolved = [e for e in events if e["kind"] == "intervention_resolved"]
     assert resolved, "intervention_resolved must be emitted after successful answer"
@@ -158,6 +164,9 @@ async def test_unknown_choice_does_not_emit_resolved(tmp_path, monkeypatch):
     consumed = await session._maybe_answer_oldest_intervention("invalid")
     assert consumed is True  # consumed but not resolved
 
+    # #2279: the ``wait_until`` above polled IN-MEMORY pending, not the WAL — so drain the worker
+    # before the raw read to make ``intervention_dispatched`` durability deterministic (else racy).
+    await session._journal.flush()
     events = _wal_events(tmp_path)
     dispatched = [e for e in events if e["kind"] == "intervention_dispatched"]
     resolved = [e for e in events if e["kind"] == "intervention_resolved"]
@@ -249,3 +258,31 @@ async def test_outstanding_interventions_in_snapshot_after_dispatch(tmp_path, mo
 
     iv.future.set_result(None)
     await asyncio.gather(task, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_wal_read_without_flush_races_durability_the_root(tmp_path, monkeypatch):
+    """Tier 2: #2279 the DETERMINISTIC mechanism-falsify (why the flush barrier is required).
+
+    A WAL append is FIRE-AND-FORGET (async-decoupled durability, #2259): it is enqueued to the
+    durability worker and is NOT on disk until the worker drains. A raw file read IMMEDIATELY after
+    — with NO await and NO flush — cannot see it (no yield = no drain), which is exactly the race the
+    flaky intervention tests hit (assert-read before the resolved append is durable; 3.12 scheduling
+    just widens the window). ``flush()`` drains the worker → durable → the read is deterministic.
+
+    Version-independent + scheduling-independent: RED (empty) before flush, GREEN after — the proof
+    that the fix is a structural barrier, not a hard-to-reproduce 3.12 nondeterminism.
+    """
+    monkeypatch.chdir(tmp_path)
+    session = _make_session(tmp_path)
+    # Fire-and-forget the exact append the flaky test asserts on.
+    session._journal._wal_append_nowait(
+        "intervention_resolved", target="alpha", intervention_id="iv-x",
+    )
+    # RAW read with no await / no flush → the worker has not drained → NOT durable yet (the race).
+    before = [e for e in _wal_events(tmp_path) if e["kind"] == "intervention_resolved"]
+    assert before == [], "read-before-flush: a fire-and-forget append is not yet durable (the race root)"
+    # The flush barrier → drain → durable → deterministic read.
+    await session._journal.flush()
+    after = [e for e in _wal_events(tmp_path) if e["kind"] == "intervention_resolved"]
+    assert after and after[0]["intervention_id"] == "iv-x", "flush() makes the append durable"
