@@ -450,10 +450,6 @@ async def run_inline_input(registry, renderer, config=None) -> None:
     # app.exit() — the second raises "Return value already set". _quit checks+sets
     # this before its first await, so only one ever runs to app.exit().
     quitting: dict = {}
-    # Set when the user pressed ctrl-c during an active turn (cancel_inflight
-    # requested). Cleared automatically when the turn ends (thinking→False).
-    # While set, the working indicator shows "Cancelling…" instead of the shimmer.
-    cancelling: dict = {}
     # Above-input interactive region: hosts the active closed-set intervention
     # (confirm / select / grant-deny) as a selectable list, poll-driven off the
     # session head (like the status chips). Free-text interventions keep using the
@@ -464,15 +460,10 @@ async def run_inline_input(registry, renderer, config=None) -> None:
     region_holder: dict = {"key": None}
 
     def _working_frags() -> list:
-        thinking = getattr(renderer, "_thinking", False)
-        if not thinking:
-            cancelling.clear()   # auto-clear once the turn ends
-        return working_line(
-            thinking,
-            getattr(renderer, "_think_start", 0.0),
-            time.monotonic(),
-            cancelling=bool(cancelling),
-        )
+        wf = getattr(renderer, "working_frags", None)
+        if callable(wf):
+            return wf(time.monotonic())
+        return []
 
     working = ConditionalContainer(
         Window(FormattedTextControl(_working_frags), height=1),
@@ -689,8 +680,10 @@ async def run_inline_input(registry, renderer, config=None) -> None:
         # A second ctrl-c (while still "thinking" / cancelling) falls through to
         # quit, matching the standard "ctrl-c to interrupt, ctrl-c again to exit"
         # pattern. Ctrl-D/Q always quit regardless of turn state.
-        if getattr(renderer, "_thinking", False) and not cancelling:
-            cancelling["requested"] = True
+        if getattr(renderer, "_thinking", False) and not getattr(renderer, "_cancelling", False):
+            rc = getattr(renderer, "request_cancel", None)
+            if callable(rc):
+                rc()
             event.app.create_background_task(_cancel_turn(registry))
         else:
             event.app.create_background_task(_quit(registry, event.app, quitting))

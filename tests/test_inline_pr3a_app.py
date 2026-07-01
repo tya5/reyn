@@ -6,6 +6,7 @@ input path. Assertions are on public return values, not whitespace/private state
 """
 from __future__ import annotations
 
+import time
 from datetime import datetime, timezone
 
 from reyn.interfaces.inline.app import working_line
@@ -107,3 +108,27 @@ def test_working_line_cancelling_shows_cancelling_text() -> None:
 def test_working_line_idle_cancelling_is_empty() -> None:
     """Tier 2: idle (thinking=False) returns [] even when cancelling=True."""
     assert working_line(False, 0.0, 3.0, cancelling=True) == []
+
+
+def test_cancelling_state_does_not_bleed_into_next_turn() -> None:
+    """Tier 2: a ctrl-c cancel in one turn does not show 'Cancelling…' in the next.
+
+    The ConditionalContainer hides the working row when _thinking=False, so the old
+    clear-in-_working_frags path was dead code. on_chat_event must reset the flag on
+    turn end so it never leaks. Verified via InlineChatRenderer.working_frags() —
+    the same public surface the app drives; no private state is read in setup or
+    assertion.
+    """
+    for end_event in ("turn_settled", "turn_completed", "turn_cancelled"):
+        r = InlineChatRenderer()
+        r.on_chat_event(_evt("turn_started"))
+        r.request_cancel()           # public API: simulate user pressing ctrl-c mid-turn
+        r.on_chat_event(_evt(end_event))
+        r.on_chat_event(_evt("turn_started"))   # next turn begins
+        text = "".join(t for _, t in r.working_frags(time.monotonic()))
+        assert "Cancelling" not in text, (
+            f"after {end_event}, next turn still shows Cancelling indicator"
+        )
+        assert "Working" in text, (
+            f"after {end_event}, next turn should show normal working indicator"
+        )

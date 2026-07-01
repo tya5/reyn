@@ -478,6 +478,21 @@ class InlineChatRenderer(ChatRenderer):
         # Working-indicator state, driven by on_chat_event (turn_started/completed).
         self._thinking = False
         self._think_start = 0.0
+        # ctrl-c cancel-in-flight flag: set via request_cancel(), cleared on
+        # turn end so it never leaks into the next turn. Owned here (not as a
+        # closure dict in run_inline_input) so on_chat_event can clear it even
+        # though the ConditionalContainer stops rendering the working row the
+        # moment _thinking becomes False.
+        self._cancelling = False
+
+    def request_cancel(self) -> None:
+        """Record ctrl-c cancel-in-flight; cleared automatically by on_chat_event on turn end."""
+        self._cancelling = True
+
+    def working_frags(self, now: float) -> list:
+        """Current working-row fragments — delegates to app.working_line with live state."""
+        from reyn.interfaces.inline.app import working_line  # deferred to avoid circular
+        return working_line(self._thinking, self._think_start, now, cancelling=self._cancelling)
 
     def on_chat_event(self, event) -> None:
         etype = getattr(event, "type", None)
@@ -488,6 +503,7 @@ class InlineChatRenderer(ChatRenderer):
         # turn_completed/turn_cancelled are kept as belt-and-suspenders.
         elif etype in ("turn_settled", "turn_completed", "turn_cancelled"):
             self._thinking = False
+            self._cancelling = False
 
     def bottom_toolbar(self):
         """Animated working indicator while a turn runs (spinner + elapsed).
