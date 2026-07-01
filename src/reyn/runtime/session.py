@@ -3149,6 +3149,24 @@ class Session:
         # Snapshot the cache before the chain so we can detect a swap.
         snapshot_before = self._router_host.mcp_tools_cache_snapshot
 
+        # #2372: re-read the server ROSTER from the config cascade BEFORE the tool-probe
+        # chain. Refreshing the tools cache alone is insufficient — the LLM-facing
+        # enumeration (_get_mcp_servers_for_router → _mcp_servers_flat) gates on the roster,
+        # which is otherwise frozen at ctor (self._mcp_servers → adapter). A server installed
+        # mid-session (mcp_install writes the IN-set .reyn/config/mcp.yaml) has no roster entry
+        # to attach its tools to → never enumerated. load_config's cascade MERGES that IN-set
+        # (loader.py: dynamic_mcp), so re-reading here picks up the install. Multi-holder swap
+        # (mirrors _reapply_per_agent_capability): the Session field AND the adapter's roster —
+        # the enumeration reads the adapter's. Best-effort: a re-read failure keeps the old
+        # roster (never breaks the refresh).
+        try:
+            from reyn.config.loader import load_config
+            fresh_roster = load_config(self._hot_reload_project_root()).mcp
+            self._mcp_servers = fresh_roster
+            self._router_host._mcp_servers = fresh_roster
+        except Exception as exc:  # noqa: BLE001 — roster re-read is best-effort
+            logger.warning("refresh_mcp_servers: roster re-read failed: %r", exc)
+
         try:
             # Step 1 (S2): yaml mtime watch — re-probes when any yaml changed.
             await self._router_host.maybe_refresh_mcp_tools_from_yaml()
