@@ -540,6 +540,18 @@ async def handle(
         # NOTE: env values are NOT emitted — only key names for audit
     )
 
+    # ── 7. #2372: schedule a hot-reload so the installed server's tools go live in the
+    # SAME chat session (no restart). The mcp seam (_reapply_mcp → refresh_mcp_servers)
+    # re-reads the roster from the config cascade — which merges the IN-set just written —
+    # and re-probes tools at the next turn boundary. Next-turn is the effective granularity:
+    # the LLM tool catalog is rebuilt per-turn, so same-turn would buy nothing. Best-effort:
+    # no active reloader (CLI `reyn mcp install` runs in a separate process; a phase/tool
+    # ctx has none) → no-op, and a restart / yaml mtime-watch still surfaces it.
+    from reyn.runtime.hot_reload import get_active_hot_reloader  # noqa: PLC0415
+    _reloader = get_active_hot_reloader()
+    if _reloader is not None:
+        _reloader.request_reload(source="mcp_install")
+
     return {
         "kind": "mcp_install",
         "status": "ok",
