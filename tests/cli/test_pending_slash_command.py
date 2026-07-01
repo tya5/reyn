@@ -183,7 +183,14 @@ async def test_pending_discard_resolves_short_prefix_id() -> None:
 @pytest.mark.asyncio
 async def test_pending_claim_invokes_session_api_with_tui_channel() -> None:
     """Tier 2b: ``/pending claim <id>`` calls ``claim_pending_intervention``
-    with ``new_channel_id="tui:<agent>"``."""
+    with ``new_channel_id=DEFAULT_CHAT_CHANNEL_ID`` ("tui").
+
+    Regression: the old code used f"tui:{agent_name}" (Textual TUI convention).
+    After TUI removal the REPL listener is "tui"; passing "tui:research" causes
+    InterventionCoordinator to immediately re-park the iv stalled.
+    """
+    from reyn.runtime.session import DEFAULT_CHAT_CHANNEL_ID
+
     sess = _StubSession(
         pending_ops=[
             _PendingOpStub(
@@ -194,12 +201,12 @@ async def test_pending_claim_invokes_session_api_with_tui_channel() -> None:
         agent_name="research",
         claim_result=_PendingOpStub(
             id="iv-abcd1234", kind="intervention",
-            origin_channel_id="tui:research", summary="claim me",
+            origin_channel_id=DEFAULT_CHAT_CHANNEL_ID, summary="claim me",
         ),
     )
     cmd = _get_pending_cmd()
     await cmd.handler(sess, "claim iv-abcd1234")
-    assert sess.claim_calls == [("iv-abcd1234", "tui:research")]
+    assert sess.claim_calls == [("iv-abcd1234", DEFAULT_CHAT_CHANNEL_ID)]
     reply_msgs = [m for m in sess.outbox_messages if m.kind == "system"]
     assert any("claimed" in m.text for m in reply_msgs)
 
