@@ -10,6 +10,12 @@ resolution, so CI stayed green while inbound webhook plugins were broken.
 This pins resolution against the installed entry-point metadata: ``ep.load()``
 raises ``ModuleNotFoundError`` if the target module is wrong, so a future rename
 that forgets the entry points fails here instead of silently in production.
+
+Local dev note (#2374 follow-up): a STALE editable install can false-fail this. If
+``src/reyn.egg-info/entry_points.txt`` predates the #1807 rename it still lists
+``reyn.plugins.*`` and duplicates the fresh dist-info, so ``entry_points()`` returns
+BOTH and the ``eps[0]`` pick may be the stale one. ``pip install -e .`` regenerates it.
+CI is unaffected (it installs clean).
 """
 from __future__ import annotations
 

@@ -196,8 +196,25 @@ async def test_restored_intervention_can_be_answered(tmp_path, monkeypatch):
     # WAL has the resolve event
     assert "iv_to_answer" in _resolved_ids()
 
-    # Snapshot pruned (path was the one passed to _make_session)
+    # Snapshot pruned. #2279/#2339: the snapshot save that prunes ``outstanding_interventions`` is a
+    # SEPARATE fire-and-forget durable write from the WAL event polled above — polling the WAL event
+    # is NOT a barrier for it, so an immediate snapshot read raced the save and spuriously red'd this
+    # assert under CI load (the #2279-family residual). Poll the SPECIFIC durable artifact the assert
+    # reads (the on-disk snapshot state), not a proxy/other write.
     snap_path = tmp_path / "alpha_snapshot.json"
+
+    def _snapshot_pruned() -> bool:
+        try:
+            raw = json.loads(snap_path.read_text())
+        except (FileNotFoundError, json.JSONDecodeError):
+            return False
+        return "iv_to_answer" not in raw.get("outstanding_interventions", {})
+
+    for _ in range(200):
+        if _snapshot_pruned():
+            break
+        await asyncio.sleep(0.01)
+
     raw = json.loads(snap_path.read_text())
     assert "iv_to_answer" not in raw.get("outstanding_interventions", {})
 

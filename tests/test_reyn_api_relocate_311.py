@@ -7,6 +7,12 @@ canonical reyn.api.* imports work; the old paths no longer import; and the
 safe-mode allowlist is allow-of-one (only reyn.api.safe.*; everything else,
 incl reyn.api.unsafe.* and the removed reyn.safe.*/reyn.unsafe.*, is
 default-deny).
+
+Local dev note (#2374 follow-up): a stale UNTRACKED ``src/reyn/safe/`` (or
+``src/reyn/plugins/``) dir — only ``__pycache__`` left from before the relocate — is
+picked up as a PEP-420 namespace package, so ``import reyn.safe`` SUCCEEDS and the
+clean-break assert here false-fails. ``rm -rf`` the stale untracked dirs. CI is
+unaffected (clean checkout).
 """
 from __future__ import annotations
 
