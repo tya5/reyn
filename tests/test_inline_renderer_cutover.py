@@ -156,6 +156,16 @@ def test_wants_separator_skips_first_nested_and_transient() -> None:
     assert wants_separator("trace", seen_message=True) is False            # transient+nested
 
 
+def test_system_lifecycle_marker_has_dim_gutter() -> None:
+    """Tier 2: system kind (compaction / budget-warn / cost-warn markers) renders
+    with a dim '· ' gutter instead of falling through to raw unstyled plain text.
+    Compaction, budget, and cost-warn all use kind='system'; without the _KIND_LINE
+    entry they rendered identically to unknown kinds — no visual hierarchy."""
+    out = _plain("system", "[↑ 5 turns compacted]")
+    assert "·" in out
+    assert "[↑ 5 turns compacted]" in out
+
+
 def test_unknown_kind_renders_text_without_marker() -> None:
     """Tier 2: an unrecognised kind falls back to plain text (no kind marker)."""
     out = _plain("totally_new_kind", "raw payload")
