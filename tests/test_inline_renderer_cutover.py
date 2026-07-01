@@ -144,6 +144,29 @@ def test_kinds_use_distinct_markers() -> None:
     assert "▸" in tool and "⏺" not in tool
 
 
+def test_tool_call_completed_renders_corner_marker_and_summary() -> None:
+    """Tier 2: a tool_call_completed result renders with the ⎿ nested marker
+    and the summarize_tool_result one-liner (e.g. 'Read 3 lines')."""
+    out = _plain(
+        "tool_call_completed", "",
+        meta={"tool": "file__read", "result": {"op": "read", "status": "ok", "content": "a\nb\nc"}},
+    )
+    assert "⎿" in out
+    assert "Read 3 lines" in out
+
+
+def test_tool_call_failed_renders_corner_marker_and_error() -> None:
+    """Tier 2: a tool_call_failed result renders with the ⎿ nested marker and
+    the error text, prefixed with ✗."""
+    out = _plain(
+        "tool_call_failed", "",
+        meta={"error_message": "file not found"},
+    )
+    assert "⎿" in out
+    assert "✗" in out
+    assert "file not found" in out
+
+
 def test_wants_separator_skips_first_nested_and_transient() -> None:
     """Tier 2: a blank line separates top-level message blocks (but not before the
     first); never before a nested ⎿ detail row (tool result), nor before a
@@ -152,6 +175,7 @@ def test_wants_separator_skips_first_nested_and_transient() -> None:
     assert wants_separator("agent", seen_message=False) is False           # first
     assert wants_separator("agent", seen_message=True) is True             # block gap
     assert wants_separator("tool_call_completed", seen_message=True) is False  # nested
+    assert wants_separator("tool_call_failed", seen_message=True) is False     # nested
     assert wants_separator("status", seen_message=True) is False           # transient
     assert wants_separator("trace", seen_message=True) is False            # transient+nested
 

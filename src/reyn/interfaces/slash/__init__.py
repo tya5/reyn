@@ -258,8 +258,6 @@ from reyn.interfaces.slash import clear_history as _clear_history_mod  # noqa: E
 from reyn.interfaces.slash import compact as _compact_mod  # noqa: E402, F401
 from reyn.interfaces.slash import concept as _concept_mod  # noqa: E402, F401
 from reyn.interfaces.slash import copy as _copy_mod  # noqa: E402, F401
-from reyn.interfaces.slash import cost_inline as _cost_inline_mod  # noqa: E402, F401
-from reyn.interfaces.slash import docs_filter as _docs_filter_mod  # noqa: E402, F401
 from reyn.interfaces.slash import donut as _donut_mod  # noqa: E402, F401
 from reyn.interfaces.slash import help as _help_mod  # noqa: E402, F401
 from reyn.interfaces.slash import image as _image_mod  # noqa: E402, F401
