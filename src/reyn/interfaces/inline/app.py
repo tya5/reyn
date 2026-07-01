@@ -221,42 +221,77 @@ def _task_expansion(snap, dispatch):
 
 
 def _more_expansion(snap, dispatch):
-    """Read-only overflow panel: cron jobs / mcp servers / hooks from config.
+    """Status-bar overflow panel: visibility + hook toggles + read-only sections.
 
-    Renders a sectioned listing — one header per category (always shown, even
-    when the section is empty) with indented item rows. No actions, no dispatch
-    calls — purely informational. Toggles are a separate OS-lane design (#2285).
+    Returns a list of RegionElements — DetailElement section headers (non-
+    selectable, cursor skips them) and CommandUIElement item rows (selectable,
+    Enter dispatches a /visibility or /hook command). When the backend hasn't
+    wired visibility_items / hook_items yet the corresponding sections fall back
+    to the existing read-only config listing. Cron is always read-only (deferred
+    per #2285 design).
+
+    Slash command format locked with e2e-coder (#2285):
+      /visibility on|off  tool|skill|mcp|category  <name>
+      /hook        on|off  <name>
     """
+    elements: list = []
+
+    # --- Visibility toggles (tool / skill / mcp) ---
+    vis_items = snap.get("visibility_items") or []
+    if vis_items:
+        # Group by kind so each kind gets its own section.
+        by_kind: dict[str, list[dict]] = {}
+        for it in vis_items:
+            by_kind.setdefault(it.get("kind", "tool"), []).append(it)
+        for kind, items in by_kind.items():
+            n = len(items)
+            hdr = f"{kind}  ({n})"
+            elements.append(DetailElement(lambda h=hdr: [h]))
+            rows = [f"  [{'on' if it['on'] else 'off'}] {it['name']}" for it in items]
+            cmds = [
+                f"/visibility {'off' if it['on'] else 'on'} {kind} {it['name']}"
+                for it in items
+            ]
+            elements.append(CommandUIElement(rows, cmds, dispatch))
+    else:
+        # Fallback: read-only mcp listing from config (no session state yet).
+        mcp_servers = snap.get("mcp_servers") or []
+        mcp_lines = [f"  {s['name']}" for s in mcp_servers] or ["  (none)"]
+        n = len(mcp_servers)
+        elements.append(DetailElement(lambda n=n, ls=mcp_lines: [f"mcp  ({n})"] + ls))
+
+    # --- Hook applicability toggles ---
+    hook_items = snap.get("hook_items") or []
+    if hook_items:
+        n = len(hook_items)
+        hdr = f"hooks  ({n})"
+        elements.append(DetailElement(lambda h=hdr: [h]))
+        rows = [
+            f"  [{'on' if h['on'] else 'off'}] {h['name']}"
+            + (f"  · {h['scope']}" if h.get("scope") else "")
+            for h in hook_items
+        ]
+        cmds = [f"/hook {'off' if h['on'] else 'on'} {h['name']}" for h in hook_items]
+        elements.append(CommandUIElement(rows, cmds, dispatch))
+    else:
+        # Fallback: read-only hooks listing from config.
+        hooks = snap.get("hooks") or []
+        hook_lines = [f"  {h['label']}" for h in hooks] or ["  (none)"]
+        n = len(hooks)
+        elements.append(DetailElement(lambda n=n, ls=hook_lines: [f"hooks  ({n})"] + ls))
+
+    # --- Cron section (read-only; per-session cron is deferred in #2285) ---
     cron_jobs = snap.get("cron_jobs") or []
-    mcp_servers = snap.get("mcp_servers") or []
-    hooks = snap.get("hooks") or []
+    cron_lines: list[str] = []
+    for j in cron_jobs:
+        marker = "on" if j.get("enabled") else "off"
+        cron_lines.append(f"  [{marker}] {j['name']}  {j['schedule']}")
+    if not cron_lines:
+        cron_lines = ["  (none)"]
+    n = len(cron_jobs)
+    elements.append(DetailElement(lambda n=n, ls=cron_lines: [f"cron  ({n})"] + ls))
 
-    lines: list[str] = []
-
-    lines.append(f"cron  ({len(cron_jobs)})")
-    if cron_jobs:
-        for j in cron_jobs:
-            marker = "on" if j["enabled"] else "off"
-            lines.append(f"  [{marker}] {j['name']}  {j['schedule']}")
-    else:
-        lines.append("  (none)")
-
-    lines.append(f"mcp  ({len(mcp_servers)})")
-    if mcp_servers:
-        for s in mcp_servers:
-            lines.append(f"  {s['name']}")
-    else:
-        lines.append("  (none)")
-
-    lines.append(f"hooks  ({len(hooks)})")
-    if hooks:
-        for h in hooks:
-            lines.append(f"  {h['label']}")
-    else:
-        lines.append("  (none)")
-
-    captured = lines[:]
-    return DetailElement(lambda: captured)
+    return elements
 
 
 _CHIP_SPECS = [
@@ -378,6 +413,45 @@ def _extract_hooks(config) -> list[dict]:
     return result
 
 
+def _session_visibility_items(session) -> list[dict]:
+    """Read visibility toggle state from the session (#2285 backend seam).
+
+    Returns [] until e2e lands ``capability_visibility_state`` on the Session.
+    Shape when available: [{kind, name, on}, ...] where on = not hidden_by_session.
+    """
+    getter = getattr(session, "capability_visibility_state", None)
+    if getter is None:
+        return []
+    try:
+        state = getter()
+        authorized = state.get("authorized") or []
+        hidden = {(h["kind"], h["name"]) for h in (state.get("hidden_by_session") or [])}
+        return [
+            {"kind": a["kind"], "name": a["name"], "on": (a["kind"], a["name"]) not in hidden}
+            for a in authorized
+        ]
+    except Exception:  # noqa: BLE001
+        return []
+
+
+def _session_hook_items(session) -> list[dict]:
+    """Read hook applicability state from the session (#2285 backend seam).
+
+    Returns [] until e2e lands ``hook_state`` on the Session.
+    Shape when available: [{name, scope, on}, ...].
+    """
+    getter = getattr(session, "hook_state", None)
+    if getter is None:
+        return []
+    try:
+        return [
+            {"name": h["name"], "scope": h.get("scope", ""), "on": h.get("enabled", True)}
+            for h in (getter() or [])
+        ]
+    except Exception:  # noqa: BLE001
+        return []
+
+
 def _snapshot(registry, task_cache=None, config=None):
     """Read live status values off the attached session via sync accessors."""
     s = registry.attached_session()
@@ -408,6 +482,10 @@ def _snapshot(registry, task_cache=None, config=None):
         "cron_jobs": _extract_cron_jobs(config) if config is not None else [],
         "mcp_servers": _extract_mcp_servers(config) if config is not None else [],
         "hooks": _extract_hooks(config) if config is not None else [],
+        # #2285: session-scoped capability visibility + hook applicability toggles.
+        # Populated once e2e lands the backend; graceful fallback to [] until then.
+        "visibility_items": _session_visibility_items(s),
+        "hook_items": _session_hook_items(s),
     }
 
 
@@ -613,14 +691,20 @@ async def run_inline_input(registry, renderer, config=None) -> None:
         app.create_background_task(_submit(registry, text))
 
     def _menu_open() -> None:
-        # Build the opened chip's element fresh and host it in menu_region. The
-        # picker rows are static (classes); a read-only panel's lines stay live.
+        # Build the opened chip's element(s) fresh and host them in menu_region.
+        # Expansion functions may return a single element (model / agent / …) or a
+        # list of mixed elements (_more_expansion: DetailElement headers +
+        # CommandUIElement toggle rows). Both paths are supported.
         spec = _CHIP_SPECS[menu["sel"]]
         menu_region.clear()
         snap = _snapshot(registry, task_cache, config)
         if spec.expansion is not None and snap is not None:
-            el = spec.expansion(snap, _menu_submit)
-            menu_region.register(el)
+            result = spec.expansion(snap, _menu_submit)
+            if isinstance(result, list):
+                for el in result:
+                    menu_region.register(el)
+            else:
+                menu_region.register(result)
         menu["open"] = True
 
     def _menu_close() -> None:
