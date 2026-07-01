@@ -77,11 +77,15 @@ async def clear_history_cmd(session: "object", args: str) -> None:
 
     cleared_parts: list[str] = []
 
-    if isinstance(history, list):
-        n_turns_before = len(history)
-        history.clear()
-        cleared_parts.append(f"{n_turns_before} history turn(s)")
+    # Snapshot size before any mutation so the report is accurate even if
+    # disk deletion is attempted first.
+    n_turns_before = len(history) if isinstance(history, list) else 0
 
+    # Disk deletion first: if it fails the in-memory state is unchanged and
+    # the next session restart will see a consistent (uncorrupted) history.
+    # Clearing memory first then failing on disk leaves the opposite: the
+    # current session sees empty history but history.jsonl survives and
+    # reloads the old turns on next startup.
     if history_path is not None:
         try:
             history_path.unlink(missing_ok=True)
@@ -91,6 +95,10 @@ async def clear_history_cmd(session: "object", args: str) -> None:
                 f"failed to remove history file {history_path}: {exc}",
             )
             return
+
+    if isinstance(history, list):
+        history.clear()
+        cleared_parts.append(f"{n_turns_before} history turn(s)")
 
     if tracker is not None and hasattr(tracker, "reset"):
         try:
