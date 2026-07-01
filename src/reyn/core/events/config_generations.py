@@ -23,7 +23,23 @@ _GEN_RE = re.compile(r"^(?P<rel>.+)@(?P<seq>\d+)\.yaml$")
 
 
 def _encode(rel_path: str) -> str:
-    """`config/mcp.yaml` → `config__mcp.yaml` (path-segment-safe single filename)."""
+    """`config/mcp.yaml` → `config__mcp.yaml` (path-segment-safe single filename).
+
+    #2352: the encoding maps ``/`` → ``__`` and is injective ONLY for paths with NO ``__``
+    in any segment — ``_decode`` reverses EVERY ``__`` to ``/``, so ``_decode(_encode("a__b/c"))``
+    would yield ``"a/b/c"`` ≠ the original. Config-registry rel_paths are ``__``-free by
+    construction (``.reyn``-relative config file names like ``config/mcp.yaml``), so this
+    enforces that invariant LOUD rather than silently colliding two distinct paths onto one
+    ``<safe-rel>@<seq>.yaml`` generation file — which would return the wrong generation on
+    config-rewind / time-travel (a durability keying corruption). Raising (not asserting) so
+    ``-O`` cannot strip the guard. Existing generation file names are unchanged (no migration):
+    every real path stays ``__``-free, so its encoding is byte-identical to before.
+    """
+    if "__" in rel_path:
+        raise ValueError(
+            f"config-generation rel_path must not contain '__' (it collides with the '/' → '__' "
+            f"encoding and would round-trip wrong): {rel_path!r}"
+        )
     return rel_path.replace("/", "__")
 
 
