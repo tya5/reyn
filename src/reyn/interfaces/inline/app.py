@@ -2,7 +2,7 @@
 
 A long-lived prompt_toolkit Application that drives input for the interactive
 (TTY) inline renderer: a rule-bar sandwiched input, an animated working row, and
-a navigable status menu (↓ to focus, ←→ to select a chip, enter to open a
+a navigable status bar (↓ to focus, ←→ to select a chip, enter to open a
 read-only detail dropdown, ↑/esc to go back).
 
 Integration: run_repl's `_output_loop` prints conversation output ABOVE this app
@@ -12,7 +12,7 @@ commands / new turns route through the session exactly as the PromptSession path
 did — the app never inspects the text.
 
 `--cui` / non-TTY keep the existing PromptSession `_input_loop` (plain invariance).
-The status menu reads live values through public sync accessors only; an
+The status bar reads live values through public sync accessors only; an
 actionable model picker (selecting a class) is a follow-up.
 """
 from __future__ import annotations
@@ -581,7 +581,7 @@ async def run_inline_input(registry, renderer, config=None) -> None:
     def _down(event) -> None:
         # With text in the box, ↓ is history navigation (forward, shell-like) so
         # it doesn't yank focus away mid-edit. With an empty box, ↓ drops into the
-        # status menu (its discoverable affordance). ↑ stays history either way.
+        # status bar (its discoverable affordance). ↑ stays history either way.
         # Gated on ~has_completions so that while the slash menu is open ↓ falls
         # through to the default binding (navigate the completion list).
         if buf.text:

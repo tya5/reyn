@@ -6,7 +6,7 @@ session factory — same pattern as test_registry_multi_session_1726). State is
 never set up by mutating private attrs. Covers the shape contract, multi-agent /
 multi-session listing, sid sorting, the unattached (all-false) marking, and
 snapshot isolation. Attached=True *rendering* (the ▸ marker) is covered by the
-``_agent_expansion`` test in test_inline_pr3b_status_menu.py.
+``_agent_expansion`` test in test_inline_pr3b_status_bar.py.
 """
 from __future__ import annotations
 

@@ -4,7 +4,7 @@ A command-UI is a slash-command-driven selector hosted in the region — distinc
 from an intervention (which is skill-driven and blocks a turn). The /rewind
 checkpoint picker is the first; the generic ``CommandUIElement`` (display rows +
 a submit-text per row) is intentionally command-agnostic so future command UIs
-(and the status menu in F5) can host in the region without bespoke wiring.
+(and the status bar in F5) can host in the region without bespoke wiring.
 
 On select, the element submits a plain slash command (e.g. ``/rewind 42``) through
 the normal input path — so the action reuses the existing slash handler, and the
