@@ -45,7 +45,7 @@ def test_working_line_never_negative_elapsed() -> None:
     """Tier 2: a clock skew (now < start) clamps elapsed to 0, not negative."""
     text = "".join(t for _, t in working_line(True, 10.0, 9.0))
     assert "0s" in text
-    assert "-" not in text
+    assert "Working… -" not in text  # no negative sign before elapsed seconds
 
 
 def test_working_line_has_a_moving_shimmer_crest() -> None:
@@ -83,3 +83,27 @@ def test_turn_settled_clears_indicator_after_short_circuit_turn() -> None:
     # A slash turn ends with turn_settled (no turn_completed) — must clear.
     r.on_chat_event(_evt("turn_settled"))
     assert r.bottom_toolbar() is None
+
+
+# ── working_line cancelling-state tests ─────────────────────────────────────
+
+
+def test_working_line_normal_shows_interrupt_affordance() -> None:
+    """Tier 2: normal working row includes 'ctrl-c to interrupt' hint."""
+    text = "".join(t for _, t in working_line(True, 0.0, 3.0))
+    assert "ctrl-c" in text
+
+
+def test_working_line_cancelling_shows_cancelling_text() -> None:
+    """Tier 2: when cancelling=True the row shows 'Cancelling' not the shimmer."""
+    frags = working_line(True, 0.0, 3.0, cancelling=True)
+    text = "".join(t for _, t in frags)
+    assert "Cancelling" in text
+    # Shimmer elements gone: no spinner, no elapsed seconds.
+    assert "Working" not in text
+    assert "ctrl-c" not in text
+
+
+def test_working_line_idle_cancelling_is_empty() -> None:
+    """Tier 2: idle (thinking=False) returns [] even when cancelling=True."""
+    assert working_line(False, 0.0, 3.0, cancelling=True) == []

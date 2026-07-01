@@ -269,16 +269,28 @@ _CHIP_SPECS = [
 ]
 
 
-def working_line(thinking: bool, think_start: float, now: float) -> list:
+def working_line(
+    thinking: bool,
+    think_start: float,
+    now: float,
+    *,
+    cancelling: bool = False,
+) -> list:
     """Pure: working-row fragments while a turn runs (empty list when idle).
 
     The spinner frame derives from `now` so it advances smoothly regardless of
     refresh jitter; elapsed is whole seconds since `think_start`. The label carries
     a shimmer — a bright crest sweeping left→right across the text (a moving light)
     over a dim base, also clock-driven so it animates on each refresh.
+
+    When ``cancelling=True`` (ctrl-c was pressed mid-turn), the shimmer is replaced
+    by a static "Cancelling…" indicator — the cancel is cooperative so the turn
+    completes at the next tool boundary; the indicator reassures the user it's noted.
     """
     if not thinking:
         return []
+    if cancelling:
+        return [(f"fg:{_CC_WARN}", " ✗ Cancelling…")]
     frame = _SPINNER[int(now * 8) % len(_SPINNER)]
     elapsed = max(0, int(now - think_start))
     label = f"Working… {elapsed}s"
@@ -294,6 +306,7 @@ def working_line(thinking: bool, think_start: float, now: float) -> list:
             frags.append((f"fg:{_CC_ACCENT}", ch))         # trailing glow
         else:
             frags.append((f"fg:{_CC_DIM}", ch))            # dim base
+    frags.append((f"fg:{_CC_DIM}", " · ctrl-c to interrupt"))
     return frags
 
 
@@ -437,6 +450,10 @@ async def run_inline_input(registry, renderer, config=None) -> None:
     # app.exit() — the second raises "Return value already set". _quit checks+sets
     # this before its first await, so only one ever runs to app.exit().
     quitting: dict = {}
+    # Set when the user pressed ctrl-c during an active turn (cancel_inflight
+    # requested). Cleared automatically when the turn ends (thinking→False).
+    # While set, the working indicator shows "Cancelling…" instead of the shimmer.
+    cancelling: dict = {}
     # Above-input interactive region: hosts the active closed-set intervention
     # (confirm / select / grant-deny) as a selectable list, poll-driven off the
     # session head (like the status chips). Free-text interventions keep using the
@@ -447,10 +464,14 @@ async def run_inline_input(registry, renderer, config=None) -> None:
     region_holder: dict = {"key": None}
 
     def _working_frags() -> list:
+        thinking = getattr(renderer, "_thinking", False)
+        if not thinking:
+            cancelling.clear()   # auto-clear once the turn ends
         return working_line(
-            getattr(renderer, "_thinking", False),
+            thinking,
             getattr(renderer, "_think_start", 0.0),
             time.monotonic(),
+            cancelling=bool(cancelling),
         )
 
     working = ConditionalContainer(
@@ -662,6 +683,17 @@ async def run_inline_input(registry, renderer, config=None) -> None:
             _menu_open()
 
     @kb.add("c-c")
+    def _interrupt_or_quit(event) -> None:
+        # During an active turn, first ctrl-c cancels the turn cooperatively.
+        # A second ctrl-c (while still "thinking" / cancelling) falls through to
+        # quit, matching the standard "ctrl-c to interrupt, ctrl-c again to exit"
+        # pattern. Ctrl-D/Q always quit regardless of turn state.
+        if getattr(renderer, "_thinking", False) and not cancelling:
+            cancelling["requested"] = True
+            event.app.create_background_task(_cancel_turn(registry))
+        else:
+            event.app.create_background_task(_quit(registry, event.app, quitting))
+
     @kb.add("c-d")
     @kb.add("c-q")
     def _quit_key(event) -> None:
@@ -829,6 +861,19 @@ async def _submit(registry, text: str) -> None:
             )
         except Exception:
             pass
+
+
+async def _cancel_turn(registry) -> None:
+    """Cancel the in-flight turn via session.cancel_inflight() — cooperative seam."""
+    s = registry.attached_session()
+    if s is None:
+        return
+    cancel_fn = getattr(s, "cancel_inflight", None)
+    if callable(cancel_fn):
+        try:
+            await cancel_fn()
+        except Exception:
+            logger.exception("cancel_inflight failed")
 
 
 async def _quit(registry, app, state: dict) -> None:
