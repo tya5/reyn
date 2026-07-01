@@ -15,6 +15,8 @@ from reyn.interfaces.inline.app import (
     _cost_expansion,
     _model_expansion,
     _more_expansion,
+    _session_hook_items,
+    _session_visibility_items,
     _task_expansion,
 )
 from reyn.interfaces.inline.region import DetailElement
@@ -37,6 +39,8 @@ def _snap(**over):
         "cron_jobs": [],
         "mcp_servers": [],
         "hooks": [],
+        "visibility_items": [],
+        "hook_items": [],
     }
     base.update(over)
     return base
@@ -103,36 +107,34 @@ def test_more_chip_has_expansion() -> None:
 
 
 # ---------------------------------------------------------------------------
-# _more_expansion (Phase 5a: read-only cron/mcp/hooks overflow panel)
+# _more_expansion (Phase 5a → #2285: visibility/hook toggles + read-only cron)
 # ---------------------------------------------------------------------------
 
-
-def test_more_expansion_empty_returns_detail_element() -> None:
-    """Tier 2: _more_expansion with empty config sections returns a read-only DetailElement."""
-    el = _more_expansion(_snap(), lambda _: None)
-    assert isinstance(el, DetailElement)
-    assert el.selectable is False
+def _all_lines(elements: list) -> list[str]:
+    """Flatten lines from a list of RegionElements (DetailElement or CommandUIElement)."""
+    return [ln for el in elements for ln in el.lines()]
 
 
-def test_more_expansion_empty_shows_all_section_headers_with_zero() -> None:
-    """Tier 2: empty snap shows cron/mcp/hooks headers with (0) and a (none) line each."""
-    el = _more_expansion(_snap(), lambda _: None)
-    joined = " ".join(el.lines())
-    assert "cron" in joined
+def test_more_expansion_returns_element_list() -> None:
+    """Tier 2: _more_expansion always returns a list of RegionElements (not a single element)."""
+    result = _more_expansion(_snap(), lambda _: None)
+    assert isinstance(result, list)
+    assert len(result) >= 1
+
+
+def test_more_expansion_fallback_all_detail_elements_when_no_session_data() -> None:
+    """Tier 2: without visibility_items/hook_items the panel is all-read-only DetailElements."""
+    result = _more_expansion(_snap(), lambda _: None)
+    assert all(isinstance(el, DetailElement) for el in result)
+
+
+def test_more_expansion_empty_shows_all_section_headers() -> None:
+    """Tier 2: empty snap shows mcp/hooks/cron headers in the panel."""
+    joined = " ".join(_all_lines(_more_expansion(_snap(), lambda _: None)))
     assert "mcp" in joined
     assert "hooks" in joined
-    assert "(0)" in joined
+    assert "cron" in joined
     assert "(none)" in joined
-
-
-def test_more_expansion_empty_all_three_sections_each_have_none_line() -> None:
-    """Tier 2: each of the three sections contains a '(none)' indicator when empty."""
-    el = _more_expansion(_snap(), lambda _: None)
-    lines = el.lines()
-    # There should be a (none) line following each header.
-    none_lines = [ln for ln in lines if "(none)" in ln]
-    # At minimum one (none) per section — i.e. three total when all empty.
-    assert none_lines
 
 
 def test_more_expansion_populated_cron_shows_on_off_markers() -> None:
@@ -145,36 +147,177 @@ def test_more_expansion_populated_cron_shows_on_off_markers() -> None:
         mcp_servers=[{"name": "github"}],
         hooks=[{"label": "on_push"}],
     )
-    el = _more_expansion(snap, lambda _: None)
-    joined = " ".join(el.lines())
+    joined = " ".join(_all_lines(_more_expansion(snap, lambda _: None)))
     assert "nightly" in joined
-    assert "on" in joined       # enabled marker for nightly
+    assert "on" in joined
     assert "paused" in joined
-    assert "off" in joined      # disabled marker for paused
+    assert "off" in joined
 
 
 def test_more_expansion_populated_mcp_shows_server_name() -> None:
-    """Tier 2: populated mcp_servers renders the server name."""
-    snap = _snap(
-        cron_jobs=[],
-        mcp_servers=[{"name": "github"}],
-        hooks=[],
-    )
-    el = _more_expansion(snap, lambda _: None)
-    joined = " ".join(el.lines())
+    """Tier 2: populated mcp_servers renders the server name in fallback mode."""
+    snap = _snap(mcp_servers=[{"name": "github"}])
+    joined = " ".join(_all_lines(_more_expansion(snap, lambda _: None)))
     assert "github" in joined
 
 
 def test_more_expansion_populated_hooks_shows_label() -> None:
-    """Tier 2: populated hooks renders the hook label."""
-    snap = _snap(
-        cron_jobs=[],
-        mcp_servers=[],
-        hooks=[{"label": "on_push"}],
-    )
-    el = _more_expansion(snap, lambda _: None)
-    joined = " ".join(el.lines())
+    """Tier 2: populated hooks renders the hook label in fallback mode."""
+    snap = _snap(hooks=[{"label": "on_push"}])
+    joined = " ".join(_all_lines(_more_expansion(snap, lambda _: None)))
     assert "on_push" in joined
+
+
+# ---------------------------------------------------------------------------
+# _more_expansion toggle mode (#2285: visibility_items / hook_items present)
+# ---------------------------------------------------------------------------
+
+
+def test_more_expansion_visibility_items_yield_command_ui_rows() -> None:
+    """Tier 2: when visibility_items are present, _more_expansion returns CommandUIElement
+    rows (selectable) with [on]/[off] markers and /visibility dispatch commands."""
+    dispatched: list[str] = []
+    snap = _snap(
+        visibility_items=[
+            {"kind": "tool", "name": "bash", "on": True},
+            {"kind": "tool", "name": "sandboxed_exec", "on": False},
+        ],
+    )
+    result = _more_expansion(snap, dispatched.append)
+
+    # At least one CommandUIElement for the tool items.
+    cmd_els = [el for el in result if isinstance(el, CommandUIElement)]
+    assert cmd_els, "expected at least one selectable CommandUIElement for tool items"
+
+    all_ln = _all_lines(result)
+    assert any("[on] bash" in ln for ln in all_ln)
+    assert any("[off] sandboxed_exec" in ln for ln in all_ln)
+
+
+def test_more_expansion_toggle_on_item_dispatches_off_command() -> None:
+    """Tier 2: selecting an [on] tool row dispatches '/visibility off tool <name>'."""
+    dispatched: list[str] = []
+    snap = _snap(
+        visibility_items=[{"kind": "tool", "name": "bash", "on": True}],
+    )
+    result = _more_expansion(snap, dispatched.append)
+    cmd_el = next(el for el in result if isinstance(el, CommandUIElement))
+    cmd_el.on_select(0)
+    assert dispatched == ["/visibility off tool bash"]
+
+
+def test_more_expansion_toggle_off_item_dispatches_on_command() -> None:
+    """Tier 2: selecting an [off] mcp row dispatches '/visibility on mcp <name>'."""
+    dispatched: list[str] = []
+    snap = _snap(
+        visibility_items=[{"kind": "mcp", "name": "brave", "on": False}],
+    )
+    result = _more_expansion(snap, dispatched.append)
+    cmd_el = next(el for el in result if isinstance(el, CommandUIElement))
+    cmd_el.on_select(0)
+    assert dispatched == ["/visibility on mcp brave"]
+
+
+def test_more_expansion_section_headers_are_non_selectable() -> None:
+    """Tier 2: section header elements are DetailElement (non-selectable) even when
+    item rows are CommandUIElement — the Region cursor skips them."""
+    snap = _snap(
+        visibility_items=[{"kind": "tool", "name": "bash", "on": True}],
+    )
+    result = _more_expansion(snap, lambda _: None)
+    # All DetailElements must have selectable=False.
+    for el in result:
+        if isinstance(el, DetailElement):
+            assert el.selectable is False
+
+
+def test_more_expansion_hook_items_show_toggle_rows() -> None:
+    """Tier 2: hook_items produce [on]/[off] rows; selecting dispatches /hook command."""
+    dispatched: list[str] = []
+    snap = _snap(
+        hook_items=[
+            {"name": "format", "scope": "runtime", "on": True},
+            {"name": "lint",   "scope": "per-agent", "on": False},
+        ],
+    )
+    result = _more_expansion(snap, dispatched.append)
+
+    all_ln = _all_lines(result)
+    assert any("[on] format" in ln for ln in all_ln)
+    assert any("[off] lint" in ln for ln in all_ln)
+
+    # on→off
+    cmd_el = next(el for el in result if isinstance(el, CommandUIElement))
+    cmd_el.on_select(0)
+    assert "/hook off format" in dispatched
+
+
+def test_more_expansion_cron_section_always_read_only() -> None:
+    """Tier 2: the cron section is always a DetailElement (deferred in #2285) even
+    when visibility_items are present."""
+    snap = _snap(
+        visibility_items=[{"kind": "tool", "name": "bash", "on": True}],
+        cron_jobs=[{"name": "nightly", "schedule": "0 0 * * *", "enabled": True}],
+    )
+    result = _more_expansion(snap, lambda _: None)
+    # Verify cron content appears in the lines.
+    joined = " ".join(_all_lines(result))
+    assert "nightly" in joined
+    # All elements including the cron one must be either Detail or Command; the cron
+    # section itself (containing "cron") must be a DetailElement.
+    cron_els = [el for el in result if isinstance(el, DetailElement)
+                and any("cron" in ln for ln in el.lines())]
+    assert cron_els, "cron section must be a read-only DetailElement"
+
+
+# ---------------------------------------------------------------------------
+# _session_visibility_items / _session_hook_items graceful fallback
+# ---------------------------------------------------------------------------
+
+
+def test_session_visibility_items_returns_empty_when_method_absent() -> None:
+    """Tier 2: _session_visibility_items returns [] when session has no capability_visibility_state."""
+    assert _session_visibility_items(object()) == []
+
+
+def test_session_hook_items_returns_empty_when_method_absent() -> None:
+    """Tier 2: _session_hook_items returns [] when session has no hook_state."""
+    assert _session_hook_items(object()) == []
+
+
+def test_session_visibility_items_reads_state_and_computes_on_flag() -> None:
+    """Tier 2: _session_visibility_items calls capability_visibility_state() and maps
+    hidden_by_session to on=False, authorized-but-not-hidden to on=True."""
+    class _FakeSession:
+        def capability_visibility_state(self):
+            return {
+                "authorized": [
+                    {"kind": "tool", "name": "bash"},
+                    {"kind": "mcp",  "name": "brave"},
+                ],
+                "hidden_by_session": [{"kind": "mcp", "name": "brave"}],
+            }
+
+    items = _session_visibility_items(_FakeSession())
+    by_name = {it["name"]: it for it in items}
+    assert by_name["bash"]["on"] is True
+    assert by_name["brave"]["on"] is False
+
+
+def test_session_hook_items_reads_state() -> None:
+    """Tier 2: _session_hook_items calls hook_state() and returns name/scope/on dicts."""
+    class _FakeSession:
+        def hook_state(self):
+            return [
+                {"name": "format", "scope": "runtime",   "enabled": True},
+                {"name": "lint",   "scope": "per-agent", "enabled": False},
+            ]
+
+    items = _session_hook_items(_FakeSession())
+    by_name = {it["name"]: it for it in items}
+    assert by_name["format"]["on"] is True
+    assert by_name["lint"]["on"] is False
+    assert by_name["format"]["scope"] == "runtime"
 
 
 # ---------------------------------------------------------------------------
