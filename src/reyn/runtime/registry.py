@@ -39,6 +39,7 @@ from reyn.core.events.agent_snapshot import AgentSnapshot
 from reyn.core.events.anchor_store import AnchorStore
 from reyn.core.events.retention import RetentionPolicy, compute_retention_floor
 from reyn.core.events.snapshot_generations import (
+    REWIND_KIND,
     Branch,
     RewindBeyondRetentionError,
     RewindIntoAbandonedError,
@@ -2021,7 +2022,7 @@ class AgentRegistry:
             # that fall below the floor (abandoned conversation turns — the append-only file
             # is never truncated, so the wal_seq references must remain resolvable).
             await self._state_log.truncate_below(
-                floor, always_keep_kinds=frozenset({"rewind"}),
+                floor, always_keep_kinds=frozenset({REWIND_KIND}),
             )
         except Exception as e:  # noqa: BLE001 — defensive; never fail caller
             logger.warning("WAL truncation: rewrite failed (floor=%d): %s", floor, e)

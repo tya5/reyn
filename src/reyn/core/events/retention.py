@@ -75,8 +75,9 @@ def compute_retention_floor(
     ``wal_seq`` anchors from ``history.jsonl`` that may be below the floor
     (abandoned-branch turns). Dropping a rewind record below the floor therefore
     lets abandoned conversation turns reappear in the LLM context. Fix: callers
-    of ``truncate_below`` pass ``always_keep_kinds=frozenset({"rewind"})`` so
-    reset-records survive truncation regardless of the floor.
+    of ``truncate_below`` pass ``always_keep_kinds=frozenset({REWIND_KIND})``
+    (``snapshot_generations.REWIND_KIND``) so reset-records survive truncation
+    regardless of the floor.
     """
     if policy.is_live or policy.keep_generations is None:
         return live_floor

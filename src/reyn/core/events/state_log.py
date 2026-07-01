@@ -392,7 +392,8 @@ class StateLog:
         last universally-absorbed seq).
 
         ``always_keep_kinds``: entries whose ``kind`` is in this set are kept
-        unconditionally regardless of seq. Pass ``frozenset({"rewind"})`` to
+        unconditionally regardless of seq. Pass
+        ``frozenset({REWIND_KIND})`` (``snapshot_generations.REWIND_KIND``) to
         protect reset-records from being dropped: ``_active_branch_history`` calls
         ``is_active_seq`` with ``wal_seq`` values from ``history.jsonl`` (which are
         append-only and can be below the floor), so dropping a rewind record causes
