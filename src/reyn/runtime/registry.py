@@ -2404,6 +2404,29 @@ class AgentRegistry:
         session._generation_store = per_session_generations  # rewind path reads this
         session._journal.set_snapshot_path(per_session_snapshot)
         session._journal.set_generation_store(per_session_generations)
+        # #2348: re-key the conversation transcript + chat audit events per-session
+        # too — they were keyed name-only (session.py: history_path / events_dir),
+        # so sessions of the same agent shared one history.jsonl (conversations bled
+        # across sessions) and one events/agents/<name>/chat tree. history.jsonl is an
+        # independent durable transcript (not WAL-reconstructed, outside snapshot/rewind
+        # scope); chat events are the P6 audit log. Isolating both aligns them with the
+        # already-per-session WAL/snapshot above. "main" (_DEFAULT_SID) never reaches
+        # this fixup (it comes through get_or_load), so single-session agents keep the
+        # legacy name-only paths byte-identical — no migration.
+        session.history_path = session_dir / "history.jsonl"
+        # _append_history opens the file directly (no mkdir), mirroring __init__'s
+        # workspace_dir.mkdir — the per-session dir must exist. (EventStore creates its
+        # own dir lazily on first write, so events need no explicit mkdir.)
+        session.history_path.parent.mkdir(parents=True, exist_ok=True)
+        session.set_events_dir(
+            session.events_dir.parent / "sessions" / self._encode_sid_for_dir(new_sid) / "chat"
+        )
+        # action_usage.json stays agent-wide by design (name-only, NOT re-keyed): it is
+        # the agent's tool-habit ranking (writer = compactor, reader = RouterLoop's
+        # per-turn hot-list cold-start hint), an agent-knowledge tier — and per-turn
+        # freshness for the CURRENT conversation is already supplied separately by the
+        # live overlay (this session's uncompacted calls layered on each turn). So it is
+        # correctly shared across the agent's sessions, not per-conversation state.
         self._sessions.setdefault(name, {})[new_sid] = session
         return new_sid
 
