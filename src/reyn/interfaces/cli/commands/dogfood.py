@@ -254,6 +254,21 @@ def _runs_dir() -> Path:
     return _dogfood_base_dir() / "runs"
 
 
+def _scenario_state_targets(project_root: Path, agent_name: str) -> "dict[str, Path]":
+    """#2357: the per-scenario ephemeral state the dogfood runner wipes between scenarios so each
+    run starts clean. The action_usage ledger MUST be the LIVE ``ActionUsageTracker`` persist path
+    (``.reyn/agents/<name>/action_usage.json`` — session.py); the previous ``.reyn/state/
+    action_usage.jsonl`` never existed, so the unlink was a silent no-op and hot-list frequency
+    counts bled across scenarios (measurement contamination). Kept as a pure, testable helper so the
+    wipe target can't silently drift from the tracker's real path again."""
+    agent_dir = project_root / ".reyn" / "agents" / agent_name
+    return {
+        "events_chat_dir": project_root / ".reyn" / "events" / "agents" / agent_name / "chat",
+        "action_usage": agent_dir / "action_usage.json",
+        "history": agent_dir / "history.jsonl",
+    }
+
+
 def _baselines_dir() -> Path:
     return _dogfood_base_dir() / "baselines"
 
@@ -520,23 +535,17 @@ def _build_live_runner(agent_name: str, *, env_backend=None, ws_base_dir=None, w
 
     def _wipe_scenario_state() -> None:
         """Delete per-scenario ephemeral state so each run starts clean."""
+        targets = _scenario_state_targets(project_root, agent_name)
         # Wipe the agent's chat event files so EventStore.iter_all() only
         # returns events from this scenario's turns.
-        events_chat_dir = project_root / ".reyn" / "events" / "agents" / agent_name / "chat"
-        if events_chat_dir.is_dir():
-            shutil.rmtree(events_chat_dir, ignore_errors=True)
-        # Wipe action_usage ledger to prevent hot-list bleed across scenarios.
-        action_usage_path = project_root / ".reyn" / "state" / "action_usage.jsonl"
-        action_usage_path.unlink(missing_ok=True)
-        # Wipe per-agent chat history so prior scenarios' user/assistant
-        # turns are NOT injected into the LLM context for this scenario.
-        # Session.load_history() (called by the session factory) reads
-        # this file unconditionally; without the wipe, scenario N sees
-        # scenarios 1..N-1's messages. dogfood_fresh_reset.sh intentionally
-        # defers this wipe to callers because it requires knowing the
-        # agent name (which the script doesn't); the runner has it.
-        history_path = project_root / ".reyn" / "agents" / agent_name / "history.jsonl"
-        history_path.unlink(missing_ok=True)
+        if targets["events_chat_dir"].is_dir():
+            shutil.rmtree(targets["events_chat_dir"], ignore_errors=True)
+        # Wipe the action_usage ledger (prevents hot-list frequency bleed) + the per-agent chat
+        # history (prevents prior scenarios' turns leaking into this scenario's LLM context —
+        # Session.load_history reads it unconditionally). dogfood_fresh_reset.sh defers the history
+        # wipe to the runner because it needs the agent name (which the script doesn't have).
+        targets["action_usage"].unlink(missing_ok=True)
+        targets["history"].unlink(missing_ok=True)
 
     def _collect_events(registry: AgentRegistry) -> list[dict]:
         """Harvest events emitted during the scenario from the EventStore."""

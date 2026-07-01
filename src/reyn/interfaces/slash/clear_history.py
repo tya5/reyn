@@ -4,7 +4,7 @@ Sibling to ``/reset`` (skill state) at a different scope: this command
 clears the conversation thread (``Session.history`` + per-agent
 ``history.jsonl``) and the action-usage tracker (= the ranking that
 backs the Memory tab's hot-list augmentation, persisted at
-``.reyn/state/action_usage.jsonl``). Everything else stays intact:
+``.reyn/agents/<name>/action_usage.json`` — #2357 docstring-drift fix). Everything else stays intact:
 
 - ``.reyn/events/``                (P6 audit truth — never touched)
 - ``.reyn/state/wal.jsonl``        (skill resume — preserved)
