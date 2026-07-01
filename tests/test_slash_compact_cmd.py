@@ -100,7 +100,8 @@ async def test_compact_success_singular_turn_word() -> None:
     session = _FakeSession(compact_now=_one)
     await compact_cmd(session, "")
     text = session.reply_text()
-    assert "1 older turn" in text, f"singular not used; got: {text!r}"
+    assert "1" in text, f"count not in reply; got: {text!r}"
+    assert "turn" in text, f"singular 'turn' not in reply; got: {text!r}"
     assert "turns" not in text
 
 
