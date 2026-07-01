@@ -277,6 +277,7 @@ _KIND_LINE = {
     "error":        ("✗ ",   _CC_ERR,    _CC_ERR),   # error       — red
     "skill_done":   ("✓ ",   _CC_DONE,   _CC_DIM),   # done        — green glyph, dim body
     "status":       ("· ",   _CC_DIM,    _CC_DIM),   # ambient     — dim
+    "system":       ("· ",   _CC_DIM,    _CC_DIM),   # lifecycle marker (compaction / budget / cost-warn)
     "trace":        ("  ⎿ ", _CC_DIM,    _CC_DIM),   # detail      [low]  nested
 }
 
