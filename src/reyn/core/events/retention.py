@@ -65,15 +65,19 @@ def compute_retention_floor(
     the gen base WAL replay starts from); the floor is clamped *down* to it so the
     last N checkpoints stay reconstructable.
 
-    **Rewind records are retained automatically** (no separate floor term): a
-    rewind record at seq ``R`` abandons ``(N, R)``; for it to affect a retained
-    seq ``S >= floor`` we need ``N < S < R``, hence ``R > S >= floor`` — so any
-    rewind record whose abandoned interval touches the retained window has
-    ``R >= floor`` and is kept (its ``target_n`` rides in the record's data).
-    Rewind records below the floor only abandon intervals entirely below it, so
-    dropping them cannot corrupt ``is_active`` for retained points. (This is why
-    Q2's "oldest in-window rewind record" term is subsumed by the gen-base term;
-    the reconstructability invariant test pins it.)
+    **Rewind records and the floor**: a rewind record at seq ``R`` abandons
+    ``(N, R)``; for it to affect a retained seq ``S >= floor`` we need
+    ``N < S < R``, hence ``R > S >= floor`` — so any rewind record whose
+    abandoned interval touches the retained window has ``R >= floor`` and is kept.
+    This argument is correct for runtime-state reconstruction (WAL replay uses
+    only seqs >= floor), but ``history.jsonl`` is append-only and never
+    floor-truncated: ``_active_branch_history`` calls ``is_active_seq`` with
+    ``wal_seq`` anchors from ``history.jsonl`` that may be below the floor
+    (abandoned-branch turns). Dropping a rewind record below the floor therefore
+    lets abandoned conversation turns reappear in the LLM context. Fix: callers
+    of ``truncate_below`` pass ``always_keep_kinds=frozenset({REWIND_KIND})``
+    (``snapshot_generations.REWIND_KIND``) so reset-records survive truncation
+    regardless of the floor.
     """
     if policy.is_live or policy.keep_generations is None:
         return live_floor

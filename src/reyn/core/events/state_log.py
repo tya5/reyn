@@ -378,13 +378,26 @@ class StateLog:
                     continue
                 yield entry
 
-    async def truncate_below(self, min_keep_seq: int) -> None:
+    async def truncate_below(
+        self,
+        min_keep_seq: int,
+        *,
+        always_keep_kinds: "frozenset[str] | None" = None,
+    ) -> None:
         """Atomically rewrite the WAL keeping only entries with ``seq >= min_keep_seq``.
 
         Drop policy: ``seq < min_keep_seq`` entries are dropped. Caller computes
         ``min_keep_seq`` as ``min(全 agent applied_seq, 全 active skill
         last_phase_applied_seq) + 1`` (i.e. drop everything strictly below the
         last universally-absorbed seq).
+
+        ``always_keep_kinds``: entries whose ``kind`` is in this set are kept
+        unconditionally regardless of seq. Pass
+        ``frozenset({REWIND_KIND})`` (``snapshot_generations.REWIND_KIND``) to
+        protect reset-records from being dropped: ``_active_branch_history`` calls
+        ``is_active_seq`` with ``wal_seq`` values from ``history.jsonl`` (which are
+        append-only and can be below the floor), so dropping a rewind record causes
+        abandoned conversation turns to reappear in the LLM context.
 
         Atomic strategy (mirrors per-snapshot atomic save):
           1. Stream-read current ``wal.jsonl``, write surviving entries to
@@ -403,7 +416,7 @@ class StateLog:
         is handled by the worker's §4 retry → health-signal (no caller to raise to). The stats
         land on ``last_truncate_stats`` (read after ``flush``), not a return value.
         """
-        if min_keep_seq <= 1:
+        if min_keep_seq <= 1 and not always_keep_kinds:
             self._last_truncate_stats = {
                 "dropped": 0, "kept": 0, "min_kept_seq": None, "max_kept_seq": None,
             }
@@ -411,12 +424,16 @@ class StateLog:
 
         async def _job() -> None:
             self._last_truncate_stats = await asyncio.to_thread(
-                self._do_truncate, min_keep_seq,
+                self._do_truncate, min_keep_seq, always_keep_kinds,
             )
 
         self._worker.submit_nowait(_job)
 
-    def _do_truncate(self, min_keep_seq: int) -> dict:
+    def _do_truncate(
+        self,
+        min_keep_seq: int,
+        always_keep_kinds: "frozenset[str] | None" = None,
+    ) -> dict:
         """The synchronous WAL rewrite (run off-loop, serialised by the worker — see
         `truncate_below`). Two-pass: identify the highest seq present (never drop ALL entries —
         that would let `_scan_max_seq` reset the counter + re-issue used seqs), then write the
@@ -477,8 +494,16 @@ class StateLog:
                     dropped += 1
                     continue
                 if seq < effective_floor:
-                    dropped += 1
-                    continue
+                    # always_keep_kinds entries (e.g. "rewind" reset-records) survive
+                    # truncation regardless of seq: _active_branch_history queries
+                    # is_active_seq with wal_seq anchors from history.jsonl (append-only,
+                    # never truncated), so dropping a rewind record below the floor lets
+                    # abandoned conversation turns reappear in the LLM context.
+                    if always_keep_kinds and entry.get("kind") in always_keep_kinds:
+                        pass  # keep despite being below floor
+                    else:
+                        dropped += 1
+                        continue
                 dst.write(raw + "\n")
                 kept += 1
                 if min_kept is None or seq < min_kept:
