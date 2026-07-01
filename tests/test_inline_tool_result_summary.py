@@ -33,6 +33,14 @@ def test_read_with_none_content_but_status_shows_status() -> None:
     assert out == "error"
 
 
+def test_file_read_singular_line() -> None:
+    """Tier 2: a single-line read says 'Read 1 line', not 'Read 1 lines'."""
+    out = summarize_tool_result(
+        "file__read", {"op": "read", "status": "ok", "content": "only one line"}
+    )
+    assert out == "Read 1 line"
+
+
 def test_file_read_truncated_is_flagged() -> None:
     """Tier 2: a truncated read says so."""
     out = summarize_tool_result(
