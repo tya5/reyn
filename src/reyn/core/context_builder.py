@@ -242,17 +242,30 @@ def offload_control_ir_result(
         return result
 
     offload_filename = f"{result_idx:04d}_{uuid.uuid4().hex[:8]}.json"
+    # #2336: producer-declares-payload. When the op result declares a dominant
+    # ``_offload_payload_field`` AND that field is the SOLE oversized field, store it
+    # CLEAN (raw text with real newlines / a clean array) instead of a JSON-of-JSON
+    # whole-dict envelope. Multi-large-field → whole-dict fallback (payload_field=None)
+    # so a non-dominant large field's full content is never dropped to preview-only
+    # (zero data-loss). P7-safe: the marker is op-supplied data, no op literal here.
+    declared_payload_field = result.get("_offload_payload_field")
+    use_clean_payload = bool(declared_payload_field) and _oversized_fields(result) == [declared_payload_field]
     offload_result = offload_value(
         result,
         store_dir=offload_dir,
         preview_strategy=_phase_preview_strategy,
         filename=offload_filename,
+        payload_field=declared_payload_field if use_clean_payload else None,
     )
 
     # The preview dict produced by _phase_preview_strategy is our inline.
     inline: dict = offload_result.preview
     # Attach content_hash for verified read-back (new in Phase 1).
     inline["_offload_content_hash"] = offload_result.content_hash
+    if use_clean_payload:
+        # Tell the reader the ref holds the raw field value (not the whole-dict envelope).
+        inline["_offload_payload_field"] = declared_payload_field
+        inline["_offload_ref_format"] = "raw_field"
     # #1209 (2): explicit machine-readable truncation status as a SEPARATE field
     # (the per-field previews already carry head+tail + total chars; this flags
     # the result as truncated without the model having to parse the content).

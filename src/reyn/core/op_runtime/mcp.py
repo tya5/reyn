@@ -151,6 +151,9 @@ async def _execute(op: MCPIROp, ctx: OpContext) -> dict:
         "content": text,
         "media_blocks": media_blocks,
         "raw": result,
+        # #2336: offload the joined text (what the LLM acts on) CLEAN. If ``raw`` is
+        # also oversized, the caller falls back to whole-dict (both preserved).
+        "_offload_payload_field": "content",
     }
 
 
