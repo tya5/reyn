@@ -193,6 +193,52 @@ async def test_mid_tool_cycle_cut_leaves_no_dangling(tmp_path, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_rewind_record_survives_wal_truncation(tmp_path, monkeypatch):
+    """Tier 2: truncate-falsify — abandoned turns stay hidden after WAL truncation below
+    the rewind reset-record (CLAUDE.md recovery PR gate: set X → truncate past X's events
+    → reconstruct → assert X survives).
+
+    Scenario: rewind hides turns 2 and 3. Many new turns advance applied_seq well past the
+    rewind reset-record seq R. A WAL truncation with floor > R would drop the rewind record
+    without always_keep_kinds protection, causing _active_branch_history / is_active_seq to
+    treat (N, R) as active — abandoned turns 2 and 3 reappear in the LLM context.
+    With always_keep_kinds=frozenset({"rewind"}) the reset-record survives and the filter holds.
+    """
+    monkeypatch.chdir(tmp_path)
+    state_log = StateLog(tmp_path / "state.wal")
+    s = _session(tmp_path, "alice", state_log)
+
+    # Three turns; rewind to after turn 1 (abandons turns 2 and 3).
+    anchors = [await _turn(s, state_log, f"turn {i}") for i in range(1, 4)]
+    reset_seq = await checkout(state_log, target_seq=anchors[0])
+
+    # New turns on the active branch — these advance applied_seq past the reset record.
+    for i in range(4, 10):
+        await _turn(s, state_log, f"turn {i}")
+
+    # Truncate with floor > reset_seq so the rewind record is below the floor.
+    # always_keep_kinds=frozenset({"rewind"}) (what AgentRegistry.truncate_wal_if_eligible
+    # passes) must keep the reset-record despite it being below floor.
+    floor = reset_seq + 5  # well past the reset record
+    await state_log.truncate_below(floor, always_keep_kinds=frozenset({"rewind"}))
+    await state_log.flush()
+
+    # Rewind record must survive in the WAL (directly verifiable).
+    surviving_kinds = [e.get("kind") for e in state_log.iter_from(1)]
+    assert "rewind" in surviving_kinds, (
+        "reset-record must survive WAL truncation so is_active_seq can still classify "
+        "abandoned-branch wal_seq values from history.jsonl"
+    )
+
+    # Abandoned turns must stay hidden from the LLM.
+    visible = _visible(s)
+    assert "turn 1" in visible, "turn 1 (before rewind target) must be visible"
+    assert "turn 2" not in visible, "abandoned turn must stay hidden after WAL truncation"
+    assert "turn 3" not in visible, "abandoned turn must stay hidden after WAL truncation"
+    assert "turn 4" in visible, "first post-rewind turn must be visible"
+
+
+@pytest.mark.asyncio
 async def test_cut_before_tool_cycle_hides_whole_cycle_no_dangling(tmp_path, monkeypatch):
     """Tier 2: #2360 tool-cycle-aware — a cut BEFORE the assistant tool_calls turn hides the WHOLE
     cycle (call + result), never a dangling tool result. The other direction of the same atomicity."""
