@@ -1,10 +1,9 @@
-"""Tier 2: picker hint sweep — Wave-12 T2-1 (Topic A #3/#4/#7/#8).
+"""Tier 2: picker hint sweep — Wave-12 T2-1 (Topic A #3/#4/#7).
 
-4 slash commands whose picker hints underspecified behavior:
+3 slash commands whose picker hints underspecified behavior:
   /pending (A#3) — added usage; sub-command vocab now visible in hint
   /agent   (A#4) — summary now mentions rm escape hatch
   /image   (A#7) — summary now lists supported extensions
-  /docs-filter (A#8) — summary now names the target tab + Ctrl+B route
 
 All assertions use the REGISTRY public surface (cmd.usage / cmd.summary).
 No MagicMock / patch per testing policy.
@@ -55,15 +54,3 @@ def test_image_summary_lists_supported_extensions() -> None:
     )
 
 
-def test_docs_filter_summary_names_tab_and_keybinding() -> None:
-    """Tier 2: /docs-filter summary surfaces Ctrl+B route and Docs tab name."""
-    from reyn.interfaces.slash import REGISTRY
-
-    cmd = REGISTRY.get("docs-filter")
-    assert cmd is not None, "/docs-filter not in registry"
-    assert "Ctrl+B" in cmd.summary, (
-        f"/docs-filter summary missing 'Ctrl+B': {cmd.summary!r}"
-    )
-    assert "Docs" in cmd.summary, (
-        f"/docs-filter summary missing 'Docs': {cmd.summary!r}"
-    )

@@ -73,8 +73,6 @@ While a session is active, lines starting with `/` are intercepted and never rou
 | `/concept <term>` | Inline glossary lookup (T1-3) |
 | `/copy [N\|list]` | Copy an agent reply to the clipboard (1 = newest, 2 = one turn back, …) |
 | `/cost` | Quick token + USD cost summary for this agent |
-| `/cost-inline` | Toggle per-turn cost suffix in conversation |
-| `/docs-filter [<substring>]` | Filter the docs tab by substring (empty = clear) |
 | `/exit` | Exit the chat (alias: `/quit`, Ctrl+D) |
 | `/help [<cmd>]` | Slash command help — list all, or focus on one |
 | `/image <path>` | Attach an image to the next user message (multimodal input) |
