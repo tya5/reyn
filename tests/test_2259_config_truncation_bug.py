@@ -15,6 +15,7 @@ from __future__ import annotations
 import pytest
 import yaml
 
+from reyn.core.events.snapshot_generations import rewind
 from reyn.core.events.state_log import StateLog
 from reyn.runtime.registry import AgentRegistry
 
@@ -57,6 +58,9 @@ async def test_config_survives_wal_truncation_below_its_seq(tmp_path):
     assert stats["dropped"] >= 1, "the early config_changed should have been truncated"
 
     # rewind to cut=1: config should reconstruct to {A} (its state as-of seq 1).
+    # Production invariant: _reconcile_config_as_of_cut is only called from _materialize_rewind
+    # which always has an active rewind record. Add one so is_active_seq gates correctly.
+    await rewind(reg.state_log, target_n=cut)
     reg._reconcile_config_as_of_cut(cut)
 
     assert mcp_path.is_file(), "config must survive the rewind (RED on main: truncated → dropped)"
