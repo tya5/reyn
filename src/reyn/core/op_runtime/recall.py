@@ -124,7 +124,8 @@ async def handle(
     else:
         mode = "mixed"
 
-    return {"chunks": stripped_chunks, "mode": mode}
+    # #2336: offload the chunks array as a clean JSON array, not a whole-dict envelope.
+    return {"chunks": stripped_chunks, "mode": mode, "_offload_payload_field": "chunks"}
 
 
 register("recall", handle)

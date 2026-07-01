@@ -79,6 +79,7 @@ def offload_value(
     store_dir: Path,
     preview_strategy: Callable[[Any, str], Any] | None = None,
     filename: str | None = None,
+    payload_field: str | None = None,
 ) -> OffloadResult:
     """Write *value* to *store_dir* and return preview + path_ref + content_hash.
 
@@ -102,6 +103,19 @@ def offload_value(
                           ★ three-party preview-bound contract for details.
         filename:         Optional explicit filename. When omitted a unique name
                           is derived from a UUID fragment.
+        payload_field:    #2336 (producer-declares-payload). When set AND *value* is
+                          a dict carrying that field, the file stores THAT field's
+                          value CLEAN — a str payload is written raw (real newlines,
+                          not a JSON-escaped ``\\n`` inside a dict envelope; fixes the
+                          "JSON-of-JSON" read-back), a non-str payload is
+                          ``json.dumps``'d (a clean array/object, not the whole dict).
+                          The caller passes this only when the payload field is the
+                          sole oversized field (single-dominant); a multi-large-field
+                          result falls back to the whole-dict path (caller passes
+                          ``None``) so no non-dominant field's full content is lost.
+                          Absent / field missing → the whole-value serialisation.
+                          The preview (and thus the inline envelope) is always built
+                          over the WHOLE *value*, unchanged.
 
     Returns:
         :class:`OffloadResult` with preview (or ``None``), path_ref, content_hash.
@@ -113,7 +127,11 @@ def offload_value(
         filename = f"{uid}.json"
 
     dest = store_dir / filename
-    serialized = json.dumps(value, ensure_ascii=False) if not isinstance(value, str) else value
+    if payload_field is not None and isinstance(value, dict) and payload_field in value:
+        payload = value[payload_field]
+        serialized = payload if isinstance(payload, str) else json.dumps(payload, ensure_ascii=False)
+    else:
+        serialized = json.dumps(value, ensure_ascii=False) if not isinstance(value, str) else value
     dest.write_text(serialized, encoding="utf-8")
 
     path_ref = str(dest)

@@ -134,6 +134,9 @@ async def handle(
         "stdout": stdout_text,
         "stderr": stderr_text,
         "truncated": result.truncated,
+        # #2336: offload stdout CLEAN. If stderr is also oversized (a huge crash
+        # trace), the caller falls back to whole-dict so stderr is not lost.
+        "_offload_payload_field": "stdout",
     }
 
 
