@@ -1842,10 +1842,11 @@ class AgentRegistry:
         # all inert until S2b emits the events.
         ag_created, ag_archived, ag_purged = self._agent_lifecycle()
         # #2103: the existence cut is the rewind TARGET (``workspace_at_or_below`` =
-        # target_n), NOT ``reconstruct_seq`` (= R, the reset-record head). An entity
-        # whose create-seq > target didn't exist as-of-target → drop it. In crash
-        # recovery ``workspace_at_or_below`` = head, so create-seq > head is never
-        # true → no spurious drops (recovery reconstructs the present, not a rewind).
+        # target_n). An entity whose create-seq > target didn't exist as-of-target
+        # → drop it. In ``rewind_to`` target_n = seq (the desired checkpoint); in
+        # crash ``recover_rewind_if_needed`` target_n = active_rewind_target = N
+        # (the user's intended checkpoint, NOT R the reset-record head — agents
+        # created on the abandoned interval (N, R) must be dropped there too).
         drop_cut = workspace_at_or_below
         # #2103 S2 re-materialise: an agent created ≤ cut, NOT purged, currently
         # ABSENT (dropped at a prior cut) → re-create from its agent_created record
@@ -1966,7 +1967,7 @@ class AgentRegistry:
             return None
         head = self._state_log.last_durable_seq
         agents = await self._materialize_rewind(
-            reconstruct_seq=head, workspace_at_or_below=head,
+            reconstruct_seq=head, workspace_at_or_below=target,
         )
         return {"recovered_target_n": target, "head": head, "agents": agents}
 

@@ -233,6 +233,39 @@ async def test_recover_rewind_is_noop_without_reset_record(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_recover_rewind_drops_abandoned_branch_agent(tmp_path):
+    """Tier 2: crash mid-rewind ⇒ recovery drops agents created on the abandoned branch.
+
+    An agent whose ``agent_created`` WAL event lands in the abandoned interval (N, R)
+    must be torn down by ``recover_rewind_if_needed``.  Previously the method passed
+    ``workspace_at_or_below=head`` (= R) instead of ``workspace_at_or_below=target``
+    (= N), so agents created at N < C < R had create-seq ≤ R and were NOT dropped.
+    """
+    reg = _make_registry(tmp_path)
+    _seed_agent(tmp_path, "alpha")      # pre-N agent — no agent_created WAL event
+    log = reg.state_log
+
+    n_seq = await _put(log, "alpha", "a1")   # seq 1 → N = 1 (rewind target)
+
+    # Simulate an agent spawned AFTER N on the abandoned branch: emit the WAL event
+    # then create the on-disk directory so list_names() surfaces it.
+    await log.append(
+        "agent_created", entity_kind="agent", name="orphan", sid="",
+    )                                        # seq 2 = C (N < C < R)
+    _seed_agent(tmp_path, "orphan")          # place the dir so list_names finds it
+
+    R = await rewind(log, target_n=n_seq)   # seq 3 = R; abandons interval (1, 3)
+
+    result = await reg.recover_rewind_if_needed()
+
+    assert result is not None and result["recovered_target_n"] == n_seq
+    # orphan (created at C=2 in the abandoned interval) must be gone.
+    assert "orphan" not in reg.list_names(), "abandoned-branch agent must be dropped by recovery"
+    # alpha (pre-N, no agent_created event) must survive.
+    assert "alpha" in reg.list_names(), "pre-N agent must survive crash-mid-rewind recovery"
+
+
+@pytest.mark.asyncio
 async def test_restore_all_triggers_crash_recovery(tmp_path):
     """Tier 2: restore_all (production startup seam) TRIGGERS crash-mid-rewind recovery.
 
