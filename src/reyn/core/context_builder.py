@@ -226,6 +226,16 @@ def offload_control_ir_result(
     Small results (at or below threshold) are returned unchanged (identity).
     No information is lost: the full content is retrievable via the ref path.
     """
+    # #2296: a self-bounded result declares (via a positive flag) that its content is already
+    # bound ≤ the inline cap BY CONSTRUCTION — its over-cap serialized size is envelope-only, so it
+    # must NOT be offloaded (that would contradict #1209's keep-in-decide-context intent AND recurse:
+    # its retrieval read is itself over-cap on envelope → re-offload → loop). Exempt it before the
+    # size check. Generic flag (no op vocabulary) = P7-safe + open-closed: any op that self-bounds
+    # sets it and is exempt without touching this code. The op's own truncation/pagination
+    # (next_offset) is the correct retrieval mechanism, not an offload ref.
+    if result.get("_self_bounded"):
+        return result
+
     serialized = json.dumps(result, ensure_ascii=False)
     size_chars = len(serialized)
     if size_chars <= cap:
