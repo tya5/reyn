@@ -5,7 +5,6 @@
 # starts from DEFAULT_HOT_LIST_SEED with no carry-over.
 #
 # What this script wipes:
-#   .reyn/state/action_usage.jsonl  — hot-list frequency/recency history
 #   .reyn/state/wal.jsonl           — plan-resume substrate (if present)
 #   .reyn/state/history.jsonl       — session-summary carry-over (if present)
 #   .reyn/state/plans/              — stale decomposition artifacts (if present)
@@ -16,6 +15,10 @@
 #   .reyn/agents/*/events           — per-agent event log; same constraint
 #   .reyn/agents/*/history.jsonl    — per-agent conversation history; requires knowing
 #                                     the agent name — callers must wipe this separately
+#   .reyn/agents/*/action_usage.json — per-agent hot-list ledger; requires the agent name,
+#                                     so the runner wipes it per-scenario (#2357). The old
+#                                     .reyn/state/action_usage.jsonl path never existed (the
+#                                     live ledger is per-agent) — wiping it here was a no-op.
 #
 # Rationale: §6.7 of docs/deep-dives/contributing/dogfood-discipline.md.
 # Cross-batch V comparison is only valid when all batches start from the same
@@ -53,8 +56,10 @@ _remove_dir() {
     fi
 }
 
-# Hot-list usage history — the primary measurement confound (B37 F2 / B38 §6)
-_remove_file ".reyn/state/action_usage.jsonl"
+# #2357: the hot-list ledger (the primary measurement confound, B37 F2 / B38 §6) is per-agent
+# (.reyn/agents/<name>/action_usage.json) — this script has no agent name, so the runner wipes it
+# per-scenario. The old `_remove_file ".reyn/state/action_usage.jsonl"` targeted a path that never
+# existed (silent no-op) and is removed here.
 
 # Plan-resume substrate
 _remove_file ".reyn/state/wal.jsonl"

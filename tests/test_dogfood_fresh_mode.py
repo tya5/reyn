@@ -43,8 +43,9 @@ def _seed_workspace(root: Path) -> dict[str, Path]:
     state_dir = root / ".reyn" / "state"
     state_dir.mkdir(parents=True, exist_ok=True)
 
-    # Files that MUST be wiped by the reset script
-    for name in ("action_usage.jsonl", "wal.jsonl", "history.jsonl"):
+    # Files that MUST be wiped by the reset script. #2357: the hot-list ledger is NOT here — it's
+    # per-agent (.reyn/agents/<name>/action_usage.json), wiped by the runner, not this script.
+    for name in ("wal.jsonl", "history.jsonl"):
         p = state_dir / name
         p.write_text('{"dummy": true}\n', encoding="utf-8")
         files[name] = p
@@ -83,13 +84,6 @@ def _run_reset(workspace: Path) -> subprocess.CompletedProcess:
 # ---------------------------------------------------------------------------
 
 class TestDogfoodFreshResetScript:
-    def test_wipes_action_usage(self, tmp_path: Path) -> None:
-        """Tier 2: reset script removes action_usage.jsonl from seeded workspace."""
-        files = _seed_workspace(tmp_path)
-        result = _run_reset(tmp_path)
-        assert result.returncode == 0, result.stderr
-        assert not files["action_usage.jsonl"].exists()
-
     def test_wipes_wal(self, tmp_path: Path) -> None:
         """Tier 2: reset script removes wal.jsonl from seeded workspace."""
         files = _seed_workspace(tmp_path)
@@ -137,7 +131,6 @@ class TestDogfoodFreshResetScript:
         _seed_workspace(tmp_path)
         result = _run_reset(tmp_path)
         assert result.returncode == 0, result.stderr
-        assert "action_usage.jsonl" in result.stdout
         assert "wal.jsonl" in result.stdout
         assert "history.jsonl" in result.stdout
 
@@ -151,7 +144,7 @@ class TestDogfoodFreshResetScript:
             cwd=str(tmp_path),
         )
         assert result.returncode == 0, result.stderr
-        assert not (tmp_path / ".reyn" / "state" / "action_usage.jsonl").exists()
+        assert not (tmp_path / ".reyn" / "state" / "wal.jsonl").exists()
 
 
 # ---------------------------------------------------------------------------
