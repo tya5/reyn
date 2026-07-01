@@ -1638,6 +1638,14 @@ async def recorded_acompletion(
             f"must be one of {LLM_PURPOSES}"
         )
 
+    # #2287 follow-up: repair the assistant.tool_calls ↔ role=tool pairing on the FINAL assembled
+    # wire list, at the single provider chokepoint — so no split pair reaches the provider as a 400
+    # from ANY source (compaction/decompose elide, rewind mid-cycle, interrupt, over-budget group).
+    # Full-list (not per-segment): an intact pair split only across a segment boundary (call in head,
+    # its real result in tail, a bridge/summary between) is left untouched — never duplicate-synth'd.
+    from reyn.llm.wire_format import repair_tool_call_pairing  # noqa: PLC0415 — local, no cycle
+    messages = repair_tool_call_pairing(messages)
+
     # #309: per-class routing (api_base/provider) wins; None → global proxy_kwargs().
     extra = routing if routing is not None else proxy_kwargs()
     # Strip the provider prefix ONLY when routing to an api_base endpoint
