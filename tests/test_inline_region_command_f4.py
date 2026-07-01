@@ -2,7 +2,7 @@
 
 A CommandUIElement is a region element whose rows each submit a slash command on
 select; the /rewind picker is built from list_rewind_points(). Generic so future
-command UIs (and F5's status menu) reuse it.
+command UIs (and F5's status bar) reuse it.
 """
 from __future__ import annotations
 

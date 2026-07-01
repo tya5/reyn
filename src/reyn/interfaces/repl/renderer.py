@@ -460,7 +460,7 @@ class InlineChatRenderer(ChatRenderer):
     stays in the terminal's own scrollback; only the prompt is live below.
 
     PR1 (cutover) scope: `⏺`/`⎿` symbols + terracotta accent + per-kind
-    formatting. The rule-sandwiched input bar, navigable status menu, and
+    formatting. The rule-sandwiched input bar, navigable status bar, and
     in-conversation animations land in follow-up PRs (a custom prompt_toolkit
     Application that replaces the PromptSession input).
     """

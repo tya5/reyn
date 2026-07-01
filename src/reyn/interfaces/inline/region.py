@@ -121,7 +121,7 @@ class Region:
         """True when the cursor sits on the first selectable row (or none exist).
 
         Lets a consumer treat ``↑`` at the top of a picker as "close" rather than
-        a no-op move, matching the pre-region status menu.
+        a no-op move, matching the pre-region status bar.
         """
         sel = self._selectable_indices()
         return (not sel) or self._cursor == sel[0]
