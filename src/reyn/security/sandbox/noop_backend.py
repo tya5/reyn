@@ -54,21 +54,45 @@ def _build_env(policy: SandboxPolicy) -> dict[str, str]:
 
 
 async def _kill_proc_group(proc: subprocess.Popen, grace_seconds: float = 2.0) -> None:
-    """SIGTERM the process group, then SIGKILL after grace_seconds if still alive."""
-    try:
-        os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
-    except (ProcessLookupError, OSError):
-        return
-    try:
-        await asyncio.wait_for(
-            asyncio.get_running_loop().run_in_executor(None, proc.wait),
-            timeout=grace_seconds,
-        )
-    except (asyncio.TimeoutError, Exception):
+    """SIGTERM the process group, then SIGKILL after grace_seconds if still alive.
+
+    Windows has no process groups / ``os.killpg`` — fall back to ``proc.terminate()`` then
+    ``proc.kill()`` on the process itself. KNOWN LIMITATION (Windows, tracked #2292): terminate/kill
+    hits the process, NOT its child tree — a sandboxed process that spawns grandchildren can leave
+    orphans on cancel. A Job-object-based tree-kill is out of scope for the broken-pipe fix.
+    """
+    async def _wait_grace() -> bool:
+        """Return True if the process exited within the grace window."""
         try:
-            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+            await asyncio.wait_for(
+                asyncio.get_running_loop().run_in_executor(None, proc.wait),
+                timeout=grace_seconds,
+            )
+            return True
+        except (asyncio.TimeoutError, Exception):
+            return False
+
+    if hasattr(os, "killpg"):
+        try:
+            os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
         except (ProcessLookupError, OSError):
-            pass
+            return
+        if not await _wait_grace():
+            try:
+                os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+            except (ProcessLookupError, OSError):
+                pass
+    else:
+        # Windows: no process groups → terminate the process, escalate to kill after the grace.
+        try:
+            proc.terminate()
+        except OSError:
+            return
+        if not await _wait_grace():
+            try:
+                proc.kill()
+            except OSError:
+                pass
 
 
 class NoopBackend:

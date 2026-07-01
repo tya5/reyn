@@ -20,6 +20,8 @@ import os
 import select as _select
 import selectors
 import subprocess
+import sys
+import threading
 import time
 
 # 10 MiB — single source for the per-stream subprocess-output ceiling. Distinct
@@ -47,7 +49,117 @@ def communicate_capped(
     :class:`subprocess.TimeoutExpired` (carrying the partial captured output) if
     ``timeout`` elapses before both streams close — parity with
     ``communicate(timeout=)``; the caller kills the process and handles it.
+
+    Platform dispatch: the POSIX selectors path uses ``select()``, which on Windows only polls
+    SOCKETS, not pipe fds (``OSError [WinError 10038] not a socket``) — so on Windows we drain via
+    a thread per stream instead (mirroring CPython's own Windows ``Popen._communicate`` branch).
+    The two paths are contract-identical: same per-stream cap→``truncated``, same drain-and-discard
+    past the cap (child never blocks on a full pipe), same ``TimeoutExpired`` (partial output).
     """
+    if sys.platform == "win32":
+        return _communicate_capped_threads(
+            proc, input=input, max_bytes=max_bytes, timeout=timeout
+        )
+    return _communicate_capped_selectors(
+        proc, input=input, max_bytes=max_bytes, timeout=timeout
+    )
+
+
+def _communicate_capped_threads(
+    proc: subprocess.Popen,
+    *,
+    input: bytes | None,
+    max_bytes: int,
+    timeout: float | None,
+) -> tuple[bytes, bytes, bool]:
+    """Windows drain: one daemon thread per stream (``select()`` can't poll pipe fds on Windows).
+
+    Contract-identical to the selectors path: per-stream cap→``truncated``; drain-and-discard past
+    the cap (the reader keeps consuming so the child never blocks on a full pipe = drain-safe); a
+    still-running reader at the deadline → ``TimeoutExpired`` carrying the partial output. Mirrors
+    CPython's Windows ``Popen._communicate`` (threads reading each stream to EOF), plus the cap.
+    """
+    stdout_buf = bytearray()
+    stderr_buf = bytearray()
+    state = {"truncated": False}
+    deadline = (time.monotonic() + timeout) if timeout is not None else None
+
+    def _timed_out() -> subprocess.TimeoutExpired:
+        return subprocess.TimeoutExpired(
+            proc.args, timeout, output=bytes(stdout_buf), stderr=bytes(stderr_buf)
+        )
+
+    def _drain(stream, buf: bytearray) -> None:
+        try:
+            while True:
+                data = stream.read1(_READ_CHUNK)
+                if not data:  # EOF
+                    break
+                room = max_bytes - len(buf)
+                if room > 0:
+                    buf += data[:room]
+                    if len(data) > room:
+                        state["truncated"] = True
+                else:
+                    state["truncated"] = True  # at cap → drain-and-discard (keep reading)
+        except (BrokenPipeError, OSError):
+            pass
+        finally:
+            try:
+                stream.close()
+            except OSError:
+                pass
+
+    def _write_stdin(stream, data: bytes) -> None:
+        try:
+            stream.write(data)
+        except (BrokenPipeError, OSError):
+            pass  # child exited early — its return code is preserved
+        finally:
+            try:
+                stream.close()
+            except OSError:
+                pass
+
+    threads: list[threading.Thread] = []
+    if proc.stdout is not None:
+        threads.append(threading.Thread(target=_drain, args=(proc.stdout, stdout_buf), daemon=True))
+    if proc.stderr is not None:
+        threads.append(threading.Thread(target=_drain, args=(proc.stderr, stderr_buf), daemon=True))
+    if proc.stdin is not None:
+        if input:
+            threads.append(
+                threading.Thread(target=_write_stdin, args=(proc.stdin, input), daemon=True)
+            )
+        else:
+            proc.stdin.close()
+    for t in threads:
+        t.start()
+
+    for t in threads:
+        remaining = None if deadline is None else max(0.0, deadline - time.monotonic())
+        t.join(remaining)
+        if t.is_alive():  # still draining at the deadline → timeout (partial output captured)
+            raise _timed_out()
+
+    try:
+        remaining = None if deadline is None else max(0.0, deadline - time.monotonic())
+        proc.wait(timeout=None if remaining is None else remaining)
+    except subprocess.TimeoutExpired:
+        raise _timed_out() from None
+    return bytes(stdout_buf), bytes(stderr_buf), state["truncated"]
+
+
+def _communicate_capped_selectors(
+    proc: subprocess.Popen,
+    *,
+    input: bytes | None = None,
+    max_bytes: int = MAX_SUBPROCESS_OUTPUT_BYTES,
+    timeout: float | None = None,
+) -> tuple[bytes, bytes, bool]:
+    """POSIX drain via a selectors loop (3-way stdin/stdout/stderr concurrency), per-stream capped.
+    The proven reference path (CPython POSIX ``Popen._communicate`` structure); see the public
+    ``communicate_capped`` docstring for the contract."""
     stdout_buf = bytearray()
     stderr_buf = bytearray()
     truncated = False
