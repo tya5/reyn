@@ -241,8 +241,14 @@ async def _claim(session: "Session", supplied_id: str) -> None:
         await reply_error(session, err)
         return
     assert iv_id is not None
-    # Channel id matches the Pending tab's claim path (= ``tui:<agent>``).
-    channel_id = f"tui:{getattr(session, 'agent_name', 'default')}"
+    # Use the canonical REPL listener channel so the re-dispatched iv is NOT
+    # immediately re-parked stalled by InterventionCoordinator (it checks
+    # has_listener(iv.origin_channel_id) and only routes through
+    # InterventionHandler when the claimed channel matches a registered listener).
+    # The old f"tui:{agent_name}" was the Textual TUI's per-agent convention;
+    # the current REPL registers DEFAULT_CHAT_CHANNEL_ID ("tui").
+    from reyn.runtime.session import DEFAULT_CHAT_CHANNEL_ID
+    channel_id = DEFAULT_CHAT_CHANNEL_ID
     try:
         view = await session.claim_pending_intervention(iv_id, channel_id)
     except Exception as exc:
