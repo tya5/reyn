@@ -235,6 +235,7 @@ class FileIROp(BaseModel):
     # read-specific
     offset: int | None = None        # line number to start reading from (0-indexed); None = beginning
     limit: int | None = None         # number of lines to read; None = all
+    char_offset: int | None = None   # #2335: char position WITHIN line `offset` to resume from (paging a single line longer than the inline cap); None = start of the line
     # grep-specific
     pattern: str | None = None       # regex pattern to search for
     glob: str | None = None          # file filter glob pattern (e.g. "**/*.py"); default searches all files
@@ -275,6 +276,7 @@ class ReadFileIROp(BaseModel):
     path: str
     offset: int | None = None        # line number to start reading from (0-indexed); None = beginning
     limit: int | None = None         # number of lines to read; None = all
+    char_offset: int | None = None   # #2335: char position WITHIN line `offset` to resume from (paging a single over-cap line); None = start of the line
 
 
 class WriteFileIROp(BaseModel):
