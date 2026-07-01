@@ -407,6 +407,30 @@ class AgentRegistry:
         spawned ids thereafter."""
         return list(self._sessions.get(name, {}).keys())
 
+    def agent_cost_usd(self, name: str) -> float:
+        """Total cost in USD across ALL sessions of agent ``name``.
+
+        Single source of truth for per-agent cost aggregation — used by both
+        the inline status bar and the run_repl exit summary so they never drift
+        when sessions are spawned via /session new.
+        """
+        total = 0.0
+        for sid in self.session_ids(name):
+            sess = self.get_session(name, sid)
+            if sess is not None:
+                total += sess.total_cost_usd
+        return total
+
+    def agent_total_usage(self, name: str) -> "object":
+        """Aggregate TokenUsage across ALL sessions of agent ``name``."""
+        from reyn.llm.pricing import TokenUsage
+        total: "TokenUsage" = TokenUsage()
+        for sid in self.session_ids(name):
+            sess = self.get_session(name, sid)
+            if sess is not None:
+                total += sess.total_usage
+        return total
+
     def resolve_session(
         self,
         agent_name: str,
