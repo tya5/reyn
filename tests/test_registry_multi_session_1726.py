@@ -99,3 +99,32 @@ async def test_attach_session_focuses_existing_and_rejects_unknown(tmp_path) -> 
     finally:
         for task in reg.running_tasks():
             task.cancel()
+
+
+def test_agent_cost_usd_aggregates_all_sessions(tmp_path):
+    """Tier 2: agent_cost_usd() sums cost across ALL sids, not just 'main'.
+
+    Regression: the exit cost summary in run_repl called get_session(name) without
+    a sid (defaulting to 'main'), silently missing sessions spawned via /session new.
+    agent_cost_usd() is the single source of truth used by both the inline status
+    bar and the run_repl exit summary.
+
+    Falsification: if agent_cost_usd() only read the main session, the assertion
+    total == pytest.approx(0.15) would return 0.10 and fail.
+    """
+    import types
+
+    reg = _registry(tmp_path)
+    main = reg.get_or_load("default")
+    sid2 = reg.spawn_session("default")
+    extra = reg.get_session("default", sid2)
+
+    assert extra is not None
+    # Inject cost via public accumulate() with a duck-typed result object.
+    main._budget.accumulate(types.SimpleNamespace(token_usage=None, cost_usd=0.10))
+    extra._budget.accumulate(types.SimpleNamespace(token_usage=None, cost_usd=0.05))
+
+    total = reg.agent_cost_usd("default")
+    assert total == pytest.approx(0.15), (
+        "agent_cost_usd must sum ALL session costs, not just 'main'"
+    )
