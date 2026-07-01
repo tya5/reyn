@@ -164,6 +164,15 @@ async def _output_loop(
             # /copy sentinel: resolve + copy, then render the result as a status
             # line instead of the (unhandled) sentinel — no more silent no-op.
             msg = await _handle_copy_sentinel(recent_replies, msg.text)
+        elif msg.kind in ("__attach_request__", "__session_switch_request__"):
+            # These were UI-sync sentinels for the (now-deleted) Textual TUI:
+            # the registry forwarder consumed them as control signals (attach /
+            # session-switch) then forwarded them so the TUI could refresh its
+            # header. With the TUI gone, no renderer handles them — they would
+            # fall through to renderer.message() and render as a bare text line
+            # (the agent-name / session-id), erasing the preceding transient
+            # status reply and leaving a confusing stray line in the scrollback.
+            continue
         elif msg.kind == "__rewind_list__":
             # /rewind picker (F4): the inline path shows a ↑↓ region selector
             # (driven by session.pending_command_ui), so skip the text list there;
