@@ -1982,6 +1982,31 @@ class Session:
         """Remove a callback registered via :meth:`subscribe_chat_events`."""
         return self._chat_events.remove_subscriber(cb)
 
+    def set_events_dir(self, events_dir: Path) -> None:
+        """#2348: re-point this session's chat EventStore to a per-session directory.
+
+        Spawned sessions share the agent identity (and thus the name-only
+        ``events_dir`` built in ``__init__``), so the chat audit events of all of an
+        agent's sessions bled into one ``events/agents/<name>/chat`` tree. The
+        registry's ``spawn_session`` fixup calls this — parallel to the snapshot/WAL
+        re-key — before the run-loop goes live, so no event lands in the shared tree.
+
+        Swaps ONLY the ``EventStore`` subscriber on ``_chat_events`` (remove old, add
+        new); every OTHER subscriber (the ``ChatLifecycleForwarder`` outbox bridge, the
+        state-change converter, any attach-time focus listener) is preserved. A rebuild
+        of the subscriber list would silently drop them and chat events would stop
+        reaching the outbox / TUI — so the swap is surgical, not a reconstruction.
+        """
+        new_store = EventStore(
+            events_dir,
+            max_bytes=self._events_config.max_bytes,
+            max_age_seconds=self._events_config.max_age_seconds,
+        )
+        self._chat_events.remove_subscriber(self._event_store)
+        self._chat_events.add_subscriber(new_store)
+        self.events_dir = events_dir
+        self._event_store = new_store
+
     @property
     def total_usage(self):
         return self._budget.total_usage
