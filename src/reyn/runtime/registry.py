@@ -1841,32 +1841,46 @@ class AgentRegistry:
         # #2103 S2: agent-lifecycle reconstruction (re-materialise / hide / purge) —
         # all inert until S2b emits the events.
         ag_created, ag_archived, ag_purged = self._agent_lifecycle()
-        # #2103: the existence cut is the rewind TARGET (``workspace_at_or_below`` =
-        # target_n). An entity whose create-seq > target didn't exist as-of-target
-        # → drop it. In ``rewind_to`` target_n = seq (the desired checkpoint); in
-        # crash ``recover_rewind_if_needed`` target_n = active_rewind_target = N
-        # (the user's intended checkpoint, NOT R the reset-record head — agents
-        # created on the abandoned interval (N, R) must be dropped there too).
+        # #2103: the existence predicate is ``is_active_seq``: an entity whose
+        # create-seq is on an ABANDONED branch didn't exist as-of-target → drop it.
+        # ``is_active_seq`` correctly handles BOTH call sites:
+        #   • ``rewind_to`` (live, no post-R agents) — agents in (N, R) are inactive.
+        #   • ``recover_rewind_if_needed`` (crash recovery) — same inactive interval;
+        #     post-rewind active agents at C' > R are IS active, so NOT dropped.
+        # Using the single-cut ``agent_seq > drop_cut`` would drop post-rewind active
+        # agents (C' > R > N = drop_cut) on a crash after a completed rewind. The
+        # ``vanished_by_cut`` check (below) still uses ``drop_cut = workspace_at_or_below``
+        # because session-vanish semantics are simpler: a vanish AT OR BEFORE the target
+        # means the session was gone as-of-target; an abandoned-branch vanish (N < V < R)
+        # doesn't satisfy V ≤ N = drop_cut, so it's correctly not treated as a vanish.
         drop_cut = workspace_at_or_below
-        # #2103 S2 re-materialise: an agent created ≤ cut, NOT purged, currently
+        # #2103 S2 re-materialise: an agent on the ACTIVE branch, NOT purged, currently
         # ABSENT (dropped at a prior cut) → re-create from its agent_created record
         # so a forward-checkout-past-drop brings it back (the inverse of the drop).
         for _rname, (_rcseq, _rpayload, _rparent, _rpseq) in ag_created.items():
             if _rname in ag_purged:
                 continue  # fork A: purged = permanent, never re-materialised
-            if _rcseq <= drop_cut and not (self._dir / _rname).is_dir():
+            _is_active = (
+                self._state_log is None or is_active_seq(self._state_log, _rcseq)
+            )
+            if _is_active and not (self._dir / _rname).is_dir():
                 self._rematerialise_agent(_rname, _rpayload)
         for name in self.list_names():
-            # An agent created after the cut — OR purged (fork A: permanent) — is
+            # An agent on an ABANDONED branch — OR purged (fork A: permanent) — is
             # torn down (subsumes its nested sessions) instead of reconstructed.
             # Reversible (create case): a forward-checkout past the create
             # re-materialises it from the agent_created WAL record (the pass above).
             agent_seq = created_at.get(("agent", name, ""))
-            if name in ag_purged or (agent_seq is not None and agent_seq > drop_cut):
+            _on_abandoned = (
+                agent_seq is not None
+                and self._state_log is not None
+                and not is_active_seq(self._state_log, agent_seq)
+            )
+            if name in ag_purged or _on_abandoned:
                 self._drop_agent(name)
                 continue
             for sid in self._discover_session_ids(name):
-                # A session spawned after the cut → drop just that session.
+                # A session on an abandoned branch → drop just that session.
                 # #2154: OR a session that VANISHED at-or-before the cut (it was gone
                 # as-of-cut) — the destroy-side mirror of the spawn-cut. A genuine
                 # vanish normally already rmtree'd the dir (so discovery won't surface
@@ -1874,7 +1888,11 @@ class AgentRegistry:
                 # vanish (a crash mid-rmtree, or a future session re-materialise seam).
                 sess_seq = created_at.get(("session", name, sid))
                 van_seq = sess_vanished.get((name, sid))
-                spawned_after_cut = sess_seq is not None and sess_seq > drop_cut
+                spawned_after_cut = (
+                    sess_seq is not None
+                    and self._state_log is not None
+                    and not is_active_seq(self._state_log, sess_seq)
+                )
                 vanished_by_cut = van_seq is not None and van_seq <= drop_cut
                 if spawned_after_cut or vanished_by_cut:
                     # #2125/#2180: detach now (quiesce in-flight writes; the global Task

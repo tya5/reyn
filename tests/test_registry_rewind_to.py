@@ -233,6 +233,39 @@ async def test_recover_rewind_is_noop_without_reset_record(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_recover_rewind_keeps_post_rewind_active_agent(tmp_path):
+    """Tier 2: crash AFTER a completed rewind preserves agents created post-rewind.
+
+    Scenario: rewind completed (snapshots pinned to R), then a new agent "delta"
+    is spawned on the active branch (agent_created at C' > R), then crash at K > C'.
+    ``recover_rewind_if_needed`` must NOT drop delta — it is on the ACTIVE branch.
+    A single-cut check (agent_seq > target=N) would wrongly drop any post-rewind
+    agent since C' > R > N = target.
+    """
+    reg = _make_registry(tmp_path)
+    _seed_agent(tmp_path, "alpha")
+    log = reg.state_log
+
+    n_seq = await _put(log, "alpha", "a1")   # seq 1 → N = 1 (rewind target)
+    R = await rewind(log, target_n=n_seq)    # seq 2 = R; abandons nothing (trivial — no gap)
+
+    # New agent created AFTER the rewind on the active branch.
+    await log.append(
+        "agent_created", entity_kind="agent", name="delta", sid="",
+    )                                        # seq 3 = C' (C' > R=2 > N=1)
+    _seed_agent(tmp_path, "delta")           # place the dir so list_names finds it
+
+    # Simulate crash AFTER delta was created (but no new rewind).
+    result = await reg.recover_rewind_if_needed()
+
+    assert result is not None and result["recovered_target_n"] == n_seq
+    # delta (created at C' > R on active branch) must survive.
+    assert "delta" in reg.list_names(), "post-rewind active agent must NOT be dropped by recovery"
+    # alpha (pre-N, no agent_created event) must also survive.
+    assert "alpha" in reg.list_names()
+
+
+@pytest.mark.asyncio
 async def test_recover_rewind_drops_abandoned_branch_agent(tmp_path):
     """Tier 2: crash mid-rewind ⇒ recovery drops agents created on the abandoned branch.
 
