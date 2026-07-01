@@ -35,6 +35,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from _async_wait import wait_until  # noqa: E402 — shared #1751 test wait helper (#2339 deflake)
 
 from reyn.config import SafetyConfig, TimeoutConfig
 from reyn.core.events.state_log import StateLog
@@ -426,8 +427,24 @@ def test_postprocessor_mid_run_chain_timeout_fires(
         # Stash chain_id (as spawn path would)
         sess_b.running_skills_chain["run_b_timeout_001"] = "chain-timeout-post-001"
 
-        # Wait for the watchdog to fire (0.05s + a small margin)
-        await asyncio.sleep(0.15)
+        # #2339: poll until the watchdog has fully fired, instead of a fixed 0.15s magic margin
+        # (chain_seconds=0.05 + slack) that races the timer under CI load. The predicate is the
+        # DURABLE chain_timeout_fired WAL event — the SPECIFIC condition the WAL assert below pins
+        # (#2279 discipline). Empirically two things race, not one: (a) the 0.05s timer firing LATE
+        # vs the 0.15s sleep (the chain force-resolve), AND (b) the watchdog's chain_timeout_fired
+        # WAL append being fire-and-forget — asyncio.run(go())'s shutdown does NOT reliably drain
+        # it (3/15 spurious reds on the WAL assert even after fixing (a) alone). Waiting on the
+        # durable WAL event covers BOTH: the event is emitted with the force-resolve, so its
+        # presence implies the chain is resolved too. Bounded; on a genuine stall wait_until returns
+        # False and both asserts still fail truthfully.
+        def _timeout_fired_durable() -> bool:
+            return any(
+                e.get("kind") == "chain_timeout_fired"
+                and e.get("chain_id") == "chain-timeout-post-001"
+                for e in state_log.iter_from(0)
+            )
+
+        await wait_until(_timeout_fired_durable)
 
     asyncio.run(go())
 

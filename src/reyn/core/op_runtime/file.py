@@ -295,45 +295,70 @@ async def handle(op: FileIROp, ctx: OpContext, caller: Literal["preprocessor", "
         # charset-normalizer); the plain-UTF-8 fast path keeps the result shape
         # byte-identical (no `encoding` field) for the common case.
         _enc_field = {"encoding": _detected_encoding} if _detected_encoding else {}
-        explicit_bounded = op.offset is not None or op.limit is not None
-        if explicit_bounded:
-            # Caller asked for an explicit window — honor it verbatim.
+        # #2335: read MODE. An explicit LINE window (offset/limit given, no char_offset) is honored
+        # VERBATIM — the LLM's line-based read contract, byte-identical (a huge explicit window is
+        # NOT self-bounded → the generic offload handles it; consistent + non-recursing since its
+        # retrieval is an unbounded read → self-bounding → exempt). Otherwise (an unbounded read, OR
+        # a char_offset mid-line RESUME) the read is SELF-BOUNDING.
+        explicit_line_window = (
+            op.offset is not None or op.limit is not None
+        ) and op.char_offset is None
+        if explicit_line_window:
+            # Caller asked for an explicit LINE window — honor it verbatim.
             lines = content.splitlines(keepends=True)
             start = op.offset or 0
             sliced = lines[start:start + op.limit] if op.limit is not None else lines[start:]
-            content = "".join(sliced)
             ctx.events.emit("tool_executed", op="read_file", path=op.path)
             return {
                 "kind": "file",
                 "op": "read",
                 "path": op.path,
                 "status": "ok",
-                "content": content,
+                "content": "".join(sliced),
                 **_enc_field,
             }
 
-        # #1209 (1) read-bounding, bound-only-when-over: an UNBOUNDED read whose
-        # content exceeds the window-derived inline cap is truncated to a head
-        # window and flagged with a STRUCTURAL truncation signal in SEPARATE
-        # fields (not embedded in `content`). This keeps the content in the
-        # model's decide context instead of being offloaded out of view (the
-        # apply-starvation root cause, #1209); the model pages the rest via
-        # `next_offset`. Small reads are returned unchanged.
+        # #1209 read-bounding (keep-in-decide-context, not offloaded-out-of-view) + #2335 char-level
+        # truncation. Accumulate WHOLE lines from (start_line, start_char); a multi-line overflow
+        # stops at the LINE boundary (byte-identical to pre-#2335 — next_char_offset stays absent);
+        # a SINGLE line/segment that alone exceeds the cap is CHAR-truncated so `content` is
+        # GENUINELY ≤ cap (honest `_self_bounded`, #2335 fix), its tail paged via next_char_offset.
         cap = _read_inline_cap(ctx)
-        if len(content) > cap:
-            all_lines = content.splitlines(keepends=True)
-            shown: list[str] = []
-            acc = 0
-            for line in all_lines:
-                if shown and acc + len(line) > cap:
-                    break
-                shown.append(line)
-                acc += len(line)
+        all_lines = content.splitlines(keepends=True)
+        start_line = op.offset or 0
+        start_char = op.char_offset or 0
+        shown: list[str] = []
+        acc = 0
+        next_offset: "int | None" = None
+        next_char_offset: "int | None" = None
+        i = start_line
+        seg_start = start_char
+        while i < len(all_lines):
+            seg = all_lines[i][seg_start:]
+            if shown and acc + len(seg) > cap:
+                # A subsequent line overflows → stop at the LINE boundary (exclude it; the
+                # continuation is a normal line read at its start). Pre-#2335 behavior.
+                next_offset = i
+                break
+            if not shown and len(seg) > cap:
+                # #2335: a single line/segment ALONE exceeds the cap → char-truncate for an honest
+                # bound; its tail resumes mid-line via next_char_offset.
+                shown.append(seg[:cap])
+                acc += cap
+                next_offset = i
+                next_char_offset = seg_start + cap
+                break
+            shown.append(seg)
+            acc += len(seg)
+            i += 1
+            seg_start = 0
+
+        if next_offset is not None:
             ctx.events.emit(
                 "tool_executed", op="read_file", path=op.path,
                 truncated=True, shown_lines=len(shown), total_lines=len(all_lines),
             )
-            return {
+            result: dict = {
                 "kind": "file",
                 "op": "read",
                 "path": op.path,
@@ -341,24 +366,26 @@ async def handle(op: FileIROp, ctx: OpContext, caller: Literal["preprocessor", "
                 "content": "".join(shown),
                 "shown_lines": len(shown),
                 "total_lines": len(all_lines),
-                "next_offset": len(shown),
+                "next_offset": next_offset,
                 "total_chars": len(content),
-                # #2296: content is bound ≤ the inline cap BY CONSTRUCTION (this is the
-                # self-bounding truncated path) → exempt from the generic control_ir offload,
-                # which would otherwise re-offload it on envelope size alone and recurse.
+                # #2296: content bound ≤ the inline cap BY CONSTRUCTION → exempt from the generic
+                # control_ir offload (else re-offload on envelope size alone and recurse).
                 "_self_bounded": True,
                 **_enc_field,
             }
+            if next_char_offset is not None:
+                # #2335: mid-line resume position (set ONLY when a single line was char-truncated).
+                result["next_char_offset"] = next_char_offset
+            return result
+
         ctx.events.emit("tool_executed", op="read_file", path=op.path)
         return {
             "kind": "file",
             "op": "read",
             "path": op.path,
             "status": "ok",
-            "content": content,
-            # #2296: an unbounded read whose content is already ≤ the inline cap (the OK-near-cap
-            # edge: not truncated, but content+envelope can exceed cap) → self-bounded by
-            # construction → exempt from the generic control_ir offload (else re-offload + recurse).
+            "content": "".join(shown),
+            # #2296: content ≤ the inline cap by construction → exempt from the generic offload.
             "_self_bounded": True,
             **_enc_field,
         }

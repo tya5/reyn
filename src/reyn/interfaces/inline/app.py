@@ -428,6 +428,8 @@ async def run_inline_input(registry, renderer, config=None) -> None:
     sections — backward-compatible.
     """
     attached = registry.attached_session()
+    if attached is None:
+        raise RuntimeError("run_inline_input: no session attached (call registry.attach() first)")
     history = FileHistory(str(attached.workspace_dir / ".input_history"))
     buf = Buffer(
         multiline=False, history=history,
@@ -898,4 +900,9 @@ async def _quit(registry, app, state: dict) -> None:
         # Log and suppress — a shutdown exception must not prevent app.exit()
         # from running (the PT app would hang with no escape path).
         logger.exception("registry shutdown failed during quit")
-    app.exit()
+    finally:
+        # asyncio.CancelledError (BaseException, not caught by `except Exception`
+        # above) must also reach app.exit() — without finally, a cancelled _quit
+        # task leaves state["quitting"]=True with app.exit() never called, hanging
+        # the PT application with no escape path.
+        app.exit()

@@ -353,7 +353,7 @@ def _summarize_result(tool, result) -> str:
             if isinstance(content, str):
                 lines = content.count("\n") + (1 if content else 0)
                 more = " (truncated)" if status == "truncated" else ""
-                return f"Read {lines} lines{more}"
+                return f"Read {lines} line{'s' if lines != 1 else ''}{more}"
             # A read whose content wasn't a usable string (e.g. None on an error
             # result): prefer the status (handled below) if any, else a clean
             # note — never fall through to dumping the raw dict repr.

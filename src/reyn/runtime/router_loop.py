@@ -3027,12 +3027,24 @@ class RouterLoop:
         return actions
 
     async def dispatch(self, actions: list[dict]) -> list[dict]:
-        """SchemeOps.dispatch: run the resolved (exclude-cleared) actions in parallel
-        via the OS dispatch substrate (the former gather of _execute_tool's dispatch
-        half)."""
-        results = await asyncio.gather(*[
-            self._dispatch_resolved(a["name"], a["args"]) for a in actions
-        ])
+        """SchemeOps.dispatch: run the resolved (exclude-cleared) actions SERIALLY in
+        declaration order via the OS dispatch substrate.
+
+        #2344 (owner design decision): the chat axis must NOT unilaterally parallelize
+        stacked tool_calls. The LLM API returns tool_calls as an ordered list but does
+        not guarantee they are independent/parallel-safe, and there is no
+        workspace-write lock — a concurrent gather races on order-dependent calls (e.g.
+        write-a-file then read-it-back). The faithful default is serial in declaration
+        order, which also matches the phase axis (``control_ir_executor`` is already a
+        serial ``for op in ops: await``). Ordering (``tool_calls[i]`` ↔
+        ``tool_results[i]``) is unchanged — the append preserves declaration order the
+        same way ``gather`` did. Error semantics are unchanged: ``dispatch_tool``
+        normalizes every exception to ``{status: error}`` and never raises, so serial
+        does not short-circuit (every call still runs). The only thing given up is
+        parallel latency for genuinely-independent calls."""
+        results: list[dict] = []
+        for a in actions:
+            results.append(await self._dispatch_resolved(a["name"], a["args"]))
         # FP-0050/#1822 S2: tag untrusted-source results by the EFFECTIVE resolved
         # name (``a["name"]``). feedback() iterates the raw tool_calls whose name
         # may be the ``invoke_action`` wrapper, so classifying there would miss
