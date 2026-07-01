@@ -104,6 +104,26 @@ class ConfigGenerationStore:
         )
         return seq, content if isinstance(content, dict) else {}
 
+    def latest_active(self, rel_path: str, state_log: object) -> "tuple[int, dict] | None":
+        """The (seq, content) of the highest generation for `rel_path` on the ACTIVE WAL
+        branch (``is_active_seq``), or None when no active generation exists.
+
+        #2405: ``latest_at_or_below(cut=N)`` has the symmetric gap — post-rewind active
+        generations (seq > R > N) are excluded, reverting config to as-of-N on crash
+        recovery. ``is_active_seq`` covers all three regions correctly:
+        • Pre-target (seq ≤ N): ``is_active_seq=True`` → applied.
+        • Abandoned branch (N < seq < R): ``is_active_seq=False`` → skipped.
+        • Post-rewind active (seq > R): ``is_active_seq=True`` → applied."""
+        from reyn.core.events.snapshot_generations import is_active_seq  # noqa: PLC0415
+        seqs = [s for s in self._entries().get(rel_path, ()) if is_active_seq(state_log, s)]
+        if not seqs:
+            return None
+        seq = seqs[-1]
+        content = yaml.safe_load(
+            self._path_for(rel_path, seq).read_text(encoding="utf-8")
+        )
+        return seq, content if isinstance(content, dict) else {}
+
     def prune_below(self, min_keep_seq: int) -> int:
         """Drop generations with seq < `min_keep_seq` — EXCEPT, per registry, the single
         highest generation < `min_keep_seq` (the truncation-surviving BASE: a rewind target

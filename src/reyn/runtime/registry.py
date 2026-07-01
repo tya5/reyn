@@ -1546,16 +1546,26 @@ class AgentRegistry:
 
     def _reconcile_topologies_as_of_cut(self, cut: int) -> None:
         """#2103 Piece-2: reconstruct the topology config-set as-of-cut from the
-        lifecycle WAL (WAL-sourced only — never the rotated audit log). Per WAL-tracked
-        topology name, the LATEST event with seq ≤ cut decides: created/updated → exists
-        with that FULL config; removed (or no event ≤ cut, i.e. created-after-cut) →
+        lifecycle WAL (WAL-sourced only — never the rotated audit log). The LATEST
+        ACTIVE event decides per WAL-tracked topology name: created/updated → exists
+        with that FULL config; removed (or no active event, i.e. created-after-cut) →
         gone. Reconcile both the on-disk YAML and the in-memory ``_topologies`` map.
         MUST-2: ONLY WAL-tracked names are touched — untracked/pre-WAL topologies are
-        never created, mutated, or deleted here. Inert without lifecycle events."""
+        never created, mutated, or deleted here. Inert without lifecycle events.
+
+        #2405: ``is_active_seq`` replaces the former ``e[0] ≤ cut`` filter — same
+        symmetric gap as vanish/archive: post-rewind active mutations (seq > R) were
+        excluded, reverting topology state to as-of-N on crash recovery."""
         for name, evs in self._topology_lifecycle().items():
-            latest = max(
-                (e for e in evs if e[0] <= cut), key=lambda e: e[0], default=None,
-            )
+            if self._state_log is not None:
+                latest = max(
+                    (e for e in evs if is_active_seq(self._state_log, e[0])),
+                    key=lambda e: e[0], default=None,
+                )
+            else:
+                latest = max(
+                    (e for e in evs if e[0] <= cut), key=lambda e: e[0], default=None,
+                )
             path = self._topology_dir / f"{name}.yaml"
             if latest is None or latest[1] == "topology_removed":
                 # Didn't exist as-of-cut (created-after-cut OR removed-≤-cut) → drop.
@@ -1631,7 +1641,17 @@ class AgentRegistry:
         """#2259 PR-1b: per-agent identity + frozen lineage as-of-cut from the truncation-
         surviving generations — the latest generation ≤ cut per agent. Returns
         ``{name: (create_seq, spawn_parent, spawn_parent_seq)}``. The rewind rebuild prefers
-        this (survives truncation) over the `agent_created` WAL scan."""
+        this (survives truncation) over the `agent_created` WAL scan.
+
+        #2405: ``≤ cut`` here is INTENTIONAL — unlike topology/config (which change
+        post-rewind and must use ``is_active_seq``), agent identity is SET ONCE at spawn
+        and never mutated. ``cut = drop_cut = N`` recovers the truncation-surviving
+        pre-N lineage (the security linchpin for ⊆-parent caps after WAL truncation).
+        Post-rewind active agents (C' > R) are NEW entities whose first generation is at
+        seq > R > N — not "updated" versions of pre-N agents. Their identity is not
+        established as-of-N and is set fresh when first accessed via ``spawn_recorded``
+        (line 654). The WAL-scan fallback at the call site (``ag_created`` loop) uses
+        the same ``≤ drop_cut`` for the same reason."""
         store = self._agent_identity_generation_store()
         out: dict[str, tuple[int, str | None, int | None]] = {}
         for name in store.names():
@@ -1661,16 +1681,24 @@ class AgentRegistry:
     def _reconcile_config_as_of_cut(self, cut: int) -> None:
         """#2259 PR-1: reconstruct the recovery-core config registries as-of-cut from the
         config GENERATIONS (truncation-surviving, full-state). Per registry, restore the
-        LATEST generation with seq ≤ cut (each generation is complete — no forward-replay). A
-        registry whose first generation is AFTER the cut didn't exist as-of-cut → removed.
+        LATEST ACTIVE generation (each generation is complete — no forward-replay). A
+        registry with no active generation didn't exist on the active branch → removed.
         Only generation-tracked registries are touched (operator-owned / pre-feature yaml with
         no generation is left alone). This survives WAL truncation — the bug the former
-        event-replay reconstruct had (config_changed below the floor was lost)."""
+        event-replay reconstruct had (config_changed below the floor was lost).
+
+        #2405: ``is_active_seq``-based ``latest_active`` replaces ``latest_at_or_below(cut=N)``
+        — same symmetric gap as topology/vanish/archive: post-rewind active config generations
+        (seq > R) were excluded, reverting config to as-of-N on crash recovery."""
         import yaml  # noqa: PLC0415 — local, matching the file convention
 
         store = self._config_generation_store()
         for rel_path in store.paths():
-            latest = store.latest_at_or_below(rel_path, cut)
+            latest = (
+                store.latest_active(rel_path, self._state_log)
+                if self._state_log is not None
+                else store.latest_at_or_below(rel_path, cut)
+            )
             abs_path = (self._project_root / ".reyn" / rel_path).resolve()
             if latest is None:
                 # First generation after the cut → didn't exist as-of-cut → drop.
