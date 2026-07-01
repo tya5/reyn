@@ -11,6 +11,8 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+import pytest
+
 _SRC = Path(__file__).parent.parent / "src"
 if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
@@ -63,6 +65,18 @@ def test_encode_decode_roundtrip_nested() -> None:
     """Tier 2: round-trip preserves a nested path whose segments contain no '__'."""
     path = "a/b/c/d.yaml"
     assert _decode(_encode(path)) == path
+
+
+def test_encode_rejects_double_underscore_in_path() -> None:
+    """Tier 2: #2352 — _encode RAISES on a rel_path containing '__'. The encoding maps '/' → '__'
+    and is injective ONLY for '__'-free paths, so a segment with '__' would silently collide two
+    distinct config paths onto one generation file (wrong generation on config-rewind = a
+    durability keying corruption). The guard enforces the '__'-free invariant loud. RED before the
+    guard: _encode('a__b/c.yaml') silently returned 'a__b__c.yaml' → _decode → 'a/b/c.yaml' ≠ the
+    original. Real config-registry paths stay '__'-free, so existing generation file names are
+    unchanged (no migration)."""
+    with pytest.raises(ValueError, match="must not contain '__'"):
+        _encode("a__b/c.yaml")
 
 
 # ---------------------------------------------------------------------------
