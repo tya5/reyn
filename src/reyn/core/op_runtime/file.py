@@ -343,6 +343,10 @@ async def handle(op: FileIROp, ctx: OpContext, caller: Literal["preprocessor", "
                 "total_lines": len(all_lines),
                 "next_offset": len(shown),
                 "total_chars": len(content),
+                # #2296: content is bound ≤ the inline cap BY CONSTRUCTION (this is the
+                # self-bounding truncated path) → exempt from the generic control_ir offload,
+                # which would otherwise re-offload it on envelope size alone and recurse.
+                "_self_bounded": True,
                 **_enc_field,
             }
         ctx.events.emit("tool_executed", op="read_file", path=op.path)
@@ -352,6 +356,10 @@ async def handle(op: FileIROp, ctx: OpContext, caller: Literal["preprocessor", "
             "path": op.path,
             "status": "ok",
             "content": content,
+            # #2296: an unbounded read whose content is already ≤ the inline cap (the OK-near-cap
+            # edge: not truncated, but content+envelope can exceed cap) → self-bounded by
+            # construction → exempt from the generic control_ir offload (else re-offload + recurse).
+            "_self_bounded": True,
             **_enc_field,
         }
 
