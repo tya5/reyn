@@ -233,13 +233,15 @@ async def test_wait_for_answer_returns_intervention_answer(tmp_path, monkeypatch
     assert history[0]["text"] == "Tokyo"
     assert history[0]["meta"]["intervention_id"] == iv.id
 
-    # Verify outbox: intervention announcement + intervention_resolved.
+    # Verify outbox: intervention announcement is present; intervention_resolved
+    # is NOT emitted (it was TUI-only widget-removal scaffolding; the inline CUI
+    # detects resolution via poll — emitting it leaks as two blank lines).
     outbox_kinds = [m.kind for m in outbox]
     assert "intervention" in outbox_kinds, (
         "announce must put an 'intervention' message in outbox"
     )
-    assert "intervention_resolved" in outbox_kinds, (
-        "successful answer must put 'intervention_resolved' in outbox"
+    assert "intervention_resolved" not in outbox_kinds, (
+        "intervention_resolved must NOT reach the outbox — no live consumer"
     )
 
     # Verify WAL has both dispatched and resolved events.
