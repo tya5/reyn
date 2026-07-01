@@ -1,22 +1,16 @@
-"""Tier 2: __attach_request__ is forwarded to repl_outbox after attach swap (issue #191).
+"""Tier 2: __attach_request__ swaps the attached agent but does not re-post to repl_outbox.
 
-Pre-fix, ``AgentRegistry._forwarder`` consumed ``__attach_request__`` as a
-control signal — it called ``self.attach(msg.text)`` and ``continue``'d,
-swallowing the message before it reached ``repl_outbox``.  The TUI's
-``_on_attach_request`` handler (= header label refresh) is wired but
-never fires, so the header stays frozen at the previous agent name.
+``AgentRegistry._forwarder`` processes ``__attach_request__`` as a
+control signal: ``attach()`` swaps the active agent, then ``continue``
+discards the message without forwarding it to ``repl_outbox``.
 
-Fix: after ``self.attach(...)`` succeeds, the registry forwards the
-same ``__attach_request__`` message to ``repl_outbox`` so downstream
-consumers (= TUI app_outbox) see the switch and refresh the header.
-
-This test pins:
-  1. The forwarder is started by ``attach()`` and pumps the agent outbox.
-  2. A ``__attach_request__("beta")`` on alpha's outbox causes the
-     registry to swap the attached agent to beta AND to forward the
-     same message to ``repl_outbox`` (= header-refresh signal).
-  3. Bad target (= unknown agent name) is rejected: no attach swap and
-     no repl_outbox forward (= silent drop, no spurious TUI refresh).
+This file pins:
+  1. A ``__attach_request__("beta")`` on alpha's outbox swaps the attached
+     agent to beta (control path intact).
+  2. ``repl_outbox`` is empty after the swap — no re-post occurs.
+  3. An unknown target (= registry.exists() is False) does not swap and
+     does not forward — unchanged behavior proves the control path is not
+     broken by the removal.
 """
 from __future__ import annotations
 
@@ -34,13 +28,7 @@ class _FakeInterventions:
 
 
 class _FakeSession:
-    """Minimal stand-in for Session that AgentRegistry can attach.
-
-    Only exposes the attributes the registry's attach() + _forwarder()
-    paths read (= .outbox, .is_attached, .run, ._interventions). The
-    session.run() coroutine sleeps forever until cancelled — matches a
-    real session that runs until shutdown.
-    """
+    """Minimal Session stand-in for AgentRegistry attach() + _forwarder() paths."""
 
     def __init__(self) -> None:
         self.outbox: asyncio.Queue = asyncio.Queue()
@@ -48,8 +36,6 @@ class _FakeSession:
         self._interventions = _FakeInterventions()
 
     async def run(self) -> None:
-        # Sleep forever; registry cancels via shutdown which we don't
-        # exercise here. The test's tmp_path teardown collects the task.
         try:
             await asyncio.sleep(3600)
         except asyncio.CancelledError:
@@ -57,14 +43,12 @@ class _FakeSession:
 
 
 def _build_registry(tmp_path: Path):
-    """Real ``AgentRegistry`` with a session factory returning _FakeSession."""
+    """Real AgentRegistry with a session factory returning _FakeSession."""
     from reyn.runtime.registry import AgentRegistry
 
     sessions: dict[str, _FakeSession] = {}
 
     def _factory(profile) -> _FakeSession:
-        # Return a cached session per agent name so attach() sees the
-        # same outbox the test pushed messages onto.
         if profile.name not in sessions:
             sessions[profile.name] = _FakeSession()
         return sessions[profile.name]
@@ -74,72 +58,54 @@ def _build_registry(tmp_path: Path):
         session_factory=_factory,
         state_log=None,
     )
-    # Persist alpha + beta profiles so registry.exists("alpha"/"beta") is True.
     registry.create("alpha")
     registry.create("beta")
     return registry, sessions
 
 
 @pytest.mark.asyncio
-async def test_attach_request_forwards_to_repl_outbox(tmp_path):
-    """Tier 2: __attach_request__ on alpha's outbox swaps attach AND forwards.
+async def test_attach_request_swaps_but_does_not_repost(tmp_path):
+    """Tier 2: __attach_request__ swaps attach AND leaves repl_outbox empty.
 
-    Issue #191: the TUI header refresh handler subscribes to
-    ``__attach_request__`` on repl_outbox, but the registry was
-    consuming the message without forwarding. After this fix the
-    message reaches repl_outbox so the header refreshes correctly.
+    The control path (attach swap + continue) is intact. repl_outbox gets
+    no copy of the signal — there is no live downstream consumer for it.
+    If a re-post is silently re-added, this test goes RED, preventing
+    a bare-text leak through _output_loop.
     """
     registry, sessions = _build_registry(tmp_path)
 
-    # Attach alpha first — starts session.run() + _forwarder loop.
     await registry.attach("alpha")
     assert registry.attached_name == "alpha"
 
-    # User types `/attach beta` — slash command emits __attach_request__
-    # on alpha's outbox (= the currently attached agent's outbox).
     await sessions["alpha"].outbox.put(
         OutboxMessage(kind="__attach_request__", text="beta"),
     )
 
-    # The forwarder is an asyncio.Task; yield to let it process the message.
-    # 10 retries with short sleeps so the test is not racy on slow runners.
+    # Yield to the forwarder task; break as soon as the swap is detected.
     for _ in range(50):
         await asyncio.sleep(0.01)
         if registry.attached_name == "beta":
             break
 
-    # Attach swap happened.
+    # Control path intact: swap happened.
     assert registry.attached_name == "beta"
-
-    # And the message reached repl_outbox so TUI's _on_attach_request fires.
-    msg = registry.repl_outbox.get_nowait()
-    assert msg.kind == "__attach_request__"
-    assert msg.text == "beta"
+    # Re-post removal proven: outbox got nothing.
+    assert registry.repl_outbox.empty()
 
 
 @pytest.mark.asyncio
 async def test_attach_request_unknown_target_drops_silently(tmp_path):
-    """Tier 2: a __attach_request__ for an unknown agent does NOT forward.
-
-    Avoids spurious TUI header refresh when the user typo'd a non-
-    existent name — the slash layer surfaces the error separately;
-    the forwarder must not echo a bogus signal.
-    """
+    """Tier 2: __attach_request__ for an unknown agent does not swap or forward."""
     registry, sessions = _build_registry(tmp_path)
 
     await registry.attach("alpha")
 
-    # Bogus target — registry.exists("ghost") is False.
     await sessions["alpha"].outbox.put(
         OutboxMessage(kind="__attach_request__", text="ghost"),
     )
 
-    # Give the forwarder time to process.
     for _ in range(20):
         await asyncio.sleep(0.01)
 
-    # Attach did NOT swap.
     assert registry.attached_name == "alpha"
-
-    # And repl_outbox got no forward (= bogus target dropped).
     assert registry.repl_outbox.empty()

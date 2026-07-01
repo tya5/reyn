@@ -2642,12 +2642,10 @@ class AgentRegistry:
                 # User typed `/attach <other>` while this agent was attached.
                 if msg.text and self.exists(msg.text):
                     await self.attach(msg.text)
-                    # Issue #191: forward the message to the REPL so the
-                    # TUI's _on_attach_request handler fires and the
-                    # header / sticky status reflect the new agent. The
-                    # registry consumed the message as a control signal,
-                    # but TUI needs the same signal for render update.
-                    await self.repl_outbox.put(msg)
+                    # (Issue #191 re-post removed: that forwarded msg to the
+                    # Textual TUI's _on_attach_request for header refresh.
+                    # TUI deleted — re-post is dead code; _output_loop never
+                    # handled this kind, so only effect was a bare-text leak.)
                 continue
             if msg.kind == "__session_switch_request__":
                 # FP-0043 Stage 4a: `/session switch <sid>` — focus another session
@@ -2661,8 +2659,8 @@ class AgentRegistry:
                         await self.attach_session(name, msg.text)
                     except KeyError:
                         pass  # session vanished between validate + switch — no-op
-                    else:
-                        await self.repl_outbox.put(msg)
+                    # (re-post removed: was for Textual TUI header refresh — dead
+                    # code after TUI deletion; _output_loop never consumed it.)
                 continue
             if key == self._attached:
                 await self.repl_outbox.put(msg)

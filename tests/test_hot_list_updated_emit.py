@@ -1,37 +1,30 @@
-"""Tier 2: ChatLifecycleForwarder routes ``hot_list_updated`` events (#192).
+"""Tier 2: ChatLifecycleForwarder does NOT emit ``hot_list_updated`` messages.
 
-The :class:`~reyn.tools.action_usage_tracker.ActionUsageTracker` emits a
-``hot_list_updated`` event whenever the compacted ranking's qualified-name
-order changes. This file pins the forwarder-side contract:
+``on_hot_list_updated`` is not implemented in ChatLifecycleForwarder.
+A ``hot_list_updated`` event on the chat_events bus produces no outbox
+message (no live consumer: ws path drops this kind via ``_FORWARDED_KINDS``;
+``_output_loop`` never handled it).
 
-  - ``hot_list_updated`` event → ``OutboxMessage(kind="hot_list_updated")``
-    with the full ranking carried in ``meta["ranking"]``.
-  - Empty / missing ranking → outbox message with ``ranking=[]``
-    (= subscribers treat this as a reset signal).
-
-Tracker-side callback semantics (= when the order actually changes,
-freq+last_ts payload shape, exception swallowing) live in
-``tests/test_action_usage_tracker.py``. This file is forwarder-only.
+The underlying tracker event still fires on ``_chat_events``; only the
+outbox-forwarding path is absent.
 """
 from __future__ import annotations
 
 import asyncio
 import time
-from typing import Any
 
 from reyn.runtime.lifecycle_forwarder import ChatLifecycleForwarder
 from reyn.schemas.models import Event
 
 
-def _drain(q: asyncio.Queue) -> list[Any]:
-    items: list[Any] = []
-    while not q.empty():
-        items.append(q.get_nowait())
-    return items
+def test_hot_list_updated_does_not_reach_outbox() -> None:
+    """Tier 2: hot_list_updated event produces no outbox message.
 
-
-def test_lifecycle_forwarder_forwards_hot_list_updated() -> None:
-    """Tier 2: on_hot_list_updated → OutboxMessage(kind=hot_list_updated)."""
+    on_hot_list_updated is not present on ChatLifecycleForwarder — the
+    event dispatch finds no handler and the outbox stays empty. If the
+    handler is silently re-added this test goes RED, catching a dead-emit
+    revival before it can leak as a bare-text line through _output_loop.
+    """
     q: asyncio.Queue = asyncio.Queue()
     fwd = ChatLifecycleForwarder(q)
     fwd(Event(
@@ -41,18 +34,12 @@ def test_lifecycle_forwarder_forwards_hot_list_updated() -> None:
             {"qualified_name": "web__search", "freq": 2, "last_ts": time.time()},
         ]},
     ))
-    (msg,) = _drain(q)
-    assert msg.kind == "hot_list_updated"
-    assert msg.text == ""  # data signal, not display
-    ranking = msg.meta["ranking"]
-    assert [r["qualified_name"] for r in ranking] == ["file__read", "web__search"]
-    assert ranking[0]["freq"] == 5
+    assert q.empty()
 
 
-def test_lifecycle_forwarder_empty_ranking_ok() -> None:
-    """Tier 2: empty / missing ranking still emits with [] (= signals reset)."""
+def test_hot_list_updated_empty_ranking_does_not_reach_outbox() -> None:
+    """Tier 2: empty ranking hot_list_updated event also produces no outbox message."""
     q: asyncio.Queue = asyncio.Queue()
     fwd = ChatLifecycleForwarder(q)
     fwd(Event(type="hot_list_updated", data={}))
-    (msg,) = _drain(q)
-    assert msg.meta["ranking"] == []
+    assert q.empty()
