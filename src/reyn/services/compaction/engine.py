@@ -530,6 +530,90 @@ def compute_covers_through_seq(new_turn_seqs: list) -> int:
     return max(int(s) for s in new_turn_seqs)
 
 
+def _turn_role(t) -> "str | None":
+    """The turn's wire role (``agent`` → ``assistant``), from a dict or a ChatMessage."""
+    r = t.get("role") if isinstance(t, dict) else getattr(t, "role", None)
+    return "assistant" if r == "agent" else r
+
+
+def _is_assistant_with_tool_calls(t) -> bool:
+    if _turn_role(t) != "assistant":
+        return False
+    tc = t.get("tool_calls") if isinstance(t, dict) else getattr(t, "tool_calls", None)
+    return bool(tc)
+
+
+def _group_tool_cycles(turns: list) -> "list[list]":
+    """#2289: group each assistant-with-tool_calls turn together with its immediately-following
+    ``role=tool`` result turns into ONE atomic trim unit (a "tool cycle"); every other turn is a
+    singleton group. Trimming at group granularity keeps a tool_call and its results together, so a
+    token boundary can never split the pair (which would reach the wire as a dangling call / orphan
+    result → a provider 400 that the Layer-1 wire-repair then has to re-adjacency/synth/drop). This
+    is the prevention layer: with it, that repair only fires on the genuine edges (an over-budget
+    single cycle, or a rewind/interrupt mid-cycle)."""
+    groups: list[list] = []
+    i = 0
+    n = len(turns)
+    while i < n:
+        t = turns[i]
+        if _is_assistant_with_tool_calls(t):
+            group = [t]
+            j = i + 1
+            while j < n and _turn_role(turns[j]) == "tool":
+                group.append(turns[j])
+                j += 1
+            groups.append(group)
+            i = j
+        else:
+            groups.append([t])
+            i += 1
+    return groups
+
+
+def _emit_over_budget_group(events, group: list, budget: int, group_tokens: int, kind: str) -> None:
+    """A single group alone exceeds ``budget`` and is KEPT WHOLE (never split → no result loss).
+
+    A tool cycle emits ``tool_cycle_kept_whole_over_budget`` (NOT a truncation — the whole cycle
+    survives, over budget). A non-cycle singleton keeps the existing Axis-7 ``turn_too_large_
+    truncated`` (the single turn is included whole; content kept). NOTE (#1909): a tool cycle that
+    exceeds the MODEL's HARD context limit (not merely this compaction budget) cannot be fixed by
+    keep-whole — it would overflow at the provider. That is a tool-RESULT-size problem for op-level
+    result truncation / context-narrowing (#1909), out of scope for this trim."""
+    if events is None:
+        return
+    head = group[0]
+    seq = head.get("seq", 0) if isinstance(head, dict) else getattr(head, "seq", 0)
+    if _is_assistant_with_tool_calls(head):
+        events.emit(
+            "tool_cycle_kept_whole_over_budget",
+            turn_seq=seq, group_tokens=group_tokens, budget=budget, budget_kind=kind,
+        )
+    else:
+        events.emit(
+            "turn_too_large_truncated",
+            turn_seq=seq, original_tokens=group_tokens, kept_tokens=budget, budget_kind=kind,
+        )
+
+
+def _trim_groups(groups: "list[list]", max_tokens: int, model: str, use_chars4: bool,
+                 events, kind: str) -> "list[list]":
+    """Accumulate whole groups until the budget is exceeded — never splitting a group. A single
+    group alone over budget is kept WHOLE (#2289). Returns the kept groups in ``groups`` order."""
+    kept: list[list] = []
+    total = 0
+    for group in groups:
+        g_tokens = sum(estimate_tokens_for_turn(t, model, use_chars4=use_chars4) for t in group)
+        if kept and total + g_tokens > max_tokens:
+            break  # adding this whole group would exceed budget — stop (never split it)
+        if g_tokens > max_tokens:
+            _emit_over_budget_group(events, group, max_tokens, g_tokens, kind)
+            kept.append(group)
+            break
+        kept.append(group)
+        total += g_tokens
+    return kept
+
+
 def trim_head(
     turns: list,
     max_tokens: int,
@@ -540,33 +624,15 @@ def trim_head(
 ) -> list:
     """Return first turns until token budget exceeded — no turn count cap (Axis 3).
 
-    A single turn that alone exceeds max_tokens is truncated (content kept,
-    event emitted) and included in the result (Axis 7).
+    #2289: trims at tool-cycle-GROUP granularity (``_group_tool_cycles``), so a boundary never
+    splits a tool_call from its results. A single group alone exceeding ``max_tokens`` is kept whole
+    (Axis 7 keep-whole — no split, no result loss). For a non-tool history every turn is a singleton
+    group, so this is byte-identical to the message-level behavior.
     """
-    kept = []
-    total = 0
-    for t in turns:
-        t_tokens = estimate_tokens_for_turn(t, model, use_chars4=use_chars4)
-        if kept and total + t_tokens > max_tokens:
-            # Would exceed budget — stop before adding this turn.
-            break
-        if t_tokens > max_tokens:
-            # Single turn exceeds cap — include it, emit event (Axis 7).
-            if events is not None:
-                seq = t.get("seq", 0) if isinstance(t, dict) else getattr(t, "seq", 0)
-                events.emit(
-                    "turn_too_large_truncated",
-                    turn_seq=seq,
-                    original_tokens=t_tokens,
-                    kept_tokens=max_tokens,
-                    budget_kind="head",
-                )
-            kept.append(t)
-            total += max_tokens
-            break
-        kept.append(t)
-        total += t_tokens
-    return kept
+    kept = _trim_groups(
+        _group_tool_cycles(turns), max_tokens, model, use_chars4, events, "head",
+    )
+    return [t for group in kept for t in group]
 
 
 def trim_tail(
@@ -579,32 +645,14 @@ def trim_tail(
 ) -> list:
     """Return last turns until token budget exceeded — no turn count cap (Axis 3).
 
-    Walks from the tail backwards, then reverses the result.
-    A single turn that alone exceeds max_tokens is included and event emitted
-    (Axis 7).
+    #2289: group-aware (see ``trim_head``) — accumulates whole tool-cycle groups from the tail, so
+    a boundary never splits a pair. Byte-identical to message-level for non-tool histories.
     """
-    kept: list = []
-    total = 0
-    for t in reversed(turns):
-        t_tokens = estimate_tokens_for_turn(t, model, use_chars4=use_chars4)
-        if kept and total + t_tokens > max_tokens:
-            break
-        if t_tokens > max_tokens:
-            if events is not None:
-                seq = t.get("seq", 0) if isinstance(t, dict) else getattr(t, "seq", 0)
-                events.emit(
-                    "turn_too_large_truncated",
-                    turn_seq=seq,
-                    original_tokens=t_tokens,
-                    kept_tokens=max_tokens,
-                    budget_kind="tail",
-                )
-            kept.append(t)
-            total += max_tokens
-            break
-        kept.append(t)
-        total += t_tokens
-    return list(reversed(kept))
+    groups = _group_tool_cycles(turns)
+    kept_reversed = _trim_groups(
+        list(reversed(groups)), max_tokens, model, use_chars4, events, "tail",
+    )
+    return [t for group in reversed(kept_reversed) for t in group]
 
 
 def hard_truncate_summary(
