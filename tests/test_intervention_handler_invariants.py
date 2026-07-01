@@ -245,6 +245,15 @@ async def test_wait_for_answer_returns_intervention_answer(tmp_path, monkeypatch
     )
 
     # Verify WAL has both dispatched and resolved events.
+    # #2279: both are FIRE-AND-FORGET WAL appends (async-decoupled durability, #2259), so poll the
+    # WAL for BOTH before asserting — a REAL barrier on the asserted events. The wait_until above
+    # (line ~215) polled IN-MEMORY pending, NOT the WAL, so it is a FALSE barrier here; a raw read
+    # would race the appends' durability (the 3.12 flake root). This mirrors the file's other
+    # WAL-durability polls (e.g. the dispatched poll earlier).
+    await wait_until(
+        lambda: {"intervention_dispatched", "intervention_resolved"}
+        <= {e["kind"] for e in _wal_events(tmp_path)}
+    )
     events = _wal_events(tmp_path)
     kinds = [e["kind"] for e in events]
     assert "intervention_dispatched" in kinds
