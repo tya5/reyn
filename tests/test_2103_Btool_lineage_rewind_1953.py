@@ -15,6 +15,7 @@ from pathlib import Path
 
 import pytest
 
+from reyn.core.events.snapshot_generations import checkout, rewind
 from reyn.core.events.state_log import StateLog
 from reyn.runtime.profile import AgentProfile
 from reyn.runtime.registry import AgentRegistry
@@ -61,14 +62,18 @@ async def test_lineage_survives_rewind_round_trip_child_stays_capped(tmp_path):
     # C is spawned under P: its agent_created carries the parent lineage (the WAL carry).
     cseq = await log.append("agent_created", entity_kind="agent", name="C", sid="",
                             parent="P", profile={"name": "C", "role": ""})
+    # Rewind to BEFORE C's create: C's seq lands in the abandoned interval (cseq-1, R1).
+    R1 = await rewind(log, target_n=cseq - 1)   # makes is_active_seq(cseq)=False
 
     # drop C (simulate a prior-cut drop), then rewind to BEFORE C's create → stays gone.
     reg._drop_agent("C")
-    await reg._materialize_rewind(reconstruct_seq=log.current_seq, workspace_at_or_below=cseq - 1)
+    await reg._materialize_rewind(reconstruct_seq=R1, workspace_at_or_below=cseq - 1)
     assert not _agent_dir(tmp_path, "C").exists()  # C didn't exist as-of-cut
 
-    # forward-checkout PAST C's create → C re-materialised + lineage rebuilt → ⊆ P.
-    await reg._materialize_rewind(reconstruct_seq=log.current_seq, workspace_at_or_below=cseq)
+    # forward-checkout PAST C's create: Phase-2 checkout since cseq is now abandoned.
+    # checkout subsumes R1 (R1 falls in (cseq, R2)), leaving C's seq active again.
+    R2 = await checkout(log, target_seq=cseq)    # new active target; R1 subsumed
+    await reg._materialize_rewind(reconstruct_seq=R2, workspace_at_or_below=cseq)
     assert _agent_dir(tmp_path, "C").is_dir()  # re-materialised
     contextual, _ = reg.resolved_profile_for("C")
     assert contextual is not None
@@ -88,9 +93,11 @@ async def test_rewound_out_child_is_dropped_parent_survives(tmp_path):
     log = reg.state_log
     cseq = await log.append("agent_created", entity_kind="agent", name="C", sid="",
                             parent="P", profile={"name": "C", "role": ""})
+    # Rewind to BEFORE C's create: puts C's seq in the abandoned interval (cseq-1, R).
+    R = await rewind(log, target_n=cseq - 1)     # makes is_active_seq(cseq)=False
 
     # rewind to BEFORE C's create → C dropped (the rebuild excludes the absent child).
-    await reg._materialize_rewind(reconstruct_seq=log.current_seq, workspace_at_or_below=cseq - 1)
+    await reg._materialize_rewind(reconstruct_seq=R, workspace_at_or_below=cseq - 1)
     names = reg.list_names()
     assert "C" not in names      # the post-cut child is gone (no stale lineage to resolve)
     assert "P" in names          # the parent (present as-of-cut) survives
