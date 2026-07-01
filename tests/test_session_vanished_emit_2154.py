@@ -69,6 +69,10 @@ async def test_genuine_ephemeral_vanish_emits_session_vanished(tmp_path):
     if eph._vanish_task is not None:
         await eph._vanish_task
 
+    # #2279: session_vanished is a FIRE-AND-FORGET WAL append (async-decoupled durability, #2259) —
+    # drain the worker before the raw WAL read so the presence assert is deterministic (await'ing
+    # the vanish task does not guarantee its WAL append is durable).
+    await reg.state_log.flush()
     assert sid in _vanished_sids(reg.state_log, "alice")  # destroy recorded
 
 

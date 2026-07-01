@@ -33,6 +33,14 @@ def test_read_with_none_content_but_status_shows_status() -> None:
     assert out == "error"
 
 
+def test_file_read_singular_line() -> None:
+    """Tier 2: a single-line read says 'Read 1 line', not 'Read 1 lines'."""
+    out = summarize_tool_result(
+        "file__read", {"op": "read", "status": "ok", "content": "only one line"}
+    )
+    assert out == "Read 1 line"
+
+
 def test_file_read_truncated_is_flagged() -> None:
     """Tier 2: a truncated read says so."""
     out = summarize_tool_result(
@@ -45,6 +53,27 @@ def test_file_write_and_edit_name_the_path() -> None:
     """Tier 2: write / edit name the path."""
     assert summarize_tool_result("file__write", {"op": "write", "path": "f.py"}) == "Wrote f.py"
     assert summarize_tool_result("file__edit", {"op": "edit", "path": "g.py"}) == "Edited g.py"
+
+
+def test_file_create_treated_same_as_write() -> None:
+    """Tier 2: op='create' uses the same 'Wrote …' branch as 'write'.
+
+    A create op arriving from an MCP tool (or a future OS create op) must
+    not fall through to the raw-repr fallback — it shares the 'write|create'
+    branch. Pinning this prevents the branch being silently narrowed to
+    write-only.
+    """
+    assert summarize_tool_result("file__create", {"op": "create", "path": "new.py"}) == "Wrote new.py"
+
+
+def test_write_without_path_degrades_cleanly() -> None:
+    """Tier 2: a write result with no path field → 'Wrote file', not a crash."""
+    assert summarize_tool_result("file__write", {"op": "write"}) == "Wrote file"
+
+
+def test_edit_without_path_degrades_cleanly() -> None:
+    """Tier 2: an edit result with no path field → 'Edited file', not a crash."""
+    assert summarize_tool_result("file__edit", {"op": "edit"}) == "Edited file"
 
 
 def test_web_search_counts_results() -> None:
