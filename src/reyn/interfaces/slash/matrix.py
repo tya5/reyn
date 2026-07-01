@@ -1,19 +1,12 @@
-"""/matrix — hidden easter egg. Triggers the Matrix rain modal in the TUI.
+"""/matrix — hidden easter egg.
 
-Not listed in /help or the Tab palette. Type `/matrix` to invoke. Sends
-a special outbox kind that the TUI app intercepts (`__matrix__`) so this
-module stays decoupled from the renderer — `reyn chat --cui` falls back
-to a friendly inline message.
+Not listed in /help or the Tab palette. Type `/matrix` to invoke.
 """
 from __future__ import annotations
 
-from reyn.interfaces.slash import slash
-from reyn.runtime.outbox import OutboxMessage
+from reyn.interfaces.slash import reply, slash
 
 
 @slash("matrix", summary="Wake up, Neo.", hidden=True)
 async def matrix_cmd(session: "object", args: str) -> None:
-    await session._put_outbox(OutboxMessage(
-        kind="__matrix__",
-        text="There is no spoon.",
-    ))
+    await reply(session, "There is no spoon.")

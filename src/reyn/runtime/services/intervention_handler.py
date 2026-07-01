@@ -264,15 +264,6 @@ class InterventionHandler:
             choice_id=choice.id if choice else None,
             answer_text=text if not iv.choices else "",
         )
-        # Signal the TUI to remove the intervention widget (handles the case
-        # where the user answered via text input rather than clicking a chip
-        # button — the chip path calls InterventionWidget._submit which calls
-        # self.remove() itself; the text-input path skips that code path).
-        await self._put_outbox(OutboxMessage(
-            kind="intervention_resolved",
-            text="",
-            meta={"iv_id": iv.id, "run_id": iv.run_id or ""},
-        ))
         return True
 
     async def announce(self, iv: UserIntervention) -> None:
