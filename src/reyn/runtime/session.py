@@ -961,6 +961,14 @@ class Session:
         # reyn_source on the external-repo eval path so it doesn't compete with
         # file__* for the weak model); interactive default empty = reyn_source kept.
         self._excluded_categories = frozenset(excluded_categories or ())
+        # #2285: session-scoped LLM tool-VISIBILITY override — the capabilities the user toggled OFF
+        # via the status-bar, per kind. Applied as one more restrict-only ∩ conjunct ON TOP of the
+        # re-resolved agent envelope (_reapply_visibility_override), so it can only HIDE within the
+        # authorized set — visible ⊆ authorized by construction. In-memory (step1 live); step2 will
+        # persist it to the per-session config.yaml so resolved_profile_for(sid) re-derives it.
+        self._visibility_override: "dict[str, set[str]]" = {
+            "tool": set(), "skill": set(), "mcp": set(), "category": set(),
+        }
         # #187: per-message tool-call budget for the MAIN chat RouterLoop. The
         # interactive default (5) suits a human turn; an autonomous one-shot run
         # (`reyn chat --once` for SWE) needs far more (explore→edit→verify rounds),
@@ -2408,6 +2416,115 @@ class Session:
         self._excluded_categories = self._excluded_categories | frozenset(
             excluded_categories or ()
         )
+
+    # ── #2285: session-scoped LLM tool-VISIBILITY toggle (the status-bar seam) ──────────────
+
+    def _reapply_visibility_override(self) -> None:
+        """#2285: recompute the live tool gate from the agent envelope ∩ the session override.
+
+        SECURITY CORE (visible ⊆ authorized): re-resolves the WHOLE agent envelope from base
+        (topology bindings ∩ the #2081 delegate floor ∩ the persisted per-session config — via
+        ``resolved_profile_for``) and composes the in-memory override as ONE MORE restrict-only ∩
+        conjunct, then SETs both live fields (never a union — ``apply_per_session_narrowing`` unions
+        excluded, so it can't RE-WIDEN; re-resolve-from-base + SET can). Because the override only
+        adds deny/exclusion ON TOP of the envelope, a toggle can only HIDE within the authorized set
+        — toggle-ON discards from the override so the capability is restored *up to the envelope*,
+        never re-granted beyond it (an envelope-denied capability stays denied). The per-turn
+        RouterLoop reads these fields at construction, so the change is live next turn.
+        """
+        from reyn.security.permissions.capability_profile import (
+            CapabilityProfile,
+            compose_resolved,
+            resolve_profile,
+        )
+        from reyn.security.permissions.effective import ContextualPermission
+        from reyn.tools.universal_catalog import CATEGORIES
+
+        base_ctx: "object | None" = None
+        base_excl: "frozenset[str]" = frozenset()
+        if self._registry is not None and hasattr(self._registry, "resolved_profile_for"):
+            base_ctx, base_excl = self._registry.resolved_profile_for(
+                self.agent_name, sid=self._session_id,
+            )
+
+        ov = self._visibility_override
+        keep_categories: "tuple[str, ...] | None" = None
+        if ov["category"]:
+            keep_categories = tuple(c for c in CATEGORIES if c not in ov["category"])
+        override_profile = CapabilityProfile(
+            name="_session_visibility_override",
+            tool_deny=tuple(sorted(ov["tool"])),
+            skill_deny=tuple(sorted(ov["skill"])),
+            mcp_deny=tuple(sorted(ov["mcp"])),
+            categories=keep_categories,
+        )
+        final_ctx, final_excl = compose_resolved([
+            (base_ctx or ContextualPermission(), base_excl),
+            resolve_profile(override_profile),
+        ])
+        self._contextual_permission = final_ctx
+        self._excluded_categories = final_excl
+
+    def set_capability_visible(self, kind: str, name: str, visible: bool) -> None:
+        """#2285: toggle the session-visibility of a tool / skill / mcp / category (status-bar seam).
+
+        ``visible=False`` hides it from the LLM catalog next turn; ``visible=True`` restores it —
+        but only UP TO the agent envelope (toggling ON a capability the envelope denies is a no-op
+        for visibility: ``_reapply_visibility_override`` re-resolves from base, which still denies
+        it). Session-scoped (this sid only); live next turn; not persisted (step1)."""
+        if kind not in self._visibility_override:
+            raise ValueError(
+                f"unknown capability kind {kind!r} (expected tool / skill / mcp / category)"
+            )
+        if visible:
+            self._visibility_override[kind].discard(name)
+        else:
+            self._visibility_override[kind].add(name)
+        self._reapply_visibility_override()
+
+    def capability_visibility_state(self) -> dict:
+        """#2285: the status-bar's read model.
+
+        ``authorized`` = every capability the AGENT ENVELOPE permits for this session (topology ∩
+        delegate ∩ per-session config, WITHOUT the visibility override) — the full togglable
+        universe. ``hidden_by_session`` = the override set (what the user turned OFF). The UI renders
+        ``on = item not in hidden_by_session``. authorized is computed from the live catalogs
+        (tools / skills / mcp / categories) filtered by the envelope's ``allows`` — so it always
+        reflects visible ⊆ authorized (nothing outside the envelope is ever togglable)."""
+        from reyn.security.permissions.effective import CapabilityAxis, ContextualLayer
+        from reyn.tools import get_default_registry
+        from reyn.tools.universal_catalog import CATEGORIES
+
+        base_ctx: "object | None" = None
+        base_excl: "frozenset[str]" = frozenset()
+        if self._registry is not None and hasattr(self._registry, "resolved_profile_for"):
+            base_ctx, base_excl = self._registry.resolved_profile_for(
+                self.agent_name, sid=self._session_id,
+            )
+        ctx = ContextualLayer(base_ctx)  # the envelope gate (None → allows all)
+
+        authorized: "list[dict]" = []
+        for name in sorted(get_default_registry().names()):
+            if ctx.allows(CapabilityAxis.TOOL, name):
+                authorized.append({"kind": "tool", "name": name})
+        for skill in self._router_host.list_available_skills():
+            n = skill.get("name")
+            if n and ctx.allows(CapabilityAxis.SKILL, n):
+                authorized.append({"kind": "skill", "name": n})
+        for server in self._router_host.get_mcp_servers():
+            n = server.get("name")
+            if n and ctx.allows(CapabilityAxis.MCP, n):
+                authorized.append({"kind": "mcp", "name": n})
+        for category in CATEGORIES:
+            if category not in base_excl:
+                authorized.append({"kind": "category", "name": category})
+
+        hidden = [
+            {"kind": kind, "name": name}
+            for kind, names in self._visibility_override.items()
+            for name in sorted(names)
+        ]
+        return {"authorized": authorized, "hidden_by_session": hidden}
 
     @property
     def current_snapshot(self) -> "AgentSnapshot":
