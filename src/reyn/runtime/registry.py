@@ -1494,34 +1494,27 @@ class AgentRegistry:
         )
         prof.save(self._dir / name)
 
-    def _reconcile_archived_as_of_cut(
-        self, archived: "dict[str, int]", cut: int, has_rewind: bool = False,
-    ) -> None:
+    def _reconcile_archived_as_of_cut(self, archived: "dict[str, int]") -> None:
         """#2103 S2: rewrite each present agent's ``.archived`` tombstone to the
-        as-of-cut archived-state — archived iff its archival event "applies":
+        as-of-cut archived-state, using ``is_active_seq`` as the canonical predicate:
 
-        • No rewind record (``has_rewind=False``): the original single-cut ``aseq ≤ cut``
-          check — archived before/at the target N → write; archived after → clear.
-        • Rewind record exists (``has_rewind=True``): use ``is_active_seq(aseq)`` to
-          distinguish the three regions — pre-target (aseq ≤ N, active → write), abandoned
-          branch (N < aseq < R, inactive → clear), post-rewind active (aseq > R, active →
-          write). The single-cut ``aseq ≤ cut`` had a symmetric gap: a post-rewind archive
-          (aseq > R > N) gave aseq > N → marker unlinked → agent un-archived on crash
-          recovery.
+        • Pre-target (aseq ≤ N): ``is_active_seq=True`` → write marker (was archived).
+        • Abandoned branch (N < aseq < R): ``is_active_seq=False`` → clear marker
+          (agent was active as-of-target; the archival is on the discarded branch).
+        • Post-rewind active (aseq > R): ``is_active_seq=True`` → write marker (the
+          archival happened after the completed rewind and must be preserved).
 
-        Inert when no ``agent_archived`` events exist (the #1954 file-only tombstone
-        is left untouched)."""
+        The single-cut ``aseq ≤ N`` had a symmetric gap: a post-rewind archive
+        (aseq > R > N) gave aseq > N → marker unlinked → agent un-archived on crash
+        recovery. Both production callers guarantee a rewind record exists (see
+        comment at the ``drop_cut`` assignment above). Inert when no ``agent_archived``
+        events exist (the #1954 file-only tombstone is left untouched)."""
         for name, aseq in archived.items():
             target = self._dir / name
             if not target.is_dir():
                 continue
             marker = target / ARCHIVED_MARKER
-            _applies = (
-                is_active_seq(self._state_log, aseq)  # type: ignore[arg-type]
-                if has_rewind
-                else aseq <= cut
-            )
-            if _applies:
+            if self._state_log is not None and is_active_seq(self._state_log, aseq):
                 marker.write_text(str(aseq), encoding="utf-8")
             elif marker.is_file():
                 marker.unlink()
@@ -1863,17 +1856,13 @@ class AgentRegistry:
         #     post-rewind active agents at C' > R are IS active, so NOT dropped.
         # Using the single-cut ``agent_seq > drop_cut`` would drop post-rewind active
         # agents (C' > R > N = drop_cut) on a crash after a completed rewind.
-        # ``vanished_by_cut`` / ``_reconcile_archived_as_of_cut`` use the SAME predicate
-        # when a rewind record exists (``_has_rewind``):
+        # ``vanished_by_cut`` and ``_reconcile_archived_as_of_cut`` use the SAME predicate:
         #   V ≤ N OR V > R (both ``is_active_seq=True``) → drop / write marker
         #   N < V < R (``is_active_seq=False``) → keep / clear marker
-        # Without a rewind record ``is_active_seq`` is True for ALL seqs (no abandoned
-        # intervals), so the plain ``≤ drop_cut`` fallback is used instead.
+        # Both production callers guarantee a rewind record exists before calling here
+        # (rewind_to appends it at line 1091 before line 1095; recover_rewind_if_needed
+        # gates on active_rewind_target is not None at line 2011 before line 2014).
         drop_cut = workspace_at_or_below
-        _has_rewind = (
-            self._state_log is not None
-            and active_rewind_target(self._state_log) is not None
-        )
         # #2103 S2 re-materialise: an agent on the ACTIVE branch, NOT purged, currently
         # ABSENT (dropped at a prior cut) → re-create from its agent_created record
         # so a forward-checkout-past-drop brings it back (the inverse of the drop).
@@ -1915,11 +1904,8 @@ class AgentRegistry:
                 )
                 vanished_by_cut = (
                     van_seq is not None
-                    and (
-                        is_active_seq(self._state_log, van_seq)
-                        if _has_rewind
-                        else van_seq <= drop_cut
-                    )
+                    and self._state_log is not None
+                    and is_active_seq(self._state_log, van_seq)
                 )
                 if spawned_after_cut or vanished_by_cut:
                     # #2125/#2180: detach now (quiesce in-flight writes; the global Task
@@ -1947,7 +1933,7 @@ class AgentRegistry:
                 agents.append(name if sid == _DEFAULT_SID else f"{name}/{sid}")
         # #2103 S2: rewrite present agents' .archived tombstones to the as-of-cut
         # archived-state (rewind-before-archive → active; rewind-after → archived).
-        self._reconcile_archived_as_of_cut(ag_archived, drop_cut, _has_rewind)
+        self._reconcile_archived_as_of_cut(ag_archived)
         self._reconcile_topologies_as_of_cut(drop_cut)
         # #2259 PR-1: rebuild the recovery-core config registries (mcp/cron/hooks/…)
         # as-of-cut from the config GENERATIONS — same latest-≤-cut-wins model as topology.
