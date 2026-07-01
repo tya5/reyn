@@ -305,8 +305,10 @@ async def _kill_task(session: "Session", args: str) -> None:
         # Reuse the existing /skill discard implementation rather than
         # duplicating cancel+notify+complete logic. Lazy-import to avoid
         # circular imports at module load time.
+        # Pass --force: /tasks kill is an explicit intent — skip the
+        # two-step confirmation that /skill discard (without --force) shows.
         from reyn.interfaces.slash.skill import _discard_skill_run
-        await _discard_skill_run(session, resolved)
+        await _discard_skill_run(session, f"{resolved} --force")
     elif kind == "task":
         # A dynamic task: abort it via the backend (#2036 follow-up). abort()
         # transitions the task + its dependents out of the runnable set.
