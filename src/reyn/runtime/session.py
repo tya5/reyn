@@ -1797,7 +1797,7 @@ class Session:
         # compaction_controller=None here; patched below after construction.
         from reyn.runtime.services.router_history_buffer import RouterHistoryBuffer
         self._history_buffer = RouterHistoryBuffer(
-            history_fn=lambda: self.history,
+            history_fn=self._active_branch_history,
             compaction=self._compaction,
             compaction_controller=None,  # patched after CompactionController below
             # #1752: live resolved model — a /model override changes the context
@@ -2639,9 +2639,61 @@ class Session:
         if msg.role in ("user", "agent") and msg.seq == 0:
             msg.seq = self._next_seq
             self._next_seq += 1
+        # #2360: anchor each turn to the WAL seq at append time so the conversation
+        # rides the GLOBAL rewind/branch derivation (is_active_seq). Time-travel is
+        # global (checkout jumps the whole world's active cut), so a rewound world
+        # must hide conversation turns whose anchor is on an abandoned branch — else
+        # runtime state rewinds but the LLM still sees post-cut turns. meta is
+        # excluded from the wire dicts build_history emits, so wal_seq never reaches
+        # the LLM. Guarded on state_log presence (no WAL → no rewind → always visible)
+        # and skipped if already anchored (a re-append keeps its original anchor).
+        if self._state_log is not None and "wal_seq" not in msg.meta:
+            msg.meta["wal_seq"] = self._state_log.current_seq
         self.history.append(msg)
         with self.history_path.open("a", encoding="utf-8") as f:
             f.write(json.dumps(asdict(msg), ensure_ascii=False) + "\n")
+
+    def _active_branch_history(self) -> "list[ChatMessage]":
+        """#2360: the conversation turns visible on the current active branch.
+
+        The LLM-facing ``build_history`` slices whatever this returns, so filtering
+        here makes the conversation follow the GLOBAL time-travel cut without
+        touching the append-only ``history.jsonl``. Each turn carries a WAL anchor
+        (``meta['wal_seq']``, stamped at append); a turn is visible iff its anchor is
+        on the active branch as-of the current rewind cut — reusing the WAL
+        branch-derivation (``is_active_seq``). Rewind moves the cut back (higher
+        anchors drop out); fork-switch makes an alternate branch's anchors active;
+        the future/other-branch turns stay in the file, just outside the visible
+        prefix. Turns without an anchor (pre-#2360 entries, or no state_log) are
+        always visible (backward-compatible, no migration)."""
+        if self._state_log is None:
+            return self.history
+        from reyn.core.events.snapshot_generations import is_active_seq
+
+        def _active(seq: "int | None") -> bool:
+            return seq is None or is_active_seq(self._state_log, seq)
+
+        # #2360 (tool-cycle-aware): a GLOBAL cut lands at a WAL seq that may be a turn boundary for
+        # the rewound session but fall MID-tool-cycle for another session's conversation (the
+        # assistant tool_calls turn's anchor ≤ cut while its tool result turns' anchors > cut, or
+        # the reverse). A flat per-turn filter would then emit a dangling tool_calls-without-results
+        # or tool-result-without-tool_calls → provider BadRequest (the #2290/#2289 adjacency class).
+        # So a tool cycle (an assistant tool_calls turn + its immediately-following tool result
+        # turns) is ONE atomic visible unit, governed by the assistant turn's anchor: the whole
+        # cycle is visible iff that anchor is active. Well-formed by construction.
+        out: list[ChatMessage] = []
+        governing_seq: "int | None" = None  # the open cycle's assistant-tool_calls anchor
+        cycle_open = False
+        for m in self.history:
+            if m.role == "tool" and cycle_open:
+                eff = governing_seq  # a tool result inherits its cycle's visibility
+            else:
+                eff = m.meta.get("wal_seq")
+                cycle_open = m.role == "assistant" and bool(m.tool_calls)
+                governing_seq = eff if cycle_open else None
+            if _active(eff):
+                out.append(m)
+        return out
 
     def _handle_sender_attribution(self, payload: object) -> None:
         """Surface a sender transition to the LLM as a state_change entry
@@ -3096,6 +3148,24 @@ class Session:
         """
         # Snapshot the cache before the chain so we can detect a swap.
         snapshot_before = self._router_host.mcp_tools_cache_snapshot
+
+        # #2372: re-read the server ROSTER from the config cascade BEFORE the tool-probe
+        # chain. Refreshing the tools cache alone is insufficient — the LLM-facing
+        # enumeration (_get_mcp_servers_for_router → _mcp_servers_flat) gates on the roster,
+        # which is otherwise frozen at ctor (self._mcp_servers → adapter). A server installed
+        # mid-session (mcp_install writes the IN-set .reyn/config/mcp.yaml) has no roster entry
+        # to attach its tools to → never enumerated. load_config's cascade MERGES that IN-set
+        # (loader.py: dynamic_mcp), so re-reading here picks up the install. Multi-holder swap
+        # (mirrors _reapply_per_agent_capability): the Session field AND the adapter's roster —
+        # the enumeration reads the adapter's. Best-effort: a re-read failure keeps the old
+        # roster (never breaks the refresh).
+        try:
+            from reyn.config.loader import load_config
+            fresh_roster = load_config(self._hot_reload_project_root()).mcp
+            self._mcp_servers = fresh_roster
+            self._router_host._mcp_servers = fresh_roster
+        except Exception as exc:  # noqa: BLE001 — roster re-read is best-effort
+            logger.warning("refresh_mcp_servers: roster re-read failed: %r", exc)
 
         try:
             # Step 1 (S2): yaml mtime watch — re-probes when any yaml changed.
