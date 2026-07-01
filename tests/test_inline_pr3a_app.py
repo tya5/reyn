@@ -6,6 +6,7 @@ input path. Assertions are on public return values, not whitespace/private state
 """
 from __future__ import annotations
 
+import time
 from datetime import datetime, timezone
 
 from reyn.interfaces.inline.app import working_line
@@ -114,19 +115,17 @@ def test_cancelling_state_does_not_bleed_into_next_turn() -> None:
 
     The ConditionalContainer hides the working row when _thinking=False, so the old
     clear-in-_working_frags path was dead code. on_chat_event must reset the flag on
-    turn end so it never leaks. Verified via the working_line output (public surface):
-    after cancel + turn-end + new turn-start, the working row shows the normal shimmer,
-    not the cancellation indicator.
+    turn end so it never leaks. Verified via InlineChatRenderer.working_frags() —
+    the same public surface the app drives; no private state is read in setup or
+    assertion.
     """
     for end_event in ("turn_settled", "turn_completed", "turn_cancelled"):
         r = InlineChatRenderer()
         r.on_chat_event(_evt("turn_started"))
-        r._cancelling = True  # simulate: user pressed ctrl-c mid-turn
+        r.request_cancel()           # public API: simulate user pressing ctrl-c mid-turn
         r.on_chat_event(_evt(end_event))
-
-        # The next turn starts — read the working row with the renderer's current state.
-        frags = working_line(True, 0.0, 3.0, cancelling=r._cancelling)
-        text = "".join(t for _, t in frags)
+        r.on_chat_event(_evt("turn_started"))   # next turn begins
+        text = "".join(t for _, t in r.working_frags(time.monotonic()))
         assert "Cancelling" not in text, (
             f"after {end_event}, next turn still shows Cancelling indicator"
         )

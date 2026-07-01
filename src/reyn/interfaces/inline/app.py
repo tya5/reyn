@@ -460,13 +460,10 @@ async def run_inline_input(registry, renderer, config=None) -> None:
     region_holder: dict = {"key": None}
 
     def _working_frags() -> list:
-        thinking = getattr(renderer, "_thinking", False)
-        return working_line(
-            thinking,
-            getattr(renderer, "_think_start", 0.0),
-            time.monotonic(),
-            cancelling=getattr(renderer, "_cancelling", False),
-        )
+        wf = getattr(renderer, "working_frags", None)
+        if callable(wf):
+            return wf(time.monotonic())
+        return []
 
     working = ConditionalContainer(
         Window(FormattedTextControl(_working_frags), height=1),
@@ -683,7 +680,9 @@ async def run_inline_input(registry, renderer, config=None) -> None:
         # quit, matching the standard "ctrl-c to interrupt, ctrl-c again to exit"
         # pattern. Ctrl-D/Q always quit regardless of turn state.
         if getattr(renderer, "_thinking", False) and not getattr(renderer, "_cancelling", False):
-            renderer._cancelling = True
+            rc = getattr(renderer, "request_cancel", None)
+            if callable(rc):
+                rc()
             event.app.create_background_task(_cancel_turn(registry))
         else:
             event.app.create_background_task(_quit(registry, event.app, quitting))
