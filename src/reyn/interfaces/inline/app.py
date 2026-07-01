@@ -551,11 +551,12 @@ async def run_inline_input(registry, renderer, config=None) -> None:
     )
 
     def above_region_frags() -> list:
+        draw_cursor = above_region.cursor_on_selectable
         out: list = []
         for i, ln in enumerate(above_region.lines()):
             if i:
                 out.append(("", "\n"))
-            if i == above_region.cursor:
+            if draw_cursor and i == above_region.cursor:
                 out.append((f"fg:#0d0f12 bg:{_CC_ACCENT} bold", f" {ln} "))
             else:
                 out.append((f"fg:{_CC_DIM}", f"   {ln}"))
@@ -701,7 +702,7 @@ async def run_inline_input(registry, renderer, config=None) -> None:
 
     # Above-region focus navigation (inert until a consumer registers an element,
     # since the region stays invisible + unfocusable while empty). ↑↓ move the
-    # cursor, enter activates the focused row, esc returns to the input.
+    # cursor, enter activates the focused row, esc dismisses (cmd) or is blocked (iv).
     @kb.add("up", filter=has_focus(above_region_win))
     def _region_up(event) -> None:
         above_region.navigate(-1)
@@ -716,7 +717,20 @@ async def run_inline_input(registry, renderer, config=None) -> None:
 
     @kb.add("escape", filter=has_focus(above_region_win))
     def _region_esc(event) -> None:
-        event.app.layout.focus(input_win)
+        # Command-UI (rewind picker etc.): Escape dismisses — clear the pending
+        # request so _sync_region collapses the region on the next poll, then
+        # return focus to the input box.
+        # Intervention (confirm / select): Escape is a no-op. The same-key skip
+        # in _sync_region prevents re-grabbing focus if we move away here, which
+        # would leave the user unable to resolve a blocking intervention.
+        key = region_holder["key"]
+        if key and key.startswith("cmd:"):
+            s = registry.attached_session()
+            if s is not None:
+                s.set_pending_command_ui(None)
+            above_region.clear()
+            region_holder["key"] = None
+            event.app.layout.focus(input_win)
 
     def _show(element, key: str) -> None:
         above_region.clear()
