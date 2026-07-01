@@ -894,7 +894,8 @@ async def _quit(registry, app, state: dict) -> None:
     state["quitting"] = True
     try:
         await registry.shutdown()
-    finally:
-        # app.exit() must fire even if registry.shutdown() raises — an unhandled
-        # exception here leaves the PT app stuck with no escape path.
-        app.exit()
+    except Exception:
+        # Log and suppress — a shutdown exception must not prevent app.exit()
+        # from running (the PT app would hang with no escape path).
+        logger.exception("registry shutdown failed during quit")
+    app.exit()
