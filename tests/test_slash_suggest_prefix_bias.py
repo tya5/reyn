@@ -31,7 +31,7 @@ from reyn.interfaces.slash import suggest_for_unknown
 # Stable fixture list independent of live registry evolution.
 _NAMES = sorted([
     "agent", "agents", "answer", "budget", "cancel", "clear-history",
-    "copy", "cost", "docs-filter", "exit", "find", "help", "image",
+    "copy", "cost", "exit", "find", "help", "image",
     "list", "memory", "plan", "quit", "reset", "save", "skill",
     "skills", "tasks", "zen",
 ])

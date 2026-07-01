@@ -8,7 +8,7 @@ and the /help <cmd> focus panel both surface structured usage
 rows for them.
 
 Pinned:
-  - /cancel, /answer, /plan, /memory, /docs-filter, /skill,
+  - /cancel, /answer, /plan, /memory, /skill,
     /agent, /image, /reset, /budget all have non-empty
     ``usage`` set
   - usage strings follow the convention <arg> required,
@@ -20,7 +20,7 @@ Pinned:
 
 Hidden commands (matrix / donut / zen) and no-arg commands
 (/list / /skills / /cost / /pending /
-/quit / /exit / /cost-inline) intentionally do NOT get a
+/quit / /exit) intentionally do NOT get a
 usage line — they have no args to document. Pinned by spot
 checks to make sure no accidental opt-in slipped through.
 Note: /tasks is NOT no-arg — it has status/kill/list subcommands
@@ -41,7 +41,6 @@ _EXPECTED_USAGE: dict[str, str] = {
     "cancel":      "/cancel <id-prefix> [confirm]",
     "answer":      "/answer <id-prefix> <text>",
     "memory":      "/memory [list|view <name>]",
-    "docs-filter": "/docs-filter [<substring>]",
     "skill":       "/skill [list|discard <id>]",
     "agent":       "/agent new <name> | /agent edit role <text>",
     "image":       "/image <path>",
@@ -112,7 +111,7 @@ def test_no_arg_commands_have_no_usage() -> None:
         # "tasks" intentionally removed: /tasks has status/kill/list subcommands
         # and now carries usage= (see _EXPECTED_USAGE above).
         "list", "skills", "cost",
-        "quit", "exit", "cost-inline",
+        "quit", "exit",
     ]
     for name in no_arg_commands:
         cmd = REGISTRY.get(name)
