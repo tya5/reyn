@@ -55,6 +55,33 @@ def _answered(msgs: list[dict]) -> set[str]:
     return {m["tool_call_id"] for m in msgs if m.get("role") == "tool"}
 
 
+def _assert_wire_adjacency_valid(msgs: list[dict]) -> None:
+    """Assert the provider wire invariant (the acceptance proxy — providers 400 otherwise): every
+    assistant ``tool_calls`` message is IMMEDIATELY followed by exactly its results (one per id),
+    and no ``role=tool`` appears without an immediately-preceding declaring ``tool_calls``."""
+    i = 0
+    while i < len(msgs):
+        m = msgs[i]
+        if m.get("role") == "assistant" and m.get("tool_calls"):
+            need = [tc["id"] for tc in m["tool_calls"] if tc.get("id")]  # DECLARATION order
+            i += 1
+            got = []
+            while i < len(msgs) and msgs[i].get("role") == "tool":
+                got.append(msgs[i]["tool_call_id"])
+                i += 1
+            assert got == need, (
+                f"assistant tool_calls {need} must be IMMEDIATELY followed by exactly its results "
+                f"IN DECLARATION ORDER; got {got}"
+            )
+        elif m.get("role") == "tool":
+            raise AssertionError(
+                f"role=tool {m.get('tool_call_id')!r} has no immediately-preceding tool_calls "
+                "(orphan / non-adjacent — a provider 400)"
+            )
+        else:
+            i += 1
+
+
 # ── Level 1: pure function ───────────────────────────────────────────────────
 
 
@@ -91,22 +118,28 @@ def test_orphan_result_is_dropped():
     assert out == [_user(), {"role": "assistant", "content": "summary"}, _user("next")]
 
 
-def test_intact_cross_segment_pair_untouched():
-    """Tier 2: THE PRIMARY case (the owner's observed failure, tui-confirmed) — build_history's
-    elide path yields ``[assistant+tool_calls(tc-1), bridge(assistant), role=tool(tc-1)]``: an INTACT
-    pair separated by the bridge. #2287's adjacency repair BREAKS it (looks ahead, sees the bridge,
-    synthesizes a DUPLICATE result for tc-1 → the real result orphaned → 400). The full-list repair
-    leaves it EXACTLY as-is: tc-1 ∈ declared ∧ ∈ answered → neither dangling nor orphan → untouched,
-    no duplicate. RED against #2287's per-segment/adjacency logic."""
+def test_bridge_separated_pair_is_re_adjacented():
+    """Tier 2: THE PRIMARY case (the owner's observed failure, tui-confirmed) — build_history's elide
+    yields ``[assistant+tool_calls(tc-1), bridge(assistant), role=tool(tc-1)]``: a matched pair the
+    BRIDGE separates. Providers require the result to IMMEDIATELY follow the tool_calls (adjacency),
+    so this 400s ("role=tool with no matching preceding tool_calls") even though membership is
+    satisfied. The repair RE-ADJACENTS: the REAL result jumps to immediately after its call, the
+    bridge moves after. The result content is preserved (not re-synthesized). RED against a
+    set-membership-only repair that leaves the pair non-adjacent."""
+    real = _tool("tc-1", "the real result")
     msgs = [
-        _assistant(["tc-1"]),                                   # call in "head"
-        {"role": "assistant", "content": "bridge summary of elided middle"},  # the bridge between
-        _tool("tc-1", "the real result"),                       # its REAL result in "tail"
+        _assistant(["tc-1"]),                                         # call
+        {"role": "assistant", "content": "bridge summary of middle"}, # the bridge between
+        real,                                                          # its REAL result, separated
     ]
     out = repair_tool_call_pairing(msgs)
-    assert out == msgs, "the intact cross-segment pair must be untouched (no dup synth, no drop)"
-    # explicit no-duplicate check: exactly ONE result for tc-1 (not the synth + the real).
-    assert sum(1 for m in out if m.get("tool_call_id") == "tc-1") == 1
+    _assert_wire_adjacency_valid(out)  # the provider-acceptance proxy
+    # the REAL result (content preserved) is now immediately after the call; the bridge follows.
+    assert out[0] == _assistant(["tc-1"])
+    assert out[1] == real, "the real result (content preserved) jumps adjacent to its call"
+    assert out[2]["content"] == "bridge summary of middle", "the bridge moves after the tool cycle"
+    # exactly ONE result for tc-1 (the real one — no duplicate synth).
+    assert [m for m in out if m.get("tool_call_id") == "tc-1"] == [real]
 
 
 # ── Logging (observability — a repair firing = a split reached the wire) ──────────────────────
@@ -133,16 +166,28 @@ def test_orphan_drop_logs_warning(caplog):
     ), "an orphan drop must log a WARNING"
 
 
-def test_intact_cross_segment_pair_does_not_log(caplog):
-    """Tier 2: the intact cross-segment pair triggers NO repair → NO log. Secondary over-repair
-    guard: if the repair wrongly touched an intact pair, this WARNING would fire."""
+def test_bridge_separated_pair_logs_re_adjacency(caplog):
+    """Tier 2: re-adjacenting a bridge-separated result logs a WARNING with the id (the PRIMARY
+    owner case is a repair firing = a split reached the wire)."""
     import logging
     with caplog.at_level(logging.WARNING, logger="reyn.llm.wire_format"):
         repair_tool_call_pairing(
             [_assistant(["tc-1"]), {"role": "assistant", "content": "bridge"}, _tool("tc-1")]
         )
+    assert any(
+        "re-adjacented tool_result tc-1" in r.message for r in caplog.records
+    ), "a bridge-separated (re-adjacented) result must log a WARNING"
+
+
+def test_already_adjacent_pair_does_not_log(caplog):
+    """Tier 2: an ALREADY-adjacent pair triggers NO repair → NO log. Over-repair guard: if the
+    repair wrongly touched an intact adjacent pair (spurious re-adjacency), this WARNING would fire."""
+    import logging
+    with caplog.at_level(logging.WARNING, logger="reyn.llm.wire_format"):
+        out = repair_tool_call_pairing([_user("q"), _assistant(["tc-1"]), _tool("tc-1"), _user("a")])
+    _assert_wire_adjacency_valid(out)
     assert [r for r in caplog.records if r.name == "reyn.llm.wire_format"] == [], (
-        "an intact pair must produce NO repair and NO log"
+        "an already-adjacent pair must produce NO repair and NO log"
     )
 
 
@@ -220,6 +265,7 @@ async def test_recorded_acompletion_repairs_before_provider_call(monkeypatch):
         )
 
     wire = captured["messages"]
+    _assert_wire_adjacency_valid(wire)  # the FULL provider invariant (membership + adjacency)
     declared, answered = _declared(wire), _answered(wire)
     assert declared == answered, (
         f"the wire payload must satisfy the pairing invariant; declared={declared} answered={answered}"
@@ -227,3 +273,22 @@ async def test_recorded_acompletion_repairs_before_provider_call(monkeypatch):
     assert "orphan-id" not in answered, "orphan result must be dropped before the provider"
     assert "call-head" in answered, "dangling call must be synthesized before the provider"
     assert "call-tail" in answered, "intact pair preserved"
+
+
+def test_multi_tool_call_results_gathered_in_declaration_order():
+    """Tier 2: an assistant with several tool_calls whose real results are SCATTERED (interleaved
+    with other messages) → all gathered immediately after the assistant, IN tool_calls DECLARATION
+    order (not wire order — some providers check result order matches call order)."""
+    msgs = [
+        _assistant(["c1", "c2", "c3"]),
+        _tool("c2", "r2"),                                   # c2's result adjacent
+        {"role": "assistant", "content": "bridge"},          # a bridge scatters the rest
+        _tool("c3", "r3"),                                   # c3's result displaced
+        _tool("c1", "r1"),                                   # c1's result displaced (out of order)
+    ]
+    out = repair_tool_call_pairing(msgs)
+    _assert_wire_adjacency_valid(out)
+    # results gathered right after the assistant in DECLARATION order c1,c2,c3 (not wire order c2,c3,c1).
+    assert [m["tool_call_id"] for m in out[1:4]] == ["c1", "c2", "c3"]
+    assert [m["content"] for m in out[1:4]] == ["r1", "r2", "r3"], "real contents preserved, re-ordered to declaration order"
+    assert out[4]["content"] == "bridge", "the bridge follows the gathered tool cycle"

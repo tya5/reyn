@@ -1,11 +1,13 @@
-"""LLM wire-format repair: the assistant.tool_calls ↔ role=tool pairing invariant.
+"""LLM wire-format repair: the assistant.tool_calls ↔ role=tool pairing + adjacency invariant.
 
-Every provider (OpenAI / Anthropic / …) requires that each assistant ``tool_calls`` id has a
-corresponding ``role="tool"`` result, and each ``role="tool"`` result has a declaring assistant
-``tool_call`` — an unpaired one is a 400 BadRequest. Compaction / history-decompose can split a
-tool_call/result pair across a discarded middle segment, leaving a DANGLING tool_call (its result
-elided) or an ORPHAN result (its call elided). ``repair_tool_call_pairing`` is a pure, full-list
-repair applied at the final provider-call boundary so every path is covered by one guard.
+Every provider (OpenAI / Anthropic / …) requires BOTH: (1) membership — each assistant
+``tool_calls`` id has a ``role="tool"`` result and each result has a declaring call; (2) adjacency
+— the results IMMEDIATELY FOLLOW the assistant ``tool_calls`` message, no intervening turn. An
+unpaired OR a matched-but-non-adjacent pair is a 400. Compaction / history-decompose can split a
+pair across a discarded (or bridge-summary-separated) middle, leaving a DANGLING call, an ORPHAN
+result, or a matched-but-separated pair. ``repair_tool_call_pairing`` is a pure, full-list repair
+applied at the final provider-call boundary (so every path is covered by one guard) that restores
+both membership AND adjacency.
 """
 from __future__ import annotations
 
@@ -24,77 +26,109 @@ _INTERRUPTED_TOOL_RESULT = json.dumps(
 
 
 def repair_tool_call_pairing(messages: list[dict]) -> list[dict]:
-    """Repair the tool_call ↔ tool_result pairing on the FINAL assembled wire message list.
+    """Repair the tool_call ↔ tool_result pairing AND ADJACENCY on the FINAL assembled wire list.
 
-    Pure + full-list (NOT per-segment): the pairing is computed over the COMPLETE list, so an
-    intact pair split only across a segment boundary (both halves present, e.g. the call in
-    ``head`` and its result in ``tail``) is left untouched — this is what avoids the per-segment /
-    adjacency-walk failure of wrongly "repairing" (duplicate-synthesizing) an intact pair.
+    Providers require not just that every assistant ``tool_calls`` id has a matching ``role="tool"``
+    result (membership), but that the results IMMEDIATELY FOLLOW the assistant message with no
+    intervening message (adjacency) — OpenAI: tool messages must follow the tool_calls message;
+    Anthropic: the tool_result turn must be the one right after the tool_use turn. So a matched but
+    non-adjacent pair (e.g. `assistant(tc) | bridge-summary | role=tool(tc)`, the compaction-elide
+    split) still 400s ("role=tool with no matching preceding tool_calls"). Set-membership alone is
+    NOT sufficient — the repair must RE-ADJACENCY.
 
-    Two directions:
+    Pure + full-list. For each assistant with ``tool_calls``, its results are GATHERED and emitted
+    IMMEDIATELY after it — the real result from wherever it sits in the list, or a synthesized
+    interrupted result for a missing id. Every ``role="tool"`` is skipped at its original position
+    (it is either gathered by its declaring assistant, or an ORPHAN whose declaring call is gone →
+    dropped, since it cannot be synthesized). Net effect:
 
-    - **Orphan result** — a ``role="tool"`` whose ``tool_call_id`` is declared by NO assistant
-      ``tool_calls`` anywhere in the list (its declaring call was elided). DROP it: you cannot
-      retroactively synthesize the assistant call, so dropping is the only valid repair (lossy,
-      but the alternative is a 400).
-    - **Dangling tool_call** — an assistant ``tool_calls`` id answered by NO ``role="tool"``
-      anywhere in the list (its result was elided). Synthesize an interrupted error result
-      immediately after that assistant message.
+    - matched-but-separated pair → results re-adjacented right after the assistant (the primary
+      compaction-elide bug);
+    - dangling call (no result anywhere) → interrupted synth, adjacent;
+    - orphan result (no declaring call) → dropped;
+    - already-adjacent pairs → unchanged (bonus: duplicate results for one id de-duped).
 
     Returns a new list; the input is not mutated (message dicts are reused by reference).
     """
-    # First pass over the FULL list: what is declared (assistant calls) vs answered (tool results).
+    # Pass 1 over the FULL list: declared ids, the first real result per id, and — per assistant —
+    # which of its results were ALREADY adjacent (the immediately-following role=tool run), so we can
+    # log only genuine re-adjacency moves.
     declared: set[str] = set()
-    answered: set[str] = set()
-    for m in messages:
+    result_for: dict[str, dict] = {}          # tool_call_id -> its (first) real role=tool message
+    adjacent_after: dict[int, set[str]] = {}  # id(assistant msg) -> result ids already adjacent to it
+    i = 0
+    n = len(messages)
+    while i < n:
+        m = messages[i]
         if m.get("role") == "assistant" and m.get("tool_calls"):
             for tc in m["tool_calls"]:
-                tc_id = tc.get("id")
-                if tc_id:
-                    declared.add(tc_id)
-        elif m.get("role") == "tool":
-            tc_id = m.get("tool_call_id")
-            if tc_id:
-                answered.add(tc_id)
+                if tc.get("id"):
+                    declared.add(tc["id"])
+            adj: set[str] = set()
+            j = i + 1
+            while j < n and messages[j].get("role") == "tool":
+                tid = messages[j].get("tool_call_id")
+                if tid:
+                    adj.add(tid)
+                    result_for.setdefault(tid, messages[j])
+                j += 1
+            adjacent_after[id(m)] = adj
+            i = j
+        else:
+            if m.get("role") == "tool":
+                tid = m.get("tool_call_id")
+                if tid:
+                    result_for.setdefault(tid, m)
+            i += 1
 
     out: list[dict] = []
-    dropped: list[str] = []       # orphan tool_result ids removed
-    synthesized: list[str] = []   # dangling tool_call ids answered with a synthetic result
+    synthesized: list[str] = []    # dangling ids answered with a synthetic interrupted result
+    dropped: list[str] = []        # orphan result ids removed (declaring call gone)
+    readjacented: list[str] = []   # matched results MOVED to be adjacent to their call
     for m in messages:
-        if m.get("role") == "tool":
-            # Orphan drop: a result whose declaring assistant call is not in the list.
+        if m.get("role") == "assistant" and m.get("tool_calls"):
+            out.append(m)
+            adj = adjacent_after.get(id(m), set())
+            for tc in m["tool_calls"]:
+                tid = tc.get("id")
+                if not tid:
+                    continue
+                if tid in result_for:
+                    out.append(result_for[tid])  # gather the real result adjacent to its call
+                    if tid not in adj:
+                        readjacented.append(tid)
+                        logger.warning(
+                            "wire-repair re-adjacented tool_result %s (its real result was "
+                            "separated from its tool_call by an intervening message)", tid,
+                        )
+                else:
+                    synthesized.append(tid)
+                    logger.warning(
+                        "wire-repair synthesized an interrupted result for dangling tool_call %s "
+                        "(its real result was compacted away)", tid,
+                    )
+                    out.append({
+                        "role": "tool", "tool_call_id": tid,
+                        "content": _INTERRUPTED_TOOL_RESULT,
+                    })
+        elif m.get("role") == "tool":
+            # Every role=tool is emitted at its declaring assistant (gathered above) — so skip it
+            # here. If its id is declared by NO assistant, it is an ORPHAN → dropped.
             if m.get("tool_call_id") not in declared:
                 dropped.append(m.get("tool_call_id"))
                 logger.warning(
                     "wire-repair dropped orphan tool_result %s (no matching tool_call in the "
                     "assembled history)", m.get("tool_call_id"),
                 )
-                continue
-            out.append(m)
-        elif m.get("role") == "assistant" and m.get("tool_calls"):
-            out.append(m)
-            # Dangling synth: this assistant's ids with no result anywhere in the list, injected
-            # immediately after (real results, if any, follow later in the list — all after the call).
-            for tc in m["tool_calls"]:
-                tc_id = tc.get("id")
-                if tc_id and tc_id not in answered:
-                    synthesized.append(tc_id)
-                    logger.warning(
-                        "wire-repair synthesized an interrupted result for dangling tool_call %s "
-                        "(its real result was compacted away)", tc_id,
-                    )
-                    out.append({
-                        "role": "tool", "tool_call_id": tc_id,
-                        "content": _INTERRUPTED_TOOL_RESULT,
-                    })
+            continue
         else:
             out.append(m)
-    if dropped or synthesized:
+    if synthesized or dropped or readjacented:
         # #2287 follow-up: the owner wants the count surfaced — a repair firing means a split pair
-        # reached the wire (an EDGE once the group-aware-trim prevention lands; before that, it also
+        # reached the wire (an EDGE once the group-aware-trim prevention lands; before that it also
         # signals the elide split frequency).
         logger.warning(
-            "wire-repair fired: synthesized %d dangling result(s), dropped %d orphan result(s)",
-            len(synthesized), len(dropped),
+            "wire-repair fired: %d re-adjacented, %d synthesized (dangling), %d dropped (orphan)",
+            len(readjacented), len(synthesized), len(dropped),
         )
     return out
