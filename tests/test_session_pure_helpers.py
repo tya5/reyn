@@ -117,19 +117,15 @@ def test_parse_no_reply_marker_partial_bracket_returns_none() -> None:
 
 
 def test_ts_iso_to_epoch_valid_utc() -> None:
-    """Tier 2: valid UTC ISO-8601 string converts to a positive epoch float."""
-    epoch = _ts_iso_to_epoch("2024-01-15T12:30:00+00:00")
-    assert epoch is not None
-    assert epoch > 0
+    """Tier 2: valid UTC ISO-8601 string converts to the exact epoch value."""
+    assert _ts_iso_to_epoch("2024-01-15T12:30:00+00:00") == 1705321800.0
 
 
 def test_ts_iso_to_epoch_valid_with_z_suffix() -> None:
-    """Tier 2: 'Z' UTC suffix (Python 3.11+ fromisoformat) converts correctly."""
+    """Tier 2: 'Z' UTC suffix (Python 3.11+ fromisoformat) converts to exact epoch."""
     import sys
     if sys.version_info >= (3, 11):
-        epoch = _ts_iso_to_epoch("2024-01-15T12:30:00Z")
-        assert epoch is not None
-        assert epoch > 0
+        assert _ts_iso_to_epoch("2024-01-15T12:30:00Z") == 1705321800.0
 
 
 def test_ts_iso_to_epoch_none_returns_none() -> None:
