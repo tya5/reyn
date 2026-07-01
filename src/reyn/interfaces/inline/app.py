@@ -620,8 +620,9 @@ async def run_inline_input(registry, renderer, config=None) -> None:
         # picker rows are static (classes); a read-only panel's lines stay live.
         spec = _CHIP_SPECS[menu["sel"]]
         menu_region.clear()
-        if spec.expansion is not None:
-            el = spec.expansion(_snapshot(registry, task_cache, config), _menu_submit)
+        snap = _snapshot(registry, task_cache, config)
+        if spec.expansion is not None and snap is not None:
+            el = spec.expansion(snap, _menu_submit)
             menu_region.register(el)
         menu["open"] = True
 
@@ -891,5 +892,9 @@ async def _quit(registry, app, state: dict) -> None:
     if state.get("quitting"):
         return
     state["quitting"] = True
-    await registry.shutdown()
-    app.exit()
+    try:
+        await registry.shutdown()
+    finally:
+        # app.exit() must fire even if registry.shutdown() raises — an unhandled
+        # exception here leaves the PT app stuck with no escape path.
+        app.exit()
