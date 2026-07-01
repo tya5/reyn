@@ -44,7 +44,12 @@ def test_encode_nested_path() -> None:
 
 
 def test_decode_reverses_encode() -> None:
-    """Tier 2: decode(_encode(x)) == x for any path."""
+    """Tier 2: decode(_encode(x)) == x for a '/'-separated path with no '__' in any segment.
+
+    _encode replaces '/' with '__' and _decode is the inverse replacement.
+    Existing '__' in a path segment would collide (encoding is not escape-safe),
+    but real config-registry paths (e.g. 'config/mcp.yaml') do not contain '__'.
+    """
     original = "config/mcp.yaml"
     assert _decode(_encode(original)) == original
 
@@ -55,7 +60,7 @@ def test_decode_flat_unchanged() -> None:
 
 
 def test_encode_decode_roundtrip_nested() -> None:
-    """Tier 2: round-trip preserves nested path."""
+    """Tier 2: round-trip preserves a nested path whose segments contain no '__'."""
     path = "a/b/c/d.yaml"
     assert _decode(_encode(path)) == path
 
