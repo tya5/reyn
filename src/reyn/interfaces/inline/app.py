@@ -108,8 +108,12 @@ def _model_expansion(snap, dispatch):
     classes = list(snap.get("model_classes") or [])
     if not classes:
         return DetailElement(lambda: [f"current: {snap['model']}", "change with /model"])
-    model = snap["model"]
-    rows = [f"▸ {c}" if c == model else f"  {c}" for c in classes]
+    # Use the pre-resolved class name: when no override is set, snap["model"] is
+    # the full LiteLLM model ID (e.g. "claude-opus-4-8") which never matches any
+    # class name ("opus") → the ▸ marker never appeared. active_model_class()
+    # reverse-looks up the class so the active entry is always highlighted.
+    active = snap.get("model_active_class") or snap["model"]
+    rows = [f"▸ {c}" if c == active else f"  {c}" for c in classes]
     return CommandUIElement(rows, [f"/model {c}" for c in classes], dispatch)
 
 
@@ -399,6 +403,7 @@ def _snapshot(registry, task_cache=None, config=None):
     )
     return {
         "model": s.model,
+        "model_active_class": s.active_model_class(),
         "model_classes": list(s.known_model_classes()),
         "agent_names": list(registry.loaded_names()),
         "attached_name": registry.attached_name,

@@ -146,6 +146,46 @@ def test_session_model_override_cleared_returns_agent_default(tmp_path):
     assert session.model == "standard"  # agent default restored
 
 
+def test_session_active_model_class_returns_override_when_set(tmp_path):
+    """Tier 2: active_model_class() returns the override class name when set.
+
+    Falsification: if the method did not short-circuit on _model_override, the
+    reverse-lookup loop would run and might return a different value (or None).
+    """
+    session = _make_session(tmp_path, model="standard")
+    session._resolver = _make_resolver()
+    session._model_override = "light"
+    assert session.active_model_class() == "light"
+
+
+def test_session_active_model_class_reverse_lookup_no_override(tmp_path):
+    """Tier 2: active_model_class() reverse-looks up the class when no override.
+
+    The agent's model is the full LiteLLM model ID "openai/gpt-4o"; the resolver
+    maps "standard" → "openai/gpt-4o". Pre-fix, callers compared this full ID
+    against class names and got no match (▸ never appeared in the model picker).
+
+    Falsification: if the reverse-lookup were absent (returning None unconditionally
+    on no-override), this assertion would fail.
+    """
+    session = _make_session(tmp_path, model="openai/gpt-4o")
+    session._resolver = _make_resolver()  # "standard" → "openai/gpt-4o"
+    # No override set — fresh session has no model_override by construction.
+    assert session.active_model_class() == "standard"
+
+
+def test_session_active_model_class_returns_none_for_unknown_model(tmp_path):
+    """Tier 2: active_model_class() returns None when the agent model is not in
+    any configured class (= passthrough / custom model).
+
+    Falsification: if the method returned the raw model ID instead of None, the
+    model picker would show a phantom ▸ on a non-class entry.
+    """
+    session = _make_session(tmp_path, model="custom/bespoke-model-v9")
+    session._resolver = _make_resolver()  # no "custom/bespoke-model-v9" entry
+    assert session.active_model_class() is None
+
+
 # ===========================================================================
 # Group B1: no-arg display — real Session (reads session.model)
 # ===========================================================================

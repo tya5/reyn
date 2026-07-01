@@ -2039,6 +2039,25 @@ class Session:
         """
         return self._resolver.known_classes()
 
+    def active_model_class(self) -> str | None:
+        """Return the class name for the currently-active model, or None.
+
+        When a ``/model`` override is active the override IS already a class name.
+        When no override is set ``session.model`` is the full LiteLLM model ID
+        (e.g. ``"claude-opus-4-8"``); this reverse-looks up which configured
+        class maps to that ID so callers (e.g. the model picker) can highlight
+        the active entry without knowing about the resolver internals.
+        Returns None when the current model ID is not found in any configured
+        class (= custom/passthrough model not declared in reyn.yaml).
+        """
+        if self._model_override is not None:
+            return self._model_override
+        model_id = self._agent.model
+        for cls in self._resolver.known_classes():
+            if self._resolver.resolve(cls).model == model_id:
+                return cls
+        return None
+
     def _rebuild_turn_budget_engine_for_model(self) -> None:
         """#1752: rebuild the chat turn_budget engine for the active model.
 
