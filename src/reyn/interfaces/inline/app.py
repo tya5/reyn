@@ -431,6 +431,7 @@ def _session_visibility_items(session) -> list[dict]:
             for a in authorized
         ]
     except Exception:  # noqa: BLE001
+        logger.warning("capability_visibility_state() raised; visibility panel degraded to []", exc_info=True)
         return []
 
 
@@ -449,6 +450,7 @@ def _session_hook_items(session) -> list[dict]:
             for h in (getter() or [])
         ]
     except Exception:  # noqa: BLE001
+        logger.warning("hook_state() raised; hooks panel degraded to []", exc_info=True)
         return []
 
 
