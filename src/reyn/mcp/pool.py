@@ -26,24 +26,6 @@ from reyn.mcp.client import MCPClient
 
 logger = logging.getLogger(__name__)
 
-# ─────────────────────────────────────────────────────────────────────────────
-# TODO(a359-cleanup): remove this a359-DIAG block after owner confirms the Windows crash is gone.
-#   grep -rn "a359-cleanup" to find every removal point (this block, the P3 test, the doc).
-# a359-DIAG — TEMPORARY Windows-verification instrumentation. Owner-authorised to
-# confirm the BaseExceptionGroup / BrokenResourceError / ConnectionReset crash is
-# GONE on the Proactor event loop (the crash cannot be RED-verified on Unix — it
-# tolerates the cross-task teardown). REMOVE this diagnostic block in the
-# follow-up once owner confirms the crash is gone. Emits at INFO on the
-# "reyn.mcp.a359diag" logger so owner can capture it with the list_mcp_tools
-# repro without turning on all-DEBUG. See docs/dev/mcp-a359-windows-verification.md.
-_diag_log = logging.getLogger("reyn.mcp.a359diag")
-
-
-def _task_name() -> str:
-    t = asyncio.current_task()
-    return getattr(t, "get_name", lambda: repr(t))() if t is not None else "<no-task>"
-# ─────────────────────────────────────────────────────────────────────────────
-
 
 def describe_fault(exc: BaseException, *, limit: int = 600) -> str:
     """Summarise a caught fault as ``Type: message`` for an LLM-facing error tool-result.
@@ -105,7 +87,6 @@ class MCPClientPool:
     def __init__(self) -> None:
         self._clients: dict[str, MCPClient] = {}
         self._owner_task: "asyncio.Task | None" = None
-        self._open_tasks: dict[str, str] = {}  # a359-DIAG (TEMPORARY): server → open-task name
 
     async def __aenter__(self) -> "MCPClientPool":
         self._owner_task = asyncio.current_task()
@@ -131,33 +112,16 @@ class MCPClientPool:
             client = MCPClient(config, agent_id=agent_id)
             await client.__aenter__()  # enter (initialize) in the pool's task
             self._clients[server] = client
-            # a359-DIAG (TEMPORARY): record + log the OPEN task, so the Windows repro shows the
-            # client was opened and (below) closed in the SAME task.
-            self._open_tasks[server] = _task_name()
-            _diag_log.info("a359-diag: opened MCP client server=%s open_task=%s", server, self._open_tasks[server])
         return self._clients[server]
 
     async def __aexit__(self, *exc_info) -> None:
         clients = list(self._clients.items())
         self._clients.clear()
         self._owner_task = None
-        open_tasks = self._open_tasks  # a359-DIAG (TEMPORARY)
-        self._open_tasks = {}          # a359-DIAG (TEMPORARY)
         for name, client in clients:
-            # a359-DIAG (TEMPORARY): log the close task vs the recorded open task — on Windows the
-            # owner's repro should show open_task == close_task and outcome=ok (no BaseExceptionGroup).
-            _close_task = _task_name()
             try:
                 await client.__aexit__(None, None, None)  # close in the pool's (owning) task
-                _diag_log.info(
-                    "a359-diag: closed MCP client server=%s open_task=%s close_task=%s outcome=ok",
-                    name, open_tasks.get(name), _close_task,
-                )
             except BaseException as exc:  # noqa: BLE001 — fault isolation (real control flow re-raised)
-                _diag_log.info(
-                    "a359-diag: MCP client server=%s open_task=%s close_task=%s teardown-fault=%r",
-                    name, open_tasks.get(name), _close_task, exc,
-                )
                 # #2421 seam: re-raise only GENUINE control flow. A cancel-mixed teardown group from a
                 # dead subprocess (our task NOT cancelled) is spurious → contained, not propagated
                 # (propagating a spurious internal cancel is the crash a conservative predicate hit).
