@@ -64,7 +64,6 @@ _NOT_EXTERNAL = {
     # #2073 S3: hooks_add writes .reyn/hooks.yaml + schedules a reload — returns a
     # status dict (on / added / reload_scheduled / path), not external content.
     "hooks_add",
-    "lint",
     # — catalog / discovery (reyn-assembled or operator config) —
     "list_agents", "describe_agent",
     "list_actions", "search_actions", "describe_action",

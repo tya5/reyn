@@ -191,15 +191,6 @@ fixtures:
       - 'memory_operation__remember_shared({content: "私の好きな色は青"})'
     axis: [precision]
 
-  # ── validation (1 entry) ──────────────────────────────────────────────────
-
-  - id: validation_lint_skill
-    source: dogfood/scenarios/control_ir_ops.yaml
-    prompt: "Use the validation__lint action to lint the index_events skill."
-    expected_action: validation__lint
-    expected_reach_path:
-      - 'validation__lint({skill_path: "index_events"})'
-    axis: [precision]
 
   # ── reyn_source (1 entry) ─────────────────────────────────────────────────
 

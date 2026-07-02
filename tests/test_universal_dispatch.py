@@ -569,7 +569,6 @@ _ROUTE_CONTRACT_SAMPLES: list[tuple[str, dict[str, Any]]] = [
     ("reyn_source__grep", {"pattern": "x"}),
     ("rag_operation__recall",      {"query": "q", "sources": ["s"]}),
     ("rag_operation__drop_source", {"source": "s"}),
-    ("validation__lint",           {"skill_path": "index_events"}),
     ("exec__sandboxed_exec",       {"argv": ["echo", "hi"]}),
     # task category (#1953 dynamic-wire) — args cover each IROp's required fields.
     ("task__create",                     {"name": "ship it"}),

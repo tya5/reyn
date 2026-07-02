@@ -127,7 +127,6 @@ def _shell_legacy_ctx(ctx: ToolContext) -> OpContext:
     "tool_module_name, handler_attr, build_args",
     [
         # (a) module-level _handle adapters that build legacy_ctx inline
-        ("reyn.tools.lint", "_handle", {"skill_path": "reyn/local/x"}),
         ("reyn.tools.web_search", "_handle", {"query": "x"}),
     ],
 )
@@ -164,10 +163,7 @@ async def test_tool_bridge_preserves_decl_from_phase_state(
     # Patch the canonical op_runtime entry point each tool delegates to.
     # Each Tool wrapper does `from reyn.core.op_runtime.<x> import handle as handle_X`
     # inside its _handle function — patch the source module's `handle`.
-    if tool_module_name == "reyn.tools.lint":
-        import reyn.core.op_runtime.lint as op_mod
-        monkeypatch.setattr(op_mod, "handle", _capture)
-    elif tool_module_name == "reyn.tools.web_search":
+    if tool_module_name == "reyn.tools.web_search":
         # web_search delegates to handle_web_search in reyn.core.op_runtime.web
         from reyn.core.op_runtime import web as op_mod
         monkeypatch.setattr(op_mod, "handle_web_search", _capture)

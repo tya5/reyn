@@ -194,7 +194,7 @@ def test_every_src_construction_passes_resolver() -> None:
                 "would be handed to litellm (BadRequestError). Pass the caller's "
                 "ModelResolver so the engine resolves the class by construction."
             )
-    assert found >= 2, (
-        f"expected the 2 known compaction axes (chat/phase), found {found}"
+    assert found >= 1, (
+        f"expected at least 1 known compaction axis (chat), found {found}"
         " — did a construction site move? update this guard."
     )

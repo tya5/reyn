@@ -108,7 +108,7 @@ def test_no_arg_commands_have_no_usage() -> None:
     no_arg_commands = [
         # "tasks" intentionally removed: /tasks has status/kill/list subcommands
         # and now carries usage= (see _EXPECTED_USAGE above).
-        "list", "skills", "cost",
+        "list", "cost",  # "skills" removed with skill/phase machinery
         "quit", "exit",
     ]
     for name in no_arg_commands:

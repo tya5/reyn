@@ -95,52 +95,10 @@ ProcessorStep = PreprocessorStep
 # bottom of this file once all referenced types are in scope.
 
 
-# ── Phase ─────────────────────────────────────────────────────────────────────
-
-class Phase(BaseModel):
-    name: str
-    role: str | None = None
-    input_schema: dict[str, Any]
-    input_schema_name: str = "artifact"  # artifact type name(s) for display (e.g. "user_input")
-    input_description: str = ""
-    instructions: str
-    max_act_turns: int = 10  # per-phase override; 0 = use system default
-    model_class: str = ""   # "light"|"standard"|"strong"|custom; "" = inherit from runtime
-    preprocessor: list[PreprocessorStep] = Field(default_factory=list)
-    # Control IR op kinds the phase may use. Filters available_control_ops in the
-    # ContextFrame and is enforced at executor dispatch (defense in depth). The
-    # default reflects the common case: file I/O plus user clarification. An
-    # explicit empty list means "no ops" (e.g. pure routing phases).
-    # #1240 Wave 2a: the default uses the fine-grained file kinds (the faithful
-    # uniform equivalent of the legacy coarse `file` grant — same file
-    # capability), so a phase that omits allowed_ops is born fine-native, keeping
-    # the file→fine migration durable end-to-end (the legacy coarse `file` kind
-    # is dropped in Wave 2b). No existing stdlib phase omits allowed_ops, so this
-    # default change is behaviorally inert for them — it only shapes
-    # future-generated / omitting skills.
-    allowed_ops: list[str] = Field(
-        default_factory=lambda: [
-            "read_file", "write_file", "edit_file", "delete_file",
-            "glob_files", "grep_files", "ask_user",
-        ],
-    )
 
 
-class SkillNodeSpec(BaseModel):
-    """Runtime descriptor for a skill node in a parent skill's graph."""
-    skill_path: str              # absolute path to sub-skill's skill.md
-    skill_root: str              # skill_root used to load the sub-skill
-    workspace: str               # "isolated" | "shared"
-    entry_input_schema: dict      # sub-app entry phase input_schema (for candidate building)
-    entry_input_schema_name: str = "artifact"  # type name for display
-    entry_input_description: str = ""
 
 
-class SkillGraph(BaseModel):
-    transitions: dict[str, list[str]] = Field(default_factory=dict)
-    can_finish_phases: list[str] = Field(default_factory=list)
-    # "@skill_name" → SkillNodeSpec for app nodes embedded in this graph
-    skill_nodes: dict[str, SkillNodeSpec] = Field(default_factory=dict)
 
 
 class Postprocessor(BaseModel):
@@ -164,62 +122,6 @@ class Postprocessor(BaseModel):
     steps: list[PreprocessorStep] = Field(default_factory=list)
 
 
-class Skill(BaseModel):
-    name: str
-    description: str = ""
-    doc: str = ""
-    entry_phase: str
-    phases: dict[str, Phase]
-    graph: SkillGraph
-    final_output_schema: dict[str, Any]
-    final_output_name: str
-    final_output_description: str = ""
-    # criteria the LLM must satisfy before the OS allows finish
-    finish_criteria: list[str] = Field(default_factory=list)
-    # Skill-level permissions. The single source of truth for all permission
-    # gating in this skill (startup_guard, postprocessor hooks, future
-    # skill-wide steps). Populated by the expander directly from the skill.md
-    # frontmatter `permissions:` block. Phase-level `permissions:` is
-    # hard-rejected at parse time (ADR-0020).
-    permissions: PermissionDecl = Field(default_factory=PermissionDecl)
-    # Skill-level postprocessor. None = no postprocessor (the LLM's
-    # `final_output_schema`-conformant artifact is returned as-is to the
-    # caller). Non-None = postprocessor steps run after LLM finish, and the
-    # caller receives an artifact conforming to `postprocessor.output_schema`.
-    postprocessor: "Postprocessor | None" = None
-    # Sub-apps referenced by preprocessor steps; pre-loaded at compile time.
-    preprocessor_sub_skills: dict[str, "Skill"] = Field(default_factory=dict)
-    # On-disk directory containing skill.md / phases/ / artifacts/. Populated by
-    # the loader; used by python preprocessor steps to resolve relative module
-    # paths. Empty string when the skill was constructed in memory.
-    skill_dir: str = ""
-    # Tool2Vec-style retrieval hints (FP-0024 Component B).
-    # Optional list of example queries this skill can answer.  Absent in
-    # existing skill.md files (backward-compat: None = not provided by author).
-    # BM25/embedding backends concat these with the description to improve
-    # Recall@5 pre-filter.  Integration with search backends is deferred to
-    # the next wave (Track 3).
-    search_hints: list[str] | None = None
-    # FP-0016 Component D: per-skill credential scoping declaration.
-    # Default ["*"] = full delegation (backward-compat — pre-FP-0016 behaviour
-    # where sub-skills inherited all parent secrets). Authors opt into
-    # scoping by listing specific keys ([], ["github_token"], etc.).
-    # The OS reads this at run_skill boundaries to construct a
-    # ScopedSecretStore for the sub-skill.
-    required_credentials: list[str] = Field(default_factory=lambda: ["*"])
-
-    @model_validator(mode="after")
-    def _require_final_output_name(self) -> "Skill":
-        if not self.final_output_name.strip():
-            raise ValueError(
-                "Skill.final_output_name must not be empty. "
-                "Set it to the artifact type name the LLM should use for the final output."
-            )
-        return self
-
-
-# Skill rebuild is deferred to the bottom of this file (Skill.preprocessor
-# references RunOpStep which forward-refs ControlIROp, defined further down).
 
 
 class FileIROp(BaseModel):
@@ -363,23 +265,8 @@ class SandboxedExecIROp(BaseModel):
     timeout_seconds: int = 60                            # wall-clock cap
 
 
-class LintIROp(BaseModel):
-    kind: Literal["lint"]
-    skill_path: str            # workspace-relative path to the skill directory (e.g. "reyn/local/my_skill")
 
 
-class RunSkillIROp(BaseModel):
-    kind: Literal["run_skill"]
-    skill: str                # skill name (resolved via search path) or path to skill.md
-    input: dict               # input artifact to pass to the sub-skill
-    model: str = ""           # model class or LiteLLM string; "" = inherit from runtime
-    workspace: str = "isolated"  # "isolated" | "shared"
-    # None = inherit caller's output_language (which may itself be None
-    # = no language directive in LLM prompts; the LLM picks based on
-    # user input). Reyn explicitly avoids regional-default fallbacks
-    # (e.g. silently defaulting to "ja") because the project targets
-    # a global audience.
-    output_language: str | None = None
 
 
 class WebFetchIROp(BaseModel):
@@ -528,17 +415,6 @@ class JudgeOutputIROp(BaseModel):
     model: str | None = None  # model class override; None = inherit from ctx
 
 
-class SkillResolveIROp(BaseModel):
-    """Resolve a skill name to its on-disk skill.md path (R-PURE-MODE Wave 5a).
-
-    Walks the canonical resolution chain (reyn/local/ → reyn/project/ →
-    stdlib/) and returns path metadata. Read-only; no content is read.
-
-    P7 note: `name` is the only skill-specific value; the OS does not
-    interpret it beyond passing it to the resolution chain.
-    """
-    kind: Literal["skill_resolve"]
-    name: str   # short skill name, e.g. "skill_improver" (no slashes or extensions)
 
 
 class CompactIROp(BaseModel):
@@ -742,8 +618,6 @@ OP_KIND_MODEL_MAP: dict[str, type[BaseModel]] = {
     "glob_files":  GlobFilesIROp,
     "grep_files":  GrepFilesIROp,
     "mcp":         MCPIROp,
-    "run_skill":   RunSkillIROp,
-    "lint":        LintIROp,
     "ask_user":    AskUserIROp,
     "web_fetch":   WebFetchIROp,
     "web_search":  WebSearchIROp,
@@ -757,7 +631,6 @@ OP_KIND_MODEL_MAP: dict[str, type[BaseModel]] = {
     "index_drop":  IndexDropIROp,
     "sandboxed_exec": SandboxedExecIROp,
     "judge_output": JudgeOutputIROp,
-    "skill_resolve": SkillResolveIROp,
     "compact": CompactIROp,
     "task.create": TaskCreateIROp,
     "task.update_status": TaskUpdateStatusIROp,
@@ -790,11 +663,11 @@ if TYPE_CHECKING:
             FileIROp,
             ReadFileIROp, WriteFileIROp, EditFileIROp, DeleteFileIROp,
             GlobFilesIROp, GrepFilesIROp,
-            MCPIROp, AskUserIROp, LintIROp,
-            RunSkillIROp, WebFetchIROp, WebSearchIROp, MCPInstallIROp,
+            MCPIROp, AskUserIROp,
+            WebFetchIROp, WebSearchIROp, MCPInstallIROp,
             MCPDropServerIROp,
             IndexQueryIROp, RecallIROp, IndexDropIROp,
-            SandboxedExecIROp, JudgeOutputIROp, SkillResolveIROp, CompactIROp,
+            SandboxedExecIROp, JudgeOutputIROp, CompactIROp,
             TaskCreateIROp, TaskUpdateStatusIROp, TaskGetIROp, TaskListIROp,
             TaskAddDependencyIROp, TaskRemoveDependencyIROp, TaskRepointDependencyIROp,
             TaskAbortIROp,
@@ -812,7 +685,6 @@ else:
 # Resolve forward references now that ControlIROp is in scope.
 RunOpStep.model_rebuild()
 IterateStep.model_rebuild()
-Skill.model_rebuild()
 
 
 class ControlReason(BaseModel):

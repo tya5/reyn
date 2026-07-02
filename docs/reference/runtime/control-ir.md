@@ -19,8 +19,6 @@ Control IR is the list of side-effect operations the LLM may emit alongside its 
 | `glob_files` | List files matching a glob pattern | `file.read` |
 | `grep_files` | Search file contents by regex | `file.read` |
 | `ask_user` | Pause the phase and ask the user a question | none (always allowed) |
-| `run_skill` | Run another skill as a sub-workflow | none (skill-level decision) |
-| `lint` | Run the DSL linter on a skill directory | none |
 | `sandboxed_exec` | Run argv under a `SandboxPolicy` via a `SandboxBackend` (replaces the removed `shell` op) | enforced by backend (`SandboxPolicy`) |
 | `web_search` | Search the public web via DuckDuckGo | Tier 1 — default allow; `web.search: deny` in `reyn.yaml` blocks |
 | `web_fetch` | Fetch a single URL and return extracted text | Tier 1 — default allow; `web.fetch: deny` in `reyn.yaml` blocks |
@@ -31,7 +29,6 @@ Control IR is the list of side-effect operations the LLM may emit alongside its 
 | `recall` | Macro: embed query (provider-direct) → index_query per source → merge top-K | none (embedding API cost) |
 | `index_drop` | Remove an indexed source entirely (destructive) | `permissions.index_drop: ask` in skill frontmatter |
 | `judge_output` | LLM scorer: rubric + threshold + `on_fail` policy | none (LLM cost) |
-| `skill_resolve` | Resolve a skill name to its on-disk path (read-only) | none |
 | `compact` | Voluntarily compact the conversation/phase history (advisory) | none (LLM cost; the mandatory `retry_loop` backstop is independent) |
 | `task.create` | Create a Task (`deps` for ordering; `link_type` `awaited`/`background` sets whether a sub-task gates the parent's completion — §2187; sub-task ownership is OS-derived from execution context — §16) | requester-gated (caller becomes requester) |
 | `task.update_status` | Declare a status transition | assignee-gated (single-writer CAS on `assignee == caller session_id`) |
@@ -137,37 +134,6 @@ Pauses the phase and asks the user. The OS prints the question, reads stdin, and
 
 `suggestions` are free-text hints (the user may still type anything). `options` (PR-F3, #2233) is a **closed selectable set** — when non-empty, the frontend renders a **selector** over exactly those answers (empty → free-text input). `required` (default `true`) — when `false`, the user may dismiss without answering.
 
-## `run_skill`
-
-Runs another skill as a sub-workflow. The result is returned as a structured artifact for the calling phase to use.
-
-```json
-{
-  "kind": "run_skill",
-  "skill": "recall_memory",
-  "input": {"type": "user_message", "data": {"text": "what did I tell you about my preferences?"}}
-}
-```
-
-> **Advertised name.** Phases advertise this op to the LLM under the chat-tool
-> name `invoke_skill` (so the catalog is uniform with the chat router). The OS
-> aliases the emitted `invoke_skill` name back to the `run_skill` kind at the
-> parse boundary. `run_skill` remains the canonical kind in
-> `OP_KIND_MODEL_MAP` and on the dispatched op.
-
-For deterministic invocation from a phase's preprocessor (rather than LLM-driven), use the `run_skill` preprocessor step instead — see `reference/dsl/preprocessor.md`.
-
-## `lint`
-
-Runs the DSL linter on a skill directory. Used by skill-building skills (`skill_builder`, `skill_improver`) to verify their output.
-
-```json
-{
-  "kind": "lint",
-  "skill_path": "reyn/local/my_skill"
-}
-```
-
 ## `sandboxed_exec`
 
 Executes `argv` under a declared `SandboxPolicy` via the OS's selected `SandboxBackend`. Replaces `shell` for cases that need (or will need, once `SeatbeltBackend` / `LandlockBackend` land) real isolation enforcement.
@@ -255,10 +221,10 @@ Calls a tool on a configured MCP server. Requires the server to be declared in `
 
 Fields: `server` (required — must match a key under `mcp.servers:` in `reyn.yaml`), `tool` (required — tool name as advertised by the server's `tools/list` response), `args` (optional, default `{}`).
 
-> **Advertised name.** As with `run_skill`/`invoke_skill`, phases advertise
-> this op to the LLM under the chat-tool name `call_mcp_tool`; the OS aliases it
-> back to the `mcp` kind at the parse boundary. `mcp` remains the
-> canonical kind in `OP_KIND_MODEL_MAP` and on the dispatched op.
+> **Advertised name.** Phases advertise this op to the LLM under the chat-tool
+> name `call_mcp_tool`; the OS aliases it back to the `mcp` kind at the parse
+> boundary. `mcp` remains the canonical kind in `OP_KIND_MODEL_MAP` and on the
+> dispatched op.
 
 The OS resolves the server's transport (`stdio`, `http`, or `sse`), dispatches via `MCPClient`, and returns the tool result. Every call emits `mcp_called`, `mcp_completed`, and (on failure) `mcp_failed` events.
 
@@ -402,39 +368,6 @@ Returns: `{"kind": "judge_output", "score": float, "passed": bool, "reason": str
 Audit event: `tool_executed` with `op=judge_output, target, score, passed, threshold, reason` (P6).
 
 **P7 note**: Reyn is rubric-agnostic. The rubric content is part of the skill's authored prompt; the OS only routes it to the LLM without inspection.
-
-## `skill_resolve`
-
-Resolve a skill name to its on-disk `skill.md` path via the canonical
-resolution chain (`reyn/local/` → `reyn/project/` → `stdlib/`). Returns
-path metadata; performs no content read.
-
-```json
-{
-  "kind": "skill_resolve",
-  "name": "skill_improver"
-}
-```
-
-Fields:
-- `name` (str, required): Short skill name (no slashes or `.md` extensions).
-
-Returns:
-- `name: str` — echo of input
-- `resolved: bool` — `true` if `skill.md` exists in any resolution layer
-- `skill_md_path: str | null` — absolute path to `skill.md`; `null` when unresolved
-- `source: "local" | "project" | "stdlib" | null` — which resolution layer matched
-- `skill_dir: str | null` — parent directory of `skill.md`; `null` when unresolved
-
-**Events**: `skill_resolve_completed` (`name`, `resolved`, `source`) — emitted after every call (P6).
-
-**Permission**: none required. The op is read-only (path existence walk within the trusted resolution chain); it never reads file content.
-
-**OpPurity**: `world` (filesystem metadata read; result may vary if skills are added/removed between calls).
-
-**Use case**: stdlib python steps that need a skill's absolute path can offload the filesystem walk to this op and stay in `mode: safe`. See R-PURE-MODE Class D refactor — `skill_improver/copy_to_work_resolver` and `eval_builder/analyze_skill_resolver` are the primary consumers.
-
----
 
 ## `compact`
 

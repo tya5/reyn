@@ -1,8 +1,7 @@
 """Op runtime — shared backend for executing ControlIROp.
 
-Both `PreprocessorExecutor` (static frontend) and `ControlIRExecutor`
-(dynamic frontend) dispatch through `execute_op` here. The op kind catalog
-and per-op semantics live in this package; the frontends decide *when*
+The router/chat tool path dispatches through `execute_op` here. The op kind
+catalog and per-op semantics live in this package; the caller decides *when*
 to invoke an op and *where* to bind its result.
 
 `ask_user` is the only op that cannot be invoked from preprocessor
@@ -125,14 +124,11 @@ from . import file as _file  # noqa: F401, E402
 from . import index_drop as _index_drop  # noqa: F401, E402
 from . import index_query as _index_query  # noqa: F401, E402
 from . import judge_output as _judge_output  # noqa: F401, E402
-from . import lint as _lint  # noqa: F401, E402
 from . import mcp as _mcp  # noqa: F401, E402
 from . import mcp_drop_server as _mcp_drop_server  # noqa: F401, E402
 from . import mcp_install as _mcp_install  # noqa: F401, E402
 from . import recall as _recall  # noqa: F401, E402
-from . import run_skill as _run_skill  # noqa: F401, E402
 from . import sandboxed_exec as _sandboxed_exec  # noqa: F401, E402
-from . import skill_resolve as _skill_resolve  # noqa: F401, E402
 
 # #1953 slice 1: Task ops (first-class trackable work-units).
 from . import task as _task  # noqa: F401, E402

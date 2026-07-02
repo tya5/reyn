@@ -3,8 +3,8 @@
 This module holds three classifications keyed by **op kind**
 (= the ``op.kind`` values phase Control IR emits today:
 ``read_file`` / ``write_file`` / ``edit_file`` / ``delete_file`` /
-``glob_files`` / ``grep_files`` / ``mcp`` / ``run_skill`` / ``shell`` /
-``lint`` / ``ask_user`` / ``web_fetch`` / ``web_search`` / etc.).
+``glob_files`` / ``grep_files`` / ``mcp`` / ``shell`` /
+``ask_user`` / ``web_fetch`` / ``web_search`` / etc.).
 
 Note: the coarse ``"file"`` kind was retired in #1240 Wave 2b. All file
 ops now use fine kinds (``read_file`` / ``write_file`` / etc.).  The
@@ -99,8 +99,6 @@ class OpPurity(str, Enum):
 # ---------------------------------------------------------------------------
 
 OP_PURITY: dict[str, OpPurity] = {
-    # Pure: pure computation, no I/O.
-    "lint":        OpPurity.pure,
     # World-state dependent (read APIs).
     "web_fetch":   OpPurity.world,
     "web_search":  OpPurity.world,
@@ -119,7 +117,6 @@ OP_PURITY: dict[str, OpPurity] = {
     "grep_files":  OpPurity.side_effect,
     # External / unknown side-effecting.
     "mcp":         OpPurity.external,
-    "run_skill":   OpPurity.external,
     # User interaction (state-changing for the user).
     "ask_user":    OpPurity.side_effect,
     # MCP server install: writes config + secrets, runs registry fetch.
@@ -138,8 +135,6 @@ OP_PURITY: dict[str, OpPurity] = {
     "sandboxed_exec": OpPurity.external,
     # FP-0007 Component D: LLM call with token cost side effect.
     "judge_output": OpPurity.llm,
-    # R-PURE-MODE Wave 5a: read-only path resolution, no external API calls.
-    "skill_resolve": OpPurity.world,
     # #272/#1128: compact triggers a compaction LLM call (cost) AND mutates
     # history/state; like `recall` it is a macro whose inner compaction engine
     # emits its own events. external = emit both started+completed so a crash
@@ -194,7 +189,6 @@ COARSE_TO_FINE: dict[str, frozenset[str]] = {
     # still declare allowed_ops: [file] will fail linting (ALL_OP_KINDS no
     # longer includes "file") and should migrate to fine kinds.
     "mcp":       frozenset({"call_mcp_tool", "list_mcp_servers", "list_mcp_tools"}),
-    "run_skill": frozenset({"invoke_skill"}),
     # #1953 slice 1: coarse "task" → all task.* fine kinds, so a skill can
     # declare allowed_ops: [task] to permit the whole Task op family.
     "task": frozenset({
@@ -262,7 +256,6 @@ ALL_TOOL_NAMES: frozenset[str] = ALL_OP_KINDS
 # ---------------------------------------------------------------------------
 
 _PHASE_TOOL_NAME_ALIAS: dict[str, str] = {
-    "invoke_skill": "run_skill",
     "call_mcp_tool": "mcp",
 }
 

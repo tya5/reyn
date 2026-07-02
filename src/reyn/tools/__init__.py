@@ -67,7 +67,6 @@ def get_default_registry() -> ToolRegistry:
         WRITE_FILE,
     )
     from reyn.tools.hooks import HOOKS_ADD
-    from reyn.tools.lint import LINT
     from reyn.tools.mcp import (
         CALL_MCP_TOOL,
         DESCRIBE_MCP_TOOL,
@@ -159,10 +158,8 @@ def get_default_registry() -> ToolRegistry:
     # category is additionally gated by is_exec_available = a real sandbox
     # backend, not by gates.router) — it was previously mis-grouped under a
     # "gates.router=deny" comment alongside the now-removed `shell` op (the only
-    # true router=deny here was shell / ask_user). LINT=router="allow",
-    # ASK_USER=router="deny".
+    # true router=deny here was shell / ask_user). ASK_USER=router="deny".
     registry.register(SANDBOXED_EXEC)
-    registry.register(LINT)
     registry.register(ASK_USER)
     # ── Router-only capabilities (gates.router=allow, gates.phase=deny) ──
     registry.register(DELEGATE_TO_AGENT)
@@ -187,11 +184,11 @@ def get_default_registry() -> ToolRegistry:
     registry.register(REYN_SRC_GLOB)
     registry.register(REYN_SRC_GREP)
     # ── Phase-only coarse-name ops (gates.router=deny, gates.phase=allow) ─
-    # #1240 Wave 2b: MCP_OP + RUN_SKILL_OP coarse ToolDefinitions dropped.
-    # Phase advertises "call_mcp_tool" / "invoke_skill" via available_ops();
-    # the (A)-alias in _PHASE_TOOL_NAME_ALIAS rewrites to "mcp"/"run_skill"
-    # at the parse boundary.  Dispatch falls to the legacy execute_op path
-    # (op_runtime/mcp.py + op_runtime/run_skill.py via register("mcp"/"run_skill")).
+    # #1240 Wave 2b: MCP_OP coarse ToolDefinition dropped.
+    # Phase advertises "call_mcp_tool" via available_ops(); the (A)-alias in
+    # _PHASE_TOOL_NAME_ALIAS rewrites it to "mcp" at the parse boundary.
+    # Dispatch falls to the legacy execute_op path (op_runtime/mcp.py via
+    # register("mcp")).
     # NOTE: FILE_OP coarse ToolDefinition was dropped in the previous Wave 2b step.
     registry.register(MCP_INSTALL_OP)
     # FP-0034 §D23: mcp_drop_server is router+phase callable (= dual gate).
