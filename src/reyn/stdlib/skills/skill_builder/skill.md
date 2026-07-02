@@ -35,6 +35,15 @@ routing:
       - "skill って何？"
       - "DSL の書き方を教えて"
       - "既存のスキルを改善して"   # this is skill_improver, not skill_builder
+permissions:
+  # #2413: build_skill's dsl_writer writes the generated skill DSL under
+  # reyn/local/{skill_name}/ — OUTSIDE the .reyn/ default write zone (#1505), so
+  # declare the recursive write grant. Sibling of eval_builder's declared grants:
+  # #1519 added declared-intent grants to eval_builder but missed this sibling, so
+  # skill_builder hit permission_denied out-of-the-box.
+  file.write:
+    - path: reyn/local
+      scope: recursive
 # FP-0016 D: this skill needs no static secrets / OAuth tokens.
 required_credentials: []
 ---

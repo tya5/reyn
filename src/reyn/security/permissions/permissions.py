@@ -3,7 +3,7 @@ Skill-level permission declarations and approval resolution.
 
 Default grants (no declaration needed):
   file read/glob/grep  — any path within the project root (CWD)
-  file write/edit/delete — under project/.reyn/ or project/reyn/ only
+  file write/edit/delete — under project/.reyn/ only
 
 Outside the defaults → the skill must declare the path AND the user must approve:
   file.read:  [{path: <path>, scope: just_path|recursive}]   (paths outside CWD)
@@ -1163,7 +1163,7 @@ class PermissionResolver:
 
         raise PermissionError(
             f"write to '{path}' was not approved (declared but not granted).\n"
-            f"Why: it is outside the default write zone (.reyn/, reyn/) and has no "
+            f"Why: it is outside the default write zone (.reyn/) and has no "
             f"approval.\n"
             f"Options:\n"
             f"  - pre-approve in reyn.yaml: permissions.file.write: allow (or the "
