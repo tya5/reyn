@@ -294,12 +294,13 @@ class MediaStore:
 
     def save_tool_result(
         self,
-        content: str,
+        content: "str | dict",
         *,
         mime_type: str = "text/plain",
         chain_id: str = "",
         tool: str = "tool",
         seq: int = 1,
+        payload_field: str | None = None,
     ) -> dict:
         """Write a tool result text dump to ``tool_results_dir`` and
         return a path-ref block (= ``{"type": "tool_result_ref", "path":
@@ -309,6 +310,13 @@ class MediaStore:
         ``services/offload/store.py`` (Phase 2 of the offload-dedup effort,
         FP-0008 C5 #223).  The return block shape is IDENTICAL to the
         pre-migration contract — callers are unaffected.
+
+        #2394-followup clean-payload: when ``content`` is the op-result dict and
+        ``payload_field`` names its sole-oversized field, ``offload_value`` stores
+        THAT field's value CLEAN (raw text with real newlines) instead of the whole
+        dict — the chat path uses this so an offloaded MCP/web/exec result is clean
+        content, not a ``{"status":...,"data":{...}}`` single-line envelope. When
+        ``content`` is a string (the default), behaviour is byte-identical to before.
 
         Preview-bound note: ``preview_strategy=None`` is passed so the
         common service performs no preview bounding.  The preview is built
@@ -326,6 +334,7 @@ class MediaStore:
             store_dir=self._tool_results_dir,
             preview_strategy=None,
             filename=filename,
+            payload_field=payload_field,
         )
 
         # Convert absolute path_ref to project-relative path for the block.

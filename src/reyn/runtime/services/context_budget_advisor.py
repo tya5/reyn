@@ -98,10 +98,18 @@ class ContextBudgetAdvisor:
         from reyn.runtime.services.tool_result_cap import compute_cap_tokens
         return compute_cap_tokens(self._get_effective_trigger())
 
-    def cap_tool_result(self, content_str: str) -> str:
+    def cap_tool_result(
+        self,
+        content_str: str,
+        *,
+        clean_value: "Any" = None,
+        payload_field: str | None = None,
+    ) -> str:
         """Cap an oversized chat tool result (#1128 size axis).
 
-        No-op when no media_store is configured.
+        No-op when no media_store is configured. ``clean_value`` / ``payload_field`` (#2394-followup)
+        carry the OS dispatch envelope's inner op-result + its sole-oversized payload field so the
+        stored body is that field CLEAN, not the whole envelope string (default None = unchanged).
         """
         store = self._media_store
         if store is None:
@@ -116,6 +124,8 @@ class ContextBudgetAdvisor:
             save_fn=store.save_tool_result,
             use_chars4=use_chars4,
             events=self._events,
+            clean_value=clean_value,
+            payload_field=payload_field,
         )
 
     def media_followup_budget(self, tool_content: str) -> int:

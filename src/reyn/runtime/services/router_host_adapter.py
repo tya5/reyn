@@ -490,14 +490,28 @@ class RouterHostAdapter:
 
     # --- RouterLoopHost identity attributes ---
 
-    def cap_tool_result(self, content_str: str) -> str:
+    def cap_tool_result(
+        self,
+        content_str: str,
+        *,
+        clean_value: Any = None,
+        payload_field: str | None = None,
+    ) -> str:
         """#1128 size axis: cap an oversized tool-result string at the
         router_loop chokepoint. Delegates to the session-supplied callable
         (which offloads the full body via the #385 store + returns a bounded
         preview); identity when no capper was wired (= legacy / test paths).
+
+        #2394-followup: ``clean_value`` / ``payload_field`` carry the OS dispatch envelope's inner
+        op-result + its sole-oversized payload field. Forwarded ONLY when clean-payload applies, so a
+        capper with the plain ``(content_str)`` signature (legacy / tests) is called exactly as before.
         """
         if self._cap_tool_result is None:
             return content_str
+        if payload_field is not None:
+            return self._cap_tool_result(
+                content_str, clean_value=clean_value, payload_field=payload_field
+            )
         return self._cap_tool_result(content_str)
 
     def media_followup_budget(self, tool_content: str) -> int | None:

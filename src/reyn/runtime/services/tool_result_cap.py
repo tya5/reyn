@@ -68,9 +68,11 @@ def cap_tool_result_content(
     *,
     cap_tokens: int,
     model: str,
-    save_fn: Callable[[str], dict],
+    save_fn: Callable[..., dict],
     use_chars4: bool = False,
     events: Any = None,
+    clean_value: Any = None,
+    payload_field: str | None = None,
 ) -> str:
     """Return *content_str* unchanged if within the cap, else its offloaded preview.
 
@@ -101,7 +103,23 @@ def cap_tool_result_content(
     if estimate_tokens(content_str, model, use_chars4=use_chars4) <= cap_tokens:
         return content_str
 
-    block = save_fn(content_str)
+    # #2394-followup clean-payload: when the result is the OS dispatch envelope whose ``data``
+    # declares a sole-oversized field (``payload_field`` from the shared ``decide_payload_field``),
+    # store THAT field's value CLEAN (raw text, real newlines) — not the whole ``{status, data:{…}}``
+    # single-line envelope — and preview FROM it. Mirrors the control_ir offloader; only the STORED
+    # body + preview source change, the token-fit machinery below is identical. When no clean-payload
+    # (the default), behaviour is byte-identical to before.
+    clean = payload_field is not None and isinstance(clean_value, dict)
+    if clean:
+        block = save_fn(clean_value, payload_field=payload_field)
+        _field_val = clean_value.get(payload_field)
+        preview_source = (
+            _field_val if isinstance(_field_val, str)
+            else json.dumps(_field_val, ensure_ascii=False, default=str)
+        )
+    else:
+        block = save_fn(content_str)
+        preview_source = content_str
     ref = block.get("path", "")
     content_hash = block.get("content_hash", "")
 
@@ -118,8 +136,9 @@ def cap_tool_result_content(
 
     head_chars, tail_chars = _PREVIEW_HEAD_CHARS, _PREVIEW_TAIL_CHARS
     preview = _build_preview(
-        content_str, ref=ref, content_hash=content_hash,
+        preview_source, ref=ref, content_hash=content_hash,
         head_chars=head_chars, tail_chars=tail_chars,
+        payload_field=payload_field if clean else None,
     )
     # Shrink head/tail symmetrically until the preview fits cap_tokens. Floor at
     # 0 (= a bare lossless ref-marker) so even a tiny cap converges rather than
@@ -128,14 +147,15 @@ def cap_tool_result_content(
         head_chars = head_chars // 2 if head_chars > 64 else 0
         tail_chars = tail_chars // 2 if tail_chars > 64 else 0
         preview = _build_preview(
-            content_str, ref=ref, content_hash=content_hash,
+            preview_source, ref=ref, content_hash=content_hash,
             head_chars=head_chars, tail_chars=tail_chars,
+            payload_field=payload_field if clean else None,
         )
 
     if events is not None:
         events.emit(
             "tool_result_offloaded",
-            total_chars=len(content_str),
+            total_chars=len(preview_source),
             cap_tokens=cap_tokens,
             ref=ref,
             content_hash=content_hash,
@@ -150,19 +170,26 @@ def _build_preview(
     content_hash: str,
     head_chars: int,
     tail_chars: int,
+    payload_field: str | None = None,
 ) -> str:
-    """Build the bounded inline preview JSON for an offloaded tool result."""
-    return json.dumps(
-        {
-            "_offload_ref": ref,
-            "_offload_content_hash": content_hash,
-            "_offload_total_chars": len(content_str),
-            "_offload_note": (
-                f"Tool result offloaded ({len(content_str)} chars); read the full "
-                f"body via read_tool_result({ref!r})."
-            ),
-            "_offload_head": content_str[:head_chars] if head_chars > 0 else "",
-            "_offload_tail": content_str[-tail_chars:] if tail_chars > 0 else "",
-        },
-        ensure_ascii=False,
-    )
+    """Build the bounded inline preview JSON for an offloaded tool result.
+
+    When ``payload_field`` is set (#2394-followup clean-payload), the ref holds the CLEAN field
+    value (raw text) rather than the whole-dict envelope, so the inline signals that to the reader
+    via ``_offload_ref_format`` / ``_offload_payload_field`` — matching the control_ir offloader's
+    inline markers so both paths read back identically."""
+    inline: dict = {
+        "_offload_ref": ref,
+        "_offload_content_hash": content_hash,
+        "_offload_total_chars": len(content_str),
+        "_offload_note": (
+            f"Tool result offloaded ({len(content_str)} chars); read the full "
+            f"body via read_tool_result({ref!r})."
+        ),
+        "_offload_head": content_str[:head_chars] if head_chars > 0 else "",
+        "_offload_tail": content_str[-tail_chars:] if tail_chars > 0 else "",
+    }
+    if payload_field is not None:
+        inline["_offload_ref_format"] = "raw_field"
+        inline["_offload_payload_field"] = payload_field
+    return json.dumps(inline, ensure_ascii=False)

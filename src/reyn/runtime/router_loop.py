@@ -3086,6 +3086,9 @@ class RouterLoop:
                 meta={"chain_id": self.chain_id, "source": "router_tool_turn"},
                 tool_calls=result.tool_calls,
             )
+        # #2394-followup: the shared clean-payload decision (same helper the control_ir offloader
+        # uses) — lazy import to avoid any import cycle with context_builder.
+        from reyn.core.context_builder import decide_payload_field
         for tc, r in zip(result.tool_calls, result.tool_results):
             # B41-NF-W7-1: _post_text → appended outside the JSON body.
             post_text: str | None = None
@@ -3104,6 +3107,20 @@ class RouterLoop:
             if isinstance(r, dict) and r.get("_external_source"):
                 external_source = True
                 r = {k: v for k, v in r.items() if k != "_external_source"}
+            # #2394-followup clean-payload: if r is the OS dispatch envelope {status, data:<dict>}
+            # and data declares a SOLE-oversized payload field (shared decide_payload_field — same
+            # decision the control_ir offloader uses), pass the inner op-result + field to the cap so
+            # the offloaded file holds THAT field CLEAN (real newlines), not the whole-envelope
+            # single-line JSON. P7-safe: OS-level keys only (status/data + the op-supplied marker);
+            # generalises to every payload-field op (mcp/web/exec). Mirrors phase_executor's unwrap
+            # check. When it doesn't apply, cap behaves byte-identically to before.
+            clean_value = None
+            payload_field = None
+            if (isinstance(r, dict) and isinstance(r.get("data"), dict)
+                    and set(r) <= {"status", "data", "error"}):
+                payload_field = decide_payload_field(r["data"])
+                if payload_field is not None:
+                    clean_value = r["data"]
             content_str = json.dumps(r, default=str)
             if post_text:
                 content_str = f"{content_str}\n\n---\n{post_text}"
@@ -3115,7 +3132,14 @@ class RouterLoop:
             # #1128: cap oversized tool results once at this chokepoint.
             _cap = getattr(host, "cap_tool_result", None)
             if _cap is not None:
-                content_str = _cap(content_str)
+                if payload_field is not None:
+                    content_str = _cap(
+                        content_str, clean_value=clean_value, payload_field=payload_field
+                    )
+                else:
+                    # No clean-payload → call with the plain (content_str) signature so a host/capper
+                    # without the #2394-followup kwargs (legacy / tests) is unaffected.
+                    content_str = _cap(content_str)
             # FP-0050/#1822 S2: fence untrusted-source content AFTER cap (so
             # truncation can't sever the end marker). Trusted-internal = scan-only.
             if external_source:

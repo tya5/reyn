@@ -148,6 +148,22 @@ def _oversized_fields(result: dict) -> list[str]:
     ]
 
 
+def decide_payload_field(result: dict) -> str | None:
+    """#2336: the clean-payload DECISION — the single source of truth shared by the control_ir
+    offloader (below) AND the chat tool-result cap (#2394-followup, via router_loop).
+
+    Return the op result's declared ``_offload_payload_field`` IFF it is the SOLE oversized field
+    (so the offloader can store that field CLEAN — raw text with real newlines — instead of a
+    whole-dict JSON envelope). Return ``None`` otherwise: no marker, or a multi-large result whose
+    non-dominant large field must not be dropped to preview-only (→ whole-dict fallback, zero
+    data-loss). Extracting this means the two offload paths can never diverge on the decision again
+    (the divergence that let the chat path lag the control_ir fix in #2394)."""
+    declared = result.get("_offload_payload_field")
+    if not declared:
+        return None
+    return declared if _oversized_fields(result) == [declared] else None
+
+
 def _phase_preview_strategy(result: dict, ref_path: str) -> dict:
     """Phase-axis preview strategy: type-aware per-field previews + hard-bound fallback.
 
@@ -248,8 +264,8 @@ def offload_control_ir_result(
     # whole-dict envelope. Multi-large-field → whole-dict fallback (payload_field=None)
     # so a non-dominant large field's full content is never dropped to preview-only
     # (zero data-loss). P7-safe: the marker is op-supplied data, no op literal here.
-    declared_payload_field = result.get("_offload_payload_field")
-    use_clean_payload = bool(declared_payload_field) and _oversized_fields(result) == [declared_payload_field]
+    declared_payload_field = decide_payload_field(result)
+    use_clean_payload = declared_payload_field is not None
     offload_result = offload_value(
         result,
         store_dir=offload_dir,
