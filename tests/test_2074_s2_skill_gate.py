@@ -25,7 +25,6 @@ import pytest
 from test_skill_runner_invariants import _make_runner
 
 from reyn.runtime.profile import AgentProfile
-from reyn.runtime.services.router_host_adapter import RouterHostAdapter
 from reyn.security.permissions.effective import (
     CapabilityAxis,
     EffectivePermission,
@@ -133,34 +132,6 @@ def test_site2_run_skill_awaitable_refuses_disallowed_skill() -> None:
         assert "skill_spawn_refused" in [e.type for e in events.all()]
 
     asyncio.run(_run())
-
-
-def _catalog_host(allowed_skills, enumerated):
-    """A real RouterHostAdapter exercising only list_available_skills via its two
-    real inputs (the _skill_enumerate_fn DI seam + _allowed_skills) — no collaborator
-    mocks, no 30-arg construction. ``enumerated`` is what enumerate returns (the
-    router is already excluded upstream by the {skill_router} exclude arg)."""
-    host = RouterHostAdapter.__new__(RouterHostAdapter)
-    host._allowed_skills = allowed_skills
-    host._contextual_permission = None  # #2074 S3: no per-context narrowing here
-    host._skill_enumerate_fn = lambda exclude: list(enumerated)
-    return host
-
-
-def test_site3_catalog_filter_routes_through_seam() -> None:
-    """Tier 2: catalog filter (RouterHostAdapter.list_available_skills) — visibility
-    shares the routed seam; an un-listed skill is filtered out, preserving the
-    visibility⇔spawn coupling. Falsifiable: break the seam → 'drop' kept / 'keep'
-    dropped → RED."""
-    host = _catalog_host(["keep"], [{"name": "keep"}, {"name": "drop"}])
-    assert [s["name"] for s in host.list_available_skills()] == ["keep"]
-
-
-def test_site3_catalog_none_is_unrestricted() -> None:
-    """Tier 2: allowed_skills=None → no catalog filtering (byte-identical to the
-    legacy `if self._allowed_skills is not None` guard)."""
-    host = _catalog_host(None, [{"name": "a"}, {"name": "b"}])
-    assert [s["name"] for s in host.list_available_skills()] == ["a", "b"]
 
 
 # ── FALSIFY NOTE (held-oracle ×3, run + reverted during S2 build) ───────────

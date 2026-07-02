@@ -209,33 +209,3 @@ async def test_agent_run_falls_back_to_make_run_id_when_none() -> None:
 # ── 5. source-level audit: _build_agent_for_skill_runner threads run_id ──
 
 
-def test_build_agent_for_skill_runner_threads_run_id_to_build_agent() -> None:
-    """Tier 2: source-level audit — Session._build_agent_for_skill_runner passes run_id.
-
-    Catches future regression where _build_agent_for_skill_runner stops
-    forwarding run_id to _build_agent (= the exact PR-R defect).
-    """
-    from pathlib import Path
-    source = (
-        Path(__file__).parent.parent / "src" / "reyn" / "runtime" / "session.py"
-    ).read_text(encoding="utf-8")
-    # Locate the _build_agent_for_skill_runner function body
-    fn_marker = "def _build_agent_for_skill_runner"
-    fn_start = source.index(fn_marker)
-    # Look for the next top-level function or class so we don't bleed past
-    # the function body.
-    fn_end_candidates = [
-        source.find("\n    def ", fn_start + len(fn_marker)),
-        source.find("\nclass ", fn_start + len(fn_marker)),
-        len(source),
-    ]
-    fn_end = min([c for c in fn_end_candidates if c > 0])
-    fn_body = source[fn_start:fn_end]
-
-    assert "run_id=run_id" in fn_body, (
-        "_build_agent_for_skill_runner must pass `run_id=run_id` to "
-        "_build_agent (= PR-R wiring contract). Without this, the "
-        "Agent instance receives None and agent.run() regenerates a "
-        "fresh canonical, breaking the chat-side ↔ skill-side run_id "
-        "match (= tui-coder finding #1 5-point smoke trace 2026-05-28)."
-    )

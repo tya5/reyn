@@ -27,7 +27,6 @@ import pytest
 from reyn.runtime.router_loop import RouterLoop
 from reyn.runtime.router_tools import build_tools
 
-_SAMPLE_SKILLS = [{"name": "example_skill", "description": "An example skill"}]
 _SAMPLE_AGENTS = [{"name": "peer_agent", "role": "Peer"}]
 
 
@@ -40,7 +39,7 @@ def _tool_names(tools: list[dict]) -> list[str]:
 
 def test_default_flag_off_excludes_universal_wrappers() -> None:
     """Tier 2: with the default (False), no universal wrappers appear."""
-    tools = build_tools(_SAMPLE_SKILLS, _SAMPLE_AGENTS)
+    tools = build_tools(_SAMPLE_AGENTS)
     names = set(_tool_names(tools))
     for w in ("list_actions", "search_actions", "describe_action",
               "invoke_action"):
@@ -56,9 +55,9 @@ def test_default_flag_off_matches_explicit_false() -> None:
     Defensive check — confirms no unintentional default flip during
     refactor.  Both calls must return identical tool name sequences.
     """
-    a = _tool_names(build_tools(_SAMPLE_SKILLS, _SAMPLE_AGENTS))
+    a = _tool_names(build_tools(_SAMPLE_AGENTS))
     b = _tool_names(build_tools(
-        _SAMPLE_SKILLS, _SAMPLE_AGENTS, universal_wrappers_enabled=False,
+        _SAMPLE_AGENTS, universal_wrappers_enabled=False,
     ))
     assert a == b
 
@@ -76,7 +75,7 @@ def test_flag_on_appends_three_wrappers_in_order() -> None:
     ``test_flag_on_with_search_visible_appends_four_wrappers``).
     """
     names = _tool_names(build_tools(
-        _SAMPLE_SKILLS, _SAMPLE_AGENTS, universal_wrappers_enabled=True,
+        _SAMPLE_AGENTS, universal_wrappers_enabled=True,
     ))
     # All 3 wrappers present (search_actions gated separately)
     assert "list_actions" in names
@@ -98,7 +97,7 @@ def test_flag_on_with_search_visible_appends_four_wrappers() -> None:
     in the canonical order.
     """
     names = _tool_names(build_tools(
-        _SAMPLE_SKILLS, _SAMPLE_AGENTS,
+        _SAMPLE_AGENTS,
         universal_wrappers_enabled=True,
         search_actions_visible=True,
     ))
@@ -123,12 +122,12 @@ def test_search_visible_alone_does_not_inject_wrappers() -> None:
     stays False keeps the legacy tools= shape unchanged.
     """
     a = _tool_names(build_tools(
-        _SAMPLE_SKILLS, _SAMPLE_AGENTS,
+        _SAMPLE_AGENTS,
         universal_wrappers_enabled=False,
         search_actions_visible=True,
     ))
     b = _tool_names(build_tools(
-        _SAMPLE_SKILLS, _SAMPLE_AGENTS,
+        _SAMPLE_AGENTS,
         universal_wrappers_enabled=False,
     ))
     assert a == b
@@ -144,7 +143,7 @@ def test_flag_on_wrappers_at_end_of_tools_list() -> None:
     in their previous positions.
     """
     names = _tool_names(build_tools(
-        _SAMPLE_SKILLS, _SAMPLE_AGENTS, universal_wrappers_enabled=True,
+        _SAMPLE_AGENTS, universal_wrappers_enabled=True,
     ))
     # The last 3 entries should be the wrappers in canonical order
     assert names[-3:] == ["list_actions", "describe_action", "invoke_action"]
@@ -158,7 +157,7 @@ def test_flag_on_strips_legacy_and_adds_wrappers() -> None:
     and only the universal wrappers remain as the addressing surface.
     """
     on_names = _tool_names(build_tools(
-        _SAMPLE_SKILLS, _SAMPLE_AGENTS, universal_wrappers_enabled=True,
+        _SAMPLE_AGENTS, universal_wrappers_enabled=True,
     ))
     # Wrappers present
     assert "list_actions" in on_names
@@ -182,7 +181,7 @@ def test_flag_on_wrapper_shapes_are_openai_function_tools() -> None:
       - nested ``function.parameters.type == "object"``
     """
     tools = build_tools(
-        _SAMPLE_SKILLS, _SAMPLE_AGENTS, universal_wrappers_enabled=True,
+        _SAMPLE_AGENTS, universal_wrappers_enabled=True,
     )
     wrappers = [
         t for t in tools
@@ -248,8 +247,7 @@ def test_flag_on_wrappers_present_even_with_empty_skills_agents() -> None:
     Wrappers are universal (§D21 category-external) so they don't
     depend on skill / agent / MCP / file presence.
     """
-    names = _tool_names(build_tools(
-        [], [], universal_wrappers_enabled=True,
+    names = _tool_names(build_tools([], universal_wrappers_enabled=True,
     ))
     assert "list_actions" in names
     assert "describe_action" in names
@@ -271,7 +269,7 @@ def test_wrappers_on_strips_all_legacy_tools() -> None:
     addresses everything through the universal wrappers only.
     """
     names = _tool_names(build_tools(
-        _SAMPLE_SKILLS, _SAMPLE_AGENTS,
+        _SAMPLE_AGENTS,
         universal_wrappers_enabled=True,
     ))
     # Wrappers present
@@ -309,7 +307,7 @@ def test_ask_user_absent_from_router_tools_when_wrappers_enabled() -> None:
     never stripped, just gated at the definition level.
     """
     names = set(_tool_names(build_tools(
-        _SAMPLE_SKILLS, _SAMPLE_AGENTS,
+        _SAMPLE_AGENTS,
         universal_wrappers_enabled=True,
     )))
     # ask_user: gated to phase-only (gates.router='deny') so correctly absent
@@ -347,8 +345,7 @@ def test_hot_list_aliases_injected_into_build_tools() -> None:
             },
         }
     ]
-    tools = build_tools(
-        [], [], universal_wrappers_enabled=True, hot_list_aliases=aliases,
+    tools = build_tools([], universal_wrappers_enabled=True, hot_list_aliases=aliases,
     )
     names = {t["function"]["name"] for t in tools}
     assert "skill__foo" in names, (
@@ -374,8 +371,7 @@ def test_hot_list_aliases_absent_when_wrappers_disabled() -> None:
             },
         }
     ]
-    tools = build_tools(
-        [], [], universal_wrappers_enabled=False, hot_list_aliases=aliases,
+    tools = build_tools([], universal_wrappers_enabled=False, hot_list_aliases=aliases,
     )
     names = {t["function"]["name"] for t in tools}
     assert "skill__bar" not in names, (
@@ -385,8 +381,8 @@ def test_hot_list_aliases_absent_when_wrappers_disabled() -> None:
 
 def test_hot_list_aliases_none_is_noop() -> None:
     """Tier 2: passing hot_list_aliases=None does not change the tools= list."""
-    a = build_tools([], [], universal_wrappers_enabled=True)
-    b = build_tools([], [], universal_wrappers_enabled=True, hot_list_aliases=None)
+    a = build_tools([], universal_wrappers_enabled=True)
+    b = build_tools([], universal_wrappers_enabled=True, hot_list_aliases=None)
     assert a == b
 
 

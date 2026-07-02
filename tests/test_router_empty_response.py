@@ -456,12 +456,10 @@ async def test_normal_text_reply_does_not_emit_empty_response_event(monkeypatch)
 @pytest.mark.asyncio
 async def test_tool_call_reply_does_not_emit_empty_response_event(monkeypatch):
     """Tier 2: tool_call response does NOT emit router_empty_response_detected event."""
-    host = FakeRouterHost(skills=[{"name": "my_skill", "category": "general"}])
+    host = FakeRouterHost()
     loop = make_loop(host)
     scripted = _ScriptedLLM([
-        tool_result([{"name": "invoke_skill", "args": {
-            "name": "my_skill", "input": {"type": "T", "data": {}},
-        }}]),
+        tool_result([{"name": "list_actions", "args": {}}]),
         text_result("Done."),
     ])
     monkeypatch.setattr("reyn.runtime.router_loop.call_llm_tools", scripted)

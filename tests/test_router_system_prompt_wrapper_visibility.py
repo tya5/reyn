@@ -20,7 +20,6 @@ from reyn.tools.schemes._universal_sp import build_universal_tool_use_slots
 _BASE = {
     "agent_name": "chat",
     "agent_role": "test agent",
-    "available_skills": [],
     "available_agents": [],
     "memory_index": {"status": "not_found", "content": ""},
 }

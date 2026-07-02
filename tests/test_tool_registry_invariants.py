@@ -423,9 +423,7 @@ def test_gate_partitioning_both_deny():
 def test_router_caller_state_defaults_all_none():
     """Tier 2: RouterCallerState() with no arguments defaults all fields to None."""
     state = RouterCallerState()
-    assert state.skill_registry is None
     assert state.agent_registry is None
-    assert state.available_skills is None
     assert state.available_agents is None
     assert state.send_to_agent is None
     assert state.chain_id is None
@@ -524,14 +522,12 @@ def test_tool_context_fields_attribute_access():
 
 
 def test_router_caller_state_partial_population():
-    """Tier 2: RouterCallerState constructed with skill_registry only leaves
+    """Tier 2: RouterCallerState constructed with agent_registry only leaves
     all other fields None (= partial population for gradual migration)."""
     sentinel_registry = object()
-    state = RouterCallerState(skill_registry=sentinel_registry)
+    state = RouterCallerState(agent_registry=sentinel_registry)
 
-    assert state.skill_registry is sentinel_registry
-    assert state.agent_registry is None
-    assert state.available_skills is None
+    assert state.agent_registry is sentinel_registry
     assert state.available_agents is None
     assert state.send_to_agent is None
     assert state.chain_id is None
@@ -543,7 +539,6 @@ def test_router_caller_state_partial_population():
 
 def test_router_caller_state_full_population():
     """Tier 2: RouterCallerState constructed with all fields preserves them."""
-    sentinel_skill_reg = object()
     sentinel_agent_reg = object()
     sentinel_budget = object()
     sentinel_memory = object()
@@ -552,9 +547,7 @@ def test_router_caller_state_full_population():
         pass
 
     state = RouterCallerState(
-        skill_registry=sentinel_skill_reg,
         agent_registry=sentinel_agent_reg,
-        available_skills=[{"name": "s1"}],
         available_agents=[{"name": "a1"}],
         send_to_agent=_send_to_agent,
         chain_id="chain-xyz",
@@ -564,9 +557,7 @@ def test_router_caller_state_full_population():
         memory_service=sentinel_memory,
     )
 
-    assert state.skill_registry is sentinel_skill_reg
     assert state.agent_registry is sentinel_agent_reg
-    assert state.available_skills == [{"name": "s1"}]
     assert state.available_agents == [{"name": "a1"}]
     assert state.send_to_agent is _send_to_agent
     assert state.chain_id == "chain-xyz"
@@ -581,20 +572,12 @@ def test_router_caller_state_full_population():
 def test_router_caller_state_catalog_callable_fields_default_none():
     """Tier 2: RouterCallerState catalog callable fields default to None."""
     state = RouterCallerState()
-    assert state.list_skills_fn is None
-    assert state.describe_skill_fn is None
     assert state.list_agents_fn is None
     assert state.describe_agent_fn is None
 
 
 def test_router_caller_state_catalog_callable_fields_assignable():
     """Tier 2: RouterCallerState catalog callable fields accept callables and remain callable."""
-    def _list_skills(query: str) -> list:
-        return [{"name": "s1", "query": query}]
-
-    def _describe_skill(name: str) -> dict:
-        return {"name": name, "description": "desc"}
-
     def _list_agents(query: str) -> list:
         return [{"name": "a1", "query": query}]
 
@@ -602,24 +585,12 @@ def test_router_caller_state_catalog_callable_fields_assignable():
         return {"name": name, "description": "agent desc"}
 
     state = RouterCallerState(
-        list_skills_fn=_list_skills,
-        describe_skill_fn=_describe_skill,
         list_agents_fn=_list_agents,
         describe_agent_fn=_describe_agent,
     )
 
-    assert callable(state.list_skills_fn)
-    assert callable(state.describe_skill_fn)
     assert callable(state.list_agents_fn)
     assert callable(state.describe_agent_fn)
-
-    skills = state.list_skills_fn("test_query")
-    assert isinstance(skills, list)
-    assert skills[0]["name"] == "s1"
-
-    skill = state.describe_skill_fn("my_skill")
-    assert isinstance(skill, dict)
-    assert skill["name"] == "my_skill"
 
     agents = state.list_agents_fn("agent_query")
     assert isinstance(agents, list)
@@ -643,7 +614,7 @@ def test_tool_definition_schema_enricher_can_be_set():
     def _enricher(rendered: dict, state: RouterCallerState) -> dict:
         enriched = dict(rendered)
         enriched["_enriched"] = True
-        enriched["_skills_count"] = len(state.available_skills or [])
+        enriched["_agents_count"] = len(state.available_agents or [])
         return enriched
 
     tool = ToolDefinition(
@@ -659,9 +630,9 @@ def test_tool_definition_schema_enricher_can_be_set():
     assert callable(tool.schema_enricher)
 
     sample_rendered = {"type": "function", "function": {"name": "enricher_tool"}}
-    state = RouterCallerState(available_skills=[{"name": "skill_a"}, {"name": "skill_b"}])
+    state = RouterCallerState(available_agents=[{"name": "agent_a"}, {"name": "agent_b"}])
     result = tool.schema_enricher(sample_rendered, state)
 
     assert result["_enriched"] is True
-    assert result["_skills_count"] == 2
+    assert result["_agents_count"] == 2
     assert result["type"] == "function"

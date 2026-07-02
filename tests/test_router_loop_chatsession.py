@@ -164,85 +164,6 @@ def test_user_message_chitchat_appended_to_history(tmp_path, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# Test 2: invoke_skill e2e (synchronous — #2104 PR1 skill-unification)
-# ---------------------------------------------------------------------------
-
-def test_user_message_invoke_skill_e2e(tmp_path, monkeypatch):
-    """Tier 1: Session→RouterLoop invoke_skill — synchronous inline result (#2104 PR1).
-
-    Contract (#2104 skill-unification): chat-mode invoke_skill now returns
-    the synchronous result ``{status: "finished"|"error", data: ...}``
-    inline, NOT the spawn-ack ``{status: "spawned", ...}``.  The router LLM
-    receives the real skill output as the tool_result and narrates from it
-    directly in the same turn.
-
-    Falsifiable: the key behavioral change is that run_skill_awaitable is
-    called (NOT spawn_skill), and the tool_result visible to round 2 is
-    the synchronous {status: "finished"} dict.
-
-    Script: round 1 LLM calls invoke_action(skill__some_skill); fake
-    run_skill_awaitable returns a finished result; round 2 LLM produces a
-    text reply. Assert: run_skill_awaitable was called; the router completes
-    round 2; result is not a spawn-ack.
-    """
-    monkeypatch.chdir(tmp_path)
-    session = _make_session(tmp_path)
-    session.is_attached = True
-
-    run_skill_called = {"called": False}
-    run_skill_result = {"status": "finished", "data": {"answer": "42"}}
-
-    async def fake_run_skill_awaitable(*, skill, input, chain_id):
-        run_skill_called["called"] = True
-        return run_skill_result
-
-    rounds = [
-        _tool_result([{"name": "invoke_action", "args": {
-            "action_name": "skill__some_skill",
-            "args": {"input": {"type": "test", "data": {}}},
-        }}]),
-        # Round 2: LLM narrates the synchronous skill result.
-        _text_result("The skill finished with answer 42."),
-    ]
-
-    call_count = {"n": 0}
-
-    async def fake_llm(*args, **kwargs):
-        result = rounds[call_count["n"]]
-        call_count["n"] += 1
-        return result
-
-    monkeypatch.setattr("reyn.runtime.router_loop.call_llm_tools", fake_llm)
-    monkeypatch.setattr(
-        session.router_host, "run_skill_awaitable", fake_run_skill_awaitable,
-    )
-    monkeypatch.setattr(
-        session.router_host,
-        "list_available_skills",
-        lambda: [{"name": "some_skill", "category": "general"}],
-    )
-
-    async def run():
-        await session._handle_user_message("run skill", chain_id="chain-003")
-
-    _run(run())
-
-    assert run_skill_called["called"], (
-        "#2104: run_skill_awaitable must have been called for synchronous dispatch"
-    )
-    # Synchronous path: the router LLM runs round 2 and produces an agent message.
-    msgs = _drain_outbox(session)
-    agent_msgs = [m for m in msgs if m.kind == "agent"]
-    assert agent_msgs, "Router must emit at least one agent message after synchronous skill result"
-    # The result must NOT be a spawn-ack (= the key behavioral change).
-    for msg in agent_msgs:
-        assert msg.meta.get("source") != "spawn_ack", (
-            "#2104: synchronous path must not emit spawn_ack messages; "
-            f"got meta={msg.meta!r}"
-        )
-
-
-# ---------------------------------------------------------------------------
 # Test 3: delegate_to_agent registers pending chain
 # ---------------------------------------------------------------------------
 
@@ -315,10 +236,10 @@ def test_chatsession_satisfies_host_protocol(tmp_path, monkeypatch):
 
     required = [
         "chat_id", "agent_name", "agent_role",
-        "list_available_skills", "list_available_agents",
+        "list_available_agents",
         "get_memory_index", "get_file_permissions", "get_mcp_servers",
         "memory_path", "memory_dir",
-        "run_skill_awaitable", "send_to_agent", "put_outbox",
+        "send_to_agent", "put_outbox",
         "file_read", "file_write", "file_delete", "file_list_directory",
         "file_regenerate_index",
         "mcp_list_servers", "mcp_list_tools", "mcp_call_tool",
@@ -347,24 +268,6 @@ def test_resolve_model_uses_resolver(tmp_path, monkeypatch):
 
     assert session.router_host.resolve_model("router") == "openai/gpt-4o-mini"
     assert session.router_host.resolve_model("unknown") == "unknown"  # pass-through
-
-
-# ---------------------------------------------------------------------------
-# Test 6: list_available_skills excludes router/compactor
-# ---------------------------------------------------------------------------
-
-def test_list_available_skills_excludes_stdlib_router(tmp_path, monkeypatch):
-    """Tier 2: OS invariant — RouterHostAdapter.list_available_skills() must never expose skill_router or chat_compactor to the LLM tool catalog. (FP-0011: skill_narrator was removed; the router LLM narrates inline.)"""
-    monkeypatch.chdir(tmp_path)
-    session = _make_session(tmp_path)
-
-    skills = session.router_host.list_available_skills()
-    names = {s.get("name") for s in skills}
-    assert "skill_router" not in names
-    assert "chat_compactor" not in names
-    # skill_narrator no longer exists post-FP-0011; the assertion is now that
-    # the name simply does not appear in any enumeration result.
-    assert "skill_narrator" not in names
 
 
 # ---------------------------------------------------------------------------

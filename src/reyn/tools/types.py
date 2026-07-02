@@ -54,11 +54,8 @@ class RouterCallerState:
     M3 / M4 Phase 1 / 2 status: structure defined; production
     population (= router_loop wiring) is M4 Phase 3.
     """
-    # Catalog discovery (= for catalog tools list_skills /
-    # describe_skill / list_agents / describe_agent handlers)
-    skill_registry: Any = None
+    # Catalog discovery (= for catalog tools list_agents / describe_agent handlers)
     agent_registry: Any = None
-    available_skills: list[Mapping[str, Any]] | None = None
     available_agents: list[Mapping[str, Any]] | None = None
 
     # Async dispatch callbacks (= for delegate_to_agent / plan
@@ -108,11 +105,8 @@ class RouterCallerState:
     memory_service: Any = None
 
     # Catalog access callbacks (= for catalog stub handlers
-    # list_skills / describe_skill / list_agents / describe_agent;
-    # RouterLoop populates with bound methods, the stubs delegate
-    # to keep router/registry decoupled from RouterLoopHost type)
-    list_skills_fn: Callable[[str], list[Mapping[str, Any]]] | None = None
-    describe_skill_fn: Callable[[str], Mapping[str, Any]] | None = None
+    # list_agents / describe_agent; RouterLoop populates with bound methods,
+    # the stubs delegate to keep router/registry decoupled from RouterLoopHost type)
     list_agents_fn: Callable[[str], list[Mapping[str, Any]]] | None = None
     describe_agent_fn: Callable[[str], Mapping[str, Any]] | None = None
 
@@ -123,18 +117,6 @@ class RouterCallerState:
     # legacy router branch behavior.  When None, handlers fall back to
     # minimal OpContext synthesis (= test sites / phase-side).
     op_context_factory: Callable[[], Any] | None = None
-
-    # Skill invocation callback (= for invoke_skill handler; bound by
-    # RouterLoop to ``host.run_skill_awaitable`` with chain_id pre-applied
-    # so the multi-hop chain identity propagates into nested run_skill /
-    # delegate_to_agent paths.  Without this, ``invoke_skill`` via
-    # op_runtime caller="control_ir" would not carry chain_id and PR14
-    # pending_chain semantics would break for sub-skill delegations.
-    #
-    # #2104 PR1 skill-unification: both chat-mode and blocking sub-loop
-    # paths now use run_skill_fn (synchronous inline). The spawn path
-    # (FP-0012 spawn_skill_fn) is retired.
-    run_skill_fn: Callable[..., Awaitable[Any]] | None = None
 
     # RouterLoopHost reference for handlers that need duck-typed access
     # to host methods not covered by individual callable fields (=

@@ -58,7 +58,6 @@ def _ctx(with_tools: bool = True) -> ToolContext:
         workspace=None,
         caller_kind="router",
         router_state=RouterCallerState(
-            available_skills=[],
             mcp_servers=_MCP_SERVERS if with_tools else None,
         ),
     )

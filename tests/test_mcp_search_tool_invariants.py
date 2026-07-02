@@ -70,7 +70,6 @@ def test_below_threshold_uses_inline_mcp_tools():
     servers = _make_mcp_servers(below_count)
 
     tools = build_tools(
-        _SAMPLE_SKILLS,
         _SAMPLE_AGENTS,
         mcp_servers=servers,
         mcp_search_threshold=_explicit_threshold,
@@ -109,7 +108,6 @@ def test_above_threshold_uses_search_tool():
     servers = _make_mcp_servers(at_count)
 
     tools = build_tools(
-        _SAMPLE_SKILLS,
         _SAMPLE_AGENTS,
         mcp_servers=servers,
         mcp_search_threshold=_explicit_threshold,

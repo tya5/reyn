@@ -79,8 +79,10 @@ _OP_KIND_CATEGORY: dict[str, str] = {
     "delete_file":   "file",
     "glob_files":    "file",
     "grep_files":    "file",
-    # run_skill → "skill" resource category (_RESOURCE_RULES: skill → invoke_skill)
-    "run_skill":     "skill",
+    # run_skill → skill-machinery decouple: the chat/router "skill" category
+    # (list_skills/describe_skill/invoke_skill) was removed from
+    # universal_dispatch. run_skill is now a skill-internal op with NO
+    # chat-router dispatch target → moved to _INTENTIONAL_CHAT_ROUTER_EXCLUSIONS.
     # web ops → "web" category (_OPERATION_RULES: web__fetch, web__search)
     "web_fetch":     "web",
     "web_search":    "web",
@@ -312,6 +314,12 @@ def test_universal_dispatch_covers_all_stdlib_skill_real_op_kinds() -> None:
         # separate work item (requires wiring PreprocessorExecutor → ToolRegistry).
         "file",           # legacy coarse kind; still in OS-deterministic preprocessor run_ops
         "skill_resolve",  # skill-internal name resolution (preprocessor run_op)
+        # skill-machinery decouple: the chat/router "skill" category (list_skills/
+        # describe_skill/invoke_skill) was removed from universal_dispatch, so the
+        # run_skill op no longer has a chat-router dispatch target. It remains a
+        # skill-internal op (deep skill machinery still exists on disk) executed
+        # via the op-loop / SkillRunner, not the chat-router table.
+        "run_skill",
     })
     assert set(uncovered) == _INTENTIONAL_CHAT_ROUTER_EXCLUSIONS, (
         "universal_dispatch op-kind coverage drifted from the intentional "

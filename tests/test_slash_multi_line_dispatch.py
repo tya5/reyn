@@ -46,7 +46,7 @@ async def test_multi_line_slash_warns_and_dispatches_first_line(
     session.is_attached = True
 
     consumed = await session._maybe_handle_slash(
-        "/skill list\nthis was meant to be a question",
+        "/tasks\nthis was meant to be a question",
     )
     assert consumed is True
 
@@ -56,10 +56,10 @@ async def test_multi_line_slash_warns_and_dispatches_first_line(
 
     # A warning naming the command + "ignored extra lines" hint.
     assert "ignored extra lines" in combined
-    assert "/skill" in combined
-    # The original handler still ran — /skill list emits "(no active skills)"
+    assert "/tasks" in combined
+    # The original handler still ran — /tasks emits "(no running tasks)"
     # when nothing is running.
-    assert "no active skills" in combined.lower()
+    assert "no running tasks" in combined.lower()
 
 
 @pytest.mark.asyncio
@@ -69,7 +69,7 @@ async def test_trailing_newline_only_does_not_warn(tmp_path, monkeypatch):
     session = _make_session(tmp_path)
     session.is_attached = True
 
-    consumed = await session._maybe_handle_slash("/skill list\n")
+    consumed = await session._maybe_handle_slash("/tasks\n")
     assert consumed is True
 
     msgs = _drain_outbox(session)
@@ -84,7 +84,7 @@ async def test_trailing_whitespace_lines_do_not_warn(tmp_path, monkeypatch):
     session = _make_session(tmp_path)
     session.is_attached = True
 
-    consumed = await session._maybe_handle_slash("/skill list\n   \n\t\n")
+    consumed = await session._maybe_handle_slash("/tasks\n   \n\t\n")
     assert consumed is True
 
     msgs = _drain_outbox(session)
@@ -96,16 +96,16 @@ async def test_trailing_whitespace_lines_do_not_warn(tmp_path, monkeypatch):
 async def test_args_on_first_line_still_reach_handler(tmp_path, monkeypatch):
     """Tier 2: first-line args (``/cmd arg1 arg2``) still reach the handler.
 
-    Uses ``/skill discard <id>`` because its error path is observable on the
-    outbox without needing to set up a full skill run — the handler reports
-    ``no running skill matches '<id>'`` when the id is unknown.
+    Uses ``/tasks status <id>`` because its error path is observable on the
+    outbox without needing to set up a full task run — the handler reports
+    ``no task matches '<id>'`` when the id is unknown.
     """
     monkeypatch.chdir(tmp_path)
     session = _make_session(tmp_path)
     session.is_attached = True
 
     consumed = await session._maybe_handle_slash(
-        "/skill discard bogus_id\nstray line",
+        "/tasks status bogus_id\nstray line",
     )
     assert consumed is True
 

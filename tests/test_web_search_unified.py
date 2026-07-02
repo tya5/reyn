@@ -148,7 +148,6 @@ def test_build_tools_includes_web_search_via_registry():
     from reyn.runtime.router_tools import build_tools
 
     tools = build_tools(
-        available_skills=[],
         available_agents=[],
     )
 
@@ -179,7 +178,6 @@ def test_build_tools_web_search_not_duplicated():
     from reyn.runtime.router_tools import build_tools
 
     tools = build_tools(
-        available_skills=[],
         available_agents=[],
     )
     ws_tools = [t for t in tools if t.get("function", {}).get("name") == "web_search"]

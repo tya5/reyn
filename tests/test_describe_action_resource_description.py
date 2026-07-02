@@ -70,59 +70,6 @@ def _describe(qualified_name: str, ctx: ToolContext) -> dict:
     ))
 
 
-# ── skill__X ────────────────────────────────────────────────────────────
-
-
-def test_skill_describe_returns_skill_description():
-    """Tier 2b: describe_action(skill__X) returns the SKILL's description.
-
-    B42-NF-W7-1: description comes from skill.md frontmatter, NOT
-    invoke_skill's dispatcher instructions.
-    """
-    actual_desc = (
-        "Catalogue-gap fallback: hand a single-shot natural-language task "
-        "straight to the LLM and return its answer verbatim."
-    )
-    ctx = _make_ctx(skills=[
-        {"name": "direct_llm", "description": actual_desc},
-    ])
-    out = _describe("skill__direct_llm", ctx)
-    assert out["description"] == actual_desc
-    # Sanity: the dispatcher description string must NOT have leaked.
-    assert "Run a skill from the registered list" not in out["description"]
-
-
-def test_skill_describe_missing_description_falls_back_to_dispatcher():
-    """Tier 2: skill entry without ``description`` falls back to
-    ``invoke_skill``'s description (= preserves D2-full pre-existing
-    behavior; the LLM at least sees the dispatcher contract).
-    """
-    ctx = _make_ctx(skills=[
-        {"name": "no_desc_skill"},  # No description field
-    ])
-    out = _describe("skill__no_desc_skill", ctx)
-    # invoke_skill's dispatcher description (= the pre-B42 fallback)
-    assert "Run a skill" in out["description"] or "skill" in out["description"].lower()
-
-
-def test_skill_describe_unknown_skill_falls_back_to_dispatcher():
-    """Tier 2: querying a skill not in list_available_skills falls back to
-    ``invoke_skill``'s description (caller falls through error response;
-    if reached the dispatcher fallback, the contract is preserved).
-    """
-    ctx = _make_ctx(skills=[
-        {"name": "other_skill", "description": "Other"},
-    ])
-    out = _describe("skill__unknown_skill", ctx)
-    # The unknown-action error response carries no `description` field —
-    # it's a §D12 error response with `error_kind` / `suggestions`. Pin
-    # that contract here so the fallback distinction is unambiguous.
-    # If the response IS the error shape, we're done; if it carries a
-    # description field, it must be the dispatcher fallback (not None).
-    if "description" in out:
-        assert out["description"]
-
-
 # Issue #879: mcp.tool / mcp.server resource-invoke describe paths were
 # removed when the MCP surface collapsed to verb actions. The per-tool /
 # per-server description metadata is now surfaced through

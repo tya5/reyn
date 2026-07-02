@@ -25,7 +25,6 @@ def build_system_prompt(
     *,
     agent_name: str,
     agent_role: str,
-    available_skills: list[dict],
     available_agents: list[dict],
     memory_index: dict,
     file_permissions: dict | None = None,
@@ -57,8 +56,6 @@ def build_system_prompt(
     Args:
         agent_name: short identifier of the agent (e.g. "chat").
         agent_role: one-liner from agent profile.
-        available_skills: list of dicts with at least ``name``; optional keys
-            ``description``, ``routing``, ``category``.
         available_agents: list of dicts with at least ``name``; optional keys
             ``role``, ``cluster``.
         memory_index: ``{"status": "ok"|"not_found", "content": str}``.
@@ -351,22 +348,6 @@ def build_system_prompt(
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
-
-def _render_skills(available_skills: list[dict]) -> str:
-    """Return one-line category summary, or empty string when no skills."""
-    counts: dict[str, int] = defaultdict(int)
-    for skill in available_skills:
-        cat = skill.get("category") or "general"
-        counts[cat] += 1
-
-    if not counts:
-        return "(none)"
-
-    # Stable sort: alphabetical within category, general first
-    ordered = sorted(counts.items(), key=lambda kv: (kv[0] != "general", kv[0]))
-    tokens = [f"{cat} ({n})" for cat, n in ordered]
-    return " / ".join(tokens)
-
 
 def _render_agents(available_agents: list[dict]) -> str:
     """Return one-line cluster summary, or empty string when no agents."""

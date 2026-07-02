@@ -234,52 +234,6 @@ def test_routing_decided_emitted_for_invoke_action(monkeypatch: pytest.MonkeyPat
 
 
 # ---------------------------------------------------------------------------
-# Test 2: hot list alias → routing_decided(source="hot_list_alias", outcome="success")
-# ---------------------------------------------------------------------------
-
-
-def test_routing_decided_emitted_for_hot_list_alias(monkeypatch: pytest.MonkeyPatch):
-    """Tier 2: hot list alias call emits routing_decided with source='hot_list_alias' and outcome='success'.
-
-    A real ActionUsageTracker pre-loaded with 'skill__bar' is passed so
-    RouterLoop injects 'skill__bar' as a hot list alias into build_tools.
-    That makes the alias a valid catalog entry, so dispatch_tool succeeds
-    and outcome='success' is recorded.
-    """
-    # Build a real tracker with skill__bar pre-loaded (high frequency)
-    # via merge_compacted — the post-FP-0034-refactor write path.
-    tracker = ActionUsageTracker()
-    tracker.merge_compacted([("skill__bar", 1000.0 + i) for i in range(5)])
-
-    host = _FakeRouterHost(
-        universal_wrappers_enabled=True,
-        tracker=tracker,
-        skills=[{"name": "bar", "short_description": "bar skill"}],
-        hot_list_n=10,  # explicit opt-in so aliases are injected (default N=0 = off)
-    )
-    # B39: ``bar`` must be in available_skills so the registry-existence
-    # check accepts ``skill__bar``. No input_schema needed (= empty-schema
-    # skills are valid registry members; see B39 #119 fix).
-    # Turn 1: LLM calls skill__bar (hot list alias — contains '__')
-    # Turn 2: text reply
-    _run_with_llm_sequence(
-        host,
-        [
-            _tool_result([{"name": "skill__bar", "args": {}}]),
-            _text_result("done"),
-        ],
-        monkeypatch,
-    )
-
-    events = _routing_decided_events(host)
-    (ev,) = events
-    assert ev["action_name"] == "skill__bar"
-    assert ev["source"] == "hot_list_alias"
-    assert ev["outcome"] == "success"
-    assert ev["chain_id"] == "chain-test"
-
-
-# ---------------------------------------------------------------------------
 # Test 3: error result → outcome="error"
 # ---------------------------------------------------------------------------
 

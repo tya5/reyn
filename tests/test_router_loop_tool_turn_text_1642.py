@@ -32,8 +32,12 @@ from tests._support.router_loop import (
 _USAGE = TokenUsage(prompt_tokens=10, completion_tokens=5)
 
 
-def _text_and_tool(content: str, *, skill: str) -> LLMToolCallResult:
-    """An LLM response carrying BOTH text content AND a tool_call (the #1642 case)."""
+def _text_and_tool(content: str) -> LLMToolCallResult:
+    """An LLM response carrying BOTH text content AND a tool_call (the #1642 case).
+
+    Uses a plain read-only ``read_file`` tool_call: the #1642 behaviour under test
+    is text-content surfacing on ANY tool-turn, independent of which tool is called.
+    """
     return LLMToolCallResult(
         content=content,
         tool_calls=[
@@ -41,10 +45,8 @@ def _text_and_tool(content: str, *, skill: str) -> LLMToolCallResult:
                 "id": "t1",
                 "type": "function",
                 "function": {
-                    "name": "invoke_skill",
-                    "arguments": json.dumps(
-                        {"name": skill, "input": {"type": "Foo", "data": {}}}
-                    ),
+                    "name": "read_file",
+                    "arguments": json.dumps({"path": "notes.txt"}),
                 },
             }
         ],
@@ -57,11 +59,12 @@ def _text_and_tool(content: str, *, skill: str) -> LLMToolCallResult:
 async def test_tool_turn_text_content_surfaced_to_conversation(monkeypatch):
     """Tier 3a: a turn with content + tool_calls emits the content as an ``agent``
     bubble (the fix), in addition to the terminal text on the final no-tool turn."""
-    host = FakeRouterHost(skills=[{"name": "my_skill", "category": "general"}])
+    host = FakeRouterHost()
+    host._files["notes.txt"] = "file body"
     loop = make_loop(host)
     script = [
-        _text_and_tool("Let me run your skill first.", skill="my_skill"),  # Execute turn
-        text_result("All done."),                                          # terminal turn
+        _text_and_tool("Let me run your skill first."),  # Execute turn
+        text_result("All done."),                        # terminal turn
     ]
     monkeypatch.setattr("reyn.runtime.router_loop.call_llm_tools", _ScriptedLLM(script))
     await loop.run("run my skill", [])
@@ -99,10 +102,11 @@ async def test_no_tool_calls_turn_emits_content_once(monkeypatch):
 async def test_tool_turn_empty_content_skipped(monkeypatch):
     """Tier 3a: a tool-turn with empty/whitespace content emits NO agent bubble on the
     tool-turn (no empty-bubble noise) — only the terminal text appears."""
-    host = FakeRouterHost(skills=[{"name": "my_skill", "category": "general"}])
+    host = FakeRouterHost()
+    host._files["notes.txt"] = "file body"
     loop = make_loop(host)
     script = [
-        _text_and_tool("   ", skill="my_skill"),  # whitespace-only content + tool_call
+        _text_and_tool("   "),  # whitespace-only content + tool_call
         text_result("done"),
     ]
     monkeypatch.setattr("reyn.runtime.router_loop.call_llm_tools", _ScriptedLLM(script))

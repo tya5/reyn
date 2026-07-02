@@ -66,7 +66,7 @@ _NOT_EXTERNAL = {
     "hooks_add",
     "lint",
     # — catalog / discovery (reyn-assembled or operator config) —
-    "list_skills", "describe_skill", "list_agents", "describe_agent",
+    "list_agents", "describe_agent",
     "list_actions", "search_actions", "describe_action",
     "list_mcp_servers", "cron_list",
     # — control / orchestration —
@@ -74,9 +74,6 @@ _NOT_EXTERNAL = {
     # invoke_action: generic dispatcher — trust resolved by the EFFECTIVE inner
     # name at dispatch() (the dispatch-tag), not by this wrapper.
     "invoke_action",
-    # invoke_skill: reyn-produced output; external content the sub-skill read is
-    # fenced at the sub-run's own tool-result chokepoint (recursive).
-    "invoke_skill",
     # — reyn's own framework source (trusted) —
     "reyn_src_list", "reyn_src_read", "reyn_src_glob", "reyn_src_grep",
     # — task subsystem (#1953 dynamic-wire) — return the OS task RECORD (id /

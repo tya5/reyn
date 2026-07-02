@@ -264,59 +264,6 @@ def test_self_answer_takes_precedence_over_parent_delegate() -> None:
     assert not parent_events
 
 
-# ── 6. Behaviour parity: existing dispatch path still works through
-#      the new routing scaffold ──────────────────────────────────────────
-
-
-def test_chain_override_is_notified_through_user_channel_branch(tmp_path: Path) -> None:
-    """Tier 2: the A2A peer override registered via
-    ``register_intervention_override`` is notified via ``on_dispatch``
-    as a side effect during the user_channel branch. Pre-α the
-    override REPLACED the dispatch; α changed it to DECORATE — the
-    iv still flows to the default handler.
-    """
-    session = Session(agent_name="t")
-    # The default handler awaits iv.future; register a listener so
-    # dispatch doesn't short-circuit on no-listener.
-    session.register_intervention_listener("test")
-
-    captured: list[UserIntervention] = []
-
-    class _StubOverrideObserver:
-        async def on_dispatch(self, iv: UserIntervention) -> None:
-            captured.append(iv)
-
-    session.register_intervention_override("chain-X", _StubOverrideObserver())
-    session.running_skills_chain["run-1"] = "chain-X"
-
-    async def _drive() -> InterventionAnswer:
-        iv = UserIntervention(kind="ask_user", prompt="Q?", run_id="run-1")
-
-        async def _resolve() -> None:
-            await asyncio.sleep(0.05)
-            iv.future.set_result(InterventionAnswer(text="from-handler"))
-
-        resolver = asyncio.create_task(_resolve())
-        try:
-            return await session.handle_intervention(iv)
-        finally:
-            resolver.cancel()
-
-    answer = asyncio.run(_drive())
-
-    # α: observer was notified (side effect); handler resolved the answer.
-    assert captured, "override observer must have been notified"
-    assert answer.text == "from-handler"
-
-    # Routing event records the user_channel branch fired.
-    events = [
-        e for e in session._chat_events.to_json()
-        if e.get("type") == "intervention_routed"
-    ]
-    assert events
-    assert events[-1]["data"]["route"] == "user_channel"
-
-
 # ── 7. RequestBus adapter — Phase 4 routing visible through the adapter ──
 
 

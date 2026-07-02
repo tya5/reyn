@@ -479,7 +479,6 @@ class RouterHistoryBuffer:
         return build_system_prompt(
             agent_name=rh.agent_name,
             agent_role=rh.agent_role,
-            available_skills=rh.list_available_skills(),
             available_agents=rh.list_available_agents(),
             memory_index=rh.get_memory_index(),
             file_permissions=rh.get_file_permissions(),

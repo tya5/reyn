@@ -118,18 +118,8 @@ class ChatInterventionBus:
         pre-existing stamping (= upstream-set origin wins for
         multi-hop delegation provenance).
         """
-        # issue #268 Phase 2 continuation: stamp origin channel for
-        # cross-channel routing (only when configured AND no chain
-        # override is going to claim this iv first). Use the bus's
-        # captured ``_run_id`` for the override lookup since
-        # ``iv.run_id`` isn't filled in until below.
         if self._channel_id is not None and iv.origin_channel_id is None:
-            run_id_for_lookup = iv.run_id or self._run_id
-            override_active = self._session._intervention_coordinator.is_override_active(
-                run_id_for_lookup,
-            )
-            if not override_active:
-                iv.origin_channel_id = self._channel_id
+            iv.origin_channel_id = self._channel_id
         if iv.run_id is None:
             iv.run_id = self._run_id
         if not iv.skill_name:

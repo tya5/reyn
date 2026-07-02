@@ -38,7 +38,6 @@ class SkillPlanGlue:
         limit_checkpoint_fn: Callable,         # async (**kw) → LimitDecision
         chain_timeout_seconds: float,
         send_agent_response_fn: Callable,      # async (to, response, depth, chain_id)
-        skill_runner: Any,                     # SkillRunner
         put_inbox_fn: Callable,               # async (kind, payload) → None
     ) -> None:
         self._append_history = append_history_fn

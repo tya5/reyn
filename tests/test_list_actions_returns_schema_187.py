@@ -39,19 +39,6 @@ class _FakeHost:
         return list(self._skills)
 
 
-_SKILL = {
-    "name": "code_review",
-    "description": "Review a code diff and report issues.",
-    "input_fields": ["diff", "focus"],
-    "input_schema": {
-        "type": "object",
-        "properties": {"diff": {"type": "string"}, "focus": {"type": "string"}},
-        "required": ["diff"],
-    },
-    "input_wrapped": True,
-}
-
-
 def _ctx(skills=None) -> ToolContext:
     sk = skills or []
     return ToolContext(
@@ -59,11 +46,7 @@ def _ctx(skills=None) -> ToolContext:
         permission_resolver=None,
         workspace=None,
         caller_kind="router",
-        # available_skills feeds list_actions enumeration; host.list_available_skills
-        # feeds describe_action / _describe_one resolution — set both so list ≡ describe.
-        router_state=RouterCallerState(
-            host=_FakeHost(sk), available_skills=sk, mcp_servers=None,
-        ),
+        router_state=RouterCallerState(host=_FakeHost(sk), mcp_servers=None),
     )
 
 
@@ -85,17 +68,11 @@ def test_narrowed_list_item_carries_description_and_schema():
 
 
 def test_static_op_and_resource_both_enriched():
-    """Tier 1: both a static op (file__edit) and a resource (skill__X) get input_schema."""
-    ctx = _ctx(skills=[_SKILL])
+    """Tier 1: a static op (file__edit) gets its input_schema."""
+    ctx = _ctx()
     file_items = _list(ctx, category=["file"])["items"]
     fe = next(i for i in file_items if i["qualified_name"] == "file__edit")
     assert fe["input_schema"]["properties"], "static op must carry its parameters schema"
-
-    skill_items = _list(ctx, category=["skill"])["items"]
-    sk = next(i for i in skill_items if i["qualified_name"] == "skill__code_review")
-    assert set(sk["input_schema"]["properties"]) == {"diff", "focus"}, (
-        "resource (skill) must carry its per-resource schema, not the dispatcher envelope"
-    )
 
 
 def test_unfiltered_browse_is_uniformly_enriched():
@@ -120,8 +97,8 @@ def test_list_equals_describe_by_construction():
     """Tier 1: ★load-bearing invariant — a narrowed list item's description +
     input_schema EQUAL describe_action's for the same action (shared _describe_one).
     Guards against future drift if either path bypasses the helper."""
-    ctx = _ctx(skills=[_SKILL])
-    for cat, name in [("file", "file__edit"), ("skill", "skill__code_review")]:
+    ctx = _ctx()
+    for cat, name in [("file", "file__edit")]:
         item = next(
             i for i in _list(ctx, category=[cat])["items"]
             if i["qualified_name"] == name

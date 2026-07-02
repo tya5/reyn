@@ -92,28 +92,6 @@ class UnknownActionError(ValueError):
 # data shapers — they do NOT call handlers, do NOT consult runtime state.
 
 
-def _invoke_skill_args(entry_name: str, args: Mapping[str, Any]) -> dict[str, Any]:
-    """``skill__<name>`` → ``invoke_skill({name, input})``.
-
-    The user-supplied ``args`` dict either:
-      (a) carries a ``input`` field — used verbatim;
-      (b) is empty / lacks ``input`` — treated as the input artifact's
-          ``data`` payload (= caller convenience: ``invoke_action(
-          "skill__foo", {"x": 1})`` reads as "run skill foo with input
-          data {x: 1}").
-
-    Per the existing invoke_skill schema, the target needs
-    ``{name, input}`` where ``input`` is ``{type, data}`` artifact dict.
-    PR-2 keeps the shape simple: if ``input`` is provided, pass through;
-    otherwise wrap ``args`` as the input payload directly (= the artifact
-    builder lives caller-side; PR-3 / runtime wire-up will choose the
-    final convention).
-    """
-    if "input" in args:
-        return {"name": entry_name, "input": args["input"]}
-    return {"name": entry_name, "input": dict(args)}
-
-
 def _multi_agent_list_peers_args(
     entry_name: str, args: Mapping[str, Any],
 ) -> dict[str, Any]:
@@ -236,7 +214,6 @@ def _passthrough_args(
 # Phase 1 follow-up (2026-05-25): ``agent.peer`` collapsed into the
 # ``multi_agent`` verb category; resource rule removed.
 _RESOURCE_RULES: Final[dict[str, tuple[str, Callable[[str, Mapping[str, Any]], dict[str, Any]]]]] = {
-    "skill":         ("invoke_skill",        _invoke_skill_args),
     "memory_entry":  ("read_memory_body",    _read_memory_body_args),
     "rag_corpus":    ("recall",              _recall_single_source_args),
     # #1647: per-tool MCP actions ``mcp__<server>__<tool>`` resolve here (the

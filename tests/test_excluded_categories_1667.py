@@ -33,7 +33,6 @@ def _ctx(excluded: "frozenset[str] | set[str]" = frozenset()) -> ToolContext:
         workspace=None,
         caller_kind="router",
         router_state=RouterCallerState(
-            available_skills=[],
             mcp_servers=None,
             excluded_categories=frozenset(excluded),
         ),

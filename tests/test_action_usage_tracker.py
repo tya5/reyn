@@ -78,29 +78,29 @@ def test_higher_freq_ranks_first() -> None:
     """Tier 2: action merged more times appears before less-merged action."""
     tracker = ActionUsageTracker(persist_path=None)
     tracker.merge_compacted([
-        ("skill__rare", 1000.0),
-        ("skill__popular", 1000.0),
-        ("skill__popular", 1001.0),
-        ("skill__popular", 1002.0),
-        ("skill__popular", 1003.0),
-        ("skill__popular", 1004.0),
+        ("mcp__srv__rare", 1000.0),
+        ("mcp__srv__popular", 1000.0),
+        ("mcp__srv__popular", 1001.0),
+        ("mcp__srv__popular", 1002.0),
+        ("mcp__srv__popular", 1003.0),
+        ("mcp__srv__popular", 1004.0),
     ])
 
     result = tracker.get_top_n(2, seed=[])
-    assert result[0] == "skill__popular"
-    assert result[1] == "skill__rare"
+    assert result[0] == "mcp__srv__popular"
+    assert result[1] == "mcp__srv__rare"
 
 
 def test_freq_ranking_n_clips_result() -> None:
     """Tier 2: result is clipped to n even when more items are recorded."""
     tracker = ActionUsageTracker(persist_path=None)
-    for name in ["skill__a", "skill__b", "skill__c"]:
+    for name in ["mcp__srv__a", "mcp__srv__b", "mcp__srv__c"]:
         tracker.merge_compacted([(name, 1000.0)] * 3)
 
     result = tracker.get_top_n(2, seed=[])
     # All three have freq=3, so order is alphabetical (= determinism tie-break).
     # n=2 clips to the first two.
-    assert result == ["skill__a", "skill__b"]
+    assert result == ["mcp__srv__a", "mcp__srv__b"]
 
 
 # ── 4. Recency boost ─────────────────────────────────────────────────────────
@@ -111,13 +111,13 @@ def test_recency_breaks_freq_ties(tmp_path: Path) -> None:
     tracker = ActionUsageTracker(persist_path=None)
     # both reach freq=2, but skill__recent's last_ts is later
     tracker.merge_compacted([
-        ("skill__old", 1000.0),
-        ("skill__old", 1001.0),
-        ("skill__recent", 1000.0),
-        ("skill__recent", 9_000_000.0),  # far future
+        ("mcp__srv__old", 1000.0),
+        ("mcp__srv__old", 1001.0),
+        ("mcp__srv__recent", 1000.0),
+        ("mcp__srv__recent", 9_000_000.0),  # far future
     ])
     result = tracker.get_top_n(2, seed=[])
-    assert result == ["skill__recent", "skill__old"]
+    assert result == ["mcp__srv__recent", "mcp__srv__old"]
 
 
 # ── 5. Invalid-name filter ───────────────────────────────────────────────────
@@ -158,7 +158,7 @@ def test_is_valid_qualified_name_recognises_wrappers_as_invalid() -> None:
     assert not _is_valid_qualified_name("")
     # Sanity: a legitimate qualified name passes.
     assert _is_valid_qualified_name("file__read")
-    assert _is_valid_qualified_name("skill__code_review")
+    assert _is_valid_qualified_name("mcp__srv__code_review")
 
 
 # ── 6. Seed deduplication + order ────────────────────────────────────────────
@@ -179,12 +179,12 @@ def test_seed_deduped_against_ranked() -> None:
 def test_seed_fills_remaining_slots_in_order() -> None:
     """Tier 2: seed items fill slots in their declared order after ranked items."""
     tracker = ActionUsageTracker(persist_path=None)
-    tracker.merge_compacted([("skill__x", 1000.0)])
+    tracker.merge_compacted([("mcp__srv__x", 1000.0)])
 
     seed = ["file__read", "web__search", "file__grep"]
     result = tracker.get_top_n(4, seed=seed)
 
-    assert result[0] == "skill__x"
+    assert result[0] == "mcp__srv__x"
     # seed items must appear in declared order
     seed_portion = [r for r in result if r in seed]
     assert seed_portion == seed
@@ -213,14 +213,14 @@ def test_merge_compacted_writes_json_table(tmp_path: Path) -> None:
     tracker.merge_compacted([
         ("file__read", 1000.0),
         ("file__read", 1500.0),
-        ("skill__foo", 2000.0),
+        ("mcp__srv__foo", 2000.0),
     ])
 
     assert persist_path.exists()
     obj = json.loads(persist_path.read_text(encoding="utf-8"))
     assert obj == {
         "file__read": {"count": 2, "last_ts": 1500.0},
-        "skill__foo": {"count": 1, "last_ts": 2000.0},
+        "mcp__srv__foo": {"count": 1, "last_ts": 2000.0},
     }
 
 
@@ -232,15 +232,15 @@ def test_reload_restores_compacted_state(tmp_path: Path) -> None:
 
     tracker1 = ActionUsageTracker(persist_path=persist_path)
     tracker1.merge_compacted([
-        ("skill__popular", 1000.0),
-        ("skill__popular", 1001.0),
-        ("skill__popular", 1002.0),
-        ("skill__rare", 1003.0),
+        ("mcp__srv__popular", 1000.0),
+        ("mcp__srv__popular", 1001.0),
+        ("mcp__srv__popular", 1002.0),
+        ("mcp__srv__rare", 1003.0),
     ])
 
     tracker2 = ActionUsageTracker(persist_path=persist_path)
     result = tracker2.get_top_n(2, seed=[])
-    assert result == ["skill__popular", "skill__rare"]
+    assert result == ["mcp__srv__popular", "mcp__srv__rare"]
 
 
 def test_reload_then_merge_accumulates(tmp_path: Path) -> None:
@@ -250,16 +250,16 @@ def test_reload_then_merge_accumulates(tmp_path: Path) -> None:
     persist_path = tmp_path / "action_usage.json"
 
     tracker1 = ActionUsageTracker(persist_path=persist_path)
-    tracker1.merge_compacted([("skill__a", 1000.0), ("skill__a", 1001.0)])
-    tracker1.merge_compacted([("skill__b", 1002.0)])
+    tracker1.merge_compacted([("mcp__srv__a", 1000.0), ("mcp__srv__a", 1001.0)])
+    tracker1.merge_compacted([("mcp__srv__b", 1002.0)])
 
     tracker2 = ActionUsageTracker(persist_path=persist_path)
-    tracker2.merge_compacted([("skill__b", 1003.0)])  # b now total=2
+    tracker2.merge_compacted([("mcp__srv__b", 1003.0)])  # b now total=2
 
     ranking = {
         r["qualified_name"]: r["freq"] for r in tracker2.full_ranking()
     }
-    assert ranking == {"skill__a": 2, "skill__b": 2}
+    assert ranking == {"mcp__srv__a": 2, "mcp__srv__b": 2}
 
 
 # ── 9. Corrupt JSON fallback ─────────────────────────────────────────────────
@@ -305,17 +305,17 @@ def test_live_records_combined_with_compacted() -> None:
     merged with the compacted table for ranking.
     """
     tracker = ActionUsageTracker(persist_path=None)
-    tracker.merge_compacted([("skill__a", 1000.0), ("skill__a", 1001.0)])
+    tracker.merge_compacted([("mcp__srv__a", 1000.0), ("mcp__srv__a", 1001.0)])
 
-    # skill__b appears only in live_records but has freq=3 there.
+    # mcp__srv__b appears only in live_records but has freq=3 there.
     live = [
-        ("skill__b", 5000.0),
-        ("skill__b", 5001.0),
-        ("skill__b", 5002.0),
+        ("mcp__srv__b", 5000.0),
+        ("mcp__srv__b", 5001.0),
+        ("mcp__srv__b", 5002.0),
     ]
     result = tracker.get_top_n(2, seed=[], live_records=live)
     # b: freq=3 + recent last_ts → ranks first; a: freq=2 → second.
-    assert result == ["skill__b", "skill__a"]
+    assert result == ["mcp__srv__b", "mcp__srv__a"]
 
 
 def test_live_records_only_no_compacted() -> None:
@@ -324,13 +324,13 @@ def test_live_records_only_no_compacted() -> None:
     """
     tracker = ActionUsageTracker(persist_path=None)
     live = [
-        ("skill__x", 1000.0),
-        ("skill__x", 1001.0),
-        ("skill__y", 1002.0),
+        ("mcp__srv__x", 1000.0),
+        ("mcp__srv__x", 1001.0),
+        ("mcp__srv__y", 1002.0),
     ]
     result = tracker.get_top_n(3, seed=["file__read"], live_records=live)
-    assert result[0] == "skill__x"
-    assert result[1] == "skill__y"
+    assert result[0] == "mcp__srv__x"
+    assert result[1] == "mcp__srv__y"
     assert result[2] == "file__read"
 
 
@@ -365,12 +365,12 @@ def test_on_ranking_changed_fires_on_order_change(tmp_path: Path) -> None:
         ),
     )
 
-    # First merge introduces skill__a → ranking order becomes [a].
-    tracker.merge_compacted([("skill__a", 1000.0)])
-    # Second merge introduces skill__b above a → order changes to [b, a].
-    tracker.merge_compacted([("skill__b", 2000.0), ("skill__b", 2001.0)])
+    # First merge introduces mcp__srv__a → ranking order becomes [a].
+    tracker.merge_compacted([("mcp__srv__a", 1000.0)])
+    # Second merge introduces mcp__srv__b above a → order changes to [b, a].
+    tracker.merge_compacted([("mcp__srv__b", 2000.0), ("mcp__srv__b", 2001.0)])
 
-    assert observed == [["skill__a"], ["skill__b", "skill__a"]]
+    assert observed == [["mcp__srv__a"], ["mcp__srv__b", "mcp__srv__a"]]
 
 
 def test_on_ranking_changed_silent_when_order_stable() -> None:

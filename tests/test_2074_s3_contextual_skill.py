@@ -23,7 +23,6 @@ import asyncio
 
 from test_skill_runner_invariants import _make_runner
 
-from reyn.runtime.services.router_host_adapter import RouterHostAdapter
 from reyn.security.permissions.effective import (
     CapabilityAxis,
     ContextualLayer,
@@ -107,29 +106,6 @@ def test_spawn_gate_honors_contextual_skill_deny() -> None:
         assert "skill_spawn_refused" in [e.type for e in events.all()]
 
     asyncio.run(_run())
-
-
-def _catalog_host(allowed_skills, contextual, enumerated):
-    host = RouterHostAdapter.__new__(RouterHostAdapter)
-    host._allowed_skills = allowed_skills
-    host._contextual_permission = contextual
-    host._skill_enumerate_fn = lambda exclude: list(enumerated)
-    return host
-
-
-def test_catalog_honors_contextual_skill_deny() -> None:
-    """Tier 2: the catalog filter hides a contextually-denied skill (visibility
-    ⇔ spawn coupling preserved across the contextual layer)."""
-    ctx = ContextualPermission(skill_deny=frozenset({"hide_me"}))
-    host = _catalog_host(None, ctx, [{"name": "keep"}, {"name": "hide_me"}])
-    assert [s["name"] for s in host.list_available_skills()] == ["keep"]
-
-
-def test_catalog_no_contextual_is_unrestricted() -> None:
-    """Tier 2: no contextual (None) + no per-agent allowlist → no filtering
-    (byte-identical to pre-S3)."""
-    host = _catalog_host(None, None, [{"name": "a"}, {"name": "b"}])
-    assert [s["name"] for s in host.list_available_skills()] == ["a", "b"]
 
 
 # ── FALSIFY NOTE (held-oracle, run + reverted during S3 build) ──────────────

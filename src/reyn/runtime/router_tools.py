@@ -2,7 +2,7 @@
 
 Public API
 ----------
-build_tools(available_skills, available_agents, *, file_permissions, mcp_servers)
+build_tools(available_agents, *, file_permissions, mcp_servers)
     Returns 14–23 tools in fixed order for litellm.acompletion.
 
 Gemini-safe schema rules enforced throughout:
@@ -72,47 +72,6 @@ MCP_SEARCH_THRESHOLD: int = 0
 # Both paths must truncate to the same threshold.  describe_skill returns the
 # full description (details on demand — list is summary only).
 MAX_DESC_LEN_FOR_LISTING: int = 80
-
-# ── G12 attractor mitigation — describe_skill routing field strip (B11-R2) ──
-#
-# describe_skill returns the full catalogue entry dict.  When that dict
-# includes the ``routing`` block (intents / when_to_use / when_not_to_use /
-# examples), the serialised tool_response can exceed 1000 chars and triggers
-# the same P-b verbosity attractor that list_skills descriptions trigger
-# (Pattern D — describe_skill response verbosity).
-#
-# B11-R2 N-shot experiment (synthetic trace, N=10):
-#   - Full routing included (~1000 chars): 2/10 empty-stop (20%)
-#   - Routing stripped (~187 chars):       0/10 empty-stop (0%)
-#   - invoke_skill desc truncation alone:  1/10 — not significant
-#
-# The ``routing`` block is decision-guidance for BEFORE the router calls
-# describe_skill.  Once the LLM has issued the describe_skill call it is
-# committed to that skill; the routing guidance is no longer needed and only
-# adds verbosity that triggers the P-b attractor.  ``category`` is internal
-# grouping metadata also redundant for invocation.
-#
-# P7-clean: ``routing`` and ``category`` are OS-level catalogue metadata
-# fields (not skill-specific names).  Filtering applied uniformly across all
-# skills (no skill-name / phase-name / artifact-name literals hardcoded).
-#
-# ``input_schema`` / ``input_wrapped`` are also stripped (FP-0034 D2-full
-# follow-up): they were added to ``enumerate_available_skills`` so the
-# hot-list direct aliases for ``skill__<name>`` can expose the actual JSON
-# schema on the alias's parameters — that's already a structured surface
-# the LLM consumes. Echoing the same schema inside ``describe_skill``'s
-# JSON response duplicates content (often >1000 chars for non-trivial
-# skills like ``skill_improver`` at ~3.6k chars), pushing past the G12
-# Pattern D verbosity-attractor threshold. ``input_fields`` (the field
-# name list) stays as the lightweight hint; structured schema lives in
-# the hot-list alias and ``describe_action``.
-_DESCRIBE_SKILL_STRIP_FIELDS: frozenset[str] = frozenset({
-    "routing",
-    "category",
-    "input_schema",
-    "input_wrapped",
-})
-
 
 # ── ToolSpec — unified tool descriptor ──────────────────────────────────────
 #
@@ -240,7 +199,6 @@ def build_mcp_search_tool(mcp_tool_specs: list[dict]) -> dict:
 
 
 def build_tools(
-    available_skills: list[dict],  # [{name, description, routing?}, ...]
     available_agents: list[dict],  # [{name, role}, ...]
     *,
     file_permissions: dict | None = None,  # {"read": [paths], "write": [paths]}
@@ -256,10 +214,10 @@ def build_tools(
 
     Returns 14–23 tools in fixed order (Anthropic prompt cache compatibility).
     Tool order matches the plan's canonical ordering:
-      A1 list_skills, A2 describe_skill, A3 list_agents, A4 describe_agent,
-      A5 list_memory, A6 read_memory_body,
-      B1 invoke_skill, B2 delegate_to_agent,
-      B3 remember_shared, B4 remember_agent, B5 forget_memory,
+      A1 list_agents, A2 describe_agent,
+      A3 list_memory, A4 read_memory_body,
+      B1 delegate_to_agent,
+      B2 remember_shared, B3 remember_agent, B4 forget_memory,
       C1 list_directory, C2 read_file (when any file scope),
       C3 write_file, C4 delete_file (only when write scope),
       D1 list_mcp_servers, D2 list_mcp_tools, D3 call_mcp_tool, D4 describe_mcp_tool (when mcp configured).
@@ -271,12 +229,6 @@ def build_tools(
 
     Parameters
     ----------
-    available_skills:
-        Skill catalogue entries. Each dict must have at least ``name``.
-        When the list is non-empty the ``name`` field of ``invoke_skill`` gets
-        an ``enum`` constraint so dispatch_tool's schema validation rejects
-        hallucinated skill names (S13b gap). When empty, plain ``string`` is
-        used (no enum) to avoid an empty-enum schema that some providers reject.
     available_agents:
         Peer agent entries. Each dict must have at least ``name``.
         Same enum strategy as above for ``delegate_to_agent.to``.
@@ -301,28 +253,14 @@ def build_tools(
         Default: MCP_SEARCH_THRESHOLD (30). Set 0 to always inline.
         Override per-project via ``mcp.search_threshold:`` in reyn.yaml.
     """
-    # RETRO-H1+H2 fix: dynamic enum injection for invoke_skill.name and
-    # delegate_to_agent.to closes the schema-level hallucination gap (P4
-    # alignment — LLM picks only from OS-provided candidates).
+    # RETRO-H1+H2 fix: dynamic enum injection for delegate_to_agent.to closes
+    # the schema-level hallucination gap (P4 alignment — LLM picks only from
+    # OS-provided candidates). Enrichment lives in schema_enricher
+    # (tools/delegate_to_agent.py _enrich_router_schema); render_for_router
+    # (state=...) applies it per-call.
     #
-    # History: PR37 wave 2D added enum; post-2D dogfood showed an attractor
-    # side-effect ("hello" → ai_article_writer). That regression was caused by
-    # surfacing skill names *only* in the schema without a flat list in the
-    # system prompt — the LLM saw names but lacked context to judge relevance.
-    # RETRO fix pairs enum (schema layer) with a flat list + one-line
-    # description in the system prompt (context layer), giving the LLM both
-    # constraint and context to resist the attractor.
-    #
-    # Wave 2c migration: dynamic enum injection has moved to schema_enricher
-    # in tools/invoke_skill.py (_enrich_router_schema) and
-    # tools/delegate_to_agent.py (_enrich_router_schema). The inline
-    # _invoke_skill_name_schema / _delegate_to_schema locals are no longer
-    # needed; render_for_router(state=...) applies the enrichment per-call.
-    #
-    # When available_skills is empty, invoke_skill is omitted from the tools
-    # list to avoid an empty-enum schema that some providers reject.
-    # Same strategy for available_agents / delegate_to_agent.
-    skill_names = [s["name"] for s in available_skills]
+    # When available_agents is empty, delegate_to_agent is omitted from the
+    # tools list to avoid an empty-enum schema that some providers reject.
     agent_names = [a["name"] for a in available_agents]
 
     # Collect ToolSpec objects in canonical order (single source of truth).
@@ -332,28 +270,6 @@ def build_tools(
     _registry = _get_default_registry()
 
     specs: list[ToolSpec] = []
-
-    # ── A1: list_skills ──────────────────────────────────────────────────
-    _list_skills_def = _registry.lookup("list_skills")
-    if _list_skills_def is not None and _list_skills_def.gates.router == "allow":
-        _list_skills_rendered = _list_skills_def.render_for_router()
-        specs.append(ToolSpec(
-            name=_list_skills_rendered["function"]["name"],
-            description=_list_skills_rendered["function"]["description"],
-            parameters=_list_skills_rendered["function"]["parameters"],
-            dispatch_kind=_list_skills_def.dispatch_kind,
-        ))
-
-    # ── A2: describe_skill ───────────────────────────────────────────────
-    _describe_skill_def = _registry.lookup("describe_skill")
-    if _describe_skill_def is not None and _describe_skill_def.gates.router == "allow":
-        _describe_skill_rendered = _describe_skill_def.render_for_router()
-        specs.append(ToolSpec(
-            name=_describe_skill_rendered["function"]["name"],
-            description=_describe_skill_rendered["function"]["description"],
-            parameters=_describe_skill_rendered["function"]["parameters"],
-            dispatch_kind=_describe_skill_def.dispatch_kind,
-        ))
 
     # ── A3: list_agents ──────────────────────────────────────────────────
     _list_agents_def = _registry.lookup("list_agents")
@@ -399,25 +315,12 @@ def build_tools(
             dispatch_kind=_read_memory_body_def.dispatch_kind,
         ))
 
-    # ── B1: invoke_skill (conditional — omitted when no skills registered) ──
+    # ── B2: delegate_to_agent ────────────────────────────────────────────
     # Wave 2c: registry-driven render with schema_enricher for per-call enum.
     from reyn.tools.types import RouterCallerState as _RouterCallerState
     _state = _RouterCallerState(
-        available_skills=[{"name": n} for n in skill_names],
         available_agents=[{"name": n} for n in agent_names],
     )
-    _invoke_skill_def = _registry.lookup("invoke_skill")
-    if _invoke_skill_def is not None and _invoke_skill_def.gates.router == "allow" and skill_names:
-        _invoke_skill_rendered = _invoke_skill_def.render_for_router(state=_state)
-        specs.append(ToolSpec(
-            name=_invoke_skill_rendered["function"]["name"],
-            description=_invoke_skill_rendered["function"]["description"],
-            parameters=_invoke_skill_rendered["function"]["parameters"],
-            dispatch_kind=_invoke_skill_def.dispatch_kind,
-        ))
-
-    # ── B2: delegate_to_agent ────────────────────────────────────────────
-    # Wave 2c: registry-driven render with schema_enricher for per-call enum.
     _delegate_def = _registry.lookup("delegate_to_agent")
     if _delegate_def is not None and _delegate_def.gates.router == "allow":
         _delegate_rendered = _delegate_def.render_for_router(state=_state)
@@ -863,8 +766,6 @@ def build_tools(
     # path).
     if universal_wrappers_enabled:
         _LEGACY_TOOL_NAMES = frozenset({
-            "list_skills", "describe_skill",
-            "invoke_skill",
             "list_agents", "describe_agent",
             "delegate_to_agent", "session_spawn",
             "list_mcp_servers", "list_mcp_tools",

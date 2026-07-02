@@ -80,7 +80,6 @@ def test_sp_catalog_partial_signal_present_when_wrappers_enabled() -> None:
     sp = build_system_prompt(
         agent_name="test",
         agent_role="tester",
-        available_skills=[],
         available_agents=[],
         memory_index={},
         tool_use_sp=_slots(has_hot_list_aliases=True),
@@ -99,7 +98,6 @@ def test_sp_no_aliases_branch_omits_hot_list_paragraph() -> None:
     sp = build_system_prompt(
         agent_name="test",
         agent_role="tester",
-        available_skills=[],
         available_agents=[],
         memory_index={},
         tool_use_sp=_slots(has_hot_list_aliases=False),
@@ -116,13 +114,11 @@ def test_sp_two_branches_are_distinct() -> None:
     #1627 Stage 4: slot-map via build_universal_tool_use_slots.
     """
     sp_with = build_system_prompt(
-        agent_name="test", agent_role="tester",
-        available_skills=[], available_agents=[], memory_index={},
+        agent_name="test", agent_role="tester", available_agents=[], memory_index={},
         tool_use_sp=_slots(has_hot_list_aliases=True),
     )
     sp_without = build_system_prompt(
-        agent_name="test", agent_role="tester",
-        available_skills=[], available_agents=[], memory_index={},
+        agent_name="test", agent_role="tester", available_agents=[], memory_index={},
         tool_use_sp=_slots(has_hot_list_aliases=False),
     )
     assert sp_with != sp_without
@@ -137,7 +133,6 @@ def test_sp_partial_signal_appears_after_action_categories() -> None:
     sp = build_system_prompt(
         agent_name="test",
         agent_role="tester",
-        available_skills=[],
         available_agents=[],
         memory_index={},
         tool_use_sp=_slots(has_hot_list_aliases=True),
@@ -159,7 +154,6 @@ def test_sp_no_aliases_action_categories_section_still_present() -> None:
     sp = build_system_prompt(
         agent_name="test",
         agent_role="tester",
-        available_skills=[],
         available_agents=[],
         memory_index={},
         tool_use_sp=_slots(has_hot_list_aliases=False),
@@ -176,7 +170,6 @@ def test_sp_partial_signal_absent_when_wrappers_disabled() -> None:
     sp = build_system_prompt(
         agent_name="test",
         agent_role="tester",
-        available_skills=[],
         available_agents=[],
         memory_index={},
         tool_use_sp=_slots(has_hot_list_aliases=False, universal_wrappers_enabled=False),
@@ -192,7 +185,6 @@ def test_sp_partial_signal_is_domain_agnostic() -> None:
     sp = build_system_prompt(
         agent_name="test",
         agent_role="tester",
-        available_skills=[],
         available_agents=[],
         memory_index={},
         tool_use_sp=_slots(has_hot_list_aliases=True),

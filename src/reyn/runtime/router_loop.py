@@ -21,18 +21,15 @@ from reyn.runtime.router_system_prompt import (
     build_system_prompt,
 )
 from reyn.runtime.router_tools import (
-    _DESCRIBE_SKILL_STRIP_FIELDS,
-    MAX_DESC_LEN_FOR_LISTING,
     build_tools,
     get_dispatch_kind,
 )
 from reyn.runtime.session import _TOOL_FAILED_FALLBACK_MSG
 from reyn.services.compaction.engine import _IMAGE_FIXED_TOKEN_COST
 from reyn.services.turn_budget import wrap_up_system_prompt
-from reyn.skill.skill_search import BM25Backend
 
 if TYPE_CHECKING:
-    from reyn.config import SkillSearchConfig
+    pass
 
 
 def _resolve_tool_use_scheme(name: "str | None" = None):
@@ -562,10 +559,6 @@ class RouterLoopHost(RouterLoopCore, Protocol):
         ToolContext so a recovery-core config tool records a config generation."""
         ...
 
-    def list_available_skills(self) -> list[dict]:
-        """Each entry: {name, description, routing?, category?}"""
-        ...
-
     def list_available_agents(self) -> list[dict]:
         """Each entry: {name, role, cluster?}"""
         ...
@@ -670,9 +663,6 @@ class RouterLoopHost(RouterLoopCore, Protocol):
         ...
 
     # Action callbacks (async)
-    async def run_skill_awaitable(self, *, skill: str, input: dict,
-                                   chain_id: str) -> dict: ...
-
     async def send_to_agent(self, *, to: str, request: str, depth: int,
                             chain_id: str) -> None: ...
 
@@ -1289,7 +1279,6 @@ class RouterLoop:
         excluded_categories: set[str] | None = None,  # #1667 catalog categories skipped at source
         contextual_permission: "object | None" = None,  # #1827 S1: per-session ContextualPermission (TOOL-axis enforcement); None → bridged from exclude_tools
         memo_provider: Any = None,  # SubLoopMemoProvider | None (ADR-0025)
-        skill_search_config: "SkillSearchConfig | None" = None,  # FP-0024-A BM25 pre-filter
         empty_stop_retry_directive: str | None = None,  # B42-NF-W6-1 opt-in retry
         empty_stop_retry_auto: bool = False,  # #187: always-on (no env opt-in); all prod sites pass True
         max_tool_calls_per_turn: int = 50,  # #1666 — safety.loop.max_tool_calls_per_turn (0 = unlimited)
@@ -1367,8 +1356,6 @@ class RouterLoop:
         # mid-step sub-loop replays its earlier LLM turns from snapshot
         # rather than re-paying. ``None`` = normal execution (no memo).
         self._memo_provider = memo_provider
-        # FP-0024-A: BM25 skill pre-filter config. None = use OS defaults.
-        self._skill_search_config = skill_search_config
         # B42-NF-W6-1: directive used as a continuation prompt when an empty
         # stop is detected after a tool-call round. None (= default) preserves
         # the existing chat-router "observe + surface" policy. The plan
@@ -1435,12 +1422,10 @@ class RouterLoop:
         # method) keep the existing chat-discovery tool-build byte-identically.
         _phase_op_catalog_getter = getattr(host, "get_phase_op_catalog", None)
         _phase_op_catalog = _phase_op_catalog_getter() if _phase_op_catalog_getter else None
-        all_skills = host.list_available_skills()
-        # FP-0024 Component A — BM25 skill pre-filter.
-        # Narrow available_skills to top-K BM25 keyword matches when the
-        # catalogue exceeds the threshold. Falls through to full enum on
-        # 0 BM25 results so no skill can become invisible (Fallback safety).
-        skills_for_tools = self._apply_skill_search(all_skills, user_text)
+        # Skill enumeration removed (stage1 decouple): the router no longer
+        # surfaces a skill catalogue. Downstream scheme/presentation code keeps
+        # the ``skills_for_tools`` key for shape stability, always empty now.
+        skills_for_tools: list[dict] = []
         # FP-0034 Phase 2 step 5: ActionUsageTracker for hot list recording.
         # Resolved once per run() so recording below can reuse without re-fetching.
         _tracker_getter = getattr(host, "get_action_usage_tracker", None)
@@ -1532,30 +1517,12 @@ class RouterLoop:
         _skill_meta_map: dict[str, dict] = {}
         _mcp_tool_map: dict[str, dict] = {}
         if _univ_enabled:
-            # Lever D (B23-PRE-1): build short_description map from
-            # available skills so aliases embed the target's purpose.
-            # FP-0034 D2-full step 2: also capture per-skill
-            # ``input_schema`` (when the skill's entry artifact has
-            # a structured shape) so ``skill__<name>`` hot-list
-            # aliases expose the actual input parameters instead
-            # of the empty ``properties: {}, additionalProperties:
-            # True`` stub.
+            # Skill enumeration removed (stage1 decouple): the short-description
+            # and known-skill-name maps stay declared (empty) because downstream
+            # hot-list / ghost-filter code still reads them for the memory_entry
+            # and mcp branches.
             _short_desc_map: dict[str, str] = {}
             _known_skill_names: set[str] = set()
-            for _s in host.list_available_skills():
-                if not isinstance(_s, dict) or "name" not in _s:
-                    continue
-                _qn = f"skill__{_s['name']}"
-                _known_skill_names.add(_qn)
-                _sd = _s.get("description") or _s.get("short_description") or ""
-                if _sd:
-                    _short_desc_map[_qn] = str(_sd)
-                if "input_schema" in _s:
-                    _skill_meta_map[_qn] = {
-                        "description": str(_sd) if _sd else "",
-                        "input_schema": _s["input_schema"],
-                        "input_wrapped": bool(_s.get("input_wrapped", True)),
-                    }
             # Issue #879: per-mcp-tool aliases (``mcp.tool__<srv>.<tool>``)
             # were removed when the mcp surface collapsed to six verb
             # actions. LLMs now dispatch tool calls through
@@ -1730,7 +1697,6 @@ class RouterLoop:
             system_prompt = build_system_prompt(
                 agent_name=host.agent_name,
                 agent_role=host.agent_role,
-                available_skills=host.list_available_skills(),
                 available_agents=host.list_available_agents(),
                 memory_index=host.get_memory_index(),
                 file_permissions=host.get_file_permissions(),
@@ -2919,7 +2885,6 @@ class RouterLoop:
             tools = list(phase_op_catalog)
         else:
             tools = build_tools(
-                available["skills_for_tools"],
                 self.host.list_available_agents(),
                 file_permissions=self.host.get_file_permissions(),
                 mcp_servers=self.host.get_mcp_servers(),
@@ -2943,7 +2908,6 @@ class RouterLoop:
         if phase_op_catalog is not None:
             return list(phase_op_catalog)
         return build_tools(
-            available["skills_for_tools"],
             self.host.list_available_agents(),
             file_permissions=self.host.get_file_permissions(),
             mcp_servers=self.host.get_mcp_servers(),
@@ -3463,27 +3427,21 @@ class RouterLoop:
         ``reyn.tools.types.RouterCallerState``:
 
         * Catalog ``_fn`` callables wrap RouterLoop's private helpers
-          (``_list_skills`` / ``_describe_skill`` / ``_list_agents`` /
-          ``_describe_agent``) so the registry handlers stay decoupled from
-          RouterLoopHost type.
+          (``_list_agents`` / ``_describe_agent``) so the registry handlers
+          stay decoupled from RouterLoopHost type.
         * ``send_to_agent`` is bound with ``chain_id`` and ``depth=0`` at
           population time so the delegate handler signature stays pure
           ``(to, request)``.
 
-        Forward-looking fields (``available_skills`` / ``available_agents``
-        for schema enrichment, identity / cost / model context) are also
-        populated so future handler activations have what they need.
+        Forward-looking fields (``available_agents`` for schema enrichment,
+        identity / cost / model context) are also populated so future handler
+        activations have what they need.
         """
         from reyn.tools.types import RouterCallerState
 
         async def _send_to_agent_bound(*, to: str, request: str) -> None:
             await self.host.send_to_agent(
                 to=to, request=request, depth=0, chain_id=self.chain_id,
-            )
-
-        async def _run_skill_bound(*, skill: str, input: dict) -> Any:
-            return await self.host.run_skill_awaitable(
-                skill=skill, input=input, chain_id=self.chain_id,
             )
 
         # #2103 S1bc: session-spawn binding. Only multi-session hosts (the chat
@@ -3560,8 +3518,6 @@ class RouterLoop:
 
         return RouterCallerState(
             # Catalog access (= activated handlers)
-            list_skills_fn=self._list_skills,
-            describe_skill_fn=self._describe_skill,
             list_agents_fn=self._list_agents,
             describe_agent_fn=self._describe_agent,
             # getattr-guarded (symmetric with ``op_context_factory`` below, #1092
@@ -3569,16 +3525,9 @@ class RouterLoop:
             # (e.g. PhaseRouterLoopHost — a phase has no skills/agents catalog) need
             # not implement these chat-discovery methods. Without the guard the
             # eager call AttributeError'd every op dispatch on the converged path.
-            available_skills=list(getattr(self.host, "list_available_skills", list)()),
             available_agents=list(getattr(self.host, "list_available_agents", list)()),
             # Async dispatch (= activated handlers)
             send_to_agent=_send_to_agent_bound,
-            # Skill invocation bridge (= for invoke_skill handler;
-            # Phase 3.5-B-light) — chain_id pre-bound to preserve PR14
-            # multi-hop chain semantics. Phase sub-loops keep using this for
-            # #2104 PR1: synchronous skill execution for all callers (chat-mode and
-            # blocking sub-loop alike). run_skill_fn is the single invoke path.
-            run_skill_fn=_run_skill_bound,
             # #2103 S1bc: session-spawn dispatch (None for non-multi-session hosts).
             spawn_session_fn=_spawn_session_bound,
             # #2103 B-tool: agent-spawn dispatch (None for non-multi-agent hosts).
@@ -3760,156 +3709,8 @@ class RouterLoop:
         return {"error": f"unhandled tool: {name}"}
 
     # -----------------------------------------------------------------------
-    # FP-0024-A: BM25 pre-filter
-    # -----------------------------------------------------------------------
-
-    def _apply_skill_search(
-        self, all_skills: list[dict], query: str
-    ) -> list[dict]:
-        """Return the skills list to pass to build_tools.
-
-        When the catalogue exceeds ``skill_search_config.threshold``, run
-        BM25 keyword search against name + description and keep only the
-        top-K candidates.  Emits a ``skill_search_invoked`` event (P6 audit)
-        on every BM25 dispatch.
-
-        Fallback safety: if BM25 returns 0 results (no keyword overlap),
-        return the full catalogue unchanged so no skill becomes invisible.
-
-        Below threshold: returns all_skills unchanged (no BM25, no event).
-        """
-        from reyn.config import SkillSearchConfig  # local import to break circular
-
-        cfg: SkillSearchConfig = (
-            self._skill_search_config
-            if self._skill_search_config is not None
-            else SkillSearchConfig()
-        )
-
-        if len(all_skills) <= cfg.threshold:
-            return all_skills
-
-        backend = BM25Backend(all_skills)
-        candidates = backend.search(query, top_k=cfg.top_k)
-
-        # P6: emit audit event for every BM25 dispatch.
-        self.host.events.emit(
-            "skill_search_invoked",
-            query=query,
-            candidates_count=len(candidates),
-            top_k=cfg.top_k,
-        )
-
-        if not candidates:
-            # 0 results → full enum fall-through (no skill invisibility).
-            return all_skills
-
-        candidate_names = {c.name for c in candidates}
-        return [s for s in all_skills if s.get("name") in candidate_names]
-
-    # -----------------------------------------------------------------------
     # Discovery helpers (pure, no async host calls)
     # -----------------------------------------------------------------------
-
-    @staticmethod
-    def _skill_item(s: dict) -> dict:
-        """Build a list_skills item from a catalogue entry.
-
-        Always includes ``name`` and ``description``. Passes through
-        ``input_artifact`` and ``input_fields`` when present so the LLM
-        sees the correct input field names before calling ``invoke_skill``
-        (RETRO-H2 fix — plan D: pre-call structural context provision).
-
-        Description is truncated to MAX_DESC_LEN_FOR_LISTING chars + "..."
-        to mitigate the G12 empty-stop attractor (B7 finding: skill
-        description verbosity triggers the attractor — a62a9dad / a947255e).
-        describe_skill returns the full description (details on demand).
-        """
-        raw_desc = s.get("description", "")
-        if len(raw_desc) > MAX_DESC_LEN_FOR_LISTING:
-            desc = raw_desc[:MAX_DESC_LEN_FOR_LISTING] + "..."
-        else:
-            desc = raw_desc
-        item: dict = {
-            "name": s["name"],
-            "description": desc,
-        }
-        if "input_artifact" in s:
-            item["input_artifact"] = s["input_artifact"]
-        if "input_fields" in s:
-            item["input_fields"] = s["input_fields"]
-        return item
-
-    def _list_skills(self, path: str) -> list[dict]:
-        """Browse skill catalogue hierarchically.
-
-        path == "" → group by category, return [{category, count, sample_names}, ...]
-        path == "<category>" → return [{name, description, input_artifact?, input_fields?}, ...]
-
-        The ``sample_names`` preview (up to 5 names per category) was added to
-        defuse a G12 empty-stop attractor: with only ``count`` in the
-        response, the LLM had nothing concrete to narrate when answering
-        "list available skills" and exited with ``finish=stop`` /
-        ``content=""``. Surfacing actual skill names gives it material to
-        speak with — confirmed via dogfood trace re-run.
-        """
-        skills = self.host.list_available_skills()
-
-        if not path:
-            # Group by category, with a small sample of names per category to
-            # defuse the empty-stop attractor on path="".
-            categories: dict[str, list[dict]] = {}
-            for skill in skills:
-                cat = skill.get("category") or "general"
-                categories.setdefault(cat, []).append(skill)
-            return [
-                {
-                    "category": cat,
-                    "count": len(items),
-                    # Up to 5 names per category — concrete enough to narrate,
-                    # bounded enough to stay under the verbosity attractor
-                    # threshold for projects with hundreds of skills.
-                    "sample_names": [s.get("name", "") for s in items[:5]],
-                }
-                for cat, items in sorted(categories.items())
-            ]
-
-        # Return skills in the given category
-        by_category = [
-            self._skill_item(s)
-            for s in skills
-            if (s.get("category") or "general") == path
-        ]
-        if by_category:
-            return by_category
-
-        # path didn't match any category — try as a skill name (fallback)
-        by_name = [
-            self._skill_item(s)
-            for s in skills
-            if s.get("name") == path
-        ]
-        return by_name
-
-    def _describe_skill(self, name: str) -> dict:
-        """Return router-optimised entry for one skill, or error dict.
-
-        Returns the catalogue entry with internal-only fields stripped
-        (``routing``, ``category``) to keep the tool_response concise.
-        The ``routing`` block (when_to_use / when_not_to_use / examples)
-        averages 800–1400 chars and triggers the G12 P-b verbosity attractor
-        when included in the describe_skill tool_response (Pattern D —
-        B11-R2 diagnosis: 20% → 0% empty-stop after stripping).
-
-        ``name``, ``description``, ``input_artifact``, and ``input_fields``
-        are preserved — they are all the router needs to build a valid
-        invoke_skill call.  (P7-clean: filtering uses OS-level field names
-        in ``_DESCRIBE_SKILL_STRIP_FIELDS``, not any skill-specific strings.)
-        """
-        for skill in self.host.list_available_skills():
-            if skill.get("name") == name:
-                return {k: v for k, v in skill.items() if k not in _DESCRIBE_SKILL_STRIP_FIELDS}
-        return {"error": f"skill not found: {name}"}
 
     def _list_agents(self, path: str) -> list[dict]:
         """Browse agent catalogue hierarchically.

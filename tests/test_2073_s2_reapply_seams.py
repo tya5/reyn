@@ -115,35 +115,6 @@ async def test_cron_seam_reapplies_jobs_live(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_per_agent_capability_seam_enforces_new_profile(tmp_path: Path, monkeypatch) -> None:
-    """Tier 2: the Session-orchestrated per-agent seam re-reads profile.yaml so the
-    SKILL gate enforces the new allowlist — BEHAVIOR, via the real spawn gate: after
-    the reapply (profile allows only skill_a), spawning an un-listed skill is refused.
-    This exercises the skill_runner holder the Session swapped (a holder the seam
-    missed would leave the old decision)."""
-    monkeypatch.chdir(tmp_path)  # project_root = cwd for the seam's profile re-read
-    agent = "test-agent"
-    prof_dir = tmp_path / ".reyn" / "agents" / agent
-    prof_dir.mkdir(parents=True)
-    (prof_dir / "profile.yaml").write_text(
-        "name: test-agent\nallowed_skills: [skill_a]\n", encoding="utf-8",
-    )
-    # before: unrestricted (allowed_skills None) → the gate would allow any skill
-    session = _make_session(tmp_path, agent_name=agent, allowed_skills=None)
-
-    changed = await session._reapply_per_agent_capability({})
-    assert changed is True
-
-    # behavior through the public spawn gate: an un-listed skill is now refused
-    # (the allowlist gate fires before skill-load, so skill_b need not exist).
-    result = await session._skill_runner.run_skill_awaitable(
-        {"skill": "skill_b", "input": {}}, chain_id="c1",
-    )
-    assert result["status"] == "error"
-    assert "not in allowed_skills" in result["data"]["error"]
-
-
-@pytest.mark.asyncio
 async def test_per_agent_seam_noop_when_no_profile(tmp_path: Path, monkeypatch) -> None:
     """Tier 2: no profile.yaml (single-agent) → the per-agent seam is a no-op."""
     monkeypatch.chdir(tmp_path)

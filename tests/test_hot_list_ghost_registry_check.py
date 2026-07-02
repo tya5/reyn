@@ -32,25 +32,10 @@ No mocks. Uses real _filter_ghost_names_by_registry + real ActionUsageTracker
 """
 from __future__ import annotations
 
-import io
-import json
-import time
-from pathlib import Path
-
-import pytest
-
 from reyn.runtime.router_loop import _filter_ghost_names_by_registry
-from reyn.tools.action_usage_tracker import ActionUsageTracker
 from reyn.tools.universal_dispatch import KNOWN_STATIC_QUALIFIED_NAMES
 
 # ── helpers ───────────────────────────────────────────────────────────────────
-
-
-def _write_jsonl(path: Path, entries: list[dict]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", encoding="utf-8") as fh:
-        for entry in entries:
-            fh.write(json.dumps(entry, ensure_ascii=False) + "\n")
 
 
 def _call_filter(
@@ -73,32 +58,6 @@ def _call_filter(
         mcp_tool_map=mcp_tool_map,
         available_agents=available_agents,
         known_memory_entries=known_memory_entries if known_memory_entries is not None else frozenset(),
-    )
-
-
-# ── R1. skill ghost filtered ──────────────────────────────────────────────────
-
-
-def test_r1_skill_ghost_filtered_when_absent_from_skill_meta_map() -> None:
-    """Tier 2: skill ghost absent from skill_meta_map is removed from hot list.
-
-    B38 W2 root cause: skill__create_skill was renamed to skill__skill_builder.
-    The old name passes structural check (category=skill, entry=create_skill)
-    but the skill no longer exists. With registry check it must be removed.
-    """
-    skill_meta_map = {
-        "skill__skill_builder": {"description": "Build skills", "input_schema": {}},
-    }
-    result = _call_filter(
-        ["skill__create_skill", "skill__skill_builder"],
-        skill_meta_map=skill_meta_map,
-    )
-
-    assert "skill__skill_builder" in result, (
-        "Canonical skill__skill_builder must pass registry check."
-    )
-    assert "skill__create_skill" not in result, (
-        "Ghost skill__create_skill (renamed; absent from skill_meta_map) must be filtered."
     )
 
 
@@ -188,110 +147,6 @@ def test_r8_valid_mcp_tool_passes_registry_check() -> None:
     )
 
     assert "mcp.tool__github.search_code" in result
-
-
-# ── R9. warning logged once per unique ghost ──────────────────────────────────
-
-
-def test_r9_ghost_warning_logged_once_per_unique_name(capsys: pytest.CaptureFixture) -> None:
-    """Tier 2: rejection warning is emitted to stderr once per unique ghost alias.
-
-    Calling filter twice with the same ghost using the same _warned set must
-    produce only 1 warning (= session-level deduplication).
-    """
-    warned: set[str] = set()
-    ghost = "skill__nonexistent_ghost_xyz"
-    skill_meta_map: dict = {}
-
-    # First call: warning emitted.
-    _filter_ghost_names_by_registry(
-        [ghost], skill_meta_map=skill_meta_map, mcp_tool_map=None, available_agents=None,
-        known_memory_entries=frozenset(),
-        _warned=warned,
-    )
-    captured = capsys.readouterr()
-    assert ghost in captured.err, (
-        "First encounter of ghost must emit a warning to stderr."
-    )
-    first_count = captured.err.count(ghost)
-
-    # Second call with same _warned: no additional warning.
-    _filter_ghost_names_by_registry(
-        [ghost], skill_meta_map=skill_meta_map, mcp_tool_map=None, available_agents=None,
-        known_memory_entries=frozenset(),
-        _warned=warned,
-    )
-    captured2 = capsys.readouterr()
-    assert ghost not in captured2.err, (
-        "Second encounter of same ghost with shared _warned must NOT emit warning."
-    )
-
-
-# ── R10. Integration: tracker + filter ───────────────────────────────────────
-
-
-def test_r10_integration_tracker_ghost_excluded_from_hot_list(tmp_path: Path) -> None:
-    """Tier 2: integration — ActionUsageTracker freq history with ghost skill
-    is filtered at hot-list build time using real registry data.
-
-    Setup:
-    - JSONL has 1 valid skill alias (skill__word_stats_demo) and 1 ghost
-      skill alias (skill__nonexistent_xyz) recorded with equal frequency.
-    - skill_meta_map contains only skill__word_stats_demo (= registry has
-      only that skill).
-    - _filter_ghost_names_by_registry is called on get_top_n() output with
-      the real skill_meta_map.
-
-    Assert: result contains skill__word_stats_demo, not skill__nonexistent_xyz.
-    """
-    now = time.time()
-    # Post-FP-0034-refactor: write directly via merge_compacted instead of
-    # writing a JSONL log. Both names are structurally valid qualified
-    # names so they enter the tracker; the registry-existence filter
-    # downstream is what drops the ghost.
-    tracker = ActionUsageTracker(persist_path=None)
-    tracker.merge_compacted([
-        ("skill__word_stats_demo", now),
-        ("skill__word_stats_demo", now),  # freq=2
-        ("skill__nonexistent_xyz", now),  # freq=1, ghost vs registry
-    ])
-
-    # Both names pass structural check and are loaded into tracker.
-    top_names = tracker.get_top_n(10, seed=[])
-    assert "skill__word_stats_demo" in top_names, (
-        "Precondition: tracker must load skill__word_stats_demo."
-    )
-    assert "skill__nonexistent_xyz" in top_names, (
-        "Precondition: tracker must load ghost skill__nonexistent_xyz (structural check passes)."
-    )
-
-    # Registry knows only skill__word_stats_demo.
-    skill_meta_map = {
-        "skill__word_stats_demo": {
-            "description": "Word statistics demo",
-            "input_schema": {
-                "type": "object",
-                "properties": {"text": {"type": "string"}},
-            },
-            "input_wrapped": True,
-        }
-    }
-
-    # Apply registry-existence filter.
-    filtered = _filter_ghost_names_by_registry(
-        top_names,
-        skill_meta_map=skill_meta_map,
-        mcp_tool_map=None,
-        available_agents=None,
-        known_memory_entries=frozenset(),
-    )
-
-    assert "skill__word_stats_demo" in filtered, (
-        "Valid skill must survive registry check."
-    )
-    assert "skill__nonexistent_xyz" not in filtered, (
-        "Ghost skill not in skill_meta_map must be removed by registry check."
-    )
 
 
 # ── R11. memory_entry passes when in known_memory_entries ─────────────────────

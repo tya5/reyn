@@ -43,9 +43,7 @@ def get_default_registry() -> ToolRegistry:
     from reyn.tools.ask_user import ASK_USER
     from reyn.tools.catalog import (
         DESCRIBE_AGENT,
-        DESCRIBE_SKILL,
         LIST_AGENTS,
-        LIST_SKILLS,
     )
     from reyn.tools.compact import COMPACT
     from reyn.tools.cron import (
@@ -69,7 +67,6 @@ def get_default_registry() -> ToolRegistry:
         WRITE_FILE,
     )
     from reyn.tools.hooks import HOOKS_ADD
-    from reyn.tools.invoke_skill import INVOKE_SKILL
     from reyn.tools.lint import LINT
     from reyn.tools.mcp import (
         CALL_MCP_TOOL,
@@ -123,7 +120,6 @@ def get_default_registry() -> ToolRegistry:
     # file__read(path) (the refs are plain files under .reyn/tool-results/), and
     # its image guard is superseded by file__read's #365 media-blocks + #1449
     # binary guard. The cross-host resource_uri path was a never-implemented stub.
-    registry.register(INVOKE_SKILL)
     # RAG ops (ADR-0033 Phase 1)
     registry.register(RECALL)
     registry.register(DROP_SOURCE)
@@ -156,8 +152,6 @@ def get_default_registry() -> ToolRegistry:
     registry.register(REMEMBER_AGENT)
     registry.register(FORGET_MEMORY)
     # Catalog ops (Wave 2 — Type C closure: catalog browse phase-side)
-    registry.register(LIST_SKILLS)
-    registry.register(DESCRIBE_SKILL)
     registry.register(LIST_AGENTS)
     registry.register(DESCRIBE_AGENT)
     # ── Exec / lint / ask_user (gates declared per-tool) ──

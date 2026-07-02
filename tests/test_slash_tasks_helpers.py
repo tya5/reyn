@@ -1,8 +1,8 @@
-"""Tier 2: /tasks slash — _format_elapsed pure helper + _list_dynamic_task_lines paths.
+"""Tier 2: /tasks slash — _list_dynamic_task_lines paths.
 
-`_format_elapsed` is a pure duration formatter; `_list_dynamic_task_lines` is the
-async listing helper whose filter logic (archived hidden, deps summary) needs pinning
-independently of the full /tasks handler machinery.
+`_list_dynamic_task_lines` is the async listing helper whose filter logic
+(archived hidden, deps summary) needs pinning independently of the full /tasks
+handler machinery.
 """
 from __future__ import annotations
 
@@ -10,40 +10,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from reyn.interfaces.slash.tasks import _format_elapsed, _list_dynamic_task_lines
-
-# ── _format_elapsed ────────────────────────────────────────────────────────
-
-
-def test_format_elapsed_seconds_range() -> None:
-    """Tier 2: values < 60 render as '…s'."""
-    assert _format_elapsed(0) == "0s"
-    assert _format_elapsed(1) == "1s"
-    assert _format_elapsed(59) == "59s"
-
-
-def test_format_elapsed_exactly_60_is_minutes() -> None:
-    """Tier 2: exactly 60 seconds renders as '1m 00s'."""
-    assert _format_elapsed(60) == "1m 00s"
-
-
-def test_format_elapsed_minutes_range() -> None:
-    """Tier 2: 61–3599 seconds render as '…m …s'."""
-    assert _format_elapsed(90) == "1m 30s"
-    assert _format_elapsed(3599) == "59m 59s"
-
-
-def test_format_elapsed_exactly_1h_is_hours() -> None:
-    """Tier 2: exactly 3600 seconds renders as '1h 00m'."""
-    assert _format_elapsed(3600) == "1h 00m"
-
-
-def test_format_elapsed_hours_range() -> None:
-    """Tier 2: ≥ 3600 seconds render as '…h …m'."""
-    assert _format_elapsed(3661) == "1h 01m"
-    assert _format_elapsed(7200) == "2h 00m"
-    assert _format_elapsed(7322) == "2h 02m"
-
+from reyn.interfaces.slash.tasks import _list_dynamic_task_lines
 
 # ── _list_dynamic_task_lines ───────────────────────────────────────────────
 

@@ -125,7 +125,6 @@ def build_scoped_chat_session(
         embedding_config=factory_config.embedding_config,
         router_config=factory_config.router_config,
         retry_config=factory_config.retry_config,  # #1835
-        tool_calls_op_loop_skills=factory_config.tool_calls_op_loop_skills,
         chat_tool_use_scheme=factory_config.chat_tool_use_scheme,
         **base,
     )

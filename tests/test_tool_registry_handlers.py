@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import pytest
 
-from reyn.tools.catalog import DESCRIBE_AGENT, DESCRIBE_SKILL, LIST_AGENTS, LIST_SKILLS
+from reyn.tools.catalog import DESCRIBE_AGENT, LIST_AGENTS
 from reyn.tools.delegate_to_agent import DELEGATE_TO_AGENT
 from reyn.tools.types import RouterCallerState, ToolContext
 
@@ -27,72 +27,6 @@ def _ctx(rs: RouterCallerState | None) -> ToolContext:
         caller_kind="router",
         router_state=rs,
     )
-
-
-# ── list_skills ───────────────────────────────────────────────────────────────
-
-@pytest.mark.asyncio
-async def test_list_skills_handler_delegates_to_router_state_fn():
-    """Tier 2: list_skills handler delegates to ctx.router_state.list_skills_fn and wraps result."""
-    captured_path: list[str] = []
-
-    def fake_fn(path: str) -> list:
-        captured_path.append(path)
-        return [{"name": "s1", "description": "d1"}, {"name": "s2", "description": "d2"}]
-
-    rs = RouterCallerState(list_skills_fn=fake_fn)
-    result = await LIST_SKILLS.handler({"path": "write/blog"}, _ctx(rs))
-
-    assert captured_path == ["write/blog"]
-    assert result == [{"name": "s1", "description": "d1"}, {"name": "s2", "description": "d2"}]
-
-
-@pytest.mark.asyncio
-async def test_list_skills_handler_raises_when_router_state_none():
-    """Tier 2: list_skills raises RuntimeError when router_state is None."""
-    with pytest.raises(RuntimeError, match="router_state.list_skills_fn"):
-        await LIST_SKILLS.handler({"path": ""}, _ctx(None))
-
-
-@pytest.mark.asyncio
-async def test_list_skills_handler_raises_when_fn_none():
-    """Tier 2: list_skills raises RuntimeError when list_skills_fn is None."""
-    rs = RouterCallerState()  # list_skills_fn defaults to None
-    with pytest.raises(RuntimeError, match="router_state.list_skills_fn"):
-        await LIST_SKILLS.handler({"path": ""}, _ctx(rs))
-
-
-# ── describe_skill ────────────────────────────────────────────────────────────
-
-@pytest.mark.asyncio
-async def test_describe_skill_handler_delegates_to_router_state_fn():
-    """Tier 2: describe_skill handler delegates to ctx.router_state.describe_skill_fn and returns directly."""
-    captured_name: list[str] = []
-
-    def fake_fn(name: str) -> dict:
-        captured_name.append(name)
-        return {"name": name, "description": "writes a blog post", "when_to_use": "..."}
-
-    rs = RouterCallerState(describe_skill_fn=fake_fn)
-    result = await DESCRIBE_SKILL.handler({"name": "write/blog"}, _ctx(rs))
-
-    assert captured_name == ["write/blog"]
-    assert result == {"name": "write/blog", "description": "writes a blog post", "when_to_use": "..."}
-
-
-@pytest.mark.asyncio
-async def test_describe_skill_handler_raises_when_router_state_none():
-    """Tier 2: describe_skill raises RuntimeError when router_state is None."""
-    with pytest.raises(RuntimeError, match="router_state.describe_skill_fn"):
-        await DESCRIBE_SKILL.handler({"name": "write/blog"}, _ctx(None))
-
-
-@pytest.mark.asyncio
-async def test_describe_skill_handler_raises_when_fn_none():
-    """Tier 2: describe_skill raises RuntimeError when describe_skill_fn is None."""
-    rs = RouterCallerState()  # describe_skill_fn defaults to None
-    with pytest.raises(RuntimeError, match="router_state.describe_skill_fn"):
-        await DESCRIBE_SKILL.handler({"name": "write/blog"}, _ctx(rs))
 
 
 # ── list_agents ───────────────────────────────────────────────────────────────

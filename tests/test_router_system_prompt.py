@@ -62,7 +62,6 @@ class TestEmptyStateRenders:
         prompt = build_system_prompt(
             agent_name="chat",
             agent_role="general assistant",
-            available_skills=[],
             available_agents=[],
             memory_index=_EMPTY_MEMORY,
             tool_use_sp=_default_slots(),
@@ -92,7 +91,6 @@ class TestIdentityPreambleScoped:
         return build_system_prompt(
             agent_name="chat",
             agent_role="general assistant",
-            available_skills=[],
             available_agents=[],
             memory_index=_EMPTY_MEMORY,
             tool_use_sp=_default_slots(),
@@ -125,52 +123,6 @@ class TestIdentityPreambleScoped:
         assert "Always apply: MUST NOT" in prompt
 
 
-class TestSizeIsConstantInItems:
-    """Category-only retry (2026-05-07): SP size is **O(1)** in skill count.
-
-    Inverts the previous TestSizeIsLinearInItems contract. Skills are no
-    longer enumerated in the SP — only a category-level pointer + count.
-    Industry-aligned per Anthropic Tool Search Tool / OpenAI namespaces /
-    MCP-Zero hierarchical patterns.
-
-    Hallucination defense moved to the schema enum (= invoke_skill rejects
-    unknown name); see test_invoke_skill_name_enum_matches_skill_list in
-    test_router_invoke_skill_enum.py.
-    """
-
-    def test_size_constant_in_skill_count(self):
-        """Tier 2: SP size is independent of skill count under category-only.
-
-        With 3 skills vs 30 skills, the SP must be the same size modulo
-        the count digits ("3 available" vs "30 available" = 1 char diff).
-        """
-        skills_3 = [_make_skill(f"skill_{i}", "general") for i in range(3)]
-        skills_30 = [_make_skill(f"skill_{i}", "general") for i in range(30)]
-
-        prompt_3 = build_system_prompt(
-            agent_name="chat",
-            agent_role="assistant",
-            available_skills=skills_3,
-            available_agents=[],
-            memory_index=_EMPTY_MEMORY,
-        )
-        prompt_30 = build_system_prompt(
-            agent_name="chat",
-            agent_role="assistant",
-            available_skills=skills_30,
-            available_agents=[],
-            memory_index=_EMPTY_MEMORY,
-        )
-        # In wrapper-only path the SP has no skill enumeration at all;
-        # size must be identical regardless of skill count.
-        size_diff = abs(len(prompt_30) - len(prompt_3))
-        assert size_diff <= 5, (
-            f"Expected SP to be O(1) in skill count under category-only retry; "
-            f"got size diff {size_diff} between N=3 ({len(prompt_3)}) and "
-            f"N=30 ({len(prompt_30)}). Difference must stay within count-digits."
-        )
-
-
 class TestJapaneseInRolePreserved:
     def test_japanese_role(self):
         """Tier 2: Japanese characters in agent_role are preserved verbatim in the system prompt."""
@@ -178,7 +130,6 @@ class TestJapaneseInRolePreserved:
         prompt = build_system_prompt(
             agent_name="jp_bot",
             agent_role=role,
-            available_skills=[],
             available_agents=[],
             memory_index=_EMPTY_MEMORY,
         )
@@ -195,7 +146,6 @@ class TestFilesSection:
         return build_system_prompt(
             agent_name="chat",
             agent_role="assistant",
-            available_skills=[],
             available_agents=[],
             memory_index=_EMPTY_MEMORY,
             **kwargs,
@@ -244,7 +194,6 @@ class TestMCPSection:
         return build_system_prompt(
             agent_name="chat",
             agent_role="assistant",
-            available_skills=[],
             available_agents=[],
             memory_index=_EMPTY_MEMORY,
             **kwargs,
@@ -288,7 +237,6 @@ def _base_prompt(**kwargs) -> str:
     return build_system_prompt(
         agent_name="chat",
         agent_role="assistant",
-        available_skills=[],
         available_agents=[],
         memory_index=_EMPTY_MEMORY,
         **kwargs,
@@ -365,7 +313,6 @@ class TestBehaviourRulesAfterF3F9Fix:
         prompt = build_system_prompt(
             agent_name="chat",
             agent_role="",
-            available_skills=[],
             available_agents=[],
             memory_index=_EMPTY_MEMORY,
             tool_use_sp=_default_slots(),
@@ -383,7 +330,6 @@ class TestBehaviourRulesAfterF3F9Fix:
         prompt = build_system_prompt(
             agent_name="chat",
             agent_role="assistant",
-            available_skills=[_make_skill("skill_improver", "general")],
             available_agents=[],
             memory_index=_EMPTY_MEMORY,
             tool_use_sp=_default_slots(),
@@ -415,7 +361,6 @@ class TestPostInvokeSkillNarrationGuidance:
         prompt = build_system_prompt(
             agent_name="chat",
             agent_role="assistant",
-            available_skills=[_make_skill("any_skill", "general")],
             available_agents=[],
             memory_index=_EMPTY_MEMORY,
         )

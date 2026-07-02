@@ -28,7 +28,7 @@ _A1_MARK = "Finishing the job"          # A1 TASK_COMPLETION signature phrase
 _M3_MARK = "Memory guidance"            # #3 memory-quality signature phrase
 _A2_MARK = "Verify before acting"       # A2 model-family signature phrase
 
-_BASE = dict(agent_name="t", agent_role="", available_skills=[], available_agents=[])
+_BASE = dict(agent_name="t", agent_role="", available_agents=[])
 
 
 def _slots(non_claude: bool) -> dict:

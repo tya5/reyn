@@ -228,7 +228,6 @@ async def send_to_agent_impl(
         # via the override path without forcing them to expose one.
         override_channel_id: str | None = None
         if intervention_override is not None:
-            session.register_intervention_override(chain_id, intervention_override)
             override_channel_id = getattr(
                 intervention_override, "channel_id", None,
             )
@@ -244,7 +243,6 @@ async def send_to_agent_impl(
             )
         finally:
             if intervention_override is not None:
-                session.unregister_intervention_override(chain_id)
                 if override_channel_id is not None:
                     session.unregister_intervention_listener(override_channel_id)
         new_replies = _new_agent_history_entries(

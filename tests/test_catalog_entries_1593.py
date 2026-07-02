@@ -57,7 +57,7 @@ def _ctx(skills=None) -> ToolContext:
         workspace=None,
         caller_kind="router",
         router_state=RouterCallerState(
-            host=_FakeHost(sk), available_skills=sk, mcp_servers=None,
+            host=_FakeHost(sk), mcp_servers=None,
         ),
     )
 
@@ -79,15 +79,6 @@ def test_sorted_by_name():
     assert names == sorted(names)
 
 
-def test_resource_categories_gated_on_router_state():
-    """Tier 1: a skill in router_state surfaces skill__X with its input_schema as parameters."""
-    entries = catalog_entries(_ctx(skills=[_SKILL]))
-    by_name = {e["name"]: e for e in entries}
-    assert "skill__code_review" in by_name, "resource category enumerated from router_state"
-    params = by_name["skill__code_review"]["parameters"]
-    assert params.get("properties", {}).keys() >= {"diff", "focus"}, "skill input_schema projected"
-
-
 def test_empty_router_state_keeps_static_drops_resources():
     """Tier 1: without router_state skills, resource cats drop; static cats survive ("usable" semantics)."""
     entries = catalog_entries(_ctx(skills=[]))
@@ -101,7 +92,7 @@ def test_single_source_invariant_vs_describe_action():
     description/input_schema (both via the shared _describe_one), by construction."""
     ctx = _ctx(skills=[_SKILL])
     by_name = {e["name"]: e for e in catalog_entries(ctx)}
-    for name in ("file__edit", "skill__code_review"):
+    for name in ("file__edit",):
         entry = by_name[name]
         described = asyncio.run(_handle_describe_action({"action_name": name}, ctx))
         # Both actions carry a real dict schema, so the completeness bar is a no-op

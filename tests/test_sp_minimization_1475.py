@@ -42,7 +42,6 @@ def _sp(*, universal_wrappers_enabled: bool = True,
     return build_system_prompt(
         agent_name="test",
         agent_role="tester",
-        available_skills=[],
         available_agents=[],
         memory_index={},
         tool_use_sp=slots,

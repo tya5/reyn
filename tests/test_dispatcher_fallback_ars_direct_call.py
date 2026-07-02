@@ -1,6 +1,6 @@
 """Tier 2: dispatcher fallback — qualified-name direct-call salvage (#229).
 
-When the LLM emits a qualified action name (e.g. ``skill__mcp_install``,
+When the LLM emits a qualified action name (e.g. ``mcp__install_registry``,
 ``file__edit``) as a DIRECT function call instead of wrapping it in
 ``invoke_action(action_name=...)``, the name isn't in the dispatcher's
 ``tool_catalog`` (qualified names get no top-level tool slot unless they are
@@ -68,15 +68,15 @@ class _MinimalRouterLoopShim:
 # ── 1. Salvage triggers for valid qualified names ─────────────────────────
 
 
-def test_salvage_rewrites_known_skill_to_invoke_action() -> None:
-    """Tier 2: ``skill__mcp_install`` → ``invoke_action`` with action_name."""
+def test_salvage_rewrites_known_action_to_invoke_action() -> None:
+    """Tier 2: ``mcp__install_registry`` → ``invoke_action`` with action_name."""
     loop = _MinimalRouterLoopShim()
     new_name, new_args = loop._maybe_salvage_qualified_direct_call(
-        "skill__mcp_install", {"server_id": "postgres"},
+        "mcp__install_registry", {"server_id": "postgres"},
     )
     assert new_name == "invoke_action"
     assert new_args == {
-        "action_name": "skill__mcp_install",
+        "action_name": "mcp__install_registry",
         "args": {"server_id": "postgres"},
     }
 

@@ -152,37 +152,3 @@ def test_invoke_skill_render_for_router_no_per_call_enum():
     rendered = INVOKE_SKILL.render_for_router()
     name_prop = rendered["function"]["parameters"]["properties"]["name"]
     assert "enum" not in name_prop
-
-
-# ── 7. Registry lookup ────────────────────────────────────────────────────────
-
-def test_default_registry_contains_invoke_skill():
-    """Tier 2: get_default_registry() returns a registry that contains
-    'invoke_skill'."""
-    from reyn.tools import get_default_registry
-    registry = get_default_registry()
-    assert "invoke_skill" in registry
-
-
-def test_default_registry_lookup_returns_invoke_skill_instance():
-    """Tier 2: registry.lookup('invoke_skill') returns the INVOKE_SKILL instance."""
-    from reyn.tools import get_default_registry
-    registry = get_default_registry()
-    found = registry.lookup("invoke_skill")
-    assert found is INVOKE_SKILL
-
-
-def test_default_registry_invoke_skill_in_for_router():
-    """Tier 2: INVOKE_SKILL appears in registry.for_router() (gates.router=allow)."""
-    from reyn.tools import get_default_registry
-    registry = get_default_registry()
-    router_tools = registry.for_router()
-    assert INVOKE_SKILL in router_tools
-
-
-def test_default_registry_invoke_skill_in_for_phase():
-    """Tier 2: INVOKE_SKILL appears in registry.for_phase() (gates.phase=allow)."""
-    from reyn.tools import get_default_registry
-    registry = get_default_registry()
-    phase_tools = registry.for_phase()
-    assert INVOKE_SKILL in phase_tools

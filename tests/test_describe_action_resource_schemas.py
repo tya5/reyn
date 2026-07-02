@@ -73,56 +73,6 @@ def _describe(qualified_name: str, ctx: ToolContext) -> dict:
     ))
 
 
-# ── skill__X ────────────────────────────────────────────────────────────
-
-
-def test_skill_describe_returns_skill_input_schema():
-    """Tier 1: ``describe_action(skill__X)`` returns the SKILL's input fields, not
-    invoke_skill's ``{name, input}`` envelope."""
-    ctx = _make_ctx(skills=[
-        {
-            "name": "index_docs",
-            "description": "Index docs",
-            "input_artifact": "index_docs_input",
-            "input_fields": ["source", "path", "description"],
-            "input_schema": {
-                "type": "object",
-                "properties": {
-                    "source": {"type": "string"},
-                    "path": {"type": "string"},
-                    "description": {"type": "string"},
-                },
-                "required": ["source", "path", "description"],
-            },
-            "input_wrapped": True,
-        },
-    ])
-    out = _describe("skill__index_docs", ctx)
-    schema = out["input_schema"]
-    # Real skill fields, not the dispatcher's {name, input}
-    assert set(schema["properties"].keys()) == {"source", "path", "description"}
-    assert set(schema["required"]) == {"source", "path", "description"}
-    # The dispatcher's keys must NOT be present
-    assert "name" not in schema["properties"]
-    assert "input" not in schema["properties"]
-
-
-def test_skill_without_input_schema_falls_back_to_dispatcher():
-    """Tier 1: When the catalogue entry has no ``input_schema`` (= caller didn't
-    enrich), describe_action falls back to ``invoke_skill``'s parameters
-    so the LLM at least sees the dispatcher contract."""
-    ctx = _make_ctx(skills=[
-        {"name": "legacy_skill", "description": "old", "input_fields": []},
-    ])
-    out = _describe("skill__legacy_skill", ctx)
-    schema = out["input_schema"]
-    # Dispatcher exposes ``name`` (curried) + ``input`` — caller sees the
-    # generic envelope, recoverable but suboptimal.
-    assert "input" in schema.get("properties", {}) or "name" in schema.get(
-        "properties", {}
-    )
-
-
 # Phase 1 multi_agent collapse (2026-05-25): agent.peer__X resource shape
 # removed.  multi_agent__delegate is the operation-shape replacement and
 # exposes the full delegate_to_agent schema (= ``to`` + ``request``) via
@@ -181,27 +131,22 @@ def test_no_router_state_falls_back_for_resource_categories():
         caller_kind="phase",
         router_state=None,
     )
-    out = _describe("skill__index_docs", ctx)
+    out = _describe("rag_corpus__my_docs", ctx)
     # Fallback shape — dispatcher's parameters, not crash.
     assert "input_schema" in out
     schema = out["input_schema"]
-    # invoke_skill dispatcher carries an ``input`` or ``name`` field.
     props = schema.get("properties") or {}
-    assert "input" in props or "name" in props
+    assert props
 
 
 @pytest.mark.parametrize("qn", [
-    "skill__index_docs",
     "rag_corpus__my_docs",
 ])
 def test_metadata_envelope_preserved(qn: str):
     """Tier 1: All cases preserve the §D11 metadata envelope (qualified_name +
     description + metadata.{target_tool_name, category, purity}); only
     input_schema is enriched."""
-    ctx = _make_ctx(skills=[{
-        "name": "index_docs",
-        "input_schema": {"type": "object", "properties": {}, "required": []},
-    }])
+    ctx = _make_ctx()
     out = _describe(qn, ctx)
     assert out["qualified_name"] == qn
     assert "description" in out
