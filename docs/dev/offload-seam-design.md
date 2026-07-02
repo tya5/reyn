@@ -29,7 +29,14 @@ it returns `None` → the **whole dict is stored as one JSON-of-JSON envelope**.
 - **sandboxed_exec** with a huge stdout AND a huge stderr crash-trace → `decide` returns `None` →
   whole-envelope (stderr not clean-separable).
 - **mcp** whose `content` AND `structured` (or `media_blocks`) are both oversized → `None` →
-  **whole-envelope** — this is the owner's chat-MCP-call report (tui reproducing which second field).
+  **whole-envelope** — the owner's chat-MCP-call report. **tui confirmed the mechanism structurally**
+  (no live needed): the marker IS set (`mcp.py` `_offload_payload_field: content`), so it is
+  root **(A) two oversized fields** — the MCP server returns a large `structuredContent`, mapped to
+  `structured` in the result, so `_oversized_fields == ["content", "structured"] != ["content"]` →
+  `decide` returns `None`. The `router_loop` media-strip looks OUTSIDE the dispatch envelope, so it
+  misses `structured` left inside `data`. This is the spec hole proven: a heterogeneous second field
+  breaks the sole-oversized guess (案B's `attachments` removes `structured` from the offload decision
+  entirely).
 - **file.read** was offload-DUPLICATING an on-disk file until #2417 special-cased it to truncate —
   another per-op patch of the same hole.
 
@@ -51,7 +58,8 @@ The hole is that offload **infers structure it cannot know** from a heterogeneou
 ## 3. Consumer analysis (what the LLM actually gets)
 
 Inline the LLM receives: a **bounded preview** (per-field head+tail), `_offload_ref` (a file path it
-**may `file.read`** for the full body — a scoped read is granted via `grant_offload_read`),
+**may `file.read`** for the full body — a scoped read is granted via `grant_offload_read`, a
+`PermissionModel` method wired at `runtime.py` as `self._perm.grant_offload_read`),
 `_offload_content_hash` (verified read-back), and `_offload_status/_offload_total_chars`.
 
 - **Primary consumption = the bounded preview** (always present, always in-budget).
