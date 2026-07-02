@@ -74,16 +74,29 @@ def test_multi_line_over_cap_unchanged(tmp_path: Path):
     assert len(res["content"]) <= CAP
 
 
-def test_explicit_line_window_stays_verbatim_not_self_bounded(tmp_path: Path):
-    """Tier 2: an explicit LINE window (offset+limit, no char_offset) is honored VERBATIM — NOT
-    self-bounded, NOT char-truncated (a huge explicit window → the generic offload handles it;
-    consistent + non-recursing since its retrieval is unbounded → self-bounding → exempt)."""
+def test_small_explicit_line_window_stays_verbatim(tmp_path: Path):
+    """Tier 2: a SMALL explicit LINE window (≤ cap) is honored VERBATIM — byte-identical, not
+    self-bounded (the common #2335 line-read contract)."""
+    (tmp_path / "s.txt").write_text("l0\nl1\nl2\n")
+    res = _read(tmp_path, path="s.txt", offset=1, limit=1)  # just line 1
+    assert res["status"] == "ok"
+    assert res["content"] == "l1\n"
+    assert "_self_bounded" not in res, "a small explicit window is verbatim, not self-bounded"
+
+
+def test_oversized_explicit_line_window_is_truncated_not_offloaded(tmp_path: Path):
+    """Tier 2: owner steer — file_read never offload-duplicates its (on-disk) source. An explicit
+    LINE window whose slice EXCEEDS the cap is now SELF-BOUNDED (truncated + LLM-visible marker +
+    on-disk path + re-read hint), NOT returned verbatim for the generic offload. Supersedes the prior
+    #2335/#2296 verbatim-then-offload contract."""
     huge_line = "z" * (CAP + 5000)
     (tmp_path / "f.txt").write_text("a\n" + huge_line + "\nb\n")
-    res = _read(tmp_path, path="f.txt", offset=1, limit=1)  # the huge line, verbatim
-    assert res["status"] == "ok"
-    assert "_self_bounded" not in res, "an explicit line window is verbatim, not self-bounded"
-    assert len(res["content"]) > CAP, "verbatim honors the caller's explicit window even when huge"
+    res = _read(tmp_path, path="f.txt", offset=1, limit=1)  # the huge line
+    assert res["status"] == "truncated"
+    assert res["_self_bounded"] is True, "an oversized explicit window is self-bounded (no offload copy)"
+    assert res["_truncated"] is True, "LLM-visible truncation marker"
+    assert len(res["content"]) <= CAP, "content is cut to fit the cap (full source stays on disk)"
+    assert res["path"] == "f.txt", "the on-disk source path is surfaced for re-read"
 
 
 def test_small_read_unchanged(tmp_path: Path):

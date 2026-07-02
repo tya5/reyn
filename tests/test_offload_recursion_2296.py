@@ -4,8 +4,10 @@ file.read self-bounds its content ≤ the inline cap (#1209), but the generic of
 whole-JSON size (content + envelope), so an already-bounded read was offloaded on ENVELOPE alone —
 and retrieving it (an unbounded file.read of the ref) was itself over-cap on envelope → re-offloaded
 → infinite recursion. Fix: the read op stamps a positive ``_self_bounded`` flag on its self-bounding
-paths; ``offload_control_ir_result`` exempts a flagged result before the size check. The
-explicit-window path (verbatim, can exceed cap) is NOT flagged → still offloaded when huge.
+paths; ``offload_control_ir_result`` exempts a flagged result before the size check. Per the later
+owner steer (file_read never offload-duplicates its on-disk source), an OVERSIZED explicit window is
+also self-bounded (truncated) now → ALL file reads are exempt, so a read can never start the offload
+recursion.
 """
 from __future__ import annotations
 
@@ -82,20 +84,22 @@ def test_unbounded_ok_read_is_self_bounded(tmp_path: Path):
     assert res.get("_self_bounded") is True, "the OK unbounded read is flagged (bounded by construction)"
 
 
-def test_explicit_window_read_is_not_self_bounded(tmp_path: Path):
-    """Tier 2: THE precision — the explicit-window path honors the caller's offset/limit VERBATIM
-    (content can exceed cap), so it is NOT self-bounded and is NOT flagged → a huge explicit-window
-    read is still offloaded (not exempt)."""
+def test_oversized_explicit_window_read_is_self_bounded_and_exempt(tmp_path: Path):
+    """Tier 2: owner steer — an OVERSIZED explicit-window file_read is now SELF-BOUNDED (truncated),
+    so it is EXEMPT from the generic offload (no duplicate copy of an on-disk file). This strengthens
+    the #2296 recursion-termination guarantee: a file_read never offloads → it can never start the
+    offload/read recursion. Supersedes the prior verbatim-then-offloaded explicit-window contract."""
     (tmp_path / "big.py").write_text("x = 1\n" * 20000)
     res = _run(handle(
         FileIROp(kind="file", op="read", path="big.py", offset=0, limit=20000),
         _make_ctx(tmp_path), "control_ir",
     ))
-    assert res["status"] == "ok", "explicit window → honored verbatim, not auto-truncated"
-    assert "_self_bounded" not in res, "the explicit-window read is NOT self-bounded (can exceed cap)"
-    # and therefore it is still offloaded when huge (path-1 not exempt).
+    assert res["status"] == "truncated", "an oversized explicit window is truncated, not verbatim"
+    assert res["_self_bounded"] is True, "the oversized explicit-window read is self-bounded"
+    assert res["_truncated"] is True, "LLM-visible truncation marker"
+    # and therefore it is NOT offloaded — no duplicate file for an already-on-disk source.
     out = offload_control_ir_result(res, 0, tmp_path, cap=200)
-    assert out.get("_offload_ref"), "a huge explicit-window read is still offloaded"
+    assert "_offload_ref" not in out, "a self-bounded file_read is never offloaded (no duplicate copy)"
 
 
 # ── recursion termination: a self-bounded read is never re-offloaded ──────────────────────────

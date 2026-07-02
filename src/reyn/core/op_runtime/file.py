@@ -296,34 +296,38 @@ async def handle(op: FileIROp, ctx: OpContext, caller: Literal["preprocessor", "
         # byte-identical (no `encoding` field) for the common case.
         _enc_field = {"encoding": _detected_encoding} if _detected_encoding else {}
         # #2335: read MODE. An explicit LINE window (offset/limit given, no char_offset) is honored
-        # VERBATIM — the LLM's line-based read contract, byte-identical (a huge explicit window is
-        # NOT self-bounded → the generic offload handles it; consistent + non-recursing since its
-        # retrieval is an unbounded read → self-bounding → exempt). Otherwise (an unbounded read, OR
-        # a char_offset mid-line RESUME) the read is SELF-BOUNDING.
+        # VERBATIM — the LLM's line-based read contract, byte-identical — AS LONG AS its slice fits
+        # the inline cap. Otherwise (an unbounded read, a char_offset mid-line RESUME, OR an explicit
+        # window whose slice exceeds the cap) the read is SELF-BOUNDING (truncate + re-read hint).
+        cap = _read_inline_cap(ctx)
         explicit_line_window = (
             op.offset is not None or op.limit is not None
         ) and op.char_offset is None
         if explicit_line_window:
-            # Caller asked for an explicit LINE window — honor it verbatim.
             lines = content.splitlines(keepends=True)
             start = op.offset or 0
             sliced = lines[start:start + op.limit] if op.limit is not None else lines[start:]
-            ctx.events.emit("tool_executed", op="read_file", path=op.path)
-            return {
-                "kind": "file",
-                "op": "read",
-                "path": op.path,
-                "status": "ok",
-                "content": "".join(sliced),
-                **_enc_field,
-            }
+            joined = "".join(sliced)
+            # A window that fits the cap is honored verbatim. An OVERSIZED window is NOT offloaded:
+            # file_read's source already lives on disk at op.path, so duplicating it into an offload
+            # file is wasteful (owner steer). Fall through to the self-bounding truncation below —
+            # truncate inline + surface a re-read hint; the full content stays at op.path.
+            if len(joined) <= cap:
+                ctx.events.emit("tool_executed", op="read_file", path=op.path)
+                return {
+                    "kind": "file",
+                    "op": "read",
+                    "path": op.path,
+                    "status": "ok",
+                    "content": joined,
+                    **_enc_field,
+                }
 
         # #1209 read-bounding (keep-in-decide-context, not offloaded-out-of-view) + #2335 char-level
         # truncation. Accumulate WHOLE lines from (start_line, start_char); a multi-line overflow
         # stops at the LINE boundary (byte-identical to pre-#2335 — next_char_offset stays absent);
         # a SINGLE line/segment that alone exceeds the cap is CHAR-truncated so `content` is
         # GENUINELY ≤ cap (honest `_self_bounded`, #2335 fix), its tail paged via next_char_offset.
-        cap = _read_inline_cap(ctx)
         all_lines = content.splitlines(keepends=True)
         start_line = op.offset or 0
         start_char = op.char_offset or 0
@@ -368,6 +372,15 @@ async def handle(op: FileIROp, ctx: OpContext, caller: Literal["preprocessor", "
                 "total_lines": len(all_lines),
                 "next_offset": next_offset,
                 "total_chars": len(content),
+                # Owner: the LLM must recognize the content was cut (not the whole file). Explicit
+                # marker + a plain re-read hint pointing at the on-disk source — no offload copy is
+                # made for a file_read (the full content already lives at op.path).
+                "_truncated": True,
+                "note": (
+                    f"content truncated to fit context ({len(''.join(shown))} of {len(content)} "
+                    f"chars shown); the full file is on disk at {op.path!r} — re-read from "
+                    f"offset {next_offset} to continue."
+                ),
                 # #2296: content bound ≤ the inline cap BY CONSTRUCTION → exempt from the generic
                 # control_ir offload (else re-offload on envelope size alone and recurse).
                 "_self_bounded": True,
