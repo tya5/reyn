@@ -63,18 +63,15 @@ Inline the LLM receives: a **bounded preview** (per-field head+tail), `_offload_
 `_offload_content_hash` (verified read-back), and `_offload_status/_offload_total_chars`.
 
 - **Primary consumption = the bounded preview** (always present, always in-budget).
-- **Deref happens (the LLM reads the ref) but its PAGING is broken** — and the two owner statements
-  reconcile: *"re-reading reads the same place"* is the paging defect; *"deref works / re-running the
-  tool is meaningless"* means the deref reaches the offload file (so it "works") AND the **tool** can't
-  be re-run for more (same result). Both are true at once. Mechanism (primary evidence, from the
-  offload code): the inline marker (`_preview_field`) is `"... [TRUNCATED — N chars total; full
-  content at {ref_path}] ..."` — it names the ref but carries **no continuation cursor (offset)**. So
-  the LLM does `file.read(ref_path)` with no offset → `file.py` truncates from offset 0 → it gets **the
-  same head it already saw in the preview**; re-reading (still no offset) → the same head →
-  **same-place, no advance**; the head↔tail middle is unreachable.
-- → Two real defects, both structural: **(1) the field-guessing** (§1) and **(2) the missing page
-  cursor**. transient bodies (MCP/web/exec) MUST be offload-stored (re-running the tool is NOT a
-  substitute), and their deref MUST be pageable. 案B fixes both.
+- **Deref happens AND works, including paging** — owner's live primary evidence. transient results
+  (MCP/web/exec) MUST be **offload-stored**: re-running the *tool* to get more is meaningless (same
+  result), so the offload store + its (working) deref is the only continuation for transient bodies.
+- **Scope decision:** the deref / paging / transient-store mechanism is **NOT in scope for 案B** —
+  it functions. 案B changes **field-guessing removal ONLY** (§1). (A prior draft inferred a
+  "same-place" paging gap from the preview marker lacking a cursor; owner's primary evidence — deref
+  paging works — is authoritative over that code-inference, so it is dropped. Lesson, both sides: a
+  code-inference must be falsify-checked against owner/live primary evidence before it is articulated
+  as an identified mechanism.)
 
 ## 4. 案B — canonical tool-result shape (recommended, spec fix)
 
@@ -95,23 +92,18 @@ structured/media→attachments, source_ref=None; web_fetch: content→text, next
 paging, media→attachments; exec: stdout→text, stderr→attachments (or appended to text with a marker),
 source_ref=None; file.read: content→text, path+offset→source_ref).
 
-**Offload becomes a single guessing-free rule** on the canonical shape:
+**Offload becomes a single guessing-free rule** on the canonical shape (the existing deref / paging /
+store machinery is reused unchanged — 案B only removes the guess):
 
-1. `text` over budget → **truncate** to the budget with a marker that carries a **page cursor**:
-   `[truncated: showing chars 0–K of M — read <ref> from offset K for the next page]` (the #2417
-   file_read form, generalized). The cursor (resume offset) is **mandatory** — this fixes the owner
-   "same-place" bug (§3): the LLM is told *where to resume*, not just *where the body lives*.
-2. `source_ref` present (on-disk) → the "rest" is **re-fetch from origin**: `file.read(path, offset=K)`
-   — **no copy stored** (the file already exists); file.read already pages via `next_offset`.
-3. `source_ref` absent (transient: MCP/web/exec) → store the full `text` **content-addressed once** in
-   the offload store + a ref; the "rest" is `file.read(ref, offset=K)` — the **same offset-threaded
-   read**, so the stored transient body pages identically. Re-running the tool is NOT a substitute
-   (owner: same result), so transient bodies MUST be stored.
+1. `text` over budget → **truncate + offload** via the existing offloader (the #2417 file_read form,
+   generalized) — but the payload is unambiguous (`text`), so no `decide_payload_field` / sole-oversized
+   check.
+2. `source_ref` present (on-disk) → the "rest" is **re-fetch from origin** (`file.read(path, offset)`)
+   — **no copy stored** (the file already exists).
+3. `source_ref` absent (transient: MCP/web/exec) → store the full `text` via the existing offload
+   store + its (working) deref. Re-running the tool is NOT a substitute (owner: same result), so
+   transient bodies MUST be stored.
 4. `attachments` → the existing media store (unchanged).
-
-**Pageability is a first-class part of the contract:** every continuation path (file origin AND
-transient store) is an offset-threaded read that ADVANCES. Today's `_offload_ref` + a bare "full
-content at …" marker (no cursor) is the defect; the canonical marker always pairs ref + resume offset.
 
 `decide_payload_field`, `_oversized_fields`, the sole-oversized condition, and the six per-op
 `_offload_payload_field` markers all **disappear** — there is no dict to guess a field from; `text`
@@ -164,11 +156,9 @@ fallback if owner wants the fastest containment. Both eliminate the *duplicate-e
 ## 7. Resolved + remaining questions
 
 **Resolved (owner + tui, folded into the design above):**
-- **Deref / paging** → the two owner statements reconcile (§3): "same-place" is a real paging defect
-  (the marker has no cursor → re-read from 0), while "deref works / tool re-run is meaningless" means
-  the deref reaches the file and the *tool* can't page. So there are **two** structural defects —
-  field-guessing (§1) AND the missing page cursor — and 案B fixes both. transient bodies MUST be
-  offload-stored (tool re-run is not a substitute).
+- **Deref / paging** → works (owner's live primary evidence); NOT in scope for 案B (§3). transient
+  bodies MUST be offload-stored (tool re-run is not a substitute). 案B scope = **field-guessing
+  removal only**.
 - **Owner whole-envelope root** → tui confirmed it structurally: a 2nd oversized field
   (`structuredContent` → `structured`) breaks the sole-oversized guess (§1). 案B's `attachments`
   removes it from the offload decision.
