@@ -30,48 +30,15 @@ def _make_cron_runner():
     """Return an async callable that executes a CronJob headlessly.
 
     FP-0009 Component B + FP-0041 #489 PR-B: dispatches based on job
-    shape via ``build_default_runner``.
+    shape via ``build_default_runner``. Skill-based job execution has been
+    retired; only message-based jobs run:
 
-      - Skill-based legacy: resolves the skill by name and runs through
-        ``SkillRuntime.run`` with sane defaults from ``load_config()``.
       - Message-based (FP-0041): pushes message into target agent's
         inbox via ``AgentRegistry.ensure_running``, with
         ``sender="cron:<name>"`` envelope so the agent reads it as a
         normal attributed turn from a scheduled trigger.
     """
     from reyn.runtime.cron.runners import build_default_runner
-
-    async def _legacy_skill_runner(job) -> str:
-        from pathlib import Path as _Path
-
-        from reyn.config import _find_project_root, load_config, load_project_context
-        from reyn.core.compiler import load_dsl_skill
-        from reyn.security.permissions.permissions import PermissionResolver
-        from reyn.skill.skill_paths import resolve_skill_path
-        from reyn.skill.skill_runtime import SkillRuntime
-
-        cfg = load_config()
-        project_root = _find_project_root(_Path.cwd())
-        project_context = load_project_context(cfg, project_root)
-
-        # resolve_skill_path returns (skill_dir, skill_root); load_dsl_skill
-        # takes the skill.md path (= skill_dir / "skill.md").
-        skill_dir, skill_root = resolve_skill_path(job.skill)
-        skill = load_dsl_skill(skill_dir / "skill.md", skill_root=skill_root)
-
-        # #997 dir2: config-derived permission/runtime bundle via from_config
-        # (the web cron path is non-interactive → interactive=False, matching the
-        # prior hand-built resolver). resolver now derives from cfg.models (was an
-        # empty ModelResolver() default) so class-name model resolution works.
-        agent = SkillRuntime.from_config(
-            cfg,
-            interactive=False,
-            project_context=project_context,
-            caller="cron",
-        )
-
-        result = await agent.run(skill, dict(job.input))
-        return "ok" if result.ok else "error"
 
     async def _inbox_pusher(to: str, envelope: dict, native_id: str) -> str:
         """Deliver ``envelope`` to the job's own ``cron:<job_name>`` Session of
@@ -131,7 +98,7 @@ def _make_cron_runner():
         )
 
     return build_default_runner(
-        legacy_skill_runner=_legacy_skill_runner,
+        legacy_skill_runner=None,
         inbox_pusher=_inbox_pusher,
         failure_notifier=_failure_notifier,
     )

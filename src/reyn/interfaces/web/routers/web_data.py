@@ -159,55 +159,13 @@ def _build_agents(registry) -> list[dict[str, Any]]:
 
 
 def _build_library(project_root: Path) -> list[dict[str, Any]]:
-    """Build Library items from skills (project + local + stdlib)."""
-    from reyn.skill.skill_paths import stdlib_root
-    try:
-        sl = stdlib_root()
-    except Exception:
-        sl = Path("/nonexistent")
+    """Return Library items.
 
-    roots = [
-        ("project", project_root / "reyn" / "project"),
-        ("local",   project_root / "reyn" / "local"),
-        ("stdlib",  sl / "skills"),
-    ]
-
-    items: list[dict[str, Any]] = []
-    seen: set[str] = set()
-    color_list = ["#7C4DFF", "#00BCD4", "#FF6B35", "#4CAF50", "#FF4081",
-                  "#F06292", "#26A69A", "#FFA726"]
-
-    for _source, skills_dir in roots:
-        if not skills_dir.is_dir():
-            continue
-        for skill_dir in sorted(skills_dir.iterdir()):
-            if not skill_dir.is_dir() or not (skill_dir / "skill.md").exists():
-                continue
-            name = skill_dir.name
-            if name in seen:
-                continue
-            seen.add(name)
-
-            # Try to read description from skill.md frontmatter
-            description = ""
-            try:
-                from reyn.core.compiler.parser import _split_frontmatter
-                fm, _ = _split_frontmatter((skill_dir / "skill.md").read_text(encoding="utf-8"))
-                description = (fm.get("description") or "").strip()
-            except Exception:
-                pass
-
-            idx = len(items)
-            items.append({
-                "id": name,
-                "title": name.replace("_", " ").replace("-", " ").title(),
-                "sub": description or f"Run the {name} skill",
-                "icon": "zap",
-                "color": color_list[idx % len(color_list)],
-                "tag": "Aria",
-            })
-
-    return items
+    Skills were the only Library source; skill execution has been retired, so
+    the Library is empty. This function no longer depends on the skill
+    machinery (the web Library UI removal is a deferred cleanup).
+    """
+    return []
 
 
 def _build_permissions(project_root: Path) -> list[dict[str, Any]]:
