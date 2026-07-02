@@ -2490,6 +2490,7 @@ class Session:
         else:
             self._visibility_override[kind].add(name)
         self._reapply_visibility_override()
+        self._persist_visibility_override()  # #2285 step2 — survive restart (best-effort)
 
     def capability_visibility_state(self) -> dict:
         """#2285: the status-bar's read model.
@@ -2547,6 +2548,96 @@ class Session:
             self._disabled_hooks.discard(name)
         else:
             self._disabled_hooks.add(name)
+        self._persist_hook_disabled()  # #2285 step2 — survive restart (best-effort)
+
+    # ── #2285 step2: persist / restore the session toggles (SEPARATE from the envelope floor) ──
+
+    def _toggle_store_dir(self) -> Path:
+        """The per-session state dir holding the toggle stores (parent of the snapshot path — set
+        per (name, sid) by spawn_session; the agent state dir for the main session)."""
+        return Path(self._snapshot_path).parent
+
+    def _persist_visibility_override(self) -> None:
+        """#2285 step2: persist the visibility override to ``<state dir>/visibility.yaml`` — a store
+        DISTINCT from the config.yaml spawner-narrowing (the authorized floor). Keeping it separate is
+        load-bearing: a toggle-ON must never edit the floor's denies (that would re-widen past
+        authorized). Best-effort: a write failure logs, never breaks the already-applied live toggle."""
+        import yaml
+        try:
+            data = {k: sorted(v) for k, v in self._visibility_override.items() if v}
+            path = self._toggle_store_dir() / "visibility.yaml"
+            if data:
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(yaml.safe_dump(data), encoding="utf-8")
+            elif path.exists():
+                path.unlink(missing_ok=True)
+        except Exception as exc:  # noqa: BLE001 — persist is best-effort (live toggle already applied)
+            logger.warning("#2285: persist visibility override failed: %r", exc)
+
+    def _persist_hook_disabled(self) -> None:
+        """#2285 step2: persist the hook disabled-set to ``<state dir>/hooks.yaml``'s ``disabled:``
+        list — distinct from that file's session-DEFINED ``hooks:`` (the 4th config layer). Preserves
+        the ``hooks:`` section. Best-effort."""
+        import yaml
+        try:
+            path = self._toggle_store_dir() / "hooks.yaml"
+            data: dict = {}
+            if path.is_file():
+                try:
+                    loaded = yaml.safe_load(path.read_text(encoding="utf-8"))
+                    data = loaded if isinstance(loaded, dict) else {}
+                except Exception:  # noqa: BLE001
+                    data = {}
+            if self._disabled_hooks:
+                data["disabled"] = sorted(self._disabled_hooks)
+            else:
+                data.pop("disabled", None)
+            if data:
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(yaml.safe_dump(data), encoding="utf-8")
+            elif path.exists():
+                path.unlink(missing_ok=True)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("#2285: persist hook disabled-set failed: %r", exc)
+
+    def load_persisted_toggles(self) -> None:
+        """#2285 step2: restore the persisted visibility override + hook disabled-set from the
+        per-session stores into the in-memory sets, then re-apply visibility. Called at BOTH
+        session-creation paths (spawn fixup + construction/restore) so a restarted session recovers
+        its toggles. The loaded override composes ON TOP of the authoritative envelope exactly like
+        the live path (just file-sourced) → visible ⊆ authorized survives persist + reload (the floor
+        is re-resolved fresh from ``resolved_profile_for``; the loaded override never touches it).
+        Best-effort."""
+        import yaml
+        state_dir = self._toggle_store_dir()
+        # Reset to a clean baseline first so the load fully re-derives from THIS (final) state dir —
+        # idempotent + leak-free if called more than once or after the per-session dir is re-keyed.
+        self._visibility_override = {"tool": set(), "skill": set(), "mcp": set(), "category": set()}
+        self._disabled_hooks = set()
+        loaded_visibility = False
+        try:
+            vpath = state_dir / "visibility.yaml"
+            if vpath.is_file():
+                data = yaml.safe_load(vpath.read_text(encoding="utf-8"))
+                if isinstance(data, dict):
+                    for kind in ("tool", "skill", "mcp", "category"):
+                        vals = data.get(kind)
+                        if isinstance(vals, list):
+                            self._visibility_override[kind] = {str(v) for v in vals}
+                            loaded_visibility = True
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("#2285: load visibility override failed: %r", exc)
+        try:
+            hpath = state_dir / "hooks.yaml"
+            if hpath.is_file():
+                data = yaml.safe_load(hpath.read_text(encoding="utf-8"))
+                disabled = data.get("disabled") if isinstance(data, dict) else None
+                if isinstance(disabled, list):
+                    self._disabled_hooks = {str(n) for n in disabled}
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("#2285: load hook disabled-set failed: %r", exc)
+        if loaded_visibility:
+            self._reapply_visibility_override()  # only re-resolve when something was actually loaded
 
     def hook_state(self) -> "list[dict]":
         """#2285: the status-bar's hook read model — each NAMED hook in this session's merged
