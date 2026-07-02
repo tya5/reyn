@@ -117,6 +117,38 @@ class PhaseRouterLoopHost:
     def resolve_model(self, name: str) -> str:
         return self._resolve_model_fn(name)
 
+    def cap_tool_result(self, content_str, *, clean_value=None, payload_field=None):
+        """#2396 Step 3: cap/offload the converged phase op-loop's oversized tool results through the
+        SAME string offloader chat uses (``cap_tool_result_content`` → ``MediaStore.save_tool_result``),
+        so a large phase op result becomes a bounded preview + a ``.reyn/tool-results/`` path-ref
+        instead of being inlined. ``RouterLoop.feedback`` calls this via ``getattr(host, ...)``; before
+        this the phase host had no capper (feedback got None) so phase op results were never offloaded.
+
+        Reuses the shared clean-payload decision (``clean_value``/``payload_field`` from
+        ``decide_payload_field``) so an oversized op result stores its dominant field CLEAN — identical
+        to chat + the control_ir path. cap_tokens is the phase's B_M-relative budget (the same
+        ``compute_cap_tokens(effective_trigger)`` chat uses), estimated ``use_chars4`` to match the
+        phase compaction engine. No-op (returns ``content_str``) when no media store or compaction
+        budget is wired — those phases have no offload target/bound (parity with chat's no-store no-op)."""
+        store = getattr(self._control_ir_executor, "_media_store", None)
+        engine = self._compaction_engine
+        if store is None or engine is None:
+            return content_str
+        from reyn.runtime.services.tool_result_cap import (
+            cap_tool_result_content,
+            compute_cap_tokens,
+        )
+        return cap_tool_result_content(
+            content_str,
+            cap_tokens=compute_cap_tokens(engine.budgets.effective_trigger),
+            model=engine.model,
+            save_fn=store.save_tool_result,
+            use_chars4=True,
+            events=self._events,
+            clean_value=clean_value,
+            payload_field=payload_field,
+        )
+
     def make_router_op_context(self) -> Any:
         """Phase ``OpContext`` factory for the registry tool-dispatch handlers.
 
