@@ -18,7 +18,11 @@ from reyn.runtime.registry import _DEFAULT_SID, AgentRegistry
 from reyn.runtime.session import Session
 
 
-def _registry(tmp_path):
+def _registry(tmp_path, tracker: "BudgetTracker | None" = None):
+    # ONE shared BudgetTracker across all sessions — matches production (created + hydrated once at
+    # the entry point, threaded to every session). agent_cost_usd reads this durable per-agent total.
+    shared = tracker if tracker is not None else BudgetTracker(CostConfig())
+
     def factory(profile: AgentProfile):
         agent_dir = tmp_path / ".reyn" / "agents" / profile.name
         agent_dir.mkdir(parents=True, exist_ok=True)
@@ -26,7 +30,7 @@ def _registry(tmp_path):
             agent_name=profile.name,
             agent_role=profile.role,
             output_language="en",
-            budget_tracker=BudgetTracker(CostConfig()),
+            budget_tracker=shared,
             snapshot_path=agent_dir / "state" / "snapshot.json",
         )
 
@@ -101,30 +105,67 @@ async def test_attach_session_focuses_existing_and_rejects_unknown(tmp_path) -> 
             task.cancel()
 
 
-def test_agent_cost_usd_aggregates_all_sessions(tmp_path):
-    """Tier 2: agent_cost_usd() sums cost across ALL sids, not just 'main'.
+def test_agent_cost_usd_reads_durable_per_agent_total(tmp_path):
+    """Tier 2: agent_cost_usd() reads the DURABLE per-agent total (ledger-hydrated BudgetTracker) —
+    ONE counter that already reflects cost across ALL sessions of the agent. So it (a) survives
+    restart (the counter is ledger-derived, not live-gateway) and (b) does NOT N×-count multiple
+    sessions (still one counter, not a sum over per-session gateways).
 
-    Regression: the exit cost summary in run_repl called get_session(name) without
-    a sid (defaulting to 'main'), silently missing sessions spawned via /session new.
-    agent_cost_usd() is the single source of truth used by both the inline status
-    bar and the run_repl exit summary.
+    Falsification: on the pre-fix impl (a SUM over per-session ``sess.total_cost_usd`` gateways),
+    this ledger-only cost reports 0.0 (no live gateway accumulation) → the 0.15 assert fails; and a
+    per-session-seed variant would report 0.30 across the two sessions (N×)."""
+    import json
+    from datetime import datetime, timezone
 
-    Falsification: if agent_cost_usd() only read the main session, the assertion
-    total == pytest.approx(0.15) would return 0.10 and fail.
-    """
-    import types
+    # A ledger with two recorded LLM calls for agent "default" (all-time cumulative 0.10 + 0.05).
+    ledger = tmp_path / ".reyn" / "state" / "budget_ledger.jsonl"
+    ledger.parent.mkdir(parents=True, exist_ok=True)
+    ts = datetime.now(timezone.utc).isoformat()
+    ledger.write_text(
+        json.dumps({"ts": ts, "agent": "default", "tokens": 100, "cost_usd": 0.10}) + "\n"
+        + json.dumps({"ts": ts, "agent": "default", "tokens": 50, "cost_usd": 0.05}) + "\n",
+        encoding="utf-8",
+    )
+    tracker = BudgetTracker(CostConfig())
+    tracker.hydrate(ledger)  # = the restart restore path
 
-    reg = _registry(tmp_path)
-    main = reg.get_or_load("default")
-    sid2 = reg.spawn_session("default")
-    extra = reg.get_session("default", sid2)
+    reg = _registry(tmp_path, tracker=tracker)
+    reg.get_or_load("default")
+    reg.spawn_session("default")  # a 2nd session — must NOT double the reported per-agent cost
 
-    assert extra is not None
-    # Inject cost via public accumulate() with a duck-typed result object.
-    main._budget.accumulate(types.SimpleNamespace(token_usage=None, cost_usd=0.10))
-    extra._budget.accumulate(types.SimpleNamespace(token_usage=None, cost_usd=0.05))
+    assert reg.agent_cost_usd("default") == pytest.approx(0.15), (
+        "durable per-agent total (all sessions, one counter) — not reset to 0, not N×-summed"
+    )
+    assert reg.agent_tokens("default") == 150, "durable per-agent total tokens (companion accessor)"
 
-    total = reg.agent_cost_usd("default")
-    assert total == pytest.approx(0.15), (
-        "agent_cost_usd must sum ALL session costs, not just 'main'"
+
+def test_agent_cost_usd_survives_restart_and_byte_aligns_no_ntimes(tmp_path):
+    """Tier 2: the fix's core (owner bug) — cost recorded pre-restart SURVIVES a restart (a fresh
+    tracker hydrated from the persisted ledger = the real restore path) and byte-aligns with the
+    tracker's own per-agent total (= what ``/cost`` reads), with NO N× across sessions.
+
+    Falsification: the pre-fix summed live per-session gateways → 0.0 after restart (RED), and a
+    per-session-seed variant → 3× across the three sessions (RED)."""
+    import json
+    from datetime import datetime, timezone
+
+    ledger = tmp_path / ".reyn" / "state" / "budget_ledger.jsonl"
+    ledger.parent.mkdir(parents=True, exist_ok=True)
+    ts = datetime.now(timezone.utc).isoformat()
+    ledger.write_text(
+        json.dumps({"ts": ts, "agent": "default", "tokens": 200, "cost_usd": 0.42}) + "\n",
+        encoding="utf-8",
+    )
+    # "Restart": a brand-new tracker hydrated from the persisted ledger.
+    restarted = BudgetTracker(CostConfig())
+    restarted.hydrate(ledger)
+
+    reg = _registry(tmp_path, tracker=restarted)
+    reg.get_or_load("default")
+    reg.spawn_session("default")
+    reg.spawn_session("default")  # 3 sessions total — must not multiply the per-agent cost
+
+    assert reg.agent_cost_usd("default") == pytest.approx(0.42), "survives restart (not 0), no N×"
+    assert reg.agent_cost_usd("default") == restarted.agent_cost_usd("default"), (
+        "status-bar per-agent cost byte-aligns with the /cost source (the durable tracker)"
     )

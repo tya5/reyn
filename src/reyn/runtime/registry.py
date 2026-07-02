@@ -408,19 +408,38 @@ class AgentRegistry:
         spawned ids thereafter."""
         return list(self._sessions.get(name, {}).keys())
 
-    def agent_cost_usd(self, name: str) -> float:
-        """Total cost in USD across ALL sessions of agent ``name``.
+    def _shared_budget_tracker(self) -> "object | None":
+        """The process-shared BudgetTracker, reached via any loaded session's gateway (all sessions
+        of all agents share ONE tracker in production). ``None`` when no session is loaded / no
+        tracker is wired. Because it is process-shared, reading it via any one session yields the
+        durable per-agent totals for EVERY agent — including agents with no currently-live session
+        (the ledger-hydrated counters persist regardless)."""
+        for a_name in self.loaded_names():
+            for sid in self.session_ids(a_name):
+                sess = self.get_session(a_name, sid)
+                tracker = getattr(getattr(sess, "_budget", None), "tracker", None)
+                if tracker is not None:
+                    return tracker
+        return None
 
-        Single source of truth for per-agent cost aggregation — used by both
-        the inline status bar and the run_repl exit summary so they never drift
-        when sessions are spawned via /session new.
-        """
-        total = 0.0
-        for sid in self.session_ids(name):
-            sess = self.get_session(name, sid)
-            if sess is not None:
-                total += sess.total_cost_usd
-        return total
+    def agent_cost_usd(self, name: str) -> float:
+        """All-time cumulative USD cost for agent ``name``, read from the DURABLE process-shared
+        BudgetTracker (ledger-hydrated).
+
+        Single source of truth for per-agent cost aggregation — used by the inline status bar and the
+        run_repl exit summary. Reading the durable tracker (one per-agent counter) makes this survive
+        restart and byte-align with ``/cost``. (Was: a SUM over per-session gateways — this-process
+        only, so it reset to 0 on restart AND N×-counted an agent's cost across ``/session new``
+        sessions, since each gateway held the full per-agent seed. #cost-restart.)"""
+        tracker = self._shared_budget_tracker()
+        return tracker.agent_cost_usd(name) if tracker is not None else 0.0
+
+    def agent_tokens(self, name: str) -> int:
+        """All-time cumulative TOTAL tokens for agent ``name`` from the durable tracker (restart-
+        surviving companion to ``agent_cost_usd``). Total only — the prompt/completion breakdown is
+        not persisted per ledger record. #cost-restart."""
+        tracker = self._shared_budget_tracker()
+        return tracker.agent_tokens(name) if tracker is not None else 0
 
     def agent_total_usage(self, name: str) -> "object":
         """Aggregate TokenUsage across ALL sessions of agent ``name``."""

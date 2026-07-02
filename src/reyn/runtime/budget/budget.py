@@ -953,6 +953,18 @@ class BudgetTracker:
             context={"model": model, "current": used, "hard": cap},
         )
 
+    def agent_cost_usd(self, agent: str) -> float:
+        """All-time cumulative USD cost for ``agent`` — the durable per-agent total (ledger-hydrated,
+        restart-surviving). The single source of truth read by ``/cost`` and, via
+        ``registry.agent_cost_usd`` (#cost-restart), the inline status bar. One counter per agent
+        (summed across all its sessions in ``record_llm``), so it never N×-counts multiple sessions."""
+        return self._agent_cost_usd.get(agent, 0.0)
+
+    def agent_tokens(self, agent: str) -> int:
+        """All-time cumulative TOTAL tokens for ``agent`` (durable, ledger-hydrated). Total only —
+        the prompt/completion breakdown is not persisted per ledger record (only ``total_tokens``)."""
+        return self._agent_tokens.get(agent, 0)
+
     def _agent_context(self, agent: str | None) -> dict:
         if agent is None:
             return {}
