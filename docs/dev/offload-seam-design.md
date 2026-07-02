@@ -156,9 +156,12 @@ fallback if owner wants the fastest containment. Both eliminate the *duplicate-e
 ## 7. Resolved + remaining questions
 
 **Resolved (owner + tui, folded into the design above):**
-- **Deref / paging** → works (owner's live primary evidence); NOT in scope for 案B (§3). transient
-  bodies MUST be offload-stored (tool re-run is not a substitute). 案B scope = **field-guessing
-  removal only**.
+- **Deref / paging** → works (owner's live primary evidence, authoritative); NOT in scope for 案B
+  (§3). transient bodies MUST be offload-stored (tool re-run is not a substitute). 案B scope =
+  **field-guessing removal only**. **Explicitly out of scope:** a "paging-cursor" defect is NOT
+  claimed — owner states paging works, and that overrides the marker code-inference. It would only
+  become a separate bug (separate PR, not 案B) if a **tmux live-verify** shows a 2nd `file.read(ref)`
+  returns the same head instead of advancing; until such primary evidence exists, it is not a defect.
 - **Owner whole-envelope root** → tui confirmed it structurally: a 2nd oversized field
   (`structuredContent` → `structured`) breaks the sole-oversized guess (§1). 案B's `attachments`
   removes it from the offload decision.
