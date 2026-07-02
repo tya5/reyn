@@ -289,23 +289,22 @@ def test_op_handler_reads_call_timeout_from_server_config() -> None:
     assert read_to == timedelta(seconds=7.5)
 
 
-def test_op_handler_treats_missing_or_invalid_call_timeout_as_unset() -> None:
-    """Tier 2: when the config omits ``call_timeout_seconds`` OR sets it
-    to a non-positive / non-numeric value, the op handler forwards
-    ``timeout_seconds=None`` so the SDK default applies.
-
-    Pinning the defensive handling here avoids surprising fail-fasts
-    from typos like ``call_timeout_seconds: -1`` or ``"slow"``.
+def test_op_handler_call_timeout_default_finite_and_optout() -> None:
+    """Tier 2: #a359 S3 — a hung server must not block reyn, so the op handler forwards a FINITE
+    default ``read_timeout_seconds`` when the config omits ``call_timeout_seconds`` (or sets a
+    malformed value → fail-safe default). ONLY an explicit opt-out (``<= 0``) forwards no timeout
+    (SDK default / unbounded). (Was: missing/invalid → unset, which let tui's slow_response=30s hang.)
     """
     from reyn.core.op_runtime import mcp as mcp_op_handler
 
-    cases: list[dict[str, Any]] = [
-        {"type": "stdio", "command": "/bin/true"},  # missing key
-        {"type": "stdio", "command": "/bin/true", "call_timeout_seconds": 0},
-        {"type": "stdio", "command": "/bin/true", "call_timeout_seconds": -1},
-        {"type": "stdio", "command": "/bin/true", "call_timeout_seconds": "slow"},
+    # (cfg, expect_timeout_forwarded): opt-out (<=0) → no read_timeout_seconds; else finite default.
+    cases: list[tuple[dict[str, Any], bool]] = [
+        ({"type": "stdio", "command": "/bin/true"}, True),                              # missing → default
+        ({"type": "stdio", "command": "/bin/true", "call_timeout_seconds": "slow"}, True),  # invalid → fail-safe default
+        ({"type": "stdio", "command": "/bin/true", "call_timeout_seconds": 0}, False),  # explicit opt-out
+        ({"type": "stdio", "command": "/bin/true", "call_timeout_seconds": -1}, False),  # explicit opt-out
     ]
-    for cfg in cases:
+    for cfg, expect_forwarded in cases:
         captured: dict[str, Any] = {}
 
         class _FakeResult:
@@ -341,11 +340,16 @@ def test_op_handler_treats_missing_or_invalid_call_timeout_as_unset() -> None:
         op = MCPIROp(kind="mcp", server="demo", tool="thing", args={})
         asyncio.run(mcp_op_handler._execute(op, ctx))
 
-        # SDK was called with no read_timeout_seconds → default applies.
-        assert "read_timeout_seconds" not in captured["kwargs"], (
-            f"cfg {cfg!r} should NOT yield read_timeout_seconds (= unset → SDK default), "
-            f"got kwargs={captured['kwargs']}"
-        )
+        if expect_forwarded:
+            assert "read_timeout_seconds" in captured["kwargs"], (
+                f"cfg {cfg!r} should forward a FINITE default read_timeout_seconds (hung-server "
+                f"guard), got kwargs={captured['kwargs']}"
+            )
+        else:
+            assert "read_timeout_seconds" not in captured["kwargs"], (
+                f"cfg {cfg!r} is an explicit opt-out (<=0) → NO read_timeout_seconds, "
+                f"got kwargs={captured['kwargs']}"
+            )
 
 
 # ── 3. ChatEventForwarder.on_mcp_progress turns events into outbox msgs ─

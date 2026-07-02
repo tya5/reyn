@@ -14,6 +14,28 @@ from reyn.schemas.models import MCPIROp
 from . import register
 from .context import OpContext
 
+# #a359 P2 / S3: a FINITE default per-call MCP timeout so a hung/slow server can't block the router
+# loop indefinitely (owner: "MCP misbehavior must not stall reyn"). Generous (long-running tools
+# exist); a per-server ``call_timeout_seconds`` overrides it, and ``<= 0`` opts out (no timeout).
+# When the timeout fires, the SDK raises → the op fault boundary contains it into an error result.
+_DEFAULT_MCP_CALL_TIMEOUT_SECONDS: float = 120.0
+
+
+def _resolve_call_timeout(config: dict) -> "float | None":
+    """Resolve the per-call MCP timeout: the finite default, overridden by a per-server
+    ``call_timeout_seconds`` (float), with ``<= 0`` meaning opt-out (no timeout / ``None``).
+    A malformed value falls back to the default (fail-safe: keep a finite bound)."""
+    ct = config.get("call_timeout_seconds")
+    timeout: "float | None" = _DEFAULT_MCP_CALL_TIMEOUT_SECONDS
+    if ct is not None:
+        try:
+            timeout = float(ct)
+        except (TypeError, ValueError):
+            timeout = _DEFAULT_MCP_CALL_TIMEOUT_SECONDS
+    if timeout is not None and timeout <= 0:
+        return None  # explicit opt-out — no timeout
+    return timeout
+
 
 async def _execute(op: MCPIROp, ctx: OpContext) -> dict:
     from reyn.mcp.client import expand_env
@@ -69,15 +91,7 @@ async def _execute(op: MCPIROp, ctx: OpContext) -> dict:
             message=message,
         )
 
-    call_timeout = None
-    try:
-        ct = expanded.get("call_timeout_seconds")
-        if ct is not None:
-            call_timeout = float(ct)
-            if call_timeout <= 0:
-                call_timeout = None
-    except (TypeError, ValueError):
-        call_timeout = None
+    call_timeout = _resolve_call_timeout(expanded)
 
     ctx.events.emit("mcp_called", server=op.server, tool=op.tool, args=op.args)
     try:

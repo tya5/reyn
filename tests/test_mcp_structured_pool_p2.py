@@ -17,6 +17,21 @@ import reyn.mcp.pool as pool_mod
 from reyn.mcp.pool import MCPClientPool, describe_fault, is_or_contains_control_flow
 
 
+def test_call_timeout_default_finite_override_optout():
+    """Tier 2: S3 (tui dogfood gap) — the per-call MCP timeout defaults FINITE so a hung/slow server
+    can't block the router loop forever; a per-server ``call_timeout_seconds`` overrides; ``<= 0``
+    opts out (None). When the timeout fires, the SDK raises a TimeoutError which the op fault
+    boundary already contains into an error result (→ LLM). Malformed → fail-safe finite default."""
+    from reyn.core.op_runtime.mcp import _DEFAULT_MCP_CALL_TIMEOUT_SECONDS, _resolve_call_timeout
+
+    assert _resolve_call_timeout({}) == _DEFAULT_MCP_CALL_TIMEOUT_SECONDS, "finite default (not None)"
+    assert _resolve_call_timeout({"call_timeout_seconds": 5}) == 5.0, "per-server override"
+    assert _resolve_call_timeout({"call_timeout_seconds": 0}) is None, "0 opts out"
+    assert _resolve_call_timeout({"call_timeout_seconds": -1}) is None, "<0 opts out"
+    assert _resolve_call_timeout({"call_timeout_seconds": "x"}) == _DEFAULT_MCP_CALL_TIMEOUT_SECONDS, \
+        "malformed → fail-safe finite default"
+
+
 def test_describe_fault_aggregates_group_members():
     """Tier 2: describe_fault summarises a group's members (type+message) for the LLM — not empty,
     not a raw traceback (owner req: the LLM must see WHAT failed)."""
