@@ -267,22 +267,21 @@ class InterventionRegistry:
         """Register *iv* in the queue, announce or signal queued status, then
         await the user's response.
 
-        Always removes the entry on exit so a cancelled skill does not leave
-        dangling queue entries.  On ``asyncio.CancelledError`` the future is
-        cancelled and an empty ``InterventionAnswer`` is returned to the
-        caller (same contract as the original ``_dispatch_intervention``).
+        Always removes the entry on exit (via ``finally``) so a cancelled
+        skill does not leave dangling queue entries.  ``asyncio.CancelledError``
+        is re-raised so the calling task is properly cancelled — swallowing it
+        caused the skill to receive an empty answer and re-request the
+        intervention, producing a teardown hang (#2414-I2).
 
         issue #254 Phase 1: when ``enforce_listener_presence=True`` was set
         at construction AND no listener is registered, return an empty
         ``InterventionAnswer`` immediately instead of enqueuing + awaiting
         an unresolvable future. The caller (= ``handle_limit_exceeded`` /
-        permission gate) sees this as a refusal and falls through to abort,
-        matching the existing cancellation contract.
+        permission gate) sees this as a refusal and falls through to abort.
         """
         if self._enforce_listener_presence and not self._listeners:
             # No listener will call deliver_answer → prompt would hang
-            # forever. Match the cancellation contract: return empty answer
-            # so the caller treats it as a refusal.
+            # forever. Return empty answer so the caller treats it as a refusal.
             return InterventionAnswer(text="")
         self._active[iv.id] = iv
         self._order.append(iv.id)
@@ -293,10 +292,7 @@ class InterventionRegistry:
             # announce (or a "queued" status message) is the session's
             # responsibility in wave 2.  The registry itself only calls
             # on_announce for the head intervention.
-            try:
-                return await iv.future
-            except asyncio.CancelledError:
-                return InterventionAnswer(text="")
+            return await iv.future
         finally:
             self._active.pop(iv.id, None)
             try:

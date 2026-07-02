@@ -171,3 +171,45 @@ async def test_dispatch_routes_to_handler_when_listener_present() -> None:
     assert handler.calls == [iv]
     assert registry.list_stalled() == []
     assert answer.text == "handled"
+
+
+# ── CancelledError propagation (#2414-I2 fix) ────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_dispatch_cancel_propagates_not_silenced_stalled_path() -> None:
+    """Tier 2: task cancellation propagates through the stalled-path dispatch.
+
+    When an iv is parked stalled and the awaiting task is cancelled,
+    CancelledError must propagate (task.cancelled() True) — swallowing it
+    caused the skill to receive an empty answer and re-request the
+    intervention, producing a teardown hang (#2414-I2)."""
+    coord, _registry, _handler, _events = _coord()
+    iv = _make_iv(origin_channel_id="gone")  # no listener → stalled path
+
+    task = asyncio.ensure_future(coord.dispatch(iv))
+    await asyncio.sleep(0)  # let dispatch reach park + await
+
+    task.cancel()
+    await asyncio.gather(task, return_exceptions=True)
+
+    assert task.cancelled(), "CancelledError must propagate — task must be cancelled, not complete silently"
+
+
+@pytest.mark.asyncio
+async def test_registry_dispatch_cancel_propagates_not_silenced() -> None:
+    """Tier 2: task cancellation propagates through InterventionRegistry.dispatch.
+
+    The registry's dispatch must re-raise CancelledError so the calling
+    skill task is properly cancelled (#2414-I2). Before the fix, the
+    except-swallow returned an empty answer; after, the task is cancelled."""
+    registry = InterventionRegistry(on_announce=_noop_announce)
+    iv = _make_iv()
+
+    # Drive dispatch: it enqueues iv and blocks at await iv.future.
+    task = asyncio.ensure_future(registry.dispatch(iv))
+    await asyncio.sleep(0)
+
+    task.cancel()
+    await asyncio.gather(task, return_exceptions=True)
+
+    assert task.cancelled(), "CancelledError must propagate — task must be cancelled, not silently return empty"
