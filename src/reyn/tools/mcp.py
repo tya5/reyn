@@ -295,8 +295,13 @@ async def _handle_call_mcp_tool(
         else None
     )
     if _op_ctx is not None and isinstance(_op_ctx, OpContext):
-        legacy_ctx = _op_ctx
-    else:
+        # The phase's OpContext already carries the run's structured mcp_pool.
+        return await mcp_handle(op=op, ctx=_op_ctx, caller="control_ir")
+
+    # #a359 P2: direct (non-phase) call → a per-call structured pool, opened + closed in THIS task,
+    # so the mcp handler's client lifecycle stays task-affine (no cross-SDK-task teardown).
+    from reyn.mcp.pool import MCPClientPool
+    async with MCPClientPool() as pool:
         legacy_ctx = OpContext(
             workspace=ctx.workspace,
             events=ctx.events,
@@ -315,14 +320,13 @@ async def _handle_call_mcp_tool(
             sub_state_dir_override=None,
             state_dir_strategy="control_ir",
             mcp_servers={},
-            mcp_clients={},
+            mcp_pool=pool,
             intervention_bus=None,
             current_phase="",
             caller="direct",
             parent_skill_run_id=None,
         )
-
-    return await mcp_handle(op=op, ctx=legacy_ctx, caller="control_ir")
+        return await mcp_handle(op=op, ctx=legacy_ctx, caller="control_ir")
 
 
 # ── Private helpers ───────────────────────────────────────────────────────────

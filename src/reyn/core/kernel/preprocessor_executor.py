@@ -181,7 +181,6 @@ class PreprocessorExecutor:
             preprocessor_phase_name=phase.name,
             preprocessor_step_index=step_index,
             mcp_servers={},
-            mcp_clients={},
             intervention_bus=None,  # ask_user is forbidden in preprocessor
             current_phase=phase.name,
             caller=self._caller,

@@ -31,6 +31,7 @@ from reyn.core.op_runtime import execute_op
 from reyn.core.op_runtime.context import OpContext
 from reyn.data.workspace.workspace import Workspace
 from reyn.llm.model_resolver import ModelResolver
+from reyn.mcp.pool import MCPClientPool
 from reyn.schemas.models import (
     ALL_OP_KINDS,
     OP_KIND_MODEL_MAP,
@@ -160,7 +161,10 @@ class ControlIRExecutor:
         self._perm = permission_resolver
         self._skill_name = skill_name
         self._mcp_servers: dict = (mcp_servers or {}).get("servers", {})
-        self._mcp_clients: dict = {}  # cached across ops
+        # #a359 P2: the per-turn structured MCP client pool (subprocess reuse within the run, opened
+        # + closed in the run-owning task via `async with`). Replaces the raw `_mcp_clients` dict +
+        # `teardown_mcp_clients()` — runtime.py wraps the run in this pool (see mcp_client_scope).
+        self._mcp_pool = MCPClientPool()
         self._caller = caller
         self._chain_id = chain_id
         # FP-0021: run_id of the currently-executing OSRuntime run.
@@ -220,14 +224,10 @@ class ControlIRExecutor:
         return self._resume_plan
 
     @property
-    def mcp_clients(self) -> dict:
-        """Read-only accessor for the cached MCP client map (server name →
-        client). Tests inspect this to verify the teardown lifecycle
-        (= ``teardown_mcp_clients`` empties the dict). Production
-        callers continue to use ``self._mcp_clients`` for the write
-        side (= ops cache new clients there).
-        """
-        return self._mcp_clients
+    def mcp_pool(self) -> "MCPClientPool":
+        """The per-turn structured MCP client pool. runtime.py enters it (``async with``) around the
+        run so clients open + close in the run-owning task; the op handler calls ``pool.get()``."""
+        return self._mcp_pool
 
     @property
     def secret_store(self):
@@ -477,7 +477,7 @@ class ControlIRExecutor:
             sub_state_dir_override=None,
             state_dir_strategy="control_ir",
             mcp_servers=self._mcp_servers,
-            mcp_clients=self._mcp_clients,
+            mcp_pool=self._mcp_pool,
             intervention_bus=self._intervention_bus,
             # #1190 stage (ii): cost recorder for LLM-calling ops (judge_output).
             budget_tracker=self._budget_tracker,
@@ -525,25 +525,10 @@ class ControlIRExecutor:
             secret_store=self._secret_store,
         )
 
-    async def teardown_mcp_clients(self) -> None:
-        """Close all cached MCP clients in the **same asyncio task** as the caller.
-
-        Must be called from the same task that ran ``execute()``.  Calling
-        ``close()`` here — rather than letting the ``AsyncExitStack`` be
-        finalised by the GC — prevents anyio cancel-scope task-affinity
-        violations (G11 hypothesis A+B): the stack's context managers
-        (``stdio_client`` / ``ClientSession``) were entered in this task and
-        must be exited in this task.
-        """
-        import logging
-        _log = logging.getLogger(__name__)
-        clients = list(self._mcp_clients.items())
-        self._mcp_clients.clear()
-        for name, client in clients:
-            try:
-                await client.close()
-            except Exception as exc:  # noqa: BLE001
-                _log.warning("MCP client %s close error: %s", name, exc)
+    # #a359 P2: `teardown_mcp_clients()` is gone — the MCPClientPool's `__aexit__` closes every
+    # cached client in the run-owning task (structurally, and fault-contained incl.
+    # BaseExceptionGroup), replacing the manual same-task teardown. runtime.py wraps the run in the
+    # pool; the op handler opens clients via `pool.get()` in that task.
 
     async def execute(
         self,

@@ -5888,22 +5888,14 @@ class Session:
             file_write=ctx.permission_decl.file_write,
             mcp=[server],
         )
-        try:
+        # #a359 P2: a per-call structured pool — the client opens (pool.get in the op handler) AND
+        # closes (pool __aexit__) in THIS task, and teardown faults (incl. BaseExceptionGroup) are
+        # contained. Replaces the manual finally-close over ``ctx.mcp_clients`` (which closed a
+        # client whose SDK task-group scope could have been entered lazily elsewhere).
+        from reyn.mcp.pool import MCPClientPool
+        async with MCPClientPool() as pool:
+            ctx.mcp_pool = pool
             return await execute_op(op, ctx, caller="control_ir")
-        finally:
-            # Close every MCPClient that op_runtime/mcp.py cached on
-            # ``ctx.mcp_clients`` during this call. Failures are
-            # swallowed — best-effort; the op result is already
-            # captured at this point.
-            for client in list(ctx.mcp_clients.values()):
-                try:
-                    await client.close()
-                except Exception:  # noqa: BLE001 — best-effort teardown
-                    logger.debug(
-                        "mcp client close failed for chat router",
-                        exc_info=True,
-                    )
-            ctx.mcp_clients.clear()
 
     # --- RouterLoop orchestration ---
 
