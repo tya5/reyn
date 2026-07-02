@@ -3107,21 +3107,48 @@ class RouterLoop:
             if isinstance(r, dict) and r.get("_external_source"):
                 external_source = True
                 r = {k: v for k, v in r.items() if k != "_external_source"}
-            # #2394-followup clean-payload: if r is the OS dispatch envelope {status, data:<dict>}
-            # and data declares a SOLE-oversized payload field (shared decide_payload_field — same
-            # decision the control_ir offloader uses), pass the inner op-result + field to the cap so
-            # the offloaded file holds THAT field CLEAN (real newlines), not the whole-envelope
-            # single-line JSON. P7-safe: OS-level keys only (status/data + the op-supplied marker);
-            # generalises to every payload-field op (mcp/web/exec). Mirrors phase_executor's unwrap
-            # check. When it doesn't apply, cap behaves byte-identically to before.
             clean_value = None
             payload_field = None
-            if (isinstance(r, dict) and isinstance(r.get("data"), dict)
-                    and set(r) <= {"status", "data", "error"}):
-                payload_field = decide_payload_field(r["data"])
-                if payload_field is not None:
-                    clean_value = r["data"]
-            content_str = json.dumps(r, default=str)
+            _is_envelope = (isinstance(r, dict) and isinstance(r.get("data"), dict)
+                            and set(r) <= {"status", "data", "error"})
+            _inner = r["data"] if _is_envelope else r
+            _media_store = getattr(host, "media_store", None)
+            if (isinstance(_inner, dict) and _inner.get("kind") == "mcp"
+                    and _media_store is not None):
+                # #2425 案B: an MCP tool result normalises to a canonical shape so ``text`` (the joined
+                # content) is the SOLE offload payload and ``structured``/media are attachments held OUT
+                # of the offload decision — a large ``structuredContent`` can no longer become a second
+                # oversized field that collapses the offload to a whole-dict single-line JSON envelope
+                # (owner chat-MCP bug). It also lifts media/structured from INSIDE ``data`` (which the
+                # top-level media-strip above misses on the {status,data} envelope). The whole-inline
+                # envelope is preserved (data becomes the canonical body) and ``text`` is the clean
+                # payload the cap stores. Non-MCP ops stay on the current path below (byte-identical —
+                # canonical's whole-dict fallback would regress web/exec's own field offload).
+                from reyn.core.offload.canonical import to_canonical
+                from reyn.core.offload.seam import build_offload_body
+                _body, _mcp_media = build_offload_body(
+                    to_canonical(_inner), save_fn=_media_store.save_tool_result,
+                )
+                if _mcp_media:
+                    media_blocks = _mcp_media  # media from INSIDE data (the top-level strip missed it)
+                content_str = json.dumps(
+                    {"status": r.get("status", "ok"), "data": _body} if _is_envelope else _body,
+                    default=str,
+                )
+                clean_value = _body
+                payload_field = "text"
+            else:
+                # #2394-followup clean-payload (non-MCP): if r is the OS dispatch envelope
+                # {status, data:<dict>} and data declares a SOLE-oversized payload field (shared
+                # decide_payload_field — same decision the control_ir offloader uses), pass the inner
+                # op-result + field to the cap so the offloaded file holds THAT field CLEAN (real
+                # newlines), not the whole-envelope single-line JSON. P7-safe: OS-level keys only.
+                # Byte-identical to before for every non-MCP op.
+                if _is_envelope:
+                    payload_field = decide_payload_field(r["data"])
+                    if payload_field is not None:
+                        clean_value = r["data"]
+                content_str = json.dumps(r, default=str)
             if post_text:
                 content_str = f"{content_str}\n\n---\n{post_text}"
             # FP-0050/#1822 S2: scan-all on the FULL content BEFORE cap truncates
