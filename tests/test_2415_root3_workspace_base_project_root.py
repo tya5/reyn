@@ -114,3 +114,39 @@ def test_no_frontend_host_entry_hardcodes_workspace_base_dir_none():
         "frontend host-entry hardcodes workspace_base_dir=None (splits base_dir from the "
         "project_root permission zone — anchor it on project_root): " + ", ".join(offenders)
     )
+
+
+def test_no_frontend_host_entry_hardcodes_workspace_state_dir_none():
+    """Tier 2: completeness guard (#2427) — no frontend host-entry construction may hardcode
+    ``workspace_state_dir=None``, which causes events/WAL to resolve against cwd instead of
+    project_root. Same base-split class as root 3 (workspace_base_dir), different param.
+    Host frontends must use the build_environment_backend funnel value, or an explicit
+    project_root/.reyn (as chainlit / mcp-serve do after #2427). RED if a new frontend
+    reintroduces the split. (Signature defaults are not matched — only call-site keyword form.)"""
+    interfaces = Path(__file__).resolve().parents[1] / "src" / "reyn" / "interfaces"
+    offenders = [
+        f"{py.relative_to(interfaces)}:{i}"
+        for py in interfaces.rglob("*.py")
+        for i, line in enumerate(py.read_text(encoding="utf-8").splitlines(), 1)
+        if "workspace_state_dir=None" in line
+    ]
+    assert not offenders, (
+        "frontend host-entry hardcodes workspace_state_dir=None (splits events/WAL from "
+        "project_root — anchor it on project_root/.reyn): " + ", ".join(offenders)
+    )
+
+
+def test_build_environment_backend_host_state_dir_anchors_on_project_root(tmp_path, monkeypatch):
+    """Tier 2: the funnel (#2427) — host-mode ``build_environment_backend`` returns
+    ws_state_dir == project_root / '.reyn', NOT None. RED before the fix (returned None →
+    SkillRuntime fell back to the relative string '.reyn' → events landed under cwd/.reyn
+    instead of project_root/.reyn for subdir invocations)."""
+    from reyn.interfaces.cli.env_backend import build_environment_backend
+
+    project_root = _project_and_cwd(tmp_path, monkeypatch)
+    _backend, _base, ws_state_dir, _cleanup = build_environment_backend(
+        argparse.Namespace(env_backend="host")
+    )
+    assert ws_state_dir == project_root / ".reyn", (
+        "host workspace_state_dir anchors on project_root/.reyn, not cwd"
+    )

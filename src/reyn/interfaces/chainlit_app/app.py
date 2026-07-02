@@ -234,7 +234,8 @@ async def _get_or_build_registry() -> "AgentRegistry":
                 # permission zone base), not cwd — else a subdir invocation splits the write-target
                 # base from the approval base. Mirrors build_environment_backend's host return.
                 workspace_base_dir=project_root,
-                workspace_state_dir=None,
+                # #2427: anchor state dir on project_root too — mirrors env_backend host return.
+                workspace_state_dir=project_root / ".reyn",
             )
             s.load_history()
             return s
