@@ -17,7 +17,7 @@ from .context import OpContext
 
 async def _execute(op: MCPIROp, ctx: OpContext) -> dict:
     from reyn.mcp.client import expand_env
-    from reyn.mcp.pool import describe_fault, is_or_contains_cancel
+    from reyn.mcp.pool import describe_fault, is_or_contains_control_flow
 
     server_cfg = ctx.mcp_servers.get(op.server)
     if not server_cfg:
@@ -92,8 +92,8 @@ async def _execute(op: MCPIROp, ctx: OpContext) -> dict:
             timeout_seconds=call_timeout,
         )
     except BaseException as exc:  # noqa: BLE001 — fault isolation across ANY MCP fault (incl groups)
-        if is_or_contains_cancel(exc):
-            raise
+        if is_or_contains_control_flow(exc):
+            raise  # never contain CancelledError / KeyboardInterrupt / SystemExit
         # Owner req: feed the fault CONTENT back to the LLM (type + message, group members
         # aggregated) via the standard op-error result — so it can retry/adapt, not a silent error.
         fault = describe_fault(exc)

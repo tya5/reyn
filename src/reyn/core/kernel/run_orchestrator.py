@@ -892,7 +892,6 @@ class RunOrchestrator:
             # fault-contained incl. BaseExceptionGroup). G11's "close in the task that opened them"
             # is now robust-by-construction; the pool also OPENS clients in that task (op handler →
             # pool.get()), closing the cross-SDK-task hazard the old dict + teardown left latent.
-            pass
 
             # R-D1: exception-aware completion. The finally clause must
             # distinguish between "this run is finished" and "this run was

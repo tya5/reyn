@@ -41,18 +41,25 @@ def describe_fault(exc: BaseException, *, limit: int = 600) -> str:
     return text if len(text) <= limit else text[:limit] + " …[truncated]"
 
 
-def is_or_contains_cancel(exc: BaseException) -> bool:
-    """True if ``exc`` is a CancelledError or a BaseExceptionGroup that contains one.
+# Control-flow exceptions that fault-isolation must NEVER contain — they must keep propagating so a
+# cancelled / Ctrl-C'd / exiting process actually unwinds and shuts down.
+_CONTROL_FLOW: tuple[type[BaseException], ...] = (asyncio.CancelledError, KeyboardInterrupt, SystemExit)
 
-    Fault-isolation must contain MCP transport/response faults but NEVER swallow cancellation — a
-    cancelled run must keep unwinding. The SDK's internal task group surfaces faults as a
-    ``BaseExceptionGroup``, which may mix a real transport error with a CancelledError; ``split``
-    detects the cancellation sub-group."""
-    if isinstance(exc, asyncio.CancelledError):
+
+def is_or_contains_control_flow(exc: BaseException) -> bool:
+    """True if ``exc`` is (or a BaseExceptionGroup that contains) a control-flow exception —
+    ``CancelledError`` / ``KeyboardInterrupt`` / ``SystemExit``.
+
+    Fault-isolation contains MCP transport/response faults (Exception + their groups) but must NEVER
+    swallow control flow: a cancelled run must keep unwinding, and Ctrl-C / process-exit must still
+    shut the process down. The SDK's internal task group surfaces faults as a ``BaseExceptionGroup``
+    that may MIX a real transport error with a control-flow exception; ``split`` detects the
+    control-flow sub-group (nested groups included)."""
+    if isinstance(exc, _CONTROL_FLOW):
         return True
     if isinstance(exc, BaseExceptionGroup):
-        cancels, _rest = exc.split(asyncio.CancelledError)
-        return cancels is not None
+        matched, _rest = exc.split(_CONTROL_FLOW)
+        return matched is not None
     return False
 
 
@@ -104,7 +111,7 @@ class MCPClientPool:
         for name, client in clients:
             try:
                 await client.__aexit__(None, None, None)  # close in the pool's (owning) task
-            except BaseException as exc:  # noqa: BLE001 — fault isolation (see is_or_contains_cancel)
-                if is_or_contains_cancel(exc):
+            except BaseException as exc:  # noqa: BLE001 — fault isolation (control flow re-raised)
+                if is_or_contains_control_flow(exc):
                     raise
                 logger.warning("MCP client %s teardown fault contained: %r", name, exc)

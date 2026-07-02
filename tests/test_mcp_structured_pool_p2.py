@@ -14,7 +14,7 @@ import asyncio
 import pytest
 
 import reyn.mcp.pool as pool_mod
-from reyn.mcp.pool import MCPClientPool, describe_fault, is_or_contains_cancel
+from reyn.mcp.pool import MCPClientPool, describe_fault, is_or_contains_control_flow
 
 
 def test_describe_fault_aggregates_group_members():
@@ -26,28 +26,37 @@ def test_describe_fault_aggregates_group_members():
     assert "RuntimeError" in text and "ValueError" in text
 
 
-# ── is_or_contains_cancel (the cancellation-safe boundary predicate) ─────────────
+# ── is_or_contains_control_flow (the cancellation-safe boundary predicate) ─────────────
 
 def test_cancel_predicate_direct():
     """Tier 2: a bare CancelledError is a cancellation."""
-    assert is_or_contains_cancel(asyncio.CancelledError()) is True
+    assert is_or_contains_control_flow(asyncio.CancelledError()) is True
 
 
 def test_cancel_predicate_group_with_cancel():
     """Tier 2: a BaseExceptionGroup containing a CancelledError counts (must be re-raised)."""
     grp = BaseExceptionGroup("teardown", [asyncio.CancelledError(), RuntimeError("BrokenResource")])
-    assert is_or_contains_cancel(grp) is True
+    assert is_or_contains_control_flow(grp) is True
 
 
 def test_cancel_predicate_group_without_cancel():
     """Tier 2: a group of ordinary faults is NOT a cancellation → containable."""
     grp = ExceptionGroup("teardown", [RuntimeError("BrokenResource"), ValueError("bad response")])
-    assert is_or_contains_cancel(grp) is False
+    assert is_or_contains_control_flow(grp) is False
 
 
 def test_cancel_predicate_plain_exception():
-    """Tier 2: a plain non-cancel exception is containable (not a cancellation)."""
-    assert is_or_contains_cancel(RuntimeError("t")) is False
+    """Tier 2: a plain non-control-flow exception is containable."""
+    assert is_or_contains_control_flow(RuntimeError("t")) is False
+
+
+@pytest.mark.parametrize("exc_cls", [KeyboardInterrupt, SystemExit])
+def test_control_flow_predicate_keyboardinterrupt_systemexit(exc_cls):
+    """Tier 2: KeyboardInterrupt / SystemExit are control flow — bare AND group-nested (mixed with a
+    transport error) — so a Ctrl-C / process-exit during an MCP call or teardown still shuts down."""
+    assert is_or_contains_control_flow(exc_cls()) is True
+    grp = BaseExceptionGroup("teardown", [RuntimeError("BrokenResource"), exc_cls()])
+    assert is_or_contains_control_flow(grp) is True
 
 
 # ── pool teardown fault-containment ──────────────────────────────────────────────
@@ -92,7 +101,7 @@ async def test_pool_reraises_cancellation_in_teardown(monkeypatch):
     with pytest.raises(BaseException) as ei:
         async with MCPClientPool() as pool:
             await pool.get("srv", {"type": "stdio", "command": "x"})
-    assert is_or_contains_cancel(ei.value), "cancellation propagates, not contained"
+    assert is_or_contains_control_flow(ei.value), "cancellation propagates, not contained"
 
 
 # ── op-handler fault isolation (bad response / transport group → error result) ────
@@ -154,10 +163,26 @@ async def test_op_contains_bad_response_exception_group():
 
 
 @pytest.mark.asyncio
-async def test_op_propagates_cancellation():
-    """Tier 2: the op handler never swallows cancellation."""
+@pytest.mark.parametrize("exc_cls", [asyncio.CancelledError, KeyboardInterrupt, SystemExit])
+async def test_op_propagates_control_flow(exc_cls):
+    """Tier 2: the op handler never contains control flow — CancelledError / KeyboardInterrupt /
+    SystemExit propagate (a cancelled / interrupted / exiting run must keep unwinding), even though
+    ANY ordinary MCP fault is contained into an error result."""
     from reyn.core.op_runtime.mcp import _execute
     from reyn.schemas.models import MCPIROp
 
-    with pytest.raises(asyncio.CancelledError):
-        await _execute(MCPIROp(kind="mcp", server="srv", tool="t", args={}), _ctx(_FaultPool(asyncio.CancelledError())))
+    with pytest.raises(exc_cls):
+        await _execute(MCPIROp(kind="mcp", server="srv", tool="t", args={}), _ctx(_FaultPool(exc_cls())))
+
+
+@pytest.mark.asyncio
+async def test_pool_reraises_keyboardinterrupt_in_teardown(monkeypatch):
+    """Tier 2: the pool re-raises a KeyboardInterrupt-containing teardown group (control flow is
+    never contained) — the required refinement beyond cancellation."""
+    raising = _RaisingCloseClient(BaseExceptionGroup("teardown", [KeyboardInterrupt()]))
+    monkeypatch.setattr(pool_mod, "MCPClient", lambda cfg, *, agent_id=None: raising)
+
+    with pytest.raises(BaseException) as ei:
+        async with MCPClientPool() as pool:
+            await pool.get("srv", {"type": "stdio", "command": "x"})
+    assert is_or_contains_control_flow(ei.value), "KeyboardInterrupt propagates, not contained"
