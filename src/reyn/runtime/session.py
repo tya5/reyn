@@ -5845,7 +5845,8 @@ class Session:
 
     async def _mcp_list_tools(self, server: str) -> list[dict]:
         """Query the MCP server for its tools list."""
-        from reyn.mcp.client import MCPClient, MCPError, expand_env
+        from reyn.mcp.client import expand_env
+        from reyn.mcp.gateway import MCPFault, MCPGateway
 
         servers = self._mcp_servers_flat()
         if not servers:
@@ -5860,17 +5861,14 @@ class Session:
         if "type" not in expanded and expanded.get("url"):
             expanded = {**expanded, "type": "http"}
 
-        # #a359 P1: structured lifecycle — the client's whole life is one ``async with`` block in
-        # this task, so its SDK stdio_client / ClientSession internal task-group scopes are entered
-        # AND exited here. This supersedes A's (#2401) finally-close: even a same-task close via a
-        # deferred self._stack crosses the SDK's INTERNAL sub-task scope (the real cross-task crash);
-        # binding open+close in one async-with block restores the SDK's intended structured usage.
+        # #2421: route through the single MCPGateway seam — it owns the whole crash-safe lifecycle
+        # (open + list + teardown inside the contain-all boundary, a task-affine pool, a per-call
+        # timeout) and raises ONLY MCPFault, never a bare BaseExceptionGroup. This is the owner's
+        # Windows crash path: a server that dies mid-list can no longer escape as an uncontained
+        # group. A one-shot pool per call (no injected pool) — list is not batched across ops.
         try:
-            async with MCPClient(expanded, agent_id=self._agent_id) as client:
-                return await client.list_tools()
-        except MCPError as exc:
-            return [{"error": str(exc)}]
-        except Exception as exc:
+            return await MCPGateway(agent_id=self._agent_id).list_tools(server, expanded)
+        except MCPFault as exc:
             return [{"error": str(exc)}]
 
     async def _mcp_call_tool(self, server: str, tool: str, args: dict) -> dict:

@@ -998,14 +998,14 @@ def _probe_status(name: str, cfg: dict) -> str:
     from reyn.llm.llm import run_async as _run_async
 
     async def _handshake() -> str:
-        # #a359 P1: structured lifecycle — ``async with MCPClient(cfg)`` runs the initialize handshake
-        # in __aenter__ and closes in __aexit__, same task/scope (supersedes C's construct +
-        # initialize + finally-close). MCPClient(cfg): config-first dict.
-        from reyn.mcp.client import MCPClient
+        # #2421: probe via the single MCPGateway seam — it opens the server (initialize handshake)
+        # inside the contain-all boundary + task-affine pool and raises only MCPFault, so a server
+        # that dies on connect surfaces as a clean status, never an uncontained BaseExceptionGroup.
+        from reyn.mcp.gateway import MCPFault, MCPGateway
         try:
-            async with MCPClient(cfg):
-                return "ready"
-        except Exception as exc:
+            await MCPGateway().probe(name, cfg)
+            return "ready"
+        except MCPFault as exc:
             return f"error: {exc}"
 
     try:
@@ -1248,20 +1248,17 @@ async def _probe_server_tools(
     """
     import asyncio
 
-    from reyn.mcp.client import MCPClient
+    from reyn.mcp.gateway import MCPFault, MCPGateway
 
-    # #a359 P1: structured lifecycle — open+use+close within ONE ``async with`` block in this task,
-    # so the SDK stdio_client / ClientSession internal task-group scopes are entered AND exited here
-    # (supersedes C's construct + finally-close, which still deferred the scope teardown to a separate
-    # close()). MCPClient(cfg): config-first dict (fixes the old ``MCPClient(server_name, cfg)`` that
-    # passed the name as config → ValueError → empty tool list); ``list_tools()`` auto-initializes.
+    # #2421: probe tool lists via the single MCPGateway seam (open + list + teardown inside the
+    # contain-all boundary + task-affine pool). The gateway raises only MCPFault — never a bare
+    # BaseExceptionGroup — so a dead server can't crash the probe. The outer ``asyncio.timeout`` keeps
+    # the tight per-server probe bound (< the gateway's own call timeout); its cancellation is genuine
+    # (cancelling() > 0) so it propagates out as a TimeoutError rather than being contained.
     try:
         async with asyncio.timeout(per_server_timeout):
-            async with MCPClient(cfg) as client:
-                raw = await client.list_tools()
-    except (TimeoutError, asyncio.TimeoutError):
-        return server_name, []
-    except Exception:  # noqa: BLE001
+            raw = await MCPGateway(agent_id=None).list_tools(server_name, cfg)
+    except (TimeoutError, asyncio.TimeoutError, MCPFault):
         return server_name, []
     cleaned = [
         t for t in (raw or [])
