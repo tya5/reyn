@@ -115,11 +115,6 @@ def _normalize_paths(v: object) -> list[str]:
     return [str(x) for x in v]
 
 
-def _expand(path_str: str) -> Path:
-    """Expand ~ and resolve a path string to an absolute Path."""
-    return Path(path_str).expanduser().resolve()
-
-
 def _is_canonical_protected_write(path_str: str, base: "Path | None" = None) -> bool:
     """Return True if ``path_str`` resolves to one of the #571 protected paths.
 
@@ -668,7 +663,17 @@ class PermissionResolver:
             if not approved or not key.startswith(prefix):
                 continue
             approved_str = key[len(prefix):]
-            approved_p = _expand(approved_str.rstrip("/"))
+            # #2415: resolve the approved key against the SAME base as the check target
+            # (``self._project_root``), NOT the CWD. approvals.yaml is project-scoped (under
+            # ``.reyn/``), so a persisted relative grant like ``reyn/local/`` means "under the
+            # project root". ``_expand`` resolved it CWD-relative, so a run whose cwd != project_root
+            # (e.g. launched from a subdirectory) failed the ``relative_to`` match even with the
+            # grant present in-memory — the recursive grant was silently not honored (skill_builder).
+            approved_raw = Path(approved_str.rstrip("/")).expanduser()
+            approved_p = (
+                approved_raw.resolve() if approved_raw.is_absolute()
+                else (base / approved_raw).resolve()
+            )
             if approved_str.endswith("/"):
                 try:
                     p_resolved.relative_to(approved_p)
@@ -744,7 +749,13 @@ class PermissionResolver:
         kind: "file.read" or "file.write". When recursive=True the approval
         covers the directory and everything beneath it.
         """
-        p = str(_expand(path))
+        # #2415: resolve against ``self._project_root`` (the base ``_is_path_approved_for`` uses),
+        # NOT the CWD. A relative path (e.g. a project-scoped declared grant) resolved CWD-relative
+        # would store a key that never matches the project_root-anchored check target when
+        # cwd != project_root — the same cwd-anchor class fixed in ``_is_path_approved_for``. Absolute
+        # inputs are unchanged (already CWD-independent).
+        raw = Path(path).expanduser()
+        p = str(raw.resolve() if raw.is_absolute() else (self._project_root / raw).resolve())
         if recursive:
             p = p.rstrip("/") + "/"
         self._session[f"{skill_name}/{kind}/{p}"] = True
@@ -792,11 +803,19 @@ class PermissionResolver:
         )
         answer = await bus.request(iv)
         choice = answer.choice_id
+        # #2415: honor the DECLARED scope on approval. When the skill declared this path as
+        # ``recursive`` (startup_guard confirming a declared grant), an affirmative approval grants
+        # the declared RECURSIVE dir — the operator approves/denies the declared grant, they do not
+        # re-scope it narrower. Otherwise (a JIT prompt, or a ``just_path`` declaration) an
+        # affirmative grants the exact path. Without this, a skill that declares ``reyn/local``
+        # recursive but writes ``reyn/local/{name}/…`` (a SUBPATH) was silently denied unless the
+        # operator happened to pick [r] — the declared recursive intent was not honored (skill_builder).
+        affirmative_key = recursive_target if scope == "recursive" else path
         if choice == YES:
-            self._session[f"{skill_name}/{kind}/{path}"] = True
+            self._session[f"{skill_name}/{kind}/{affirmative_key}"] = True
             return True
         if choice == JUST_PATH:
-            self._persist(f"{skill_name}/{kind}/{path}", True)
+            self._persist(f"{skill_name}/{kind}/{affirmative_key}", True)
             return True
         if choice == RECURSIVE:
             self._persist(f"{skill_name}/{kind}/{recursive_target}", True)
