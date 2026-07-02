@@ -3,93 +3,8 @@
 Tier 1 hard rules for code-writing agents. Read on demand for rationale and
 deep dives via the references at the bottom.
 
-## Architecture
+## Hard rules
 
-`User → Agent → Skill → OS → Phase → Workspace`, with Events recording every
-state change. The OS is the constant; Skills come and go. New skills MUST NOT
-require OS changes (P7).
-
-## P1–P8 (CRITICAL — violations break the OS)
-
-- **P1** Phase declares only `input_schema` and instructions. It MUST NOT
-  know its next phase, output schema, or parent skill. Output shape is
-  determined externally — by `next_phase.input_schema` or by the skill's
-  `final_output_schema`.
-- **P2** Skill declares `entry_phase`, `graph` (allowed transitions), and
-  `final_output_schema`. Phase connections live in Skill, never in Phase.
-  Final-output validation is the OS's responsibility against this schema.
-- **P3** OS is the runtime engine — context build, LLM call, validation,
-  Control IR execution, transitions, events. Skills and the LLM do not run
-  things; they describe and decide.
-- **P4** LLM picks ONLY from OS-provided candidates: next phase + artifact +
-  control_ir. No arbitrary next phases.
-- **P5 (Workspace is the single source of truth)** All data, artifacts, and
-  files passed between phases live in the workspace. Phases read and write
-  only through Control IR (gated by the permission system). In-memory state
-  inside a phase is not trustworthy until it lands in the workspace — this is
-  what makes permission enforcement and crash recovery (PR21) possible.
-- **P6 (Events are the audit truth)** Every state change emits an event. The
-  event log (`events/`) is append-only and replay-capable. State recovery
-  (crash recovery, audit trails, future hash chain), debugging, and
-  cross-agent tracing all derive from events. Anything that mutates state
-  without an event is invisible to the OS.
-- **P7 (CRITICAL)** OS code MUST NOT contain skill-specific strings (phase
-  names, artifact types, fields). **Detection rule**: if a literal naming a
-  specific phase / artifact type / field appears in OS code, it's a violation.
-  Common traps:
-  - Fallback logic that fabricates skill-specific fields → return raw artifact
-  - Decision vocabulary encoding skill concepts (`decision="revise"`) → use
-    OS-level only: `continue | finish | abort`
-  - Hardcoded artifact type names in any OS module
-- **P8** Phase instructions describe WHAT/WHEN/domain rules. They MUST NOT
-  enumerate output artifact fields or describe Control IR format. The OS
-  injects those at runtime via `candidate_outputs` and `available_control_ops`.
-
-## LLM Output Contract (REJECTED if violated)
-
-Single format for all phases:
-
-```json
-{
-  "control": {
-    "type": "transition|finish|abort|rollback",
-    "decision": "continue|finish|abort",
-    "next_phase": "<name> or null",
-    "confidence": 0.0,
-    "reason": {"summary": "..."}
-  },
-  "artifact": {"type": "<schema_name>", "data": {}},
-  "ops": []
-}
-```
-
-- `decision` values are OS-level only: `continue | finish | abort`. **`revise`
-  is NOT valid** — it encodes a skill-specific concept (P7). Transitions to a
-  "revise" phase use `decision="continue"`.
-- Consistency rules:
-  - `type=finish` → `decision=finish`, `next_phase=null`
-  - `type=transition` → `next_phase` non-null
-  - `type=abort` → `decision=abort`, `next_phase=null`
-  - `type=rollback` → `decision=continue`, `next_phase=null`
-
-## Validation (MANDATORY)
-
-- **Transition**: `next_phase` allowed by Skill graph; artifact matches
-  `next_phase.input_schema`.
-- **Finish**: finishing allowed; final_output matches
-  `skill.final_output_schema`.
-
-## Hard "NEVER" rules (cross-refs to P-numbers)
-
-- NEVER define transitions or output schema inside Phase (P1)
-- NEVER allow LLM to choose arbitrary next phase (P4)
-- NEVER pass data between phases outside the workspace (P5)
-- NEVER mutate runtime state without emitting an event (P6)
-- NEVER put skill-specific strings in OS code (P7)
-- NEVER enumerate artifact fields in Phase instructions (P8)
-- NEVER describe Control IR format in Phase instructions (P8)
-- ALWAYS validate LLM output (Transition + Finish above)
-- ALWAYS emit events for state changes (P6)
 - **`docs/reference/runtime/control-ir.md` must stay synced with `OP_KIND_MODEL_MAP`** in `src/reyn/schemas/models.py` (#1983: relocated there from `op_runtime/registry.py` so the `ControlIROp` union derives from the same map). New op kinds get a section in the reference in the same PR.
 - **Recovery-feature PR gate**: any PR adding recovery / reconstruction functionality (WAL-event-derived state, PITR, rewind/restore paths) MUST include a truncate-falsify test verifying the reconstruction source survives WAL truncation below its source events (set X → truncate past X's events → reconstruct → assert X survives). WAL-event-derived recovery state that isn't snapshot-backed is a silent data-loss vector. Same PR, not a follow-up. (Motivated by #2259/#2260.)
 
@@ -228,38 +143,14 @@ and run the checklist below before continuing:
 - `feedback_observe_before_speculate_llm.md` (passive principle this trigger
   operationalises)
 
-## Skill resolution order
+## When in doubt — read these
 
-1. `reyn/project/<name>/skill.md` — checked-in project skills
-2. `reyn/local/<name>/skill.md` — workspace-local (typically gitignored)
-3. `src/stdlib/skills/<name>/skill.md` — bundled stdlib skills
-
-`@sub_skill` graph nodes and `run_skill` Control IR ops use the same lookup.
-
-## When in doubt — read these (Tier 2)
-
-- **P1–P8 rationale and examples**: `docs/concepts/architecture/principles.md`
-- **Care boundary** (what Reyn cares / doesn't care): `docs/concepts/architecture/care-boundary.md`
-- **Architecture overview / component layers**: `docs/concepts/architecture/architecture.md`
-- **Phase vs Skill vs OS boundary**: `docs/concepts/architecture/phase-vs-skill-vs-os.md`
-- **Why constrain the LLM (P4)**: `docs/concepts/architecture/llm-as-decision-engine.md`
-- **Workspace** (P5): `docs/concepts/runtime/workspace.md`
-- **Events / replay** (P6): `docs/concepts/runtime/events.md`
+- **Workspace** (single source of truth): `docs/concepts/runtime/workspace.md`
+- **Events / replay** (audit truth): `docs/concepts/runtime/events.md`
 - **`.reyn/` directory layout** (what's recovery-core vs persist/audit/cache/outside, the
   recovery-core write-gate, where new subsystem data goes):
   `docs/reference/runtime/reyn-dir-layout.md`
 - **Permission model**: `docs/concepts/runtime/permission-model.md`
-- **Input handling, ask_user, Phase Preprocessor (run_op / iterate / validate
-  / lint_plan / python)**: read the corresponding stdlib skill (`skill_router`,
-  `eval`, `skill_improver`) for live examples
-- **ContextFrame / Output schemas**: `src/reyn/models.py`
 - **Op catalog and dispatch**: `src/reyn/core/op_runtime/`
 - **LLM trace analysis**: `docs/reference/dogfood-tracing.md` — `scripts/dogfood_trace.py --mode llm-payloads` is the canonical entry point for inspecting LLM payloads; do not hand-parse JSONL.
 - **Full feature inventory**: `docs/feature-map.md` — every implemented feature grouped by subsystem, each linked to its reference/concept doc (impl-extracted; impl↔doc mirror).
-
-## Goal
-
-> Phase transitions driven by LLM + constrained context are stable and valid.
-
-The OS is the constant. Skills come and go. New skills MUST NOT require OS
-code changes (P7).
