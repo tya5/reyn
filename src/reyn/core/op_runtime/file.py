@@ -675,7 +675,7 @@ def regenerate_index_impl(
     - Scans direct children of `dir_path` matching `*.md`, sorted by name.
     - Skips any file whose basename equals `output_path.name` so the index
       doesn't include itself.
-    - Parses YAML frontmatter via `_split_frontmatter`. Files with no /
+    - Parses YAML frontmatter via `split_frontmatter`. Files with no /
       malformed frontmatter are skipped silently.
     - Substitutes `entry_template` placeholders against frontmatter keys
       plus `slug` (= filename without `.md`). Missing placeholders fall
@@ -683,7 +683,7 @@ def regenerate_index_impl(
     - Writes `header + "\\n".join(entries) + "\\n"` (trailing newline only
       when entries exist).
     """
-    from reyn.core.compiler.parser import _split_frontmatter
+    from reyn.core.frontmatter import split_frontmatter
 
     output_basename = output_path.name
     entries: list[str] = []
@@ -695,7 +695,7 @@ def regenerate_index_impl(
                 content = child.read_text(encoding="utf-8")
             except OSError:
                 continue
-            fm, _body = _split_frontmatter(content)
+            fm, _body = split_frontmatter(content)
             if not isinstance(fm, dict) or not fm:
                 # No / malformed frontmatter — skip rather than emit a
                 # placeholder-empty entry like `- []() — `.
