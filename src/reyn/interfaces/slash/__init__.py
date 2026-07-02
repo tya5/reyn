@@ -260,6 +260,7 @@ from reyn.interfaces.slash import concept as _concept_mod  # noqa: E402, F401
 from reyn.interfaces.slash import copy as _copy_mod  # noqa: E402, F401
 from reyn.interfaces.slash import donut as _donut_mod  # noqa: E402, F401
 from reyn.interfaces.slash import help as _help_mod  # noqa: E402, F401
+from reyn.interfaces.slash import hook as _hook_mod  # noqa: E402, F401
 from reyn.interfaces.slash import image as _image_mod  # noqa: E402, F401
 from reyn.interfaces.slash import matrix as _matrix_mod  # noqa: E402, F401
 from reyn.interfaces.slash import memory as _memory_mod  # noqa: E402, F401

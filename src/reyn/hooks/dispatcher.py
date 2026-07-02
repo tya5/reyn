@@ -64,8 +64,15 @@ class HookDispatcher:
         emit_event: "Callable[..., Any] | None" = None,
         cross_session_put: "Callable[..., Any] | None" = None,
         current_session_id: "str | None" = None,
+        is_hook_disabled: "Callable[[HookDef], bool] | None" = None,
     ) -> None:
         self._registry = registry
+        # #2285: per-session hook APPLICABILITY gate — consulted at dispatch time (live) so a hook
+        # disabled for THIS session is skipped. Deferred (a callable, not a snapshot) so a toggle
+        # applies to the next dispatch without rebuilding the dispatcher. ``None`` → no gate
+        # (byte-identical to pre-#2285). Per-session by construction: each session's dispatcher gets
+        # its own predicate over its own disabled-set.
+        self._is_hook_disabled = is_hook_disabled
         self._put_inbox = put_inbox
         self._stage_next_turn_context = stage_next_turn_context
         # #2072: cross-session push routing. ``cross_session_put(target_sid, kind, payload,
@@ -120,6 +127,8 @@ class HookDispatcher:
         Empty registry → the loop body never runs → byte-identical no-op.
         """
         for hook in self._registry.hooks_for(point):
+            if self._is_hook_disabled is not None and self._is_hook_disabled(hook):
+                continue  # #2285: hook disabled for THIS session (live applicability toggle)
             try:
                 await self._dispatch_one(hook, point, template_vars)
             except Exception as exc:  # noqa: BLE001 — per-hook isolation boundary
