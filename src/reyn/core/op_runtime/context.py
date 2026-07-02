@@ -44,7 +44,6 @@ class OpContext:
     resolver: "ModelResolver | None" = None
     subscribers: list = field(default_factory=list)
     output_language: str | None = None
-    max_phase_visits: int = 25
 
     # run_skill state_dir layout strategy
     # When set, run_skill uses this path verbatim. When None, the handler

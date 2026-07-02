@@ -748,11 +748,6 @@ class ExecutionState(BaseModel):
     total_steps: int = 0     # total LLM calls completed across all phases so far
 
 
-class PhaseConstraints(BaseModel):
-    """Operational limits for the current phase, surfaced to the LLM."""
-    max_phase_visits: int | None = None   # global visit cap per phase (None = unlimited)
-
-
 class ContextFrame(BaseModel):
     # Field order is intentionally stable-first to maximize prompt-cache hit rate.
     # When serialized via model_dump(mode="json"), pydantic v2 preserves declaration
@@ -766,7 +761,6 @@ class ContextFrame(BaseModel):
     instructions: str
     candidate_outputs: list[CandidateOutput]
     finish_criteria: list[str] = Field(default_factory=list)
-    constraints: PhaseConstraints = Field(default_factory=PhaseConstraints)
     available_control_ops: list[ControlIROpSpec] = Field(default_factory=list)
     # Reference catalog of every Control IR op kind the OS can dispatch in this
     # run, regardless of the current phase's allowed_ops. Populated for all
@@ -794,10 +788,6 @@ class ContextFrame(BaseModel):
     # inline content (e.g. flash-lite) and for the json-mode act loop. Bounded to
     # the last `recent_act_turns_raw` entries by the op-loop (no compaction LLM call).
     act_turn_reasoning: list[str] = Field(default_factory=list)
-    # How many more act turns the LLM may emit before it MUST produce a decide turn.
-    # 0 means this call is the mandatory decide turn — the LLM MUST NOT emit any ops.
-    # None means unlimited (no max_act_turns constraint on this phase).
-    remaining_act_turns: int | None = None
     # #1176 B1: OS-injected context-size signal (exact-token free-window header),
     # symmetric with the chat axis. None when the phase window is ample (the OS
     # omits it). Most per-turn-volatile → kept at the tail with the other

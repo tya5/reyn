@@ -48,7 +48,7 @@ class SchemaNode:
     """One entry in the flattened config schema."""
 
     key: str
-    """Dotted key, e.g. ``safety.loop.max_phase_visits``."""
+    """Dotted key, e.g. ``safety.loop.max_router_calls_per_turn``."""
 
     type_repr: str
     """Human-readable type string, e.g. ``int``, ``str | None``."""

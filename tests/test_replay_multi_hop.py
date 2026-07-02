@@ -21,7 +21,6 @@ from reyn.schemas.models import (
     CandidateOutput,
     ContextFrame,
     ExecutionState,
-    PhaseConstraints,
 )
 
 MODEL = "gemini-2.5-flash-lite"
@@ -77,7 +76,6 @@ def _agent_a_frame(chain_id: str) -> ContextFrame:
         instructions="Classify the user intent and delegate to another agent if appropriate.",
         candidate_outputs=[_candidate_finish(), _candidate_delegate()],
         finish_criteria=["Classified and delegated"],
-        constraints=PhaseConstraints(),
         available_control_ops=[],
         op_catalog=[],
         output_language="en",
@@ -101,7 +99,6 @@ def _agent_a_frame(chain_id: str) -> ContextFrame:
         },
         execution=ExecutionState(path=[], current_visit=1, total_steps=0),
         control_ir_results=[],
-        remaining_act_turns=2,
         current_datetime=REPLAY_DATETIME,
     )
 
@@ -199,7 +196,6 @@ def test_agent_a_refuses_self_loop_in_chain():
         ),
         candidate_outputs=[_candidate_finish(), _candidate_delegate()],
         finish_criteria=["Classified and delegated"],
-        constraints=PhaseConstraints(),
         available_control_ops=[],
         op_catalog=[],
         output_language="en",
@@ -228,7 +224,6 @@ def test_agent_a_refuses_self_loop_in_chain():
         },
         execution=ExecutionState(path=[], current_visit=1, total_steps=0),
         control_ir_results=[],
-        remaining_act_turns=2,
         current_datetime=REPLAY_DATETIME,
     )
 
@@ -281,7 +276,6 @@ def test_agent_acknowledges_imminent_chain_timeout():
         ),
         candidate_outputs=[_candidate_finish(), _candidate_delegate()],
         finish_criteria=["Classified"],
-        constraints=PhaseConstraints(),
         available_control_ops=[],
         op_catalog=[],
         output_language="en",
@@ -307,7 +301,6 @@ def test_agent_acknowledges_imminent_chain_timeout():
         },
         execution=ExecutionState(path=[], current_visit=1, total_steps=0),
         control_ir_results=[],
-        remaining_act_turns=2,
         current_datetime=REPLAY_DATETIME,
     )
 

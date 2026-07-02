@@ -257,13 +257,13 @@ def _set(key: str, value: str) -> None:
     """Set a config key in reyn.local.yaml.
 
     Validates *key* against the full ReynConfig schema (including nested
-    keys like ``safety.loop.max_phase_visits`` and free-form dict sub-keys
-    like ``mcp.servers.github.url``).
+    keys like ``safety.loop.max_router_calls_per_turn`` and free-form dict
+    sub-keys like ``mcp.servers.github.url``).
 
-    Writes the correct nested YAML structure — ``safety.loop.max_phase_visits``
-    becomes ``{safety: {loop: {max_phase_visits: <value>}}}`` rather than
-    the flat ``{safety: {'loop.max_phase_visits': <value>}}`` the old 1-level
-    split produced.
+    Writes the correct nested YAML structure — ``safety.loop.max_router_calls_per_turn``
+    becomes ``{safety: {loop: {max_router_calls_per_turn: <value>}}}`` rather than
+    the flat ``{safety: {'loop.max_router_calls_per_turn': <value>}}`` the old
+    1-level split produced.
     """
     import yaml
 
@@ -285,8 +285,8 @@ def _set(key: str, value: str) -> None:
         parsed = value
 
     # Recurse the dotted path through nested dicts via setdefault so that
-    # ``safety.loop.max_phase_visits`` writes {safety: {loop: {max_phase_visits: v}}}
-    # instead of {safety: {'loop.max_phase_visits': v}}.
+    # ``safety.loop.max_router_calls_per_turn`` writes {safety: {loop: {max_router_calls_per_turn: v}}}
+    # instead of {safety: {'loop.max_router_calls_per_turn': v}}.
     parts = key.split(".")
     node: dict = current
     for part in parts[:-1]:

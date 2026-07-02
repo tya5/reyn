@@ -16,7 +16,6 @@ from reyn.schemas.models import (
     ContextFrame,
     ControlIROpSpec,
     ExecutionState,
-    PhaseConstraints,
 )
 from reyn.services.offload.store import offload_value
 
@@ -393,7 +392,6 @@ def build_frame(
     history: list[str],
     visit_counts: dict[str, int],
     finish_criteria: list[str],
-    max_phase_visits: int | None,
     available_ops: list[ControlIROpSpec],
     effective_model: str,
     model_resolved: str,
@@ -401,7 +399,6 @@ def build_frame(
     op_catalog: list[ControlIROpSpec] | None = None,
     control_ir_results: list[dict] | None = None,
     artifact_path: str | None = None,
-    remaining_act_turns: int | None = None,
     run_id: str | None = None,
     act_turn: int | None = None,
     offload_dir: Path | None = None,
@@ -446,14 +443,12 @@ def build_frame(
         ),
         candidate_outputs=candidates,
         finish_criteria=finish_criteria if "end" in allowed_next else [],
-        constraints=PhaseConstraints(max_phase_visits=max_phase_visits),
         available_control_ops=available_ops,
         op_catalog=op_catalog or [],
         output_language=output_language,
         model=effective_model,
         model_resolved=model_resolved,
         control_ir_results=offloaded_results,
-        remaining_act_turns=remaining_act_turns,
         context_size_signal=context_size_signal,
         act_turn_reasoning=act_turn_reasoning or [],
     )

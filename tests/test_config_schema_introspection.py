@@ -42,21 +42,21 @@ def _project_root(tmp_path: Path) -> Path:
 # ---------------------------------------------------------------------------
 
 
-def test_walk_includes_safety_loop_max_phase_visits() -> None:
-    """Tier 2: walk includes the real 3-level nested field safety.loop.max_phase_visits."""
+def test_walk_includes_safety_loop_max_router_calls_per_turn() -> None:
+    """Tier 2: walk includes the real 3-level nested field safety.loop.max_router_calls_per_turn."""
     nodes = walk_config_schema()
     keys = {n.key for n in nodes}
-    assert "safety.loop.max_phase_visits" in keys, (
-        "safety.loop.max_phase_visits missing from walk — walk may not be recursing"
+    assert "safety.loop.max_router_calls_per_turn" in keys, (
+        "safety.loop.max_router_calls_per_turn missing from walk — walk may not be recursing"
     )
 
 
-def test_walk_safety_loop_max_phase_visits_type_and_default() -> None:
-    """Tier 2: safety.loop.max_phase_visits has type=int and default=25."""
+def test_walk_safety_loop_max_router_calls_per_turn_type_and_default() -> None:
+    """Tier 2: safety.loop.max_router_calls_per_turn has type=int and default=3."""
     nodes = walk_config_schema()
-    node = next(n for n in nodes if n.key == "safety.loop.max_phase_visits")
+    node = next(n for n in nodes if n.key == "safety.loop.max_router_calls_per_turn")
     assert node.type_repr == "int"
-    assert node.default == 25
+    assert node.default == 3
     assert node.is_dict_leaf is False
 
 
@@ -154,30 +154,30 @@ def test_walk_forward_ref_sections_produce_nested_keys() -> None:
 
 
 def test_set_nested_three_level_produces_nested_yaml(tmp_path: Path) -> None:
-    """Tier 2: _set safety.loop.max_phase_visits writes {safety: {loop: {max_phase_visits: 50}}}."""
+    """Tier 2: _set safety.loop.max_router_calls_per_turn writes {safety: {loop: {max_router_calls_per_turn: 5}}}."""
     root = _project_root(tmp_path)
     old_cwd = os.getcwd()
     os.chdir(root)
     try:
         from reyn.interfaces.cli.commands.config import _set
-        _set("safety.loop.max_phase_visits", "50")
+        _set("safety.loop.max_router_calls_per_turn", "5")
         local_yaml = root / "reyn.local.yaml"
         assert local_yaml.exists(), "reyn.local.yaml not created by _set"
         data = yaml.safe_load(local_yaml.read_text(encoding="utf-8"))
         assert isinstance(data, dict)
-        # Must NOT be flat {safety: {'loop.max_phase_visits': 50}}
+        # Must NOT be flat {safety: {'loop.max_router_calls_per_turn': 5}}
         assert isinstance(data.get("safety"), dict), (
             f"safety key not a nested dict; got: {data}"
         )
         assert isinstance(data["safety"].get("loop"), dict), (
             f"safety.loop not a nested dict; got: {data['safety']}"
         )
-        assert data["safety"]["loop"].get("max_phase_visits") == 50, (
-            f"safety.loop.max_phase_visits not set correctly; got: {data}"
+        assert data["safety"]["loop"].get("max_router_calls_per_turn") == 5, (
+            f"safety.loop.max_router_calls_per_turn not set correctly; got: {data}"
         )
-        # Flat key must NOT exist (old bug: {'loop.max_phase_visits': 50})
-        assert "loop.max_phase_visits" not in data.get("safety", {}), (
-            f"Flat 'loop.max_phase_visits' key found — nested-write bug not fixed: {data}"
+        # Flat key must NOT exist (old bug: {'loop.max_router_calls_per_turn': 5})
+        assert "loop.max_router_calls_per_turn" not in data.get("safety", {}), (
+            f"Flat 'loop.max_router_calls_per_turn' key found — nested-write bug not fixed: {data}"
         )
     finally:
         os.chdir(old_cwd)
@@ -241,16 +241,16 @@ def test_set_free_form_dict_subkey_permissions(tmp_path: Path) -> None:
 
 
 def test_get_nested_key_resolves_correctly(tmp_path: Path, capsys) -> None:
-    """Tier 2: _get('safety.loop.max_phase_visits') prints the default value, not an error."""
+    """Tier 2: _get('safety.loop.max_router_calls_per_turn') prints the default value, not an error."""
     root = _project_root(tmp_path)
     old_cwd = os.getcwd()
     os.chdir(root)
     try:
         from reyn.interfaces.cli.commands.config import _get
-        _get("safety.loop.max_phase_visits")
+        _get("safety.loop.max_router_calls_per_turn")
         captured = capsys.readouterr()
-        assert "25" in captured.out, (
-            f"Expected '25' in output, got: {captured.out!r}"
+        assert "3" in captured.out, (
+            f"Expected '3' in output, got: {captured.out!r}"
         )
         assert captured.err == "", (
             f"Unexpected stderr: {captured.err!r}"
@@ -287,8 +287,8 @@ def test_is_valid_config_key_rejects_nonexistent() -> None:
 
 
 def test_is_valid_config_key_accepts_known_nested() -> None:
-    """Tier 2: safety.loop.max_phase_visits is accepted."""
-    assert is_valid_config_key("safety.loop.max_phase_visits")
+    """Tier 2: safety.loop.max_router_calls_per_turn is accepted."""
+    assert is_valid_config_key("safety.loop.max_router_calls_per_turn")
 
 
 def test_is_valid_config_key_accepts_free_form_subkey() -> None:
@@ -363,11 +363,11 @@ def test_resolve_config_value_none_not_unknown() -> None:
 
 
 def test_resolve_nested_key_default_value() -> None:
-    """Tier 2: resolve_config_value returns the default for safety.loop.max_phase_visits."""
+    """Tier 2: resolve_config_value returns the default for safety.loop.max_router_calls_per_turn."""
     config = ReynConfig()
-    found, value = resolve_config_value(config, "safety.loop.max_phase_visits")
+    found, value = resolve_config_value(config, "safety.loop.max_router_calls_per_turn")
     assert found is True
-    assert value == 25
+    assert value == 3
 
 
 def test_resolve_unknown_key_returns_not_found() -> None:

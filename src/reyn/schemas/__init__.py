@@ -18,7 +18,6 @@ from .models import (
     LintPlanStep,
     LLMOutput,
     MCPIROp,
-    PhaseConstraints,
     PreprocessorStep,
     PythonStep,
     RunOpStep,
@@ -30,7 +29,6 @@ from .models import (
 
 __all__ = [
     "ValidateStep", "IterateStep", "LintPlanStep", "PythonStep", "RunOpStep", "PreprocessorStep",
-    "PhaseConstraints",
     "ContextFrame", "ExecutionState", "CandidateOutput", "ControlIROpSpec",
     "LLMOutput", "ActOutput", "ControlDecision", "ControlReason",
     "ControlIROp", "FileIROp", "WebFetchIROp", "WebSearchIROp",

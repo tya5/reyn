@@ -189,7 +189,7 @@ def assert_turn_budget_bounds(tb: TurnBudget) -> None:
     # full increment of NEW progress (not just the minimal ≥1 op that
     # output_reserve<threshold alone gives — that is fragile, re-entering close to
     # the visit cap), so a finite-work phase converges to a genuine finish in FEW
-    # re-entries — making the max_phase_visits abort UNREACHABLE for a
+    # re-entries — making the loop-cap abort UNREACHABLE for a
     # well-configured / finite-work phase (a pathological infinite-work phase that
     # never completes is still backstopped by the visit cap). Strictly implies
     # threshold > 0 AND no wrap-up overflow (consolidation + T_wrap_SP +
@@ -201,7 +201,7 @@ def assert_turn_budget_bounds(tb: TurnBudget) -> None:
         f"{tb.output_reserve + tb.offload_cap} so a force-close re-entry makes a full "
         f"increment of progress (the consolidation, hard-capped ≤ output_reserve, "
         f"plus one increment fit below the threshold). Otherwise the re-entry cannot "
-        f"reliably progress and would force-close-loop toward max_phase_visits — a "
+        f"reliably progress and would force-close-loop toward the loop cap — a "
         f"by-construction termination gap. Lower the reserves or use a larger-context "
         f"model."
     )
