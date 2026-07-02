@@ -23,25 +23,11 @@ class LoopConfig:
     workload genuinely needs more iterations.
 
     Fields:
-        max_act_turns_per_phase:
-            Global default for the per-phase ``max_act_turns`` (= LLM ↔ op
-            volleys inside one phase visit). Skill / phase frontmatter still
-            wins when set. ``0`` = unlimited.
-        max_phase_visits:
-            How many times any single phase may be entered in one skill run.
-            ``0`` = unlimited.
         max_router_calls_per_turn:
             Cap on chat-router invocations within a single user turn.
             ``0`` = unlimited.
         max_agent_hops:
             Maximum delegation depth (= user → A → B → C is 3 hops).
-        skill_calls_per_chain:
-            Per-(chain, skill) spawn cap with warn semantics; the exceed
-            flow is driven by ``safety.on_limit.mode`` (#1877).
-            ``hard_limit=None`` = unlimited (default).
-        skill_tokens_per_chain:
-            Per-(chain, skill) token cap with warn semantics.
-            ``hard_limit=None`` = unlimited (default).
         max_router_iterations:
             Maximum LLM tool-call iterations per chat-router invocation
             (= per user turn). ``0`` = unlimited. CLI ``--max-iterations``
@@ -66,17 +52,17 @@ class LoopConfig:
             the count would exceed the cap the next hook turn hits the
             ``safety.on_limit`` checkpoint (warn → ask_user → abort) instead of
             running. A backstop only — does NOT obstruct intentional
-            loop-engineering (the operator raises the cap). Default ``25``
-            aligns with ``max_phase_visits``. ``0`` = unlimited.
+            loop-engineering (the operator raises the cap). ``0`` = unlimited.
     """
 
-    max_act_turns_per_phase: int = 10
-    max_phase_visits: int = 25
     max_router_calls_per_turn: int = 3
     max_agent_hops: int = 3
     max_router_iterations: int = 5
     max_tool_calls_per_turn: int = 50
     max_hook_driven_turns: int = 25
+    # Per-chain skill-spawn caps — retained (dead-in-production after the #2434
+    # skill deletion, but the budget skill-cap subsystem + its tests still
+    # consume them; the whole subsystem is removed in the #2439 follow-up).
     skill_calls_per_chain: CostLimitConfig = field(default_factory=CostLimitConfig)
     skill_tokens_per_chain: CostLimitConfig = field(default_factory=CostLimitConfig)
 
@@ -139,8 +125,7 @@ class OnLimitConfig:
       extensions are acceptable.
 
     The mode applies to the user-facing limits listed in FP-0005 §
-    "limit ごとの適用可否" (max_act_turns, max_phase_visits, router_cap,
-    skill_calls_per_chain, max_agent_hops, phase_seconds, chain_seconds).
+    "limit ごとの適用可否" (router_cap, max_agent_hops, phase_seconds, chain_seconds).
     LLM call timeouts already retry via litellm and are not part of this
     pipeline.
 
@@ -254,13 +239,6 @@ class SafetyConfig:
     under ``safety.loop`` / ``safety.timeout``; budget caps stay under
     ``cost:`` because they are financial knobs (per-agent / daily /
     monthly token + USD limits) rather than runaway-detection knobs.
-
-    ``safety.loop.skill_calls_per_chain`` and
-    ``safety.loop.skill_tokens_per_chain`` are hybrid caps: they live
-    under ``safety.loop`` because they gate repeated skill spawns
-    (loop-detection), but carry ``CostLimitConfig`` semantics (warn_ratio,
-    extension_calls); the exceed flow follows the unified
-    ``safety.on_limit.mode`` policy (#1877) rather than a dedicated knob.
 
     See ``docs/guide/for-skill-authors/understand-why-reyn-stops.md`` for
     the operator's mental model.
@@ -591,12 +569,6 @@ def _build_safety_config(raw: object) -> SafetyConfig:
     timeout_defaults = TimeoutConfig()
 
     loop = LoopConfig(
-        max_act_turns_per_phase=int(loop_raw.get(
-            "max_act_turns_per_phase", loop_defaults.max_act_turns_per_phase,
-        )),
-        max_phase_visits=int(loop_raw.get(
-            "max_phase_visits", loop_defaults.max_phase_visits,
-        )),
         max_router_calls_per_turn=int(loop_raw.get(
             "max_router_calls_per_turn", loop_defaults.max_router_calls_per_turn,
         )),

@@ -55,31 +55,26 @@ class InvocationContext:
     def safety_for(self, args: argparse.Namespace) -> SafetyConfig:
         """Resolve effective SafetyConfig with CLI flags layered over config.
 
-        CLI flags (--max-phase-visits, --phase-budget, --llm-timeout,
-        --llm-max-retries) override the corresponding safety.loop / safety.timeout
-        fields while preserving everything else from the loaded config.
+        CLI flags (--phase-budget, --llm-timeout, --llm-max-retries) override
+        the corresponding safety.timeout fields while preserving everything else
+        from the loaded config.
         """
-        from reyn.config import LoopConfig, TimeoutConfig
+        from reyn.config import TimeoutConfig
         base = self.config.safety
-        max_visits = getattr(args, "max_phase_visits", None)
         phase_budget = getattr(args, "phase_budget", None)
         llm_timeout = getattr(args, "llm_timeout", None)
         llm_max_retries = getattr(args, "llm_max_retries", None)
 
         # Only rebuild if at least one CLI override was provided.
-        if any(v is not None for v in [max_visits, phase_budget, llm_timeout, llm_max_retries]):
+        if any(v is not None for v in [phase_budget, llm_timeout, llm_max_retries]):
             from dataclasses import replace
-            loop = replace(
-                base.loop,
-                max_phase_visits=max_visits if max_visits is not None else base.loop.max_phase_visits,
-            )
             timeout = replace(
                 base.timeout,
                 llm_call_seconds=llm_timeout if llm_timeout is not None else base.timeout.llm_call_seconds,
                 llm_max_retries=llm_max_retries if llm_max_retries is not None else base.timeout.llm_max_retries,
                 phase_seconds=phase_budget if phase_budget is not None else base.timeout.phase_seconds,
             )
-            return SafetyConfig(loop=loop, timeout=timeout, on_limit=base.on_limit)
+            return SafetyConfig(loop=base.loop, timeout=timeout, on_limit=base.on_limit)
         return base
 
     # Keep limits_for as an alias that returns the safety config for backward

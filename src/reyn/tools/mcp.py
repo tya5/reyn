@@ -315,7 +315,6 @@ async def _handle_call_mcp_tool(
             resolver=ctx.resolver,
             subscribers=getattr(ctx.events, "subscribers", []),
             output_language=None,
-            max_phase_visits=25,
             sub_state_dir_override=None,
             state_dir_strategy="control_ir",
             mcp_servers={},
