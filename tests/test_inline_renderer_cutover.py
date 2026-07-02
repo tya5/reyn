@@ -130,6 +130,26 @@ def test_intervention_keeps_question_text() -> None:
     assert "Which file?" in out
 
 
+def test_intervention_suppresses_run_id_short_prefix() -> None:
+    """Tier 2: intervention drops the [#short] run-id hash — it is cryptic noise on
+    an interactive user-facing prompt where disambiguation is unnecessary (#2243)."""
+    out = _plain("intervention", "Confirm?", meta={"run_id_short": "ab12"})
+    assert "#ab12" not in out
+    assert "Confirm?" in out
+
+
+def test_intervention_keeps_skill_name_prefix_when_present() -> None:
+    """Tier 2: skill_name context is retained on interventions so the user sees which
+    skill is asking — only run_id_short (the cryptic hash) is suppressed."""
+    out = _plain(
+        "intervention", "Confirm?",
+        meta={"skill_name": "skill_builder", "run_id_short": "ab12"},
+    )
+    assert "skill_builder" in out
+    assert "#ab12" not in out
+    assert "Confirm?" in out
+
+
 def test_kinds_use_distinct_markers() -> None:
     """Tier 2: message kinds carry distinct glyphs so the eye separates them — the
     assistant ⏺ is not reused for an intervention (◆), a finished skill (✓), or a
