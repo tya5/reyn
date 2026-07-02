@@ -3129,17 +3129,16 @@ class RouterLoop:
             _scan = getattr(host, "scan_tool_result", None)
             if _scan is not None:
                 _scan(content_str)
-            # #1128: cap oversized tool results once at this chokepoint.
+            # #1128: cap oversized tool results once at this chokepoint. #2397-followup: uniform
+            # call — every capper accepts (content_str, *, clean_value, payload_field), so we always
+            # pass the clean-payload kwargs (both None when not an envelope → capper does a plain cap).
+            # No if/else backward-compat branch (that split let the wired Session._cap_tool_result be
+            # missed → MCP router-fail; owner: backward-compat = debt).
             _cap = getattr(host, "cap_tool_result", None)
             if _cap is not None:
-                if payload_field is not None:
-                    content_str = _cap(
-                        content_str, clean_value=clean_value, payload_field=payload_field
-                    )
-                else:
-                    # No clean-payload → call with the plain (content_str) signature so a host/capper
-                    # without the #2394-followup kwargs (legacy / tests) is unaffected.
-                    content_str = _cap(content_str)
+                content_str = _cap(
+                    content_str, clean_value=clean_value, payload_field=payload_field
+                )
             # FP-0050/#1822 S2: fence untrusted-source content AFTER cap (so
             # truncation can't sever the end marker). Trusted-internal = scan-only.
             if external_source:

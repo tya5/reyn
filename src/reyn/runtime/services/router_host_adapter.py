@@ -500,19 +500,19 @@ class RouterHostAdapter:
         """#1128 size axis: cap an oversized tool-result string at the
         router_loop chokepoint. Delegates to the session-supplied callable
         (which offloads the full body via the #385 store + returns a bounded
-        preview); identity when no capper was wired (= legacy / test paths).
+        preview); identity when no capper was wired.
 
-        #2394-followup: ``clean_value`` / ``payload_field`` carry the OS dispatch envelope's inner
-        op-result + its sole-oversized payload field. Forwarded ONLY when clean-payload applies, so a
-        capper with the plain ``(content_str)`` signature (legacy / tests) is called exactly as before.
+        ``clean_value`` / ``payload_field`` carry the OS dispatch envelope's inner op-result + its
+        sole-oversized payload field (clean-payload). #2397-followup: every capper has the UNIFORM
+        signature ``(content_str, *, clean_value=None, payload_field=None)``, so we always forward —
+        no backward-compat branch. (The prior "forward only when payload_field is not None" split was
+        the debt that let the wired ``Session._cap_tool_result`` be missed → MCP router-fail.)
         """
         if self._cap_tool_result is None:
             return content_str
-        if payload_field is not None:
-            return self._cap_tool_result(
-                content_str, clean_value=clean_value, payload_field=payload_field
-            )
-        return self._cap_tool_result(content_str)
+        return self._cap_tool_result(
+            content_str, clean_value=clean_value, payload_field=payload_field
+        )
 
     def media_followup_budget(self, tool_content: str) -> int | None:
         """#272 media axis: tokens left for a tool turn's media follow-up after

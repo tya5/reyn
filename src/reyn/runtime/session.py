@@ -5904,9 +5904,19 @@ class Session:
 
     # --- RouterLoop orchestration ---
 
-    def _cap_tool_result(self, content_str: str) -> str:
-        """Forwarding → ContextBudgetAdvisor.cap_tool_result (PR-1)."""
-        return self._budget_advisor.cap_tool_result(content_str)
+    def _cap_tool_result(
+        self, content_str: str, *, clean_value=None, payload_field=None
+    ) -> str:
+        """Forwarding → ContextBudgetAdvisor.cap_tool_result (PR-1).
+
+        #2397-followup: this is the capper actually wired into the router host (session.py:1750),
+        so it MUST accept + forward the clean-payload kwargs (``clean_value`` / ``payload_field``)
+        the router chokepoint passes when an envelope declares a sole-oversized field — else the
+        interactive/MCP path raises ``TypeError: unexpected keyword argument 'clean_value'`` and the
+        router fails. The advisor already accepts them; this method was the missed sibling capper."""
+        return self._budget_advisor.cap_tool_result(
+            content_str, clean_value=clean_value, payload_field=payload_field
+        )
 
     def _media_followup_budget(self, tool_content: str) -> int:
         """Forwarding → ContextBudgetAdvisor.media_followup_budget (PR-1)."""
