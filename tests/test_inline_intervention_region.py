@@ -189,23 +189,20 @@ async def test_answer_oldest_intervention_text_delivers_free_text(
     assert answer.text == "Alice"
 
 
-@pytest.mark.asyncio
-async def test_submit_routes_to_intervention_bus_when_ask_user_pending() -> None:
-    """Tier 2: ``_submit`` routes free-text to ``answer_oldest_intervention_text``
-    (not ``submit_user_text``) when the head pending intervention is ask_user.
-
-    RED-verify: removing the ``head.kind == "ask_user"`` routing check would
-    call ``submit_user_text`` instead — this test fails in that case.
-    """
+def _stub_registry(*, choices: list) -> SimpleNamespace:
+    """Build a minimal registry stub with a head intervention of given choices."""
     answered: list[str] = []
     submitted: list[str] = []
 
     class _StubIntervention:
-        kind = "ask_user"
+        pass
+
+    iv = _StubIntervention()
+    iv.choices = choices  # type: ignore[attr-defined]
 
     class _StubInterventions:
         def head(self):
-            return _StubIntervention()
+            return iv
 
     class _StubSession:
         interventions = _StubInterventions()
@@ -218,7 +215,38 @@ async def test_submit_routes_to_intervention_bus_when_ask_user_pending() -> None
             submitted.append(text)
 
     registry = SimpleNamespace(attached_session=lambda: _StubSession())
+    return registry, answered, submitted
+
+
+@pytest.mark.asyncio
+async def test_submit_routes_to_intervention_bus_when_ask_user_pending() -> None:
+    """Tier 2: ``_submit`` routes free-text to ``answer_oldest_intervention_text``
+    (not ``submit_user_text``) when the head pending intervention has no choices
+    (ask_user is the canonical case).
+
+    RED-verify: replacing ``not head.choices`` with a kind-name check like
+    ``head.kind == "ask_user"`` would pass for ask_user but fail for other
+    free-text kinds (mcp_install.secret). Widened to choices-shape to match
+    build_intervention_element logic.
+    """
+    registry, answered, submitted = _stub_registry(choices=[])
     await _submit(registry, "hello ask_user")
 
     assert answered == ["hello ask_user"], "text must reach intervention bus"
-    assert submitted == [], "submit_user_text must NOT be called while ask_user pending"
+    assert submitted == [], "submit_user_text must NOT be called while free-text iv pending"
+
+
+@pytest.mark.asyncio
+async def test_submit_routes_to_intervention_bus_for_mcp_install_secret() -> None:
+    """Tier 2: ``_submit`` routes free-text to the intervention bus for
+    ``mcp_install.secret`` (choices=[]) — the same free-text class as ask_user.
+
+    RED-verify: ``head.kind == "ask_user"`` silently misses mcp_install.secret
+    and calls ``submit_user_text`` instead, leaving the MCP install awaiting a
+    secret that never arrives.
+    """
+    registry, answered, submitted = _stub_registry(choices=[])
+    await _submit(registry, "mysecretvalue")
+
+    assert answered == ["mysecretvalue"], "secret must reach intervention bus"
+    assert submitted == [], "submit_user_text must NOT be called for mcp_install.secret"
