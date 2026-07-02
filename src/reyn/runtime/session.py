@@ -821,7 +821,7 @@ class Session:
         # authorized set — visible ⊆ authorized by construction. In-memory (step1 live); step2 will
         # persist it to the per-session config.yaml so resolved_profile_for(sid) re-derives it.
         self._visibility_override: "dict[str, set[str]]" = {
-            "tool": set(), "skill": set(), "mcp": set(), "category": set(),
+            "tool": set(), "mcp": set(), "category": set(),
         }
         # #2285: session-scoped hook APPLICABILITY override — hook names the user disabled via the
         # status-bar. The HookDispatcher (per-session) skips a hook whose name is in this set at
@@ -1358,20 +1358,6 @@ class Session:
             file_delete=self._file_delete,
             file_regenerate_index=self._file_regenerate_index,
         )
-
-        # Dormant skill-status registry (in-flight skill-run task map). The chat
-        # session no longer runs skills, so this is empty. Its readers are the
-        # skill-status / monitoring surface (session status count, agent_skill_runs,
-        # /tasks-pending, TUI agents-tab) plus the drain / quiescence / idle
-        # predicates (message_bus, mcp/server) for which "no skill runs" is the
-        # correct signal. This registry and the REMAINING monitoring surface are
-        # removed together in a later stage — the same scoped-deletion pattern as
-        # the CLI skill surface, not a lasting compatibility shim. (The /skill
-        # run-management slash — an isolated part of this surface — is already
-        # removed in THIS PR: it was self-contained and the registry it read
-        # remains, so its removal leaves no dangling ref.)
-        self.running_skills: dict = {}
-        self.running_skills_started_at: dict = {}
 
         # PR-refactor-session-1 wave 2: pending-chain lifecycle and intervention
         # queue ownership extracted into services. The session orchestrates the
@@ -2083,19 +2069,7 @@ class Session:
         via asyncio task cancellation (existing behaviour, preserved here).
         """
         self._loop_driver.request_cancel()
-        cancelled_skills = 0
-        for task in list(self.running_skills.values()):
-            if not task.done():
-                task.cancel()
-                cancelled_skills += 1
-        parts: list[str] = []
-        # Turn cancel is always "requested" when this method is called, but
-        # only fires if a turn is actually running. We include it in the
-        # summary as "turn" (a human can observe whether the chain stopped).
-        parts.append("turn")
-        if cancelled_skills:
-            parts.append(f"{cancelled_skills} skill{'s' if cancelled_skills != 1 else ''}")
-        return f"✗ cancelled {' + '.join(parts)}"
+        return "✗ cancelled turn"
 
     async def await_quiescent(self) -> None:
         """Block until every append-capable task has settled (ADR-0038 Stage 1c).
@@ -2111,9 +2085,9 @@ class Session:
 
         Coverage (the exhaustive set of append-capable spawned tasks in this
         surface — see #1533 source→gated-by table): the current turn (``_turn_idle``),
-        in-flight skills (``running_skills``), chain-timeout
-        watchdogs (``_chains`` timers, cancel+join), and fire-and-forget WAL-append
-        tasks — intervention dispatch + intervention_answer_consumed (``_inflight_wal_tasks``).
+        chain-timeout watchdogs (``_chains`` timers, cancel+join), and fire-and-forget
+        WAL-append tasks — intervention dispatch + intervention_answer_consumed
+        (``_inflight_wal_tasks``).
         """
         # 1. wait for the current turn (if any) to finish its WAL appends.
         await self._turn_idle.wait()
@@ -2125,24 +2099,19 @@ class Session:
         # 3-4. RE-DRAIN LOOP (#2115): cancel the tracked fire-and-forget WAL tasks
         #    (cancel — not join-only — is required: the intervention-dispatch task
         #    awaits the user-answer future indefinitely; the tasks are drop-safe so
-        #    cancelling is correct) + join the append-capable tasks (running_skills +
-        #    _inflight_wal_tasks), then RE-CHECK. A joined task may schedule a NEW
+        #    cancelling is correct) + join the append-capable tasks
+        #    (_inflight_wal_tasks), then RE-CHECK. A joined task may schedule a NEW
         #    tracked append (or re-spawn) DURING the gather — which the prior
-        #    one-shot snapshot would miss (the join↔append race that let a
-        #    skill_completed land PAST the reset-record, #2115). Loop to a fixpoint
-        #    (both sets fully drained) so no append can land after this returns —
-        #    vector-agnostic: closes any append-scheduled-during-quiescence path,
-        #    subsuming the _inflight_wal_tasks special-case. On reconstruct, restore()
-        #    re-arms timers from the recovered snapshot, so cancelling is reversible.
+        #    one-shot snapshot would miss (#2115). Loop to a fixpoint (both sets fully
+        #    drained) so no append can land after this returns. On reconstruct,
+        #    restore() re-arms timers from the recovered snapshot, so cancelling is
+        #    reversible.
         for _ in range(_QUIESCE_MAX_ROUNDS):
             for task in list(self._inflight_wal_tasks):
                 if not task.done():
                     task.cancel()
             pending = [
-                t for t in (
-                    *self.running_skills.values(),
-                    *self._inflight_wal_tasks,
-                )
+                t for t in self._inflight_wal_tasks
                 if not t.done()
             ]
             if not pending:
@@ -2169,8 +2138,8 @@ class Session:
         set bounded) makes them joinable. Returns the task for call-site chaining.
 
         #2115 CONVENTION: every async WAL-append spawned outside the current turn —
-        ESPECIALLY any skill-completion append — MUST be tracked here (or run within
-        a ``running_skills`` task) so ``await_quiescent``'s re-drain joins it before
+        ESPECIALLY any skill-completion append — MUST be tracked here so
+        ``await_quiescent``'s re-drain joins it before
         the rewind reset-record. A new untracked append path would leak past a
         rewind (the #2115 bug class).
         """
@@ -2253,7 +2222,6 @@ class Session:
         override_profile = CapabilityProfile(
             name="_session_visibility_override",
             tool_deny=tuple(sorted(ov["tool"])),
-            skill_deny=tuple(sorted(ov["skill"])),
             mcp_deny=tuple(sorted(ov["mcp"])),
             categories=keep_categories,
         )
@@ -2265,7 +2233,7 @@ class Session:
         self._excluded_categories = final_excl
 
     def set_capability_visible(self, kind: str, name: str, visible: bool) -> None:
-        """#2285: toggle the session-visibility of a tool / skill / mcp / category (status-bar seam).
+        """#2285: toggle the session-visibility of a tool / mcp / category (status-bar seam).
 
         ``visible=False`` hides it from the LLM catalog next turn; ``visible=True`` restores it —
         but only UP TO the agent envelope (toggling ON a capability the envelope denies is a no-op
@@ -2290,7 +2258,8 @@ class Session:
         universe. ``hidden_by_session`` = the override set (what the user turned OFF). The UI renders
         ``on = item not in hidden_by_session``. authorized is computed from the live catalogs
         (tools / mcp / categories) filtered by the envelope's ``allows`` — so it always
-        reflects visible ⊆ authorized (nothing outside the envelope is ever togglable)."""
+        reflects visible ⊆ authorized (nothing outside the envelope is ever togglable).
+        Kind ∈ tool / mcp / category."""
         from reyn.security.permissions.effective import CapabilityAxis, ContextualLayer
         from reyn.tools import get_default_registry
         from reyn.tools.universal_catalog import CATEGORIES
@@ -2398,7 +2367,7 @@ class Session:
         state_dir = self._toggle_store_dir()
         # Reset to a clean baseline first so the load fully re-derives from THIS (final) state dir —
         # idempotent + leak-free if called more than once or after the per-session dir is re-keyed.
-        self._visibility_override = {"tool": set(), "skill": set(), "mcp": set(), "category": set()}
+        self._visibility_override = {"tool": set(), "mcp": set(), "category": set()}
         self._disabled_hooks = set()
         loaded_visibility = False
         try:
@@ -2406,7 +2375,7 @@ class Session:
             if vpath.is_file():
                 data = yaml.safe_load(vpath.read_text(encoding="utf-8"))
                 if isinstance(data, dict):
-                    for kind in ("tool", "skill", "mcp", "category"):
+                    for kind in ("tool", "mcp", "category"):
                         vals = data.get(kind)
                         if isinstance(vals, list):
                             self._visibility_override[kind] = {str(v) for v in vals}
@@ -2493,9 +2462,8 @@ class Session:
                                              + self._restore_intervention_tasks
             buffered_intervention_answers  → self._buffered_intervention_answers
             next_turn_context              → self._next_turn_context
-            active_skill_run_ids           → self.running_skills (+ started_at / chain)
 
-        The running_*/_inflight_wal_tasks task handles are already settled by
+        The _inflight_wal_tasks task handles are already settled by
         await_quiescent; this drops the (now-done) handles so the rewound
         session starts clean.
         """
@@ -2519,9 +2487,6 @@ class Session:
         self._buffered_intervention_answers.clear()
         # next_turn_context (#1800-4b)
         self._next_turn_context.clear()
-        # active_skill_run_ids live mirrors (handles settled)
-        self.running_skills.clear()
-        self.running_skills_started_at.clear()
         self._inflight_wal_tasks.clear()
 
     @property
@@ -2584,54 +2549,6 @@ class Session:
         # Skill-execution machinery removed (stage1 decouple): there is no live
         # skill registry contributing per-skill last_phase_applied_seq floors.
         return out
-
-    def current_state_summary(self) -> dict:
-        """Return a lightweight snapshot for slash-command display.
-
-        Used by ``/pending list`` (needs-attention section) and
-        ``/reset`` (confirm preview line).  Keys:
-
-        - ``running_skills``: count of currently running skill runs.
-        - ``stuck_skills``: list of ``{skill_name, run_id, stuck_at}``
-          dicts for skill runs that ended on a non-terminal event.
-
-        All sources are defensive: missing attributes / I/O errors
-        return zero / empty rather than raising.
-        """
-        n_skills = len(self.running_skills)
-
-        # Stuck skills require the event-store scan implemented in the agents-tab
-        # helper functions.  We import lazily (avoids pulling TUI widgets at
-        # session-bootstrap time).
-        stuck_skills: list[dict] = []
-        try:
-            project_root: "Path | None" = None
-            registry = getattr(self, "_registry", None)
-            if registry is not None:
-                project_root = getattr(registry, "_project_root", None)
-
-            if project_root is not None:
-                from reyn.runtime.agent_skill_runs import (
-                    _recent_skill_runs_for_agent,
-                )
-                running_run_ids = set(self.running_skills.keys())
-                skills = _recent_skill_runs_for_agent(
-                    project_root, self.agent_name, running_run_ids,
-                )
-                for s in skills:
-                    if s.get("status") == "stuck":
-                        stuck_skills.append({
-                            "skill_name": s.get("skill_name", "?"),
-                            "run_id": s.get("run_id", "?"),
-                            "stuck_at": s.get("stuck_at", "?"),
-                        })
-        except Exception:  # noqa: BLE001 — best-effort; display must not crash
-            pass
-
-        return {
-            "running_skills": n_skills,
-            "stuck_skills": stuck_skills,
-        }
 
     def _effective_contextual_for_turn(self) -> "object | None":
         """#1827 S4b (context-auto): the per-session contextual narrowing for THIS
@@ -4999,26 +4916,8 @@ class Session:
 
     # ── slash command dispatch ──────────────────────────────────────────────────
 
-    def _resolve_run_id(self, prefix: str) -> tuple[str | None, list[str]]:
-        """Find a unique run_id matching `prefix` (anywhere within the id).
-
-        Matches against the full id OR the trailing 4-char short tag, since
-        users see `[skill#abcd]` and naturally type the short tag.
-
-        Returns (run_id, candidates). `run_id` is non-None only when exactly
-        one candidate matches; otherwise inspect `candidates`.
-        """
-        prefix = prefix.strip()
-        if not prefix:
-            return None, []
-        candidates = [
-            rid for rid in self.running_skills
-            if rid.startswith(prefix) or rid.endswith(prefix)
-        ]
-        return (candidates[0] if len(candidates) == 1 else None), candidates
-
     def _resolve_intervention_id(self, prefix: str) -> tuple[str | None, list[str]]:
-        """Same shape as `_resolve_run_id` but over the intervention registry."""
+        """Resolve a unique intervention id by prefix in the intervention registry."""
         return self._interventions.resolve_id_prefix(prefix)
 
     async def _maybe_handle_slash(self, text: str) -> bool:
@@ -5121,11 +5020,10 @@ class Session:
             ))
         return True
 
-    # NOTE: the 7 ``_slash_*`` handlers (list / cancel / answer / agents /
-    # attach / cost / budget) live in ``src/reyn/runtime/slash/`` per the
-    # cli-redesign plan. ``_resolve_run_id`` / ``_resolve_intervention_id``
-    # / ``_deliver_answer_to`` stay here as session-state helpers the slash
-    # modules call back into.
+    # NOTE: the slash handlers (list / answer / agents / attach / cost / budget)
+    # live in ``src/reyn/runtime/slash/`` per the cli-redesign plan.
+    # ``_resolve_intervention_id`` / ``_deliver_answer_to`` stay here as
+    # session-state helpers the slash modules call back into.
 
     # ── RouterLoop helper methods (Wave 3 F1, kept for session callbacks) ──────────
     # _make_router_op_context + 3 helpers remain on Session because the

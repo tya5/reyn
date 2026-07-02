@@ -43,37 +43,6 @@ def _a2a_task(task_id, ctx, status=TaskState.RUNNING):
                 requester="external", origin=TaskOrigin.EXTERNAL, status=status)
 
 
-# ── P2: escalation creates the canonical Task (GetTask 404 → resolves) ───────
-
-
-@pytest.mark.asyncio
-async def test_escalation_creates_canonical_task(monkeypatch):
-    """Tier 2: #1981 P2 — `_escalate_to_task` creates the canonical Task via the
-    shared create-path, so the escalated run is GetTask-resolvable (the post-5a-1
-    404 gap). RED if escalation drops the Task creation."""
-    async def _no_session(*_a, **_k):
-        return None
-    # Keep the spawned monitor benign (no real session) — it fails fast + is caught.
-    monkeypatch.setattr(a2a_mod, "_get_session_for_monitor", _no_session)
-
-    rr = RunRegistry()
-    tb = InMemoryTaskBackend()
-    res = await a2a_mod._escalate_to_task(
-        1, "alice", ["skill-1"], object(), rr,
-        context_id="ctx-esc", task_backend=tb,
-    )
-    run_id = res["result"]["id"]
-
-    # GAP FIX: the escalated run now has a canonical Task (was None → GetTask 404).
-    task = await tb.get(run_id)
-    assert task is not None
-    assert task.assignee == a2a_session_id("ctx-esc")  # the per-contextId session
-    assert task.origin is TaskOrigin.EXTERNAL
-    # tidy the benign monitor task
-    entry = rr.get(run_id)
-    if entry is not None and entry.task is not None:
-        entry.task.cancel()
-
 
 # ── P1: the SSE terminal decision reads the Task authority ──────────────────
 

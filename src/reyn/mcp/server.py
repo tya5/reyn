@@ -143,12 +143,12 @@ async def _await_turn_complete(
             msg.role in ("assistant", "agent")
             for msg in session.history[baseline:]
         )
-        is_idle = session.inbox.empty() and not session.running_skills
+        is_idle = session.inbox.empty()
         if has_reply and is_idle:
             # Grace period to absorb a possible second `agent_response`
             # follow-up in the same turn (= multi-iteration router loops).
             await asyncio.sleep(_IDLE_GRACE_SECONDS)
-            if session.inbox.empty() and not session.running_skills:
+            if session.inbox.empty():
                 return True
         if asyncio.get_event_loop().time() >= deadline:
             return False
@@ -191,7 +191,7 @@ async def send_to_agent_impl(
 
     where ``partial=True`` indicates the timeout fired before the agent
     went idle. The agent's task is NOT cancelled in that case — its
-    work is preserved on the inbox / running_skills, and the next
+    work is preserved on the inbox, and the next
     ``send_to_agent`` call (or ``reyn chat`` attach) will see the rest
     of the work as it lands in history.
 
@@ -268,20 +268,6 @@ async def send_to_agent_impl(
             "its task continues in the background; call again to receive the rest.)"
         )
 
-    # B42-NF-W6-2: surface still-running skill run_ids so the A2A sync
-    # path can auto-escalate to a Task envelope (= A2A spec-compliant
-    # async response) when the timeout fires before quiescence. Empty
-    # list when no skill is in flight (the common case).
-    # running_skills is populated by crash-recovery auto-resume —
-    # those runs are real background asyncio tasks that A2A callers
-    # must be able to observe.
-    running_skill_run_ids: list[str] = []
-    if not idle:
-        running_skills_attr: dict = getattr(session, "running_skills", {})
-        for rid, task in running_skills_attr.items():
-            if not task.done():
-                running_skill_run_ids.append(rid)
-
     # #1649 PART B: detect a limit-abort. The router stamps ``limit_stopped`` on
     # the limit wrap-up / degrade outbox message. A non-TTY run-once / wrapper
     # caller uses this to (a) surface the decision-enabling message even when the
@@ -303,7 +289,7 @@ async def send_to_agent_impl(
         "reply": reply_text,
         "partial": (not idle),
         "agent": agent_name,
-        "running_skill_run_ids": running_skill_run_ids,
+        "running_skill_run_ids": [],
         "limit_stopped": limit_stopped,
     }
 
@@ -315,9 +301,6 @@ def _is_quiescent_after_bus(session) -> bool:
     that captures the partial=True case (timeout fired before quiescence).
     """
     if not session.inbox.empty():
-        return False
-    running_skills: dict = getattr(session, "running_skills", {})
-    if any(not t.done() for t in running_skills.values()):
         return False
     return True
 
@@ -505,8 +488,8 @@ def build_server(
                 # FP-0043 S4b-6: run the invocation on the agent's SHARED mcp
                 # session (isolated from "main"); resolve-or-spawn it (no run-loop
                 # — driven inline by MessageBus.request). The single shared session
-                # preserves the request-response continuity (running_skills pumped
-                # on the next call).
+                # preserves the request-response continuity (state preserved on
+                # the inbox for the next call).
                 from reyn.runtime.mcp_routing import mcp_session_id, resolve_mcp_session
                 resolve_mcp_session(registry, agent_name)
                 result = await send_to_agent_impl(

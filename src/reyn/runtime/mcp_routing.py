@@ -3,8 +3,8 @@
 When an external MCP client invokes a Reyn agent (Reyn-as-MCP-server: `reyn mcp
 serve`), the invocation runs on a SHARED "mcp" session per agent — isolated from
 the user's "main" conversation, while preserving the continuity the request-response
-model relies on (a partial send_to_agent leaves running_skills that the NEXT call
-pumps via MessageBus.request — a single stable session per connection).
+model relies on (a single stable session per connection; a partial send_to_agent
+leaves state on the inbox that the NEXT call pumps via MessageBus.request).
 
 MCP is stdio: one external client per `reyn mcp serve` process, and the call-tool
 handler carries no connection id (McpRef is per-REQUEST, not per-connection), so

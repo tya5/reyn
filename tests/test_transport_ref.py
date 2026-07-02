@@ -405,44 +405,6 @@ async def test_message_bus_collects_multiple_outbox_messages(tmp_path, monkeypat
     assert texts == ["first_fragment", "done"]
 
 
-@pytest.mark.asyncio
-async def test_message_bus_waits_for_running_tasks(tmp_path, monkeypatch):
-    """Tier 2: MessageBus.request waits for running_skills / running_plans
-    to finish before declaring quiescence.
-
-    This replaces the previous ``running_plans gather`` + ``running_skills
-    gather`` tactical patches in ``send_to_agent_impl``.
-    """
-    session = _make_session(tmp_path)
-    background_done = asyncio.Event()
-
-    async def _fake_handle_user_message(self, text, *, chain_id):
-        # Spawn a "background skill" that completes after a brief delay.
-        async def _bg():
-            await asyncio.sleep(0.05)
-            background_done.set()
-            # Emit an outbox message when done.
-            await self._put_outbox(OutboxMessage(kind="agent", text="bg_result"))
-
-        task = asyncio.create_task(_bg())
-        self.running_skills["fake_skill"] = task
-
-    monkeypatch.setattr(Session, "_handle_user_message", _fake_handle_user_message)
-
-    bus = MessageBus()
-    replies = await bus.request(
-        session,
-        kind="user",
-        payload={"text": "kick"},
-        reply_to=McpRef(request_id="bg-test"),
-        timeout=5.0,
-    )
-
-    # Background task must have completed before bus returned.
-    assert background_done.is_set(), "bus returned before background task finished"
-    texts = [r.text for r in replies if r.kind == "agent"]
-    assert "bg_result" in texts
-
 
 # ---------------------------------------------------------------------------
 # Component D + Migration: A2A endpoint uses MessageBus

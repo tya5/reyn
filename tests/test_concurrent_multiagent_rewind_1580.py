@@ -154,17 +154,14 @@ async def test_both_agents_resume_after_concurrent_rewind(tmp_path):
 
 @pytest.mark.asyncio
 async def test_single_agent_inflight_skill_plan_intervention_drained_by_rewind(tmp_path):
-    """Tier 2: rewind drains in-flight skill + plan + intervention tasks — no
-    straggler WAL append crosses the reset-record (await_quiescent coverage, #1533).
+    """Tier 2: rewind drains in-flight intervention tasks — no straggler WAL
+    append crosses the reset-record (await_quiescent coverage, #1533).
 
-    Owner follow-up: within ONE agent, chat/plan/skill run concurrently. This
-    exercises ``await_quiescent``'s append-capable coverage set LIVE end-to-end
-    (not per-source): an in-flight skill (``running_skills``), plan
-    (``running_plans``), and fire-and-forget intervention task
-    (``_inflight_wal_tasks``) are all parked *before* their would-be WAL append
-    when the rewind fires. The barrier (``cancel_inflight`` + ``await_quiescent``)
-    must drain every one so none appends past the reset-record. If any escaped,
-    its append would land after R (the straggler bug #1533 guards) → this fails.
+    Within ONE agent, a fire-and-forget intervention task (``_inflight_wal_tasks``)
+    is parked *before* its would-be WAL append when the rewind fires. The barrier
+    (``cancel_inflight`` + ``await_quiescent``) must drain it so it cannot append
+    past the reset-record. If it escaped, its append would land after R (the
+    straggler bug #1533 guards) → this fails.
     """
     reg, alpha, _beta = _two_agent_registry(tmp_path)
     state_log = reg.state_log
@@ -184,26 +181,24 @@ async def test_single_agent_inflight_skill_plan_intervention_drained_by_rewind(t
             "inbox_put", target="alpha", msg_id=marker, msg_kind="user", payload={},
         )
 
-    skill_t = asyncio.create_task(_parked_then_append("skill-straggler"))
     iv_t = asyncio.create_task(_parked_then_append("iv-straggler"))
-    alpha.running_skills["s1"] = skill_t          # in-flight skill
     alpha._track_wal_task(iv_t)                    # fire-and-forget intervention task
-    for _ in range(5):                            # let each reach `await release.wait()`
+    for _ in range(5):                            # let it reach `await release.wait()`
         await asyncio.sleep(0)
 
     # ── global rewind: the cancel_inflight + await_quiescent barrier must drain all ──
     res = await reg.rewind_to(seq_a1)
     reset_seq = res["reset_seq"]
 
-    # every in-flight append-capable task settled (cancelled + joined → done).
-    assert skill_t.done() and iv_t.done()
+    # in-flight append-capable task settled (cancelled + joined → done).
+    assert iv_t.done()
     # the reset-record is the head — no straggler append crossed it.
     assert state_log.current_seq == reset_seq
 
-    # releasing the (now-cancelled) tasks cannot resurrect a straggler append.
+    # releasing the (now-cancelled) task cannot resurrect a straggler append.
     release.set()
     for _ in range(5):
         await asyncio.sleep(0)
     assert state_log.current_seq == reset_seq
     appended = {e.get("msg_id") for e in state_log.iter_from(1)}
-    assert appended.isdisjoint({"skill-straggler", "iv-straggler"})
+    assert appended.isdisjoint({"iv-straggler"})

@@ -1,14 +1,14 @@
-"""Tier 2: /pending slash — _render_list + _render_needs_attention pure helper contracts.
+"""Tier 2: /pending slash — _render_list pure helper contract.
 
-Both are pure formatting functions used by /pending list output.  They accept both
-dataclass-style objects (via getattr) and dict-shaped values, and the singular/plural
+Pure formatting function used by /pending list output. Accepts both
+dataclass-style objects (via getattr) and dict-shaped values; singular/plural
 and truncation behaviours need independent pinning.
 """
 from __future__ import annotations
 
 from types import SimpleNamespace
 
-from reyn.interfaces.slash.pending import _render_list, _render_needs_attention
+from reyn.interfaces.slash.pending import _render_list
 
 # ── helpers ────────────────────────────────────────────────────────────────
 
@@ -90,37 +90,3 @@ def test_render_list_accepts_dict_shaped_ops() -> None:
     assert "dict op" in out
 
 
-# ── _render_needs_attention ────────────────────────────────────────────────
-
-
-def test_render_needs_attention_empty_summary_returns_empty() -> None:
-    """Tier 2: summary with no stuck_skills → '' (caller skips append)."""
-    assert _render_needs_attention({}) == ""
-    assert _render_needs_attention({"stuck_skills": []}) == ""
-
-
-def test_render_needs_attention_shows_stuck_skill() -> None:
-    """Tier 2: stuck skill entry surfaces skill_name, stuck_at, and run_id."""
-    summary = {
-        "stuck_skills": [
-            {"skill_name": "planner", "run_id": "run-abc", "stuck_at": "phase_a"},
-        ]
-    }
-    out = _render_needs_attention(summary)
-    assert "needs attention" in out
-    assert "planner" in out
-    assert "phase_a" in out
-    assert "run-abc" in out
-
-
-def test_render_needs_attention_multiple_stuck_skills() -> None:
-    """Tier 2: multiple stuck skills all appear in output."""
-    summary = {
-        "stuck_skills": [
-            {"skill_name": "skill_a", "run_id": "r1", "stuck_at": "p1"},
-            {"skill_name": "skill_b", "run_id": "r2", "stuck_at": "p2"},
-        ]
-    }
-    out = _render_needs_attention(summary)
-    assert "skill_a" in out
-    assert "skill_b" in out

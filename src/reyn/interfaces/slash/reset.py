@@ -23,25 +23,6 @@ from __future__ import annotations
 from reyn.interfaces.slash import reply, reply_error, slash
 
 
-def _format_currently_line(session: "object") -> str:
-    """Build the 'Currently: N skills, M plans' context line.
-
-    Reads from ``session.current_state_summary()`` when available.
-    Returns an empty string when the session is not a full Session
-    (e.g. test stubs that don't expose the method).
-    """
-    summary_fn = getattr(session, "current_state_summary", None)
-    if not callable(summary_fn):
-        return ""
-    try:
-        s = summary_fn()
-    except Exception:  # noqa: BLE001 — best-effort
-        return ""
-    n_skills = s.get("running_skills", 0)
-    skill_word = "skill" if n_skills == 1 else "skills"
-    return f"Currently: {n_skills} {skill_word} running."
-
-
 @slash(
     "reset",
     summary="Reset in-flight skill state (snapshots + WAL; audit logs preserved)",
@@ -51,11 +32,8 @@ def _format_currently_line(session: "object") -> str:
 async def reset_cmd(session: "object", args: str) -> None:
     token = args.strip().lower()
     if token != "confirm":
-        currently = _format_currently_line(session)
-        preamble = f"{currently}\n" if currently else ""
         await reply(
             session,
-            f"{preamble}"
             "⚠ This will delete all in-flight skill state "
             "(snapshots + WAL). Audit logs are preserved.\n"
             "Type `/reset confirm` to proceed, or anything else to abort.\n"

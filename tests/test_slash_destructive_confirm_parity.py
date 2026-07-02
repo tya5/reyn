@@ -1,18 +1,15 @@
-"""Tier 2: destructive slash commands require 2-step confirm (Wave-13 B#2).
+"""Tier 2: destructive slash commands require 2-step confirm.
 
-/cancel and /pending discard now mirror /reset's pattern:
+/pending discard mirrors /reset's pattern:
   - First invocation (no "confirm" suffix) → warning + hint; action NOT taken.
   - Second invocation (same args + " confirm") → action proceeds.
 
 This prevents a misclick on a Tab-completed prefix from immediately
-aborting a skill or intervention.
+discarding an intervention.
 
 Pinned per task spec:
-  1. /cancel <id> (no confirm) → outbox carries warning + "confirm" hint;
-     task.cancel() NOT called.
-  2. /cancel <id> confirm → task.cancel() called.
-  3. /pending discard <id> (no confirm) → warning; API NOT called.
-  4. /pending discard <id> confirm → API called.
+  1. /pending discard <id> (no confirm) → warning; API NOT called.
+  2. /pending discard <id> confirm → API called.
 """
 from __future__ import annotations
 
@@ -30,98 +27,12 @@ if str(_SRC) not in sys.path:
 from reyn.interfaces.slash import REGISTRY
 from reyn.runtime.outbox import OutboxMessage
 
-# ── /cancel stubs ─────────────────────────────────────────────────────────
-
-
-class _CancelTask:
-    """Minimal asyncio.Task stand-in that records cancel() calls."""
-
-    def __init__(self):
-        self._cancelled = False
-
-    @property
-    def cancelled(self) -> bool:
-        """Public read: True after cancel() has been called."""
-        return self._cancelled
-
-    def cancel(self):
-        self._cancelled = True
-
-    def done(self):
-        return False
-
-
-class _CancelSession:
-    """Stub session for /cancel tests."""
-
-    def __init__(self, rid: str):
-        self._rid = rid
-        self.task = _CancelTask()
-        self.running_skills = {rid: self.task}
-        self.running_skills_started_at = {}
-        self.outbox_messages: list[OutboxMessage] = []
-
-    async def _put_outbox(self, msg: OutboxMessage) -> None:
-        self.outbox_messages.append(msg)
-
-    def _resolve_run_id(self, prefix: str):
-        """Return (rid, []) when prefix matches, else (None, [])."""
-        matches = [r for r in self.running_skills if r.startswith(prefix)]
-        if len(matches) == 1:
-            return matches[0], []
-        if len(matches) > 1:
-            return None, matches
-        return None, []
-
 
 def _get_cmd(name: str):
     cmd = REGISTRY.get(name)
     assert cmd is not None, f"/{name} must be registered"
     return cmd
 
-
-# ── Test 1: /cancel <id> (no confirm) → warning; task NOT cancelled ───────
-
-
-@pytest.mark.asyncio
-async def test_cancel_no_confirm_shows_warning_not_cancelled() -> None:
-    """Tier 2: /cancel <id> without confirm emits warning; task.cancel() NOT called."""
-    rid = "20250101_my_skill_abcd"
-    sess = _CancelSession(rid)
-    cmd = _get_cmd("cancel")
-    await cmd.handler(sess, rid)
-
-    # task must NOT be cancelled
-    assert not sess.task.cancelled
-
-    # outbox must contain a system warning with "confirm" hint
-    warn_msgs = [m for m in sess.outbox_messages if m.kind == "system"]
-    assert warn_msgs, (
-        f"expected at least one warning system message, got none: "
-        f"{[m.text for m in sess.outbox_messages]}"
-    )
-    assert "confirm" in warn_msgs[0].text
-    assert rid in warn_msgs[0].text or "abcd" in warn_msgs[0].text
-
-
-# ── Test 2: /cancel <id> confirm → task.cancel() called ──────────────────
-
-
-@pytest.mark.asyncio
-async def test_cancel_with_confirm_cancels_task() -> None:
-    """Tier 2: /cancel <id> confirm calls task.cancel()."""
-    rid = "20250101_my_skill_abcd"
-    sess = _CancelSession(rid)
-    cmd = _get_cmd("cancel")
-    await cmd.handler(sess, f"{rid} confirm")
-
-    assert sess.task.cancelled
-
-    # outbox must carry the cancel-requested system message
-    system_msgs = [m for m in sess.outbox_messages if m.kind == "system"]
-    assert any("cancel" in m.text.lower() for m in system_msgs), (
-        f"expected 'cancel' in system outbox, got: {[m.text for m in system_msgs]}"
-    )
 
 # ── /pending discard stubs and tests ─────────────────────────────────────
 

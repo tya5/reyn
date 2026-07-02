@@ -1,45 +1,18 @@
-"""/list, /cancel, /answer slash commands.
-
-Migrated out of ``session.py`` per the cli-redesign plan (`docs/deep-dives/
-contributing/cli-redesign.md`). Helpers ``_run_short`` / ``_run_meta``
-remain in ``session`` as module-level utilities (used by other call sites
-too); we import them here.
-"""
+"""/list, /answer slash commands."""
 from __future__ import annotations
 
-import time
 from typing import TYPE_CHECKING
 
 from reyn.interfaces.slash import reply, reply_error, slash
-from reyn.runtime.outbox import OutboxMessage
-from reyn.runtime.session import _run_meta, _run_short
 
 if TYPE_CHECKING:
     from reyn.runtime.session import Session
 
 
-@slash("list", summary="List running skills and pending interventions")
+@slash("list", summary="List pending interventions")
 async def list_cmd(session: "Session", args: str) -> None:
-    """``/list`` — show running skill tasks + pending interventions."""
-    now = time.monotonic()
-    lines: list[str] = []
-    if session.running_skills:
-        lines.append("running skills:")
-        for rid in session.running_skills:
-            started = session.running_skills_started_at.get(rid)
-            elapsed = f"{int(now - started)}s" if started is not None else "?s"
-            # Recover skill_name from the run_id format
-            # ``TIMESTAMP_<skill>_<short>`` — split between first and last
-            # underscore.
-            short = _run_short(rid)
-            trimmed = rid[: -len(short) - 1] if short else rid  # drop "_abcd"
-            # trimmed = "TIMESTAMP_skill_name"; drop the leading TIMESTAMP_
-            _, _, skill_part = trimmed.partition("_")
-            lines.append(
-                f"  {short}  {skill_part:<24} {elapsed:>5}  (run_id={rid})"
-            )
-    else:
-        lines.append("running skills: (none)")
+    """``/list`` — show pending interventions."""
+    lines: list[str] = ["running skills: (none)"]
     active_ivs = session._interventions.list_active()
     if active_ivs:
         lines.append("pending interventions:")
@@ -50,94 +23,6 @@ async def list_cmd(session: "Session", args: str) -> None:
                 f"{iv.skill_name or '?'}#{short}"
             )
     await reply(session, "\n".join(lines))
-
-
-def _running_run_id_completer(
-    session: "object", arg_partial: str = "",
-) -> list[str]:
-    """Wave-11 C#3 — completer for /cancel <id-prefix>.
-
-    Surfaces running ``run_id`` keys from ``session.running_skills``
-    so the user can Tab through them in the picker hint instead of
-    eye-balling them from ``/list`` output. Defensive: empty list
-    on any access failure (= test stubs / pre-init session) so a
-    broken completer can't break the picker.
-    """
-    try:
-        running = list(getattr(session, "running_skills", {}).keys())
-    except Exception:
-        return []
-    if not arg_partial:
-        return running
-    last_word = arg_partial.rsplit(" ", 1)[-1] if " " in arg_partial else arg_partial
-    return [rid for rid in running if rid.startswith(last_word)]
-
-
-@slash(
-    "cancel",
-    summary="Cancel a running skill",
-    usage="/cancel <id-prefix> [confirm]",
-    completer=_running_run_id_completer,
-)
-async def cancel_cmd(session: "Session", args: str) -> None:
-    """``/cancel <id-prefix>`` — cancel a running skill task (2-step confirm).
-
-    First invocation prints a warning and asks the user to re-type with
-    ``confirm`` appended.  Second invocation (``/cancel <id-prefix> confirm``)
-    executes the cancellation.  Mirrors ``/reset``'s 2-step pattern so a
-    Tab-completed prefix can't accidentally abort the wrong skill on first
-    press (Wave-13 B#2).
-    """
-    stripped = args.strip()
-    # Detect "confirm" suffix (case-insensitive, space-separated).
-    if stripped.lower().endswith(" confirm"):
-        prefix = stripped[: -len(" confirm")].strip()
-        _do_confirm = True
-    else:
-        prefix = stripped
-        _do_confirm = False
-
-    if not prefix:
-        await reply_error(session, "usage: /cancel <id-prefix>")
-        return
-    rid, candidates = session._resolve_run_id(prefix)
-    if rid is None:
-        if not candidates:
-            await reply_error(session, f"no running skill matches {prefix!r}")
-        else:
-            matches = ", ".join(_run_short(c) for c in candidates)
-            await reply_error(
-                session,
-                f"ambiguous prefix {prefix!r}; matches: {matches}",
-            )
-        return
-    task = session.running_skills.get(rid)
-    if task is None or task.done():
-        await reply(session, f"skill {_run_short(rid)} already finished")
-        return
-
-    if not _do_confirm:
-        # First invocation — show warning, require explicit confirm.
-        short = _run_short(rid)
-        # Recover skill_name from run_id for the warning context line.
-        trimmed = rid[: -len(short) - 1] if short else rid
-        _, _, skill_part = trimmed.partition("_")
-        await reply(
-            session,
-            f"⚠ About to cancel: {skill_part} #{short}\n"
-            f"Type `/cancel {prefix} confirm` to abort the skill, "
-            "or anything else to leave it running.",
-        )
-        return
-
-    task.cancel()
-    # Preserve the per-run meta on the cancel-requested system message so
-    # the TUI's skill-activity row can match against it.
-    await session._put_outbox(OutboxMessage(
-        kind="system",
-        text="cancel requested",
-        meta=_run_meta(rid, None),
-    ))
 
 
 def _intervention_id_completer(

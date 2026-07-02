@@ -1,17 +1,7 @@
-"""Tier 2: /pending list needs-attention + /reset confirm preview.
+"""Tier 2: /pending list — needs-attention gate.
 
 Pinned:
-  1. /pending list with 0 interrupted plans + 0 stuck skills
-     → no "needs attention" section in output.
-  2. /pending list with 1 interrupted plan → output contains "interrupted".
-  3. /pending list with 1 stuck skill → output contains "stuck @".
-  4. /reset (no arg, no state) → confirm output contains "Currently:" with
-     "0 skills" and "0 plans".
-  5. /reset (no arg, with state: 2 skills, 1 plan) → output
-     contains "2 skills" and "1 plan".
-
-Note: error_box_count was removed from the state summary in the inline
-scroll-away refactor (errors are now plain log lines, not persistent widgets).
+  1. /pending list with no stuck/pending items → no "needs attention" section.
 
 Policy compliance:
   - No MagicMock / AsyncMock / patch — stub session pattern only.
@@ -34,17 +24,13 @@ from reyn.runtime.outbox import OutboxMessage  # noqa: E402
 
 
 class _StubSession:
-    """Minimal session stub supporting /pending list and /reset confirm preview."""
+    """Minimal session stub supporting /pending list."""
 
     def __init__(
         self,
         *,
-        stuck_skills: list[dict] | None = None,
-        running_skills: int = 0,
         pending_ops: list | None = None,
     ) -> None:
-        self._stuck_skills = stuck_skills or []
-        self._running_skills = running_skills
         self._pending_ops = pending_ops or []
         self.outbox_messages: list[OutboxMessage] = []
 
@@ -53,12 +39,6 @@ class _StubSession:
 
     def list_stalled_interventions(self) -> list:
         return list(self._pending_ops)
-
-    def current_state_summary(self) -> dict:
-        return {
-            "running_skills": self._running_skills,
-            "stuck_skills": list(self._stuck_skills),
-        }
 
     def captured_text(self) -> str:
         """Concatenate all outbox message texts for assertion convenience."""
@@ -73,9 +53,7 @@ def test_pending_list_no_attention_when_clean() -> None:
     from reyn.interfaces.slash import REGISTRY  # noqa: F401 — triggers registration
     from reyn.interfaces.slash.pending import pending_cmd
 
-    session = _StubSession(
-        stuck_skills=[],
-    )
+    session = _StubSession()
     asyncio.run(pending_cmd(session, "list"))
 
     text = session.captured_text()
@@ -84,62 +62,3 @@ def test_pending_list_no_attention_when_clean() -> None:
     )
 
 
-def test_pending_list_shows_stuck_skill() -> None:
-    """Tier 2: /pending list with 1 stuck skill → output contains 'stuck @'."""
-    from reyn.interfaces.slash import REGISTRY  # noqa: F401
-    from reyn.interfaces.slash.pending import pending_cmd
-
-    session = _StubSession(
-        stuck_skills=[{
-            "skill_name": "foo",
-            "run_id": "abcdefgh",
-            "stuck_at": "llm_called",
-        }],
-    )
-    asyncio.run(pending_cmd(session, "list"))
-
-    text = session.captured_text()
-    assert "needs attention" in text, (
-        f"Expected 'needs attention' in output, got: {text!r}"
-    )
-    assert "stuck @" in text, (
-        f"Expected 'stuck @' in output, got: {text!r}"
-    )
-
-
-# ── /reset confirm preview tests ─────────────────────────────────────────
-
-
-def test_reset_no_arg_no_state_shows_currently_zero() -> None:
-    """Tier 2: /reset (no arg, no state) → contains 'Currently:' with zeros."""
-    from reyn.interfaces.slash import REGISTRY  # noqa: F401
-    from reyn.interfaces.slash.reset import reset_cmd
-
-    session = _StubSession(
-        running_skills=0,
-    )
-    asyncio.run(reset_cmd(session, ""))
-
-    text = session.captured_text()
-    assert "Currently:" in text, (
-        f"Expected 'Currently:' in /reset prompt, got: {text!r}"
-    )
-    assert "0 skills" in text, (
-        f"Expected '0 skills' in /reset prompt, got: {text!r}"
-    )
-
-
-def test_reset_no_arg_with_state_shows_counts() -> None:
-    """Tier 2: /reset (no arg, 2 skills) → output contains counts."""
-    from reyn.interfaces.slash import REGISTRY  # noqa: F401
-    from reyn.interfaces.slash.reset import reset_cmd
-
-    session = _StubSession(
-        running_skills=2,
-    )
-    asyncio.run(reset_cmd(session, ""))
-
-    text = session.captured_text()
-    assert "2 skills" in text, (
-        f"Expected '2 skills' in /reset prompt, got: {text!r}"
-    )

@@ -1,6 +1,5 @@
-"""Tier 2: /reset slash — _format_currently_line helper + handler paths.
+"""Tier 2: /reset slash — handler paths.
 
-`_format_currently_line` builds a context line from `session.current_state_summary()`.
 `reset_cmd` has four paths: no-confirm warning, confirm+no-registry error,
 confirm+no-project-root error, confirm+valid-state success.
 """
@@ -10,17 +9,15 @@ from pathlib import Path
 
 import pytest
 
-from reyn.interfaces.slash.reset import _format_currently_line, reset_cmd
+from reyn.interfaces.slash.reset import reset_cmd
 from reyn.runtime.outbox import OutboxMessage
 
 # ── stubs ──────────────────────────────────────────────────────────────────
 
 
 class _FakeSession:
-    def __init__(self, *, registry=None, summary_fn=None) -> None:
+    def __init__(self, *, registry=None) -> None:
         self._registry = registry
-        if summary_fn is not None:
-            self.current_state_summary = summary_fn
         self._outbox: list[OutboxMessage] = []
 
     async def _put_outbox(self, msg: OutboxMessage) -> None:
@@ -36,47 +33,6 @@ class _FakeSession:
 class _FakeRegistry:
     def __init__(self, *, project_root=None) -> None:
         self._project_root = project_root
-
-
-# ── _format_currently_line pure helper ────────────────────────────────────
-
-
-def test_format_currently_no_summary_method_returns_empty() -> None:
-    """Tier 2: session without current_state_summary → empty string."""
-    session = object()  # no current_state_summary
-    assert _format_currently_line(session) == ""
-
-
-def test_format_currently_zero_skills() -> None:
-    """Tier 2: zero running skills → 'Currently: 0 skills running.'"""
-    session = _FakeSession(summary_fn=lambda: {"running_skills": 0})
-    out = _format_currently_line(session)
-    assert "Currently:" in out
-    assert "0 skills running" in out
-
-
-def test_format_currently_one_skill_singular() -> None:
-    """Tier 2: exactly 1 running skill uses singular 'skill' not 'skills'."""
-    session = _FakeSession(summary_fn=lambda: {"running_skills": 1})
-    out = _format_currently_line(session)
-    assert "1 skill running" in out
-    assert "skills" not in out
-
-
-def test_format_currently_multiple_skills_plural() -> None:
-    """Tier 2: 3 running skills uses plural 'skills'."""
-    session = _FakeSession(summary_fn=lambda: {"running_skills": 3})
-    out = _format_currently_line(session)
-    assert "3 skills running" in out
-
-
-def test_format_currently_summary_raises_returns_empty() -> None:
-    """Tier 2: if current_state_summary raises, _format_currently_line returns '' (best-effort)."""
-    def _bad():
-        raise RuntimeError("state unavailable")
-
-    session = _FakeSession(summary_fn=_bad)
-    assert _format_currently_line(session) == ""
 
 
 # ── reset_cmd handler paths ────────────────────────────────────────────────
