@@ -31,6 +31,13 @@ class _FakeMCPClient:
     async def initialize(self) -> None:
         pass
 
+    async def __aenter__(self):
+        # #a359 P1: mirror the real MCPClient's async-CM protocol (probe now uses `async with`).
+        return self
+
+    async def __aexit__(self, *exc_info) -> None:
+        await self.close()
+
     async def list_tools(self):
         return [{"name": "tool_a"}, {"name": "tool_b"}, {"error": "skip"}, {"no_name": 1}]
 

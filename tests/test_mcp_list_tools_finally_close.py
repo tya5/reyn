@@ -60,6 +60,13 @@ class _FakeMCPClient:
         self._raises = getattr(_FakeMCPClient, "_next_raises", True)
         _FakeMCPClient.instances.append(self)
 
+    async def __aenter__(self):
+        # #a359 P1: mirror the real MCPClient's async-CM protocol (callers now use `async with`).
+        return self
+
+    async def __aexit__(self, *exc_info):
+        await self.close()
+
     async def list_tools(self):
         self.list_task = asyncio.current_task()
         if self._raises:

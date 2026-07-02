@@ -5841,28 +5841,18 @@ class Session:
         if "type" not in expanded and expanded.get("url"):
             expanded = {**expanded, "type": "http"}
 
-        client = None
+        # #a359 P1: structured lifecycle — the client's whole life is one ``async with`` block in
+        # this task, so its SDK stdio_client / ClientSession internal task-group scopes are entered
+        # AND exited here. This supersedes A's (#2401) finally-close: even a same-task close via a
+        # deferred self._stack crosses the SDK's INTERNAL sub-task scope (the real cross-task crash);
+        # binding open+close in one async-with block restores the SDK's intended structured usage.
         try:
-            client = MCPClient(expanded, agent_id=self._agent_id)
-            return await client.list_tools()
+            async with MCPClient(expanded, agent_id=self._agent_id) as client:
+                return await client.list_tools()
         except MCPError as exc:
             return [{"error": str(exc)}]
         except Exception as exc:
             return [{"error": str(exc)}]
-        finally:
-            # Close in the SAME task that opened it, on EVERY exit path — success, MCPError,
-            # Exception, AND cancellation. The old code closed only after a successful list_tools(),
-            # so a raise (or cancel) leaked the anyio stdio_client cancel-scope → a later teardown in
-            # a different task raised "cancel scope crossed task boundary" (owner's list_mcp_tools
-            # crash). ``finally`` runs for BaseException (incl. CancelledError) too, which a trailing
-            # close after ``except Exception`` would miss. Best-effort (mirrors _mcp_call_tool).
-            if client is not None:
-                try:
-                    await client.close()
-                except Exception:  # noqa: BLE001 — best-effort teardown; original result stands
-                    logger.debug(
-                        "mcp client close failed in _mcp_list_tools", exc_info=True
-                    )
 
     async def _mcp_call_tool(self, server: str, tool: str, args: dict) -> dict:
         """Invoke an MCP tool and return its result.
