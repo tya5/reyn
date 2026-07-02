@@ -14,7 +14,7 @@ from types import SimpleNamespace
 import pytest
 
 from reyn.core.events.state_log import StateLog
-from reyn.interfaces.inline.app import _deliver_intervention_choice
+from reyn.interfaces.inline.app import _deliver_intervention_choice, _submit
 from reyn.interfaces.inline.intervention_region import (
     InterventionElement,
     build_intervention_element,
@@ -155,3 +155,70 @@ async def test_deliver_choice_no_echo_when_nothing_delivered() -> None:
     )
     await _deliver_intervention_choice(registry, "x", "lbl")
     assert queue.empty()
+
+
+@pytest.mark.asyncio
+async def test_answer_oldest_intervention_text_delivers_free_text(
+    tmp_path, monkeypatch,
+) -> None:
+    """Tier 2: ``answer_oldest_intervention_text`` delivers the verbatim text
+    to the head ask_user intervention and resolves its future.
+
+    RED-verify: if ``_submit`` skips the ``head.kind == "ask_user"`` check
+    and falls through to ``submit_user_text``, the intervention future is
+    never resolved and ``asyncio.wait_for`` times out.
+    """
+    monkeypatch.chdir(tmp_path)
+    session = Session(
+        agent_name="alpha",
+        state_log=StateLog(tmp_path / "state.wal"),
+        snapshot_path=tmp_path / "alpha_snapshot.json",
+    )
+    session.register_intervention_listener("test")
+    iv = UserIntervention(kind="ask_user", prompt="What is your name?")
+    iv.future = asyncio.get_running_loop().create_future()
+    task = asyncio.ensure_future(session._dispatch_intervention(iv))
+    for _ in range(200):
+        if session.interventions.list_active():
+            break
+        await asyncio.sleep(0.01)
+
+    delivered = await session.answer_oldest_intervention_text("Alice")
+    assert delivered is True
+    answer = await asyncio.wait_for(task, timeout=2.0)
+    assert answer.text == "Alice"
+
+
+@pytest.mark.asyncio
+async def test_submit_routes_to_intervention_bus_when_ask_user_pending() -> None:
+    """Tier 2: ``_submit`` routes free-text to ``answer_oldest_intervention_text``
+    (not ``submit_user_text``) when the head pending intervention is ask_user.
+
+    RED-verify: removing the ``head.kind == "ask_user"`` routing check would
+    call ``submit_user_text`` instead — this test fails in that case.
+    """
+    answered: list[str] = []
+    submitted: list[str] = []
+
+    class _StubIntervention:
+        kind = "ask_user"
+
+    class _StubInterventions:
+        def head(self):
+            return _StubIntervention()
+
+    class _StubSession:
+        interventions = _StubInterventions()
+
+        async def answer_oldest_intervention_text(self, text: str) -> bool:
+            answered.append(text)
+            return True
+
+        async def submit_user_text(self, text: str) -> None:
+            submitted.append(text)
+
+    registry = SimpleNamespace(attached_session=lambda: _StubSession())
+    await _submit(registry, "hello ask_user")
+
+    assert answered == ["hello ask_user"], "text must reach intervention bus"
+    assert submitted == [], "submit_user_text must NOT be called while ask_user pending"

@@ -948,6 +948,13 @@ async def _submit(registry, text: str) -> None:
     # field clear with no response — a silent failure. Contain it: log + surface a
     # visible error line via the outbox the output loop already drains.
     try:
+        # Route free-text input to a pending ask_user intervention rather than
+        # starting a new chat turn. Approval interventions (Python/HTTP) are
+        # handled by the region dropdown and never reach this path.
+        head = s.interventions.head()
+        if head is not None and head.kind == "ask_user":
+            await s.answer_oldest_intervention_text(text)
+            return
         await s.submit_user_text(text)
     except Exception:
         logger.exception("inline submit failed")
