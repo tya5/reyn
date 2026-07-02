@@ -230,7 +230,10 @@ async def _get_or_build_registry() -> "AgentRegistry":
                 non_interactive=False,  # #1439 Fix #1: interactive UI = byte-identical
                 environment_backend=None,
                 sandbox_backend=None,
-                workspace_base_dir=None,
+                # #2415 root 3: host workspace base_dir anchors on the project root (== the
+                # permission zone base), not cwd — else a subdir invocation splits the write-target
+                # base from the approval base. Mirrors build_environment_backend's host return.
+                workspace_base_dir=project_root,
                 workspace_state_dir=None,
             )
             s.load_history()

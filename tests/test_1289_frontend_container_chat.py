@@ -41,12 +41,23 @@ def test_register_env_backend_args_surface() -> None:
     assert ns2.repo_dir == "/repo" and ns2.keep_container is True
 
 
-def test_build_environment_backend_host_is_identity() -> None:
-    """Tier 2: env_backend=host → (None, None, None, None) = the HostBackend
-    identity path (no container, no cleanup) — frontends stay byte-identical
-    unless --env-backend=docker is passed."""
-    ns = argparse.Namespace(env_backend="host")
-    assert build_environment_backend(ns) == (None, None, None, None)
+def test_build_environment_backend_host_is_identity(tmp_path, monkeypatch) -> None:
+    """Tier 2: env_backend=host → HostBackend identity for the backend/state/cleanup slots (None,
+    no container, no cleanup), but the workspace base_dir slot anchors on the PROJECT ROOT (#2415
+    root 3), NOT cwd — so the FS base matches the permission-zone base and a subdir invocation's
+    writes both land and are permitted under the project. (Was (None, None, None, None).)"""
+    project_root = tmp_path / "proj"
+    project_root.mkdir()
+    (project_root / "reyn.yaml").write_text("model: stub/model\n", encoding="utf-8")
+    subdir = project_root / "docs"
+    subdir.mkdir()
+    monkeypatch.chdir(subdir)
+
+    backend, ws_base_dir, ws_state_dir, cleanup = build_environment_backend(
+        argparse.Namespace(env_backend="host")
+    )
+    assert (backend, ws_state_dir, cleanup) == (None, None, None), "HostBackend identity (no container)"
+    assert ws_base_dir == project_root, "host workspace base_dir anchors on project_root, not the cwd subdir"
 
 
 def test_frontend_contract_same_instance_reaches_both_seams(tmp_path: Path) -> None:
