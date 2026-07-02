@@ -998,13 +998,24 @@ def _probe_status(name: str, cfg: dict) -> str:
     from reyn.llm.llm import run_async as _run_async
 
     async def _handshake() -> str:
+        # MCPClient takes ONE positional ``config: dict`` (no async-CM protocol). The old
+        # ``MCPClient(name, cfg)`` + ``async with client`` passed the name as config → ValueError,
+        # reported as a bogus "error: ..." status for every server. Correct: construct with cfg,
+        # ``initialize()`` (the handshake the async-with was meant to do), close in the same task.
+        from reyn.mcp.client import MCPClient
+        client = None
         try:
-            from reyn.mcp.client import MCPClient
-            client = MCPClient(name, cfg)
-            async with client:
-                return "ready"
+            client = MCPClient(cfg)
+            await client.initialize()
+            return "ready"
         except Exception as exc:
             return f"error: {exc}"
+        finally:
+            if client is not None:
+                try:
+                    await client.close()
+                except Exception:  # noqa: BLE001 — best-effort teardown
+                    pass
 
     try:
         return _run_async(_handshake())
@@ -1248,14 +1259,27 @@ async def _probe_server_tools(
 
     from reyn.mcp.client import MCPClient
 
+    # MCPClient has NO async-context-manager protocol and takes ONE positional ``config: dict``
+    # (agent_id is keyword-only). The old ``async with MCPClient(server_name, cfg)`` passed the
+    # server NAME as ``config`` → ValueError, swallowed by the bare except → EVERY probe returned an
+    # empty tool list (installed servers showed no tools = the hot-reload gap). Correct: construct
+    # with the cfg dict, ``list_tools()`` (which auto-initializes), and close in ``finally`` in this
+    # same task (the anyio cancel-scope is task-affine — same discipline as _mcp_list_tools).
+    client = None
     try:
         async with asyncio.timeout(per_server_timeout):
-            async with MCPClient(server_name, cfg) as client:
-                raw = await client.list_tools()
+            client = MCPClient(cfg)
+            raw = await client.list_tools()
     except (TimeoutError, asyncio.TimeoutError):
         return server_name, []
     except Exception:  # noqa: BLE001
         return server_name, []
+    finally:
+        if client is not None:
+            try:
+                await client.close()
+            except Exception:  # noqa: BLE001 — best-effort teardown
+                pass
     cleaned = [
         t for t in (raw or [])
         if isinstance(t, dict) and "error" not in t and t.get("name")
