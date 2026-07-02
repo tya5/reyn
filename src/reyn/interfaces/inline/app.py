@@ -121,11 +121,12 @@ def _cost_expansion(snap, dispatch):
     def lines():
         p, c, t = snap["usage"]
         session = snap["cost_usd"]
+        agent_t = snap.get("agent_tokens", t)
         return [
             f"total    ${snap.get('cost_total', session):.4f}",
             f"agent    ${snap.get('cost_agent', session):.4f}",
             f"session  ${session:.4f}",
-            f"tokens   prompt {p} · completion {c} · total {t}",
+            f"tokens   prompt {p} · completion {c} · total {agent_t}",
         ]
     return DetailElement(lines)
 
@@ -297,7 +298,7 @@ def _more_expansion(snap, dispatch):
 _CHIP_SPECS = [
     ChipSpec("model", "model", lambda s: str(s["model"]), _model_expansion,
              value_color=_CC_ACCENT),
-    ChipSpec("cost",  "cost",  lambda s: f"${s['cost_usd']:.4f}", _cost_expansion,
+    ChipSpec("cost",  "cost",  lambda s: f"${s['cost_agent']:.4f}", _cost_expansion,
              value_color=_CC_DONE),
     ChipSpec("agent", "agent", lambda s: str(s["attached_name"] or "—"), _agent_expansion,
              value_color=_CC_COOL),
@@ -467,6 +468,12 @@ def _snapshot(registry, task_cache=None, config=None):
         registry.agent_cost_usd(registry.attached_name)
         if registry.attached_name else s.total_cost_usd
     )
+    _agent_tokens_fn = getattr(registry, "agent_tokens", None)
+    agent_tokens = (
+        _agent_tokens_fn(registry.attached_name)
+        if _agent_tokens_fn is not None and registry.attached_name
+        else u.total_tokens
+    )
     return {
         "model": s.model,
         "model_active_class": s.active_model_class(),
@@ -479,6 +486,7 @@ def _snapshot(registry, task_cache=None, config=None):
         "cost_usd": s.total_cost_usd,
         "cost_total": cost_total,
         "cost_agent": cost_agent,
+        "agent_tokens": agent_tokens,
         "task_count": task_cache["count"] if task_cache else 0,
         "task_tree": task_cache["tree"] if task_cache else [],
         "cron_jobs": _extract_cron_jobs(config) if config is not None else [],

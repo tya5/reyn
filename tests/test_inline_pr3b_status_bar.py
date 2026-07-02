@@ -34,6 +34,8 @@ def _snap(**over):
         "skill_run_ids": [],
         "usage": (0, 0, 0),
         "cost_usd": 0.0,
+        "cost_agent": 0.0,
+        "agent_tokens": 0,
         "task_count": 0,
         "task_tree": [],
         "cron_jobs": [],
@@ -74,11 +76,20 @@ def test_model_chip_value_returns_model_name() -> None:
 
 
 def test_cost_chip_value_returns_formatted_dollars() -> None:
-    """Tier 2: the cost chip's value() returns a dollar-formatted string."""
+    """Tier 2: cost chip reads the durable per-agent cost (cost_agent), not the
+    per-session cost_usd that resets on restart."""
     spec = next(s for s in _CHIP_SPECS if s.key == "cost")
-    result = spec.value(_snap(cost_usd=0.0123))
+    result = spec.value(_snap(cost_agent=0.0123))
     assert result.startswith("$")
     assert "0123" in result or "0.0123" in result
+
+
+def test_cost_chip_reads_agent_cost_not_session_cost() -> None:
+    """Tier 2: cost chip shows cost_agent (durable, restart-surviving) even when
+    cost_usd (per-session) differs — fixes the cost-reset-on-restart bug."""
+    spec = next(s for s in _CHIP_SPECS if s.key == "cost")
+    snap = _snap(cost_usd=0.0, cost_agent=0.0500)
+    assert "$0.0500" in spec.value(snap)
 
 
 def test_agent_chip_value_returns_attached_name() -> None:
@@ -394,7 +405,7 @@ def test_cost_expansion_is_detail_element() -> None:
 
 def test_cost_expansion_shows_total_cost_and_token_breakdown() -> None:
     """Tier 2: cost expansion lines contain a total cost line and a token line."""
-    snap = _snap(cost_usd=0.0123, usage=(200, 9, 209))
+    snap = _snap(cost_usd=0.0123, usage=(200, 9, 209), agent_tokens=209)
     el = _cost_expansion(snap, lambda _: None)
     lines = el.lines()
     joined = " ".join(lines)
@@ -402,6 +413,26 @@ def test_cost_expansion_shows_total_cost_and_token_breakdown() -> None:
     assert "prompt 200" in joined
     assert "completion 9" in joined
     assert "total 209" in joined
+
+
+def test_cost_expansion_tokens_line_uses_agent_tokens_when_present() -> None:
+    """Tier 2: when agent_tokens is in the snapshot (durable per-agent total from
+    registry.agent_tokens), the tokens line shows it instead of the session total —
+    so the count survives restart."""
+    snap = _snap(usage=(200, 9, 209), agent_tokens=1500)
+    lines = _cost_expansion(snap, lambda _: None).lines()
+    joined = " ".join(lines)
+    assert "total 1500" in joined
+    assert "total 209" not in joined
+
+
+def test_cost_expansion_tokens_fallback_to_session_total_when_absent() -> None:
+    """Tier 2: when agent_tokens is absent (e2e backend not yet landed), the tokens
+    line falls back to the session total so nothing breaks pre-landing."""
+    snap = _snap(usage=(200, 9, 209))
+    snap.pop("agent_tokens", None)
+    lines = _cost_expansion(snap, lambda _: None).lines()
+    assert "total 209" in " ".join(lines)
 
 
 def test_cost_expansion_breaks_down_total_agent_session() -> None:
