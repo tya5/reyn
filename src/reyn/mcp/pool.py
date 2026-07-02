@@ -81,6 +81,33 @@ def is_or_contains_control_flow(exc: BaseException) -> bool:
     return False
 
 
+def is_real_control_flow(exc: BaseException) -> bool:
+    """True if ``exc`` is GENUINE control flow that must propagate — the seam re-raises only these
+    and contains everything else (transport faults, groups, spurious internal cancels).
+
+    Refines :func:`is_or_contains_control_flow` for the MCP gateway boundary: ``KeyboardInterrupt`` /
+    ``SystemExit`` always propagate; a ``CancelledError`` propagates ONLY when THIS task is genuinely
+    being cancelled (``asyncio.current_task().cancelling() > 0``). A ``CancelledError`` raised by an
+    SDK-internal task group folding a faulted sibling (subprocess death) — while our own task is NOT
+    cancelled — is *spurious*: it must be contained along with the transport fault, not propagated
+    (propagating it is the crash). Groups: propagate if they carry ``KeyboardInterrupt`` /
+    ``SystemExit``, or carry a ``CancelledError`` while our task is genuinely cancelling; otherwise
+    contain (cancel-mixed teardown groups from a dead subprocess are contained)."""
+    if isinstance(exc, (KeyboardInterrupt, SystemExit)):
+        return True
+    t = asyncio.current_task()
+    real_cancel = t is not None and t.cancelling() > 0
+    if isinstance(exc, asyncio.CancelledError):
+        return real_cancel
+    if isinstance(exc, BaseExceptionGroup):
+        ki_se, _rest = exc.split((KeyboardInterrupt, SystemExit))
+        if ki_se is not None:
+            return True
+        cancels, _rest2 = exc.split(asyncio.CancelledError)
+        return cancels is not None and real_cancel
+    return False
+
+
 class MCPClientPool:
     """Structured, task-affine cache of MCP clients for one run/turn.
 
@@ -143,11 +170,14 @@ class MCPClientPool:
                     "a359-diag: closed MCP client server=%s open_task=%s close_task=%s outcome=ok",
                     name, open_tasks.get(name), _close_task,
                 )
-            except BaseException as exc:  # noqa: BLE001 — fault isolation (control flow re-raised)
+            except BaseException as exc:  # noqa: BLE001 — fault isolation (real control flow re-raised)
                 _diag_log.info(
                     "a359-diag: MCP client server=%s open_task=%s close_task=%s teardown-fault=%r",
                     name, open_tasks.get(name), _close_task, exc,
                 )
-                if is_or_contains_control_flow(exc):
+                # #2421 seam: re-raise only GENUINE control flow. A cancel-mixed teardown group from a
+                # dead subprocess (our task NOT cancelled) is spurious → contained, not propagated
+                # (propagating it is the crash `is_or_contains_control_flow` did not prevent).
+                if is_real_control_flow(exc):
                     raise
                 logger.warning("MCP client %s teardown fault contained: %r", name, exc)
