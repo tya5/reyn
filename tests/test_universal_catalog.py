@@ -1,7 +1,7 @@
 """Tier 2: FP-0034 PR-1 universal_catalog foundation contract.
 
 Tests for ``src/reyn/tools/universal_catalog.py`` covering:
-  1. CATEGORIES taxonomy (13 entries, ordered per §D18 master table).
+  1. CATEGORIES taxonomy (ordered per §D18 master table).
   2. Qualified-name parse / build / validate round-trip across
      flat (`skill`), single-dotted (`mcp.tool`), and dotted-with-
      dotted-entry (`mcp.tool__brave.search`) names.
@@ -62,7 +62,6 @@ def test_categories_master_table_order() -> None:
         "reyn_source",
         "rag_corpus",
         "rag_operation",
-        "validation",
         "exec",
         # #1953 dynamic-wire: task.* control-IR ops as invoke_action targets.
         "task",

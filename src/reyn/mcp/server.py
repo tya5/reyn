@@ -272,9 +272,9 @@ async def send_to_agent_impl(
     # path can auto-escalate to a Task envelope (= A2A spec-compliant
     # async response) when the timeout fires before quiescence. Empty
     # list when no skill is in flight (the common case).
-    # running_skills is populated by crash-recovery auto-resume
-    # (AutoResumeHandler.spawn_resumed_skill) — those runs are real
-    # background asyncio tasks that A2A callers must be able to observe.
+    # running_skills is populated by crash-recovery auto-resume —
+    # those runs are real background asyncio tasks that A2A callers
+    # must be able to observe.
     running_skill_run_ids: list[str] = []
     if not idle:
         running_skills_attr: dict = getattr(session, "running_skills", {})

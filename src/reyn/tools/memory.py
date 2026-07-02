@@ -13,7 +13,7 @@ were previously router-only; phase="allow" is registered as a metadata
 closure so the registry advertises memory write as phase-eligible.
 
 Status (post-FP-0039 audit, 2026-05-18): coarse-kind phase dispatch
-(= file / mcp / run_skill / shell / lint / ask_user / web_fetch /
+(= file / mcp / ask_user / web_fetch /
 web_search / mcp_install / recall / sandboxed_exec) is wired through
 ``invoke_tool(get_default_registry(), op.kind, ...)`` in
 ``ControlIRExecutor._invoker``.  The fine-grained memory names

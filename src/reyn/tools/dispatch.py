@@ -1,9 +1,8 @@
 """Dispatch helpers for the unified tool registry (ADR-0026 M1).
 
-The protocol-specific dispatchers (RouterLoop / ControlIRExecutor)
-each use these helpers to look up tools, build ToolContext, and
-invoke handlers consistently. M1 keeps dispatch shape minimal;
-M3 may extend as capability migrations surface needs.
+The RouterLoop dispatcher uses these helpers to look up tools, build
+ToolContext, and invoke handlers consistently. M1 keeps dispatch shape
+minimal; M3 may extend as capability migrations surface needs.
 """
 from __future__ import annotations
 

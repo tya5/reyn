@@ -271,7 +271,6 @@ from reyn.interfaces.slash import reload as _reload_mod  # noqa: E402, F401
 from reyn.interfaces.slash import reset as _reset_mod  # noqa: E402, F401
 from reyn.interfaces.slash import rewind as _rewind_mod  # noqa: E402, F401
 from reyn.interfaces.slash import session as _session_mod  # noqa: E402, F401
-from reyn.interfaces.slash import skills as _skills_mod  # noqa: E402, F401
 from reyn.interfaces.slash import tasks as _tasks_mod  # noqa: E402, F401
 from reyn.interfaces.slash import visibility as _visibility_mod  # noqa: E402, F401
 from reyn.interfaces.slash import zen as _zen_mod  # noqa: E402, F401

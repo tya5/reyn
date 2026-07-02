@@ -194,9 +194,6 @@ def build_universal_tool_use_slots(
             "- **rag_operation** — RAG management (multi-source recall, drop_source)."
         )
         _r2.append(
-            "- **validation** — DSL linting (lint a skill directory and report issues)."
-        )
-        _r2.append(
             "- **exec** — sandboxed argv execution (only when sandbox backend is enabled)."
         )
         _r2.append(

@@ -16,7 +16,6 @@ from reyn.schemas.models import (
     ContextFrame,
     ControlIROpSpec,
     ExecutionState,
-    Phase,
     PhaseConstraints,
 )
 from reyn.services.offload.store import offload_value
@@ -387,7 +386,7 @@ def maybe_ref_artifact(
 
 def build_frame(
     phase_name: str,
-    phase: Phase,
+    phase: Any,
     artifact: dict,
     candidates: list[CandidateOutput],
     output_language: str,

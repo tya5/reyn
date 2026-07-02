@@ -38,8 +38,6 @@ _OP_KIND_ALIASES: "dict[str, frozenset[str]]" = {
     "index_drop": frozenset({"rag_operation__drop_source"}),
     # exec (the dangerous one — both forms)
     "sandboxed_exec": frozenset({"exec__sandboxed_exec"}),
-    # validation
-    "lint": frozenset({"validation__lint"}),
     # mcp: the install surface is its OWN op kind (precisely gated); the generic
     # ``mcp`` op (call_tool / list / …) is gated on its kind name (per-verb deny
     # is a follow-up — the built-in untrusted profile denies install, not call).
@@ -49,8 +47,6 @@ _OP_KIND_ALIASES: "dict[str, frozenset[str]]" = {
     "mcp_drop_server": frozenset({"mcp__drop_server"}),
     "mcp": frozenset(),
     # control-IR-only ops with no distinct chat-tool qualified name → kind only.
-    "run_skill": frozenset(),
-    "skill_resolve": frozenset(),
     "judge_output": frozenset(),
     "compact": frozenset(),
     "ask_user": frozenset(),

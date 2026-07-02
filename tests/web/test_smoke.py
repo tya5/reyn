@@ -48,7 +48,6 @@ def test_routers_mounted() -> None:
     routes = {r.path for r in app.routes}
     # Basic sanity: key prefixes exist
     assert any("/api/agents" in r for r in routes), f"No /api/agents route in {routes}"
-    assert any("/api/skills" in r for r in routes), f"No /api/skills route in {routes}"
     assert any("/api/runs" in r for r in routes), f"No /api/runs route in {routes}"
     assert any("/health" in r for r in routes), f"No /health route in {routes}"
     assert any("/ws/chat/" in r for r in routes), f"No /ws/chat/ route in {routes}"

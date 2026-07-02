@@ -31,9 +31,7 @@ _SRC = pathlib.Path(__file__).resolve().parents[1] / "src" / "reyn"
 # Parent-propagation exemptions (paths relative to src/reyn). These construct an
 # Agent from an already-wired parent context, not a fresh config — from_config
 # (config → bundle) does not apply to them.
-_EXEMPT = {
-    "skill/sub_skill_runner.py",
-}
+_EXEMPT: set[str] = set()
 
 
 def _bare_agent_constructions() -> list[tuple[str, int]]:

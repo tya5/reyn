@@ -1,5 +1,4 @@
 """Service classes extracted from Session (waves 1, 2, and 3)."""
-from reyn.runtime.services.auto_resume_handler import AutoResumeHandler
 from reyn.runtime.services.budget_gateway import BudgetGateway
 from reyn.runtime.services.chain_manager import ChainManager, _PendingChain
 from reyn.runtime.services.compaction_controller import CompactionController
@@ -23,7 +22,6 @@ from reyn.services.compaction.engine import (
 __all__ = [
     "InterAgentMessaging",
     "ContextBudgetAdvisor",
-    "AutoResumeHandler",
     "BudgetGateway",
     "ChainManager",
     "ChatSummary",

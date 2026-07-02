@@ -66,8 +66,6 @@ _CATALOG = {
     "shell":    {"function": {"name": "shell"}},
     # world: step_completed only
     "web_fetch": {"function": {"name": "web_fetch"}},
-    # pure: no step events
-    "lint":     {"function": {"name": "lint"}},
 }
 
 
@@ -143,23 +141,6 @@ def test_world_op_emits_only_step_completed(tmp_path):
     assert result["status"] == "ok"
     assert _wal_kinds(log) == ["step_completed"]
 
-
-def test_pure_op_emits_no_step_events(tmp_path):
-    """Tier 2: pure op (lint) emits no step events — re-execution on resume is safe and cheap."""
-    log = StateLog(tmp_path / "wal.jsonl")
-
-    async def go():
-        ctx, _ = _make_ctx(state_log=log)
-        async def invoker(args):
-            return {"passed": True}
-        return await dispatch_tool(
-            name="lint", args={"skill_path": "x"},
-            ctx=ctx, invoker=invoker,
-            op_invocation_id="draft.0",
-        )
-
-    asyncio.run(go())
-    assert _wal_kinds(log) == []
 
 
 def test_step_failed_emitted_on_invoker_exception(tmp_path):

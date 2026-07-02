@@ -11,7 +11,7 @@ Field populate strategy:
     AGENTS            — AgentRegistry.list_names()  (live)
     RECAP             — empty list  (no run-to-recap adapter yet)
     QUICKSTARTS       — hardcoded sample set
-    LIBRARY           — skills router _search_roots() (live)
+    LIBRARY           — live filesystem reads
     CONVO_ARIA        — empty list
     CONVO_ARIA_STUDIO — empty list
     SKILL_GRAPH       — default empty graph

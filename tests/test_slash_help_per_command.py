@@ -71,9 +71,10 @@ def test_render_focus_without_usage_omits_usage_line() -> None:
     from reyn.interfaces.slash.help import _render_command_focus
 
     # /help itself does have usage now, so pick a no-usage command.
-    # (/expand was removed with the conversation-reply fold; use /skills.)
-    panel = _render_command_focus("skills")
-    assert "/skills" in panel
+    # (/expand was removed with the conversation-reply fold; /skills was removed
+    # with the skill/phase machinery; use /cost which is a no-arg command.)
+    panel = _render_command_focus("cost")
+    assert "/cost" in panel
     assert "summary:" in panel
     # No structured usage was set on /skills → no usage line.
     assert "usage:" not in panel.lower() or "usage:" in panel.lower().split("\n")[0]
