@@ -12,7 +12,6 @@ dispatch path and ``ChatInterventionBus`` both consult.
 """
 from __future__ import annotations
 
-import asyncio
 import logging
 from typing import TYPE_CHECKING, Callable
 
@@ -134,9 +133,6 @@ class InterventionCoordinator:
                 origin_channel_id=iv.origin_channel_id,
             )
             self._registry.park_stalled(iv)
-            try:
-                return await iv.future
-            except asyncio.CancelledError:
-                return InterventionAnswer(text="")
+            return await iv.future
         # Default: route through the regular InterventionHandler.
         return await self._handler.dispatch(iv)
