@@ -147,12 +147,10 @@ async def test_tasks_list_no_backend_falls_back_to_skill_only():
 
 
 @pytest.mark.asyncio
-async def test_tasks_list_shows_done_hides_soft_deleted():
-    """Tier 2: the Tasks section shows the full plan WITH status (#2036) — a
-    DONE task is SHOWN (so the user sees "done" progress + deps to it stay
-    intact); only a SOFT-DELETED task (``archived_at`` set, #2187 — the orthogonal
-    retention marker abort() sets) is hidden. The split is intentional vs the
-    skill-runs section's running-only filter."""
+async def test_tasks_list_done_folded_soft_deleted_hidden():
+    """Tier 2: DONE tasks are folded into '+N done' summary (#2040) — they are
+    not listed individually. SOFT-DELETED tasks (``archived_at`` set, #2187)
+    remain hidden entirely. Both are distinct from active tasks which list in full."""
     backend = InMemoryTaskBackend()
     # deps-less tasks → the backend honors the given status (no readiness derive).
     await backend.create(Task(
@@ -169,12 +167,41 @@ async def test_tasks_list_shows_done_hides_soft_deleted():
     await _list_tasks(session)
 
     out = session.replies[-1]
-    # DONE task surfaces WITH its status (progress visibility).
-    assert "done-step" in out
-    assert "status: done" in out
-    # SOFT-DELETED task (archived_at set) is hidden.
+    # DONE task is folded into the summary, NOT listed individually.
+    assert "done-step" not in out
+    assert "status: done" not in out
+    assert "+1 done" in out
+    # SOFT-DELETED task (archived_at set) is hidden entirely (unchanged).
     assert "archived-step" not in out
     assert "arch-ddd" not in out
+
+
+@pytest.mark.asyncio
+async def test_tasks_list_done_summary_alongside_active():
+    """Tier 2: active + done tasks → active shown in full, done folded into '+N done' (#2040)."""
+    backend = InMemoryTaskBackend()
+    await backend.create(Task(
+        task_id="run-eeeeeeee-0005", name="active-step", assignee="sess-1",
+        requester="req", status=TaskState.RUNNING,
+    ))
+    await backend.create(Task(
+        task_id="done-ffffffff-0006", name="done-step-1", assignee="sess-1",
+        requester="req", status=TaskState.DONE,
+    ))
+    await backend.create(Task(
+        task_id="done-gggggggg-0007", name="done-step-2", assignee="sess-1",
+        requester="req", status=TaskState.DONE,
+    ))
+    session = _CaptureSession(task_backend=backend)
+
+    await _list_tasks(session)
+
+    out = session.replies[-1]
+    assert "active-step" in out            # active task shown in full
+    assert "done-step-1" not in out        # done tasks NOT individually listed
+    assert "done-step-2" not in out
+    assert "+2 done" in out                # done count summarised
+    assert "1 task(s)" in out             # header counts only active tasks
 
 
 @pytest.mark.asyncio

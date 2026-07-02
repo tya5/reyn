@@ -126,22 +126,23 @@ async def _resolve_task(
 
 async def _list_tasks(session: "Session") -> None:
     skill_lines = _list_skill_lines(session)
-    task_lines = await _list_dynamic_task_lines(session)
-    if not skill_lines and not task_lines:
+    task_lines, done_count = await _list_dynamic_task_lines(session)
+    if not skill_lines and not task_lines and not done_count:
         await reply(session, "(no running tasks)")
         return
 
-    # "task(s)" not "running task(s)": the Tasks section now shows the full plan
-    # incl completed (#2036), so the count spans running skill runs + persistent
-    # tasks of any non-archived status.
-    total = len(skill_lines) + len(task_lines)
-    out: list[str] = [f"{total} task(s):"]
+    active_count = len(skill_lines) + len(task_lines)
+    out: list[str] = []
+    if active_count:
+        out.append(f"{active_count} task(s):")
     if skill_lines:
         out.append("  Skills:")
         out.extend(f"    {ln}" for ln in skill_lines)
-    if task_lines:
+    if task_lines or done_count:
         out.append("  Tasks:")
         out.extend(f"    {ln}" for ln in task_lines)
+        if done_count:
+            out.append(f"    +{done_count} done")
     await reply(session, "\n".join(out))
 
 
@@ -179,34 +180,35 @@ def _list_skill_lines(session: "Session") -> list[str]:
 # intentional (#2036 review).
 
 
-async def _list_dynamic_task_lines(session: "Session") -> list[str]:
+async def _list_dynamic_task_lines(session: "Session") -> tuple[list[str], int]:
     """Render the dynamic Tasks (``task__create`` work-units) for /tasks.
 
-    Reads ``session.task_backend`` (#1953 slice R). Returns ``[]`` when the
-    session carries no backend. Shows the full plan WITH status (active +
-    completed + failed) so the user sees progress + intact deps; only
-    SOFT-DELETED tasks (``archived_at`` set, #2187) are hidden. Each task is
-    formatted in the same idiom as ``_list_skill_lines``.
+    Reads ``session.task_backend`` (#1953 slice R). Returns ``([], 0)`` when
+    the session carries no backend. Active tasks (non-DONE, non-archived) are
+    returned as formatted lines; DONE tasks are folded into a count so a long
+    session does not accumulate stale completed-task clutter (#2040). Only
+    SOFT-DELETED tasks (``archived_at`` set, #2187) are hidden entirely.
     """
     backend = getattr(session, "task_backend", None)
     if backend is None:
-        return []
+        return [], 0
     tasks = await backend.list()
     lines: list[str] = []
+    done_count = 0
     for task in tasks:
         status = getattr(task.status, "value", task.status)
         if getattr(task, "archived_at", None) is not None:  # soft-deleted (retention) — hidden
             continue
+        if status == "done":
+            done_count += 1
+            continue
         deps = list(getattr(task, "deps", []) or [])
-        if deps:
-            deps_summary = ", ".join(d[:8] for d in deps)
-        else:
-            deps_summary = "(none)"
+        deps_summary = ", ".join(d[:8] for d in deps) if deps else "(none)"
         lines.append(
             f"{task.name}  [{task.task_id[:8]}]  status: {status}  "
             f"deps: {deps_summary}"
         )
-    return lines
+    return lines, done_count
 
 
 # ── /tasks status ────────────────────────────────────────────────────────────
