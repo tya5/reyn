@@ -451,6 +451,11 @@ async def _handle_mcp_install_local(
     servers[name] = entry
     _write_yaml_config(config_path, data)
 
+    from reyn.runtime.hot_reload import get_active_hot_reloader
+    _reloader = get_active_hot_reloader()
+    if _reloader is not None:
+        _reloader.request_reload(source="mcp__install_local")
+
     return {
         "status": "ok",
         "data": {
