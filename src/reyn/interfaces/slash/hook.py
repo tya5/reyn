@@ -2,7 +2,7 @@
 
 The status-bar hook rows submit this command; it maps 1:1 to ``Session.set_hook_enabled``. Disabling
 a hook skips it at dispatch for THIS session (live, next dispatch) — session-scoped, so a hook
-disabled here still fires in the agent's other sessions. Not persisted (step1).
+disabled here still fires in the agent's other sessions. Persists across restart (step2).
 """
 from __future__ import annotations
 
@@ -34,5 +34,5 @@ async def hook_cmd(session: "Session", args: str) -> None:
     await reply(
         session,
         f"hook {name!r} is now {'enabled' if on else 'disabled'} for this session "
-        f"(applies next dispatch; session-scoped, not persisted)",
+        f"(applies next dispatch; session-scoped; persists across restart)",
     )
