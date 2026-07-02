@@ -468,11 +468,9 @@ def _snapshot(registry, task_cache=None, config=None):
         registry.agent_cost_usd(registry.attached_name)
         if registry.attached_name else s.total_cost_usd
     )
-    _agent_tokens_fn = getattr(registry, "agent_tokens", None)
     agent_tokens = (
-        _agent_tokens_fn(registry.attached_name)
-        if _agent_tokens_fn is not None and registry.attached_name
-        else u.total_tokens
+        registry.agent_tokens(registry.attached_name)
+        if registry.attached_name else u.total_tokens
     )
     return {
         "model": s.model,
