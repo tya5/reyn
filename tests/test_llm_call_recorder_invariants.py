@@ -258,3 +258,65 @@ async def test_budget_post_record_increments_usage(tmp_path, monkeypatch):
     assert usage.prompt_tokens == 200
     assert usage.completion_tokens == 60
     assert usage.total_tokens == 260
+
+
+# ── Test 4: budget_warn emitted cleanly when per-agent threshold fires ─────────
+
+
+@pytest.mark.asyncio
+async def test_budget_warn_emitted_without_duplicate_kwarg_on_agent_path(
+    tmp_path, monkeypatch,
+):
+    """Tier 2: budget_warn is emitted without TypeError when per-agent token
+    warn fires on the agents/ caller path.
+
+    RED-verify: before the fix, _record_budget_post_llm called
+        events.emit("budget_warn", agent=agent, **check.context)
+    while check.context (from _agent_context) already contained "agent",
+    causing TypeError("multiple values for keyword argument 'agent'").
+    The fix drops the explicit agent= kwarg so the field is sourced
+    exclusively from check.context.
+    """
+    monkeypatch.chdir(tmp_path)
+
+    async def stub_call_llm(model, frame, *args, **kwargs):
+        # 90 total tokens — above the 80-token warn threshold (hard=100, ratio=0.8)
+        return LLMCallResult(
+            data=_FINISH_RESULT,
+            usage=TokenUsage(prompt_tokens=60, completion_tokens=30),
+        )
+
+    monkeypatch.setattr(llm_call_recorder_mod, "call_llm", stub_call_llm)
+
+    budget = BudgetTracker(
+        CostConfig(per_agent_tokens=CostLimitConfig(hard_limit=100))
+    )
+    skill = _one_phase_skill()
+    state_log = StateLog(tmp_path / ".reyn" / "wal.jsonl")
+    rt = OSRuntime(
+        skill,
+        model="stub/model",
+        run_id="run_warn_no_dup",
+        budget_tracker=budget,
+        caller="agents/gamma",
+        state_log=state_log,
+    )
+
+    warn_events: list = []
+
+    def _collect(event):
+        if event.type == "budget_warn":
+            warn_events.append(event)
+
+    rt.events.add_subscriber(_collect)
+
+    frame = rt.build_frame("draft", {"type": "input", "data": {}}, [], "en")
+    # Must not raise TypeError for duplicate 'agent' kwarg
+    await rt._call_llm_and_record("draft", frame, prior_attempts=None)
+
+    assert len(warn_events) >= 1, "budget_warn must fire when per-agent threshold is crossed"
+    ev = warn_events[0]
+    assert ev.data["dimension"] == "per_agent_tokens", f"wrong dimension: {ev.data}"
+    assert ev.data.get("agent") == "gamma", (
+        "agent field must be present via check.context — not via explicit kwarg"
+    )
