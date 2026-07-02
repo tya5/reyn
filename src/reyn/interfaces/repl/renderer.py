@@ -437,7 +437,15 @@ def format_inline_message(msg: OutboxMessage):
     gutter, gutter_style, body_style = line
     # A provenance prefix ([skill#id]) is kept inline (rare for agent replies); it
     # renders as literal text inside the agent markdown body.
-    body_text = f"{_meta_prefix(meta)}{msg.text}"
+    # Intervention is user-facing: suppress the cryptic run_id_short hash — the
+    # user doesn't need disambiguation for a prompt that has one active caller.
+    # skill_name context (e.g. "[skill_builder] ") is still shown if present.
+    if kind == "intervention":
+        skill = meta.get("skill_name")
+        _pfx = f"[{skill}] " if skill else ""
+    else:
+        _pfx = _meta_prefix(meta)
+    body_text = f"{_pfx}{msg.text}"
     if kind == "user":
         # The user's own submitted line: echoed into scrollback (the inline input
         # clears on submit) AND given a faint background block so it reads as a
