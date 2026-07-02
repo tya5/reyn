@@ -97,9 +97,12 @@ def build_environment_backend(args: argparse.Namespace, *, launcher=None):
         # #2415 root 3: anchor the host workspace base_dir on the project root (== the resolver's
         # file_zone_root default), so the write-target base and the approval base coincide. Fall
         # back to cwd when there is no reyn.yaml ancestor (no project to anchor to).
+        # #2427: anchor workspace_state_dir (events/WAL) on project_root too — same base-split
+        # class: a subdir invocation (cwd != project_root) landed state under <cwd>/.reyn instead
+        # of <project_root>/.reyn. Mirror the docker-LAUNCH pattern (line below).
         from reyn.config import _find_project_root
         project_root = _find_project_root(Path.cwd()) or Path.cwd()
-        return None, project_root, None, None
+        return None, project_root, project_root / ".reyn", None
 
     if backend_kind == "docker":
         from reyn.environment import DockerEnvironmentBackend

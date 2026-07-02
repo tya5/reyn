@@ -72,22 +72,24 @@ def _project_subdir(tmp_path: Path, monkeypatch) -> Path:
 
 
 def test_host_backend_no_container_but_base_dir_is_project_root(tmp_path, monkeypatch) -> None:
-    """Tier 2: --env-backend=host yields no backend + no cleanup, and the workspace base_dir anchors
-    on the PROJECT ROOT (#2415 root 3), not the cwd subdir — so the FS base == the permission-zone
-    base. (Was (None, None, None, None); the base_dir slot now carries project_root.)"""
+    """Tier 2: --env-backend=host yields no backend + no cleanup; workspace base_dir anchors on
+    the PROJECT ROOT (#2415 root 3) and workspace_state_dir anchors on project_root/.reyn (#2427)
+    — FS base, state (events/WAL), and permission zone all share the same project root."""
     project_root = _project_subdir(tmp_path, monkeypatch)
     backend, base_dir, state_dir, cleanup = _build_environment_backend(_args(env_backend="host"))
-    assert (backend, state_dir, cleanup) == (None, None, None), "no backend / dirs / cleanup"
+    assert (backend, cleanup) == (None, None), "no backend / no cleanup"
     assert base_dir == project_root, "host base_dir anchors on project_root, not the cwd subdir"
+    assert state_dir == project_root / ".reyn", "host state_dir anchors on project_root/.reyn"
 
 
 def test_default_is_host(tmp_path, monkeypatch) -> None:
     """Tier 2: a Namespace without env_backend defaults to host (getattr fallback) — same contract:
-    no backend/state/cleanup, base_dir anchored on project_root (#2415 root 3)."""
+    no backend/cleanup, base_dir + state_dir anchored on project_root (#2415 root 3 / #2427)."""
     project_root = _project_subdir(tmp_path, monkeypatch)
     backend, base_dir, state_dir, cleanup = _build_environment_backend(argparse.Namespace())
-    assert (backend, state_dir, cleanup) == (None, None, None)
+    assert (backend, cleanup) == (None, None)
     assert base_dir == project_root
+    assert state_dir == project_root / ".reyn"
 
 
 # ─── docker ATTACH (--container given) ─────────────────────────────────────────
