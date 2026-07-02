@@ -21,7 +21,6 @@ if TYPE_CHECKING:
     from reyn.data.workspace.workspace import Workspace
     from reyn.llm.model_resolver import ModelResolver
     from reyn.mcp.pool import MCPClientPool
-    from reyn.schemas.models import Skill
     from reyn.security.permissions.permissions import PermissionDecl, PermissionResolver
     from reyn.security.sandbox import SandboxBackend
     from reyn.security.sandbox.policy import SandboxPolicy
@@ -41,8 +40,6 @@ class OpContext:
     permission_resolver: "PermissionResolver | None" = None
     skill_name: str = ""
 
-    # Sub-skill invocation
-    skill: "Skill | None" = None  # current skill (for preloaded preprocessor sub-skills)
     model: str = "standard"
     resolver: "ModelResolver | None" = None
     subscribers: list = field(default_factory=list)

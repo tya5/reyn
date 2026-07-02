@@ -87,7 +87,6 @@ async def _handle(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
         ),
         permission_resolver=ctx.permission_resolver,
         skill_name="",
-        skill=None,
         # #1673: real resolver + "tool" purpose class (was None + literal
         # "standard") — eliminates the resolver=None → litellm-BadRequestError class
         # by construction (uniform with invoke_skill; this handler makes no LLM call).
