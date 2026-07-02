@@ -83,7 +83,7 @@ Each Control IR op kind emits its own event:
 - `sub_skill_credential_scope` is audit-grade; used to reconstruct the credential authorisation chain across nested skill runs. Pairs with `run_skill_started` (same `skill` name).
 - `token_refresh_failed` pairs with `token_refreshed` — exactly one is emitted per `get_valid_token` call that performs a network refresh.
 
-See also: [Concepts: secret handling](../../concepts/runtime/secret-handling.md) — OAuth lifecycle and credential scoping; [Concepts: permission model](../../concepts/runtime/permission-model.md) — per-skill credential scoping; [DSL reference: `required_credentials`](../dsl/skill-md.md).
+See also: [Concepts: secret handling](../../concepts/runtime/secret-handling.md) — OAuth lifecycle and credential scoping; [Concepts: permission model](../../concepts/runtime/permission-model.md) — per-skill credential scoping; DSL reference: `required_credentials`.
 
 ## Action catalog routing
 

@@ -451,7 +451,6 @@ reyn dogfood publish a1b2c3d4-... --template path/to/my-template.md
 
 ## 関連
 
-- [Reference: `reyn eval compare`](eval.ja.md) — スキル単位ルーブリック回帰（直交する観測面）
 - [Reference: `reyn run`](run.ja.md) — ヘッドレスなスキル実行（同じ Agent.run パス）
 - [Concepts: events](../../concepts/runtime/events.md) — P6 イベントログ
 - [Deep dive: dogfood discipline](../../deep-dives/contributing/dogfood-discipline.ja.md) — 4 段階アウトカム + 9 原則フレームワーク

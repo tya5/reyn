@@ -23,5 +23,5 @@ Memory writes (persisting user / feedback / project / reference facts) happen in
 
 - [Concepts: memory](../../concepts/data-retrieval/memory.md) — 2-tier read/write contract
 - [Concepts: multi-agent](../../concepts/multi-agent/multi-agent.md) — `messages_to_agents` and chain semantics
-- [Reference: profile-yaml](../dsl/profile-yaml.md) — `allowed_skills` filter
+- Reference: profile-yaml — `allowed_skills` filter
 - [Reference: chat CLI](../cli/chat.md)

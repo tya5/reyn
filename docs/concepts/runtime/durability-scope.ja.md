@@ -102,4 +102,4 @@ tree-membership 境界を durable な契約として扱い、per-backend の enf
 - [タイムトラベル](time-travel.md) — WAL + runtime snapshot 上の reconstruct、L2 を支える shadow-git generation
 - [Workspace](workspace.md) — workspace tree そのもの
 - [Permission model](permission-model.md) — Control IR file op (L1) を gate する機構
-- [クラッシュ復旧 / skill resume](../skills/skill-resume.md) — 復旧機構
+- クラッシュ復旧 / skill resume (ページ削除済み)

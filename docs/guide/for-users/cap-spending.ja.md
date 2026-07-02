@@ -72,4 +72,4 @@ cost:
 
 - [リファレンス: Budget and cost tracking](../../reference/config/budget.md) — 全スキーマ・全フィールド・ledger 形式・`/cost` / `/budget` の出力
 - [リファレンス: `reyn.yaml`](../../reference/config/reyn-yaml.md) — 設定ファイル全体
-- [Reyn が停止する理由を理解する](../for-skill-authors/operations/understand-why-reyn-stops.md) — limit と budget は1つの停止フレームワークを共有
+- Reyn が停止する理由を理解する (ページ削除済み) — limit と budget は1つの停止フレームワークを共有

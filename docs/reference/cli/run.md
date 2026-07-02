@@ -65,6 +65,6 @@ reyn run direct_llm "..." --events
 
 ## See also
 
-- [Reference: skill.md frontmatter](../dsl/skill-md.md)
+- Reference: skill.md frontmatter
 - `reference/runtime/events.md` — event types (Phase 2)
 - [Concepts: architecture](../../concepts/architecture/architecture.md)

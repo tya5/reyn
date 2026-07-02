@@ -112,5 +112,5 @@ Removing an agent via `reyn agent rm` automatically drops it from every topology
 ## See also
 
 - [Concepts: topology](../../concepts/multi-agent/topology.md) — kind semantics, `_default`, permit rules
-- [Reference: topology-yaml](../dsl/topology-yaml.md) — on-disk schema
+- Reference: topology-yaml — on-disk schema
 - [Reference: agent CLI](agent.md)

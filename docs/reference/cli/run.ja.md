@@ -64,6 +64,6 @@ reyn run direct_llm "..." --events
 
 ## 関連情報
 
-- [リファレンス: skill.md frontmatter](../dsl/skill-md.md)
+- リファレンス: skill.md frontmatter
 - `reference/runtime/events.md` — イベントの種類
 - [コンセプト: architecture](../../concepts/architecture/architecture.md)

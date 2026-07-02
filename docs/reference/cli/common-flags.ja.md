@@ -58,6 +58,6 @@ applies_to: [reyn run, reyn eval, reyn chat]
 
 ## 関連情報
 
-- [run.md](run.md)、[eval.md](eval.md)、[chat.md](chat.md)
+- [run.md](run.md)、[chat.md](chat.md)
 - [リファレンス: reyn.yaml](../config/reyn-yaml.md)
 - [リファレンス: permissions](../config/permissions.md)

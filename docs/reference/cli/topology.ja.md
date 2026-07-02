@@ -112,5 +112,5 @@ reyn topology rm-member team_research editor
 ## 関連情報
 
 - [コンセプト: topology](../../concepts/multi-agent/topology.md) — kind のセマンティクス、`_default`、許可ルール
-- [リファレンス: topology-yaml](../dsl/topology-yaml.md) — ディスク上のスキーマ
+- リファレンス: topology-yaml — ディスク上のスキーマ
 - [リファレンス: agent CLI](agent.md)

@@ -82,7 +82,7 @@ Reyn はすべての状態変化に対して構造化イベントを発行しま
 - `sub_skill_credential_scope` は監査グレードのイベントで、ネストされたスキル実行間のクレデンシャル認可チェーンを再構築するために使用されます。同じ `skill` 名の `run_skill_started` とペアになります。
 - `token_refresh_failed` は `token_refreshed` とペアになります — ネットワークリフレッシュを実行する `get_valid_token` 呼び出しごとに、どちらか一方のみ発行されます。
 
-関連情報: [コンセプト: シークレット処理](../../concepts/runtime/secret-handling.md) — OAuth ライフサイクルとクレデンシャルスコープ; [コンセプト: パーミッションモデル](../../concepts/runtime/permission-model.md) — スキルごとのクレデンシャルスコープ; [DSL リファレンス: `required_credentials`](../dsl/skill-md.md)。
+関連情報: [コンセプト: シークレット処理](../../concepts/runtime/secret-handling.md) — OAuth ライフサイクルとクレデンシャルスコープ; [コンセプト: パーミッションモデル](../../concepts/runtime/permission-model.md) — スキルごとのクレデンシャルスコープ; DSL リファレンス: `required_credentials`。
 
 ## アクションカタログルーティング
 

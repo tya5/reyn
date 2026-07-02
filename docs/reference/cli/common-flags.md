@@ -58,6 +58,6 @@ For each flag, the runtime checks (highest precedence first):
 
 ## See also
 
-- [run.md](run.md), [eval.md](eval.md), [chat.md](chat.md)
+- [run.md](run.md), [chat.md](chat.md)
 - [Reference: reyn.yaml](../config/reyn-yaml.md)
 - [Reference: permissions](../config/permissions.md)

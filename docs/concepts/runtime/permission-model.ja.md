@@ -353,7 +353,7 @@ Phase 7 は `http.get` 軸を `file.write` と同じ prompt model に揃えて a
 
 **非インタラクティブ自動許可**: stdlib スキルが `reyn run`（非インタラクティブコンテキスト）経由で呼び出される場合、`mode: safe` と `mode: unsafe` の両方の python ステップはプロンプトなしで自動許可されます。これは eval / CI 実行で他の op に既に適用されている非インタラクティブ動作と同等です。
 
-**`mode: safe` の形式的契約**（= "ambient sources only"）は [Python safe モード](../skills/python-safe-mode.ja.md) で文書化されています。allowlist の根拠・コンテキスト別の safe/unsafe 自動許可ルール・unsafe ステップを safe に変換するリファクタリングパターンを網羅しています。
+**`mode: safe` の形式的契約**（= "ambient sources only"）は allowlist の根拠・コンテキスト別の safe/unsafe 自動許可ルール・unsafe ステップを safe に変換するリファクタリングパターンを網羅しています。
 
 ## スキルごとのクレデンシャルスコーピング (FP-0016 D)
 
