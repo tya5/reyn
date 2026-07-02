@@ -37,7 +37,6 @@ def _sp(*, scheme_sp_fragment: str = "", context_size_signal: str | None = None)
     return build_system_prompt(
         agent_name="test",
         agent_role="tester",
-        available_skills=[],
         available_agents=[],
         memory_index={},
         tool_use_sp=_base_slots(),
@@ -55,7 +54,6 @@ def test_empty_fragment_leaves_named_gate_sp_unchanged() -> None:
     without_arg = build_system_prompt(
         agent_name="test",
         agent_role="tester",
-        available_skills=[],
         available_agents=[],
         memory_index={},
         tool_use_sp=_base_slots(),

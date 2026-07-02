@@ -56,7 +56,6 @@ def _minimal_prompt(indexed_sources_section: str | None = None) -> str:
     return build_system_prompt(
         agent_name="chat",
         agent_role="general assistant",
-        available_skills=[{"name": "review", "category": "general"}],
         available_agents=[],
         memory_index=_SYNTHETIC_MEMORY,
         indexed_sources_section=indexed_sources_section,
@@ -144,7 +143,6 @@ class TestBackwardCompat:
         prompt = build_system_prompt(
             agent_name="chat",
             agent_role="assistant",
-            available_skills=[],
             available_agents=[],
             memory_index=_EMPTY_MEMORY,
             # indexed_sources_section not passed — default is None

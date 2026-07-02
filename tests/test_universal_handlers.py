@@ -162,21 +162,6 @@ def test_list_actions_no_category_filter_includes_all() -> None:
 # ── 2. list_actions — dynamic categories via RouterCallerState ────────────
 
 
-def test_list_actions_skill_category_uses_router_state() -> None:
-    """Tier 2: skill category enumerates from rs.available_skills."""
-    rs = RouterCallerState(
-        available_skills=[
-            {"name": "code_review", "description": "Review code"},
-            {"name": "summarize", "description": "Summarize"},
-        ],
-    )
-    result = _run(LIST_ACTIONS.handler(
-        {"category": ["skill"]}, _make_ctx(rs),
-    ))
-    qns = {it["qualified_name"] for it in result["items"]}
-    assert qns == {"skill__code_review", "skill__summarize"}
-
-
 def test_list_actions_multi_agent_static_category_returns_verbs() -> None:
     """Tier 2: list_actions(category=['multi_agent']) returns the three
     verb actions (= list_peers / describe_peer / delegate) regardless of
@@ -330,9 +315,9 @@ def test_search_actions_returns_ranked_items() -> None:
 def test_search_actions_filters_by_category() -> None:
     """Tier 2: category filter restricts to qualified_names in those categories."""
     items = [
-        {"qualified_name": "skill__alpha", "short_description": "Alpha"},
+        {"qualified_name": "memory_entry__alpha", "short_description": "Alpha"},
         {"qualified_name": "file__read", "short_description": "Read"},
-        {"qualified_name": "skill__beta", "short_description": "Beta"},
+        {"qualified_name": "memory_entry__beta", "short_description": "Beta"},
         {"qualified_name": "file__write", "short_description": "Write"},
     ]
     idx = _ready_index_with(items)
@@ -342,12 +327,12 @@ def test_search_actions_filters_by_category() -> None:
         embedding_model_class="standard",
     )
     result = _run(SEARCH_ACTIONS.handler(
-        {"query": "x", "category": ["skill"], "limit": 10}, _make_ctx(rs),
+        {"query": "x", "category": ["memory_entry"], "limit": 10}, _make_ctx(rs),
     ))
     qns = {it["qualified_name"] for it in result["items"]}
-    # Only skill__ qualified names; no file__ entries.
-    assert all(qn.startswith("skill__") for qn in qns)
-    assert qns == {"skill__alpha", "skill__beta"}
+    # Only memory_entry__ qualified names; no file__ entries.
+    assert all(qn.startswith("memory_entry__") for qn in qns)
+    assert qns == {"memory_entry__alpha", "memory_entry__beta"}
 
 
 def test_list_actions_dynamic_category_empty_when_state_absent() -> None:
@@ -360,7 +345,7 @@ def test_list_actions_dynamic_category_empty_when_state_absent() -> None:
     verified by the dedicated stale-enum tests below.
     """
     result = _run(LIST_ACTIONS.handler(
-        {"category": ["skill", "rag_corpus", "memory_entry"]},
+        {"category": ["rag_corpus", "memory_entry"]},
         _make_ctx(),
     ))
     assert result["items"] == []
@@ -602,29 +587,6 @@ def test_invoke_action_unparseable_name_returns_d12_error() -> None:
 
 
 # ── 6. Augmented suggestions use router_state when available ──────────────
-
-
-def test_unknown_action_suggestions_augmented_from_router_state() -> None:
-    """Tier 2: §D12 suggestions widen to include dynamic items.
-
-    A typo like "skill__cod_review" (missing 'e') near
-    available_skills' "code_review" should produce that name in
-    suggestions, even though it's not in KNOWN_STATIC_QUALIFIED_NAMES.
-    """
-    rs = RouterCallerState(
-        available_skills=[
-            {"name": "code_review", "description": "Review code"},
-        ],
-    )
-    # Use unknown CATEGORY to trigger the suggestion path (not a routing path)
-    result = _run(DESCRIBE_ACTION.handler(
-        {"action_name": "nonexistent__cod_review"}, _make_ctx(rs),
-    ))
-    assert "error" in result
-    assert isinstance(result["suggestions"], list)
-    # Suggestions may or may not contain skill__code_review depending on
-    # difflib similarity ratio. The contract here is that the
-    # augmentation path runs (= suggestions field is a list, not absent).
 
 
 # ── 7. Missing-args response includes hint ────────────────────────────────

@@ -33,7 +33,6 @@ _SRC = pathlib.Path(__file__).resolve().parents[1] / "src" / "reyn"
 # (config → bundle) does not apply to them.
 _EXEMPT = {
     "skill/sub_skill_runner.py",
-    "runtime/session.py",
 }
 
 

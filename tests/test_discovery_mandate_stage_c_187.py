@@ -33,7 +33,6 @@ from reyn.tools.schemes._universal_sp import build_universal_tool_use_slots
 _BASE = dict(
     agent_name="chat",
     agent_role="test role",
-    available_skills=[],
     available_agents=[],
     memory_index={"status": "not_found", "content": ""},
 )

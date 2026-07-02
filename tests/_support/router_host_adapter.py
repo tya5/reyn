@@ -45,10 +45,6 @@ async def null_mcp_call_tool(server: str, tool: str, args: dict) -> dict:
     return {}
 
 
-async def null_run_skill(spec, *, chain_id) -> dict:
-    return {"status": "finished", "data": {}}
-
-
 async def null_send_to_agent(*, to, request, depth, chain_id) -> None:
     pass
 
@@ -129,7 +125,6 @@ def make_adapter(
         agent_name=agent_name,
         agent_role="test role",
         output_language="en",
-        allowed_skills=None,
         allowed_mcp=None,
         permission_resolver=None,
         mcp_servers=None,
@@ -141,7 +136,6 @@ def make_adapter(
         agent_registry=agent_registry,
         handle_chat_limit_checkpoint=_checkpoint,  # #2175
         safety_extensions=_ext,  # #2175
-        skill_enumerate_fn=lambda exclude: [],
         agent_workspace_dir=workspace,
         file_read=null_file_read,
         file_write=null_file_write,
@@ -151,7 +145,6 @@ def make_adapter(
         mcp_list_servers=null_mcp_list_servers,
         mcp_list_tools=null_mcp_list_tools,
         mcp_call_tool=null_mcp_call_tool,
-        run_skill_awaitable=null_run_skill,
         send_to_agent=null_send_to_agent,
         put_outbox=null_put_outbox,
         append_history=null_append_history,

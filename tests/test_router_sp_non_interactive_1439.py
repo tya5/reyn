@@ -34,7 +34,6 @@ def _sp(*, non_interactive: bool) -> str:
     return build_system_prompt(
         agent_name="chat",
         agent_role="general agent",
-        available_skills=[],
         available_agents=[],
         memory_index={},
         tool_use_sp=slots,
@@ -65,7 +64,6 @@ def test_default_param_is_interactive() -> None:
     default_sp = build_system_prompt(
         agent_name="chat",
         agent_role="general agent",
-        available_skills=[],
         available_agents=[],
         memory_index={},
         tool_use_sp=build_universal_tool_use_slots(

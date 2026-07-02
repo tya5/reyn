@@ -7,35 +7,12 @@ universal_dispatch maps action names to these helpers at dispatch time.
 from __future__ import annotations
 
 from reyn.tools.universal_dispatch import (
-    _invoke_skill_args,
     _mcp_tool_args,
     _multi_agent_delegate_args,
     _multi_agent_list_peers_args,
     _passthrough_args,
     _recall_single_source_args,
 )
-
-# ── _invoke_skill_args ────────────────────────────────────────────────────────
-
-
-def test_invoke_skill_args_passes_through_explicit_input() -> None:
-    """Tier 2: when 'input' is present in args it is forwarded verbatim."""
-    payload = {"type": "MyArtifact", "data": {"x": 1}}
-    result = _invoke_skill_args("foo", {"input": payload})
-    assert result == {"name": "foo", "input": payload}
-
-
-def test_invoke_skill_args_wraps_bare_args_as_input() -> None:
-    """Tier 2: when 'input' is absent the whole args dict becomes the input."""
-    result = _invoke_skill_args("bar", {"a": 1, "b": 2})
-    assert result == {"name": "bar", "input": {"a": 1, "b": 2}}
-
-
-def test_invoke_skill_args_empty_args_gives_empty_input() -> None:
-    """Tier 2: empty args dict → input is an empty dict."""
-    result = _invoke_skill_args("baz", {})
-    assert result == {"name": "baz", "input": {}}
-
 
 # ── _multi_agent_list_peers_args ──────────────────────────────────────────────
 

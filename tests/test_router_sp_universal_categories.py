@@ -26,9 +26,6 @@ from reyn.tools.universal_catalog import CATEGORIES
 _BASE_KWARGS = {
     "agent_name": "alpha",
     "agent_role": "Test agent",
-    "available_skills": [
-        {"name": "code_review", "description": "Review code", "category": "analytics"},
-    ],
     "available_agents": [],
     "memory_index": {"status": "not_found", "content": ""},
     "file_permissions": None,
@@ -94,7 +91,6 @@ def test_flag_on_lists_all_categories() -> None:
         **_BASE_KWARGS, tool_use_sp=_slots(universal_wrappers_enabled=True),
     )
     for cat in (
-        "skill",
         "multi_agent",
         "mcp",
         "file", "web",

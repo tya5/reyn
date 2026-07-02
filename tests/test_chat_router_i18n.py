@@ -183,7 +183,6 @@ def test_system_prompt_contains_explicit_ja_instruction():
     prompt = build_system_prompt(
         agent_name="chat",
         agent_role="assistant",
-        available_skills=[],
         available_agents=[],
         memory_index={"status": "not_found", "content": ""},
         output_language="ja",
@@ -202,7 +201,6 @@ def test_system_prompt_contains_explicit_en_instruction():
     prompt = build_system_prompt(
         agent_name="chat",
         agent_role="assistant",
-        available_skills=[],
         available_agents=[],
         memory_index={"status": "not_found", "content": ""},
         output_language="en",
@@ -222,7 +220,6 @@ def test_system_prompt_omits_language_directive_when_output_language_is_none():
     prompt = build_system_prompt(
         agent_name="chat",
         agent_role="assistant",
-        available_skills=[],
         available_agents=[],
         memory_index={"status": "not_found", "content": ""},
         output_language=None,
@@ -246,7 +243,6 @@ def test_system_prompt_default_output_language_is_none():
     prompt = build_system_prompt(
         agent_name="chat",
         agent_role="assistant",
-        available_skills=[],
         available_agents=[],
         memory_index={"status": "not_found", "content": ""},
         # output_language intentionally omitted → defaults to None

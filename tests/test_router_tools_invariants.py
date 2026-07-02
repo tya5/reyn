@@ -20,7 +20,6 @@ from reyn.runtime.router_tools import (
 
 # ── shared fixtures ───────────────────────────────────────────────────────────
 
-_SAMPLE_SKILLS = [{"name": "example_skill", "description": "An example skill"}]
 _SAMPLE_AGENTS = [{"name": "peer_agent", "role": "Peer"}]
 
 
@@ -101,7 +100,7 @@ def test_build_tools_dispatch_kinds_consistent() -> None:
     the known async tools (delegate_to_agent, plan) and that all others
     default to "sync".
     """
-    tools = build_tools(_SAMPLE_SKILLS, _SAMPLE_AGENTS)
+    tools = build_tools(_SAMPLE_AGENTS)
     tool_names = [t["function"]["name"] for t in tools]
 
     # delegate_to_agent is always present and must be "async".
@@ -123,7 +122,6 @@ def test_build_tools_full_permissions_dispatch_kinds_consistent() -> None:
     (list_directory, read_file, write_file, delete_file, list_mcp_servers,
     list_mcp_tools, call_mcp_tool, web_fetch) must all be 'sync'."""
     tools = build_tools(
-        _SAMPLE_SKILLS,
         _SAMPLE_AGENTS,
         file_permissions={"read": ["src"], "write": ["out"]},
         mcp_servers=[{"name": "fs", "description": "FS"}],

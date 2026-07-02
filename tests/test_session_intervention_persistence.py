@@ -1,10 +1,10 @@
 """Tier 2: Session invariant — intervention dispatch/resolve hits the WAL.
 
 PR-intervention-link L3. The session-level wrappers
-``_dispatch_intervention`` / ``_deliver_answer_to`` /
-``_drop_interventions_for_run`` must route through the SnapshotJournal so
-WAL ``intervention_dispatched`` / ``intervention_resolved`` events are
-emitted. Without these, an in-flight intervention can't survive a crash.
+``_dispatch_intervention`` / ``_deliver_answer_to`` must route through the
+SnapshotJournal so WAL ``intervention_dispatched`` / ``intervention_resolved``
+events are emitted. Without these, an in-flight intervention can't survive a
+crash.
 
 Invariants:
   - dispatch fires ``intervention_dispatched`` with a serialized iv_dict
@@ -178,49 +178,6 @@ async def test_unknown_choice_does_not_emit_resolved(tmp_path, monkeypatch):
     # Now resolve correctly to clean up
     await session._maybe_answer_oldest_intervention("y")
     await asyncio.gather(task, return_exceptions=True)
-
-
-@pytest.mark.asyncio
-async def test_drop_for_run_emits_resolved_for_each_dropped(tmp_path, monkeypatch):
-    """Tier 2: cancelling a skill run emits resolve for each dropped intervention.
-
-    Without this, the snapshot would still show outstanding entries that
-    are no longer awaitable — restore would re-enqueue dead interventions.
-    """
-    monkeypatch.chdir(tmp_path)
-    session = _make_session(tmp_path)
-    session.is_attached = True
-
-    iv1 = _iv(run_id="rA", prompt="Q1")
-    iv2 = _iv(run_id="rA", prompt="Q2")
-    iv3 = _iv(run_id="rB", prompt="Q3")
-
-    t1 = asyncio.ensure_future(session._dispatch_intervention(iv1))
-    t2 = asyncio.ensure_future(session._dispatch_intervention(iv2))
-    t3 = asyncio.ensure_future(session._dispatch_intervention(iv3))
-    # Wait until all three dispatches have registered (#1751: each fsyncs its
-    # intervention_dispatched append via to_thread, so a fixed sleep loop no
-    # longer covers them).
-    await wait_until(lambda: len(session.interventions.list_active()) >= 3)
-
-    session._drop_interventions_for_run("rA")
-    # Wait until both drops' intervention_resolved appends are durable.
-    await wait_until(
-        lambda: len(
-            [e for e in _wal_events(tmp_path) if e["kind"] == "intervention_resolved"]
-        ) >= 2
-    )
-
-    events = _wal_events(tmp_path)
-    resolved = [e for e in events if e["kind"] == "intervention_resolved"]
-    resolved_ids = {e["intervention_id"] for e in resolved}
-    assert resolved_ids == {iv1.id, iv2.id}, (
-        f"drop_for_run must emit resolve for rA's iv1+iv2; got {resolved_ids}"
-    )
-
-    # Clean up
-    iv3.future.set_result(None)
-    await asyncio.gather(t1, t2, t3, return_exceptions=True)
 
 
 @pytest.mark.asyncio

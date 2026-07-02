@@ -41,7 +41,6 @@ _EXPECTED_USAGE: dict[str, str] = {
     "cancel":      "/cancel <id-prefix> [confirm]",
     "answer":      "/answer <id-prefix> <text>",
     "memory":      "/memory [list|view <name>]",
-    "skill":       "/skill [list|discard <id>]",
     "agent":       "/agent new <name> | /agent edit role <text>",
     "image":       "/image <path>",
     "reset":       "/reset confirm",
@@ -50,7 +49,7 @@ _EXPECTED_USAGE: dict[str, str] = {
     # /tasks has status/kill/list subcommands and genuinely takes args.
     # Previously omitted from _EXPECTED_USAGE (and misclassified as no-arg);
     # corrected here alongside the usage= addition in slash/tasks.py.
-    "tasks":       "/tasks [list|status <run_id>|kill <run_id>]",
+    "tasks":       "/tasks [list|status <task_id>|kill <task_id>]",
 }
 
 
@@ -85,7 +84,6 @@ def test_summary_does_not_re_embed_usage_in_parens() -> None:
         ("cancel",  ["/cancel <id-prefix>", ": /cancel"]),
         ("answer",  ["/answer <id-prefix>", ": /answer"]),
         ("memory",  ["(list / view <name>)"]),
-        ("skill",   ["(list / discard)"]),
         ("agent",   ["(subcommands: new <name>)"]),
         ("budget",  ["/budget reset to clear"]),
     ]

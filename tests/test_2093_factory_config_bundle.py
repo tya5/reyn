@@ -29,7 +29,6 @@ def test_from_config_maps_each_field_to_its_config_source() -> None:
     assert fc.embedding_config is config.embedding
     assert fc.router_config is config.llm.router
     assert fc.retry_config is config.llm.retry
-    assert fc.tool_calls_op_loop_skills is config.tool_calls_op_loop_skills
     assert fc.chat_tool_use_scheme == config.tool_use.chat
     # AgentRegistry uniform config
     assert fc.delegation_capability_default == config.delegation.capability_default

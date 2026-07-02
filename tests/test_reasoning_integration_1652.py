@@ -38,7 +38,7 @@ def _mk_host(reasoning_config, *, outbox: list, history: list, section: str = ""
     workspace = Path(".reyn") / "agents" / "t"
     return RouterHostAdapter(
         agent_name="t", agent_role="r", output_language="en",
-        allowed_skills=None, allowed_mcp=None, permission_resolver=None,
+        allowed_mcp=None, permission_resolver=None,
         mcp_servers=None, project_context="", events=events,
         resolver=ModelResolver({}),
         memory=MemoryService(
@@ -46,12 +46,12 @@ def _mk_host(reasoning_config, *, outbox: list, history: list, section: str = ""
             file_write=_noop, file_read=_noop, file_delete=_noop,
             file_regenerate_index=_noop,
         ),
-        journal=None, agent_registry=None, skill_enumerate_fn=lambda exclude: [],
+        journal=None, agent_registry=None,
         agent_workspace_dir=workspace,
         file_read=_noop, file_write=_noop, file_delete=_noop,
         file_list_directory=_noop, file_regenerate_index=_noop,
         mcp_list_servers=_noop, mcp_list_tools=_noop, mcp_call_tool=_noop,
-        run_skill_awaitable=_noop, send_to_agent=_noop,
+        send_to_agent=_noop,
         put_outbox=lambda msg: outbox.append(msg) or _noop(),
         append_history=lambda msg: history.append(msg),
         delegation_tracker=lambda: [],

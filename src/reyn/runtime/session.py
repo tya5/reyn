@@ -26,8 +26,6 @@ from reyn.config import (  # noqa: F401
     SafetyConfig,
     SandboxConfig,
 )
-from reyn.core.compiler import load_dsl_skill
-from reyn.core.compiler.parser import _split_frontmatter
 from reyn.core.events.agent_snapshot import AgentSnapshot
 from reyn.core.events.anchor_store import truncate_anchor as _truncate_anchor
 from reyn.core.events.event_store import EventStore
@@ -59,7 +57,6 @@ from reyn.runtime.limits.limit_handler import (
 from reyn.runtime.outbox import OutboxMessage
 from reyn.runtime.pending_op_view import PendingOpView
 from reyn.runtime.services import (
-    AutoResumeHandler,
     BudgetGateway,
     ChainManager,
     CompactionController,
@@ -76,11 +73,6 @@ from reyn.runtime.services.task_wake import WAKE_READY_KIND, WAKE_REQUESTER_KIND
 from reyn.runtime.session_buses import AgentRequestBus, ChatInterventionBus
 from reyn.security.permissions.permissions import PermissionResolver
 from reyn.services.compaction.engine import CompactionEngine
-from reyn.skill.skill_outbound import SkillOutboundMessage
-from reyn.skill.skill_paths import SkillNotFoundError, resolve_skill_path, stdlib_root
-from reyn.skill.skill_registry import SkillRegistry
-from reyn.skill.skill_runner import SkillRunner
-from reyn.skill.skill_runtime import SkillRuntime
 from reyn.task.subscription import SubscriptionWriter
 from reyn.user_intervention import (
     InterventionAnswer,
@@ -88,8 +80,6 @@ from reyn.user_intervention import (
     RequestBus,
     UserIntervention,
 )
-
-ROUTER_SKILL_NAME = "skill_router"
 
 # #2115: cap for await_quiescent's re-drain loop. In-flight WAL-append tasks are
 # finite + cancel-requested + spawn no new user-work under a rewind, so the drain
@@ -645,141 +635,6 @@ def _render_summary_for_storage(structured: dict) -> str:
     return "\n".join(parts)
 
 
-def _extract_skill_input_hint(skill_dir: "Path", entry_phase_name: str) -> dict:
-    """Extract input artifact name and top-level field list from a skill's entry phase.
-
-    Returns a dict with:
-      - ``input_artifact``: "|"-joined artifact type names from the phase ``input:`` field
-        (e.g. ``"user_message | eval_builder_request"``).
-      - ``input_fields``: flat list of top-level property names from the first
-        non-``user_message`` artifact schema (or from the only artifact if all
-        are ``user_message``). Empty list on any read/parse failure.
-
-    Failures are silently swallowed — the hint is best-effort and must not
-    break the catalogue enumeration.
-    """
-    import yaml as _yaml
-
-    try:
-        phase_path = skill_dir / "phases" / f"{entry_phase_name}.md"
-        if not phase_path.exists():
-            return {}
-        phase_fm, _ = _split_frontmatter(phase_path.read_text(encoding="utf-8"))
-        inputs_raw = phase_fm.get("input", "")
-        if not inputs_raw:
-            return {}
-        artifact_names = [n.strip() for n in str(inputs_raw).split("|") if n.strip()]
-        if not artifact_names:
-            return {}
-
-        input_artifact = " | ".join(artifact_names)
-
-        # Resolve top-level fields from the first non-user_message artifact,
-        # falling back to user_message if that's the only one.
-        preferred = [n for n in artifact_names if n != "user_message"] or artifact_names
-        input_fields: list[str] = []
-        input_schema: dict | None = None
-        input_wrapped: bool = True
-        artifacts_dir = skill_dir / "artifacts"
-        # B46-fix: shared stdlib artifacts (= src/reyn/stdlib/artifacts/<n>.yaml,
-        # e.g. user_message) are referenced by many skills as their entry input
-        # but live outside the skill directory. Without a fallback, every skill
-        # using user_message ends up with input_schema=None → hot-list wrapper
-        # surfaces empty {properties: {}, additionalProperties: true} → LLM
-        # calls skill__<name> with {} (= word_stats_demo multiline 9/10 empty
-        # args in dogfood B46 W2 S6). Verified via trace-patch-replay: when the
-        # alias parameters include the shared artifact's properties (= just
-        # `text` declaration), flash-lite passes the correct value 10/10.
-        stdlib_artifacts_dir = stdlib_root() / "artifacts"
-        for art_name in preferred:
-            for candidate in (artifacts_dir / f"{art_name}.yaml",
-                              stdlib_artifacts_dir / f"{art_name}.yaml"):
-                if not candidate.exists():
-                    continue
-                art_data = _yaml.safe_load(candidate.read_text(encoding="utf-8")) or {}
-                schema = art_data.get("schema") or {}
-                props = schema.get("properties") or {}
-                if props:
-                    input_fields = list(props.keys())
-                    input_schema = dict(schema)
-                    input_wrapped = bool(art_data.get("wrapped", True))
-                    break
-            if input_schema is not None:
-                break
-
-        result: dict = {
-            "input_artifact": input_artifact,
-            "input_fields": input_fields,
-        }
-        if input_schema is not None:
-            # FP-0034 D2-full step 2: the hot-list alias for skill__<name>
-            # exposes the skill's actual input shape on the LLM-facing
-            # parameters. ``input_wrapped`` lets the alias builder decide
-            # whether to peel the {type, data} envelope.
-            result["input_schema"] = input_schema
-            result["input_wrapped"] = input_wrapped
-        return result
-    except Exception:  # noqa: BLE001 — best-effort; never break catalogue
-        return {}
-
-
-def enumerate_available_skills(exclude: set[str]) -> list[dict]:
-    """Walk reyn/project, reyn/local, stdlib/skills and collect skill catalogue entries.
-
-    Each entry has ``{name, description}`` always, plus optional fields:
-      - ``routing``: block lifted from skill.md frontmatter (intents, examples, …).
-      - ``input_artifact``: "|"-joined artifact type names accepted by the entry phase
-        (e.g. ``"user_message | eval_builder_request"``). Absent when unavailable.
-      - ``input_fields``: flat list of top-level property names from the structured
-        input artifact (e.g. ``["target_skill"]``). Empty list = unknown / no
-        structured fields. Absent when unavailable.
-
-    The router uses ``routing.intents``, ``routing.when_to_use``,
-    ``routing.when_not_to_use``, and ``routing.examples`` to decide whether the
-    user's request matches the skill.
-
-    ``input_artifact`` and ``input_fields`` are exposed via ``list_skills``
-    so the LLM sees the correct input field names before calling ``invoke_skill``
-    (RETRO-H2 fix — plan D: pre-call structural context provision).
-    """
-    sl = stdlib_root()
-    roots = [
-        Path("reyn") / "project",
-        Path("reyn") / "local",
-        sl / "skills",
-    ]
-    seen: set[str] = set()
-    results: list[dict] = []
-    for root in roots:
-        if not root.exists():
-            continue
-        for d in sorted(root.iterdir()):
-            if not d.is_dir() or d.name in seen or d.name in exclude:
-                continue
-            md = d / "skill.md"
-            if not md.exists():
-                continue
-            try:
-                fm, _ = _split_frontmatter(md.read_text(encoding="utf-8"))
-            except Exception:
-                continue
-            description = ""
-            if fm.get("description"):
-                description = str(fm["description"]).strip().splitlines()[0]
-            entry: dict = {"name": fm.get("name") or d.name, "description": description}
-            routing = fm.get("routing")
-            if isinstance(routing, dict) and routing:
-                entry["routing"] = routing
-            # RETRO-H2 fix (plan D): inject input artifact + field hint for list_skills.
-            entry_phase_name = str(fm.get("entry") or "").strip()
-            if entry_phase_name:
-                hint = _extract_skill_input_hint(d, entry_phase_name)
-                entry.update(hint)
-            results.append(entry)
-            seen.add(d.name)
-    return results
-
-
 class DurabilityHaltError(RuntimeError):
     """#2259 PR-3: raised when an operation is submitted to an agent whose durability has FAILED
     persistently (a §4-retry-exhausted fire-and-forget durable write — disk full / dead). The agent
@@ -863,7 +718,6 @@ class Session:
         # spawned within this session inherit the ContextVar (propagation).
         router_config: "RouterConfig | None" = None,
         retry_config: "object | None" = None,  # #1835: reyn.yaml llm.retry.* timing config
-        tool_calls_op_loop_skills: list[str] | None = None,  # #1212: op-loop gate for chat-run skills
         agent_id: str | None = None,
         exclude_tools: "frozenset[str] | set[str] | None" = None,  # #187: tool names hidden from the LLM catalog (e.g. web for faithful eval)
         excluded_categories: "frozenset[str] | set[str] | None" = None,  # #1667: catalog categories hidden at source (e.g. reyn_source for external-repo eval)
@@ -1010,8 +864,6 @@ class Session:
         # through to spawned Agents AND to the router host adapter (=
         # chat-router web__fetch / file__read / mcp paths).
         self._multimodal_config = multimodal_config
-        # #1212: op-loop gate, threaded to Agents spawned for chat-run skills.
-        self._tool_calls_op_loop_skills = list(tool_calls_op_loop_skills or [])
         # Issue #383 PR-C — single MediaStore instance per Session,
         # constructed from the multimodal config's storage dirs.
         # Subsequently threaded into spawned Agents (= for control-IR
@@ -1363,13 +1215,6 @@ class Session:
             if isinstance(j, dict) and j.get("name")
         }
 
-        # Per-agent SkillRegistry — lazily constructed on first skill run.
-        # Tracks active skill_run_ids and emits skill lifecycle events.
-        # Truncation auto-trigger flows through registry.truncate_wal_if_eligible
-        # when an AgentRegistry back-reference is wired (production path);
-        # tests with registry=None see no truncation triggers (acceptable).
-        self._skill_registry: SkillRegistry | None = None
-
         # PR22: budget / rate-limit tracker (process-shared). When None,
         # checks are noops and counters are not maintained.
         # Kept as a direct reference so RouterLoop and other callers that
@@ -1514,10 +1359,19 @@ class Session:
             file_regenerate_index=self._file_regenerate_index,
         )
 
-        # FP-0019 Wave 1b: running_skills dicts now owned by SkillRunner.
-        # Session exposes forwarding properties for slash commands that
-        # access them directly (slash/skill.py, slash/tasks.py).
-        # SkillRunner is constructed below after _interventions is ready.
+        # Dormant skill-status registry (in-flight skill-run task map). The chat
+        # session no longer runs skills, so this is empty. Its readers are the
+        # skill-status / monitoring surface (session status count, agent_skill_runs,
+        # /tasks-pending, TUI agents-tab) plus the drain / quiescence / idle
+        # predicates (message_bus, mcp/server) for which "no skill runs" is the
+        # correct signal. This registry and the REMAINING monitoring surface are
+        # removed together in a later stage — the same scoped-deletion pattern as
+        # the CLI skill surface, not a lasting compatibility shim. (The /skill
+        # run-management slash — an isolated part of this surface — is already
+        # removed in THIS PR: it was self-contained and the registry it read
+        # remains, so its removal leaves no dangling ref.)
+        self.running_skills: dict = {}
+        self.running_skills_started_at: dict = {}
 
         # PR-refactor-session-1 wave 2: pending-chain lifecycle and intervention
         # queue ownership extracted into services. The session orchestrates the
@@ -1560,39 +1414,11 @@ class Session:
             threat_scan=self._safety.threat_scan,
         )
         # Owns the chain-override state + the per-intervention dispatch
-        # orchestration. running_skills_chain (run→chain map) lives on the
-        # SkillRunner built below; read it live via the lambda.
+        # orchestration.
         self._intervention_coordinator = InterventionCoordinator(
             registry=self._interventions,
             handler=self._intervention_handler,
             events=self._chat_events,
-            running_skills_chain_fn=lambda: self.running_skills_chain,
-        )
-
-        # FP-0019 Wave 1b: SkillRunner — skill task lifecycle service.
-        # Owns running_skills / running_skills_started_at / running_skills_chain.
-        # Constructed after _interventions (needed for drop_interventions_for_run
-        # callback) and before RouterHostAdapter (which receives run_skill_awaitable).
-        self._skill_runner = SkillRunner(
-            event_log=self._chat_events,
-            agent_name=self.agent_name,
-            output_language=self.output_language,
-            mcp_servers=self._mcp_servers,
-            allowed_skills=self._allowed_skills,
-            budget=self._budget,
-            state_log=self._state_log,
-            build_agent_fn=self._build_agent_for_skill_runner,
-            accumulate=self._accumulate,
-            drop_interventions_for_run=self._drop_interventions_for_run,
-            get_skill_registry=self.get_skill_registry,
-            ask_budget_extension=self._ask_budget_extension,
-            # #1794 S3: runtime-boundary seams — SkillRunner (now in reyn.skill)
-            # stays free of reyn.runtime; the session supplies the runtime objects.
-            put_outbox=self._skill_outbox_adapter,
-            make_subscribers=self._make_skill_subscribers,
-            format_refusal=format_refusal_message,
-            format_warn=format_warn_message,
-            contextual_permission=self._contextual_permission,  # #2074 S3
         )
 
         # F2: Delegation tracking for RouterLoop runs. Set to a list before
@@ -1652,7 +1478,6 @@ class Session:
             agent_name=self.agent_name,
             agent_role=self._agent_role,
             output_language=self.output_language,
-            allowed_skills=self._allowed_skills,
             allowed_mcp=self._allowed_mcp,
             permission_resolver=self._perm,
             mcp_servers=self._mcp_servers,
@@ -1671,7 +1496,6 @@ class Session:
             # #1953 §16: the per-turn execution context (set in run_one_iteration),
             # read at op-ctx-build time so a router task.create derives ownership.
             current_task_id_fn=lambda: self._current_task_id,
-            skill_enumerate_fn=enumerate_available_skills,
             agent_workspace_dir=self.workspace_dir,
             file_read=self._file_read,
             file_write=self._file_write,
@@ -1681,7 +1505,6 @@ class Session:
             mcp_list_servers=self._mcp_list_servers,
             mcp_list_tools=self._mcp_list_tools,
             mcp_call_tool=self._mcp_call_tool,
-            run_skill_awaitable=self._skill_runner.run_skill_awaitable,
             send_to_agent=self._send_to_agent,
             put_outbox=self._put_outbox,
             append_history=self._append_history,
@@ -1869,18 +1692,6 @@ class Session:
         # Wire compaction_controller now that it exists.
         self._history_buffer._compaction_controller = self._compaction_controller
 
-        # FP-0019 Wave 3: crash recovery service.
-        # Discovers in-flight skill_runs from WAL and re-spawns them on
-        # session start.  All business logic lives in AutoResumeHandler;
-        # session delegates via _auto_resume_active_skills() (thin wrapper).
-        self._auto_resume_handler = AutoResumeHandler(
-            event_log=self._chat_events,
-            state_log=self._state_log,
-            get_skill_registry=self.get_skill_registry,
-            drop_interventions_for_run=self._drop_interventions_for_run,
-            launcher=self._skill_runner.spawn_resumed_skill,
-        )
-
         # FP-0019 Wave 2 part 2: InterAgentMessaging — agent-to-agent messaging service.
         # Extracts _send_to_agent / _send_agent_response / _handle_agent_request /
         # _handle_agent_response / _resolve_pending_chain from Session.
@@ -1976,7 +1787,6 @@ class Session:
             limit_checkpoint_fn=self._handle_chat_limit_checkpoint,
             chain_timeout_seconds=self._chain_timeout_seconds,
             send_agent_response_fn=self._send_agent_response,
-            skill_runner=self._skill_runner,
             put_inbox_fn=self._put_inbox,
         )
 
@@ -2256,26 +2066,6 @@ class Session:
         """
         return self._buffered_intervention_answers
 
-    # ── SkillRunner forwarding (FP-0019 Wave 1b) ────────────────────────────────
-    # slash/skill.py and slash/tasks.py access these dicts directly via session.
-    # Forward to SkillRunner so external callers see the same live dict.
-
-    @property
-    def running_skills(self) -> dict:
-        """Forwarding property → SkillRunner.running_skills."""
-        return self._skill_runner.running_skills
-
-    @property
-    def running_skills_started_at(self) -> dict:
-        """Forwarding property → SkillRunner.running_skills_started_at."""
-        return self._skill_runner.running_skills_started_at
-
-    @property
-    def running_skills_chain(self) -> dict:
-        """Forwarding property → SkillRunner.running_skills_chain."""
-        return self._skill_runner.running_skills_chain
-
-
     def _is_turn_cancel_requested(self) -> bool:
         """Forwarding → RouterLoopDriver.is_cancel_requested (PR-3)."""
         return self._loop_driver.is_cancel_requested()
@@ -2499,7 +2289,7 @@ class Session:
         delegate ∩ per-session config, WITHOUT the visibility override) — the full togglable
         universe. ``hidden_by_session`` = the override set (what the user turned OFF). The UI renders
         ``on = item not in hidden_by_session``. authorized is computed from the live catalogs
-        (tools / skills / mcp / categories) filtered by the envelope's ``allows`` — so it always
+        (tools / mcp / categories) filtered by the envelope's ``allows`` — so it always
         reflects visible ⊆ authorized (nothing outside the envelope is ever togglable)."""
         from reyn.security.permissions.effective import CapabilityAxis, ContextualLayer
         from reyn.tools import get_default_registry
@@ -2517,10 +2307,6 @@ class Session:
         for name in sorted(get_default_registry().names()):
             if ctx.allows(CapabilityAxis.TOOL, name):
                 authorized.append({"kind": "tool", "name": name})
-        for skill in self._router_host.list_available_skills():
-            n = skill.get("name")
-            if n and ctx.allows(CapabilityAxis.SKILL, n):
-                authorized.append({"kind": "skill", "name": n})
         for server in self._router_host.get_mcp_servers():
             n = server.get("name")
             if n and ctx.allows(CapabilityAxis.MCP, n):
@@ -2736,7 +2522,6 @@ class Session:
         # active_skill_run_ids live mirrors (handles settled)
         self.running_skills.clear()
         self.running_skills_started_at.clear()
-        self.running_skills_chain.clear()
         self._inflight_wal_tasks.clear()
 
     @property
@@ -2796,14 +2581,8 @@ class Session:
         snap_applied = int(self._journal.snapshot.applied_seq)
         if snap_applied > 0:
             out.append(snap_applied)
-        skill_reg = self.get_skill_registry()
-        if skill_reg is not None:
-            out.extend(
-                skill_reg.iter_applied_phase_seqs(
-                    now_ts=now_ts,
-                    long_await_threshold=long_await_threshold,
-                )
-            )
+        # Skill-execution machinery removed (stage1 decouple): there is no live
+        # skill registry contributing per-skill last_phase_applied_seq floors.
         return out
 
     def current_state_summary(self) -> dict:
@@ -2819,7 +2598,7 @@ class Session:
         All sources are defensive: missing attributes / I/O errors
         return zero / empty rather than raising.
         """
-        n_skills = len(self.running_skills) if hasattr(self, "_skill_runner") else 0
+        n_skills = len(self.running_skills)
 
         # Stuck skills require the event-store scan implemented in the agents-tab
         # helper functions.  We import lazily (avoids pulling TUI widgets at
@@ -2885,37 +2664,6 @@ class Session:
         if self._contextual_permission is not None:
             resolved.insert(0, (self._contextual_permission, frozenset()))
         return compose_resolved(resolved)[0]
-
-    def _build_agent_for_skill_runner(
-        self,
-        run_id: str | None,
-        skill_name: str | None,
-        *,
-        subscribers: list | None = None,
-    ) -> "SkillRuntime":
-        """Build an Agent wired with a per-spawn ChatInterventionBus.
-
-        Supplied as ``build_agent_fn`` to SkillRunner so SkillRunner
-        never imports ChatInterventionBus or holds a session reference.
-
-        FP-0008 PR-R (tui-coder finding #1 propagation): propagate
-        ``run_id`` to the Agent constructor so the instance carries
-        the skill_runner-generated canonical run_id from birth
-        (= before ``agent.run()`` is invoked). Without this,
-        ``self.run_id = None`` at instance level + ``agent.run()``
-        would generate a fresh canonical, creating a 2-form mismatch
-        between the chat-side spawn-ack id and the skill-side events
-        id (= 5-point smoke trace 2026-05-28).
-        """
-        return self._build_agent(
-            run_id=run_id,
-            intervention_bus=ChatInterventionBus(
-                self, run_id, skill_name,
-                channel_id=DEFAULT_CHAT_CHANNEL_ID,
-            ),
-            mcp_servers=self._mcp_servers,
-            subscribers=subscribers,
-        )
 
     # ── persistence ─────────────────────────────────────────────────────────────
 
@@ -3648,7 +3396,6 @@ class Session:
         # Session orchestrates the multi-holder swap (the holders it owns).
         self._allowed_skills = prof.allowed_skills
         self._allowed_mcp = prof.allowed_mcp
-        self._skill_runner._allowed_skills = prof.allowed_skills   # SKILL spawn gate
         self._router_host._allowed_skills = prof.allowed_skills    # SKILL catalog gate
         self._router_host._allowed_mcp = prof.allowed_mcp          # MCP gate (decl source)
         return True
@@ -4263,22 +4010,7 @@ class Session:
         cancel_all() block so genuine missing-await bugs elsewhere stay
         visible.
         """
-        import warnings
-
-        # FP-0019 Wave 1b: delegated to SkillRunner.
-        # Grace window: wait up to 30 s for background skills to land their
-        # skill_run_completed event before resorting to cancellation.
-        await self._skill_runner.wait_for_completion(timeout_sec=30.0)
-        with warnings.catch_warnings():
-            warnings.filterwarnings(
-                "ignore",
-                message=(
-                    r".*coroutine 'OpenAIChatCompletion\.acompletion' "
-                    r"was never awaited.*"
-                ),
-                category=RuntimeWarning,
-            )
-            await self._skill_runner.cancel_all()
+        # Stage-1 decouple: SkillRunner removed; no background skills to drain.
 
         # PR18: cancel any pending chain-timeout watchdogs so they don't keep
         # the loop alive past shutdown. Late-firing timers swallow their work
@@ -4432,138 +4164,6 @@ class Session:
         # effective_trigger) before each router call, plus on-demand (/compact,
         # compact op) and the retry_loop overflow backstop.
 
-    # ── skill invocation helpers ────────────────────────────────────────────────
-
-    async def _auto_resume_active_skills(
-        self,
-        *,
-        coordinator: "SkillResumeCoordinator | None" = None,
-        config: "SkillResumeConfig | None" = None,
-        launcher: "Callable[[Any], Awaitable[None]] | None" = None,
-    ) -> list:
-        """Thin delegation wrapper → AutoResumeHandler._resume_and_collect.
-
-        FP-0019 Wave 3: business logic extracted to
-        ``src/reyn/runtime/services/auto_resume_handler.py``.  This wrapper
-        preserves the original call signature and list-return type so
-        existing callers (tests + startup chain) continue to work unchanged.
-
-        ``launcher`` is dependency-injected so tests can inspect decisions
-        without launching real skill runtimes.  Production callers pass
-        ``None`` to use the default launcher (``SkillRunner.spawn_resumed_skill``).
-
-        Returns the list of decisions that were launched (= decisions
-        minus discards).
-        """
-        return await self._auto_resume_handler._resume_and_collect(
-            coordinator=coordinator,
-            config=config,
-            launcher=launcher,
-        )
-
-    # NOTE: ``_spawn_resumed_skill`` moved to SkillRunner.spawn_resumed_skill
-    # (RunSpawner wave). Callers go through ``self._skill_runner`` directly;
-    # the AutoResumeHandler wiring in __init__ uses the method reference.
-
-    def get_skill_registry(self) -> "SkillRegistry | None":
-        """Return the per-agent SkillRegistry, lazily constructed on first call.
-
-        Returns None when no state_log is wired (test / standalone mode) —
-        with no WAL to write to, the registry would be a no-op anyway.
-
-        The truncate-eligible hook closes over the back-reference to the
-        owning AgentRegistry; if `registry` is None (test fixtures that
-        don't construct a full process tree), the hook is None and
-        ``advance_phase`` / ``complete`` skip the truncation trigger. This
-        keeps truncation a production concern, not a test concern.
-        """
-        if self._state_log is None:
-            return None
-        if self._skill_registry is None:
-            agent_state_dir = (
-                Path(".reyn") / "agents" / self.agent_name / "state"
-            )
-            hook = None
-            if self._registry is not None:
-                # Bind self._registry into a hook that fires after every
-                # ``skill_phase_advanced`` / ``skill_completed``. Throttle
-                # + floor calc happen inside truncate_wal_if_eligible.
-                async def _truncate_hook() -> None:
-                    if self._registry is not None:
-                        await self._registry.truncate_wal_if_eligible()
-                hook = _truncate_hook
-            self._skill_registry = SkillRegistry(
-                agent_name=self.agent_name,
-                agent_state_dir=agent_state_dir,
-                state_log=self._state_log,
-                truncate_eligible_hook=hook,
-                session_id=self._session_id,  # FP-0043 S5: per-session WAL routing
-                hook_dispatcher=self._hook_dispatcher,  # #1800 slice 5c: skill_start/end
-            )
-        return self._skill_registry
-
-    def _build_agent(
-        self,
-        *,
-        run_id: str | None = None,
-        intervention_bus: RequestBus | None = None,
-        mcp_servers: dict | None = None,
-        subscribers: list | None = None,
-    ) -> SkillRuntime:
-        """Construct a SkillRuntime with this session's shared defaults applied.
-
-        ``run_id`` (FP-0008 PR-R): when provided, the Agent instance
-        carries this id from construction time. ``agent.run()`` honors
-        the pre-set value (instead of generating a fresh canonical).
-        Used by ``_build_agent_for_skill_runner`` to keep the chat-side
-        and skill-side ids consistent. ``None`` (= default) preserves
-        the prior behavior of agent-side id generation at run time.
-        """
-        return SkillRuntime(
-            model=self.model,
-            resolver=self._resolver,
-            permission_resolver=self._perm,
-            safety=self._safety,
-            contextual_permission=self._contextual_permission,  # #1912: narrow skill execution too
-            task_backend=self._task_backend,  # #1953 slice 3a: session-scoped Task backend
-            task_waker=self._task_waker,  # #1953 slice 7: the OS TaskWaker driver
-            task_subscription_writer=self._task_subscription_writer,  # #2187 backend-master: the Task subscription WAL writer
-            task_session_id=self._session_id,  # #1953 slice 3: caller session identity (single-writer key)
-            hook_dispatcher=self._hook_dispatcher,  # #1800 slice 5c: task_start/end (phase path)
-            mcp_servers=mcp_servers,
-            intervention_bus=intervention_bus,
-            subscribers=subscribers,
-            prompt_cache_enabled=self._prompt_cache_enabled,
-            project_context=self._project_context,
-            agent_role=self._agent_role,
-            caller=f"agents/{self.agent_name}",
-            budget_tracker=self._budget_tracker,
-            sandbox_config=self._sandbox_config,
-            multimodal_config=self._multimodal_config,
-            media_store=self._media_store,
-            run_id=run_id,
-            tool_calls_op_loop_skills=self._tool_calls_op_loop_skills,
-        )
-
-    async def _skill_outbox_adapter(self, msg: "SkillOutboundMessage") -> None:
-        """#1794 S3: adapt a skill's transport-neutral ``SkillOutboundMessage``
-        to the runtime ``OutboxMessage`` and enqueue. Skills emit kind/text/meta
-        only and never set ``reply_to``, so the adapter passes ``reply_to=None`` —
-        behavior-identical to the prior direct ``OutboxMessage`` constructs that
-        lived inside SkillRunner before it moved to ``reyn.skill``."""
-        await self._put_outbox(
-            OutboxMessage(kind=msg.kind, text=msg.text, meta=msg.meta),
-        )
-
-    def _make_skill_subscribers(
-        self, skill_name: str, run_id: "str | None" = None,
-    ) -> list:
-        """#1794 S3: build the chat-event subscribers for a skill spawn — the
-        ``ChatEventForwarder`` construction that ``SkillRunner`` (now in
-        ``reyn.skill``) DI's so it takes no ``reyn.runtime`` dependency."""
-        from reyn.runtime.forwarder import ChatEventForwarder
-        return [ChatEventForwarder(skill_name, self.outbox, run_id=run_id)]
-
     async def _put_outbox(self, msg: OutboxMessage) -> None:
         """Drop transient kinds while detached; durable kinds are queued.
 
@@ -4610,33 +4210,6 @@ class Session:
         if not self.is_attached and msg.kind in {"status", "trace"}:
             return
         await self.outbox.put(msg)
-
-    def _load_stdlib_skill(self, skill_name: str):
-        """Load a stdlib skill by its directory name. Propagates parse errors."""
-        sl = stdlib_root()
-        skill_md = sl / "skills" / skill_name / "skill.md"
-        return load_dsl_skill(str(skill_md), skill_root=str(sl))
-
-    async def _run_stdlib_skill(
-        self,
-        skill_name: str,
-        input_artifact: dict,
-        *,
-        state_subdir: str,
-        mcp_servers: dict | None = None,
-        forward_events: bool = False,
-    ):
-        """Thin delegation to SkillRunner.run_stdlib (FP-0019 Wave 1b).
-
-        Kept for callers that still reference this name directly.
-        Returns the RunResult. Callers handle exceptions.
-        """
-        return await self._skill_runner.run_stdlib(
-            skill_name, input_artifact,
-            state_subdir=state_subdir,
-            mcp_servers=mcp_servers,
-            forward_events=forward_events,
-        )
 
     # ── compaction helpers (FP-0019 Wave 1) ────────────────────────────────────
     # Business logic lives in CompactionController.  Session keeps only the
@@ -4955,42 +4528,6 @@ class Session:
         """Thin wrapper → InterventionHandler.announce."""
         await self._intervention_handler.announce(iv)
 
-    def register_intervention_override(self, chain_id: str, bus: "RequestBus") -> None:
-        """Register a ``RequestBus`` for ask_user prompts emitted by
-        skills spawned under this chain_id. Caller must pair with
-        ``unregister_intervention_override`` in a try/finally.
-
-        Issue #254 Phase 5: parameter type tightened from the legacy
-        ``InterventionBus`` alias to the canonical ``RequestBus`` name —
-        functionally identical since the alias points at the same
-        Protocol, but the type hint now reflects the OS↔Agent contract
-        layer the override participates in.
-        """
-        self._intervention_coordinator.register_override(chain_id, bus)
-
-    def unregister_intervention_override(self, chain_id: str) -> None:
-        """Remove an override. Idempotent."""
-        self._intervention_coordinator.unregister_override(chain_id)
-
-    def has_intervention_override(self, chain_id: str) -> bool:
-        """Return True iff *chain_id* currently has a registered override
-        ``RequestBus``. Public read-side counterpart to
-        ``register_intervention_override`` / ``unregister_intervention_override``.
-        """
-        return self._intervention_coordinator.has_override(chain_id)
-
-    def get_intervention_override(self, chain_id: str) -> "RequestBus | None":
-        """Return the override bus for *chain_id* or None if absent. Read-only
-        accessor for callers (= primarily tests) that need to confirm the
-        registered bus identity without consuming the override."""
-        return self._intervention_coordinator.get_override(chain_id)
-
-    def intervention_override_count(self) -> int:
-        """Return the number of currently-registered overrides. Public
-        emptiness probe for cleanup-leak tests (= prefer over reading the
-        private mapping directly)."""
-        return self._intervention_coordinator.override_count()
-
     # ── Listener registration (issue #254 Phase 1) ──────────────────────────
 
     def register_intervention_listener(self, listener_id: str) -> None:
@@ -5143,8 +4680,8 @@ class Session:
              forward to a chain-upstream agent so the originating
              user-facing agent owns the decision. Default returns None
              — no parent resolution — so the request falls through.
-             Phase 5+ adds the chain-walk via the running_skills_chain
-             registry + an agent-lookup factory.
+             Phase 5+ adds the chain-walk to find the originating
+             agent via an agent-lookup factory.
           3. **user_channel.deliver** (= default branch): route the
              prompt through ``_dispatch_intervention``, which preserves
              the chain-override path (A2A peer) + the regular
@@ -5244,9 +4781,9 @@ class Session:
         agent; return ``None`` to fall through to user_channel delivery.
 
         Default implementation returns ``None`` (= no parent resolution).
-        Phase 5+ will walk ``running_skills_chain`` to find the
-        originating agent and look it up via an agent-registry factory;
-        Phase 4 only establishes the routing branch.
+        Phase 5+ will walk the chain to find the originating agent and
+        look it up via an agent-registry factory; Phase 4 only
+        establishes the routing branch.
         """
         return None
 
@@ -5336,42 +4873,6 @@ class Session:
             extension=decision.extension,
         )
         return decision.allow_continue
-
-    def _drop_interventions_for_run(self, run_id: str | None) -> None:
-        """Cancel any pending interventions tagged with `run_id`.
-
-        The registry's drop cancels the futures; ``_dispatch_intervention``'s
-        finally clause then fires ``intervention_resolved`` to the WAL for
-        each cancelled coroutine, so the snapshot's
-        ``outstanding_interventions`` is pruned correctly.
-
-        R-D12: also clears any durable buffered answer for this run — the
-        run is gone, nothing should consume the answer. Both the
-        in-memory dict AND the on-disk buffer are dropped.
-        """
-        self._interventions.drop_for_run(run_id)
-        if run_id is not None:
-            had_buffered = (
-                self._buffered_intervention_answers.pop(run_id, None) is not None
-            )
-            # If we cleared an in-memory buffered answer, also fire the
-            # consumed event so the durable copy in the snapshot gets
-            # pruned. Fire-and-forget; if the loop is gone (teardown),
-            # the durable entry persists harmlessly until next restart.
-            if had_buffered:
-                try:
-                    loop = asyncio.get_running_loop()
-                except RuntimeError:
-                    loop = None
-                if loop is not None:
-                    self._track_wal_task(
-                        loop.create_task(
-                            self._journal.record_intervention_answer_consumed(
-                                run_id=run_id,
-                            ),
-                            name=f"buffered-answer-dropped-{run_id}",
-                        )
-                    )
 
     def consume_buffered_intervention_answer(
         self, run_id: str,

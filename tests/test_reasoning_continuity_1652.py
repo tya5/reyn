@@ -17,7 +17,6 @@ from reyn.runtime.router_system_prompt import build_system_prompt
 _SP_BASE = dict(
     agent_name="chat",
     agent_role="r",
-    available_skills=[],
     available_agents=[],
     memory_index={"status": "not_found", "content": ""},
 )

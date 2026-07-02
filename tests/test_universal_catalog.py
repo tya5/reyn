@@ -50,7 +50,6 @@ def test_categories_master_table_order() -> None:
     Reviewers reading the design doc and the code see the same shape.
     """
     assert CATEGORIES == (
-        "skill",
         "multi_agent",
         # Issue #879: mcp.server / mcp.tool / mcp.operation collapsed
         # into a single ``mcp`` category whose six verb_object actions
@@ -82,7 +81,6 @@ def test_categories_no_duplicates() -> None:
     "qualified, category, entry_name",
     [
         # Flat category, simple entry
-        ("skill__code_review", "skill", "code_review"),
         ("file__read", "file", "read"),
         ("web__search", "web", "search"),
         ("exec__sandboxed_exec", "exec", "sandboxed_exec"),
@@ -100,7 +98,7 @@ def test_categories_no_duplicates() -> None:
         ("mcp__call_tool", "mcp", "call_tool"),
         ("mcp__drop_server", "mcp", "drop_server"),
         # Entry name containing further underscores (must not re-split)
-        ("skill__multi__word__name", "skill", "multi__word__name"),
+        ("mcp__multi__word__name", "mcp", "multi__word__name"),
     ],
 )
 def test_split_qualified_name_parses_correctly(
@@ -117,7 +115,6 @@ def test_split_qualified_name_parses_correctly(
 @pytest.mark.parametrize(
     "category, entry_name, expected",
     [
-        ("skill", "code_review", "skill__code_review"),
         ("rag_corpus", "meetings", "rag_corpus__meetings"),
         # Issue #879 collapsed mcp surface.
         ("mcp", "search_registry", "mcp__search_registry"),
@@ -152,7 +149,7 @@ def test_split_qualified_name_unknown_category_raises() -> None:
 def test_split_qualified_name_empty_entry_raises() -> None:
     """Tier 2: empty entry_name raises ValueError."""
     with pytest.raises(ValueError, match="empty entry_name"):
-        split_qualified_name("skill__")
+        split_qualified_name("file__")
 
 
 def test_split_qualified_name_non_string_raises() -> None:
@@ -170,7 +167,7 @@ def test_build_qualified_name_unknown_category_raises() -> None:
 def test_build_qualified_name_empty_entry_raises() -> None:
     """Tier 2: build_qualified_name rejects empty entry_name."""
     with pytest.raises(ValueError, match="non-empty"):
-        build_qualified_name("skill", "")
+        build_qualified_name("file", "")
 
 
 def test_is_valid_qualified_name_predicate() -> None:
@@ -179,11 +176,11 @@ def test_is_valid_qualified_name_predicate() -> None:
     Mirrors the predicate convenience contract; useful in filter
     pipelines and schema validators.
     """
-    assert is_valid_qualified_name("skill__code_review") is True
+    assert is_valid_qualified_name("file__read") is True
     assert is_valid_qualified_name("mcp__call_tool") is True
     assert is_valid_qualified_name("missing_separator") is False
     assert is_valid_qualified_name("unknown__entry") is False
-    assert is_valid_qualified_name("skill__") is False
+    assert is_valid_qualified_name("file__") is False
 
 
 # ── 4. 4 ToolDefinitions shape ────────────────────────────────────────────

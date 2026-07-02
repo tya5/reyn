@@ -34,20 +34,6 @@ def test_skill_outbound_message_is_neutral():
 
 
 @pytest.mark.asyncio
-async def test_adapter_round_trips_to_outbox_message(tmp_path):
-    """Tier 2: the adapter converts the neutral record → OutboxMessage with
-    kind/text/meta preserved and reply_to=None (behavior-identical to the prior
-    direct OutboxMessage constructs)."""
-    session = _make_session(tmp_path)
-    await session._skill_outbox_adapter(
-        SkillOutboundMessage(kind="error", text="boom", meta={"chain_id": "c1"}),
-    )
-    msg = session.outbox.get_nowait()
-    assert (msg.kind, msg.text, msg.meta) == ("error", "boom", {"chain_id": "c1"})
-    assert msg.reply_to is None
-
-
-@pytest.mark.asyncio
 async def test_adapter_is_load_bearing_falsify(tmp_path):
     """Tier 2: FALSIFY — bypassing the adapter (enqueuing the neutral record
     straight through _put_outbox) fails, because the record lacks the transport
@@ -57,16 +43,3 @@ async def test_adapter_is_load_bearing_falsify(tmp_path):
         await session._put_outbox(
             SkillOutboundMessage(kind="status", text="x"),  # type: ignore[arg-type]
         )
-
-
-def test_make_skill_subscribers_builds_forwarder(tmp_path):
-    """Tier 2: the subscriber factory builds a ChatEventForwarder for the skill
-    (the construction SkillRunner DI's so it stays reyn.runtime-free)."""
-    from reyn.runtime.forwarder import ChatEventForwarder
-
-    session = _make_session(tmp_path)
-    subs = session._make_skill_subscribers("demo_skill", run_id="r1")
-    forwarder = subs[0]
-    assert isinstance(forwarder, ChatEventForwarder)
-    assert forwarder.skill_name == "demo_skill"
-    assert forwarder.run_id == "r1"

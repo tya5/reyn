@@ -8,12 +8,6 @@ from reyn.runtime.router_tools import build_tools
 
 # ── Fixtures / helpers ────────────────────────────────────────────────────────
 
-SAMPLE_SKILLS = [
-    {"name": "article_writer", "description": "Write articles"},
-    {"name": "web_search", "description": "Search the web"},
-    {"name": "summarizer", "description": "Summarise text"},
-]
-
 SAMPLE_AGENTS = [
     {"name": "researcher", "role": "Research agent"},
     {"name": "editor", "role": "Editorial agent"},
@@ -22,13 +16,10 @@ SAMPLE_AGENTS = [
 FORBIDDEN_KEYS = {"oneOf", "anyOf", "additionalProperties", "format"}
 
 EXPECTED_TOOL_NAMES = [
-    "list_skills",
-    "describe_skill",
     "list_agents",
     "describe_agent",
     "list_memory",
     "read_memory_body",
-    "invoke_skill",
     "delegate_to_agent",
     "session_spawn",  # #2103 S1bc / #2120: router-only spawn primitive (unconditional)
     "agent_spawn",     # #2103 B-tool: router-only org-design spawn primitive
@@ -110,7 +101,7 @@ def test_build_tools_returns_expected_baseline_tools():
     baseline is exactly EXPECTED_TOOL_NAMES. All file-class tools and MCP
     remain gated.
     """
-    tools = build_tools(SAMPLE_SKILLS, SAMPLE_AGENTS)
+    tools = build_tools(SAMPLE_AGENTS)
     assert _tool_names(tools) == EXPECTED_TOOL_NAMES, (
         f"Expected tools {EXPECTED_TOOL_NAMES}, got {_tool_names(tools)}"
     )
@@ -118,8 +109,8 @@ def test_build_tools_returns_expected_baseline_tools():
 
 def test_tool_order_is_deterministic():
     """Tier 2: build_tools() returns tools in a stable, deterministic order."""
-    tools_a = build_tools(SAMPLE_SKILLS, SAMPLE_AGENTS)
-    tools_b = build_tools(SAMPLE_SKILLS, SAMPLE_AGENTS)
+    tools_a = build_tools(SAMPLE_AGENTS)
+    tools_b = build_tools(SAMPLE_AGENTS)
     assert _tool_names(tools_a) == _tool_names(tools_b)
     assert _tool_names(tools_a) == EXPECTED_TOOL_NAMES
 
@@ -130,10 +121,10 @@ def test_compact_visible_gates_tool():
     search_actions §D14 visibility gate; keeps tools= stable on ample-window
     turns (and LLMReplay fixtures keyed on tools byte-stable).
     """
-    default = _tool_names(build_tools(SAMPLE_SKILLS, SAMPLE_AGENTS))
+    default = _tool_names(build_tools(SAMPLE_AGENTS))
     assert "compact" not in default, "compact must be hidden when the window is ample"
 
-    gated = _tool_names(build_tools(SAMPLE_SKILLS, SAMPLE_AGENTS, compact_visible=True))
+    gated = _tool_names(build_tools(SAMPLE_AGENTS, compact_visible=True))
     assert "compact" in gated, "compact must appear when the window is filling"
     # Enabling the gate only adds compact — no other tool churn.
     assert set(gated) - set(default) == {"compact"}
@@ -141,7 +132,7 @@ def test_compact_visible_gates_tool():
 
 def test_no_forbidden_schema_keywords():
     """Tier 2: No tool schema contains Gemini-forbidden keywords."""
-    tools = build_tools(SAMPLE_SKILLS, SAMPLE_AGENTS)
+    tools = build_tools(SAMPLE_AGENTS)
     for tool in tools:
         fn = tool["function"]
         for key, _val, _depth in _walk_dict(fn.get("parameters", {})):
@@ -157,7 +148,7 @@ def test_nested_objects_max_depth_1():
       - depth-0 'properties' key is the top-level parameter list → OK
       - depth-1 'properties' key would be a nested object's inner fields → NOT OK
     """
-    tools = build_tools(SAMPLE_SKILLS, SAMPLE_AGENTS)
+    tools = build_tools(SAMPLE_AGENTS)
     for tool in tools:
         fn = tool["function"]
         params = fn.get("parameters", {})
@@ -171,7 +162,7 @@ def test_nested_objects_max_depth_1():
 
 def test_required_fields_present_per_tool():
     """Tier 1: Every tool has type, function.name, function.description, and function.parameters."""
-    tools = build_tools(SAMPLE_SKILLS, SAMPLE_AGENTS)
+    tools = build_tools(SAMPLE_AGENTS)
     for tool in tools:
         assert tool.get("type") == "function", (
             f"Tool missing 'type: function': {tool}"
@@ -184,7 +175,7 @@ def test_required_fields_present_per_tool():
 
 def test_remember_type_enum():
     """Tier 1: remember_shared and remember_agent must both expose the canonical type enum."""
-    tools = build_tools(SAMPLE_SKILLS, SAMPLE_AGENTS)
+    tools = build_tools(SAMPLE_AGENTS)
     tool_map = {t["function"]["name"]: t for t in tools}
 
     expected_enum = ["user", "feedback", "project", "reference"]
@@ -203,7 +194,7 @@ def test_remember_type_enum():
 
 def test_layer_enum():
     """Tier 1: read_memory_body and forget_memory must both expose the canonical layer enum."""
-    tools = build_tools(SAMPLE_SKILLS, SAMPLE_AGENTS)
+    tools = build_tools(SAMPLE_AGENTS)
     tool_map = {t["function"]["name"]: t for t in tools}
 
     expected_enum = ["shared", "agent"]
@@ -236,7 +227,7 @@ def test_file_tools_omitted_when_no_permissions():
     tools cover the gap (= reading Reyn's own OSS repo, not user
     files).
     """
-    tools = build_tools(SAMPLE_SKILLS, SAMPLE_AGENTS)
+    tools = build_tools(SAMPLE_AGENTS)
     names = set(_tool_names(tools))
     assert names.isdisjoint(FILE_TOOL_NAMES), (
         f"Expected no file tools, but found: {names & FILE_TOOL_NAMES}"
@@ -248,9 +239,7 @@ def test_file_tools_omitted_when_no_permissions():
 
 def test_file_read_only_tools_present():
     """Tier 2: read scope only → list_directory and read_file present; write tools absent."""
-    tools = build_tools(
-        SAMPLE_SKILLS,
-        SAMPLE_AGENTS,
+    tools = build_tools(SAMPLE_AGENTS,
         file_permissions={"read": ["src"], "write": []},
     )
     names = set(_tool_names(tools))
@@ -262,9 +251,7 @@ def test_file_read_only_tools_present():
 
 def test_file_full_tools_present():
     """Tier 2: Both read and write scope → all 4 file tools present."""
-    tools = build_tools(
-        SAMPLE_SKILLS,
-        SAMPLE_AGENTS,
+    tools = build_tools(SAMPLE_AGENTS,
         file_permissions={"read": ["src"], "write": ["out"]},
     )
     names = set(_tool_names(tools))
@@ -277,7 +264,7 @@ def test_file_full_tools_present():
 
 def test_mcp_tools_omitted_when_no_servers():
     """Tier 2: No mcp_servers kwarg → all MCP tools absent."""
-    tools = build_tools(SAMPLE_SKILLS, SAMPLE_AGENTS)
+    tools = build_tools(SAMPLE_AGENTS)
     names = set(_tool_names(tools))
     assert names.isdisjoint(MCP_TOOL_NAMES), (
         f"Expected no MCP tools, but found: {names & MCP_TOOL_NAMES}"
@@ -286,7 +273,7 @@ def test_mcp_tools_omitted_when_no_servers():
 
 def test_mcp_tools_present_when_servers_configured():
     """Tier 2: mcp_servers non-empty → all 3 MCP tools present."""
-    tools = build_tools(SAMPLE_SKILLS, SAMPLE_AGENTS, mcp_servers=SAMPLE_MCP_SERVERS)
+    tools = build_tools(SAMPLE_AGENTS, mcp_servers=SAMPLE_MCP_SERVERS)
     names = set(_tool_names(tools))
     missing = MCP_TOOL_NAMES - names
     assert not missing, f"Missing MCP tools when servers configured: {missing}"
@@ -311,9 +298,7 @@ def test_total_tool_count_with_full_permissions():
     FP-0032: D4 describe_mcp_tool added alongside D1-D3.
     web_fetch_allowed param is kept for backward compat but now a no-op.
     """
-    tools = build_tools(
-        SAMPLE_SKILLS,
-        SAMPLE_AGENTS,
+    tools = build_tools(SAMPLE_AGENTS,
         file_permissions={"read": ["src"], "write": ["out"]},
         mcp_servers=SAMPLE_MCP_SERVERS,
         web_fetch_allowed=True,
@@ -332,9 +317,7 @@ def test_total_tool_count_with_full_permissions():
 
 def test_no_forbidden_schema_keywords_full_permissions():
     """Tier 2: new file+MCP tools must also pass Gemini-safe schema check."""
-    tools = build_tools(
-        SAMPLE_SKILLS,
-        SAMPLE_AGENTS,
+    tools = build_tools(SAMPLE_AGENTS,
         file_permissions={"read": ["src"], "write": ["out"]},
         mcp_servers=SAMPLE_MCP_SERVERS,
     )
@@ -348,9 +331,7 @@ def test_no_forbidden_schema_keywords_full_permissions():
 
 def test_nested_objects_max_depth_1_full_permissions():
     """Tier 2: new file+MCP tools must also satisfy max depth-1 object nesting."""
-    tools = build_tools(
-        SAMPLE_SKILLS,
-        SAMPLE_AGENTS,
+    tools = build_tools(SAMPLE_AGENTS,
         file_permissions={"read": ["src"], "write": ["out"]},
         mcp_servers=SAMPLE_MCP_SERVERS,
     )
@@ -373,7 +354,7 @@ def test_recall_in_build_tools():
     B17-S6-1 fix: RECALL was registered in ToolRegistry but missing from
     build_tools(), so the LLM could not see or call it (S5/S6 blocked).
     """
-    tools = build_tools(SAMPLE_SKILLS, SAMPLE_AGENTS)
+    tools = build_tools(SAMPLE_AGENTS)
     tool_names = [t["function"]["name"] for t in tools]
     assert "recall" in tool_names, (
         f"'recall' missing from build_tools() output; got: {tool_names}"
@@ -386,7 +367,7 @@ def test_drop_source_in_build_tools():
     B17-S8-2 fix: DROP_SOURCE was registered in ToolRegistry but missing from
     build_tools(), so the LLM could not see or call it (S8 blocked).
     """
-    tools = build_tools(SAMPLE_SKILLS, SAMPLE_AGENTS)
+    tools = build_tools(SAMPLE_AGENTS)
     tool_names = [t["function"]["name"] for t in tools]
     assert "drop_source" in tool_names, (
         f"'drop_source' missing from build_tools() output; got: {tool_names}"

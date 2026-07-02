@@ -36,8 +36,6 @@ class RouterHostAdapter:
     output_language:
         BCP-47 code or None. Stored as a plain attribute (not property) per
         the RouterLoopHost Protocol.
-    allowed_skills:
-        Optional allowlist for skill enumeration.
     allowed_mcp:
         Optional allowlist for MCP server scope (forwarded to PermissionDecl).
     permission_resolver:
@@ -56,9 +54,6 @@ class RouterHostAdapter:
         SnapshotJournal instance for plan-lifecycle persistence.
     agent_registry:
         AgentRegistry (or None) for listing reachable peers.
-    skill_enumerate_fn:
-        Callable ``(exclude: set[str]) -> list[dict]`` — wraps
-        ``enumerate_available_skills`` without importing it here.
     agent_workspace_dir:
         Path to ``.reyn/agents/<agent_name>`` — used for ``get_memory_index``.
     file_read:
@@ -77,8 +72,6 @@ class RouterHostAdapter:
         Async callback ``(server: str) -> list[dict]``.
     mcp_call_tool:
         Async callback ``(server: str, tool: str, args: dict) -> dict``.
-    run_skill_awaitable:
-        Async callback ``(*, skill: str, input: dict, chain_id: str) -> dict``.
     send_to_agent:
         Async callback ``(*, to, request, depth, chain_id) -> None``.
     put_outbox:
@@ -100,8 +93,7 @@ class RouterHostAdapter:
         agent_name: str,
         agent_role: str,
         output_language: str | None,
-        allowed_skills: list[str] | None,
-        allowed_mcp: list[str] | None,
+        allowed_mcp: list[str] | None = None,
         permission_resolver: Any,               # PermissionResolver | None
         mcp_servers: dict | None,
         project_context: str,
@@ -114,7 +106,6 @@ class RouterHostAdapter:
         record_spawned_task: "Callable[[str, str], None] | None" = None,  # #2103 S1bc-exec
         live_session_id_fn: "Callable[[], str | None] | None" = None,     # #2103 S1bc-exec
         current_task_id_fn: "Callable[[], str | None] | None" = None,     # #1953 §16
-        skill_enumerate_fn: Callable[[set], list],
         agent_workspace_dir: Path,
         # File op callbacks
         file_read: Callable[..., Awaitable[dict]],
@@ -127,7 +118,6 @@ class RouterHostAdapter:
         mcp_list_tools: Callable[..., Awaitable[list]],
         mcp_call_tool: Callable[..., Awaitable[dict]],
         # Action callbacks
-        run_skill_awaitable: Callable[..., Awaitable[dict]],
         send_to_agent: Callable[..., Awaitable[None]],
         put_outbox: Callable[..., Awaitable[None]],
         append_history: Callable,
@@ -295,7 +285,6 @@ class RouterHostAdapter:
         self._agent_name = agent_name
         self._agent_role = agent_role
         self.output_language = output_language
-        self._allowed_skills = allowed_skills
         self._allowed_mcp = allowed_mcp
         self._perm = permission_resolver
         self._mcp_servers = mcp_servers
@@ -328,7 +317,6 @@ class RouterHostAdapter:
         self._record_spawned_task = record_spawned_task   # #2103 S1bc-exec
         self._live_session_id_fn = live_session_id_fn      # #2103 S1bc-exec
         self._current_task_id_fn = current_task_id_fn      # #1953 §16
-        self._skill_enumerate_fn = skill_enumerate_fn
         self._workspace_dir = Path(agent_workspace_dir)
         # File callbacks
         self._file_read_cb = file_read
@@ -341,7 +329,6 @@ class RouterHostAdapter:
         self._mcp_list_tools_cb = mcp_list_tools
         self._mcp_call_tool_cb = mcp_call_tool
         # Action callbacks
-        self._run_skill_awaitable_cb = run_skill_awaitable
         self._send_to_agent_cb = send_to_agent
         self._put_outbox_cb = put_outbox
         self._append_history_cb = append_history
@@ -570,29 +557,6 @@ class RouterHostAdapter:
         return self._perm
 
     # --- Catalogue accessors ---
-
-    def list_available_skills(self) -> list[dict]:
-        """Return enumerated skills with router excluded.
-
-        (FP-0011: skill_narrator was removed; the router LLM narrates inline.
-        PR-N3: chat_compactor skill retired — compaction is now OS-internal.)
-        """
-        avail = self._skill_enumerate_fn({"skill_router"})
-        # #2074 S2/S3: catalog-visibility shares the SKILL ∩ decision with the
-        # spawn gates (skill_allowed → ProfileLayer per-agent ∩ ContextualLayer
-        # per-context), preserving the visibility⇔spawn coupling. Byte-identical
-        # to the legacy inline allowlist filter (None = unrestricted ⇒ no
-        # filtering; a context that does not narrow SKILL ⇒ ⊤). skill_router is
-        # already excluded above, so its exemption is preserved.
-        from reyn.security.permissions.effective import skill_allowed
-        avail = [
-            s for s in avail
-            if skill_allowed(
-                self._allowed_skills, s.get("name"),
-                contextual=self._contextual_permission,
-            )
-        ]
-        return avail
 
     def list_available_agents(self) -> list[dict]:
         """Return topology-reachable peers (PR11/PR12)."""
@@ -923,12 +887,6 @@ class RouterHostAdapter:
         return self._memory.memory_dir(layer)
 
     # --- Action callbacks ---
-
-    async def run_skill_awaitable(self, *, skill: str, input: dict,
-                                   chain_id: str) -> dict:
-        return await self._run_skill_awaitable_cb(
-            {"skill": skill, "input": input}, chain_id=chain_id,
-        )
 
     async def send_to_agent(self, *, to: str, request: str, depth: int,
                             chain_id: str) -> None:

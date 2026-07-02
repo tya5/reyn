@@ -160,7 +160,6 @@ def test_build_tools_includes_web_fetch_via_registry():
     from reyn.runtime.router_tools import build_tools
 
     tools = build_tools(
-        available_skills=[],
         available_agents=[],
     )
 
@@ -193,7 +192,6 @@ def test_build_tools_web_fetch_not_duplicated():
     from reyn.runtime.router_tools import build_tools
 
     tools = build_tools(
-        available_skills=[],
         available_agents=[],
     )
     wf_tools = [t for t in tools if t.get("function", {}).get("name") == "web_fetch"]

@@ -167,9 +167,6 @@ def build_universal_tool_use_slots(
         )
         _r2.append("")
         _r2.append(
-            "- **skill** — project-defined workflows (e.g. skill__code_review)."
-        )
-        _r2.append(
             "- **multi_agent** — delegate / list / describe peer agents in this network."
         )
         _r2.append(

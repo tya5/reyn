@@ -51,99 +51,6 @@ async def test_chitchat_no_tools(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_single_skill_round(monkeypatch):
-    """Tier 1: RouterLoop dispatches invoke_skill on round 1 and produces text reply on round 2."""
-    host = FakeRouterHost(skills=[{"name": "my_skill", "category": "general"}])
-    loop = make_loop(host)
-
-    rounds = [
-        tool_result([{"name": "invoke_skill", "args": {
-            "name": "my_skill",
-            "input": {"type": "Foo", "data": {}},
-        }}]),
-        text_result("Done!"),
-    ]
-    scripted = _ScriptedLLM(rounds)
-
-    monkeypatch.setattr("reyn.runtime.router_loop.call_llm_tools", scripted)
-    await loop.run("run my skill", [])
-
-    (skill_call,) = host.skill_calls
-    assert skill_call["skill"] == "my_skill"
-    assert skill_call["chain_id"] == "chain-test"
-
-    (msg,) = host.outbox
-    assert msg["text"] == "Done!"
-    assert scripted.call_count == 2
-
-
-@pytest.mark.asyncio
-async def test_two_round_sequential(monkeypatch):
-    """Tier 1: multi-round message accumulation — tool results from round 1 and 2 appear in round 3 messages."""
-    host = FakeRouterHost(
-        file_permissions={"read": ["/docs"], "write": []},
-        skills=[{"name": "skill_a", "category": "general"}],
-    )
-    host._files["/docs/note.txt"] = "content from file"
-    loop = make_loop(host)
-
-    rounds = [
-        tool_result([{"name": "read_file", "args": {"path": "/docs/note.txt"}}]),
-        tool_result([{"name": "invoke_skill", "args": {
-            "name": "skill_a",
-            "input": {"type": "T", "data": {"note": "content from file"}},
-        }}]),
-        text_result("All done."),
-    ]
-
-    messages_seen: list[list[dict]] = []
-
-    async def mock_llm(*, messages, **kwargs):
-        messages_seen.append(list(messages))
-        return rounds[len(messages_seen) - 1]
-
-    monkeypatch.setattr("reyn.runtime.router_loop.call_llm_tools", mock_llm)
-    await loop.run("process the file", [])
-
-    # Round 3 messages should include tool results from both prior rounds
-    final_messages = messages_seen[2]
-    roles = [m["role"] for m in final_messages]
-    assert roles.count("tool") == 2, "Two tool result messages expected"
-    (only_skill_call,) = host.skill_calls
-    assert host.outbox[0]["text"] == "All done."
-
-
-@pytest.mark.asyncio
-async def test_parallel_tool_calls_executed(monkeypatch):
-    """Tier 1: RouterLoop executes all tool_calls from a single round concurrently."""
-    host = FakeRouterHost(
-        skills=[
-            {"name": "skill_a", "category": "general"},
-            {"name": "skill_b", "category": "general"},
-        ]
-    )
-    loop = make_loop(host)
-
-    rounds = [
-        tool_result([
-            {"id": "tc_0", "name": "invoke_skill", "args": {
-                "name": "skill_a", "input": {"type": "X", "data": {}}}},
-            {"id": "tc_1", "name": "invoke_skill", "args": {
-                "name": "skill_b", "input": {"type": "Y", "data": {}}}},
-        ]),
-        text_result("Both done."),
-    ]
-    scripted = _ScriptedLLM(rounds)
-
-    monkeypatch.setattr("reyn.runtime.router_loop.call_llm_tools", scripted)
-    await loop.run("run both", [])
-
-    called_skills = {c["skill"] for c in host.skill_calls}
-    assert called_skills == {"skill_a", "skill_b"}
-    assert host.outbox[0]["text"] == "Both done."
-
-
-@pytest.mark.asyncio
 async def test_max_iterations_exhausted(monkeypatch):
     """Tier 2: OS invariant — RouterLoop emits error outbox message after exceeding max_iterations cap. Loop never runs more iterations than configured."""
     host = FakeRouterHost()
@@ -235,41 +142,6 @@ async def test_remember_shared_writes_file_and_regenerates_index(monkeypatch):
     assert regen["output_path"] == "/memory/shared/MEMORY.md"
 
     assert host.outbox[0]["text"] == "Saved."
-
-
-@pytest.mark.asyncio
-async def test_list_skills_empty_path_returns_categories():
-    """Tier 1: list_skills('') returns category+count entries grouped by category. Tests tool API output shape without LLM involvement."""
-    skills = [
-        {"name": "write_blog", "category": "write"},
-        {"name": "write_email", "category": "write"},
-        {"name": "general_task", "category": "general"},
-    ]
-    host = FakeRouterHost(skills=skills)
-    loop = make_loop(host)
-
-    result = loop._list_skills("")
-
-    # Sort by category for comparison
-    result_by_cat = {r["category"]: r["count"] for r in result}
-    assert result_by_cat == {"general": 1, "write": 2}
-
-
-@pytest.mark.asyncio
-async def test_list_skills_with_category_returns_items():
-    """Tier 1: list_skills('write') returns only skills in the write category. Tests tool API output shape without LLM involvement."""
-    skills = [
-        {"name": "write_blog", "description": "Writes blog posts", "category": "write"},
-        {"name": "write_email", "description": "Writes emails", "category": "write"},
-        {"name": "general_task", "description": "General task", "category": "general"},
-    ]
-    host = FakeRouterHost(skills=skills)
-    loop = make_loop(host)
-
-    result = loop._list_skills("write")
-
-    names = {r["name"] for r in result}
-    assert names == {"write_blog", "write_email"}
 
 
 @pytest.mark.asyncio
@@ -482,89 +354,6 @@ async def test_dedupe_does_not_apply_to_non_invoke_sync_tool_calls(monkeypatch):
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_dedupe_duplicate_invoke_skill_in_same_round(monkeypatch):
-    """Tier 2: OS invariant — duplicate invoke_skill calls with identical
-    name+input in one LLM round are deduplicated before dispatch (G3 fix).
-
-    Weak models (observed in B5-M1) emit `invoke_skill` three times in
-    the same tool_calls list with identical args, causing 333k tokens /
-    51 LLM calls for a single review request. After dedupe, exactly one
-    skill invocation runs and a `tool_call_deduped` audit event is emitted
-    for each suppressed call.
-    """
-    host = FakeRouterHost(skills=[
-        {"name": "skill_improver", "category": "general"},
-    ])
-    loop = make_loop(host)
-
-    # Three identical invoke_skill calls in the same round (B5-M1 pattern).
-    duplicate_round = tool_result([
-        {"id": "tc_a", "name": "invoke_skill",
-         "args": {"name": "skill_improver", "input": {"type": "T", "data": {}}}},
-        {"id": "tc_b", "name": "invoke_skill",
-         "args": {"name": "skill_improver", "input": {"type": "T", "data": {}}}},
-        {"id": "tc_c", "name": "invoke_skill",
-         "args": {"name": "skill_improver", "input": {"type": "T", "data": {}}}},
-    ])
-    scripted = _ScriptedLLM([duplicate_round, text_result("done")])
-
-    monkeypatch.setattr("reyn.runtime.router_loop.call_llm_tools", scripted)
-    await loop.run("improve the skill", [])
-
-    # Only one skill invocation — two duplicates suppressed.
-    (skill_call,) = host.skill_calls
-    assert skill_call["skill"] == "skill_improver"
-
-    # Two audit events for the two suppressed calls.
-    deduped_events = [
-        e for e in host.events.emitted
-        if e["type"] == "tool_call_deduped"
-    ]
-    evt_a, evt_b = deduped_events
-    for evt in (evt_a, evt_b):
-        assert evt["name"] == "invoke_skill"
-        assert evt["reason"] == "duplicate_invoke_skill_in_round"
-
-
-@pytest.mark.asyncio
-async def test_dedupe_does_not_collapse_distinct_invoke_skill_args(monkeypatch):
-    """Tier 2: OS invariant — invoke_skill calls with different args in
-    the same round are NOT deduped (G3 false-positive guard).
-
-    Two invoke_skill calls for different skills (or same skill with
-    different inputs) must both execute — they are legitimately distinct
-    work items.
-    """
-    host = FakeRouterHost(skills=[
-        {"name": "skill_a", "category": "general"},
-        {"name": "skill_b", "category": "general"},
-    ])
-    loop = make_loop(host)
-
-    distinct_round = tool_result([
-        {"id": "tc_a", "name": "invoke_skill",
-         "args": {"name": "skill_a", "input": {"type": "T", "data": {"x": 1}}}},
-        {"id": "tc_b", "name": "invoke_skill",
-         "args": {"name": "skill_b", "input": {"type": "T", "data": {"x": 2}}}},
-    ])
-    scripted = _ScriptedLLM([distinct_round, text_result("done")])
-
-    monkeypatch.setattr("reyn.runtime.router_loop.call_llm_tools", scripted)
-    await loop.run("run two skills", [])
-
-    # Both skills executed — different args, no collapse.
-    called = {c["skill"] for c in host.skill_calls}
-    assert called == {"skill_a", "skill_b"}
-
-    # No dedupe events.
-    deduped_events = [
-        e for e in host.events.emitted
-        if e["type"] == "tool_call_deduped"
-    ]
-    assert not deduped_events
-
-
-@pytest.mark.asyncio
 async def test_tool_call_deduped_event_emitted_for_invoke_skill(monkeypatch):
     """Tier 2: P6 invariant — deduped invoke_skill calls emit
     `tool_call_deduped` events with correct name and reason fields,
@@ -726,7 +515,7 @@ async def test_tool_names_populated_per_run(monkeypatch):
     assert "reyn_src_list" in names_no_file
     assert "reyn_src_read" in names_no_file
     # Other always-on baseline.
-    assert "list_skills" in names_no_file
+    assert "list_agents" in names_no_file
 
     # Second run with a host that has file permissions.
     host_with_file = FakeRouterHost(
@@ -760,66 +549,9 @@ async def test_tool_names_populated_per_run(monkeypatch):
     assert "delete_file" in names_with_write
 
 
-@pytest.mark.asyncio
-async def test_known_tool_still_dispatches(monkeypatch):
-    """Tier 1: valid catalog tool (list_skills) dispatches and returns status=ok with list data. Sanity check that tool name validation does not block legitimate tools."""
-    host = FakeRouterHost(
-        skills=[{"name": "my_skill", "category": "general"}],
-    )
-    loop = make_loop(host)
-
-    rounds = [
-        tool_result([{"name": "list_skills", "args": {"path": ""}}]),
-        text_result("Here are the skills."),
-    ]
-
-    messages_captured: list[list[dict]] = []
-
-    async def mock_llm(*, messages, **kwargs):
-        messages_captured.append(list(messages))
-        return rounds[len(messages_captured) - 1]
-
-    monkeypatch.setattr("reyn.runtime.router_loop.call_llm_tools", mock_llm)
-    await loop.run("what skills do you have?", [])
-
-    # The tool result should not be an error
-    round2_messages = messages_captured[1]
-    tool_msgs = [m for m in round2_messages if m.get("role") == "tool"]
-    (tool_msg,) = tool_msgs
-    result_data = json.loads(tool_msg["content"])
-    # dispatch_tool wraps success as {"status": "ok", "data": <result>}
-    assert result_data.get("status") == "ok"
-    # list_skills returns a list (categories) inside "data"
-    assert isinstance(result_data.get("data"), list)
-    assert host.outbox[0]["text"] == "Here are the skills."
-
-
 # ---------------------------------------------------------------------------
 # PR37 Wave 2D: dispatch_tool integration + S13b skill-name validation
 # ---------------------------------------------------------------------------
-
-@pytest.mark.asyncio
-async def test_dispatch_tool_emits_tool_called_and_tool_returned_events(monkeypatch):
-    """Tier 2: P6 invariant — dispatch_tool emits tool_called and tool_returned events on successful skill invocation."""
-    host = FakeRouterHost(skills=[{"name": "my_skill", "category": "general"}])
-    loop = make_loop(host)
-
-    rounds = [
-        tool_result([{"name": "invoke_skill", "args": {
-            "name": "my_skill",
-            "input": {"type": "Foo", "data": {}},
-        }}]),
-        text_result("Done!"),
-    ]
-    scripted = _ScriptedLLM(rounds)
-
-    monkeypatch.setattr("reyn.runtime.router_loop.call_llm_tools", scripted)
-    await loop.run("run skill", [])
-
-    event_types = [e["type"] for e in host.events.emitted]
-    assert "tool_called" in event_types
-    assert "tool_returned" in event_types
-
 
 @pytest.mark.asyncio
 async def test_dispatch_tool_emits_tool_failed_on_unknown_tool(monkeypatch):
@@ -895,51 +627,6 @@ async def test_invoke_skill_with_unknown_skill_name_rejected(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_invoke_skill_with_known_name_dispatches(monkeypatch):
-    """Tier 1: invoke_skill with a valid skill name dispatches and produces text reply. Happy-path sanity check for skill name validation."""
-    host = FakeRouterHost(skills=[{"name": "real_skill", "category": "general"}])
-    loop = make_loop(host)
-
-    rounds = [
-        tool_result([{"name": "invoke_skill", "args": {
-            "name": "real_skill",
-            "input": {"type": "T", "data": {"key": "value"}},
-        }}]),
-        text_result("Skill ran."),
-    ]
-    scripted = _ScriptedLLM(rounds)
-
-    monkeypatch.setattr("reyn.runtime.router_loop.call_llm_tools", scripted)
-    await loop.run("run real skill", [])
-
-    (skill_call,) = host.skill_calls
-    assert skill_call["skill"] == "real_skill"
-    assert host.outbox[0]["text"] == "Skill ran."
-
-
-@pytest.mark.asyncio
-async def test_invoke_skill_layer_b_catches_bypass():
-    """Tier 2: OS invariant — Layer B defense raises ValueError for unknown skill name even when enum validation is bypassed; skill name validation is enforced at dispatch time.
-
-    Simulate by calling _invoke_router_tool directly with a name not in skills.
-    """
-    host = FakeRouterHost(skills=[{"name": "real_skill", "category": "general"}])
-    loop = RouterLoop(host=host, chain_id="chain-test")
-
-    # Prime the catalog (normally done in run())
-    from reyn.runtime.router_tools import build_tools
-    tools = build_tools(host.list_available_skills(), host.list_available_agents())
-    loop._catalog = {t["function"]["name"]: t for t in tools}
-    loop._tool_names = frozenset(loop._catalog.keys())
-
-    with pytest.raises(ValueError, match="not found"):
-        await loop._invoke_router_tool(
-            "invoke_skill",
-            {"name": "hallucinated_skill", "input": {"type": "T", "data": {}}},
-        )
-
-
-@pytest.mark.asyncio
 async def test_session_spawn_dispatches_to_host_not_unhandled():
     """Tier 2: #2120 — _invoke_router_tool('session_spawn') reaches the registry handler
     and the host's spawn_session, NOT the {"error": "unhandled tool"} fall-through.
@@ -954,7 +641,7 @@ async def test_session_spawn_dispatches_to_host_not_unhandled():
     loop = RouterLoop(host=host, chain_id="chain-test")
 
     from reyn.runtime.router_tools import build_tools
-    tools = build_tools(host.list_available_skills(), host.list_available_agents())
+    tools = build_tools(host.list_available_agents())
     loop._catalog = {t["function"]["name"]: t for t in tools}
     loop._tool_names = frozenset(loop._catalog.keys())
 
@@ -969,72 +656,6 @@ async def test_session_spawn_dispatches_to_host_not_unhandled():
     spawned = host.spawn_calls[-1]
     assert spawned["request"] == "do a task"
     assert spawned["mode"] == "persistent"
-
-
-# ---------------------------------------------------------------------------
-# B3-M2 fix: _list_skills name-lookup fallback
-# ---------------------------------------------------------------------------
-
-@pytest.mark.asyncio
-async def test_list_skills_name_lookup_fallback():
-    """Tier 2: OS invariant — _list_skills returns a 1-item list when path matches a skill name but no category.
-
-    Covers the B3-M2 bug: LLM calls list_skills(path="read_local_files")
-    but all skills have no category set (defaulting to "general"), so
-    the category filter returns 0 results. The name-lookup fallback must
-    return the matching skill entry instead of an empty list.
-    """
-    skills = [
-        {"name": "read_local_files", "description": "Read files from local FS"},
-        {"name": "write_blog", "description": "Write a blog post", "category": "write"},
-    ]
-    host = FakeRouterHost(skills=skills)
-    loop = make_loop(host)
-
-    result = loop._list_skills("read_local_files")
-
-    (item,) = result
-    assert item["name"] == "read_local_files"
-    assert item["description"] == "Read files from local FS"
-
-
-@pytest.mark.asyncio
-async def test_list_skills_unknown_path_returns_empty():
-    """Tier 2: OS invariant — _list_skills returns empty list when path matches neither a category nor a skill name.
-
-    Regression guard: unknown path must still return [] (existing contract).
-    """
-    skills = [
-        {"name": "read_local_files", "description": "Read files"},
-        {"name": "write_blog", "description": "Write blog", "category": "write"},
-    ]
-    host = FakeRouterHost(skills=skills)
-    loop = make_loop(host)
-
-    result = loop._list_skills("nonexistent_category_or_skill")
-
-    assert result == []
-
-
-@pytest.mark.asyncio
-async def test_list_skills_empty_path_returns_all_categories():
-    """Tier 2: OS invariant — _list_skills('') groups all skills by category and returns [{category, count}] entries.
-
-    Regression guard for existing empty-path behaviour: skills without an
-    explicit category fall into "general".
-    """
-    skills = [
-        {"name": "read_local_files"},           # no category → "general"
-        {"name": "write_blog", "category": "write"},
-        {"name": "write_email", "category": "write"},
-    ]
-    host = FakeRouterHost(skills=skills)
-    loop = make_loop(host)
-
-    result = loop._list_skills("")
-
-    by_cat = {r["category"]: r["count"] for r in result}
-    assert by_cat == {"general": 1, "write": 2}
 
 
 @pytest.mark.asyncio

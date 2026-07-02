@@ -38,7 +38,6 @@ These tests pin:
 """
 from __future__ import annotations
 
-import asyncio
 import gc
 import warnings
 
@@ -171,49 +170,3 @@ def test_shutdown_filter_does_not_swallow_unrelated_warnings():
     )
 
 
-def test_drain_on_shutdown_does_not_leak_warning(tmp_path, monkeypatch):
-    """Tier 2: end-to-end — Session._drain_on_shutdown swallows the warning.
-
-    Integrates the filter into the actual production code path: builds a
-    real Session, monkeypatches ``SkillRunner.cancel_all`` to provoke
-    the unawaited-coroutine pattern WHILE the filter window is active
-    (mirrors what the litellm executor race does inside cancel_all's await
-    chain), and asserts no warning leaks out.
-    """
-    from reyn.core.events.state_log import StateLog
-    from reyn.runtime.session import Session
-
-    monkeypatch.chdir(tmp_path)
-
-    session = Session(
-        agent_name="alpha",
-        state_log=StateLog(tmp_path / "state.wal"),
-        snapshot_path=tmp_path / "alpha_snapshot.json",
-    )
-
-    original_cancel_all = session._skill_runner.cancel_all
-
-    async def _patched_cancel_all():
-        # Build + drop the matching coroutine inside the filter window so
-        # GC fires while the warning filter is active. This mirrors the
-        # litellm executor race timing — the unawaited coro is born and
-        # dies inside the cancel_all() await chain.
-        _make_unawaited_coro()
-        gc.collect()
-        await original_cancel_all()
-
-    session._skill_runner.cancel_all = _patched_cancel_all
-
-    with warnings.catch_warnings(record=True) as captured:
-        warnings.simplefilter("always", RuntimeWarning)
-        asyncio.run(session._drain_on_shutdown())
-
-    leaked = [
-        w for w in captured
-        if "never awaited" in str(w.message)
-        and "OpenAIChatCompletion.acompletion" in str(w.message)
-    ]
-    assert not leaked, (
-        f"_drain_on_shutdown must suppress the litellm 'never awaited' "
-        f"warning; leaked: {[str(w.message) for w in leaked]}"
-    )

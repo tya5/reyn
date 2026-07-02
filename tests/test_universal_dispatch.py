@@ -37,27 +37,6 @@ from reyn.tools.universal_dispatch import (
 # ── 1. resolve_invoke_action — resource categories (§D19) ────────────────
 
 
-def test_resolve_invoke_action_skill_routes_to_invoke_skill() -> None:
-    """Tier 2: skill__<name> → invoke_skill(name, input)."""
-    result = resolve_invoke_action(
-        "skill__code_review",
-        {"input": {"type": "code_input", "data": {"path": "x.py"}}},
-    )
-    assert result.target_tool_name == "invoke_skill"
-    assert result.target_args == {
-        "name": "code_review",
-        "input": {"type": "code_input", "data": {"path": "x.py"}},
-    }
-
-
-def test_resolve_invoke_action_skill_wraps_args_when_input_missing() -> None:
-    """Tier 2: skill__<name> with no 'input' wraps args as input payload."""
-    result = resolve_invoke_action("skill__foo", {"x": 1, "y": 2})
-    assert result.target_tool_name == "invoke_skill"
-    assert result.target_args["name"] == "foo"
-    assert result.target_args["input"] == {"x": 1, "y": 2}
-
-
 def test_resolve_invoke_action_multi_agent_delegate_routes_to_handler() -> None:
     """Tier 2: multi_agent__delegate → delegate_to_agent({to, request}).
 
@@ -317,7 +296,6 @@ def test_suggest_similar_names_empty_candidates_returns_empty() -> None:
 @pytest.mark.parametrize(
     "qualified_name, expected_target",
     [
-        ("skill__code_review",       "invoke_skill"),
         ("multi_agent__delegate",    "delegate_to_agent"),
         ("multi_agent__list_peers",  "list_agents"),
         ("multi_agent__describe_peer", "describe_agent"),
@@ -442,7 +420,7 @@ def test_known_qualified_name_for_category() -> None:
         "file__grep", "file__glob", "file__edit",
     }
     # Resource category returns empty
-    assert known_qualified_name_for_category("skill") == ()
+    assert known_qualified_name_for_category("memory_entry") == ()
     # exec has sandboxed_exec (FP-0034 Phase 2)
     assert known_qualified_name_for_category("exec") == ("exec__sandboxed_exec",)
     # mcp (= issue #879 + 2026-05-25 install 3-verb split) verb set.
@@ -554,7 +532,6 @@ def test_multi_agent_delegate_translator_request_passes_through() -> None:
 # is responsible for shaping them to the target's required schema.
 _ROUTE_CONTRACT_SAMPLES: list[tuple[str, dict[str, Any]]] = [
     # Resource categories (= _RESOURCE_RULES)
-    ("skill__code_review", {"input": {"type": "x", "data": {}}}),
     ("multi_agent__list_peers", {}),
     ("multi_agent__describe_peer", {"name": "planner"}),
     ("multi_agent__delegate", {"to": "planner", "message": "hi", "request": "hi"}),

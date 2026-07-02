@@ -55,7 +55,6 @@ def _make_adapter(
         agent_name="test_agent",
         agent_role="test",
         output_language=None,
-        allowed_skills=None,
         allowed_mcp=None,
         permission_resolver=None,
         mcp_servers=None,
@@ -65,7 +64,6 @@ def _make_adapter(
         memory=_noop_callable,
         journal=_noop_callable,
         agent_registry=None,
-        skill_enumerate_fn=lambda _s: [],
         agent_workspace_dir=Path("/tmp"),
         file_read=_noop_callable,
         file_write=_noop_callable,
@@ -75,7 +73,6 @@ def _make_adapter(
         mcp_list_servers=_noop_callable,
         mcp_list_tools=_noop_callable,
         mcp_call_tool=_noop_callable,
-        run_skill_awaitable=_noop_callable,
         send_to_agent=_noop_callable,
         put_outbox=_noop_callable,
         append_history=_noop_callable,
@@ -105,7 +102,7 @@ def test_router_host_adapter_with_flag_on() -> None:
 
 def test_build_tools_off_when_flag_off() -> None:
     """Tier 2: with flag off, universal wrappers do NOT appear in tools=."""
-    tools = build_tools([], [], universal_wrappers_enabled=False)
+    tools = build_tools([], universal_wrappers_enabled=False)
     names = [t["function"]["name"] for t in tools]
     for w in ("list_actions", "describe_action", "invoke_action"):
         assert w not in names
@@ -113,7 +110,7 @@ def test_build_tools_off_when_flag_off() -> None:
 
 def test_build_tools_on_when_flag_on() -> None:
     """Tier 2: with flag on, 3 universal wrappers appear at the end of tools=."""
-    tools = build_tools([], [], universal_wrappers_enabled=True)
+    tools = build_tools([], universal_wrappers_enabled=True)
     names = [t["function"]["name"] for t in tools]
     assert names[-3:] == ["list_actions", "describe_action", "invoke_action"]
 

@@ -28,20 +28,18 @@ from reyn.tools import get_default_registry
 # change) when adding/removing a dispatch-routed tool, the same way #1822 / #2111 / #1056
 # require deliberate updates to their exhaustiveness lists.
 _EXPECTED_DISPATCH: "frozenset[str]" = frozenset({
-    "list_skills", "describe_skill", "list_agents", "describe_agent", "delegate_to_agent",
+    "list_agents", "describe_agent", "delegate_to_agent",
     "session_spawn", "agent_spawn", "topology_create",
     "reyn_src_list", "reyn_src_read",
     "web_search", "web_fetch",
     "read_file", "write_file", "delete_file", "list_directory",
     "edit_file", "glob_files", "grep_files",
-    "invoke_skill",
     "list_mcp_servers", "list_mcp_tools", "call_mcp_tool", "describe_mcp_tool",
     "remember_shared", "remember_agent", "forget_memory", "list_memory", "read_memory_body",
     "recall", "drop_source", "compact",
     "list_actions", "search_actions", "describe_action", "invoke_action",
 })
 
-_SK = [{"name": "s1", "description": "d", "category": "general"}]
 _AG = [{"name": "a1", "description": "d"}]
 _MCP = [{"name": "fs", "description": "Filesystem MCP server"}]
 
@@ -52,7 +50,7 @@ def _advertised_bare_router_tools() -> "set[str]":
     names: set[str] = set()
     for wrappers in (True, False):
         tools = build_tools(
-            _SK, _AG,
+            _AG,
             file_permissions={"read": ["src"], "write": ["out"]},
             mcp_servers=_MCP, universal_wrappers_enabled=wrappers, compact_visible=True,
         )

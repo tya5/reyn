@@ -56,7 +56,6 @@ if TYPE_CHECKING:
 # design doc and the code see the same shape. ``exec`` ships last because
 # it is the only category with hard sandbox-backend gating (= D14 / D14-ext).
 CATEGORIES: Final[tuple[str, ...]] = (
-    "skill",
     # Phase 1 follow-up (2026-05-25): collapsed ``agent.peer`` resource
     # category into ``multi_agent`` verb category (= list_peers /
     # describe_peer / delegate). Same shape rationale as #879 mcp
@@ -669,20 +668,6 @@ def _enumerate_category(category: str, ctx: ToolContext) -> list[dict[str, str]]
         items = list(_enumerate_static_category("mcp"))
         items.extend(_enumerate_mcp_tools(rs))
         return items
-
-    if category == "skill":
-        if rs is None or not rs.available_skills:
-            return []
-        return [
-            {
-                "qualified_name": build_qualified_name("skill", s["name"]),
-                "short_description": _truncate_short_description(
-                    s.get("description", ""),
-                ),
-            }
-            for s in rs.available_skills
-            if isinstance(s, Mapping) and "name" in s
-        ]
 
     if category == "rag_corpus":
         # FP-0034 Phase 2 prep: enumerate indexed RAG corpora from the
@@ -1316,20 +1301,6 @@ def _resource_input_schema(
     except ValueError:
         return None
 
-    if category == "skill":
-        host = getattr(rs, "host", None) if rs is not None else None
-        if host is None or not hasattr(host, "list_available_skills"):
-            return None
-        try:
-            for skill in host.list_available_skills():
-                if not isinstance(skill, Mapping):
-                    continue
-                if skill.get("name") == entry_name and "input_schema" in skill:
-                    return dict(skill["input_schema"])
-        except Exception:
-            return None
-        return None
-
     if category == "rag_corpus":
         tool = registry.lookup("recall")
         if tool is None:
@@ -1406,21 +1377,6 @@ def _resource_description(
     try:
         category, entry_name = split_qualified_name(qualified_name)
     except ValueError:
-        return None
-
-    if category == "skill":
-        host = getattr(rs, "host", None) if rs is not None else None
-        if host is None or not hasattr(host, "list_available_skills"):
-            return None
-        try:
-            for skill in host.list_available_skills():
-                if not isinstance(skill, Mapping):
-                    continue
-                if skill.get("name") == entry_name:
-                    desc = skill.get("description")
-                    return str(desc) if desc else None
-        except Exception:
-            return None
         return None
 
     if category == "mcp":

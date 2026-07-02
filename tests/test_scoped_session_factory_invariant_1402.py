@@ -78,7 +78,6 @@ _BUNDLED_UNIFORM = frozenset({
     "embedding_config",
     "router_config",  # #1829 S3b
     "retry_config",  # #1835
-    "tool_calls_op_loop_skills",
     "chat_tool_use_scheme",  # #1593 PR-2
     # → AgentRegistry — where delegation_capability_default drifted (#2081)
     "delegation_capability_default",

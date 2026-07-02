@@ -23,29 +23,6 @@ def _find_tool(tools: list[dict], name: str) -> dict:
     raise AssertionError(f"tool {name} not found in build_tools output")
 
 
-def test_q4_list_skills_description_directs_narration() -> None:
-    """Tier 2: list_skills description tells the LLM to narrate names directly.
-
-    Q4 mitigation — without this hint, the LLM stops after the tool returns
-    instead of repeating the skill names back to the user (G12 empty-stop
-    attractor variant).
-    """
-    tools = build_tools(
-        available_skills=[{"name": "demo", "description": "x"}],
-        available_agents=[],
-    )
-    desc = _find_tool(tools, "list_skills")["description"].lower()
-
-    # Structural assertion: the description must steer the LLM toward
-    # narrating skill names (not stopping silently).
-    assert "narrate" in desc, (
-        f"list_skills description lost narration directive: {desc!r}"
-    )
-    assert "skill names" in desc or "names directly" in desc, (
-        f"list_skills description lost 'skill names' phrasing: {desc!r}"
-    )
-
-
 def test_q6_read_file_description_has_root_convention_hint() -> None:
     """Tier 2: read_file description carries project-root convention hints.
 
@@ -54,7 +31,6 @@ def test_q6_read_file_description_has_root_convention_hint() -> None:
     project-root path directly.
     """
     tools = build_tools(
-        available_skills=[],
         available_agents=[],
         file_permissions={"read": ["."]},
     )
@@ -80,7 +56,6 @@ def test_q8_system_prompt_prefers_project_context_over_web_search() -> None:
     prompt = build_system_prompt(
         agent_name="chat",
         agent_role="general-purpose router",
-        available_skills=[],
         available_agents=[],
         memory_index={"status": "not_found", "content": ""},
         project_context="Reyn is an Agent OS for predictable workflows.",
@@ -106,7 +81,6 @@ def test_q8_directive_only_when_project_context_present() -> None:
     prompt = build_system_prompt(
         agent_name="chat",
         agent_role="general-purpose router",
-        available_skills=[],
         available_agents=[],
         memory_index={"status": "not_found", "content": ""},
         project_context="",

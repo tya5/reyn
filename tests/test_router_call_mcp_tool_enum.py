@@ -47,7 +47,6 @@ from reyn.tools.types import RouterCallerState, ToolContext
 # Helpers / fixtures
 # ---------------------------------------------------------------------------
 
-_SKILLS = [{"name": "direct_llm", "description": "Direct LLM call", "category": "general"}]
 _AGENTS = [{"name": "researcher", "role": "Research agent", "cluster": "default"}]
 _EMPTY_MEMORY: dict = {"status": "not_found", "content": ""}
 
@@ -94,7 +93,7 @@ def test_call_mcp_tool_param_renamed_to_mcp_tool_name():
     FP-0032 vocabulary unification: the old 'tool' param collided with OpenAI's
     standard 'tool' semantics. 'mcp_tool_name' is unambiguous.
     """
-    tools = build_tools(_SKILLS, _AGENTS, mcp_servers=_MCP_SERVERS_NO_TOOLS)
+    tools = build_tools(_AGENTS, mcp_servers=_MCP_SERVERS_NO_TOOLS)
     fn = _get_tool(tools, "call_mcp_tool")
     assert fn is not None, "call_mcp_tool must be present when mcp_servers are configured"
     props = fn["parameters"]["properties"]
@@ -119,7 +118,7 @@ def test_call_mcp_tool_server_enum_injected():
 
     P4 alignment: LLM can only pick from OS-provided server names.
     """
-    tools = build_tools(_SKILLS, _AGENTS, mcp_servers=_MCP_SERVERS_NO_TOOLS)
+    tools = build_tools(_AGENTS, mcp_servers=_MCP_SERVERS_NO_TOOLS)
     fn = _get_tool(tools, "call_mcp_tool")
     assert fn is not None
     server_schema = fn["parameters"]["properties"]["server"]
@@ -142,7 +141,7 @@ def test_call_mcp_tool_mcp_tool_name_enum_injected_when_tools_available():
 
     Dotted form <server>.<tool> avoids name collision across servers.
     """
-    tools = build_tools(_SKILLS, _AGENTS, mcp_servers=_MCP_SERVERS_WITH_TOOLS)
+    tools = build_tools(_AGENTS, mcp_servers=_MCP_SERVERS_WITH_TOOLS)
     fn = _get_tool(tools, "call_mcp_tool")
     assert fn is not None
     tool_name_schema = fn["parameters"]["properties"]["mcp_tool_name"]
@@ -161,7 +160,7 @@ def test_call_mcp_tool_no_mcp_tool_name_enum_when_no_tools_listed():
 
     Graceful fallback: schema remains valid, no empty enum.
     """
-    tools = build_tools(_SKILLS, _AGENTS, mcp_servers=_MCP_SERVERS_NO_TOOLS)
+    tools = build_tools(_AGENTS, mcp_servers=_MCP_SERVERS_NO_TOOLS)
     fn = _get_tool(tools, "call_mcp_tool")
     assert fn is not None
     tool_name_schema = fn["parameters"]["properties"]["mcp_tool_name"]
@@ -183,7 +182,7 @@ def test_call_mcp_tool_not_present_when_no_mcp_servers():
     Same pattern as invoke_skill being absent when available_skills=[].
     An empty-server catalog should not present MCP tools at all.
     """
-    tools = build_tools(_SKILLS, _AGENTS, mcp_servers=[])
+    tools = build_tools(_AGENTS, mcp_servers=[])
     names = {t["function"]["name"] for t in tools if t.get("type") == "function"}
     assert "call_mcp_tool" not in names, (
         "call_mcp_tool must be absent when mcp_servers is empty"
@@ -275,7 +274,7 @@ def test_describe_mcp_tool_enum_mirrors_call_mcp_tool():
 
     Symmetry invariant: both tools constrain LLM to the same candidate set.
     """
-    tools = build_tools(_SKILLS, _AGENTS, mcp_servers=_MCP_SERVERS_WITH_TOOLS)
+    tools = build_tools(_AGENTS, mcp_servers=_MCP_SERVERS_WITH_TOOLS)
     call_fn = _get_tool(tools, "call_mcp_tool")
     describe_fn = _get_tool(tools, "describe_mcp_tool")
     assert call_fn is not None, "call_mcp_tool must be present"
@@ -413,7 +412,6 @@ def test_system_prompt_mcp_section_absent_in_wrapper_only_path():
     prompt = build_system_prompt(
         agent_name="chat",
         agent_role="assistant",
-        available_skills=_SKILLS,
         available_agents=[],
         memory_index=_EMPTY_MEMORY,
         mcp_servers=_MCP_SERVERS_WITH_TOOLS,
@@ -434,7 +432,6 @@ def test_system_prompt_mcp_section_absent_when_no_tool_list():
     prompt = build_system_prompt(
         agent_name="chat",
         agent_role="assistant",
-        available_skills=_SKILLS,
         available_agents=[],
         memory_index=_EMPTY_MEMORY,
         mcp_servers=_MCP_SERVERS_NO_TOOLS,
@@ -474,7 +471,6 @@ def test_default_threshold_always_inline():
         for i in range(50)
     ]
     tools = build_tools(
-        _SKILLS,
         _AGENTS,
         mcp_servers=many_servers,
         mcp_search_threshold=MCP_SEARCH_THRESHOLD,  # == 0
@@ -504,7 +500,7 @@ def test_describe_mcp_tool_present_in_build_tools():
     Closes the symmetry gap: skill has describe_skill, agent has describe_agent,
     MCP now has describe_mcp_tool.
     """
-    tools = build_tools(_SKILLS, _AGENTS, mcp_servers=_MCP_SERVERS_NO_TOOLS)
+    tools = build_tools(_AGENTS, mcp_servers=_MCP_SERVERS_NO_TOOLS)
     names = {t["function"]["name"] for t in tools if t.get("type") == "function"}
     assert "describe_mcp_tool" in names, (
         "describe_mcp_tool (D4) must appear in build_tools output alongside D1–D3"
@@ -513,7 +509,7 @@ def test_describe_mcp_tool_present_in_build_tools():
 
 def test_describe_mcp_tool_absent_when_no_mcp_servers():
     """Tier 2: describe_mcp_tool is absent when mcp_servers=[] (same guard as D1–D3)."""
-    tools = build_tools(_SKILLS, _AGENTS, mcp_servers=None)
+    tools = build_tools(_AGENTS, mcp_servers=None)
     names = {t["function"]["name"] for t in tools if t.get("type") == "function"}
     assert "describe_mcp_tool" not in names, (
         "describe_mcp_tool must be absent when no mcp_servers configured"

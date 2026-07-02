@@ -188,7 +188,6 @@ def _sp_with_env(**kw) -> str:
     return build_system_prompt(
         agent_name="test",
         agent_role="tester",
-        available_skills=[],
         available_agents=[],
         memory_index={},
         **kw,

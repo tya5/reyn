@@ -35,7 +35,6 @@ class SessionFactoryConfig:
     embedding_config: Any
     router_config: Any
     retry_config: Any
-    tool_calls_op_loop_skills: "list[str] | None"
     chat_tool_use_scheme: str
     # ── AgentRegistry uniform config (3) ────────────────────────────────────
     delegation_capability_default: str
@@ -55,7 +54,6 @@ class SessionFactoryConfig:
             embedding_config=config.embedding,
             router_config=config.llm.router,
             retry_config=config.llm.retry,
-            tool_calls_op_loop_skills=config.tool_calls_op_loop_skills,
             chat_tool_use_scheme=config.tool_use.chat,
             delegation_capability_default=config.delegation.capability_default,
             max_spawn_depth=config.safety.spawn.max_depth,
