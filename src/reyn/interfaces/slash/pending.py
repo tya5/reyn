@@ -121,22 +121,6 @@ async def pending_cmd(session: "Session", args: str) -> None:
         await reply_error(session, _USAGE)
 
 
-def _render_needs_attention(summary: dict) -> str:
-    """Render the "needs attention" tail section from a state summary dict.
-
-    Returns an empty string when there is nothing to report so the caller
-    can skip appending entirely (= no blank "needs attention:" header).
-    """
-    lines: list[str] = []
-    for s in summary.get("stuck_skills", []):
-        skill = s.get("skill_name", "?")
-        rid = s.get("run_id", "?")
-        stuck_at = s.get("stuck_at", "?")
-        lines.append(f"  ⊘ skill {skill} stuck @ {stuck_at} (run {rid})")
-    if not lines:
-        return ""
-    return "needs attention:\n" + "\n".join(lines)
-
 
 async def _list(session: "Session") -> None:
     if not hasattr(session, "list_stalled_interventions"):
@@ -147,21 +131,7 @@ async def _list(session: "Session") -> None:
     except Exception as exc:
         await reply_error(session, f"/pending list failed: {exc}")
         return
-    iv_text = _render_list(ops)
-    # Append needs-attention tail if available.
-    needs_attention = ""
-    try:
-        summary_fn = getattr(session, "current_state_summary", None)
-        if callable(summary_fn):
-            summary = summary_fn()
-            needs_attention = _render_needs_attention(summary)
-    except Exception:  # noqa: BLE001 — display must not crash
-        pass
-    if needs_attention:
-        output = iv_text + "\n\n" + needs_attention
-    else:
-        output = iv_text
-    await reply(session, output)
+    await reply(session, _render_list(ops))
 
 
 async def _discard(session: "Session", supplied_id: str) -> None:

@@ -232,7 +232,7 @@ def _more_expansion(snap, dispatch):
     per #2285 design).
 
     Slash command format locked with e2e-coder (#2285):
-      /visibility on|off  tool|skill|mcp|category  <name>
+      /visibility on|off  tool|mcp|category  <name>
       /hook        on|off  <name>
     """
     elements: list = []
@@ -479,7 +479,6 @@ def _snapshot(registry, task_cache=None, config=None):
         "agent_names": list(registry.loaded_names()),
         "attached_name": registry.attached_name,
         "session_tree": registry.session_tree(),
-        "skill_run_ids": list(s.running_skills.keys()),
         "usage": (u.prompt_tokens, u.completion_tokens, u.total_tokens),
         "cost_usd": s.total_cost_usd,
         "cost_total": cost_total,

@@ -49,9 +49,7 @@ async def test_reset_for_rewind_then_restore_state_zero_residue(tmp_path):
     session._buffered_intervention_answers["OLD-run"] = InterventionAnswer(text="OLD")
     old_iv = UserIntervention(kind="ask_user", prompt="OLD?")
     session._interventions._stalled[old_iv.id] = old_iv
-    done_skill = asyncio.create_task(asyncio.sleep(0))
-    session.running_skills["OLD-skill"] = done_skill
-    await asyncio.sleep(0)  # let the dummy skill task settle (post-quiescent state)
+    await asyncio.sleep(0)
 
     # ── reset, then adopt a reconstructed snapshot carrying only NEW state ──
     await session.reset_for_rewind()
@@ -65,7 +63,6 @@ async def test_reset_for_rewind_then_restore_state_zero_residue(tmp_path):
     assert chain_ids == []                                  # OLD-chain cleared
     assert session.list_stalled_interventions() == []       # OLD iv cleared
     assert session.buffered_intervention_answers == {}       # OLD buffered cleared
-    assert session.running_skills == {}                      # OLD skill handle dropped
     # inbox: OLD drained by reset; NEW re-queued by restore_state from the snapshot.
     drained = []
     while not session.inbox.empty():
@@ -115,5 +112,4 @@ async def test_reset_for_rewind_is_idempotent_on_clean_session(tmp_path):
     assert chain_ids == []
     assert session.list_stalled_interventions() == []
     assert session.buffered_intervention_answers == {}
-    assert session.running_skills == {}
     assert session.inbox.empty()

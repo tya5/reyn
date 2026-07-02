@@ -38,7 +38,6 @@ if str(_SRC) not in sys.path:
 
 # Commands that should have ``usage`` set after this PR.
 _EXPECTED_USAGE: dict[str, str] = {
-    "cancel":      "/cancel <id-prefix> [confirm]",
     "answer":      "/answer <id-prefix> <text>",
     "memory":      "/memory [list|view <name>]",
     "agent":       "/agent new <name> | /agent edit role <text>",
@@ -81,7 +80,6 @@ def test_summary_does_not_re_embed_usage_in_parens() -> None:
     # We only check commands whose old summary explicitly carried
     # the usage in parens or after a colon.
     cleaned: list[tuple[str, list[str]]] = [
-        ("cancel",  ["/cancel <id-prefix>", ": /cancel"]),
         ("answer",  ["/answer <id-prefix>", ": /answer"]),
         ("memory",  ["(list / view <name>)"]),
         ("agent",   ["(subcommands: new <name>)"]),
@@ -147,5 +145,5 @@ def test_help_focus_panel_renders_usage_for_extended_commands() -> None:
     assert "usage:" in panel
     assert "kill" in panel or "status" in panel or "list" in panel
 
-    panel = _render_command_focus("cancel")
-    assert "/cancel <id-prefix>" in panel
+    panel = _render_command_focus("answer")
+    assert "/answer <id-prefix>" in panel

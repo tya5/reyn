@@ -1095,10 +1095,9 @@ class AgentRegistry:
         try:
             sessions = self._iter_sessions()
             # #2115: snapshot the in-flight skill tasks BEFORE the cancel, so the
-            # summary reports their TRUE disposition (cancelled vs
-            # finished-before-the-cancel-landed) instead of a hardcoded "cancelled"
-            # literal — a skill that already returned wins the cancel race.
-            inflight_tasks = [t for s in sessions for t in s.running_skills.values()]
+            # Skill-execution machinery removed (stage1 decouple): no in-flight
+            # skill tasks exist; the summary always reflects 0 cancelled / 0 finished.
+            inflight_tasks: list = []
             # 2. all-cancel (stop-world).
             for session in sessions:
                 await session.cancel_inflight()

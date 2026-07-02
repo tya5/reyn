@@ -198,65 +198,6 @@ async def test_host_without_cancel_method_runs_normally() -> None:
 # ── 3. session.cancel_inflight() single seam ─────────────────────────────────
 
 
-class _MinimalEventsLog:
-    def __init__(self) -> None:
-        self.emitted: list[dict] = []
-
-    def emit(self, kind: str, **kw) -> None:
-        self.emitted.append({"kind": kind, **kw})
-
-
-class _FakeSkillTask:
-    """Real fake asyncio-task stand-in for running_skills testing."""
-
-    def __init__(self) -> None:
-        self._done = False
-        self._was_cancelled = False
-
-    def done(self) -> bool:
-        return self._done
-
-    def cancel(self) -> bool:
-        if not self._done:
-            self._was_cancelled = True
-            self._done = True
-            return True
-        return False
-
-    def was_cancelled(self) -> bool:
-        """Public observable: True iff cancel() was called and succeeded."""
-        return self._was_cancelled
-
-
-class _MinimalLoopDriver:
-    """Minimal stub for RouterLoopDriver's cancel seam in harness tests."""
-
-    def __init__(self) -> None:
-        self._turn_cancel_requested = False
-
-    def request_cancel(self) -> None:
-        self._turn_cancel_requested = True
-
-    def is_cancel_requested(self) -> bool:
-        return self._turn_cancel_requested
-
-
-class _SessionWithCancelSeam:
-    """Minimal session-like object exposing the #1468 cancel seam."""
-
-    def __init__(self) -> None:
-        self._loop_driver = _MinimalLoopDriver()
-        self.running_skills: dict = {}
-        self.running_plans: dict = {}
-
-    def _is_turn_cancel_requested(self) -> bool:
-        return self._loop_driver.is_cancel_requested()
-
-    async def cancel_inflight(self) -> str:
-        from reyn.runtime.session import Session
-        # Call the real method (unbound, passing self)
-        return await Session.cancel_inflight(self)  # type: ignore[arg-type]
-
 
 @pytest.mark.asyncio
 async def test_cancel_inflight_causes_next_run_loop_to_break() -> None:
@@ -280,28 +221,6 @@ async def test_cancel_inflight_causes_next_run_loop_to_break() -> None:
     cancelled_events = [e for e in host.events.emitted if e.get("type") == "turn_cancelled"]
     (ev,) = cancelled_events  # unpack-enforcement: exactly one
 
-
-@pytest.mark.asyncio
-async def test_cancel_inflight_cancels_skills() -> None:
-    """Tier 2: #1468 — cancel_inflight() cancels all non-done skill tasks in the
-    single call (single seam covers turn + skills)."""
-    session = _SessionWithCancelSeam()
-    skill_task = _FakeSkillTask()
-    session.running_skills = {"r1": skill_task}
-    await session.cancel_inflight()
-    assert skill_task.was_cancelled()
-
-
-@pytest.mark.asyncio
-async def test_cancel_inflight_already_done_tasks_not_recancelled() -> None:
-    """Tier 2: #1468 — tasks that are already done are not recancelled
-    (cancel() must not be called on a done task)."""
-    session = _SessionWithCancelSeam()
-    done_task = _FakeSkillTask()
-    done_task._done = True  # already finished
-    session.running_skills = {"r1": done_task}
-    await session.cancel_inflight()
-    assert not done_task.was_cancelled()  # done tasks are skipped
 
 
 @pytest.mark.asyncio
