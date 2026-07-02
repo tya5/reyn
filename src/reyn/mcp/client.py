@@ -177,6 +177,21 @@ class MCPClient:
         self._session = session
         self._initialized = True
 
+    async def __aenter__(self) -> "MCPClient":
+        """#a359: structured lifecycle. ``initialize()`` here + ``close()`` in ``__aexit__`` run in
+        the SAME task/scope — so the transport + session (whose SDK stdio_client / ClientSession hold
+        internal anyio task-group scopes that MUST be exited in the task that entered them) open and
+        close within one ``async with`` block. Callers use ``async with MCPClient(cfg) as c:`` instead
+        of a lazy ``initialize()`` + a deferred ``self._stack`` closed by a later ``close()`` in a
+        possibly-different task — that deferral was the root cause of the cross-task 'cancel scope
+        crossed task boundary' error (Windows: BrokenResource / BaseExceptionGroup during subprocess
+        teardown)."""
+        await self.initialize()
+        return self
+
+    async def __aexit__(self, *exc_info) -> None:
+        await self.close()
+
     async def call_tool(
         self,
         name: str,
