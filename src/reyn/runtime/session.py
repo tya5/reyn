@@ -4866,6 +4866,19 @@ class Session:
             return False
         return await self._deliver_answer_to(iv, "", choice_id_override=choice_id)
 
+    async def answer_oldest_intervention_text(self, text: str) -> bool:
+        """Deliver a free-text answer to the oldest pending intervention.
+
+        The inline CUI calls this when the user submits text via the normal
+        input bar while an ask_user intervention is pending. Uses match_choice
+        so hotkeys (``"1"`` → first option) and option names resolve correctly.
+        Returns False when nothing is pending.
+        """
+        iv = self._interventions.head()
+        if iv is None:
+            return False
+        return await self._deliver_answer_to(iv, text)
+
     async def _deliver_answer_to(
         self,
         iv: UserIntervention,
