@@ -63,10 +63,16 @@ Inline the LLM receives: a **bounded preview** (per-field head+tail), `_offload_
 `_offload_content_hash` (verified read-back), and `_offload_status/_offload_total_chars`.
 
 - **Primary consumption = the bounded preview** (always present, always in-budget).
-- **Deref (re-read the ref) is SUPPORTED but its real-world frequency is unmeasured** — OPEN
-  QUESTION for the assessment: does the LLM meaningfully re-read offloaded refs, or is the preview +
-  a re-fetch of the *origin* (file re-read / MCP re-call) sufficient? (Needs a dogfood-trace count;
-  informs whether transient results must be stored at all, or just previewed + re-fetchable.)
+- **Deref DOES happen** (owner-confirmed: the LLM reads offloaded refs) → **transient results MUST be
+  stored** (a re-fetch of the origin isn't always possible for MCP/web/exec). This resolves the prior
+  open question.
+- **But deref-paging is BROKEN today (owner: "re-reading just reads the same place")** — and the
+  mechanism is now identified. The offloaded FILE holds the full body; the inline preview's marker is
+  `"... [TRUNCATED — N chars total; full content at {ref_path}] ..."` (`_preview_field`) — it names
+  the ref path but carries **no continuation cursor (offset)**. So the LLM does `file.read(ref_path)`
+  with no offset → `file.py` truncates from offset 0 → it gets **the same head it already saw in the
+  preview**; re-reading again (still no offset) returns the same head → **same-place, no advance**.
+  The head↔tail middle is unreachable. The deref path has a ref but **no page cursor**.
 
 ## 4. 案B — canonical tool-result shape (recommended, spec fix)
 
@@ -89,13 +95,21 @@ source_ref=None; file.read: content→text, path+offset→source_ref).
 
 **Offload becomes a single guessing-free rule** on the canonical shape:
 
-1. `text` over budget → **truncate** to the budget with a `[truncated N/M chars — <how to get the
-   rest>]` marker (the #2417 file_read form, generalized).
-2. `source_ref` present (on-disk) → the "rest" is **re-fetch from origin** (path+offset) — **no copy
-   stored** (the file already exists).
-3. `source_ref` absent (transient: MCP/web/exec) → store the full `text` **content-addressed once**
-   in the offload store + a ref; the "rest" is that ref.
+1. `text` over budget → **truncate** to the budget with a marker that carries a **page cursor**:
+   `[truncated: showing chars 0–K of M — read <ref> from offset K for the next page]` (the #2417
+   file_read form, generalized). The cursor (next offset) is **mandatory** — this is what fixes the
+   owner "same-place" bug (§3): the LLM is told *where to resume*, not just *where the body lives*.
+2. `source_ref` present (on-disk) → the "rest" is **re-fetch from origin**: `file.read(path, offset=K)`
+   — **no copy stored** (the file already exists), and file.read already pages via `next_offset`.
+3. `source_ref` absent (transient: MCP/web/exec) → store the full `text` **content-addressed once** in
+   the offload store + a ref; the "rest" is `file.read(ref, offset=K)` — the **same offset-threaded
+   read**, so the stored transient body pages identically (advances, no same-place).
 4. `attachments` → the existing media store (unchanged).
+
+**Pageability is a first-class requirement of the contract** (owner): every continuation path — file
+origin AND transient store — is an offset-threaded read that ADVANCES. A ref without a live cursor
+(today's `_offload_ref` + a bare "full content at …" marker) is the defect; the canonical marker
+always pairs the ref with the resume offset.
 
 `decide_payload_field`, `_oversized_fields`, the sole-oversized condition, and the six per-op
 `_offload_payload_field` markers all **disappear** — there is no dict to guess a field from; `text`
@@ -145,12 +159,20 @@ current executors (no behavior change); (2) migrate ops to canonical; (3) delete
 fallback if owner wants the fastest containment. Both eliminate the *duplicate-executor* divergence
 (#2394 class); only 案B eliminates the *guessing* class.
 
-## 7. Open questions for lead / owner
-1. **Deref frequency** (§3) — measure whether the LLM re-reads offloaded refs; if rare, transient
-   results may only need preview + origin-re-fetch, simplifying the store.
-2. **exec stderr** — attachment, or appended to `text` with a `--- stderr ---` marker? (LLM usually
-   wants both inline for a crash.)
-3. **Staging** — land 案A's multi-oversized fix now (unblock owner) as step 0, then 案B? Or straight to
-   案B behind the adapter?
-4. Feed the **tui whole-envelope repro** (which second field made `decide` return None) to confirm
-   §1's mechanism before build.
+## 7. Resolved + remaining questions
+
+**Resolved (owner + tui, folded into the design above):**
+- **Deref frequency** → deref DOES happen (owner) → transient results MUST be stored (§3). And
+  deref-paging is broken today (no page cursor on the ref, §3) → **pageability is a first-class
+  requirement** of the canonical contract (§4).
+- **Owner whole-envelope root** → tui confirmed it structurally: a 2nd oversized field
+  (`structuredContent` → `structured`) breaks the sole-oversized guess (§1). 案B's `attachments`
+  removes it from the offload decision.
+- **Staging** → straight to 案B (owner/lead: avoid a throwaway interim); step 1 = `to_canonical`
+  adapter + one seam + completeness gate behind the current executors, byte-identical, **MCP first**.
+
+**Remaining for build:**
+1. **exec stderr** — attachment, or appended to `text` with a `--- stderr ---` marker? (LLM usually
+   wants both inline for a crash — lean: append to `text` so a crash is self-contained + pageable.)
+2. **Upfront summary** (owner, if spare capacity) — a more useful head than head+tail to reduce deref
+   frequency; secondary to the pageable-cursor fix.
