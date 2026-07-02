@@ -113,6 +113,20 @@ class ConsoleChatRenderer(ChatRenderer):
         # Tracks whether the last write left a single-line transient on screen
         # that the next write should overwrite.
         self._transient_active = False
+        self._thinking = False  # driven by on_chat_event
+
+    def on_chat_event(self, event) -> None:
+        etype = event.type
+        if etype == "turn_started":
+            self._thinking = True
+        elif etype in ("turn_settled", "turn_completed", "turn_cancelled"):
+            self._thinking = False
+
+    def bottom_toolbar(self):
+        if not self._thinking:
+            return None
+        frame = _SPINNER[int(time.monotonic() * 8) % len(_SPINNER)]
+        return f" {frame} working…"
 
     def _write(self, s: str) -> None:
         # Bypass patch_stdout's proxy: it renders ANSI bytes (including cursor
