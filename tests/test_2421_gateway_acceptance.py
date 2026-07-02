@@ -75,3 +75,43 @@ async def test_gateway_reraises_genuine_control_flow(exc_cls, tmp_path, monkeypa
     _inject(monkeypatch, exc_cls())
     with pytest.raises(exc_cls):
         await MCPGateway().list_tools("srv", _CFG)
+
+
+# ── [4] per-call timeout: the FIRING path bounds a slow op AND a hang-on-init ───────────
+
+class _SlowClient:
+    """A fake client that hangs — in ``__aenter__`` (initialize) or in ``list_tools`` — so the
+    gateway's per-call timeout is exercised on both the OPEN and the CALL."""
+
+    hang_on: str = "op"  # "init" | "op"
+
+    def __init__(self, config, *, agent_id=None) -> None:
+        pass
+
+    async def __aenter__(self):
+        if _SlowClient.hang_on == "init":
+            await asyncio.sleep(3)  # bounded so a MISSING-fix RED asserts (not an infinite hang)
+        return self
+
+    async def __aexit__(self, *exc_info):
+        return None
+
+    async def list_tools(self):
+        if _SlowClient.hang_on == "op":
+            await asyncio.sleep(3)
+        return []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("hang_on", ["op", "init"], ids=["slow_op", "hang_on_init"])
+async def test_gateway_timeout_fires_and_contains(hang_on, tmp_path, monkeypatch):
+    """Tier 2: #2421 [4] — a slow op OR a server that HANGS ON INIT is bounded by the per-call
+    timeout and contained as MCPFault (reyn survives). RED for ``hang_on_init`` before the fix that
+    wraps the timeout around acquire+op (the timeout used to wrap only the call, leaving a fresh
+    one-shot open — owner's list_mcp_tools path — unbounded)."""
+    monkeypatch.chdir(tmp_path)
+    _SlowClient.hang_on = hang_on
+    monkeypatch.setattr(pool_mod, "MCPClient", _SlowClient)
+    cfg = {**_CFG, "call_timeout_seconds": 0.1}  # tight bound; the fake sleeps 3s
+    with pytest.raises(MCPFault):
+        await MCPGateway().list_tools("srv", cfg)

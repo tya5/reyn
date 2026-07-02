@@ -85,13 +85,20 @@ class MCPGateway:
     ) -> Any:
         """Open a client and run ``op`` inside the contain-all boundary + a finite timeout. Raises
         :class:`MCPFault` for any non-control-flow fault (incl. teardown groups); re-raises genuine
-        control flow untouched."""
+        control flow untouched.
+
+        The timeout wraps the WHOLE ``acquire + op`` — the OPEN (initialize handshake) as well as the
+        call — so a server that HANGS ON INIT is bounded too (else a fresh one-shot open for a
+        list/probe would hang unbounded). On timeout ``asyncio.timeout`` surfaces a ``TimeoutError``
+        (an Exception, our task not cancelling), which the boundary contains as an ``MCPFault``."""
         try:
-            async with self._acquire(server, config) as client:
-                if timeout is not None:
-                    async with asyncio.timeout(timeout):
+            if timeout is not None:
+                async with asyncio.timeout(timeout):
+                    async with self._acquire(server, config) as client:
                         return await op(client)
-                return await op(client)
+            else:
+                async with self._acquire(server, config) as client:
+                    return await op(client)
         except MCPFault:
             raise
         except BaseException as exc:  # noqa: BLE001 — the seam contains ALL non-control-flow faults
