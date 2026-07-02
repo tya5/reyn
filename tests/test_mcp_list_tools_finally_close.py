@@ -1,13 +1,11 @@
-"""Tier 2: _mcp_list_tools closes the MCP client on EVERY exit path (owner's list_mcp_tools crash).
+"""Tier 2: _mcp_list_tools closes the MCP client on EVERY exit path + surfaces errors (list crash).
 
-The bug: ``Session._mcp_list_tools`` called ``await client.close()`` only AFTER a successful
-``list_tools()`` — so a raise (or cancellation) skipped close, leaking the MCP SDK's anyio
-``stdio_client`` cancel-scope. A later teardown in a DIFFERENT task then raised "cancel scope crossed
-task boundary" (the owner-facing crash on ``list_mcp_tools`` when the server errors).
-
-Fix: ``finally: await client.close()`` — close runs in the SAME task that opened it, on success,
-error, and cancellation. This pins the close-on-error guarantee + the same-task affinity (the crash
-class), via a real Session and an injected client whose ``list_tools`` raises. No real subprocess.
+``Session._mcp_list_tools`` now routes through the ``MCPGateway`` seam (→ ``MCPClientPool`` →
+``MCPClient``, #2421). The pool opens + closes the client in the SAME task on success, error, AND
+cancellation, and the gateway contains any fault into an ``MCPFault`` → the list method returns an
+``[{"error": …}]`` result instead of leaking the SDK's anyio cancel-scope cross-task (the owner-facing
+``list_mcp_tools`` crash). This pins the close-on-error guarantee + same-task affinity + error
+surfacing through the real Session, with the fake patched where the POOL constructs it. No subprocess.
 """
 from __future__ import annotations
 
@@ -16,7 +14,7 @@ from pathlib import Path
 
 import pytest
 
-import reyn.mcp.client as mcp_client_mod
+import reyn.mcp.pool as pool_mod
 from reyn.core.events.state_log import StateLog
 from reyn.runtime.profile import AgentProfile
 from reyn.runtime.registry import AgentRegistry
@@ -81,7 +79,7 @@ class _FakeMCPClient:
 def _install_fake(monkeypatch, sess, *, raises: bool) -> None:
     _FakeMCPClient.instances = []
     _FakeMCPClient._next_raises = raises
-    monkeypatch.setattr(mcp_client_mod, "MCPClient", _FakeMCPClient)
+    monkeypatch.setattr(pool_mod, "MCPClient", _FakeMCPClient)  # where the pool constructs it
     # Supply one configured server so the method reaches the client lifecycle.
     monkeypatch.setattr(sess, "_mcp_servers_flat", lambda: {"srv": {"command": "fake"}})
 
@@ -96,9 +94,10 @@ async def test_list_tools_error_path_still_closes_same_task(tmp_path, monkeypatc
 
     result = await sess._mcp_list_tools("srv")
 
-    assert result == [{"error": "boom from list_tools"}], "error is surfaced, not raised"
+    assert any("boom from list_tools" in (e.get("error") or "") for e in result), \
+        "the fault is surfaced as an error result (gateway describe_fault), not raised"
     client = _FakeMCPClient.instances[-1]
-    assert client.closed is True, "client MUST be closed on the error path (finally)"
+    assert client.closed is True, "client MUST be closed on the error path (pool __aexit__)"
     assert client.close_task is client.list_task, (
         "close ran in the SAME task as list_tools — no cross-task cancel-scope boundary"
     )

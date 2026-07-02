@@ -1,17 +1,17 @@
-"""Tier 2: MCP probe constructs MCPClient correctly (hot-reload: installed servers' tools show up).
+"""Tier 2: MCP probe returns a server's real tools / ready status through the MCPGateway seam.
 
-``_probe_server_tools`` / ``_probe_status`` did ``async with MCPClient(server_name, cfg)``, but
-MCPClient takes ONE positional ``config: dict`` (agent_id keyword-only) and has NO async-context-
-manager protocol. The server NAME (a str) was passed as ``config`` → ValueError, swallowed by the
-bare except → every probe returned an empty tool list / a bogus "error:" status (the hot-reload gap:
-installed servers showed no tools). Fix: ``MCPClient(cfg)`` + ``list_tools()`` / ``initialize()`` +
-``finally: close()`` in the same task. Injected fake mirrors the real MCPClient surface.
+``_probe_server_tools`` / ``_probe_status`` now route through ``MCPGateway`` (→ ``MCPClientPool`` →
+``MCPClient``) rather than constructing an ``MCPClient`` directly (#2421). This still verifies the
+probe surfaces the server's actual tools (cleaned) and a ready status, with the cfg DICT flowing
+through to the client (the hot-reload requirement). The fake is patched where the POOL constructs it
+(``reyn.mcp.pool.MCPClient``); patching ``reyn.mcp.client.MCPClient`` would miss the pool's
+module-level binding (and be import-order-flaky).
 """
 from __future__ import annotations
 
 import pytest
 
-import reyn.mcp.client as mcp_client_mod
+import reyn.mcp.pool as pool_mod
 from reyn.interfaces.cli.commands.mcp import _probe_server_tools, _probe_status
 
 
@@ -50,7 +50,7 @@ async def test_probe_server_tools_returns_real_tools(monkeypatch):
     """Tier 2: CORE — the probe returns the server's actual tools (cleaned), constructed with the
     cfg DICT (not the name string). RED on the pre-fix ``MCPClient(server_name, cfg)`` (a str as
     config → ValueError → swallowed → empty list)."""
-    monkeypatch.setattr(mcp_client_mod, "MCPClient", _FakeMCPClient)
+    monkeypatch.setattr(pool_mod, "MCPClient", _FakeMCPClient)
 
     name, tools = await _probe_server_tools("mysrv", {"type": "stdio", "command": "x"})
 
@@ -65,6 +65,6 @@ def test_probe_status_ready(monkeypatch):
     """Tier 2: _probe_status returns 'ready' via a real initialize() handshake, not a swallowed
     ValueError from the mis-constructed client. (Sync test — _probe_status manages its own loop via
     run_async.)"""
-    monkeypatch.setattr(mcp_client_mod, "MCPClient", _FakeMCPClient)
+    monkeypatch.setattr(pool_mod, "MCPClient", _FakeMCPClient)
 
     assert _probe_status("mysrv", {"type": "stdio", "command": "x"}) == "ready"
