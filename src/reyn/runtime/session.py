@@ -969,6 +969,12 @@ class Session:
         self._visibility_override: "dict[str, set[str]]" = {
             "tool": set(), "skill": set(), "mcp": set(), "category": set(),
         }
+        # #2285: session-scoped hook APPLICABILITY override — hook names the user disabled via the
+        # status-bar. The HookDispatcher (per-session) skips a hook whose name is in this set at
+        # dispatch time (live). Per-session by construction: each Session owns its own dispatcher +
+        # this set, so disabling a hook in session S1 does NOT affect S2 (even though the hook config
+        # is shared). In-memory (step1 live); step2 will persist to the per-session hooks.yaml.
+        self._disabled_hooks: "set[str]" = set()
         # #187: per-message tool-call budget for the MAIN chat RouterLoop. The
         # interactive default (5) suits a human turn; an autonomous one-shot run
         # (`reyn chat --once` for SWE) needs far more (explore→edit→verify rounds),
@@ -1323,6 +1329,9 @@ class Session:
             # (cross-session); `current_session_id` keeps a self/unnamed push local.
             cross_session_put=self._cross_session_hook_put,
             current_session_id=self._session_id,
+            # #2285: per-session hook applicability gate — skip a hook this session disabled. A
+            # callable (not a snapshot) so a toggle applies live to the next dispatch.
+            is_hook_disabled=lambda hook: hook.name is not None and hook.name in self._disabled_hooks,
             sandbox_config=self._sandbox_config,
             sandbox_backend=self._sandbox_backend,
             # #2095: route a not-yet-allowlisted shell-hook's consent prompt
@@ -2526,6 +2535,57 @@ class Session:
         ]
         return {"authorized": authorized, "hidden_by_session": hidden}
 
+    # ── #2285: session-scoped hook APPLICABILITY toggle (the status-bar seam) ──────────────
+
+    def set_hook_enabled(self, name: str, enabled: bool) -> None:
+        """#2285: enable/disable a hook by name for THIS session (status-bar seam).
+
+        Live at the next dispatch — the per-session HookDispatcher gate consults ``_disabled_hooks``.
+        Session-scoped by construction: each session owns its dispatcher + disabled-set, so S1's
+        disable does NOT affect S2 (even though hook CONFIG is shared). Not persisted (step1)."""
+        if enabled:
+            self._disabled_hooks.discard(name)
+        else:
+            self._disabled_hooks.add(name)
+
+    def hook_state(self) -> "list[dict]":
+        """#2285: the status-bar's hook read model — each NAMED hook in this session's merged
+        registry (startup ∪ runtime ∪ per-agent ∪ per-session) as ``{name, scope, enabled}``.
+        ``scope`` = the most-specific layer that defines the name; a hook with no name is omitted
+        (it can't be individually toggled). ``enabled`` = not in this session's disabled-set."""
+        runtime_hooks: list = []
+        try:
+            from reyn.runtime.hot_reload import load_hot_reload_config
+            runtime_hooks = (load_hot_reload_config(self._hot_reload_project_root()) or {}).get("hooks") or []
+        except Exception:  # noqa: BLE001 — scope is best-effort display metadata
+            runtime_hooks = []
+        scope_by_name: "dict[str, str]" = {}
+        for scope, raw in (
+            ("startup", self._startup_hooks_raw),
+            ("runtime", runtime_hooks),
+            ("per-agent", self._read_per_agent_hooks()),
+            ("per-session", self._read_per_session_hooks()),
+        ):
+            for hook_cfg in (raw or []):
+                n = hook_cfg.get("name") if isinstance(hook_cfg, dict) else None
+                if n:
+                    scope_by_name[n] = scope  # more-specific layer wins (later in this order)
+
+        registry = getattr(self._hook_dispatcher, "_registry", None)
+        out: "list[dict]" = []
+        seen: "set[str]" = set()
+        for hook in getattr(registry, "_defs", []) if registry is not None else []:
+            n = getattr(hook, "name", None)
+            if n is None or n in seen:
+                continue
+            seen.add(n)
+            out.append({
+                "name": n,
+                "scope": scope_by_name.get(n, "unknown"),
+                "enabled": n not in self._disabled_hooks,
+            })
+        return out
+
     @property
     def current_snapshot(self) -> "AgentSnapshot":
         """Read-only view of the live in-memory AgentSnapshot (ADR-0038).
@@ -3384,9 +3444,14 @@ class Session:
         runtime = (in_set or {}).get("hooks") or []
         runtime_list = list(runtime) if isinstance(runtime, list) else []
         per_agent_list = self._read_per_agent_hooks()
+        per_session_list = self._read_per_session_hooks()  # #2285: the 4th, most-specific layer
         combined = list(self._startup_hooks_raw)
         registry = load_hooks(combined)  # trusted startup must load — else fail loud
-        for label, layer in (("runtime", runtime_list), ("per-agent", per_agent_list)):
+        for label, layer in (
+            ("runtime", runtime_list),
+            ("per-agent", per_agent_list),
+            ("per-session", per_session_list),  # #2285: session-defined hooks (try-add like untrusted)
+        ):
             if not layer:
                 continue
             try:
@@ -3405,6 +3470,23 @@ class Session:
         profile.yaml, not via the top-level IN-set loader). ``[]`` when absent."""
         from reyn.config.loader import load_per_agent_hooks
         return load_per_agent_hooks(self._hot_reload_project_root(), self.agent_name)
+
+    def _read_per_session_hooks(self) -> list:
+        """#2285: read the per-SESSION hooks layer — ``<per-session state dir>/hooks.yaml`` (the 4th,
+        most-specific COMBINE layer). The per-session dir is the parent of this session's snapshot
+        path (set per (name, sid) by spawn_session). A hook defined here is visible ONLY to this
+        session. ``[]`` when absent (or the file is malformed — the loader's per-layer resilience
+        also guards)."""
+        import yaml
+        path = Path(self._snapshot_path).parent / "hooks.yaml"
+        if not path.is_file():
+            return []
+        try:
+            data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        except Exception:  # noqa: BLE001 — malformed → treat as absent
+            return []
+        hooks = data.get("hooks") if isinstance(data, dict) else None
+        return list(hooks) if isinstance(hooks, list) else []
 
     async def _reapply_hooks(self, in_set: dict) -> bool:
         """Reapply the hook layers (#2073 S2b + per-agent add-on) — re-read the global
