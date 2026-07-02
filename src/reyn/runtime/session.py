@@ -5725,6 +5725,12 @@ class Session:
                 else None
             ),
             agent_id=self._agent_id,
+            # #2409: forward the media store (the public twin RouterHostAdapter.make_router_op_context
+            # already does — session.py:1826). Without it the chat-router MCP path got media_store=None
+            # → MCP ImageContent couldn't be saved as a path-ref → a large image was inlined as
+            # base64 to the LLM instead of a small path-ref (the clean-payload/offload gate needs the
+            # image out of the inline body).
+            media_store=self._media_store,
             contextual_permission=self._contextual_permission,  # #1827 S3 → control-IR OpContext
             hook_dispatcher=self._hook_dispatcher,  # #1800 slice 5c: complete-by-construction (both router callers)
             current_task_id=self._current_task_id,  # #1953 §16: ownership-derivation for task.create (enumerate ALL op-ctx builders)
