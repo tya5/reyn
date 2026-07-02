@@ -141,7 +141,7 @@ def test_skill_op_emits_tool_called_event_with_correct_fields(tmp_path: Path, mo
 def test_skill_op_failure_emits_tool_failed(tmp_path: Path, monkeypatch):
     """Tier 2: P6 invariant — permission denied path emits tool_called → tool_failed with no tool_returned; failure is always recorded in the event log.
 
-    Trigger: write op to a path outside the default write zone (.reyn/, reyn/).
+    Trigger: write op to a path outside the default write zone (.reyn/).
     """
     monkeypatch.chdir(tmp_path)
 

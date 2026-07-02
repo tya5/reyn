@@ -202,7 +202,7 @@ def test_grep_inside_cwd_allowed(tmp_path, monkeypatch):
 def test_write_check_unchanged(tmp_path, monkeypatch):
     """Tier 2: Existing write permission check is not broken by the refactor.
 
-    write to a path outside the default write zone (.reyn/, reyn/) that has
+    write to a path outside the default write zone (.reyn/) that has
     not been approved should still raise PermissionError.
     """
     monkeypatch.chdir(tmp_path)
