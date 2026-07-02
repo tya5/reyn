@@ -115,7 +115,7 @@ def test_converged_dispatch_denies_unpermitted_write(tmp_path) -> None:
     """
     decl = PermissionDecl()
     host = _converged_host(tmp_path, decl=decl)  # no config grant
-    # A project-relative path OUTSIDE the default write zone (.reyn/, reyn/).
+    # A project-relative path OUTSIDE the default write zone (.reyn/).
     denied = "data/bar2_gate.txt"
 
     result = _dispatch_write(host, denied)
