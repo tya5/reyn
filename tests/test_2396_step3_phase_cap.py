@@ -1,4 +1,4 @@
-"""Tier 2: #2396 Step 3 — the converged phase op-loop caps oversized tool results (was uncapped).
+"""Tier 3a: #2396 Step 3 — the converged phase op-loop caps oversized tool results (was uncapped).
 
 Live opt-in consumer (not latent): a skill opted into ``tool_calls_op_loop_skills`` runs the converged
 op-loop (RouterLoop.run_loop + PhaseRouterLoopHost). A phase op returning a LARGE result now flows
