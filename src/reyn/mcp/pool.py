@@ -95,7 +95,10 @@ def is_real_control_flow(exc: BaseException) -> bool:
     contain (cancel-mixed teardown groups from a dead subprocess are contained)."""
     if isinstance(exc, (KeyboardInterrupt, SystemExit)):
         return True
-    t = asyncio.current_task()
+    try:
+        t = asyncio.current_task()
+    except RuntimeError:
+        t = None  # no running loop (e.g. a synchronous caller) → treat as not-cancelling
     real_cancel = t is not None and t.cancelling() > 0
     if isinstance(exc, asyncio.CancelledError):
         return real_cancel

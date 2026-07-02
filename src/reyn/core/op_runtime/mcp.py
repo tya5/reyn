@@ -14,32 +14,13 @@ from reyn.schemas.models import MCPIROp
 from . import register
 from .context import OpContext
 
-# #a359 P2 / S3: a FINITE default per-call MCP timeout so a hung/slow server can't block the router
-# loop indefinitely (owner: "MCP misbehavior must not stall reyn"). Generous (long-running tools
-# exist); a per-server ``call_timeout_seconds`` overrides it, and ``<= 0`` opts out (no timeout).
-# When the timeout fires, the SDK raises → the op fault boundary contains it into an error result.
-_DEFAULT_MCP_CALL_TIMEOUT_SECONDS: float = 120.0
-
-
-def _resolve_call_timeout(config: dict) -> "float | None":
-    """Resolve the per-call MCP timeout: the finite default, overridden by a per-server
-    ``call_timeout_seconds`` (float), with ``<= 0`` meaning opt-out (no timeout / ``None``).
-    A malformed value falls back to the default (fail-safe: keep a finite bound)."""
-    ct = config.get("call_timeout_seconds")
-    timeout: "float | None" = _DEFAULT_MCP_CALL_TIMEOUT_SECONDS
-    if ct is not None:
-        try:
-            timeout = float(ct)
-        except (TypeError, ValueError):
-            timeout = _DEFAULT_MCP_CALL_TIMEOUT_SECONDS
-    if timeout is not None and timeout <= 0:
-        return None  # explicit opt-out — no timeout
-    return timeout
+# #2421: the per-call MCP timeout ([4]) now lives in the MCPGateway seam (``resolve_call_timeout``),
+# applied to every MCP op in one place. The op handler delegates to the gateway.
 
 
 async def _execute(op: MCPIROp, ctx: OpContext) -> dict:
     from reyn.mcp.client import expand_env
-    from reyn.mcp.pool import describe_fault, is_or_contains_control_flow
+    from reyn.mcp.gateway import MCPFault, MCPGateway
 
     server_cfg = ctx.mcp_servers.get(op.server)
     if not server_cfg:
@@ -91,26 +72,22 @@ async def _execute(op: MCPIROp, ctx: OpContext) -> dict:
             message=message,
         )
 
-    call_timeout = _resolve_call_timeout(expanded)
-
     ctx.events.emit("mcp_called", server=op.server, tool=op.tool, args=op.args)
+    # #2421: the open+call+teardown fault boundary + per-call timeout + task-affine lifecycle all live
+    # in the ONE MCPGateway seam (reusing this turn's pool). The gateway raises only MCPFault (an
+    # Exception) or genuine control flow — never a bare BaseExceptionGroup — so a server that dies on
+    # connect, a bad config, a malformed response, or a transport group all surface here as a clean
+    # MCPFault → contained error tool-result (owner req: MCP misbehavior must not crash the router
+    # loop). Cancellation is never swallowed (is_real_control_flow re-raises genuine cancel/KI/SE).
+    gateway = MCPGateway(pool=ctx.mcp_pool, agent_id=ctx.agent_id)
     try:
-        # Open (or reuse) the client via the pool, then call — both inside the fault boundary so a
-        # server that dies on connect, a bad config, a malformed response, OR a transport
-        # BaseExceptionGroup all become a contained error tool-result (owner req: MCP misbehavior
-        # must not crash the router loop). Cancellation is never swallowed.
-        client = await ctx.mcp_pool.get(op.server, expanded, agent_id=ctx.agent_id)
-        result = await client.call_tool(
-            op.tool, op.args,
-            progress_callback=_on_progress,
-            timeout_seconds=call_timeout,
+        result = await gateway.call_tool(
+            op.server, op.tool, op.args, expanded, progress_cb=_on_progress,
         )
-    except BaseException as exc:  # noqa: BLE001 — fault isolation across ANY MCP fault (incl groups)
-        if is_or_contains_control_flow(exc):
-            raise  # never contain CancelledError / KeyboardInterrupt / SystemExit
+    except MCPFault as fault_exc:
         # Owner req: feed the fault CONTENT back to the LLM (type + message, group members
         # aggregated) via the standard op-error result — so it can retry/adapt, not a silent error.
-        fault = describe_fault(exc)
+        fault = str(fault_exc)
         ctx.events.emit("mcp_failed", server=op.server, tool=op.tool, error=fault)
         return {"kind": "mcp", "status": "error", "server": op.server,
                 "tool": op.tool, "error": fault}
