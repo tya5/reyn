@@ -92,3 +92,25 @@ def test_full_chain_write_lands_and_is_permitted_under_project_root(tmp_path, mo
     assert landed.exists(), "the file LANDS under project_root/reyn/local, not cwd"
     assert not (Path.cwd() / "reyn" / "local" / "my_new_skill" / "skill.md").exists(), \
         "the file did NOT land under cwd (the root-3 wrong-dir bug)"
+
+
+def test_no_frontend_host_entry_hardcodes_workspace_base_dir_none():
+    """Tier 2: completeness guard (#2415 root 3) — no frontend host-entry construction may hardcode
+    ``workspace_base_dir=None``, which splits the write-target base (→ cwd) from the project_root-
+    anchored permission zone. Host frontends must anchor base_dir on project_root (the
+    build_environment_backend funnel value, or an explicit project_root as chainlit / mcp-serve do).
+    This is the robust-by-construction regression guard (MCP-seam grep-gate pattern) — it caught the
+    mcp-serve session factory the initial two-site sweep missed. RED if a new frontend reintroduces
+    the split. (Signature defaults ``workspace_base_dir: "Path | None" = None`` are not matched — the
+    call-site keyword form is contiguous ``workspace_base_dir=None``.)"""
+    interfaces = Path(__file__).resolve().parents[1] / "src" / "reyn" / "interfaces"
+    offenders = [
+        f"{py.relative_to(interfaces)}:{i}"
+        for py in interfaces.rglob("*.py")
+        for i, line in enumerate(py.read_text(encoding="utf-8").splitlines(), 1)
+        if "workspace_base_dir=None" in line
+    ]
+    assert not offenders, (
+        "frontend host-entry hardcodes workspace_base_dir=None (splits base_dir from the "
+        "project_root permission zone — anchor it on project_root): " + ", ".join(offenders)
+    )

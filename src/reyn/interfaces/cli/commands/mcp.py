@@ -440,7 +440,10 @@ def run_serve(args: argparse.Namespace) -> None:
             non_interactive=False,  # #1439 Fix #1: stdio-MCP byte-identical (run-once-only fix)
             environment_backend=None,  # gap: MCP-serve lacks env-backend / container-rooting
             sandbox_backend=None,
-            workspace_base_dir=None,
+            # #2415 root 3: host workspace base_dir anchors on the project root (== the permission
+            # zone base), not cwd — else a subdir invocation splits the write-target base from the
+            # approval base. Mirrors build_environment_backend's host return.
+            workspace_base_dir=project_root,
             workspace_state_dir=None,
             eager_embedding_build=False,
         )
