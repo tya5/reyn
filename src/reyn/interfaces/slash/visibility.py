@@ -4,7 +4,7 @@ The status-bar rows submit this command; it maps 1:1 to ``Session.set_capability
 capability removes it from the LLM catalog on the next turn; showing it restores it — but only UP TO
 the agent's authorized envelope (toggling ON a capability the envelope denies is a no-op; the
 re-resolve-from-base gate stops at the envelope, so ``visible ⊆ authorized`` always holds).
-Session-scoped (this session only); live next turn; not persisted (step1).
+Session-scoped (this session only); live next turn; persists across restart (step2).
 """
 from __future__ import annotations
 
@@ -44,5 +44,5 @@ async def visibility_cmd(session: "Session", args: str) -> None:
     await reply(
         session,
         f"{kind} {name!r} is now {'visible' if on else 'hidden'} for this session "
-        f"(applies next turn; session-scoped, not persisted)",
+        f"(applies next turn; session-scoped; persists across restart)",
     )

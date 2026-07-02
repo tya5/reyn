@@ -2480,7 +2480,7 @@ class Session:
         ``visible=False`` hides it from the LLM catalog next turn; ``visible=True`` restores it —
         but only UP TO the agent envelope (toggling ON a capability the envelope denies is a no-op
         for visibility: ``_reapply_visibility_override`` re-resolves from base, which still denies
-        it). Session-scoped (this sid only); live next turn; not persisted (step1)."""
+        it). Session-scoped (this sid only); live next turn; persists across restart (step2)."""
         if kind not in self._visibility_override:
             raise ValueError(
                 f"unknown capability kind {kind!r} (expected tool / skill / mcp / category)"
@@ -2543,7 +2543,7 @@ class Session:
 
         Live at the next dispatch — the per-session HookDispatcher gate consults ``_disabled_hooks``.
         Session-scoped by construction: each session owns its dispatcher + disabled-set, so S1's
-        disable does NOT affect S2 (even though hook CONFIG is shared). Not persisted (step1)."""
+        disable does NOT affect S2 (even though hook CONFIG is shared). Persists across restart (step2)."""
         if enabled:
             self._disabled_hooks.discard(name)
         else:
