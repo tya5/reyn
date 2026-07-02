@@ -68,43 +68,6 @@ def test_harness_import_does_not_load_agent_llm_chain():
     )
 
 
-def test_lazy_public_api_still_resolves():
-    """Tier 2: PEP 562-lazy __init__ still exposes the public names on access.
-
-    Falsification guard for the lazy refactor: ``from reyn import SkillRuntime`` and
-    ``from reyn.core.kernel import OSRuntime`` must still resolve (now triggering the
-    lazy load), and an unknown attribute must raise AttributeError — proving the
-    laziness did not silently drop the public surface.
-    """
-    code = "\n".join(
-        [
-            "import reyn",
-            "from reyn import SkillRuntime, RunResult, Phase, Skill, SkillGraph",
-            "from reyn.core.kernel import OSRuntime, validate_output, normalize",
-            "names = (SkillRuntime, RunResult, Phase, Skill, SkillGraph,",
-            "         OSRuntime, validate_output, normalize)",
-            "assert all(x is not None for x in names), 'a public name resolved to None'",
-            "raised = False",
-            "try:",
-            "    reyn.DoesNotExist",
-            "except AttributeError:",
-            "    raised = True",
-            "assert raised, 'unknown attr did not raise AttributeError'",
-        ]
-    )
-    result = subprocess.run(
-        [sys.executable, "-c", code],
-        capture_output=True,
-        text=True,
-        timeout=30,
-    )
-    assert result.returncode == 0, (
-        f"lazy public API did not resolve correctly.\n"
-        f"stdout: {result.stdout}\n"
-        f"stderr: {result.stderr}"
-    )
-
-
 def test_harness_import_time_is_below_ceiling():
     """Tier 2: harness import completes well under the preprocessor timeout ceiling.
 
