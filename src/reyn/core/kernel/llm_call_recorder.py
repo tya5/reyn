@@ -711,10 +711,12 @@ class LLMCallRecorder:
             purpose="phase",  # #1190: the OS phase-execution LLM path
         )
         for dim in check.warn_dimensions:
+            # check.context from record_llm already carries "agent" when
+            # non-None (via _agent_context). Passing agent= explicitly too
+            # would raise TypeError ("multiple values for keyword argument").
             self._events.emit(
                 "budget_warn",
                 dimension=dim,
-                agent=agent,
                 chain_id=self._chain_id,
                 **check.context,
             )
