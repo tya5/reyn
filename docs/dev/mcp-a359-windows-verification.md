@@ -55,6 +55,8 @@ a359-diag: closed MCP client server=<s> open_task=<T> close_task=<T> outcome=ok
   (owner req), not a crash.
 
 ## After confirmation
+<!-- TODO(a359-cleanup): remove this doc + the a359-DIAG block + the P3 diag test after owner
+confirms the Windows crash is gone. `grep -rn "a359-cleanup"` finds every removal point. -->
 Post the harness output + the `a359-diag` lines on the arc issue. Then the follow-up PR removes:
 - the `a359-DIAG` block + the `_diag_log` / `_open_tasks` / `_task_name` diagnostics in
   `src/reyn/mcp/pool.py`, and

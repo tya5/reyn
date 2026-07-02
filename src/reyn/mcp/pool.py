@@ -25,6 +25,8 @@ from reyn.mcp.client import MCPClient
 logger = logging.getLogger(__name__)
 
 # ─────────────────────────────────────────────────────────────────────────────
+# TODO(a359-cleanup): remove this a359-DIAG block after owner confirms the Windows crash is gone.
+#   grep -rn "a359-cleanup" to find every removal point (this block, the P3 test, the doc).
 # a359-DIAG — TEMPORARY Windows-verification instrumentation. Owner-authorised to
 # confirm the BaseExceptionGroup / BrokenResourceError / ConnectionReset crash is
 # GONE on the Proactor event loop (the crash cannot be RED-verified on Unix — it

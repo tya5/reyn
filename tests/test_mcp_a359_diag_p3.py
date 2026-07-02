@@ -5,6 +5,9 @@ opened AND closed in the SAME task with ``outcome=ok`` (no BaseExceptionGroup). 
 instrumentation actually emits those lines on a normal pool cycle, so owner gets a real signal (a
 silently-broken diagnostic would give false confidence). REMOVED in the follow-up together with the
 a359-DIAG block (see docs/dev/mcp-a359-windows-verification.md).
+
+TODO(a359-cleanup): remove this test with the a359-DIAG block once owner confirms the Windows crash
+is gone. ``grep -rn "a359-cleanup"`` finds every removal point.
 """
 from __future__ import annotations
 
