@@ -62,7 +62,19 @@ def build_legacy_op_context(ctx: "ToolContext") -> Any:
             else PermissionDecl()
         ),
         permission_resolver=ctx.permission_resolver,
-        skill_name="",
+        # #2415 root 4: propagate skill_name + intervention_bus from the phase
+        # OpContext so permission checks key correctly on the calling skill's
+        # approval prefix (``{skill}/file.write/{path}``) and the JIT prompt
+        # fires when approval is needed. Without this, skill_name="" → prefix
+        # ``/file.write/`` → no saved approval matches → PermissionError even
+        # when the operator already approved the path.  intervention_bus=None
+        # suppressed the JIT fallback prompt, giving no recovery path.
+        skill_name=(
+            phase_op_ctx.skill_name if phase_op_ctx is not None else ""
+        ),
+        intervention_bus=(
+            phase_op_ctx.intervention_bus if phase_op_ctx is not None else None
+        ),
         # #1673: thread the config-aware resolver + "tool" purpose class so this
         # ONE shared bridge gives every delegating tool a real resolver instead of
         # the OpContext default resolver=None (+ literal "standard"). Eliminates the
