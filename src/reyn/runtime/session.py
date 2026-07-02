@@ -5841,15 +5841,28 @@ class Session:
         if "type" not in expanded and expanded.get("url"):
             expanded = {**expanded, "type": "http"}
 
+        client = None
         try:
             client = MCPClient(expanded, agent_id=self._agent_id)
-            tools = await client.list_tools()
-            await client.close()
-            return tools
+            return await client.list_tools()
         except MCPError as exc:
             return [{"error": str(exc)}]
         except Exception as exc:
             return [{"error": str(exc)}]
+        finally:
+            # Close in the SAME task that opened it, on EVERY exit path — success, MCPError,
+            # Exception, AND cancellation. The old code closed only after a successful list_tools(),
+            # so a raise (or cancel) leaked the anyio stdio_client cancel-scope → a later teardown in
+            # a different task raised "cancel scope crossed task boundary" (owner's list_mcp_tools
+            # crash). ``finally`` runs for BaseException (incl. CancelledError) too, which a trailing
+            # close after ``except Exception`` would miss. Best-effort (mirrors _mcp_call_tool).
+            if client is not None:
+                try:
+                    await client.close()
+                except Exception:  # noqa: BLE001 — best-effort teardown; original result stands
+                    logger.debug(
+                        "mcp client close failed in _mcp_list_tools", exc_info=True
+                    )
 
     async def _mcp_call_tool(self, server: str, tool: str, args: dict) -> dict:
         """Invoke an MCP tool and return its result.
