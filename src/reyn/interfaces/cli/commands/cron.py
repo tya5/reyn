@@ -1,12 +1,13 @@
-"""`reyn cron` — cron-driven skill scheduling (FP-0009 Component B).
+"""`reyn cron` — cron-driven job scheduling (FP-0009 Component B).
 
 Subcommands:
   run     Start the foreground cron scheduler (blocks until Ctrl-C).
   list    Print all configured jobs with next-run time; no scheduler started.
   status  Like `list` but shows last-run fields too (empty in standalone mode).
 
-The scheduler reads ``cron.jobs`` from reyn.yaml; each enabled job runs the
-named skill on its cron schedule via the headless SkillRuntime.run path.
+The scheduler reads ``cron.jobs`` from reyn.yaml and computes each enabled
+job's cron schedule. Standalone CLI mode has no execution runner (skill-based
+job execution has been retired; message-based jobs need ``reyn web``).
 
 v1 limitation: last-run state is in-memory only.  ``reyn cron status``
 shows empty last_run_* fields when invoked standalone (i.e. not while
@@ -265,63 +266,17 @@ async def _run_scheduler() -> None:
 def _build_runner():
     """Return the async runner function that executes a CronJob.
 
-    FP-0009 + FP-0041 #489 PR-B: standalone CLI mode supports the
-    legacy skill-based shape only (= ``inbox_pusher=None`` since there
-    is no AgentRegistry context in ``reyn cron run`` foreground). Use
-    ``reyn web`` for message-based jobs.
+    Standalone CLI mode wires neither runner: skill-based jobs are no longer
+    executable from the CLI, and message-based jobs need an AgentRegistry
+    context that ``reyn cron run`` (foreground) lacks. The scheduler still
+    runs (``list`` / ``status`` / next-run computation); jobs warn + skip.
+    Use ``reyn web`` for message-based execution.
     """
     from reyn.runtime.cron.runners import build_default_runner
 
-    async def _legacy_skill_runner(job) -> str:
-        from reyn.config import _find_project_root, load_config, load_project_context
-        from reyn.core.compiler import load_dsl_skill
-        from reyn.interfaces.cli.commands.run import _build_permission_resolver
-        from reyn.interfaces.cli.logger_factory import make_logger
-        from reyn.interfaces.cli.skill_loader import resolve_skill_path
-        from reyn.llm.model_resolver import ModelResolver
-        from reyn.skill.skill_runtime import SkillRuntime
-        from reyn.user_intervention import StdinInterventionBus
-
-        config = load_config()
-        model_class = config.model
-        resolver = ModelResolver(
-            config.models,
-            default_class=config.model,
-            purpose_classes=config.model_class_by_purpose,
-        )
-        resolved = resolver.resolve(model_class).model
-        project_root = _find_project_root(Path.cwd())
-        project_context = load_project_context(config, project_root)
-        logger = make_logger()
-
-        # #997 dir2: config-derived permission/runtime bundle wired by
-        # SkillRuntime.from_config (cron jobs run unattended).
-        agent = SkillRuntime.from_config(
-            config,
-            model=resolved,
-            resolver=resolver,
-            strict=False,
-            subscribers=[logger],
-            intervention_bus=StdinInterventionBus(),
-            project_context=project_context,
-            caller="cron",
-        )
-
-        skill_dir, skill_root = resolve_skill_path(job.skill)
-        skill_md = skill_dir / "skill.md"
-        skill = load_dsl_skill(str(skill_md), skill_root=str(skill_root))
-        initial_input = job.input if job.input else {}
-
-        result = await agent.run(skill, initial_input)
-        if not result.ok:
-            raise RuntimeError(
-                f"Skill {job.skill!r} ended with status {result.status!r}"
-            )
-        return "ok"
-
-    # Standalone CLI has no AgentRegistry → message-based jobs warn
-    # and skip (= operator should use ``reyn web`` for them).
+    # Standalone CLI has no AgentRegistry and no skill-execution runner:
+    # skill-based jobs warn + skip, and message-based jobs need ``reyn web``.
     return build_default_runner(
-        legacy_skill_runner=_legacy_skill_runner,
+        legacy_skill_runner=None,
         inbox_pusher=None,
     )
