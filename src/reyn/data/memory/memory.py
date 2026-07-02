@@ -16,7 +16,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-from reyn.core.compiler.parser import _split_frontmatter
+from reyn.core.frontmatter import split_frontmatter
 from reyn.data.memory.memory_paths import memory_dir
 
 VALID_TYPES = ("user", "feedback", "project", "reference")
@@ -47,7 +47,7 @@ def read_entry(path: Path) -> MemoryEntry | None:
         text = path.read_text(encoding="utf-8")
     except OSError:
         return None
-    fm, body = _split_frontmatter(text)
+    fm, body = split_frontmatter(text)
     description_raw = str(fm.get("description") or "").strip()
     description = description_raw.splitlines()[0] if description_raw else ""
     return MemoryEntry(
