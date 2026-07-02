@@ -23,6 +23,16 @@ from reyn.core.context_builder import MAX_CONTROL_IR_RESULT_INLINE_BYTES as CAP
 from reyn.core.context_builder import _oversized_fields, offload_control_ir_result
 from reyn.services.offload.store import read_offloaded
 
+
+class _StubPool:
+    """Test double for MCPClientPool — get() returns a pre-set client (a359 P2). Real Fake."""
+    def __init__(self, client): self._client = client
+    async def __aenter__(self): return self
+    async def __aexit__(self, *e): return None
+    @property
+    def owner_task(self): return None
+    async def get(self, server, config, *, agent_id=None): return self._client
+
 # A multi-line text payload well over the per-field offload threshold — mirrors a big MCP tool dump.
 _BIG_TEXT = "\n".join(f"row {i}: " + "d" * 80 for i in range((CAP // 40) + 200))
 
@@ -53,7 +63,7 @@ def _make_ctx(tmp_path: Path, mcp_client: _FakeMCPClient) -> Any:
         permission_decl=PermissionDecl(),
         permission_resolver=None,  # bypass permission gate
         mcp_servers={"testsrv": {"type": "stdio", "command": "fake"}},
-        mcp_clients={"testsrv": mcp_client},  # type: ignore[dict-item]
+        mcp_pool=_StubPool(mcp_client),  # #a359 P2
     )
 
 

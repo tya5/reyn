@@ -1,0 +1,163 @@
+"""Tier 2: a359 P2 — structured MCPClientPool + fault-isolation boundary.
+
+The pool opens + reuses clients in the run-owning task and closes them there on scope exit
+(structural teardown). Fault isolation (owner req): teardown faults — including a
+``BaseExceptionGroup`` from the SDK's internal task group — are CONTAINED so a broken subprocess
+teardown can't crash the run; and the op handler turns ANY MCP call fault (bad response / transport
+group / server death) into an error tool-result so MCP misbehavior never crashes the router loop.
+Neither ever swallows cancellation. Real pool + real op handler; injected raising client (no mock).
+"""
+from __future__ import annotations
+
+import asyncio
+
+import pytest
+
+import reyn.mcp.pool as pool_mod
+from reyn.mcp.pool import MCPClientPool, describe_fault, is_or_contains_cancel
+
+
+def test_describe_fault_aggregates_group_members():
+    """Tier 2: describe_fault summarises a group's members (type+message) for the LLM — not empty,
+    not a raw traceback (owner req: the LLM must see WHAT failed)."""
+    grp = ExceptionGroup("teardown", [RuntimeError("malformed response"), ValueError("reset")])
+    text = describe_fault(grp)
+    assert "malformed response" in text and "reset" in text
+    assert "RuntimeError" in text and "ValueError" in text
+
+
+# ── is_or_contains_cancel (the cancellation-safe boundary predicate) ─────────────
+
+def test_cancel_predicate_direct():
+    """Tier 2: a bare CancelledError is a cancellation."""
+    assert is_or_contains_cancel(asyncio.CancelledError()) is True
+
+
+def test_cancel_predicate_group_with_cancel():
+    """Tier 2: a BaseExceptionGroup containing a CancelledError counts (must be re-raised)."""
+    grp = BaseExceptionGroup("teardown", [asyncio.CancelledError(), RuntimeError("BrokenResource")])
+    assert is_or_contains_cancel(grp) is True
+
+
+def test_cancel_predicate_group_without_cancel():
+    """Tier 2: a group of ordinary faults is NOT a cancellation → containable."""
+    grp = ExceptionGroup("teardown", [RuntimeError("BrokenResource"), ValueError("bad response")])
+    assert is_or_contains_cancel(grp) is False
+
+
+def test_cancel_predicate_plain_exception():
+    """Tier 2: a plain non-cancel exception is containable (not a cancellation)."""
+    assert is_or_contains_cancel(RuntimeError("t")) is False
+
+
+# ── pool teardown fault-containment ──────────────────────────────────────────────
+
+class _RaisingCloseClient:
+    """A client whose close (``__aexit__``) raises — models the SDK teardown fault."""
+
+    def __init__(self, exc: BaseException) -> None:
+        self._exc = exc
+        self.closed = False
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc_info):
+        self.closed = True
+        raise self._exc
+
+
+@pytest.mark.asyncio
+async def test_pool_contains_teardown_exception_group(monkeypatch):
+    """Tier 2: CORE fault-isolation — a client whose teardown raises a transport BaseExceptionGroup
+    is CONTAINED by the pool's __aexit__ (the run survives), not propagated as an uncontained crash."""
+    raising = _RaisingCloseClient(
+        BaseExceptionGroup("teardown", [RuntimeError("BrokenResourceError"), RuntimeError("ConnectionReset")])
+    )
+    monkeypatch.setattr(pool_mod, "MCPClient", lambda cfg, *, agent_id=None: raising)
+
+    async with MCPClientPool() as pool:
+        await pool.get("srv", {"type": "stdio", "command": "x"})
+    # reached here → the teardown group was contained (no crash out of the scope)
+    assert raising.closed is True
+
+
+@pytest.mark.asyncio
+async def test_pool_reraises_cancellation_in_teardown(monkeypatch):
+    """Tier 2: the pool NEVER swallows cancellation — a teardown group containing a CancelledError
+    is re-raised so a cancelled run keeps unwinding."""
+    raising = _RaisingCloseClient(BaseExceptionGroup("teardown", [asyncio.CancelledError()]))
+    monkeypatch.setattr(pool_mod, "MCPClient", lambda cfg, *, agent_id=None: raising)
+
+    with pytest.raises(BaseException) as ei:
+        async with MCPClientPool() as pool:
+            await pool.get("srv", {"type": "stdio", "command": "x"})
+    assert is_or_contains_cancel(ei.value), "cancellation propagates, not contained"
+
+
+# ── op-handler fault isolation (bad response / transport group → error result) ────
+
+class _FaultPool:
+    """A pool whose get() returns a client whose call_tool raises ``exc`` — to exercise the op
+    handler's fault boundary."""
+
+    def __init__(self, exc: BaseException) -> None:
+        self._exc = exc
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *e):
+        return None
+
+    @property
+    def owner_task(self):
+        return None
+
+    async def get(self, server, config, *, agent_id=None):
+        exc = self._exc
+
+        class _C:
+            async def call_tool(self, name, args, *, progress_callback=None, timeout_seconds=None):
+                raise exc
+        return _C()
+
+
+def _ctx(pool):
+    from reyn.core.events.events import EventLog
+    from reyn.core.op_runtime.context import OpContext
+    from reyn.data.workspace.workspace import Workspace
+    from reyn.security.permissions.permissions import PermissionDecl
+    events = EventLog()
+    return OpContext(
+        workspace=Workspace(events=events), events=events,
+        permission_decl=PermissionDecl(), permission_resolver=None,
+        mcp_servers={"srv": {"type": "stdio", "command": "x"}}, mcp_pool=pool,
+    )
+
+
+@pytest.mark.asyncio
+async def test_op_contains_bad_response_exception_group():
+    """Tier 2: a transport/bad-response BaseExceptionGroup from call_tool → a contained error
+    tool-result (owner req: MCP misbehavior must not crash the loop). RED if the boundary only
+    caught `except Exception` (a BaseExceptionGroup would escape uncontained)."""
+    from reyn.core.op_runtime.mcp import _execute
+    from reyn.schemas.models import MCPIROp
+
+    grp = BaseExceptionGroup("bad", [RuntimeError("malformed response"), RuntimeError("reset")])
+    result = await _execute(MCPIROp(kind="mcp", server="srv", tool="t", args={}), _ctx(_FaultPool(grp)))
+    assert result["status"] == "error", "MCP fault surfaced as an error result, not a crash"
+    assert result["kind"] == "mcp"
+    # owner req: the fault CONTENT reaches the LLM (non-empty; group members aggregated)
+    assert result["error"], "error content is non-empty (fed to the LLM)"
+    assert "malformed response" in result["error"] and "reset" in result["error"]
+
+
+@pytest.mark.asyncio
+async def test_op_propagates_cancellation():
+    """Tier 2: the op handler never swallows cancellation."""
+    from reyn.core.op_runtime.mcp import _execute
+    from reyn.schemas.models import MCPIROp
+
+    with pytest.raises(asyncio.CancelledError):
+        await _execute(MCPIROp(kind="mcp", server="srv", tool="t", args={}), _ctx(_FaultPool(asyncio.CancelledError())))

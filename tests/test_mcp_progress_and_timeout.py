@@ -39,6 +39,16 @@ from reyn.runtime.forwarder import ChatEventForwarder
 from reyn.runtime.outbox import OutboxMessage
 from reyn.schemas.models import MCPIROp
 
+
+class _StubPool:
+    """Test double for MCPClientPool — get() returns a pre-set client (a359 P2). Real Fake."""
+    def __init__(self, client): self._client = client
+    async def __aenter__(self): return self
+    async def __aexit__(self, *e): return None
+    @property
+    def owner_task(self): return None
+    async def get(self, server, config, *, agent_id=None): return self._client
+
 # ── 1. MCPClient.call_tool signature accepts the new kwargs ────────────
 
 
@@ -192,13 +202,12 @@ def test_op_handler_progress_callback_emits_mcp_progress_event() -> None:
         permission_decl=PermissionDecl(),
         permission_resolver=None,
         mcp_servers={"demo": {"type": "stdio", "command": "/bin/true"}},
-        mcp_clients={},
     )
     # Pre-install a fake client so MCPClient construction is skipped.
     client = MCPClient({"type": "stdio", "command": "/bin/true"})
     client._initialized = True
     client._session = _CapturingSession()
-    ctx.mcp_clients["demo"] = client
+    ctx.mcp_pool = _StubPool(client)
 
     op = MCPIROp(kind="mcp", server="demo", tool="thing", args={})
     asyncio.run(mcp_op_handler._execute(op, ctx))
@@ -264,14 +273,13 @@ def test_op_handler_reads_call_timeout_from_server_config() -> None:
                 "call_timeout_seconds": 7.5,
             },
         },
-        mcp_clients={},
     )
     client = MCPClient(
         {"type": "stdio", "command": "/bin/true", "call_timeout_seconds": 7.5},
     )
     client._initialized = True
     client._session = _CapturingSession()
-    ctx.mcp_clients["demo"] = client
+    ctx.mcp_pool = _StubPool(client)
 
     op = MCPIROp(kind="mcp", server="demo", tool="thing", args={})
     asyncio.run(mcp_op_handler._execute(op, ctx))
@@ -324,12 +332,11 @@ def test_op_handler_treats_missing_or_invalid_call_timeout_as_unset() -> None:
             permission_decl=PermissionDecl(),
             permission_resolver=None,
             mcp_servers={"demo": cfg},
-            mcp_clients={},
-        )
+            )
         client = MCPClient(cfg)
         client._initialized = True
         client._session = _CapturingSession()
-        ctx.mcp_clients["demo"] = client
+        ctx.mcp_pool = _StubPool(client)
 
         op = MCPIROp(kind="mcp", server="demo", tool="thing", args={})
         asyncio.run(mcp_op_handler._execute(op, ctx))

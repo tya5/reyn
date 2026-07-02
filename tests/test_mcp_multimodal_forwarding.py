@@ -56,8 +56,29 @@ def _make_ctx(tmp_path, mcp_client: _FakeMCPClient) -> Any:
         permission_decl=PermissionDecl(),
         permission_resolver=None,  # bypass permission gate
         mcp_servers={"testsrv": {"type": "stdio", "command": "fake"}},
-        mcp_clients={"testsrv": mcp_client},  # type: ignore[dict-item]
+        mcp_pool=_StubPool(mcp_client),  # #a359 P2: pool returns the pre-set fake
     )
+
+
+class _StubPool:
+    """Test double for MCPClientPool — ``get`` returns a pre-set client (no real subprocess). A real
+    Fake (not a mock): implements the pool contract the op handler calls."""
+
+    def __init__(self, client) -> None:
+        self._client = client
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc):
+        return None
+
+    @property
+    def owner_task(self):
+        return None
+
+    async def get(self, server, config, *, agent_id=None):
+        return self._client
 
 
 def test_op_result_preserves_image_blocks(tmp_path, monkeypatch):

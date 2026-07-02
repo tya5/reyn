@@ -16,7 +16,8 @@ from .context import OpContext
 
 
 async def _execute(op: MCPIROp, ctx: OpContext) -> dict:
-    from reyn.mcp.client import MCPClient, MCPError, expand_env
+    from reyn.mcp.client import expand_env
+    from reyn.mcp.pool import describe_fault, is_or_contains_cancel
 
     server_cfg = ctx.mcp_servers.get(op.server)
     if not server_cfg:
@@ -36,15 +37,12 @@ async def _execute(op: MCPIROp, ctx: OpContext) -> dict:
         if expanded.get("url"):
             expanded = {**expanded, "type": "http"}
 
-    if op.server not in ctx.mcp_clients:
-        try:
-            # FP-0016 E: thread agent_id so X-Reyn-Agent-Id is added to
-            # outgoing MCP HTTP requests.
-            ctx.mcp_clients[op.server] = MCPClient(expanded, agent_id=ctx.agent_id)
-        except ValueError as exc:
-            return {"kind": "mcp", "status": "error", "server": op.server,
-                    "tool": op.tool, "error": str(exc)}
-    client = ctx.mcp_clients[op.server]
+    # #a359 P2: the client comes from the per-turn structured pool (opened + closed in the pool's
+    # owning task — no cross-SDK-task teardown). None = no pool wired on this ctx (a non-MCP
+    # OpContext should never reach the mcp handler; guard defensively).
+    if ctx.mcp_pool is None:
+        return {"kind": "mcp", "status": "error", "server": op.server,
+                "tool": op.tool, "error": "no MCP client pool on this context"}
 
     # issue #264 — wire MCP SDK progress + per-call timeout:
     #
@@ -83,15 +81,25 @@ async def _execute(op: MCPIROp, ctx: OpContext) -> dict:
 
     ctx.events.emit("mcp_called", server=op.server, tool=op.tool, args=op.args)
     try:
+        # Open (or reuse) the client via the pool, then call — both inside the fault boundary so a
+        # server that dies on connect, a bad config, a malformed response, OR a transport
+        # BaseExceptionGroup all become a contained error tool-result (owner req: MCP misbehavior
+        # must not crash the router loop). Cancellation is never swallowed.
+        client = await ctx.mcp_pool.get(op.server, expanded, agent_id=ctx.agent_id)
         result = await client.call_tool(
             op.tool, op.args,
             progress_callback=_on_progress,
             timeout_seconds=call_timeout,
         )
-    except MCPError as exc:
-        ctx.events.emit("mcp_failed", server=op.server, tool=op.tool, error=str(exc))
+    except BaseException as exc:  # noqa: BLE001 — fault isolation across ANY MCP fault (incl groups)
+        if is_or_contains_cancel(exc):
+            raise
+        # Owner req: feed the fault CONTENT back to the LLM (type + message, group members
+        # aggregated) via the standard op-error result — so it can retry/adapt, not a silent error.
+        fault = describe_fault(exc)
+        ctx.events.emit("mcp_failed", server=op.server, tool=op.tool, error=fault)
         return {"kind": "mcp", "status": "error", "server": op.server,
-                "tool": op.tool, "error": str(exc)}
+                "tool": op.tool, "error": fault}
 
     content_items = result.get("content", [])
     if isinstance(content_items, list):
