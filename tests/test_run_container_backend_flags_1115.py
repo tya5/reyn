@@ -61,20 +61,33 @@ class _FakeLauncher:
 # ─── host (default) ────────────────────────────────────────────────────────────
 
 
-def test_host_backend_returns_none_quad() -> None:
-    """Tier 2: --env-backend=host yields no backend + default dirs + no cleanup."""
-    backend, base_dir, state_dir, cleanup = _build_environment_backend(
-        _args(env_backend="host")
-    )
-    assert (backend, base_dir, state_dir, cleanup) == (None, None, None, None)
+def _project_subdir(tmp_path: Path, monkeypatch) -> Path:
+    project_root = tmp_path / "proj"
+    project_root.mkdir()
+    (project_root / "reyn.yaml").write_text("model: stub/model\n", encoding="utf-8")
+    subdir = project_root / "docs"
+    subdir.mkdir()
+    monkeypatch.chdir(subdir)
+    return project_root
 
 
-def test_default_is_host() -> None:
-    """Tier 2: a Namespace without env_backend defaults to host (getattr fallback)."""
-    backend, base_dir, state_dir, cleanup = _build_environment_backend(
-        argparse.Namespace()
-    )
-    assert (backend, base_dir, state_dir, cleanup) == (None, None, None, None)
+def test_host_backend_no_container_but_base_dir_is_project_root(tmp_path, monkeypatch) -> None:
+    """Tier 2: --env-backend=host yields no backend + no cleanup, and the workspace base_dir anchors
+    on the PROJECT ROOT (#2415 root 3), not the cwd subdir — so the FS base == the permission-zone
+    base. (Was (None, None, None, None); the base_dir slot now carries project_root.)"""
+    project_root = _project_subdir(tmp_path, monkeypatch)
+    backend, base_dir, state_dir, cleanup = _build_environment_backend(_args(env_backend="host"))
+    assert (backend, state_dir, cleanup) == (None, None, None), "no backend / dirs / cleanup"
+    assert base_dir == project_root, "host base_dir anchors on project_root, not the cwd subdir"
+
+
+def test_default_is_host(tmp_path, monkeypatch) -> None:
+    """Tier 2: a Namespace without env_backend defaults to host (getattr fallback) — same contract:
+    no backend/state/cleanup, base_dir anchored on project_root (#2415 root 3)."""
+    project_root = _project_subdir(tmp_path, monkeypatch)
+    backend, base_dir, state_dir, cleanup = _build_environment_backend(argparse.Namespace())
+    assert (backend, state_dir, cleanup) == (None, None, None)
+    assert base_dir == project_root
 
 
 # ─── docker ATTACH (--container given) ─────────────────────────────────────────

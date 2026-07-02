@@ -73,7 +73,14 @@ def build_environment_backend(args: argparse.Namespace, *, launcher=None):
 
     Returns ``(backend, workspace_base_dir, workspace_state_dir, cleanup)``:
 
-    - host (default): ``(None, None, None, None)`` — identity HostBackend.
+    - host (default): ``(None, project_root, None, None)`` — identity HostBackend with the
+      workspace base_dir anchored on the **project root** (the reyn.yaml ancestor), NOT the
+      invocation cwd. #2415 root 3: the permission zone (``file_zone_root``) already anchors on
+      project_root, so a subdir invocation whose ``base_dir`` was cwd split the two bases — a
+      write target resolved under cwd while its approval resolved under project_root → silently
+      denied AND landed in the wrong dir. Returning project_root here (the host analogue of the
+      container's repo root) keeps base_dir == file_zone_root, so writes both land and are permitted
+      under project_root. Falls back to cwd when no reyn.yaml is found up-tree (no project to anchor).
     - docker ATTACH (``--container`` given): a ``DockerEnvironmentBackend`` over
       the existing container; base_dir = the in-container ``--repo-dir``; no
       cleanup (the operator owns the container).
@@ -87,7 +94,12 @@ def build_environment_backend(args: argparse.Namespace, *, launcher=None):
     """
     backend_kind = getattr(args, "env_backend", "host")
     if backend_kind == "host":
-        return None, None, None, None
+        # #2415 root 3: anchor the host workspace base_dir on the project root (== the resolver's
+        # file_zone_root default), so the write-target base and the approval base coincide. Fall
+        # back to cwd when there is no reyn.yaml ancestor (no project to anchor to).
+        from reyn.config import _find_project_root
+        project_root = _find_project_root(Path.cwd()) or Path.cwd()
+        return None, project_root, None, None
 
     if backend_kind == "docker":
         from reyn.environment import DockerEnvironmentBackend
