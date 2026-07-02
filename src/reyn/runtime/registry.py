@@ -2416,6 +2416,12 @@ class AgentRegistry:
         profile = self.load_profile(name)
         session = self._construct_session(profile, is_delegate=is_delegate)
         self._store_session(name, session)
+        # #2285 step2: restore persisted visibility/hook toggles for the MAIN session (spawned
+        # sessions load in spawn_session after the per-session path re-key). First-construction only
+        # — cache-hits return above — so this runs once per session lifetime, incl. on restart.
+        loader = getattr(session, "load_persisted_toggles", None)
+        if callable(loader):
+            loader()
         return session
 
     def _construct_session(
@@ -2518,6 +2524,12 @@ class AgentRegistry:
         # freshness for the CURRENT conversation is already supplied separately by the
         # live overlay (this session's uncompacted calls layered on each turn). So it is
         # correctly shared across the agent's sessions, not per-conversation state.
+        # #2285 step2: now that the per-session state dir is finalized (snapshot re-key above),
+        # restore any persisted visibility/hook toggles for this (name, sid) — the loaded override
+        # composes atop the authoritative envelope, so visible ⊆ authorized survives across restart.
+        loader = getattr(session, "load_persisted_toggles", None)
+        if callable(loader):
+            loader()
         self._sessions.setdefault(name, {})[new_sid] = session
         return new_sid
 
