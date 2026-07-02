@@ -308,7 +308,6 @@ async def _handle_call_mcp_tool(
             permission_decl=PermissionDecl(mcp=[server]),
             permission_resolver=ctx.permission_resolver,
             skill_name="",
-            skill=None,
             # #1673: real resolver + "tool" purpose class (was None + literal
             # "standard") — eliminates the resolver=None → litellm-BadRequestError
             # class by construction (uniform; this handler makes no LLM call).
