@@ -4,7 +4,7 @@ Subcommands
 -----------
 serve          Expose Reyn agents to outer LLM clients via MCP (inbound, existing).
 search         Search the MCP registry for servers.
-install        Install an MCP server (wraps the mcp_install skill).
+install        Install an MCP server from a --source spec (direct).
 list           List configured MCP servers with status.
 remove         Remove an MCP server from configuration.
 set-secret     Set a secret for an MCP server.
@@ -578,30 +578,22 @@ def _resolve_install_project_root(project_arg: str | None) -> Path:
 
 
 def run_install(args: argparse.Namespace) -> None:
-    """Install an MCP server — thin wrapper over the mcp_install skill.
+    """Install an MCP server from a ``--source`` specifier.
 
-    Two install modes:
-      - Registry mode (positional SERVER_ID): fetch server.json from
-        registry.modelcontextprotocol.io, then install.  This is the
-        existing behaviour.
-      - Source mode (``--source SPECIFIER``): skip the registry; resolve
-        metadata from the specifier directly.  Useful for servers that are
-        not yet listed in the registry (e.g. Anthropic official reference
-        servers).
-
-    ``SERVER_ID`` and ``--source`` are mutually exclusive; exactly one must
-    be supplied.
+    ``--source SPECIFIER`` resolves server metadata from the specifier directly
+    and installs via the IR op handler (permission gate, credential flow, and
+    config write included). Registry-id install (positional ``SERVER_ID``) was
+    implemented via the ``mcp_install`` skill, which has been retired — it now
+    prints a message pointing at ``--source``.
 
     When ``--non-interactive`` is set the ``REYN_MCP_INSTALL_AUTO_APPROVE``
-    environment variable is injected so the skill / IR op suppress interactive
-    prompts.
+    environment variable is injected so the IR op suppresses interactive prompts.
 
-    ``--env KEY=VALUE`` pairs are forwarded to the skill as pre-supplied
-    environment overrides so the credential-prompt flow is skipped for those
-    keys.
+    ``--env KEY=VALUE`` pairs are forwarded as pre-supplied environment overrides
+    so the credential-prompt flow is skipped for those keys.
 
-    ``--args ARGS`` is a shell-quoted string of extra arguments appended to
-    the server's args list after installation (e.g. ``--args "--server pyright"``).
+    ``--args ARGS`` is a shell-quoted string of extra arguments appended to the
+    server's args list after installation (e.g. ``--args "--server pyright"``).
     """
     import shlex
 
@@ -672,109 +664,18 @@ def run_install(args: argparse.Namespace) -> None:
         )
         return
 
-    # ── Registry mode (existing path) ─────────────────────────────────────────
-    server_id = (server_id_raw or "").strip()
-
-    # Forward to mcp_install skill via reyn run machinery.
-    import json
-
-    from reyn.config import load_config, load_project_context
-    from reyn.llm.llm import run_async as _run_async
-    from reyn.llm.model_resolver import ModelResolver
-    from reyn.security.permissions.permissions import PermissionResolver
-    from reyn.skill.skill_paths import SkillNotFoundError, is_stdlib_skill
-    from reyn.skill.skill_paths import resolve_skill_path as _resolve_skill_path_raw
-    from reyn.skill.skill_runtime import SkillRuntime
-    from reyn.user_intervention import StdinInterventionBus
-
-    from ..logger_factory import make_logger
-
-    config = load_config()
-    # #1442 Layer A: root the agent's workspace at the resolved project_root so
-    # the mcp_install op handler writes there, not cwd. Mirrors `reyn mcp
-    # refresh` (os.chdir to project_root); the agent's cwd-defaulted workspace
-    # then base_dir-roots at it (paired with the handler base_dir fix, Layer B).
-    os.chdir(project_root)
-
-    try:
-        skill_dir, skill_root = _resolve_skill_path_raw("mcp_install")
-    except SkillNotFoundError:
-        print(
-            "error: mcp_install skill not found.\n"
-            "Note: the mcp_install skill is implemented in a parallel wave. "
-            "Verify it is available before using 'reyn mcp install'.",
-            file=sys.stderr,
-        )
-        sys.exit(1)
-
-    from reyn.core.compiler import load_dsl_skill
-    skill = load_dsl_skill(str(skill_dir / "skill.md"), skill_root=str(skill_root))
-
-    initial_input = {
-        "type": "mcp_install_request",
-        "data": {
-            "server_id": server_id,
-            "scope": scope,
-            "env_overrides": pre_env,
-            "non_interactive": non_interactive,
-            "extra_args": extra_args,
-        },
-    }
-
-    perm_config = getattr(config, "permissions", {}) or {}
-    # Stdlib skills ship with the Reyn team's code — their unsafe python steps
-    # are safe by construction. Auto-allow so users are not blocked by the
-    # --allow-unsafe-python gate that applies only to user-supplied skills.
-    auto_trust_python = is_stdlib_skill(skill_dir)
-    perm_resolver = PermissionResolver(
-        config_permissions=perm_config,
-        project_root=project_root,
-        interactive=not non_interactive and sys.stdin.isatty(),
-        unsafe_python_allowed=auto_trust_python,
+    # ── Registry mode (retired) ───────────────────────────────────────────────
+    # Registry-id install was implemented via the ``mcp_install`` skill, which
+    # has been retired. Direct source installs (``--source``) remain fully
+    # supported above; registry-id resolution has no non-skill implementation.
+    print(
+        "error: 'reyn mcp install <registry-id>' (skill-based registry mode) "
+        "has been retired.\n"
+        "Install directly from a source instead: "
+        "'reyn mcp install --source <spec>'.",
+        file=sys.stderr,
     )
-    project_context = load_project_context(config, project_root)
-
-    if config.api_base:
-        os.environ.setdefault("LITELLM_API_BASE", config.api_base)
-    resolver = ModelResolver(
-        config.models,
-        default_class=config.model,
-        purpose_classes=config.model_class_by_purpose,
-    )
-    logger = make_logger()
-    # #997 dir2: config-derived permission/runtime bundle wired by from_config.
-    agent = SkillRuntime.from_config(
-        config,
-        resolver=resolver,
-        strict=False,
-        subscribers=[logger],
-        intervention_bus=StdinInterventionBus(),
-        project_context=project_context,
-        caller="direct",
-    )
-
-    print(f"Installing MCP server: {server_id}")
-    print(f"Scope: {scope}")
-    if pre_env:
-        print(f"Pre-supplied env keys: {', '.join(pre_env.keys())}")
-    print()
-
-    try:
-        result = _run_async(
-            agent.run(skill, initial_input, output_language=None)
-        )
-    except Exception as exc:
-        print(f"\nError during mcp_install: {exc}", file=sys.stderr)
-        sys.exit(1)
-
-    print()
-    if not result.ok:
-        print(f"=== mcp_install ended with status '{result.status}' ===",
-              file=sys.stderr)
-        sys.exit(2)
-
-    print(f"Server '{server_id}' installed successfully.")
-    print(json.dumps(result.data, indent=2, ensure_ascii=False))
+    sys.exit(1)
 
 
 def _run_install_from_source(
@@ -788,9 +689,9 @@ def _run_install_from_source(
 ) -> None:
     """Install an MCP server directly from a ``--source`` specifier.
 
-    Bypasses the mcp_install skill and the registry fetch, going directly
-    to the IR op handler.  The permission gate, credential flow, and config
-    write are all identical to the registry path (reusing the same handler).
+    Resolves metadata from the specifier and installs directly via the IR op
+    handler (no registry fetch).  The permission gate, credential flow, and
+    config write are all handled by that op.
 
     #1442 Layer A: ``project_root`` is the run_install-resolved root (--project
     or the closest reyn.yaml), no longer re-derived cwd-only here.
