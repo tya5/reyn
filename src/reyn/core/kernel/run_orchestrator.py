@@ -15,6 +15,7 @@ This is the final layer in the 4-component decomposition:
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable
@@ -439,6 +440,12 @@ class RunOrchestrator:
 
     # ── Main loop ─────────────────────────────────────────────────────────────
 
+    def mcp_client_scope(self):
+        """#B-hardening: the run-scoped MCP client lifecycle CM (delegates to the control_ir
+        executor). runtime.py wraps the ``run()`` call in this so the cached MCP clients open + close
+        in the run-owning task — structural teardown, not a discipline-dependent finally line."""
+        return self._phase_executor._control_ir_executor.mcp_client_scope()
+
     async def run(
         self,
         initial_input: dict,
@@ -453,6 +460,15 @@ class RunOrchestrator:
         Returns RunResult with status="finished" or status="loop_limit_exceeded".
         Raises WorkflowAbortedError on unrecoverable LLM abort.
         """
+        # #B-hardening: this run MUST execute inside mcp_client_scope() (runtime.py wraps the call),
+        # so any MCP client opened during the run is closed in THIS task at scope exit. Fail fast if a
+        # caller bypassed the wrap — else the cross-task teardown hazard returns and clients leak.
+        _executor = self._phase_executor._control_ir_executor
+        if _executor.mcp_scope_owner_task is not asyncio.current_task():
+            raise RuntimeError(
+                "RunOrchestrator.run must execute inside mcp_client_scope() (the run-owning task). "
+                "Wrap the call: `async with orchestrator.mcp_client_scope(): await orchestrator.run(...)`."
+            )
         if self._perm:
             # B49 W2-S5 fix (2026-05-22): pass intervention_bus as-is; it
             # may be None in non-interactive contexts (= preprocessor
@@ -870,11 +886,10 @@ class RunOrchestrator:
             raise
 
         finally:
-            # G11 fix (hypothesis A+B): close MCP clients in the same asyncio
-            # task that opened them.  Deferring to GC lets the AsyncExitStack
-            # be finalised from an unrelated context, which causes anyio
-            # cancel-scope task-affinity RuntimeErrors in stderr.
-            await self._phase_executor._control_ir_executor.teardown_mcp_clients()
+            # #B-hardening: MCP client teardown is no longer a manual line here — it moved to the
+            # structural ``mcp_client_scope()`` __aexit__ that runtime.py wraps this run in (G11's
+            # "close in the same task that opened them", now robust-by-construction: single close
+            # site, can't be forgotten/duplicated, + the op handler fails fast on a cross-task open).
 
             # R-D1: exception-aware completion. The finally clause must
             # distinguish between "this run is finished" and "this run was

@@ -61,6 +61,11 @@ class OpContext:
     mcp_servers: dict = field(default_factory=dict)
     # Mutable cache for MCP HTTP clients keyed by server name
     mcp_clients: dict = field(default_factory=dict)
+    # #B-hardening: the task that owns the mcp_clients lifecycle (set by the control_ir executor's
+    # mcp_client_scope). The mcp op handler fails fast if a client is opened from a different task
+    # (the cross-task cancel-scope hazard). None = unscoped (e.g. the chat per-call path, which
+    # opens+closes in its own task) → guard is skipped.
+    mcp_owner_task: "object | None" = None
     # FP-0016 Component E: agent identity for X-Reyn-Agent-Id header on
     # outgoing MCP / external HTTP calls. Plumbed from Session's
     # ReynConfig.agent.id (= `reyn/<hostname>` by default). None

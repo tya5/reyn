@@ -17,6 +17,8 @@ handlers are preserved (they run inside the invoker).
 """
 from __future__ import annotations
 
+import asyncio
+from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -160,7 +162,11 @@ class ControlIRExecutor:
         self._perm = permission_resolver
         self._skill_name = skill_name
         self._mcp_servers: dict = (mcp_servers or {}).get("servers", {})
-        self._mcp_clients: dict = {}  # cached across ops
+        self._mcp_clients: dict = {}  # cached across ops (subprocess reuse within a run)
+        # #B-hardening: the task that owns the MCP client scope for the current run. Set by
+        # ``mcp_client_scope`` (entered once per run in the run-owning task); the op handler's
+        # same-task guard reads it. None outside a scope (e.g. the chat per-call path).
+        self._mcp_scope_owner_task: "asyncio.Task | None" = None
         self._caller = caller
         self._chain_id = chain_id
         # FP-0021: run_id of the currently-executing OSRuntime run.
@@ -478,6 +484,9 @@ class ControlIRExecutor:
             state_dir_strategy="control_ir",
             mcp_servers=self._mcp_servers,
             mcp_clients=self._mcp_clients,
+            # #B-hardening: the run-owning task, so the op handler can fail-fast if a client is
+            # opened from a different task (the cross-task cancel-scope hazard). None outside a scope.
+            mcp_owner_task=self._mcp_scope_owner_task,
             intervention_bus=self._intervention_bus,
             # #1190 stage (ii): cost recorder for LLM-calling ops (judge_output).
             budget_tracker=self._budget_tracker,
@@ -524,6 +533,34 @@ class ControlIRExecutor:
             # FP-0016 D: per-skill credential scoping.
             secret_store=self._secret_store,
         )
+
+    @property
+    def mcp_scope_owner_task(self) -> "asyncio.Task | None":
+        """The task that owns the MCP client scope (None outside a scope). Read by the op handler's
+        same-task guard (op_runtime/mcp.py) to fail-fast on a cross-task client open."""
+        return self._mcp_scope_owner_task
+
+    @asynccontextmanager
+    async def mcp_client_scope(self):
+        """#B-hardening (robust-by-construction): own the cached MCP clients' lifecycle.
+
+        Entered ONCE per run, in the run-owning task (see runtime.py wrapping ``RunOrchestrator.run``).
+        Records that task, and on exit — success, exception, OR cancellation — closes every cached
+        client in THAT task. This replaces the manual ``teardown_mcp_clients()`` call in the run
+        finally: a single close site bound to the scope's ``__aexit__``, which cannot be forgotten or
+        duplicated (was: a discipline-dependent line that a future edit could move/drop). Combined
+        with the same-task guard in op_runtime/mcp.py (which reads ``mcp_scope_owner_task``), a client
+        opened from a NON-owning task fails fast at open rather than crashing at teardown with the
+        anyio "cancel scope crossed task boundary" error. Subprocess reuse is preserved — the cache
+        still lives for the whole run."""
+        self._mcp_scope_owner_task = asyncio.current_task()
+        try:
+            yield
+        finally:
+            try:
+                await self.teardown_mcp_clients()
+            finally:
+                self._mcp_scope_owner_task = None
 
     async def teardown_mcp_clients(self) -> None:
         """Close all cached MCP clients in the **same asyncio task** as the caller.

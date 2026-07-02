@@ -793,11 +793,18 @@ class OSRuntime:
         Returns RunResult with status="finished" or status="loop_limit_exceeded".
         Raises WorkflowAbortedError on unrecoverable LLM abort.
         """
-        return await self._orchestrator.run(
-            initial_input=initial_input,
-            output_language=output_language,
-            max_phase_retries=max_phase_retries,
-        )
+        # #B-hardening: own the MCP client lifecycle structurally for this run. The scope records
+        # the run-owning task (this one) and closes every cached MCP client in it on exit — success,
+        # exception, or cancellation — replacing the old manual teardown_mcp_clients() finally line
+        # in RunOrchestrator.run. All runs (incl. tests via OSRuntime.run) flow through here, so the
+        # scope is always active; RunOrchestrator.run asserts this + the op handler fails fast on a
+        # cross-task client open.
+        async with self._orchestrator.mcp_client_scope():
+            return await self._orchestrator.run(
+                initial_input=initial_input,
+                output_language=output_language,
+                max_phase_retries=max_phase_retries,
+            )
 
     # ── _validate_phase_output — kept as backward-compat shim ─────────────────
     # Tests that call _validate_phase_output directly on OSRuntime continue to

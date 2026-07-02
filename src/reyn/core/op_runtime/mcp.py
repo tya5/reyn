@@ -7,6 +7,7 @@ with pre-PR32 reyn.yaml files.
 """
 from __future__ import annotations
 
+import asyncio
 from typing import Literal
 
 from reyn.schemas.models import MCPIROp
@@ -35,6 +36,19 @@ async def _execute(op: MCPIROp, ctx: OpContext) -> dict:
     if "type" not in expanded:
         if expanded.get("url"):
             expanded = {**expanded, "type": "http"}
+
+    # #B-hardening: fail fast if this op runs in a task OTHER than the one that owns the client
+    # scope. A client initialized (anyio stdio_client cancel-scope) in a non-owner task would later
+    # be closed by the owner task at scope teardown → "cancel scope crossed task boundary". Guarding
+    # at open/use time turns that latent cross-task crash into a loud, immediate error. The unscoped
+    # (chat per-call) path has mcp_owner_task=None and opens+closes in its own task → guard skipped.
+    owner_task = getattr(ctx, "mcp_owner_task", None)
+    if owner_task is not None and asyncio.current_task() is not owner_task:
+        raise RuntimeError(
+            "MCP op executed in a task other than the client-scope owner — this would leak an anyio "
+            "cancel-scope across tasks (see control_ir_executor.mcp_client_scope). Run MCP ops in "
+            "the run-owning task, or open a per-call client in this task."
+        )
 
     if op.server not in ctx.mcp_clients:
         try:
