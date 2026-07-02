@@ -67,7 +67,7 @@ agent（およびざっと読む人間）が必要なコンセプトだけを正
 
 ## 用語集
 
-DSL/ランタイム用語は `docs/guide/for-skill-authors/stdlib-authoring-tools/glossary.md` (removed) に記載されています。どちらの言語で書く場合も、その用語集の正規用語名を使用してください。これによりクロスランゲージのクロスリファレンスの一貫性が保たれます。
+DSL/ランタイム用語は [`docs/guide/for-skill-authors/stdlib-authoring-tools/glossary.md`](../../guide/for-skill-authors/stdlib-authoring-tools/glossary.md) に記載されています。どちらの言語で書く場合も、その用語集の正規用語名を使用してください。これによりクロスランゲージのクロスリファレンスの一貫性が保たれます。
 
 ## ランタイム/DSL のセマンティクスを変更する場合
 

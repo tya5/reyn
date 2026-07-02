@@ -311,7 +311,7 @@ The server runs non-interactively. No human is at the stdin that the MCP transpo
 | `--project PATH` | Closest ancestor directory containing `reyn.yaml`, else fails with exit code 1 | Project root. Required in most client configs because MCP clients ignore the `cwd` field when spawning the server process. |
 | `--timeout SECONDS` | `60.0` | Maximum blocking time per `send_to_agent` call. On timeout the call returns whatever reply has accumulated; the agent keeps working in the background. The next `send_to_agent` call will receive the rest. |
 
-Inherited common flags (`--model`, `--output-language`, `--max-phase-visits`, etc.) are accepted; see [common-flags.md](common-flags.md).
+Inherited common flags (`--model`, `--output-language`, `--phase-budget`, etc.) are accepted; see [common-flags.md](common-flags.md).
 
 ### Tools exposed
 

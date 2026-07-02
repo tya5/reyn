@@ -36,6 +36,9 @@ models:
 | `chat` | マップ | チャットセッションの Head/Body/Tail 圧縮設定。以下参照。 |
 | `voice` | マップ | チャット TUI の音声入力（Whisper）設定。以下参照。 |
 | `events` | マップ | チャットセッションイベントファイルの監査ログローテーションポリシー。以下参照。 |
+| `skill_search` | マップ | BM25 Skill 事前フィルター設定。以下参照。 |
+| `skill_resume` | マップ | 再起動時の曖昧なステップに対するレジューム ポリシー。以下参照。 |
+| `self_improvement` | マップ | `skill_improver` の適用ゲートとバージョン上限。以下参照。 |
 | `mcp` | マップ | MCP サーバー定義と `search_threshold`。以下参照。 |
 | `python` | マップ | Python preprocessor の追加許可モジュール。以下参照。 |
 | `agent` | マップ | P6 イベント監査証跡と送信 HTTP ヘッダー用のエージェント識別子。以下参照。 |
@@ -922,6 +925,62 @@ voice:
 | `cpu_threads` | int | `4` | faster-whisper の CPU スレッド数。`0` = OpenMP デフォルト。Apple Silicon での OpenMP/Python スレッドデッドロックを避けるため 4 に固定しています。 |
 | `num_workers` | int | `1` | 並列転写ストリーム数。`1` でメモリとスレッド使用量を低く保ちます。 |
 | `max_duration_s` | float | `300.0` | この秒数を超える録音を自動キャンセル。放置録音によるメモリ増大を防ぎます。 |
+
+## `skill_search` ブロック
+
+BM25 Skill 事前フィルター設定。カタログが `threshold` を超える Skill 数になると、ルーターは `tools=` を構築する前に上位 `top_k` の BM25 キーワードマッチに利用可能 Skill の列挙を絞り込みます。BM25 が 0 件を返した場合は全列挙にフォールバック — Skill が見えなくなることはありません。
+
+```yaml
+skill_search:
+  threshold: 20    # BM25 が有効化されるカタログサイズ; 0 = 常にフィルター
+  top_k: 5         # BM25 が返す Skill 数
+  backend: bm25    # bm25（デフォルト）; embedding / hybrid は将来のフェーズ向けに予約
+```
+
+| フィールド | 型 | デフォルト | 説明 |
+|-------|------|---------|-------------|
+| `threshold` | int | `20` | BM25 事前フィルタリングが有効化されるカタログサイズ。`0` で常にフィルタリング; 大きな数値で実質的に無効化。 |
+| `top_k` | int | `5` | BM25 が返す最良マッチ Skill 数。最小値 `1`。 |
+| `backend` | 文字列 | `bm25` | 検索バックエンド。`bm25` が唯一のアクティブバックエンド。`embedding` と `hybrid` は将来のフェーズ向けに予約。 |
+
+## `skill_resume` ブロック
+
+ステップ途中で中断された Skill 実行のレジューム ポリシー。*曖昧なステップ* とは `step_started` WAL イベントに対応する `step_completed` / `step_failed` がないもので、op が外部で確定している可能性があります。
+
+```yaml
+skill_resume:
+  default: retry            # retry | skip | discard_skill | prompt
+  per_skill:
+    my_idempotent_skill: retry
+    my_side_effect_skill: discard_skill
+```
+
+| ポリシー | 説明 |
+|--------|-------------|
+| `retry`（デフォルト） | 曖昧なステップを再実行。読み取り専用 op や冪等性が信頼できる Skill に安全。リスク: 副作用の重複。 |
+| `skip` | 空/デフォルト完了を合成して続行。リスク: 下流でのデータ欠損。 |
+| `discard_skill` | Skill 実行全体を中止し、チェックポイントを破棄して発生元チェーンに失敗を通知。 |
+| `prompt` | レガシー/no-op。設定互換性のために保持。自動レジューム ランタイムでは `retry` として扱われます（インタラクティブプロンプトは表示されません）。 |
+
+| フィールド | 型 | デフォルト | 説明 |
+|-------|------|---------|-------------|
+| `default` | 文字列 | `retry` | 全 Skill のデフォルトレジューム ポリシー。 |
+| `per_skill` | マップ | `{}` | Skill ごとのポリシーオーバーライド。キーは Skill 名、値は上記ポリシーのいずれか。 |
+
+## `self_improvement` ブロック
+
+`skill_improver` の動作設定。Skill 改善提案をソースに適用する方法を制御します。
+
+```yaml
+self_improvement:
+  on_propose: ask_user   # ask_user | auto | disabled
+  max_versions: 10       # 保持する v<N>.md スナップショットの上限; 0 = 制限なし
+```
+
+| フィールド | 型 | デフォルト | 説明 |
+|-------|------|---------|-------------|
+| `on_propose` | 文字列 | `ask_user` | 改善を適用しようとする際の動作。`ask_user` — intervention `RequestBus` 経由でユーザーに確認（安全なデフォルト）。`auto` — プロンプトをスキップして直接適用（CI / 無人実行向け）。`disabled` — `skill_improvement_dry_run` イベントをログに記録し変更を適用しない。 |
+| `max_versions` | int | `10` | `.reyn/skill-versions/<name>/` に保持する `v<N>.md` スナップショットの上限。上限を超えると最古バージョンが削除されます（current バージョンは削除されません）。`0` でプルーニングを無効化。 |
 
 ## `python` ブロック
 
