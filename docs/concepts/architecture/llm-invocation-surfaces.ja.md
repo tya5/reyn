@@ -66,9 +66,9 @@ Reyn は LLM を2つの異なる文脈で呼び出す。チャットルーター
 
 2つのコンストラクトは同じ Phase 実行コンテキストに登場するため、LLM invocation kind と混同されることがある。
 
-**Preprocessor steps**（`run_skill` / `iterate` / `validate` / `lint_plan` / `python`）は Phase LLM 呼び出しの前に決定論的に実行される。それ自体は LLM を呼び出さない。`python` ステップはサンドボックス化された Python 関数を実行する。`run_skill` ステップは sub-skill を再帰的にディスパッチし、その sub-skill には Phase-style で LLM を呼び出す Phase が含まれるが、preprocessor ステップ自体は同期的な OS 制御であり、preprocessing 層から LLM 呼び出しは行わない。[../skills/preprocessor.md](../skills/preprocessor.md) 参照。
+**Preprocessor steps**（`run_skill` / `iterate` / `validate` / `lint_plan` / `python`）は Phase LLM 呼び出しの前に決定論的に実行される。それ自体は LLM を呼び出さない。`python` ステップはサンドボックス化された Python 関数を実行する。`run_skill` ステップは sub-skill を再帰的にディスパッチし、その sub-skill には Phase-style で LLM を呼び出す Phase が含まれるが、preprocessor ステップ自体は同期的な OS 制御であり、preprocessing 層から LLM 呼び出しは行わない。../skills/preprocessor.md 参照。
 
-**Postprocessor steps**（同一 step types）は LLM の `finish` 出力の後、artifact が呼び出し元に返される前に決定論的に実行される。LLM 呼び出しではない。[../skills/postprocessor.md](../skills/postprocessor.md) 参照。
+**Postprocessor steps**（同一 step types）は LLM の `finish` 出力の後、artifact が呼び出し元に返される前に決定論的に実行される。LLM 呼び出しではない。../skills/postprocessor.md 参照。
 
 両者はOS が実行する決定論的パイプラインであり、LLM invocation ではない。
 
@@ -199,8 +199,8 @@ Type B には Option 2 の役割分離を採用しつつ、3つの Type C conven
 - [../architecture/architecture.md](../architecture/architecture.md) — コンポーネント全体の階層化とランタイムループ
 - [../architecture/phase-vs-skill-vs-os.md](../architecture/phase-vs-skill-vs-os.md) — Phase・Skill・OS 間の責任境界
 - [../architecture/care-boundary.md](../architecture/care-boundary.md) — Reyn が担うこと・担わないこと; downstream tooling セクションは上記マトリックスを補完する
-- [../skills/preprocessor.md](../skills/preprocessor.md) — LLM 呼び出し前の決定論的ステップ（= 第3の invocation kind ではない理由）
-- [../skills/postprocessor.md](../skills/postprocessor.md) — LLM 呼び出し後の決定論的ステップ（同理由）
+- ../skills/preprocessor.md — LLM 呼び出し前の決定論的ステップ（= 第3の invocation kind ではない理由）
+- ../skills/postprocessor.md — LLM 呼び出し後の決定論的ステップ（同理由）
 - [../../reference/runtime/control-ir.md](../../reference/runtime/control-ir.md) — Phase 側 op の語彙とセマンティクス
 - [../../reference/cli/chat.md](../../reference/cli/chat.md) — チャットで使用可能なスラッシュコマンド（router tools と混同されることがあるが別物）
 - [../../reference/cli/mcp.md](../../reference/cli/mcp.md) — MCP サーバー側（Reyn-as-MCP-server は外部クライアントが Reyn を呼び出す第3の surface を公開するが、Reyn 内部の LLM invocation kind ではないため本ドキュメントでは扱わない）

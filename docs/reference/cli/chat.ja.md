@@ -114,4 +114,4 @@ reyn chat --model strong
 - [リファレンス: state-dir](../config/state-dir.md) — `agents/` の場所
 - [コンセプト: multi-agent](../../concepts/multi-agent/multi-agent.md)
 - [コンセプト: memory](../../concepts/data-retrieval/memory.md)
-- [コンセプト: skill-resume](../../concepts/skills/skill-resume.md)
+

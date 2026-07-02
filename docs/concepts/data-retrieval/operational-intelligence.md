@@ -93,7 +93,7 @@ Candidate: sha:def67890  88% pass (44/50 runs)  2026-05-05 ~ 2026-05-15
 Delta:     +16pp  /  regression: none
 ```
 
-See [Reference: `reyn eval compare`](../../reference/cli/eval.md#reyn-eval-compare) for the full CLI reference.
+See `reyn eval compare` for the full CLI reference.
 
 ## `ops_report` — ready-made operational summary
 
@@ -181,4 +181,3 @@ Scheduled skills run with the same permissions as `reyn run <skill>` would (= no
 - [FP-0007: Evaluation Infrastructure](../../deep-dives/proposals/0007-evaluation-infrastructure.md) — `reyn eval compare` design
 - [Concepts: RAG](../data-retrieval/rag.md) — underlying index/recall primitives
 - [Concepts: Events](../runtime/events.md) — P6 event log structure
-- [Reference: `reyn eval compare`](../../reference/cli/eval.md#reyn-eval-compare) — CLI reference

@@ -256,7 +256,6 @@ Every scope decision emits a `sub_skill_credential_scope` P6 event for audit:
 **Cross-references:**
 
 - [Concepts: permission model](../runtime/permission-model.md) "Per-skill credential scoping" — deeper detail including capability inheritance rules.
-- [Reference: `skill.md` DSL](../../reference/dsl/skill-md.md) — full `required_credentials` field reference.
 
 ## Device authorization grant (FP-0016 C)
 
@@ -289,7 +288,7 @@ For cross-agent tracing and multi-agent topology: [Concepts: multi-agent](../mul
 - [Reference: `reyn mcp`](../../reference/cli/mcp.md) — `set-secret` / `clear-secret` subcommands
 - [Reference: `reyn.yaml`](../../reference/config/reyn-yaml.md) — `${VAR}` interpolation in config fields; OAuth provider config
 - [Reference: `reyn auth`](../../reference/cli/auth.md) — device authorization grant CLI
-- [Reference: `skill.md` DSL](../../reference/dsl/skill-md.md) — `required_credentials` field reference
+
 - [Concepts: permission model](../runtime/permission-model.md) — `mcp_install` permission gating; per-skill credential scoping
 - [Concepts: multi-agent](../multi-agent/multi-agent.md) — agent ID propagation
 - ADR-0030 `docs/deep-dives/decisions/0030-universal-../runtime/secret-handling.md` — design rationale (implementation team, internal)

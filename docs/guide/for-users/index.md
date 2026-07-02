@@ -46,7 +46,7 @@ No configuration required for any of these. Reyn has the skills for them out of 
 ### Files and tools
 
 - **[Work with local files](work-with-files.md)** — reference files and directories in your requests.
-- **[Use an MCP server](../for-skill-authors/operations/use-an-mcp-server.md)** — add GitHub, Slack, a database, or any MCP-compatible tool.
+
 - **[Enable semantic search](enable-semantic-search.md)** — index your own docs so Reyn can search them by meaning.
 - **[Log in to an OAuth provider](oauth-login.md)** — authorize GitHub / Google / etc. via the browser device flow.
 - **[Inspect and manage memory](manage-memory.md)** — review, edit, back up, or restore what Reyn remembers.

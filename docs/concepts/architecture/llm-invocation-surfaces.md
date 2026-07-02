@@ -68,9 +68,9 @@ Each phase narrows this set further via `allowed_ops: list[str]` in the phase de
 
 Two constructs are sometimes confused with LLM invocation kinds because they appear in the same phase execution context:
 
-**Preprocessor steps** (`run_skill` / `iterate` / `validate` / `lint_plan` / `python`) run deterministically, before the phase LLM call. They do not invoke the LLM themselves. The `python` step executes a sandboxed Python function. The `run_skill` step dispatches a sub-skill recursively — that sub-skill contains its own phases that DO invoke the LLM phase-style, but the preprocessor step itself is synchronous and does not make an LLM call from the preprocessing layer. See [../skills/preprocessor.md](../skills/preprocessor.md).
+**Preprocessor steps** (`run_skill` / `iterate` / `validate` / `lint_plan` / `python`) run deterministically, before the phase LLM call. They do not invoke the LLM themselves. The `python` step executes a sandboxed Python function. The `run_skill` step dispatches a sub-skill recursively — that sub-skill contains its own phases that DO invoke the LLM phase-style, but the preprocessor step itself is synchronous and does not make an LLM call from the preprocessing layer. See ../skills/preprocessor.md.
 
-**Postprocessor steps** (same step types) run deterministically, after the LLM's `finish` output, before the artifact is returned to the caller. Not an LLM call. See [../skills/postprocessor.md](../skills/postprocessor.md).
+**Postprocessor steps** (same step types) run deterministically, after the LLM's `finish` output, before the artifact is returned to the caller. Not an LLM call. See ../skills/postprocessor.md.
 
 Both are OS-executed deterministic pipelines, not LLM invocations.
 
@@ -201,8 +201,8 @@ Adopt Option 2's role separation for Type B, but explicitly close the three Type
 - [../architecture/architecture.md](../architecture/architecture.md) — overall component layering and the runtime loop
 - [../architecture/phase-vs-skill-vs-os.md](../architecture/phase-vs-skill-vs-os.md) — responsibility boundaries between Phase, Skill, and OS
 - [../architecture/care-boundary.md](../architecture/care-boundary.md) — what Reyn does and does not own; the downstream tooling section complements the matrix above
-- [../skills/preprocessor.md](../skills/preprocessor.md) — pre-LLM deterministic steps (= why those are not a third invocation kind)
-- [../skills/postprocessor.md](../skills/postprocessor.md) — post-LLM deterministic steps (same reason)
+- ../skills/preprocessor.md — pre-LLM deterministic steps (= why those are not a third invocation kind)
+- ../skills/postprocessor.md — post-LLM deterministic steps (same reason)
 - [../../reference/runtime/control-ir.md](../../reference/runtime/control-ir.md) — phase-side op vocabulary and semantics
 - [../../reference/cli/chat.md](../../reference/cli/chat.md) — slash commands available in chat (sometimes confused with router tools; they are distinct)
 - [../../reference/cli/mcp.md](../../reference/cli/mcp.md) — MCP server side (Reyn-as-MCP-server exposes a third surface that is NOT covered here because it is external clients calling INTO Reyn, not Reyn's internal LLM invocation kinds)

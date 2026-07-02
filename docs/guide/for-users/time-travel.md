@@ -59,4 +59,4 @@ When using Reyn through the web interface (WebSocket / A2A), `/rewind` opens the
 ## See also
 
 - [Time-Travel concepts and architecture](../../concepts/runtime/time-travel.md)
-- [Crash recovery and skill resume](../../concepts/skills/skill-resume.md) — different from rewind; automatic, forward-only
+

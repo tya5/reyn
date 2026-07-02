@@ -141,5 +141,4 @@ members: [vp_sales, sales_a]
 ## 関連情報
 
 - [リファレンス: topology CLI](../../reference/cli/topology.md)
-- [リファレンス: topology-yaml](../../reference/dsl/topology-yaml.md)
 - [コンセプト: multi-agent](../multi-agent/multi-agent.md)

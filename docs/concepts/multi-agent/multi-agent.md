@@ -8,9 +8,9 @@ audience: [human, agent]
 
 A reyn process can host any number of long-lived **agents** — each an *identity* with its own profile, memory layer, permissions, and skill catalogue view. Each agent runs one or more **Sessions**: independent conversations under that identity, each with its own history, inbox, and current task (see [Sessions](sessions.md) for the Agent / Session / SkillRuntime three-level model). Agents talk to humans (one at a time, via attach) and to each other (through a structured request-response channel).
 
-## Four layers of multi-agent in Reyn
+## Two layers of multi-agent in Reyn
 
-Reyn does not have a single multi-agent feature. It has four distinct compositional surfaces, each suited to a different scope and wiring time. The differentiating claim: **all four layers preserve the same OS invariants** — [P4](../architecture/principles.md#p4-llm-is-a-constrained-decision-engine) (constrained candidate set), [P6](../architecture/principles.md#p6-events-are-the-audit-truth) (events for every transition), and the permission system. Many frameworks have one or two of these surfaces; Reyn's distinction is uniform invariants across all four.
+Reyn does not have a single multi-agent feature. It has two distinct compositional surfaces for agent-to-agent interaction, each suited to a different scope. The differentiating claim: **both layers preserve the same OS invariants** — [P4](../architecture/principles.md#p4-llm-is-a-constrained-decision-engine) (constrained candidate set), [P6](../architecture/principles.md#p6-events-are-the-audit-truth) (events for every transition), and the permission system.
 
 ```
 ┌──────────────────────────────────────────────────────────────────┐
@@ -20,46 +20,26 @@ Reyn does not have a single multi-agent feature. It has four distinct compositio
 ├──────────────────────────────────────────────────────────────────┤
 │  Layer 3:  delegate_to_agent                                     │
 │            (agent → agent, in-process, chain_id correlated)      │
-├──────────────────────────────────────────────────────────────────┤
-│  Layer 2:  run_skill  Control IR op                              │
-│            (phase invokes a sub-skill at runtime, LLM-chosen)    │
-├──────────────────────────────────────────────────────────────────┤
-│  Layer 1:  @sub_skill  graph node                                │
-│            (skill graph statically embeds another skill)         │
 └──────────────────────────────────────────────────────────────────┘
-                All layers enforce: P4 + P6 + permissions
+                Both layers enforce: P4 + P6 + permissions
 ```
 
 ### Layer summary
 
 | Layer | Mechanism | Wiring | Boundary | Typical use | Reference |
 |-------|-----------|--------|----------|-------------|-----------|
-| 1 | `@sub_skill` graph node | compile-time | same-process | static composition ("phase A always calls skill X") | [graph.md](../../reference/dsl/graph.md) |
-| 2 | `run_skill` Control IR op | LLM-runtime | same-process | dynamic sub-skill choice ("phase decides which sub-skill") | [control-ir.md](../../reference/runtime/control-ir.md#run_skill) |
 | 3 | `delegate_to_agent` | runtime + topology | same-process | specialist hand-off ("research agent → writer agent") | [../multi-agent/topology.md](../multi-agent/topology.md) |
 | 4 | `reyn mcp serve` | runtime | external client | exposing agent fleet to Claude Code, Cursor, or any MCP-aware client | [../tools-integrations/mcp.md](../tools-integrations/mcp.md) |
 
-> **FP-0034 Phase 6 (2026-05-16) routing note**: Layer 3
-> `delegate_to_agent` and Layer 2 `run_skill` keep their handler names
-> for the diagrams and Control IR. The LLM-visible surface is the
-> universal `invoke_action(action_name="agent.peer__<name>", args={...})`
-> for delegations and `invoke_action(action_name="skill__<name>",
-> args={...})` for skill invocations — `universal_dispatch.py` routes
-> these to the same handlers. Permissions, events, and chain semantics
-> are unchanged.
+### What stays the same across both layers
 
-### What stays the same across all four layers
-
-- **P4 — constrained candidate set.** At every layer the LLM picks from an OS-curated set: skills it owns, agents reachable via topology, or tools the MCP server exposes. No layer lets the LLM invent agents or skills not already in the catalogue.
+- **P4 — constrained candidate set.** At every layer the LLM picks from an OS-curated set: agents reachable via topology, or tools the MCP server exposes. No layer lets the LLM invent agents not already in the catalogue.
 - **P6 — events for every transition.** Every layer emits structured events on entry, completion, and failure. Cross-layer chains are reconstructable by `grep <chain_id>` across each agent's `events.jsonl`. The event log is the single audit channel.
-- **Permission gating.** File, MCP, shell, and web permissions are checked at the OS level regardless of which layer triggered the call. A Layer 3 delegated call does not bypass permission rules, and a Layer 2 sub-skill must declare its own permissions.
-- **Workspace isolation.** Each layer respects skill-scoped workspace boundaries. A sub-skill invoked via Layer 1 or 2 reads only the inputs it declares.
+- **Permission gating.** File, MCP, shell, and web permissions are checked at the OS level regardless of which layer triggered the call.
 
 ### When to pick which layer
 
-- "I always need step Y inside skill X" → **Layer 1** (`@sub_skill` graph node)
-- "Skill X needs to call one of N sub-skills depending on input" → **Layer 2** (`run_skill` Control IR op)
-- "Different specialist roles, each with their own skill catalogue, talking to each other" → **Layer 3** (`delegate_to_agent`)
+- "Different specialist roles, each talking to each other" → **Layer 3** (`delegate_to_agent`)
 - "Outside MCP-aware tools (Claude Code, Cursor, OpenAI Agents SDK, etc.) need to call my agents" → **Layer 4** (`reyn mcp serve`)
 
 ## What is an agent?
@@ -148,7 +128,6 @@ Enterprise deployments need per-agent attribution: SOC2 / ISO27001 / METI v1.1 a
 
 1. **P6 events**: every event emitted from the session carries `agent_id` in its payload. This makes the event log replay-capable as an audit trail of agent-attributed actions.
 2. **MCP HTTP calls**: outgoing requests to HTTP-mode MCP servers add an `X-Reyn-Agent-Id: <agent.id>` header. Downstream MCP servers can apply RBAC based on the calling agent identity (= the "Entra Agent ID" pattern from Microsoft's identity model).
-3. **Sub-skill calls**: nested `run_skill` invocations inherit the parent's `agent_id` (= the same identity persists through the entire call tree from chat entry to deepest sub-skill).
 
 Configuration:
 
@@ -171,7 +150,6 @@ Cross-references:
 
 - [Concepts: Sessions](sessions.md) — the Agent / Session / SkillRuntime three-level model (one identity, many conversations)
 - [Reference: agent CLI](../../reference/cli/agent.md)
-- [Reference: profile-yaml](../../reference/dsl/profile-yaml.md)
 - [Reference: multi-agent config](../../reference/config/multi-agent.md)
 - [Concepts: topology](../multi-agent/topology.md)
 - [Concepts: memory](../data-retrieval/memory.md)

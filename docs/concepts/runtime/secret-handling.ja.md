@@ -256,7 +256,6 @@ required_credentials:
 **クロスリファレンス：**
 
 - [コンセプト: パーミッションモデル](../runtime/permission-model.md) "スキルごとの認証情報スコーピング" — ケイパビリティ継承ルールを含む詳細解説。
-- [Reference: `skill.md` DSL](../../reference/dsl/skill-md.md) — `required_credentials` フィールドの完全なリファレンス。
 
 ## デバイス認可グラント (FP-0016 C)
 
@@ -289,7 +288,7 @@ ID が登場する場所：
 - [Reference: `reyn mcp`](../../reference/cli/mcp.md) — `set-secret` / `clear-secret` サブコマンド
 - [Reference: `reyn.yaml`](../../reference/config/reyn-yaml.md) — 設定フィールドでの `${VAR}` interpolation；OAuth プロバイダー設定
 - [Reference: `reyn auth`](../../reference/cli/auth.md) — デバイス認可グラント CLI
-- [Reference: `skill.md` DSL](../../reference/dsl/skill-md.md) — `required_credentials` フィールドリファレンス
+
 - [コンセプト: パーミッションモデル](../runtime/permission-model.md) — `mcp_install` パーミッションゲート；スキルごとの認証情報スコーピング
 - [コンセプト: マルチエージェント](../multi-agent/multi-agent.md) — エージェント ID 伝播
 - ADR-0030 `docs/deep-dives/decisions/0030-universal-../runtime/secret-handling.md` — 設計の根拠（実装チーム向け、内部）

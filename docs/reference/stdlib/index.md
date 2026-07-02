@@ -27,4 +27,3 @@ Bundled skills shipped with reyn. Resolved last in name lookup (after `reyn/proj
 > compaction is now handled by OS-internal Python (`CompactionEngine` at
 > `reyn.services.compaction.engine`) with no phase-frame overhead.
 
-Run `reyn skills <name>` for the full description and entry instructions of any skill.

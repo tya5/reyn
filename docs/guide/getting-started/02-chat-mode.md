@@ -105,5 +105,5 @@ You've seen Reyn deliver value as a chat agent. From here:
 - **[Tutorial 03 — Your first skill](03-your-first-skill.md)** — author a skill of your own with `skill_builder`.
 - **[Tutorial 04 — Running a skill](04-running-a-skill.md)** — run a skill from the CLI in depth (input formats, flags, event log).
 - **[Tutorial 05 — Writing an eval](05-writing-an-eval.md)** — pin behaviour with a rubric.
-- **Multi-agent (later):** [How-to: Build an agent team](../for-skill-authors/composition/build-an-agent-team.md) walks through `reyn agent new`, role-specific allowlists, and `/attach`. Background reading: [concepts/multi-agent](../../concepts/multi-agent/multi-agent.md), [concepts/topology](../../concepts/multi-agent/topology.md).
+- **Multi-agent (later):** How-to: Build an agent team walks through `reyn agent new`, role-specific allowlists, and `/attach`. Background reading: [concepts/multi-agent](../../concepts/multi-agent/multi-agent.md), [concepts/topology](../../concepts/multi-agent/topology.md).
 - **The why:** [concepts/principles](../../concepts/architecture/principles.md).

@@ -20,7 +20,7 @@ Anything outside these defaults must be declared.
 
 ## Skill declarations (`permissions:` in skill.md frontmatter)
 
-Phase-level `permissions:` was removed. All permission declarations belong in `skill.md` frontmatter — see [skill-md.md](../dsl/skill-md.md#permissions-skill-level). Phases inherit whatever the skill declares.
+Phase-level `permissions:` was removed. All permission declarations belong in `skill.md` frontmatter — see skill-md.md. Phases inherit whatever the skill declares.
 
 ```yaml
 ---
@@ -72,7 +72,7 @@ For paths outside the default zones. Each entry has:
 
 ### `python`
 
-Per-(module, function) declarations for `python` preprocessor steps. See [`reference/dsl/preprocessor.md`](../dsl/preprocessor.md).
+Per-(module, function) declarations for `python` preprocessor steps. See `reference/dsl/preprocessor.md`.
 
 - `module`, `function` — must match the corresponding preprocessor step.
 - `mode` — `safe` (sandboxed) or `unsafe` (no AST sandbox; needs `--allow-unsafe-python` at runtime).
@@ -158,5 +158,5 @@ reyn permissions revoke <key>     # remove an approval
 
 - [reyn-yaml.md](reyn-yaml.md) — full project config
 - [state-dir.md](state-dir.md) — `.reyn/approvals.yaml` location
-- [Reference: skill.md](../dsl/skill-md.md) — declaring permissions
+
 - [Reference: control-ir](../runtime/control-ir.md) — which ops need permissions

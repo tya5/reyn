@@ -93,7 +93,7 @@ Candidate: sha:def67890  88% pass（50 ラン中 44 通過）  2026-05-05 〜 20
 Delta:     +16pp  /  回帰: なし
 ```
 
-フル CLI リファレンスは [リファレンス: `reyn eval compare`](../../reference/cli/eval.ja.md#reyn-eval-compare) を参照してください。
+フル CLI リファレンスは `reyn eval compare` を参照してください。
 
 ## `ops_report` — 既製の運用サマリー
 
@@ -181,4 +181,3 @@ cron:
 - [FP-0007: 評価インフラ](../../deep-dives/proposals/0007-evaluation-infrastructure.ja.md) — `reyn eval compare` の設計
 - [コンセプト: RAG](../data-retrieval/rag.ja.md) — 基盤となる index/recall プリミティブ
 - [コンセプト: Events](../runtime/events.ja.md) — P6 イベントログの構造
-- [リファレンス: `reyn eval compare`](../../reference/cli/eval.ja.md#reyn-eval-compare) — CLI リファレンス

@@ -53,6 +53,6 @@ artifact を使う場合:
 ## 関連情報
 
 - [../architecture/principles.md](../architecture/principles.md) — P3（OS が実行を制御）、P5（Workspace が唯一の信頼できる情報源）
-- [リファレンス: artifact.yaml](../../reference/dsl/artifact-yaml.md)
+
 - [リファレンス: control-ir](../../reference/runtime/control-ir.md)
 - [../runtime/events.md](../runtime/events.md)

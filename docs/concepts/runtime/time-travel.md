@@ -7,7 +7,7 @@ audience: [human, agent]
 # Time-Travel: Rewind and Resume
 
 Reyn's time-travel system lets you rewind the agent to any past checkpoint and
-optionally branch from there. It is a separate feature from [crash recovery](../../concepts/skills/skill-resume.md) — the two use different mechanisms and serve different purposes.
+optionally branch from there. It is a separate feature from crash recovery — the two use different mechanisms and serve different purposes.
 
 > **Crash recovery** (`ReplayEngine` / WAL) automatically restores the agent after an unexpected failure — it is transparent to the user and replays forward to where the run stopped. **Time-travel** is an intentional, user-initiated rewind to an earlier point, with the option to fork a new branch of history.
 
@@ -152,6 +152,6 @@ Both are the price of crash-recovery and time-travel fidelity; neither is option
 ## See also
 
 - [Sessions](../multi-agent/sessions.md) — the Agent / Session model that a rewind cuts across
-- [Crash Recovery / Skill Resume](../../concepts/skills/skill-resume.md)
+
 - [Events and the WAL](events.md)
 - [How to use rewind](../../guide/for-users/time-travel.md)

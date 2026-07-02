@@ -41,7 +41,7 @@ Chat-specific flags:
 
 Each agent persists state under `.reyn/agents/<name>/`:
 
-- `profile.yaml` — name, role, optional `allowed_skills` ([reference](../dsl/profile-yaml.md))
+- `profile.yaml` — name, role, optional `allowed_skills`
 - `history.jsonl` — append-only conversation log (chat + agent-to-agent messages, with chain_id for cross-agent trace)
 - `events.jsonl` — runtime events for `reyn events`
 - `memory/` — agent-scoped memory layer (`MEMORY.md` + body files)
@@ -130,9 +130,9 @@ reyn chat --model strong
 - [Reference: agent CLI](agent.md) — `reyn agent new / list / show / rm`
 - [Reference: topology CLI](topology.md) — `reyn topology` to declare communication structure
 - [Reference: skill_router](../stdlib/skill_router.md)
-- [Reference: profile-yaml](../dsl/profile-yaml.md)
+
 - [Reference: multi-agent config](../config/multi-agent.md) — `safety.loop.max_agent_hops`
 - [Reference: state-dir](../config/state-dir.md) — `agents/` location
 - [Concepts: multi-agent](../../concepts/multi-agent/multi-agent.md)
 - [Concepts: memory](../../concepts/data-retrieval/memory.md)
-- [Concepts: skill-resume](../../concepts/skills/skill-resume.md)
+

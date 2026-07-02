@@ -8,7 +8,7 @@ audience: [human]
 
 Orientation for contributors to the Reyn OS core. If you're adding a new op kind, fixing a runtime bug, or extending the event system, start here.
 
-If you're building skills on top of Reyn rather than modifying the OS itself, see [For skill authors](../for-skill-authors/index.md) instead.
+If you're building skills on top of Reyn rather than modifying the OS itself, see For skill authors instead.
 
 ---
 
