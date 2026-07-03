@@ -680,7 +680,7 @@ cost:
 | `monthly_tokens` | プロセスグローバル | 台帳ファイル | 月初（現地時間） |
 | `monthly_cost_usd` | プロセスグローバル | 台帳ファイル | 月初（現地時間） |
 
-> **注意**: チェーンごとの Skill スポーン・トークン上限（`skill_calls_per_chain`、`skill_tokens_per_chain`）とルーター呼び出し上限（`max_router_calls_per_turn`）は `safety.loop` 配下にあります。上記の [`safety` ブロック](#safety-ブロック) を参照してください。
+> **注意**: ルーター呼び出し上限（`max_router_calls_per_turn`）は `safety.loop` 配下にあります。上記の [`safety` ブロック](#safety-ブロック) を参照してください。
 
 **上限の動作:** ハード上限を超えると、LLM の呼び出しが行われる前に拒否されます。現在の使用状況を見るには `/budget`、メモリ内カウンターをクリアするには `/budget reset` を使用します（日次/月次は reset の影響を受けません。永続台帳に基づいています）。
 

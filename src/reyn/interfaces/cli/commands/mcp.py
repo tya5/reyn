@@ -377,7 +377,7 @@ def run_serve(args: argparse.Namespace) -> None:
     os.chdir(project_root)
 
     state_log = StateLog(project_root / ".reyn" / "state" / "wal.jsonl")
-    budget_tracker = BudgetTracker(session_cfg.config.cost, safety=safety)
+    budget_tracker = BudgetTracker(session_cfg.config.cost)
     budget_tracker.hydrate(project_root / ".reyn" / "state" / "budget_ledger.jsonl")
     budget_state_path = project_root / ".reyn" / "state" / "budget_state.json"
     budget_tracker.load_state(budget_state_path)

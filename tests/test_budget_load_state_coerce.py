@@ -25,7 +25,6 @@ def test_load_state_malformed_counters_no_crash(tmp_path: Path) -> None:
         "version": 1,
         "agent_tokens": {"a": None, "b": "xyz", "c": 5},
         "agent_cost_usd": {"a": None, "b": 1.5},
-        "chain_skill_calls": [["c1", "s1", None], ["c2", "s2", 3]],
     }))
 
     bt = BudgetTracker(CostConfig())

@@ -7,7 +7,7 @@ the session's ``_budget`` gateway. Two stub gateways exercise:
 2. Active (returns a string/dict) → reply with formatted output.
 
 The ``/budget reset`` path has non-trivial formatting logic (agent_tokens /
-agent_cost_usd / chain_skill_calls / rate_window_sizes branches) that is
+agent_cost_usd / rate_window_sizes branches) that is
 pinned separately.
 """
 from __future__ import annotations
@@ -52,7 +52,6 @@ class _ActiveBudget:
         return {
             "agent_tokens": {"alpha": 1500},
             "agent_cost_usd": {"alpha": 0.003},
-            "chain_skill_calls": 2,
             "rate_window_sizes": [5],
         }
 
@@ -119,12 +118,12 @@ async def test_budget_reset_active_mentions_per_agent_counters() -> None:
 
 
 @pytest.mark.asyncio
-async def test_budget_reset_mentions_chain_and_rate() -> None:
-    """Tier 2: /budget reset reports chain_skill_calls + rate-limit window lines."""
+async def test_budget_reset_mentions_agent_and_rate() -> None:
+    """Tier 2: /budget reset reports per-agent + rate-limit window lines."""
     session = _FakeSession(budget=_ActiveBudget())
     await budget_cmd(session, "reset")
     body = session.reply_text()
-    assert "chain" in body.lower() or "skill calls" in body.lower()
+    assert "per-agent" in body.lower() or "agent" in body.lower()
     assert "rate" in body.lower()
 
 

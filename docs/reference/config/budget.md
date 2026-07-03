@@ -9,8 +9,8 @@ applies_to: [reyn.yaml]
 
 ## Overview
 
-Reyn tracks LLM token usage and USD cost per session, per-agent, per-chain,
-and per-model. Token and USD totals accumulate as LLM calls complete;
+Reyn tracks LLM token usage and USD cost per session, per-agent, and
+per-model. Token and USD totals accumulate as LLM calls complete;
 configured caps refuse or warn before any call (or spawn) that would exceed
 them. The system is entirely opt-in: without a `cost:` block in `reyn.yaml`,
 runs are unlimited.
@@ -51,7 +51,7 @@ cost:
     hard_limit: 50.00    # refuse after $50.00 this month
 ```
 
-> **Migration note**: `per_chain_skill_calls`, `per_chain_skill_tokens`, and `router_invocations_per_turn` were moved from `cost:` to `safety.loop`. Use `safety.loop.skill_calls_per_chain`, `safety.loop.skill_tokens_per_chain`, and `safety.loop.max_router_calls_per_turn` instead. See [Reference: `reyn.yaml` — `safety` block](reyn-yaml.md#safety-block).
+> **Migration note**: `router_invocations_per_turn` was moved from `cost:` to `safety.loop`. Use `safety.loop.max_router_calls_per_turn` instead. See [Reference: `reyn.yaml` — `safety` block](reyn-yaml.md#safety-block).
 
 ### Field reference
 
@@ -138,7 +138,7 @@ are configured and at least one LLM call has been made since startup.
 
 ### `/budget reset`
 
-Clear the in-memory per-agent and per-chain counters:
+Clear the in-memory per-agent counters:
 
 ```
 /budget reset
@@ -199,8 +199,8 @@ Cross-link: [reference/runtime/events.md](../runtime/events.md)
 
 Counters update after each LLM call completes successfully:
 
-1. Token usage (`input_tokens + output_tokens`) is added to the per-agent and
-   per-chain accumulators.
+1. Token usage (`input_tokens + output_tokens`) is added to the per-agent
+   accumulators.
 2. USD cost is estimated via LiteLLM pricing and added to the USD accumulators.
 3. A record is appended to `.reyn/state/budget_ledger.jsonl` (fsync'd for
    durability). The daily / monthly / per-agent counters are reconstructed
@@ -214,36 +214,30 @@ call is refused at that point — no tokens are consumed.
 ## Ledger file
 
 Budget counters persist across process restarts — and crashes — via the
-fsync-per-append `.reyn/state/budget_ledger.jsonl`. It holds two record kinds,
-distinguished by an optional `kind` field.
-
-One record per LLM call (no `kind` field):
+fsync-per-append `.reyn/state/budget_ledger.jsonl`. One record per LLM call:
 
 ```json
 {"ts": "2026-05-09T10:23:00+09:00", "agent": "alice", "model": "openai/gpt-4o", "tokens": 312, "cost_usd": 0.00234}
 ```
 
-One record per skill spawn (`kind: "spawn"`), which durably backs the
-per-chain spawn-count cap:
-
-```json
-{"ts": "2026-05-09T10:23:01+09:00", "kind": "spawn", "chain_id": "ab12…", "skill": "eval"}
-```
+Legacy note: a pre-existing ledger may also contain skill-spawn records
+(`{"kind": "spawn", ...}`) written before the per-chain skill-spawn cap was
+removed. They are no longer written; hydrate skips them on read.
 
 Records are fsync'd on append. On startup, Reyn re-aggregates from the ledger:
 today's and this month's daily / monthly totals (period-filtered), the
-cumulative per-agent token + USD totals, and per-chain skill spawn counts. The
+and the cumulative per-agent token + USD totals. The
 ledger is the cap-critical source of truth; `.reyn/state/budget_state.json` is
 a throttled best-effort cache layered on top (it can lag the ledger by up to a
 second, so the ledger value always wins on recovery). The ledger is
 append-only and grows at roughly a few MB per month; it can be manually
 archived if needed (stop the process first, or wait for the period rollover).
 
-## Per-agent and per-chain cap recovery semantics
+## Per-agent cap recovery semantics
 
-`per_agent_tokens`, `per_agent_cost_usd`, and per-chain skill spawn caps are
-**lifetime/persistent** — they are reconstructed from the all-time durable
-ledger on every startup and survive crash and restart unchanged.
+`per_agent_tokens` and `per_agent_cost_usd` are **lifetime/persistent** — they
+are reconstructed from the all-time durable ledger on every startup and survive
+crash and restart unchanged.
 
 **They do not reset per-conversation.** The counters accumulate continuously
 and are only cleared explicitly by `/budget reset` (in-memory clear) or by
@@ -253,8 +247,8 @@ Contrast with daily / monthly caps, which auto-reset at their period boundary
 (midnight or 1st of month, local time) regardless of process restarts or
 crashes.
 
-**Crash-recovery guarantee**: a crash cannot lower a per-agent or per-chain
-cap counter below its durable ledger value. On recovery, `load_state` (the
+**Crash-recovery guarantee**: a crash cannot lower a per-agent cap counter
+below its durable ledger value. On recovery, `load_state` (the
 throttled best-effort cache) is merged with `hydrate` (the ledger) using
 `max()` — so a stale or garbage-corrupted state file can never cause the cap
 to under-count spending and permit an over-budget call. Rationale: crash
@@ -271,8 +265,8 @@ Be aware of the following limitations:
   process maintains its own in-memory counters and only picks up another live
   process's ledger records on its next startup (hydrate). Concurrently running
   processes therefore enforce every cap independently in real time; the shared
-  ledger reconciles daily / monthly / per-agent totals and per-chain spawn
-  counts only when a process restarts.
+  ledger reconciles daily / monthly / per-agent totals only when a process
+  restarts.
 
 ## See also
 

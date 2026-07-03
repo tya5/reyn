@@ -96,7 +96,7 @@ def _get_budget_tracker():
         from reyn.runtime.budget.budget import BudgetTracker
         config = _load_config()
         root = _get_project_root()
-        tracker = BudgetTracker(config.cost, safety=config.safety)
+        tracker = BudgetTracker(config.cost)
         tracker.hydrate(root / ".reyn" / "state" / "budget_ledger.jsonl")
         # R-D8: restore in-memory counters (per-agent / per-chain-skill)
         # for cap enforcement across crash.

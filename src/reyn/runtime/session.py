@@ -4569,10 +4569,9 @@ class Session:
         """Dispatch one intervention via the InterventionCoordinator.
 
         Kept as a Session-level entry so existing call sites
-        (ChatInterventionBus, _handle_chat_limit_checkpoint,
-        _ask_budget_extension, tests) stay stable; the override-observe /
-        origin-pin-stall / handler-dispatch orchestration lives in
-        ``InterventionCoordinator.dispatch``.
+        (ChatInterventionBus, _handle_chat_limit_checkpoint, tests) stay
+        stable; the override-observe / origin-pin-stall / handler-dispatch
+        orchestration lives in ``InterventionCoordinator.dispatch``.
         """
         return await self._intervention_coordinator.dispatch(iv)
 
@@ -4719,77 +4718,6 @@ class Session:
         decision and the downstream ``UserChannel`` selection.
         """
         return AgentRequestBus(self)
-
-    async def _ask_budget_extension(
-        self,
-        *,
-        chain_id: str,
-        skill_name: str,
-        check,  # BudgetCheck
-    ) -> bool:
-        """FP-0003: ask the user to approve extending a hard-limit cap.
-
-        FP-0005: now generalised to call the shared
-        ``handle_limit_exceeded`` helper so all seven safety / budget
-        checkpoints share one implementation. Returns True iff the
-        decision allows continuing (= ``user_approved`` or
-        ``auto_extended``); any other outcome (refused / timeout /
-        bus failure / unattended) returns False so the caller falls
-        through to the original refusal path.
-
-        Note: the per-(chain, skill) extension bookkeeping is owned by
-        ``BudgetTracker.extend_chain_calls`` (= the count counter is
-        the FP-0003 source of truth, not ``self._safety_extensions``).
-        This method only signals approval; the caller applies the
-        extension via the tracker.
-        """
-        ctx = check.context or {}
-        used = int(ctx.get("current") or 0)
-        base = int(ctx.get("base_hard") or 0)
-        granted = int(ctx.get("extensions_granted") or 0)
-        extension = int(ctx.get("extension_calls") or 0)
-        prompt = (
-            f"Skill {skill_name!r} has hit the chain hard-limit "
-            f"({used} of {base + granted}). "
-            f"Approve {extension} additional spawn(s) for this chain?"
-        )
-        detail = (
-            f"chain={chain_id} dimension={check.hard_dimension} "
-            f"detail={check.detail}"
-        )
-        # FP-0005 (#1877): the per_chain_skill_calls seam is driven by the
-        # unified ``safety.on_limit`` policy (the ``ask_on_exceed`` bool was
-        # subsumed — clean-break). ``self._on_limit.mode`` decides:
-        # interactive → ask the user; auto_extend → bounded auto-grant;
-        # unattended → deny. This also fixes the prior bug where a hardcoded
-        # ``mode="interactive"`` over-prompted even under on_limit=unattended
-        # (CI / cron). The ``extension_calls > 0`` precondition in the caller
-        # guards the default hard-refuse.
-        # Reuse the chat-side bus adapter from _handle_chat_limit_checkpoint.
-        session_dispatch = self._dispatch_intervention
-
-        class _ChatLimitBus:
-            async def request(self, iv):  # type: ignore[no-untyped-def]
-                return await session_dispatch(iv)
-
-        decision = await handle_limit_exceeded(
-            bus=_ChatLimitBus(),
-            on_limit=self._on_limit,
-            kind=f"per_chain_skill_calls:{chain_id}:{skill_name}",
-            run_id=chain_id,
-            prompt=prompt,
-            detail=detail,
-            extension_amount=float(extension),
-            skill_name=skill_name,
-        )
-        self._chat_events.emit(
-            "safety_limit_checkpoint",
-            kind="per_chain_skill_calls",
-            allow_continue=decision.allow_continue,
-            reason=decision.reason,
-            extension=decision.extension,
-        )
-        return decision.allow_continue
 
     def consume_buffered_intervention_answer(
         self, run_id: str,

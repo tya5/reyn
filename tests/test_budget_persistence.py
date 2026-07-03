@@ -53,39 +53,6 @@ def test_save_state_includes_per_agent_counters(tmp_path):
     assert data["agent_tokens"]["beta"] == 280
 
 
-def test_save_state_includes_per_chain_skill_counters(tmp_path):
-    """Tier 2: tuple-keyed chain_skill counters are persisted."""
-    bt = _tracker()
-    # record_spawn increments calls (sub-skill spawn); record_llm increments
-    # tokens. Use both to populate the chain_skill counters.
-    bt.record_spawn(chain_id="c1", skill="my_skill")
-    bt.record_llm(
-        model="gpt-4", agent="alpha", usage=TokenUsage(100, 50),
-        chain_id="c1", skill="my_skill",
-    )
-    state_path = tmp_path / "budget_state.json"
-    bt.save_state(state_path)
-
-    data = json.loads(state_path.read_text())
-    chain_skill_calls = data.get("chain_skill_calls", [])
-    matched = [
-        e for e in chain_skill_calls
-        if isinstance(e, list) and e[:2] == ["c1", "my_skill"]
-    ]
-    assert matched, (
-        f"chain_skill_calls must include c1/my_skill; got {chain_skill_calls}"
-    )
-    assert matched[0][2] == 1
-    # tokens are also persisted
-    chain_skill_tokens = data.get("chain_skill_tokens", [])
-    matched_tokens = [
-        e for e in chain_skill_tokens
-        if isinstance(e, list) and e[:2] == ["c1", "my_skill"]
-    ]
-    assert matched_tokens
-    assert matched_tokens[0][2] == 150
-
-
 def test_load_state_restores_per_agent_counters(tmp_path):
     """Tier 2: load_state populates agent counters from disk."""
     bt = _tracker()
@@ -100,38 +67,12 @@ def test_load_state_restores_per_agent_counters(tmp_path):
     assert snap["agent_tokens"]["alpha"] == 150
 
 
-def test_load_state_restores_chain_skill_counters(tmp_path):
-    """Tier 2: load_state populates chain_skill counters."""
-    bt = _tracker()
-    bt.record_spawn(chain_id="c1", skill="s1")
-    bt.record_spawn(chain_id="c1", skill="s1")
-    bt.record_llm(
-        model="gpt-4", agent="alpha", usage=TokenUsage(100, 50),
-        chain_id="c1", skill="s1",
-    )
-    bt.record_llm(
-        model="gpt-4", agent="alpha", usage=TokenUsage(50, 20),
-        chain_id="c1", skill="s1",
-    )
-    state_path = tmp_path / "budget_state.json"
-    bt.save_state(state_path)
-
-    bt2 = _tracker()
-    bt2.load_state(state_path)
-    snap = bt2.snapshot()
-
-    assert snap["chain_skill_calls"]["c1/s1"] == 2
-    # 100+50+50+20 = 220 tokens
-    assert snap["chain_skill_tokens"]["c1/s1"] == 220
-
-
 def test_load_state_missing_file_is_noop(tmp_path):
     """Tier 2: load_state on a missing file leaves the tracker pristine."""
     bt = _tracker()
     bt.load_state(tmp_path / "does_not_exist.json")  # must not raise
     snap = bt.snapshot()
     assert snap["agent_tokens"] == {}
-    assert snap["chain_skill_calls"] == {}
 
 
 def test_load_state_corrupt_file_is_noop(tmp_path):

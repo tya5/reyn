@@ -7,8 +7,8 @@ Four sites in the codebase raise on a safety limit hit:
   - E (max_hop_depth)         — ``Session._send_to_agent``
   - G (chain_seconds)         — ``ChainManager`` watchdog fire path
 
-This module replaces the bespoke ``_ask_budget_extension`` with a
-generic ``handle_limit_exceeded`` callable that all seven sites share.
+This module provides a generic ``handle_limit_exceeded`` callable that
+all seven safety-limit sites share.
 The signature is intentionally minimal: the caller passes the user-
 facing ``prompt``, machine-readable ``kind``, and per-site
 ``extension_amount`` (= "if approved, by how much?"); the helper
@@ -84,8 +84,8 @@ def reset_run_extensions(run_id: str) -> None:
 def _yes_no_choices() -> list[InterventionChoice]:
     """The standard yes/no prompt used by all safety-limit checkpoints.
 
-    Mirrors FP-0003's ``_ask_budget_extension`` choice set so the chat
-    UI behaves consistently across permission gates and limit gates.
+    A single yes/no choice set so the chat UI behaves consistently
+    across permission gates and limit gates.
     """
     return [
         InterventionChoice(id="yes", label="[Y]es, continue", hotkey="y"),

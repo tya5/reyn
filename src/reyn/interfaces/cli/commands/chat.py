@@ -322,7 +322,7 @@ def run(args: argparse.Namespace) -> None:
     state_log = StateLog(project_root / ".reyn" / "state" / "wal.jsonl")
     # PR22: process-shared budget tracker. Defaults to all unlimited unless
     # `cost:` is configured.
-    budget_tracker = BudgetTracker(session_cfg.config.cost, safety=safety)
+    budget_tracker = BudgetTracker(session_cfg.config.cost)
     # PR25: hydrate daily / monthly counters from the persistent ledger.
     budget_tracker.hydrate(project_root / ".reyn" / "state" / "budget_ledger.jsonl")
     # R-D8: restore in-memory counters (per-agent / per-chain-skill) from

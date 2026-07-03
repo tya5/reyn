@@ -60,11 +60,6 @@ class LoopConfig:
     max_router_iterations: int = 5
     max_tool_calls_per_turn: int = 50
     max_hook_driven_turns: int = 25
-    # Per-chain skill-spawn caps — retained (dead-in-production after the #2434
-    # skill deletion, but the budget skill-cap subsystem + its tests still
-    # consume them; the whole subsystem is removed in the #2439 follow-up).
-    skill_calls_per_chain: CostLimitConfig = field(default_factory=CostLimitConfig)
-    skill_tokens_per_chain: CostLimitConfig = field(default_factory=CostLimitConfig)
 
 
 @dataclass
@@ -584,12 +579,6 @@ def _build_safety_config(raw: object) -> SafetyConfig:
         max_hook_driven_turns=int(loop_raw.get(
             "max_hook_driven_turns", loop_defaults.max_hook_driven_turns,
         )),
-        skill_calls_per_chain=_build_cost_limit(
-            loop_raw.get("skill_calls_per_chain")
-        ),
-        skill_tokens_per_chain=_build_cost_limit(
-            loop_raw.get("skill_tokens_per_chain")
-        ),
     )
     timeout = TimeoutConfig(
         llm_call_seconds=float(timeout_raw.get(
@@ -710,7 +699,7 @@ def _build_cost_limit(raw: object) -> CostLimitConfig:
         import warnings
         warnings.warn(
             "cost.*.ask_on_exceed is deprecated and ignored — removed in #1877. "
-            "The per_chain_skill_calls exceed flow is now driven by "
+            "The cap exceed flow is now driven by "
             "safety.on_limit.mode (interactive / auto_extend / unattended). "
             "Remove this key; set safety.on_limit.mode instead.",
             DeprecationWarning, stacklevel=2,
