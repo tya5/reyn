@@ -361,6 +361,13 @@ def _summarize_result(tool, result) -> str:
         word = "result" if "search" in t else "item"
         return f"{n} {word}{'' if n == 1 else 's'}"
     if isinstance(result, dict):
+        # Error always wins — a dict with "error" is a failure regardless of
+        # any other keys (e.g. file__read returns op="read", content="", error="file
+        # not found: ..." for a missing file; without this guard the read branch
+        # below would short-circuit to "Read 0 lines" and the error is never seen).
+        error = result.get("error")
+        if isinstance(error, str):
+            return _short(error, 80)
         op = result.get("op")
         path = result.get("path")
         status = result.get("status")
@@ -383,9 +390,6 @@ def _summarize_result(tool, result) -> str:
         if isinstance(tasks, list):
             n = len(tasks)
             return f"{n} task{'s' if n != 1 else ''}"
-        error = result.get("error")
-        if isinstance(error, str):
-            return _short(error, 80)
         if status:
             return str(status)
     return _short(result, 80)

@@ -114,6 +114,23 @@ def test_dict_with_error_key_shows_error_not_raw_repr() -> None:
     assert "{" not in out, "raw dict repr must not leak into ⎿ row"
 
 
+def test_file_read_not_found_shows_error_not_zero_lines() -> None:
+    """Tier 2: file__read for a missing file shows the error, not 'Read 0 lines'.
+
+    file__read returns {"op": "read", "content": "", "error": "file not found: …"}
+    for a non-existent path.  Without the error-first guard the read branch fires
+    on op=="read" and returns "Read 0 lines" (empty content → 0 lines), which looks
+    identical to an empty file and gives the user no signal that the file is absent.
+    """
+    out = summarize_tool_result(
+        "file__read",
+        {"op": "read", "content": "", "error": "file not found: README.md"},
+    )
+    assert "0 lines" not in out, "missing file must not look like empty file"
+    assert "not found" in out or "README" in out, "must surface the error"
+    assert "{" not in out, "raw dict repr must not leak"
+
+
 def test_dict_with_status_shows_status() -> None:
     """Tier 2: an opaque dict with a status field shows the status."""
     assert summarize_tool_result("mcp__call", {"status": "ok", "x": 1}) == "ok"
