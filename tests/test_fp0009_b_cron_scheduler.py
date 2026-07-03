@@ -55,7 +55,7 @@ class _RecordingRunner:
 
 
 def _job(name: str = "j1", schedule: str = "* * * * *", **kwargs) -> CronJob:
-    return CronJob(name=name, skill="test_skill", schedule=schedule, **kwargs)
+    return CronJob(name=name, to="test_agent", message="test_message", schedule=schedule, **kwargs)
 
 
 # ---------------------------------------------------------------------------
@@ -64,10 +64,11 @@ def _job(name: str = "j1", schedule: str = "* * * * *", **kwargs) -> CronJob:
 
 
 def test_cronjob_constructs_with_required_fields():
-    """Tier 1: CronJob builds with name/skill/schedule; optional fields default correctly."""
-    job = CronJob(name="my-job", skill="my_skill", schedule="0 * * * *")
+    """Tier 1: CronJob builds with name/to/message/schedule; optional fields default correctly."""
+    job = CronJob(name="my-job", to="my_agent", message="run now", schedule="0 * * * *")
     assert job.name == "my-job"
-    assert job.skill == "my_skill"
+    assert job.to == "my_agent"
+    assert job.message == "run now"
     assert job.schedule == "0 * * * *"
     assert job.input == {}
     assert job.enabled is True
@@ -82,13 +83,14 @@ def test_cronjob_to_dict_is_json_serialisable():
     """Tier 1: to_dict returns a dict with no datetime objects (all ISO strings or None)."""
     import json
 
-    job = CronJob(name="j", skill="s", schedule="0 * * * *")
+    job = CronJob(name="j", to="agent_a", message="go", schedule="0 * * * *")
     d = job.to_dict()
     # Must round-trip through JSON without error
     encoded = json.dumps(d)
     decoded = json.loads(encoded)
     assert decoded["name"] == "j"
-    assert decoded["skill"] == "s"
+    assert decoded["to"] == "agent_a"
+    assert decoded["message"] == "go"
     assert decoded["schedule"] == "0 * * * *"
     assert decoded["enabled"] is True
     assert decoded["last_run_at"] is None
@@ -104,7 +106,7 @@ def test_cronjob_to_dict_serialises_datetime_fields():
     import json
 
     now = datetime(2026, 3, 15, 12, 0, 0, tzinfo=timezone.utc)
-    job = CronJob(name="j", skill="s", schedule="* * * * *")
+    job = CronJob(name="j", to="agent_a", message="go", schedule="* * * * *")
     job.last_run_at = now
     job.next_run_at = now
     job.last_run_status = "ok"

@@ -555,23 +555,20 @@ class CronJobConfig:
     config-side dataclass exists to keep the YAML parsing layer
     independent of the runtime layer.
 
-    Two execution shapes co-exist (= FP-0041 #489 PR-B):
+    Jobs are message-based (= FP-0041 #489 PR-B): ``to`` (target agent) +
+    ``message`` (free-form text). Cron dispatches the message to the target
+    agent's inbox with a ``sender="cron:<name>"`` envelope.
 
-      - **Message-based** (recommended): ``to`` + ``message``. Cron
-        dispatches the message to the target agent's inbox with
-        ``sender="cron:<name>"`` envelope.
-      - **Skill-based** (legacy): ``skill``. Cron runs the skill
-        directly via ``SkillRuntime.run`` (= FP-0009 original shape).
-
-    Exactly one shape per job. Validation rejects both / neither.
+    (Legacy skill-based jobs — a bare ``skill`` name — are no longer
+    supported; the skill runtime was removed. An old on-disk ``cron.yaml``
+    carrying such an entry is warned-and-skipped at load, not rejected.)
     """
 
     name: str
     schedule: str   # 5-field cron expression
-    to: str | None = None        # message-based: target agent name
-    message: str | None = None   # message-based: free-form text
+    to: str | None = None        # target agent name
+    message: str | None = None   # free-form text dispatched to the agent's inbox
     notify: str | None = None    # FP-0043 S4b-3b: opt-in notify channel (e.g. "telegram"); None = event-log only
-    skill: str | None = None     # skill-based legacy: skill name
     input: dict = field(default_factory=dict)
     enabled: bool = True
 
@@ -596,25 +593,20 @@ def _build_cron_config(raw: object) -> CronConfig:
 
         cron:
           jobs:
-            # Message-based (FP-0041 recommended):
             - name: morning_news
               to: news_agent
               message: "今日の主要ニュースをまとめて"
               schedule: "0 9 * * *"
               enabled: true
 
-            # Skill-based (FP-0009 legacy, backward compat):
-            - name: index_events_hourly
-              skill: index_events
-              schedule: "0 */6 * * *"
-              input: {}
-              enabled: true
-
     ``None`` / missing block / empty dict → ``CronConfig(jobs=[])``.
-    Validates ``name`` + ``schedule`` are non-empty strings + exactly
-    one of (``skill``) OR (``to`` + ``message``) is set per entry.
-    Raises ``ValueError`` naming the offending entry on validation
-    failure. Unknown extra fields are ignored (= forward-compatible).
+    Validates ``name`` + ``schedule`` are non-empty strings + ``to`` +
+    ``message`` are set per entry, raising ``ValueError`` naming the
+    offending entry on failure. Legacy skill-based entries (a bare
+    ``skill`` name, no ``to``/``message``) are no longer supported: they
+    are warned-and-skipped (degrade-not-raise) so an old on-disk
+    ``cron.yaml`` does not crash startup. Unknown extra fields are ignored
+    (= forward-compatible).
     """
     if raw is None:
         return CronConfig()
@@ -641,40 +633,46 @@ def _build_cron_config(raw: object) -> CronConfig:
                 f"cron.jobs[{i}] (name={name!r}): 'schedule' must be a non-empty string "
                 f"(got {schedule!r})"
             )
-        # FP-0041 #489 PR-B: shape selection — message-based vs skill-based.
-        skill = entry.get("skill")
+        # FP-0041 #489 PR-B: message-based shape (to + message). Legacy
+        # skill-based jobs (a bare ``skill`` name) are no longer supported —
+        # the skill runtime was removed.
         to = entry.get("to")
         message = entry.get("message")
-        has_skill = bool(skill) and isinstance(skill, str)
         has_message_shape = (
             bool(to) and isinstance(to, str)
             and bool(message) and isinstance(message, str)
         )
-        if has_skill and has_message_shape:
+        if not has_message_shape:
+            skill = entry.get("skill")
+            if bool(skill) and isinstance(skill, str):
+                # Degrade-not-raise: an old on-disk cron.yaml may still carry a
+                # skill-based entry. Warn (user-visible) + skip so startup does
+                # not crash on a config that predates the skill-runtime removal.
+                import logging
+                logging.getLogger(__name__).warning(
+                    "cron.jobs[%d] (name=%r): skill-based cron jobs are no "
+                    "longer supported (the skill runtime was removed); "
+                    "skipping this job. Use 'to' + 'message' instead.",
+                    i, name,
+                )
+                continue
             raise ValueError(
-                f"cron.jobs[{i}] (name={name!r}): cannot set both "
-                f"'skill' and 'to'/'message' (= choose one shape)."
-            )
-        if not has_skill and not has_message_shape:
-            raise ValueError(
-                f"cron.jobs[{i}] (name={name!r}): must set either "
-                f"'skill' (legacy) OR 'to' + 'message' (= recommended)."
+                f"cron.jobs[{i}] (name={name!r}): must set "
+                f"'to' + 'message'."
             )
         raw_input = entry.get("input") or {}
         if not isinstance(raw_input, dict):
             raw_input = {}
         enabled = bool(entry.get("enabled", True))
-        # FP-0043 S4b-3b: opt-in notify channel (message-based only; a skill-based
-        # job is headless with no conversational reply to relay).
+        # FP-0043 S4b-3b: opt-in notify channel.
         notify = entry.get("notify")
-        notify = notify if (has_message_shape and isinstance(notify, str) and notify) else None
+        notify = notify if (isinstance(notify, str) and notify) else None
         jobs.append(CronJobConfig(
             name=name,
             schedule=schedule,
-            to=to if has_message_shape else None,
-            message=message if has_message_shape else None,
+            to=to,
+            message=message,
             notify=notify,
-            skill=skill if has_skill else None,
             input=dict(raw_input),
             enabled=enabled,
         ))

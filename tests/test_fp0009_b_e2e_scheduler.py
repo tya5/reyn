@@ -31,10 +31,10 @@ class _RecordingRunner:
     """Real async callable that records each job fire for assertion."""
 
     def __init__(self) -> None:
-        self.calls: list[tuple[str, dict[str, Any]]] = []  # (skill, input)
+        self.calls: list[tuple[str, dict[str, Any]]] = []  # (name, input)
 
     async def __call__(self, job: CronJobRuntime) -> str:
-        self.calls.append((job.skill, dict(job.input)))
+        self.calls.append((job.name, dict(job.input)))
         return "ok"
 
 
@@ -70,14 +70,16 @@ def test_cron_config_parsed_from_reyn_yaml(tmp_path: Path) -> None:
                 "jobs": [
                     {
                         "name": "index_events_hourly",
-                        "skill": "index_events",
+                        "to": "indexer_agent",
+                        "message": "index events",
                         "schedule": "0 */6 * * *",
                         "input": {},
                         "enabled": True,
                     },
                     {
                         "name": "weekly_ops_report",
-                        "skill": "ops_report",
+                        "to": "ops_agent",
+                        "message": "generate ops report",
                         "schedule": "0 9 * * MON",
                         "input": {"since_days": 7},
                         "enabled": True,
@@ -93,14 +95,16 @@ def test_cron_config_parsed_from_reyn_yaml(tmp_path: Path) -> None:
 
     job0 = cfg.cron.jobs[0]
     assert job0.name == "index_events_hourly"
-    assert job0.skill == "index_events"
+    assert job0.to == "indexer_agent"
+    assert job0.message == "index events"
     assert job0.schedule == "0 */6 * * *"
     assert job0.input == {}
     assert job0.enabled is True
 
     job1 = cfg.cron.jobs[1]
     assert job1.name == "weekly_ops_report"
-    assert job1.skill == "ops_report"
+    assert job1.to == "ops_agent"
+    assert job1.message == "generate ops report"
     assert job1.schedule == "0 9 * * MON"
     assert job1.input == {"since_days": 7}
     assert job1.enabled is True
@@ -140,7 +144,8 @@ async def test_scheduler_built_from_config_jobs_and_run_now(tmp_path: Path) -> N
                 "jobs": [
                     {
                         "name": "test_job",
-                        "skill": "index_events",
+                        "to": "indexer_agent",
+                        "message": "index events",
                         "schedule": "* * * * *",
                         "input": {"since": "2026-01-01T00:00:00"},
                         "enabled": True,
@@ -158,7 +163,8 @@ async def test_scheduler_built_from_config_jobs_and_run_now(tmp_path: Path) -> N
     runtime_jobs = [
         CronJobRuntime(
             name=jc.name,
-            skill=jc.skill,
+            to=jc.to,
+            message=jc.message,
             schedule=jc.schedule,
             input=jc.input,
             enabled=jc.enabled,
@@ -181,8 +187,8 @@ async def test_scheduler_built_from_config_jobs_and_run_now(tmp_path: Path) -> N
         assert result is True
 
         assert runner.calls
-        fired_skill, fired_input = runner.calls[0]
-        assert fired_skill == "index_events"
+        fired_name, fired_input = runner.calls[0]
+        assert fired_name == "test_job"
         assert fired_input == {"since": "2026-01-01T00:00:00"}
 
         # Step 7: last_run_* fields updated
@@ -217,13 +223,15 @@ async def test_disabled_job_not_scheduled(tmp_path: Path) -> None:
                 "jobs": [
                     {
                         "name": "active_job",
-                        "skill": "index_events",
+                        "to": "indexer_agent",
+                        "message": "index events",
                         "schedule": "0 * * * *",
                         "enabled": True,
                     },
                     {
                         "name": "disabled_job",
-                        "skill": "ops_report",
+                        "to": "ops_agent",
+                        "message": "generate report",
                         "schedule": "0 * * * *",
                         "enabled": False,
                     },
@@ -240,7 +248,8 @@ async def test_disabled_job_not_scheduled(tmp_path: Path) -> None:
     runtime_jobs = [
         CronJobRuntime(
             name=jc.name,
-            skill=jc.skill,
+            to=jc.to,
+            message=jc.message,
             schedule=jc.schedule,
             input=jc.input,
             enabled=jc.enabled,
@@ -279,7 +288,8 @@ async def test_run_now_returns_false_for_unknown_job(tmp_path: Path) -> None:
                 "jobs": [
                     {
                         "name": "real_job",
-                        "skill": "index_events",
+                        "to": "indexer_agent",
+                        "message": "index events",
                         "schedule": "* * * * *",
                         "enabled": True,
                     }
@@ -293,7 +303,8 @@ async def test_run_now_returns_false_for_unknown_job(tmp_path: Path) -> None:
     runtime_jobs = [
         CronJobRuntime(
             name=jc.name,
-            skill=jc.skill,
+            to=jc.to,
+            message=jc.message,
             schedule=jc.schedule,
             input=jc.input,
             enabled=jc.enabled,
@@ -319,14 +330,16 @@ def test_build_cron_config_directly() -> None:
         "jobs": [
             {
                 "name": "hourly_index",
-                "skill": "index_events",
+                "to": "indexer_agent",
+                "message": "index events",
                 "schedule": "0 * * * *",
                 "input": {},
                 "enabled": True,
             },
             {
                 "name": "daily_report",
-                "skill": "ops_report",
+                "to": "ops_agent",
+                "message": "generate daily report",
                 "schedule": "0 8 * * *",
                 # no input key — should default to {}
                 # no enabled key — should default to True
@@ -340,10 +353,12 @@ def test_build_cron_config_directly() -> None:
     assert result.jobs
 
     assert result.jobs[0].name == "hourly_index"
+    assert result.jobs[0].to == "indexer_agent"
     assert result.jobs[0].input == {}
     assert result.jobs[0].enabled is True
 
     assert result.jobs[1].name == "daily_report"
-    assert result.jobs[1].skill == "ops_report"
+    assert result.jobs[1].to == "ops_agent"
+    assert result.jobs[1].message == "generate daily report"
     assert result.jobs[1].input == {}
     assert result.jobs[1].enabled is True

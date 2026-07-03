@@ -51,7 +51,8 @@ def _make_cron_config(jobs: list | None = None):
     job_configs = [
         CronJobConfig(
             name=j["name"],
-            skill=j["skill"],
+            to=j.get("to", "some_agent"),
+            message=j.get("message", "do the thing"),
             schedule=j["schedule"],
             input=j.get("input", {}),
             enabled=j.get("enabled", True),
@@ -151,13 +152,15 @@ def test_cron_list_no_jobs_prints_empty_message(
 _SAMPLE_JOBS = [
     {
         "name": "index_events_hourly",
-        "skill": "index_events",
+        "to": "indexer_agent",
+        "message": "index events",
         "schedule": "0 */6 * * *",
         "enabled": True,
     },
     {
         "name": "weekly_ops_report",
-        "skill": "ops_report",
+        "to": "ops_agent",
+        "message": "generate ops report",
         "schedule": "0 9 * * MON",
         "enabled": True,
     },
@@ -180,9 +183,9 @@ def test_cron_list_two_jobs_prints_both_rows(
     captured = capsys.readouterr()
     assert "index_events_hourly" in captured.out
     assert "weekly_ops_report" in captured.out
-    # Both skill names appear
-    assert "index_events" in captured.out
-    assert "ops_report" in captured.out
+    # Both target agents appear
+    assert "indexer_agent" in captured.out
+    assert "ops_agent" in captured.out
 
 
 def test_cron_list_shows_header_columns(
@@ -256,7 +259,8 @@ def test_cron_list_shows_dash_for_invalid_schedule(
 
     cfg = _make_cron_config(jobs=[{
         "name": "bad_job",
-        "skill": "some_skill",
+        "to": "some_agent",
+        "message": "do the thing",
         "schedule": "NOT_A_CRON_EXPR",
         "enabled": True,
     }])
@@ -335,8 +339,8 @@ def test_cron_list_enabled_flag_shown(
     from reyn.interfaces.cli.commands.cron import run_list
 
     cfg = _make_cron_config(jobs=[
-        {"name": "enabled_job", "skill": "sk1", "schedule": "0 * * * *", "enabled": True},
-        {"name": "disabled_job", "skill": "sk2", "schedule": "0 * * * *", "enabled": False},
+        {"name": "enabled_job", "to": "agent1", "message": "run", "schedule": "0 * * * *", "enabled": True},
+        {"name": "disabled_job", "to": "agent2", "message": "run", "schedule": "0 * * * *", "enabled": False},
     ])
     monkeypatch.setattr(_cfg_mod, "load_config", lambda cwd=None: cfg)
 

@@ -478,33 +478,36 @@ auth:
 
 ## `cron:` ブロック
 
-定期的なスキル実行をスケジュールします。スケジューラーは `reyn web` の一部（= FastAPI lifespan で起動）として、または `reyn cron run` 経由のフォアグラウンドプロセスとして実行されます。
+定期的なメッセージ配信をスケジュールします。スケジューラーは `reyn web` の一部（= FastAPI lifespan で起動）として、または `reyn cron run` 経由のフォアグラウンドプロセスとして実行されます。
 
 ```yaml
 cron:
   jobs:
-    - name: index_events_hourly
-      skill: index_events
-      schedule: "0 */6 * * *"   # 6時間ごと
-      input: {}
+    - name: morning_news
+      to: news_agent            # 宛先エージェント名
+      message: "今日の主要ニュースをまとめて"
+      schedule: "0 9 * * *"     # 毎日 09:00
       enabled: true
 
     - name: weekly_ops_report
-      skill: ops_report
+      to: ops_agent
+      message: "weekly ops report"
       schedule: "0 9 * * MON"   # 月曜 09:00
-      input:
-        since_days: 7
       enabled: true
 ```
 
 ### フィールド
 
 - **`name`** (必須) — ジョブ識別子。スケジュール内で一意である必要があります
-- **`skill`** (必須) — 呼び出す stdlib またはプロジェクトスキルの名前
+- **`to`** (必須) — 宛先エージェント名。メッセージは `sender="cron:<name>"` 属性でそのエージェントの inbox に配信されます
+- **`message`** (必須) — 宛先エージェントに配信される自由形式テキスト
 - **`schedule`** (必須) — 5 フィールドの cron 式
   （分 / 時 / 日 / 月 / 曜日）
-- **`input`** (省略可、デフォルト `{}`) — スキルに渡す入力アーティファクト
+- **`notify`** (省略可) — オプトインの無人通知チャンネル
+- **`input`** (省略可、デフォルト `{}`) — ジョブに付随する追加の入力辞書
 - **`enabled`** (省略可、デフォルト `true`) — `false` にすると設定にエントリを保持したままスケジューリングをスキップします
+
+> レガシーなスキルベースジョブ（`skill` 名のみ）はサポートされなくなりました（skill runtime は削除済み）。旧 `cron.yaml` にそのようなエントリが残っていても、load 時に warn+skip され、reject されません。
 
 ### 関連情報
 

@@ -3,9 +3,16 @@
 These tests verify the public contract of the config-layer dataclasses and
 the reyn.yaml parser for the ``cron:`` block.  No mocking; real config
 loader called with tmp_path YAML files.
+
+Cron jobs are message-based (``to`` + ``message``). Legacy skill-based jobs
+(a bare ``skill`` name) are no longer supported — the skill runtime was
+removed — and are warned-and-skipped at load (degrade-not-raise) so an old
+on-disk cron.yaml does not crash startup. The final test is that
+migration-safety gate.
 """
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 import pytest
@@ -22,9 +29,12 @@ from reyn.config import (
 
 def test_cron_job_config_required_fields() -> None:
     """Tier 1: CronJobConfig constructs with required fields; defaults apply."""
-    job = CronJobConfig(name="my_job", skill="index_events", schedule="0 * * * *")
+    job = CronJobConfig(
+        name="my_job", to="news_agent", message="summarise today", schedule="0 * * * *"
+    )
     assert job.name == "my_job"
-    assert job.skill == "index_events"
+    assert job.to == "news_agent"
+    assert job.message == "summarise today"
     assert job.schedule == "0 * * * *"
     assert job.input == {}      # default_factory
     assert job.enabled is True  # default
@@ -34,7 +44,8 @@ def test_cron_job_config_explicit_input_and_enabled() -> None:
     """Tier 1: CronJobConfig preserves explicit input dict and enabled=False."""
     job = CronJobConfig(
         name="weekly_report",
-        skill="ops_report",
+        to="ops_agent",
+        message="weekly ops report",
         schedule="0 9 * * MON",
         input={"since_days": 7},
         enabled=False,
@@ -71,13 +82,15 @@ def test_cron_block_parsed_correctly(tmp_path: Path) -> None:
 model: standard
 cron:
   jobs:
-    - name: index_events_hourly
-      skill: index_events
+    - name: morning_news
+      to: news_agent
+      message: "今日の主要ニュースをまとめて"
       schedule: "0 */6 * * *"
       input: {}
       enabled: true
     - name: weekly_ops_report
-      skill: ops_report
+      to: ops_agent
+      message: "weekly ops report"
       schedule: "0 9 * * MON"
       input:
         since_days: 7
@@ -90,14 +103,14 @@ cron:
     job1 = cfg.cron.jobs[1]  # IndexError if fewer than 2 jobs parsed
     assert not cfg.cron.jobs[2:], f"Expected exactly 2 cron jobs, got extras: {cfg.cron.jobs[2:]}"
     assert isinstance(job0, CronJobConfig)
-    assert job0.name == "index_events_hourly"
-    assert job0.skill == "index_events"
+    assert job0.name == "morning_news"
+    assert job0.to == "news_agent"
     assert job0.schedule == "0 */6 * * *"
     assert job0.input == {}
     assert job0.enabled is True
     assert isinstance(job1, CronJobConfig)
     assert job1.name == "weekly_ops_report"
-    assert job1.skill == "ops_report"
+    assert job1.to == "ops_agent"
     assert job1.schedule == "0 9 * * MON"
     assert job1.input == {"since_days": 7}
     assert job1.enabled is False
@@ -108,28 +121,28 @@ cron:
 
 def test_missing_name_raises_value_error() -> None:
     """Tier 1: missing 'name' in a cron job raises ValueError naming the entry."""
-    raw = {"jobs": [{"skill": "index_events", "schedule": "0 * * * *"}]}
+    raw = {"jobs": [{"to": "a", "message": "m", "schedule": "0 * * * *"}]}
     with pytest.raises(ValueError, match="name"):
         _build_cron_config(raw)
 
 
-def test_missing_skill_raises_value_error() -> None:
-    """Tier 1: missing 'skill' in a cron job raises ValueError naming the entry."""
+def test_missing_to_message_raises_value_error() -> None:
+    """Tier 1: a job with neither a message shape nor a (legacy) skill raises ValueError."""
     raw = {"jobs": [{"name": "my_job", "schedule": "0 * * * *"}]}
-    with pytest.raises(ValueError, match="skill"):
+    with pytest.raises(ValueError, match="to.*message"):
         _build_cron_config(raw)
 
 
 def test_missing_schedule_raises_value_error() -> None:
     """Tier 1: missing 'schedule' in a cron job raises ValueError naming the entry."""
-    raw = {"jobs": [{"name": "my_job", "skill": "index_events"}]}
+    raw = {"jobs": [{"name": "my_job", "to": "a", "message": "m"}]}
     with pytest.raises(ValueError, match="schedule"):
         _build_cron_config(raw)
 
 
 def test_empty_name_raises_value_error() -> None:
     """Tier 1: empty string 'name' also raises ValueError."""
-    raw = {"jobs": [{"name": "", "skill": "index_events", "schedule": "0 * * * *"}]}
+    raw = {"jobs": [{"name": "", "to": "a", "message": "m", "schedule": "0 * * * *"}]}
     with pytest.raises(ValueError, match="name"):
         _build_cron_config(raw)
 
@@ -144,7 +157,8 @@ model: standard
 cron:
   jobs:
     - name: disabled_job
-      skill: some_skill
+      to: some_agent
+      message: "do the thing"
       schedule: "0 0 * * *"
       enabled: false
 """
@@ -165,7 +179,8 @@ model: standard
 cron:
   jobs:
     - name: report_job
-      skill: ops_report
+      to: ops_agent
+      message: "ops report"
       schedule: "0 9 * * MON"
       input:
         since_days: 7
@@ -196,3 +211,39 @@ def test_cron_block_non_dict_raw() -> None:
     """Tier 1: _build_cron_config with a non-dict value returns empty CronConfig gracefully."""
     result = _build_cron_config("invalid")
     assert result == CronConfig()
+
+
+# ── Migration-safety gate: legacy skill-based jobs degrade-not-raise ─────────
+
+
+def test_legacy_skill_based_job_warned_and_skipped(caplog) -> None:
+    """Tier 1: an old on-disk cron.yaml with a legacy skill-based entry mixed with a
+    message-based entry (i) does not crash, (ii) warns + skips the skill-based job,
+    (iii) loads the message-based job correctly.
+
+    Migration-safety for the skill-runtime removal: a bare-``skill`` cron entry
+    (valid before the removal) must degrade — warn-and-skip — rather than raise
+    and crash startup for operators whose ``.reyn/config/cron.yaml`` predates it.
+    """
+    raw = {
+        "jobs": [
+            # Legacy skill-based (no to/message) — must be warned + skipped.
+            {"name": "legacy_index", "skill": "index_events", "schedule": "0 */6 * * *"},
+            # Message-based — must load unaffected.
+            {"name": "morning_news", "to": "news_agent",
+             "message": "summarise today", "schedule": "0 9 * * *"},
+        ]
+    }
+    with caplog.at_level(logging.WARNING, logger="reyn.config.infra"):
+        cfg = _build_cron_config(raw)  # (i) must not raise
+
+    # (ii) the skill-based job is skipped, with a user-visible warning naming it.
+    assert [j.name for j in cfg.jobs] == ["morning_news"]
+    assert any(
+        "legacy_index" in r.message and "skill-based" in r.message
+        for r in caplog.records
+    ), "expected a WARNING naming the skipped skill-based job"
+
+    # (iii) the message-based job loaded correctly.
+    assert cfg.jobs[0].to == "news_agent"
+    assert cfg.jobs[0].message == "summarise today"

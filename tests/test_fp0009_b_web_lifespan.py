@@ -139,7 +139,8 @@ async def test_enabled_job_scheduler_is_cron_scheduler_instance(tmp_path, monkey
             "cron:\n"
             "  jobs:\n"
             "    - name: far_future_job\n"
-            "      skill: some_skill\n"
+            "      to: some_agent\n"
+            "      message: do the thing\n"
             "      schedule: '59 23 31 12 5'\n"
             "      enabled: true\n"
         ),
@@ -148,7 +149,7 @@ async def test_enabled_job_scheduler_is_cron_scheduler_instance(tmp_path, monkey
 
     app = _make_bare_app()
 
-    # Use a no-op runner to prevent any actual skill resolution during the test.
+    # Use a no-op runner to prevent any actual dispatch during the test.
     # We inject it via set_runner() before any job can fire (the schedule is
     # far-future so no fire occurs within the test, but defensive anyway).
     async def _noop_runner(job):
@@ -168,7 +169,8 @@ async def test_enabled_job_scheduler_is_cron_scheduler_instance(tmp_path, monkey
         jobs = app.state.cron_scheduler.jobs()
         (job,) = jobs  # exactly one job was configured
         assert job.name == "far_future_job"
-        assert job.skill == "some_skill"
+        assert job.to == "some_agent"
+        assert job.message == "do the thing"
         assert job.enabled is True
 
     # After the context exits, stop() has been called
@@ -190,7 +192,8 @@ async def test_shutdown_stops_scheduler(tmp_path, monkeypatch):
             "cron:\n"
             "  jobs:\n"
             "    - name: stop_test_job\n"
-            "      skill: some_skill\n"
+            "      to: some_agent\n"
+            "      message: do the thing\n"
             "      schedule: '59 23 31 12 5'\n"
             "      enabled: true\n"
         ),

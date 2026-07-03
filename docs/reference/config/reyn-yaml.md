@@ -778,36 +778,42 @@ See also:
 
 ## `cron:` block
 
-Schedule recurring skill executions. The scheduler runs as part of
+Schedule recurring message dispatches. The scheduler runs as part of
 `reyn web` (= started in the FastAPI lifespan) or as a foreground
 process via `reyn cron run`.
 
 ```yaml
 cron:
   jobs:
-    - name: index_events_hourly
-      skill: index_events
-      schedule: "0 */6 * * *"   # every 6 hours
-      input: {}
+    - name: morning_news
+      to: news_agent            # target agent name
+      message: "今日の主要ニュースをまとめて"
+      schedule: "0 9 * * *"     # every day 09:00
       enabled: true
 
     - name: weekly_ops_report
-      skill: ops_report
+      to: ops_agent
+      message: "weekly ops report"
       schedule: "0 9 * * MON"   # Monday 09:00
-      input:
-        since_days: 7
       enabled: true
 ```
 
 ### Fields
 
 - **`name`** (required) — job identifier, unique within the schedule
-- **`skill`** (required) — stdlib or project skill name to invoke
+- **`to`** (required) — target agent name; the message is dispatched to its
+  inbox with `sender="cron:<name>"` attribution
+- **`message`** (required) — free-form text delivered to the target agent
 - **`schedule`** (required) — 5-field cron expression
   (minute / hour / day-of-month / month / day-of-week)
-- **`input`** (optional, default `{}`) — input artifact passed to the skill
+- **`notify`** (optional) — opt-in unattended notification channel
+- **`input`** (optional, default `{}`) — extra input dict carried on the job
 - **`enabled`** (optional, default `true`) — `false` keeps the entry in
   configuration but skips scheduling
+
+> Legacy skill-based jobs (a bare `skill` name) are no longer supported — the
+> skill runtime was removed. An old on-disk `cron.yaml` carrying such an entry
+> is warned-and-skipped at load, not rejected.
 
 ### Cross-references
 
