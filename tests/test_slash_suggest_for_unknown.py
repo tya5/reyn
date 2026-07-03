@@ -114,3 +114,18 @@ def test_real_registry_returns_meaningful_suggestions() -> None:
     # ``list`` should be a close fuzzy match for ``lis``.
     assert "list" in suggestions
     assert "help" in suggestions
+
+
+def test_hidden_commands_excluded_from_suggestions() -> None:
+    """Tier 2: hidden slash commands (e.g. /matrix) must not leak into
+    unknown-command suggestion output — they are easter eggs, not user-facing
+    help targets.
+    """
+    from reyn.interfaces.slash import REGISTRY
+
+    hidden = [c.name for c in REGISTRY.all_commands() if c.hidden]
+    if not hidden:
+        return  # no hidden commands registered — nothing to assert
+    suggestions = suggest_for_unknown("clear")
+    for h in hidden:
+        assert h not in suggestions, f"hidden command /{h!r} leaked into suggestions"
