@@ -179,3 +179,64 @@ def test_budget_warn_zero_hard_drops_pct_safely() -> None:
     ))
     msgs = _drain(q)
     assert msgs[0].text == "[↑ budget warn: daily_tokens]"
+
+
+# ── model_cost_block (#1867 / FP-0052 S4) ────────────────────────────────────
+
+
+def test_model_cost_block_declined_emits_marker() -> None:
+    """Tier 2: model_cost_block with reason=declined → [✗ model switch declined:] marker.
+
+    Without this handler, a user who says No to the high-cost confirm gets no
+    feedback — the model chip stays unchanged but nothing explains why.
+    """
+    q: asyncio.Queue = asyncio.Queue()
+    fwd = ChatLifecycleForwarder(q)
+    fwd(Event(
+        type="model_cost_block",
+        data={"model": "gpt-4o", "model_class": "gpt4o", "reason": "declined"},
+    ))
+    msgs = _drain(q)
+    (only,) = msgs
+    assert only.kind == "system"
+    assert "model switch declined" in only.text
+    assert "gpt-4o" in only.text
+
+
+def test_model_cost_block_approved_emits_nothing() -> None:
+    """Tier 2: model_cost_block with reason=approved → no outbox message.
+
+    The status-bar chip updates to the new model; no extra marker is needed.
+    """
+    q: asyncio.Queue = asyncio.Queue()
+    fwd = ChatLifecycleForwarder(q)
+    fwd(Event(
+        type="model_cost_block",
+        data={"model": "gpt-4o", "reason": "approved"},
+    ))
+    assert _drain(q) == []
+
+
+def test_model_cost_block_non_interactive_emits_nothing() -> None:
+    """Tier 2: model_cost_block with reason=non_interactive_fail_closed → no message.
+
+    No human present; the operator discovers the block via the calling exception.
+    """
+    q: asyncio.Queue = asyncio.Queue()
+    fwd = ChatLifecycleForwarder(q)
+    fwd(Event(
+        type="model_cost_block",
+        data={"model": "gpt-4o", "reason": "non_interactive_fail_closed"},
+    ))
+    assert _drain(q) == []
+
+
+def test_model_cost_block_missing_reason_emits_nothing() -> None:
+    """Tier 2: model_cost_block with no reason field → no message (forward-compat).
+
+    Future event-shape additions must not accidentally trigger the declined marker.
+    """
+    q: asyncio.Queue = asyncio.Queue()
+    fwd = ChatLifecycleForwarder(q)
+    fwd(Event(type="model_cost_block", data={"model": "gpt-4o"}))
+    assert _drain(q) == []
