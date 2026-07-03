@@ -142,8 +142,10 @@ class HotReloader:
         in_set = load_hot_reload_config(self._project_root)
 
         # Validate-before-apply (atomicity): a malformed IN-set is REJECTED whole —
-        # no seam runs, the live config is unchanged (rollback). config_reloaded is
-        # NOT emitted (no state change occurred), only a warning.
+        # no seam runs, the live config is unchanged (rollback). Emit a
+        # ``config_reload_rejected`` event so the conv pane can surface the error
+        # (the user typed /reload and expects feedback on failure, not just a log
+        # warning they'll never see in the inline CUI).
         if self._validate is not None:
             reason = self._validate(in_set)
             if reason:
@@ -151,6 +153,12 @@ class HotReloader:
                     "hot-reload REJECTED (invalid IN-set): %s — live config unchanged",
                     reason,
                 )
+                if self._events is not None:
+                    self._events.emit(
+                        "config_reload_rejected",
+                        source=source or "unknown",
+                        reason=reason,
+                    )
                 return {"source": source, "rejected": reason, "applied": [], "failed": []}
 
         applied: list[str] = []

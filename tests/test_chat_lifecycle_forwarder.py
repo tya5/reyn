@@ -240,3 +240,93 @@ def test_model_cost_block_missing_reason_emits_nothing() -> None:
     fwd = ChatLifecycleForwarder(q)
     fwd(Event(type="model_cost_block", data={"model": "gpt-4o"}))
     assert _drain(q) == []
+
+
+# ── config hot-reload (#2073) ─────────────────────────────────────────────────
+
+
+def test_config_reloaded_with_components_emits_marker() -> None:
+    """Tier 2: config_reloaded with changed components → [↻ config reloaded: <names>] marker.
+
+    Without this handler, a user who ran /reload gets no confirmation that the
+    reload completed or which components changed — only the /reload "scheduled"
+    message from earlier in the turn.
+    """
+    q: asyncio.Queue = asyncio.Queue()
+    fwd = ChatLifecycleForwarder(q)
+    fwd(Event(
+        type="config_reloaded",
+        data={"components": ["hooks", "mcp"], "failed": [], "source": "operator"},
+    ))
+    msgs = _drain(q)
+    (only,) = msgs
+    assert only.kind == "system"
+    assert "config reloaded" in only.text
+    assert "hooks" in only.text
+    assert "mcp" in only.text
+
+
+def test_config_reloaded_with_no_changes_emits_nothing() -> None:
+    """Tier 2: config_reloaded with empty components+failed → no outbox marker.
+
+    A reload that touched nothing is already confirmed by the /reload reply;
+    a redundant "nothing changed" marker would be noise.
+    """
+    q: asyncio.Queue = asyncio.Queue()
+    fwd = ChatLifecycleForwarder(q)
+    fwd(Event(
+        type="config_reloaded",
+        data={"components": [], "failed": [], "source": "operator"},
+    ))
+    assert _drain(q) == []
+
+
+def test_config_reloaded_with_failed_seams_includes_failure_note() -> None:
+    """Tier 2: config_reloaded with failed seams → marker includes failure names.
+
+    A seam failure is otherwise silently logged; surfacing it in the conv pane
+    lets the user know the reload was partial.
+    """
+    q: asyncio.Queue = asyncio.Queue()
+    fwd = ChatLifecycleForwarder(q)
+    fwd(Event(
+        type="config_reloaded",
+        data={"components": ["hooks"], "failed": ["cron"], "source": "operator"},
+    ))
+    msgs = _drain(q)
+    (only,) = msgs
+    assert "config reloaded" in only.text
+    assert "hooks" in only.text
+    assert "cron" in only.text
+    assert "failed" in only.text
+
+
+def test_config_reload_rejected_emits_error_marker() -> None:
+    """Tier 2: config_reload_rejected → [✗ config reload rejected: <reason>] marker.
+
+    Without this event the user sees the /reload "scheduled" confirmation but
+    then nothing when the validate-before-apply step rejects the malformed
+    IN-set — the next turn silently runs under the old config.
+    """
+    q: asyncio.Queue = asyncio.Queue()
+    fwd = ChatLifecycleForwarder(q)
+    fwd(Event(
+        type="config_reload_rejected",
+        data={"reason": "cron.jobs must be a list", "source": "operator"},
+    ))
+    msgs = _drain(q)
+    (only,) = msgs
+    assert only.kind == "system"
+    assert "config reload rejected" in only.text
+    assert "cron.jobs must be a list" in only.text
+
+
+def test_config_reload_rejected_missing_reason_uses_fallback() -> None:
+    """Tier 2: config_reload_rejected with no reason field → generic fallback text."""
+    q: asyncio.Queue = asyncio.Queue()
+    fwd = ChatLifecycleForwarder(q)
+    fwd(Event(type="config_reload_rejected", data={}))
+    msgs = _drain(q)
+    (only,) = msgs
+    assert "config reload rejected" in only.text
+    assert "malformed config" in only.text
