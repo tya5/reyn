@@ -14,6 +14,8 @@ from __future__ import annotations
 
 from typing import Callable
 
+_ANCHOR_MAX_LEN = 50
+
 
 class CommandUIElement:
     """A RegionElement for a slash-command selector.
@@ -55,7 +57,8 @@ def rewind_rows(points: list[dict]) -> tuple[list[str], list[str]]:
         anchor = p.get("anchor")
         label = f"seq {seq} · {kind}"
         if anchor:
-            label += f" ({anchor})"
+            a = anchor if len(anchor) <= _ANCHOR_MAX_LEN else anchor[:_ANCHOR_MAX_LEN - 1] + "…"
+            label += f" ({a})"
         rows.append(label)
         submit_texts.append(f"/rewind {seq}")
     return rows, submit_texts

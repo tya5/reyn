@@ -643,11 +643,19 @@ async def run_inline_input(registry, renderer, config=None) -> None:
                 out.append((f"fg:#0d0f12 bg:{_CC_ACCENT} bold", f" {ln} "))
             else:
                 out.append((f"fg:{_CC_DIM}", f"   {ln}"))
+        items_below = len(lines) - scroll - _ABOVE_REGION_MAX_HEIGHT
+        if items_below > 0:
+            out.append(("", "\n"))
+            out.append((f"fg:{_CC_DIM}", f"   ↓ {items_below} more"))
         return out
 
     def above_region_height() -> Dimension:
-        n = min(len(above_region.lines()), _ABOVE_REGION_MAX_HEIGHT)
-        return Dimension.exact(n)
+        lines = above_region.lines()
+        n = len(lines)
+        scroll = above_region.scroll
+        visible = min(n, _ABOVE_REGION_MAX_HEIGHT)
+        hint = 1 if n > scroll + _ABOVE_REGION_MAX_HEIGHT else 0
+        return Dimension.exact(visible + hint)
 
     above_region_win = Window(
         FormattedTextControl(above_region_frags, focusable=True),
