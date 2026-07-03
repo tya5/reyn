@@ -429,6 +429,10 @@ def _summarize_result(tool, result) -> str:
         if isinstance(items, list):
             n = len(items)
             return f"{n} item{'s' if n != 1 else ''}"
+        results = result.get("results")
+        if isinstance(results, list):
+            n = len(results)
+            return f"{n} result{'s' if n != 1 else ''}"
         chunks_dropped = result.get("chunks_dropped")
         if isinstance(chunks_dropped, int):
             n = chunks_dropped
@@ -440,6 +444,11 @@ def _summarize_result(tool, result) -> str:
             mcp_content = result.get("content")
             if isinstance(mcp_content, str) and mcp_content:
                 return _short(mcp_content.split("\n")[0], 60)
+        passed = result.get("passed")
+        if isinstance(passed, bool):
+            score = result.get("score")
+            pct = f" ({score:.2f})" if isinstance(score, (int, float)) else ""
+            return ("Passed" if passed else "Failed") + pct
         if status:
             return str(status)
     return _short(result, 80)
