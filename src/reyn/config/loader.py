@@ -16,10 +16,8 @@ from reyn.config.embedding import (  # #1682 #3 cross-section
     ActionRetrievalConfig,
     _build_action_retrieval_config,
     _build_embedding_config,
-    _build_skill_search_config,
 )
 from reyn.config.execution import (  # #1682 #3 cross-section
-    _build_self_improvement_config,
     _build_skill_resume_config,
     _build_tool_use_config,
 )
@@ -478,13 +476,11 @@ def load_config(cwd: Path | None = None) -> ReynConfig:
         cost_warn=cost_warn,
         web=_build_web_config(merged.get("web")),
         multimodal=_build_multimodal_config(merged.get("multimodal")),
-        skill_search=_build_skill_search_config(merged.get("skill_search")),
         eval=_build_eval_config(merged.get("eval")),
         sandbox=_build_sandbox_config(merged.get("sandbox")),
         # #1800 slice 5b: the raw ``hooks:`` block, passed through (parsed by
         # ``load_hooks`` at Session construction). None/absent → empty list.
         hooks=merged.get("hooks") or [],
-        self_improvement=_build_self_improvement_config(merged.get("self_improvement")),
         action_retrieval=_build_action_retrieval_config(merged.get("action_retrieval")),
         cron=_build_cron_config(merged.get("cron")),
         external_transports=_build_external_transports_config(

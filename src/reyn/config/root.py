@@ -39,10 +39,8 @@ from reyn.config.chat import (
 from reyn.config.embedding import (
     ActionRetrievalConfig,
     EmbeddingConfig,
-    SkillSearchConfig,
 )
 from reyn.config.execution import (
-    SelfImprovementConfig,
     SkillResumeConfig,
     ToolUseConfig,
 )
@@ -188,11 +186,6 @@ class ReynConfig:
     # ``reyn config set/get/fields`` and the doc-mirror guard don't advertise
     # a key the set/get path can't honor.
     mcp_search_threshold: int = field(default=30, metadata={"schema_internal": True})
-    # FP-0024 Component A — BM25 skill pre-filter settings.
-    # Below threshold: full enum. Above threshold: BM25 top-K filter.
-    # Default 20 — current stdlib (~30-50 skills) stays at full enum unless
-    # the operator explicitly lowers the threshold.
-    skill_search: SkillSearchConfig = field(default_factory=SkillSearchConfig)
     # Python preprocessor step settings.
     python: PythonConfig = field(default_factory=PythonConfig)
     # FP-0016 Component E — agent identity for audit trail + HTTP header
@@ -270,8 +263,6 @@ class ReynConfig:
     # here and parsed via ``load_hooks`` at Session construction. Empty (default)
     # → empty registry → the HookDispatcher is a no-op.
     hooks: list = field(default_factory=list)
-    # FP-0006 B+D: skill_improver behavior knobs (on_propose gate + max_versions cap).
-    self_improvement: SelfImprovementConfig = field(default_factory=SelfImprovementConfig)
     # FP-0034: universal catalog gating + action retrieval (D13 / D14).
     # Default-off so existing chat behaviour is byte-identical until the
     # operator explicitly opts in; will flip in PR-3b-iii after LLMReplay
