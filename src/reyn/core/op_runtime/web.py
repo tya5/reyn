@@ -243,7 +243,7 @@ async def handle_web_fetch(op: WebFetchIROp, ctx: OpContext) -> dict:
         # network:false vetoes the fetch. Re-run on EVERY hop (not just initial).
         if ctx.permission_resolver is not None:
             await ctx.permission_resolver.require_http_get(
-                ctx.permission_decl, host, ctx.intervention_bus, ctx.skill_name,
+                ctx.permission_decl, host, ctx.intervention_bus, ctx.actor,
                 sandbox_policy=_sandbox_policy_from_ctx(ctx),
             )
         # L2 — SSRF IP-deny (always; independent of the permission system).

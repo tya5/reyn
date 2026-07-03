@@ -13,12 +13,12 @@ from reyn.runtime.outbox import OutboxMessage
 
 
 def _meta_prefix(meta: dict) -> str:
-    """Build a `[skill_name#abcd] ` prefix from meta provenance, if present.
+    """Build a `[actor#abcd] ` prefix from meta provenance, if present.
 
-    Returns "" when neither skill_name nor run_id_short is set, so generic
+    Returns "" when neither actor nor run_id_short is set, so generic
     status / error messages stay clean.
     """
-    skill = meta.get("skill_name")
+    skill = meta.get("actor")
     short = meta.get("run_id_short")
     if skill and short:
         return f"[{skill}#{short}] "
@@ -63,7 +63,7 @@ class ChatRenderer:
         """Render one outbox item.
 
         msg.kind ∈ {"agent","status","error","intervention","trace","skill_done"}
-        msg.meta carries provenance (skill_name, run_id, run_id_short, ...)
+        msg.meta carries provenance (actor, run_id, run_id_short, ...)
         """
 
     def prompt_text(self) -> AnyFormattedText:
@@ -639,9 +639,9 @@ def format_inline_message(msg: OutboxMessage):
     # renders as literal text inside the agent markdown body.
     # Intervention is user-facing: suppress the cryptic run_id_short hash — the
     # user doesn't need disambiguation for a prompt that has one active caller.
-    # skill_name context (e.g. "[skill_builder] ") is still shown if present.
+    # actor context (e.g. "[skill_builder] ") is still shown if present.
     if kind == "intervention":
-        skill = meta.get("skill_name")
+        skill = meta.get("actor")
         _pfx = f"[{skill}] " if skill else ""
     else:
         _pfx = _meta_prefix(meta)

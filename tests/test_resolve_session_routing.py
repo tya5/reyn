@@ -47,7 +47,7 @@ def _seed(tmp_path: Path, name: str) -> None:
 def _iv_dict(iv_id: str) -> dict:
     return {
         "kind": "ask_user", "prompt": "Q?", "detail": "", "choices": [],
-        "suggestions": [], "run_id": "r", "skill_name": "demo", "id": iv_id,
+        "suggestions": [], "run_id": "r", "actor": "demo", "id": iv_id,
     }
 
 

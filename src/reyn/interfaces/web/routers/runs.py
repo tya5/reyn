@@ -107,7 +107,7 @@ def _read_events(path: Path) -> list[dict]:
 
 class RunSummary(BaseModel):
     run_id: str
-    skill_name: str | None
+    actor: str | None
     started_at: str | None
     # status, cost etc. could be added once we agree on a stable first-event schema.
     # For now surface only what the filename reliably tells us.
@@ -126,7 +126,7 @@ async def list_runs(
         # run_id format: 20260501T103200Z_skill_name
         parts = run_id.split("_", 1)
         started_at_raw = parts[0] if parts else None
-        skill_name = parts[1] if len(parts) > 1 else None
+        actor = parts[1] if len(parts) > 1 else None
         # Parse ts into ISO-8601
         started_at: str | None = None
         if started_at_raw and len(started_at_raw) == 16:  # YYYYMMDDTHHMMSSz
@@ -138,7 +138,7 @@ async def list_runs(
                 started_at = started_at_raw
         results.append(RunSummary(
             run_id=run_id,
-            skill_name=skill_name,
+            actor=actor,
             started_at=started_at,
         ))
     return results

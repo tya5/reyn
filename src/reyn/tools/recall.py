@@ -178,7 +178,7 @@ async def _handle_recall(args: Mapping[str, Any], ctx: ToolContext) -> ToolResul
                 else PermissionDecl()
             ),
             permission_resolver=ctx.permission_resolver,
-            skill_name="",
+            actor="",
             subscribers=getattr(ctx.events, "subscribers", []),
             # #1673: thread the config-aware resolver so this OpContext is never
             # resolver=None (the bug-class invariant). recall uses op.embedding_model

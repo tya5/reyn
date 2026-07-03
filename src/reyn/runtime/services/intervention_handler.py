@@ -87,8 +87,8 @@ def _iv_meta(iv: UserIntervention) -> dict:
     if iv.run_id:
         out["run_id"] = iv.run_id
         out["run_id_short"] = iv.run_id[-4:] if iv.run_id else ""
-    if iv.skill_name:
-        out["skill_name"] = iv.skill_name
+    if iv.actor:
+        out["actor"] = iv.actor
     if iv.choices:
         out["choices"] = [
             {"id": c.id, "label": c.label, "hotkey": c.hotkey}
@@ -241,7 +241,7 @@ class InterventionHandler:
             from reyn.security.content_guard import fence_if_enabled
             history_text = fence_if_enabled(text, self._threat_scan)
         meta = {
-            "answered_skill": iv.skill_name or "",
+            "answered_skill": iv.actor or "",
             "answered_run_id": iv.run_id or "",
             "intervention_id": iv.id,
             "intervention_kind": iv.kind,
@@ -259,7 +259,7 @@ class InterventionHandler:
             intervention_id=iv.id,
             kind=iv.kind,
             run_id=iv.run_id,
-            skill=iv.skill_name,
+            skill=iv.actor,
             choice_id=choice.id if choice else None,
             answer_text=text if not iv.choices else "",
         )

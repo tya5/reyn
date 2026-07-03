@@ -49,7 +49,7 @@ def _make_ctx(
     *,
     resolver: PermissionResolver | None,
     decl: PermissionDecl | None = None,
-    skill_name: str = "test_skill",
+    actor: str = "test_skill",
 ) -> OpContext:
     ws = Workspace(events=events)
     return OpContext(
@@ -57,7 +57,7 @@ def _make_ctx(
         events=events,
         permission_decl=decl or PermissionDecl(),
         permission_resolver=resolver,
-        skill_name=skill_name,
+        actor=actor,
     )
 
 

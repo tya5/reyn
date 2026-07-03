@@ -61,7 +61,7 @@ async def test_index_drop_records_generation_full_sources(tmp_path):
         events=_Events(),
         permission_decl=None,
         permission_resolver=None,  # no gate in this unit-test context
-        skill_name="test",
+        actor="test",
         intervention_bus=None,
         subscribers=[],
         state_log=state_log,

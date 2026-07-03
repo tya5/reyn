@@ -17,9 +17,9 @@ Approval choices (shown once at startup before execution starts):
   [r]ecursive from parent      — persist approval for the parent directory + skill (covers all files under it)
   [N]o                         — deny
 
-Approval keys are skill-scoped to prevent external skill privilege escalation:
-  "{skill_name}/file.write/{path}"   (just_path)
-  "{skill_name}/file.write/{dir}/"   (recursive, trailing slash signals recursive)
+Approval keys are actor-scoped to prevent external-actor privilege escalation:
+  "{actor}/file.write/{path}"   (just_path)
+  "{actor}/file.write/{dir}/"   (recursive, trailing slash signals recursive)
 
 Config pre-approval (reyn.yaml / reyn.local.yaml):
   permissions:
@@ -647,7 +647,7 @@ class PermissionResolver:
 
     # ── File access approval (read + write) ───────────────────────────────────
 
-    def _is_path_approved_for(self, path: str, skill_name: str, kind: str) -> bool:
+    def _is_path_approved_for(self, path: str, actor: str, kind: str) -> bool:
         """Return True if path is covered by any saved/session approval for this skill+kind.
 
         kind is "file.read" or "file.write".
@@ -655,7 +655,7 @@ class PermissionResolver:
         base = self._project_root
         p = Path(path).expanduser()
         p_resolved = (base / p).resolve() if not p.is_absolute() else p.resolve()
-        prefix = f"{skill_name}/{kind}/"
+        prefix = f"{actor}/{kind}/"
         combined = {**self._saved, **self._session}
         for key, approved in combined.items():
             if not approved or not key.startswith(prefix):
@@ -684,8 +684,8 @@ class PermissionResolver:
         return False
 
     # Backwards-compatible alias used by older write-class call sites.
-    def _is_path_approved(self, path: str, skill_name: str) -> bool:
-        return self._is_path_approved_for(path, skill_name, "file.write")
+    def _is_path_approved(self, path: str, actor: str) -> bool:
+        return self._is_path_approved_for(path, actor, "file.write")
 
     def _resolve_for_offload(self, path: str) -> str:
         """Resolve ``path`` to an absolute string (same convention as the gate)."""
@@ -716,12 +716,12 @@ class PermissionResolver:
         live here — a single source both gates call, so the offload-grant
         decision cannot diverge (the merged D12 bug: only one gate had it). The
         per-skill path-approval term differs (is_read_allowed guards it on a
-        non-empty skill_name) and stays inline in each gate.
+        non-empty actor) and stays inline in each gate.
         """
         return self._is_config_approved("file.read") or self._is_offload_read_granted(path)
 
     def _is_host_approved_for(
-        self, host: str, skill_name: str, kind: str = "http.get",
+        self, host: str, actor: str, kind: str = "http.get",
     ) -> bool:
         """Return True if ``host`` is covered by a saved/session approval.
 
@@ -730,13 +730,13 @@ class PermissionResolver:
         :meth:`_is_path_approved_for` but skips the filesystem
         resolution because hosts are network identifiers, not paths.
         """
-        if not skill_name or not host:
+        if not actor or not host:
             return False
-        key = f"{skill_name}/{kind}/{host}"
+        key = f"{actor}/{kind}/{host}"
         return bool(self._saved.get(key) or self._session.get(key))
 
     def session_approve_path(
-        self, path: str, skill_name: str, kind: str, recursive: bool = False,
+        self, path: str, actor: str, kind: str, recursive: bool = False,
     ) -> None:
         """Mark `path` as approved for this session only (not persisted).
 
@@ -756,10 +756,10 @@ class PermissionResolver:
         p = str(raw.resolve() if raw.is_absolute() else (self._project_root / raw).resolve())
         if recursive:
             p = p.rstrip("/") + "/"
-        self._session[f"{skill_name}/{kind}/{p}"] = True
+        self._session[f"{actor}/{kind}/{p}"] = True
 
     def session_approve_host(
-        self, host: str, skill_name: str, kind: str = "http.get",
+        self, host: str, actor: str, kind: str = "http.get",
     ) -> None:
         """Mark ``host`` as approved for this session only (not persisted).
 
@@ -770,12 +770,12 @@ class PermissionResolver:
         and operator-startup code can pre-seed approvals via this public
         surface instead of mutating ``_session`` directly.
         """
-        if not skill_name or not host:
+        if not actor or not host:
             return
-        self._session[f"{skill_name}/{kind}/{host}"] = True
+        self._session[f"{actor}/{kind}/{host}"] = True
 
     async def _prompt_file_access(
-        self, path: str, scope: str, skill_name: str, kind: str, bus: RequestBus,
+        self, path: str, scope: str, actor: str, kind: str, bus: RequestBus,
     ) -> bool:
         """Prompt the user to approve a file access. Returns True if approved.
 
@@ -810,16 +810,16 @@ class PermissionResolver:
         # operator happened to pick [r] — the declared recursive intent was not honored (skill_builder).
         affirmative_key = recursive_target if scope == "recursive" else path
         if choice == YES:
-            self._session[f"{skill_name}/{kind}/{affirmative_key}"] = True
+            self._session[f"{actor}/{kind}/{affirmative_key}"] = True
             return True
         if choice == JUST_PATH:
-            self._persist(f"{skill_name}/{kind}/{affirmative_key}", True)
+            self._persist(f"{actor}/{kind}/{affirmative_key}", True)
             return True
         if choice == RECURSIVE:
-            self._persist(f"{skill_name}/{kind}/{recursive_target}", True)
+            self._persist(f"{actor}/{kind}/{recursive_target}", True)
             return True
         # NO or unknown → deny (session-only)
-        self._session[f"{skill_name}/{kind}/{path}"] = False
+        self._session[f"{actor}/{kind}/{path}"] = False
         return False
 
     # ── Public check methods ──────────────────────────────────────────────────
@@ -828,7 +828,7 @@ class PermissionResolver:
         self,
         decl: PermissionDecl,
         path: str,
-        skill_name: str = "",
+        actor: str = "",
         *,
         sandbox_policy: "SandboxPolicy | None" = None,
         bus: "RequestBus | None" = None,
@@ -865,7 +865,7 @@ class PermissionResolver:
             # #1383: config + offload grant via the shared base (kept in sync with
             # is_read_allowed); per-skill path-approval inline.
             return self._read_base_approved(str(value)) or self._is_path_approved_for(
-                str(value), skill_name, "file.read"
+                str(value), actor, "file.read"
             )
 
         if EffectivePermission([
@@ -876,7 +876,7 @@ class PermissionResolver:
 
         # JIT ask: outside zone, not yet approved. Mirrors require_http_get wildcard path.
         if bus is not None:
-            if await self._prompt_file_access(path, "just_path", skill_name, "file.read", bus):
+            if await self._prompt_file_access(path, "just_path", actor, "file.read", bus):
                 return
 
         raise PermissionError(
@@ -892,7 +892,7 @@ class PermissionResolver:
         self,
         decl: PermissionDecl,
         path: str,
-        skill_name: str = "",
+        actor: str = "",
         *,
         sandbox_policy: "SandboxPolicy | None" = None,
         bus: "RequestBus | None" = None,
@@ -927,7 +927,7 @@ class PermissionResolver:
 
         def _approved(axis: object, value: object) -> bool:
             return self._is_config_approved("file.write") or self._is_path_approved_for(
-                str(value), skill_name, "file.write"
+                str(value), actor, "file.write"
             )
 
         if EffectivePermission([
@@ -938,7 +938,7 @@ class PermissionResolver:
 
         # JIT ask: outside zone, not yet approved. Mirrors require_http_get wildcard path.
         if bus is not None:
-            if await self._prompt_file_access(path, "just_path", skill_name, "file.write", bus):
+            if await self._prompt_file_access(path, "just_path", actor, "file.write", bus):
                 return
 
         raise PermissionError(
@@ -956,7 +956,7 @@ class PermissionResolver:
         decl: PermissionDecl,
         host: str,
         bus: "RequestBus | None" = None,
-        skill_name: str = "",
+        actor: str = "",
         *,
         sandbox_policy: "SandboxPolicy | None" = None,
     ) -> None:
@@ -1037,7 +1037,7 @@ class PermissionResolver:
 
         # Persisted per-host approval (from a prior interactive
         # runtime prompt, specific or wildcard).
-        if skill_name and self._is_host_approved_for(host, skill_name, "http.get"):
+        if actor and self._is_host_approved_for(host, actor, "http.get"):
             return
         # Legacy session/saved ``web.fetch`` approval still authorises
         # every host while the deprecation window is open.
@@ -1074,7 +1074,7 @@ class PermissionResolver:
                     f"or run interactively so the prompt can collect "
                     f"approvals)."
                 )
-            approval_key = f"{skill_name}/http.get/{host}"
+            approval_key = f"{actor}/http.get/{host}"
             label = (
                 f"web fetch from host: {host!r}"
                 if has_wildcard
@@ -1096,7 +1096,7 @@ class PermissionResolver:
         # while we wait for them to declare ``http.get`` explicitly.
         import warnings
         warnings.warn(
-            f"HTTP access to host {host!r} from skill {skill_name!r} "
+            f"HTTP access to host {host!r} from skill {actor!r} "
             f"without an http.get declaration. This will become a hard "
             f"error in a future release. Add to skill.md:\n"
             f"  permissions:\n"
@@ -1123,7 +1123,7 @@ class PermissionResolver:
             )
 
     def require_secret_write(
-        self, decl: PermissionDecl, key: str, skill_name: str = "",
+        self, decl: PermissionDecl, key: str, actor: str = "",
     ) -> None:
         """Raise PermissionError if secret-store write of ``key`` is not declared.
 
@@ -1171,7 +1171,7 @@ class PermissionResolver:
             f"      - '*'\n"
         )
 
-    def is_read_allowed(self, path: str, skill_name: str = "") -> bool:
+    def is_read_allowed(self, path: str, actor: str = "") -> bool:
         """Check if reading `path` is allowed.
 
         Allowed if: the path is in the default read zone (under CWD), OR config
@@ -1194,10 +1194,10 @@ class PermissionResolver:
             # source as require_file_read → the offload decision cannot diverge;
             # the merged D12 bug was this gate lacking the offload grant, leaving
             # astropy-13236 denied at Workspace._resolve_read). Per-skill
-            # path-approval inline (guarded on a non-empty skill_name here).
+            # path-approval inline (guarded on a non-empty actor here).
             return self._read_base_approved(str(value)) or (
-                bool(skill_name)
-                and self._is_path_approved_for(str(value), skill_name, "file.read")
+                bool(actor)
+                and self._is_path_approved_for(str(value), actor, "file.read")
             )
 
         return EffectivePermission([
@@ -1205,7 +1205,7 @@ class PermissionResolver:
                        file_zone_root=self._file_zone_root)  # #1414
         ]).allows(CapabilityAxis.FILE_READ, path)
 
-    def is_write_allowed(self, path: str, skill_name: str = "") -> bool:
+    def is_write_allowed(self, path: str, actor: str = "") -> bool:
         """Check if writing `path` is allowed.
 
         Allowed if: default write zone, OR config grants `file.write: allow`, OR
@@ -1226,8 +1226,8 @@ class PermissionResolver:
 
         def _approved(axis: object, value: object) -> bool:
             return self._is_config_approved("file.write") or (
-                bool(skill_name)
-                and self._is_path_approved_for(str(value), skill_name, "file.write")
+                bool(actor)
+                and self._is_path_approved_for(str(value), actor, "file.write")
             )
 
         return EffectivePermission([
@@ -1300,7 +1300,7 @@ class PermissionResolver:
     async def require_python(
         self, decl: PermissionDecl, module: str, function: str,
         bus: "RequestBus | None",
-        skill_name: str = "",
+        actor: str = "",
     ) -> PythonPermission:
         """Resolve which python permission entry applies; raise if denied.
 
@@ -1342,7 +1342,7 @@ class PermissionResolver:
                     f"Unsafe python runs unrestricted user code; pass the flag "
                     f"only when you trust the skill source."
                 )
-            key = f"{skill_name}/python.unsafe/{module}:{function}"
+            key = f"{actor}/python.unsafe/{module}:{function}"
             # Non-interactive + unsafe_python_allowed=True (stdlib skills) must
             # auto-approve without a prompt.  Pre-seed the session key so _approve()
             # returns True instead of auto-denying the non-interactive branch.
@@ -1359,7 +1359,7 @@ class PermissionResolver:
                 )
             return perm
         # safe mode
-        key = f"{skill_name}/python.safe/{module}:{function}"
+        key = f"{actor}/python.safe/{module}:{function}"
         # Mirror the unsafe-mode stdlib auto-allow path. Safe mode is more
         # restricted (per _python_allowlist.py), so any context that auto-allows
         # unsafe MUST auto-allow safe. Without this, stdlib skills declaring

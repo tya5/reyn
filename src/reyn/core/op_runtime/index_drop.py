@@ -53,7 +53,7 @@ async def handle(
         sandbox_policy = sandbox_policy_from_ctx(ctx)
         sources_yaml = workspace_root / ".reyn" / "config" / "index" / "sources.yaml"
         await ctx.permission_resolver.require_file_write(
-            ctx.permission_decl, str(sources_yaml), ctx.skill_name,
+            ctx.permission_decl, str(sources_yaml), ctx.actor,
             sandbox_policy=sandbox_policy,
         )
         # #1199 S3.4 Part1: gate the actual deletion target — the source dir —
@@ -62,7 +62,7 @@ async def handle(
         # host-direct; the gate fires before backend.drop opens/removes it.
         source_dir = workspace_root / ".reyn" / "cache" / "index" / op.source
         await ctx.permission_resolver.require_file_write(
-            ctx.permission_decl, str(source_dir), ctx.skill_name,
+            ctx.permission_decl, str(source_dir), ctx.actor,
             sandbox_policy=sandbox_policy,
         )
 

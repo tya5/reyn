@@ -72,7 +72,7 @@ async def _handle_compact(args: Mapping[str, Any], ctx: ToolContext) -> ToolResu
             events=ctx.events,
             permission_decl=PermissionDecl(),
             permission_resolver=ctx.permission_resolver,
-            skill_name="",
+            actor="",
             subscribers=getattr(ctx.events, "subscribers", []),
             # #1673: never resolver=None (the bug-class invariant). This minimal
             # path returns compaction_unavailable (no LLM call), but the uniform

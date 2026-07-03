@@ -99,7 +99,7 @@ async def _handle(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
             events=ctx.events,
             permission_decl=PermissionDecl(),
             permission_resolver=ctx.permission_resolver,
-            skill_name="",
+            actor="",
             subscribers=getattr(ctx.events, "subscribers", []),
             # #1673: never resolver=None (the bug-class invariant). web_fetch makes
             # no LLM call, but the uniform threading keeps the invariant provable.

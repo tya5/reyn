@@ -24,7 +24,7 @@ def _ctx(tmp_path: Path) -> OpContext:
     ev = EventLog()
     return OpContext(
         workspace=Workspace(events=ev, base_dir=tmp_path),
-        events=ev, permission_decl=PermissionDecl(), skill_name="t",
+        events=ev, permission_decl=PermissionDecl(), actor="t",
     )
 
 

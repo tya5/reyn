@@ -32,7 +32,7 @@ import yaml
 # Documented exemptions — keep in lock-step with python-safe-mode.md
 # ---------------------------------------------------------------------------
 #
-# Each entry: (skill_name, function_name).
+# Each entry: (actor, function_name).
 # Rationale for each is documented in the safe-mode concept page.
 # Adding an entry here is a deliberate decision — pair it with a doc update.
 
@@ -129,8 +129,8 @@ def _collect_unsafe_python_entries() -> set[tuple[str, str]]:
         fm = _parse_skill_md_frontmatter(skill_md)
         if fm is None:
             continue
-        skill_name = str(fm.get("name") or "")
-        if not skill_name:
+        actor = str(fm.get("name") or "")
+        if not actor:
             continue
         perms = fm.get("permissions") or {}
         for entry in perms.get("python") or []:
@@ -139,7 +139,7 @@ def _collect_unsafe_python_entries() -> set[tuple[str, str]]:
             if entry.get("mode") == "unsafe":
                 fn = str(entry.get("function") or "")
                 if fn:
-                    found.add((skill_name, fn))
+                    found.add((actor, fn))
     return found
 
 

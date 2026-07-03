@@ -59,9 +59,9 @@ class ChatInterventionBus:
     """``UserChannel`` implementation that routes through Session's
     outbox/inbox to the attached TUI listener.
 
-    One instance per skill spawn — captures `run_id` and a default `skill_name`
+    One instance per skill spawn — captures `run_id` and a default `actor`
     so the chat session can drop pending interventions when the spawn is
-    cancelled. Interventions emitted by ops carry their own `skill_name` from
+    cancelled. Interventions emitted by ops carry their own `actor` from
     `OpContext`; this bus only fills in `run_id` (which the OS layer doesn't
     have, since chat tracks runs separately from the runtime's run_id).
 
@@ -78,13 +78,13 @@ class ChatInterventionBus:
         self,
         session: "Session",
         run_id: str | None,
-        skill_name: str | None,
+        actor: str | None,
         *,
         channel_id: str | None = None,
     ) -> None:
         self._session = session
         self._run_id = run_id
-        self._skill_name = skill_name
+        self._actor = actor
         # issue #268 Phase 2 continuation: optional channel_id stamping.
         # Production wiring (= Session._build_intervention_bus_for_skill)
         # passes the session's canonical channel_id (e.g. "tui") so
@@ -122,8 +122,8 @@ class ChatInterventionBus:
             iv.origin_channel_id = self._channel_id
         if iv.run_id is None:
             iv.run_id = self._run_id
-        if not iv.skill_name:
-            iv.skill_name = self._skill_name
+        if not iv.actor:
+            iv.actor = self._actor
         # PR-intervention-link L6: short-circuit if a previous (crashed-then-
         # restored) run's intervention was already answered post-restart.
         # The L5 watcher buffered the answer keyed by run_id; the resuming

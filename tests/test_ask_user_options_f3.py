@@ -45,7 +45,7 @@ class _RecordingBus:
 
 
 def _ctx(bus) -> OpContext:
-    # ask_user's handler only reads events / intervention_bus / skill_name /
+    # ask_user's handler only reads events / intervention_bus / actor /
     # run_id / current_phase, so workspace + permission_decl are unused dummies.
     return OpContext(
         workspace=None, events=_RecordingEvents(),

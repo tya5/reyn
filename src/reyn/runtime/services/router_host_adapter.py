@@ -200,7 +200,7 @@ class RouterHostAdapter:
         # router-initiated tools that need the 4-layer approval flow
         # (web_fetch interactive prompt, mcp install / drop ask gates).
         # Session passes a factory that wraps ``ChatInterventionBus(
-        # session, run_id=None, skill_name="chat_router")``; tests can
+        # session, run_id=None, actor="chat_router")``; tests can
         # pass None and the OpContext gets ``intervention_bus=None`` (=
         # config-deny path still raises, interactive prompt path raises
         # the documented RuntimeError telling the caller a bus is needed).
@@ -1745,11 +1745,11 @@ class RouterHostAdapter:
         Public method (ADR-0026 Phase 3.5): the unified registry handlers
         in ``src/reyn/tools/`` delegate to op_runtime via this factory so
         the OpContext carries the operator-declared PermissionDecl and the
-        Workspace with ``skill_name="chat_router"``. Without this, handlers
+        Workspace with ``actor="chat_router"``. Without this, handlers
         would synthesize a ``PermissionDecl()`` empty default and op_runtime
         permission gates would deny operations.
 
-        Uses the injected events log and permission resolver. The skill_name
+        Uses the injected events log and permission resolver. The actor
         ``"chat_router"`` is used for permission key lookups. PermissionDecl
         is populated from the agent's effective permissions so that op_runtime
         layer permission checks actually gate access.

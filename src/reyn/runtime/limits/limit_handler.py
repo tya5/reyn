@@ -128,7 +128,7 @@ async def handle_limit_exceeded(
     prompt: str,
     detail: str = "",
     extension_amount: float = 1.0,
-    skill_name: str | None = None,
+    actor: str | None = None,
     non_interactive: bool = False,
 ) -> LimitDecision:
     """Generic safety-limit checkpoint dispatcher (FP-0005).
@@ -159,7 +159,7 @@ async def handle_limit_exceeded(
         detail: Optional second line of context (= specifics like
                 "Phase 'revise' visit count 25 / 25").
         extension_amount: How much to extend the counter by on approval.
-        skill_name: Optional skill name for /list / TUI display.
+        actor: Optional skill name for /list / TUI display.
 
     Returns:
         LimitDecision describing the outcome. Caller is responsible for
@@ -207,7 +207,7 @@ async def handle_limit_exceeded(
         detail=detail,
         choices=_yes_no_choices(),
         run_id=run_id,
-        skill_name=skill_name,
+        actor=actor,
     )
     try:
         if on_limit.ask_timeout_seconds > 0:

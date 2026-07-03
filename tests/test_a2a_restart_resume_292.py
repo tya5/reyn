@@ -118,7 +118,7 @@ def test_a2a_restart_resume_round_trip_ask_user(tmp_path: Path) -> None:
         "choices": [],
         "suggestions": [],
         "run_id": run_id,
-        "skill_name": "demo",
+        "actor": "demo",
         "id": iv_id,
         "origin_channel_id": f"a2a:{run_id}",  # stamped by A2A bus pre-crash
     }
@@ -160,7 +160,7 @@ def test_a2a_restart_resume_round_trip_ask_user(tmp_path: Path) -> None:
         # A fresh ChatInterventionBus simulates what a re-spawned skill
         # would do via its OpContext-injected bus.
         resumed_bus = ChatInterventionBus(
-            session, run_id=run_id, skill_name="demo",
+            session, run_id=run_id, actor="demo",
             channel_id=DEFAULT_CHAT_CHANNEL_ID,
         )
         # The skill emits a fresh iv (= it doesn't know about the
@@ -168,7 +168,7 @@ def test_a2a_restart_resume_round_trip_ask_user(tmp_path: Path) -> None:
         # circuits dispatch.
         fresh_iv = UserIntervention(
             kind="ask_user", prompt="What is your name?",
-            run_id=run_id, skill_name="demo",
+            run_id=run_id, actor="demo",
         )
         answer = await resumed_bus.deliver(fresh_iv)
         assert answer.text == "Alice"
@@ -205,7 +205,7 @@ def test_a2a_restart_resume_round_trip_with_choice_id(tmp_path: Path) -> None:
         ],
         "suggestions": [],
         "run_id": run_id,
-        "skill_name": "demo",
+        "actor": "demo",
         "id": iv_id,
         "origin_channel_id": f"a2a:{run_id}",
     }
@@ -236,7 +236,7 @@ def test_a2a_restart_resume_round_trip_with_choice_id(tmp_path: Path) -> None:
 
         # Skill resume picks it up unchanged.
         resumed_bus = ChatInterventionBus(
-            session, run_id=run_id, skill_name="demo",
+            session, run_id=run_id, actor="demo",
             channel_id=DEFAULT_CHAT_CHANNEL_ID,
         )
         fresh_iv = UserIntervention(
@@ -247,7 +247,7 @@ def test_a2a_restart_resume_round_trip_with_choice_id(tmp_path: Path) -> None:
                 InterventionChoice(id="always", label="[A]lways", hotkey="a"),
                 InterventionChoice(id="no", label="[N]o", hotkey="n"),
             ],
-            run_id=run_id, skill_name="demo",
+            run_id=run_id, actor="demo",
         )
         answer = await resumed_bus.deliver(fresh_iv)
         assert answer.text == "always"
@@ -295,7 +295,7 @@ def test_answer_pending_intervention_returns_false_when_future_done(
         "choices": [],
         "suggestions": [],
         "run_id": run_id,
-        "skill_name": "demo",
+        "actor": "demo",
         "id": iv_id,
     }
     snap = _build_post_crash_snapshot(

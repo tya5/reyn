@@ -23,11 +23,11 @@ EVENT_AUDIT_REQUIREMENTS: dict[str, frozenset[str]] = {
     "llm_called": frozenset({"model"}),
     "llm_response_received": frozenset({"prompt_tokens", "completion_tokens", "cost_usd"}),
     # Permission events (op_runtime/__init__.py)
-    "permission_granted": frozenset({"run_id", "skill", "phase"}),
-    "permission_denied": frozenset({"run_id", "skill", "phase"}),
+    "permission_granted": frozenset({"run_id", "actor", "phase"}),
+    "permission_denied": frozenset({"run_id", "actor", "phase"}),
     # User intervention (op_runtime/ask_user.py)
-    "user_intervention_requested": frozenset({"run_id", "skill", "intervention_id"}),
-    "user_intervention_received": frozenset({"run_id", "skill", "intervention_id"}),
+    "user_intervention_requested": frozenset({"run_id", "actor", "intervention_id"}),
+    "user_intervention_received": frozenset({"run_id", "actor", "intervention_id"}),
     # MCP tool-search deferred loading (chat/router_tools.py — FP-0024 Component D)
     # Emitted by the router when the LLM invokes the tool_search_tool meta-tool.
     # mcp_search_invoked: LLM called tool_search; query + result count recorded.

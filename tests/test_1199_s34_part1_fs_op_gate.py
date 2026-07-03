@@ -127,7 +127,7 @@ def _ctx(tmp_path: Path, *, sandbox_policy: dict | None) -> OpContext:
     )
     return OpContext(
         workspace=ws, events=events, permission_decl=PermissionDecl(),
-        permission_resolver=resolver, skill_name="s",
+        permission_resolver=resolver, actor="s",
         default_sandbox_policy=sandbox_policy,
     )
 

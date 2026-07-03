@@ -113,7 +113,7 @@ class RouterCallerState:
     # OpContext factory (= for file / mcp / web handlers that delegate
     # to op_runtime).  Bound by RouterLoop to ``host.make_router_op_context``
     # so handlers can build a permission-aware OpContext (= populated
-    # PermissionDecl + Workspace + skill_name="chat_router") matching the
+    # PermissionDecl + Workspace + actor="chat_router") matching the
     # legacy router branch behavior.  When None, handlers fall back to
     # minimal OpContext synthesis (= test sites / phase-side).
     op_context_factory: Callable[[], Any] | None = None

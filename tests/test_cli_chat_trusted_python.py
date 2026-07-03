@@ -117,7 +117,7 @@ def test_unsafe_python_blocked_without_flag(tmp_path):
     bus = _AutoApproveInterventionBus()
 
     with pytest.raises(PermissionError, match="--allow-unsafe-python"):
-        _run(resolver.require_python(decl, "my.module", "run", bus, skill_name="s"))
+        _run(resolver.require_python(decl, "my.module", "run", bus, actor="s"))
 
 
 def test_unsafe_python_allowed_with_flag(tmp_path):
@@ -129,5 +129,5 @@ def test_unsafe_python_allowed_with_flag(tmp_path):
     decl = _make_unsafe_decl()
     bus = _AutoApproveInterventionBus()
 
-    perm = _run(resolver.require_python(decl, "my.module", "run", bus, skill_name="s"))
+    perm = _run(resolver.require_python(decl, "my.module", "run", bus, actor="s"))
     assert perm.mode == "unsafe"

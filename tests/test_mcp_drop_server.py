@@ -150,7 +150,7 @@ def _make_op_ctx(
         events=events or _CapturingEvents(),
         permission_decl=effective_decl,
         permission_resolver=resolver,
-        skill_name="test_mcp_drop_server",
+        actor="test_mcp_drop_server",
         intervention_bus=bus,
         subscribers=[],
     )

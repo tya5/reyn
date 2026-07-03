@@ -82,7 +82,7 @@ class UserIntervention:
     # a closed-set selector). Backward-compatible: existing callers leave it "".
     input_type: str = ""
     run_id: str | None = None
-    skill_name: str | None = None
+    actor: str | None = None
     # issue #268: identifies the channel that initiated this intervention
     # (= "tui:<session>" / "a2a:<run_id>" / etc.). When the origin channel
     # closes while the iv is unresolved, the iv becomes **stalled** in
@@ -129,7 +129,7 @@ class UserIntervention:
             ],
             "suggestions": list(self.suggestions),
             "run_id": self.run_id,
-            "skill_name": self.skill_name,
+            "actor": self.actor,
             "id": self.id,
         }
         if self.input_type:
@@ -160,7 +160,7 @@ class UserIntervention:
             suggestions=list(data.get("suggestions") or []),
             input_type=data.get("input_type", ""),
             run_id=data.get("run_id"),
-            skill_name=data.get("skill_name"),
+            actor=data.get("actor"),
             origin_channel_id=data.get("origin_channel_id"),
             id=data.get("id") or uuid.uuid4().hex,
         )
@@ -286,7 +286,7 @@ class StdinInterventionBus:
     @staticmethod
     def _render_prompt(iv: UserIntervention) -> str:
         lines: list[str] = []
-        prefix = f"[{iv.skill_name}] " if iv.skill_name else ""
+        prefix = f"[{iv.actor}] " if iv.actor else ""
         lines.append(f"{prefix}{iv.prompt}")
         if iv.detail:
             lines.append(f"  {iv.detail}")

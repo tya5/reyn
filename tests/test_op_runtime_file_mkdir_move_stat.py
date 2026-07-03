@@ -38,7 +38,7 @@ def _make_ctx(
         events=events,
         permission_decl=permission_decl or PermissionDecl(),
         permission_resolver=permission_resolver,
-        skill_name="test_skill",
+        actor="test_skill",
     )
 
 

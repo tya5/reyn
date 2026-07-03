@@ -27,17 +27,17 @@ from reyn.interfaces.repl.renderer import (
 
 
 def test_meta_prefix_both_skill_and_run_id() -> None:
-    """Tier 2: skill_name + run_id_short → '[skill#abcd] ' prefix."""
-    assert _meta_prefix({"skill_name": "research", "run_id_short": "ab12"}) == "[research#ab12] "
+    """Tier 2: actor + run_id_short → '[skill#abcd] ' prefix."""
+    assert _meta_prefix({"actor": "research", "run_id_short": "ab12"}) == "[research#ab12] "
 
 
 def test_meta_prefix_skill_only() -> None:
-    """Tier 2: skill_name without run_id_short → '[skill] ' prefix."""
-    assert _meta_prefix({"skill_name": "finder"}) == "[finder] "
+    """Tier 2: actor without run_id_short → '[skill] ' prefix."""
+    assert _meta_prefix({"actor": "finder"}) == "[finder] "
 
 
 def test_meta_prefix_run_id_only() -> None:
-    """Tier 2: run_id_short without skill_name → '[#abcd] ' prefix."""
+    """Tier 2: run_id_short without actor → '[#abcd] ' prefix."""
     assert _meta_prefix({"run_id_short": "cd34"}) == "[#cd34] "
 
 
@@ -47,7 +47,7 @@ def test_meta_prefix_empty_meta() -> None:
 
 
 def test_meta_prefix_unrelated_keys_ignored() -> None:
-    """Tier 2: keys other than skill_name/run_id_short produce empty string."""
+    """Tier 2: keys other than actor/run_id_short produce empty string."""
     assert _meta_prefix({"status": "done", "turn_id": "42"}) == ""
 
 

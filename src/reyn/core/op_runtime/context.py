@@ -38,7 +38,7 @@ class OpContext:
     # Permissions
     permission_decl: "PermissionDecl"
     permission_resolver: "PermissionResolver | None" = None
-    skill_name: str = ""
+    actor: str = ""
 
     model: str = "standard"
     resolver: "ModelResolver | None" = None

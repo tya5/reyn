@@ -75,7 +75,7 @@ async def test_real_mcp_drop_records_generation_and_rewind_restores(tmp_path):
             file_write=[{"path": canonical, "scope": "just_path"}],
         ),
         permission_resolver=resolver,
-        skill_name="test",
+        actor="test",
         intervention_bus=None,
         subscribers=[],
         state_log=state_log,  # the PR-A2 threading under test

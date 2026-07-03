@@ -95,7 +95,7 @@ def test_web_resolver_allows_unsafe_python_when_config_set(tmp_path):
     bus = _AutoApproveInterventionBus()
 
     # Must not raise — unsafe step is allowed.
-    perm = _run(resolver.require_python(decl, "my.module", "run", bus, skill_name="s"))
+    perm = _run(resolver.require_python(decl, "my.module", "run", bus, actor="s"))
     assert perm.mode == "unsafe"
 
 
@@ -126,4 +126,4 @@ def test_web_resolver_denies_unsafe_python_when_config_absent(tmp_path):
     bus = _AutoApproveInterventionBus()
 
     with pytest.raises(PermissionError):
-        _run(resolver.require_python(decl, "my.module", "run", bus, skill_name="s"))
+        _run(resolver.require_python(decl, "my.module", "run", bus, actor="s"))

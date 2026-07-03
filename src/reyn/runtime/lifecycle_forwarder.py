@@ -289,7 +289,7 @@ class ChatLifecycleForwarder:
     ) -> None:
         """Shared enqueue path for the three tool-call lifecycle outbox kinds.
 
-        Session-level forwarder has no own ``run_id`` / ``skill_name`` to
+        Session-level forwarder has no own ``run_id`` / ``actor`` to
         contribute — every meta field is sourced from the event payload
         itself. Consumers (= the conv pane's ``_on_tool_call_*``) read
         ``meta["op_id"]`` (= the deterministic ``args_hash``) to pair

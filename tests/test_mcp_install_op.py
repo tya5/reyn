@@ -172,7 +172,7 @@ def _make_op_ctx(
         events=events,
         permission_decl=decl,
         permission_resolver=resolver,
-        skill_name="mcp_install_test",
+        actor="mcp_install_test",
         intervention_bus=bus,
     )
 

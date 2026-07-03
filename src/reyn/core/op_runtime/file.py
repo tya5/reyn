@@ -169,7 +169,7 @@ def _read_inline_cap(ctx: OpContext) -> int:
             model_str = ctx.resolver.resolve(ctx.model).model
         except Exception:
             model_str = None
-    return control_ir_inline_cap(model_str, events=ctx.events, phase=ctx.skill_name)
+    return control_ir_inline_cap(model_str, events=ctx.events, phase=ctx.actor)
 
 
 def _resolve_for_gate(ctx: OpContext, path_str: str) -> str:
@@ -209,20 +209,20 @@ async def handle(op: FileIROp, ctx: OpContext) -> dict:
         if op.op in _WRITE_OPS:
             write_target = op.output_path if op.op == "regenerate_index" and op.output_path else op.path
             await ctx.permission_resolver.require_file_write(
-                ctx.permission_decl, _resolve_for_gate(ctx, write_target), ctx.skill_name,
+                ctx.permission_decl, _resolve_for_gate(ctx, write_target), ctx.actor,
                 sandbox_policy=_sandbox, bus=ctx.intervention_bus,
             )
             # move also writes to dest_path — gate both source (= the file
             # being effectively deleted) and dest (= the file being created).
             if op.op == "move" and op.dest_path:
                 await ctx.permission_resolver.require_file_write(
-                    ctx.permission_decl, _resolve_for_gate(ctx, op.dest_path), ctx.skill_name,
+                    ctx.permission_decl, _resolve_for_gate(ctx, op.dest_path), ctx.actor,
                     sandbox_policy=_sandbox, bus=ctx.intervention_bus,
                 )
         elif op.op in _READ_OPS:
             # read / glob / grep / stat — gate against read scope
             await ctx.permission_resolver.require_file_read(
-                ctx.permission_decl, _resolve_for_gate(ctx, op.path), ctx.skill_name,
+                ctx.permission_decl, _resolve_for_gate(ctx, op.path), ctx.actor,
                 sandbox_policy=_sandbox, bus=ctx.intervention_bus,
             )
 

@@ -333,7 +333,7 @@ def tool_contextually_denied(
 
 def skill_allowed(
     allowed_skills: "object | None",
-    skill_name: str,
+    actor: str,
     *,
     contextual: "ContextualPermission | None" = None,
 ) -> bool:
@@ -360,7 +360,7 @@ def skill_allowed(
     ]
     if contextual is not None:
         layers.append(ContextualLayer(contextual))
-    return EffectivePermission(layers).allows(CapabilityAxis.SKILL, skill_name)
+    return EffectivePermission(layers).allows(CapabilityAxis.SKILL, actor)
 
 
 def _path_under(path_str: str, root: str) -> bool:

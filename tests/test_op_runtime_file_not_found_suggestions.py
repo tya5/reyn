@@ -28,7 +28,7 @@ def _make_ctx(tmp_path: Path) -> OpContext:
         events=events,
         permission_decl=PermissionDecl(),
         permission_resolver=None,  # skip op-level perm; covered in test_op_runtime_file_permissions.py
-        skill_name="test_skill",
+        actor="test_skill",
     )
 
 

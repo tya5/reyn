@@ -218,13 +218,13 @@ def _make_op_context(config_permissions: dict, tmp_path: Path):
         project_root=tmp_path,
         interactive=False,  # no prompts — config is the only gate
     )
-    workspace = Workspace(events=events, permission_resolver=resolver, skill_name="test")
+    workspace = Workspace(events=events, permission_resolver=resolver, actor="test")
     return OpContext(
         workspace=workspace,
         events=events,
         permission_decl=PermissionDecl(),
         permission_resolver=resolver,
-        skill_name="test",
+        actor="test",
     )
 
 

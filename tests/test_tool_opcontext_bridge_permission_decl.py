@@ -61,7 +61,7 @@ def _build_phase_state(perm_decl: PermissionDecl) -> PhaseCallerState:
         events=events,
         permission_decl=perm_decl,
         permission_resolver=None,
-        skill_name="test_skill",
+        actor="test_skill",
     )
     return PhaseCallerState(
         phase_name="test_phase",
@@ -112,7 +112,7 @@ def _shell_legacy_ctx(ctx: ToolContext) -> OpContext:
             else PermissionDecl()
         ),
         permission_resolver=ctx.permission_resolver,
-        skill_name="",
+        actor="",
     )
 
 

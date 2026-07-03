@@ -85,7 +85,7 @@ def _ws(tmp_path: Path, backend, state_dir: Path, *, grant: Path | None = None) 
         base_dir=repo,
         state_dir=state_dir,
         permission_resolver=perm,
-        skill_name="swe_bench",
+        actor="swe_bench",
         environment_backend=backend,
     )
 

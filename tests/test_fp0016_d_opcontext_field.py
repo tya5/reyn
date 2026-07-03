@@ -36,7 +36,7 @@ class _StubScopedSecretStore:
 
 def _make_context(**kwargs: object) -> OpContext:
     """Construct a minimal real OpContext for test use."""
-    ws = Workspace(events=EventLog(), skill_name="test_skill")
+    ws = Workspace(events=EventLog(), actor="test_skill")
     return OpContext(
         workspace=ws,
         events=EventLog(),

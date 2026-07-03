@@ -157,7 +157,7 @@ def test_state_dir_artifacts_not_routed_through_repo_backend(tmp_path: Path) -> 
     backend = _RecordingBackend()
     ws = Workspace(events=EventLog(), base_dir=tmp_path, environment_backend=backend)
 
-    handle = ws.store_artifact("p", {"type": "demo", "data": {"v": 1}}, skill_name="s")
+    handle = ws.store_artifact("p", {"type": "demo", "data": {"v": 1}}, actor="s")
     # store_artifact wrote the file without going through the repo-FS backend.
     assert "write_bytes" not in backend.calls
     assert ws.resolve_artifact_handle(handle).is_file()

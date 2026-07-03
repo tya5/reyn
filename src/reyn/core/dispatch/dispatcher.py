@@ -33,7 +33,7 @@ class DispatchContext:
     Attributes:
         caller_kind: "router" for chat agent main loop, "skill_phase" for
             skills' op execution. Used in event taxonomy for filtering.
-        caller_id: agent_name (router) or f"{skill_name}.{phase_name}"
+        caller_id: agent_name (router) or f"{actor}.{phase_name}"
             (skill_phase). Identifies the audit subject.
         chain_id: optional chain id for multi-hop tracing (PR14).
         tool_catalog: dict[str, dict] mapping tool name → tool definition

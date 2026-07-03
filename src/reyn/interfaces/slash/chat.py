@@ -20,7 +20,7 @@ async def list_cmd(session: "Session", args: str) -> None:
             short = (iv.run_id[-4:] if iv.run_id else "----")
             lines.append(
                 f"  {iv.id[:8]}  {iv.kind:<20}  "
-                f"{iv.skill_name or '?'}#{short}"
+                f"{iv.actor or '?'}#{short}"
             )
     await reply(session, "\n".join(lines))
 

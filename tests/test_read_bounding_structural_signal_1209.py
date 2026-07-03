@@ -40,7 +40,7 @@ def _make_ctx(tmp_path: Path) -> OpContext:
         workspace=ws,
         events=events,
         permission_decl=PermissionDecl(),
-        skill_name="test_skill",
+        actor="test_skill",
     )
 
 

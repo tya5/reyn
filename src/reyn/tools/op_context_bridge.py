@@ -62,15 +62,15 @@ def build_legacy_op_context(ctx: "ToolContext") -> Any:
             else PermissionDecl()
         ),
         permission_resolver=ctx.permission_resolver,
-        # #2415 root 4: propagate skill_name + intervention_bus from the phase
+        # #2415 root 4: propagate actor + intervention_bus from the phase
         # OpContext so permission checks key correctly on the calling skill's
         # approval prefix (``{skill}/file.write/{path}``) and the JIT prompt
-        # fires when approval is needed. Without this, skill_name="" → prefix
+        # fires when approval is needed. Without this, actor="" → prefix
         # ``/file.write/`` → no saved approval matches → PermissionError even
         # when the operator already approved the path.  intervention_bus=None
         # suppressed the JIT fallback prompt, giving no recovery path.
-        skill_name=(
-            phase_op_ctx.skill_name if phase_op_ctx is not None else ""
+        actor=(
+            phase_op_ctx.actor if phase_op_ctx is not None else ""
         ),
         intervention_bus=(
             phase_op_ctx.intervention_bus if phase_op_ctx is not None else None

@@ -152,7 +152,7 @@ def _make_ctx(tmp_path: Path, threat_scan: object | None) -> OpContext:
         events=EventLog(),
         permission_decl=decl,
         permission_resolver=resolver,
-        skill_name="mcp_install_threat_test",
+        actor="mcp_install_threat_test",
         intervention_bus=_AutoApproveBus(),
         threat_scan=threat_scan,
     )
