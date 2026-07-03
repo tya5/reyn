@@ -100,6 +100,20 @@ def test_task_list_result_shows_count() -> None:
     ) == "2 tasks"
 
 
+def test_dict_with_error_key_shows_error_not_raw_repr() -> None:
+    """Tier 2: a dict with an 'error' key shows the error message, not raw repr.
+
+    `file__list` outside the project returns `{'error': 'glob not permitted…'}`.
+    The summarizer must surface the error string, not dump the raw dict.
+    """
+    out = summarize_tool_result(
+        "file__list",
+        {"error": "glob not permitted: '/tmp/*' (outside project, no read permission)"},
+    )
+    assert "glob not permitted" in out
+    assert "{" not in out, "raw dict repr must not leak into ⎿ row"
+
+
 def test_dict_with_status_shows_status() -> None:
     """Tier 2: an opaque dict with a status field shows the status."""
     assert summarize_tool_result("mcp__call", {"status": "ok", "x": 1}) == "ok"

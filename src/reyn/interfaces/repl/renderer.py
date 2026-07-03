@@ -382,6 +382,9 @@ def _summarize_result(tool, result) -> str:
         if isinstance(tasks, list):
             n = len(tasks)
             return f"{n} task{'s' if n != 1 else ''}"
+        error = result.get("error")
+        if isinstance(error, str):
+            return _short(error, 80)
         if status:
             return str(status)
     return _short(result, 80)
