@@ -1,4 +1,4 @@
-"""Op runtime — shared backend for executing ControlIROp.
+"""Op runtime — shared backend for executing Op.
 
 The router/chat tool path dispatches through `execute_op` here. The op kind
 catalog and per-op semantics live in this package; the caller decides *when*
@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from reyn.schemas.models import ControlIROp
+from reyn.schemas.models import Op
 
 from .context import OpContext
 from .result import OpDenied, OpResult, OpSkipped
@@ -25,10 +25,10 @@ class OpDispatchError(RuntimeError):
 
 
 async def execute_op(
-    op: ControlIROp,
+    op: Op,
     ctx: OpContext,
 ) -> dict:
-    """Dispatch a ControlIROp to its handler and return a result dict.
+    """Dispatch a Op to its handler and return a result dict.
 
     Returns a JSON-serializable dict in the same shape callers have
     historically appended to `control_ir_results`. Errors are captured

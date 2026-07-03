@@ -1,9 +1,9 @@
-"""Tier 2: #1983 — the ControlIROp union is single-sourced from OP_KIND_MODEL_MAP.
+"""Tier 2: #1983 — the Op union is single-sourced from OP_KIND_MODEL_MAP.
 
 Finding 3: ``mcp_drop_server`` was registered (universal_dispatch), documented
 (``control-ir.md``), modeled (``MCPDropServerIROp``) and handled by the executor,
-but ABSENT from the hand-listed ``ControlIROp`` discriminated union and from
-``OP_KIND_MODEL_MAP`` — so a phase emitting it failed ``ControlIROp`` union validation
+but ABSENT from the hand-listed ``Op`` discriminated union and from
+``OP_KIND_MODEL_MAP`` — so a phase emitting it failed ``Op`` union validation
 (advertise-but-don't-enforce; the worst direction of the control-ir.md ↔ map
 sync invariant).
 
@@ -24,17 +24,17 @@ from typing import get_args
 import pytest
 from pydantic import TypeAdapter, ValidationError
 
-from reyn.schemas.models import ControlIROp
+from reyn.schemas.models import Op
 
 
 def _union_member_kinds() -> set[str]:
-    """The literal ``kind`` of every member of the ControlIROp discriminated union.
+    """The literal ``kind`` of every member of the Op discriminated union.
 
-    ``ControlIROp == Annotated[Union[...], Field(discriminator="kind")]`` →
+    ``Op == Annotated[Union[...], Field(discriminator="kind")]`` →
     ``get_args(...)[0]`` is the ``Union``; its args are the member models; each
     member's ``kind`` field is a ``Literal["<kind>"]``.
     """
-    union = get_args(ControlIROp)[0]
+    union = get_args(Op)[0]
     kinds: set[str] = set()
     for member in get_args(union):
         kind_ann = member.model_fields["kind"].annotation
@@ -68,10 +68,10 @@ def test_all_op_kinds_is_exactly_map_keys():
 
 def test_mcp_drop_server_validates_through_union():
     """Tier 2: Finding-3 falsifying — an ``mcp_drop_server`` op validates through
-    the ControlIROp union. PRE-fix (kind absent from the union) this raised
+    the Op union. PRE-fix (kind absent from the union) this raised
     ValidationError — the exact bug: registered + documented + handled but not
     enforceable. Revert the fix and this goes RED."""
-    adapter = TypeAdapter(ControlIROp)
+    adapter = TypeAdapter(Op)
     op = adapter.validate_python({"kind": "mcp_drop_server", "server": "stale_srv"})
     assert op.kind == "mcp_drop_server"
     assert op.server == "stale_srv"
@@ -92,6 +92,6 @@ def test_mcp_drop_server_is_a_known_allowed_op():
 def test_derived_union_still_rejects_unknown_kind():
     """Tier 2: deriving the union from the map did NOT open the discriminator to
     arbitrary kinds — an unknown kind is still rejected (closed-set invariant)."""
-    adapter = TypeAdapter(ControlIROp)
+    adapter = TypeAdapter(Op)
     with pytest.raises(ValidationError):
         adapter.validate_python({"kind": "no_such_op_kind_xyz", "server": "x"})
