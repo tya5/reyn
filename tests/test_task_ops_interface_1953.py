@@ -21,7 +21,6 @@ from pydantic import TypeAdapter
 from reyn.core.op_runtime import available_kinds
 from reyn.core.op_runtime import task as taskmod
 from reyn.core.op_runtime.contextual_gate import _OP_KIND_ALIASES
-from reyn.core.op_runtime.registry import OP_PURITY
 from reyn.schemas.models import ALL_OP_KINDS, OP_KIND_MODEL_MAP, Op
 from reyn.task import InMemoryTaskBackend, Task, TaskState
 from reyn.task.subscription import SubscriptionRegistry
@@ -46,13 +45,12 @@ def _reset_backend():
 # ── registry / gate completeness (Tier 1 contract) ──────────────────────────
 
 
-def test_all_task_kinds_present_in_registry_and_purity():
-    """Tier 1: every task op kind has a model + purity + handler (no half-wiring)."""
+def test_all_task_kinds_present_in_registry():
+    """Tier 1: every task op kind has a model + handler (no half-wiring)."""
     assert _TASK_KINDS  # non-empty; the exact set is pinned in the union test
     handlers = set(available_kinds())
     for kind in _TASK_KINDS:
         assert kind in OP_KIND_MODEL_MAP
-        assert kind in OP_PURITY
         assert kind in handlers
 
 

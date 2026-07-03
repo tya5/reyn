@@ -73,10 +73,8 @@ async def dispatch_tool(
 
     Events emitted (via ctx.events.emit):
         - tool_called (caller_kind, caller_id, tool, chain_id, args, args_hash)
-            Skipped for ``pure`` op kinds (no side effect to disambiguate)
-            and for ``world`` / ``llm`` purity (no side effect ambiguity).
         - tool_returned (caller_kind, caller_id, tool, chain_id, result, args_hash)
-            on success.  Skipped for ``pure``.
+            on success.
         - tool_failed (caller_kind, caller_id, tool, chain_id, error_kind, message)
             on error.
 
@@ -84,7 +82,6 @@ async def dispatch_tool(
     raw result (any JSON-serializable value). PermissionError raised
     inside invoker becomes a "permission_denied" error result.
     """
-    from reyn.core.op_runtime.registry import OpPurity, get_op_purity
 
     # 1. Name validation
     if name not in ctx.tool_catalog:
@@ -113,24 +110,18 @@ async def dispatch_tool(
         except InvalidArgsError as e:
             return _error(ctx, name, "invalid_args", str(e))
 
-    # Determine purity (controls event emission; defaults to side_effect).
-    # Note: tool catalog entries from the chat router are not "ops" in the
-    # IR-op sense (memory/file/mcp tool entries here are wrappers around
-    # multiple op kinds). For chat-router callers, fall back to side_effect.
-    purity = get_op_purity(name) if ctx.caller_kind == "skill_phase" else OpPurity.side_effect
     args_hash = _compute_args_hash(args)
 
-    # 3. Pre-event (skip for pure / world / llm — no side-effect ambiguity)
-    if purity in (OpPurity.side_effect, OpPurity.external):
-        ctx.events.emit(
-            "tool_called",
-            caller_kind=ctx.caller_kind,
-            caller_id=ctx.caller_id,
-            tool=name,
-            chain_id=ctx.chain_id,
-            args=args,
-            args_hash=args_hash,
-        )
+    # 3. Pre-event: record the tool call.
+    ctx.events.emit(
+        "tool_called",
+        caller_kind=ctx.caller_kind,
+        caller_id=ctx.caller_id,
+        tool=name,
+        chain_id=ctx.chain_id,
+        args=args,
+        args_hash=args_hash,
+    )
 
     # 4. Invoke (with structured error handling)
     try:
@@ -164,18 +155,16 @@ async def dispatch_tool(
                 "error": {"kind": "exception",
                           "message": f"{type(e).__name__}: {e}"}}
 
-    # 5. Post-event with result (skipped for ``pure``: re-execution is safe
-    #    and cheap, no need to record).
-    if purity != OpPurity.pure:
-        ctx.events.emit(
-            "tool_returned",
-            caller_kind=ctx.caller_kind,
-            caller_id=ctx.caller_id,
-            tool=name,
-            chain_id=ctx.chain_id,
-            args_hash=args_hash,
-            result=result,
-        )
+    # 5. Post-event: record the result.
+    ctx.events.emit(
+        "tool_returned",
+        caller_kind=ctx.caller_kind,
+        caller_id=ctx.caller_id,
+        tool=name,
+        chain_id=ctx.chain_id,
+        args_hash=args_hash,
+        result=result,
+    )
     return {"status": "ok", "data": result}
 
 

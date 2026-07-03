@@ -1,6 +1,6 @@
 """Op kind registry — op kind classification (ADR-0026 Phase 4 steady state).
 
-This module holds three classifications keyed by **op kind**
+This module holds two classifications keyed by **op kind**
 (= the ``op.kind`` values phase Control IR emits today:
 ``read_file`` / ``write_file`` / ``edit_file`` / ``delete_file`` /
 ``glob_files`` / ``grep_files`` / ``mcp`` / ``shell`` /
@@ -16,15 +16,10 @@ is KEPT — fine handlers still build ``FileIROp(kind="file")`` internally.
      classes; registry re-imports ``ALL_OP_KINDS`` from there).
      Schema derivation is done by ``reyn.tools.ToolRegistry``
      entries (= ADR-0026 Phase 4-3); the map remains the stable target
-     for ``ALL_OP_KINDS`` and purity classification.
+     for ``ALL_OP_KINDS``.
 
   2. ``ALL_OP_KINDS`` — frozenset of op kinds.  Used by the DSL
-     linter to flag misspelled ``allowed_ops`` entries; also drives
-     ``OP_PURITY`` coverage tests.
-
-  3. ``OP_PURITY`` — determinism classification.  See ``OpPurity`` enum
-     below.  Used by ``dispatch_tool`` to decide whether to emit step
-     events for resume.
+     linter to flag misspelled ``allowed_ops`` entries.
 
 Helper:
   - ``is_op_allowed(op_kind, allowed_ops)`` — prefix-wildcard membership
@@ -33,7 +28,6 @@ Helper:
 
 Consumers:
   - ``reyn.core.compiler.linter``     — ``ALL_OP_KINDS``
-  - ``reyn.core.dispatch.dispatcher`` — ``OP_PURITY`` (skip emission for ``pure``)
   - ``reyn.core.kernel.control_ir_executor`` — ``is_op_allowed`` for the
     ``allowed_ops`` filter
 
@@ -43,131 +37,18 @@ op kinds.  They are a different concern and intentionally stay local.
 """
 from __future__ import annotations
 
-from enum import Enum
-
 # #1983: OP_KIND_MODEL_MAP + ALL_OP_KINDS relocated to schemas/models.py
 # (co-located with the IROp model classes + the now-derived Op union =
 # single source; the map lived here before, but registry imports those model
 # classes, so models.py could not derive the union from the map without a cycle).
-# registry keeps the *purity* classification (OP_PURITY) and re-imports
-# ALL_OP_KINDS from models for ALL_TOOL_NAMES — an intentional op-runtime-view
-# convenience, NOT a migration shim.
+# registry re-imports ALL_OP_KINDS from models for ALL_TOOL_NAMES — an
+# intentional op-runtime-view convenience, NOT a migration shim.
 from reyn.schemas.models import ALL_OP_KINDS
-
-
-class OpPurity(str, Enum):
-    """Determinism classification for ops, used by skill resume design.
-
-    - ``pure``: same args → same result, no external state, no side effects.
-      Resume can re-execute safely; step event emission is **skipped** to
-      reduce WAL volume.
-    - ``world``: depends on external state (filesystem, network reads),
-      but no side effects.  Result varies across calls; step event must
-      record the result so resume uses cached value, not re-execute.
-    - ``side_effect``: writes to local state (workspace, filesystem).
-      Both ``step_started`` and ``step_completed`` are emitted so a crash
-      between them surfaces as an ambiguous state on resume.
-    - ``external``: invokes external systems with potential side effects
-      (mcp/call_tool, shell, run_skill).  Same emission policy as
-      ``side_effect``; the distinction is audit metadata.
-    - ``llm``: language-model call.  Cost side effect + non-deterministic
-      output.  ``step_completed`` records the output; ``step_started`` is
-      not emitted (no externally-observable side effect to disambiguate).
-    """
-
-    pure = "pure"
-    world = "world"
-    side_effect = "side_effect"
-    external = "external"
-    llm = "llm"
-
 
 # #1983: OP_KIND_MODEL_MAP + ALL_OP_KINDS now live in schemas/models.py — the
 # single source (the Op discriminated union derives from the map there,
 # completeness-by-construction). Add a new op kind in models.py; ALL_OP_KINDS is
-# imported above (used by ALL_TOOL_NAMES below). registry owns only OP_PURITY.
-
-# ---------------------------------------------------------------------------
-# OP_PURITY
-# ---------------------------------------------------------------------------
-# Determinism classification per op kind.  Default is ``side_effect`` (safe
-# side: emit both events) for any kind not explicitly listed.  Sub-types
-# (e.g. file/read vs file/write) cannot be distinguished here; for kinds
-# whose behavior varies by sub-op (file, mcp), ``side_effect`` is chosen
-# as the conservative default and finer-grained classification belongs
-# inside the op handler.
-# ---------------------------------------------------------------------------
-
-OP_PURITY: dict[str, OpPurity] = {
-    # World-state dependent (read APIs).
-    "web_fetch":   OpPurity.world,
-    "web_search":  OpPurity.world,
-    # Side effect (workspace mutation; file write/delete fall here).
-    # #1240 Wave 2b: coarse "file" purity entry dropped (coarse kind removed).
-    # #1240 Wave 1: fine-grained file kinds. Conservative side_effect stance
-    # (matches the former coarse "file" classification). A read_file→world
-    # accuracy refinement is a separate decision, out of pivot scope.
-    "read_file":   OpPurity.side_effect,
-    "write_file":  OpPurity.side_effect,
-    "edit_file":   OpPurity.side_effect,
-    "delete_file": OpPurity.side_effect,
-    # #1240 Wave 1.5: glob_files / grep_files. Same conservative stance as
-    # Wave 1 fine kinds — match the coarse "file" side_effect classification.
-    "glob_files":  OpPurity.side_effect,
-    "grep_files":  OpPurity.side_effect,
-    # External / unknown side-effecting.
-    "mcp":         OpPurity.external,
-    # User interaction (state-changing for the user).
-    "ask_user":    OpPurity.side_effect,
-    # MCP server install: writes config + secrets, runs registry fetch.
-    "mcp_install": OpPurity.side_effect,
-    # #1983: MCP server drop — mutates config (removes a server entry).
-    "mcp_drop_server": OpPurity.side_effect,
-    # ADR-0033 RAG ops (#1303 Stage I: embed + index_write deleted):
-    # - index_query: read-only, depends on backend state (= world).
-    "index_query": OpPurity.world,
-    # - recall: macro op — embeds the query provider-direct, then dispatches
-    #   index_query sub-ops (which emit their own events); external.
-    "recall":      OpPurity.external,
-    # - index_drop: deletes backend collection + manifest entry.
-    "index_drop":  OpPurity.side_effect,
-    # FP-0017: sandboxed_exec — same external side-effect class as shell.
-    "sandboxed_exec": OpPurity.external,
-    # FP-0007 Component D: LLM call with token cost side effect.
-    "judge_output": OpPurity.llm,
-    # #272/#1128: compact triggers a compaction LLM call (cost) AND mutates
-    # history/state; like `recall` it is a macro whose inner compaction engine
-    # emits its own events. external = emit both started+completed so a crash
-    # mid-compaction surfaces as ambiguous on resume.
-    "compact": OpPurity.external,
-    # #1953 slice 1: Task ops. Reads = world (backend state); mutations =
-    # side_effect (backend write). Conservative; finer attempt-vs-task purity
-    # is not needed for resume since the Task backend is its own source of truth.
-    "task.get": OpPurity.world,
-    "task.list": OpPurity.world,
-    "task.create": OpPurity.side_effect,
-    "task.update_status": OpPurity.side_effect,
-    "task.add_dependency": OpPurity.side_effect,
-    "task.remove_dependency": OpPurity.side_effect,
-    "task.repoint_dependency": OpPurity.side_effect,
-    "task.abort": OpPurity.side_effect,
-    "task.heartbeat": OpPurity.side_effect,
-    "task.register_unblock_predicate": OpPurity.side_effect,
-    "task.comment": OpPurity.side_effect,
-    "task.assign": OpPurity.side_effect,
-}
-
-
-def get_op_purity(op_kind: str) -> OpPurity:
-    """Return the purity classification for an op kind.
-
-    Defaults to ``side_effect`` (conservative — emit both step events) for
-    unknown kinds.  Future skill resume dispatcher uses this to decide
-    whether to emit ``tool_called`` ahead of execution and whether to
-    record the result in ``tool_returned``.
-    """
-    return OP_PURITY.get(op_kind, OpPurity.side_effect)
-
+# imported above (used by ALL_TOOL_NAMES below).
 
 # ALL_OP_KINDS is imported from schemas/models.py above (single source, #1983);
 # it remains importable from this module for back-compat (intentional convenience).
