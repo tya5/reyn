@@ -78,7 +78,7 @@ reyn init
 ## 確認する
 
 ```bash
-reyn skills          # stdlib + project + local の Skill を一覧表示
+reyn skills          # stdlib + project + local のワークフローを一覧表示
 reyn run direct_llm "reyn is a workflow OS for LLMs."
 ```
 

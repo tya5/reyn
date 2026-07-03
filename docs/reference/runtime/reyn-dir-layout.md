@@ -2,7 +2,7 @@
 
 This is the canonical reference for what lives under a project's `.reyn/` directory:
 the five-way classification of every subtree, which subtrees are **recovery-core**
-(captured + restored by time-travel), the **write-gate** rule a skill author hits, and
+(captured + restored by time-travel), the **write-gate** rule a workflow author hits, and
 where a new subsystem should put its data.
 
 `.reyn/` holds Reyn's own plumbing under the project root. The organizing principle is
@@ -102,7 +102,7 @@ same rewind path (WAL replay + snapshot generations — see
     snapshots (truncation-surviving, same generation-store pattern as config). (This is
     why the write-gate, below, covers only the authoritative tier.)
 
-## The recovery-core write-gate (the rule you hit as a skill author)
+## The recovery-core write-gate (the rule you hit as a workflow author)
 
 **A raw `file.write` to `.reyn/config/` or `.reyn/state/` is DENIED.** The
 **authoritative** recovery-core (the WAL at `.reyn/state/` + the `.reyn/config/` registries —

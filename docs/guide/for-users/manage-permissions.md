@@ -7,14 +7,14 @@ applies_to: [reyn.yaml, .reyn/approvals.yaml, phases/*.md]
 
 # Manage permissions
 
-**Goal:** Grant the right capabilities to a skill without over-broadening trust, and inspect / revoke approvals after the fact.
+**Goal:** Grant the right capabilities to a workflow without over-broadening trust, and inspect / revoke approvals after the fact.
 
 ## Three places to set permissions
 
 | Layer | Lives in | Granularity |
 |-------|----------|-------------|
 | Phase declaration | Phase frontmatter | Per phase + per (op, path) |
-| Saved approvals | `.reyn/approvals.yaml` | Per (skill, op, path) |
+| Saved approvals | `.reyn/approvals.yaml` | Per (workflow, op, path) |
 | Project-wide pre-approval | `reyn.yaml` `permissions:` | Per op kind |
 
 The defaults are conservative; the rest is opt-in. See the [permission model concept](../../concepts/runtime/permission-model.md) for the why.
@@ -44,7 +44,7 @@ permissions:
 
 ## Approve at startup
 
-When the skill needs something not in the defaults, the runtime prompts:
+When the workflow needs something not in the defaults, the runtime prompts:
 
 ```
 [approval] my_skill/file.write needs:
@@ -78,7 +78,7 @@ permissions:
 reyn permissions list
 ```
 
-Output groups entries by skill, then by op kind:
+Output groups entries by workflow, then by op kind:
 
 ```
   [my_skill]
@@ -95,7 +95,7 @@ reyn permissions clear     # remove all (asks for confirmation)
 
 ## Eval mode
 
-`reyn eval` is non-interactive. Pre-arrange every approval the target skill needs:
+`reyn eval` is non-interactive. Pre-arrange every approval the target workflow needs:
 
 - run the target once with `reyn run` and persist via `[j]` or `[r]`, OR
 - pre-approve in `reyn.yaml`.

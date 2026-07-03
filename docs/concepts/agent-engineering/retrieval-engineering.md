@@ -10,7 +10,7 @@ Feeding the right context into the agent at the right time — memory of past in
 
 ## How reyn handles it
 
-Two retrieval mechanisms today, both expressed as ordinary stdlib skills:
+Two retrieval mechanisms today, both expressed as ordinary stdlib workflows:
 
 ### `recall_memory`
 
@@ -21,7 +21,7 @@ Pulls facts from project- and user-scope memory stores:
 | Global | `~/.reyn/memory/` | Facts about the user (role, preferences) |
 | Project | `.reyn/memory/` | Facts about the current project |
 
-Both scopes share the same shape (a `MEMORY.md` index plus one `<slug>.md` per entry) and are read together; project entries surface first. Skills consume retrieval results via the preprocessor:
+Both scopes share the same shape (a `MEMORY.md` index plus one `<slug>.md` per entry) and are read together; project entries surface first. Workflows consume retrieval results via the preprocessor:
 
 ```yaml
 preprocessor:
@@ -43,11 +43,11 @@ In chat mode, every turn implicitly calls `recall_memory` (`top-k` configurable 
 
 This is the lens where reyn currently has the most ground to cover.
 
-**`recall_docs` is not yet implemented.** The plan is for it to be the symmetric counterpart of `recall_memory` — a stdlib skill that retrieves from the project's docs the way `recall_memory` retrieves from memory. Until it ships, skills that need doc context transcribe the relevant passages directly into phase instructions. This works but it's manual, and the transcription drifts from the source.
+**`recall_docs` is not yet implemented.** The plan is for it to be the symmetric counterpart of `recall_memory` — a stdlib workflow that retrieves from the project's docs the way `recall_memory` retrieves from memory. Until it ships, workflows that need doc context transcribe the relevant passages directly into phase instructions. This works but it's manual, and the transcription drifts from the source.
 
-**Memory matching is keyword/index-based, not vector.** `MEMORY.md` is a flat index; `recall_memory` returns entries that match the query by keyword and metadata. At a few dozen entries this is fine. At a few hundred it will start missing relevant matches. Vector retrieval (or hybrid keyword + vector) is a likely next step, but the API surface — a stdlib skill with a well-typed input — is already the right shape for swapping the implementation later.
+**Memory matching is keyword/index-based, not vector.** `MEMORY.md` is a flat index; `recall_memory` returns entries that match the query by keyword and metadata. At a few dozen entries this is fine. At a few hundred it will start missing relevant matches. Vector retrieval (or hybrid keyword + vector) is a likely next step, but the API surface — a stdlib workflow with a well-typed input — is already the right shape for swapping the implementation later.
 
-**No web search or external retrieval primitive.** Skills that need to fetch from the web invoke MCP search tools when configured; reyn does not bundle a default web retrieval skill. The intent is to keep the OS skill-agnostic (P7) — retrieval kinds are added by writing skills, not by changing the runtime.
+**No web search or external retrieval primitive.** Workflows that need to fetch from the web invoke MCP search tools when configured; reyn does not bundle a default web retrieval workflow. The intent is to keep the OS workflow-agnostic (P7) — retrieval kinds are added by writing workflows, not by changing the runtime.
 
 ## What this lens is really asking
 
@@ -55,6 +55,6 @@ Retrieval engineering isn't just "did we find the doc?" — it's "did the agent 
 
 ## See also
 
-- [../data-retrieval/memory.md](../data-retrieval/memory.md) — concept (memory is read inline by `skill_router/classify`; see also the [stdlib/skill_router reference](../../reference/stdlib/skill_router.md))
+- [../data-retrieval/memory.md](../data-retrieval/memory.md) — concept (memory is read inline by the router on every chat turn)
 - [tool-contract-design.md](tool-contract-design.md) — how retrieval slots into the contract
 - [evaluation-and-observability.md](evaluation-and-observability.md) — measuring retrieval quality

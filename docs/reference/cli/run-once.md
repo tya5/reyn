@@ -72,5 +72,5 @@ cat task.md | reyn run-once --exclude-tools web__search,web__fetch --exclude-cat
 ## See also
 
 - [`reyn chat`](chat.md) — the interactive counterpart (shares the scoped-session construction)
-- [`reyn run`](run.md) — run a specific skill end-to-end
+- [`reyn run`](run.md) — run a specific workflow end-to-end
 - [Common flags](common-flags.md)

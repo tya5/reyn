@@ -19,13 +19,13 @@ A checkpoint marks a boundary between agent states. Reyn creates checkpoints at:
 
 - **Turn boundaries** — after the LLM finishes its response turn.
 - **Plan-step boundaries** — after each plan step completes.
-- **Phase boundaries** — after each OS phase transition within a skill run.
+- **Phase boundaries** — after each OS phase transition within a workflow run.
 
 Each checkpoint has a monotonically increasing **sequence number** (seq). The seq is the global clock used to address all time-travel operations.
 
 ### Rewind
 
-`/rewind` rewinds the agent to a past checkpoint, restoring the **runtime substrate** — the agent's conversation state and skill-run execution memo — to the snapshot at the target seq.
+`/rewind` rewinds the agent to a past checkpoint, restoring the **runtime substrate** — the agent's conversation state and workflow-run execution memo — to the snapshot at the target seq.
 
 Reyn time-travels its own `.reyn/` state only. User workspace files remain at HEAD. See [`.reyn/` directory layout](../../reference/runtime/reyn-dir-layout.md#recovery-core) for the full recovery-core classification.
 
@@ -50,7 +50,7 @@ The `checkout(seq)` primitive implements both: if the target seq is on the activ
 
 ### Act-turn rewind
 
-For finer granularity, within a live skill run you can rewind to an **act-turn boundary** (a step within the current turn). This is a runtime-only operation using the Ghost-Replay mechanism: the committed-step memo is truncated at the target seq, and on relaunch steps before the target replay as ghosts (0 tokens, recorded results replayed), while steps after the target re-execute. User workspace files are unaffected.
+For finer granularity, within a live workflow run you can rewind to an **act-turn boundary** (a step within the current turn). This is a runtime-only operation using the Ghost-Replay mechanism: the committed-step memo is truncated at the target seq, and on relaunch steps before the target replay as ghosts (0 tokens, recorded results replayed), while steps after the target re-execute. User workspace files are unaffected.
 
 ---
 

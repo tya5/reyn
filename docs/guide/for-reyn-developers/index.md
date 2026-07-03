@@ -8,7 +8,7 @@ audience: [human]
 
 Orientation for contributors to the Reyn OS core. If you're adding a new op kind, fixing a runtime bug, or extending the event system, start here.
 
-If you're building skills on top of Reyn rather than modifying the OS itself, see For skill authors instead.
+If you're building workflows on top of Reyn rather than modifying the OS itself, see the workflow authoring docs instead.
 
 ---
 
@@ -25,10 +25,10 @@ If you're building skills on top of Reyn rather than modifying the OS itself, se
 ## The OS in one paragraph
 
 ```
-User → Agent → Skill → OS → Phase → Workspace
+User → Agent → Workflow → OS → Phase → Workspace
 ```
 
-The OS (`kernel/runtime.py`) is the only thing that calls the LLM, executes Control IR ops, validates outputs, and emits events. Skills describe *what* to do; the OS does *how*. A new skill must never require an OS change (P7).
+The OS (`kernel/runtime.py`) is the only thing that calls the LLM, executes Control IR ops, validates outputs, and emits events. Workflows describe *what* to do; the OS does *how*. A new workflow must never require an OS change (P7).
 
 ---
 

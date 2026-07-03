@@ -55,7 +55,7 @@ and emits a `chain_timeout` event with `chain_id`, `waiting_on`, `timeout_second
 
 Set `chain_seconds: 0` (or any non-positive value) to disable the watchdog — useful for tests and experiments where slow delegates are expected. Disabled chains can still hang indefinitely if a delegate never responds.
 
-The default of `60.0` is a compromise: most chains finish in 10–30s for typical 3-hop trees with light/strong models. Raise it for skill chains that genuinely take longer (large web research fan-outs, long compaction passes); lower it for tighter SLAs.
+The default of `60.0` is a compromise: most chains finish in 10–30s for typical 3-hop trees with light/strong models. Raise it for agent chains that genuinely take longer (large web research fan-outs, long compaction passes); lower it for tighter SLAs.
 
 ## Example
 

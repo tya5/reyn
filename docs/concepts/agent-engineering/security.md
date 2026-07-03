@@ -6,7 +6,7 @@ audience: [human, agent]
 
 # Security
 
-Capability gating, sandbox boundaries, and trust scoping. The bar is "no skill silently gets capabilities the user didn't authorize, and a compromised skill can't escalate to other skills."
+Capability gating, sandbox boundaries, and trust scoping. The bar is "no workflow silently gets capabilities the user didn't authorize, and a compromised workflow can't escalate to other workflows."
 
 ## How reyn handles it
 
@@ -14,7 +14,7 @@ Capability gating, sandbox boundaries, and trust scoping. The bar is "no skill s
 
 ```
 defaults (always on)
-   ↓ if a skill needs more
+   ↓ if a workflow needs more
 phase declarations → user approves at startup
    ↓ if you trust the project broadly
 project-wide pre-approval (reyn.yaml)
@@ -37,7 +37,7 @@ Approvals are keyed by skill, not by user. If skill A is granted `file.write:/tm
 - **`safe`** — AST-validated against an allowlist (no `open`, `eval`, `exec`, `__import__`, `compile`, `subprocess`, etc.). Imports limited to a curated allowlist (`math`, `statistics`, `json`, `re`, `random`, `time`, `datetime`, …), extensible via `reyn.yaml`. Restricted `__builtins__`. Executes in a subprocess with a wall-clock timeout for crash isolation.
 - **`unsafe`** — no AST checks, full Python. Requires `--allow-unsafe-python` at runtime and a `permissions.python` entry with `mode: unsafe` in `skill.md`. Used only when `safe` blocks something genuinely needed.
 
-Skill authors are nudged toward `safe`; reaching for `unsafe` is a deliberate choice that the linter can flag.
+Workflow authors are nudged toward `safe`; reaching for `unsafe` is a deliberate choice that the linter can flag.
 
 ### Non-interactive approval (eval, CI)
 
@@ -80,7 +80,7 @@ Memory is therefore covered on **both** directions: a memory **read** (recall or
 
 ## Where it's still thin
 
-**Content-layer defense is seam-based regex detection, not a prompt-injection guarantee.** Pattern scans catch known attack shapes at OS seams; novel or obfuscated payloads that don't match a regex pass through. Once untrusted content is fenced and in the prompt, the LLM may still follow embedded instructions that read as natural language rather than a recognisable attack pattern. The OS does not gate the LLM's *response* for injection residue — capability damage is bounded by the permission system (no writes outside approved paths, no shell without `--allow-shell`) but response-level interception is not implemented. Direct operator input (`ask_user`, chat messages) is trusted by definition and not scanned. Skill design still matters: keep untrusted content summarised rather than passed verbatim, validate structured outputs, and use `judge_output` to gate critical decisions.
+**Content-layer defense is seam-based regex detection, not a prompt-injection guarantee.** Pattern scans catch known attack shapes at OS seams; novel or obfuscated payloads that don't match a regex pass through. Once untrusted content is fenced and in the prompt, the LLM may still follow embedded instructions that read as natural language rather than a recognisable attack pattern. The OS does not gate the LLM's *response* for injection residue — capability damage is bounded by the permission system (no writes outside approved paths, no shell without `--allow-shell`) but response-level interception is not implemented. Direct operator input (`ask_user`, chat messages) is trusted by definition and not scanned. Workflow design still matters: keep untrusted content summarised rather than passed verbatim, validate structured outputs, and use `judge_output` to gate critical decisions.
 
 **`mode: unsafe` is OS-level trust, not OS-level sandbox.** An unsafe Python step runs as the same user with the same filesystem access; it is not kernel-sandboxed. The system trusts that the user authorized the specific (module, function) pair. This is the right boundary for a developer tool — but it means unsafe steps deserve code review the way a Makefile target does.
 

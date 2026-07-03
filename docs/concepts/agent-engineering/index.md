@@ -16,7 +16,7 @@ reyn read through seven engineering perspectives. Each lens is a different way t
               │    User                                          │
               │     │                                            │
               │     ▼                                            │
-              │    Agent ── selects a Skill ─────► Skill         │   ← System Design
+              │    Agent ── selects a Workflow ─────► Workflow     │   ← System Design
               │                                     │            │   ← Tool Contract
               │                                     ▼            │
               │             OS ◄──── runtime loop ──┤            │   ← Reliability
@@ -43,7 +43,7 @@ Every layer has a corresponding engineering lens. The lenses don't partition the
 
 ### 1. [System Design](system-design.md)
 
-The macro shape: how control flow, state, and responsibility are distributed across layers. In reyn this is the **Phase / Skill / OS** split — Phases are stateless and reusable, Skills own structure, the OS owns execution.
+The macro shape: how control flow, state, and responsibility are distributed across layers. In reyn this is the **Phase / Workflow / OS** split — Phases are stateless and reusable, workflows own structure, the OS owns execution.
 
 ### 2. [Tool Contract Design](tool-contract-design.md)
 
@@ -59,11 +59,11 @@ Recovery from failure: validation, re-prompt, loop bounds, timeout. reyn validat
 
 ### 5. [Security](security.md)
 
-Capability gating, sandbox boundaries, trust scoping. The three-layer permission model + AST sandbox for pure Python steps + skill-scoped approvals are the core.
+Capability gating, sandbox boundaries, trust scoping. The three-layer permission model + AST sandbox for pure Python steps + per-workflow approvals are the core.
 
 ### 6. [Evaluation and Observability](evaluation-and-observability.md)
 
-Knowing whether the agent works, and seeing why. The event log answers "why?"; the eval skill answers "does it?". Both are first-class — the same channel powers debug rendering, replay, and eval analytics.
+Knowing whether the agent works, and seeing why. The event log answers "why?"; the eval workflow answers "does it?". Both are first-class — the same channel powers debug rendering, replay, and eval analytics.
 
 ### 7. [Product Think](product-think.md)
 

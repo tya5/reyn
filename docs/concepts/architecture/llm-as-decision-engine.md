@@ -54,7 +54,7 @@ Unconstrained LLM control flow is unstable in three measurable ways:
 2. **Untestability.** "Will this prompt eventually finish?" is undecidable for a free agent and trivially decidable on a finite graph.
 3. **No clean re-entry point.** When something goes wrong, you want to point to the failing phase. Free-form orchestration has no phases to point at.
 
-So reyn pays the cost of writing skill graphs explicitly and gets predictability in return.
+So reyn pays the cost of writing workflow graphs explicitly and gets predictability in return.
 
 ## See also
 

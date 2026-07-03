@@ -6,20 +6,20 @@ audience: [human, agent]
 
 # Sandbox and permissions: orthogonal concerns
 
-reyn has two separate systems that both gate what a skill can do.
+reyn has two separate systems that both gate what a workflow can do.
 They are **completely orthogonal** — they answer different questions and are
 configured at different levels. Conflating them is a common source of confusion.
 
-## Permission: can the skill use this capability?
+## Permission: can the workflow use this capability?
 
 `skill.permissions` (declared in `skill.md` frontmatter) describes the **access
-policy** for a specific skill:
+policy** for a specific workflow:
 
 - What file paths may it read or write?
 - May it make network requests? To which hosts?
 - May it call shell commands or MCP tools?
 
-Permissions are **skill-level**: each skill declares its own, and the operator
+Permissions are **workflow-level**: each workflow declares its own, and the operator
 or user approves them. The runtime enforces them through the AgentLayer of the
 [conjunctive permission model](../runtime/permission-model.md#effective-permission-conjunctive-restrict-model).
 
@@ -33,10 +33,10 @@ permissions:
     - host: "api.github.com"
 ```
 
-**Who sets it:** the skill author declares, the operator/user approves.
-**Question answered:** "Is this op allowed for this skill?"
+**Who sets it:** the workflow author declares, the operator/user approves.
+**Question answered:** "Is this op allowed for this workflow?"
 
-## Sandbox: how is the skill contained?
+## Sandbox: how is the workflow contained?
 
 `sandbox` (configured in `reyn.yaml` under `sandbox:`, or via CLI flags)
 describes the **containment** model for the agent:
@@ -46,8 +46,8 @@ describes the **containment** model for the agent:
 - What filesystem mounts or network restrictions apply?
 
 Sandbox is **agent-level**: a single sandbox configuration applies to the whole
-agent, not per-skill or per-phase. It is part of the operator's deployment
-configuration, not something skill authors declare.
+agent, not per-workflow or per-phase. It is part of the operator's deployment
+configuration, not something workflow authors declare.
 
 ```yaml
 # reyn.yaml
@@ -56,7 +56,7 @@ sandbox:
 ```
 
 **Who sets it:** the operator.
-**Question answered:** "How is the process that runs skills contained?"
+**Question answered:** "How is the process that runs workflows contained?"
 
 ## How they combine
 
@@ -67,22 +67,22 @@ allowed = permission_check(skill, op) AND sandbox_check(backend, op)
 ```
 
 The permission system may allow an op that the sandbox still denies — for
-example, a skill with `http.get: [{host: "api.github.com"}]` permission running
+example, a workflow with `http.get: [{host: "api.github.com"}]` permission running
 under a `network: false` sandbox policy will be denied at the sandbox layer. The
-skill author cannot override the operator's sandbox configuration.
+workflow author cannot override the operator's sandbox configuration.
 
 Conversely, the sandbox may allow something the permission system denies — for
-example, a broad sandbox configuration does not grant a skill permission to call
+example, a broad sandbox configuration does not grant a workflow permission to call
 shell ops it hasn't declared.
 
 ## Summary
 
 | Axis | Permission | Sandbox |
 |---|---|---|
-| Level | Skill-level | Agent-level |
-| Declared by | Skill author | Operator |
+| Level | Workflow-level | Agent-level |
+| Declared by | Workflow author | Operator |
 | Approved by | User / operator | Operator (config / CLI) |
-| Covers | Op access policy (what may this skill do?) | Containment (how is the process isolated?) |
+| Covers | Op access policy (what may this workflow do?) | Containment (how is the process isolated?) |
 | Lives in | `skill.md` frontmatter `permissions:` | `reyn.yaml` `sandbox:` / CLI |
 
 ## See also

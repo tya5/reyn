@@ -6,7 +6,7 @@ audience: [human, agent]
 
 # LLM output contract
 
-Every phase, regardless of skill, expects the LLM to return a single JSON object matching this schema. Output that doesn't conform is rejected — the OS surfaces a `validation_error` event and re-prompts (subject to retry limits) or fails the phase.
+Every phase expects the LLM to return a single JSON object matching this schema. Output that doesn't conform is rejected — the OS surfaces a `validation_error` event and re-prompts (subject to retry limits) or fails the phase.
 
 ## Schema
 
@@ -34,13 +34,13 @@ Every phase, regardless of skill, expects the LLM to return a single JSON object
 The shape of the transition the LLM is requesting.
 
 - `transition` — go to another phase.
-- `finish` — terminate the workflow cleanly. The artifact must match the skill's `final_output_schema`.
+- `finish` — terminate the workflow cleanly. The artifact must match the workflow's `final_output_schema`.
 - `abort` — unrecoverable error. The artifact may be empty.
 - `rollback` — send the immediately preceding phase back for revision. The OS determines the rollback target automatically. `next_phase` must be `null`. Set `decision` to `continue` by convention; the OS does not enforce a specific `decision` value for rollback. The artifact may be empty; put the rejection reason in `reason.summary`.
 
 ### `decision`
 
-OS-level intent. **Only three values are valid.** Skill-specific verbs like `revise` are NOT allowed (P7).
+OS-level intent. **Only three values are valid.** Workflow-specific verbs like `revise` are NOT allowed (P7).
 
 - `continue` — normal transition. Valid for any non-terminal flow, including revision loops where you transition to a `revise` phase.
 - `finish` — terminate. Requires `type=finish` and `next_phase=null`.
@@ -48,7 +48,7 @@ OS-level intent. **Only three values are valid.** Skill-specific verbs like `rev
 
 ### `next_phase`
 
-- For `type=transition`, must be one of the allowed next phases for the current phase, per the skill graph.
+- For `type=transition`, must be one of the allowed next phases for the current phase, per the workflow graph.
 - For `type=finish` or `type=abort`, must be `null`.
 
 ### `confidence`
@@ -61,7 +61,7 @@ One-sentence rationale. Stored in the event log.
 
 ## `artifact` block
 
-- `type` — the artifact schema name. Must match either the input schema of `next_phase` (for transitions) or the skill's `final_output_schema` (for finish).
+- `type` — the artifact schema name. Must match either the input schema of `next_phase` (for transitions) or the workflow's `final_output_schema` (for finish).
 - `data` — the artifact payload. Validated against the schema.
 
 In `--strict` mode, required fields are enforced at every nesting level. In default lenient mode, only top-level required fields are enforced.
@@ -82,7 +82,7 @@ These are checked before dispatch. Violations are rejected.
 
 ## Why this contract is rigid
 
-The OS's job is to make LLM-driven control flow safe. By rejecting any output that hallucinates a phase name, invents a decision verb, or returns a malformed artifact, reyn prevents the runtime from drifting into states the Skill author didn't anticipate. The LLM is free to be creative *inside* the artifact — never about *which artifact* or *which phase*.
+The OS's job is to make LLM-driven control flow safe. By rejecting any output that hallucinates a phase name, invents a decision verb, or returns a malformed artifact, reyn prevents the runtime from drifting into states the workflow author didn't anticipate. The LLM is free to be creative *inside* the artifact — never about *which artifact* or *which phase*.
 
 ## See also
 

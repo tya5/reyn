@@ -195,7 +195,7 @@ The static dotenv path (`~/.reyn/secrets.env`, chmod 600) is designed for **rota
 
 reyn ships an `OAuthToken` value type stored in `~/.reyn/oauth_tokens.json` (chmod 600). Each entry holds the access token, refresh token, expiry timestamp, and token endpoint URL.
 
-**Runtime API** — skills access OAuth tokens via:
+**Runtime API** — workflows access OAuth tokens via:
 
 ```python
 from reyn.secrets import get_valid_token
@@ -222,7 +222,7 @@ token = await get_valid_token("github_oauth")
 
 ### Declaration
 
-Each skill declares `required_credentials` in its `skill.md` frontmatter:
+Each workflow declares `required_credentials` in its `skill.md` frontmatter:
 
 ```yaml
 # skill.md frontmatter
@@ -237,7 +237,7 @@ Accepted values:
 
 | Value | Meaning |
 |-------|---------|
-| `[]` | No credentials needed (default for stdlib skills) |
+| `[]` | No credentials needed (default for stdlib workflows) |
 | `["github_token", "openai_key"]` | Explicit allowlist |
 | `["*"]` | Full delegation — backward-compat default when field is omitted |
 

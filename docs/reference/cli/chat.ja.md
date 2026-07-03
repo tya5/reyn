@@ -108,7 +108,6 @@ reyn chat --model strong
 
 - [リファレンス: agent CLI](agent.md) — `reyn agent new / list / show / rm`
 - [リファレンス: topology CLI](topology.md) — `reyn topology` で通信構造を宣言
-- [リファレンス: skill_router](../stdlib/skill_router.md)
 - リファレンス: profile-yaml
 - [リファレンス: multi-agent 設定](../config/multi-agent.md) — `safety.loop.max_agent_hops`
 - [リファレンス: state-dir](../config/state-dir.md) — `agents/` の場所

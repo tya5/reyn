@@ -12,7 +12,7 @@ lifecycle points in a reyn session.
 
 They are built on two mechanisms that already exist: the **unified inbox** (the
 channel that feeds messages into a turn) and the **P6 lifecycle** (the event
-stream). No new OS machinery — a new skill that uses hooks does not require any
+stream). No new OS machinery — a new workflow that uses hooks does not require any
 OS change (P7).
 
 ## Lifecycle points
@@ -153,7 +153,7 @@ propagate to the LLM output.
 
 The valve is a backstop, not an obstruction. A well-designed self-continuation
 hook will finish before the cap; the cap catches runaway loops that a bug or
-unexpected skill behavior would otherwise leave open.
+unexpected workflow behavior would otherwise leave open.
 
 ## Sandbox
 

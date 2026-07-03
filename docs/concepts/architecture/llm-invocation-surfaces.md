@@ -8,7 +8,7 @@ audience: [human, agent]
 
 ## 1. Why this matters
 
-Reyn invokes the LLM in two structurally distinct contexts: the chat router and the phase executor inside a skill. Each context exposes its own vocabulary of capabilities — function-calling tools for the router, Control IR ops for the phase. The two sets overlap substantially but not completely. Without a written account of that divergence, contributors tend to add new capabilities to whichever surface is convenient, and the gap widens silently. This document names the two invocation kinds, maps the divergence, and identifies which asymmetries are principled and which are convention drift — so that future additions land in the right place, and unintended asymmetries surface before they accumulate.
+Reyn invokes the LLM in two structurally distinct contexts: the chat router and the phase executor inside a workflow. Each context exposes its own vocabulary of capabilities — function-calling tools for the router, Control IR ops for the phase. The two sets overlap substantially but not completely. Without a written account of that divergence, contributors tend to add new capabilities to whichever surface is convenient, and the gap widens silently. This document names the two invocation kinds, maps the divergence, and identifies which asymmetries are principled and which are convention drift — so that future additions land in the right place, and unintended asymmetries surface before they accumulate.
 
 ---
 
@@ -23,14 +23,14 @@ Reyn invokes the LLM in two structurally distinct contexts: the chat router and 
 **Tool surface:** `build_tools()` in `src/reyn/runtime/router_tools.py` assembles the tool list. The actual count depends on operator configuration:
 
 - **Always present (13 tools):** `list_skills`, `describe_skill`, `list_agents`, `describe_agent`, `list_memory`, `read_memory_body`, `delegate_to_agent`, `remember_shared`, `remember_agent`, `forget_memory`, `web_search`, `reyn_src_list`, `reyn_src_read`.
-- **Conditional (+0 to +9 tools):** `invoke_skill` (when skills are registered), `list_directory` + `read_file` (when file read scope is configured), `write_file` + `delete_file` (when file write scope is configured), `web_fetch` (operator opt-in), `list_mcp_servers` + `list_mcp_tools` + `call_mcp_tool` (when MCP servers are configured).
+- **Conditional (+0 to +9 tools):** `invoke_skill` (when workflows are registered), `list_directory` + `read_file` (when file read scope is configured), `write_file` + `delete_file` (when file write scope is configured), `web_fetch` (operator opt-in), `list_mcp_servers` + `list_mcp_tools` + `call_mcp_tool` (when MCP servers are configured).
 - **Verified range: 13–22 tools.** (The comment in `router_tools.py` that states "11–18" predates the addition of `web_search`, `reyn_src_list`, and `reyn_src_read` and is stale.)
 
-**Role:** orchestration — pick the next sub-component (skill, agent, plan, memory operation, direct text reply).
+**Role:** orchestration — pick the next sub-component (workflow, agent, plan, memory operation, direct text reply).
 
-### 2.2 Phase-style (skill execution)
+### 2.2 Phase-style (workflow execution)
 
-**Used by:** every phase invocation inside a skill, driven by `OSRuntime`.
+**Used by:** every phase invocation inside a workflow, driven by `OSRuntime`.
 
 **Mechanism:** JSON output contract. The LLM returns a single structured response:
 
@@ -62,7 +62,7 @@ The fine file kinds replaced the former coarse `file` kind in #1240 Wave 2b (the
 
 Each phase narrows this set further via `allowed_ops: list[str]` in the phase declaration (default: `["read_file", "write_file", "edit_file", "delete_file", "glob_files", "grep_files", "ask_user"]`). The OS enforces `allowed_ops` at dispatch time as a defense-in-depth layer.
 
-**Role:** domain work — produce an artifact for the next phase or as the skill's final output.
+**Role:** domain work — produce an artifact for the next phase or as the workflow's final output.
 
 ### 2.3 What is NOT a third invocation kind
 
@@ -114,13 +114,13 @@ The router LLM calls `invoke_skill("name", input={...})`; the phase LLM also emi
 
 Asymmetries that exist for principled reasons and should remain asymmetric:
 
-- **`delegate_to_agent` is router-only.** Phases work within a skill scope. Routing a request to a peer agent is an orchestration decision that belongs to the chat session, not to a phase mid-execution. Allowing agent delegation from inside a phase would conflate the orchestration layer (session) with the domain-work layer (phase).
+- **`delegate_to_agent` is router-only.** Phases work within a workflow scope. Routing a request to a peer agent is an orchestration decision that belongs to the chat session, not to a phase mid-execution. Allowing agent delegation from inside a phase would conflate the orchestration layer (session) with the domain-work layer (phase).
 
 - **`plan` is router-only.** Phases already have `run_skill` for in-phase decomposition. The `plan` tool is the chat session's mechanism for multi-source synthesis across router turns; it has no analog inside a phase because phases have a defined input and output contract.
 
-- **`shell` is phase-only.** Exposing `shell` directly to the chat router would allow the LLM to execute arbitrary commands in a free-form conversational context with no schema boundary. The phase model constrains this: `shell` is opt-in per skill, gated by `allowed_ops`, and the phase's input schema narrows what data reaches the command. The router LLM sees the user's open-ended request; the phase LLM sees a bounded, schema-validated artifact.
+- **`shell` is phase-only.** Exposing `shell` directly to the chat router would allow the LLM to execute arbitrary commands in a free-form conversational context with no schema boundary. The phase model constrains this: `shell` is opt-in per workflow, gated by `allowed_ops`, and the phase's input schema narrows what data reaches the command. The router LLM sees the user's open-ended request; the phase LLM sees a bounded, schema-validated artifact.
 
-- **`lint` is phase-only.** Lint validates the LLM's skill-authoring output during a phase. It has no use in the chat router, which does not produce skill artifacts.
+- **`lint` is phase-only.** Lint validates the LLM's workflow-authoring output during a phase. It has no use in the chat router, which does not produce workflow artifacts.
 
 - **`ask_user` is phase-only as an explicit op.** The router LLM asks the user by emitting a plain text reply — the `RouterLoop` exits with that text. The phase LLM cannot exit mid-phase to reply; it must use `ask_user` in `control_ir` to pause and surface a question to the OS.
 
@@ -138,7 +138,7 @@ These are gaps, not failures. Whether to close them is the doctrine question add
 
 ### Type D — Pre-LLM deterministic steps
 
-Preprocessor and postprocessor steps are not LLM invocations, but they appear in feature-parity discussions because they are "things a skill author can reach for." The distinction matters:
+Preprocessor and postprocessor steps are not LLM invocations, but they appear in feature-parity discussions because they are "things a workflow author can reach for." The distinction matters:
 
 - A `python` preprocessor step runs sandboxed Python code — no LLM call.
 - A `run_skill` preprocessor step invokes a sub-skill whose phases DO invoke the LLM phase-style — but the preprocessor dispatch itself is synchronous and OS-controlled, not an LLM call in the same turn.
@@ -150,7 +150,7 @@ Preprocessor and postprocessor steps expand what a phase can compute before and 
 
 ## 5. Why the divergence happened — historical pattern
 
-The chat router accumulated capabilities via tool additions whenever a new feature landed: memory I/O, catalog browse, web ops, plan mode, Reyn source access. Each addition was natural in context — the chat user wants to ask about memory directly, or browse the catalog interactively, or search the web in a conversational turn. The phase Control IR op set grew more conservatively (8 op kinds vs up to 23 router tools) because Reyn's phase model emphasizes constrained candidate sets (P4) and skill-author intent: a phase declares what it is allowed to do, and nothing more. The result is that the router accumulated interactive-exploration capabilities; the phase surface stayed domain-work-focused. This is appropriate where the role-separation reason holds (Type B); it is convention drift where it does not (Type C).
+The chat router accumulated capabilities via tool additions whenever a new feature landed: memory I/O, catalog browse, web ops, plan mode, Reyn source access. Each addition was natural in context — the chat user wants to ask about memory directly, or browse the catalog interactively, or search the web in a conversational turn. The phase Control IR op set grew more conservatively (8 op kinds vs up to 23 router tools) because Reyn's phase model emphasizes constrained candidate sets (P4) and workflow-author intent: a phase declares what it is allowed to do, and nothing more. The result is that the router accumulated interactive-exploration capabilities; the phase surface stayed domain-work-focused. This is appropriate where the role-separation reason holds (Type B); it is convention drift where it does not (Type C).
 
 ---
 
@@ -170,18 +170,18 @@ Every capability available on both surfaces, expressed in the appropriate invoca
 Document the current asymmetries as the doctrine. Router does orchestration; phase does domain work; capabilities belong to one role only. Type C gaps are accepted as-is.
 
 - **Pros:** minimal change; codifies what already works; contributors have a clear rule ("is this orchestration or domain work?"); no implementation cost.
-- **Cons:** Type C gaps are rubber-stamped without re-examining whether the role argument actually applies to them; memory write from a phase is a legitimate need that this option leaves unaddressed; the doctrine may not age well as more complex skills require richer phase-side capabilities.
+- **Cons:** Type C gaps are rubber-stamped without re-examining whether the role argument actually applies to them; memory write from a phase is a legitimate need that this option leaves unaddressed; the doctrine may not age well as more complex workflows require richer phase-side capabilities.
 
 ### Option 3 — Hybrid: close Type C only
 
 Adopt Option 2's role separation for Type B, but explicitly close the three Type C convention-drift gaps:
 
-- **Memory write from phases:** new `memory` op kind (or a stdlib skill like `update_memory`) so phases can write durable facts without routing through the chat layer.
-- **Catalog browse from phases:** a stdlib skill (for example, `recall_skill_catalog`) that a phase can invoke via `run_skill` to query the live catalog mid-phase, without embedding catalog knowledge in the OS.
+- **Memory write from phases:** new `memory` op kind (or a stdlib workflow like `update_memory`) so phases can write durable facts without routing through the chat layer.
+- **Catalog browse from phases:** a stdlib workflow (for example, `recall_skill_catalog`) that a phase can invoke via `run_skill` to query the live catalog mid-phase, without embedding catalog knowledge in the OS.
 - **MCP discover from phases:** extend the `mcp` op with `action=list_servers` and `action=list_tools` variants so phases can probe available MCP capabilities at runtime.
 
 - **Pros:** principled — role-based where role separation is real (Type B), symmetric where the gap was unintentional (Type C); the doctrine does not accumulate technical debt; new capabilities designed for both surfaces from the start.
-- **Cons:** medium implementation cost (three new capabilities); ordering matters (stdlib skills before phase op extensions); requires discipline to avoid re-creating drift with the next batch of additions.
+- **Cons:** medium implementation cost (three new capabilities); ordering matters (stdlib workflows before phase op extensions); requires discipline to avoid re-creating drift with the next batch of additions.
 
 ---
 
@@ -191,7 +191,7 @@ Adopt Option 2's role separation for Type B, but explicitly close the three Type
 
 **P4 (LLM is a constrained decision engine)** — both invocation kinds present a curated candidate set. The router LLM sees a fixed tool list assembled by `build_tools()`. The phase LLM sees `available_control_ops` built from the phase's `allowed_ops`. Doctrine is about which candidates each kind sees; P4 applies to both sides equally.
 
-**P7 (OS skill-agnostic)** — neither surface should embed skill-specific knowledge. Closing Type C gaps via stdlib skills (Option 3 path) preserves P7: the OS exposes a general `memory` op or `run_skill` mechanism; the skill author decides whether to use it. Embedding skill-specific memory keys or catalog paths in the OS layer would violate P7.
+**P7 (OS workflow-agnostic)** — neither surface should embed workflow-specific knowledge. Closing Type C gaps via stdlib workflows (Option 3 path) preserves P7: the OS exposes a general `memory` op or `run_skill` mechanism; the workflow author decides whether to use it. Embedding workflow-specific memory keys or catalog paths in the OS layer would violate P7.
 
 ---
 

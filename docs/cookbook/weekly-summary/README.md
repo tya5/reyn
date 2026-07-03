@@ -30,7 +30,7 @@ Today you can get most of the way with `cron` (or any scheduler) calling
 0 9 * * MON  cd ~/myrepo && reyn run weekly_summary "summarize last week" >> .reyn/weekly.log 2>&1
 ```
 
-The `weekly_summary` skill (you'd write it under `reyn/local/`) would:
+The `weekly_summary` workflow (you'd write it under `reyn/local/`) would:
 
 1. Read `.reyn/state/weekly_summary.json` for `last_run_iso`.
 2. Run `git log --since=$last_run_iso --until=now`.
@@ -40,7 +40,7 @@ The `weekly_summary` skill (you'd write it under `reyn/local/`) would:
 Steps 1 and 4 need `read_file` / `write_file` Control IR ops with
 permission grants in `reyn.yaml`.
 
-## Sketch — `weekly_summary` skill graph
+## Sketch — `weekly_summary` workflow graph
 
 ```
 load_state → collect_changes → summarize → save_state

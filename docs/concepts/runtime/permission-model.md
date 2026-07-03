@@ -6,7 +6,7 @@ audience: [human, agent]
 
 # Permission model
 
-reyn's permission system gates four kinds of capability: file paths, shell, MCP tool calls, and Python preprocessor steps. The defaults are conservative; anything beyond them must be declared by the skill **and** approved by the user (or pre-approved in `reyn.yaml`).
+reyn's permission system gates four kinds of capability: file paths, shell, MCP tool calls, and Python preprocessor steps. The defaults are conservative; anything beyond them must be declared by the workflow **and** approved by the user (or pre-approved in `reyn.yaml`).
 
 ## Three layers, in order
 
@@ -42,13 +42,13 @@ Read/glob/grep anywhere under the project root. Write/edit/delete only under `.r
 - `.reyn/mcp.yaml` — writing it (installing a server) grants nothing on its own. *Using* a server still passes a per-server check at call time (`require_mcp`), so download + execute of the server package is gated regardless of who wrote the config.
 - `.reyn/cron.yaml` — registering a job goes through the standard tool gate (`require_cron_register` / `require_file_write`); fired jobs run only under a user-launched in-process scheduler, and each fired op is itself permission-gated.
 
-A skill that legitimately needs to write a *still-protected* path must declare it explicitly (e.g. `file.write: [{path: ".reyn/index/sources.yaml"}]` in `skill.md` frontmatter) and obtain the corresponding approval. The intended route remains the appropriate gated op handler — not direct file writes.
+A workflow that legitimately needs to write a *still-protected* path must declare it explicitly (e.g. `file.write: [{path: ".reyn/index/sources.yaml"}]` in `skill.md` frontmatter) and obtain the corresponding approval. The intended route remains the appropriate gated op handler — not direct file writes.
 
 **Residual risk.** With mcp/cron at protect-at-use, a safe-mode step *can* now write `.reyn/mcp.yaml` / `.reyn/cron.yaml` directly via the broad `.reyn/` zone. This is intentional and bounded: the write changes only inert configuration. The authority it appears to grant (an MCP server, a cron job) is not realized until the gated use path (`require_mcp` / scheduler + op gates) is crossed, which a config write cannot bypass. The approval store keeps its carve-out precisely because it has no such downstream gate.
 
-### Layer 2: skill declarations
+### Layer 2: workflow declarations
 
-A skill that needs something outside the defaults declares it in its `skill.md` frontmatter. At skill startup, the runtime shows a single approval prompt:
+A workflow that needs something outside the defaults declares it in its `skill.md` frontmatter. At workflow startup, the runtime shows a single approval prompt:
 
 ```
 [approval] my_skill/file.write needs:
@@ -172,7 +172,7 @@ grep '"mcp_server_installed"' .reyn/events.jsonl
 Reyn permissions operate on two axes:
 
 **Axis 1 — Usage Declaration** (skill.md frontmatter `permissions:` block):
-The skill author declares what ops the skill intends to use. An undeclared
+The workflow author declares what ops the workflow intends to use. An undeclared
 op raises `PermissionError` immediately (analogous to Android `SecurityException`
 when calling an API not in the manifest).
 
@@ -196,7 +196,7 @@ Four resolution layers in `PermissionResolver._approve()`:
 | 3 | `shell`, `file` (outside zone) | required | ✅ ask (JIT — `bus≠None` prompt at gate time; `bus=None` deny) | `allow` pre-approves; `deny` blocks even the default zone |
 
 Tier 0 is "unconditional pass", not "default allow" — there is no config key
-that could block these ops without breaking skill execution semantics.
+that could block these ops without breaking workflow execution semantics.
 
 ### web_fetch behavior (FP-0022)
 
@@ -250,9 +250,9 @@ is configured — there is no regression for environments that already use env v
 
 ## Permission is an OS I/O primitive
 
-The permission system is part of the OS runtime, not a separate layer above it. Every side-effect performed by reyn — whether from skill code, op handler, or any other OS-internal path — goes through the same permission resolver against the calling skill's `PermissionDecl`. There is no inside/outside split: the OS uses the permission system as its core abstraction for all I/O.
+The permission system is part of the OS runtime, not a separate layer above it. Every side-effect performed by reyn — whether from workflow code, op handler, or any other OS-internal path — goes through the same permission resolver against the calling workflow's `PermissionDecl`. There is no inside/outside split: the OS uses the permission system as its core abstraction for all I/O.
 
-Concretely, `op_runtime/mcp_install.py` writing `.reyn/mcp.yaml` routes through `reyn.api.safe.file.write` — the same gate a skill-level safe-mode python step would use. The PermissionDecl in scope is the skill's; the OS honors it uniformly regardless of where the call originates. The older "OS gates its callers, not itself" framing is dissolved by this: a single uniform mechanism, no cyclic concern.
+Concretely, `op_runtime/mcp_install.py` writing `.reyn/mcp.yaml` routes through `reyn.api.safe.file.write` — the same gate a workflow-level safe-mode python step would use. The PermissionDecl in scope is the workflow's; the OS honors it uniformly regardless of where the call originates. The older "OS gates its callers, not itself" framing is dissolved by this: a single uniform mechanism, no cyclic concern.
 
 ## Declaration axis taxonomy
 
@@ -264,7 +264,7 @@ Each side-effect kind has a corresponding declarable axis. The axis vocabulary i
 |---|---|---|---|---|
 | `file.read` | `list[{path, scope}]` | per-path | `require_file_read()` | scope ∈ {`just_path`, `recursive`}. Default zone = CWD. Outside zone: JIT ask (bus≠None) or deny (bus=None). `file.read: deny` blocks even CWD. Mirrors `http.get` pattern. |
 | `file.write` | `list[{path, scope}]` | per-path | `require_file_write()` | covers write / edit / delete. Default zone = `.reyn/`. Outside zone: JIT ask (bus≠None) or deny (bus=None). `file.write: deny` blocks even `.reyn/`. Mirrors `http.get` pattern. |
-| `http.get` | `list[{host}]` | per-host | `require_http_get()` | specific host = startup prompt + silent runtime; `"*"` wildcard = per-host runtime prompt. Covers both `reyn.api.safe.http.*` (skill-internal, specific only) and `web_fetch` (LLM-driven, accepts wildcard) |
+| `http.get` | `list[{host}]` | per-host | `require_http_get()` | specific host = startup prompt + silent runtime; `"*"` wildcard = per-host runtime prompt. Covers both `reyn.api.safe.http.*` (workflow-internal, specific only) and `web_fetch` (LLM-driven, accepts wildcard) |
 | `secret.write` | `list[<key>]` | per-key | `require_secret_write()` | per-key for `~/.reyn/secrets.env`; `"*"` wildcard for runtime-determined keys (= the per-value prompt is the actual gate) |
 | `mcp` | `list[str]` | per-server | implicit at MCP call | per-server-name allowlist |
 | `python` | `list[{module, function, mode, timeout}]` | per-step | `require_python_step()` | mode ∈ {`safe`, `unsafe`} |
@@ -292,7 +292,7 @@ The criterion is: **if a capability reduces to a finite I/O scope (file path / h
 Bool axes carried a per-instance approval surface (= `mcp_install:<server_id>` keyed per server). After collapse:
 
 - **MCP per-server granularity is preserved** at *call time* via the existing `permissions.mcp: [<server>]` axis. Installing a server (= writing `.reyn/mcp.yaml`) becomes a one-step grant; using a specific server still requires the call-time per-server check, so download + execute of the server's package still passes a per-server gate.
-- **Cron per-job granularity is reduced** to "may write `.reyn/cron.yaml` at all", but cron-fired skills still go through their own runtime permission gates when they execute. The granularity reduction does not bypass downstream protections.
+- **Cron per-job granularity is reduced** to "may write `.reyn/cron.yaml` at all", but cron-fired workflows still go through their own runtime permission gates when they execute. The granularity reduction does not bypass downstream protections.
 - **Index per-source granularity is reduced** — there is no equivalent post-write gate. Drop is destructive and the per-source distinction was operator-UX, not security; the reduction is accepted.
 
 ### `allowed_mcp` is an ACL filter, not a capability
@@ -325,7 +325,7 @@ The execution surfaces that perform side-effects, ordered by enforcement strengt
 ```
 
 - **Top (sandboxed_exec)** is the only layer with OS-kernel enforcement. argv / network / fs scope is declarative per call and enforced by the platform sandbox.
-- **Internal OS code** uses the same `reyn.api.safe.*` primitives as skill code, against the calling skill's PermissionDecl. There is no inside/outside split — the OS exercises its own permission mechanism uniformly.
+- **Internal OS code** uses the same `reyn.api.safe.*` primitives as workflow code, against the calling workflow's PermissionDecl. There is no inside/outside split — the OS exercises its own permission mechanism uniformly.
 - **Safe-mode python** is honor-system: AST validation prevents `import os`, and `reyn.api.safe.*` checks declared paths / hosts / keys. A motivated user with `mode: unsafe` access can bypass; a non-motivated `mode: safe` author cannot accidentally bypass via normal coding patterns.
 - **Unsafe-mode python** is trust-by-declaration: the operator approves `--allow-unsafe-python` at runtime and accepts that the step has full host access.
 
@@ -362,7 +362,7 @@ The `sandboxed_exec` policy (`SandboxPolicy`) is scoped **per axis**. The axes a
 
 Reyn deviates from the iOS / Android "capability + first-use prompt" pattern on two axes:
 
-1. **Granularity is finer than industry default** — list-axis path / host / server scope is closer to Web's origin-scope than to iOS / Android's capability axis. The justification is that Reyn skills are workflow code (= author knows the inventory), whereas iOS / Android apps are general-purpose.
+1. **Granularity is finer than industry default** — list-axis path / host / server scope is closer to Web's origin-scope than to iOS / Android's capability axis. The justification is that Reyn workflows are purpose-specific code (= author knows the inventory), whereas iOS / Android apps are general-purpose.
 2. **Enforcement is honor-system for safe-mode python** — iOS / Android rely on kernel boundaries; Reyn relies on AST validation + path / host / key checks via the `reyn.api.safe.*` primitives. The trade-off is implementation simplicity (= no per-step seatbelt setup) for weaker enforcement.
 
 ## Collapse arc (#571)
@@ -374,7 +374,7 @@ The axis taxonomy above is the target state. The permissions audit identified th
 | 1 | This doc — articulate "permission is an OS I/O primitive" and the collapse map | this PR |
 | 2 | Route `op_runtime` handlers (= `mcp_install` / `mcp_drop_server` / `cron_register` / `index_drop`) through `reyn.api.safe.file.write`; loader compat shim accepts both bool form and explicit list form | follow-up PR |
 | 3 | Introduce `http.get: [{host}]` axis (= gates `reyn.api.safe.http.*` per-host) and `secret.write: [<key>]` axis (= gates `~/.reyn/secrets.env` writes per-key) | follow-up |
-| 4 | Migrate stdlib skills to explicit list-axis form | follow-up |
+| 4 | Migrate stdlib workflows to explicit list-axis form | follow-up |
 | 5 | Remove bool axes (`mcp_install` etc.) and `require_mcp_install` / `require_cron_register` / `require_index_drop` / `require_mcp_drop_server` from the OS surface | follow-up |
 
 During Phases 1–4 the bool form (= `mcp_install: true`) is accepted as a compat shim that implicitly expands to the equivalent list-axis decomposition. The bool form is removed in Phase 5.
@@ -385,18 +385,18 @@ Phase 7 finishes the alignment by giving the `http.get` axis the same prompt mod
 
 - **Specific declared host** (`http.get: [{host: "api.github.com"}]`) — `startup_guard` prompts the operator once per `<skill, host>` and persists the decision to approvals.yaml under `<skill>/http.get/<host>`. Runtime is then silent. Mirrors `file.write` for paths outside the default zone.
 - **Wildcard** (`http.get: [{host: "*"}]` or `["*"]`) — host set is unknown at write-time (= LLM picks at runtime, e.g. `web_fetch` follow-up of `web_search` results), so the prompt fires at the actual host gate inside `require_http_get`. Same `<skill>/http.get/<host>` persistence; ALWAYS / NEVER choices apply per host.
-- **No declaration** — legacy `web.fetch` compat path with a `DeprecationWarning` until the segmented-migration window closes; existing skills that relied on Tier-1 default-allow keep working.
+- **No declaration** — legacy `web.fetch` compat path with a `DeprecationWarning` until the segmented-migration window closes; existing workflows that relied on Tier-1 default-allow keep working.
 
 The `web_fetch` op handler routes through `require_http_get` instead of the legacy `require_web_fetch`; the chat router's PermissionDecl declares `http.get: [{host: "*"}]` so LLM-driven fetches go through the wildcard branch. The `reyn.api.safe.http` subprocess path strips wildcard entries at the preprocessor — sync subprocesses can't prompt, so wildcard-host fetches must go through the async `web_fetch` op route.
 
-This unifies the two HTTP surfaces (`safe.http` skill-internal + `web_fetch` LLM-driven) under one axis with one prompt model. It matches the browser-extension `host_permissions` (= declared, install-time prompt) + Web Permissions API (= runtime per-feature prompt) hybrid — see the [Industry comparison](#industry-comparison) section.
+This unifies the two HTTP surfaces (`safe.http` workflow-internal + `web_fetch` LLM-driven) under one axis with one prompt model. It matches the browser-extension `host_permissions` (= declared, install-time prompt) + Web Permissions API (= runtime per-feature prompt) hybrid — see the [Industry comparison](#industry-comparison) section.
 
 | Aspect | Pre-Phase-7 | Post-Phase-7 |
 |---|---|---|
-| `safe.http` skill-internal | per-host decl, silent runtime, no prompt | unchanged for specific decl; wildcard rejected (= subprocess can't prompt) |
+| `safe.http` workflow-internal | per-host decl, silent runtime, no prompt | unchanged for specific decl; wildcard rejected (= subprocess can't prompt) |
 | `web_fetch` LLM-driven | Tier-1 default-allow, 4-layer per-URL prompt | routed through `http.get` axis; chat router decl carries wildcard so behaviour is preserved |
 | Operator prompt granularity | per-URL (`web.fetch` key) | per-host (`<skill>/http.get/<host>` key) — ALWAYS covers all URLs on that host |
-| Skill author control over LLM fetch scope | none | declare specific `http.get` hosts to constrain (= LLM can only fetch declared hosts; wildcard absent = no fallback) |
+| Workflow author control over LLM fetch scope | none | declare specific `http.get` hosts to constrain (= LLM can only fetch declared hosts; wildcard absent = no fallback) |
 | Legacy `web.fetch: allow` / `deny` config | direct gate | honored as backward-compat alias inside `require_http_get` during the migration window |
 
 ## `python` permission and `mode: safe` allowlist
@@ -410,7 +410,7 @@ The `python` permission has two levels:
 
 `PURE_STDLIB_ALLOWLIST` is defined in `src/reyn/core/kernel/_python_allowlist.py`. `__future__` is in the list as a compiler directive — it carries no runtime capability.
 
-**Non-interactive auto-allow**: when a stdlib skill is invoked via `reyn run` (non-interactive context), both `mode: safe` and `mode: unsafe` python steps are auto-allowed without a prompt. This mirrors the same non-interactive behavior already in place for other ops in eval/CI runs.
+**Non-interactive auto-allow**: when a stdlib workflow is invoked via `reyn run` (non-interactive context), both `mode: safe` and `mode: unsafe` python steps are auto-allowed without a prompt. This mirrors the same non-interactive behavior already in place for other ops in eval/CI runs.
 
 **The formal contract for `mode: safe`** (= "ambient sources only") covers the full allowlist rationale, the safe-vs-unsafe auto-allow rules by context, and the refactor pattern for converting unsafe steps to safe.
 
@@ -438,9 +438,9 @@ required_credentials:
 
 The default — when `required_credentials` is omitted — is `["*"]`, which grants
 full credential delegation. This preserves backward compatibility for existing
-skills written before FP-0016.
+workflows written before FP-0016.
 
-To explicitly declare that a skill needs no credentials at all, use an empty list:
+To explicitly declare that a workflow needs no credentials at all, use an empty list:
 
 ```yaml
 required_credentials: []
@@ -544,7 +544,7 @@ Two distinct concepts both use the word "layers" in this document. They answer d
 | Authorization 3 layers (grant hierarchy, top of page) | How does a capability get granted? | Hierarchical grant |
 | Conjunctive restrict layers (this section) | Given current runtime restrictions, is the capability allowed? | Intersect — can only narrow |
 
-They operate in sequence: authorization resolution (AgentLayer) determines whether the skill's declaration and approvals cover a capability; then the conjunctive intersection applies any active sandbox or profile restrictions. An approved capability can still be denied by `SandboxLayer` or `ProfileLayer` — grant-back is forbidden.
+They operate in sequence: authorization resolution (AgentLayer) determines whether the workflow's declaration and approvals cover a capability; then the conjunctive intersection applies any active sandbox or profile restrictions. An approved capability can still be denied by `SandboxLayer` or `ProfileLayer` — grant-back is forbidden.
 
 ## LLM spawn capability model {#llm-spawn-capability-model}
 
@@ -617,5 +617,5 @@ See [reyn-yaml § safety.spawn](../../reference/config/reyn-yaml.md#safetyspawn-
 - [Concepts: secret handling](../runtime/secret-handling.md) — credential storage (`~/.reyn/secrets.env`)
 - [Reference: `reyn mcp`](../../reference/cli/mcp.md) — `install` subcommand and `mcp_install` gate interaction
 - [How-to: manage permissions](../../guide/for-users/manage-permissions.md)
-- [Concepts: Capability profile](../runtime/capability-profile.md) — per-agent ProfileLayer spec (skill / MCP / tool / category axes) and agent self-edit guide
+- [Concepts: Capability profile](../runtime/capability-profile.md) — per-agent ProfileLayer spec (workflow / MCP / tool / category axes) and agent self-edit guide
 - [Concepts: LLM org-design tools](../multi-agent/org-design.md) — `agent_spawn` / `session_spawn` / `topology_create` and the ⊆-parent model in practice

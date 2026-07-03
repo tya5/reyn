@@ -302,7 +302,7 @@ On startup the server:
 
 On EOF from stdin (= the MCP client disconnects), the registry is shut down cleanly and all in-flight sessions drain.
 
-The server runs non-interactively. No human is at the stdin that the MCP transport owns, so interactive permission prompts would block indefinitely. Pre-approve skill permissions in `reyn.yaml` with `permissions: allow` before wiring up the server.
+The server runs non-interactively. No human is at the stdin that the MCP transport owns, so interactive permission prompts would block indefinitely. Pre-approve run permissions in `reyn.yaml` with `permissions: allow` before wiring up the server.
 
 ### `serve` options
 

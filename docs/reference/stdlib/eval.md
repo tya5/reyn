@@ -7,7 +7,7 @@ applies_to: [eval]
 
 # `eval`
 
-Evaluate a target skill against a single test case using `judge_phase` as LLM-as-judge.
+Evaluate a target workflow against a single test case using `judge_phase` as LLM-as-judge.
 
 ## Entry
 
@@ -23,7 +23,7 @@ The `evaluate` phase uses an `iterate × run_skill` preprocessor that fans `judg
 
 ## Caveats — Python preprocessor approval
 
-If the target skill uses Python preprocessor steps, **each step must be approved before eval**. eval invokes the target via `run_skill` under a non-interactive permission resolver — there is no prompt at eval time.
+If the target workflow uses Python preprocessor steps, **each step must be approved before eval**. eval invokes the target via `run_skill` under a non-interactive permission resolver — there is no prompt at eval time.
 
 Two ways to pre-approve:
 

@@ -54,13 +54,13 @@ reyn lint SKILL
 
 ## 例
 
-プロジェクト Skill をリント:
+プロジェクトワークフローをリント:
 
 ```bash
 reyn lint article_writer
 ```
 
-stdlib Skill をリント（編集後の健全性チェック）:
+stdlib コンポーネントをリント（編集後の健全性チェック）:
 
 ```bash
 reyn lint eval

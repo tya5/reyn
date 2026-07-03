@@ -7,7 +7,7 @@ applies_to: [reyn run]
 
 # `reyn run`
 
-Skill をエンドツーエンドで実行します。
+ワークフローをエンドツーエンドで実行します。
 
 ## 概要
 
@@ -38,7 +38,7 @@ reyn run [OPTIONS] [SKILL] [INPUT]
 
 ## 例
 
-自然言語入力で stdlib Skill を実行:
+自然言語入力で stdlib コンポーネントを実行:
 
 ```bash
 reyn run direct_llm "reyn is a workflow OS for LLMs."

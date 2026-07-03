@@ -14,7 +14,7 @@ substrate = event/WAL log と runtime snapshot）の crash-recovery を完全に
 
 ## なぜ「全ファイルシステム」でなく境界なのか
 
-プロセスが触れる *すべて* のバイトの復旧を保証することは達成不可能です: skill は
+プロセスが触れる *すべて* のバイトの復旧を保証することは達成不可能です: ワークフローは
 shell を呼べ、サブプロセスは権限のある場所へ書け、外部ツールは Reyn が見ないファイル
 を変更できます。それら全部を復旧すると謳うのは、提供できないものを約束することです。
 
@@ -102,4 +102,4 @@ tree-membership 境界を durable な契約として扱い、per-backend の enf
 - [タイムトラベル](time-travel.md) — WAL + runtime snapshot 上の reconstruct、L2 を支える shadow-git generation
 - [Workspace](workspace.md) — workspace tree そのもの
 - [Permission model](permission-model.md) — Control IR file op (L1) を gate する機構
-- クラッシュ復旧 / skill resume (ページ削除済み)
+- クラッシュ復旧 / ワークフロー再開 (ページ削除済み)

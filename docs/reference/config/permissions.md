@@ -7,7 +7,7 @@ applies_to: [reyn.yaml, skill.md, phases/*.md]
 
 # Permissions
 
-reyn's permission system gates access to file paths, shell, MCP tools, named tools, and Python preprocessor steps. Defaults are conservative; anything outside the defaults requires either a skill-level declaration plus user approval, OR a project-wide pre-approval in `reyn.yaml`.
+reyn's permission system gates access to file paths, shell, MCP tools, named tools, and Python preprocessor steps. Defaults are conservative; anything outside the defaults requires either a workflow-level declaration plus user approval, OR a project-wide pre-approval in `reyn.yaml`.
 
 ## Default grants (no declaration needed)
 
@@ -18,9 +18,9 @@ reyn's permission system gates access to file paths, shell, MCP tools, named too
 
 Anything outside these defaults must be declared.
 
-## Skill declarations (`permissions:` in skill.md frontmatter)
+## Workflow declarations (`permissions:` in `skill.md` frontmatter)
 
-Phase-level `permissions:` was removed. All permission declarations belong in `skill.md` frontmatter — see skill-md.md. Phases inherit whatever the skill declares.
+Phase-level `permissions:` was removed. All permission declarations belong in `skill.md` frontmatter — see skill-md.md. Phases inherit whatever the workflow declares.
 
 ```yaml
 ---
@@ -80,7 +80,7 @@ Per-(module, function) declarations for `python` preprocessor steps. See `refere
 
 ### `http.get`
 
-Per-host HTTP allowlist for `reyn.api.safe.http.*` (skill-internal) AND for `web_fetch` (LLM-driven) — both surfaces share one axis.
+Per-host HTTP allowlist for `reyn.api.safe.http.*` (workflow-internal) AND for `web_fetch` (LLM-driven) — both surfaces share one axis.
 
 - **Specific host** (`http.get: [{host: "api.github.com"}]`) — `startup_guard` prompts once per `<skill, host>`; runtime is silent after approval. Same model as `file.write` outside the default zone.
 - **Wildcard** (`http.get: [{host: "*"}]` or `["*"]`) — host set is unknown at write-time (= LLM picks at runtime); the 4-layer prompt fires inside `require_http_get` at the actual host gate; ALWAYS / NEVER persists per host.
@@ -145,7 +145,7 @@ Use `allow` only when the project is trusted. `ask` (the default) prompts; `deny
 
 ## Non-interactive runs (CI, eval)
 
-`reyn eval` runs non-interactively — there is no prompt. Approvals must be pre-arranged either in `reyn.yaml` or `.reyn/approvals.yaml` (e.g. by running the target skill once interactively first).
+`reyn eval` runs non-interactively — there is no prompt. Approvals must be pre-arranged either in `reyn.yaml` or `.reyn/approvals.yaml` (e.g. by running the target workflow once interactively first).
 
 ## Inspecting and revoking
 

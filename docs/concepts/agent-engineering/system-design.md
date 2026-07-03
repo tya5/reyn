@@ -14,16 +14,16 @@ Three layers, each with a single responsibility:
 
 | Layer | Owns | Knows about |
 |-------|------|-------------|
-| **OS** | The runtime loop, validation, events | None of the skill's domain |
-| **Skill** | The graph, entry phase, final output schema | Only its own phases and artifacts |
+| **OS** | The runtime loop, validation, events | None of the workflow's domain |
+| **Workflow** | The graph, entry phase, final output schema | Only its own phases and artifacts |
 | **Phase** | An input artifact type + LLM instructions | Nothing outside its own input |
 
 Two invariants follow from the split:
 
 1. **The graph constrains the LLM.** The LLM picks an edge from `candidate_outputs`; the OS rejects anything else. Control flow is a finite state machine, not free-form prompt chaining.
-2. **The OS is skill-agnostic.** No string literal naming a specific phase, artifact, or field appears in OS code (P7). New skills are pure data; OS code never changes.
+2. **The OS is workflow-agnostic.** No string literal naming a specific phase, artifact, or field appears in OS code (P7). New workflows are pure data; OS code never changes.
 
-The result: a workflow's behavior is a function of its skill files plus the LLM's choices within each phase — both small, both inspectable.
+The result: a workflow's behavior is a function of its workflow files plus the LLM's choices within each phase — both small, both inspectable.
 
 ### Why bound the LLM's control flow
 
@@ -33,7 +33,7 @@ Unbounded LLM orchestration is unstable in three measurable ways:
 - **Untestability.** "Will this prompt eventually finish?" is undecidable for a free agent and trivially decidable on a finite graph.
 - **No clean re-entry.** When something fails, you want to point to the failing phase. Free-form orchestration has no phases to point at.
 
-reyn pays the cost of writing skill graphs explicitly and gets predictability in return.
+reyn pays the cost of writing workflow graphs explicitly and gets predictability in return.
 
 ## Where it's still thin
 

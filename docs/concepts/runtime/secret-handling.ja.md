@@ -195,7 +195,7 @@ grep '"secret_' .reyn/events.jsonl
 
 reyn は `~/.reyn/oauth_tokens.json`（chmod 600）に格納される `OAuthToken` 値型を提供します。各エントリにはアクセストークン、リフレッシュトークン、有効期限タイムスタンプ、トークンエンドポイント URL が含まれます。
 
-**ランタイム API** — スキルは OAuth トークンを次の方法でアクセスします：
+**ランタイム API** — ワークフローは OAuth トークンを次の方法でアクセスします：
 
 ```python
 from reyn.secrets import get_valid_token
@@ -222,7 +222,7 @@ token = await get_valid_token("github_oauth")
 
 ### 宣言
 
-各スキルは `skill.md` フロントマターで `required_credentials` を宣言します：
+各ワークフローは `skill.md` フロントマターで `required_credentials` を宣言します：
 
 ```yaml
 # skill.md フロントマター
@@ -237,7 +237,7 @@ required_credentials:
 
 | 値 | 意味 |
 |----|------|
-| `[]` | 認証情報不要（stdlib スキルのデフォルト） |
+| `[]` | 認証情報不要（stdlib ワークフローのデフォルト） |
 | `["github_token", "openai_key"]` | 明示的な許可リスト |
 | `["*"]` | 完全委任 — フィールド省略時の後方互換デフォルト |
 

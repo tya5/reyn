@@ -49,7 +49,7 @@ The shape is fixed; the discriminators are validated; the artifact is checked ag
 
 A phase may declare a chain that runs **before** the LLM is called: invoke a sub-skill, iterate over a list, validate against a schema, run a Python function. The result lands at a named slot in the LLM's input — phases reference the slot by name and don't need to know it came from a preprocessor.
 
-This is what lets stdlib skills compose without imperative code: `eval` iterates `judge_phase` over per-criterion requests; `skill_router` calls `recall_memory` before deciding which skill to dispatch.
+This is what lets stdlib workflows compose without imperative code: `eval` iterates `judge_phase` over per-criterion requests; `skill_router` calls `recall_memory` before deciding which workflow to dispatch.
 
 ## Why type the contracts so aggressively
 
@@ -61,7 +61,7 @@ Three properties fall out of "everything has a schema":
 
 ## Where it's still thin
 
-The five Control IR kinds cover most workflows but more are likely needed as the ecosystem grows. MCP integration exists at the runtime layer (skills can declare MCP servers in permissions and the LLM gets MCP tools as ops); the surface area will grow. Extending the contract is intentionally cheap: add a kind to the OS, declare it in `available_control_ops`, and every skill can use it.
+The five Control IR kinds cover most workflows but more are likely needed as the ecosystem grows. MCP integration exists at the runtime layer (workflows can declare MCP servers in permissions and the LLM gets MCP tools as ops); the surface area will grow. Extending the contract is intentionally cheap: add a kind to the OS, declare it in `available_control_ops`, and every workflow can use it.
 
 ## See also
 

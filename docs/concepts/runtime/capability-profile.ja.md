@@ -24,7 +24,7 @@ effective = AgentLayer ∩ SandboxLayer ∩ ProfileLayer ∩ ContextualLayer
 エージェントごとのアイデンティティとベースライン許可リスト。オペレーターは自然なキー名でこのファイルを書きます:
 
 - `name`、`role`、`created_at` — アイデンティティ
-- `allowed_skills` — スキル許可リスト（内部的に `skill_allow` にマップ）
+- `allowed_skills` — ワークフロー許可リスト（内部的に `skill_allow` にマップ）
 - `allowed_mcp` — MCP サーバー許可リスト（内部的に `mcp_allow` にマップ）
 
 `AgentProfile.default_profile()` はランタイムにこれらのキーを `CapabilityProfile` に変換します — ユーザー向けのリネームなし、セマンティクスは同じです。これが **ProfileLayer**（エージェントごとのデフォルトバインディング）に入力します。
@@ -39,12 +39,12 @@ effective = AgentLayer ∩ SandboxLayer ∩ ProfileLayer ∩ ContextualLayer
 
 全フィールドはオプションです; 省略または `null` はその軸で無制限を意味します。
 
-### 軸 A — スキル絞り込み
+### 軸 A — ワークフロー絞り込み
 
 | フィールド | 型 | セマンティクス |
 |-----------|-----|--------------|
-| `skill_allow` | `list[str] \| null` | スキル許可リスト。`null` = 制約なし。`[]` = なし。 |
-| `skill_deny` | `list[str]` | スキル拒否リスト。合成プロファイル間で和集合。 |
+| `skill_allow` | `list[str] \| null` | ワークフロー許可リスト。`null` = 制約なし。`[]` = なし。 |
+| `skill_deny` | `list[str]` | ワークフロー拒否リスト。合成プロファイル間で和集合。 |
 
 ### 軸 B — MCP 絞り込み
 

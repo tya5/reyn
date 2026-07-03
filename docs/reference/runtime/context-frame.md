@@ -138,7 +138,7 @@ OS-injected header describing available token budget when the context window is 
 
 ## Why this design
 
-Building a fresh frame every visit forces every phase to be self-contained. There is no hidden conversational state between visits — only what the OS injects. This is what makes runs replayable and individual phases reusable across skills.
+Building a fresh frame every visit forces every phase to be self-contained. There is no hidden conversational state between visits — only what the OS injects. This is what makes runs replayable and individual phases reusable across workflows.
 
 ## See also
 

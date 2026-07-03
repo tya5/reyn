@@ -49,8 +49,8 @@ The Agent Card surfaces:
   notifications, task lifecycle)
 - `defaultInputModes` / `defaultOutputModes` — currently `text/plain`
 - `skills` — a single coarse-grained `chat` capability. Reyn's
-  internal skill catalogue stays opaque to the A2A peer (P7); the
-  agent decides internally which Reyn skill to invoke for each
+  internal workflow catalogue stays opaque to the A2A peer (P7); the
+  agent decides internally which Reyn workflow to invoke for each
   incoming message.
 
 ## What's supported
@@ -76,7 +76,7 @@ gets the final reply text. Multi-turn history is preserved across
 calls because Reyn's `Session.history` is per-agent and
 persistent — exactly the same property the MCP path relies on. The
 async task lifecycle layered on top (detailed below) lets
-peers drive long-running skills, react to mid-run `ask_user`, and
+peers drive long-running workflows, react to mid-run `ask_user`, and
 cancel without changing the wire shape of the `message/send` call.
 
 ## Why both MCP and A2A

@@ -6,7 +6,7 @@ audience: [human, agent]
 
 # Memory
 
-Memory is reyn's mechanism for facts that should outlive a single run: user preferences, project conventions, prior decisions, agent-specific habits. The router phase (`skill_router/classify`) reads memory on every chat turn and decides whether to write new entries.
+Memory is reyn's mechanism for facts that should outlive a single run: user preferences, project conventions, prior decisions, agent-specific habits. The router reads memory on every chat turn and decides whether to write new entries.
 
 There is no separate memory API in the OS — memory is just files plus the `file/read` and `file/write` ops the router phase uses through normal permission rules.
 
@@ -57,7 +57,7 @@ RouterHostAdapter.get_memory_index()   (chat/services/router_host_adapter.py)
        ├─ reads .reyn/agents/<name>/memory/MEMORY.md (if present)
        └─ returns {status, content}  ← embedded in chat_routing_request artifact
 
-skill_router classify phase
+router classify phase
   └─ LLM sees memory_index.content alongside user_message + history
 ```
 
@@ -76,7 +76,7 @@ The relationship between memory and docs is intentional:
 | Memory | Docs |
 |--------|------|
 | What the system has learned about *this* user/project | What the system *can do* in general |
-| Read inline by `skill_router` | Read by `recall_docs` (planned, not yet implemented) |
+| Read inline by the router | Read by `recall_docs` (planned, not yet implemented) |
 | Persisted across runs | Static |
 
 `recall_docs` is on the residual list — once shipped it will provide a project-documentation analogue with the same 2-tier shape but a different read trigger.
@@ -88,7 +88,7 @@ The relationship between memory and docs is intentional:
 | Across-run state? | Yes | No (per-run, append-only audit) |
 | Author | The user, via the router LLM persisting facts | The OS |
 | Format | Markdown w/ frontmatter | JSONL |
-| Read by | `skill_router` classify phase | `reyn events` CLI |
+| Read by | router classify phase | `reyn events` CLI |
 
 Events answer "what happened in this run?"; memory answers "what should I know going into the next run?"
 
@@ -100,6 +100,5 @@ The system does not auto-decay or expire entries. Pruning is left to the user vi
 
 ## See also
 
-- [Reference: skill_router](../../reference/stdlib/skill_router.md) — the phase that reads/writes memory
 - [Reference: state-dir](../../reference/config/state-dir.md) — `memory/` and `agents/<name>/` locations
 - [../runtime/events.md](../runtime/events.md)

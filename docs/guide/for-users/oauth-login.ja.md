@@ -68,7 +68,7 @@ Waiting for approval...
 Saved OAuth token under key 'github'. Expires at 2026-05-17T11:00:00+00:00.
 ```
 
-トークンは `~/.reyn/oauth_tokens.json`（`chmod 600`）に書き込まれ、skill が
+トークンは `~/.reyn/oauth_tokens.json`（`chmod 600`）に書き込まれ、ワークフローが
 使用する際に自動更新されます — リフレッシュトークン自体が失効するまで
 再ログインは不要です。
 

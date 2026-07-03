@@ -70,5 +70,3 @@ A `translated_document` artifact:
 
 ## See also
 
-- [Tutorial: your first skill](../../guide/getting-started/03-your-first-skill.md)
-

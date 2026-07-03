@@ -6,11 +6,11 @@ audience: [human, agent]
 
 # RAG (Retrieval-Augmented Generation)
 
-reyn ships a RAG **framework foundation** — five primitive ops, an extensible `IndexBackend` protocol, an `EmbeddingProvider` protocol, and the stdlib `index_docs` skill — that lets you index any document corpus and have the LLM retrieve relevant chunks at query time, without ever overloading the context window with the full corpus.
+reyn ships a RAG **framework foundation** — five primitive ops, an extensible `IndexBackend` protocol, an `EmbeddingProvider` protocol, and the stdlib `index_docs` workflow — that lets you index any document corpus and have the LLM retrieve relevant chunks at query time, without ever overloading the context window with the full corpus.
 
-**The differentiation: skill-driven indexing.** LangChain and LlamaIndex give you a Python pipeline; reyn gives you a `skill.md`. Override the chunker per-source by swapping a single python step in the postprocessor chain. The Phase 1 LLM still picks the chunking strategy, but it picks from a closed candidate set defined in your strategy skill — not from open-ended training memory.
+**The differentiation: workflow-driven indexing.** LangChain and LlamaIndex give you a Python pipeline; reyn gives you a `skill.md`. Override the chunker per-source by swapping a single python step in the postprocessor chain. The Phase 1 LLM still picks the chunking strategy, but it picks from a closed candidate set defined in your strategy workflow — not from open-ended training memory.
 
-**Phase 1 scope (= 1.0 release).** The framework foundation, the SQLite default backend (≤100K chunks, sub-second query), the LiteLLM embedding passthrough, and the stdlib `index_docs` skill ship in 1.0. Vector store plugin variety (Qdrant / FAISS / Weaviate / Pinecone), advanced retrieval (rerank / HyDE / contextual retrieval), RAG eval frameworks, and IDE integration are post-1.0 (= phase 2) territory — see [../architecture/care-boundary.md](../architecture/care-boundary.md). If you need that ecosystem today, LangChain / LlamaIndex are the better fit.
+**Phase 1 scope (= 1.0 release).** The framework foundation, the SQLite default backend (≤100K chunks, sub-second query), the LiteLLM embedding passthrough, and the stdlib `index_docs` workflow ship in 1.0. Vector store plugin variety (Qdrant / FAISS / Weaviate / Pinecone), advanced retrieval (rerank / HyDE / contextual retrieval), RAG eval frameworks, and IDE integration are post-1.0 (= phase 2) territory — see [../architecture/care-boundary.md](../architecture/care-boundary.md). If you need that ecosystem today, LangChain / LlamaIndex are the better fit.
 
 **TL;DR:** Index once with `reyn run index_docs`. The LLM calls the built-in `recall` tool automatically when it needs information. Override the chunking strategy per-source with a single `skill.md` file.
 
@@ -75,7 +75,7 @@ Use the `recall` tool with `sources=[<name>, ...]` to search.
 recall(query="plan-mode discussion", sources=["memory"], top_k=5)
 ```
 
-The LLM picks which sources to search based on the source descriptions you provided at index time. You do not need to configure which sources a skill may use — any indexed source is accessible.
+The LLM picks which sources to search based on the source descriptions you provided at index time. You do not need to configure which sources a workflow may use — any indexed source is accessible.
 
 Internally, `recall` embeds the query using the same model used for indexing, runs a cosine-similarity search against each source's SQLite index, and merges results ranked by similarity score. The entire operation is deterministic; the LLM sees only the top-K chunks as text, never the raw vectors.
 
@@ -122,7 +122,7 @@ postprocessor:
 
 Your `ast_chunkers.py` module receives the strategy artifact and the file path glob, and returns a list of chunks. The rest of the pipeline (embed → index_write) is unchanged.
 
-This is the core skill-DSL differentiator: you describe your chunking logic in natural language and Python; the OS handles embedding and indexing. See the skill author guide for a full walkthrough.
+This is the core workflow-DSL differentiator: you describe your chunking logic in natural language and Python; the OS handles embedding and indexing. See the workflow author guide for a full walkthrough.
 
 ## Storage location
 
@@ -148,7 +148,7 @@ Two permission gates protect RAG operations:
 
 | Permission | Default | Trigger |
 |-----------|---------|---------|
-| `permissions.embed` | `ask` | First embedding call per skill run |
+| `permissions.embed` | `ask` | First embedding call per workflow run |
 | `permissions.index_drop` | `ask` | `drop_source` tool call or `reyn source rm` |
 
 `permissions.embed: ask` means the first time `index_docs` tries to call the embedding API, reyn prompts you to approve. You can pre-approve in `reyn.yaml`:
@@ -158,7 +158,7 @@ permissions:
   embed: allow
 ```
 
-The stdlib `index_docs` skill ships with `embed: allow` in its own permissions block, so the prompt only fires if you are running a custom override that hasn't inherited this setting.
+The stdlib `index_docs` workflow ships with `embed: allow` in its own permissions block, so the prompt only fires if you are running a custom override that hasn't inherited this setting.
 
 ## Cost
 
@@ -221,7 +221,7 @@ For chat-side action retrieval specifically (= `search_actions`), see [Guide: en
 
 **Included in Phase 1 (1.0 release):**
 
-- `index_docs` stdlib skill with heading / blank_line / sentence chunkers
+- `index_docs` stdlib workflow with heading / blank_line / sentence chunkers
 - `recall` tool available to the LLM in every chat session
 - `drop_source` tool for cleanup
 - SQLite vector store backend
@@ -257,9 +257,9 @@ For chat-side action retrieval specifically (= `search_actions`), see [Guide: en
 
 ## Operational Intelligence — `recall` on events
 
-The `index_events` stdlib skill (FP-0009 Component A) populates a source named
+The `index_events` stdlib workflow (FP-0009 Component A) populates a source named
 `"events"` by chunking the P6 event log (`.reyn/events/*.jsonl`) on run
-boundaries: one chunk per skill execution. This makes Reyn's own execution
+boundaries: one chunk per workflow execution. This makes Reyn's own execution
 history semantically searchable through the standard `recall` op — no new
 op kinds required.
 
@@ -299,7 +299,7 @@ query to surface relevant chunks, then filter in post-processing logic.
 
 ### Typical queries
 
-**Failure patterns for a specific skill:**
+**Failure patterns for a specific workflow:**
 
 ```yaml
 - type: run_op
@@ -327,7 +327,7 @@ Because error messages are embedded in the chunk text itself, semantic
 similarity surfaces runs where that error class appeared — even without
 structured filtering.
 
-**Top-cost skills (recent period):**
+**Top-cost workflows (recent period):**
 
 ```
 query: "高コスト high cost expensive run"
@@ -339,9 +339,9 @@ The LLM cannot directly sort by `cost_usd` (no numeric range query in Phase 1
 SQLite backend). Return top-K semantically relevant chunks and sort in Python
 using `chunk.metadata.extra["cost_usd"]`.
 
-### Example skill usage
+### Example workflow usage
 
-A skill phase that collects execution traces before analysis:
+A workflow phase that collects execution traces before analysis:
 
 ```yaml
 - type: run_op
@@ -359,7 +359,7 @@ top-K matching run summaries. Downstream phases read this list directly.
 ### Empty-index fallback
 
 If `index_events` has never been run, `sources=["events"]` returns an empty
-result (`trace_summary.chunks` has length 0). A skill should detect this and
+result (`trace_summary.chunks` has length 0). A workflow should detect this and
 either:
 
 1. Emit a `run_skill` op to invoke `index_events` first, then retry `recall`.
@@ -373,17 +373,17 @@ either:
      output_name: event_files
    ```
 
-The `ops_report` stdlib skill (FP-0009 Component D) implements option 1
+The `ops_report` stdlib workflow (FP-0009 Component D) implements option 1
 as its `collect` phase.
 
 ### Cross-references
 
 | Consumer | Uses events source for |
 |----------|----------------------|
-| FP-0006 `collect_traces` | failure pattern retrieval for skill self-improvement |
+| FP-0006 `collect_traces` | failure pattern retrieval for workflow self-improvement |
 | FP-0007 evaluation reports | regression detection across eval runs |
 | FP-0008 SWE-bench | past-case retrieval for analogous repository fixes |
-| `ops_report` stdlib skill | weekly/periodic operational summary generation |
+| `ops_report` stdlib workflow | weekly/periodic operational summary generation |
 
 See [FP-0006](../../deep-dives/proposals/0006-skill-self-improvement.md),
 [FP-0007](../../deep-dives/proposals/0007-evaluation-infrastructure.md),

@@ -37,7 +37,7 @@ Agent Card に含まれる情報：
 - agent の `role` テキスト（`profile.yaml` から）を `description` として
 - `capabilities` — ワイヤー上でサポートされる内容（streaming、プッシュ通知、タスクライフサイクル）
 - `defaultInputModes` / `defaultOutputModes` — 現時点では `text/plain`
-- `skills` — 粗粒度の `chat` capability 1 つ。Reyn 内部の Skill カタログは A2A ピアから不透明なままです（P7）。各受信メッセージに対してどの Reyn Skill を呼び出すかは agent が内部で決定します。
+- `skills` — 粗粒度の `chat` capability 1 つ。Reyn 内部のワークフローカタログは A2A ピアから不透明なままです（P7）。各受信メッセージに対してどの Reyn ワークフローを呼び出すかは agent が内部で決定します。
 
 ## サポート状況
 
@@ -56,7 +56,7 @@ Agent Card に含まれる情報：
 | 認証（bearer トークン / OAuth） | ❌ | v1 では対象外。ネットワーク層のアクセス制御に依存。 |
 | テキスト以外のパーツ（`file`、`data`） | ❌ | 現状はファイルを Reyn workspace 経由で交換。 |
 
-`message/send` が MVP の中心機能です。最も一般的な interop パターン（ピア agent が Reyn agent に質問し、最終返信テキストを受け取る）をカバーするためです。マルチターンの履歴は呼び出し間で保持されます。Reyn の `Session.history` は agent ごとに永続化されており — MCP パスと同じ特性です。上に重ねた非同期タスクライフサイクル（下記詳細）により、ピアは長時間実行 skill を駆動し、実行中の `ask_user` に応答し、キャンセルできます。`message/send` のワイヤー形状は変わりません。
+`message/send` が MVP の中心機能です。最も一般的な interop パターン（ピア agent が Reyn agent に質問し、最終返信テキストを受け取る）をカバーするためです。マルチターンの履歴は呼び出し間で保持されます。Reyn の `Session.history` は agent ごとに永続化されており — MCP パスと同じ特性です。上に重ねた非同期タスクライフサイクル（下記詳細）により、ピアは長時間実行ワークフローを駆動し、実行中の `ask_user` に応答し、キャンセルできます。`message/send` のワイヤー形状は変わりません。
 
 ## MCP と A2A の両方を使う理由
 

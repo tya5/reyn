@@ -144,7 +144,6 @@ Events emitted by the task Control IR ops (`task.py`).
 
 | Kind | Payload fields | Emitted when |
 |------|---------------|--------------|
-| `skill_rolled_back` | `skill: str`, `from_version: int`, `to_version: int`, `reason: str` (default `"user rollback via CLI"`) | A `reyn skill rollback` invocation restores a prior version. Written to `.reyn/events/direct/cli/<YYYY-MM-DD>.jsonl`. See [Reference: CLI — `reyn skill rollback`](../cli/skill.md). |
 
 ## Memory
 

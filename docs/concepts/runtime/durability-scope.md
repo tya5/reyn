@@ -15,7 +15,7 @@ promise covers and where its boundary is.
 ## Why a boundary, not "the whole filesystem"
 
 Guaranteeing recovery for *every* byte a process might touch is not achievable: a
-skill can shell out, a subprocess can write anywhere it has rights, an external
+workflow can shell out, a subprocess can write anywhere it has rights, an external
 tool can mutate files Reyn never sees. A system that claimed to recover all of
 that would be claiming something it cannot deliver.
 
@@ -114,4 +114,4 @@ principle does not change — only how far its durability currently reaches.
 - [Time-travel](time-travel.md) — reconstruct over the WAL + runtime snapshots, and the shadow-git generations behind L2
 - [Workspace](workspace.md) — the workspace tree itself
 - [Permission model](permission-model.md) — the gate over Control IR file ops (L1)
-- Crash recovery / skill resume (page removed)
+- Crash recovery / workflow resume (page removed)

@@ -25,7 +25,7 @@ P6 events ──┐
             └─► (index 未使用時の ops_report raw fallback)
 ```
 
-`index_events` は stdlib スキル — OS 変更は不要（P7 準拠）。`.reyn/events/*.jsonl` を読み込み、イベントを run 単位のチャンクにグルーピングして、共有の `SqliteIndexBackend` に書き込みます。インデックス後は、任意のスキルの任意フェーズから `recall(sources=["events"], query="...", top_k=N)` で実行履歴をクエリできます。
+`index_events` は stdlib ワークフロー — OS 変更は不要（P7 準拠）。`.reyn/events/*.jsonl` を読み込み、イベントを run 単位のチャンクにグルーピングして、共有の `SqliteIndexBackend` に書き込みます。インデックス後は、任意のワークフローの任意フェーズから `recall(sources=["events"], query="...", top_k=N)` で実行履歴をクエリできます。
 
 ## run チャンク形式
 
@@ -97,7 +97,7 @@ Delta:     +16pp  /  回帰: なし
 
 ## `ops_report` — 既製の運用サマリー
 
-`ops_report` stdlib スキルはカスタムクエリなしで週次サマリーを生成します:
+`ops_report` stdlib ワークフローはカスタムクエリなしで週次サマリーを生成します:
 
 ```bash
 reyn run ops_report
@@ -166,7 +166,7 @@ cron:
 
 ### 脅威モデル
 
-スケジュールされたスキルは `reyn run <skill>` と同一の権限で実行されます（= 昇格した権限はありません）。cron エントリの `skill` と `input` はオペレーターが reyn.yaml で管理します。スキル単位のクレデンシャルスコーピング（FP-0016 D）も引き続き適用されます。スケジューラはパーミッションシステムを迂回しません。
+スケジュールされたワークフローは `reyn run <skill>` と同一の権限で実行されます（= 昇格した権限はありません）。cron エントリの `skill` と `input` はオペレーターが reyn.yaml で管理します。ワークフロー単位のクレデンシャルスコーピング（FP-0016 D）も引き続き適用されます。スケジューラはパーミッションシステムを迂回しません。
 
 ### 関連リファレンス
 

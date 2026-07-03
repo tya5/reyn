@@ -37,8 +37,8 @@ Inspect with `reyn permissions list`. Remove with `reyn permissions revoke <key>
 
 All event JSONL logs. Organized by caller and log type:
 
-- `direct/skill_runs/<YYYY-MM>/<ts>_<skill>.jsonl` — events from `reyn run` (non-agent skill runs)
-- `agents/<name>/skill_runs/<YYYY-MM>/<ts>_<skill>.jsonl` — skill run events spawned by a named agent
+- `direct/skill_runs/<YYYY-MM>/<ts>_<skill>.jsonl` — events from `reyn run` (non-agent workflow runs)
+- `agents/<name>/skill_runs/<YYYY-MM>/<ts>_<skill>.jsonl` — workflow run events spawned by a named agent
 - `agents/<name>/chat/<YYYY-MM>/<ts>.jsonl` — chat-session events (rotated by `events.max_bytes` / `events.max_age_seconds`)
 
 JSONL files are replayable with `reyn events <file>`. See [events reference](../runtime/events.md).
@@ -62,7 +62,7 @@ One JSONL file per `reyn eval run` execution. Each line records a single case re
 
 ### `state/budget_ledger.jsonl`
 
-Durable, append-only budget record log (fsync per append). Holds one record per LLM call (token + USD usage) and one record per skill spawn (`kind: "spawn"`). On startup Reyn re-aggregates the daily / monthly totals (auto-reset at midnight / the 1st of the month), the cumulative per-agent token + USD totals, and the per-chain spawn counts — so every budget cap survives a process restart or crash. This is the cap-critical source of truth. Inspect with `/budget` in `reyn chat`. Not affected by `/budget reset` (which only clears in-memory counters).
+Durable, append-only budget record log (fsync per append). Holds one record per LLM call (token + USD usage) and one record per run spawn (`kind: "spawn"`). On startup Reyn re-aggregates the daily / monthly totals (auto-reset at midnight / the 1st of the month), the cumulative per-agent token + USD totals, and the per-chain spawn counts — so every budget cap survives a process restart or crash. This is the cap-critical source of truth. Inspect with `/budget` in `reyn chat`. Not affected by `/budget reset` (which only clears in-memory counters).
 
 ### `state/budget_state.json`
 

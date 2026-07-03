@@ -6,7 +6,7 @@ audience: [human, agent]
 
 # Evaluation and Observability
 
-本格的な agent システムが答えなければならない 2 つの問い: *機能しているか?*（Evaluation）と *なぜそのような動作をしているのか?*（Observability）。Reyn は同じチャネル（Events）を通じて両方に答えます。さらに、ルーブリック基準を採点する stdlib Skill（`eval`）がその Events を使用します。
+本格的な agent システムが答えなければならない 2 つの問い: *機能しているか?*（Evaluation）と *なぜそのような動作をしているのか?*（Observability）。Reyn は同じチャネル（Events）を通じて両方に答えます。さらに、ルーブリック基準を採点する stdlib ワークフロー（`eval`）がその Events を使用します。
 
 ## Reyn の実装方法
 
@@ -33,15 +33,15 @@ reyn events <log> --filter validation_error --skip context_built
 
 ### Eval — Phase をキーとしたルーブリック採点
 
-`eval` stdlib Skill は、ルーブリック（基準ごとに 1 項目）に対して fan-out された `judge_phase` を使用して、ターゲット Skill の出力を Phase ごとの基準で採点します。結果は構造化レポートです: ケースごとの合否、最も弱い Phase、全体スコア、トークン使用量、コスト。
+`eval` stdlib ワークフローは、ルーブリック（基準ごとに 1 項目）に対して fan-out された `judge_phase` を使用して、ターゲットワークフローの出力を Phase ごとの基準で採点します。結果は構造化レポートです: ケースごとの合否、最も弱い Phase、全体スコア、トークン使用量、コスト。
 
 ```bash
 reyn eval reyn/local/my_skill/eval.md
 ```
 
-関連する 2 つの stdlib Skill:
+関連する 2 つの stdlib ワークフロー:
 
-- **`eval_builder`** Skill の説明からルーブリックのドラフトを生成します。
+- **`eval_builder`** ワークフローの説明からルーブリックのドラフトを生成します。
 - **`judge_phase`** は `eval` がオーケストレートする基準ごとの採点者です。
 
 Phase をキーとした構造が重要です: 「要約がフレンドリーである」という基準は、ラン全体ではなく*要約* Phase の出力に対して採点されます。これにより、最終出力が悪化したことを単に記録するのではなく、後退の*原因となる* Phase を見つけることが可能になります。

@@ -17,7 +17,7 @@ organisation at runtime:
 
 These tools are **router-only** (not available inside a Phase): they are
 org-design decisions made by the running agent, not instructions authored in a
-skill.
+workflow.
 
 > **Distinct from the operator topology tools.** The [operator CLI
 > (`reyn topology`)](../../reference/cli/topology.md) and

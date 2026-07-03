@@ -11,8 +11,8 @@ audience: [human]
 ## 前提条件
 
 - reyn がインストール済み（`pip install reyn`）
-- 評価対象のスキル（例: `my_skill`）
-- スキルが少なくとも 1 回インタラクティブ実行済みで、パーミッション承認が記録済み
+- 評価対象のワークフロー（例: `my_skill`）
+- ワークフローが少なくとも 1 回インタラクティブ実行済みで、パーミッション承認が記録済み
 
 ---
 
@@ -30,7 +30,7 @@ eval:
       path: .reyn/traces/
 ```
 
-トレースはスキル実行後に非同期で書き込まれます。exporter はスキル実行のレイテンシに影響しません。
+トレースはワークフロー実行後に非同期で書き込まれます。exporter はワークフロー実行のレイテンシに影響しません。
 
 ### ステップ 2 — ゴールデンデータセットを作成する
 
@@ -46,7 +46,7 @@ eval:
 
 | フィールド | 必須 | 説明 |
 |---------|-----|-----|
-| `input` | はい | スキルの実行入力として直接渡される |
+| `input` | はい | ワークフローの実行入力として直接渡される |
 | `expected` | いいえ | `mode: exact` 比較で使用。`mode: judge` では無視される |
 | `tags` | いいえ | `--tags smoke` でランをフィルタリング |
 
@@ -149,7 +149,7 @@ reyn secret set LANGFUSE_PUBLIC_KEY
 reyn secret set LANGFUSE_SECRET_KEY
 ```
 
-トレースはスキル名をトレース名として Langfuse に表示されます。各フェーズ訪問がスパンにマッピングされます。
+トレースはワークフロー名をトレース名として Langfuse に表示されます。各フェーズ訪問がスパンにマッピングされます。
 
 ### OTLP（Jaeger、Grafana Tempo）
 
@@ -206,11 +206,11 @@ eval:
 
 ---
 
-## スキルフェーズで `judge_output` を使う
+## ワークフローフェーズで `judge_output` を使う
 
-`judge_output` はフェーズが自身の出力を rubric に対してスコアリングし、結果に基づいて続行するか遷移するかを判断できる Control IR op です。rubric は常にスキルが供給します。OS はドメインを知らずに評価します。
+`judge_output` はフェーズが自身の出力を rubric に対してスコアリングし、結果に基づいて続行するか遷移するかを判断できる Control IR op です。rubric は常にワークフローが供給します。OS はドメインを知らずに評価します。
 
-例: 記事作成スキルが完了前に自己評価する場合:
+例: 記事作成ワークフローが完了前に自己評価する場合:
 
 ```yaml
 # phases/evaluate.md
@@ -239,7 +239,7 @@ LLM は `judge_output` Control IR op を emit します:
 | 値 | 動作 |
 |----|------|
 | `transition` | LLM が次フェーズを選択（通常は修正フェーズ） |
-| `abort` | スキル実行を即座に abort |
+| `abort` | ワークフロー実行を即座に abort |
 | `continue` | スコアに関わらず実行を続行。スコアは workspace に記録のみ |
 
 スコアは P6 イベントログに `tool_executed`（op=judge_output, score=0.72, passed=false）として記録されます。
@@ -250,11 +250,11 @@ LLM は `judge_output` Control IR op を emit します:
 
 各 `reyn eval run` ケースは隔離された workspace コピーで実行されます。本番 workspace の状態 — index 済みソース、承認、既存アーティファクト — は eval ケースから見えません。あるケースの結果が次のケースに影響しません。
 
-この隔離は eval が通常のスキル実行と同じプロジェクトディレクトリで動作する場合でも保証されます。`.reyn/eval-results/` 出力ディレクトリが eval ランナーとプロジェクト workspace の唯一の共有書き込みパスです。
+この隔離は eval が通常のワークフロー実行と同じプロジェクトディレクトリで動作する場合でも保証されます。`.reyn/eval-results/` 出力ディレクトリが eval ランナーとプロジェクト workspace の唯一の共有書き込みパスです。
 
 ### 非インタラクティブパーミッション {#non-interactive-permissions}
 
-`reyn eval run` はパーミッションプロンプトを表示しません。eval 実行前にスキルが必要とするパーミッションを事前承認してください:
+`reyn eval run` はパーミッションプロンプトを表示しません。eval 実行前にワークフローが必要とするパーミッションを事前承認してください:
 
 **オプション 1 — インタラクティブで一度実行:**
 
@@ -296,7 +296,7 @@ python -c "import json; [json.loads(l) for l in open('eval/golden.jsonl')]"
 
 **ケースが「failed」ではなく「not-finished」として報告される**
 
-スキルが eval 中にパーミッションゲートに遭遇しました（eval はプロンプトを表示しません）。上記のオプションのいずれかで必要なパーミッションを事前承認してください。失敗したケースのイベントログに `permission_denied` イベントが表示されます:
+ワークフローが eval 中にパーミッションゲートに遭遇しました（eval はプロンプトを表示しません）。上記のオプションのいずれかで必要なパーミッションを事前承認してください。失敗したケースのイベントログに `permission_denied` イベントが表示されます:
 
 ```bash
 reyn events .reyn/events/<run_id>.jsonl --filter permission_denied

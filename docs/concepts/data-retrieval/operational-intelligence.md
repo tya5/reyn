@@ -25,7 +25,7 @@ P6 events ──┐
             └─► (raw fallback for ops_report when index absent)
 ```
 
-`index_events` is a stdlib skill — it requires no OS changes (P7 compliant). It reads `.reyn/events/*.jsonl`, groups events into per-run chunks, and writes them to the shared `SqliteIndexBackend`. Once indexed, any phase in any skill can query the execution history with `recall(sources=["events"], query="...", top_k=N)`.
+`index_events` is a stdlib workflow — it requires no OS changes (P7 compliant). It reads `.reyn/events/*.jsonl`, groups events into per-run chunks, and writes them to the shared `SqliteIndexBackend`. Once indexed, any phase in any skill can query the execution history with `recall(sources=["events"], query="...", top_k=N)`.
 
 ## Run-chunk format
 
@@ -97,7 +97,7 @@ See `reyn eval compare` for the full CLI reference.
 
 ## `ops_report` — ready-made operational summary
 
-The `ops_report` stdlib skill produces a weekly summary without requiring custom queries:
+The `ops_report` stdlib workflow produces a weekly summary without requiring custom queries:
 
 ```bash
 reyn run ops_report
@@ -166,7 +166,7 @@ Two modes:
 
 ### Threat model
 
-Scheduled skills run with the same permissions as `reyn run <skill>` would (= no elevated privilege). The cron entry's `skill` and `input` are operator-controlled via reyn.yaml; per-skill credential scoping (FP-0016 D) still applies. The scheduler does NOT bypass the permission system.
+Scheduled workflows run with the same permissions as `reyn run <skill>` would (= no elevated privilege). The cron entry's `skill` and `input` are operator-controlled via reyn.yaml; per-skill credential scoping (FP-0016 D) still applies. The scheduler does NOT bypass the permission system.
 
 ### Cross-references
 

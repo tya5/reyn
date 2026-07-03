@@ -17,19 +17,19 @@ This page focuses on the *how*; the conceptual rationale is in CLAUDE.md.
 | Principle | Enforced by | Primary file(s) |
 |---|---|---|
 | P1 — Phase doesn't know next | Phase model has no `next_phase` field | `schemas/models.py` |
-| P2 — Skill owns the graph | `SkillGraph` in Skill; compiler validates DAG | `schemas/models.py`, `compiler/linter.py` |
+| P2 — Workflow owns the graph | `SkillGraph` in Skill; compiler validates DAG | `schemas/models.py`, `compiler/linter.py` |
 | P3 — OS executes | `OSRuntime` is the only caller of LLM and Control IR | `kernel/runtime.py` |
 | P4 — LLM picks from candidates | `_build_candidates()` gates choices; normalizer rejects unknown | `context_builder.py`, `kernel/runtime.py` |
 | P5 — Workspace is SSoT | All writes go through `Workspace` with permission gate | `workspace/workspace.py`, `op_runtime/file.py` |
 | P6 — Events are audit truth | `EventLog` is append-only; state recovery reads events | `events/events.py`, `events/state_log.py` |
-| P7 — OS is skill-agnostic | `OP_KIND_MODEL_MAP` is the only op catalogue; linter rejects skill-specific strings | `op_runtime/registry.py`, `compiler/linter.py` |
+| P7 — OS is workflow-agnostic | `OP_KIND_MODEL_MAP` is the only op catalogue; linter rejects workflow-specific strings | `op_runtime/registry.py`, `compiler/linter.py` |
 | P8 — Instructions don't list fields | Schema is injected via `candidate_outputs`, not baked into instructions | `context_builder.py`, `kernel/runtime.py` |
 
 ---
 
 ## P1 — Phase declares only input_schema and instructions
 
-**What it means**: A Phase must not know which phase comes next, what the output schema is, or who its parent Skill is.
+**What it means**: A Phase must not know which phase comes next, what the output schema is, or who its parent workflow is.
 
 **How it's enforced**:
 
@@ -50,9 +50,9 @@ class Phase(BaseModel):
 
 ---
 
-## P2 — Skill declares graph and final_output
+## P2 — Workflow declares graph and final_output
 
-**What it means**: Phase connections (who can transition to whom) live in the Skill, not in any Phase.
+**What it means**: Phase connections (who can transition to whom) live in the workflow, not in any Phase.
 
 **How it's enforced**:
 
@@ -66,7 +66,7 @@ class Phase(BaseModel):
 
 ## P3 — OS is the runtime engine
 
-**What it means**: The LLM describes what to do; the OS does it. Skills and phases never call the LLM or execute ops directly.
+**What it means**: The LLM describes what to do; the OS does it. Workflows and phases never call the LLM or execute ops directly.
 
 **How it's enforced**:
 
@@ -127,7 +127,7 @@ output = normalizer.normalize(raw, allowed_candidates=candidates)
 
 ---
 
-## P7 — OS code contains no skill-specific strings
+## P7 — OS code contains no workflow-specific strings
 
 **What it means**: No phase name, artifact type, or domain-specific field name appears as a literal in OS code.
 
@@ -159,7 +159,7 @@ The practical consequence: you can change an artifact's schema without editing a
 
 ## Adding a new op kind (3 touch points)
 
-This is the canonical example of P7 in practice: a new op kind requires exactly three changes, all in OS code, none in any skill.
+This is the canonical example of P7 in practice: a new op kind requires exactly three changes, all in OS code, none in any workflow.
 
 ### 1. Define the Pydantic model (`schemas/models.py`)
 

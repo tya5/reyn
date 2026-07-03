@@ -17,11 +17,11 @@ FP-0036 以前は 3 つの仕組みが統合されていなかった:
 
 | | `reyn eval` | Dogfood シナリオフレームワーク |
 |---|---|---|
-| 起点 | `reyn run <skill>` | `reyn chat`（ルーターがスキルを選択） |
+| 起点 | `reyn run <skill>` | `reyn chat`（ルーターがワークフローを選択） |
 | 検証面 | フェーズ単位の rubric（LLM judge） | reply + events + artifacts |
-| スコープ | 1 スキル単位 | feature-map カバレッジ |
+| スコープ | 1 ワークフロー単位 | feature-map カバレッジ |
 | 結果スケール | 二値（pass/fail） | 4 バンド（verified / inconclusive / refuted / blocked） |
-| 用途 | スキル単位の回帰 | システム全体の e2e 回帰 |
+| 用途 | ワークフロー単位の回帰 | システム全体の e2e 回帰 |
 
 このフレームワークは `reyn eval` と **直交** している。`judge_output` op バックエンドと
 ベースライン比較パターンは再利用するが、CLI とスキーマは独立している。

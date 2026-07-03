@@ -98,7 +98,7 @@ python scripts/dogfood_trace.py --mode llm-tools-schema abc123... --trace .reyn/
 ```
 
 Outputs the full tools array as pretty-printed JSON. Useful for checking enum
-constraints, parameter descriptions, and which skills were in the available
+constraints, parameter descriptions, and which components were in the available
 list for that call.
 
 ## Dump format
@@ -191,7 +191,7 @@ development only.
 - **Secrets redaction is default ON.** Known API key patterns are automatically
   masked before writing. See [Secrets redaction](#secrets-redaction) above.
 - **Prompts may contain sensitive content.** System prompts carry project
-  context and skill instructions. Treat the file as internal even with redaction
+  context and workflow instructions. Treat the file as internal even with redaction
   enabled.
 - **Add to `.gitignore`.** The dump path (`.reyn/llm_trace.jsonl` by default)
   should not be committed:
@@ -627,7 +627,7 @@ previously triggered a bug to confirm the fix without a full dogfood run.
 ## Security and cost notes
 
 - **Dump files contain sensitive prompt content.** System prompts carry project
-  context and skill instructions. Do not share trace files externally.
+  context and workflow instructions. Do not share trace files externally.
 - **Each replay is a real LLM call.** `--n 10` costs 10x a single call.
   Use the cheapest model for initial investigation; switch to stronger models
   only for targeted comparison.
@@ -793,8 +793,8 @@ counts to confirm whether the model change eliminated the pattern.
 compare `--summary-only --output-format json` output across batch traces to
 verify the rate dropped.
 
-**Production skill self-check.** Skill developers can enable `REYN_LLM_TRACE_DUMP`
-during local development and run detection to check whether their skill's
+**Production workflow self-check.** Workflow developers can enable `REYN_LLM_TRACE_DUMP`
+during local development and run detection to check whether their workflow's
 prompts trigger attractors before submitting a PR.
 
 **Targeted investigation with `--filter-caller`.** Focus on a single caller

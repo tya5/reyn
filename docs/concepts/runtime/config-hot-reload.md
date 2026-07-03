@@ -120,7 +120,7 @@ seam.
 | `push_when` | no | Jinja2 → bool guard; the push is skipped when this renders false. |
 | `name` | no | Label surfaced as `[hook:name]` attribution prefix in history. |
 
-The tool is write-gated: the calling skill must declare `hooks_add` in
+The tool is write-gated: the calling workflow must declare `hooks_add` in
 `permissions.tool`, and the capability profile `tool_deny` can deny it.
 
 ## Safety story

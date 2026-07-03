@@ -11,8 +11,8 @@ audience: [human]
 ## Prerequisites
 
 - reyn installed (`pip install reyn`)
-- A skill to evaluate — for example `my_skill`
-- The skill has been run at least once interactively so permission approvals are recorded
+- A workflow to evaluate — for example `my_skill`
+- The workflow has been run at least once interactively so permission approvals are recorded
 
 ---
 
@@ -30,7 +30,7 @@ eval:
       path: .reyn/traces/
 ```
 
-Traces are written asynchronously after each skill run. The exporter does not affect skill execution latency.
+Traces are written asynchronously after each workflow run. The exporter does not affect workflow execution latency.
 
 ### Step 2 — Create a golden dataset
 
@@ -46,7 +46,7 @@ Fields:
 
 | Field | Required | Description |
 |-------|----------|-------------|
-| `input` | yes | Passed directly to the skill as the run input |
+| `input` | yes | Passed directly to the workflow as the run input |
 | `expected` | no | Used for `mode: exact` comparison; ignored for `mode: judge` |
 | `tags` | no | Filter runs with `--tags smoke` |
 
@@ -149,7 +149,7 @@ reyn secret set LANGFUSE_PUBLIC_KEY
 reyn secret set LANGFUSE_SECRET_KEY
 ```
 
-Traces appear in Langfuse under the skill name as the trace name. Each phase visit maps to a span.
+Traces appear in Langfuse under the workflow name as the trace name. Each phase visit maps to a span.
 
 ### OTLP (Jaeger, Grafana Tempo)
 
@@ -206,11 +206,11 @@ eval:
 
 ---
 
-## Using `judge_output` in a skill phase
+## Using `judge_output` in a workflow phase
 
-`judge_output` is a Control IR op that lets a phase score its own output against a rubric, then decide whether to continue or transition based on the result. The rubric is always supplied by the skill; the OS evaluates it without knowing the domain.
+`judge_output` is a Control IR op that lets a phase score its own output against a rubric, then decide whether to continue or transition based on the result. The rubric is always supplied by the workflow; the OS evaluates it without knowing the domain.
 
-Example: an article-writing skill that self-evaluates before finishing:
+Example: an article-writing workflow that self-evaluates before finishing:
 
 ```yaml
 # phases/evaluate.md
@@ -239,7 +239,7 @@ The LLM emits a `judge_output` Control IR op:
 | Value | Behaviour |
 |-------|-----------|
 | `transition` | LLM selects the next phase (typically a revise phase) |
-| `abort` | Skill execution aborts immediately |
+| `abort` | Workflow execution aborts immediately |
 | `continue` | Execution continues regardless of score; score is recorded in the workspace |
 
 The score is recorded in the P6 event log as `tool_executed` (op=judge_output, score=0.72, passed=false).
@@ -250,11 +250,11 @@ The score is recorded in the P6 event log as `tool_executed` (op=judge_output, s
 
 Each `reyn eval run` case executes in an isolated workspace copy. Production workspace state — indexed sources, approvals, existing artifacts — is not visible to eval cases. Results from one case do not bleed into the next.
 
-This isolation is guaranteed even when eval runs in the same project directory as normal skill runs. The `.reyn/eval-results/` output directory is the only shared write path between the eval runner and the project workspace.
+This isolation is guaranteed even when eval runs in the same project directory as normal workflow runs. The `.reyn/eval-results/` output directory is the only shared write path between the eval runner and the project workspace.
 
 ### Non-interactive permissions
 
-`reyn eval run` does not show permission prompts. Pre-approve any permissions the skill needs before running eval:
+`reyn eval run` does not show permission prompts. Pre-approve any permissions the workflow needs before running eval:
 
 **Option 1 — Run interactively once:**
 
@@ -296,7 +296,7 @@ python -c "import json; [json.loads(l) for l in open('eval/golden.jsonl')]"
 
 **Cases are reported as "not-finished" instead of "failed"**
 
-The skill encountered a permission gate during eval (which does not prompt). Pre-approve the required permissions using one of the options above. The event log for the failed case will show the `permission_denied` event:
+The workflow encountered a permission gate during eval (which does not prompt). Pre-approve the required permissions using one of the options above. The event log for the failed case will show the `permission_denied` event:
 
 ```bash
 reyn events .reyn/events/<run_id>.jsonl --filter permission_denied

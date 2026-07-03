@@ -28,7 +28,7 @@ The per-agent identity and baseline allowlists. The operator writes this file
 using the natural key names:
 
 - `name`, `role`, `created_at` — identity
-- `allowed_skills` — skill allowlist (maps internally to `skill_allow`)
+- `allowed_skills` — workflow allowlist (maps internally to `skill_allow`)
 - `allowed_mcp` — MCP server allowlist (maps internally to `mcp_allow`)
 
 `AgentProfile.default_profile()` converts these keys to a `CapabilityProfile`
@@ -47,12 +47,12 @@ session may have zero or more applied simultaneously. This feeds
 
 All fields are optional; absent or `null` means unrestricted on that axis.
 
-### Axis A — skill narrowing
+### Axis A — workflow narrowing
 
 | Field | Type | Semantics |
 |-------|------|-----------|
-| `skill_allow` | `list[str] \| null` | Skill allow-list. `null` = unconstrained. `[]` = none. |
-| `skill_deny` | `list[str]` | Skill deny-list. Union across composed profiles. |
+| `skill_allow` | `list[str] \| null` | Workflow allow-list. `null` = unconstrained. `[]` = none. |
+| `skill_deny` | `list[str]` | Workflow deny-list. Union across composed profiles. |
 
 ### Axis B — MCP narrowing
 
