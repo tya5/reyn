@@ -49,8 +49,6 @@ from reyn.user_intervention import (
 if TYPE_CHECKING:
     from reyn.security.sandbox.policy import SandboxPolicy
 
-    from .models import Skill
-
 
 _DEFAULT_WRITE_ZONES = (".reyn",)
 
@@ -390,7 +388,7 @@ class PermissionResolver:
     Resolves permission requests against config, saved approvals, and a
     ``RequestBus`` for user prompts.
 
-    The bus is supplied per-call (`require_*`, `startup_guard`, …) by the
+    The bus is supplied per-call (`require_*`) by the
     caller, since the bus is tied to the Agent that's running while the
     resolver is shared across runs in long-lived sessions (chat).
     """
@@ -597,8 +595,8 @@ class PermissionResolver:
             return True
         # Composite keys (e.g. "skill_router/python.safe/./mod.py:fn") accept
         # a kind-level blanket grant in config (e.g. "python.safe: allow").
-        # The startup_guard already honors this; mirror the behavior at the
-        # runtime check so config and startup are consistent.
+        # Honor the same config blanket-grant here at the
+        # runtime check so config and runtime stay consistent.
         for part in key.split("/"):
             if "." in part and self._is_config_approved(part):
                 return True
@@ -742,9 +740,9 @@ class PermissionResolver:
     ) -> None:
         """Mark `path` as approved for this session only (not persisted).
 
-        Used to suppress startup_guard prompts for paths a stdlib skill
-        declares but the caller wants to silently approve up-front (avoids an
-        interactive prompt before the chat REPL takes over stdin).
+        Used to suppress the runtime prompt for paths the caller wants to
+        silently approve up-front (avoids an interactive prompt before the
+        chat REPL takes over stdin).
 
         kind: "file.read" or "file.write". When recursive=True the approval
         covers the directory and everything beneath it.
@@ -804,7 +802,7 @@ class PermissionResolver:
         answer = await bus.request(iv)
         choice = answer.choice_id
         # #2415: honor the DECLARED scope on approval. When the skill declared this path as
-        # ``recursive`` (startup_guard confirming a declared grant), an affirmative approval grants
+        # ``recursive`` (confirming a declared grant), an affirmative approval grants
         # the declared RECURSIVE dir — the operator approves/denies the declared grant, they do not
         # re-scope it narrower. Otherwise (a JIT prompt, or a ``just_path`` declaration) an
         # affirmative grants the exact path. Without this, a skill that declares ``reyn/local``
@@ -822,243 +820,6 @@ class PermissionResolver:
             return True
         # NO or unknown → deny (session-only)
         self._session[f"{skill_name}/{kind}/{path}"] = False
-        return False
-
-    async def _prompt_file_write(
-        self, path: str, scope: str, skill_name: str, bus: RequestBus,
-    ) -> bool:
-        return await self._prompt_file_access(path, scope, skill_name, "file.write", bus)
-
-    async def startup_guard(
-        self, skill: "Skill", skill_name: str, bus: "RequestBus | None",
-    ) -> None:
-        """
-        Pre-flight permission check: scan all phase declarations, collect paths that
-        fall outside the default zones, and ask the user to approve them before
-        execution starts. Already-approved and config-approved paths are skipped.
-
-        Non-interactive runs require approvals to be in place beforehand: either
-        pre-approved in reyn.yaml / reyn.local.yaml (layer 3) or persisted to
-        .reyn/approvals.yaml from a prior interactive run (layer 2).
-
-        B49 W2-S5 fix (2026-05-22): ``bus`` may be ``None`` when the caller
-        is a non-interactive context (e.g. a preprocessor sub-skill run
-        invoked via ``run_skill`` op from inside ``iterate`` /
-        ``run_op``). If all permissions are already approved or the skill
-        declares none that need approval, the guard returns without using
-        the bus. If unapproved permissions are found and ``bus is None``,
-        a ``RuntimeError`` is raised with a clear message naming the
-        pending permissions so the caller can surface the
-        mis-configuration. Previously, ``run_orchestrator`` had an
-        unconditional pre-check ``if intervention_bus is None: raise``
-        that blocked any preprocessor sub-skill call when the resolver
-        was configured, regardless of whether prompts were actually
-        needed; that pre-check is removed and the None-handling moves
-        here, where it can branch on actual prompt necessity.
-        """
-        write_requests: list[dict] = []
-        read_requests: list[dict] = []
-        write_seen: set[tuple] = set()
-        read_seen: set[tuple] = set()
-
-        decl = skill.permissions  # aggregated upper bound across all phases
-        for entry in decl.file_write:
-            path = entry.get("path", "")
-            scope = entry.get("scope", "just_path")
-            if not path:
-                continue
-            if _in_default_write_zone(path, self._file_zone_root):  # #1414
-                continue
-            if self._is_config_approved("file.write"):
-                continue
-            if self._is_path_approved_for(path, skill_name, "file.write"):
-                continue
-            key = (path, scope)
-            if key not in write_seen:
-                write_seen.add(key)
-                write_requests.append({"path": path, "scope": scope})
-
-        for entry in decl.file_read:
-            path = entry.get("path", "")
-            scope = entry.get("scope", "just_path")
-            if not path:
-                continue
-            if _in_default_read_zone(path, self._file_zone_root):  # #1414
-                continue
-            if self._is_config_approved("file.read"):
-                continue
-            if self._is_path_approved_for(path, skill_name, "file.read"):
-                continue
-            key = (path, scope)
-            if key not in read_seen:
-                read_seen.add(key)
-                read_requests.append({"path": path, "scope": scope})
-
-        # Python preprocessor steps — both safe and unsafe require approval.
-        # Unsafe additionally needs unsafe_python_allowed (checked here so the
-        # user is told why their startup is being aborted before any prompts fire).
-        python_requests: list[dict] = []
-        python_seen: set[tuple] = set()
-        for entry in decl.python:
-            key = (entry.module, entry.function)
-            if key in python_seen:
-                continue
-            python_seen.add(key)
-            kind = "python.unsafe" if entry.mode == "unsafe" else "python.safe"
-            if self._is_config_approved(kind):
-                continue
-            approval_key = f"{skill_name}/{kind}/{entry.module}:{entry.function}"
-            if approval_key in self._saved or approval_key in self._session:
-                continue
-            python_requests.append({
-                "module": entry.module, "function": entry.function,
-                "mode": entry.mode,
-            })
-
-        # Hard-fail before prompting if an unsafe step appears without the flag.
-        for req in python_requests:
-            if req["mode"] == "unsafe" and not self._unsafe_python_allowed:
-                raise PermissionError(
-                    f"Skill '{skill_name}' declares an unsafe "
-                    f"python step ({req['module']}:{req['function']}) but "
-                    f"--allow-unsafe-python was not provided. Re-run with the flag "
-                    f"to enable unsafe-mode Python preprocessor steps."
-                )
-
-        # #571 Phase 7: http.get specific declarations follow the
-        # file.write pattern — startup_guard prompts the operator once
-        # per skill+host and persists under ``<skill>/http.get/<host>``.
-        # Wildcard ``"*"`` entries are skipped here; their prompt fires
-        # JIT in ``require_http_get`` at the actual host gate.
-        http_get_requests: list[dict] = []
-        http_get_seen: set[str] = set()
-        for entry in decl.http_get:
-            if not isinstance(entry, dict):
-                continue
-            host = entry.get("host", "")
-            if not host or host == "*":
-                continue
-            if host in http_get_seen:
-                continue
-            if self._is_config_approved("web.fetch"):
-                continue
-            if self._is_config_approved(f"http.get.{host}"):
-                continue
-            if self._is_host_approved_for(host, skill_name, "http.get"):
-                continue
-            http_get_seen.add(host)
-            http_get_requests.append({"host": host})
-
-        if not (write_requests or read_requests or python_requests or http_get_requests):
-            return
-
-        # B49 W2-S5 fix (2026-05-22): bus may be None in non-interactive
-        # contexts (= preprocessor sub-skill run). If we reach here,
-        # prompts are needed but no bus is available — surface a clear
-        # error rather than silently skipping approvals or crashing
-        # inside _prompt_*.
-        if bus is None:
-            pending = (
-                [f"file.read:{r['path']}" for r in read_requests]
-                + [f"file.write:{r['path']}" for r in write_requests]
-                + [f"python:{r['module']}:{r['function']}" for r in python_requests]
-                + [f"http.get:{r['host']}" for r in http_get_requests]
-            )
-            raise RuntimeError(
-                f"Skill '{skill_name}' has unapproved permissions "
-                f"({', '.join(pending)}) but no intervention_bus is "
-                f"available to prompt the user. Pre-approve via "
-                f"reyn.yaml or an interactive run before using this "
-                f"skill non-interactively."
-            )
-
-        for req in read_requests:
-            await self._prompt_file_access(
-                req["path"], req["scope"], skill_name, "file.read", bus,
-            )
-        for req in write_requests:
-            await self._prompt_file_access(
-                req["path"], req["scope"], skill_name, "file.write", bus,
-            )
-        for req in python_requests:
-            kind = "python.unsafe" if req["mode"] == "unsafe" else "python.safe"
-            key = f"{skill_name}/{kind}/{req['module']}:{req['function']}"
-            await self._prompt_python(key, req["module"], req["function"], req["mode"], bus)
-        for req in http_get_requests:
-            await self._prompt_http_get(req["host"], skill_name, bus)
-
-    async def _prompt_http_get(
-        self, host: str, skill_name: str, bus: RequestBus,
-    ) -> bool:
-        """Approve a specific http.get host at startup; persist on yes.
-
-        #571 Phase 7: mirrors ``_prompt_file_access`` for HTTP host
-        approvals. Uses the generic yes/no/always choice set (= host
-        has no scope axis, so the file-access ``just_path`` /
-        ``recursive`` choice doesn't apply). Persistence key is
-        ``<skill>/http.get/<host>``.
-        """
-        if not self._interactive:
-            self._session[f"{skill_name}/http.get/{host}"] = False
-            return False
-        iv = UserIntervention(
-            kind="permission.http.get",
-            prompt=f"Allow fetching from {host!r}?",
-            detail=f"skill {skill_name!r} requests http.get for host {host!r}",
-            choices=generic_yn_choices(),
-        )
-        answer = await bus.request(iv)
-        choice = answer.choice_id
-        key = f"{skill_name}/http.get/{host}"
-        if choice == YES:
-            self._session[key] = True
-            return True
-        if choice == ALWAYS:
-            self._persist(key, True)
-            return True
-        # NO or unknown → deny (session-only)
-        self._session[key] = False
-        return False
-
-    async def _prompt_python(
-        self, key: str, module: str, function: str, mode: str, bus: RequestBus,
-    ) -> bool:
-        """Approve a python step; persist on yes."""
-        if not self._interactive:
-            # stdlib skills set unsafe_python_allowed=True — their python steps
-            # are safe by construction and must auto-approve even in non-interactive
-            # mode (--non-interactive).  User-supplied unsafe steps without the
-            # flag are already hard-rejected in startup_guard before this point.
-            #
-            # Apply the auto-allow to BOTH unsafe and safe modes. `safe` is the
-            # more-restricted capability (per _python_allowlist.py), so any
-            # context that auto-allows unsafe MUST auto-allow safe — otherwise
-            # stdlib `mode: safe` is strictly more locked-down than stdlib
-            # `mode: unsafe`, which is semantically backwards. Pre-seeding the
-            # session here also primes the matching require_python check at
-            # runtime so the two code paths agree.
-            if self._unsafe_python_allowed:
-                self._session[key] = True
-                return True
-            self._session[key] = False
-            return False
-        verb = "UNSAFE" if mode == "unsafe" else "safe"
-        iv = UserIntervention(
-            kind="permission.python",
-            prompt=f"Python step ({verb}): {module}:{function}",
-            detail=f"approval key: {key}",
-            choices=python_choices(),
-        )
-        answer = await bus.request(iv)
-        choice = answer.choice_id
-        if choice == YES:
-            self._session[key] = True
-            return True
-        if choice == ALWAYS:
-            self._persist(key, True)
-            return True
-        # NO or unknown → deny (session-only)
-        self._session[key] = False
         return False
 
     # ── Public check methods ──────────────────────────────────────────────────
@@ -1206,10 +967,10 @@ class PermissionResolver:
         known:
 
         - **Specific declared host** (``http.get: [{host: "api.github.com"}]``):
-          ``startup_guard`` prompts the operator once per skill+host
-          at startup and persists the decision to approvals.yaml under
-          ``<skill>/http.get/<host>``. Runtime is then silent — this
-          method finds the persisted approval and passes.
+          the runtime prompt fires once per host and persists the
+          decision to approvals.yaml under ``<skill>/http.get/<host>``.
+          A subsequent run is then silent — this method finds the
+          persisted approval and passes.
         - **Wildcard** (``http.get: [{host: "*"}]`` or ``["*"]``): host
           set is unknown at write-time (= LLM picks at runtime), so
           the prompt fires here at the actual host gate. Same
@@ -1274,8 +1035,8 @@ class PermissionResolver:
         if self._is_config_approved(f"http.get.{host}"):
             return
 
-        # Persisted per-host approval (= startup_guard for specific,
-        # prior runtime decision for wildcard).
+        # Persisted per-host approval (from a prior interactive
+        # runtime prompt, specific or wildcard).
         if skill_name and self._is_host_approved_for(host, skill_name, "http.get"):
             return
         # Legacy session/saved ``web.fetch`` approval still authorises
@@ -1303,15 +1064,14 @@ class PermissionResolver:
         if EffectivePermission([AgentLayer(decl)]).allows(
             CapabilityAxis.NETWORK_HOST, host
         ):
-            # Need to prompt — either startup_guard was skipped (=
-            # non-interactive run with a still-unapproved specific decl)
-            # or this is the wildcard JIT path.
+            # Need to prompt — a still-unapproved host (a specific decl
+            # not yet approved, or the wildcard JIT path).
             if bus is None:
                 raise PermissionError(
                     f"HTTP access to host {host!r} requires an interactive "
                     f"prompt but no bus is available. Pre-approve via "
                     f"reyn.yaml (`permissions.web.fetch: allow` for blanket, "
-                    f"or run interactively so startup_guard can collect "
+                    f"or run interactively so the prompt can collect "
                     f"approvals)."
                 )
             approval_key = f"{skill_name}/http.get/{host}"
@@ -1545,7 +1305,7 @@ class PermissionResolver:
         """Resolve which python permission entry applies; raise if denied.
 
         Lookup is by (module, function). Safe-mode steps need a one-time
-        startup_guard approval (saved per skill+module:function). Unsafe-mode
+        interactive approval (saved per skill+module:function). Unsafe-mode
         steps additionally require unsafe_python_allowed=True (set by the
         --allow-unsafe-python CLI flag).
 

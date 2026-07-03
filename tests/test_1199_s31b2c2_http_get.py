@@ -3,7 +3,7 @@
 require_http_get's host-MEMBERSHIP decision (has_specific OR has_wildcard) routes
 through the model (NETWORK_HOST axis, decl-membership only — no approval_check, as
 the config/persisted/legacy approvals are separate disjuncts). The intricate
-resolution flow (config-deny tiers / startup_guard prompt / legacy compat) stays.
+resolution flow (config-deny tiers / interactive prompt / legacy compat) stays.
 The broad byte-identical guard is the http_get/web_fetch suites; these pin the
 NETWORK_HOST wildcard + the membership routing (via the bus=None raise paths).
 python is deliberately NOT routed (resolves+returns a PythonPermission).

@@ -135,7 +135,7 @@ class AgentLayer:
             # #1199 S3.1b-2c-2: faithful to require_http_get's membership decision —
             # a specific declared host OR the "*" wildcard (host set unknown at
             # write-time). The intricate resolution flow (config-deny tiers /
-            # startup_guard host-prompt / legacy compat / per-host persistence)
+            # runtime host-prompt / legacy compat / per-host persistence)
             # stays in require_http_get as the non-∩ flow; this axis is just the
             # decl membership (so S3.1c can ∩ SandboxLayer.network).
             return (
