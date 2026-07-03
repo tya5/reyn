@@ -330,3 +330,76 @@ def test_config_reload_rejected_missing_reason_uses_fallback() -> None:
     (only,) = msgs
     assert "config reload rejected" in only.text
     assert "malformed config" in only.text
+
+
+# ── compaction_failed ────────────────────────────────────────────────────────
+
+
+def test_compaction_failed_emits_error_marker() -> None:
+    """Tier 2: compaction_failed → [✗ compaction failed: <reason>] marker.
+
+    CompactionController emits this when the summarisation LLM call raises.
+    Without a handler the user sees the compaction spinner clear but gets no
+    feedback that context pressure is still unrelieved.
+    """
+    q: asyncio.Queue = asyncio.Queue()
+    fwd = ChatLifecycleForwarder(q)
+    fwd(Event(
+        type="compaction_failed",
+        data={"error": "LLM returned empty"},
+    ))
+    msgs = _drain(q)
+    (only,) = msgs
+    assert only.kind == "system"
+    assert "compaction failed" in only.text
+    assert "LLM returned empty" in only.text
+
+
+def test_compaction_failed_missing_error_uses_fallback() -> None:
+    """Tier 2: compaction_failed with no error field → generic fallback text."""
+    q: asyncio.Queue = asyncio.Queue()
+    fwd = ChatLifecycleForwarder(q)
+    fwd(Event(type="compaction_failed", data={}))
+    msgs = _drain(q)
+    (only,) = msgs
+    assert "compaction failed" in only.text
+    assert "unknown error" in only.text
+
+
+# ── limit_denied (router cap) ────────────────────────────────────────────────
+
+
+def test_limit_denied_emits_cap_marker_with_counts() -> None:
+    """Tier 2: limit_denied with count+cap → [✗ router cap hit: N ops (limit L)].
+
+    session.py emits this when the loop's op-count exceeds the operator-configured
+    router cap. Without a handler the user only sees LLM wrap-up text — no inline
+    marker signals that the cap is WHY the turn ended early.
+    """
+    q: asyncio.Queue = asyncio.Queue()
+    fwd = ChatLifecycleForwarder(q)
+    fwd(Event(
+        type="limit_denied",
+        data={"kind": "router_cap", "count": 42, "cap": 40, "chain_id": "abc"},
+    ))
+    msgs = _drain(q)
+    (only,) = msgs
+    assert only.kind == "system"
+    assert "router cap hit" in only.text
+    assert "42" in only.text
+    assert "40" in only.text
+
+
+def test_limit_denied_missing_counts_uses_generic_marker() -> None:
+    """Tier 2: limit_denied without count/cap → generic [✗ router cap hit] marker.
+
+    Forward-compat: future limit_denied sub-kinds that omit numeric fields still
+    surface a marker rather than silently dropping the event.
+    """
+    q: asyncio.Queue = asyncio.Queue()
+    fwd = ChatLifecycleForwarder(q)
+    fwd(Event(type="limit_denied", data={"kind": "router_cap"}))
+    msgs = _drain(q)
+    (only,) = msgs
+    assert "router cap hit" in only.text
+    assert "ops" not in only.text

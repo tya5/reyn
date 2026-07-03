@@ -148,6 +148,18 @@ class ChatLifecycleForwarder:
 
     # ── Compaction (issue #162) ──────────────────────────────────────────
 
+    def on_compaction_failed(self, data: dict) -> None:
+        """Surface a ``[✗ compaction failed: <reason>]`` error marker.
+
+        ``compaction_controller.py`` emits ``compaction_failed`` when the
+        summarisation LLM call raises. Without this handler the user sees the
+        ``compaction_started`` side-effect (spinner clears) but gets no signal
+        that compaction silently failed — early turns are still unsummarised and
+        context pressure continues unrelieved.
+        """
+        reason = str(data.get("error") or "unknown error")
+        self._enqueue(f"[✗ compaction failed: {reason}]")
+
     def on_compaction_completed(self, data: dict) -> None:
         """Surface a ``[↑ N turns compacted]`` marker in the conv pane.
 
@@ -161,6 +173,24 @@ class ChatLifecycleForwarder:
         else:
             text = "[↑ history compacted]"
         self._enqueue(text)
+
+    # ── Router cap (session.py _handle_router_cap_exceeded) ──────────────
+
+    def on_limit_denied(self, data: dict) -> None:
+        """Surface a ``[✗ router cap hit: N ops (limit L)]`` error marker.
+
+        ``session.py`` emits ``limit_denied`` when the loop's op-count exceeds
+        the operator-configured router cap. Without this handler the user only
+        sees whatever LLM wrap-up text the session synthesises — no inline
+        marker signals that the cap is WHY the turn ended early. ``kind``
+        is ``"router_cap"``; ``count`` and ``cap`` carry the numbers.
+        """
+        count = data.get("count")
+        cap = data.get("cap")
+        if count is not None and cap is not None:
+            self._enqueue(f"[✗ router cap hit: {count} ops (limit {cap})]")
+        else:
+            self._enqueue("[✗ router cap hit]")
 
     def _enqueue(self, text: str) -> None:
         # Fire-and-forget: lifecycle markers are advisory, never block the
