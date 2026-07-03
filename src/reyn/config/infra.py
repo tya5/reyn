@@ -559,9 +559,8 @@ class CronJobConfig:
     ``message`` (free-form text). Cron dispatches the message to the target
     agent's inbox with a ``sender="cron:<name>"`` envelope.
 
-    (Legacy skill-based jobs — a bare ``skill`` name — are no longer
-    supported; the skill runtime was removed. An old on-disk ``cron.yaml``
-    carrying such an entry is warned-and-skipped at load, not rejected.)
+    (A bare ``skill`` name is not a valid job shape; an entry without
+    ``to`` + ``message`` is rejected at load with a ValueError naming it.)
     """
 
     name: str
@@ -602,11 +601,9 @@ def _build_cron_config(raw: object) -> CronConfig:
     ``None`` / missing block / empty dict → ``CronConfig(jobs=[])``.
     Validates ``name`` + ``schedule`` are non-empty strings + ``to`` +
     ``message`` are set per entry, raising ``ValueError`` naming the
-    offending entry on failure. Legacy skill-based entries (a bare
-    ``skill`` name, no ``to``/``message``) are no longer supported: they
-    are warned-and-skipped (degrade-not-raise) so an old on-disk
-    ``cron.yaml`` does not crash startup. Unknown extra fields are ignored
-    (= forward-compatible).
+    offending entry on failure. An entry without the ``to`` + ``message``
+    shape (e.g. a legacy bare ``skill`` name) is rejected with that
+    ValueError. Unknown extra fields are ignored (= forward-compatible).
     """
     if raw is None:
         return CronConfig()
@@ -643,19 +640,6 @@ def _build_cron_config(raw: object) -> CronConfig:
             and bool(message) and isinstance(message, str)
         )
         if not has_message_shape:
-            skill = entry.get("skill")
-            if bool(skill) and isinstance(skill, str):
-                # Degrade-not-raise: an old on-disk cron.yaml may still carry a
-                # skill-based entry. Warn (user-visible) + skip so startup does
-                # not crash on a config that predates the skill-runtime removal.
-                import logging
-                logging.getLogger(__name__).warning(
-                    "cron.jobs[%d] (name=%r): skill-based cron jobs are no "
-                    "longer supported (the skill runtime was removed); "
-                    "skipping this job. Use 'to' + 'message' instead.",
-                    i, name,
-                )
-                continue
             raise ValueError(
                 f"cron.jobs[{i}] (name={name!r}): must set "
                 f"'to' + 'message'."
