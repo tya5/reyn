@@ -3,7 +3,7 @@
 Finding 3: ``mcp_drop_server`` was registered (universal_dispatch), documented
 (``control-ir.md``), modeled (``MCPDropServerIROp``) and handled by the executor,
 but ABSENT from the hand-listed ``ControlIROp`` discriminated union and from
-``OP_KIND_MODEL_MAP`` — so a phase emitting it failed ``ActOutput`` validation
+``OP_KIND_MODEL_MAP`` — so a phase emitting it failed ``ControlIROp`` union validation
 (advertise-but-don't-enforce; the worst direction of the control-ir.md ↔ map
 sync invariant).
 
@@ -24,7 +24,7 @@ from typing import get_args
 import pytest
 from pydantic import TypeAdapter, ValidationError
 
-from reyn.schemas.models import ActOutput, ControlIROp
+from reyn.schemas.models import ControlIROp
 
 
 def _union_member_kinds() -> set[str]:
@@ -66,16 +66,15 @@ def test_all_op_kinds_is_exactly_map_keys():
     assert set(ALL_OP_KINDS) == set(OP_KIND_MODEL_MAP)
 
 
-def test_mcp_drop_server_validates_through_act_output():
-    """Tier 2: Finding-3 falsifying — an act turn carrying an ``mcp_drop_server``
-    op validates. PRE-fix (kind absent from the union) this raised
+def test_mcp_drop_server_validates_through_union():
+    """Tier 2: Finding-3 falsifying — an ``mcp_drop_server`` op validates through
+    the ControlIROp union. PRE-fix (kind absent from the union) this raised
     ValidationError — the exact bug: registered + documented + handled but not
     enforceable. Revert the fix and this goes RED."""
-    out = ActOutput.model_validate(
-        {"type": "act", "ops": [{"kind": "mcp_drop_server", "server": "stale_srv"}]}
-    )
-    assert out.ops[0].kind == "mcp_drop_server"
-    assert out.ops[0].server == "stale_srv"
+    adapter = TypeAdapter(ControlIROp)
+    op = adapter.validate_python({"kind": "mcp_drop_server", "server": "stale_srv"})
+    assert op.kind == "mcp_drop_server"
+    assert op.server == "stale_srv"
 
 
 def test_mcp_drop_server_is_a_known_allowed_op():
