@@ -53,9 +53,9 @@ class PythonStep(BaseModel):
 
 
 class RunOpStep(BaseModel):
-    """Invoke any ControlIROp from the static (preprocessor) frontend.
+    """Invoke any Op from the static (preprocessor) frontend.
 
-    `op` is a literal ControlIROp embedded directly. `args_from` lets
+    `op` is a literal Op embedded directly. `args_from` lets
     selected fields be replaced with values pulled from dot-paths in the
     input artifact at execution time (useful inside `iterate`, where
     each item's data needs to flow into the op).
@@ -64,7 +64,7 @@ class RunOpStep(BaseModel):
     it because static execution can't pause for user input.
     """
     type: Literal["run_op"]
-    op: "ControlIROp"
+    op: "Op"
     into: str | None = None
     args_from: dict[str, str] = Field(default_factory=dict)
     on_error: Literal["fail", "skip", "empty"] = "fail"
@@ -91,7 +91,7 @@ PreprocessorStep = Annotated[
 ProcessorStep = PreprocessorStep
 
 # IterateStep / RunOpStep both use forward refs that resolve only after
-# ControlIROp is defined further down. The rebuild is performed at the
+# Op is defined further down. The rebuild is performed at the
 # bottom of this file once all referenced types are in scope.
 
 
@@ -598,7 +598,7 @@ class TaskAssignIROp(BaseModel):
 
 # ── Op-kind registry — the single source for the Control IR op surface ───────
 # #1983: OP_KIND_MODEL_MAP is co-located HERE (relocated from
-# op_runtime/registry.py) so the ControlIROp union, ALL_OP_KINDS, and
+# op_runtime/registry.py) so the Op union, ALL_OP_KINDS, and
 # op_runtime's purity / op_catalog all derive from ONE map. Previously the map
 # lived in registry.py — which imports these model classes — so models.py could
 # not derive the union from it without a cycle; that dual-source (hand-listed
@@ -623,7 +623,7 @@ OP_KIND_MODEL_MAP: dict[str, type[BaseModel]] = {
     "web_search":  WebSearchIROp,
     "mcp_install": MCPInstallIROp,
     # #1983: was registered + documented (control-ir.md) + handled but ABSENT
-    # here → a phase emitting it failed ControlIROp union validation. Added to restore
+    # here → a phase emitting it failed Op union validation. Added to restore
     # the control-ir.md ↔ map sync invariant.
     "mcp_drop_server": MCPDropServerIROp,
     "index_query": IndexQueryIROp,
@@ -658,7 +658,7 @@ if TYPE_CHECKING:
     # Union. The RUNTIME value derives from the map (below); this list is NOT the
     # source of truth and is pinned in sync by the completeness-invariant test
     # ({union kinds} == ALL_OP_KINDS ∪ {"file"}).
-    ControlIROp = Annotated[
+    Op = Annotated[
         Union[
             FileIROp,
             ReadFileIROp, WriteFileIROp, EditFileIROp, DeleteFileIROp,
@@ -677,12 +677,12 @@ if TYPE_CHECKING:
         Field(discriminator="kind"),
     ]
 else:
-    ControlIROp = Annotated[
+    Op = Annotated[
         Union[tuple([FileIROp, *OP_KIND_MODEL_MAP.values()])],
         Field(discriminator="kind"),
     ]
 
-# Resolve forward references now that ControlIROp is in scope.
+# Resolve forward references now that Op is in scope.
 RunOpStep.model_rebuild()
 IterateStep.model_rebuild()
 

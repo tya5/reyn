@@ -1,6 +1,6 @@
 """Tier 1/2: #1953 slice 1 — Task op interface contract surface.
 
-The ``task.*`` Control IR ops exist, validate through the ControlIROp union, are
+The ``task.*`` Control IR ops exist, validate through the Op union, are
 registered + gated (completeness), and round-trip through the in-memory backend.
 Enforcement (single-writer CAS, abort quiescence, cascade, cycle-check,
 predicate-eval) lands in later slices — this slice is the contract surface.
@@ -22,7 +22,7 @@ from reyn.core.op_runtime import available_kinds
 from reyn.core.op_runtime import task as taskmod
 from reyn.core.op_runtime.contextual_gate import _OP_KIND_ALIASES
 from reyn.core.op_runtime.registry import OP_PURITY
-from reyn.schemas.models import ALL_OP_KINDS, OP_KIND_MODEL_MAP, ControlIROp
+from reyn.schemas.models import ALL_OP_KINDS, OP_KIND_MODEL_MAP, Op
 from reyn.task import InMemoryTaskBackend, Task, TaskState
 from reyn.task.subscription import SubscriptionRegistry
 from tests._support.task_subscription import SubscriptionBackend
@@ -65,8 +65,8 @@ def test_contextual_gate_covers_every_task_kind():
 
 
 def test_union_validates_every_task_kind():
-    """Tier 1: each task op kind round-trips through the ControlIROp union."""
-    adapter = TypeAdapter(ControlIROp)
+    """Tier 1: each task op kind round-trips through the Op union."""
+    adapter = TypeAdapter(Op)
     samples = {
         "task.create": {"kind": "task.create", "name": "n"},
         "task.update_status": {"kind": "task.update_status", "task_id": "t", "status": "running"},

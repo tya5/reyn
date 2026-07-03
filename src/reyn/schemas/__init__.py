@@ -1,14 +1,14 @@
 """schemas — Pydantic models and DSL schemas for the Reyn OS."""
 from .models import (
     AskUserIROp,
-    # Control IR ops
-    ControlIROp,
     # Events
     Event,
     FileIROp,
     IterateStep,
     LintPlanStep,
     MCPIROp,
+    # Control IR ops
+    Op,
     PreprocessorStep,
     PythonStep,
     RunOpStep,
@@ -20,7 +20,7 @@ from .models import (
 
 __all__ = [
     "ValidateStep", "IterateStep", "LintPlanStep", "PythonStep", "RunOpStep", "PreprocessorStep",
-    "ControlIROp", "FileIROp", "WebFetchIROp", "WebSearchIROp",
+    "Op", "FileIROp", "WebFetchIROp", "WebSearchIROp",
     "AskUserIROp", "MCPIROp",
     "Event",
 ]

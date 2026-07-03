@@ -46,7 +46,7 @@ from __future__ import annotations
 from enum import Enum
 
 # #1983: OP_KIND_MODEL_MAP + ALL_OP_KINDS relocated to schemas/models.py
-# (co-located with the IROp model classes + the now-derived ControlIROp union =
+# (co-located with the IROp model classes + the now-derived Op union =
 # single source; the map lived here before, but registry imports those model
 # classes, so models.py could not derive the union from the map without a cycle).
 # registry keeps the *purity* classification (OP_PURITY) and re-imports
@@ -83,7 +83,7 @@ class OpPurity(str, Enum):
 
 
 # #1983: OP_KIND_MODEL_MAP + ALL_OP_KINDS now live in schemas/models.py — the
-# single source (the ControlIROp discriminated union derives from the map there,
+# single source (the Op discriminated union derives from the map there,
 # completeness-by-construction). Add a new op kind in models.py; ALL_OP_KINDS is
 # imported above (used by ALL_TOOL_NAMES below). registry owns only OP_PURITY.
 
@@ -247,10 +247,10 @@ ALL_TOOL_NAMES: frozenset[str] = ALL_OP_KINDS
 # The phase-advertised chat name "call_mcp_tool" aliases to the canonical
 # execution op kind "mcp".  The phase frame shows the chat name so phase =
 # chat-tools subset (catalog-axis goal); parse boundaries in op_loop +
-# json-mode rewrite it to the op kind BEFORE ControlIROp validation.  The
+# json-mode rewrite it to the op kind BEFORE Op validation.  The
 # the allowed-ops filter applies this alias so allowed_ops=[mcp]
 # matches the advertised call_mcp_tool spec.  The execution backend
-# (op_runtime/mcp.py) and ControlIROp model (MCPIROp) use the op-kind name.
+# (op_runtime/mcp.py) and Op model (MCPIROp) use the op-kind name.
 # ---------------------------------------------------------------------------
 
 _PHASE_TOOL_NAME_ALIAS: dict[str, str] = {
@@ -274,7 +274,7 @@ def split_tool_name(tool_name: str) -> tuple[str, str | None]:
 
 
 def is_op_instance_allowed(op: object, allowed_ops: set[str] | frozenset[str]) -> bool:
-    """Gate a ControlIROp instance against an ``allowed_ops`` set.
+    """Gate a Op instance against an ``allowed_ops`` set.
 
     Delegates to ``is_op_allowed(op.kind, allowed_ops)`` for all op kinds.
     The D7 file-verb-granular special-case (``file__read``-style) is retired
