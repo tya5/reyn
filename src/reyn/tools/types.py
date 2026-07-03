@@ -197,7 +197,7 @@ class PhaseCallerState:
 
     Populated when invoking a ToolDefinition
     handler in phase context. Handlers that need phase-scoped
-    resources (already-built OpContext, skill_run_id, run_visit_count,
+    resources (already-built OpContext, run_id, run_visit_count,
     etc.) consume them via this object.
 
     All fields are Optional. Test contexts may populate only what's
@@ -205,7 +205,7 @@ class PhaseCallerState:
     population (= control_ir_executor wiring) is M4 Phase 3.
     """
     # Phase identity
-    skill_run_id: str | None = None
+    run_id: str | None = None
     phase_name: str | None = None
     run_visit_count: int | None = None
 

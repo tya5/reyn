@@ -436,7 +436,7 @@ def test_router_caller_state_defaults_all_none():
 def test_phase_caller_state_defaults_all_none():
     """Tier 2: PhaseCallerState() with no arguments defaults all fields to None."""
     state = PhaseCallerState()
-    assert state.skill_run_id is None
+    assert state.run_id is None
     assert state.phase_name is None
     assert state.run_visit_count is None
     assert state.op_context is None
@@ -477,7 +477,7 @@ def test_tool_context_with_phase_caller_state():
         pass
 
     state = PhaseCallerState(
-        skill_run_id="run-abc",
+        run_id="run-abc",
         phase_name="analyze",
         run_visit_count=3,
     )
@@ -490,7 +490,7 @@ def test_tool_context_with_phase_caller_state():
     )
     assert ctx.caller_kind == "phase"
     assert ctx.phase_state is state
-    assert ctx.phase_state.skill_run_id == "run-abc"
+    assert ctx.phase_state.run_id == "run-abc"
     assert ctx.phase_state.phase_name == "analyze"
     assert ctx.phase_state.run_visit_count == 3
     assert ctx.router_state is None

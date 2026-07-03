@@ -289,7 +289,7 @@ async def send_to_agent_impl(
         "reply": reply_text,
         "partial": (not idle),
         "agent": agent_name,
-        "running_skill_run_ids": [],
+        "running_run_ids": [],
         "limit_stopped": limit_stopped,
     }
 

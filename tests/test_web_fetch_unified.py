@@ -465,7 +465,7 @@ def test_phase_dispatch_reuses_op_context_intervention_bus(tmp_path: Path) -> No
     )
 
     phase_state = PhaseCallerState(
-        skill_run_id="run-1",
+        run_id="run-1",
         phase_name="search",
         op_context=op_ctx_with_bus,
     )
@@ -520,7 +520,7 @@ def test_phase_dispatch_without_op_context_falls_back_to_minimal(
 
     # Phase state with no op_context (= test-site shape).
     phase_state = PhaseCallerState(
-        skill_run_id="run-1",
+        run_id="run-1",
         phase_name="search",
         op_context=None,
     )

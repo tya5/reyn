@@ -125,7 +125,7 @@ async def _handle(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
         intervention_bus=None,
         current_phase="",
         caller="direct",
-        parent_skill_run_id=None,
+        parent_run_id=None,
         sandbox_config=sandbox_config,
     )
     return await handle_sandboxed_exec(op=op, ctx=legacy_ctx)
