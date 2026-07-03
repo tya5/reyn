@@ -467,6 +467,8 @@ def _summarize_result(tool, result) -> str:
         returncode = result.get("returncode")
         if isinstance(returncode, int) and status == "ok":
             return f"exit {returncode}"
+        if isinstance(returncode, int) and status in ("cancelled", "timeout"):
+            return f"✗ {status} (exit {returncode})"
         freed_tokens = result.get("freed_tokens")
         if isinstance(freed_tokens, int):
             return f"Freed {freed_tokens} token{'s' if freed_tokens != 1 else ''}"

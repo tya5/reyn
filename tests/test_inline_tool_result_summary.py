@@ -485,24 +485,14 @@ def test_sandboxed_exec_ok_shows_exit_code() -> None:
     """Tier 2: sandboxed_exec success (returncode int, status='ok') shows 'exit N'.
 
     sandboxed_exec returns {kind, status, returncode, stdout, stderr, ...}; for
-    status='ok' (exit 0) the generic 'ok' is unhelpful. 'timeout'/'cancelled' are
-    already informative via the status branch and are not overridden.
+    status='ok' the generic 'ok' is unhelpful. 'timeout'/'cancelled' get a '✗' prefix
+    with the exit code so failure is visually distinct from a successful result row.
     """
     assert summarize_tool_result(
         "sandboxed_exec",
         {"kind": "sandboxed_exec", "status": "ok", "backend": "subprocess",
          "returncode": 0, "stdout": "hello", "stderr": "", "truncated": False},
     ) == "exit 0"
-    assert summarize_tool_result(
-        "sandboxed_exec",
-        {"kind": "sandboxed_exec", "status": "timeout", "backend": "subprocess",
-         "returncode": -1, "stdout": "", "stderr": "", "truncated": False},
-    ) == "timeout"
-    assert summarize_tool_result(
-        "sandboxed_exec",
-        {"kind": "sandboxed_exec", "status": "cancelled", "backend": "subprocess",
-         "returncode": -1, "stdout": "", "stderr": "", "truncated": False},
-    ) == "cancelled"
 
 
 def test_task_op_shows_task_name() -> None:
@@ -678,3 +668,31 @@ def test_cron_enable_disable_shows_verb_and_name() -> None:
         "cron__disable",
         {"status": "ok", "name": "daily-sync", "enabled": False},
     ) == "Disabled daily-sync"
+
+
+def test_sandboxed_exec_cancelled_shows_failure_text() -> None:
+    """Tier 2: sandboxed_exec cancelled result shows '✗ cancelled (exit N)' not plain 'cancelled'.
+
+    sandboxed_exec returns {kind:"sandboxed_exec", status:"cancelled", returncode:int, ...}
+    when the subprocess is killed. Without a branch, the status fallback returns the bare
+    string 'cancelled' with no visual failure signal.
+    """
+    assert summarize_tool_result(
+        "sandboxed_exec",
+        {"kind": "sandboxed_exec", "status": "cancelled",
+         "backend": "local", "returncode": -9, "stdout": "", "stderr": ""},
+    ) == "✗ cancelled (exit -9)"
+
+
+def test_sandboxed_exec_timeout_shows_failure_text() -> None:
+    """Tier 2: sandboxed_exec timeout result shows '✗ timeout (exit N)' not plain 'timeout'.
+
+    sandboxed_exec returns {kind:"sandboxed_exec", status:"timeout", returncode:-1, ...}
+    when the subprocess exceeds the deadline. The bare 'timeout' string is indistinguishable
+    from a successful result in the ⎿ row without an explicit failure prefix.
+    """
+    assert summarize_tool_result(
+        "sandboxed_exec",
+        {"kind": "sandboxed_exec", "status": "timeout",
+         "backend": "local", "returncode": -1, "stdout": "partial", "stderr": ""},
+    ) == "✗ timeout (exit -1)"
