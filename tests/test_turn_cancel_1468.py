@@ -128,10 +128,11 @@ async def test_cancel_surfaces_interrupted_ack_not_max_iterations_error() -> Non
         tools=[],
         _univ_enabled=False,
     )
-    # A cancel acknowledgement was surfaced (status, not error)...
+    # A cancel acknowledgement was surfaced as a persistent system message (not
+    # a transient status that gets erased, and not an error)...
     ack = [m for m in host.outbox if "interrupted" in m["text"].lower()]
     assert ack, f"expected a 'turn interrupted' ack, got {host.outbox}"
-    assert ack[0]["kind"] == "status"
+    assert ack[0]["kind"] == "system"
     # ...and NOT the misleading max_iterations error (the copy-paste bug).
     assert not any("max iteration" in m["text"].lower() for m in host.outbox)
     assert not any(m["kind"] == "error" for m in host.outbox)

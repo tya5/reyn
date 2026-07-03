@@ -2443,7 +2443,7 @@ class RouterLoop:
         # message is cancel-only.
         if _loop_cancelled:
             await self.host.put_outbox(
-                kind="status",
+                kind="system",
                 text="✗ turn interrupted",
                 meta={"chain_id": self.chain_id},
             )
