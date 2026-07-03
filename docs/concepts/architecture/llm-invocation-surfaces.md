@@ -51,9 +51,9 @@ No native function calling. The LLM declares its intended side effects in `contr
 |---------|---------|
 | `read_file` / `write_file` / `edit_file` / `delete_file` / `glob_files` / `grep_files` | Fine-grained file operations — the same subset the chat router exposes as tools (#1240) |
 | `mcp` | Call a tool on a configured MCP server |
-| `run_skill` | Invoke a nested workflow |
+| `run_skill` | Invoke a sub-skill as a nested workflow |
 | `shell` | Run a shell command |
-| `lint` | Run the DSL linter on a workflow directory |
+| `lint` | Run the DSL linter on a skill directory |
 | `ask_user` | Pause and prompt the user for input |
 | `web_fetch` | Fetch a single URL |
 | `web_search` | Search the public web |
@@ -68,7 +68,7 @@ Each phase narrows this set further via `allowed_ops: list[str]` in the phase de
 
 Two constructs are sometimes confused with LLM invocation kinds because they appear in the same phase execution context:
 
-**Preprocessor steps** (`run_skill` / `iterate` / `validate` / `lint_plan` / `python`) run deterministically, before the phase LLM call. They do not invoke the LLM themselves. The `python` step executes a sandboxed Python function. The `run_skill` step dispatches a nested workflow recursively — that nested workflow contains its own phases that DO invoke the LLM phase-style, but the preprocessor step itself is synchronous and does not make an LLM call from the preprocessing layer. See ../skills/preprocessor.md.
+**Preprocessor steps** (`run_skill` / `iterate` / `validate` / `lint_plan` / `python`) run deterministically, before the phase LLM call. They do not invoke the LLM themselves. The `python` step executes a sandboxed Python function. The `run_skill` step dispatches a sub-skill recursively — that sub-skill contains its own phases that DO invoke the LLM phase-style, but the preprocessor step itself is synchronous and does not make an LLM call from the preprocessing layer. See ../skills/preprocessor.md.
 
 **Postprocessor steps** (same step types) run deterministically, after the LLM's `finish` output, before the artifact is returned to the caller. Not an LLM call. See ../skills/postprocessor.md.
 
@@ -89,7 +89,7 @@ Both are OS-executed deterministic pipelines, not LLM invocations.
 | MCP discover (list servers / tools) | `list_mcp_servers`, `list_mcp_tools` | Not available | Gap (Type C) |
 | Shell | Not available | `shell` op | Role-separated (Type B) |
 | Lint | Not available | `lint` op | Role-separated (Type B) |
-| Run / invoke workflow | `invoke_skill` (conditional on workflows registered) | `run_skill` op | Symmetric |
+| Run / invoke skill | `invoke_skill` (conditional on skills registered) | `run_skill` op | Symmetric |
 | Inter-agent delegation | `delegate_to_agent` | Not available | Role-separated (Type B) |
 | Ask user | Not available as a tool; router exits with a text reply | `ask_user` op | Role-separated (Type B) |
 | Memory read | `list_memory`, `read_memory_body` | Via context_builder injection only (read at phase start; no mid-phase query) | Gap (Type C) |
@@ -106,7 +106,7 @@ Both are OS-executed deterministic pipelines, not LLM invocations.
 
 Capabilities present on both sides with the same semantic, expressed in different invocation forms (function calling vs Control IR JSON). These are not problems; they are the natural consequence of two API styles.
 
-**Examples:** file ops (`read_file` ↔ `read_file` — the same fine kinds on both sides since #1240), web ops (`web_search` / `web_fetch` ↔ `web_search` / `web_fetch` ops), MCP invocation (`call_mcp_tool` ↔ `mcp` op), workflow invocation (`invoke_skill` ↔ `run_skill` op).
+**Examples:** file ops (`read_file` ↔ `read_file` — the same fine kinds on both sides since #1240), web ops (`web_search` / `web_fetch` ↔ `web_search` / `web_fetch` ops), MCP invocation (`call_mcp_tool` ↔ `mcp` op), skill invocation (`invoke_skill` ↔ `run_skill` op).
 
 The router LLM calls `invoke_skill("name", input={...})`; the phase LLM also emits `invoke_skill` (the chat-tool name the phase catalog advertises), which the OS aliases to `{"kind": "run_skill", "skill": "name", "input": {...}}` before dispatch. The OS dispatches both. Since #1240 the surface form is largely unified (fine file kinds + chat-tool names on both sides); the remaining difference is the wire protocol (native function-calling vs Control IR JSON).
 
@@ -130,7 +130,7 @@ Asymmetries that emerged over time without a doctrine and do not have a strong r
 
 - **Memory I/O is router-only.** The tools `list_memory`, `read_memory_body`, `remember_shared`, `remember_agent`, and `forget_memory` are available to the chat router. Phases receive memory injected via context_builder at phase entry (read-only snapshot); they cannot query or update memory mid-phase. There is no principled architectural reason why phases cannot write memory — the gap emerged because memory tools were added to the router for direct user interaction, and no corresponding phase capability was designed.
 
-- **Catalog browse is router-only.** The tools `list_skills`, `describe_skill`, `list_agents`, and `describe_agent` are available to the chat router. Phases that need workflow or agent catalog data (for example, `eval_builder` or `skill_improver`) receive the catalog injected as ContextFrame data (`op_catalog`), but they cannot issue a mid-phase catalog query. This gap emerged because catalog browsing was primarily useful for the router's "what workflow should I invoke?" decision; the phase use case was less common and handled by injection rather than tools.
+- **Catalog browse is router-only.** The tools `list_skills`, `describe_skill`, `list_agents`, and `describe_agent` are available to the chat router. Phases that need skill or agent catalog data (for example, `eval_builder` or `skill_improver`) receive the catalog injected as ContextFrame data (`op_catalog`), but they cannot issue a mid-phase catalog query. This gap emerged because catalog browsing was primarily useful for the router's "what skill should I invoke?" decision; the phase use case was less common and handled by injection rather than tools.
 
 - **MCP discover is router-only.** `list_mcp_servers` and `list_mcp_tools` are available to the chat router. Phases using the `mcp` op must have the server name and tool name statically declared in `control_ir`; they cannot discover available MCP tools at runtime. This gap emerged because MCP browsing was added for the router's interactive "what can I do with MCP?" use case, without a corresponding discovery mechanism for the phase-side `mcp` op.
 
@@ -141,7 +141,7 @@ These are gaps, not failures. Whether to close them is the doctrine question add
 Preprocessor and postprocessor steps are not LLM invocations, but they appear in feature-parity discussions because they are "things a workflow author can reach for." The distinction matters:
 
 - A `python` preprocessor step runs sandboxed Python code — no LLM call.
-- A `run_skill` preprocessor step invokes a nested workflow whose phases DO invoke the LLM phase-style — but the preprocessor dispatch itself is synchronous and OS-controlled, not an LLM call in the same turn.
+- A `run_skill` preprocessor step invokes a sub-skill whose phases DO invoke the LLM phase-style — but the preprocessor dispatch itself is synchronous and OS-controlled, not an LLM call in the same turn.
 - A `validate` step runs a JSON Schema check — no LLM call.
 
 Preprocessor and postprocessor steps expand what a phase can compute before and after the LLM call; they do not constitute a third invocation kind.

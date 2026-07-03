@@ -37,7 +37,7 @@ reyn pays the cost of writing workflow graphs explicitly and gets predictability
 
 ## Where it's still thin
 
-The graph is a DAG with no self-loops — a phase cannot list itself as a next phase. Revision loops use a separate phase (`review → revise → review`). This is fine in practice but adds one node where some frameworks let you "retry the same step inline." Sub-run nodes (`@subskill` in the graph) are the escape hatch when a single phase isn't enough.
+The graph is a DAG with no self-loops — a phase cannot list itself as a next phase. Revision loops use a separate phase (`review → revise → review`). This is fine in practice but adds one node where some frameworks let you "retry the same step inline." Sub-skill nodes (`@subskill` in the graph) are the escape hatch when a single phase isn't enough.
 
 ## See also
 

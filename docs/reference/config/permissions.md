@@ -124,7 +124,7 @@ When a phase declares a non-default permission, reyn shows a single startup prom
   [N] deny
 ```
 
-Persistent choices land in `.reyn/approvals.yaml` keyed by `<skill>/<op>/<path>` (with a trailing `/` for recursive grants). External automations cannot reuse another automation's approvals — keys are run-scoped to prevent privilege escalation.
+Persistent choices land in `.reyn/approvals.yaml` keyed by `<skill>/<op>/<path>` (with a trailing `/` for recursive grants). External skills cannot reuse another skill's approvals — keys are skill-scoped to prevent privilege escalation.
 
 ## Project-wide pre-approval (`reyn.yaml`)
 

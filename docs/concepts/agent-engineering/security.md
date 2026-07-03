@@ -26,9 +26,9 @@ Defaults are conservative — read anywhere under the project root, write only u
 
 A phase declares the capabilities it needs in its frontmatter; at startup the runtime shows a single approval prompt. Persistent choices land in `.reyn/approvals.yaml`, keyed by `<skill>/<op>/<path>`.
 
-### Per-workflow approvals
+### Skill-scoped approvals
 
-Approvals are keyed by workflow, not by user. If workflow A is granted `file.write:/tmp/output`, a nested run B (invoked via `run_skill`) does not transitively inherit that grant — B has to ask for its own. This is the composition-safety property: trusting one workflow doesn't trust everything it might call.
+Approvals are keyed by skill, not by user. If skill A is granted `file.write:/tmp/output`, sub-skill B (invoked via `run_skill`) does not transitively inherit that grant — B has to ask for its own. This is the composition-safety property: trusting one skill doesn't trust everything it might call.
 
 ### AST sandbox for Python preprocessor steps
 

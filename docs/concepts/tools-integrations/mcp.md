@@ -219,7 +219,7 @@ MCP tool calls cross two checks before they leave the process:
 1. **Phase declaration.** A phase MUST list each server it intends to use under `permissions.mcp` in its frontmatter. The runtime calls `require_mcp(decl, server, ...)`; if `server not in decl.mcp`, the call fails with a clear error pointing at the missing declaration.
 2. **Approval.** Like every other capability, the first invocation per workflow prompts (`y` / `j` / `r` / `N`). Persistent approvals land in `.reyn/approvals.yaml` keyed by `<skill>/mcp.<server>`. Pre-approve project-wide with `permissions.mcp: allow` in `reyn.yaml` if you trust the project broadly.
 
-This matches reyn's general permission model — see [../runtime/permission-model.md](../runtime/permission-model.md). One workflow's MCP approval doesn't leak to another workflow, and a nested run invoked via `run_skill` has to ask for its own permissions.
+This matches reyn's general permission model — see [../runtime/permission-model.md](../runtime/permission-model.md). One skill's MCP approval doesn't leak to another skill, and a sub-skill invoked via `run_skill` has to ask for its own permissions.
 
 Three audit events are emitted per call:
 
@@ -271,7 +271,7 @@ This is part of Reyn's "talks-out + talked-to" multi-agent surface. See [../mult
 MCP is the right tool for *external capability access*. Don't reach for it when:
 
 - **You need heavy compute.** Use a Python preprocessor (`python` op). MCP calls cross a process boundary on every invocation; an inline NumPy step is much faster.
-- **You're encoding a reusable workflow.** That's a workflow, not an MCP server. Use `skill_builder` to author a new workflow, not a new MCP tool.
+- **You're encoding a reusable workflow.** That's a skill, not an MCP server. Use `skill_builder` to author a new skill, not a new MCP tool.
 - **You want cross-agent messaging.** Use `messages_to_agents` and topology rules. MCP doesn't model agent identity or chains.
 - **You need state across invocations.** MCP servers can be stateless or stateful, but reyn treats each call as independent. Persistent state belongs in the workspace.
 

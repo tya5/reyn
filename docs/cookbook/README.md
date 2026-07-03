@@ -26,7 +26,7 @@ topology call the existing `reyn agent new` / `reyn topology new` commands.
 | Recipe | Status | What it shows |
 |--------|--------|---------------|
 | [multi-agent-research](multi-agent-research/README.md) | ✅ Works today | 3-agent team via `reyn agent new` + `reyn topology new --kind team` |
-| [translate-doc](translate-doc/README.md) | ℹ️ Works today (custom automation) | en → ja document translation; uses a bundled `translate_doc` automation (no stdlib equivalent) |
+| [translate-doc](translate-doc/README.md) | ℹ️ Works today (custom workflow) | en → ja document translation; uses a bundled `translate_doc` workflow (no stdlib equivalent) |
 | [research-topic](research-topic/README.md) | 🔮 Roadmap | Generic web research; `mcp_search` stdlib only finds MCP **servers** in the GitHub registry — generic web search needs an external search MCP server you've configured |
 | [write-readme](write-readme/README.md) | 🔮 Roadmap | Generate a Reyn-style README; `skill_builder` builds **new skills**, not arbitrary docs — needs a dedicated doc-writer skill |
 | [weekly-summary](weekly-summary/README.md) | 🔮 Roadmap | Cron-style recurring summarizer; needs scheduling / persistent state |

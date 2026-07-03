@@ -6,7 +6,7 @@ audience: [human, agent]
 
 # Agent lifecycle hooks
 
-Hooks are a thin operator- and workflow-scoped layer that lets you inject context,
+Hooks are a thin operator- and skill-scoped layer that lets you inject context,
 trigger self-continuation, or run a sandboxed side-effect at any of the eight
 lifecycle points in a reyn session.
 

@@ -70,7 +70,7 @@ class Phase(BaseModel):
 
 **How it's enforced**:
 
-`kernel/runtime.py` — `OSRuntime` contains the only call to `call_llm()` (from `llm/llm.py`). No workflow code path reaches `call_llm` directly.
+`kernel/runtime.py` — `OSRuntime` contains the only call to `call_llm()` (from `llm/llm.py`). No skill code path reaches `call_llm` directly.
 
 `kernel/control_ir_executor.py` — the only place that calls op handlers. Phase instructions can ask for a `file` op; they cannot *execute* one.
 

@@ -50,11 +50,11 @@ Per-agent workspace. One directory per named agent (created by `reyn agent new`)
 - `profile.yaml` — agent identity: name, role, optional `allowed_skills`. See profile-yaml reference.
 - `history.jsonl` — append-only conversation log (user + assistant turns; cross-agent messages include `chain_id` for tracing).
 - `memory/` — agent-scoped memory (`MEMORY.md` index + body files). Recalled and written automatically during the router phase.
-- `state/skills/<run_id>.snapshot.json` — WAL snapshots for crash recovery of in-flight workflow runs.
+- `state/skills/<run_id>.snapshot.json` — WAL snapshots for crash recovery of in-flight skill runs.
 
 ### `skill-versions/<name>/`
 
-Workflow version snapshots written by `skill_improver`. Each `v<N>.md` is a timestamped snapshot of `skill.md` at the time a proposal was applied. Pruned to `self_improvement.max_versions` snapshots. Inspect with `reyn skill versions <name>`.
+Skill version snapshots written by `skill_improver`. Each `v<N>.md` is a timestamped snapshot of `skill.md` at the time a proposal was applied. Pruned to `self_improvement.max_versions` snapshots. Inspect with `reyn skill versions <name>`.
 
 ### `eval-results/<skill>/`
 

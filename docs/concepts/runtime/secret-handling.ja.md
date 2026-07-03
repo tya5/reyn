@@ -216,9 +216,9 @@ token = await get_valid_token("github_oauth")
 | `token_refreshed` | リフレッシュ成功。ペイロードに `key`、マスクされたトークンヒントを含む |
 | `token_refresh_failed` | リフレッシュリクエスト失敗。ペイロードに `key`、`error` を含む |
 
-## ワークフローごとの認証情報スコーピング (FP-0016 D)
+## スキルごとの認証情報スコーピング (FP-0016 D)
 
-**脅威モデル：** 信頼されないドキュメントを処理するネストされた実行は、親ワークフローの全シークレットストアを外部に持ち出すようにプロンプトインジェクションされる可能性があります（Confused Deputy 攻撃）。スコーピングはこれを防ぎます。
+**脅威モデル：** 信頼されないドキュメントを処理するサブスキルは、親スキルの全シークレットストアを外部に持ち出すようにプロンプトインジェクションされる可能性があります（Confused Deputy 攻撃）。スコーピングはこれを防ぎます。
 
 ### 宣言
 
@@ -243,7 +243,7 @@ required_credentials:
 
 ### 強制適用
 
-`run_skill` の境界でOS が `ScopedSecretStore(allowed_keys=...)` を構築し、親のスコープと**交差**させます（親キャップセマンティクス — ネストされた実行が親より広いアクセスを持つことはできません）。
+`run_skill` の境界でOS が `ScopedSecretStore(allowed_keys=...)` を構築し、親のスコープと**交差**させます（親キャップセマンティクス — サブスキルが親より広いアクセスを持つことはできません）。
 
 許可セット外の読み取りは `CredentialScopeError`（`PermissionError` のサブクラス）を raise します。
 
@@ -255,7 +255,7 @@ required_credentials:
 
 **クロスリファレンス：**
 
-- [コンセプト: パーミッションモデル](../runtime/permission-model.md) "ワークフローごとの認証情報スコーピング" — ケイパビリティ継承ルールを含む詳細解説。
+- [コンセプト: パーミッションモデル](../runtime/permission-model.md) "スキルごとの認証情報スコーピング" — ケイパビリティ継承ルールを含む詳細解説。
 
 ## デバイス認可グラント (FP-0016 C)
 
@@ -289,6 +289,6 @@ ID が登場する場所：
 - [Reference: `reyn.yaml`](../../reference/config/reyn-yaml.md) — 設定フィールドでの `${VAR}` interpolation；OAuth プロバイダー設定
 - [Reference: `reyn auth`](../../reference/cli/auth.md) — デバイス認可グラント CLI
 
-- [コンセプト: パーミッションモデル](../runtime/permission-model.md) — `mcp_install` パーミッションゲート；ワークフローごとの認証情報スコーピング
+- [コンセプト: パーミッションモデル](../runtime/permission-model.md) — `mcp_install` パーミッションゲート；スキルごとの認証情報スコーピング
 - [コンセプト: マルチエージェント](../multi-agent/multi-agent.md) — エージェント ID 伝播
 - ADR-0030 `docs/deep-dives/decisions/0030-universal-../runtime/secret-handling.md` — 設計の根拠（実装チーム向け、内部）

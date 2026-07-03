@@ -60,7 +60,7 @@ A workflow that needs something outside the defaults declares it in its `skill.m
   [N] deny
 ```
 
-Persistent choices land in `.reyn/approvals.yaml` keyed by `<skill>/<op>/<path>`. Keys are workflow-scoped — one workflow's approval doesn't leak to another.
+Persistent choices land in `.reyn/approvals.yaml` keyed by `<skill>/<op>/<path>`. Keys are skill-scoped — one skill's approval doesn't leak to another.
 
 ### Layer 3: project-wide pre-approval
 
@@ -102,11 +102,11 @@ This grants project-wide pre-approval for the local environment without affectin
 committed `reyn.yaml` or production users.  Interactive TTY runs elsewhere still see
 startup_guard prompts as documented.
 
-## Why workflow-scoped keys
+## Why skill-scoped keys
 
-Approvals are keyed by workflow, not globally. If workflow A asks "can you write to `/tmp/foo`?", granting it doesn't grant workflow B the same access.
+Approvals are keyed by skill, not globally. If skill A asks "can you write to `/tmp/foo`?", granting it doesn't grant skill B the same access.
 
-The reason is composition safety. Workflow A might be trusted; workflow A invoking a nested run (via `run_skill`) doesn't transitively grant the nested run's permissions. It has to ask for its own.
+The reason is composition safety. Skill A might be trusted; skill A invoking sub-skill B (via `run_skill`) doesn't transitively grant B's permissions. B has to ask for its own.
 
 ## `mcp_install` permission {#mcp_install-permission}
 
@@ -414,19 +414,19 @@ The `python` permission has two levels:
 
 **The formal contract for `mode: safe`** (= "ambient sources only") covers the full allowlist rationale, the safe-vs-unsafe auto-allow rules by context, and the refactor pattern for converting unsafe steps to safe.
 
-## Per-workflow credential scoping (FP-0016 D)
+## Per-skill credential scoping (FP-0016 D)
 
 ### Threat model: Confused Deputy
 
-When a parent workflow invokes a nested run via `run_skill`, the nested run executes
+When a parent skill invokes a sub-skill via `run_skill`, the sub-skill executes
 with the parent's full authority if no scoping is applied. A malicious document
-processed by the nested run could instruct it to read credentials it has no
+processed by the sub-skill could instruct it to read credentials it has no
 legitimate need for and include them in its output — a classic **Confused Deputy**
 attack where the OS is tricked into using its authority on behalf of an adversary.
 
 ### `required_credentials` declaration
 
-Nested runs declare their credential needs in `skill.md` frontmatter:
+Sub-skills declare their credential needs in `skill.md` frontmatter:
 
 ```yaml
 # skill.md
@@ -449,8 +449,8 @@ required_credentials: []
 ### How `run_skill` narrows the scope
 
 At the `run_skill` boundary, the OS constructs a `ScopedSecretStore` from the
-nested run's `required_credentials` declaration and intersects it with the
-parent's already-scoped store. A nested run can never gain credentials the parent
+sub-skill's `required_credentials` declaration and intersects it with the
+parent's already-scoped store. A sub-skill can never gain credentials the parent
 does not itself hold:
 
 ```
@@ -459,7 +459,7 @@ sub-skill declares: ["github_token", "slack_token"]
 effective scope: {"github_token"}  ← intersection; slack_token not in parent
 ```
 
-If the parent store is unrestricted (`["*"]`), the nested run's declared list is
+If the parent store is unrestricted (`["*"]`), the sub-skill's declared list is
 honoured as-is (no intersection needed).
 
 ### `CredentialScopeError`
@@ -488,8 +488,8 @@ recording the effective allowed key set for that invocation:
 grep '"sub_skill_credential_scope"' .reyn/events.jsonl
 ```
 
-The event payload contains `skill` (nested run name) and `allowed_keys` (sorted
-list, or `["*"]` for unrestricted). This makes every nested-run credential grant
+The event payload contains `skill` (sub-skill name) and `allowed_keys` (sorted
+list, or `["*"]` for unrestricted). This makes every sub-skill credential grant
 auditable and replay-capable (P6).
 
 ## Effective permission: conjunctive restrict model {#effective-permission-conjunctive-restrict-model}

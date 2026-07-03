@@ -166,7 +166,7 @@ Two modes:
 
 ### Threat model
 
-Scheduled workflows run with the same permissions as `reyn run <skill>` would (= no elevated privilege). The cron entry's `skill` and `input` are operator-controlled via reyn.yaml; per-workflow credential scoping (FP-0016 D) still applies. The scheduler does NOT bypass the permission system.
+Scheduled workflows run with the same permissions as `reyn run <skill>` would (= no elevated privilege). The cron entry's `skill` and `input` are operator-controlled via reyn.yaml; per-skill credential scoping (FP-0016 D) still applies. The scheduler does NOT bypass the permission system.
 
 ### Cross-references
 
