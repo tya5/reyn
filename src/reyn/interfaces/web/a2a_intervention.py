@@ -9,7 +9,7 @@ and the bus awaited ``iv.future`` directly. The iv lived in this bus +
 ``Session._interventions._active`` or the WAL / snapshot persistence
 channels. On restart, the bus coroutine died and the restored iv was
 orphaned — no in-process awaiter, no R-D12 buffer eligibility, no
-``SkillResumeCoordinator`` integration. See issue #292 body for the
+resume-coordination integration. See issue #292 body for the
 full analysis.
 
 Post-α this class is a **side-effect observer**: ``on_dispatch(iv)``
