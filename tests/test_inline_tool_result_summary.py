@@ -131,6 +131,49 @@ def test_file_read_not_found_shows_error_not_zero_lines() -> None:
     assert "{" not in out, "raw dict repr must not leak"
 
 
+def test_file_list_shows_entry_count() -> None:
+    """Tier 2: file__list result ({path, entries}) shows 'Listed N entries'.
+
+    Without this branch the raw dict repr leaked into the ⎿ row.
+    """
+    assert summarize_tool_result(
+        "file__list", {"path": "src/", "entries": ["a.py", "b.py", "c.py"]}
+    ) == "Listed 3 entries"
+    assert summarize_tool_result(
+        "file__list", {"path": "src/", "entries": ["only.py"]}
+    ) == "Listed 1 entry"
+
+
+def test_file_grep_shows_match_count() -> None:
+    """Tier 2: file__grep result (op='grep', count=N) shows 'N matches'.
+
+    Without this branch grep fell through to status='ok' which is uninformative.
+    """
+    assert summarize_tool_result(
+        "file__grep",
+        {"op": "grep", "status": "ok", "count": 7, "matches": []},
+    ) == "7 matches"
+    assert summarize_tool_result(
+        "file__grep",
+        {"op": "grep", "status": "ok", "count": 1, "matches": []},
+    ) == "1 match"
+
+
+def test_file_glob_shows_match_count() -> None:
+    """Tier 2: file__glob result ({pattern, matches, count}) shows 'N matches'.
+
+    Without this branch the raw dict repr leaked into the ⎿ row.
+    """
+    assert summarize_tool_result(
+        "file__glob",
+        {"pattern": "src/**/*.py", "matches": ["a.py", "b.py"], "count": 2},
+    ) == "2 matches"
+    assert summarize_tool_result(
+        "file__glob",
+        {"pattern": "*.md", "matches": ["README.md"], "count": 1},
+    ) == "1 match"
+
+
 def test_dict_with_status_shows_status() -> None:
     """Tier 2: an opaque dict with a status field shows the status."""
     assert summarize_tool_result("mcp__call", {"status": "ok", "x": 1}) == "ok"
