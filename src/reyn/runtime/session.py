@@ -1126,6 +1126,10 @@ class Session:
         # appending the reset-record — so no append lands past the reset seq.
         self._turn_idle = asyncio.Event()
         self._turn_idle.set()
+        # Tracks the asyncio task currently owning a turn so await_quiescent can skip
+        # _turn_idle.wait() when called re-entrantly from that same task (e.g. a slash
+        # handler calling registry.checkout while the turn is still in progress).
+        self._turn_owner_task: "asyncio.Task | None" = None
         # ADR-0038 Stage 1c coverage: joinable handle for fire-and-forget WAL-append
         # tasks (intervention dispatch / intervention_answer_consumed) that would
         # otherwise escape await_quiescent. Each spawn registers via
@@ -2088,7 +2092,13 @@ class Session:
         (``_inflight_wal_tasks``).
         """
         # 1. wait for the current turn (if any) to finish its WAL appends.
-        await self._turn_idle.wait()
+        # Re-entrancy guard: if the caller IS the current turn task (e.g. a slash
+        # handler calling registry.checkout while the turn is still in progress),
+        # skip the wait — awaiting _turn_idle from the same task that cleared it
+        # would deadlock (single-task asyncio: nobody else can set it).  The slash
+        # handler makes no WAL appends before calling checkout, so skipping is safe.
+        if asyncio.current_task() is not self._turn_owner_task:
+            await self._turn_idle.wait()
         # 2. cancel + join chain-timeout watchdogs. A cancelled timer cannot fire
         #    (no chain_timeout_fired append); join settles any callback already
         #    in-progress before this returns. On reconstruct, restore() re-arms a
@@ -2124,7 +2134,8 @@ class Session:
         # 5. re-confirm turn-idle — a joined task may have enqueued a follow-up
         #    turn; with cancel already requested it breaks immediately, so this
         #    settles. The double wait closes the join↔turn race.
-        await self._turn_idle.wait()
+        if asyncio.current_task() is not self._turn_owner_task:
+            await self._turn_idle.wait()
 
     def _track_wal_task(self, task: asyncio.Task) -> asyncio.Task:
         """Register a fire-and-forget WAL-append task for quiescence (Stage 1c).
@@ -3710,6 +3721,7 @@ class Session:
         )
         # ADR-0038 Stage 1c: busy until this turn settles (its WAL appends done).
         self._turn_idle.clear()
+        self._turn_owner_task = asyncio.current_task()
         try:
             if kind == "user":
                 await self._handle_user_message(
@@ -3734,6 +3746,7 @@ class Session:
                 # turns, and the audit trail attributes the turn to the hook).
                 await self._handle_hook_message(payload)
         finally:
+            self._turn_owner_task = None
             self._turn_idle.set()
             # Symmetric turn-end lifecycle event. turn_completed fires only on
             # the router path; turn_settled fires for EVERY turn kind (including

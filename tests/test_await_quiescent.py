@@ -113,6 +113,40 @@ async def test_await_quiescent_cancels_intervention_dispatch_no_append(tmp_path)
 
 
 @pytest.mark.asyncio
+async def test_await_quiescent_returns_when_called_from_turn_owner_task(tmp_path):
+    """Tier 2: await_quiescent does not deadlock when called from the turn-owner task.
+
+    A slash handler calling registry.checkout (which calls await_quiescent) runs
+    on the SAME asyncio task that holds _turn_idle.clear() — awaiting _turn_idle
+    from the same task would deadlock.  The re-entrancy guard must detect this and
+    return promptly instead of hanging.
+
+    The setup AND the await_quiescent call run inside a single inner coroutine so
+    the task identity is consistent.  asyncio.wait_for wraps the coroutine in a
+    new Task in Python ≤3.12; setting _turn_owner_task from WITHIN that Task
+    ensures the re-entrancy guard sees a matching identity on all versions.
+    """
+    log = StateLog(tmp_path / "state.wal")
+    session = _session(tmp_path, log)
+
+    async def _simulate_turn_calling_quiescent() -> None:
+        # Simulate being inside a turn: clear _turn_idle and record THIS task as
+        # the owner — exactly as run_one_iteration does before dispatching a turn.
+        session._turn_idle.clear()
+        session._turn_owner_task = asyncio.current_task()
+        try:
+            # Must return promptly, not deadlock.
+            await session.await_quiescent()
+        finally:
+            session._turn_owner_task = None
+            session._turn_idle.set()
+
+    # 10s timeout: generous enough to survive a loaded CI runner, tight enough
+    # to catch a true deadlock (which would hang indefinitely).
+    await asyncio.wait_for(_simulate_turn_calling_quiescent(), timeout=10.0)
+
+
+@pytest.mark.asyncio
 async def test_await_quiescent_settles_intervention_answer_consumed_no_append(tmp_path):
     """Tier 2: await_quiescent settles the fire-and-forget answer-consumed task.
 
