@@ -315,14 +315,13 @@ async def test_dedupe_does_not_collapse_distinct_async_args(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_dedupe_does_not_apply_to_non_invoke_sync_tool_calls(monkeypatch):
-    """Tier 2: OS invariant — duplicate SYNC tool_calls (other than
-    invoke_skill) in same round are NOT deduped.
+    """Tier 2: OS invariant — duplicate SYNC tool_calls in the same round are
+    NOT deduped.
 
     Sync tool dupes are wasteful but correctness-preserving (same args →
     same result), and deduping them risks tool_call_id mismatches in the
-    follow-up assistant message. Only async tools (delegate_to_agent) and
-    invoke_skill (G3) get the dedupe treatment; describe_skill and other
-    pure-sync tools do not.
+    follow-up assistant message. Only async tools (delegate_to_agent) get the
+    dedupe treatment; sync tools do not.
     """
     host = FakeRouterHost(skills=[{"name": "my_skill", "category": "general"}])
     loop = make_loop(host)
@@ -347,42 +346,6 @@ async def test_dedupe_does_not_apply_to_non_invoke_sync_tool_calls(monkeypatch):
         if e["type"] == "tool_call_deduped"
     ]
     assert not deduped_events
-
-
-# ---------------------------------------------------------------------------
-# G3 fix (dogfood batch 5 B5-M1): dedupe duplicate invoke_skill in same round
-# ---------------------------------------------------------------------------
-
-@pytest.mark.asyncio
-async def test_tool_call_deduped_event_emitted_for_invoke_skill(monkeypatch):
-    """Tier 2: P6 invariant — deduped invoke_skill calls emit
-    `tool_call_deduped` events with correct name and reason fields,
-    making the dedupe visible in the audit log (P6).
-    """
-    host = FakeRouterHost(skills=[
-        {"name": "my_skill", "category": "general"},
-    ])
-    loop = make_loop(host)
-
-    duplicate_round = tool_result([
-        {"id": "tc_a", "name": "invoke_skill",
-         "args": {"name": "my_skill", "input": {"type": "T", "data": {}}}},
-        {"id": "tc_b", "name": "invoke_skill",
-         "args": {"name": "my_skill", "input": {"type": "T", "data": {}}}},
-    ])
-    scripted = _ScriptedLLM([duplicate_round, text_result("done")])
-
-    monkeypatch.setattr("reyn.runtime.router_loop.call_llm_tools", scripted)
-    await loop.run("run skill", [])
-
-    deduped_events = [
-        e for e in host.events.emitted
-        if e["type"] == "tool_call_deduped"
-    ]
-    (evt,) = deduped_events
-    assert evt["name"] == "invoke_skill"
-    assert evt["reason"] == "duplicate_invoke_skill_in_round"
-    assert evt["chain_id"] == "chain-test"
 
 
 @pytest.mark.asyncio
@@ -577,53 +540,6 @@ async def test_dispatch_tool_emits_tool_failed_on_unknown_tool(monkeypatch):
     assert "tool_failed" in event_types
     failed = next(e for e in host.events.emitted if e["type"] == "tool_failed")
     assert failed["error_kind"] == "unknown_tool"
-
-
-@pytest.mark.asyncio
-async def test_invoke_skill_with_unknown_skill_name_rejected(monkeypatch):
-    """Tier 2: OS invariant — invoke_skill with a hallucinated skill name is rejected
-    and emits a deterministic i18n error message; no skill spawned (G10 / B2-M2 fix).
-
-    Layer A (enum) catches it via jsonschema validation → invalid_args.
-    If somehow enum is bypassed, Layer B raises ValueError → exception kind.
-    Either way, no skill spawn occurs. G10 fix: the router short-circuits and emits
-    a deterministic i18n message instead of passing the error back to the LLM.
-    """
-    host = FakeRouterHost(skills=[{"name": "real_skill", "category": "general"}])
-    loop = make_loop(host)
-
-    rounds = [
-        tool_result([{"name": "invoke_skill", "args": {
-            "name": "ai_article_writer.write_article",  # hallucinated name
-            "input": {"type": "T", "data": {}},
-        }}]),
-        text_result("Ok, trying differently."),  # must NOT be reached after G10 fix
-    ]
-
-    messages_captured: list[list[dict]] = []
-
-    async def mock_llm(*, messages, **kwargs):
-        messages_captured.append(list(messages))
-        return rounds[len(messages_captured) - 1]
-
-    monkeypatch.setattr("reyn.runtime.router_loop.call_llm_tools", mock_llm)
-    await loop.run("run bogus skill", [])
-
-    # No skill should have been spawned
-    assert not host.skill_calls, "No skill must be spawned for unknown name"
-
-    # G10: router exits after the failed tool call — only 1 LLM call (no second round).
-    # Unpacking asserts exactly one call (ValueError if more or fewer).
-    (only_captured,) = messages_captured
-
-    # Outbox must contain a deterministic error message (not the LLM-generated fallback).
-    assert host.outbox, "Expected at least one outbox message"
-    agent_msgs = [m for m in host.outbox if m.get("kind") == "agent"]
-    assert agent_msgs, f"Expected agent-kind outbox message; got: {host.outbox}"
-    text = agent_msgs[0]["text"]
-    assert "Tool call failed" in text, (
-        f"Expected deterministic English error message; got: {text!r}"
-    )
 
 
 @pytest.mark.asyncio
