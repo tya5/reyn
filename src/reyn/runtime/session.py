@@ -4932,7 +4932,7 @@ class Session:
         pre_size = self.outbox.qsize()
         try:
             await slash_cmd.handler(self, args)
-        except Exception:
+        except Exception as e:
             # A slash handler raising must not kill the session run loop: run()'s
             # `while await run_one_iteration()` has no `except`, so an uncaught
             # error here ends session.run() and silently drops every later inbox
@@ -4940,8 +4940,11 @@ class Session:
             # Surface a clean error and treat the command as consumed so the loop
             # continues. (CancelledError is BaseException → shutdown still cancels.)
             logger.exception("slash handler /%s failed", cmd)
+            detail = f"{type(e).__name__}: {e}"
+            if len(detail) > 72:
+                detail = detail[:69] + "…"
             await self._put_outbox(OutboxMessage(
-                kind="error", text=f"/{cmd} failed (see logs)",
+                kind="error", text=f"/{cmd} failed: {detail}",
             ))
             return True
         try:
