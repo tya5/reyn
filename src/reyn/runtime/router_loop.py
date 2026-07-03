@@ -24,7 +24,6 @@ from reyn.runtime.router_tools import (
     build_tools,
     get_dispatch_kind,
 )
-from reyn.runtime.session import _TOOL_FAILED_FALLBACK_MSG
 from reyn.services.compaction.engine import _IMAGE_FIXED_TOKEN_COST
 from reyn.services.turn_budget import wrap_up_system_prompt
 
@@ -2203,42 +2202,6 @@ class RouterLoop:
                     )
                     return self._total_usage
 
-                # G10 / B2-M2 fix: intercept invoke_skill tool_failed results and
-                # emit a deterministic i18n message instead of letting the LLM
-                # generate an English fallback reply. Checked before accumulating
-                # messages so the LLM is never called for this error path.
-                for tc, r in zip(tool_calls, tool_results):
-                    if (
-                        tc["function"]["name"] == "invoke_skill"
-                        and isinstance(r, dict)
-                        and r.get("status") == "error"
-                    ):
-                        try:
-                            args = json.loads(tc["function"].get("arguments", "{}"))
-                        except (json.JSONDecodeError, KeyError):
-                            args = {}
-                        tool_name = args.get("name", "invoke_skill")
-                        err_info = r.get("error", {})
-                        error_msg = (
-                            err_info.get("message", str(r))
-                            if isinstance(err_info, dict)
-                            else str(err_info)
-                        )
-                        lang = getattr(host, "output_language", None)
-                        tmpl = _TOOL_FAILED_FALLBACK_MSG.get(
-                            lang,
-                            _TOOL_FAILED_FALLBACK_MSG["en"],
-                        )
-                        fallback = tmpl.format(
-                            tool_name=tool_name, error=error_msg
-                        )
-                        await host.put_outbox(
-                            kind="agent",
-                            text=fallback,
-                            meta={"chain_id": self.chain_id},
-                        )
-                        return self._total_usage
-
                 # FP-0034 Phase 3: routing_decided P6 event for catalog dispatch audit.
                 # Emitted independently of tracker (tracker=None is valid when
                 # hot_list_n=0, but P6 audit must fire whenever catalog routing
@@ -2515,52 +2478,32 @@ class RouterLoop:
     # -----------------------------------------------------------------------
 
     def _dedupe_tool_calls_round(self, tool_calls: list[dict]) -> list[dict]:
-        """Dedupe duplicate tool_calls within the same round (F5 + G3).
+        """Dedupe duplicate async tool_calls within the same round (F5).
 
-        Covers two categories of duplicates that weak models emit:
-
-        1. Async tools (e.g. `delegate_to_agent`) — F5 fix (batch 1).
-           Duplicates would inbox_put the same request twice, doubling
-           peer cost and confusing the chain.
-
-        2. `invoke_skill` — G3 fix (batch 5 B5-M1).
-           Three identical invoke_skill calls in one round caused 333k
-           tokens / 51 LLM calls. Same skill + same args → same result;
-           only the first call is needed.
+        Async tools (e.g. `delegate_to_agent`) — F5 fix (batch 1).
+        Duplicates would inbox_put the same request twice, doubling peer
+        cost and confusing the chain.
 
         Keyed on (tool_name, arguments_json). The original tool_call_id
         is preserved for the kept copy so the assistant/tool message
-        alignment downstream stays intact.
+        alignment downstream stays intact. Sync tools are deliberately
+        excluded — dupes there are wasteful but correctness-preserving and
+        the tool_call_id count must stay consistent with what the LLM emitted.
 
         Emits a `tool_call_deduped` audit event per suppressed call.
         """
-        # Tools that are dedupe candidates: async tools (by dispatch kind)
-        # and invoke_skill (sync but non-idempotent from a cost standpoint).
-        # Other sync tools (describe_skill, list_skills, read_file, …) are
-        # deliberately excluded — dupes there are wasteful but
-        # correctness-preserving and the tool_call_id count must stay
-        # consistent with what the LLM emitted.
-        _DEDUPE_SYNC_TOOLS: frozenset[str] = frozenset({"invoke_skill"})
-
         deduped: list[dict] = []
         seen: set[tuple[str, str]] = set()
         for tc in tool_calls:
             name = tc["function"]["name"]
-            is_async = get_dispatch_kind(name) == "async"
-            is_dedupe_sync = name in _DEDUPE_SYNC_TOOLS
-            if is_async or is_dedupe_sync:
+            if get_dispatch_kind(name) == "async":
                 key = (name, tc["function"].get("arguments", ""))
                 if key in seen:
-                    reason = (
-                        "duplicate_async_in_round"
-                        if is_async
-                        else "duplicate_invoke_skill_in_round"
-                    )
                     self.host.events.emit(
                         "tool_call_deduped",
                         name=name,
                         chain_id=self.chain_id,
-                        reason=reason,
+                        reason="duplicate_async_in_round",
                     )
                     continue
                 seen.add(key)
