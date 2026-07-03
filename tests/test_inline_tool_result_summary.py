@@ -87,6 +87,19 @@ def test_generic_list_counts_items_with_pluralisation() -> None:
     assert summarize_tool_result("anything", ["only"]) == "1 item"
 
 
+def test_task_list_result_shows_count() -> None:
+    """Tier 2: task__list result counts tasks rather than falling through to 'ok'."""
+    assert summarize_tool_result(
+        "task__list", {"kind": "task.list", "status": "ok", "tasks": []}
+    ) == "0 tasks"
+    assert summarize_tool_result(
+        "task__list", {"kind": "task.list", "status": "ok", "tasks": [{"id": "t1"}]}
+    ) == "1 task"
+    assert summarize_tool_result(
+        "task__list", {"kind": "task.list", "status": "ok", "tasks": [{"id": "t1"}, {"id": "t2"}]}
+    ) == "2 tasks"
+
+
 def test_dict_with_status_shows_status() -> None:
     """Tier 2: an opaque dict with a status field shows the status."""
     assert summarize_tool_result("mcp__call", {"status": "ok", "x": 1}) == "ok"
