@@ -131,6 +131,23 @@ def test_file_read_not_found_shows_error_not_zero_lines() -> None:
     assert "{" not in out, "raw dict repr must not leak"
 
 
+def test_file_delete_shows_deleted_path() -> None:
+    """Tier 2: file__delete result (op='delete', path=...) shows 'Deleted {path}'.
+
+    file__delete returns {"kind": "file", "op": "delete", "path": ..., "status": "ok"}.
+    Without this branch op='delete' misses all op checks, falls through to
+    status='ok' → shows 'ok' with no path, giving the user no signal of what was
+    deleted.
+    """
+    assert summarize_tool_result(
+        "file__delete",
+        {"kind": "file", "op": "delete", "path": "src/old.py", "status": "ok", "deleted": True},
+    ) == "Deleted src/old.py"
+    assert summarize_tool_result(
+        "file__delete", {"op": "delete"}
+    ) == "Deleted file"
+
+
 def test_file_list_shows_entry_count() -> None:
     """Tier 2: file__list result ({path, entries}) shows 'Listed N entries'.
 
