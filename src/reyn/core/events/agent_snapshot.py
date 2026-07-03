@@ -54,10 +54,10 @@ class AgentSnapshot:
     pending_chains: dict[str, dict] = field(default_factory=dict)
     # Outstanding (unresolved) interventions keyed by intervention_id.
     outstanding_interventions: dict[str, dict] = field(default_factory=dict)
-    # R-D12: durable buffered intervention answers keyed by skill_run_id.
+    # R-D12: durable buffered intervention answers keyed by run_id.
     # Populated when the user answers an intervention post-restart but
-    # before the resuming skill consumes it. Survives a *second* crash
-    # so the answer is replayed when the skill finally resumes (the
+    # before the resuming run consumes it. Survives a *second* crash
+    # so the answer is replayed when the run finally resumes (the
     # in-memory ``_buffered_intervention_answers`` dict in Session
     # is the runtime cache; this field is its on-disk durable form).
     # Each value is ``{"text": str, "choice_id": str | None}``.

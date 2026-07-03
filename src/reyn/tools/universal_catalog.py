@@ -6,7 +6,7 @@ This module defines the 4 universal wrapper ToolDefinitions
 canonical 13-category enum that FP-0034 establishes.
 
 Per FP-0034 §D1, the universal catalog replaces the per-category
-discover ops (= ``list_skills`` / ``list_mcp_tools`` / ``list_memory``
+discover ops (= ``list_mcp_tools`` / ``list_memory``
 etc.) with 4 wrappers that cover all 13 categories uniformly. Per
 §D18, qualified names use ``<category>__<entry_name>`` format with
 ``__`` (double underscore) as the separator. Inside ``entry_name``
@@ -532,7 +532,7 @@ def _enumerate_static_category(category: str) -> list[dict[str, str]]:
     universal_dispatch._OPERATION_RULES. Their short_description comes
     from the target ToolDefinition in the registry.
 
-    Resource categories (skill / agent.peer / mcp.{server,tool} /
+    Resource categories (agent.peer / mcp.{server,tool} /
     memory_entry / rag_corpus) are NOT handled here — they need caller
     state (= ctx.router_state.available_*). See _enumerate_category.
     """
@@ -617,7 +617,7 @@ def _enumerate_category(category: str, ctx: ToolContext) -> list[dict[str, str]]
         reyn_source / rag_operation / mcp.operation) →
         _enumerate_static_category (= populated via universal_dispatch's
         ``_OPERATION_RULES`` table)
-      - Resource categories → consult ctx.router_state (skills /
+      - Resource categories → consult ctx.router_state (
         agents / mcp_servers / mcp_servers[*].tools / list_memory_fn /
         available_rag_sources)
       - Categories without state-binding yet (exec) →
@@ -1117,7 +1117,7 @@ def catalog_entries(ctx: ToolContext) -> list[dict[str, Any]]:
 
     Deterministic ``name`` sort (stable ``tools=`` ordering → replay-fixture
     stability). **Pass a ``ToolContext`` with ``router_state`` populated** or the
-    resource categories (skills / agents / mcp_servers / …) enumerate empty and
+    resource categories (agents / mcp_servers / …) enumerate empty and
     only static categories survive (the "usable this session" semantics).
     """
     from reyn.tools import get_default_registry
@@ -1154,9 +1154,9 @@ async def _handle_describe_action(
     ``.parameters`` directly — which is correct for operation-category
     actions (web__fetch / file__read / …) whose target IS the action.
 
-    For resource-category actions (``skill__X``, ``agent.peer__X``,
+    For resource-category actions (``agent.peer__X``,
     ``mcp.tool__X.Y``, ``mcp.server__X``, ``rag_corpus__X``) the target
-    is a generic dispatcher (``invoke_skill`` / ``delegate_to_agent`` /
+    is a generic dispatcher (``delegate_to_agent`` /
     ``call_mcp_tool`` / …) whose ``.parameters`` is the dispatcher's
     own args shape, NOT the resource's actual input schema. D2-full
     extends the handler to look up the per-resource schema via
@@ -1278,8 +1278,6 @@ def _resource_input_schema(
     parameters).
 
     Covered:
-      - ``skill__<name>`` — uses ``ctx.router_state.host.list_available_skills()``
-        which carries ``input_schema`` after FP-0034 D2-full.
       - ``agent.peer__<name>`` — ``delegate_to_agent`` parameters minus ``to``.
       - ``mcp.server__<name>`` — empty object (``list_mcp_tools`` takes
         only the curried ``server`` arg).
@@ -1340,8 +1338,6 @@ def _resource_description(
 
     Covered (= categories with per-resource description metadata on the
     host side):
-      - ``skill__<name>`` — pulls ``description`` from
-        ``ctx.router_state.host.list_available_skills()``.
       - ``agent.peer__<name>`` — pulls ``description`` (or ``role``
         fallback) from ``ctx.router_state.host.list_available_agents()``.
       - ``mcp__<server>__<tool>`` — pulls ``description`` from the tool's
@@ -1361,7 +1357,7 @@ def _resource_description(
         already the correct per-action text.
 
     Coverage delta vs ``_resource_input_schema``: that helper covers
-    5 categories (skill / agent.peer / mcp.server / **rag_corpus** /
+    4 categories (agent.peer / mcp.server / **rag_corpus** /
     mcp.tool). This helper covers 4 (= same set minus rag_corpus) because
     the host-side per-corpus description surface doesn't exist; if a
     ``list_available_corpora()`` surface is added later, this helper
@@ -1449,7 +1445,7 @@ def _augment_suggestions(
 
     The PR-2 default suggestion pool is the static catalogue
     (= KNOWN_STATIC_QUALIFIED_NAMES, 13 names). When ``ctx.router_state``
-    is populated, we widen the pool with dynamic items (= skills /
+    is populated, we widen the pool with dynamic items (= 
     agents / mcp.tool / mcp.server / memory_entry) so the suggestion
     surfaces names the LLM can actually invoke. Falls back to the
     original exception unchanged when no dynamic items exist.
