@@ -467,14 +467,24 @@ def _harden_soft_breaks(text: str) -> str:
 
 def _body_renderable(kind: str, text: str, body_style: str):
     """The body cell: markdown for agent (LLM) output, a styled Text otherwise."""
-    from rich.markdown import Markdown
+    from rich.markdown import Heading, Markdown
     from rich.text import Text
+
     if kind == "agent":
+        # rich.Markdown centers H1 by default (LEVEL_ALIGN = {"h1": "center"}).
+        # In a gutter-grid chat context that produces heavy leading whitespace —
+        # "⏺                          My Heading". Override to left for all levels.
+        class _LeftHeading(Heading):
+            LEVEL_ALIGN = {tag: "left" for tag in Heading.LEVEL_ALIGN}
+
+        class _ChatMarkdown(Markdown):
+            elements = {**Markdown.elements, "heading_open": _LeftHeading}
+
         # Render the LLM reply as markdown (headings / bold / lists / code) like
         # Claude Code. Single newlines are hardened to CommonMark hard line breaks
         # so the model's per-line output is preserved rather than collapsed to one
         # paragraph — matching how CC displays LLM output.
-        return Markdown(_harden_soft_breaks(text or ""))
+        return _ChatMarkdown(_harden_soft_breaks(text or ""))
     return Text(text, style=body_style)
 
 

@@ -743,10 +743,18 @@ async def run_inline_input(registry, renderer, config=None) -> None:
         # read-only panel has no cursor, so ↑ simply closes it.
         if _actionable_open() and not menu_region.at_first_selectable:
             menu_region.navigate(-1)
-        else:
-            if menu["open"]:
-                _menu_close()
+        elif menu["open"]:
+            # dropdown is open but not navigable (at top / read-only): close it
+            # and return to input — don't also navigate history since the user
+            # was browsing a dropdown, not requesting history recall.
+            _menu_close()
             event.app.layout.focus(input_win)
+        else:
+            # No dropdown open — user is browsing chips in the status bar.
+            # ↑ returns to input AND navigates one step back in history so the
+            # experience feels like a single "go up" rather than two keypresses.
+            event.app.layout.focus(input_win)
+            buf.history_backward()
 
     @kb.add("down", filter=has_focus(status_win))
     def _menu_down(event) -> None:

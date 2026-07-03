@@ -55,6 +55,25 @@ def test_agent_body_renders_markdown_not_raw_source() -> None:
     assert "•" in out               # list rendered as bullets
 
 
+def test_agent_heading_renders_left_not_centered() -> None:
+    """Tier 2: a markdown H1 in an agent reply renders left-aligned, not centered.
+
+    rich.Markdown centers H1 by default (LEVEL_ALIGN = {"h1": "center"}) which
+    produces many leading spaces inside the gutter-grid body column:
+    "⏺                          My Heading". The _ChatMarkdown override makes all
+    heading levels left-aligned so headings sit at the left edge of the body column,
+    matching the CC chat aesthetic."""
+    out = _plain("agent", "# Heading Title\nsome text", width=80)
+    heading_line = next((ln for ln in out.split("\n") if "Heading Title" in ln), None)
+    assert heading_line is not None, "heading line not found in output"
+    # Left-aligned: the heading text follows the gutter marker (⏺) with at most
+    # a small indent. Centered: ~30+ spaces precede the text in an 80-wide render.
+    leading = len(heading_line) - len(heading_line.lstrip())
+    assert leading < 10, (
+        f"heading has {leading} leading spaces — looks centered, not left-aligned: {heading_line!r}"
+    )
+
+
 def test_wrapped_agent_body_hang_indents_clear_of_the_gutter() -> None:
     """Tier 2: a wrapped body continues INDENTED in the body column, never bleeding
     back into the 2-cell marker gutter (the reserved-gutter contract)."""
