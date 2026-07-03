@@ -103,8 +103,8 @@ class SlashRegistry:
         return list(self._commands.values())
 
     def names(self) -> list[str]:
-        """Sorted canonical command names (no aliases) for /help and palette."""
-        return sorted(self._commands.keys())
+        """Sorted visible canonical command names (no aliases, no hidden) for /help and palette."""
+        return sorted(k for k, v in self._commands.items() if not v.hidden)
 
 
 REGISTRY: SlashRegistry = SlashRegistry()
