@@ -164,25 +164,6 @@ class BudgetGateway:
         self._router_cap += int(additional)
         return self._router_cap
 
-    # ── pre-spawn budget gate ─────────────────────────────────────────────────
-
-    def check_pre_spawn(self, *, chain_id: str, skill: str):
-        """Delegate to tracker for the per-spawn budget check.
-
-        Returns BudgetCheck (allow / warn / refuse), or a permissive
-        BudgetCheck when tracker is None (unlimited mode).
-        """
-        from reyn.runtime.budget.budget import BudgetCheck
-        if self._tracker is None:
-            return BudgetCheck(allowed=True)
-        return self._tracker.check_pre_spawn(chain_id=chain_id, skill=skill)
-
-    def record_spawn(self, *, chain_id: str, skill: str) -> None:
-        """Delegate to tracker.record_spawn after a successful gate."""
-        if self._tracker is None:
-            return
-        self._tracker.record_spawn(chain_id=chain_id, skill=skill)
-
     # ── slash-command formatters ──────────────────────────────────────────────
 
     def cost_line(self) -> str | None:

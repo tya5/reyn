@@ -91,8 +91,6 @@ def test_e2e_loaded_state_does_not_double_count_on_subsequent_records(tmp_path):
         "version": 1,
         "agent_tokens": {"alpha": 250},
         "agent_cost_usd": {"alpha": 0.0},
-        "chain_skill_calls": [],
-        "chain_skill_tokens": [],
     }))
     bt.load_state(state_path)
     assert bt.snapshot()["agent_tokens"]["alpha"] == 250

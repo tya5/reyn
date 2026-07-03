@@ -1,33 +1,34 @@
-"""Tier 2c: #1911 — per-agent + per-chain spawn caps survive a crash that
-lands inside the throttled-save window.
+"""Tier 2c: #1911 — per-agent token/cost caps survive a crash that lands
+inside the throttled-save window.
 
 Quota-enforcement-across-crash invariant. Before #1911 the per-agent
-(``_agent_tokens`` / ``_agent_cost_usd``) and per-chain spawn-count counters
-persisted ONLY via the throttled, best-effort ``budget_state.json`` save
-(``_save_throttle_secs`` default 1.0s, OSError swallowed). ``hydrate`` rebuilt
-daily / monthly from the durable fsync-per-append ``BudgetLedger`` but NOT
-per-agent, and spawn counts had no durable backing at all. A crash inside the
+(``_agent_tokens`` / ``_agent_cost_usd``) counters persisted ONLY via the
+throttled, best-effort ``budget_state.json`` save (``_save_throttle_secs``
+default 1.0s, OSError swallowed). ``hydrate`` rebuilt daily / monthly from the
+durable fsync-per-append ``BudgetLedger`` but NOT per-agent. A crash inside the
 throttle window therefore lost the unsaved increments → caps UNDER-count on
-recovery → over-budget LLM calls / skill spawns get re-allowed.
+recovery → over-budget LLM calls get re-allowed.
 
-The fix makes the durable ledger the source of truth for both:
-  - ``hydrate`` re-aggregates per-agent tokens/cost (summed per ``agent``) and
-    per-chain spawn counts (``kind="spawn"`` records) from the ledger.
-  - ``record_spawn`` appends a fsync'd spawn record (not just the throttled
-    save).
+The fix makes the durable ledger the source of truth: ``hydrate`` re-aggregates
+per-agent tokens/cost (summed per ``agent`` field) from the ledger.
 
 These tests drive the *production* recovery path (``hydrate`` then
-``load_state``, as wired in chat.py / web/deps.py / mcp.py) and assert the
-caps are PRESERVED — bounded by construction, the durable ledger record is the
+``load_state``, as wired in chat.py / web/deps.py / mcp.py) and assert the caps
+are PRESERVED — bounded by construction, the durable ledger record is the
 source of truth.
 
+The final test is a migration-safety gate: the per-chain skill-spawn cap (and
+its ``kind="spawn"`` ledger records) was removed with the skill machinery, but
+a pre-existing on-disk ledger may still contain those legacy records — hydrate
+must skip them without breaking recovery of the kept LLM counters.
+
 FALSIFICATION (verified out-of-band on pre-fix HEAD): with hydrate not
-restoring per-agent and record_spawn not appending to the ledger, the same
-scenario recovers agent_tokens=100 (want 280) and chain_skill_calls={} (want
-2) — i.e. these assertions go RED.
+restoring per-agent, the same scenario recovers agent_tokens=100 (want 280) —
+i.e. that assertion goes RED.
 """
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from reyn.llm.pricing import TokenUsage
@@ -48,24 +49,21 @@ def _simulate_crash_in_throttle_window(
 
     ``set_state_path`` makes the *first* record always save (throttle clock at
     0), so a large throttle window means: the state file captures only the
-    first record's snapshot, while the durable ledger fsyncs every record /
-    spawn. That is precisely the "crash before the throttled save lands" gap.
+    first record's snapshot, while the durable ledger fsyncs every record.
+    That is precisely the "crash before the throttled save lands" gap.
     """
     bt = BudgetTracker(_cfg())
     bt.hydrate(ledger_path)
     bt.set_state_path(state_path, throttle_secs=10_000.0)  # effectively never re-saves
 
-    # 3 LLM calls (100 + 100 + 80 = 280 tokens) and 2 spawns, interleaved.
+    # 3 LLM calls (100 + 100 + 80 = 280 tokens).
     bt.record_llm(model="gpt-4", agent="alpha", usage=TokenUsage(50, 50))
-    bt.record_spawn(chain_id="c1", skill="s1")
     bt.record_llm(model="gpt-4", agent="alpha", usage=TokenUsage(50, 50))
-    bt.record_spawn(chain_id="c1", skill="s1")
     bt.record_llm(model="gpt-4", agent="alpha", usage=TokenUsage(40, 40))
 
     # Sanity: in-memory truth before the crash.
     snap = bt.snapshot()
     assert snap["agent_tokens"]["alpha"] == 280
-    assert snap["chain_skill_calls"]["c1/s1"] == 2
     return bt
 
 
@@ -98,23 +96,6 @@ def test_per_agent_tokens_preserved_across_crash(tmp_path):
     )
 
 
-def test_per_chain_spawn_count_preserved_across_crash(tmp_path):
-    """Tier 2c: per-chain spawn count is not under-counted after a crash inside
-    the throttle window (record_spawn appends a durable ledger record)."""
-    ledger_path = tmp_path / ".reyn" / "state" / "budget_ledger.jsonl"
-    state_path = tmp_path / ".reyn" / "state" / "budget_state.json"
-
-    bt = _simulate_crash_in_throttle_window(ledger_path, state_path)
-    del bt
-
-    bt2 = _recover(ledger_path, state_path)
-    snap = bt2.snapshot()
-    assert snap["chain_skill_calls"]["c1/s1"] == 2, (
-        "per-chain spawn count must be restored from the durable ledger; "
-        "spawn counts had no durable backing before #1911"
-    )
-
-
 def test_per_agent_cap_enforced_after_crash(tmp_path):
     """Tier 2c: the per-agent token cap still refuses once the durable total
     crosses the hard limit after recovery.
@@ -140,98 +121,49 @@ def test_per_agent_cap_enforced_after_crash(tmp_path):
     assert check.hard_dimension == "per_agent_tokens"
 
 
-def test_per_chain_spawn_cap_enforced_after_crash(tmp_path):
-    """Tier 2c: the per-chain spawn cap still refuses once the durable spawn
-    count reaches the hard limit after recovery.
+def test_hydrate_tolerates_legacy_spawn_records(tmp_path):
+    """Tier 2c: a pre-existing ledger containing legacy skill-spawn records
+    (``kind="spawn"``, written before the per-chain skill-spawn cap was
+    removed) still hydrates the live LLM counters correctly.
 
-    Spawn cap = 2. The two pre-crash spawns are restored from the ledger, so a
-    third spawn in the same chain must be refused. An under-counted recovery
-    (0 spawns) would wrongly re-allow runaway spawning = the loop-detection
-    bypass this guards against.
+    Migration-safety gate for the durable-ledger schema change: hydrate must
+    (i) not raise on the legacy spawn records, (ii) reconstruct the per-agent
+    token/cost totals from the LLM-call records only, and (iii) not resurrect
+    any per-chain skill-spawn state in the snapshot.
+
+    FALSIFICATION: if hydrate lacked the ``kind == "spawn"`` skip branch, an
+    old spawn record would fall through to the LLM aggregation — harmless for
+    tokens (0) here, but the branch guards against a future spawn-record schema
+    that carries a numeric field, and documents the tolerance as intentional.
     """
     ledger_path = tmp_path / ".reyn" / "state" / "budget_ledger.jsonl"
-    state_path = tmp_path / ".reyn" / "state" / "budget_state.json"
-
-    # safety.loop.skill_calls_per_chain drives the per-chain spawn cap.
-    class _Loop:
-        skill_calls_per_chain = CostLimitConfig(hard_limit=2)
-        skill_tokens_per_chain = CostLimitConfig()
-
-    class _Safety:
-        loop = _Loop()
-
-    # Pre-crash: hydrate + 2 durable spawns, throttled save stays stale.
-    bt = BudgetTracker(_cfg(), safety=_Safety())
-    bt.hydrate(ledger_path)
-    bt.set_state_path(state_path, throttle_secs=10_000.0)
-    bt.record_spawn(chain_id="c1", skill="s1")
-    bt.record_spawn(chain_id="c1", skill="s1")
-    assert bt.snapshot()["chain_skill_calls"]["c1/s1"] == 2
-    del bt  # crash
-
-    # Recover with the SAME spawn cap.
-    bt2 = BudgetTracker(_cfg(), safety=_Safety())
-    bt2.hydrate(ledger_path)
-    bt2.load_state(state_path)
-    assert bt2.snapshot()["chain_skill_calls"]["c1/s1"] == 2, (
-        "spawn count must survive the crash via the durable ledger"
+    ledger_path.parent.mkdir(parents=True, exist_ok=True)
+    # Hand-write a legacy ledger: LLM-call records interleaved with legacy
+    # spawn records (the shape BudgetLedger.append_spawn used to write).
+    records = [
+        {"ts": "2026-05-02T10:00:00+09:00", "agent": "alpha",
+         "model": "gpt-4", "tokens": 100, "cost_usd": 0.01},
+        {"ts": "2026-05-02T10:00:01+09:00", "kind": "spawn",
+         "chain_id": "c1", "skill": "s1"},
+        {"ts": "2026-05-02T10:00:02+09:00", "agent": "alpha",
+         "model": "gpt-4", "tokens": 80, "cost_usd": 0.008},
+        {"ts": "2026-05-02T10:00:03+09:00", "kind": "spawn",
+         "chain_id": "c1", "skill": "s1"},
+    ]
+    ledger_path.write_text(
+        "\n".join(json.dumps(r) for r in records) + "\n", encoding="utf-8"
     )
-    check = bt2.check_pre_spawn(chain_id="c1", skill="s1")
-    assert not check.allowed, (
-        "2/2 spawns already used → third spawn must be refused after recovery"
-    )
-    assert check.hard_dimension == "per_chain_skill_calls"
-
-
-def test_recovery_does_not_double_count_spawn(tmp_path):
-    """Tier 2c: hydrate counts each durable spawn record exactly once.
-
-    The ledger is append-only and hydrate recounts from scratch on every
-    restart, so a recover→record→recover sequence must not inflate the count
-    (bounded by construction: one ledger record per record_spawn call).
-    """
-    ledger_path = tmp_path / ".reyn" / "state" / "budget_ledger.jsonl"
-    state_path = tmp_path / ".reyn" / "state" / "budget_state.json"
 
     bt = BudgetTracker(_cfg())
-    bt.hydrate(ledger_path)
-    bt.set_state_path(state_path, throttle_secs=10_000.0)
-    bt.record_spawn(chain_id="c1", skill="s1")
-    del bt
-
-    # First recovery sees exactly 1.
-    bt2 = _recover(ledger_path, state_path)
-    assert bt2.snapshot()["chain_skill_calls"]["c1/s1"] == 1
-    # One more durable spawn, then crash + recover again.
-    bt2.set_state_path(state_path, throttle_secs=10_000.0)
-    bt2.record_spawn(chain_id="c1", skill="s1")
-    del bt2
-
-    bt3 = _recover(ledger_path, state_path)
-    assert bt3.snapshot()["chain_skill_calls"]["c1/s1"] == 2, (
-        "two record_spawn calls → exactly two; no replay double-count"
-    )
-
-
-def test_spawn_records_excluded_from_period_and_agent_totals(tmp_path):
-    """Tier 2c: spawn records carry no tokens/cost, so they must not pollute
-    the daily / monthly / per-agent token+cost aggregation in hydrate."""
-    ledger_path = tmp_path / ".reyn" / "state" / "budget_ledger.jsonl"
-    state_path = tmp_path / ".reyn" / "state" / "budget_state.json"
-
-    bt = BudgetTracker(_cfg())
-    bt.hydrate(ledger_path)
-    bt.set_state_path(state_path, throttle_secs=10_000.0)
-    bt.record_llm(model="gpt-4", agent="alpha", usage=TokenUsage(50, 50))  # 100 tok
-    bt.record_spawn(chain_id="c1", skill="s1")
-    del bt
-
-    bt2 = _recover(ledger_path, state_path)
-    snap = bt2.snapshot()
-    # Spawn record contributes 0 tokens; only the LLM call counts.
-    assert snap["agent_tokens"]["alpha"] == 100
-    assert snap["daily_tokens"] == 100
-    assert snap["chain_skill_calls"]["c1/s1"] == 1
+    bt.hydrate(ledger_path)  # (i) must not raise on the legacy spawn records
+    snap = bt.snapshot()
+    # (ii) per-agent total (all-time cumulative) is reconstructed from the two
+    # LLM-call records only; the spawn records contribute nothing.
+    assert snap["agent_tokens"]["alpha"] == 180
+    assert round(snap["agent_cost_usd"]["alpha"], 3) == 0.018
+    # (iii) no per-chain skill-spawn state resurfaces.
+    assert "chain_skill_calls" not in snap
+    assert "chain_skill_tokens" not in snap
 
 
 if __name__ == "__main__":

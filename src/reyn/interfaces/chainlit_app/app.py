@@ -160,7 +160,7 @@ async def _get_or_build_registry() -> "AgentRegistry":
 
         project_root = _find_project_root(Path.cwd()) or Path.cwd()
         state_log = StateLog(project_root / ".reyn" / "state" / "wal.jsonl")
-        budget_tracker = BudgetTracker(session_cfg.config.cost, safety=safety)
+        budget_tracker = BudgetTracker(session_cfg.config.cost)
         budget_tracker.hydrate(
             project_root / ".reyn" / "state" / "budget_ledger.jsonl"
         )

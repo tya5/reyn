@@ -86,23 +86,6 @@ def test_auto_save_after_throttle_window(tmp_path, monkeypatch):
     assert second_data["agent_tokens"]["a"] == 220
 
 
-def test_record_spawn_also_triggers_auto_save(tmp_path):
-    """Tier 2: chain_skill counters are persisted when record_spawn fires."""
-    bt = _tracker()
-    state_path = tmp_path / "budget_state.json"
-    bt.set_state_path(state_path, throttle_secs=0.0)
-    bt.record_spawn(chain_id="c1", skill="s1")
-
-    data = json.loads(state_path.read_text())
-    triplets = data.get("chain_skill_calls", [])
-    matched = [
-        e for e in triplets
-        if isinstance(e, list) and e[:2] == ["c1", "s1"]
-    ]
-    assert matched, "record_spawn must trigger auto-save of chain_skill_calls"
-    assert matched[0][2] == 1
-
-
 def test_auto_save_survives_save_io_error(tmp_path, monkeypatch):
     """Tier 2: a save_state I/O error must not propagate (defensive)."""
     bt = _tracker()

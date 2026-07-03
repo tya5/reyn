@@ -1,9 +1,8 @@
 """Budget / cost / rate-limit enforcement (PR22 + PR25).
 
-A process-shared `BudgetTracker` accumulates token + USD usage per agent,
-per-chain per-skill spawn counts, and per-model call rates. Hooked into
-LLM calls (pre-check refuses on hard cap, post-record updates counters)
-and into skill spawns (refuses on per-chain cap).
+A process-shared `BudgetTracker` accumulates token + USD usage per agent
+and per-model call rates. Hooked into LLM calls (pre-check refuses on hard
+cap, post-record updates counters).
 
 PR25 adds persistent daily / monthly quota enforcement via a JSONL ledger
 (.reyn/state/budget_ledger.jsonl). On startup call `tracker.hydrate(path)`
@@ -50,19 +49,18 @@ class BudgetExceeded(Exception):
 class CostLimitConfig:
     """A single hybrid-cap dimension. None hard_limit = unlimited.
 
-    FP-0003 → FP-0005 (#1877): the per_chain_skill_calls exceed flow is now
-    driven by the unified ``safety.on_limit`` 3-mode policy. ``extension_calls``
-    is the per-grant extension amount; ``> 0`` opts the dimension into the
-    on_limit flow (``interactive`` = ask the user, ``auto_extend`` = bounded
-    auto-grant, ``unattended`` = deny). ``0`` (default) keeps the hard-refuse
-    behaviour regardless of mode (nothing to grant).
+    FP-0005 (#1877): ``extension_calls`` is the per-grant extension amount
+    for the unified ``safety.on_limit`` 3-mode policy; ``> 0`` opts the
+    dimension into the on_limit flow (``interactive`` = ask the user,
+    ``auto_extend`` = bounded auto-grant, ``unattended`` = deny). ``0``
+    (default) keeps the hard-refuse behaviour regardless of mode (nothing to
+    grant).
     """
 
     hard_limit: float | None = None
     warn_ratio: float = 0.8
     # FP-0005 (#1877): per-grant extension amount. ``> 0`` makes the
-    # dimension participate in the ``safety.on_limit`` flow; for
-    # per_chain_skill_calls this is a spawn count.
+    # dimension participate in the ``safety.on_limit`` flow.
     extension_calls: int = 0
 
     @property
@@ -81,9 +79,8 @@ class CostConfig:
     """`cost:` — financial budget caps and rate limits (PR22 + PR25).
 
     Contains only financial knobs (per-agent token/USD, daily/monthly quota,
-    rate limits). Loop-detection caps (router_invocations_per_turn,
-    per_chain_skill_calls, per_chain_skill_tokens) moved to
-    ``SafetyConfig.loop`` in the FP-0004/0005 refactor.
+    rate limits). Loop-detection caps (router_invocations_per_turn) moved
+    to ``SafetyConfig.loop`` in the FP-0004/0005 refactor.
     """
 
     per_agent_tokens: CostLimitConfig = field(default_factory=CostLimitConfig)
@@ -138,24 +135,22 @@ def _current_period_key(kind: str) -> tuple[str, str]:
 
 
 class BudgetLedger:
-    """Append-only JSONL ledger for durable budget records (PR25 + #1911).
+    """Append-only JSONL ledger for durable budget records (PR25).
 
-    Two record kinds, discriminated by the optional ``kind`` field:
+    Each line is an LLM-call record::
 
-      - LLM call (default kind; ``kind`` omitted for byte-compatibility with
-        pre-#1911 lines)::
+        {"ts": "2026-05-02T10:23:00+09:00", "agent": "alice",
+         "model": "...", "tokens": 300, "cost_usd": 0.0023}
 
-            {"ts": "2026-05-02T10:23:00+09:00", "agent": "alice",
-             "model": "...", "tokens": 300, "cost_usd": 0.0023}
-
-      - skill spawn (#1911 — durable backing for the per-chain spawn cap)::
-
-            {"ts": "...", "kind": "spawn", "chain_id": "c1", "skill": "eval"}
+    Legacy note: pre-existing ledgers may also contain skill-spawn records
+    (``{"kind": "spawn", ...}``) written before the per-chain skill-spawn cap
+    was removed. They are no longer written; ``BudgetTracker.hydrate`` skips
+    them on read (see the legacy-tolerance branch there).
 
     Records are fsync'd on append so a process crash cannot roll back a
-    completed LLM call / spawn and under-count quota usage. This is the
-    cap-critical durability layer; the throttled ``budget_state.json`` is a
-    best-effort cache on top of it (see ``BudgetTracker.hydrate``).
+    completed LLM call and under-count quota usage. This is the cap-critical
+    durability layer; the throttled ``budget_state.json`` is a best-effort
+    cache on top of it (see ``BudgetTracker.hydrate``).
 
     This class is synchronous and not asyncio-aware — all writes are tiny
     and complete in microseconds.  The asyncio event loop is never blocked
@@ -196,23 +191,6 @@ class BudgetLedger:
         if purpose is not None:
             record["purpose"] = purpose
         self._write_record(record)
-
-    def append_spawn(self, *, chain_id: str, skill: str) -> None:
-        """Append one durable skill-spawn record and fsync (#1911).
-
-        Gives the per-chain spawn-count cap the same fsync-per-append
-        durability the daily / monthly / per-agent counters already enjoy,
-        rather than relying on the throttled best-effort state save (which
-        loses unsaved increments to a crash inside the throttle window). The
-        ``kind`` discriminator keeps spawn records out of the LLM-call
-        token/cost aggregation in ``hydrate``.
-        """
-        self._write_record({
-            "ts": self._now_iso(),
-            "kind": "spawn",
-            "chain_id": chain_id,
-            "skill": skill,
-        })
 
     @staticmethod
     def _now_iso() -> str:
@@ -326,47 +304,16 @@ class BudgetTracker:
     Counters live in memory and reset on process restart. `/budget reset`
     clears them mid-process. The tracker is single-thread / asyncio-safe
     by virtue of running in a single event loop (no internal locking).
-
-    ``safety`` carries loop-detection caps that belong to ``SafetyConfig``
-    (skill_calls_per_chain, skill_tokens_per_chain). Pass ``None`` for
-    unlimited (= no chain-skill caps enforced).
     """
 
-    def __init__(self, config: CostConfig, safety: "Any | None" = None) -> None:
+    def __init__(self, config: CostConfig) -> None:
         self._config = config
-        # Pull chain-skill caps out of SafetyConfig.loop if provided.
-        # SafetyConfig is imported lazily to avoid a circular import at
-        # module load time (budget.py ← config.py ← budget.py).
-        if safety is not None:
-            loop = getattr(safety, "loop", None)
-            self._skill_calls_cap: CostLimitConfig = (
-                getattr(loop, "skill_calls_per_chain", CostLimitConfig())
-                if loop is not None else CostLimitConfig()
-            )
-            self._skill_tokens_cap: CostLimitConfig = (
-                getattr(loop, "skill_tokens_per_chain", CostLimitConfig())
-                if loop is not None else CostLimitConfig()
-            )
-        else:
-            self._skill_calls_cap = CostLimitConfig()
-            self._skill_tokens_cap = CostLimitConfig()
         self._agent_tokens: dict[str, int] = defaultdict(int)
         self._agent_cost_usd: dict[str, float] = defaultdict(float)
         # #1190 stage (iii): per-purpose cost attribution (main/phase/compaction/
         # judge/skill_node_adapt/dogfood) for the /budget breakdown payoff.
         self._purpose_tokens: dict[str, int] = defaultdict(int)
         self._purpose_cost_usd: dict[str, float] = defaultdict(float)
-        self._chain_skill_calls: dict[tuple[str, str], int] = defaultdict(int)
-        self._chain_skill_tokens: dict[tuple[str, str], int] = defaultdict(int)
-        # FP-0005 (#1877): per-(chain_id, skill) extensions granted via the
-        # ``safety.on_limit`` flow. The effective hard limit
-        # for a (chain, skill) pair is ``cap.hard_limit + extensions[key]``.
-        # Tracked separately from ``_chain_skill_calls`` so the counter
-        # itself remains a simple monotonic spawn count, and so the
-        # extension carries clean audit semantics ("user approved +N
-        # spawns at 12:34:56" vs mutating the counter retroactively).
-        self._chain_skill_call_extensions: dict[tuple[str, str], int] = defaultdict(int)
-        self._chain_skill_token_extensions: dict[tuple[str, str], int] = defaultdict(int)
         self._call_window: dict[str, deque[float]] = defaultdict(deque)
         self._warned: set[tuple[str, str]] = set()
         # PR25: persistent daily / monthly counters
@@ -404,8 +351,6 @@ class BudgetTracker:
           - daily / monthly token + cost (period-filtered to today / this month)
           - per-agent tokens + cost (#1911 — all-time cumulative, summed per
             ``agent`` field; mirrors what ``load_state`` restores)
-          - per-chain skill spawn counts (#1911 — counted from ``kind="spawn"``
-            records, keyed by ``(chain_id, skill)``)
 
         The throttled ``budget_state.json`` (``load_state``) is a best-effort
         cache only; a crash inside the 1s throttle window can leave it stale.
@@ -424,7 +369,6 @@ class BudgetTracker:
         monthly_cost = 0.0
         agent_tokens: dict[str, int] = defaultdict(int)
         agent_cost: dict[str, float] = defaultdict(float)
-        chain_skill_calls: dict[tuple[str, str], int] = defaultdict(int)
 
         for record in self._ledger.iter_records():
             ts_str = record.get("ts")
@@ -435,14 +379,12 @@ class BudgetTracker:
             except (ValueError, OSError):
                 continue
 
-            # #1911: spawn records back the per-chain spawn cap. They carry no
-            # tokens/cost, so they are counted separately and skipped by the
-            # LLM-call aggregation below.
+            # Legacy tolerance: a pre-existing ledger may contain skill-spawn
+            # records (``kind="spawn"``) written before the per-chain
+            # skill-spawn cap was removed. They carry no tokens/cost — skip
+            # them so an old ledger still hydrates the live LLM counters
+            # (daily / monthly / per-agent / cost) without error.
             if record.get("kind") == "spawn":
-                chain_id = record.get("chain_id")
-                skill = record.get("skill")
-                if isinstance(chain_id, str) and isinstance(skill, str):
-                    chain_skill_calls[(chain_id, skill)] += 1
                 continue
 
             tokens = record.get("tokens", 0)
@@ -476,11 +418,10 @@ class BudgetTracker:
         self._monthly_cost_usd = monthly_cost
         self._day_key = day_key
         self._month_key = month_key
-        # #1911: durable per-agent / per-chain restore. defaultdict so later
-        # record_llm / record_spawn keep their increment semantics.
+        # #1911: durable per-agent restore. defaultdict so later record_llm
+        # keeps its increment semantics.
         self._agent_tokens = agent_tokens
         self._agent_cost_usd = agent_cost
-        self._chain_skill_calls = chain_skill_calls
 
     # ── pre-call checks ─────────────────────────────────────────────────
 
@@ -523,82 +464,6 @@ class BudgetTracker:
 
         return rl_check  # may carry warn dims
 
-    def check_pre_spawn(self, *, chain_id: str, skill: str) -> BudgetCheck:
-        """Run before spawning a skill from chat. Refuses on per-chain cap.
-
-        FP-0005 (#1877): the effective hard limit is the configured
-        ``cap.hard_limit`` plus any per-(chain, skill) extensions granted via
-        the ``safety.on_limit`` flow (see ``extend_chain_calls``).
-        ``BudgetCheck.context['extension_calls'] > 0`` tells the caller the
-        dimension participates in that flow (else the refusal is hard).
-        """
-        cap = self._skill_calls_cap
-        if not cap.is_active:
-            return BudgetCheck(allowed=True)
-        used = self._chain_skill_calls[(chain_id, skill)]
-        extension = self._chain_skill_call_extensions[(chain_id, skill)]
-        effective_hard = int(cap.hard_limit) + extension
-        if used >= effective_hard:
-            return BudgetCheck(
-                allowed=False,
-                hard_dimension="per_chain_skill_calls",
-                detail=(
-                    f"skill {skill!r} already spawned {used} times in chain "
-                    f"{chain_id} (effective hard limit {effective_hard}; "
-                    f"base {int(cap.hard_limit)} + extensions {extension})"
-                ),
-                context={
-                    "skill": skill, "chain_id": chain_id,
-                    "current": used,
-                    "hard": effective_hard,
-                    "base_hard": int(cap.hard_limit),
-                    "extensions_granted": extension,
-                    "extension_calls": int(cap.extension_calls),
-                },
-            )
-        warn_dims: list[str] = []
-        threshold = cap.warn_threshold
-        if threshold is not None and used + 1 >= threshold:
-            wkey = ("per_chain_skill_calls", f"{chain_id}/{skill}")
-            if wkey not in self._warned:
-                self._warned.add(wkey)
-                warn_dims.append("per_chain_skill_calls")
-        return BudgetCheck(
-            allowed=True,
-            warn_dimensions=warn_dims,
-            context={
-                "skill": skill, "chain_id": chain_id,
-                "current": used, "hard": effective_hard,
-                "base_hard": int(cap.hard_limit),
-                "extensions_granted": extension,
-            },
-        )
-
-    def extend_chain_calls(
-        self, *, chain_id: str, skill: str, additional: int
-    ) -> int:
-        """Extend the effective hard limit for a (chain, skill) pair.
-
-        FP-0003: invoked after the user approves continuation via
-        ``ask_user`` on a hard-limit hit. The next ``additional`` spawns
-        of ``skill`` in ``chain_id`` will be allowed before the gate
-        refuses again. Returns the new total extension count for audit.
-
-        ``additional`` is clamped to >= 0; passing a negative value is
-        silently treated as 0 (= the typical caller derives ``additional``
-        from ``CostLimitConfig.extension_calls`` so a misconfigured zero
-        extension produces a no-op rather than an exception).
-        """
-        if additional <= 0:
-            return self._chain_skill_call_extensions[(chain_id, skill)]
-        self._chain_skill_call_extensions[(chain_id, skill)] += additional
-        # Reset the warn flag for this dimension so the user gets a
-        # fresh warn around the new effective threshold.
-        self._warned.discard(
-            ("per_chain_skill_calls", f"{chain_id}/{skill}")
-        )
-        return self._chain_skill_call_extensions[(chain_id, skill)]
-
     # ── recording ───────────────────────────────────────────────────────
 
     def record_llm(
@@ -607,8 +472,6 @@ class BudgetTracker:
         model: str,
         agent: str | None,
         usage: TokenUsage,
-        chain_id: str | None = None,
-        skill: str | None = None,
         purpose: str | None = None,
     ) -> BudgetCheck:
         """Update counters after a successful LLM call.
@@ -646,15 +509,6 @@ class BudgetTracker:
                 if new_cost >= cap.warn_threshold:
                     self._maybe_warn(warn_dims, "per_agent_cost_usd", agent)
 
-        if chain_id is not None and skill is not None:
-            new_tok = self._chain_skill_tokens[(chain_id, skill)] + usage.total_tokens
-            self._chain_skill_tokens[(chain_id, skill)] = new_tok
-            cap = self._skill_tokens_cap
-            if cap.is_active and cap.warn_threshold is not None:
-                if new_tok >= cap.warn_threshold:
-                    key = f"{chain_id}/{skill}"
-                    self._maybe_warn(warn_dims, "per_chain_skill_tokens", key)
-
         # PR25: update daily / monthly counters and append to ledger
         self._update_period_counters(usage.total_tokens, cost_usd)
         if self._ledger is not None:
@@ -678,21 +532,10 @@ class BudgetTracker:
             context=self._agent_context(agent) if agent else {},
         )
 
-    def record_spawn(self, *, chain_id: str, skill: str) -> None:
-        self._chain_skill_calls[(chain_id, skill)] += 1
-        # #1911: durably back the per-chain spawn cap. The fsync'd ledger
-        # record is the cap-critical source of truth across a crash; the
-        # throttled state save below is a best-effort cache only (a crash
-        # inside the throttle window would otherwise lose this increment and
-        # let the cap under-count after recovery).
-        if self._ledger is not None:
-            self._ledger.append_spawn(chain_id=chain_id, skill=skill)
-        self._maybe_auto_save()
-
     # ── reset / introspect ──────────────────────────────────────────────
 
     def reset_all(self) -> dict:
-        """Clear per-agent / per-chain / rate-window counters.
+        """Clear per-agent / rate-window counters.
 
         PR25: daily / monthly counters are NOT reset here — they auto-reset
         at period boundary and are backed by the persistent ledger. Returns
@@ -701,37 +544,20 @@ class BudgetTracker:
         before = {
             "agent_tokens": dict(self._agent_tokens),
             "agent_cost_usd": dict(self._agent_cost_usd),
-            "chain_skill_calls": dict(self._chain_skill_calls),
-            "chain_skill_tokens": dict(self._chain_skill_tokens),
             "rate_window_sizes": {m: len(q) for m, q in self._call_window.items()},
         }
         self._agent_tokens.clear()
         self._agent_cost_usd.clear()
-        self._chain_skill_calls.clear()
-        self._chain_skill_tokens.clear()
         self._call_window.clear()
         self._warned.clear()
         return before
-
-    def reset_chain(self, chain_id: str) -> None:
-        """Clear state tied to a single chain (called when chain resolves)."""
-        keys = [k for k in self._chain_skill_calls if k[0] == chain_id]
-        for k in keys:
-            self._chain_skill_calls.pop(k, None)
-        keys = [k for k in self._chain_skill_tokens if k[0] == chain_id]
-        for k in keys:
-            self._chain_skill_tokens.pop(k, None)
-        self._warned = {
-            w for w in self._warned
-            if not w[1].startswith(f"{chain_id}/")
-        }
 
     # ── R-D8: state persistence ─────────────────────────────────────────
 
     def set_state_path(
         self, path: Path, *, throttle_secs: float = 1.0,
     ) -> None:
-        """Enable auto-save: every record_llm / record_spawn after this call
+        """Enable auto-save: every record_llm after this call
         writes the state file (subject to throttle).
 
         ``throttle_secs`` collapses rapid consecutive writes (LLM call paths
@@ -773,9 +599,8 @@ class BudgetTracker:
 
         R-D8: closes the gap left by PR25 (which only persists daily /
         monthly via ``budget_ledger.jsonl``). On restart, ``load_state``
-        restores ``agent_tokens`` / ``agent_cost_usd`` /
-        ``chain_skill_calls`` / ``chain_skill_tokens`` so cap enforcement
-        continues across crash.
+        restores ``agent_tokens`` / ``agent_cost_usd`` so per-agent cap
+        enforcement continues across crash.
 
         Volatile state is NOT persisted:
           - rate-limit window (60-second time-based; entries older than
@@ -793,14 +618,6 @@ class BudgetTracker:
             "version": 1,
             "agent_tokens": dict(self._agent_tokens),
             "agent_cost_usd": dict(self._agent_cost_usd),
-            "chain_skill_calls": [
-                [cid, sk, v]
-                for (cid, sk), v in self._chain_skill_calls.items()
-            ],
-            "chain_skill_tokens": [
-                [cid, sk, v]
-                for (cid, sk), v in self._chain_skill_tokens.items()
-            ],
         }
         import os
         with tmp.open("w", encoding="utf-8") as f:
@@ -817,14 +634,13 @@ class BudgetTracker:
         ``reyn chat --reset`` if state is unrecoverable.
 
         #1911: live startup runs ``hydrate`` (durable ledger) *before*
-        ``load_state``. For the ledger-backed counters (per-agent tokens/cost,
-        per-chain spawn calls) the value already restored from the ledger is
-        the source of truth and is always at least as complete as this
-        throttled best-effort state file (the ledger is fsync'd before each
-        throttled save). So those counters are merged with ``max`` rather than
-        overwritten — a stale state file can never under-count a cap below the
-        durable ledger value. ``chain_skill_tokens`` has no ledger backing yet,
-        so ``max`` against the post-hydrate zero is a plain restore.
+        ``load_state``. For the ledger-backed per-agent tokens/cost counters
+        the value already restored from the ledger is the source of truth and
+        is always at least as complete as this throttled best-effort state
+        file (the ledger is fsync'd before each throttled save). So those
+        counters are merged with ``max`` rather than overwritten — a stale
+        state file can never under-count a cap below the durable ledger
+        value.
         """
         path = Path(path)
         # Mark loaded regardless of file presence — the caller's intent
@@ -867,19 +683,6 @@ class BudgetTracker:
         for k, v in (data.get("agent_cost_usd") or {}).items():
             key = str(k)
             self._agent_cost_usd[key] = max(self._agent_cost_usd.get(key, 0.0), _coerce_float(v))
-        # chain_skill counters (list of [cid, sk, v] entries)
-        for entry in (data.get("chain_skill_calls") or []):
-            if isinstance(entry, list) and len(entry) >= 3:
-                key = (str(entry[0]), str(entry[1]))
-                self._chain_skill_calls[key] = max(
-                    self._chain_skill_calls.get(key, 0), _coerce_int(entry[2])
-                )
-        for entry in (data.get("chain_skill_tokens") or []):
-            if isinstance(entry, list) and len(entry) >= 3:
-                key = (str(entry[0]), str(entry[1]))
-                self._chain_skill_tokens[key] = max(
-                    self._chain_skill_tokens.get(key, 0), _coerce_int(entry[2])
-                )
 
     def snapshot(self) -> dict:
         """Return a structured view used by `/cost` / `/budget` formatters."""
@@ -889,21 +692,11 @@ class BudgetTracker:
             # #1190 stage (iii): per-purpose cost attribution.
             "purpose_tokens": dict(self._purpose_tokens),
             "purpose_cost_usd": dict(self._purpose_cost_usd),
-            "chain_skill_calls": {
-                f"{cid}/{sk}": v
-                for (cid, sk), v in self._chain_skill_calls.items()
-            },
-            "chain_skill_tokens": {
-                f"{cid}/{sk}": v
-                for (cid, sk), v in self._chain_skill_tokens.items()
-            },
             "rate_window": {
                 m: len([t for t in q if time.monotonic() - t <= 60])
                 for m, q in self._call_window.items()
             },
             "config": self._config,
-            # Chain-skill cap from SafetyConfig (for :budget display)
-            "skill_calls_cap": self._skill_calls_cap,
             # PR25: persistent daily / monthly counters
             "daily_tokens": self._daily_tokens,
             "daily_cost_usd": round(self._daily_cost_usd, 6),
@@ -1097,12 +890,6 @@ def format_refusal_message(check: BudgetCheck, *, agent: Optional[str] = None) -
             f"[budget exceeded] rate limit for model "
             f"{ctx.get('model')!r} ({ctx.get('current')}/{ctx.get('hard')} calls/min)."
         )
-    elif dim == "per_chain_skill_calls":
-        ctx = check.context
-        lines.append(
-            f"[budget exceeded] skill {ctx.get('skill')!r} hit hard cap "
-            f"({ctx.get('current')}/{ctx.get('hard')} calls in this chain)."
-        )
     elif dim in ("per_agent_tokens", "per_agent_cost_usd"):
         ctx = check.context
         lines.append(
@@ -1214,13 +1001,6 @@ def format_warn_message(dimension: str, ctx: dict) -> str:
             f"[budget warn] rate limit approaching for model "
             f"{ctx.get('model')}: {ctx.get('current')} / {ctx.get('hard')} calls/min"
         )
-    if dimension == "per_chain_skill_calls":
-        return (
-            f"[budget warn] skill {ctx.get('skill')!r} approaching cap "
-            f"({ctx.get('current')+1}/{ctx.get('hard')} in chain {ctx.get('chain_id')})"
-        )
-    if dimension == "per_chain_skill_tokens":
-        return f"[budget warn] {dimension} approaching cap"
     if dimension == "daily_tokens":
         return (
             f"[budget warn] daily token quota approaching: "
@@ -1356,16 +1136,6 @@ def format_budget_full(snapshot: dict, attached: str | None) -> str:
             tok = purpose_tokens.get(p, 0)
             cost = purpose_cost.get(p, 0.0)
             lines.append(f"    {p:<18}{tok:>10,} tok | ${cost:.4f}")
-        lines.append("")
-
-    if snapshot["chain_skill_calls"]:
-        lines.append("  Per-chain skill calls:")
-        skill_calls_cap = snapshot.get("skill_calls_cap") or CostLimitConfig()
-        for key, used in sorted(snapshot["chain_skill_calls"].items()):
-            if skill_calls_cap.is_active:
-                lines.append(f"    {key}:  {used} / {int(skill_calls_cap.hard_limit)}")
-            else:
-                lines.append(f"    {key}:  {used}")
         lines.append("")
 
     if snapshot["rate_window"]:

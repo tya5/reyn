@@ -55,8 +55,6 @@ async def budget_cmd(session: "Session", args: str) -> None:
                 cost = before.get("agent_cost_usd", {}).get(a, 0.0)
                 lines.append(f"  per-agent ({a}) tokens:    {t:>10,} → 0")
                 lines.append(f"  per-agent ({a}) cost_usd:  ${cost:.4f} → $0.00")
-        if before.get("chain_skill_calls"):
-            lines.append("  per-chain skill calls:        cleared")
         if before.get("rate_window_sizes"):
             lines.append("  rate-limit window:            cleared")
         lines.append(

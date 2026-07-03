@@ -3,9 +3,8 @@
 
 This is the architectural contract that all six per-site call sites
 (max_phase_visits, phase_seconds, max_act_turns, router_cap,
-max_hop_depth, chain_seconds) consume. FP-0003's
-``_ask_budget_extension`` is generalised to call into this helper as
-well.
+max_hop_depth, chain_seconds) consume. The chat-side checkpoint
+wrapper calls into this helper as well.
 
 These tests pin the helper's behaviour in isolation. Per-site wiring
 tests (= "site B actually consults the helper before raising") live

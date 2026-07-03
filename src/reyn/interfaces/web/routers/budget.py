@@ -32,8 +32,6 @@ class BudgetCapDetail(BaseModel):
 class BudgetCaps(BaseModel):
     per_agent_tokens: BudgetCapDetail
     per_agent_cost_usd: BudgetCapDetail
-    per_chain_skill_calls: BudgetCapDetail
-    per_chain_skill_tokens: BudgetCapDetail
     daily_tokens: BudgetCapDetail
     daily_cost_usd: BudgetCapDetail
     monthly_tokens: BudgetCapDetail
@@ -90,8 +88,6 @@ async def get_budget_usage(
         caps=BudgetCaps(
             per_agent_tokens=_cap_detail(cfg.per_agent_tokens),
             per_agent_cost_usd=_cap_detail(cfg.per_agent_cost_usd),
-            per_chain_skill_calls=_cap_detail(cfg.per_chain_skill_calls),
-            per_chain_skill_tokens=_cap_detail(cfg.per_chain_skill_tokens),
             daily_tokens=_cap_detail(cfg.daily_tokens),
             daily_cost_usd=_cap_detail(cfg.daily_cost_usd),
             monthly_tokens=_cap_detail(cfg.monthly_tokens),
