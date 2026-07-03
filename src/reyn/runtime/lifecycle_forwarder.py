@@ -108,6 +108,44 @@ class ChatLifecycleForwarder:
         model = str(data.get("model") or data.get("model_class") or "unknown")
         self._enqueue(f"[✗ model switch declined: {model}]")
 
+    # ── Config hot-reload (#2073) ──────────────────────────────────────────
+
+    def on_config_reloaded(self, data: dict) -> None:
+        """Surface a ``[↻ config reloaded: <components>]`` marker in the conv pane.
+
+        Fires after a hot-reload applies at the turn boundary (#2073 S1). A user
+        who ran ``/reload`` gets confirmation that the reload completed and which
+        components changed. Silenced when no component reported a change AND no
+        seam failed — a reload that touched nothing is already confirmed by the
+        ``/reload`` reply; a second no-op marker would be noise.
+
+        ``data["components"]`` is the list of seam names that reported a change
+        (e.g. ``["hooks", "mcp"]``). ``data["failed"]`` is the list of seams
+        that raised an exception.
+        """
+        applied = list(data.get("components") or [])
+        failed = list(data.get("failed") or [])
+        if not applied and not failed:
+            return
+        parts: list[str] = []
+        if applied:
+            parts.append(", ".join(applied))
+        if failed:
+            parts.append(f"✗ failed: {', '.join(failed)}")
+        self._enqueue(f"[↻ config reloaded: {'; '.join(parts)}]")
+
+    def on_config_reload_rejected(self, data: dict) -> None:
+        """Surface a ``[✗ config reload rejected: <reason>]`` error marker.
+
+        Fires when the validate-before-apply step rejects the IN-set as
+        malformed (#2073 S2). Without this marker, the user sees the ``/reload``
+        "scheduled" confirmation and then nothing — the next turn silently
+        runs under the OLD config, with only a ``_log.warning`` that is never
+        visible in the inline CUI.
+        """
+        reason = str(data.get("reason") or "malformed config")
+        self._enqueue(f"[✗ config reload rejected: {reason}]")
+
     # ── Compaction (issue #162) ──────────────────────────────────────────
 
     def on_compaction_completed(self, data: dict) -> None:
