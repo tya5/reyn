@@ -7,122 +7,6 @@ from pydantic import BaseModel, Field, model_serializer, model_validator
 
 from reyn.security.permissions.permissions import PermissionDecl
 
-# ── Preprocessor step types ───────────────────────────────────────────────────
-
-class ValidateStep(BaseModel):
-    type: Literal["validate"]
-    schema_: dict[str, Any] = Field(alias="schema")
-
-    model_config = {"populate_by_name": True}
-
-
-class IterateStep(BaseModel):
-    type: Literal["iterate"]
-    over: str                                   # dot path to an array in the input artifact
-    apply: "PreprocessorStep"                   # nested step (run_op typically)
-    into: str                                   # dot path where the collected array is placed
-    on_error: Literal["fail", "skip"] = "fail"
-
-
-class LintPlanStep(BaseModel):
-    """
-    Run deterministic structural checks (cycle, artifact coverage, etc.) on a
-    plan-shaped dict embedded in the input artifact. Issues are appended at
-    `into` for the LLM to act on. Does NOT abort on issues — enrichment only.
-    """
-    type: Literal["lint_plan"]
-    over: str = "data"  # dot path to the plan dict; default: artifact["data"]
-    into: str           # dot path where the list of issue strings is placed
-
-
-class PythonStep(BaseModel):
-    """Run a user-supplied Python function as a deterministic preprocessor step.
-
-    Phase declares both the function (here) and the permission to call it
-    (in `permissions.python`). The function executes in a subprocess via
-    reyn._python_harness with the user's chosen mode (safe / unsafe),
-    timeout, and 3rd-party allowlist. Its return value is placed at
-    `into` and validated against `output_schema` so the LLM sees a
-    typed enriched artifact.
-    """
-    type: Literal["python"]
-    module: str               # skill-dir-relative path, e.g. "./preprocessing.py"
-    function: str             # function name within the module
-    into: str                 # dot path in artifact where the return value is placed
-    output_schema: dict[str, Any]  # JSON Schema of the function's return value
-
-
-class RunOpStep(BaseModel):
-    """Invoke any Op from the static (preprocessor) frontend.
-
-    `op` is a literal Op embedded directly. `args_from` lets
-    selected fields be replaced with values pulled from dot-paths in the
-    input artifact at execution time (useful inside `iterate`, where
-    each item's data needs to flow into the op).
-
-    `ask_user` cannot be invoked here — the op_runtime dispatcher rejects
-    it because static execution can't pause for user input.
-    """
-    type: Literal["run_op"]
-    op: "Op"
-    into: str | None = None
-    args_from: dict[str, str] = Field(default_factory=dict)
-    on_error: Literal["fail", "skip", "empty"] = "fail"
-
-    @model_validator(mode="after")
-    def _check_ask_user(self) -> "RunOpStep":
-        if getattr(self.op, "kind", None) == "ask_user":
-            raise ValueError(
-                "run_op cannot wrap an ask_user op — preprocessor steps "
-                "execute statically and cannot pause for user input."
-            )
-        return self
-
-
-PreprocessorStep = Annotated[
-    Union[RunOpStep, IterateStep, ValidateStep, LintPlanStep, PythonStep],
-    Field(discriminator="type"),
-]
-
-# Postprocessor uses the same step set as preprocessor (`RunOpStep` /
-# `IterateStep` / `ValidateStep` / `LintPlanStep` / `PythonStep`). The alias
-# below keeps callsites readable when they're operating in postprocessor
-# context, while the discriminated union itself is shared.
-ProcessorStep = PreprocessorStep
-
-# IterateStep / RunOpStep both use forward refs that resolve only after
-# Op is defined further down. The rebuild is performed at the
-# bottom of this file once all referenced types are in scope.
-
-
-
-
-
-
-
-
-class Postprocessor(BaseModel):
-    """Skill-level postprocessor block — fires after the LLM finishes.
-
-    Symmetric to the phase-level preprocessor (Phase.preprocessor), but lives
-    at the **skill** boundary. The LLM is contracted against the skill's
-    existing `final_output_schema`; postprocessor receives that artifact and
-    transforms it into a (potentially richer) caller-facing artifact whose
-    schema lives here.
-
-    The step set, executable op set, on_error semantics, and permission gate
-    are all identical to preprocessor — the only differences are fire
-    position and the input/output schema source. See
-    `docs/deep-dives/decisions/0017-...` family for the design rationale.
-    """
-    # Caller-facing output (what the skill returns to its invoker).
-    output_schema: dict[str, Any]
-    output_name: str = "artifact"
-    output_description: str = ""
-    steps: list[PreprocessorStep] = Field(default_factory=list)
-
-
-
 
 class FileIROp(BaseModel):
     kind: Literal["file"]
@@ -682,9 +566,6 @@ else:
         Field(discriminator="kind"),
     ]
 
-# Resolve forward references now that Op is in scope.
-RunOpStep.model_rebuild()
-IterateStep.model_rebuild()
 
 
 class Event(BaseModel):
