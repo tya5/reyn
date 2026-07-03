@@ -1937,7 +1937,6 @@ class RouterLoop:
                         messages=messages,
                         tools=tools,
                         tool_choice="auto",
-                        skill_name="router",
                         budget=self.budget,
                         budget_agent=host.agent_name,
                         trace_caller="router",
@@ -2588,7 +2587,6 @@ class RouterLoop:
             messages=wrap_messages,
             tools=[],            # continuation suppression: no tool to call
             tool_choice="auto",  # omitted by call_llm_tools when tools=[] (Gemini fix)
-            skill_name="router",
             budget=self.budget,
             budget_agent=self.host.agent_name,
             trace_caller="router_force_close",
