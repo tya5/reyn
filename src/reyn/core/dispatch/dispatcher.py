@@ -42,29 +42,6 @@ class DispatchContext:
         events: callable matching events.emit signature
             (def emit(self, event_type: str, **data) -> None).
         chain_id is included as an event field automatically.
-
-    Skill-resume fields (PR-skill-resume part A):
-        state_log: optional WAL for crash recovery. When set together with
-            ``skill_run_id`` and ``caller_kind == 'skill_phase'``, dispatch
-            emits ``step_started``/``step_completed``/``step_failed``
-            events to the WAL alongside the audit-log events. Decoupled
-            from audit emission: step events drive forward-replay resume,
-            audit events drive forensics. Same OpPurity gating applies.
-        skill_run_id: identifier of the currently-executing skill run.
-            Required for step-event emission; ignored if ``state_log`` is
-            None.
-        phase: name of the phase whose ops are being dispatched. Embedded
-            in step events so resume scans can scope to a phase boundary.
-
-    Skill-resume memoization field (PR-skill-resume part D3b):
-        resume_plan: optional ``ResumePlan`` from ``SkillResumeAnalyzer``.
-            When set, dispatch_tool consults ``resume_plan.committed_steps``
-            before invoking — a matching (op_invocation_id + args_hash)
-            triggers memoization (return the recorded result without
-            invoking). Drives forward-replay resume; ``args_hash``
-            mismatch falls through to fresh execution (drift detection).
-            ``None`` means normal execution (no memoization), which is
-            the default for fresh starts.
     """
 
     caller_kind: Literal["router", "skill_phase"]
@@ -72,13 +49,6 @@ class DispatchContext:
     chain_id: str | None
     tool_catalog: dict[str, dict]
     events: Any  # has .emit(type: str, **data) -> None
-    # Skill-resume fields (optional; only meaningful for skill_phase caller).
-    state_log: Any = None       # has async .append(kind, **fields) -> int
-    skill_run_id: str | None = None
-    phase: str | None = None
-    # Resume memoization (PR-skill-resume D3b). Optional ResumePlan with
-    # the committed_steps list dispatch_tool consults before invoking.
-    resume_plan: Any = None     # has .committed_steps: list[CommittedStep]
 
 
 async def dispatch_tool(
@@ -87,7 +57,6 @@ async def dispatch_tool(
     args: dict,
     ctx: DispatchContext,
     invoker: Callable[[dict], Awaitable[Any]],
-    op_invocation_id: str | None = None,
 ) -> dict:
     """Dispatch a tool call with shared cross-cutting concerns.
 
@@ -110,10 +79,6 @@ async def dispatch_tool(
             on success.  Skipped for ``pure``.
         - tool_failed (caller_kind, caller_id, tool, chain_id, error_kind, message)
             on error.
-
-    The ``result`` and ``args_hash`` fields are part of the skill resume
-    transactional-replay design: on resume, these events let the runtime
-    use the recorded result instead of re-executing a side-effecting op.
 
     The invoker callable receives the validated args dict and returns the
     raw result (any JSON-serializable value). PermissionError raised
@@ -155,58 +120,6 @@ async def dispatch_tool(
     purity = get_op_purity(name) if ctx.caller_kind == "skill_phase" else OpPurity.side_effect
     args_hash = _compute_args_hash(args)
 
-    # 2.5. Resume memoization (PR-skill-resume D3b-1c).
-    # If a ResumePlan is wired in and we find a CommittedStep matching the
-    # current call (op_invocation_id + phase + args_hash), reproduce the
-    # recorded outcome without invoking. This prevents:
-    #   - duplicate side effects on resume (the canonical resume concern)
-    #   - wasted LLM costs (when llm calls memoize through the same path)
-    # args_hash mismatch falls through deliberately — the LLM may have
-    # emitted a structurally different op shape this resume, in which
-    # case the recorded result no longer applies (drift detection).
-    #
-    # ``world`` purity bypass (PR-memo-purity-fix M2). World ops read
-    # external state (web_fetch, web_search, future read-only mcp /
-    # file/read with sub-op refinement) — their recorded result may be
-    # transient or stale (e.g. a flaky API returning 0 results would
-    # lock in forever). Skipping memo for world ops on resume forces
-    # re-execution, paying the read-cost for fresh truth. Side effect
-    # / external / llm purity still memoize (the cost of duplicating
-    # those is much higher than re-reading external state).
-    memo = (
-        None
-        if purity is OpPurity.world
-        else _lookup_memoized_step(
-            ctx.resume_plan, op_invocation_id, ctx.phase, args_hash,
-        )
-    )
-    if memo is not None:
-        ctx.events.emit(
-            "step_memoized",
-            caller_kind=ctx.caller_kind,
-            caller_id=ctx.caller_id,
-            tool=name,
-            chain_id=ctx.chain_id,
-            op_invocation_id=op_invocation_id,
-            args_hash=args_hash,
-            recorded_seq=memo.seq,
-        )
-        if memo.error_kind is not None:
-            return {"status": "error",
-                    "error": {"kind": memo.error_kind,
-                              "message": memo.error_message or ""}}
-        return {"status": "ok", "data": memo.result}
-
-    # Step-event emission gate (PR-skill-resume part A).
-    # Step events go to the WAL (durable, drives forward-replay resume);
-    # audit events go to ctx.events (forensics). Only emit step events for
-    # skill-phase callers with a state_log + skill_run_id wired in.
-    emit_step = (
-        ctx.caller_kind == "skill_phase"
-        and ctx.state_log is not None
-        and ctx.skill_run_id is not None
-    )
-
     # 3. Pre-event (skip for pure / world / llm — no side-effect ambiguity)
     if purity in (OpPurity.side_effect, OpPurity.external):
         ctx.events.emit(
@@ -218,10 +131,6 @@ async def dispatch_tool(
             args=args,
             args_hash=args_hash,
         )
-        if emit_step:
-            await _wal_step_started(
-                ctx, name, args, args_hash, op_invocation_id,
-            )
 
     # 4. Invoke (with structured error handling)
     try:
@@ -238,11 +147,6 @@ async def dispatch_tool(
             error_kind="permission_denied",
             message=enriched,
         )
-        if emit_step and purity != OpPurity.pure:
-            await _wal_step_failed(
-                ctx, name, args_hash, op_invocation_id,
-                "permission_denied", enriched,
-            )
         return {"status": "error",
                 "error": {"kind": "permission_denied", "message": enriched}}
     except Exception as e:  # noqa: BLE001 — caller errors are normalized
@@ -256,11 +160,6 @@ async def dispatch_tool(
             error_kind="exception",
             message=f"{type(e).__name__}: {e}",
         )
-        if emit_step and purity != OpPurity.pure:
-            await _wal_step_failed(
-                ctx, name, args_hash, op_invocation_id,
-                "exception", f"{type(e).__name__}: {e}",
-            )
         return {"status": "error",
                 "error": {"kind": "exception",
                           "message": f"{type(e).__name__}: {e}"}}
@@ -277,137 +176,11 @@ async def dispatch_tool(
             args_hash=args_hash,
             result=result,
         )
-        if emit_step:
-            await _wal_step_completed(
-                ctx, name, args_hash, op_invocation_id, result,
-            )
     return {"status": "ok", "data": result}
 
 
-async def _wal_step_started(
-    ctx: DispatchContext,
-    op_kind: str,
-    args: dict,
-    args_hash: str,
-    op_invocation_id: str | None,
-) -> None:
-    """Append a ``step_started`` WAL entry. Defensive: log + swallow on failure.
-
-    Truncation correctness depends on WAL durability, not on every step
-    event landing — a missing step_started just means resume must treat the
-    op as unknown (and prompt). Swallowing here protects the hot path.
-    """
-    try:
-        await ctx.state_log.append(
-            "step_started",
-            run_id=ctx.skill_run_id,
-            phase=ctx.phase,
-            op_invocation_id=op_invocation_id,
-            op_kind=op_kind,
-            args=args,
-            args_hash=args_hash,
-        )
-    except Exception as e:  # noqa: BLE001 — never fail the dispatch
-        import logging
-        logging.getLogger(__name__).warning(
-            "WAL step_started emission failed (run=%s op=%s): %s",
-            ctx.skill_run_id, op_kind, e,
-        )
-
-
-async def _wal_step_completed(
-    ctx: DispatchContext,
-    op_kind: str,
-    args_hash: str,
-    op_invocation_id: str | None,
-    result: Any,
-) -> None:
-    """Append a ``step_completed`` WAL entry with the recorded result."""
-    try:
-        await ctx.state_log.append(
-            "step_completed",
-            run_id=ctx.skill_run_id,
-            phase=ctx.phase,
-            op_invocation_id=op_invocation_id,
-            op_kind=op_kind,
-            args_hash=args_hash,
-            result=result,
-        )
-    except Exception as e:  # noqa: BLE001 — never fail the dispatch
-        import logging
-        logging.getLogger(__name__).warning(
-            "WAL step_completed emission failed (run=%s op=%s): %s",
-            ctx.skill_run_id, op_kind, e,
-        )
-
-
-async def _wal_step_failed(
-    ctx: DispatchContext,
-    op_kind: str,
-    args_hash: str,
-    op_invocation_id: str | None,
-    error_kind: str,
-    message: str,
-) -> None:
-    """Append a ``step_failed`` WAL entry."""
-    try:
-        await ctx.state_log.append(
-            "step_failed",
-            run_id=ctx.skill_run_id,
-            phase=ctx.phase,
-            op_invocation_id=op_invocation_id,
-            op_kind=op_kind,
-            args_hash=args_hash,
-            error_kind=error_kind,
-            message=message,
-        )
-    except Exception as e:  # noqa: BLE001 — never fail the dispatch
-        import logging
-        logging.getLogger(__name__).warning(
-            "WAL step_failed emission failed (run=%s op=%s): %s",
-            ctx.skill_run_id, op_kind, e,
-        )
-
-
-def _lookup_memoized_step(
-    resume_plan: Any,
-    op_invocation_id: str | None,
-    phase: str | None,
-    args_hash: str,
-) -> Any:
-    """Find a CommittedStep matching the current call, or return None.
-
-    Match criteria (all must hold for a hit):
-      - op_invocation_id equal (phase-relative ID)
-      - phase equal (same phase visit context)
-      - args_hash equal (drift detection — different args = re-execute)
-
-    The last-write-wins semantic: if multiple CommittedSteps match
-    (theoretically possible if the WAL has duplicates from a buggy
-    earlier run), the *most recently appended* one wins (highest seq).
-    This handles the edge case of a botched truncation that left two
-    completions for the same step.
-
-    ``resume_plan`` is typed Any to keep the dispatch module decoupled
-    from skill module imports — duck-typed access via ``committed_steps``.
-    """
-    if resume_plan is None or op_invocation_id is None:
-        return None
-    committed = getattr(resume_plan, "committed_steps", None)
-    if not committed:
-        return None
-    best = None
-    for step in committed:
-        if (step.op_invocation_id == op_invocation_id
-                and step.phase == (phase or "")
-                and step.args_hash == args_hash):
-            if best is None or step.seq > best.seq:
-                best = step
-    return best
-
-
 def _compute_args_hash(args: dict) -> str:
-    """Stable hash for args.  Used as a memoization key on resume.
+    """Stable fingerprint for args, recorded on the audit events.
 
     SHA-256 of canonical JSON; safe across Python runs (unlike Python's
     builtin hash() which is randomized).  First 16 hex chars are kept

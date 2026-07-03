@@ -33,7 +33,7 @@ answers:
 
   Phase 4 (skill resume):
     - Fresh ``ChatInterventionBus`` fires iv with same run_id (= what
-      a re-spawned skill would do via ``SkillResumeCoordinator``)
+      a re-spawned skill would do)
     - L6 ``_consume_buffered_intervention_answer`` short-circuits
       dispatch and returns the buffered answer
     - Skill receives answer without re-prompting the peer
