@@ -88,7 +88,6 @@ def test_reset_for_rewind_clear_scope_covers_all_agentsnapshot_fields():
         "applied_seq": "replaced wholesale by journal.install (no separate holder)",
         "inbox": "session.inbox drained",
         "pending_chains": "session._chains.reset()",
-        "active_skill_run_ids": "session.running_skills (+ started_at / chain) cleared",
         "outstanding_interventions": "session._interventions.clear() + restore tasks",
         "buffered_intervention_answers": "session._buffered_intervention_answers cleared",
         "next_turn_context": "session._next_turn_context cleared",

@@ -52,9 +52,6 @@ class AgentSnapshot:
     # field set serialized as a dict ({chain_id, origin_agent, origin_depth,
     # original_request, waiting_on: list}).
     pending_chains: dict[str, dict] = field(default_factory=dict)
-    # NEW (skill resume design — PR-state-foundation):
-    # run_ids of skills currently executing under this agent.
-    active_skill_run_ids: list[str] = field(default_factory=list)
     # Outstanding (unresolved) interventions keyed by intervention_id.
     outstanding_interventions: dict[str, dict] = field(default_factory=dict)
     # R-D12: durable buffered intervention answers keyed by skill_run_id.
@@ -121,9 +118,6 @@ class AgentSnapshot:
             applied_seq=_coerce_int(data.get("applied_seq", 0)),
             inbox=list(data.get("inbox", []) or []),
             pending_chains=dict(data.get("pending_chains", {}) or {}),
-            active_skill_run_ids=list(
-                data.get("active_skill_run_ids", []) or []
-            ),
             outstanding_interventions=dict(
                 data.get("outstanding_interventions", {}) or {}
             ),
@@ -146,7 +140,6 @@ class AgentSnapshot:
             "applied_seq": self.applied_seq,
             "inbox": self.inbox,
             "pending_chains": self.pending_chains,
-            "active_skill_run_ids": self.active_skill_run_ids,
             "outstanding_interventions": self.outstanding_interventions,
             "buffered_intervention_answers": self.buffered_intervention_answers,
             "next_turn_context": self.next_turn_context,
@@ -240,18 +233,11 @@ class AgentSnapshot:
                 chain["waiting_on"] = list(event.get("waiting_on", []))
         elif kind in ("chain_resolve", "chain_timeout_fired"):
             self.pending_chains.pop(event.get("chain_id"), None)
-        # ── skill resume kinds (PR-state-foundation) ────────────────────
-        elif kind == "skill_started":
-            run_id = event.get("run_id")
-            if run_id and run_id not in self.active_skill_run_ids:
-                self.active_skill_run_ids.append(run_id)
-        elif kind in ("skill_completed", "skill_discarded"):
-            # PR-resume-ux β: skill_discarded prunes active_skill_run_ids
-            # the same way skill_completed does — both are terminal states
-            # from the agent-snapshot perspective.
-            run_id = event.get("run_id")
-            if run_id and run_id in self.active_skill_run_ids:
-                self.active_skill_run_ids.remove(run_id)
+        # Note: skill_started / skill_completed / skill_discarded are still
+        # valid WAL kinds (read by the replay/rewind engine) but no longer
+        # mutate agent-snapshot state — the per-skill run-id tracking they
+        # populated was removed with the skill runtime. An old-WAL skill_*
+        # entry therefore falls through here (no-op) on reconstruction.
         elif kind == "intervention_dispatched":
             iv_id = event.get("intervention_id")
             if iv_id:
