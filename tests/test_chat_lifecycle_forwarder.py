@@ -403,3 +403,38 @@ def test_limit_denied_missing_counts_uses_generic_marker() -> None:
     (only,) = msgs
     assert "router cap hit" in only.text
     assert "ops" not in only.text
+
+
+# ── summary_resummarize_failed ───────────────────────────────────────────────
+
+
+def test_summary_resummarize_failed_emits_error_marker() -> None:
+    """Tier 2: summary_resummarize_failed → [✗ summary re-compress failed: <reason>].
+
+    CompactionEngine emits this when the T2 re-summarise LLM call raises.
+    Without a handler the user sees compaction_completed as if everything
+    succeeded, but the stored summary may overshoot its body-budget — degrading
+    future compaction quality silently.
+    """
+    q: asyncio.Queue = asyncio.Queue()
+    fwd = ChatLifecycleForwarder(q)
+    fwd(Event(
+        type="summary_resummarize_failed",
+        data={"error": "context length exceeded"},
+    ))
+    msgs = _drain(q)
+    (only,) = msgs
+    assert only.kind == "system"
+    assert "summary re-compress failed" in only.text
+    assert "context length exceeded" in only.text
+
+
+def test_summary_resummarize_failed_missing_error_uses_fallback() -> None:
+    """Tier 2: summary_resummarize_failed with no error field → generic fallback text."""
+    q: asyncio.Queue = asyncio.Queue()
+    fwd = ChatLifecycleForwarder(q)
+    fwd(Event(type="summary_resummarize_failed", data={}))
+    msgs = _drain(q)
+    (only,) = msgs
+    assert "summary re-compress failed" in only.text
+    assert "unknown error" in only.text

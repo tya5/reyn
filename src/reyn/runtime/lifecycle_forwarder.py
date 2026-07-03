@@ -160,6 +160,21 @@ class ChatLifecycleForwarder:
         reason = str(data.get("error") or "unknown error")
         self._enqueue(f"[✗ compaction failed: {reason}]")
 
+    def on_summary_resummarize_failed(self, data: dict) -> None:
+        """Surface a ``[✗ summary re-compress failed: <reason>]`` error marker.
+
+        ``compaction/engine.py`` calls ``_resummarize_topic_arc`` when the
+        produced topic_arc overshoots its body-budget (T2 re-compression
+        pass). When that LLM call raises, the engine catches it, emits
+        ``summary_resummarize_failed``, and falls back to the uncompressed
+        arc — which may still overshoot. Without this handler the user sees
+        ``compaction_completed`` as if everything succeeded, but the stored
+        summary is potentially larger than the budget, degrading future
+        compaction quality silently.
+        """
+        reason = str(data.get("error") or "unknown error")
+        self._enqueue(f"[✗ summary re-compress failed: {reason}]")
+
     def on_compaction_completed(self, data: dict) -> None:
         """Surface a ``[↑ N turns compacted]`` marker in the conv pane.
 
