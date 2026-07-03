@@ -57,4 +57,4 @@ Retrieval engineering isn't just "did we find the doc?" — it's "did the agent 
 
 - [../data-retrieval/memory.md](../data-retrieval/memory.md) — concept (memory is read inline by the router on every chat turn)
 - [tool-contract-design.md](tool-contract-design.md) — how retrieval slots into the contract
-- [evaluation-and-observability.md](evaluation-and-observability.md) — measuring retrieval quality
+

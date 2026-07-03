@@ -214,8 +214,7 @@ fixture recording mechanics.
   reference (run / coverage / report / compare / baseline)
 - [Dogfood discipline](../../deep-dives/contributing/dogfood-discipline.md) —
   4-band outcome scale, Brier scoring, 9-principle framework
-- [Concepts: Evaluation](../observability/evaluation.md) — `reyn eval` (per-skill rubric,
-  orthogonal surface)
+
 - [Concepts: Events](../runtime/events.md) — P6 event types used in `must_emit`
   assertions
 - [Concepts: Operational Intelligence](../data-retrieval/operational-intelligence.md) — indexing

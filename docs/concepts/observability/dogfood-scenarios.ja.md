@@ -201,7 +201,7 @@ reyn dogfood run dogfood/scenarios/chat_router_smoke.yaml --replay dogfood/fixtu
   （run / coverage / report / compare / baseline）
 - [Dogfood discipline](../../deep-dives/contributing/dogfood-discipline.ja.md) —
   4 バンド結果スケール・Brier スコアリング・9 原則フレームワーク
-- [Concepts: Evaluation](../observability/evaluation.ja.md) — `reyn eval`（スキル単位 rubric、直交する検証面）
+
 - [Concepts: Events](../runtime/events.ja.md) — `must_emit` アサーションで使用する P6 イベントタイプ
 - [Concepts: Operational Intelligence](../data-retrieval/operational-intelligence.ja.md) — 同 P6 イベントログのインデックス・クエリ
 - [Feature Map](../../feature-map.md) — カバレッジタグの正典

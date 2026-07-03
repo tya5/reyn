@@ -78,8 +78,6 @@ nav:
           - Installation & setup:
               - guide/getting-started/01-installation.md
               - guide/getting-started/02-chat-mode.md
-          - guide/getting-started/05-writing-an-eval.md
-      - Setup evaluation: guide/evaluation.md
       - For users:
           - guide/for-users/index.md
           - Using Reyn:
@@ -156,15 +154,12 @@ nav:
           - reference/stdlib/index.md
           - Routing:
               - reference/stdlib/direct_llm.md
-          - Evaluation & judgment:
-              - reference/stdlib/eval.md
-              - reference/stdlib/eval_builder.md
-              - reference/stdlib/judge_phase.md
           - Data & ops:
               - reference/stdlib/index_docs.md
               - reference/stdlib/index_events.md
               - reference/stdlib/ops_report.md
               - reference/stdlib/word_stats_demo.md
+              - reference/stdlib/judge_phase.md
       - Testing:
           - reference/testing/replay.md
           - reference/test-tier-audit.md
@@ -214,15 +209,13 @@ nav:
           - concepts/tools-integrations/voice.md
       - Observability:
           - concepts/observability/dogfood-scenarios.md
-          - concepts/observability/evaluation.md
-      - Agent engineering — seven lenses:
+      - Agent engineering — six lenses:
           - concepts/agent-engineering/index.md
           - concepts/agent-engineering/system-design.md
           - concepts/agent-engineering/tool-contract-design.md
           - concepts/agent-engineering/retrieval-engineering.md
           - concepts/agent-engineering/reliability-engineering.md
           - concepts/agent-engineering/security.md
-          - concepts/agent-engineering/evaluation-and-observability.md
           - concepts/agent-engineering/product-think.md
 
 extra_css:

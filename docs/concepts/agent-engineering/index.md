@@ -4,9 +4,9 @@ topic: architecture
 audience: [human, agent]
 ---
 
-# Agent engineering — seven lenses
+# Agent engineering — six lenses
 
-reyn read through seven engineering perspectives. Each lens is a different way to ask "what does this system get right, and where is it still thin?" The same docs are pointed at from multiple lenses; this index is the map.
+reyn read through six engineering perspectives. Each lens is a different way to ask "what does this system get right, and where is it still thin?" The same docs are pointed at from multiple lenses; this index is the map.
 
 ## The picture
 
@@ -28,8 +28,8 @@ reyn read through seven engineering perspectives. Each lens is a different way t
               │              │                  Workspace        │   ← Security
               │              │                                   │       (permissions)
               │              ▼                                   │
-              │         ┌────────┐                               │   ← Evaluation
-              │         │ Events │ ─────► JSONL replay log       │       Observability
+              │         ┌────────┐                               │
+              │         │ Events │ ─────► JSONL replay log       │
               │         └────────┘                               │
               │                                                  │
               └──────────────────────────────────────────────────┘
@@ -39,7 +39,7 @@ reyn read through seven engineering perspectives. Each lens is a different way t
 
 Every layer has a corresponding engineering lens. The lenses don't partition the system; they overlap on purpose.
 
-## The seven lenses
+## The six lenses
 
 ### 1. [System Design](system-design.md)
 
@@ -61,11 +61,7 @@ Recovery from failure: validation, re-prompt, loop bounds, timeout. reyn validat
 
 Capability gating, sandbox boundaries, trust scoping. The three-layer permission model + AST sandbox for pure Python steps + per-workflow approvals are the core.
 
-### 6. [Evaluation and Observability](evaluation-and-observability.md)
-
-Knowing whether the agent works, and seeing why. The event log answers "why?"; the eval workflow answers "does it?". Both are first-class — the same channel powers debug rendering, replay, and eval analytics.
-
-### 7. [Product Think](product-think.md)
+### 6. [Product Think](product-think.md)
 
 The agent as a product: CLI affordances, cost discipline, predictable UX. Model classes (`light`/`standard`/`strong`), per-run cost reporting, and `output_language` localization are the levers reyn currently exposes.
 

@@ -102,6 +102,5 @@ The OS doesn't know about "chat". It just runs a workflow — `skill_router` —
 
 You've seen Reyn deliver value as a chat agent. From here:
 
-- **[Tutorial 05 — Writing an eval](05-writing-an-eval.md)** — pin behaviour with a rubric.
 - **Multi-agent (later):** How-to: Build an agent team walks through `reyn agent new`, role-specific allowlists, and `/attach`. Background reading: [concepts/multi-agent](../../concepts/multi-agent/multi-agent.md), [concepts/topology](../../concepts/multi-agent/topology.md).
 - **The why:** concepts/principles (principles doc removed).
