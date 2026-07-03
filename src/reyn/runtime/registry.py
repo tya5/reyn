@@ -1170,7 +1170,6 @@ class AgentRegistry:
         boundary derived from the WAL entry kind (P7-safe — all source kinds
         live in ``WAL_EVENT_KINDS``, none are skill/domain strings):
 
-          - ``skill_phase_advanced``                      → ``phase``
           - ``step_completed`` / ``step_failed``          → ``plan-step``
           - anything else (``inbox_consume``, …)           → ``turn``
 
