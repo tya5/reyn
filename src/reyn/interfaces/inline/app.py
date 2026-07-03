@@ -1011,12 +1011,15 @@ async def _submit(registry, text: str) -> None:
             await s.answer_oldest_intervention_text(text)
             return
         await s.submit_user_text(text)
-    except Exception:
+    except Exception as e:
         logger.exception("inline submit failed")
+        detail = f"{type(e).__name__}: {e}"
+        if len(detail) > 72:
+            detail = detail[:69] + "…"
         try:
             from reyn.runtime.outbox import OutboxMessage
             registry.repl_outbox.put_nowait(
-                OutboxMessage(kind="error", text="input could not be submitted (see logs)")
+                OutboxMessage(kind="error", text=f"input could not be submitted: {detail}")
             )
         except Exception:
             pass
