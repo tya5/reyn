@@ -66,7 +66,10 @@ async def session_cmd(session: "Session", args: str) -> None:
             return
         if reg.get_session(name, rest) is None:
             await reply_error(
-                session, f"no session {rest!r} for {name!r}; try /session list"
+                session,
+                f"no session {rest!r} for {name!r}"
+                " — use the session name (e.g. 'main') or full session ID;"
+                " partial prefixes are not supported. Try /session list.",
             )
             return
         # Visible breadcrumb; the actual focus flip is driven by the sentinel
