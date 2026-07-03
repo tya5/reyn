@@ -1,22 +1,18 @@
 """schemas — Pydantic models and DSL schemas for the Reyn OS."""
 from .models import (
-    ActOutput,
     AskUserIROp,
     CandidateOutput,
     # LLM interaction
     ContextFrame,
-    ControlDecision,
     # Control IR ops
     ControlIROp,
     ControlIROpSpec,
-    ControlReason,
     # Events
     Event,
     ExecutionState,
     FileIROp,
     IterateStep,
     LintPlanStep,
-    LLMOutput,
     MCPIROp,
     PreprocessorStep,
     PythonStep,
@@ -30,7 +26,6 @@ from .models import (
 __all__ = [
     "ValidateStep", "IterateStep", "LintPlanStep", "PythonStep", "RunOpStep", "PreprocessorStep",
     "ContextFrame", "ExecutionState", "CandidateOutput", "ControlIROpSpec",
-    "LLMOutput", "ActOutput", "ControlDecision", "ControlReason",
     "ControlIROp", "FileIROp", "WebFetchIROp", "WebSearchIROp",
     "AskUserIROp", "MCPIROp",
     "Event",

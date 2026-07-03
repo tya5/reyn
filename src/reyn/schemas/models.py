@@ -623,7 +623,7 @@ OP_KIND_MODEL_MAP: dict[str, type[BaseModel]] = {
     "web_search":  WebSearchIROp,
     "mcp_install": MCPInstallIROp,
     # #1983: was registered + documented (control-ir.md) + handled but ABSENT
-    # here → a phase emitting it failed ActOutput validation. Added to restore
+    # here → a phase emitting it failed ControlIROp union validation. Added to restore
     # the control-ir.md ↔ map sync invariant.
     "mcp_drop_server": MCPDropServerIROp,
     "index_query": IndexQueryIROp,
@@ -687,27 +687,6 @@ RunOpStep.model_rebuild()
 IterateStep.model_rebuild()
 
 
-class ControlReason(BaseModel):
-    """Structured reason object — extensible for future fields."""
-    summary: str
-
-
-class ControlDecision(BaseModel):
-    """Routing decision returned by the LLM. Strict contract — no runtime inference."""
-    type: Literal["transition", "finish", "abort", "rollback"]
-    decision: Literal["continue", "finish", "abort"]
-    next_phase: str | None = None  # phase name for transition; None for finish/abort/rollback
-    confidence: float = 1.0
-    reason: ControlReason
-
-    @property
-    def effective_next_phase(self) -> str:
-        """Maps control decision to the candidate_map key ("end" for finish)."""
-        if self.type == "finish":
-            return "end"
-        return self.next_phase or ""
-
-
 class CandidateOutput(BaseModel):
     """A single candidate the LLM may choose for its next step."""
     next_phase: str                                        # phase name, or "end"
@@ -715,23 +694,6 @@ class CandidateOutput(BaseModel):
     schema_name: str                                       # artifact type name
     artifact_schema: dict[str, Any]
     description: str = ""
-
-
-class ActOutput(BaseModel):
-    """Act-turn output: execute ops and be re-called with results."""
-    type: Literal["act"]
-    ops: list[ControlIROp] = Field(default_factory=list)
-
-
-class LLMOutput(BaseModel):
-    """Decide-turn output: routing decision + artifact (+ optional write ops)."""
-    control: ControlDecision
-    artifact: dict[str, Any]
-    ops: list[ControlIROp] = Field(default_factory=list)
-
-    @property
-    def next_phase(self) -> str:
-        return self.control.effective_next_phase
 
 
 class ControlIROpSpec(BaseModel):
