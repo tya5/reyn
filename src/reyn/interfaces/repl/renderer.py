@@ -400,6 +400,8 @@ def _summarize_result(tool, result) -> str:
         if op == "move":
             dest = result.get("dest_path")
             return f"Moved to {dest}" if dest else "Moved"
+        if op == "regenerate_index":
+            return f"Indexed {path}" if path else "Indexed"
         saved = result.get("saved")
         if isinstance(saved, str):
             return f"Saved {saved}"
@@ -480,6 +482,14 @@ def _summarize_result(tool, result) -> str:
         state = result.get("state")
         if isinstance(state, str) and state:
             return state
+        server = result.get("server")
+        if isinstance(server, str) and server and status == "ok" and result.get("kind") == "mcp_drop_server":
+            return f"Removed {server}"
+        enabled = result.get("enabled")
+        if isinstance(enabled, bool):
+            name_val = result.get("name") or ""
+            verb = "Enabled" if enabled else "Disabled"
+            return f"{verb} {name_val}" if name_val else verb
         if status:
             return str(status)
     return _short(result, 80)

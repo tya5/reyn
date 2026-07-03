@@ -626,3 +626,55 @@ def test_task_heartbeat_shows_state() -> None:
         {"kind": "task.heartbeat", "status": "ok",
          "task_id": "t-def", "state": "awaiting", "unblocked": False},
     ) == "awaiting"
+
+
+def test_file_regenerate_index_shows_indexed_path() -> None:
+    """Tier 2: file regenerate_index result shows 'Indexed <path>' not raw dict.
+
+    file op='regenerate_index' returns {kind:"file", op:"regenerate_index", path, status:"ok",
+    entries:int} — 'entries' is an int (not a list) so no list branch fires; without the
+    op branch this falls through to the status branch and shows 'ok'.
+    """
+    assert summarize_tool_result(
+        "file__regenerate_index",
+        {"kind": "file", "op": "regenerate_index", "path": "/repo/.reyn/index",
+         "status": "ok", "entries": 42},
+    ) == "Indexed /repo/.reyn/index"
+    assert summarize_tool_result(
+        "file__regenerate_index",
+        {"kind": "file", "op": "regenerate_index", "path": None, "status": "ok"},
+    ) == "Indexed"
+
+
+def test_mcp_drop_server_shows_removed_name() -> None:
+    """Tier 2: mcp_drop_server success shows 'Removed <server>' not 'ok'.
+
+    mcp_drop_server returns {kind:"mcp_drop_server", status:"ok", server:str, ...};
+    without a branch this falls through to status='ok'. not_found result has status
+    'not_found' and should NOT match (stays as 'not_found' via the status fallback).
+    """
+    assert summarize_tool_result(
+        "mcp__drop_server",
+        {"kind": "mcp_drop_server", "status": "ok", "server": "my-mcp"},
+    ) == "Removed my-mcp"
+    assert summarize_tool_result(
+        "mcp__drop_server",
+        {"kind": "mcp_drop_server", "status": "not_found", "server": "missing-mcp"},
+    ) == "not_found"
+
+
+def test_cron_enable_disable_shows_verb_and_name() -> None:
+    """Tier 2: cron_enable/disable shows 'Enabled/Disabled <name>' not 'ok'.
+
+    cron_enable returns {status:"ok", name:str, enabled:True};
+    cron_disable returns {status:"ok", name:str, enabled:False}.
+    Both currently fall through to the status branch showing 'ok'.
+    """
+    assert summarize_tool_result(
+        "cron__enable",
+        {"status": "ok", "name": "daily-sync", "enabled": True},
+    ) == "Enabled daily-sync"
+    assert summarize_tool_result(
+        "cron__disable",
+        {"status": "ok", "name": "daily-sync", "enabled": False},
+    ) == "Disabled daily-sync"
