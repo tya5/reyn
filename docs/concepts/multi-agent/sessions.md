@@ -4,33 +4,24 @@ topic: architecture
 audience: [human, agent]
 ---
 
-# Sessions and the three-level model
+# Sessions and the agent–session model
 
-Reyn separates *who is acting*, *which conversation*, and *the machinery that runs
-a skill* into three distinct levels. Keeping them apart is what lets one agent hold
-many parallel conversations, each independently persisted, without the
-conversations bleeding into each other.
+Reyn separates *who is acting* from *which conversation*, keeping them apart so one agent can hold many parallel conversations, each independently persisted, without the conversations bleeding into each other.
 
-## The three levels
+## The two levels
 
 | Level | What it is | Owns |
 |---|---|---|
 | **Agent** | the **identity / node** — a long-lived actor, addressable by name | name, memory, permissions, workspace scope, peer addressing |
 | **Session** | a **conversation** under an Agent (one Agent → many Sessions) | message history, inbox / outbox, current task, transient state |
-| **SkillRuntime** | the **per-skill OS-runtime host** | builds and owns the execution context for one skill run; drives the phase-graph through the OS |
 
 The hierarchy:
 
 ```
-AgentRegistry → Agent (identity) → N Sessions → SkillRuntime → OS runtime → Phase
+AgentRegistry → Agent (identity) → N Sessions
 ```
 
-This is the mainstream agent-platform shape, not a novel design. OpenAI's
-Assistants API is the exact analogue — **Assistant** (identity) : **Thread**
-(conversation) : **Run** (one execution) — and graph/thread-id/invocation in other
-frameworks embodies the same split. Reyn's distinction is not the model but what
-sits *beneath* it: every Session is event-sourced, permission-gated, and
-time-travelable (see below).
+This is the mainstream agent-platform shape. Reyn's distinction is not the model but what sits *beneath* it: every Session is event-sourced, permission-gated, and time-travelable (see below).
 
 ## Multiple Sessions vs multiple Agents
 
@@ -102,5 +93,3 @@ join. Additional transports route through the same model as they are added.
 - [Time-travel](../runtime/time-travel.md) — the rewind / fork / crash-recovery
   machinery (rewind is a global consistent-cut across all Sessions; persistence
   and recovery are per-Session).
-- [Architecture](../architecture/architecture.md) — where the Agent / Session /
-  runtime split sits in the component layers.

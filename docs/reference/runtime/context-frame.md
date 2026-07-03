@@ -144,4 +144,4 @@ Building a fresh frame every visit forces every phase to be self-contained. Ther
 
 - [llm-output-contract.md](llm-output-contract.md) — the shape of what the LLM returns
 - [control-ir.md](control-ir.md) — `available_control_ops` op kinds
-- [Concepts: architecture](../../concepts/architecture/architecture.md)
+- Concepts: architecture (architecture doc removed)

@@ -699,7 +699,7 @@ When enabled (default), the chat router's `tools=` includes the wrappers at the 
 
 Resource categories (`mcp.server`, `rag_corpus`, `memory_entry`, …) also support `invoke_action`.  Unknown action names return a structured error with `suggestions` ranked by string similarity, so the LLM recovers in one turn.
 
-See [Concepts: architecture](../../concepts/architecture/architecture.md) for the tool registry / dispatch background.
+See Concepts: architecture (architecture doc removed) for the tool registry / dispatch background.
 
 ## `agent` block
 

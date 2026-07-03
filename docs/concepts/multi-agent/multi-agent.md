@@ -10,7 +10,7 @@ A reyn process can host any number of long-lived **agents** — each an *identit
 
 ## Two layers of multi-agent in Reyn
 
-Reyn does not have a single multi-agent feature. It has two distinct compositional surfaces for agent-to-agent interaction, each suited to a different scope. The differentiating claim: **both layers preserve the same OS invariants** — [P4](../architecture/principles.md#p4-llm-is-a-constrained-decision-engine) (constrained candidate set), [P6](../architecture/principles.md#p6-events-are-the-audit-truth) (events for every transition), and the permission system.
+Reyn does not have a single multi-agent feature. It has two distinct compositional surfaces for agent-to-agent interaction, each suited to a different scope. The differentiating claim: **both layers preserve the same OS invariants** — P4 (constrained candidate set), P6 (events for every transition), and the permission system.
 
 ```
 ┌──────────────────────────────────────────────────────────────────┐

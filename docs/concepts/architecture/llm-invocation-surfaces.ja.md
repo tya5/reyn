@@ -195,9 +195,6 @@ Type B には Option 2 の役割分離を採用しつつ、3つの Type C conven
 
 ## 8. 関連ドキュメント
 
-- [../architecture/principles.md](../architecture/principles.md) — P3、P4、P7
-- [../architecture/architecture.md](../architecture/architecture.md) — コンポーネント全体の階層化とランタイムループ
-- [../architecture/phase-vs-skill-vs-os.md](../architecture/phase-vs-skill-vs-os.md) — Phase・Skill・OS 間の責任境界
 - [../architecture/care-boundary.md](../architecture/care-boundary.md) — Reyn が担うこと・担わないこと; downstream tooling セクションは上記マトリックスを補完する
 - ../skills/preprocessor.md — LLM 呼び出し前の決定論的ステップ（= 第3の invocation kind ではない理由）
 - ../skills/postprocessor.md — LLM 呼び出し後の決定論的ステップ（同理由）

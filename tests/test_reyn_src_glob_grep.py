@@ -54,15 +54,14 @@ def test_reyn_source_grep_routes_to_reyn_src_grep() -> None:
 # ── 2. glob_entries — pattern match against real repo ─────────────────────
 
 
-def test_glob_finds_principles_docs() -> None:
+def test_glob_finds_care_boundary_docs() -> None:
     """Tier 2: glob pattern returns real repo files matching it.
 
-    Uses a well-known stable file pair (`docs/concepts/architecture/principles*.md`)
-    that won't be renamed without an FP-0034-scale change.
+    Uses a well-known stable file pair (`docs/concepts/architecture/care-boundary*.md`).
     """
-    result = glob_entries(ROOT, "docs/concepts/architecture/principles*.md")
+    result = glob_entries(ROOT, "docs/concepts/architecture/care-boundary*.md")
     assert "matches" in result and "count" in result
-    assert "docs/concepts/architecture/principles.md" in result["matches"]
+    assert "docs/concepts/architecture/care-boundary.md" in result["matches"]
     assert result["count"] >= 1
 
 
@@ -105,11 +104,11 @@ def test_glob_caps_result_count() -> None:
 # ── 3. grep_entries — regex content search against real repo ──────────────
 
 
-def test_grep_finds_known_p7_critical_marker() -> None:
+def test_grep_finds_known_os_code_marker() -> None:
     """Tier 2: regex pattern returns real matches with path + line + snippet."""
     result = grep_entries(
         ROOT,
-        pattern=r"P7.*CRITICAL",
+        pattern=r"P7 says OS code",
         glob="docs/concepts/architecture/*.md",
         max_results=10,
     )

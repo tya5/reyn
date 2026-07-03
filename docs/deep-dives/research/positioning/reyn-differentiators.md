@@ -41,8 +41,8 @@ reframe: general-agent positioning (2026-06-13、README #1517 + feature-map.md m
 
 つまり Reyn の差別化は「ある機能を持つこと」ではなく、**振る舞いが OS によって
 検証・記録・制約される構造そのもの**である。skill はその構造の上の一機能であって、
-見出しではない。詳細は [phase-vs-skill-vs-os](../../../concepts/architecture/phase-vs-skill-vs-os.md) /
-[principles](../../../concepts/architecture/principles.md) 参照。
+見出しではない。詳細は phase-vs-skill-vs-os (phase-vs-skill-vs-os doc removed) /
+principles (principles doc removed) 参照。
 
 ---
 

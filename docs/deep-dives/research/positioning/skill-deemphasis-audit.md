@@ -72,4 +72,4 @@ small PR (one line each), keeping this audit doc as the rationale record.
 ## Related
 
 - [reyn-differentiators.md](reyn-differentiators.md) — the OS-constant / skills-come-and-go lead differentiator (skill as one feature, not the headline)
-- [phase-vs-skill-vs-os.md](../../../concepts/architecture/phase-vs-skill-vs-os.md) — the structural basis (OS-constant)
+- phase-vs-skill-vs-os.md (phase-vs-skill-vs-os doc removed) — the structural basis (OS-constant)

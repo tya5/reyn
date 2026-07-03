@@ -197,9 +197,6 @@ Adopt Option 2's role separation for Type B, but explicitly close the three Type
 
 ## 8. See also
 
-- [../architecture/principles.md](../architecture/principles.md) — P3, P4, P7
-- [../architecture/architecture.md](../architecture/architecture.md) — overall component layering and the runtime loop
-- [../architecture/phase-vs-skill-vs-os.md](../architecture/phase-vs-skill-vs-os.md) — responsibility boundaries between Phase, Skill, and OS
 - [../architecture/care-boundary.md](../architecture/care-boundary.md) — what Reyn does and does not own; the downstream tooling section complements the matrix above
 - ../skills/preprocessor.md — pre-LLM deterministic steps (= why those are not a third invocation kind)
 - ../skills/postprocessor.md — post-LLM deterministic steps (same reason)
