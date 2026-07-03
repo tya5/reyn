@@ -84,6 +84,11 @@ class _SlashCompleter(Completer):
 
 _SLASH_COMPLETER = _SlashCompleter()
 
+# Maximum rows the above-input region (interventions, /rewind picker) may occupy.
+# Capping prevents prompt_toolkit "Window too small" when the picker has more rows
+# than the terminal height minus the fixed chrome (rules + input + status).
+_ABOVE_REGION_MAX_HEIGHT = 12
+
 
 @dataclass(frozen=True)
 class ChipSpec:
@@ -537,6 +542,7 @@ async def run_inline_input(registry, renderer, config=None) -> None:
     # session head (like the status chips). Free-text interventions keep using the
     # input field, so they get no element. Empty region collapses (inert).
     above_region = Region()
+    above_region.set_max_visible(_ABOVE_REGION_MAX_HEIGHT)
     # What the region is currently showing: "iv:<id>" (intervention) or
     # "cmd:<id>" (command-UI) or None. Lets the poll skip rebuilding each tick.
     region_holder: dict = {"key": None}
@@ -625,18 +631,23 @@ async def run_inline_input(registry, renderer, config=None) -> None:
 
     def above_region_frags() -> list:
         draw_cursor = above_region.cursor_on_selectable
+        scroll = above_region.scroll
+        lines = above_region.lines()
+        visible = lines[scroll : scroll + _ABOVE_REGION_MAX_HEIGHT]
+        cursor_local = above_region.cursor - scroll
         out: list = []
-        for i, ln in enumerate(above_region.lines()):
+        for i, ln in enumerate(visible):
             if i:
                 out.append(("", "\n"))
-            if draw_cursor and i == above_region.cursor:
+            if draw_cursor and i == cursor_local:
                 out.append((f"fg:#0d0f12 bg:{_CC_ACCENT} bold", f" {ln} "))
             else:
                 out.append((f"fg:{_CC_DIM}", f"   {ln}"))
         return out
 
     def above_region_height() -> Dimension:
-        return Dimension.exact(len(above_region.lines()))
+        n = min(len(above_region.lines()), _ABOVE_REGION_MAX_HEIGHT)
+        return Dimension.exact(n)
 
     above_region_win = Window(
         FormattedTextControl(above_region_frags, focusable=True),
