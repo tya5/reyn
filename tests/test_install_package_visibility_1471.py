@@ -125,7 +125,7 @@ async def test_not_found_error_mentions_install_package(tmp_path, monkeypatch) -
     monkeypatch.setattr(_rc, "RegistryClient", _RegistryClientNotFound)
 
     from reyn.core.op_runtime import mcp_install as _mi
-    result = await _mi.handle(_make_registry_op("some-npm-package"), _minimal_ctx(tmp_path), caller="control_ir")
+    result = await _mi.handle(_make_registry_op("some-npm-package"), _minimal_ctx(tmp_path))
 
     assert result["status"] == "error"
     error_text = result["error"]
@@ -142,7 +142,7 @@ async def test_not_found_error_mentions_source_param(tmp_path, monkeypatch) -> N
     monkeypatch.setattr(_rc, "RegistryClient", _RegistryClientNotFound)
 
     from reyn.core.op_runtime import mcp_install as _mi
-    result = await _mi.handle(_make_registry_op("mypackage"), _minimal_ctx(tmp_path), caller="control_ir")
+    result = await _mi.handle(_make_registry_op("mypackage"), _minimal_ctx(tmp_path))
 
     assert result["status"] == "error"
     assert "source" in result["error"], (
@@ -160,7 +160,7 @@ async def test_non_404_error_does_not_get_install_package_guidance(
     monkeypatch.setattr(_rc, "RegistryClient", _RegistryClientNetworkError)
 
     from reyn.core.op_runtime import mcp_install as _mi
-    result = await _mi.handle(_make_registry_op("someserver"), _minimal_ctx(tmp_path), caller="control_ir")
+    result = await _mi.handle(_make_registry_op("someserver"), _minimal_ctx(tmp_path))
 
     assert result["status"] == "error"
     error_text = result["error"]

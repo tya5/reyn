@@ -258,7 +258,7 @@ async def test_op_repoint_cycle_returns_edge_error_dict():
     await b.create(_task("bb", deps=["a"], requester="req"))
     res = await taskmod._repoint_dependency(
         SimpleNamespace(task_id="a", from_depends_on="x", to_depends_on="bb"),
-        _opctx(b), "control_ir")
+        _opctx(b))
     assert res["status"] == "error"
     assert res["error"]["kind"] == "cycle"
     assert (await b.get("a")).deps == ["x"]  # unchanged
@@ -274,7 +274,7 @@ async def test_op_remove_emits_readiness_on_promote():
     await b.create(_task("a", deps=["d1"], requester="req"))  # born-blocked
     res = await taskmod._remove_dependency(
         SimpleNamespace(task_id="a", depends_on="d1"),
-        _opctx(b, events=rec, session_id="req"), "control_ir")
+        _opctx(b, events=rec, session_id="req"))
     assert res["status"] == "ok"
     readied = [(f["task_id"], f["to"]) for k, f in rec.events if k == "task_readiness"]
     assert readied == [("a", "ready")]
@@ -291,7 +291,7 @@ async def test_op_abort_routes_disposition_to_requester():
     await b.create(_task("A", deps=["B"], assignee="sA", requester="req"))
 
     await taskmod._abort(SimpleNamespace(task_id="B", reason=None),
-                         _opctx(b, events=rec, waker=waker, session_id="req"), "control_ir")
+                         _opctx(b, events=rec, waker=waker, session_id="req"))
 
     assert waker.calls == [{"requester_session": "req", "terminal_task": "B",
                             "dependents": ["A"], "disposition": "aborted",
@@ -312,7 +312,7 @@ async def test_op_failed_routes_disposition_to_requester():
 
     # failed is assignee-gated → caller must be B's assignee.
     await taskmod._update_status(SimpleNamespace(task_id="B", status="failed"),
-                                 _opctx(b, waker=waker, session_id="sB"), "control_ir")
+                                 _opctx(b, waker=waker, session_id="sB"))
     assert waker.calls == [{"requester_session": "req", "terminal_task": "B",
                             "dependents": ["A"], "disposition": "failed",
                             "managing_task_id": None}]
@@ -329,7 +329,7 @@ async def test_op_abort_root_routes_to_requester():
     await b.create(_task("B", assignee="sB", requester="req", status=TaskState.RUNNING))
     await b.create(_task("A", deps=["B"], assignee="sA", requester="req"))  # root, no parent
     await taskmod._abort(SimpleNamespace(task_id="B", reason=None),
-                         _opctx(b, waker=waker, session_id="req"), "control_ir")
+                         _opctx(b, waker=waker, session_id="req"))
     assert waker.calls == [{"requester_session": "req", "terminal_task": "B",
                             "dependents": ["A"], "disposition": "aborted",
                             "managing_task_id": None}]  # #2107: NOT dropped
@@ -350,7 +350,7 @@ async def test_2107_flat_self_task_plan_mid_failure_notifies_requester():
     await b.create(_task("t3", deps=["t2"], assignee="me", requester="me"))
     await b.create(_task("t4", deps=["t3"], assignee="me", requester="me"))
     await taskmod._abort(SimpleNamespace(task_id="t2", reason=None),
-                         _opctx(b, waker=waker, session_id="me"), "control_ir")
+                         _opctx(b, waker=waker, session_id="me"))
     # the requester ("me") is woken to recover the stuck dependent t3 (t4 sits blocked
     # behind t3, surfaced once t3 is recovered) — NOT dropped.
     assert waker.calls == [{"requester_session": "me", "terminal_task": "t2",
@@ -371,5 +371,5 @@ async def test_external_origin_skips_internal_requester_wake():
     await b.create(_task("A", deps=["B"], assignee="sA", requester="a2a:client",
                          origin=TaskOrigin.EXTERNAL))
     await taskmod._abort(SimpleNamespace(task_id="B", reason=None),
-                         _opctx(b, waker=waker, session_id="req"), "control_ir")
+                         _opctx(b, waker=waker, session_id="req"))
     assert waker.calls == []  # external → webhook channel (S2), not an internal session wake

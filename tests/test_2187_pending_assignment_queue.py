@@ -80,7 +80,7 @@ async def _fresh():
 
 
 async def _create(b, ctx, **kw) -> str:
-    res = await taskmod._create(_create_op(**kw), ctx, "control_ir")
+    res = await taskmod._create(_create_op(**kw), ctx)
     assert res.get("status") != "error", res
     return res["task"]["task_id"]
 
@@ -133,7 +133,7 @@ async def test_unassigned_task_claimed_by_any_session():
     writer = _Writer(cp)
     res = await taskmod._assign(
         SimpleNamespace(task_id=tid, assignee="sess-claimer"),
-        _ctx(b, waker, "sess-claimer", writer=writer), "control_ir")
+        _ctx(b, waker, "sess-claimer", writer=writer))
     assert res.get("status") == "ok", res
     task = await b.get(tid)
     assert task.assignee == "sess-claimer", task.assignee
@@ -156,13 +156,13 @@ async def test_assigned_task_reassign_denied_for_non_owner_allowed_for_owner():
     # non-owner (sess-B) tries to reassign → denied.
     denied = await taskmod._assign(
         SimpleNamespace(task_id=tid, assignee="sess-B"),
-        _ctx(b, waker, "sess-B", writer=writer), "control_ir")
+        _ctx(b, waker, "sess-B", writer=writer))
     assert denied.get("status") == "denied", denied
     assert (await b.get(tid)).assignee == "sess-A"
     # current owner (sess-A) hands off to sess-C → allowed.
     ok = await taskmod._assign(
         SimpleNamespace(task_id=tid, assignee="sess-C"),
-        _ctx(b, waker, "sess-A", writer=writer), "control_ir")
+        _ctx(b, waker, "sess-A", writer=writer))
     assert ok.get("status") == "ok", ok
     assert (await b.get(tid)).assignee == "sess-C"
 
@@ -183,14 +183,14 @@ async def test_status_cas_reads_rebound_assignee_not_the_old_one():
     tid = await _create(b, _ctx(b, waker, "sess-A", writer=writer), assignee="sess-A")
     await taskmod._assign(
         SimpleNamespace(task_id=tid, assignee="sess-C"),
-        _ctx(b, waker, "sess-A", writer=writer), "control_ir")
+        _ctx(b, waker, "sess-A", writer=writer))
     # OLD assignee can no longer write the status.
     old = await taskmod._update_status(
         SimpleNamespace(task_id=tid, status="running"),
-        _ctx(b, waker, "sess-A", writer=writer), "control_ir")
+        _ctx(b, waker, "sess-A", writer=writer))
     assert old.get("status") == "denied", old
     # NEW assignee can.
     new = await taskmod._update_status(
         SimpleNamespace(task_id=tid, status="running"),
-        _ctx(b, waker, "sess-C", writer=writer), "control_ir")
+        _ctx(b, waker, "sess-C", writer=writer))
     assert new.get("status") == "ok", new

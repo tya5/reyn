@@ -122,8 +122,7 @@ async def test_completed_wakes_promoted_dependent():
     await b.create(_task("d", assignee="a2a:sd"))
     await b.create(_task("a", deps=["d"], assignee="a2a:sa"))  # born-blocked
     await taskmod._update_status(SimpleNamespace(task_id="d", status="done"),
-                                 _ctx(b, TaskWaker(reg, "alice"), session_id="a2a:sd"),
-                                 "control_ir")
+                                 _ctx(b, TaskWaker(reg, "alice"), session_id="a2a:sd"))
     assert ("alice", "a2a", "sa") in reg.resolved
     assert reg.ensured == [("alice", "a2a:sa")]
 
@@ -138,7 +137,7 @@ async def test_abort_wakes_requester():
     await b.create(_task("A", deps=["B"], assignee="a2a:sA", requester="a2a:sReq"))
     # abort is requester-gated → the requester is the caller.
     await taskmod._abort(SimpleNamespace(task_id="B", reason=None),
-                         _ctx(b, TaskWaker(reg, "alice"), session_id="a2a:sReq"), "control_ir")
+                         _ctx(b, TaskWaker(reg, "alice"), session_id="a2a:sReq"))
     assert ("alice", "a2a", "sReq") in reg.resolved
     assert reg.inbox_of("alice", "a2a", "sReq")[0][0] == "task_dependency_aborted"
 
@@ -162,7 +161,7 @@ async def test_recovery_loop_abort_then_requester_repoint_wakes_both():
     ctx = _ctx(b, waker, session_id="a2a:sReq")  # the requester owns + drives B/A/Bsub
 
     # 1. abort B → the REQUESTER is woken to decide.
-    await taskmod._abort(SimpleNamespace(task_id="B", reason=None), ctx, "control_ir")
+    await taskmod._abort(SimpleNamespace(task_id="B", reason=None), ctx)
     assert ("alice", "a2a", "sReq") in reg.resolved
     assert reg.inbox_of("alice", "a2a", "sReq")[0][0] == "task_dependency_aborted"
 
@@ -170,7 +169,7 @@ async def test_recovery_loop_abort_then_requester_repoint_wakes_both():
     #    completed substitute Bsub → A becomes ready and is woken.
     await taskmod._repoint_dependency(
         SimpleNamespace(task_id="A", from_depends_on="B", to_depends_on="Bsub"),
-        ctx, "control_ir")
+        ctx)
     assert (await b.get("A")).status is TaskState.READY
     assert ("alice", "a2a", "sA") in reg.resolved
     assert reg.inbox_of("alice", "a2a", "sA")[0][0] == "task_ready"

@@ -67,7 +67,7 @@ async def test_index_drop_records_generation_full_sources(tmp_path):
         state_log=state_log,
     )
     op = IndexDropIROp(kind="index_drop", source="code")
-    result = await drop_handle(op=op, ctx=ctx, caller="control_ir")
+    result = await drop_handle(op=op, ctx=ctx)
     assert result["removed"] is True
 
     # the op recorded a generation → reconstruct as-of the current head re-materialises the

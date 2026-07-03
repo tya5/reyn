@@ -142,7 +142,7 @@ def test_index_query_gated_by_sandbox_read_cap(tmp_path: Path, monkeypatch) -> N
     ctx = _ctx(tmp_path, sandbox_policy={"read_paths": ["/sandboxed"]})
     op = IndexQueryIROp(kind="index_query", source="src", query_vector=[0.1], top_k=1)
     with pytest.raises(PermissionError):
-        asyncio.run(handle(op, ctx, caller="control_ir"))
+        asyncio.run(handle(op, ctx))
 
 
 def test_index_query_no_policy_passes(tmp_path: Path, monkeypatch) -> None:
@@ -153,7 +153,7 @@ def test_index_query_no_policy_passes(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.chdir(tmp_path)
     ctx = _ctx(tmp_path, sandbox_policy=None)
     op = IndexQueryIROp(kind="index_query", source="src", query_vector=[0.1], top_k=1)
-    result = asyncio.run(handle(op, ctx, caller="control_ir"))
+    result = asyncio.run(handle(op, ctx))
     assert result["mode"] == "fallback"  # no index yet, but NOT denied
 
 
@@ -166,4 +166,4 @@ def test_index_drop_gates_source_dir_by_sandbox_cap(tmp_path: Path, monkeypatch)
     ctx = _ctx(tmp_path, sandbox_policy={"write_paths": ["/sandboxed"]})
     op = IndexDropIROp(kind="index_drop", source="src")
     with pytest.raises(PermissionError):
-        asyncio.run(handle(op, ctx, caller="control_ir"))
+        asyncio.run(handle(op, ctx))

@@ -43,7 +43,7 @@ async def _make_task(backend, description: str, *, session: str = "sess-A") -> s
     created = await taskmod._create(
         SimpleNamespace(name="ship", assignee=session, requester=session,
                         origin="self", description=description, deps=[]),
-        ctx, "control_ir",
+        ctx
     )
     return created["task"]["task_id"]
 
@@ -55,7 +55,7 @@ async def test_get_fences_injection_description_when_enabled():
     backend = InMemoryTaskBackend()
     tid = await _make_task(backend, _INJ)
     res = await taskmod._get(
-        SimpleNamespace(task_id=tid), _ctx(backend, fence_on=True), "control_ir")
+        SimpleNamespace(task_id=tid), _ctx(backend, fence_on=True))
     desc = res["task"]["description"]
     assert _FENCE_MARK in desc, f"description must be fenced; got {desc!r}"
     assert _INJ in desc, "fenced content is preserved (wrapped, not stripped)"
@@ -68,7 +68,7 @@ async def test_get_does_not_fence_when_content_fence_disabled():
     backend = InMemoryTaskBackend()
     tid = await _make_task(backend, _INJ)
     res = await taskmod._get(
-        SimpleNamespace(task_id=tid), _ctx(backend, fence_on=False), "control_ir")
+        SimpleNamespace(task_id=tid), _ctx(backend, fence_on=False))
     assert res["task"]["description"] == _INJ  # unchanged when fencing off
 
 
@@ -81,7 +81,7 @@ async def test_list_fences_each_task_view():
     await _make_task(backend, _INJ + " #2")
     res = await taskmod._list(
         SimpleNamespace(assignee=None, requester=None, status=None),
-        _ctx(backend, fence_on=True), "control_ir")
+        _ctx(backend, fence_on=True))
     assert res["tasks"], "expected tasks in the list"
     assert all(_FENCE_MARK in t["description"] for t in res["tasks"]), (
         "every listed task view's description must be fenced"

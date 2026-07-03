@@ -36,7 +36,6 @@ def _resolve_provider():
 async def handle(
     op: RecallIROp,
     ctx: OpContext,
-    caller: Literal["preprocessor", "control_ir"],
 ) -> dict:
     """Execute a recall macro op (ADR-0033 §2.1).
 
@@ -79,7 +78,7 @@ async def handle(
             top_k=op.top_k,
             filters=op.filters,
         )
-        result = await execute_op(query_op, ctx, caller=caller)
+        result = await execute_op(query_op, ctx)
 
         if result.get("status") in ("error", "denied", "skipped"):
             # Source query failed — treat as fallback for this source

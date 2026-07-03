@@ -96,7 +96,7 @@ async def test_real_mcp_drop_writes_config_subdir_keyed_path_and_rewind_restores
     op = MCPDropServerIROp(
         kind="mcp_drop_server", server="brave", scope=None, clear_secrets=False,
     )
-    result = await drop_handle(op=op, ctx=ctx, caller="control_ir")
+    result = await drop_handle(op=op, ctx=ctx)
     assert result["status"] == "ok"
 
     # 1) the LIVE write landed at the NEW config-subdir path (not the old top-level one).

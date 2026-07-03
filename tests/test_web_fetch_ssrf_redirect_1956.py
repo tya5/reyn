@@ -70,7 +70,7 @@ def server(monkeypatch):
 
 def _fetch(url: str, ctx: Any) -> dict:
     op = WebFetchIROp(kind="web_fetch", url=url)
-    return asyncio.run(handle_web_fetch(op=op, ctx=ctx, caller="control_ir"))
+    return asyncio.run(handle_web_fetch(op=op, ctx=ctx))
 
 
 def test_redirect_to_loopback_blocked(server):

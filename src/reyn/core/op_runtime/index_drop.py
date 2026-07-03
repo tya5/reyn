@@ -24,7 +24,6 @@ from .context import OpContext, sandbox_policy_from_ctx
 async def handle(
     op: IndexDropIROp,
     ctx: OpContext,
-    caller: Literal["preprocessor", "control_ir"],
 ) -> dict:
     """Execute an index_drop op (ADR-0033 §2.1).
 

@@ -28,7 +28,6 @@ from .context import OpContext
 async def handle(
     op: CompactIROp,
     ctx: OpContext,
-    caller: Literal["preprocessor", "control_ir"],
 ) -> dict:
     """Run a voluntary compaction via ``ctx.compact_now``.
 

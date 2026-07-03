@@ -87,7 +87,7 @@ async def test_handler_event_shows_enforced_policy_network(tmp_path):
     op = SandboxedExecIROp(
         kind="sandboxed_exec", argv=["/bin/echo", "x"], network=True,  # op REQUESTS network
     )
-    await handle(op, ctx, caller="control_ir")
+    await handle(op, ctx)
     started = [e for e in events.all() if e.type == "sandboxed_exec_started"]
     (ev,) = started
     assert ev.data["network"] is False  # enforced policy, NOT op.network=True

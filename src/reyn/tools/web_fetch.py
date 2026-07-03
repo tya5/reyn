@@ -2,7 +2,7 @@
 
 Mirrors web_search.py structure. The existing handler in
 src/reyn/op_runtime/web.py is preserved and wrapped via a thin
-adapter that translates between the old (op, ctx, caller) signature
+adapter that translates between the old (op, ctx) signature
 and the new (args, ctx) signature.
 
 Both router-style and phase-style dispatch paths consume this
@@ -48,7 +48,7 @@ async def _handle(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
     """Adapter wrapping op_runtime.web.handle_web_fetch.
 
     Bridges between the unified (args, ctx) signature and the
-    existing (op, ctx, caller) signature. Once M3 Wave 1 succeeds,
+    existing (op, ctx) signature. Once M3 Wave 1 succeeds,
     the body of handle_web_fetch may be inlined here in M4 cleanup.
 
     OpContext resolution (parallel with ``file.py:_build_legacy_op_context``):
@@ -106,7 +106,7 @@ async def _handle(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
             resolver=ctx.resolver,
         )
 
-    return await handle_web_fetch(op=op, ctx=legacy_ctx, caller="control_ir")
+    return await handle_web_fetch(op=op, ctx=legacy_ctx)
 
 
 WEB_FETCH = ToolDefinition(

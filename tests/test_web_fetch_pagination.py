@@ -85,7 +85,7 @@ def test_default_no_start_index_returns_prefix(monkeypatch: pytest.MonkeyPatch) 
     monkeypatch.setattr(httpx, "AsyncClient", _CapturingTextClient)
 
     op = WebFetchIROp(kind="web_fetch", url="https://example.com", max_length=50)
-    result = asyncio.run(handle_web_fetch(op=op, ctx=_make_ctx(), caller="control_ir"))
+    result = asyncio.run(handle_web_fetch(op=op, ctx=_make_ctx()))
 
     assert result["content"] == "A" * 50
     assert result["truncated"] is True
@@ -108,7 +108,7 @@ def test_start_index_returns_suffix_chunk(monkeypatch: pytest.MonkeyPatch) -> No
         kind="web_fetch", url="https://example.com",
         max_length=50, start_index=50,
     )
-    result = asyncio.run(handle_web_fetch(op=op, ctx=_make_ctx(), caller="control_ir"))
+    result = asyncio.run(handle_web_fetch(op=op, ctx=_make_ctx()))
 
     assert result["content"] == "B" * 50
     assert result["truncated"] is True
@@ -128,7 +128,7 @@ def test_start_index_final_chunk_clears_next_start(monkeypatch: pytest.MonkeyPat
         kind="web_fetch", url="https://example.com",
         max_length=100, start_index=50,
     )
-    result = asyncio.run(handle_web_fetch(op=op, ctx=_make_ctx(), caller="control_ir"))
+    result = asyncio.run(handle_web_fetch(op=op, ctx=_make_ctx()))
 
     assert result["content"] == "B" * 50
     assert result["truncated"] is False
@@ -149,7 +149,7 @@ def test_start_index_past_end_returns_empty(monkeypatch: pytest.MonkeyPatch) -> 
         kind="web_fetch", url="https://example.com",
         max_length=50, start_index=1000,
     )
-    result = asyncio.run(handle_web_fetch(op=op, ctx=_make_ctx(), caller="control_ir"))
+    result = asyncio.run(handle_web_fetch(op=op, ctx=_make_ctx()))
 
     assert result["content"] == ""
     assert result["truncated"] is False
@@ -168,7 +168,7 @@ def test_small_content_returns_in_one_call(monkeypatch: pytest.MonkeyPatch) -> N
     monkeypatch.setattr(httpx, "AsyncClient", _CapturingTextClient)
 
     op = WebFetchIROp(kind="web_fetch", url="https://example.com", max_length=50_000)
-    result = asyncio.run(handle_web_fetch(op=op, ctx=_make_ctx(), caller="control_ir"))
+    result = asyncio.run(handle_web_fetch(op=op, ctx=_make_ctx()))
 
     assert result["content"] == "short content"
     assert result["truncated"] is False
@@ -191,7 +191,7 @@ def test_two_call_pagination_covers_whole_document(monkeypatch: pytest.MonkeyPat
         kind="web_fetch", url="https://example.com",
         max_length=100, start_index=0,
     )
-    r1 = asyncio.run(handle_web_fetch(op=op1, ctx=_make_ctx(), caller="control_ir"))
+    r1 = asyncio.run(handle_web_fetch(op=op1, ctx=_make_ctx()))
     assert r1["truncated"] is True
     assert r1["next_start"] is not None
 
@@ -199,7 +199,7 @@ def test_two_call_pagination_covers_whole_document(monkeypatch: pytest.MonkeyPat
         kind="web_fetch", url="https://example.com",
         max_length=100, start_index=r1["next_start"],
     )
-    r2 = asyncio.run(handle_web_fetch(op=op2, ctx=_make_ctx(), caller="control_ir"))
+    r2 = asyncio.run(handle_web_fetch(op=op2, ctx=_make_ctx()))
     assert r2["truncated"] is False
     assert r2["next_start"] is None
 

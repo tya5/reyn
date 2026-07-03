@@ -120,12 +120,12 @@ async def test_create_then_get_via_handlers():
     created = await taskmod._create(
         SimpleNamespace(name="ship", assignee="bob", requester="alice",
                         origin="self", description=None, deps=[]),
-        _ctx(), "control_ir",
+        _ctx()
     )
     assert created["status"] == "ok"
     task_id = created["task"]["task_id"]
 
-    got = await taskmod._get(SimpleNamespace(task_id=task_id), _ctx(), "control_ir")
+    got = await taskmod._get(SimpleNamespace(task_id=task_id), _ctx())
     assert got["status"] == "ok"
     assert got["task"]["assignee"] == "bob"
 
@@ -144,16 +144,14 @@ async def test_update_status_single_writer_is_assignee_session():
     created = await taskmod._create(
         SimpleNamespace(name="n", assignee="sess-A", requester="alice",
                         origin="self", description=None, deps=[]),
-        SimpleNamespace(session_id="alice", agent_id="a", events=None, task_backend=backend),
-        "control_ir",
+        SimpleNamespace(session_id="alice", agent_id="a", events=None, task_backend=backend)
     )
     task_id = created["task"]["task_id"]
 
     # the assignee session (session_id == assignee) may write.
     updated = await taskmod._update_status(
         SimpleNamespace(task_id=task_id, status="running", reason=None),
-        SimpleNamespace(session_id="sess-A", agent_id="a", events=None, task_backend=backend),
-        "control_ir",
+        SimpleNamespace(session_id="sess-A", agent_id="a", events=None, task_backend=backend)
     )
     assert updated["status"] == "ok"
     assert updated["task"]["status"] == "running"
@@ -163,8 +161,7 @@ async def test_update_status_single_writer_is_assignee_session():
     # op's _authorize binding-check). Same reject semantics preserved.
     denied = await taskmod._update_status(
         SimpleNamespace(task_id=task_id, status="failed", reason=None),
-        SimpleNamespace(session_id="sess-B", agent_id="b", events=None, task_backend=backend),
-        "control_ir",
+        SimpleNamespace(session_id="sess-B", agent_id="b", events=None, task_backend=backend)
     )
     assert denied["status"] == "denied"
 
@@ -190,7 +187,7 @@ async def test_abort_emits_disposition_event_per_aborted_task():
     events = EventLog()
     ctx = SimpleNamespace(task_backend=backend, session_id="X", agent_id="x", events=events)
 
-    res = await taskmod._abort(SimpleNamespace(task_id="p", reason=None), ctx, "control_ir")
+    res = await taskmod._abort(SimpleNamespace(task_id="p", reason=None), ctx)
     assert res["status"] == "ok"
 
     disp = {e.data["task_id"]: e.data for e in events.all() if e.type == "task_disposition"}
@@ -208,26 +205,26 @@ async def test_abort_archives_and_rejects_assignee_straggler():
     lands (RED if the terminal-guard is dropped)."""
     created = await taskmod._create(
         SimpleNamespace(name="t", assignee="A", description=None, deps=[]),
-        SimpleNamespace(session_id="R", agent_id="r", events=None), "control_ir")
+        SimpleNamespace(session_id="R", agent_id="r", events=None))
     task_id = created["task"]["task_id"]
 
     # requester R aborts (= delete) → archived.
     aborted = await taskmod._abort(
         SimpleNamespace(task_id=task_id, reason="don't need it"),
-        SimpleNamespace(session_id="R", agent_id="r", events=None), "control_ir")
+        SimpleNamespace(session_id="R", agent_id="r", events=None))
     assert aborted["task"]["status"] == "aborted"
 
     # the assignee's straggler write is rejected by the terminal state.
     with pytest.raises(PermissionError):
         await taskmod._update_status(
             SimpleNamespace(task_id=task_id, status="done", reason=None),
-            SimpleNamespace(session_id="A", agent_id="a", events=None), "control_ir")
+            SimpleNamespace(session_id="A", agent_id="a", events=None))
 
 
 @pytest.mark.asyncio
 async def test_handlers_return_error_for_unknown_task():
     """Tier 2: ops on a missing task return a decision-enabling error, not a crash."""
-    got = await taskmod._get(SimpleNamespace(task_id="nope"), _ctx(), "control_ir")
+    got = await taskmod._get(SimpleNamespace(task_id="nope"), _ctx())
     assert got["status"] == "error"
     assert "not found" in got["error"]
 
@@ -245,7 +242,7 @@ async def _make_cross_session_task(requester="R", assignee="A", *, backend=None)
         ctx.task_backend = backend
     created = await taskmod._create(
         SimpleNamespace(name="n", assignee=assignee, description=None, deps=[]),
-        ctx, "control_ir",
+        ctx
     )
     assert created["task"]["requester"] == requester
     assert created["task"]["assignee"] == assignee
@@ -264,13 +261,13 @@ async def test_requester_gated_ops_reject_non_requester():
         (taskmod._add_dependency, SimpleNamespace(task_id=task_id, depends_on="u")),
         (taskmod._abort, SimpleNamespace(task_id=task_id, reason=None)),
     ):
-        res = await handler(op, assignee_ctx, "control_ir")
+        res = await handler(op, assignee_ctx)
         assert res["status"] == "denied", (handler.__name__, res)
         assert res["error"]["kind"] == "role_denied"
 
     # the requester itself is allowed.
     req_ctx = SimpleNamespace(session_id="R", agent_id="r", events=None)
-    allowed = await taskmod._get(SimpleNamespace(task_id=task_id), req_ctx, "control_ir")
+    allowed = await taskmod._get(SimpleNamespace(task_id=task_id), req_ctx)
     assert allowed["status"] == "ok"
 
 
@@ -290,16 +287,16 @@ async def test_assignee_gated_ops_reject_non_assignee():
     # (the gate moved from a backend PermissionError raise to the op's _authorize binding-
     # check). Same reject semantics preserved.
     denied = await taskmod._update_status(
-        SimpleNamespace(task_id=task_id, status="failed", reason=None), req_ctx, "control_ir")
+        SimpleNamespace(task_id=task_id, status="failed", reason=None), req_ctx)
     assert denied["status"] == "denied"
     # heartbeat / register: handler role-gate → denied for the non-assignee.
     for handler, op in (
         (taskmod._heartbeat, SimpleNamespace(task_id=task_id)),
         (taskmod._register_unblock_predicate, SimpleNamespace(task_id=task_id, predicate="x")),
     ):
-        res = await handler(op, req_ctx, "control_ir")
+        res = await handler(op, req_ctx)
         assert res["status"] == "denied", (handler.__name__, res)
 
     # the assignee itself is allowed.
-    allowed = await taskmod._heartbeat(SimpleNamespace(task_id=task_id), assignee_ctx, "control_ir")
+    allowed = await taskmod._heartbeat(SimpleNamespace(task_id=task_id), assignee_ctx)
     assert allowed["status"] == "ok"

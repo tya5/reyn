@@ -71,7 +71,7 @@ async def test_hook_self_continuation_create_is_owned_by_executing_task(tmp_path
     adapter = make_adapter(agent_name="alice", task_backend=b, session_id="main",
                            current_task_id_fn=lambda: s._current_task_id)
     ctx = adapter.make_router_op_context()
-    res = await taskmod._create(_create_op("sub-on-hook"), ctx, "control_ir")
+    res = await taskmod._create(_create_op("sub-on-hook"), ctx)
     sub = await b.get(res["task"]["task_id"])
     assert sub.requester == "T-exec"  # owned by T, not orphaned (RED if hook resets)
     assert sub.requester_kind is TaskRequesterKind.TASK

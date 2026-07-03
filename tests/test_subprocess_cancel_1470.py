@@ -252,7 +252,7 @@ async def test_sandboxed_exec_op_cancel_event_p6_p5() -> None:
         timeout_seconds=30,
     )
 
-    result = await execute_op(op, ctx, caller="control_ir")
+    result = await execute_op(op, ctx)
 
     # P5: result envelope reflects interruption
     assert result["status"] == "cancelled", f"expected 'cancelled', got {result['status']!r}"

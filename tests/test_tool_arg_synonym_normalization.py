@@ -55,7 +55,7 @@ async def test_write_file_accepts_text_synonym(monkeypatch):
 
     captured_ops: list = []
 
-    async def fake_execute_op(op, ctx, *, caller):
+    async def fake_execute_op(op, ctx):
         captured_ops.append(op)
         return {"status": "ok", "path": op.path}
 
@@ -85,7 +85,7 @@ async def test_write_file_canonical_content_wins_over_text(monkeypatch):
 
     captured_ops: list = []
 
-    async def fake_execute_op(op, ctx, *, caller):
+    async def fake_execute_op(op, ctx):
         captured_ops.append(op)
         return {"status": "ok", "path": op.path}
 
@@ -109,7 +109,7 @@ async def test_write_file_canonical_content_still_works(monkeypatch):
 
     captured_ops: list = []
 
-    async def fake_execute_op(op, ctx, *, caller):
+    async def fake_execute_op(op, ctx):
         captured_ops.append(op)
         return {"status": "ok", "path": op.path}
 
@@ -140,7 +140,7 @@ async def test_drop_source_accepts_source_id_synonym(monkeypatch):
 
     captured_ops: list = []
 
-    async def fake_execute_op(op, ctx, *, caller):
+    async def fake_execute_op(op, ctx):
         captured_ops.append(op)
         return {"removed": True, "chunks_dropped": 5}
 
@@ -169,7 +169,7 @@ async def test_drop_source_canonical_source_wins_over_source_id(monkeypatch):
 
     captured_ops: list = []
 
-    async def fake_execute_op(op, ctx, *, caller):
+    async def fake_execute_op(op, ctx):
         captured_ops.append(op)
         return {"removed": True, "chunks_dropped": 1}
 
@@ -193,7 +193,7 @@ async def test_drop_source_canonical_source_still_works(monkeypatch):
 
     captured_ops: list = []
 
-    async def fake_execute_op(op, ctx, *, caller):
+    async def fake_execute_op(op, ctx):
         captured_ops.append(op)
         return {"removed": True, "chunks_dropped": 0}
 

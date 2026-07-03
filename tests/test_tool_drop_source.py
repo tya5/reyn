@@ -127,7 +127,7 @@ async def test_drop_source_handler_builds_index_drop_ir_op(monkeypatch):
 
     captured_ops: list = []
 
-    async def fake_execute_op(op, ctx, *, caller):
+    async def fake_execute_op(op, ctx):
         captured_ops.append(op)
         return {"removed": True, "chunks_dropped": 42}
 
@@ -155,7 +155,7 @@ async def test_drop_source_handler_different_source(monkeypatch):
 
     captured_ops: list = []
 
-    async def fake_execute_op(op, ctx, *, caller):
+    async def fake_execute_op(op, ctx):
         captured_ops.append(op)
         return {"removed": False, "chunks_dropped": 0}
 
@@ -172,7 +172,7 @@ async def test_drop_source_handler_different_source(monkeypatch):
 @pytest.mark.asyncio
 async def test_drop_source_handler_returns_op_result(monkeypatch):
     """Tier 2: DROP_SOURCE handler returns the dict from execute_op unchanged."""
-    async def fake_execute_op(op, ctx, *, caller):
+    async def fake_execute_op(op, ctx):
         return {"removed": True, "chunks_dropped": 99}
 
     import reyn.core.op_runtime as _orm

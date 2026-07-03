@@ -77,7 +77,7 @@ async def _task_assigned_to(backend, assignee: str) -> str:
     created = await taskmod._create(
         SimpleNamespace(name="t", assignee=assignee, requester=assignee,
                         origin="self", description=None, deps=[]),
-        ctx, "control_ir",
+        ctx
     )
     return created["task"]["task_id"]
 
@@ -181,5 +181,5 @@ async def test_router_opctx_threads_task_waker_so_chat_abort_wakes_requester():
     assert ctx.task_waker is waker  # the wire — the exact gap make_router_op_context had
 
     # abort t2 through the REAL router op-ctx → the requester ("main") must be woken.
-    await taskmod._abort(SimpleNamespace(task_id="t2", reason=None), ctx, "control_ir")
+    await taskmod._abort(SimpleNamespace(task_id="t2", reason=None), ctx)
     assert waker.calls and waker.calls[0]["requester_session"] == "main"

@@ -197,7 +197,7 @@ def _resolve_for_gate(ctx: OpContext, path_str: str) -> str:
     return str((ws.base_dir / p).resolve())
 
 
-async def handle(op: FileIROp, ctx: OpContext, caller: Literal["preprocessor", "control_ir"]) -> dict:
+async def handle(op: FileIROp, ctx: OpContext) -> dict:
     # Permission check (single point for both frontends). For
     # `regenerate_index` the file actually written is `output_path`, not
     # `path`; everything else writes to `path`.

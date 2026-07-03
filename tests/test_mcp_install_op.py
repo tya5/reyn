@@ -242,7 +242,7 @@ def test_permission_gate_passes_with_explicit_decl(tmp_path, monkeypatch):
     )
 
     with _patch_registry_get(_FILESYSTEM_SERVER_RESPONSE):
-        result = _run(mcp_install_handle(op, ctx, "control_ir"))
+        result = _run(mcp_install_handle(op, ctx))
 
     assert result["status"] == "ok"
     assert result["server_id"] == "io.github.modelcontextprotocol/server-filesystem"
@@ -271,7 +271,7 @@ def test_missing_runtime_returns_error(tmp_path, monkeypatch):
     )
 
     with _patch_registry_get(_FILESYSTEM_SERVER_RESPONSE):
-        result = _run(mcp_install_handle(op, ctx, "control_ir"))
+        result = _run(mcp_install_handle(op, ctx))
 
     assert result["status"] == "error"
     assert "npx" in result["error"].lower() or "node" in result["error"].lower()
@@ -302,7 +302,7 @@ def test_env_overrides_skip_prompt_and_persist_secret(tmp_path, monkeypatch):
     )
 
     with _patch_registry_get(_SECRET_SERVER_RESPONSE):
-        result = _run(mcp_install_handle(op, ctx, "control_ir"))
+        result = _run(mcp_install_handle(op, ctx))
 
     assert result["status"] == "ok"
     assert "EXAMPLE_API_KEY" in result["env_keys_set"]
@@ -360,7 +360,7 @@ def test_save_secret_blocked_when_secret_write_not_declared(tmp_path, monkeypatc
 
     with _patch_registry_get(_SECRET_SERVER_RESPONSE):
         with pytest.raises(PermissionError, match="EXAMPLE_API_KEY"):
-            _run(mcp_install_handle(op, ctx, "control_ir"))
+            _run(mcp_install_handle(op, ctx))
 
 
 def test_secret_value_not_in_event(tmp_path, monkeypatch):
@@ -382,7 +382,7 @@ def test_secret_value_not_in_event(tmp_path, monkeypatch):
     )
 
     with _patch_registry_get(_SECRET_SERVER_RESPONSE):
-        _run(mcp_install_handle(op, ctx, "control_ir"))
+        _run(mcp_install_handle(op, ctx))
 
     events = ctx.events.all()
     install_events = [e for e in events if e.type == "mcp_server_installed"]
@@ -431,7 +431,7 @@ def test_install_writes_to_dynamic_mcp_yaml_regardless_of_scope(tmp_path, monkey
         )
 
         with _patch_registry_get(_FILESYSTEM_SERVER_RESPONSE):
-            result = _run(mcp_install_handle(op, ctx, "control_ir"))
+            result = _run(mcp_install_handle(op, ctx))
 
         expected_path = tmp_path / ".reyn" / "config" / "mcp.yaml"
         assert result["status"] == "ok"
@@ -474,7 +474,7 @@ def test_event_emitted_on_success(tmp_path, monkeypatch):
     )
 
     with _patch_registry_get(_FILESYSTEM_SERVER_RESPONSE):
-        result = _run(mcp_install_handle(op, ctx, "control_ir"))
+        result = _run(mcp_install_handle(op, ctx))
 
     assert result["status"] == "ok"
 
@@ -514,7 +514,7 @@ def test_registry_fetch_failure_returns_error(tmp_path):
     )
 
     with _patch_registry_get({}, status=404):
-        result = _run(mcp_install_handle(op, ctx, "control_ir"))
+        result = _run(mcp_install_handle(op, ctx))
 
     assert result["status"] == "error"
     assert "Registry" in result["error"] or "registry" in result["error"].lower()
@@ -598,4 +598,4 @@ def test_mcp_install_sandbox_policy_denies_out_of_cap_write(tmp_path, monkeypatc
 
     with _patch_registry_get(_FILESYSTEM_SERVER_RESPONSE):
         with pytest.raises(PermissionError):
-            _run(mcp_install_handle(op, ctx, "control_ir"))
+            _run(mcp_install_handle(op, ctx))

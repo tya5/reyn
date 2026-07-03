@@ -206,7 +206,7 @@ async def _handle_mcp_install_registry(
     op_ctx.permission_decl = decl
     op_ctx.skill_name = "mcp__install_registry"
 
-    result = await mcp_install_handle(op, op_ctx, caller="control_ir")
+    result = await mcp_install_handle(op, op_ctx)
     return {"status": "ok", "data": result}
 
 
@@ -335,7 +335,7 @@ async def _handle_mcp_install_package(
     op_ctx.permission_decl = decl
     op_ctx.skill_name = "mcp__install_package"
 
-    result = await mcp_install_handle(op, op_ctx, caller="control_ir")
+    result = await mcp_install_handle(op, op_ctx)
     return {"status": "ok", "data": result}
 
 

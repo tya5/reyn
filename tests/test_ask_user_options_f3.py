@@ -59,7 +59,7 @@ async def test_ask_user_with_options_is_a_select_intervention() -> None:
     chosen option id."""
     bus = _RecordingBus(InterventionAnswer(choice_id="no"))
     op = AskUserIROp(kind="ask_user", question="Pick?", options=["yes", "no"])
-    result = await handle(op, _ctx(bus), "control_ir")
+    result = await handle(op, _ctx(bus))
 
     iv = bus.requested[0]
     assert iv.input_type == "select"
@@ -72,7 +72,7 @@ async def test_ask_user_without_options_stays_free_text() -> None:
     """Tier 2: no options → free-text (no choices), answer is the typed text."""
     bus = _RecordingBus(InterventionAnswer(text="some text"))
     op = AskUserIROp(kind="ask_user", question="Free?")
-    result = await handle(op, _ctx(bus), "control_ir")
+    result = await handle(op, _ctx(bus))
 
     iv = bus.requested[0]
     assert iv.choices == []

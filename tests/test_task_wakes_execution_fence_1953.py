@@ -112,7 +112,7 @@ async def test_create_time_wake_delegated_executes_and_fences_injection():
         SimpleNamespace(name="ship-it", assignee="assignee-sess",
                         requester="requester-sess", origin="self",
                         description=_INJ, deps=[]),
-        ctx, "control_ir")
+        ctx)
     _assert_executes_and_fences(_last_wake_text(reg))
     # the wake-triple booted the assignee's run-loop (so a loopless A2A/MCP session
     # actually drains the wake).
@@ -134,7 +134,7 @@ async def test_create_time_wake_off_fence_still_executes_raw_description():
         SimpleNamespace(name="ship-it", assignee="assignee-sess",
                         requester="requester-sess", origin="self",
                         description=_INJ, deps=[]),
-        ctx, "control_ir")
+        ctx)
     text = _last_wake_text(reg)
     assert _EXECUTE in text          # still executes
     assert _INJ in text              # description delivered
@@ -152,7 +152,7 @@ async def test_create_time_wake_skipped_for_self_task():
     await taskmod._create(
         SimpleNamespace(name="mine", assignee="solo-sess", requester="solo-sess",
                         origin="self", description="do the thing", deps=[]),
-        ctx, "control_ir")
+        ctx)
     assert not reg.session.inbox, "a self-task must not wake (creator == executor)"
 
 
@@ -167,13 +167,13 @@ async def test_create_time_wake_skipped_for_born_blocked_delegated():
     dep = await taskmod._create(
         SimpleNamespace(name="dep", assignee="req-sess", requester="req-sess",
                         origin="self", description="d", deps=[]),
-        ctx, "control_ir")
+        ctx)
     reg.session.inbox.clear()  # the dep create is a self-task (no wake) — be explicit
     dep_id = dep["task"]["task_id"]
     await taskmod._create(
         SimpleNamespace(name="later", assignee="assignee-sess", requester="req-sess",
                         origin="self", description=_INJ, deps=[dep_id]),
-        ctx, "control_ir")
+        ctx)
     assert not reg.session.inbox, "a born-blocked task must not wake at create"
 
 
@@ -192,14 +192,14 @@ async def test_dep_completion_wakes_dependent_with_full_fenced_description():
     dep = await taskmod._create(
         SimpleNamespace(name="dep", assignee="req-sess", requester="req-sess",
                         origin="self", description="d", deps=[]),
-        ctx, "control_ir")
+        ctx)
     dep_id = dep["task"]["task_id"]
     await taskmod._create(
         SimpleNamespace(name="dependent", assignee="assignee-sess", requester="req-sess",
                         origin="self", description=_INJ, deps=[dep_id]),
-        ctx, "control_ir")
+        ctx)
     reg.session.inbox.clear()  # ignore create-time activity; assert on the wake below
     # the dep's assignee (req-sess) completes it → drives readiness → wakes dependent.
     await taskmod._update_status(
-        SimpleNamespace(task_id=dep_id, status="done"), ctx, "control_ir")
+        SimpleNamespace(task_id=dep_id, status="done"), ctx)
     _assert_executes_and_fences(_last_wake_text(reg))

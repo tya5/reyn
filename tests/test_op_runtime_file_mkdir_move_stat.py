@@ -65,7 +65,7 @@ def test_mkdir_creates_new_directory(tmp_path, monkeypatch):
     ctx = _make_ctx(tmp_path, permission_resolver=_resolver(tmp_path))
 
     op = FileIROp(kind="file", op="mkdir", path=".reyn/newdir/nested")
-    result = _run(handle(op, ctx, "control_ir"))
+    result = _run(handle(op, ctx))
 
     assert result["status"] == "ok"
     assert result["created"] is True
@@ -78,8 +78,8 @@ def test_mkdir_is_idempotent_when_dir_already_exists(tmp_path, monkeypatch):
     ctx = _make_ctx(tmp_path, permission_resolver=_resolver(tmp_path))
 
     op = FileIROp(kind="file", op="mkdir", path=".reyn/d")
-    first = _run(handle(op, ctx, "control_ir"))
-    second = _run(handle(op, ctx, "control_ir"))
+    first = _run(handle(op, ctx))
+    second = _run(handle(op, ctx))
 
     assert first["created"] is True
     assert second["status"] == "ok"
@@ -94,7 +94,7 @@ def test_mkdir_fails_when_path_is_existing_file(tmp_path, monkeypatch):
     ctx = _make_ctx(tmp_path, permission_resolver=_resolver(tmp_path))
 
     op = FileIROp(kind="file", op="mkdir", path=".reyn/blocker.txt")
-    result = _run(handle(op, ctx, "control_ir"))
+    result = _run(handle(op, ctx))
 
     assert result["status"] == "error"
     assert "not a directory" in result["error"]
@@ -109,7 +109,7 @@ def test_mkdir_outside_cwd_denied(tmp_path, monkeypatch):
 
     op = FileIROp(kind="file", op="mkdir", path="/tmp/reyn_test_should_be_denied_356")
     with pytest.raises(PermissionError):
-        _run(handle(op, ctx, "control_ir"))
+        _run(handle(op, ctx))
 
 
 # ── move ───────────────────────────────────────────────────────────────
@@ -128,7 +128,7 @@ def test_move_renames_existing_file(tmp_path, monkeypatch):
         kind="file", op="move",
         path=".reyn/src.txt", dest_path=".reyn/dst.txt",
     )
-    result = _run(handle(op, ctx, "control_ir"))
+    result = _run(handle(op, ctx))
 
     assert result["status"] == "ok"
     assert result["moved"] is True
@@ -145,7 +145,7 @@ def test_move_returns_not_found_when_source_missing(tmp_path, monkeypatch):
         kind="file", op="move",
         path=".reyn/missing.txt", dest_path=".reyn/elsewhere.txt",
     )
-    result = _run(handle(op, ctx, "control_ir"))
+    result = _run(handle(op, ctx))
 
     assert result["status"] == "not_found"
     assert "not found" in result["error"]
@@ -164,7 +164,7 @@ def test_move_without_dest_path_errors(tmp_path, monkeypatch):
     ctx = _make_ctx(tmp_path, permission_resolver=_resolver(tmp_path))
 
     op = FileIROp(kind="file", op="move", path=".reyn/src.txt")  # no dest_path
-    result = _run(handle(op, ctx, "control_ir"))
+    result = _run(handle(op, ctx))
 
     assert result["status"] == "error"
     assert "dest_path" in result["error"]
@@ -185,7 +185,7 @@ def test_move_dest_outside_zone_denied(tmp_path, monkeypatch):
         dest_path="/tmp/reyn_test_should_be_denied_356.txt",
     )
     with pytest.raises(PermissionError):
-        _run(handle(op, ctx, "control_ir"))
+        _run(handle(op, ctx))
 
 
 # ── stat ───────────────────────────────────────────────────────────────
@@ -198,7 +198,7 @@ def test_stat_returns_metadata_for_existing_file(tmp_path, monkeypatch):
     ctx = _make_ctx(tmp_path, permission_resolver=_resolver(tmp_path))
 
     op = FileIROp(kind="file", op="stat", path="f.txt")
-    result = _run(handle(op, ctx, "control_ir"))
+    result = _run(handle(op, ctx))
 
     assert result["status"] == "ok"
     info = result["info"]
@@ -215,7 +215,7 @@ def test_stat_returns_not_found_when_path_missing(tmp_path, monkeypatch):
     ctx = _make_ctx(tmp_path, permission_resolver=_resolver(tmp_path))
 
     op = FileIROp(kind="file", op="stat", path="missing.txt")
-    result = _run(handle(op, ctx, "control_ir"))
+    result = _run(handle(op, ctx))
 
     assert result["status"] == "not_found"
 
@@ -227,7 +227,7 @@ def test_stat_outside_cwd_denied(tmp_path, monkeypatch):
 
     op = FileIROp(kind="file", op="stat", path="/etc/passwd")
     with pytest.raises(PermissionError):
-        _run(handle(op, ctx, "control_ir"))
+        _run(handle(op, ctx))
 
 
 def test_stat_distinguishes_directory_from_file(tmp_path, monkeypatch):
@@ -237,7 +237,7 @@ def test_stat_distinguishes_directory_from_file(tmp_path, monkeypatch):
     ctx = _make_ctx(tmp_path, permission_resolver=_resolver(tmp_path))
 
     op = FileIROp(kind="file", op="stat", path="subdir")
-    result = _run(handle(op, ctx, "control_ir"))
+    result = _run(handle(op, ctx))
 
     assert result["status"] == "ok"
     assert result["info"]["is_dir"] is True

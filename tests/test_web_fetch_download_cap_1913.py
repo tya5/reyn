@@ -95,7 +95,7 @@ def _client_factory(resp: _StreamResp):
 def _run(monkeypatch, resp: _StreamResp, cap: int) -> dict:
     monkeypatch.setattr(httpx, "AsyncClient", _client_factory(resp))
     op = WebFetchIROp(kind="web_fetch", url="https://example.com")
-    return asyncio.run(handle_web_fetch(op=op, ctx=_make_ctx(cap), caller="control_ir"))
+    return asyncio.run(handle_web_fetch(op=op, ctx=_make_ctx(cap)))
 
 
 def test_body_over_cap_rejected(monkeypatch) -> None:

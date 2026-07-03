@@ -63,7 +63,7 @@ async def test_delegate_to_nonexistent_assignee_is_rejected():
     """Tier 2: the #45 repro — delegating to a bare-sid assignee that names no live
     session is REJECTED with unknown_assignee (not silently orphaned)."""
     ctx = _ctx(waker=_StubWaker(live={"s1"}))  # only s1 (the caller) is live
-    res = await taskmod._create(_create_op(assignee="researcher"), ctx, "s1")
+    res = await taskmod._create(_create_op(assignee="researcher"), ctx)
     assert res["status"] == "error" and res["error"]["kind"] == "unknown_assignee", res
     # nothing was created — no orphan
     assert await ctx.task_backend.list() == []
@@ -74,7 +74,7 @@ async def test_delegate_to_live_assignee_ok():
     """Tier 2: delegating to a LIVE session is accepted (the legitimate cross-session
     delegation path is unaffected)."""
     ctx = _ctx(waker=_StubWaker(live={"s1", "worker-2"}))
-    res = await taskmod._create(_create_op(assignee="worker-2"), ctx, "s1")
+    res = await taskmod._create(_create_op(assignee="worker-2"), ctx)
     assert res["status"] == "ok", res
     assert (await ctx.task_backend.get(res["task"]["task_id"])).assignee == "worker-2"
 
@@ -85,7 +85,7 @@ async def test_owned_subtask_self_default_skips_the_check():
     (self-decomposition, the surviving self-default) is NOT checked — the caller is the live
     session making the op. (A top-level omitted assignee → UNASSIGNED, covered separately.)"""
     ctx = _ctx(waker=_StubWaker(live=set()), current_task_id="parentTask")  # no live session
-    res = await taskmod._create(_create_op(assignee=None), ctx, "s1")  # owned → self (caller)
+    res = await taskmod._create(_create_op(assignee=None), ctx)  # owned → self (caller)
     assert res["status"] == "ok", res
     assert (await ctx.task_backend.get(res["task"]["task_id"])).assignee == "s1"
 
@@ -95,5 +95,5 @@ async def test_no_waker_skips_the_check():
     """Tier 2: the check is opt-in — without a waker (direct construction / tests) the
     create is not gated (byte-identical to pre-fix)."""
     ctx = _ctx(waker=None)
-    res = await taskmod._create(_create_op(assignee="researcher"), ctx, "s1")
+    res = await taskmod._create(_create_op(assignee="researcher"), ctx)
     assert res["status"] == "ok", res

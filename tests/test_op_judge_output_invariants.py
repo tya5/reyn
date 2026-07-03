@@ -108,7 +108,7 @@ async def test_judge_output_emits_tool_executed_event(
     _seed_artifact(ctx, {"type": "t", "data": {"summary": "Hello world"}})
     op = _make_op(target="artifact.data.summary", threshold=0.8)
 
-    result = await execute_op(op, ctx, caller="control_ir")
+    result = await execute_op(op, ctx)
 
     assert result.get("status") != "error", f"unexpected error: {result}"
     # P6: at least one tool_executed event must have been emitted
@@ -137,7 +137,7 @@ async def test_judge_output_passing_score_returns_passed_true(
     _seed_artifact(ctx, {"type": "t", "data": {"summary": "A clear and concise summary."}})
     op = _make_op(target="artifact.data.summary", threshold=0.8)
 
-    result = await execute_op(op, ctx, caller="control_ir")
+    result = await execute_op(op, ctx)
 
     assert result.get("status") != "error", f"unexpected error: {result}"
     assert result["kind"] == "judge_output"
@@ -162,7 +162,7 @@ async def test_judge_output_failing_score_returns_passed_false(
     _seed_artifact(ctx, {"type": "t", "data": {"summary": "Vague text."}})
     op = _make_op(target="artifact.data.summary", threshold=0.8)
 
-    result = await execute_op(op, ctx, caller="control_ir")
+    result = await execute_op(op, ctx)
 
     assert result.get("status") != "error", f"unexpected error: {result}"
     assert result["kind"] == "judge_output"
@@ -191,7 +191,7 @@ async def test_judge_output_resolves_target_path(
     _seed_artifact(ctx, {"data": {"summary": "X"}})
     op = _make_op(target="artifact.data.summary", threshold=0.5)
 
-    result = await execute_op(op, ctx, caller="control_ir")
+    result = await execute_op(op, ctx)
 
     assert result.get("status") != "error", f"unexpected error: {result}"
     assert fake_llm.call_count == 1, "LLM must have been called once"

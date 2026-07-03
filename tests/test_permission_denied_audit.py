@@ -91,7 +91,7 @@ def test_permission_denied_op_does_not_mutate_workspace(tmp_path, monkeypatch):
     target = tmp_path / "secret_output.txt"
     op = _write_op(str(target))
 
-    result = _run(execute_op(op, ctx, caller="control_ir"))
+    result = _run(execute_op(op, ctx))
 
     # P5: workspace is not mutated
     assert not target.exists(), "denied op must not write the file"
@@ -116,7 +116,7 @@ def test_permission_denied_emits_p6_event(tmp_path, monkeypatch):
     target = tmp_path / "should_not_exist.txt"
     op = _write_op(str(target))
 
-    _run(execute_op(op, ctx, caller="control_ir"))
+    _run(execute_op(op, ctx))
 
     denial_events = [e for e in events.all() if e.type == "permission_denied"]
     assert denial_events, (
@@ -141,7 +141,7 @@ def test_permission_denied_event_carries_op_kind(tmp_path, monkeypatch):
     target = tmp_path / "no_write.txt"
     op = _write_op(str(target))
 
-    _run(execute_op(op, ctx, caller="control_ir"))
+    _run(execute_op(op, ctx))
 
     denial_events = [e for e in events.all() if e.type == "permission_denied"]
     assert denial_events, "permission_denied event must be emitted"
@@ -177,8 +177,8 @@ def test_permission_allow_then_deny_only_first_executes(tmp_path, monkeypatch):
     denied_target = tmp_path / "op2_denied.txt"
     op2 = _write_op(str(denied_target))
 
-    result1 = _run(execute_op(op1, ctx, caller="control_ir"))
-    result2 = _run(execute_op(op2, ctx, caller="control_ir"))
+    result1 = _run(execute_op(op1, ctx))
+    result2 = _run(execute_op(op2, ctx))
 
     # P5: first op wrote, second did not
     assert result1["status"] == "ok", f"first op should succeed; got {result1}"
@@ -215,7 +215,7 @@ def test_permission_denied_read_emits_p6_event(tmp_path, monkeypatch):
     # Absolute path outside CWD — denied for read.
     op = _read_op("/etc/passwd")
 
-    result = _run(execute_op(op, ctx, caller="control_ir"))
+    result = _run(execute_op(op, ctx))
 
     assert result["status"] == "denied"
 
@@ -243,7 +243,7 @@ def test_allowed_op_emits_no_denial_event(tmp_path, monkeypatch):
     # Write inside .reyn/ — always allowed.
     op = _write_op(".reyn/allowed_file.txt")
 
-    result = _run(execute_op(op, ctx, caller="control_ir"))
+    result = _run(execute_op(op, ctx))
 
     assert result["status"] == "ok"
 

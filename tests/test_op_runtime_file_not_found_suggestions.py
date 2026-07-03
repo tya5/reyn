@@ -56,7 +56,7 @@ def test_read_not_found_returns_error_and_suggestions(tmp_path, monkeypatch):
     (tmp_path / "gamma.md").write_text("gamma", encoding="utf-8")
 
     ctx = _make_ctx(tmp_path)
-    result = _run(handle(_read("nonexistent.md"), ctx, "control_ir"))
+    result = _run(handle(_read("nonexistent.md"), ctx))
 
     assert result["status"] == "not_found"
     assert result["op"] == "read"
@@ -77,7 +77,7 @@ def test_read_not_found_empty_dir_returns_empty_suggestions(tmp_path, monkeypatc
     monkeypatch.chdir(tmp_path)
     ctx = _make_ctx(tmp_path)
 
-    result = _run(handle(_read("nowhere.md"), ctx, "control_ir"))
+    result = _run(handle(_read("nowhere.md"), ctx))
 
     assert result["status"] == "not_found"
     assert result["suggestions"] == []
@@ -90,7 +90,7 @@ def test_read_not_found_capped_at_limit(tmp_path, monkeypatch):
         (tmp_path / f"file{i:02d}.md").write_text("x", encoding="utf-8")
 
     ctx = _make_ctx(tmp_path)
-    result = _run(handle(_read("missing.md"), ctx, "control_ir"))
+    result = _run(handle(_read("missing.md"), ctx))
 
     assert result["status"] == "not_found"
     assert result["suggestions"], "suggestions must be non-empty when siblings exist"
@@ -107,7 +107,7 @@ def test_read_ok_still_returns_ok_shape(tmp_path, monkeypatch):
     (tmp_path / "exists.md").write_text("hello", encoding="utf-8")
     ctx = _make_ctx(tmp_path)
 
-    result = _run(handle(_read("exists.md"), ctx, "control_ir"))
+    result = _run(handle(_read("exists.md"), ctx))
 
     assert result["status"] == "ok"
     assert result["content"] == "hello"
@@ -125,7 +125,7 @@ def test_edit_not_found_returns_error_and_suggestions(tmp_path, monkeypatch):
     (tmp_path / "other.py").write_text("pass", encoding="utf-8")
 
     ctx = _make_ctx(tmp_path)
-    result = _run(handle(_edit("missing.py", old="foo", new="bar"), ctx, "control_ir"))
+    result = _run(handle(_edit("missing.py", old="foo", new="bar"), ctx))
 
     assert result["status"] == "not_found"
     assert result["op"] == "edit"
@@ -143,7 +143,7 @@ def test_edit_existing_file_unchanged(tmp_path, monkeypatch):
     (tmp_path / "file.py").write_text("foo bar foo", encoding="utf-8")
     ctx = _make_ctx(tmp_path)
 
-    result = _run(handle(_edit("file.py", old="foo", new="baz"), ctx, "control_ir"))
+    result = _run(handle(_edit("file.py", old="foo", new="baz"), ctx))
 
     # old_string appears twice, replace_all not set → error (= existing behaviour)
     assert result["status"] == "error"
@@ -160,7 +160,7 @@ def test_read_not_found_in_nested_missing_dir(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     ctx = _make_ctx(tmp_path)
 
-    result = _run(handle(_read("nonexistent_dir/file.md"), ctx, "control_ir"))
+    result = _run(handle(_read("nonexistent_dir/file.md"), ctx))
 
     assert result["status"] == "not_found"
     assert result["suggestions"] == []
@@ -175,7 +175,7 @@ def test_read_not_found_in_nested_existing_dir(tmp_path, monkeypatch):
     (sub / "sibling2.txt").write_text("b", encoding="utf-8")
 
     ctx = _make_ctx(tmp_path)
-    result = _run(handle(_read("subdir/missing.txt"), ctx, "control_ir"))
+    result = _run(handle(_read("subdir/missing.txt"), ctx))
 
     assert result["status"] == "not_found"
     suggestion_names = {Path(p).name for p in result["suggestions"]}
@@ -201,7 +201,7 @@ def test_suggestions_not_starved_by_dirs(tmp_path, monkeypatch):
         (tmp_path / name).write_text("x", encoding="utf-8")
 
     ctx = _make_ctx(tmp_path)
-    result = _run(handle(_read("missing.md"), ctx, "control_ir"))
+    result = _run(handle(_read("missing.md"), ctx))
 
     assert result["status"] == "not_found"
     names = {Path(p).name for p in result["suggestions"]}

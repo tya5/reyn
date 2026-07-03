@@ -233,7 +233,7 @@ async def _cmd_rm_async(args: argparse.Namespace) -> int:
     )
 
     op = IndexDropIROp(kind="index_drop", source=args.name)
-    result = await _op_runtime.execute_op(op, ctx, caller="control_ir")
+    result = await _op_runtime.execute_op(op, ctx)
 
     if result.get("status") in ("error", "denied"):
         err = result.get("error", "(unknown error)")

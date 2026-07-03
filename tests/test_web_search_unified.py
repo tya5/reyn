@@ -241,7 +241,7 @@ def test_web_search_config_deny_raises_permission_error(tmp_path: Path) -> None:
     ctx = _make_op_context({"web.search": "deny"}, tmp_path)
     op = WebSearchIROp(kind="web_search", query="test", max_results=5, backend="duckduckgo")
     with pytest.raises(PermissionError, match="web search denied by config"):
-        asyncio.run(handle_web_search(op, ctx, caller="control_ir"))
+        asyncio.run(handle_web_search(op, ctx))
 
 
 def test_web_search_no_deny_config_does_not_raise(tmp_path: Path) -> None:
@@ -257,7 +257,7 @@ def test_web_search_no_deny_config_does_not_raise(tmp_path: Path) -> None:
     ctx = _make_op_context({}, tmp_path)  # no web.search config → allow
     op = WebSearchIROp(kind="web_search", query="test", max_results=5, backend="duckduckgo")
     # Backend will fail (no real network), but the PermissionError must NOT fire.
-    result = asyncio.run(handle_web_search(op, ctx, caller="control_ir"))
+    result = asyncio.run(handle_web_search(op, ctx))
     # Permission passed — result is either ok or an error from the backend.
     assert result.get("kind") == "web_search"
     assert "status" in result

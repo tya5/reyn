@@ -21,7 +21,6 @@ from .context import OpContext
 async def handle(
     op: SandboxedExecIROp,
     ctx: OpContext,
-    caller: Literal["preprocessor", "control_ir"],
 ) -> dict:
     # FP-0050/#1822 S5 (EP4): exec-scope scan of the command (joined argv) BEFORE
     # any exec. A block-severity hit denies via the permission-deny channel

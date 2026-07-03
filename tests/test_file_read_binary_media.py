@@ -78,7 +78,7 @@ def test_read_png_returns_media_block(tmp_path, monkeypatch):
 
     ctx = _ctx(tmp_path, multimodal=MultimodalConfig(max_bytes=5_000_000, on_oversize="ask"))
     op = FileIROp(kind="file", op="read", path="shot.png")
-    result = _run(handle(op, ctx, "control_ir"))
+    result = _run(handle(op, ctx))
 
     assert result["status"] == "ok"
     assert result["content"] == ""
@@ -109,7 +109,7 @@ def test_read_recognised_image_extensions(tmp_path, monkeypatch, filename, expec
 
     ctx = _ctx(tmp_path, multimodal=MultimodalConfig(max_bytes=5_000_000, on_oversize="ask"))
     op = FileIROp(kind="file", op="read", path=filename)
-    result = _run(handle(op, ctx, "control_ir"))
+    result = _run(handle(op, ctx))
 
     assert result["status"] == "ok"
     assert result["media_blocks"][0]["mimeType"] == expected_mime
@@ -125,7 +125,7 @@ def test_read_text_file_unchanged_when_extension_not_image(tmp_path, monkeypatch
 
     ctx = _ctx(tmp_path, multimodal=MultimodalConfig(max_bytes=5_000_000, on_oversize="ask"))
     op = FileIROp(kind="file", op="read", path="notes.md")
-    result = _run(handle(op, ctx, "control_ir"))
+    result = _run(handle(op, ctx))
 
     assert result["status"] == "ok"
     assert "hello world" in result["content"]
@@ -143,7 +143,7 @@ def test_read_unknown_extension_takes_text_path(tmp_path, monkeypatch):
 
     ctx = _ctx(tmp_path, multimodal=MultimodalConfig(max_bytes=5_000_000, on_oversize="ask"))
     op = FileIROp(kind="file", op="read", path="noext")
-    result = _run(handle(op, ctx, "control_ir"))
+    result = _run(handle(op, ctx))
 
     assert result["status"] == "ok"
     assert result["content"] == "plain text"
@@ -166,7 +166,7 @@ def test_oversize_image_with_deny_returns_status_denied(tmp_path, monkeypatch):
         multimodal=MultimodalConfig(max_bytes=5_000_000, on_oversize="deny"),
     )
     op = FileIROp(kind="file", op="read", path="huge.png")
-    result = _run(handle(op, ctx, "control_ir"))
+    result = _run(handle(op, ctx))
 
     assert result["status"] == "denied"
     assert result["size_bytes"] == 10_000_000
@@ -184,7 +184,7 @@ def test_oversize_image_with_ask_no_returns_status_denied(tmp_path, monkeypatch)
         bus_answer="no",
     )
     op = FileIROp(kind="file", op="read", path="huge.jpg")
-    result = _run(handle(op, ctx, "control_ir"))
+    result = _run(handle(op, ctx))
 
     assert result["status"] == "denied"
 
@@ -200,7 +200,7 @@ def test_oversize_image_with_allow_loads_anyway(tmp_path, monkeypatch):
         bus_answer="never_called",
     )
     op = FileIROp(kind="file", op="read", path="huge.png")
-    result = _run(handle(op, ctx, "control_ir"))
+    result = _run(handle(op, ctx))
 
     assert result["status"] == "ok"
     assert result["media_blocks"]
@@ -217,7 +217,7 @@ def test_no_multimodal_config_skips_gate(tmp_path, monkeypatch):
 
     ctx = _ctx(tmp_path, multimodal=None)
     op = FileIROp(kind="file", op="read", path="shot.png")
-    result = _run(handle(op, ctx, "control_ir"))
+    result = _run(handle(op, ctx))
 
     assert result["status"] == "ok"
     assert result["media_blocks"]
@@ -235,7 +235,7 @@ def test_read_missing_image_returns_not_found(tmp_path, monkeypatch):
 
     ctx = _ctx(tmp_path, multimodal=MultimodalConfig(max_bytes=5_000_000, on_oversize="ask"))
     op = FileIROp(kind="file", op="read", path="missing.png")
-    result = _run(handle(op, ctx, "control_ir"))
+    result = _run(handle(op, ctx))
 
     assert result["status"] == "not_found"
     assert "suggestions" in result

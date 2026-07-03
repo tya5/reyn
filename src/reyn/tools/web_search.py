@@ -3,7 +3,7 @@
 This is the FIRST capability migrated to the unified registry.
 The existing handler in src/reyn/op_runtime/web.py is preserved
 and wrapped via a thin adapter that translates between the old
-(op, ctx, caller) signature and the new (args, ctx) signature.
+(op, ctx) signature and the new (args, ctx) signature.
 
 Both router-style and phase-style dispatch paths consume this
 ToolDefinition; M2 verifies byte-identity for both surfaces.
@@ -46,7 +46,7 @@ async def _handle(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
     """Adapter wrapping op_runtime.web.handle_web_search.
 
     Bridges between the unified (args, ctx) signature and the
-    existing (op, ctx, caller) signature. Once M2 succeeds, the
+    existing (op, ctx) signature. Once M2 succeeds, the
     body of handle_web_search may be inlined here in M4 cleanup.
     """
     # Lazy import to avoid circular dependency at registry-init time.
@@ -103,7 +103,7 @@ async def _handle(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
         parent_skill_run_id=None,
     )
 
-    return await handle_web_search(op=op, ctx=legacy_ctx, caller="control_ir")
+    return await handle_web_search(op=op, ctx=legacy_ctx)
 
 
 WEB_SEARCH = ToolDefinition(

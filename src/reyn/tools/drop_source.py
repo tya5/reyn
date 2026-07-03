@@ -101,7 +101,7 @@ async def _handle_drop_source(
             subscribers=getattr(ctx.events, "subscribers", []),
         )
 
-    return await execute_op(op, legacy_ctx, caller="control_ir")
+    return await execute_op(op, legacy_ctx)
 
 
 DROP_SOURCE = ToolDefinition(

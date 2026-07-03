@@ -187,7 +187,7 @@ async def _handle_recall(args: Mapping[str, Any], ctx: ToolContext) -> ToolResul
             resolver=ctx.resolver,
         )
 
-    return await execute_op(op, legacy_ctx, caller="control_ir")
+    return await execute_op(op, legacy_ctx)
 
 
 RECALL = ToolDefinition(

@@ -31,7 +31,7 @@ def _options_to_choices(options: list[str]) -> list[InterventionChoice]:
     ]
 
 
-async def handle(op: AskUserIROp, ctx: OpContext, caller: Literal["preprocessor", "control_ir"]) -> dict:
+async def handle(op: AskUserIROp, ctx: OpContext) -> dict:
     if ctx.intervention_bus is None:
         raise RuntimeError(
             "ask_user invoked without an intervention_bus on OpContext. "

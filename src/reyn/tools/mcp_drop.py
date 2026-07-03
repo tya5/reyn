@@ -137,7 +137,7 @@ async def _handle_mcp_drop_server_op(
             subscribers=getattr(ctx.events, "subscribers", []),
         )
 
-    return await drop_handle(op=op, ctx=legacy_ctx, caller="control_ir")
+    return await drop_handle(op=op, ctx=legacy_ctx)
 
 
 MCP_DROP_SERVER_OP = ToolDefinition(

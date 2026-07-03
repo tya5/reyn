@@ -29,7 +29,7 @@ def _ctx(tmp_path: Path) -> OpContext:
 
 
 def _read(tmp_path: Path, **kw) -> dict:
-    return asyncio.run(handle(FileIROp(kind="file", op="read", **kw), _ctx(tmp_path), "control_ir"))
+    return asyncio.run(handle(FileIROp(kind="file", op="read", **kw), _ctx(tmp_path)))
 
 
 def test_single_line_over_cap_is_char_truncated_and_honest(tmp_path: Path):

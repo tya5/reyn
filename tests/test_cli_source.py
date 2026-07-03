@@ -314,7 +314,7 @@ async def test_cmd_rm_yes_removes_source(tmp_path, capsys, monkeypatch):
     monkeypatch.setattr(_src_mod, "_find_project_root_safe", lambda _: None)
     monkeypatch.setattr(_src_mod, "_make_cli_workspace", lambda _: _MinimalWorkspace(tmp_path))
 
-    async def fake_execute_op(op, ctx, *, caller):
+    async def fake_execute_op(op, ctx):
         return {"removed": True, "chunks_dropped": 77}
 
     # Patch execute_op at the op_runtime level so the CLI handler's lazy

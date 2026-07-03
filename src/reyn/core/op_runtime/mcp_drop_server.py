@@ -153,7 +153,6 @@ def _resolve_project_root(ctx: OpContext) -> Path:
 async def handle(
     op: MCPDropServerIROp,
     ctx: OpContext,
-    caller: Literal["preprocessor", "control_ir"],
 ) -> dict:
     """Execute an mcp_drop_server op — remove a configured MCP server.
 

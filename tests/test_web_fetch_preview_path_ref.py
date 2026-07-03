@@ -149,7 +149,7 @@ def test_html_fetch_returns_preview_and_path_ref(
         kind="web_fetch", url="https://example.com", max_length=50_000,
     )
     ctx = _ctx_with_media_store(tmp_path)
-    result = asyncio.run(handle_web_fetch(op=op, ctx=ctx, caller="control_ir"))
+    result = asyncio.run(handle_web_fetch(op=op, ctx=ctx))
 
     assert result["status"] == "ok"
     assert result["stored_as"] == "path_ref"
@@ -196,12 +196,12 @@ def test_html_preview_is_deterministic_for_same_input(
 
     r1 = asyncio.run(
         handle_web_fetch(
-            op=op, ctx=_ctx_with_media_store(tmp_path), caller="control_ir",
+            op=op, ctx=_ctx_with_media_store(tmp_path),
         ),
     )
     r2 = asyncio.run(
         handle_web_fetch(
-            op=op, ctx=_ctx_with_media_store(tmp_path), caller="control_ir",
+            op=op, ctx=_ctx_with_media_store(tmp_path),
         ),
     )
 
@@ -229,7 +229,7 @@ def test_plain_text_fetch_returns_first_lines_preview(
         kind="web_fetch", url="https://example.com/log.txt", max_length=50_000,
     )
     ctx = _ctx_with_media_store(tmp_path)
-    result = asyncio.run(handle_web_fetch(op=op, ctx=ctx, caller="control_ir"))
+    result = asyncio.run(handle_web_fetch(op=op, ctx=ctx))
 
     assert result["stored_as"] == "path_ref"
     preview = result["preview"]
@@ -258,7 +258,7 @@ def test_legacy_no_media_store_path_returns_inline_content(
     )
     result = asyncio.run(
         handle_web_fetch(
-            op=op, ctx=_ctx_without_media_store(), caller="control_ir",
+            op=op, ctx=_ctx_without_media_store(),
         ),
     )
 
