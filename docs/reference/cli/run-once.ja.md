@@ -35,8 +35,8 @@ prompt は stdin から全体を（行単位でなく）読みます。
 | `--exclude-tools NAMES` | agent の LLM-visible カタログから隠すツール名（カンマ区切り、例 `web__search,web__fetch`）。`reyn chat --exclude-tools` と同じ。 |
 | `--exclude-categories NAMES` | カタログソースで隠すカテゴリ名（カンマ区切り、例: task に Reyn 自身のソースが無関係なら `reyn_source`）。`reyn chat --exclude-categories` と同じ。 |
 
-environment-backend フラグと [共通フラグ](common-flags.md) は `reyn chat` /
-`reyn run` と共有です。
+environment-backend フラグと [共通フラグ](common-flags.md) は `reyn chat`
+と共有です。
 
 ## 挙動メモ
 
@@ -69,6 +69,5 @@ cat task.md | reyn run-once --exclude-tools web__search,web__fetch --exclude-cat
 
 ## 関連
 
-- [`reyn chat`](chat.md) — 対話版（スコープ付きセッション構築を共有）
-- [`reyn run`](run.md) — 特定の skill を端から端まで実行
+- [`reyn chat`](chat.md) — 対話版(スコープ付きセッション構築を共有)
 - [共通フラグ](common-flags.md)

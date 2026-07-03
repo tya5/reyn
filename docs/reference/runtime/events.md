@@ -196,6 +196,5 @@ Two consequences fall out of "every state change emits":
 
 ## See also
 
-- [run.md](../cli/run.md) — `--events` flag
 - [control-ir.md](control-ir.md) — Control IR ops
 - [Concepts: events](../../concepts/runtime/events.md)

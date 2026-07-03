@@ -100,7 +100,6 @@ You don't need a debugger; the log already has the information.
 ## See also
 
 - [Reference: events](../../reference/runtime/events.md) — the full event taxonomy
-- [Reference: events CLI](../../reference/cli/run.md) — `--events` flag on `reyn run`
 
 Events are not just an audit trail — they are the substrate for crash recovery
 and user-facing time-travel (`/rewind`). For payload-level trace inspection,

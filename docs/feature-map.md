@@ -72,9 +72,7 @@ mindmap
       CodeAct
       Per-call gate unchanged
     ⌨️ CLI
-      reyn run
       reyn chat
-      reyn lint
       reyn agent
       reyn topology
       reyn memory
@@ -363,9 +361,7 @@ How tools are presented to the LLM and how its calls are dispatched is a **plugg
 
 | Command | Description | Documentation |
 |---------|-------------|---------------|
-| `reyn run` | Execute a skill non-interactively | [Reference](reference/cli/run.md) |
 | `reyn chat` | Interactive multi-turn chat with a named agent | [Reference](reference/cli/chat.md) |
-| `reyn lint` | DSL linter for a skill directory | [Reference](reference/cli/lint.md) |
 | `reyn agent` | Create and manage named persistent agents | [Reference](reference/cli/agent.md) |
 | `reyn topology` | Create and manage communication topologies | [Reference](reference/cli/topology.md) |
 | `reyn memory` | CRUD + search + export/import for agent memories | [Reference](reference/cli/memory.md) |

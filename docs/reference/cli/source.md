@@ -173,6 +173,5 @@ reyn run index_docs --source my_docs --path "docs/**/*.md" --description "Projec
 ## See also
 
 - [Concepts: RAG](../../concepts/data-retrieval/rag.md) — indexing workflow, source model, and chunker overview
-- [`reyn run index_docs`](run.md) — create or update a source index
 - [`recall` tool](../../concepts/data-retrieval/rag.md) — LLM-facing retrieval tool
 - [Concepts: permission model](../../concepts/runtime/permission-model.md) — `index_drop` permission gate

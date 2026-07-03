@@ -159,6 +159,5 @@ reyn events .reyn/events/<run_id>.jsonl
 
 ## 関連情報
 
-- [run.md](../cli/run.md) — `--events` フラグ
 - [control-ir.md](control-ir.md) — Control IR op
 - [コンセプト: events](../../concepts/runtime/events.md)

@@ -2,12 +2,12 @@
 type: reference
 topic: cli
 audience: [human, agent]
-applies_to: [reyn run, reyn eval, reyn chat]
+applies_to: [reyn chat, reyn run-once]
 ---
 
 # 共通フラグ
 
-`reyn run`、`reyn eval`、`reyn chat` に共通のフラグです。コマンド固有のフラグはそれぞれのページに記載されています。
+`reyn chat` と `reyn run-once` に共通のフラグです。コマンド固有のフラグはそれぞれのページに記載されています。
 
 ## モデル選択
 
@@ -35,14 +35,7 @@ applies_to: [reyn run, reyn eval, reyn chat]
 
 | フラグ | 利用可能 | デフォルト | 説明 |
 |------|---------|---------|-------------|
-| `--allow-unsafe-python` | `run`、`chat` | オフ | `mode: unsafe` の Python preprocessor ステップを許可（AST サンドボックスなし）。`--allow-untrusted-python` はレガシーエイリアス。safe モードのステップはこれなしで動作します。 |
-| `--strict` | `run` | オフ | すべてのネスト深さで必須フィールドを検証します（デフォルト: トップレベルのみ）。 |
-
-## 診断
-
-| フラグ | 利用可能 | 説明 |
-|------|--------------|-------------|
-| `--events` | `run` | 実行終了後に完全なイベントログを表示。 |
+| `--allow-unsafe-python` | `chat` | オフ | `mode: unsafe` の Python preprocessor ステップを許可（AST サンドボックスなし）。`--allow-untrusted-python` はレガシーエイリアス。safe モードのステップはこれなしで動作します。 |
 
 ## 解決順序
 
@@ -53,10 +46,8 @@ applies_to: [reyn run, reyn eval, reyn chat]
 3. `.reyn/config.yaml`（個人設定オーバーライド）— `reyn.yaml` と同じスキーマ
 4. 組み込みデフォルト
 
-`reyn eval` は `--model` に追加のレイヤーを加えます: eval スペックの `model:` フィールドが CLI と `reyn.yaml` の間に位置します。
-
 ## 関連情報
 
-- [run.md](run.md)、[chat.md](chat.md)
+- [chat.md](chat.md)、[run-once.md](run-once.md)
 - [リファレンス: reyn.yaml](../config/reyn-yaml.md)
 - [リファレンス: permissions](../config/permissions.md)

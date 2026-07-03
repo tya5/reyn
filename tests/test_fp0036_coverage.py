@@ -65,15 +65,6 @@ class TestParseFeatureMap:
             f"Got paths sample: {sorted(p for p in paths if 'control' in p)[:10]}"
         )
 
-    def test_known_path_cli_reyn_run(self) -> None:
-        """Tier 1: 'cli/reyn-run' is parsed from the CLI table."""
-        features = parse_feature_map(FEATURE_MAP_PATH)
-        paths = {f.path for f in features}
-        assert "cli/reyn-run" in paths, (
-            f"Expected 'cli/reyn-run' in feature paths. "
-            f"Got cli paths: {sorted(p for p in paths if 'cli' in p)[:10]}"
-        )
-
     def test_nodes_have_correct_parent_structure(self) -> None:
         """Tier 1: Section nodes have None parent; leaf nodes have non-None parent."""
         features = parse_feature_map(FEATURE_MAP_PATH)

@@ -2,12 +2,12 @@
 type: reference
 topic: cli
 audience: [human, agent]
-applies_to: [reyn run, reyn eval, reyn chat]
+applies_to: [reyn chat, reyn run-once]
 ---
 
 # Common flags
 
-Flags shared across `reyn run`, `reyn eval`, and `reyn chat`. Per-command flags live in their own pages.
+Flags shared across `reyn chat` and `reyn run-once`. Per-command flags live in their own pages.
 
 ## Model selection
 
@@ -35,14 +35,7 @@ All limits are read from `reyn.yaml`'s `safety:` block by default and can be ove
 
 | Flag | Available on | Default | Description |
 |------|--------------|---------|-------------|
-| `--allow-unsafe-python` | `run`, `chat` | off | Allow `mode: unsafe` Python preprocessor steps (no AST sandbox). Safe-mode steps run without this. `--allow-untrusted-python` is a legacy alias. |
-| `--strict` | `run` | off | Validate required fields at every nesting depth (default: top level only). |
-
-## Diagnostics
-
-| Flag | Available on | Description |
-|------|--------------|-------------|
-| `--events` | `run` | Print the full event log at the end of execution. |
+| `--allow-unsafe-python` | `chat` | off | Allow `mode: unsafe` Python preprocessor steps (no AST sandbox). Safe-mode steps run without this. `--allow-untrusted-python` is a legacy alias. |
 
 ## Resolution order
 
@@ -53,10 +46,8 @@ For each flag, the runtime checks (highest precedence first):
 3. `.reyn/config.yaml` (personal overrides) — same schema as `reyn.yaml`
 4. Built-in default
 
-`reyn eval` adds one extra layer for `--model`: the eval spec's `model:` field sits between CLI and `reyn.yaml`.
-
 ## See also
 
-- [run.md](run.md), [chat.md](chat.md)
+- [chat.md](chat.md), [run-once.md](run-once.md)
 - [Reference: reyn.yaml](../config/reyn-yaml.md)
 - [Reference: permissions](../config/permissions.md)

@@ -468,7 +468,7 @@ reyn dogfood publish .reyn/dogfood/runs/a1b2c3d4-... --dry-run
 
 ## Related
 
-- [Reference: `reyn run`](run.md) — headless execution (same Agent.run path)
+- [Reference: `reyn run-once`](run-once.md) — headless execution (same Agent.run path)
 - [Concepts: events](../../concepts/runtime/events.md) — P6 event log
 - [Deep dive: dogfood discipline](../../deep-dives/contributing/dogfood-discipline.md) — 4-band outcome + 9-principle framework
 - [Deep dive: dogfood reporting](../../deep-dives/contributing/dogfood-reporting.md) — Discussion format + issue filing guide
