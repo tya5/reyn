@@ -18,6 +18,7 @@ from reyn.interfaces.inline.app import (
     _session_hook_items,
     _session_visibility_items,
     _task_expansion,
+    _task_rows,
 )
 from reyn.interfaces.inline.region import DetailElement
 from reyn.interfaces.inline.region_command import CommandUIElement
@@ -651,3 +652,35 @@ def test_task_expansion_child_row_more_indented_than_parent() -> None:
     root_indent = len(root_row) - len(root_row.lstrip())
     child_indent = len(child_row) - len(child_row.lstrip())
     assert child_indent > root_indent
+
+
+# _task_rows live-reading contract
+# ---------------------------------------------------------------------------
+
+
+def test_task_rows_dict_replacement_is_visible_through_lambda() -> None:
+    """Tier 2: live-reading DetailElement over task_cache re-reads the dict on every lines() call.
+
+    _menu_open creates DetailElement(lambda: _task_rows(tc.get("tree") or [], 0) …)
+    so that the open task dropdown reflects _task_poll's updates. The key contract:
+    replacing tc["tree"] (as _task_poll does — it assigns a new list, not in-place)
+    is immediately visible in the next lines() call, unlike a snapshot-time pre-compute.
+    """
+    tc: dict = {"tree": [{"task_id": "a", "name": "Task A", "status": "running", "children": []}]}
+    el = DetailElement(lambda: _task_rows(tc.get("tree") or [], 0) or ["(no active tasks)"])
+    assert any("Task A" in ln for ln in el.lines())
+
+    # Simulate _task_poll replacing the tree with a new list (not in-place mutation):
+    tc["tree"] = [{"task_id": "b", "name": "Task B", "status": "done", "children": []}]
+    assert any("Task B" in ln for ln in el.lines())
+    assert not any("Task A" in ln for ln in el.lines())
+
+
+def test_task_rows_empty_tree_replacement_shows_fallback() -> None:
+    """Tier 2: when _task_poll clears the tree, the live element shows the empty-state fallback."""
+    tc: dict = {"tree": [{"task_id": "a", "name": "Task A", "status": "running", "children": []}]}
+    el = DetailElement(lambda: _task_rows(tc.get("tree") or [], 0) or ["(no active tasks)"])
+    assert any("Task A" in ln for ln in el.lines())
+
+    tc["tree"] = []
+    assert el.lines() == ["(no active tasks)"]
