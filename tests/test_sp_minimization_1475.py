@@ -74,12 +74,12 @@ def test_file_action_names_backtick_wrapped() -> None:
     assert "`file__edit`" in sp, "file__edit must be backtick-wrapped in SP"
 
 
-def test_skill_example_backtick_wrapped() -> None:
-    """Tier 2: #1475 — skill__code_review (example in ROUTING RULE ABSOLUTE)
+def test_action_example_backtick_wrapped() -> None:
+    """Tier 2: #1475 — the action-name example in ROUTING RULE ABSOLUTE
     appears backtick-wrapped."""
     sp = _sp()
-    assert "`skill__code_review`" in sp, (
-        "skill__code_review example in ROUTING RULE ABSOLUTE must be backtick-wrapped"
+    assert "`mcp__brave__search`" in sp, (
+        "the action-name example in ROUTING RULE ABSOLUTE must be backtick-wrapped"
     )
 
 
