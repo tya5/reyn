@@ -429,3 +429,77 @@ def test_web_search_results_shows_count() -> None:
         {"kind": "web_search", "query": "x", "status": "ok", "results": [{"title": "X"}]},
     )
     assert out1 == "1 result"
+
+
+def test_file_mkdir_shows_created_path() -> None:
+    """Tier 2: file mkdir result (op='mkdir', path=...) shows 'Created {path}'.
+
+    file__mkdir returns {kind, op='mkdir', path, status='ok', created: bool} with
+    no matching op branch; without this fix it falls to status → shows 'ok'.
+    """
+    assert summarize_tool_result(
+        "file__mkdir",
+        {"kind": "file", "op": "mkdir", "path": "src/new/", "status": "ok", "created": True},
+    ) == "Created src/new/"
+    assert summarize_tool_result(
+        "file__mkdir", {"op": "mkdir"}
+    ) == "Created directory"
+
+
+def test_file_move_shows_destination() -> None:
+    """Tier 2: file move result (op='move', dest_path=...) shows 'Moved to {dest}'.
+
+    file__move returns {kind, op='move', path, dest_path, status='ok', moved: True}
+    with no matching op branch; without this fix it falls to status → shows 'ok'.
+    """
+    assert summarize_tool_result(
+        "file__move",
+        {"kind": "file", "op": "move", "path": "old.py", "dest_path": "new.py",
+         "status": "ok", "moved": True},
+    ) == "Moved to new.py"
+    assert summarize_tool_result(
+        "file__move", {"op": "move"}
+    ) == "Moved"
+
+
+def test_cron_list_shows_job_count() -> None:
+    """Tier 2: cron_list result ({status, source, jobs: [...]}) shows 'N jobs'.
+
+    cron_list returns {"status": "ok", "source": "...", "jobs": [...]} — 'jobs' is
+    not in the covered list-key set so without this branch it falls to status → 'ok'.
+    """
+    assert summarize_tool_result(
+        "cron_list",
+        {"status": "ok", "source": "live_scheduler",
+         "jobs": [{"name": "nightly"}, {"name": "weekly"}]},
+    ) == "2 jobs"
+    assert summarize_tool_result(
+        "cron_list", {"status": "ok", "source": "config_file", "jobs": [{"name": "daily"}]}
+    ) == "1 job"
+    assert summarize_tool_result(
+        "cron_list", {"status": "ok", "source": "live_scheduler", "jobs": []}
+    ) == "0 jobs"
+
+
+def test_sandboxed_exec_ok_shows_exit_code() -> None:
+    """Tier 2: sandboxed_exec success (returncode int, status='ok') shows 'exit N'.
+
+    sandboxed_exec returns {kind, status, returncode, stdout, stderr, ...}; for
+    status='ok' (exit 0) the generic 'ok' is unhelpful. 'timeout'/'cancelled' are
+    already informative via the status branch and are not overridden.
+    """
+    assert summarize_tool_result(
+        "sandboxed_exec",
+        {"kind": "sandboxed_exec", "status": "ok", "backend": "subprocess",
+         "returncode": 0, "stdout": "hello", "stderr": "", "truncated": False},
+    ) == "exit 0"
+    assert summarize_tool_result(
+        "sandboxed_exec",
+        {"kind": "sandboxed_exec", "status": "timeout", "backend": "subprocess",
+         "returncode": -1, "stdout": "", "stderr": "", "truncated": False},
+    ) == "timeout"
+    assert summarize_tool_result(
+        "sandboxed_exec",
+        {"kind": "sandboxed_exec", "status": "cancelled", "backend": "subprocess",
+         "returncode": -1, "stdout": "", "stderr": "", "truncated": False},
+    ) == "cancelled"
