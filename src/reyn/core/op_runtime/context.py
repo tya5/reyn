@@ -99,7 +99,7 @@ class OpContext:
     # debug logs, and future cascade-discard semantics. ``None`` means
     # "no parent visible" (e.g. preprocessor-spawned sub-skills, or
     # runtime invocations that don't track a run_id).
-    parent_skill_run_id: str | None = None
+    parent_run_id: str | None = None
 
     # FP-0021: the run_id of the currently-executing run.
     # Threaded from the runtime through the ctx-build seams to OpContext so

@@ -337,7 +337,7 @@ def test_e2e_create_with_webhook_then_cancel_fires_disposition(tmp_path, monkeyp
     # Real injected collaborators (no mocks): a fast agent-send stub so the
     # background run doesn't reach the LLM, and a recording webhook poster.
     async def _stub_send(*_args, **_kwargs):
-        return {"reply": "ok", "partial": False, "running_skill_run_ids": []}
+        return {"reply": "ok", "partial": False, "running_run_ids": []}
 
     monkeypatch.setattr(a2a_mod, "send_to_agent_impl", _stub_send)
     monkeypatch.setattr(

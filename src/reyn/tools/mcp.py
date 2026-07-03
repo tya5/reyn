@@ -322,7 +322,7 @@ async def _handle_call_mcp_tool(
             intervention_bus=None,
             current_phase="",
             caller="direct",
-            parent_skill_run_id=None,
+            parent_run_id=None,
         )
         return await mcp_handle(op=op, ctx=legacy_ctx)
 

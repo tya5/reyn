@@ -100,7 +100,7 @@ async def _handle(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
         intervention_bus=None,
         current_phase="",
         caller="direct",
-        parent_skill_run_id=None,
+        parent_run_id=None,
     )
 
     return await handle_web_search(op=op, ctx=legacy_ctx)
