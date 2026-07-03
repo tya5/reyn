@@ -1321,9 +1321,7 @@ class Session:
         )
         # Issue #162: surface session-level lifecycle events (compaction
         # today; attach/detach + budget warnings as growth) into the
-        # conv pane via OutboxMessage(kind="system"). Sibling of the
-        # per-skill ChatEventForwarder; both subscribe to event logs but
-        # at different scopes.
+        # conv pane via OutboxMessage(kind="system").
         from reyn.runtime.lifecycle_forwarder import ChatLifecycleForwarder
         self._chat_events.add_subscriber(ChatLifecycleForwarder(self.outbox))
         # #398 v4 emitter family — generic events-log subscriber that

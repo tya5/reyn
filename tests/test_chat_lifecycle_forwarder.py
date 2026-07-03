@@ -2,10 +2,10 @@
 
 When ``CompactionController`` finishes collapsing N early-session turns
 into a rolling summary, the conv pane previously showed nothing — users
-had no signal that early turns had been replaced. This forwarder is a
-session-scoped sibling of ``ChatEventForwarder`` (= per-skill) that
-pushes a ``[↑ N turns compacted]`` system marker into the outbox so the
-conversation pane's ``_render_system_message`` path can display it.
+had no signal that early turns had been replaced. This session-scoped
+forwarder pushes a ``[↑ N turns compacted]`` system marker into the
+outbox so the conversation pane's ``_render_system_message`` path can
+display it.
 
 Pins:
   1. ``compaction_completed`` event → ``OutboxMessage(kind="system",
