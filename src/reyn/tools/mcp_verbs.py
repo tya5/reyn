@@ -201,10 +201,10 @@ async def _handle_mcp_install_registry(
     # one file/compact/recall/web_fetch/sandboxed_exec use), not a hand-built one.
     # On the chat-router path this yields the real Workspace rooted at the agent's
     # workspace_base_dir; hand-building from ctx.workspace (None there) wrote the
-    # config to cwd. Only the install-specific decl + skill_name are overridden.
+    # config to cwd. Only the install-specific decl + actor are overridden.
     op_ctx = build_legacy_op_context(ctx)
     op_ctx.permission_decl = decl
-    op_ctx.skill_name = "mcp__install_registry"
+    op_ctx.actor = "mcp__install_registry"
 
     result = await mcp_install_handle(op, op_ctx)
     return {"status": "ok", "data": result}
@@ -333,7 +333,7 @@ async def _handle_mcp_install_package(
     # real Workspace on the chat path; override only the install-specific fields.
     op_ctx = build_legacy_op_context(ctx)
     op_ctx.permission_decl = decl
-    op_ctx.skill_name = "mcp__install_package"
+    op_ctx.actor = "mcp__install_package"
 
     result = await mcp_install_handle(op, op_ctx)
     return {"status": "ok", "data": result}

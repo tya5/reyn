@@ -228,7 +228,7 @@ async def _cmd_rm_async(args: argparse.Namespace) -> int:
         events=events,
         permission_decl=decl,
         permission_resolver=perm_resolver,
-        skill_name="reyn_source_rm",
+        actor="reyn_source_rm",
         intervention_bus=bus,
     )
 

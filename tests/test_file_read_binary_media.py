@@ -55,7 +55,7 @@ def _ctx(tmp_path: Path, *, multimodal: MultimodalConfig | None, bus_answer: str
         events=events,
         permission_decl=PermissionDecl(),
         permission_resolver=resolver,
-        skill_name="test",
+        actor="test",
         intervention_bus=_FakeBus(bus_answer),  # type: ignore[arg-type]
         multimodal_config=multimodal,
     )

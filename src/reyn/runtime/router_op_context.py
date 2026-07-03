@@ -1,6 +1,6 @@
 """#1412: single-source the chat-router OpContext construction.
 
-Two hosts built the ``skill_name="chat_router"`` OpContext with ~95% identical
+Two hosts built the ``actor="chat_router"`` OpContext with ~95% identical
 code: ``Session._make_router_op_context`` (session.py) and
 ``RouterHostAdapter.make_router_op_context`` (services/router_host_adapter.py).
 They drifted — #1410/#1411 threaded ``base_dir`` to one and lagged the other
@@ -117,7 +117,7 @@ def build_router_op_context(
     workspace = Workspace(
         events=events,
         permission_resolver=permission_resolver,
-        skill_name="chat_router",
+        actor="chat_router",
         # #187: chat OpContext FS root = the container repo root with a container
         # env-backend (e.g. /testbed); state_dir stays host-side. None → cwd default.
         base_dir=workspace_base_dir,
@@ -129,7 +129,7 @@ def build_router_op_context(
         events=events,
         permission_decl=decl,
         permission_resolver=permission_resolver,
-        skill_name="chat_router",
+        actor="chat_router",
         mcp_servers=mcp_servers_flat,
         run_id=run_id,
         agent_id=agent_id,

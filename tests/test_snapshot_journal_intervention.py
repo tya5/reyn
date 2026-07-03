@@ -47,7 +47,7 @@ def _iv_dict(iid: str, **overrides) -> dict:
         "choices": [],
         "suggestions": [],
         "run_id": "run_alpha_001",
-        "skill_name": "demo",
+        "actor": "demo",
         "id": iid,
         **overrides,
     }

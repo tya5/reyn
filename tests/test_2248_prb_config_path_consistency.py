@@ -88,7 +88,7 @@ async def test_real_mcp_drop_writes_config_subdir_keyed_path_and_rewind_restores
             file_write=[{"path": canonical, "scope": "just_path"}],
         ),
         permission_resolver=resolver,
-        skill_name="test",
+        actor="test",
         intervention_bus=None,
         subscribers=[],
         state_log=state_log,

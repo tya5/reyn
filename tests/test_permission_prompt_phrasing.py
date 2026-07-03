@@ -115,7 +115,7 @@ async def test_announce_meta_carries_natural_prompt() -> None:
         detail="web fetch: https://example.com",
         choices=generic_yn_choices(),
         run_id="r1",
-        skill_name="chat_router",
+        actor="chat_router",
     )
     msg = await _capture_announce(iv)
     assert msg.meta["prompt"] == "Allow fetching this URL?"

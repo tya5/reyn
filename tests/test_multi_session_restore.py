@@ -58,7 +58,7 @@ def _iv_dict(iv_id: str, run_id: str) -> dict:
         "choices": [],
         "suggestions": [],
         "run_id": run_id,
-        "skill_name": "demo",
+        "actor": "demo",
         "id": iv_id,
     }
 

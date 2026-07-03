@@ -77,7 +77,7 @@ def _snapshot_with_intervention(
         "choices": [],
         "suggestions": [],
         "run_id": run_id,
-        "skill_name": "demo",
+        "actor": "demo",
         "id": iv_id,
     }
     snap.applied_seq = 5
@@ -123,7 +123,7 @@ async def test_bus_returns_buffered_answer_without_dispatching(tmp_path, monkeyp
         session.outbox.get_nowait()
 
     # Now the actual contract under test:
-    bus = ChatInterventionBus(session, run_id="rResume", skill_name="demo")
+    bus = ChatInterventionBus(session, run_id="rResume", actor="demo")
     iv = UserIntervention(kind="ask_user", prompt="Fresh Q?")
     iv.future = asyncio.get_running_loop().create_future()
     answer = await bus.request(iv)
@@ -145,7 +145,7 @@ async def test_bus_falls_through_to_dispatch_when_no_buffer(tmp_path, monkeypatc
     session = _make_session(tmp_path)
     session.is_attached = True
 
-    bus = ChatInterventionBus(session, run_id="rFresh", skill_name="demo")
+    bus = ChatInterventionBus(session, run_id="rFresh", actor="demo")
     iv = UserIntervention(kind="ask_user", prompt="What's up?")
     iv.future = asyncio.get_running_loop().create_future()
 
@@ -178,7 +178,7 @@ async def test_buffer_is_single_use(tmp_path, monkeypatch):
     await session._maybe_answer_oldest_intervention("first")
     await wait_until(lambda: bool(session.buffered_intervention_answers))
 
-    bus = ChatInterventionBus(session, run_id="rOnce", skill_name="demo")
+    bus = ChatInterventionBus(session, run_id="rOnce", actor="demo")
     iv1 = UserIntervention(kind="ask_user", prompt="Q1?")
     iv1.future = asyncio.get_running_loop().create_future()
     a1 = await bus.request(iv1)
@@ -225,7 +225,7 @@ async def test_watcher_buffers_answer_when_restored_iv_resolves(tmp_path, monkey
     await wait_until(lambda: bool(session.buffered_intervention_answers))
 
     # Bus.request reaches the answer without dispatching
-    bus = ChatInterventionBus(session, run_id="rW", skill_name="demo")
+    bus = ChatInterventionBus(session, run_id="rW", actor="demo")
     fresh_iv = UserIntervention(kind="ask_user", prompt="Skill resumes")
     fresh_iv.future = asyncio.get_running_loop().create_future()
     answer = await bus.request(fresh_iv)
@@ -276,7 +276,7 @@ async def test_e2e_skill_resume_picks_up_user_answer(tmp_path, monkeypatch):
     assert "iv_crashed" in resolved_ids
 
     # Phase 3: skill resumes — bus.request with the same run_id finds buffer
-    bus = ChatInterventionBus(session, run_id="rE2E", skill_name="demo")
+    bus = ChatInterventionBus(session, run_id="rE2E", actor="demo")
     fresh_iv = UserIntervention(kind="ask_user", prompt="What's your name?")
     fresh_iv.future = asyncio.get_running_loop().create_future()
     answer = await bus.request(fresh_iv)
@@ -323,7 +323,7 @@ async def test_e2e_choice_intervention_round_trip(tmp_path, monkeypatch):
         ],
         "suggestions": [],
         "run_id": "rChoice",
-        "skill_name": "demo",
+        "actor": "demo",
         "id": "iv_choice",
     }
     snap.applied_seq = 1
@@ -336,7 +336,7 @@ async def test_e2e_choice_intervention_round_trip(tmp_path, monkeypatch):
     for _ in range(3):
         await asyncio.sleep(0)
 
-    bus = ChatInterventionBus(session, run_id="rChoice", skill_name="demo")
+    bus = ChatInterventionBus(session, run_id="rChoice", actor="demo")
     fresh_iv = UserIntervention(
         kind="permission.generic", prompt="Allow?",
         choices=[

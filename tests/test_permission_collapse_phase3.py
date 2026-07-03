@@ -124,7 +124,7 @@ def test_require_http_get_passes_for_declared_host(tmp_path):
     resolver = PermissionResolver(config_permissions={}, project_root=tmp_path)
     decl = PermissionDecl(http_get=[{"host": "api.github.com"}])
     resolver.session_approve_host("api.github.com", "test_skill")
-    asyncio.run(resolver.require_http_get(decl, "api.github.com", skill_name="test_skill"))
+    asyncio.run(resolver.require_http_get(decl, "api.github.com", actor="test_skill"))
 
 
 def test_require_http_get_passes_via_explicit_decl(tmp_path):
@@ -135,7 +135,7 @@ def test_require_http_get_passes_via_explicit_decl(tmp_path):
     })
     resolver.session_approve_host("registry.modelcontextprotocol.io", "mcp_install")
     asyncio.run(resolver.require_http_get(
-        decl, "registry.modelcontextprotocol.io", skill_name="mcp_install",
+        decl, "registry.modelcontextprotocol.io", actor="mcp_install",
     ))
 
 

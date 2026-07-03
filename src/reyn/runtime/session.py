@@ -454,14 +454,14 @@ def _run_short(run_id: str) -> str:
     return run_id[-4:] if run_id else ""
 
 
-def _run_meta(run_id: str | None, skill_name: str | None) -> dict:
+def _run_meta(run_id: str | None, actor: str | None) -> dict:
     """Standard `meta` payload for OutboxMessage produced inside a skill spawn."""
     if run_id is None:
-        return {"skill_name": skill_name} if skill_name else {}
+        return {"actor": actor} if actor else {}
     return {
         "run_id": run_id,
         "run_id_short": _run_short(run_id),
-        "skill_name": skill_name,
+        "actor": actor,
     }
 
 
@@ -560,8 +560,8 @@ def _iv_meta(iv: "UserIntervention") -> dict:
     if iv.run_id:
         out["run_id"] = iv.run_id
         out["run_id_short"] = _run_short(iv.run_id)
-    if iv.skill_name:
-        out["skill_name"] = iv.skill_name
+    if iv.actor:
+        out["actor"] = iv.actor
     if iv.choices:
         out["choices"] = [
             {"id": c.id, "label": c.label, "hotkey": c.hotkey}
@@ -1563,7 +1563,7 @@ class Session:
             # — short-lived, scoped to the chat_router skill, identical
             # to what session._mcp_call_tool wires manually today.
             intervention_bus_factory=lambda: ChatInterventionBus(
-                self, run_id=None, skill_name="chat_router",
+                self, run_id=None, actor="chat_router",
                 channel_id=DEFAULT_CHAT_CHANNEL_ID,
             ),
             # FP-0037 S2: yaml mtime watch needs the project root to resolve
@@ -5030,7 +5030,7 @@ class Session:
     def _make_router_op_context(self) -> "OpContext":
         """Build a minimal OpContext for router-initiated file/MCP ops.
 
-        Uses the session's events log and permission resolver. The skill_name
+        Uses the session's events log and permission resolver. The actor
         "chat_router" is used for permission key lookups — it matches what the
         PermissionResolver uses to gate paths. All .reyn/ paths are in the
         default write zone so memory ops pass without additional approval.
@@ -5217,7 +5217,7 @@ class Session:
         ctx = self._make_router_op_context()
         # MCP handler requires intervention_bus; wire the session's bus
         ctx.intervention_bus = ChatInterventionBus(
-            self, run_id=None, skill_name="chat_router",
+            self, run_id=None, actor="chat_router",
             channel_id=DEFAULT_CHAT_CHANNEL_ID,
         )
         # Narrow mcp scope to just this server while preserving file perms from the

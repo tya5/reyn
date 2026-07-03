@@ -24,13 +24,13 @@ def _make_workspace(
     *,
     project_root: Path,
     permission_resolver: PermissionResolver | None = None,
-    skill_name: str = "test_skill",
+    actor: str = "test_skill",
 ) -> Workspace:
     events = EventLog()
     ws = Workspace(
         events=events,
         permission_resolver=permission_resolver,
-        skill_name=skill_name,
+        actor=actor,
     )
     # Override base_dir / state_dir to match the tmp project root
     ws.base_dir = project_root.resolve()
@@ -90,12 +90,12 @@ def test_outside_project_glob_with_permission_succeeds(tmp_path):
     (phases_dir / "phase_one.md").write_text("# phase")
     (phases_dir / "phase_two.md").write_text("# phase 2")
 
-    skill_name = "skill_improver"
+    actor = "skill_improver"
     perm = _resolver(tmp_path)
     # Session-approve the stdlib skill directory recursively
-    perm.session_approve_path(str(skill_dir), skill_name, "file.read", recursive=True)
+    perm.session_approve_path(str(skill_dir), actor, "file.read", recursive=True)
 
-    ws = _make_workspace(project_root=tmp_path, permission_resolver=perm, skill_name=skill_name)
+    ws = _make_workspace(project_root=tmp_path, permission_resolver=perm, actor=actor)
 
     # Glob for all .md files under the skill dir
     results = ws.glob_files(str(phases_dir / "*.md"))

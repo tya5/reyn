@@ -30,7 +30,7 @@ class Workspace:
         self,
         events: EventLog,
         permission_resolver: "PermissionResolver | None" = None,
-        skill_name: str = "",
+        actor: str = "",
         base_dir: "Path | None" = None,
         state_dir: "Path | None" = None,
         environment_backend: "EnvironmentBackend | None" = None,
@@ -68,7 +68,7 @@ class Workspace:
         self.state_dir.mkdir(parents=True, exist_ok=True)
         (self.state_dir / "artifacts").mkdir(exist_ok=True)
         self._perm = permission_resolver
-        self._skill_name = skill_name
+        self._actor = actor
 
     @property
     def backend(self) -> "EnvironmentBackend":
@@ -97,7 +97,7 @@ class Workspace:
         resolved = (self.base_dir / p).resolve() if not p.is_absolute() else p.resolve()
         if resolved.is_relative_to(self.base_dir):
             return resolved
-        if self._perm and self._perm.is_read_allowed(str(resolved), self._skill_name):
+        if self._perm and self._perm.is_read_allowed(str(resolved), self._actor):
             return resolved
         raise PermissionError(f"read not permitted: {path_str!r} (outside project)")
 
@@ -122,7 +122,7 @@ class Workspace:
         p = Path(path_str).expanduser()
         if p.is_absolute():
             resolved = p.resolve()
-            if self._perm and self._perm.is_write_allowed(str(resolved), self._skill_name):
+            if self._perm and self._perm.is_write_allowed(str(resolved), self._actor):
                 return resolved
             raise PermissionError(
                 f"write not permitted: {path_str!r} (absolute paths are read-only)"
@@ -130,7 +130,7 @@ class Workspace:
         resolved = (self.base_dir / p).resolve()
         if resolved.is_relative_to(self.base_dir):
             return resolved
-        if self._perm and self._perm.is_write_allowed(str(resolved), self._skill_name):
+        if self._perm and self._perm.is_write_allowed(str(resolved), self._actor):
             return resolved
         raise PermissionError(f"path escapes project: {path_str!r}")
 
@@ -256,7 +256,7 @@ class Workspace:
                 base_for_check = str(Path(*concrete_parts)) if concrete_parts else pattern_str
                 if not (
                     self._perm is not None
-                    and self._perm.is_read_allowed(base_for_check, self._skill_name)
+                    and self._perm.is_read_allowed(base_for_check, self._actor)
                 ):
                     raise PermissionError(
                         f"glob not permitted: {pattern!r} (outside project, no read permission)"
@@ -326,11 +326,11 @@ class Workspace:
         phase: str,
         artifact: dict,
         *,
-        skill_name: str = "_unknown",
+        actor: str = "_unknown",
         visit: int = 1,
     ) -> str:
         """
-        Persist artifact to state_dir/artifacts/{skill_name}/{phase}/v{visit}_{type}.json.
+        Persist artifact to state_dir/artifacts/{actor}/{phase}/v{visit}_{type}.json.
         Returns the state_dir-relative path.
         """
         artifact_type = artifact.get("type", "unknown")
@@ -339,7 +339,7 @@ class Workspace:
             return s.replace("/", "_").replace(" ", "_")
 
         rel = (
-            f"artifacts/{_safe(skill_name)}/{_safe(phase)}"
+            f"artifacts/{_safe(actor)}/{_safe(phase)}"
             f"/v{visit:02d}_{_safe(artifact_type)}.json"
         )
         abs_path = self.state_dir / rel

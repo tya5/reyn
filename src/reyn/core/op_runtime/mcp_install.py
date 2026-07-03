@@ -363,7 +363,7 @@ async def handle(
         # ran permission-only (SandboxLayer ⊤). None → ⊤ (unchanged).
         _sandbox = _sandbox_policy_from_ctx(ctx)
         await ctx.permission_resolver.require_file_write(
-            ctx.permission_decl, str(config_path), ctx.skill_name,
+            ctx.permission_decl, str(config_path), ctx.actor,
             sandbox_policy=_sandbox,
         )
         # Registry fetch happened via RegistryClient above — gate the
@@ -375,7 +375,7 @@ async def handle(
                 ctx.permission_decl,
                 "registry.modelcontextprotocol.io",
                 ctx.intervention_bus,
-                ctx.skill_name,
+                ctx.actor,
                 sandbox_policy=_sandbox,
             )
 
@@ -400,7 +400,7 @@ async def handle(
     def _save_with_gate(key: str, value: str) -> None:
         if ctx.permission_resolver is not None:
             ctx.permission_resolver.require_secret_write(
-                ctx.permission_decl, key, ctx.skill_name,
+                ctx.permission_decl, key, ctx.actor,
             )
         from reyn.security.secrets.store import save_secret
         save_secret(key, value)

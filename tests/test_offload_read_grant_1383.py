@@ -201,7 +201,7 @@ def test_workspace_read_gate_honors_offload_grant_end_to_end(tmp_path: Path) -> 
     offloaded.write_text("INPUT-CONTENT")
     base = (tmp_path / "proj").resolve()
     ws = Workspace(
-        EventLog(), permission_resolver=r, skill_name="swe_bench", base_dir=base
+        EventLog(), permission_resolver=r, actor="swe_bench", base_dir=base
     )
     with pytest.raises(PermissionError):
         ws.read_file(str(offloaded))  # gate-2: outside project, no grant

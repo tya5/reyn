@@ -774,14 +774,14 @@ def test_event_assertion_payload_stored(tmp_path: Path) -> None:
                 must_emit:
                   - type: skill_run_completed
                     payload:
-                      skill_name: direct_llm
+                      actor: direct_llm
                       status: success
         """,
     )
     ss = load_scenario_set(p)
     ea = ss.scenarios[0].expected_events
     assert ea is not None
-    assert ea.must_emit[0].payload == {"skill_name": "direct_llm", "status": "success"}
+    assert ea.must_emit[0].payload == {"actor": "direct_llm", "status": "success"}
 
 
 # ── events sequence ───────────────────────────────────────────────────────

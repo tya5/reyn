@@ -158,12 +158,12 @@ def test_intervention_suppresses_run_id_short_prefix() -> None:
     assert "Confirm?" in out
 
 
-def test_intervention_keeps_skill_name_prefix_when_present() -> None:
-    """Tier 2: skill_name context is retained on interventions so the user sees which
-    skill is asking — only run_id_short (the cryptic hash) is suppressed."""
+def test_intervention_keeps_actor_prefix_when_present() -> None:
+    """Tier 2: actor context is retained on interventions so the user sees which
+    actor is asking — only run_id_short (the cryptic hash) is suppressed."""
     out = _plain(
         "intervention", "Confirm?",
-        meta={"skill_name": "skill_builder", "run_id_short": "ab12"},
+        meta={"actor": "skill_builder", "run_id_short": "ab12"},
     )
     assert "skill_builder" in out
     assert "#ab12" not in out
@@ -247,10 +247,10 @@ def test_unknown_kind_renders_text_without_marker() -> None:
 
 
 def test_meta_skill_prefix_is_applied() -> None:
-    """Tier 2: skill_name + run_id_short surface as a [skill#abcd] prefix."""
+    """Tier 2: actor + run_id_short surface as a [skill#abcd] prefix."""
     out = _plain(
         "agent", "done",
-        meta={"skill_name": "skill_builder", "run_id_short": "ab12"},
+        meta={"actor": "skill_builder", "run_id_short": "ab12"},
     )
     assert "[skill_builder#ab12]" in out
     assert "done" in out

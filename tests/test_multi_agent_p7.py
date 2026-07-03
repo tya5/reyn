@@ -288,12 +288,12 @@ def test_os_topology_dispatch_has_no_skill_specific_strings():
             continue
 
         # Check 1: known skill name literals
-        for skill_name in _KNOWN_SKILL_NAMES:
-            # Match as a quoted string literal: "skill_name" or 'skill_name'
-            if f'"{skill_name}"' in source or f"'{skill_name}'" in source:
+        for actor in _KNOWN_SKILL_NAMES:
+            # Match as a quoted string literal: "actor" or 'actor'
+            if f'"{actor}"' in source or f"'{actor}'" in source:
                 violations.append(
                     f"P7 violation: {rel_path} contains skill name literal "
-                    f"{skill_name!r}"
+                    f"{actor!r}"
                 )
 
         # Check 2: phase-name pattern literals (e.g. "analyze_phase")

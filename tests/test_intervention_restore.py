@@ -62,7 +62,7 @@ def _snapshot_with_intervention(
         "choices": [],
         "suggestions": [],
         "run_id": run_id,
-        "skill_name": "demo",
+        "actor": "demo",
         "id": iv_id,
     }
     snap.applied_seq = 5
@@ -240,7 +240,7 @@ async def test_multiple_restored_interventions_preserve_order(tmp_path, monkeypa
             "choices": [],
             "suggestions": [],
             "run_id": "rA",
-            "skill_name": "demo",
+            "actor": "demo",
             "id": iv_id,
         }
     snap.applied_seq = 10

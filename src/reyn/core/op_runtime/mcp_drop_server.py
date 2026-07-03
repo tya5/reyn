@@ -220,7 +220,7 @@ async def handle(
         # #1352-C: thread the agent/operator sandbox policy (SandboxLayer ∩),
         # same as op_runtime/file.py — was missing here (permission-only gap).
         await ctx.permission_resolver.require_file_write(
-            ctx.permission_decl, str(config_path), ctx.skill_name,
+            ctx.permission_decl, str(config_path), ctx.actor,
             sandbox_policy=_sandbox_policy_from_ctx(ctx),
         )
 

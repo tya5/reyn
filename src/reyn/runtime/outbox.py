@@ -1,7 +1,7 @@
 """OutboxMessage — structured payload for Session's display stream.
 
 Replaces the previous (kind, text) tuple. Provenance fields (run_id,
-skill_name, intervention_id, …) live in `meta: dict` rather than as fixed
+actor, intervention_id, …) live in `meta: dict` rather than as fixed
 attributes, so future additions (e.g. `agent_id` for multi-agent sessions)
 don't require dataclass schema changes. This mirrors the `ChatMessage.meta`
 convention already used for history entries.
@@ -30,7 +30,7 @@ class OutboxMessage:
     Common keys:
       run_id           full chat-side run id (e.g. "20260501T...Z_skill_foo_abcd")
       run_id_short     trailing 4 chars of run_id, used in display prefix
-      skill_name       human-friendly skill name for [skill#abcd] prefix
+      actor       human-friendly skill name for [skill#abcd] prefix
       intervention_id  for kind="intervention", which UI is being announced
 
     Future keys (multi-agent):

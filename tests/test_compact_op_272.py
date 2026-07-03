@@ -42,7 +42,7 @@ def _ctx(compact_now=None) -> OpContext:
         events=_Events(),
         permission_decl=PermissionDecl(),
         permission_resolver=None,
-        skill_name="",
+        actor="",
         compact_now=compact_now,
     )
 

@@ -53,7 +53,7 @@ async def execute_op(
         ctx.events.emit(
             "permission_granted",
             run_id=ctx.run_id,
-            skill=ctx.skill_name,
+            actor=ctx.actor,
             phase=ctx.current_phase,
             kind=op.kind,
             path=path,
@@ -64,7 +64,7 @@ async def execute_op(
         ctx.events.emit(
             "permission_denied",
             run_id=ctx.run_id,
-            skill=ctx.skill_name,
+            actor=ctx.actor,
             phase=ctx.current_phase,
             kind=op.kind,
             path=path,

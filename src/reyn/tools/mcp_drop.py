@@ -131,7 +131,7 @@ async def _handle_mcp_drop_server_op(
             events=ctx.events,
             permission_decl=synth_decl,
             permission_resolver=ctx.permission_resolver,
-            skill_name="mcp_drop_server",
+            actor="mcp_drop_server",
             state_log=getattr(ctx, "state_log", None),  # #2259 PR-1: config generation emit
             intervention_bus=None,
             subscribers=getattr(ctx.events, "subscribers", []),

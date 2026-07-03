@@ -64,7 +64,7 @@ def test_safe_python_auto_allowed_in_stdlib_non_interactive(tmp_path: Path) -> N
     bus = _AutoDenyBus()
 
     # Must NOT raise — safe step auto-approved on the stdlib non-interactive path.
-    result = _run(resolver.require_python(decl, "./aggregate.py", "collect", bus, skill_name="ops_report"))
+    result = _run(resolver.require_python(decl, "./aggregate.py", "collect", bus, actor="ops_report"))
     assert result is not None
     assert result.mode == "safe"
     # No prompt was issued (non-interactive auto-allow must not touch the bus).
@@ -87,7 +87,7 @@ def test_safe_python_denied_in_non_stdlib_non_interactive(tmp_path: Path) -> Non
     bus = _AutoDenyBus()
 
     with pytest.raises(PermissionError, match="denied by user"):
-        _run(resolver.require_python(decl, "./aggregate.py", "collect", bus, skill_name="ops_report"))
+        _run(resolver.require_python(decl, "./aggregate.py", "collect", bus, actor="ops_report"))
 
 
 def test_safe_python_explicit_deny_overrides_auto_allow(tmp_path: Path) -> None:
@@ -113,7 +113,7 @@ def test_safe_python_explicit_deny_overrides_auto_allow(tmp_path: Path) -> None:
 
     # The explicit deny must survive — auto-allow must not clobber it.
     with pytest.raises(PermissionError, match="denied by user"):
-        _run(resolver.require_python(decl, "./aggregate.py", "collect", bus, skill_name="ops_report"))
+        _run(resolver.require_python(decl, "./aggregate.py", "collect", bus, actor="ops_report"))
 
 
 def test_safe_python_still_requires_approval_when_interactive(tmp_path: Path) -> None:
@@ -139,7 +139,7 @@ def test_safe_python_still_requires_approval_when_interactive(tmp_path: Path) ->
 
     # In interactive mode the auto-deny bus causes a denial, so PermissionError is raised.
     with pytest.raises(PermissionError, match="denied by user"):
-        _run(resolver.require_python(decl, "./aggregate.py", "collect", bus, skill_name="ops_report"))
+        _run(resolver.require_python(decl, "./aggregate.py", "collect", bus, actor="ops_report"))
 
     # The key assertion: the bus was consulted (proves routing went through _prompt,
     # not the non-interactive auto-allow shortcut).

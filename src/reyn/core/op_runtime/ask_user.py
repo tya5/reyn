@@ -46,14 +46,14 @@ async def handle(op: AskUserIROp, ctx: OpContext) -> dict:
         suggestions=op.suggestions or [],
         choices=choices,
         input_type="select" if choices else "",
-        skill_name=ctx.skill_name or None,
+        actor=ctx.actor or None,
         run_id=None,  # set by chat session if it tracks runs; CLI ignores
     )
 
     ctx.events.emit(
         "user_intervention_requested",
         run_id=ctx.run_id,
-        skill=ctx.skill_name,
+        actor=ctx.actor,
         phase=ctx.current_phase,
         question=op.question,
         intervention_id=iv.id,
@@ -71,7 +71,7 @@ async def handle(op: AskUserIROp, ctx: OpContext) -> dict:
     ctx.events.emit(
         "user_intervention_received",
         run_id=ctx.run_id,
-        skill=ctx.skill_name,
+        actor=ctx.actor,
         phase=ctx.current_phase,
         answer=text,
         intervention_id=iv.id,

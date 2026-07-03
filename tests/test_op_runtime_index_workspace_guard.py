@@ -58,7 +58,7 @@ def _make_ctx_no_workspace() -> OpContext:
         events=_NullEventLog(),
         permission_decl=PermissionDecl(),
         permission_resolver=None,
-        skill_name="",
+        actor="",
     )
 
 

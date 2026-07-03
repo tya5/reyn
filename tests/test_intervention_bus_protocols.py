@@ -100,7 +100,7 @@ def test_stdin_intervention_bus_satisfies_both_protocols() -> None:
 def test_chat_intervention_bus_satisfies_both_protocols(tmp_path: Path) -> None:
     """Tier 2: ``ChatInterventionBus`` satisfies both Protocols."""
     session = Session(agent_name="t")
-    bus = ChatInterventionBus(session, run_id="r1", skill_name="demo")
+    bus = ChatInterventionBus(session, run_id="r1", actor="demo")
     assert isinstance(bus, RequestBus)
     assert isinstance(bus, UserChannel)
 
@@ -199,7 +199,7 @@ def test_outbox_intervention_meta_shape_is_stable() -> None:
       - ``detail``: present iff the iv carries a non-empty detail
       - ``choices``: present iff the iv carries choices, each a
         ``{"id", "label", "hotkey"}`` dict
-      - ``run_id`` / ``run_id_short`` / ``skill_name``: opt-in fields
+      - ``run_id`` / ``run_id_short`` / ``actor``: opt-in fields
 
     If a Phase 2+ refactor renames any of these keys, TUI's outbox
     consumer breaks — this test fails first.
@@ -219,7 +219,7 @@ def test_outbox_intervention_meta_shape_is_stable() -> None:
         prompt="Run ls?",
         detail="cmd: ls -la",
         run_id="r-1234",
-        skill_name="demo",
+        actor="demo",
         choices=[
             InterventionChoice(id="yes", label="[Y]es", hotkey="y"),
             InterventionChoice(id="no", label="[N]o", hotkey="n"),
@@ -232,7 +232,7 @@ def test_outbox_intervention_meta_shape_is_stable() -> None:
     assert meta_rich["detail"] == "cmd: ls -la"
     assert meta_rich["run_id"] == "r-1234"
     assert meta_rich["run_id_short"] == "1234"
-    assert meta_rich["skill_name"] == "demo"
+    assert meta_rich["actor"] == "demo"
     assert meta_rich["choices"] == [
         {"id": "yes", "label": "[Y]es", "hotkey": "y"},
         {"id": "no", "label": "[N]o", "hotkey": "n"},

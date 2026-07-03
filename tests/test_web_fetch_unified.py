@@ -297,14 +297,14 @@ def _make_router_op_ctx_factory(resolver, bus, events):
         ws = Workspace(
             events=events,
             permission_resolver=resolver,
-            skill_name="chat_router",
+            actor="chat_router",
         )
         return OpContext(
             workspace=ws,
             events=events,
             permission_decl=PermissionDecl(),
             permission_resolver=resolver,
-            skill_name="chat_router",
+            actor="chat_router",
             intervention_bus=bus,
         )
 
@@ -453,14 +453,14 @@ def test_phase_dispatch_reuses_op_context_intervention_bus(tmp_path: Path) -> No
     workspace = Workspace(
         events=events,
         permission_resolver=resolver,
-        skill_name="skill_importer",
+        actor="skill_importer",
     )
     op_ctx_with_bus = OpContext(
         workspace=workspace,
         events=events,
         permission_decl=PermissionDecl(),
         permission_resolver=resolver,
-        skill_name="skill_importer",
+        actor="skill_importer",
         intervention_bus=bus,
     )
 

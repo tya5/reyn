@@ -196,7 +196,7 @@ def test_op_context_agent_id_default_is_none() -> None:
     from reyn.data.workspace.workspace import Workspace
     from reyn.security.permissions.permissions import PermissionDecl
 
-    ws = Workspace(events=EventLog(), skill_name="t")
+    ws = Workspace(events=EventLog(), actor="t")
     ctx = OpContext(
         workspace=ws,
         events=EventLog(),
@@ -211,7 +211,7 @@ def test_op_context_agent_id_flows_through() -> None:
     from reyn.data.workspace.workspace import Workspace
     from reyn.security.permissions.permissions import PermissionDecl
 
-    ws = Workspace(events=EventLog(), skill_name="t")
+    ws = Workspace(events=EventLog(), actor="t")
     ctx = OpContext(
         workspace=ws,
         events=EventLog(),

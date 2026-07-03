@@ -8,7 +8,7 @@ volatile and the restored intervention gets a fresh future when re-enqueued.
 
 Round-trip invariants:
   - All persistent fields (kind, prompt, detail, choices, suggestions,
-    run_id, skill_name, id) survive a to_dict → from_dict cycle.
+    run_id, actor, id) survive a to_dict → from_dict cycle.
   - InterventionChoice nested objects serialize / deserialize correctly.
   - The dict shape is JSON-safe (only str / list / dict / None values)
     so it can flow through ``AgentSnapshot.outstanding_interventions``
@@ -43,7 +43,7 @@ def _sample_iv(*, with_choices: bool = False) -> UserIntervention:
         choices=choices,
         suggestions=["yes", "no"],
         run_id="run_alpha_001",
-        skill_name="my_skill",
+        actor="my_skill",
     )
 
 
@@ -60,7 +60,7 @@ def test_to_dict_returns_json_safe_dict():
     assert d["prompt"] == "Allow file/write to /tmp/foo?"
     assert d["detail"] == "Reason: skill X requested it"
     assert d["run_id"] == "run_alpha_001"
-    assert d["skill_name"] == "my_skill"
+    assert d["actor"] == "my_skill"
     assert d["id"] == iv.id
     assert d["suggestions"] == ["yes", "no"]
     assert d["choices"], "expected choices to be non-empty"
@@ -79,7 +79,7 @@ def test_from_dict_round_trip_preserves_persistent_fields():
     assert iv2.detail == iv.detail
     assert iv2.suggestions == iv.suggestions
     assert iv2.run_id == iv.run_id
-    assert iv2.skill_name == iv.skill_name
+    assert iv2.actor == iv.actor
     assert iv2.id == iv.id
     assert iv2.choices == iv.choices
 
@@ -111,18 +111,18 @@ def test_from_dict_handles_empty_choices_and_suggestions():
     assert iv2.choices == []
     assert iv2.suggestions == []
     assert iv2.kind == "ask_user"
-    assert iv2.skill_name is None  # default None preserved
+    assert iv2.actor is None  # default None preserved
 
 
-def test_from_dict_handles_none_run_id_and_skill_name():
+def test_from_dict_handles_none_run_id_and_actor():
     """Tier 2: intervention created before bus fills metadata round-trips."""
     iv = UserIntervention(kind="ask_user", prompt="Q?")
     d = iv.to_dict()
     assert d["run_id"] is None
-    assert d["skill_name"] is None
+    assert d["actor"] is None
     iv2 = UserIntervention.from_dict(d)
     assert iv2.run_id is None
-    assert iv2.skill_name is None
+    assert iv2.actor is None
 
 
 def test_to_dict_choices_preserve_none_hotkey():

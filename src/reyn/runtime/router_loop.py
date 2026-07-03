@@ -717,7 +717,7 @@ class RouterLoopHost(RouterLoopCore, Protocol):
 
     # OpContext factory for unified-registry handlers (ADR-0026 Phase 3.5).
     # Builds a permission-aware OpContext with the operator-declared
-    # PermissionDecl + Workspace(skill_name="chat_router") + mcp_servers,
+    # PermissionDecl + Workspace(actor="chat_router") + mcp_servers,
     # so handlers in src/reyn/tools/{file,mcp,web*}.py can delegate to
     # op_runtime with the same gating the legacy router branches had.
     def make_router_op_context(self) -> Any: ...

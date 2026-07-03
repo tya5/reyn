@@ -2,14 +2,14 @@
 
 ``Session._make_router_op_context`` and
 ``RouterHostAdapter.make_router_op_context`` built the
-``skill_name="chat_router"`` OpContext with ~95% identical code and drifted
+``actor="chat_router"`` OpContext with ~95% identical code and drifted
 (#1410/#1411 threaded base_dir to one, lagged the other — the #187 wrong-FS
 class). The fix routes both through ``build_router_op_context``
 (reyn/runtime/router_op_context.py).
 
 Pinned invariants (src-wide AST, the #1402 sole-construction pattern):
 
-- An ``OpContext(..., skill_name="chat_router", ...)`` is constructed ONLY in
+- An ``OpContext(..., actor="chat_router", ...)`` is constructed ONLY in
   ``router_op_context.py`` anywhere in ``src/reyn``. A second chat-router
   OpContext construction re-opens the drift class → this fails, naming
   file:line (incl. hidden sites).
@@ -41,7 +41,7 @@ def _chat_router_opcontext_sites() -> list[str]:
                 continue
             for kw in node.keywords:
                 if (
-                    kw.arg == "skill_name"
+                    kw.arg == "actor"
                     and isinstance(kw.value, ast.Constant)
                     and kw.value.value == "chat_router"
                 ):
@@ -67,9 +67,9 @@ def test_chat_router_opcontext_built_only_in_factory() -> None:
     inline chat-router OpContext construction fails this, naming file:line."""
     sites = _chat_router_opcontext_sites()
     offenders = [s for s in sites if not s.startswith(_FACTORY_REL + ":")]
-    assert sites, "no OpContext(skill_name='chat_router') found at all (factory missing?)"
+    assert sites, "no OpContext(actor='chat_router') found at all (factory missing?)"
     assert not offenders, (
-        "OpContext(skill_name='chat_router') built outside router_op_context.py "
+        "OpContext(actor='chat_router') built outside router_op_context.py "
         "— re-opens the #1412 drift class; route through build_router_op_context: "
         f"{offenders}"
     )

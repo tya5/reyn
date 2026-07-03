@@ -96,7 +96,7 @@ def _make_registry(tmp_path: Path, wal: Path) -> tuple[AgentRegistry, StateLog]:
 def _iv_dict(iv_id: str, run_id: str) -> dict:
     return {
         "kind": "ask_user", "prompt": f"Q-{iv_id}?", "detail": "", "choices": [],
-        "suggestions": [], "run_id": run_id, "skill_name": "demo", "id": iv_id,
+        "suggestions": [], "run_id": run_id, "actor": "demo", "id": iv_id,
     }
 
 

@@ -744,7 +744,7 @@ def _run_install_from_source(
         events=events,
         permission_decl=decl,
         permission_resolver=perm_resolver,
-        skill_name="mcp_install_source",
+        actor="mcp_install_source",
         intervention_bus=bus,
     )
 

@@ -13,7 +13,7 @@ Protocol (server → client):
     {
         "kind": "<kind>",     # agent | status | error | intervention | trace | skill_done
         "text": "<text>",
-        "meta": {             # optional provenance: run_id, run_id_short, skill_name,
+        "meta": {             # optional provenance: run_id, run_id_short, actor,
                               # intervention_id, intervention_kind, choices, ...
             ...
         }

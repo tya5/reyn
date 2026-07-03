@@ -60,7 +60,7 @@ def test_store_artifact_returns_state_dir_relative_handle(tmp_path: Path) -> Non
     ws = Workspace(events=EventLog(), base_dir=base, state_dir=state)
 
     artifact = {"type": "demo", "data": {"x": 1, "y": "two"}}
-    handle = ws.store_artifact("phase_a", artifact, skill_name="demo_skill")
+    handle = ws.store_artifact("phase_a", artifact, actor="demo_skill")
 
     assert not Path(handle).is_absolute(), f"handle must be relative: {handle!r}"
     assert handle.startswith("artifacts/"), (

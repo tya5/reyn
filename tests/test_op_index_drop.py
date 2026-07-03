@@ -49,7 +49,7 @@ def _make_ctx(
         events=events,
         permission_decl=permission_decl or PermissionDecl(),
         permission_resolver=permission_resolver,
-        skill_name="test_op_index_drop",
+        actor="test_op_index_drop",
     )
 
 
@@ -152,7 +152,7 @@ async def test_drop_emits_p6_event(tmp_path: Path, monkeypatch: pytest.MonkeyPat
             events=events,
             permission_decl=_phase5_index_drop_decl(resolver, tmp_path),
             permission_resolver=resolver,
-            skill_name="test_op_index_drop",
+            actor="test_op_index_drop",
         )
 
         op = IndexDropIROp(kind="index_drop", source="audit_src")
