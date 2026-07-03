@@ -503,3 +503,69 @@ def test_sandboxed_exec_ok_shows_exit_code() -> None:
         {"kind": "sandboxed_exec", "status": "cancelled", "backend": "subprocess",
          "returncode": -1, "stdout": "", "stderr": "", "truncated": False},
     ) == "cancelled"
+
+
+def test_task_op_shows_task_name() -> None:
+    """Tier 2: task op result ({kind, status, task: {name, ...}}) shows the task name.
+
+    task.create/get/update_status/abort/assign/add_dependency/... all return a
+    nested 'task' dict; without this branch they fall to status → 'ok', losing
+    the identity of which task was acted on.
+    """
+    assert summarize_tool_result(
+        "task__create",
+        {"kind": "task.create", "status": "ok",
+         "task": {"task_id": "t1", "name": "Add user auth", "status": "open"}},
+    ) == "Add user auth"
+    assert summarize_tool_result(
+        "task__update_status",
+        {"kind": "task.update_status", "status": "ok",
+         "task": {"task_id": "t2", "name": "Fix login bug", "status": "done"}},
+    ) == "Fix login bug"
+    assert summarize_tool_result(
+        "task__get",
+        {"kind": "task.get", "status": "ok",
+         "task": {"task_id": "abc-123", "name": "", "status": "open"}},
+    ) == "abc-123"
+
+
+def test_compact_shows_freed_tokens() -> None:
+    """Tier 2: compact success ({kind, status, freed_tokens, ...}) shows 'Freed N tokens'.
+
+    compact returns {"kind": "compact", "status": "ok", "freed_tokens": int, ...};
+    without this branch status fires showing 'ok' with no context of how much was freed.
+    """
+    assert summarize_tool_result(
+        "compact",
+        {"kind": "compact", "status": "ok", "freed_tokens": 8200,
+         "free_window_after": 50000, "summarized_turns": 12},
+    ) == "Freed 8200 tokens"
+    assert summarize_tool_result(
+        "compact",
+        {"kind": "compact", "status": "ok", "freed_tokens": 1,
+         "free_window_after": 10000},
+    ) == "Freed 1 token"
+    assert summarize_tool_result(
+        "compact",
+        {"kind": "compact", "status": "ok", "freed_tokens": 0},
+    ) == "Freed 0 tokens"
+
+
+def test_ask_user_shows_answer_text() -> None:
+    """Tier 2: ask_user result ({kind, question, answer, status}) shows the answer.
+
+    ask_user returns {"kind": "ask_user", "question": "...", "answer": "...", "status": "ok"};
+    showing the answer text is more informative than the generic 'ok'.
+    """
+    assert summarize_tool_result(
+        "ask_user",
+        {"kind": "ask_user", "question": "Which environment?",
+         "answer": "production", "status": "ok"},
+    ) == "production"
+    long_answer = "yes " * 30
+    out = summarize_tool_result(
+        "ask_user",
+        {"kind": "ask_user", "question": "Are you sure?",
+         "answer": long_answer, "status": "ok"},
+    )
+    assert "…" in out and "\n" not in out  # long answer is truncated to a single line
