@@ -18,8 +18,8 @@ Reyn におけるすべての設計判断 — schema 制約を追加するか、
 
 各 LLM call の *前に* OS が構築するもの。LLM が健全な環境で推論できるようにするための整備:
 
-- **Schema および enum 制約。** フィールドが取りうる値が有限であれば、artifact schema の enum として表現する。LLM はその集合の外側を hallucinate できない。OS はそれ以外を拒否する。(歴史的事例: RETRO-H1 では `invoke_skill.name` に live skill 名の enum を追加した。attractor はすぐに消えた。制約が構造的だったから。)
-- **Context 提供。** OS は使用可能な skill の flat リストを構築し、system prompt に inject する。LLM は何が存在するかを推測する必要がない。
+- **Schema および enum 制約。** フィールドが取りうる値が有限であれば、artifact schema の enum として表現する。LLM はその集合の外側を hallucinate できない。OS はそれ以外を拒否する。(歴史的事例: RETRO-H1 では `invoke_skill.name` に live ワークフロー名の enum を追加した。attractor はすぐに消えた。制約が構造的だったから。)
+- **Context 提供。** OS は使用可能なワークフローの flat リストを構築し、system prompt に inject する。LLM は何が存在するかを推測する必要がない。
 - **決定論的 work の代行。** input から機械的に derive できるもの — path 計算、file glob、schema validation、format 変換 — は LLM ではなく phase preprocessor が行う。(歴史的事例: G2 の `copy_to_work` phase は当初 LLM-driven だった。LLM は繰り返し write step をスキップした。ロジックを 8 step の preprocessor に移した結果、問題は構造的に不可能になった。`max_act_turns` は 0 に設定された。)
 - **Input shape の正規化。** Union artifact 型の解決、OS が計算した path の inject、context frame の組み立て — これらはすべて LLM が見る前に行われる。
 
@@ -57,9 +57,9 @@ Prompt rule が真に必要な場合の最適バランス: **個別 bullet × bu
 
 | 判断 | 区分 | 備考 |
 |------|------|------|
-| artifact schema の `invoke_skill.name` enum (RETRO-H1) | Structural care | Hallucinated な skill 名が構造的に不可能になった |
+| artifact schema の `invoke_skill.name` enum (RETRO-H1) | Structural care | Hallucinated なワークフロー名が構造的に不可能になった |
 | preprocessor が `copy_to_work` の path 解決を担う (G2) | Structural care | LLM の write-skip attractor が構造的に不可能になった |
-| OS が flat skill list を構築して context に inject | Structural care | LLM は正確な情報を持つ。推測不要 |
+| OS が flat ワークフローリストを構築して context に inject | Structural care | LLM は正確な情報を持つ。推測不要 |
 | OS が union artifact を LLM call 前に組み立て | Structural care | Input shape は常に well-formed |
 | Option F: `empty_stop` event を emit、clean failure UX | Post-call observe-only | user が失敗を確認。サイレント retry なし |
 | Option B: `empty_stop` 時の auto-retry (却下) | Behavioral rescue | 却下 — 失敗を隠す、P3-adjacent、OS bloat |
@@ -102,7 +102,7 @@ if transition_count[phase] > THRESHOLD:
     # OS が意思決定ノードになっている、LLM ではなく
 ```
 
-phase が attractor になっているなら、fix は構造的であるべきだ: skill graph を見直してループを閉じる (例: phase preprocessor に `max_iterations` guard を追加) — OS にランタイムのエスケープハッチを追加するのではなく。
+phase が attractor になっているなら、fix は構造的であるべきだ: ワークフローグラフを見直してループを閉じる (例: phase preprocessor に `max_iterations` guard を追加) — OS にランタイムのエスケープハッチを追加するのではなく。
 
 ### Prompt rule の累積
 
@@ -136,8 +136,8 @@ care boundary はこれら 4 つを統合するメタ原則。
 Reyn は OS 層に一連の raw primitive を公開する:
 
 - **Events log** — 全状態変化を記録した、構造化・機械可読な JSONL ストリーム ([../runtime/events.md](../runtime/events.md) 参照)。
-- **WAL および skill snapshot** — crash を生き残る workspace state; P5 の workspace-as-source-of-truth の産物。
-- **Cost tracker** — run 単位・skill 単位のトークン数とコスト集計を event として emit。
+- **WAL およびワークフロースナップショット** — crash を生き残る workspace state; P5 の workspace-as-source-of-truth の産物。
+- **Cost tracker** — run 単位・ワークフロー単位のトークン数とコスト集計を event として emit。
 - **Phase trace** — run ごとに記録された phase 順序、LLM call、Control IR 実行の系列。
 - **control_ir results** — phase 実行ごとに event log に書き込まれる op レベルの実行結果。
 
@@ -145,9 +145,9 @@ Reyn は OS 層に一連の raw primitive を公開する:
 
 ### なぜこれが意図的なものか
 
-P7 は OS コードが skill 固有の文字列を含んではならないと定める。同じロジックが一段上にも適用される: OS はあらゆる隣接 product ニーズを吸収してはならない。吸収された機能はそれぞれ、OS が何かしら skill 固有あるいは consumer 固有のことを知ることを要求し、Reyn を拡張可能にしている抽象を破壊する。
+P7 は OS コードがワークフロー固有の文字列を含んではならないと定める。同じロジックが一段上にも適用される: OS はあらゆる隣接 product ニーズを吸収してはならない。吸収された機能はそれぞれ、OS が何かしらワークフロー固有あるいは consumer 固有のことを知ることを要求し、Reyn を拡張可能にしている抽象を破壊する。
 
-したがって care boundary は上述の LLM-behavior split だけを意味するのではない — 上位 product が自分で build すべきものの下方限界も定義する。Reyn を基盤として使えるほど小さく保つことが、基盤としての有用性を守る。analytics platform であり deployment runtime であり eval service でもある OS は、あらゆる場面で skill 固有の知識を必要とし — P7 違反の連鎖を生む。
+したがって care boundary は上述の LLM-behavior split だけを意味するのではない — 上位 product が自分で build すべきものの下方限界も定義する。Reyn を基盤として使えるほど小さく保つことが、基盤としての有用性を守る。analytics platform であり deployment runtime であり eval service でもある OS は、あらゆる場面でワークフロー固有の知識を必要とし — P7 違反の連鎖を生む。
 
 ### Landscape からの具体例
 
@@ -155,19 +155,19 @@ P7 は OS コードが skill 固有の文字列を含んではならないと定
 
 **Conversation analytics platform (Lenzy AI を一例として)**
 
-Lenzy AI は「product analytics for AI agents」— agent とユーザーの会話を分析して product insight を抽出する。Reyn の primitive として消費するのは events log だ: `workflow_started`、`phase_completed`、`llm_called`、および per-skill 集計は、会話の弧を再構成して analytics を導出するために必要なものをすべて持っている。
+Lenzy AI は「product analytics for AI agents」— agent とユーザーの会話を分析して product insight を抽出する。Reyn の primitive として消費するのは events log だ: `workflow_started`、`phase_completed`、`llm_called`、および per-ワークフロー集計は、会話の弧を再構成して analytics を導出するために必要なものをすべて持っている。
 
-Reyn が行うこと: 安定した envelope を持つ、run 単位の構造化 event を emit すること。意図的にスコープ外とすること: それらの event をユーザー・run・skill をまたいで集計し、dashboard、トレンドライン、product insight レポートを生成すること。そのレイヤーには product 固有の schema 知識が必要だ (この skill にとって「成功した会話」とは何か?) — OS が encode してはならないもの。
+Reyn が行うこと: 安定した envelope を持つ、run 単位の構造化 event を emit すること。意図的にスコープ外とすること: それらの event をユーザー・run・ワークフローをまたいで集計し、dashboard、トレンドライン、product insight レポートを生成すること。そのレイヤーには product 固有の schema 知識が必要だ (このワークフローにとって「成功した会話」とは何か?) — OS が encode してはならないもの。
 
 **Stateful agent runtime (Agentainer を一例として)**
 
-Agentainer (「Vercel for stateful AI agents」) は durable agent container を persistent state、auto-recovery、proxy routing 付きで zero-DevOps で提供する。消費する Reyn primitive は WAL + skill snapshot + state-dir contract — P5 crash recovery を可能にするのと同じ機構だ。
+Agentainer (「Vercel for stateful AI agents」) は durable agent container を persistent state、auto-recovery、proxy routing 付きで zero-DevOps で提供する。消費する Reyn primitive は WAL + ワークフロースナップショット + state-dir contract — P5 crash recovery を可能にするのと同じ機構だ。
 
 Reyn が行うこと: crash を生き残る workspace の維持; 最後の一貫した WAL checkpoint から run を resume すること。意図的にスコープ外とすること: zero-DevOps container 管理、HTTP proxy routing、マルチテナント state 分離、インフラ障害モードに合わせた retry policy。これらは deployment layer の関心事であり、agent OS の関心事ではない。
 
 **Eval-as-a-service product**
 
-Reyn が行うこと: phase 単位・skill 単位のテスト実行のために `LLMReplay` と eval framework を提供すること。意図的にスコープ外とすること: hosted eval pipeline、組織横断の benchmark 集計、rubric marketplace。Reyn を消費する eval service は `LLMReplay` を API 経由で駆動する — Reyn が hosting インフラを ship することを要求しない。
+Reyn が行うこと: phase 単位・ワークフロー単位のテスト実行のために `LLMReplay` と eval framework を提供すること。意図的にスコープ外とすること: hosted eval pipeline、組織横断の benchmark 集計、rubric marketplace。Reyn を消費する eval service は `LLMReplay` を API 経由で駆動する — Reyn が hosting インフラを ship することを要求しない。
 
 **Observability dashboard**
 
@@ -181,11 +181,11 @@ pre-1.0 の安定性注意書きが適用される: これらの contract はま
 
 ### contributor へのソフトな境界線
 
-新機能を評価するとき、問う: 「これを提供するために Reyn は skill 固有あるいは consumer 固有のことを知る必要があるか?」
+新機能を評価するとき、問う: 「これを提供するために Reyn はワークフロー固有あるいは consumer 固有のことを知る必要があるか?」
 
 もし yes なら — 「成功した会話」が何を意味するかを OS が理解する必要がある、あるいはどの consumer のためにどの event を集計するかを知る必要がある、あるいはどの deployment 環境にどの retry policy が合うかを知る必要がある — それは downstream layer に属し、OS には属さない。これはニーズの否定ではない; 責任の正しい割り当てだ。OS が primitive を提供し、downstream layer が product を提供する。
 
-もし no なら — OS が特定の skill あるいは consumer について何も知ることなく提供できる汎用の structural 機能なら — OS layer の候補だ。
+もし no なら — OS が特定のワークフローあるいは consumer について何も知ることなく提供できる汎用の structural 機能なら — OS layer の候補だ。
 
 この問いは P7 をコード境界だけでなく product 境界に適用したものだ。
 

@@ -8,11 +8,11 @@ audience: [human]
 
 This tutorial walks through adding a new op kind to the Reyn OS end-to-end.
 The goal is to make the 3-touch-point constraint tangible: after you finish,
-the OS dispatches your op, the linter validates it in skill frontmatter, and
-the LLM sees its schema in the system prompt — all without touching any skill
-files or adding skill-specific strings anywhere.
+the OS dispatches your op, the linter validates it in workflow frontmatter, and
+the LLM sees its schema in the system prompt — all without touching any workflow
+files or adding workflow-specific strings anywhere.
 
-**P7 in practice.** The OS's skill-agnostic guarantee (P7) is what makes this
+**P7 in practice.** The OS's workflow-agnostic guarantee (P7) is what makes this
 possible. Op kind strings appear in exactly one place — `OP_KIND_MODEL_MAP` in
 `schemas/models.py`. Every other mechanism (`ALL_OP_KINDS`, the op dispatcher
 `execute_op`, the `reyn.tools` catalog) derives from that single source.
@@ -58,7 +58,7 @@ Op = Annotated[
 
 Rules for the model:
 - `kind` must be a `Literal["<your_kind>"]`. This is the discriminator field.
-- Field names must be generic (not skill-specific) — `channel`, `message`,
+- Field names must be generic (not workflow-specific) — `channel`, `message`,
   `severity` rather than `slack_channel`, `alert_text`, `reyn_severity`.
 - Default values for optional fields keep the LLM's minimal form short.
 
@@ -143,8 +143,8 @@ Handler conventions:
 - Catch exceptions and return `{"kind": op.kind, "status": "error", "error": str(exc)}`
   rather than raising — `execute_op` in `__init__.py` has a catch-all, but
   explicit handling produces cleaner events.
-- Never import skill-specific modules or reference skill-specific strings
-  (P7 — the OS must remain skill-agnostic).
+- Never import workflow-specific modules or reference workflow-specific strings
+  (P7 — the OS must remain workflow-agnostic).
 
 Then add the import to `src/reyn/core/op_runtime/__init__.py` so the module
 self-registers at startup:
@@ -194,11 +194,11 @@ default `"info"`; values: `"info"`, `"warning"`, `"error"`).
 ## Verifying your work
 
 **Linter validation.** After adding to `OP_KIND_MODEL_MAP`, the linter
-recognises `notify` as a valid op kind. A skill phase that declares
+recognises `notify` as a valid op kind. A workflow phase that declares
 `allowed_ops: [notfiy]` (misspelled) will produce a lint error at compile
 time, not a silent runtime skip.
 
-Run the linter against any skill to confirm it loads without errors:
+Run the linter against any workflow to confirm it loads without errors:
 
 ```
 reyn lint reyn/local/my_skill
@@ -221,7 +221,7 @@ async def test_notify_handler_emits_events():
     assert "notify_started" in event_kinds
 ```
 
-**End-to-end.** Write a minimal skill phase that lists `notify` in
+**End-to-end.** Write a minimal workflow phase that lists `notify` in
 `allowed_ops` and run it with `reyn run`:
 
 ```yaml
@@ -245,7 +245,7 @@ After these four steps, no further OS changes are needed:
 | LLM system prompt | the `reyn.tools` catalog iterates `OP_KIND_MODEL_MAP` and derives JSON Schema from `NotifyIROp` |
 | DSL linter | Validates `allowed_ops` entries against `ALL_OP_KINDS` |
 
-The OS contains no `"notify"` string outside `schemas/models.py`. Any future skill
+The OS contains no `"notify"` string outside `schemas/models.py`. Any future workflow
 that wants to use notifications just adds `notify` to its `allowed_ops` — no
 OS code changes, no new files outside the three touch points above.
 

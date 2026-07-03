@@ -6,7 +6,7 @@ audience: [human]
 
 # 05 — eval を書く
 
-Eval は「出力が良さそうだった」を「出力が M ケースにわたって N 基準を通過した」に変えます。このチュートリアルでは `my_explainer`（[チュートリアル 03](03-your-first-skill.md) の Skill）のルーブリックを構築して実行する方法を説明します。
+Eval は「出力が良さそうだった」を「出力が M ケースにわたって N 基準を通過した」に変えます。このチュートリアルでは `my_explainer` のルーブリックを構築して実行する方法を説明します。
 
 ## eval の形式
 
@@ -31,7 +31,7 @@ input: photosynthesis
 - トーンはフレンドリーで、学術的でない。
 ```
 
-各 `## Phase: <name>` ブロックはルーブリック基準をリストします。`eval` Skill は `judge_phase` を使用して各基準を Phase ごとに採点します。
+各 `## Phase: <name>` ブロックはルーブリック基準をリストします。`eval` ワークフローは `judge_phase` を使用して各基準を Phase ごとに採点します。
 
 ## ステップ 1: ドラフトを生成する
 
@@ -39,7 +39,7 @@ input: photosynthesis
 reyn run eval_builder "build an eval for my_explainer covering tone and structure"
 ```
 
-`eval_builder` は Skill を読み取り、ケースと基準のドラフトを作成し、`reyn/local/my_explainer/eval.md` に書き込みます。
+`eval_builder` はワークフローを読み取り、ケースと基準のドラフトを作成し、`reyn/local/my_explainer/eval.md` に書き込みます。
 
 ## ステップ 2: レビューする
 
@@ -87,7 +87,7 @@ cat .reyn/eval-results/my_explainer/<timestamp>.json
 
 ## eval は非インタラクティブ
 
-`reyn eval` はプロンプトを表示しません。ターゲット Skill が必要とする Permission はすべて事前承認されている必要があります（`reyn.yaml` の `permissions:` またはこれまでの `reyn run` から `.reyn/approvals.yaml` に保存済み）。事前承認がなければ、ケースは未完了として報告されます。[manage-permissions](../for-users/manage-permissions.md) を参照してください。
+`reyn eval` はプロンプトを表示しません。ターゲットワークフローが必要とする Permission はすべて事前承認されている必要があります（`reyn.yaml` の `permissions:` またはこれまでの `reyn run` から `.reyn/approvals.yaml` に保存済み）。事前承認がなければ、ケースは未完了として報告されます。[manage-permissions](../for-users/manage-permissions.md) を参照してください。
 
 ## 学んだこと
 

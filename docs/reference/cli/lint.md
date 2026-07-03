@@ -7,7 +7,7 @@ applies_to: [reyn lint]
 
 # `reyn lint`
 
-Run deterministic structural checks on a skill directory: graph, frontmatter, artifact references, and Python preprocessor steps (when `mode: safe`, the AST is also validated). Detects most authoring mistakes before runtime.
+Run deterministic structural checks on a workflow directory: graph, frontmatter, artifact references, and Python preprocessor steps (when `mode: safe`, the AST is also validated). Detects most authoring mistakes before runtime.
 
 ## Synopsis
 
@@ -23,7 +23,7 @@ reyn lint SKILL
 
 ## What is checked
 
-- **Graph**: every key references a phase file in `phases/`; every value is a known phase, sub-skill (`@name`), or `end`.
+- **Graph**: every key references a phase file in `phases/`; every value is a known phase, sub-workflow (`@name`), or `end`.
 - **Reachability**: every phase reachable from `entry`; phases with `can_finish: true` have a path to `end`.
 - **Frontmatter**: required keys (`type`, `name`, `entry`, `final_output`).
 - **Artifact references**: every `input` and `final_output_schema` resolves to an artifact file.
@@ -54,13 +54,13 @@ When clean: `No issues found.`
 
 ## Examples
 
-Lint a project skill:
+Lint a project workflow:
 
 ```bash
 reyn lint article_writer
 ```
 
-Lint a stdlib skill (sanity check after editing):
+Lint a stdlib component (sanity check after editing):
 
 ```bash
 reyn lint eval

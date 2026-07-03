@@ -34,7 +34,7 @@ Most agent frameworks optimize for reach. Reyn optimizes for the **integrity of 
 | **Bounded decisions** | The model only picks from options the OS hands it (next step + a typed result). It can't invent a step, jump somewhere unlisted, or skip validation — a bad or hallucinated output is rejected before any side effect happens. |
 | **Everything on disk, replayable** | Data lives in one workspace; every state change is appended to a log. Crash recovery and full run-replay come from those files — never from in-memory state. |
 | **Spending you can cap** | Token and dollar limits per agent / chain / model. A run refuses to continue *before* it overspends, so there are no surprise bills from runaway loops. |
-| **Isolated & auditable** | Each skill sees only its own credentials (it can't reach another skill's secrets), and every logged event carries an agent identity — ready for SOC 2 / ISO 27001 / audit trails. |
+| **Isolated & auditable** | Each automation run sees only its own credentials (it can't reach another run's secrets), and every logged event carries an agent identity — ready for SOC 2 / ISO 27001 / audit trails. |
 | **Weak models stay viable** | Because the OS absorbs capability gaps structurally, low-cost models run agent workflows reliably without prompt-level workarounds. |
 
 The trade-off is explicit: **predictability and auditability over maximum autonomy.** If you want the densest integration ecosystem and maximum LLM latitude, a connectivity-first agent or a workflow framework will feel less restrictive.
@@ -82,14 +82,14 @@ reyn chat
 
 > **A note on the default model.** Reyn's default `models.standard` points at a low-cost LLM; occasional empty replies on tool-heavy queries and router-vocabulary leakage in non-English answers are normal at the weak tier and dissolve on stronger models. Point `models.standard` at a stronger model if it matters — details in the [Quick Start guide](docs/guide/getting-started/02-chat-mode.md).
 
-Index your own docs for retrieval, or write a reusable typed workflow (a *skill*):
+Index your own docs for retrieval, or write a reusable typed workflow:
 
 ```bash
 reyn run index_docs '{"type":"index_docs_input","data":{"source":"my_docs","path":"docs/**/*.md","description":"Project documentation"}}'
 reyn run my_skill "Summarize AI trends in education."
 ```
 
-Walkthroughs: [chat mode](docs/guide/getting-started/02-chat-mode.md) · [your first skill](docs/guide/getting-started/03-your-first-skill.md) · [RAG](docs/concepts/data-retrieval/rag.md).
+Walkthroughs: [chat mode](docs/guide/getting-started/02-chat-mode.md) · [RAG](docs/concepts/data-retrieval/rag.md).
 
 ---
 
@@ -103,8 +103,8 @@ flowchart TB
     Agent --> S
     subgraph S["Session: binds identity, capability and scope"]
       direction LR
-      Cap["Capability<br/>skills · MCP · A2A · RAG · tools"]
-      Perm["Permission<br/>per-skill credential scope"]
+      Cap["Capability<br/>automations · MCP · A2A · RAG · tools"]
+      Perm["Permission<br/>per-run credential scope"]
     end
     S --> OS{{"OS runtime — bounded-decision loop"}}
     Cap -. invoked via .-> OS
@@ -117,7 +117,7 @@ flowchart TB
 ```
 
 - **Actors** — the *User* talks to an *Agent* (which carries an audit identity), inside a *Session* that binds what the agent can do and is allowed to do.
-- **Capability** — what the agent can do: skills, MCP/A2A peers, RAG recall, tools. A *skill* is just one kind of capability, not the centre of gravity.
+- **Capability** — what the agent can do: automations, MCP/A2A peers, RAG recall, tools.
 - **Governance** — *Permission* gates every action; cost caps and the sandbox bound it.
 - **State of record** — the *Workspace* holds data, the *WAL* drives crash recovery, the *AuditEvent log* drives replay and audit. These are separate logs on purpose.
 
@@ -196,9 +196,9 @@ Reyn connects too (MCP + A2A) and runs open-ended tasks, but optimizes for **int
 
 | Section | What's covered |
 |---|---|
-| [Getting started](docs/guide/getting-started/) | Install, chat mode, your first skill, evals |
+| [Getting started](docs/guide/getting-started/) | Install, chat mode, evals |
 | [For users](docs/guide/for-users/) | Day-to-day usage: permissions, sandbox, cost caps, scheduling, memory |
-| [For skill authors](docs/guide/for-skill-authors/) | Phases, composition, MCP, validation, operations |
+| [For automation authors](docs/guide/for-skill-authors/) | Phases, composition, MCP, validation, operations |
 | [Reference](docs/reference/) | CLI, config (`reyn.yaml`), Control IR, events |
 | [Concepts](docs/concepts/) | Architecture, principles, the act-sense-react loop |
 | [Feature inventory](docs/feature-map.md) | Every implemented feature, grouped by subsystem |
@@ -221,7 +221,7 @@ Reyn both consumes external tools and exposes itself to other systems over stand
 
 ## Project Status
 
-**1.0 OSS launch ready.** The framework foundation is green and dogfood discipline is operational: stable DSL, CLI, and event-log surfaces; an authentication stack (MCP bearer headers, OAuth refresh, per-skill credential scoping, agent-id propagation); and a RAG framework foundation.
+**1.0 OSS launch ready.** The framework foundation is green and dogfood discipline is operational: stable DSL, CLI, and event-log surfaces; an authentication stack (MCP bearer headers, OAuth refresh, per-run credential scoping, agent-id propagation); and a RAG framework foundation.
 
 Deliberate maturity gaps live downstream — vector stores beyond SQLite, advanced retrieval (rerank / HyDE), a RAG eval framework, IDE integration, and sensitive-data redaction. The "framework foundation" framing is honest, not a hedge; see [Project Status in the docs](https://tya5.github.io/reyn/docs/) and [CLAUDE.md](CLAUDE.md) for the full list and architectural constraints.
 
@@ -233,4 +233,4 @@ MIT — see [LICENSE](LICENSE).
 
 ## Acknowledgements — powered by AI
 
-Reyn is powered by AI both at runtime (every skill execution delegates decisions to an LLM via LiteLLM) and in its development (substantial portions of the code, stdlib skills, docs, and website were drafted with AI tooling — primarily Claude Code, with human review and the final architectural calls held by the maintainer). This disclosure is mandatory rather than promotional: for provenance, start with `git log --grep="Co-Authored-By: Claude"` and the design prompts under `website/_design/`.
+Reyn is powered by AI both at runtime (every workflow execution delegates decisions to an LLM via LiteLLM) and in its development (substantial portions of the code, stdlib components, docs, and website were drafted with AI tooling — primarily Claude Code, with human review and the final architectural calls held by the maintainer). This disclosure is mandatory rather than promotional: for provenance, start with `git log --grep="Co-Authored-By: Claude"` and the design prompts under `website/_design/`.

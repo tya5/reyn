@@ -66,8 +66,8 @@ role:
 
 `allowed_skills` renders as one of:
 
-- `(unrestricted — all project + stdlib skills)` — field absent / `null`
-- `(none — router-only, no skill spawn)` — empty list `[]`
+- `(unrestricted — all project + stdlib automations)` — field absent / `null`
+- `(none — router-only, no automation spawn)` — empty list `[]`
 - bullet list — populated allowlist
 
 ## `reyn agent rm <name> [--purge] [--yes]`
@@ -110,7 +110,7 @@ Each agent owns `.reyn/agents/<name>/`:
 | `history.jsonl` | append-only conversation + agent message log |
 | `events.jsonl` | runtime event audit log |
 | `memory/MEMORY.md` + body files | agent-scoped memory layer |
-| `runs/<run_id>/` | per-skill-spawn workspace |
+| `runs/<run_id>/` | per-run workspace |
 
 ## See also
 

@@ -48,8 +48,8 @@ data      — flat dict of payload fields specific to the type
 Key fields present in most events (in `data`):
 
 ```
-run_id    — uuid for the run (always present for skill-execution events)
-skill     — skill name (always present for skill-execution events)
+run_id    — uuid for the run (always present for workflow-execution events)
+skill     — workflow name (always present for workflow-execution events)
 phase     — current phase at emission time
 ```
 
@@ -83,7 +83,7 @@ Stable shape makes the log machine-readable without a custom parser per consumer
 
 ## What events are NOT
 
-- **Not application logs.** A skill author shouldn't emit free-form events. The set is OS-defined.
+- **Not application logs.** A workflow author shouldn't emit free-form events. The set is OS-defined.
 - **Not memory.** Events are the runtime's per-run record; memory is across-run knowledge. See [../data-retrieval/memory.md](../data-retrieval/memory.md).
 - **Not the source of truth for artifacts.** Artifacts pass through the workspace channel; events record that they passed.
 

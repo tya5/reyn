@@ -6,7 +6,7 @@ audience: [human, agent]
 
 # Multi-agent
 
-A reyn process can host any number of long-lived **agents** — each an *identity* with its own profile, memory layer, permissions, and skill catalogue view. Each agent runs one or more **Sessions**: independent conversations under that identity, each with its own history, inbox, and current task (see [Sessions](sessions.md) for the Agent / Session / SkillRuntime three-level model). Agents talk to humans (one at a time, via attach) and to each other (through a structured request-response channel).
+A reyn process can host any number of long-lived **agents** — each an *identity* with its own profile, memory layer, permissions, and workflow catalogue view. Each agent runs one or more **Sessions**: independent conversations under that identity, each with its own history, inbox, and current task (see [Sessions](sessions.md) for the Agent / Session / SkillRuntime three-level model). Agents talk to humans (one at a time, via attach) and to each other (through a structured request-response channel).
 
 ## Two layers of multi-agent in Reyn
 
@@ -117,10 +117,10 @@ That preserves the existing chat UX ("you'll see I'm working on it") while letti
 ## What the OS does NOT manage
 
 - **Topology**: who can send to whom is a separate concept (see [../multi-agent/topology.md](../multi-agent/topology.md)) consulted by the registry's `permit()`.
-- **Skill access**: the LLM-side skill filter is per-agent via `profile.allowed_skills`; the OS just respects what the profile says.
+- **Workflow access**: the LLM-side workflow filter is per-agent via `profile.allowed_skills`; the OS just respects what the profile says.
 - **Memory layering**: shared vs agent layer is read/written by the router's classify phase; the registry doesn't touch memory files.
 
-Agents are first-class identity + state; topology and skill access are policy layered on top.
+Agents are first-class identity + state; topology and workflow access are policy layered on top.
 
 ## Agent ID propagation (FP-0016 Component E)
 

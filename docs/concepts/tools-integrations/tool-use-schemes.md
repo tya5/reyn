@@ -46,7 +46,7 @@ which only bites at very large catalogues (see `universal-category`).
 
 ### `universal-category`
 
-The [universal action catalog](universal-catalog.md): every action — a skill, an
+The [universal action catalog](universal-catalog.md): every action — a workflow, an
 MCP tool, a memory entry, a file op, an indexed corpus — is addressed by a single
 qualified name and reached through a small fixed set of wrappers (discover →
 describe → invoke). The LLM-facing tool list stays constant as the catalogue

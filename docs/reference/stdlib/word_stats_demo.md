@@ -7,7 +7,7 @@ applies_to: [word_stats_demo]
 
 # `word_stats_demo`
 
-Demo skill showing the `python` preprocessor step pattern. Produces a short commentary grounded in precomputed text statistics.
+Demo component showing the `python` preprocessor step pattern. Produces a short commentary grounded in precomputed text statistics.
 
 ## Entry
 
@@ -23,7 +23,7 @@ A single `review` phase. The `stats.py:compute_text_stats` preprocessor (safe mo
 
 ## Caveats
 
-Safe-mode Python; no special permissions required beyond the default. This skill is a reference example, not a production utility.
+Safe-mode Python; no special permissions required beyond the default. This component is a reference example, not a production utility.
 
 ## Usage
 

@@ -23,9 +23,7 @@ exclude_docs: |
   # contributing (= maintainer / design history).
   deep-dives/
   # Cookbook: render the example READMEs (first-class Cookbook section), but
-  # exclude the runnable skill *source* dirs (skill.md + phases) — those are
-  # executable examples, not doc pages.
-  cookbook/improve-a-skill/sample_skill/
+  # exclude runnable source dirs — those are executable examples, not doc pages.
   cookbook/translate-doc/translate_doc/
 
 theme:
@@ -80,10 +78,7 @@ nav:
           - Installation & setup:
               - guide/getting-started/01-installation.md
               - guide/getting-started/02-chat-mode.md
-          - Your first skill:
-              - guide/getting-started/03-your-first-skill.md
-              - guide/getting-started/04-running-a-skill.md
-              - guide/getting-started/05-writing-an-eval.md
+          - guide/getting-started/05-writing-an-eval.md
       - Setup evaluation: guide/evaluation.md
       - For users:
           - guide/for-users/index.md
@@ -93,7 +88,6 @@ nav:
               - guide/for-users/manage-permissions.md
               - guide/for-users/configure-sandbox.md
               - guide/for-users/cap-spending.md
-              - guide/for-users/schedule-skills.md
           - Files & integrations:
               - guide/for-users/work-with-files.md
               - guide/for-users/enable-semantic-search.md
@@ -111,9 +105,7 @@ nav:
               - guide/for-reyn-developers/run-swe-bench.md
   - Cookbook:
       - cookbook/README.md
-      - Example skills:
-          - cookbook/eval-a-skill/README.md
-          - cookbook/improve-a-skill/README.md
+      - Examples:
           - cookbook/multi-agent-research/README.md
           - cookbook/research-topic/README.md
           - cookbook/translate-doc/README.md
@@ -126,7 +118,6 @@ nav:
               - reference/cli/run.md
               - reference/cli/run-once.md
               - reference/cli/chat.md
-              - reference/cli/skill.md
               - reference/cli/dogfood.md
               - reference/cli/lint.md
               - reference/cli/web.md
@@ -164,12 +155,7 @@ nav:
       - Stdlib:
           - reference/stdlib/index.md
           - Routing:
-              - reference/stdlib/skill_router.md
               - reference/stdlib/direct_llm.md
-          - Skill authoring:
-              - reference/stdlib/skill_builder.md
-              - reference/stdlib/skill_improver.md
-              - reference/stdlib/skill_importer.md
           - Evaluation & judgment:
               - reference/stdlib/eval.md
               - reference/stdlib/eval_builder.md

@@ -24,7 +24,7 @@ effective trigger, which is window-relative (derived from the same budgets, not
 an absolute token count).
 
 The `CompactionEngine` is an OS-internal Python helper that makes a direct
-LLM call to produce the summary. It is not a stdlib skill.
+LLM call to produce the summary. It is not a stdlib workflow.
 
 ## Compaction paths
 

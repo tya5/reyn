@@ -14,7 +14,7 @@ Three contracts, all schema-anchored:
 
 ### 1. Control IR — the side-effect envelope
 
-Every side effect (file I/O, asking the user, invoking a sub-skill, running shell, linting) is a JSON object with a `kind` discriminator. The OS dispatches each op against its kind's schema:
+Every side effect (file I/O, asking the user, invoking a sub-run, running shell, linting) is a JSON object with a `kind` discriminator. The OS dispatches each op against its kind's schema:
 
 ```json
 {"kind": "read_file", "path": "src/foo.py"}
@@ -47,9 +47,9 @@ The shape is fixed; the discriminators are validated; the artifact is checked ag
 
 ### 3. Preprocessor — deterministic enrichment
 
-A phase may declare a chain that runs **before** the LLM is called: invoke a sub-skill, iterate over a list, validate against a schema, run a Python function. The result lands at a named slot in the LLM's input — phases reference the slot by name and don't need to know it came from a preprocessor.
+A phase may declare a chain that runs **before** the LLM is called: invoke a sub-run, iterate over a list, validate against a schema, run a Python function. The result lands at a named slot in the LLM's input — phases reference the slot by name and don't need to know it came from a preprocessor.
 
-This is what lets stdlib skills compose without imperative code: `eval` iterates `judge_phase` over per-criterion requests; `skill_router` calls `recall_memory` before deciding which skill to dispatch.
+This is what lets stdlib workflows compose without imperative code: `eval` iterates `judge_phase` over per-criterion requests; `skill_router` calls `recall_memory` before deciding which workflow to dispatch.
 
 ## Why type the contracts so aggressively
 
@@ -57,11 +57,11 @@ Three properties fall out of "everything has a schema":
 
 - **Reject early.** Malformed output triggers a re-prompt before any side effect runs.
 - **Replay safely.** A saved event log can be re-rendered without re-invoking the LLM, because every artifact and op was validated at write-time.
-- **Compose without surprises.** A sub-skill's output is a typed artifact; the calling phase consumes it like any input.
+- **Compose without surprises.** A sub-run's output is a typed artifact; the calling phase consumes it like any input.
 
 ## Where it's still thin
 
-The five Control IR kinds cover most workflows but more are likely needed as the ecosystem grows. MCP integration exists at the runtime layer (skills can declare MCP servers in permissions and the LLM gets MCP tools as ops); the surface area will grow. Extending the contract is intentionally cheap: add a kind to the OS, declare it in `available_control_ops`, and every skill can use it.
+The five Control IR kinds cover most workflows but more are likely needed as the ecosystem grows. MCP integration exists at the runtime layer (workflows can declare MCP servers in permissions and the LLM gets MCP tools as ops); the surface area will grow. Extending the contract is intentionally cheap: add a kind to the OS, declare it in `available_control_ops`, and every workflow can use it.
 
 ## See also
 

@@ -1,10 +1,10 @@
 # research-topic
 
 > 🔮 **Roadmap example.** Depends on: a generic-web-search MCP server you've
-> configured under `mcp:` in `reyn.yaml`, plus a `web_research` stdlib skill
+> configured under `mcp:` in `reyn.yaml`, plus a `web_research` stdlib component
 > that wraps it. Not runnable on Reyn v1 as of 2026-05-02.
 >
-> Tracked in: post-OSS roadmap. Note: the `mcp_search` stdlib skill that
+> Tracked in: post-OSS roadmap. Note: the `mcp_search` stdlib component that
 > ships today is a **registry search** (it queries `github.com/mcp` for MCP
 > *servers* matching a capability). It is **not** a generic web-research
 > entry point — calling it with "What changed in DuckDB v1.0?" returns
@@ -15,8 +15,8 @@ Run web research on a topic and get a structured summary back.
 
 ## What this shows
 
-- Driving a stdlib skill with natural language input.
-- How a skill that needs an external capability (web search) is wired
+- Driving a stdlib component with natural language input.
+- How a workflow that needs an external capability (web search) is wired
   through MCP rather than baked into the OS (P7).
 
 ## Prerequisites

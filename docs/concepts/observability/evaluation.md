@@ -6,7 +6,7 @@ audience: [human, agent]
 
 # Evaluation
 
-reyn ships a **structured evaluation infrastructure** built on top of the P6 event log. Rather than bolting on a separate observability layer, reyn treats every skill execution as a potential evaluation artifact: the same append-only event stream that powers live debug output and crash recovery is the substrate for golden-dataset testing, CI gating, and external trace export.
+reyn ships a **structured evaluation infrastructure** built on top of the P6 event log. Rather than bolting on a separate observability layer, reyn treats every workflow execution as a potential evaluation artifact: the same append-only event stream that powers live debug output and crash recovery is the substrate for golden-dataset testing, CI gating, and external trace export.
 
 **The key insight:** If every state change is already an event (P6), evaluation is a query over that log — not a new recording system.
 
@@ -14,7 +14,7 @@ reyn ships a **structured evaluation infrastructure** built on top of the P6 eve
 
 ### Goodhart's Law and reward hacking
 
-UC Berkeley (2026-04) demonstrated reward hacking across eight major benchmarks: once a benchmark becomes a target, optimizing for the metric drifts away from the underlying capability. The industry-standard response is **traceability** — not just "what score did this run get?" but "which skill version, which model, which dataset case, and which phase produced it?"
+UC Berkeley (2026-04) demonstrated reward hacking across eight major benchmarks: once a benchmark becomes a target, optimizing for the metric drifts away from the underlying capability. The industry-standard response is **traceability** — not just "what score did this run get?" but "which workflow version, which model, which dataset case, and which phase produced it?"
 
 reyn's evaluation infrastructure is designed to answer that question without additional executions. The `skill_version_hash` (FP-0006) is recorded in every `run_skill_started` event, which means retrospective version-to-version comparison is P6 log aggregation — not re-running anything.
 
@@ -83,7 +83,7 @@ Components A, B, and D are independent of FP-0006 and can be used without Compon
 
 ## Positioning
 
-**P7 compliance.** The OS has no knowledge of skill-specific rubric content. The `judge_output` op (Component D) receives a `target` path and a `rubric` string supplied by the calling skill — the OS-side implementation knows only the score and whether the threshold passed. Skill-domain evaluation criteria never appear in OS code.
+**P7 compliance.** The OS has no knowledge of workflow-specific rubric content. The `judge_output` op (Component D) receives a `target` path and a `rubric` string supplied by the calling workflow — the OS-side implementation knows only the score and whether the threshold passed. Workflow-domain evaluation criteria never appear in OS code.
 
 **OSS self-host support.** Langfuse and Grafana/Tempo are both OSS and self-hostable. The local file backend requires no external service. reyn does not mandate any SaaS dependency for evaluation.
 

@@ -18,11 +18,11 @@ Three mechanisms exist today and were not unified before FP-0036:
 
 | | `reyn eval` | Dogfood scenario framework |
 |---|---|---|
-| Entry point | `reyn run <skill>` | `reyn chat` (router decides skill) |
+| Entry point | `reyn run <skill>` | `reyn chat` (router decides workflow) |
 | Verification | Per-phase rubric (LLM judge) | reply + events + artifacts |
 | Scope | One skill at a time | Feature-map coverage |
 | Outcome scale | Binary pass/fail | 4-band (verified / inconclusive / refuted / blocked) |
-| Use case | Per-skill regression | System-wide e2e regression |
+| Use case | Per-workflow regression | System-wide e2e regression |
 
 The framework is **orthogonal** to `reyn eval`. It reuses the `judge_output`
 op backend and the baseline comparison pattern, but the CLI surface and YAML

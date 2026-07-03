@@ -14,7 +14,7 @@ the LLM a fresh tool to learn.
 
 The **universal action catalog** (FP-0034) replaces N per-kind discover /
 describe / invoke tools with **4 wrappers that cover every category
-uniformly**. Every action — a skill, a peer agent, an MCP tool, a memory
+uniformly**. Every action — a workflow, a peer agent, an MCP tool, a memory
 entry, a file op, an indexed corpus, … — is addressed by a single
 qualified name (`<category>__<entry>`) and dispatched through
 `invoke_action`. Discovery happens through `list_actions` and detail
@@ -49,7 +49,7 @@ adds an entry to the `CATEGORIES` tuple and one routing rule.
 
 | Category | Holds | Canonical invoke semantic |
 |---|---|---|
-| `skill` | Project / stdlib skills | run the skill with `input` artifact |
+| `skill` | Project / stdlib workflows | run the workflow with `input` artifact |
 | `agent.peer` | Peer agents in the topology | delegate a message to that peer |
 | `mcp` | MCP server management + tool dispatch | six verb_object actions — see below |
 | `file` | Workspace file ops | read / write / delete / list |
@@ -179,7 +179,7 @@ resource runs the *canonical default operation* for that kind:
 
 | Resource category | Canonical default invoke |
 |---|---|
-| `skill` | run the skill |
+| `skill` | run the workflow |
 | `agent.peer` | delegate a message |
 | `memory_entry` | read the body |
 | `rag_corpus` | single-source recall |
@@ -205,14 +205,14 @@ the routing:
   memory_operation / reyn_source / rag_operation / mcp).
 - **`_RESOURCE_RULES`** — category → `(target_tool_name,
   arg_transformer)` for resource categories whose entries come from
-  `RouterCallerState` (skills / agents / memory entries / rag corpora).
+  `RouterCallerState` (workflows / agents / memory entries / rag corpora).
 
 Routing always:
 
 1. Splits the qualified name into (`category`, `entry_name`).
 2. Looks up the rule for that category / qualified name.
 3. Runs the arg transformer (e.g. `_invoke_skill_args` wraps the
-   caller args under the skill's input artifact).
+   caller args under the workflow's input artifact).
 4. Returns a `ResolvedAction(target_tool_name, target_args)` that
    the wrapper hands to the unified `ToolRegistry`.
 
@@ -300,7 +300,7 @@ This serves two ends:
 - **Forced discovery of genuinely-unknown actions** — when a name exists
   nowhere the model could have memorised it, the only way to obtain it is to
   call `list_actions`. For genuinely-unknown actions this fires reliably
-  (observed 16/16 `list_actions` for an obscure, non-guessable skill).
+  (observed 16/16 `list_actions` for an obscure, non-guessable workflow).
 
   Caveat — name-hiding forces discovery only for *unknown* actions. For
   training-**known** concepts (`file__read` / `file__write`) the weak model

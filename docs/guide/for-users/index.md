@@ -56,7 +56,6 @@ No configuration required for any of these. Reyn has the skills for them out of 
 - **[Manage permissions](manage-permissions.md)** — approve or deny what Reyn is allowed to do.
 - **[Rewind a session](time-travel.md)** — jump back to an earlier point with `/rewind` and branch from there.
 - **[Cap your spending](cap-spending.md)** — set token / dollar limits so a run can't overspend.
-- **[Run a skill on a schedule](schedule-skills.md)** — fire a skill on a cron schedule with `reyn cron`.
 
 ---
 
@@ -74,5 +73,4 @@ No configuration required for any of these. Reyn has the skills for them out of 
 
 Once you're comfortable with chat mode:
 
-- **[Getting started: Your first skill](../getting-started/03-your-first-skill.md)** — build a custom automation tailored to your workflow.
 - **[Reference: CLI / chat](../../reference/cli/chat.md)** — full list of slash commands and flags.

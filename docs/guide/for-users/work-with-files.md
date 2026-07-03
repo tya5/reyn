@@ -44,7 +44,7 @@ Write the file path naturally — Reyn understands both casual descriptions and 
 > Explain what src/reyn/runtime.py does
 ```
 
-The skill resolves the path and reads the file before composing its answer. It tells you which file it actually read at the end of the response.
+The agent resolves the path and reads the file before composing its answer. It tells you which file it actually read at the end of the response.
 
 ---
 
@@ -87,9 +87,8 @@ It will not read every file in a large directory; it infers which file to start 
 ### Understand source code
 
 ```
-> What does the `ContextFrame` class in src/reyn/models.py do?
 > List the public functions in src/reyn/core/op_runtime/registry.py
-> How does src/reyn/runtime.py start a skill run?
+> How does src/reyn/runtime.py start a workflow run?
 ```
 
 ### Check configuration
@@ -108,9 +107,9 @@ It will not read every file in a large directory; it infers which file to start 
 
 ---
 
-## What the skill cannot do
+## What the workflow cannot do
 
-- **Write or modify files** — `read_local_files` is read-only. If you need to edit a file, say so explicitly; the router will pick a different skill.
+- **Write or modify files** — `read_local_files` is read-only. If you need to edit a file, say so explicitly; the router will pick a different component.
 - **Read files outside the server root** — if you configured the server with `.` as root, paths like `/etc/passwd` or `~/.ssh/config` are outside scope and will return an error. The server enforces this boundary, not Reyn.
 - **Read binary files** — the underlying tool is `read_text_file`. Images, compiled artifacts, and other binaries are not supported.
 
@@ -134,9 +133,9 @@ Say which file you meant:
 > Not that one — I meant src/reyn/core/op_runtime/registry.py
 ```
 
-The skill will re-read the correct path.
+The agent will re-read the correct path.
 
-**No response, or "skill exited empty"**
+**No response, or "workflow exited empty"**
 
 The `filesystem` server may not be running or may be misconfigured. Check that `mcp.servers.filesystem` is present in `reyn.yaml` and that `npx` is installed (`npx --version`).
 

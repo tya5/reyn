@@ -7,7 +7,7 @@ applies_to: [reyn cron]
 
 # `reyn cron`
 
-Run and inspect cron-scheduled skill jobs. Jobs are declared under `cron.jobs` in `reyn.yaml`; the scheduler dispatches each enabled job at its cron expression using the same headless `Agent.run` path as `reyn run`.
+Run and inspect cron-scheduled jobs. Jobs are declared under `cron.jobs` in `reyn.yaml`; the scheduler dispatches each enabled job at its cron expression using the same headless `Agent.run` path as `reyn run`.
 
 ## Synopsis
 
@@ -19,7 +19,7 @@ reyn cron status
 
 ## Description
 
-`reyn cron` manages time-triggered skill execution. The operator declares jobs in `reyn.yaml`; `reyn cron run` starts a foreground scheduler that fires each enabled job at its configured interval. `reyn cron list` and `reyn cron status` let operators inspect the job table without starting a scheduler.
+`reyn cron` manages time-triggered execution. The operator declares jobs in `reyn.yaml`; `reyn cron run` starts a foreground scheduler that fires each enabled job at its configured interval. `reyn cron list` and `reyn cron status` let operators inspect the job table without starting a scheduler.
 
 ## Subcommands
 
@@ -36,7 +36,7 @@ reyn cron run
 1. Reads `cron.jobs` from `reyn.yaml`.
 2. For each enabled job, computes the next fire time from the cron expression.
 3. Prints a startup banner listing all enabled jobs and their next-run times.
-4. Runs each job in a separate asyncio task; tasks sleep until the next fire time and then dispatch the skill via `Agent.run`.
+4. Runs each job in a separate asyncio task; tasks sleep until the next fire time and then dispatch the job via `Agent.run`.
 5. On Ctrl-C, waits up to 5 seconds for in-flight jobs to finish, then exits cleanly.
 
 **Example:**
@@ -112,7 +112,7 @@ weekly_ops_report        ops_report     0 9 * * MON     true     2026-05-19T09:0
 
 ## Configuration
 
-Jobs are declared under `cron.jobs` in `reyn.yaml`. Each entry maps to one scheduled skill run.
+Jobs are declared under `cron.jobs` in `reyn.yaml`. Each entry maps to one scheduled run.
 
 ```yaml
 cron:
@@ -169,6 +169,6 @@ All times are UTC. The scheduler uses [`croniter`](https://pypi.org/project/cron
 ## Related
 
 - [Reference: `reyn.yaml`](../config/reyn-yaml.md) — `cron:` configuration block
-- [Concepts: Operational Intelligence](../../concepts/data-retrieval/operational-intelligence.md) — use-cases for scheduled skill execution
+- [Concepts: Operational Intelligence](../../concepts/data-retrieval/operational-intelligence.md) — use-cases for scheduled execution
 - [Concepts: A2A protocol](../../concepts/multi-agent/a2a.md) — `RunRegistry` pattern and future web-mode status API
-- [Reference: `reyn run`](run.md) — headless single-shot skill execution (same Agent.run path)
+- [Reference: `reyn run`](run.md) — headless single-shot execution (same Agent.run path)

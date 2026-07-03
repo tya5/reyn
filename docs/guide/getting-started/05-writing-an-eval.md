@@ -6,7 +6,7 @@ audience: [human]
 
 # 05 — Writing an eval
 
-Evals turn "the output looked good" into "the output passed N criteria across M cases." This tutorial covers building a rubric for `my_explainer` (the skill from [Tutorial 03](03-your-first-skill.md)) and running it.
+Evals turn "the output looked good" into "the output passed N criteria across M cases." This tutorial covers building a rubric for `my_explainer` and running it.
 
 ## The shape of an eval
 
@@ -31,7 +31,7 @@ input: photosynthesis
 - The tone is friendly, not academic.
 ```
 
-Each `## Phase: <name>` block lists rubric criteria. The `eval` skill judges each criterion phase-by-phase using `judge_phase`.
+Each `## Phase: <name>` block lists rubric criteria. The `eval` workflow judges each criterion phase-by-phase using `judge_phase`.
 
 ## Step 1: generate a draft
 
@@ -39,7 +39,7 @@ Each `## Phase: <name>` block lists rubric criteria. The `eval` skill judges eac
 reyn run eval_builder "build an eval for my_explainer covering tone and structure"
 ```
 
-`eval_builder` reads the skill, drafts cases and criteria, and writes `reyn/local/my_explainer/eval.md`.
+`eval_builder` reads the workflow, drafts cases and criteria, and writes `reyn/local/my_explainer/eval.md`.
 
 ## Step 2: review it
 
@@ -87,7 +87,7 @@ For each failed criterion, the report includes the judge's reasoning. Use it to 
 
 ## Eval is non-interactive
 
-`reyn eval` doesn't prompt. Any permission the target skill needs must be pre-approved (in `reyn.yaml`'s `permissions:` or saved to `.reyn/approvals.yaml` from a prior `reyn run`). Without it, the case is reported as not-finished. See [manage-permissions](../for-users/manage-permissions.md).
+`reyn eval` doesn't prompt. Any permission the target workflow needs must be pre-approved (in `reyn.yaml`'s `permissions:` or saved to `.reyn/approvals.yaml` from a prior `reyn run`). Without it, the case is reported as not-finished. See [manage-permissions](../for-users/manage-permissions.md).
 
 ## What you learned
 

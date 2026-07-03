@@ -1,6 +1,6 @@
 # SP Render Inspector (`scripts/dogfood_sp_render.py`)
 
-A CLI for verifying system-prompt output during skill development — replacing the
+A CLI for verifying system-prompt output during workflow development — replacing the
 one-off `python -c "..."` scripts that were previously the only way to preview
 what the OS actually injects into a LLM call.
 
@@ -134,7 +134,7 @@ lighter alternative to `--grep-legacy` when only pass/fail status is needed.
 
 | Flag | Description | Format |
 |------|-------------|--------|
-| `--skill name=desc` | Skill available to this agent | `name=description` |
+| `--skill name=desc` | Component available to this agent | `name=description` |
 | `--agent-peer name=role` | Peer agent this agent can delegate to | `name=role` |
 | `--mcp-servers name=desc` | MCP server this agent has access to | `name=description` |
 | `--indexed-sources name` | Indexed source name (for RAG-aware agents) | plain name |

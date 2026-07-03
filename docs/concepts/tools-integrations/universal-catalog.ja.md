@@ -14,7 +14,7 @@ LLM が学ぶべき tool が 1 つ増えていた。
 
 **Universal action catalog** (FP-0034) は、 種別ごとの N 個の discover /
 describe / invoke tool を、 **全 category を一律にカバーする 4 つの
-wrapper** に置き換える。 あらゆる action — skill / peer agent / MCP
+wrapper** に置き換える。 あらゆる action — workflow / peer agent / MCP
 tool / memory entry / file op / indexed corpus / … — は単一の qualified
 name (`<category>__<entry>`) でアドレッシングされ、 `invoke_action` 経由
 で dispatch される。 discovery は `list_actions`、 詳細 introspection は
@@ -48,7 +48,7 @@ hallucination 0/35)。
 
 | Category | 保持するもの | Canonical invoke 意味論 |
 |---|---|---|
-| `skill` | project / stdlib skill | `input` artifact を持って skill を実行 |
+| `skill` | project / stdlib workflow | `input` artifact を持ってワークフローを実行 |
 | `agent.peer` | topology 内の peer agent | その peer にメッセージを delegate |
 | `mcp` | MCP server 管理 + tool dispatch | 6 個の verb_object actions — 下表参照 |
 | `file` | workspace の file op | read / write / delete / list |
@@ -175,7 +175,7 @@ invoke すると、 その種別の *canonical default operation* が走る:
 
 | Resource category | Canonical default invoke |
 |---|---|
-| `skill` | skill を実行 |
+| `skill` | ワークフローを実行 |
 | `agent.peer` | message を delegate |
 | `memory_entry` | body を read |
 | `rag_corpus` | single-source recall |
@@ -203,14 +203,14 @@ qualified name → target tool 名のマッピングは
   memory_operation / reyn_source / rag_operation / mcp)。
 - **`_RESOURCE_RULES`** — category → `(target_tool_name,
   arg_transformer)`、 entry が `RouterCallerState` 由来の resource
-  category 向け (skills / agents / memory entries / rag corpora)。
+  category 向け (workflows / agents / memory entries / rag corpora)。
 
 Routing は常に:
 
 1. qualified name を (`category`, `entry_name`) に split。
 2. その category / qualified name の rule を lookup。
 3. arg transformer を実行 (例: `_invoke_skill_args` は caller の args を
-   skill の input artifact に wrap)。
+   ワークフローの input artifact に wrap)。
 4. `ResolvedAction(target_tool_name, target_args)` を返し、 wrapper が
    それを unified `ToolRegistry` に渡す。
 
@@ -292,7 +292,7 @@ system prompt (category を capability で記述し、 action 名は載せない
 - **真に未知の action の強制 discovery** — 名前が model の記憶し得る
   どこにも存在しないとき、 それを得る唯一の手段は `list_actions` の呼び
   出しになる。 真に未知の action ではこれが確実に fire する (非推測な
-  obscure skill で `list_actions` 16/16 を観測)。
+  obscure なワークフローで `list_actions` 16/16 を観測)。
 
   注意 — 名前隠蔽が discovery を強制するのは *未知* action のみ。 training
   で **既知** の概念 (`file__read` / `file__write`) では、 weak model は

@@ -12,13 +12,13 @@ reyn speaks MCP in both directions: it can call out to external MCP servers (as 
 
 MCP is a JSON-RPC protocol for AI agents to connect to "servers" that expose tools. The spec is published by Anthropic at [modelcontextprotocol.io](https://modelcontextprotocol.io). Many official server implementations exist (`filesystem`, `git`, `github`, `fetch`, `brave-search`); third parties ship dozens more. A server advertises its tool list (`tools/list`) and executes calls (`tools/call`); the agent stays generic.
 
-The point: your skill says "call the `read_text_file` tool on the `filesystem` server", not "shell out to `cat`". Swapping the backend is a config change, not a code change.
+The point: your workflow says "call the `read_text_file` tool on the `filesystem` server", not "shell out to `cat`". Swapping the backend is a config change, not a code change.
 
 ## Two roles Reyn plays
 
 | Role | Direction | How |
 |------|-----------|-----|
-| **MCP client** — Reyn calls external servers | Outbound | The `mcp` Control IR op + `permissions.mcp:` declaration in a phase. A skill says "call this tool on this server"; the OS dispatches via `MCPClient` (stdio / http / sse). Example: a skill reads files through the `filesystem` MCP server. |
+| **MCP client** — Reyn calls external servers | Outbound | The `mcp` Control IR op + `permissions.mcp:` declaration in a phase. A workflow says "call this tool on this server"; the OS dispatches via `MCPClient` (stdio / http / sse). Example: a workflow reads files through the `filesystem` MCP server. |
 | **MCP server** — external clients call Reyn | Inbound | `reyn mcp serve --project .` launches Reyn as a JSON-RPC server. Claude Code, Cursor, OpenAI Agents SDK, or any MCP-aware client can then call INTO Reyn's agents using two tools: `list_agents()` and `send_to_agent(agent_name, message)`. |
 
 The rest of this page covers each role in turn.
@@ -90,11 +90,11 @@ reyn chat
 > このディレクトリにある README.md を要約して
 ```
 
-The router invokes `mcp__list_tools` → `mcp__call_tool` automatically; no `permissions.mcp:` declaration in any skill is required. **Skill authoring is for when you want to formalize a recurring workflow** (= phase graph, validation, retry policy) — not a prerequisite to using MCP. The deep-dive below is for that case; if you only need ad-hoc invocation, you can stop reading here.
+The router invokes `mcp__list_tools` → `mcp__call_tool` automatically; no `permissions.mcp:` declaration in any workflow is required. **Workflow authoring is for when you want to formalize a recurring workflow** (= phase graph, validation, retry policy) — not a prerequisite to using MCP. The deep-dive below is for that case; if you only need ad-hoc invocation, you can stop reading here.
 
 ## Role 1: MCP client — Reyn calls external servers
 
-When a skill needs an external tool, the flow is:
+When a workflow needs an external tool, the flow is:
 
 ```
 phase frontmatter         LLM emits Control IR        OS dispatches
@@ -104,12 +104,12 @@ phase frontmatter         LLM emits Control IR        OS dispatches
                              args: {path: ...}}
 ```
 
-1. The skill's phase declares `permissions.mcp: [server_name]` in frontmatter — without this, the runtime refuses every call to that server.
+1. The workflow's phase declares `permissions.mcp: [server_name]` in frontmatter — without this, the runtime refuses every call to that server.
 2. The LLM emits an `mcp` Control IR op: `{server, tool, args}`. It cannot invent server names; only servers configured in `reyn.yaml` and declared in the phase's permissions are reachable.
 3. The OS resolves the server's transport (`stdio`, `http`, `sse`), dispatches via `MCPClient`, and returns the tool result to the phase loop.
 4. Every call emits events — `mcp_called` before, `mcp_completed` (or `mcp_failed`) after. The audit trail is identical to any other op.
 
-The boundary is sharp on purpose: skills describe what they want, the OS decides how to get it. Adding a new MCP server doesn't touch any OS code (P7).
+The boundary is sharp on purpose: workflows describe what they want, the OS decides how to get it. Adding a new MCP server doesn't touch any OS code (P7).
 
 ## Transport choice (stdio vs HTTP)
 
@@ -171,7 +171,7 @@ MCP operations are gated at two points:
 
 Before any MCP server can be added to the configuration, the install op's writes go through the OS's standard list-axis gates. The legacy `permissions.mcp_install: ask | allow | deny` bool axis was removed in the collapse arc — install gating now flows through:
 
-- `file.write` on `.reyn/mcp.yaml` (= the canonical mutation target). `startup_guard` prompts the operator once per skill+path; runtime is silent after approval.
+- `file.write` on `.reyn/mcp.yaml` (= the canonical mutation target). `startup_guard` prompts the operator once per workflow+path; runtime is silent after approval.
 - `http.get` on `registry.modelcontextprotocol.io` (= the registry fetch). Same prompt model.
 - `secret.write` on the env-var keys the registry declares as `isSecret` (= wildcard `"*"` because the key set is runtime-determined).
 
@@ -217,9 +217,9 @@ See [Concepts: permission model](../runtime/permission-model.md) → "Collapse a
 MCP tool calls cross two checks before they leave the process:
 
 1. **Phase declaration.** A phase MUST list each server it intends to use under `permissions.mcp` in its frontmatter. The runtime calls `require_mcp(decl, server, ...)`; if `server not in decl.mcp`, the call fails with a clear error pointing at the missing declaration.
-2. **Approval.** Like every other capability, the first invocation per skill prompts (`y` / `j` / `r` / `N`). Persistent approvals land in `.reyn/approvals.yaml` keyed by `<skill>/mcp.<server>`. Pre-approve project-wide with `permissions.mcp: allow` in `reyn.yaml` if you trust the project broadly.
+2. **Approval.** Like every other capability, the first invocation per workflow prompts (`y` / `j` / `r` / `N`). Persistent approvals land in `.reyn/approvals.yaml` keyed by `<skill>/mcp.<server>`. Pre-approve project-wide with `permissions.mcp: allow` in `reyn.yaml` if you trust the project broadly.
 
-This matches reyn's general permission model — see [../runtime/permission-model.md](../runtime/permission-model.md). One skill's MCP approval doesn't leak to another skill, and a sub-skill invoked via `run_skill` has to ask for its own permissions.
+This matches reyn's general permission model — see [../runtime/permission-model.md](../runtime/permission-model.md). One workflow's MCP approval doesn't leak to another workflow, and a nested run invoked via `run_skill` has to ask for its own permissions.
 
 Three audit events are emitted per call:
 
@@ -231,9 +231,9 @@ Three audit events are emitted per call:
 
 Filter for them with `reyn events tail | grep mcp_` or `grep '"mcp_called"' .reyn/events.jsonl`.
 
-## Stdlib skills that use MCP
+## Stdlib workflows that use MCP
 
-Stdlib skills declare `permissions.mcp: [<server>]` in the phase, emit `mcp` ops with `tool: <name>` (or whatever the server advertises), and let the OS handle the rest. See the how-to for a full quickstart on authoring your own MCP-backed skill.
+Stdlib workflows declare `permissions.mcp: [<server>]` in the phase, emit `mcp` ops with `tool: <name>` (or whatever the server advertises), and let the OS handle the rest. See the how-to for a full quickstart on authoring your own MCP-backed workflow.
 
 ## Role 2: MCP server — external clients call Reyn
 
@@ -260,9 +260,9 @@ Two tools are registered:
 
 Multi-turn continuity is preserved: each agent's `Session` keeps its `history.jsonl` between calls, so a conversation that starts in Claude Code can be resumed from `reyn chat` — or vice versa.
 
-### What "via MCP" means for your skills
+### What "via MCP" means for your workflows
 
-External clients see agents, not the skill graph. From the outside, there are only two operations: list agents and send a message. The OS contract still applies on Reyn's side: permissions are checked, events are emitted, and all the normal validation runs. Skills can be approved non-interactively if `permissions: allow` is set in `reyn.yaml` (the MCP server runs without a human at stdin, so interactive prompts would block indefinitely).
+External clients see agents, not the workflow graph. From the outside, there are only two operations: list agents and send a message. The OS contract still applies on Reyn's side: permissions are checked, events are emitted, and all the normal validation runs. Workflows can be approved non-interactively if `permissions: allow` is set in `reyn.yaml` (the MCP server runs without a human at stdin, so interactive prompts would block indefinitely).
 
 This is part of Reyn's "talks-out + talked-to" multi-agent surface. See [../multi-agent/multi-agent.md](../multi-agent/multi-agent.md) for how agents relate to each other within a single Reyn process.
 
@@ -271,7 +271,7 @@ This is part of Reyn's "talks-out + talked-to" multi-agent surface. See [../mult
 MCP is the right tool for *external capability access*. Don't reach for it when:
 
 - **You need heavy compute.** Use a Python preprocessor (`python` op). MCP calls cross a process boundary on every invocation; an inline NumPy step is much faster.
-- **You're encoding a reusable workflow.** That's a skill, not an MCP server. Use `skill_builder` to author a new skill, not a new MCP tool.
+- **You're encoding a reusable workflow.** That's a workflow, not an MCP server. Use `skill_builder` to author a new workflow, not a new MCP tool.
 - **You want cross-agent messaging.** Use `messages_to_agents` and topology rules. MCP doesn't model agent identity or chains.
 - **You need state across invocations.** MCP servers can be stateless or stateful, but reyn treats each call as independent. Persistent state belongs in the workspace.
 

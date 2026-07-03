@@ -23,7 +23,7 @@ Two phases: `collect → summarize`. In `collect`, the `aggregate.py` preprocess
 
 ## Caveats
 
-Requires `file.read` on `.reyn/events/` and `.reyn/index/`. The recall path is only useful after `index_events` has been run; without it the skill falls back to raw event scanning. `cost_total_usd` is always `null` — cost aggregation is not yet implemented.
+Requires `file.read` on `.reyn/events/` and `.reyn/index/`. The recall path is only useful after `index_events` has been run; without it the component falls back to raw event scanning. `cost_total_usd` is always `null` — cost aggregation is not yet implemented.
 
 ## Usage
 

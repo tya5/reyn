@@ -8,7 +8,7 @@ applies_to: [reyn.yaml, reyn run]
 # Configure the sandbox
 
 reyn's sandbox layer isolates subprocess execution at the operator level.
-The operator sets the backend and policy in `reyn.yaml`; skills do not control
+The operator sets the backend and policy in `reyn.yaml`; workflows do not control
 their own containment. Sandbox is orthogonal to permissions — see
 [Sandbox and permissions](../../concepts/architecture/sandbox-vs-permission.md).
 
@@ -42,7 +42,7 @@ platform:
 
 `sandbox.policy` lets the operator declare a deterministic, operator-controlled
 sandbox policy. When set, it applies to all `sandboxed_exec` ops **and** to the
-`SandboxLayer` of the permission intersection — a skill or the LLM cannot widen it.
+`SandboxLayer` of the permission intersection — a workflow or the LLM cannot widen it.
 
 ```yaml
 sandbox:
@@ -118,7 +118,7 @@ effect. Use only in trusted environments where enforcement is unavailable.
 
 ## Run in a container (mount mode)
 
-For the strongest isolation — or to run skills against a consistent Linux
+For the strongest isolation — or to run workflows against a consistent Linux
 environment regardless of the host OS — use the Docker backend:
 
 ```bash
@@ -179,4 +179,4 @@ always overrides the devcontainer.
 - [Concepts: Sandbox and permissions](../../concepts/architecture/sandbox-vs-permission.md) — why sandbox and permissions are orthogonal
 - [Concepts: Sandbox](../../concepts/runtime/sandbox.md) — backend field reference and scoping model details
 - [Reference: `reyn.yaml`](../../reference/config/reyn-yaml.md) — full `sandbox:` config schema
-- [How-to: Manage permissions](manage-permissions.md) — declare and approve skill-level capability permissions
+- [How-to: Manage permissions](manage-permissions.md) — declare and approve workflow-level capability permissions

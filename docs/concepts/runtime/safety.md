@@ -36,7 +36,7 @@ the current configured value, and which config key to change.
 | Phase act-turns | `safety.loop.max_act_turns_per_phase` | 10 | ✅ | yes |
 | Phase visits | `safety.loop.max_phase_visits` | 25 | ✅ | yes |
 | Router calls/turn | `safety.loop.max_router_calls_per_turn` | 3 | ✅ | yes |
-| Skill calls/chain | _(configured per skill)_ | — | ✅ | yes |
+| Workflow calls/chain | _(configured per workflow)_ | — | ✅ | yes |
 | Agent hops | `safety.loop.max_agent_hops` | 3 | ✅ | yes |
 | Phase wall-clock | `safety.timeout.phase_seconds` | 0 (off) | ✅ | yes |
 | Chain wait | `safety.timeout.chain_seconds` | 60 | ✅ | yes |

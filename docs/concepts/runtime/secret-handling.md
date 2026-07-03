@@ -195,7 +195,7 @@ The static dotenv path (`~/.reyn/secrets.env`, chmod 600) is designed for **rota
 
 reyn ships an `OAuthToken` value type stored in `~/.reyn/oauth_tokens.json` (chmod 600). Each entry holds the access token, refresh token, expiry timestamp, and token endpoint URL.
 
-**Runtime API** — skills access OAuth tokens via:
+**Runtime API** — workflows access OAuth tokens via:
 
 ```python
 from reyn.secrets import get_valid_token
@@ -216,13 +216,13 @@ token = await get_valid_token("github_oauth")
 | `token_refreshed` | Successful refresh; payload includes `key`, masked token hint |
 | `token_refresh_failed` | Refresh request failed; payload includes `key`, `error` |
 
-## Per-skill credential scoping (FP-0016 D)
+## Per-workflow credential scoping (FP-0016 D)
 
-**Threat model:** sub-skills that process untrusted documents could be prompt-injected into exfiltrating the parent skill's full secret store (Confused Deputy attack). Scoping prevents this.
+**Threat model:** nested runs that process untrusted documents could be prompt-injected into exfiltrating the parent workflow's full secret store (Confused Deputy attack). Scoping prevents this.
 
 ### Declaration
 
-Each skill declares `required_credentials` in its `skill.md` frontmatter:
+Each workflow declares `required_credentials` in its `skill.md` frontmatter:
 
 ```yaml
 # skill.md frontmatter
@@ -237,13 +237,13 @@ Accepted values:
 
 | Value | Meaning |
 |-------|---------|
-| `[]` | No credentials needed (default for stdlib skills) |
+| `[]` | No credentials needed (default for stdlib workflows) |
 | `["github_token", "openai_key"]` | Explicit allowlist |
 | `["*"]` | Full delegation — backward-compat default when field is omitted |
 
 ### Enforcement
 
-At `run_skill` boundaries the OS constructs a `ScopedSecretStore(allowed_keys=...)` and **intersects** it with the parent's scope (parent-cap semantics — a sub-skill can never have wider access than its parent).
+At `run_skill` boundaries the OS constructs a `ScopedSecretStore(allowed_keys=...)` and **intersects** it with the parent's scope (parent-cap semantics — a nested run can never have wider access than its parent).
 
 Reads outside the allowed set raise `CredentialScopeError` (a `PermissionError` subclass).
 
@@ -255,7 +255,7 @@ Every scope decision emits a `sub_skill_credential_scope` P6 event for audit:
 
 **Cross-references:**
 
-- [Concepts: permission model](../runtime/permission-model.md) "Per-skill credential scoping" — deeper detail including capability inheritance rules.
+- [Concepts: permission model](../runtime/permission-model.md) "Per-workflow credential scoping" — deeper detail including capability inheritance rules.
 
 ## Device authorization grant (FP-0016 C)
 
@@ -289,6 +289,6 @@ For cross-agent tracing and multi-agent topology: [Concepts: multi-agent](../mul
 - [Reference: `reyn.yaml`](../../reference/config/reyn-yaml.md) — `${VAR}` interpolation in config fields; OAuth provider config
 - [Reference: `reyn auth`](../../reference/cli/auth.md) — device authorization grant CLI
 
-- [Concepts: permission model](../runtime/permission-model.md) — `mcp_install` permission gating; per-skill credential scoping
+- [Concepts: permission model](../runtime/permission-model.md) — `mcp_install` permission gating; per-workflow credential scoping
 - [Concepts: multi-agent](../multi-agent/multi-agent.md) — agent ID propagation
 - ADR-0030 `docs/deep-dives/decisions/0030-universal-../runtime/secret-handling.md` — design rationale (implementation team, internal)

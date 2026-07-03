@@ -69,7 +69,7 @@ Saved OAuth token under key 'github'. Expires at 2026-05-17T11:00:00+00:00.
 ```
 
 The token is written to `~/.reyn/oauth_tokens.json` (`chmod 600`) and refreshed
-automatically when a skill uses it — you don't log in again until the refresh
+automatically when a workflow uses it — you don't log in again until the refresh
 token itself expires.
 
 ### Multiple accounts for one provider

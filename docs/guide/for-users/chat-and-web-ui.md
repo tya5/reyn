@@ -30,7 +30,7 @@ reyn web
 
 Then open **http://localhost:8080** in any browser.
 
-The Web UI shows conversation history, running skill status, and richer output rendering (tables, code blocks, markdown). Use it when you want a more readable view or when sharing a screen.
+The Web UI shows conversation history, running workflow status, and richer output rendering (tables, code blocks, markdown). Use it when you want a more readable view or when sharing a screen.
 
 ### Custom host and port
 
@@ -45,7 +45,7 @@ reyn web --host 0.0.0.0         # accept connections from other machines (LAN)
 
 ## TUI and Web UI side by side
 
-Both interfaces talk to the same agent. Starting a task in the TUI and then watching it in the browser works — both views update as the skill runs.
+Both interfaces talk to the same agent. Starting a task in the TUI and then watching it in the browser works — both views update as the workflow runs.
 
 ```
 Terminal A          Terminal B          Browser
@@ -91,7 +91,7 @@ The shortcuts you reach for daily:
 |-----|--------|
 | `Ctrl+P` / `Ctrl+N` | Jump to the previous / next turn header |
 | `Ctrl+L` | Clear the conversation pane (engine state untouched) |
-| `Ctrl+C` | Cancel the in-flight skill / LLM call / intervention modal |
+| `Ctrl+C` | Cancel the in-flight workflow run / LLM call / intervention modal |
 
 ### Right panel
 

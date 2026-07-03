@@ -107,7 +107,7 @@ Target language for natural-language output. From `reyn.yaml` or `--output-langu
 
 ### `op_catalog`
 
-Full catalog of every Control IR op kind the OS can dispatch in this run, regardless of the current phase's `allowed_ops`. This differs from `available_control_ops` (which lists only ops allowed for the current phase). Populated for all phases but consulted only by meta-skills (`skill_builder`, `skill_improver`, `skill_importer`) that need to emit correct `allowed_ops` values in phase frontmatter they generate.
+Full catalog of every Control IR op kind the OS can dispatch in this run, regardless of the current phase's `allowed_ops`. This differs from `available_control_ops` (which lists only ops allowed for the current phase). Populated for all phases but consulted only by meta-components (`skill_builder`, `skill_improver`, `skill_importer`) that need to emit correct `allowed_ops` values in phase frontmatter they generate.
 
 ### `current_datetime`
 
@@ -131,14 +131,14 @@ OS-injected header describing available token budget when the context window is 
 
 ## What's NOT in the frame
 
-- Other phases' artifacts (use `file` ops or sub-skills if you need them).
+- Other phases' artifacts (use `file` ops or sub-runs if you need them).
 - The event log.
 - Memory or other long-term state (only what was recalled into the input artifact).
 - The LLM's own past outputs (each call is stateless — preprocessor + this frame are the only context).
 
 ## Why this design
 
-Building a fresh frame every visit forces every phase to be self-contained. There is no hidden conversational state between visits — only what the OS injects. This is what makes runs replayable and individual phases reusable across skills.
+Building a fresh frame every visit forces every phase to be self-contained. There is no hidden conversational state between visits — only what the OS injects. This is what makes runs replayable and individual phases reusable across runs.
 
 ## See also
 

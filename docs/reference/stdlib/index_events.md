@@ -19,7 +19,7 @@ Index the P6 event log at run granularity into the RAG infrastructure for operat
 
 ## How it composes
 
-Two-stage execution. Phase `scan` (LLM): a preprocessor runs `resolve_scan_context` to read the cursor file and summarise the event file inventory (count + timestamp range, no paths exposed); the LLM echoes the resolved `since`, `event_files_count`, `skill_filter`, and `mode` into `scan_plan` and finishes immediately. Skill.postprocessor (deterministic, no LLM): `run_collect_chunks` walks `.reyn/events/` from the cursor, groups events by run boundary (1 run = 1 chunk), writes `event_chunks.jsonl`; the `embed` op embeds each chunk; `index_write` writes to the `events` source; `run_advance_cursor` persists the new cursor.
+Two-stage execution. Phase `scan` (LLM): a preprocessor runs `resolve_scan_context` to read the cursor file and summarise the event file inventory (count + timestamp range, no paths exposed); the LLM echoes the resolved `since`, `event_files_count`, `skill_filter`, and `mode` into `scan_plan` and finishes immediately. workflow postprocessor (deterministic, no LLM): `run_collect_chunks` walks `.reyn/events/` from the cursor, groups events by run boundary (1 run = 1 chunk), writes `event_chunks.jsonl`; the `embed` op embeds each chunk; `index_write` writes to the `events` source; `run_advance_cursor` persists the new cursor.
 
 ## Caveats
 
@@ -38,7 +38,7 @@ reyn run index_events --input '{"since":"2026-05-14T00:00:00"}'
 reyn run index_events --input '{"skills":["my_skill"],"mode":"replace"}'
 ```
 
-To recall indexed events from a skill or phase:
+To recall indexed events from a run or phase:
 
 ```yaml
 - op: recall

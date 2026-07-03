@@ -87,7 +87,7 @@ A few reliability primitives are intentionally simple today and on the roadmap t
 
 **No checkpoint/resume.** Because every state change is an event (P3), the *information* needed for resume is already in the log; the *machinery* to reload at event N and continue isn't built. Adding it doesn't require new event types — just a runtime mode that replays events as state-restore rather than just rendering.
 
-**Idempotency is the skill author's responsibility.** If a phase writes a file via Control IR, re-entering the phase on retry will write again. The preprocessor + Control IR distinction helps (preprocessors are deterministic), but skills with externally-visible side effects need to think about idempotency themselves.
+**Idempotency is the workflow author's responsibility.** If a phase writes a file via Control IR, re-entering the phase on retry will write again. The preprocessor + Control IR distinction helps (preprocessors are deterministic), but workflows with externally-visible side effects need to think about idempotency themselves.
 
 ## See also
 

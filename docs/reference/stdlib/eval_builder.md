@@ -7,7 +7,7 @@ applies_to: [eval_builder]
 
 # `eval_builder`
 
-Auto-generate an eval spec (`eval.md`) for a skill.
+Auto-generate an eval spec (`eval.md`) for a workflow.
 
 ## Entry
 
@@ -19,7 +19,7 @@ Auto-generate an eval spec (`eval.md`) for a skill.
 
 ## How it works
 
-Reads the target skill's `skill.md` and phase files, infers test cases that exercise the graph, and proposes per-phase quality criteria. The user runs the spec separately with `reyn eval <eval_md_path>`.
+Reads the target workflow's `skill.md` and phase files, infers test cases that exercise the graph, and proposes per-phase quality criteria. The user runs the spec separately with `reyn eval <eval_md_path>`.
 
 ## When phases use Python preprocessors
 

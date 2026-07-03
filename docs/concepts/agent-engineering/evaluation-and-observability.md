@@ -6,7 +6,7 @@ audience: [human, agent]
 
 # Evaluation and Observability
 
-Two questions a serious agent system has to answer: *does it work?* (evaluation) and *why is it doing what it's doing?* (observability). reyn answers both through the same channel — events — plus a stdlib skill (`eval`) that uses events to grade rubric criteria.
+Two questions a serious agent system has to answer: *does it work?* (evaluation) and *why is it doing what it's doing?* (observability). reyn answers both through the same channel — events — plus a stdlib workflow (`eval`) that uses events to grade rubric criteria.
 
 ## How reyn handles it
 
@@ -33,15 +33,15 @@ Replay does not re-invoke the LLM. It re-renders the saved log to the console wi
 
 ### Eval — phase-keyed rubric grading
 
-The `eval` stdlib skill judges a target skill's output against per-phase criteria using `judge_phase` fanned out over the rubric (one item per criterion). The result is a structured report: per-case pass/fail, weakest phase, overall score, token usage, cost.
+The `eval` stdlib workflow judges a target workflow's output against per-phase criteria using `judge_phase` fanned out over the rubric (one item per criterion). The result is a structured report: per-case pass/fail, weakest phase, overall score, token usage, cost.
 
 ```bash
 reyn eval reyn/local/my_skill/eval.md
 ```
 
-Two related stdlib skills:
+Two related stdlib workflows:
 
-- **`eval_builder`** generates a rubric draft from a skill description.
+- **`eval_builder`** generates a rubric draft from a workflow description.
 - **`judge_phase`** is the per-criterion judge that `eval` orchestrates.
 
 The phase-keyed structure matters: a "the summary is friendly" criterion is graded against the *summary* phase's output, not the whole run. This makes it possible to find the *responsible* phase for a regression instead of just noting that the final output is worse.

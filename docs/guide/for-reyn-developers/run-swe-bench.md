@@ -13,7 +13,7 @@ real GitHub issues. There are two surfaces, and they are independent:
 - **Solve a single instance** — `scripts/swe_bench_runner.py` runs the general
   agent on one SWE-bench instance and emits a prediction (a git patch). It does
   **not** score.
-- **Run a batch** — `reyn eval benchmark` runs a skill across a JSONL task file
+- **Run a batch** — `reyn eval benchmark` runs a workflow across a JSONL task file
   with concurrent dispatch and **built-in faithful scoring**.
 
 Scoring in both cases is delegated to the official `swebench` harness, which is
@@ -93,13 +93,13 @@ which scores inline.
 
 ## Run a batch
 
-`reyn eval benchmark` runs a skill across a JSONL task file (one task per line)
+`reyn eval benchmark` runs a workflow across a JSONL task file (one task per line)
 with concurrent dispatch, and scores each result inline:
 
-> **There is no bundled `swe_bench` skill.** The batch driver runs whatever
-> skill you name, and the previously bundled `swe_bench` skill was retired — so
-> `reyn eval benchmark swe_bench …` will dead-end with "skill not found". The
-> batch path requires a **caller-supplied** skill. The agent-routed (no-skill)
+> **There is no bundled `swe_bench` workflow.** The batch driver runs whatever
+> workflow you name, and the previously bundled `swe_bench` workflow was retired — so
+> `reyn eval benchmark swe_bench …` will dead-end with "workflow not found". The
+> batch path requires a **caller-supplied** workflow. The agent-routed (no-workflow)
 > SWE-bench solve is the [single-instance runner](#solve-a-single-instance)
 > above; to cover a full dataset that way, loop the runner over instances and
 > score the predictions with the `swebench` harness yourself. There is no single
@@ -118,7 +118,7 @@ reyn eval benchmark <SKILL> \
 
 | Flag | Default | Notes |
 |---|---|---|
-| `<SKILL>` | — | the skill to run on each task (resolved via reyn/project → local → stdlib) |
+| `<WORKFLOW>` | — | the workflow to run on each task (resolved via reyn/project → local → stdlib) |
 | `--tasks PATH` | — | **required** — JSONL; each line is one task input |
 | `--output DIR` | — | **required** — results land under `<DIR>/run_<timestamp>/` |
 | `--clone-task-repo` | off | **needed for SWE-bench** — clones `<repo>` and checks out `<base_commit>` into each task's workspace |
@@ -149,8 +149,8 @@ unless it was faithfully verified.
 
 ### Non-interactive permissions
 
-`reyn eval benchmark` never prompts. Every permission the skill needs must be
-pre-approved before the run, either by running the skill once interactively and
+`reyn eval benchmark` never prompts. Every permission the workflow needs must be
+pre-approved before the run, either by running the workflow once interactively and
 accepting the prompts, or by granting in `reyn.yaml`:
 
 ```yaml
