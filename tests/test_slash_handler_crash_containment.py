@@ -56,4 +56,9 @@ async def test_raising_slash_handler_is_contained_not_fatal(
     # Before the fix this raised RuntimeError out of dispatch (→ killed run()).
     consumed = await session._maybe_handle_slash("/__f3boom__")
     assert consumed is True  # handled → the run loop continues
-    assert any(m.kind == "error" for m in _drain_outbox(session))
+    msgs = _drain_outbox(session)
+    err = next(m for m in msgs if m.kind == "error")
+    # Exception type + message must appear in the error text so the user sees
+    # what went wrong without needing developer log access.
+    assert "RuntimeError" in err.text
+    assert "handler exploded" in err.text
