@@ -239,9 +239,9 @@ class Workspace:
                 for r in [self.base_dir, self.state_dir]
             ):
                 # Outside project root — consult PermissionResolver.
-                # stdlib skills and other legitimate read targets may live
-                # outside the project directory; the permission system is the
-                # canonical gate for those paths.
+                # Safe-mode python steps and other legitimate read targets
+                # may live outside the project directory; the permission
+                # system is the canonical gate for those paths.
                 # For glob patterns that contain wildcards, extract the
                 # longest concrete prefix (the root before any wildcard
                 # component) and check read permission against that base.

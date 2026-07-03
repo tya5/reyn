@@ -1,4 +1,4 @@
-"""Safe-mode HTTP for stdlib skills.
+"""Safe-mode HTTP for safe-mode python steps.
 
 Exposes the same ``get`` / ``post`` / ``put`` / ``delete`` surface as
 ``reyn.api.unsafe.http`` (= ``urllib.request``-backed, no extra deps),

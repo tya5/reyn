@@ -1,7 +1,7 @@
 """Process-identity helpers for safe-mode python steps (FP-0042 Phase 2.2).
 
 Safe-mode python bans ``import os``, but a small subset of os surface is
-needed by stdlib skills — specifically PID identity for advisory locks
+needed by safe-mode python steps — specifically PID identity for advisory locks
 (``index_docs.write_chunks_with_lock`` records its own PID in
 ``.reyn/cache/index/<source>/.lock`` and checks holder liveness on next
 acquire).

@@ -1,4 +1,4 @@
-"""Safe-mode provider-direct embed+index for stdlib RAG skills (#1303 Stage I).
+"""Safe-mode provider-direct embed+index for safe-mode RAG in CodeAct/python steps (#1303 Stage I).
 
 Folds the old ``embed`` + ``index_write`` run-op pair into a single
 ``reyn.api.safe.*`` surface a safe-mode python step (the swappable chunker) can
