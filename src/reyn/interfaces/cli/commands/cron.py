@@ -6,8 +6,8 @@ Subcommands:
   status  Like `list` but shows last-run fields too (empty in standalone mode).
 
 The scheduler reads ``cron.jobs`` from reyn.yaml and computes each enabled
-job's cron schedule. Standalone CLI mode has no execution runner (skill-based
-job execution has been retired; message-based jobs need ``reyn web``).
+job's cron schedule. Standalone CLI mode has no execution runner; message-based jobs need
+``reyn web``.
 
 v1 limitation: last-run state is in-memory only.  ``reyn cron status``
 shows empty last_run_* fields when invoked standalone (i.e. not while
@@ -25,9 +25,9 @@ from pathlib import Path
 def register(sub) -> None:
     p = sub.add_parser(
         "cron",
-        help="Manage and run cron-scheduled skill jobs",
+        help="Manage and run cron-scheduled jobs",
         description=(
-            "Schedule and execute skills on a cron timetable.  "
+            "Schedule and dispatch messages on a cron timetable.  "
             "Configure jobs under the ``cron.jobs`` key in reyn.yaml."
         ),
     )
@@ -92,9 +92,8 @@ def _load_jobs() -> list:
 def _jobs_to_cron_jobs(job_configs) -> list:
     """Convert CronJobConfig entries to CronJob instances.
 
-    Both message-based (= ``to`` + ``message``) and legacy skill-based
-    (= ``skill``) shapes pass through; CronJob carries all three fields
-    and the runner dispatches based on ``is_message_based()``.
+    Jobs are message-based (= ``to`` + ``message``); the runner dispatches
+    the message to the target agent's inbox.
     """
     from reyn.runtime.cron import CronJob
     return [
@@ -104,7 +103,6 @@ def _jobs_to_cron_jobs(job_configs) -> list:
             to=jc.to,
             message=jc.message,
             notify=jc.notify,
-            skill=jc.skill,
             input=dict(jc.input),
             enabled=jc.enabled,
         )
@@ -126,19 +124,16 @@ def _print_list_table(jobs: list, *, show_last_run: bool = False) -> None:
         print("(no jobs configured)")
         return
 
-    # Pre-compute next_run_at for each job. FP-0041 #489 PR-B: target
-    # column shows the agent (= message-based) or the skill (= legacy)
-    # so operators can tell at a glance what each job dispatches.
+    # Pre-compute next_run_at for each job. FP-0041 #489 PR-B: the target
+    # column shows the destination agent so operators can tell at a glance
+    # what each job dispatches.
     rows = []
     for job in jobs:
         next_str = _compute_next_run(job)
-        if job.is_message_based():
-            target = f"→{job.to}"
-        else:
-            target = job.skill or "-"
+        target = f"→{job.to}" if job.to else "-"
         row = {
             "name": job.name,
-            "skill": target,
+            "target": target,
             "schedule": job.schedule,
             "enabled": "true" if job.enabled else "false",
             "next_run": next_str,
@@ -152,8 +147,8 @@ def _print_list_table(jobs: list, *, show_last_run: bool = False) -> None:
     # Column widths
     w_name = max(len(r["name"]) for r in rows)
     w_name = max(w_name, 4)  # "NAME"
-    w_skill = max(len(r["skill"]) for r in rows)
-    w_skill = max(w_skill, 6)  # "TARGET"
+    w_target = max(len(r["target"]) for r in rows)
+    w_target = max(w_target, 6)  # "TARGET"
     w_sched = max(len(r["schedule"]) for r in rows)
     w_sched = max(w_sched, 8)  # "SCHEDULE"
     w_enabled = 7  # "ENABLED"
@@ -168,7 +163,7 @@ def _print_list_table(jobs: list, *, show_last_run: bool = False) -> None:
         w_lre = max(len(r["last_run_error"]) for r in rows)
         w_lre = max(w_lre, 10)  # "LAST ERROR"
         header = (
-            f"{'NAME':<{w_name}}  {'TARGET':<{w_skill}}  "
+            f"{'NAME':<{w_name}}  {'TARGET':<{w_target}}  "
             f"{'SCHEDULE':<{w_sched}}  {'ENABLED':<{w_enabled}}  "
             f"{'NEXT RUN':<{w_next}}  {'LAST RUN AT':<{w_lra}}  "
             f"{'LAST STATUS':<{w_lrs}}  {'LAST ERROR':<{w_lre}}"
@@ -177,14 +172,14 @@ def _print_list_table(jobs: list, *, show_last_run: bool = False) -> None:
         print("─" * len(header))
         for r in rows:
             print(
-                f"{r['name']:<{w_name}}  {r['skill']:<{w_skill}}  "
+                f"{r['name']:<{w_name}}  {r['target']:<{w_target}}  "
                 f"{r['schedule']:<{w_sched}}  {r['enabled']:<{w_enabled}}  "
                 f"{r['next_run']:<{w_next}}  {r['last_run_at']:<{w_lra}}  "
                 f"{r['last_run_status']:<{w_lrs}}  {r['last_run_error']:<{w_lre}}"
             )
     else:
         header = (
-            f"{'NAME':<{w_name}}  {'TARGET':<{w_skill}}  "
+            f"{'NAME':<{w_name}}  {'TARGET':<{w_target}}  "
             f"{'SCHEDULE':<{w_sched}}  {'ENABLED':<{w_enabled}}  "
             f"{'NEXT RUN':<{w_next}}"
         )
@@ -192,7 +187,7 @@ def _print_list_table(jobs: list, *, show_last_run: bool = False) -> None:
         print("─" * len(header))
         for r in rows:
             print(
-                f"{r['name']:<{w_name}}  {r['skill']:<{w_skill}}  "
+                f"{r['name']:<{w_name}}  {r['target']:<{w_target}}  "
                 f"{r['schedule']:<{w_sched}}  {r['enabled']:<{w_enabled}}  "
                 f"{r['next_run']:<{w_next}}"
             )
@@ -266,17 +261,14 @@ async def _run_scheduler() -> None:
 def _build_runner():
     """Return the async runner function that executes a CronJob.
 
-    Standalone CLI mode wires neither runner: skill-based jobs are no longer
-    executable from the CLI, and message-based jobs need an AgentRegistry
-    context that ``reyn cron run`` (foreground) lacks. The scheduler still
-    runs (``list`` / ``status`` / next-run computation); jobs warn + skip.
-    Use ``reyn web`` for message-based execution.
+    Standalone CLI mode wires no runner: message-based jobs need an
+    AgentRegistry context that ``reyn cron run`` (foreground) lacks. The
+    scheduler still runs (``list`` / ``status`` / next-run computation);
+    jobs warn + skip. Use ``reyn web`` for message-based execution.
     """
     from reyn.runtime.cron.runners import build_default_runner
 
-    # Standalone CLI has no AgentRegistry and no skill-execution runner:
-    # skill-based jobs warn + skip, and message-based jobs need ``reyn web``.
+    # Standalone CLI has no AgentRegistry: message-based jobs need ``reyn web``.
     return build_default_runner(
-        legacy_skill_runner=None,
         inbox_pusher=None,
     )

@@ -10,8 +10,8 @@ Behaviour change note (FP-0043 S4b-3a, owner-approved): a message-based cron job
 delivery moves from the agent's shared "main" session to a ``cron:<job_name>``
 mapping — each job is its own conversation, PERSISTENT per job (the stable job name
 resumes the same Session across fires, so the conversation accumulates a history of
-prior runs = "what changed since last run"). Skill-based cron jobs stay headless
-(``SkillRuntime.run``); standalone ``reyn cron run`` (no registry) is unchanged.
+prior runs = "what changed since last run"). Standalone ``reyn cron run`` (no
+registry) is unchanged.
 """
 from __future__ import annotations
 

@@ -118,14 +118,3 @@ def test_notify_field_parses_from_config_message_shape():
     assert cfg.jobs[0].notify == "telegram"
 
 
-def test_notify_ignored_for_skill_shape():
-    """Tier 2: a skill-based job has no conversational reply → notify is dropped."""
-    from reyn.config.infra import _build_cron_config
-
-    cfg = _build_cron_config({
-        "jobs": [{
-            "name": "index", "skill": "index_events",
-            "schedule": "0 9 * * *", "notify": "telegram",
-        }],
-    })
-    assert cfg.jobs[0].notify is None

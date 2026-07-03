@@ -98,7 +98,6 @@ def _make_cron_runner():
         )
 
     return build_default_runner(
-        legacy_skill_runner=None,
         inbox_pusher=_inbox_pusher,
         failure_notifier=_failure_notifier,
     )
@@ -177,7 +176,6 @@ async def _lifespan(app: FastAPI):
                 schedule=j.schedule,
                 to=j.to,
                 message=j.message,
-                skill=j.skill,
                 input=dict(j.input),
                 enabled=j.enabled,
             )

@@ -17,22 +17,13 @@ logger = logging.getLogger(__name__)
 class CronJob:
     """One scheduled execution (FP-0009 Component B + FP-0041 #489 PR-B).
 
-    Two execution shapes co-exist:
+    Jobs are message-based (= FP-0041 PR-B): set ``to`` (= target agent
+    name) and ``message`` (= free-form text). The scheduler dispatches the
+    message to the agent's inbox with ``sender="cron:<name>"`` so the LLM
+    reads it as a normal attributed turn from a scheduled trigger.
 
-      - **Message-based** (= FP-0041 PR-B, recommended): set ``to`` (=
-        target agent name) and ``message`` (= free-form text). The
-        scheduler dispatches the message to the agent's inbox with
-        ``sender="cron:<name>"`` so the LLM reads it as a normal
-        attributed turn from a scheduled trigger.
-
-      - **Skill-based** (= legacy FP-0009): set ``skill`` (= skill name).
-        The scheduler runs the skill directly via ``SkillRuntime.run``. Kept
-        for backward compatibility with existing ``reyn.yaml``
-        configurations.
-
-    Exactly one shape should be set per job. If both ``skill`` AND
-    ``to`` are set, the message-based path wins (= ``skill`` is
-    ignored with a warning). If neither is set, the job is invalid.
+    (Legacy skill-based jobs are no longer supported; the skill runtime was
+    removed. Config parsing warns-and-skips any surviving ``skill`` entry.)
 
     Mutable on the scheduler side: ``last_run_at`` / ``last_run_status``
     / ``last_run_error`` / ``next_run_at`` are updated after each fire.
@@ -40,7 +31,7 @@ class CronJob:
 
     name: str               # job identifier, unique within scheduler
     schedule: str           # cron expression, 5-field (e.g. "0 */6 * * *")
-    # ── message-based (FP-0041 PR-B, recommended) ─────────────────
+    # ── message-based (FP-0041 PR-B) ─────────────────
     to: str | None = None       # target agent name
     message: str | None = None  # free-form text dispatched to agent.inbox
     # FP-0043 S4b-3b: opt-in unattended notification channel (e.g. "telegram").
@@ -50,8 +41,6 @@ class CronJob:
     # the runner level. The channel name maps to an MCP tool via reyn.yaml
     # external_transports (e.g. telegram→broker__post_message).
     notify: str | None = None
-    # ── skill-based (FP-0009 legacy, backward compat) ──────────────
-    skill: str | None = None    # skill name to run via SkillRuntime.run
     input: dict = field(default_factory=dict)
     # ── shared ─────────────────────────────────────────────────────
     enabled: bool = True
@@ -72,7 +61,6 @@ class CronJob:
             "to": self.to,
             "message": self.message,
             "notify": self.notify,
-            "skill": self.skill,
             "schedule": self.schedule,
             "input": self.input,
             "enabled": self.enabled,
@@ -85,10 +73,10 @@ class CronJob:
 
 
 class CronScheduler:
-    """Asyncio-based cron scheduler for stdlib + project skills.
+    """Asyncio-based cron scheduler for message-based cron jobs.
 
     Each enabled job runs in its own asyncio.Task that sleeps until the
-    next croniter-computed fire time, then dispatches the skill. Failures
+    next croniter-computed fire time, then dispatches the job. Failures
     are recorded on the CronJob entry and logged at WARNING; the scheduler
     continues to the next interval (= no retry beyond the next fire).
 
@@ -102,11 +90,10 @@ class CronScheduler:
       - `clock_fn` (= callable returning aware datetime) is injectable
         for tests. Production omits and uses `datetime.now(timezone.utc)`.
 
-    Skill execution:
-      - `runner_fn` (= async callable that runs the skill and returns
+    Job execution:
+      - `runner_fn` (= async callable that runs the job and returns
         a status string) is injectable. Production passes a function
-        that resolves the skill via `load_dsl_skill` and runs through
-        `SkillRuntime.run`.
+        that dispatches the job's message to the target agent's inbox.
       - If omitted, scheduler logs WARNING and marks status="error"
         with "no runner configured" so unconfigured deployments fail
         loudly rather than silently.
@@ -311,7 +298,7 @@ class CronScheduler:
             await self._fire(job)
 
     async def _fire(self, job: CronJob) -> None:
-        """Execute the job's skill via the runner, record outcome."""
+        """Execute the job via the runner, record outcome."""
         import time
 
         fired_at = self._clock()
