@@ -386,10 +386,22 @@ def _summarize_result(tool, result) -> str:
             return f"Wrote {path}" if path else "Wrote file"
         if op == "edit":
             return f"Edited {path}" if path else "Edited file"
+        if op == "grep":
+            count = result.get("count")
+            n = int(count) if isinstance(count, (int, float)) else 0
+            return f"{n} match{'es' if n != 1 else ''}"
         tasks = result.get("tasks")
         if isinstance(tasks, list):
             n = len(tasks)
             return f"{n} task{'s' if n != 1 else ''}"
+        entries = result.get("entries")
+        if isinstance(entries, list):
+            n = len(entries)
+            return f"Listed {n} {'entry' if n == 1 else 'entries'}"
+        matches = result.get("matches")
+        if isinstance(matches, list):
+            n = len(matches)
+            return f"{n} match{'es' if n != 1 else ''}"
         if status:
             return str(status)
     return _short(result, 80)
