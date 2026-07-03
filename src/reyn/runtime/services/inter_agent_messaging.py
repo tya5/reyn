@@ -434,8 +434,11 @@ class InterAgentMessaging:
             )
             return
         except Exception as exc:
+            _detail = f"{type(exc).__name__}: {exc}"
+            if len(_detail) > 72:
+                _detail = _detail[:69] + "…"
             await self._put_outbox(OutboxMessage(
-                kind="error", text=f"router failed (agent_request): {exc}",
+                kind="error", text=f"router failed (agent_request): {_detail}",
                 meta={"chain_id": chain_id},
             ))
             # F6/F7 fix: send a structured failure marker so the requester
@@ -611,8 +614,11 @@ class InterAgentMessaging:
             await self._emit_router_cap_exhausted_user(exc, chain_id=chain_id)
             return
         except Exception as exc:
+            _detail = f"{type(exc).__name__}: {exc}"
+            if len(_detail) > 72:
+                _detail = _detail[:69] + "…"
             await self._put_outbox(OutboxMessage(
-                kind="error", text=f"router failed (agent_response): {exc}",
+                kind="error", text=f"router failed (agent_response): {_detail}",
                 meta={"chain_id": chain_id},
             ))
             return
@@ -699,9 +705,12 @@ class InterAgentMessaging:
             await self._chains.resolve(chain_id)
             return
         except Exception as exc:
+            _detail = f"{type(exc).__name__}: {exc}"
+            if len(_detail) > 72:
+                _detail = _detail[:69] + "…"
             await self._put_outbox(OutboxMessage(
                 kind="error",
-                text=f"router failed (chain resolve): {exc}",
+                text=f"router failed (chain resolve): {_detail}",
                 meta={"chain_id": chain_id},
             ))
             # F6/F7 fix: structured marker upstream, not "".
