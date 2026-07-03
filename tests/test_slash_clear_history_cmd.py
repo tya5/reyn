@@ -159,6 +159,15 @@ class _FailingPath:
         raise OSError("permission denied")
 
 
+def test_clear_alias_registered() -> None:
+    """Tier 2: /clear is a registered alias for /clear-history so CC users don't hit
+    'unknown command /clear'."""
+    from reyn.interfaces.slash import REGISTRY
+    cmd = REGISTRY.get("clear")
+    assert cmd is not None, "/clear must resolve via the registry"
+    assert cmd.name == "clear-history", "/clear must resolve to /clear-history handler"
+
+
 @pytest.mark.asyncio
 async def test_clear_history_disk_fail_leaves_memory_intact() -> None:
     """Tier 2: when history_path.unlink() fails, in-memory history must NOT be cleared.

@@ -48,6 +48,7 @@ def _format_currently_line(session: "object") -> str:
 
 @slash(
     "clear-history",
+    aliases=("clear",),
     summary=(
         "Clear conversation history + action-usage table (= events, "
         "skill state, profile preserved)"
