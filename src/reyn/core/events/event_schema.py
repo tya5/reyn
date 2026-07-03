@@ -1,9 +1,9 @@
 """Event schema registry — declares required fields per event kind.
 
 Used by Tier 2 invariant tests to enforce audit completeness (FP-0021).
-NOT enforced at emit() runtime (to keep production overhead zero); the
-test in tests/test_event_audit_invariants.py validates that all listed
-events carry the declared required fields.
+NOT enforced at emit() runtime (to keep production overhead zero); each
+feature's invariant test asserts that its event kinds are declared here
+with the required fields.
 
 P7 note: kind names here are OS-level event kinds, not skill-specific
 identifiers, so this file stays within the OS layer's allowed vocabulary.
@@ -16,9 +16,12 @@ EVENT_AUDIT_REQUIREMENTS: dict[str, frozenset[str]] = {
     # Workflow lifecycle (runtime.py)
     "workflow_started": frozenset({"run_id", "skill"}),
     "workflow_finished": frozenset({"run_id", "skill"}),
-    # LLM call lifecycle (runtime.py)
-    "llm_called": frozenset({"run_id", "skill"}),
-    "llm_response_received": frozenset({"run_id", "skill"}),
+    # LLM cost events (llm.py _emit_chat_cost_events — cost-tab observability).
+    # Minimal fields: llm_called carries model, llm_response_received carries the
+    # usage/cost figures. skill is derived from the events file path (not an event
+    # field), and run_id is not threaded on this path.
+    "llm_called": frozenset({"model"}),
+    "llm_response_received": frozenset({"prompt_tokens", "completion_tokens", "cost_usd"}),
     # Permission events (op_runtime/__init__.py)
     "permission_granted": frozenset({"run_id", "skill", "phase"}),
     "permission_denied": frozenset({"run_id", "skill", "phase"}),
