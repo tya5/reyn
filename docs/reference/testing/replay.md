@@ -1,20 +1,10 @@
-# `reyn.testing.LLMReplay` API
+# `reyn.dev.testing.LLMReplay` API
 
-`LLMReplay` is the core class powering `@pytest.mark.replay`. It monkeypatches `litellm.acompletion` at the boundary shared by all Reyn LLM calls (`reyn.llm.llm.call_llm` and `reyn.skill.skill_node_runner._adapt_artifact`).
-
-```python
-from reyn.testing.replay import LLMReplay, MissingFixture, REPLAY_DATETIME
-```
-
----
-
-## `REPLAY_DATETIME`
+`LLMReplay` is the core class powering `@pytest.mark.replay`. It monkeypatches `litellm.acompletion` — the async boundary every Reyn LLM call passes through (reached via `reyn.llm.llm.call_llm_tools`, the tool_use wrapper the chat router drives).
 
 ```python
-REPLAY_DATETIME: datetime  # datetime(2026, 1, 1, 0, 0, 0, tzinfo=timezone.utc)
+from reyn.dev.testing.replay import LLMReplay, MissingFixture
 ```
-
-Fixed UTC datetime to pass as `current_datetime` when constructing `ContextFrame` objects in replay tests. Without this, `ContextFrame.current_datetime` defaults to `datetime.now()`, which changes every run and invalidates the SHA-256 fixture key.
 
 ---
 
@@ -53,7 +43,7 @@ Writes pending record-mode entries to `fixture_path`. Appends to the existing fi
 
 ```python
 with LLMReplay(fixture_path, mode="replay") as replay:
-    result = asyncio.run(call_llm(...))
+    result = await call_llm_tools(...)
 ```
 
 `__exit__` calls `restore()` and, if `mode="record"`, `flush()`.
@@ -62,7 +52,7 @@ with LLMReplay(fixture_path, mode="replay") as replay:
 
 ## `class MissingFixture(Exception)`
 
-Raised in replay mode when no fixture entry matches the SHA-256 key for the current `(model, messages)` combination. The error message includes:
+Raised in replay mode when no fixture entry matches the SHA-256 key for the current `(model, messages, tools, tool_choice)` combination. The error message includes:
 
 - The model name
 - A 200-character preview of the last user-turn message
@@ -73,17 +63,23 @@ Raised in replay mode when no fixture entry matches the SHA-256 key for the curr
 
 ## Key computation
 
+The key depends on whether the call carries tools. `canonical(x)` is
+`json.dumps(x, sort_keys=True, ensure_ascii=False)`:
+
 ```python
-key = SHA256(model.encode() + canonical_json(messages).encode())
+# No tools and no tool_choice (legacy form — preserves pre-tools fixture keys):
+key = SHA256(model.encode() + canonical(messages).encode())
+
+# With tools or tool_choice:
+key = SHA256(f"{model}|{canonical(messages)}|{canonical(tools)}|{tool_choice or ''}".encode())
 ```
 
-Where `canonical_json` is `json.dumps(messages, sort_keys=True, ensure_ascii=False)`.
-
-**Every field in `messages` contributes to the key.** This includes:
-- The full system prompt (skill name, description, phase role, project context, agent role)
-- The serialised `ContextFrame` (all fields, including `current_datetime`)
-
-Changing any of these invalidates the key and causes `MissingFixture` in replay mode. This is intentional — it makes prompt drift explicit.
+**Every byte of the serialised inputs contributes to the key** — the full
+system prompt, the message list, and (when present) the tool catalog and
+`tool_choice`. Changing any of them invalidates the key and causes
+`MissingFixture` in replay mode. This is intentional — it makes prompt drift
+explicit. Keep test inputs free of volatile values (timestamps, uuids) so the
+key stays reproducible.
 
 ---
 
@@ -107,7 +103,7 @@ JSONL file, one JSON object per line:
         "finish_reason": "stop",
         "index": 0,
         "message": {
-          "content": "{\"type\": \"decide\", ...}",
+          "content": "Sure — here is the result ...",
           "role": "assistant",
           "tool_calls": null,
           "function_call": null
@@ -139,7 +135,7 @@ The `response` dict is the output of `litellm.ModelResponse.model_dump()`. On re
 
 Reyn uses `litellm.acompletion` (async) for all LLM calls. `LLMReplay` monkeypatches the async variant only. `litellm.completion` (sync) is not patched and is never used by Reyn's production paths.
 
-Tests call `asyncio.get_event_loop().run_until_complete(coro)` to drive async coroutines synchronously, matching the style of the existing `test_budget_persistent.py` test suite.
+Replay tests are `async def` and marked `@pytest.mark.asyncio`, awaiting the coroutine under test directly (`result = await call_llm_tools(...)`).
 
 ---
 

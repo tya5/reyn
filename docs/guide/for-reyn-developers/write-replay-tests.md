@@ -56,8 +56,9 @@ AttributeError) rather than in production.
 | 3 — LLM-replay | Behavior of LLM-dependent paths via recorded fixtures | Yes (`LLMReplay`) |
 | 4 — Don't write | Everything else | — |
 
-This tutorial covers **Tier 3a**: single LLM call per test, single phase. If
-you are not testing an LLM-dependent path, check the decision flow in
+This tutorial covers **Tier 3a**: a single LLM call per test. The LLM tool-call
+path is reached through `call_llm_tools` (the tool_use wrapper the chat router
+drives). If you are not testing an LLM-dependent path, check the decision flow in
 [testing.md](../../deep-dives/contributing/testing.md#decision-flow) first.
 
 ---
@@ -72,63 +73,43 @@ you are not testing an LLM-dependent path, check the decision flow in
 
 ### Write the test first (without a fixture)
 
-Create your test file. Use `@pytest.mark.replay` with a path relative to
-`tests/`:
+Create your test file. Mark the test with `@pytest.mark.replay`, passing a
+fixture path relative to `tests/`, and drive the real `call_llm_tools`
+boundary. There is no frame or context object to build — you pass the plain
+`messages` and `tools` dicts that go to litellm:
 
 ```python
 # tests/test_replay_my_area.py
 
-import asyncio
 import pytest
-from reyn.llm.llm import call_llm
-from reyn.schemas.models import ContextFrame, ExecutionState, PhaseConstraints
-from reyn.testing.replay import REPLAY_DATETIME
 
-MODEL = "gemini-2.5-flash-lite"
+from reyn.llm.llm import call_llm_tools
 
-@pytest.mark.replay("fixtures/llm/my_area/happy_path.jsonl")
-def test_my_phase_happy_path():
-    """Tier 3a: my_phase transitions to next_phase on valid input."""
-    frame = ContextFrame(
-        current_phase="my_phase",
-        current_phase_role="my_role",
-        instructions="... the phase instructions ...",
-        candidate_outputs=[],   # fill in from the real skill
-        finish_criteria=[],
-        constraints=PhaseConstraints(),
-        available_control_ops=[],
-        op_catalog=[],
-        output_language="en",
-        model="standard",
-        model_resolved=MODEL,
-        input_artifact={"type": "my_input", "data": {"field": "value"}},
-        execution=ExecutionState(path=["start → my_phase"], current_visit=1, total_steps=1),
-        control_ir_results=[],
-        remaining_act_turns=0,
-        current_datetime=REPLAY_DATETIME,  # REQUIRED — see below
-    )
+MODEL = "gemini-2.5-flash-lite"   # bare name — the proxy strips any prefix on
+                                  # record, so the replay key matches
+MESSAGES = [{"role": "user", "content": "hi"}]
+TOOLS = [
+    {
+        "type": "function",
+        "function": {
+            "name": "run_skill",
+            "description": "run a skill",
+            "parameters": {"type": "object", "properties": {}},
+        },
+    }
+]
 
-    result = asyncio.run(
-        call_llm(
-            MODEL,
-            frame,
-            prompt_cache_enabled=False,
-            skill_name="my_skill",
-            skill_description="...",
-            phase_role="my_role",
-        )
-    )
 
-    assert result.data["type"] == "decide"
-    assert result.data["control"]["type"] == "transition"
-    assert result.data["control"]["next_phase"] == "next_phase"
+@pytest.mark.replay("fixtures/llm/my_area/text_only.jsonl")
+@pytest.mark.asyncio
+async def test_my_call_returns_text_when_no_tool_calls():
+    """Tier 3a: when the LLM returns plain text, result.content reflects it."""
+    result = await call_llm_tools(model=MODEL, messages=MESSAGES, tools=TOOLS)
+
+    assert isinstance(result.content, str)
+    assert len(result.content) > 0
+    assert result.tool_calls == []
 ```
-
-**Why `REPLAY_DATETIME` is required**: the `ContextFrame` is serialised into
-the prompt, and every field contributes to the SHA-256 fixture key. If you use
-`datetime.now()`, the key changes every second and no fixture will ever match.
-`REPLAY_DATETIME` is a fixed sentinel (`2026-01-01T00:00:00Z`) that keeps the
-key stable across runs.
 
 ### Run once to record
 
@@ -136,11 +117,11 @@ When the fixture file does not exist, `conftest.py` switches to record mode
 automatically:
 
 ```bash
-python -m pytest tests/test_replay_my_area.py::test_my_phase_happy_path -v
+python -m pytest tests/test_replay_my_area.py::test_my_call_returns_text_when_no_tool_calls -v
 ```
 
 This calls the real LLM, records the response, and writes
-`tests/fixtures/llm/my_area/happy_path.jsonl`. The test also passes on this
+`tests/fixtures/llm/my_area/text_only.jsonl`. The test also passes on this
 first run.
 
 After recording, run the test again without a live LLM to confirm it replays
@@ -148,7 +129,7 @@ correctly:
 
 ```bash
 # Stop the proxy, then:
-python -m pytest tests/test_replay_my_area.py::test_my_phase_happy_path -v
+python -m pytest tests/test_replay_my_area.py::test_my_call_returns_text_when_no_tool_calls -v
 ```
 
 Commit the fixture file alongside the test.
@@ -157,146 +138,102 @@ Commit the fixture file alongside the test.
 
 ## Step 2: Write the test body
 
-### Build the ContextFrame accurately
+### Keep the inputs deterministic
 
-The fixture key is derived from the exact serialised `(model, messages)` that
-`call_llm` sends to litellm. **Every field in `ContextFrame` contributes**,
-including:
+The fixture key is the SHA-256 of the exact `(model, messages, tools,
+tool_choice)` that `call_llm_tools` sends to litellm. **Every byte of the
+serialised inputs contributes to the key.** Two consequences:
 
-- `instructions` — must be the real phase instructions, not a placeholder
-- `candidate_outputs` — must reflect what the OS would inject at runtime
-- `input_artifact` — must match the artifact shape the phase receives
-
-The easiest way to get this right is to load the skill from disk using
-`load_dsl_skill` and pull the phase and its schema directly:
-
-```python
-from pathlib import Path
-from reyn.core.compiler.loader import load_dsl_skill
-from reyn.schemas.models import CandidateOutput
-
-_SKILL_PATH = Path(__file__).parent.parent / "src" / "reyn" / "stdlib" / "skills" / "my_skill" / "skill.md"
-
-def _load_skill():
-    return load_dsl_skill(_SKILL_PATH)
-
-def _make_frame(skill) -> ContextFrame:
-    phase = skill.phases["my_phase"]
-    next_phase = skill.phases["next_phase"]
-    candidate = CandidateOutput(
-        next_phase="next_phase",
-        control_type="transition",
-        schema_name=next_phase.input_schema_name,
-        artifact_schema=next_phase.input_schema,
-        description="Transition to next_phase",
-    )
-    return ContextFrame(
-        current_phase="my_phase",
-        instructions=phase.instructions,
-        candidate_outputs=[candidate],
-        # ... other fields ...
-        current_datetime=REPLAY_DATETIME,
-    )
-```
-
-Loading from disk has two benefits: the fixture stays in sync when the skill
-evolves (the key changes and `MissingFixture` fires, signalling a re-record),
-and the test documents the real call path rather than a synthetic approximation.
+- Build `messages` and `tools` from stable, literal values. Do **not** inject
+  volatile data (timestamps, UUIDs, `datetime.now()`, random ids) into the
+  prompt — the key would change every run and no fixture would ever match.
+- Because the key is a pure function of the inputs, two tests that pass the
+  *same* `(model, messages, tools, tool_choice)` share one fixture file. Reuse
+  a fixture across tests that exercise the same call.
 
 ### Assert on structure, not wording
 
-Good assertions check the OS-level contract:
+`call_llm_tools` returns a result with a `.content` string and a normalized
+`.tool_calls` list (plain dicts, not litellm internals). Good assertions check
+that shape, not the model's free text:
 
 ```python
-# Good — structural contract
-assert result.data["control"]["type"] == "transition"
-assert result.data["control"]["decision"] == "continue"
-assert result.data["control"]["next_phase"] == "run_and_eval"
+@pytest.mark.replay("fixtures/llm/my_area/tool_call.jsonl")
+@pytest.mark.asyncio
+async def test_tool_calls_are_normalized():
+    """Tier 3a: tool_calls are normalized to plain dicts."""
+    messages = [{"role": "user", "content": "call the run_skill tool with skill=hello"}]
+    result = await call_llm_tools(
+        model=MODEL, messages=messages, tools=TOOLS, tool_choice="required"
+    )
+
+    assert len(result.tool_calls) >= 1
+    tc = result.tool_calls[0]
+    assert isinstance(tc, dict)                       # not a litellm object
+    assert tc["type"] == "function"
+    assert isinstance(tc["function"]["arguments"], str)   # JSON string, not dict
 ```
 
-Avoid asserting on free-text fields like `reason.summary` unless the field
-content is part of the contract you are pinning. Wording varies across model
-versions and causes unnecessary re-records.
-
-One exception: when the test is explicitly verifying that the LLM *read* a
-specific field, a `in reason_summary.lower()` assertion is appropriate (see
-`test_copy_to_work_validation_judgment.py` for an example).
+Avoid asserting on free-text `.content` wording unless the exact content is the
+contract you are pinning. Wording varies across model versions and causes
+unnecessary re-records.
 
 ---
 
 ## Step 3: Add a drift detection test
 
-Every Tier 3a area needs one test that asserts `MissingFixture` is raised when
-the input does not match any fixture entry. This is the mechanism that catches
-accidental prompt drift — if someone changes the phase instructions or the
-`ContextFrame` shape, the test fails loudly rather than silently passing with
-stale fixture data.
+`LLMReplay` raises `MissingFixture` in replay mode when the call's key matches
+no fixture entry. That is the mechanism that catches accidental prompt drift —
+if someone changes the messages or tool catalog the OS sends, the key changes,
+no fixture matches, and the test fails loudly rather than passing on stale data.
 
 ```python
-from reyn.testing.replay import MissingFixture
+from reyn.dev.testing.replay import MissingFixture
 
-@pytest.mark.replay("fixtures/llm/my_area/happy_path.jsonl")
-def test_drift_detection_raises_missing_fixture():
-    """Tier 3a drift detection: prompt changes must be reflected in re-recorded fixtures."""
-    frame = ContextFrame(
-        current_phase="my_phase",
-        instructions="intentionally not in the fixture — drift sentinel",
-        candidate_outputs=[],
-        finish_criteria=[],
-        constraints=PhaseConstraints(),
-        available_control_ops=[],
-        op_catalog=[],
-        output_language="en",
-        model="standard",
-        model_resolved=MODEL,
-        input_artifact={"type": "my_input", "data": {}},
-        execution=ExecutionState(path=[], current_visit=1, total_steps=1),
-        control_ir_results=[],
-        remaining_act_turns=0,
-        current_datetime=REPLAY_DATETIME,
-    )
 
+@pytest.mark.replay("fixtures/llm/my_area/text_only.jsonl")
+@pytest.mark.asyncio
+async def test_drift_detection_raises_missing_fixture():
+    """Tier 3a drift detection: input changes must be reflected in re-recorded fixtures."""
+    drift_messages = [{"role": "user", "content": "not in the fixture — drift sentinel"}]
     with pytest.raises(MissingFixture):
-        asyncio.run(
-            call_llm(MODEL, frame, prompt_cache_enabled=False,
-                     skill_name="my_skill", skill_description="...", phase_role="my_role")
-        )
+        await call_llm_tools(model=MODEL, messages=drift_messages, tools=TOOLS)
 ```
 
-The drift detection test re-uses the same fixture file as the happy-path test.
-A frame with different instructions produces a different SHA-256 key, which is
-not in the fixture, so `MissingFixture` is raised.
+The drift test re-uses the same fixture file as the happy path. Different
+`messages` produce a different SHA-256 key, which is not in the fixture, so
+`MissingFixture` is raised.
 
 ---
 
-## Step 4: Update fixtures after intentional prompt changes
+## Step 4: Update fixtures after intentional input changes
 
-When you intentionally change phase instructions, the fixture key changes.
-Replay mode will raise `MissingFixture`. This is expected and correct behavior.
+When you intentionally change the messages or tool catalog, the fixture key
+changes and replay mode raises `MissingFixture`. This is expected and correct.
 
 Re-record by deleting the fixture and running with `REYN_LLM_RECORD=1`:
 
 ```bash
-rm tests/fixtures/llm/my_area/happy_path.jsonl
+rm tests/fixtures/llm/my_area/text_only.jsonl
 REYN_LLM_RECORD=1 python -m pytest tests/test_replay_my_area.py -v
 ```
 
 Or delete and let conftest auto-detect the missing file:
 
 ```bash
-rm tests/fixtures/llm/my_area/happy_path.jsonl
+rm tests/fixtures/llm/my_area/text_only.jsonl
 python -m pytest tests/test_replay_my_area.py -v
 # conftest sees file missing → switches to record mode automatically
 ```
 
-Commit the new fixture alongside the prompt change. Reviewers can diff the
+Commit the new fixture alongside the change. Reviewers can diff the
 `prompt_preview` field in the JSONL to see what changed.
 
 > **Warning — `-k` filtered runs exclude replay tests.** If your local test run uses
 > `-k some_keyword` that does not match replay test names, replay tests are silently
 > skipped and the run appears green. This masks broken fixtures until CI runs the
-> full suite. Always run the full replay suite (`pytest tests/test_replay_*.py -v`)
-> after any change to phase instructions, tool catalog, or LLM-call boundaries.
+> full suite. Always run the full replay suite after any change to the tool catalog
+> or LLM-call boundaries.
 
 ---
 
@@ -321,147 +258,28 @@ Use `@pytest.mark.replay` with a real recorded fixture instead.
 ```python
 # FORBIDDEN — Tier 4
 assert runtime._last_llm_response["id"] == "chatcmpl-abc"
-assert skill_node._cached_frame is not None
 ```
 
-Assert on the public return value of the function under test.
+Assert on the public return value of the function under test
+(`result.content`, `result.tool_calls`).
 
-**Do not use `datetime.now()` in `ContextFrame`.**
+**Do not inject volatile values into the prompt.**
 
 ```python
-# FORBIDDEN — breaks fixture keys
-frame = ContextFrame(current_datetime=datetime.now(), ...)
-
-# Required
-from reyn.testing.replay import REPLAY_DATETIME
-frame = ContextFrame(current_datetime=REPLAY_DATETIME, ...)
+# FORBIDDEN — breaks fixture keys (key changes every run)
+messages = [{"role": "user", "content": f"now is {datetime.now()}"}]
 ```
+
+Build `messages` and `tools` from stable literals so the SHA-256 key is
+reproducible.
 
 **Do not write Tier 4 tests.** Common Tier 4 traps:
 
-- Testing that `result.data["reason"]["summary"]` contains a specific
-  sentence — this pins LLM output wording, which drifts with every model
-  update.
+- Asserting that `.content` contains a specific sentence — this pins LLM output
+  wording, which drifts with every model update.
 - Testing internal cache state or flag values (`_state_loaded`, `_initialized`).
 - Adding a test for "this specific bug we fixed" unless it represents a
   genuine P1–P8 invariant.
-
----
-
-## Complete example
-
-The following is drawn from the actual `test_copy_to_work_validation_judgment.py`
-in the test suite. It tests two LLM judgment cases in the `copy_to_work` phase
-of the `skill_improver` stdlib skill.
-
-```python
-"""Tier 3a: copy_to_work phase validation judgment behavior.
-
-Two cases are pinned:
-  - Case 1 (validation.ok=True):  LLM must transition to run_and_eval.
-  - Case 2 (validation.ok=False): LLM must abort.
-"""
-from __future__ import annotations
-
-import asyncio
-from pathlib import Path
-
-import pytest
-
-from reyn.core.compiler.loader import load_dsl_skill
-from reyn.llm.llm import call_llm
-from reyn.schemas.models import (
-    CandidateOutput,
-    ContextFrame,
-    ExecutionState,
-    PhaseConstraints,
-)
-from reyn.testing.replay import REPLAY_DATETIME
-
-MODEL = "gemini-2.5-flash-lite"
-SKILL_NAME = "skill_improver"
-PHASE_ROLE = "workspace_initializer"
-
-_SKILL_PATH = (
-    Path(__file__).parent.parent
-    / "src" / "reyn" / "stdlib" / "skills" / "skill_improver" / "skill.md"
-)
-
-
-def _make_frame(skill, validation_ok: bool) -> ContextFrame:
-    phase = skill.phases["copy_to_work"]
-    next_phase = skill.phases["run_and_eval"]
-    candidate = CandidateOutput(
-        next_phase="run_and_eval",
-        control_type="transition",
-        schema_name=next_phase.input_schema_name,
-        artifact_schema=next_phase.input_schema,
-        description="Transition to run_and_eval",
-    )
-    return ContextFrame(
-        current_phase="copy_to_work",
-        current_phase_role=PHASE_ROLE,
-        instructions=phase.instructions,
-        candidate_outputs=[candidate],
-        finish_criteria=[],
-        constraints=PhaseConstraints(),
-        available_control_ops=[],
-        op_catalog=[],
-        output_language="en",
-        model="standard",
-        model_resolved=MODEL,
-        input_artifact={
-            "type": "improvement_session",
-            "data": {
-                "target_skill": "direct_llm",
-                "validation": {
-                    "ok": validation_ok,
-                    "files_written": 2 if validation_ok else 0,
-                    "files_expected": 2,
-                },
-            },
-        },
-        execution=ExecutionState(
-            path=["prepare → copy_to_work"], current_visit=1, total_steps=1
-        ),
-        control_ir_results=[],
-        remaining_act_turns=0,
-        current_datetime=REPLAY_DATETIME,
-    )
-
-
-@pytest.mark.replay("fixtures/llm/copy_to_work_validation/validation_ok.jsonl")
-def test_copy_to_work_transitions_when_validation_ok():
-    """Tier 3a (LLM replay): copy_to_work transitions to run_and_eval when validation.ok=True."""
-    skill = load_dsl_skill(_SKILL_PATH)
-    frame = _make_frame(skill, validation_ok=True)
-
-    result = asyncio.run(
-        call_llm(MODEL, frame, prompt_cache_enabled=False,
-                 skill_name=SKILL_NAME, skill_description="...", phase_role=PHASE_ROLE)
-    )
-
-    ctrl = result.data["control"]
-    assert ctrl["type"] == "transition"
-    assert ctrl["next_phase"] == "run_and_eval"
-    assert ctrl["decision"] == "continue"
-
-
-@pytest.mark.replay("fixtures/llm/copy_to_work_validation/validation_fail.jsonl")
-def test_copy_to_work_aborts_when_validation_fails():
-    """Tier 3a (LLM replay): copy_to_work aborts when validation.ok=False."""
-    skill = load_dsl_skill(_SKILL_PATH)
-    frame = _make_frame(skill, validation_ok=False)
-
-    result = asyncio.run(
-        call_llm(MODEL, frame, prompt_cache_enabled=False,
-                 skill_name=SKILL_NAME, skill_description="...", phase_role=PHASE_ROLE)
-    )
-
-    ctrl = result.data["control"]
-    assert ctrl["type"] == "abort"
-    assert ctrl["decision"] == "abort"
-```
 
 ---
 
@@ -472,7 +290,7 @@ When adding a new LLM-dependent OS path, verify:
 - [ ] One Tier 3a test for the canonical happy path
 - [ ] One Tier 3a test for a boundary or error case (optional but recommended)
 - [ ] One drift detection test (`MissingFixture` assertion) per fixture file
-- [ ] `current_datetime=REPLAY_DATETIME` in every `ContextFrame`
+- [ ] `messages` / `tools` built from stable literals (no volatile values)
 - [ ] Each test docstring starts with `"""Tier 3a: ...`
 - [ ] Fixture file committed alongside the test
 - [ ] No `MagicMock` / `AsyncMock` / `patch` anywhere in the file
@@ -485,5 +303,5 @@ When adding a new LLM-dependent OS path, verify:
 - Full LLMReplay API: [docs/reference/testing/replay.md](../../reference/testing/replay.md)
 - Full testing policy (Tier definitions, NEVER rules, decision flow): [docs/deep-dives/contributing/testing.md](../../deep-dives/contributing/testing.md)
 - Live examples in the codebase:
-  - `tests/test_copy_to_work_validation_judgment.py` — two judgment cases with `load_dsl_skill`
-  - `tests/conftest.py` — `_llm_replay` autouse fixture and mode resolution
+  - `tests/test_llm_tools.py` — the canonical `@pytest.mark.replay` tests for `call_llm_tools`
+  - `tests/conftest.py` — the `_llm_replay` autouse fixture and record/replay mode resolution
