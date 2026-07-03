@@ -54,11 +54,10 @@ See `transcript.example.txt` for a sketch.
 ## Troubleshooting
 
 - `mcp server 'search' not configured` — add a `mcp:` block to `reyn.yaml`.
-  See `docs/guide/for-skill-authors/` for an MCP setup walk-through.
 - Empty search results — your MCP server's `web_search` tool may need an
   API key in its own env.
 
 ## See also
 
 - [stdlib/mcp_search](https://github.com/tya5/reyn/blob/main/src/reyn/stdlib/skills/mcp_search/skill.md)
-- [How-to: compose skills with run_skill](../../guide/for-skill-authors/composition/compose-skills-with-run-skill.md)
+

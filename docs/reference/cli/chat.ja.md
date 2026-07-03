@@ -21,7 +21,7 @@ reyn chat [agent_name] [OPTIONS]
 
 ## オプション
 
-共通ランタイムフラグ（`--model`、`--output-language`、`--max-phase-visits`、`--phase-budget`、`--llm-timeout`、`--llm-max-retries`）は `reyn run` / `reyn eval` と共有です。[共通フラグ](common-flags.md) を参照してください。
+共通ランタイムフラグ（`--model`、`--output-language`、`--phase-budget`、`--llm-timeout`、`--llm-max-retries`）は `reyn run` / `reyn eval` と共有です。[共通フラグ](common-flags.md) を参照してください。
 
 chat 固有のフラグ:
 
@@ -38,7 +38,7 @@ chat 固有のフラグ:
 
 各 agent は `.reyn/agents/<name>/` 配下に状態を永続化します:
 
-- `profile.yaml` — 名前、ロール、オプションの `allowed_skills`（[リファレンス](../dsl/profile-yaml.md)）
+- `profile.yaml` — 名前、ロール、オプションの `allowed_skills`（リファレンス）
 - `history.jsonl` — 追記専用の会話ログ（chat + agent 間メッセージ、クロス agent トレース用の chain_id 付き）
 - `events.jsonl` — `reyn events` 用のランタイムイベント
 - `memory/` — agent スコープの Memory レイヤー（`MEMORY.md` + body ファイル）
@@ -109,9 +109,9 @@ reyn chat --model strong
 - [リファレンス: agent CLI](agent.md) — `reyn agent new / list / show / rm`
 - [リファレンス: topology CLI](topology.md) — `reyn topology` で通信構造を宣言
 - [リファレンス: skill_router](../stdlib/skill_router.md)
-- [リファレンス: profile-yaml](../dsl/profile-yaml.md)
+- リファレンス: profile-yaml
 - [リファレンス: multi-agent 設定](../config/multi-agent.md) — `safety.loop.max_agent_hops`
 - [リファレンス: state-dir](../config/state-dir.md) — `agents/` の場所
 - [コンセプト: multi-agent](../../concepts/multi-agent/multi-agent.md)
 - [コンセプト: memory](../../concepts/data-retrieval/memory.md)
-- [コンセプト: skill-resume](../../concepts/skills/skill-resume.md)
+

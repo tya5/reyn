@@ -63,19 +63,16 @@ mindmap
     ⚙️ Control IR Ops
       file
       ask_user
-      run_skill
       shell
       sandboxed_exec
       web_search
       web_fetch
       mcp
       mcp_install
-      lint
       index_query
       recall
       index_drop
       compact
-      skill_resolve
       judge_output
     🔧 Tool-Use Schemes
       Pluggable per-layer
@@ -84,12 +81,6 @@ mindmap
       retrieval
       CodeAct
       Per-call gate unchanged
-    📝 DSL
-      skill.md
-      phase.md
-      artifact YAML
-      topology YAML
-      profile YAML
     📦 Stdlib Skills
       direct_llm
       eval
@@ -98,16 +89,10 @@ mindmap
       index_events
       judge_phase
       ops_report
-      skill_builder
-      skill_importer
-      skill_improver
-      skill_search
       word_stats_demo
     ⌨️ CLI
       reyn run
       reyn chat
-      reyn eval
-      reyn skills
       reyn lint
       reyn agent
       reyn topology
@@ -148,7 +133,6 @@ mindmap
     🔒 Permissions
       Tier 0-3 model
       4-layer resolution
-      Skill declarations
       CLI gates
     🛡️ Safety
       Force-close wrap-up
@@ -254,25 +238,25 @@ mindmap
 |---------|-------------|---------------|
 | JSON contract | Enforce `control` / `artifact` / `control_ir` envelope structure | [LLM Output Contract](reference/runtime/llm-output-contract.md) |
 | Type-decision consistency | `finish` type requires `decision=finish`, `next_phase=null`, etc. | [LLM Output Contract](reference/runtime/llm-output-contract.md) |
-| Next-phase allowlist | Transition target must appear in the skill graph candidates | [LLM Output Contract](reference/runtime/llm-output-contract.md) · [Graph](reference/dsl/graph.md) |
-| Artifact schema validation | `data` validated against the target phase's `input_schema` | [Artifact YAML](reference/dsl/artifact-yaml.md) |
+| Next-phase allowlist | Transition target must appear in the skill graph candidates | [LLM Output Contract](reference/runtime/llm-output-contract.md) · Graph |
+| Artifact schema validation | `data` validated against the target phase's `input_schema` | Artifact YAML |
 | Normalization retry | Minor JSON errors healed before rejecting, up to `llm_max_retries` | [LLM Output Contract](reference/runtime/llm-output-contract.md) |
 
 #### Preprocessor
 | Feature | Description | Documentation |
 |---------|-------------|---------------|
-| `run_op` step | Invoke any Control IR op deterministically before the LLM call | [Preprocessor DSL](reference/dsl/preprocessor.md) |
-| `iterate` step | Fan-out `run_op` over array field elements | [Preprocessor DSL](reference/dsl/preprocessor.md) |
-| `validate` step | JSON Schema check on artifact data | [Preprocessor DSL](reference/dsl/preprocessor.md) |
-| `lint_plan` step | Structural check on plan-shaped artifacts | [Preprocessor DSL](reference/dsl/preprocessor.md) |
-| `python` step | User function in sandboxed subprocess (safe/unsafe mode) | [Preprocessor DSL](reference/dsl/preprocessor.md) |
+| `run_op` step | Invoke any Control IR op deterministically before the LLM call | Preprocessor DSL |
+| `iterate` step | Fan-out `run_op` over array field elements | Preprocessor DSL |
+| `validate` step | JSON Schema check on artifact data | Preprocessor DSL |
+| `lint_plan` step | Structural check on plan-shaped artifacts | Preprocessor DSL |
+| `python` step | User function in sandboxed subprocess (safe/unsafe mode) | Preprocessor DSL |
 
 #### Postprocessor
 | Feature | Description | Documentation |
 |---------|-------------|---------------|
-| Skill-finish transform | Convert LLM `final_output` to caller artifact schema | [Postprocessor DSL](reference/dsl/postprocessor.md) · [Concepts: Postprocessor](concepts/skills/postprocessor.md) |
-| Same step types | `run_op` / `iterate` / `validate` / `lint_plan` / `python` | [Postprocessor DSL](reference/dsl/postprocessor.md) |
-| Step memoization | Skip re-execution on crash resume if step already committed | [Postprocessor DSL](reference/dsl/postprocessor.md) · [Skill Resume](concepts/skills/skill-resume.md) |
+| Skill-finish transform | Convert LLM `final_output` to caller artifact schema | Postprocessor DSL · Concepts: Postprocessor |
+| Same step types | `run_op` / `iterate` / `validate` / `lint_plan` / `python` | Postprocessor DSL |
+| Step memoization | Skip re-execution on crash resume if step already committed | Postprocessor DSL · Skill Resume |
 
 #### Workspace (P5)
 | Feature | Description | Documentation |
@@ -285,11 +269,11 @@ mindmap
 |---------|-------------|---------------|
 | `.reyn/` layout + recovery-core classification | Which `.reyn/` subtrees are recovery-core (`state/` + `config/`) vs persist / audit / cache / outside; the recovery-core write-gate (mutate config via dedicated ops, never raw `file.write`) | [.reyn/ directory layout](reference/runtime/reyn-dir-layout.md) |
 | Config recovery (config-as-snapshot) | Config registries (`.reyn/config/`: mcp/cron/hooks/index) reconstruct from truncation-surviving config **generations** (full-state snapshots written by the durability worker, seq-keyed) — replacing the former `config_changed`-WAL-event replay, which a WAL truncation below the floor could silently drop (#2259 PR-1). The `.yaml` IS the durable snapshot, not a derived projection | [.reyn/ directory layout](reference/runtime/reyn-dir-layout.md) |
-| WAL state log | `step_started` / `step_completed` / `step_failed` written to `.reyn/state/wal.jsonl` (`StateLog`); fsync'd off the event loop via the shared `DurabilityWorker`. #2259: durable-RECORD writes (snapshots / config / identity) are async fire-and-forget — the task loop never blocks on durability; `step_started` BLOCKS by design (durable-before-side-effect, so a crash-mid-op is detected as ambiguous for non-idempotent ops — #2275). Truncatable after snapshot. **Not** the audit trail — see Event System (P6). | [Skill Resume](concepts/skills/skill-resume.md) |
+| WAL state log | `step_started` / `step_completed` / `step_failed` written to `.reyn/state/wal.jsonl` (`StateLog`); fsync'd off the event loop via the shared `DurabilityWorker`. #2259: durable-RECORD writes (snapshots / config / identity) are async fire-and-forget — the task loop never blocks on durability; `step_started` BLOCKS by design (durable-before-side-effect, so a crash-mid-op is detected as ambiguous for non-idempotent ops — #2275). Truncatable after snapshot. **Not** the audit trail — see Event System (P6). | Skill Resume |
 | Async-decoupled durability (recover-to-last-durable) | In-memory state mutates immediately on the task loop; the seq-keyed durable record is submitted fire-and-forget to the serial `DurabilityWorker` (the seq is assigned IN the worker). Recovery restores to the last durable record — a consistent prefix; the un-durable tail at crash is lost (relaxed durability). A persistent (§4-exhausted) durable-write failure latches `durability_failed` → the session fail-stops (`DurabilityHaltError` on new ops + run-loop halt) so in-memory cannot race a dead disk (#2259) | [.reyn/ directory layout](reference/runtime/reyn-dir-layout.md) |
-| Forward-replay resume | `SkillResumeAnalyzer` reconstructs run state from state log | [Skill Resume](concepts/skills/skill-resume.md) |
-| `CommittedStep` memo | Replay recorded op results on resume without re-invoking | [Skill Resume](concepts/skills/skill-resume.md) |
-| World-op bypass | Transient ops (web_search, web_fetch) re-execute fresh on resume | [Skill Resume](concepts/skills/skill-resume.md) |
+| Forward-replay resume | `SkillResumeAnalyzer` reconstructs run state from state log | Skill Resume |
+| `CommittedStep` memo | Replay recorded op results on resume without re-invoking | Skill Resume |
+| World-op bypass | Transient ops (web_search, web_fetch) re-execute fresh on resume | Skill Resume |
 
 #### Time-Travel / Rewind (Resume)
 
@@ -299,7 +283,7 @@ User-facing point-in-time rewind with branching. Phase 1 and Phase 2 (2a/2b/2c/2
 |---------|-------------|---------------|
 | `/rewind` picker | Interactive checkpoint timeline (seq / timestamp / kind columns); Esc-Esc double-tap shortcut | [How-to: rewind](guide/for-users/time-travel.md) |
 | Per-checkpoint anchor preview | Each picker row shows a rendered scroll-hint anchor | [How-to: rewind](guide/for-users/time-travel.md) |
-| PITR reconstruct | Point-in-time snapshot + WAL-diff reconstruction to target seq | [Time-Travel concepts](concepts/runtime/time-travel.md) · [Crash Recovery](concepts/skills/skill-resume.md) |
+| PITR reconstruct | Point-in-time snapshot + WAL-diff reconstruction to target seq | [Time-Travel concepts](concepts/runtime/time-travel.md) · Crash Recovery |
 | Consistent-cut rewind | Both substrates (runtime state + workspace shadow-git `as-of-N`) rewound atomically | [Time-Travel concepts](concepts/runtime/time-travel.md) |
 | Append-only reset-record | Undo appends a reset-record at seq R; history before R is preserved on the current branch (no destructive rewrite) | [Time-Travel concepts](concepts/runtime/time-travel.md) |
 | Retention window + GC | Configurable checkpoint retention window; stale snapshots GC'd automatically | [How-to: rewind](guide/for-users/time-travel.md) |
@@ -374,25 +358,22 @@ Config-gated `litellm.Router` slot-in for provider-resilience. Default OFF (`llm
 
 All ops are documented in the single reference page: **[Control IR](reference/runtime/control-ir.md)**
 
-The op kinds below mirror `OP_KIND_MODEL_MAP` in `op_runtime/registry.py` (20 kinds — the six `file` sub-ops are grouped into one row).
+The op kinds below mirror `OP_KIND_MODEL_MAP` in `op_runtime/registry.py`.
 
 | Op | Description |
 |----|-------------|
 | `file` | `read` / `write` / `edit` / `delete` / `glob` / `grep` / `regenerate_index` (six fine-grained registry kinds) |
 | `ask_user` | Pause phase, collect user answer, re-run same phase |
-| `run_skill` | Invoke sub-skill and return `final_output` artifact |
 | `sandboxed_exec` | `argv` under `SandboxPolicy` via platform-selected backend |
 | `shell` | Raw shell exec — deprecated; prefer `sandboxed_exec` |
 | `web_search` | DuckDuckGo search — Tier 1, default-allow |
 | `web_fetch` | URL fetch + text extract — Tier 1, default-allow |
 | `mcp` | Call a configured MCP server tool by name |
 | `mcp_install` | Install / register an MCP server (registry / package / local source) |
-| `lint` | Run DSL linter on a skill directory |
 | `index_query` | Vector similarity search over one indexed source |
 | `recall` | Macro: embed query → `index_query` per source → merge top-K |
 | `index_drop` | Destructive source removal — requires approval |
 | `compact` | Summarise / compact context within budget (chat + phase results) |
-| `skill_resolve` | Resolve a skill reference to its local / project / stdlib source |
 | `judge_output` | LLM scorer with rubric + threshold + `on_fail` policy |
 
 > The `embed` and `index_write` ops were removed — embedding and index-writing now run provider-direct inside `reyn.api.safe.embed_index` and the `recall` op, not as standalone ops. See [Control IR](reference/runtime/control-ir.md).
@@ -416,21 +397,6 @@ How tools are presented to the LLM and how its calls are dispatched is a **plugg
 
 ---
 
-### DSL
-
-| Feature | Description | Documentation |
-|---------|-------------|---------------|
-| `skill.md` frontmatter | `name` / `entry` / `graph` / `final_output` / `permissions` / `postprocessor` / `search_hints` | [Skill frontmatter](reference/dsl/skill-md.md) |
-| `phase.md` frontmatter | `input_schema` / `instructions` / `preprocessor` / `allowed_ops` / `model_class` | [Phase frontmatter](reference/dsl/phase-md.md) |
-| Artifact YAML | 45 built-in types, JSON Schema Draft 7 | [Artifact YAML](reference/dsl/artifact-yaml.md) |
-| Graph semantics | Phase transition adjacency list and `end` terminal | [Graph](reference/dsl/graph.md) |
-| Postprocessor block | Deterministic skill-finish transform declared in `skill.md` | [Postprocessor](reference/dsl/postprocessor.md) |
-| Preprocessor block | Deterministic phase-entry enrichment declared in `phase.md` | [Preprocessor](reference/dsl/preprocessor.md) |
-| Topology YAML | Multi-agent topology definition | [Topology YAML](reference/dsl/topology-yaml.md) |
-| Profile YAML | Agent role profile definition | [Profile YAML](reference/dsl/profile-yaml.md) |
-
----
-
 ### Stdlib Skills
 
 | Skill | Description | Documentation |
@@ -442,13 +408,7 @@ How tools are presented to the LLM and how its calls are dispatched is a **plugg
 | `index_events` | Index P6 event log with incremental cursor tracking | [Reference](reference/stdlib/index_events.md) |
 | `judge_phase` | Score one phase artifact against quality criteria | [Reference](reference/stdlib/judge_phase.md) |
 | `ops_report` | Execution summary from indexed events for a period | [Reference](reference/stdlib/ops_report.md) |
-| `skill_builder` | Scaffold a new skill from a natural-language description | [Reference](reference/stdlib/skill_builder.md) |
-| `skill_importer` | Find and import an external skill with DSL conversion | [Reference](reference/stdlib/skill_importer.md) |
-| `skill_improver` | Iterative skill improvement via eval-plan-apply loop | [Reference](reference/stdlib/skill_improver.md) |
-| `skill_search` | Search a public skills registry for skills matching a natural-language capability request | [Reference](reference/stdlib/skill_search.md) |
 | `word_stats_demo` | Demo of the `python` preprocessor step pattern | [Reference](reference/stdlib/word_stats_demo.md) |
-
-> **Differentiation vs general agents:** skills are *one* feature here, not the headline. Where agents like Hermes auto-generate procedure docs (emergent), Reyn's skills (DSL above + this stdlib set) are explicit, typed, and OS-validated — a reviewable, versioned phase graph the OS checks at each transition. The bet is predictable over emergent.
 
 ---
 
@@ -458,8 +418,6 @@ How tools are presented to the LLM and how its calls are dispatched is a **plugg
 |---------|-------------|---------------|
 | `reyn run` | Execute a skill non-interactively | [Reference](reference/cli/run.md) |
 | `reyn chat` | Interactive multi-turn chat with a named agent | [Reference](reference/cli/chat.md) |
-| `reyn eval` | Golden dataset eval, result reports, version regression compare | [Reference](reference/cli/eval.md) |
-| `reyn skills` | List skills, show details, validate op/permission consistency | [Reference](reference/cli/skills.md) |
 | `reyn lint` | DSL linter for a skill directory | [Reference](reference/cli/lint.md) |
 | `reyn agent` | Create and manage named persistent agents | [Reference](reference/cli/agent.md) |
 | `reyn topology` | Create and manage communication topologies | [Reference](reference/cli/topology.md) |
@@ -495,7 +453,7 @@ Main reference: **[`reyn.yaml`](reference/config/reyn-yaml.md)**
 | `embedding` | Model classes / batch_size / cost_warn_threshold | [RAG concepts](concepts/data-retrieval/rag.md) |
 | `voice` | Whisper model / language / device — optional `reyn[voice]` | [Voice concepts](concepts/tools-integrations/voice.md) |
 | `events` | Rotation size/age + cleanup_period_days | [Events reference](reference/runtime/events.md) |
-| `skill_search` | BM25 threshold / top_k for skill catalogue routing | [Skill frontmatter](reference/dsl/skill-md.md) |
+| `skill_search` | BM25 threshold / top_k for skill catalogue routing | Skill frontmatter |
 | `models` | Class → LiteLLM model string with `extends` chain | [reyn-yaml § models](reference/config/reyn-yaml.md#models-block) |
 | `permissions` | Project-wide default capability policy | [Permissions config](reference/config/permissions.md) |
 | `multi-agent` | Agent and topology defaults | [Multi-agent config](reference/config/multi-agent.md) |
@@ -503,10 +461,10 @@ Main reference: **[`reyn.yaml`](reference/config/reyn-yaml.md)**
 | `auth` | OAuth provider definitions for `reyn auth login` (RFC 8628 device grant) | [reyn-yaml](reference/config/reyn-yaml.md) |
 | `mcp` | Configured external MCP server connections (transport + env) | [Concepts: MCP](concepts/tools-integrations/mcp.md) |
 | `multimodal` | Media handling caps (`max_bytes`, per-part token cost) | [reyn-yaml](reference/config/reyn-yaml.md) |
-| `python` | `python`-step execution policy (safe / unsafe subprocess) | [Preprocessor](reference/dsl/preprocessor.md) |
+| `python` | `python`-step execution policy (safe / unsafe subprocess) | Preprocessor |
 | `cron` | Cron-scheduled skill job definitions | [reyn-yaml](reference/config/reyn-yaml.md) |
 | `self_improvement` | Skill self-improvement (eval-plan-apply) settings | [reyn-yaml](reference/config/reyn-yaml.md) |
-| `skill_resume` | Crash-resume behaviour for skill runs | [Skill Resume](concepts/skills/skill-resume.md) |
+| `skill_resume` | Crash-resume behaviour for skill runs | Skill Resume |
 | `action_retrieval` | Action-catalog `search_actions` retrieval tuning | [Universal catalog](concepts/tools-integrations/universal-catalog.md) |
 | `hooks` | Agent-lifecycle push/shell hooks at 8 points (`turn_start/end`, `session_start/end`, `skill_start/end`, `task_start/end`). `push` mode: `wake:false` passive context ride-along, or `wake:true` self-continuation bounded by `safety.loop.max_hook_driven_turns`. `shell`: sandbox-gated side-effect, output ignored. Shell-hook consent routes through the intervention bus → TUI Pending-tab modal (`[A]lways` / `[y]es` / `[n]o`; `Always` persists to `~/.reyn/shell-hooks-allowlist.json`); falls back to stdin on non-TUI. All shell runs emit `hook_shell_executed` P6 event (Events-tab "tool" group; prefix `shell_exec:` or `shell_push:`). Hooks emit attributed `[hook:name]` messages — history is never silently mutated. | [reyn-yaml § hooks](reference/config/reyn-yaml.md#hooks-block) · [Concepts: hooks](concepts/runtime/hooks.md) |
 | Config hot-reload | Runtime re-read of the IN-set (`.reyn/mcp.yaml` / `cron.yaml` / `hooks.yaml`) at the turn boundary without a process restart. OUT-set (`reyn.yaml`: security / budget / loop valve) is restart-only — the file-split is the structural write-gate. Two triggers: operator `/reload` and agent `hooks_add` LLM-op. Validate-before-apply + per-layer boot resilience + sandbox/loop-valve = safe-by-construction. | [Concepts: Config hot-reload](concepts/runtime/config-hot-reload.md) |
@@ -517,16 +475,15 @@ Main reference: **[`reyn.yaml`](reference/config/reyn-yaml.md)**
 
 | Feature | Description | Documentation |
 |---------|-------------|---------------|
-| Tier 0 — always allowed | `run_skill` / `ask_user` / `lint` — no gate | [Permission model](concepts/runtime/permission-model.md) |
+| Tier 0 — always allowed | `ask_user` — no gate | [Permission model](concepts/runtime/permission-model.md) |
 | Tier 1 — default-allow | `web_search` / `web_fetch` — deny-only gate | [Permission model](concepts/runtime/permission-model.md) · [Permissions config](reference/config/permissions.md) |
 | Tier 2/3 — declaration + 4-layer approval | `shell` / `mcp` / `file` (out-of-zone) / `python` | [Permission model](concepts/runtime/permission-model.md) |
 | Layer 1: config pre-approval | `reyn.yaml` hard `allow` / `deny` | [Permissions config](reference/config/permissions.md) |
 | Layer 2: saved approvals | `.reyn/approvals.yaml` — persisted per path/server | [reyn permissions CLI](reference/cli/permissions.md) |
 | Layer 3: session approvals | In-memory for current invocation only | [Permission model](concepts/runtime/permission-model.md) |
 | Layer 4: interactive prompt | Ask user with persist choices (yes / always / just-this-path) | [Permission model](concepts/runtime/permission-model.md) |
-| Skill-level declarations | `shell` / `file.read+write` / `http.get` / `secret.write` / `mcp` / `python` / `tool` | [Skill frontmatter](reference/dsl/skill-md.md) |
 | CLI gates | `--allow-shell` / `--allow-unsafe-python` required at invocation | [Common flags](reference/cli/common-flags.md) |
-| Capability profile | Per-agent skill / MCP / tool / category capability restriction (ProfileLayer in the ∩ model); agent can self-edit `.reyn/agents/<name>/profile.yaml` within the default write zone | [Concepts: Capability profile](concepts/runtime/capability-profile.md) · [Reference: profile.yaml](reference/dsl/profile-yaml.md) |
+| Capability profile | Per-agent skill / MCP / tool / category capability restriction (ProfileLayer in the ∩ model); agent can self-edit `.reyn/agents/<name>/profile.yaml` within the default write zone | [Concepts: Capability profile](concepts/runtime/capability-profile.md) · Reference: profile.yaml |
 | Delegation policy | Config-selectable default-deny for delegated agents: `delegation.capability_default=deny` narrows any unbound delegate with the restrictive `_delegate` floor (same deny taxonomy as `_untrusted`). Binding replaces the floor (= the re-grant). Recursive: no laundering via re-granted coordinators. `reyn audit` (`gateway:delegation-unsafe`) flags re-grants with OPT-A reachability precision (HIGH exit on re-delegation/exec). | [Concepts: Delegation policy](concepts/runtime/delegation-policy.md) · [Concepts: Capability profile](concepts/runtime/capability-profile.md) |
 
 > **Differentiation vs general agents:** autonomous agents typically execute tools with minimal gating. Reyn requires per-capability declaration + 4-layer just-in-time approval (config → saved → session → interactive), a `.reyn/` write zone, and per-skill credential scoping (Confused Deputy mitigation).
@@ -677,7 +634,7 @@ Cross-surface `ask_user` and permission routing — the same prompt reaches the 
 
 | Feature | Description | Documentation |
 |---------|-------------|---------------|
-| Three-level model | `Agent` (identity) → `Session` (conversation) → `SkillRuntime` (per-skill OS-runtime host) | [Concepts: Sessions](concepts/multi-agent/sessions.md) |
+| Two-level model | `Agent` (identity) → `Session` (conversation) | [Concepts: Sessions](concepts/multi-agent/sessions.md) |
 | Multiple Sessions per Agent | One identity, many parallel conversations; `AgentRegistry` maps name → {sid → Session} with a shared `Agent` identity | [Concepts: Sessions](concepts/multi-agent/sessions.md#multiple-sessions-vs-multiple-agents) |
 | Identity vs conversation scope | Memory / permissions / workspace / peer-addressing live on the Agent; history / inbox-outbox / current task stay per-Session | [Concepts: Sessions](concepts/multi-agent/sessions.md#what-a-session-owns) |
 | Per-session persistence | Each Session is snapshotted and restored independently (WAL-backed; snapshot re-keyed per Session) | [Concepts: Sessions](concepts/multi-agent/sessions.md#what-a-session-owns) |
@@ -694,9 +651,9 @@ Cross-surface `ask_user` and permission routing — the same prompt reaches the 
 | Feature | Description | Documentation |
 |---------|-------------|---------------|
 | Agent registry | Named agents with role profiles + `history.jsonl` | [reyn agent CLI](reference/cli/agent.md) |
-| `network` topology | Full mesh — any member to any member | [Topology YAML](reference/dsl/topology-yaml.md) · [reyn topology CLI](reference/cli/topology.md) |
-| `team` topology | Star around leader — member-to-member forbidden | [Topology YAML](reference/dsl/topology-yaml.md) |
-| `pipeline` topology | Ordered — each member sends only to next | [Topology YAML](reference/dsl/topology-yaml.md) |
+| `network` topology | Full mesh — any member to any member | [reyn topology CLI](reference/cli/topology.md) |
+| `team` topology | Star around leader — member-to-member forbidden | — |
+| `pipeline` topology | Ordered — each member sends only to next | — |
 | `_default` topology | Auto-synthesized full mesh for unassigned agents | [Multi-agent config](reference/config/multi-agent.md) |
 | MessageBus | Quiescence-based coordination with `reply_to` correlation | [Multi-agent config](reference/config/multi-agent.md) |
 | `delegate_to_agent` | Async-dispatch to peer with topology permission gate | [Concepts: principles P4](concepts/architecture/principles.md) |

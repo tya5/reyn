@@ -57,7 +57,7 @@ Every state change emits an event. Replayable for debugging and (eventually) che
 For each phase visit:
 
 1. Build the context frame (instructions + input + candidate outputs + control ops).
-2. Run preprocessor steps if any (deterministic — `reference/dsl/preprocessor.md`, Phase 2).
+2. Run preprocessor steps if any (deterministic, Phase 2).
 3. Call the LLM.
 4. Receive: `next_phase | finish`, an artifact, optional Control IR ops.
 5. Validate the output against OS rules and against the chosen target's schema.

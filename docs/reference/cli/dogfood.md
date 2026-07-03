@@ -468,7 +468,6 @@ reyn dogfood publish .reyn/dogfood/runs/a1b2c3d4-... --dry-run
 
 ## Related
 
-- [Reference: `reyn eval compare`](eval.md) — per-skill rubric regression (orthogonal surface)
 - [Reference: `reyn run`](run.md) — headless skill execution (same Agent.run path)
 - [Concepts: events](../../concepts/runtime/events.md) — P6 event log
 - [Deep dive: dogfood discipline](../../deep-dives/contributing/dogfood-discipline.md) — 4-band outcome + 9-principle framework

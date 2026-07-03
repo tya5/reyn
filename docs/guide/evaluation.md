@@ -314,7 +314,7 @@ The `judge_output` rubric drives the score. Vague rubrics ("the output is good")
 ## See also
 
 - [Concepts: evaluation](../concepts/observability/evaluation.md) — architecture and positioning
-- [Reference: `reyn eval`](../reference/cli/eval.md) — full CLI flag reference
+
 - [Concepts: events](../concepts/runtime/events.md) — P6 event log
 - [Concepts: workspace](../concepts/runtime/workspace.md) — workspace isolation model
 - [Concepts: permission model](../concepts/runtime/permission-model.md) — non-interactive pre-approval

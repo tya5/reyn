@@ -32,7 +32,7 @@ A Skill says "from `entry`, the graph allows these transitions, and the final ou
 
 #### Postprocessor: a skill-level finish hook
 
-A Skill may optionally declare a `postprocessor` block — a deterministic transformation that runs at skill finish, between the LLM's final output (which conforms to the skill's `final_output` schema) and the artifact returned to the caller (which conforms to `postprocessor.output_schema`). Postprocessor mirrors the phase preprocessor structurally — same step types, same op set, same `on_error` policy — differing only in fire position (phase entry vs. skill finish). Like the skill graph, the postprocessor block is declared in `skill.md` and is invisible to both the OS's generic runtime logic and to individual phases. See [Concepts: postprocessor](../skills/postprocessor.md) and [Reference: postprocessor](../../reference/dsl/postprocessor.md).
+A Skill may optionally declare a `postprocessor` block — a deterministic transformation that runs at skill finish, between the LLM's final output (which conforms to the skill's `final_output` schema) and the artifact returned to the caller (which conforms to `postprocessor.output_schema`). Postprocessor mirrors the phase preprocessor structurally — same step types, same op set, same `on_error` policy — differing only in fire position (phase entry vs. skill finish). Like the skill graph, the postprocessor block is declared in `skill.md` and is invisible to both the OS's generic runtime logic and to individual phases.
 
 ### OS: skill-agnostic
 
@@ -69,6 +69,3 @@ The crucial reyn-specific point: the LLM picks the *edge* but the OS validates t
 
 - [../architecture/principles.md](../architecture/principles.md) — P1, P2, P3, P7
 - [../architecture/llm-as-decision-engine.md](../architecture/llm-as-decision-engine.md)
-- [Reference: skill.md](../../reference/dsl/skill-md.md)
-- [Reference: phase.md](../../reference/dsl/phase-md.md)
-- [Reference: graph](../../reference/dsl/graph.md)

@@ -29,7 +29,7 @@ produce the artifact.
 ```bash
 reyn chat
 > Write a Reyn-style README for the `mcp_search` stdlib skill. Match the
-  voice of the existing how-to guides under docs/guide/for-skill-authors/. Output
+  voice of the existing how-to guides. Output
   Markdown only.
 ```
 
@@ -44,7 +44,7 @@ The chat agent:
 If you'd rather skip routing and call the builder explicitly:
 
 ```bash
-reyn run skill_builder "Write a Reyn-style README for the mcp_search stdlib skill, matching docs/guide/for-skill-authors/ voice. Output Markdown."
+reyn run skill_builder "Write a Reyn-style README for the mcp_search stdlib skill, matching the project's guide voice. Output Markdown."
 ```
 
 `skill_builder` is general-purpose and will recognize this as a docs task
@@ -63,9 +63,8 @@ the prose.)
 
 ## Tip: matching house style
 
-Mention the reference directory in the prompt — the model uses it as a
-style anchor. `docs/guide/for-skill-authors/` has consistent voice; `docs/concepts/`
-is more reference-toned.
+Mention a reference directory in the prompt — the model uses it as a
+style anchor. `docs/concepts/` is reference-toned; the getting-started guides have a more tutorial voice.
 
 ## See also
 

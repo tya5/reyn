@@ -21,7 +21,7 @@ skill.
 
 > **Distinct from the operator topology tools.** The [operator CLI
 > (`reyn topology`)](../../reference/cli/topology.md) and
-> [Topology YAML](../../reference/dsl/topology-yaml.md) let a *human operator*
+> Topology YAML let a *human operator*
 > define the org structure up front in configuration. The tools on this page let
 > the *LLM itself* design the org at runtime — they are complementary, not
 > competing, surfaces. An operator-authored topology remains the authority for
@@ -200,4 +200,4 @@ See [reyn-yaml § safety.spawn](../../reference/config/reyn-yaml.md#safetyspawn-
 - [Concepts: topology (operator)](../multi-agent/topology.md) — the human-CLI org-design surface
 - [Concepts: sessions](../multi-agent/sessions.md) — what a session owns; ephemeral / persistent lifecycle
 - [Reference: reyn-yaml § safety.spawn](../../reference/config/reyn-yaml.md#safetyspawn-fields) — operator bounds
-- [Reference: Topology YAML](../../reference/dsl/topology-yaml.md) — operator topology YAML schema
+

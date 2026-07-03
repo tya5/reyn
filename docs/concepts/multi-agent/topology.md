@@ -141,5 +141,4 @@ After cascade, the registry recomputes `_default`; agents who lost their last us
 ## See also
 
 - [Reference: topology CLI](../../reference/cli/topology.md)
-- [Reference: topology-yaml](../../reference/dsl/topology-yaml.md)
 - [Concepts: multi-agent](../multi-agent/multi-agent.md)

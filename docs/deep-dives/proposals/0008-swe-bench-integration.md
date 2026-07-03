@@ -170,7 +170,7 @@ A batch runner for efficiently executing all 500 problems in SWE-bench Verified.
 > **Shipped (current).** `reyn eval benchmark <SKILL> --tasks … --output …` exists and
 > is the batch driver. It runs a skill across a JSONL task file with concurrent dispatch
 > and built-in Tier-1 faithful scoring (`--clone-task-repo` for SWE-bench tasks). See the
-> [`reyn eval` reference](../../reference/cli/eval.md#subcommand-benchmark) and the
+> `reyn eval` reference (removed) and the
 > [operator how-to](../../guide/for-reyn-developers/run-swe-bench.md).
 
 ```

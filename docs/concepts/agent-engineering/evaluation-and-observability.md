@@ -62,7 +62,5 @@ There is no built-in cost dashboard or longitudinal eval trend view; consumers p
 - [Reference: events](../../reference/runtime/events.md)
 - [Reference: stdlib/eval](../../reference/stdlib/eval.md)
 - [Reference: stdlib/eval_builder](../../reference/stdlib/eval_builder.md)
-- [Reference: cli/eval](../../reference/cli/eval.md)
-- [How-to: debug with events](../../guide/for-skill-authors/operations/debug-with-events.md)
 - [reliability-engineering.md](reliability-engineering.md) — events for failure
 - [product-think.md](product-think.md) — surfacing observability through CLI affordances

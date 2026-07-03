@@ -94,5 +94,5 @@ Hard invariants:
   taxonomy with skill_*, step_*, intervention_* events
 - [docs/en/concepts/runtime/events.md](../concepts/runtime/events.md) — event log + WAL
   architecture
-- [docs/en/concepts/skills/skill-resume.md](../concepts/skills/skill-resume.md) —
+- `concepts/skills/skill-resume.md` (removed) —
   user-facing summary

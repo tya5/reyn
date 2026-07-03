@@ -314,7 +314,7 @@ reyn events .reyn/events/<run_id>.jsonl --filter permission_denied
 ## 関連項目
 
 - [コンセプト: 評価インフラ](../concepts/observability/evaluation.md) — アーキテクチャとポジショニング
-- [リファレンス: `reyn eval`](../reference/cli/eval.md) — 完全な CLI フラグリファレンス
+
 - [コンセプト: イベント](../concepts/runtime/events.md) — P6 イベントログ
 - [コンセプト: workspace](../concepts/runtime/workspace.md) — workspace 隔離モデル
 - [コンセプト: パーミッションモデル](../concepts/runtime/permission-model.md) — 非インタラクティブ事前承認

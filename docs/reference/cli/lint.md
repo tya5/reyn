@@ -74,8 +74,8 @@ reyn lint my_skill || exit 1
 
 ## See also
 
-- [Reference: skill.md](../dsl/skill-md.md)
-- [Reference: phase.md](../dsl/phase-md.md)
-- [Reference: graph](../dsl/graph.md)
-- [Reference: preprocessor](../dsl/preprocessor.md)
-- [Reference: reyn skills](skills.md) — `reyn skills validate` for op/permission consistency (complements lint)
+- Reference: skill.md
+- Reference: phase.md
+- Reference: graph
+- Reference: preprocessor
+- Reference: reyn skills validate — op/permission consistency (complements lint) (page removed)

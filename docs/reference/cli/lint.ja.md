@@ -74,8 +74,8 @@ reyn lint my_skill || exit 1
 
 ## 関連情報
 
-- [リファレンス: skill.md](../dsl/skill-md.md)
-- [リファレンス: phase.md](../dsl/phase-md.md)
-- [リファレンス: graph](../dsl/graph.md)
-- [リファレンス: preprocessor](../dsl/preprocessor.md)
-- [リファレンス: reyn skills](skills.md) — op/permission 整合性チェックの `reyn skills validate`（lint と補完）
+- リファレンス: skill.md
+- リファレンス: phase.md
+- リファレンス: graph
+- リファレンス: preprocessor
+- リファレンス: reyn skills validate — op/permission 整合性チェック（lint と補完）(ページ削除済み)

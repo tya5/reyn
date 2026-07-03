@@ -29,7 +29,7 @@ effective = AgentLayer ∩ SandboxLayer ∩ ProfileLayer ∩ ContextualLayer
 
 `AgentProfile.default_profile()` はランタイムにこれらのキーを `CapabilityProfile` に変換します — ユーザー向けのリネームなし、セマンティクスは同じです。これが **ProfileLayer**（エージェントごとのデフォルトバインディング）に入力します。
 
-フルスキーマ: [profile.yaml リファレンス](../../reference/dsl/profile-yaml.md)。
+フルスキーマ: profile.yaml を参照してください。
 
 ### `CapabilityProfile` — `.reyn/capability_profiles/<name>.yaml`
 
@@ -149,6 +149,5 @@ tool_deny:
 ## 参照
 
 - [パーミッションモデル § 論理積制限 + 1 仕様 2 バインディングアダプター](permission-model.md#effective-permission-conjunctive-restrict-model) — ∩ 式、ProfileLayer vs ContextualLayer、アダプター設計
-- [リファレンス: profile.yaml](../../reference/dsl/profile-yaml.md) — AgentProfile スキーマ（allowed_skills、allowed_mcp、default_profile マッピング）
 - [コンセプト: マルチエージェント](../multi-agent/multi-agent.md) — トポロジーと委譲（ContextualLayer コンシューマー）
 - [リファレンス: reyn agent CLI](../../reference/cli/agent.md) — `reyn agent new`、`reyn agent list`

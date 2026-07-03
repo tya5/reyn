@@ -72,4 +72,4 @@ While `reyn chat` is running:
 
 - [Reference: Budget and cost tracking](../../reference/config/budget.md) — full schema, every field, the ledger format, and the `/cost` / `/budget` command output
 - [Reference: `reyn.yaml`](../../reference/config/reyn-yaml.md) — the complete config file
-- [Understand why Reyn stops](../for-skill-authors/operations/understand-why-reyn-stops.md) — limits and budgets share one stop framework
+

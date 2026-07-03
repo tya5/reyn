@@ -160,7 +160,7 @@ permissions:
 ```
 
 Without prior approval a task fails and is reported as not-finished. See the
-[`reyn eval` reference](../../reference/cli/eval.md#non-interactive-constraint)
+reyn eval reference
 and [Manage permissions](../for-users/manage-permissions.md).
 
 ## Faithful scoring and the honest-skip
@@ -185,7 +185,7 @@ the summary, not just that the run finished.
 
 ## See also
 
-- [`reyn eval` reference](../../reference/cli/eval.md) — full `benchmark` flag reference
+
 - [Configure the sandbox](../for-users/configure-sandbox.md) — how container/host execution is bounded
 - [Manage permissions](../for-users/manage-permissions.md) — pre-approval mechanics
 - [SWE-bench integration proposal](../../deep-dives/proposals/0008-swe-bench-integration.md) — the original design record

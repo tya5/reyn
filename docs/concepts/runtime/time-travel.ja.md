@@ -6,7 +6,7 @@ audience: [human, agent]
 
 # タイムトラベル：巻き戻しと再開
 
-Reyn のタイムトラベルシステムは、agent を過去の任意のチェックポイントに巻き戻し、そこから分岐させます。[クラッシュリカバリ](../../concepts/skills/skill-resume.md)とは別の機能であり、異なるメカニズムを使い、異なる目的に対応します。
+Reyn のタイムトラベルシステムは、agent を過去の任意のチェックポイントに巻き戻し、そこから分岐させます。クラッシュリカバリとは別の機能であり、異なるメカニズムを使い、異なる目的に対応します。
 
 > **クラッシュリカバリ**（`ReplayEngine` / WAL）は予期しない障害の後に agent を自動的に復元します。ユーザーには透過的であり、停止した場所まで前方再生します。**タイムトラベル**はユーザーが意図的に開始する過去のポイントへの巻き戻しであり、新しい履歴ブランチをフォークするオプションがあります。
 
@@ -142,6 +142,6 @@ WAL（`StateLog`、`.reyn/state/wal.jsonl`）と P6 監査イベントログ（`
 ## 参照
 
 - [Sessions](../multi-agent/sessions.md) — 巻き戻しが横断する Agent / Session モデル
-- [Crash Recovery / Skill Resume](../../concepts/skills/skill-resume.md)
+
 - [Events と WAL](events.md)
 - [巻き戻しの使い方](../../guide/for-users/time-travel.md)

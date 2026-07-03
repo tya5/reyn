@@ -101,6 +101,5 @@ The system does not auto-decay or expire entries. Pruning is left to the user vi
 ## See also
 
 - [Reference: skill_router](../../reference/stdlib/skill_router.md) — the phase that reads/writes memory
-- [Reference: profile-yaml](../../reference/dsl/profile-yaml.md) — agent profile shape
 - [Reference: state-dir](../../reference/config/state-dir.md) — `memory/` and `agents/<name>/` locations
 - [../runtime/events.md](../runtime/events.md)

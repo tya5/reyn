@@ -119,7 +119,6 @@ Component A、B、D は FP-0006 に依存せず、Component C なしで使用で
 ## 関連項目
 
 - [ガイド: 評価インフラのセットアップ](../../guide/evaluation.md) — クイックスタート、export 設定、CI 連携
-- [リファレンス: `reyn eval`](../../reference/cli/eval.md) — CLI フラグリファレンス
 - [コンセプト: イベント](../runtime/events.md) — P6 イベントログ基盤
 - [コンセプト: workspace](../runtime/workspace.md) — eval 実行の workspace 隔離
 - [コンセプト: パーミッションモデル](../runtime/permission-model.md) — eval の非インタラクティブ事前承認

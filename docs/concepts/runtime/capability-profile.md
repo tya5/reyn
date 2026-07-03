@@ -35,7 +35,7 @@ using the natural key names:
 at runtime — no user-facing rename, same semantics. This feeds **ProfileLayer**
 (per-agent default binding).
 
-Full schema: [profile.yaml reference](../../reference/dsl/profile-yaml.md).
+Full schema: see profile.yaml.
 
 ### `CapabilityProfile` — `.reyn/capability_profiles/<name>.yaml`
 
@@ -213,6 +213,5 @@ tool_deny:
 ## See also
 
 - [Permission model § conjunctive restrict + one spec two binding adapters](permission-model.md#effective-permission-conjunctive-restrict-model) — the ∩ formula, ProfileLayer vs ContextualLayer, adapter design
-- [Reference: profile.yaml](../../reference/dsl/profile-yaml.md) — AgentProfile schema (allowed_skills, allowed_mcp, default_profile mapping)
 - [Concepts: multi-agent](../multi-agent/multi-agent.md) — topology and delegation (ContextualLayer consumers)
 - [Reference: reyn agent CLI](../../reference/cli/agent.md) — `reyn agent new`, `reyn agent list`

@@ -23,4 +23,3 @@ Reyn に付属するバンドルされた Skill。名前のルックアップで
 > — router system prompt の「spawn-ack + completion-narration」 guidance および
 > chat-mode 非同期 dispatch についても参照してください。
 
-任意の Skill の完全な説明とエントリー指示を見るには `reyn skills <name>` を実行してください。

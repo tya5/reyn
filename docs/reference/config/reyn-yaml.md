@@ -1102,7 +1102,7 @@ mcp:
     ...
 ```
 
-See [Concepts: MCP](../../concepts/tools-integrations/mcp.md) for the protocol overview and [How-to: use an MCP server](../../guide/for-skill-authors/operations/use-an-mcp-server.md) for the end-to-end quickstart.
+See [Concepts: MCP](../../concepts/tools-integrations/mcp.md) for the protocol overview and How-to: use an MCP server for the end-to-end quickstart.
 
 ## `embedding` block
 

@@ -114,4 +114,4 @@ principle does not change — only how far its durability currently reaches.
 - [Time-travel](time-travel.md) — reconstruct over the WAL + runtime snapshots, and the shadow-git generations behind L2
 - [Workspace](workspace.md) — the workspace tree itself
 - [Permission model](permission-model.md) — the gate over Control IR file ops (L1)
-- [Crash recovery / skill resume](../skills/skill-resume.md) — the recovery mechanism
+- Crash recovery / skill resume (page removed)

@@ -75,6 +75,5 @@ User sees an interim "(working on it)" then the final 200-word summary.
 
 ## See also
 
-- [How-to: build an agent team](../../guide/for-skill-authors/composition/build-an-agent-team.md)
-- [How-to: multi-hop delegation](../../guide/for-skill-authors/composition/multi-hop-delegation.md)
+
 - [Concepts: topology](../../concepts/multi-agent/topology.md)

@@ -119,7 +119,6 @@ Components A, B, and D are independent of FP-0006 and can be used without Compon
 ## See also
 
 - [Guide: Setup evaluation](../../guide/evaluation.md) — quickstart, export setup, CI integration
-- [Reference: `reyn eval`](../../reference/cli/eval.md) — CLI flag reference
 - [Concepts: events](../runtime/events.md) — P6 event log foundation
 - [Concepts: workspace](../runtime/workspace.md) — workspace isolation for eval runs
 - [Concepts: permission model](../runtime/permission-model.md) — non-interactive pre-approval for eval
