@@ -167,7 +167,7 @@ async def _execute(op: MCPIROp, ctx: OpContext) -> dict:
     return out
 
 
-async def handle(op: MCPIROp, ctx: OpContext, caller: Literal["preprocessor", "control_ir"]) -> dict:
+async def handle(op: MCPIROp, ctx: OpContext) -> dict:
     if ctx.permission_resolver is not None:
         if ctx.intervention_bus is None:
             raise RuntimeError("mcp op requires intervention_bus on OpContext")

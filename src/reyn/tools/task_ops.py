@@ -146,7 +146,7 @@ def _make_handler(op_kind: str, model: type):
                 ),
             }
 
-        return await execute_op(op, op_ctx, caller="control_ir")
+        return await execute_op(op, op_ctx)
 
     return _handle
 

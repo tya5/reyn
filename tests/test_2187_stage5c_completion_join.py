@@ -63,8 +63,7 @@ async def _backend_with(*tasks):
 
 async def _complete(backend, waker, task_id, assignee, *, status="done"):
     return await taskmod._update_status(
-        SimpleNamespace(task_id=task_id, status=status), _ctx(backend, waker, assignee),
-        "control_ir")
+        SimpleNamespace(task_id=task_id, status=status), _ctx(backend, waker, assignee))
 
 
 # ── (1) completion-join gate ────────────────────────────────────────────────

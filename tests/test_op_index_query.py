@@ -84,7 +84,7 @@ async def test_semantic_query_returns_chunks(tmp_path: Path, monkeypatch: pytest
         top_k=2,
         filters={},
     )
-    result = await execute_op(op, ctx, caller="control_ir")
+    result = await execute_op(op, ctx)
 
     assert result.get("status") != "error", result
     assert result["mode"] == "semantic"
@@ -106,7 +106,7 @@ async def test_query_empty_source_returns_fallback(tmp_path: Path, monkeypatch: 
         top_k=5,
         filters={},
     )
-    result = await execute_op(op, ctx, caller="control_ir")
+    result = await execute_op(op, ctx)
 
     assert result.get("status") != "error", result
     assert result["mode"] == "fallback"
@@ -131,7 +131,7 @@ async def test_null_query_vector_returns_fallback(tmp_path: Path, monkeypatch: p
         top_k=5,
         filters={},
     )
-    result = await execute_op(op, ctx, caller="control_ir")
+    result = await execute_op(op, ctx)
 
     assert result.get("status") != "error", result
     assert result["mode"] == "fallback"
@@ -157,7 +157,7 @@ async def test_top_k_limits_results(tmp_path: Path, monkeypatch: pytest.MonkeyPa
         top_k=3,
         filters={},
     )
-    result = await execute_op(op, ctx, caller="control_ir")
+    result = await execute_op(op, ctx)
 
     assert result.get("status") != "error", result
     assert not result["chunks"][3:]  # top_k=3 caps result count
@@ -209,7 +209,7 @@ async def test_filters_narrow_results(tmp_path: Path, monkeypatch: pytest.Monkey
         top_k=10,
         filters={"source_type": "python"},
     )
-    result = await execute_op(op, ctx, caller="control_ir")
+    result = await execute_op(op, ctx)
 
     assert result.get("status") != "error", result
     assert all(c["metadata"]["source_type"] == "python" for c in result["chunks"])

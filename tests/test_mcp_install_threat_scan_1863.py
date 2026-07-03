@@ -178,7 +178,7 @@ def test_handle_blocks_matching_install_and_writes_no_config(tmp_path, monkeypat
     ctx = _make_ctx(tmp_path, cfg)
     monkeypatch.setattr("shutil.which", lambda name: "/usr/bin/npx")
 
-    result = asyncio.run(mcp_install_handle(_npm_op(), ctx, "control_ir"))
+    result = asyncio.run(mcp_install_handle(_npm_op(), ctx))
 
     assert result["status"] == "blocked", f"expected blocked, got {result!r}"
     assert "test_block_id" in result["error"]
@@ -193,7 +193,7 @@ def test_handle_passes_legit_install(tmp_path, monkeypatch) -> None:
     ctx = _make_ctx(tmp_path, cfg)
     monkeypatch.setattr("shutil.which", lambda name: "/usr/bin/npx")
 
-    result = asyncio.run(mcp_install_handle(_npm_op(), ctx, "control_ir"))
+    result = asyncio.run(mcp_install_handle(_npm_op(), ctx))
 
     assert result["status"] == "ok", f"expected ok for legit install, got {result!r}"
     assert (tmp_path / ".reyn" / "config" / "mcp.yaml").exists()
@@ -212,6 +212,6 @@ def test_handle_disabled_scan_does_not_block(tmp_path, monkeypatch) -> None:
     ctx = _make_ctx(tmp_path, cfg)
     monkeypatch.setattr("shutil.which", lambda name: "/usr/bin/npx")
 
-    result = asyncio.run(mcp_install_handle(_npm_op(), ctx, "control_ir"))
+    result = asyncio.run(mcp_install_handle(_npm_op(), ctx))
 
     assert result["status"] == "ok", f"expected ok when scan disabled, got {result!r}"

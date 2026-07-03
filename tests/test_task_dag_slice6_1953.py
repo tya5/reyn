@@ -250,9 +250,9 @@ async def test_op_add_dependency_cycle_returns_error_dict():
     await b.create(_task("a", requester="req"))
     await b.create(_task("b", requester="req"))
     await taskmod._add_dependency(SimpleNamespace(task_id="a", depends_on="b"),
-                                  _opctx(b), "control_ir")
+                                  _opctx(b))
     res = await taskmod._add_dependency(SimpleNamespace(task_id="b", depends_on="a"),
-                                        _opctx(b), "control_ir")
+                                        _opctx(b))
     assert res["status"] == "error"
     assert res["error"]["kind"] == "cycle"
     assert res["error"]["edge"] == ["b", "a"]
@@ -266,7 +266,7 @@ async def test_op_create_dangling_dep_returns_error_dict():
     b = InMemoryTaskBackend()
     op = SimpleNamespace(name="x", assignee=None, origin="self", description=None,
                          deps=["ghost"])
-    res = await taskmod._create(op, _opctx(b), "control_ir")
+    res = await taskmod._create(op, _opctx(b))
     assert res["status"] == "error"
     assert res["error"]["kind"] == "dep_not_found"
     assert res["error"]["edge"][1] == "ghost"
@@ -283,7 +283,7 @@ async def test_op_update_status_completion_drives_readiness_and_emits_p6():
     # Complete d (ctx.session_id must equal d's assignee for the CAS).
     res = await taskmod._update_status(
         SimpleNamespace(task_id="d", status="done"),
-        _opctx(b, events=rec, session_id="sd"), "control_ir")
+        _opctx(b, events=rec, session_id="sd"))
     assert res["status"] == "ok"
     # a was promoted → exactly one task_readiness event for a (behavioral, not a
     # size pin): which task readied, triggered by which predecessor.
@@ -302,6 +302,6 @@ async def test_op_update_status_non_completion_does_not_recompute():
     await b.create(_task("a", deps=["d"], assignee="sa"))
     await taskmod._update_status(
         SimpleNamespace(task_id="d", status="running"),
-        _opctx(b, events=rec, session_id="sd"), "control_ir")
+        _opctx(b, events=rec, session_id="sd"))
     assert [k for k, _ in rec.events if k == "task_readiness"] == []
     assert (await b.get("a")).status is TaskState.BLOCKED

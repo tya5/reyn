@@ -24,14 +24,9 @@ class OpDispatchError(RuntimeError):
     """Raised when execute_op is called with an unsupported op kind."""
 
 
-_PREPROCESSOR_FORBIDDEN_KINDS = frozenset({"ask_user"})
-
-
 async def execute_op(
     op: ControlIROp,
     ctx: OpContext,
-    *,
-    caller: Literal["preprocessor", "control_ir"],
 ) -> dict:
     """Dispatch a ControlIROp to its handler and return a result dict.
 
@@ -40,20 +35,9 @@ async def execute_op(
     in the dict (status="error" / "denied" / "skipped"); this function
     never raises for op-level failures.
 
-    Static-execution constraints:
-      - `ask_user` is rejected when caller=="preprocessor" because static
-        enrichment cannot pause for user input.
-
     Permission checks happen here (single point) — callers do not need to
     invoke `require_*` themselves.
     """
-    if caller == "preprocessor" and op.kind in _PREPROCESSOR_FORBIDDEN_KINDS:
-        return {
-            "kind": op.kind,
-            "status": "denied",
-            "error": f"op kind '{op.kind}' cannot be invoked from preprocessor",
-        }
-
     handler = _HANDLERS.get(op.kind)
     if handler is None:
         ctx.events.emit("control_ir_skipped", kind=op.kind)
@@ -64,7 +48,7 @@ async def execute_op(
         }
 
     try:
-        result = await handler(op, ctx, caller)
+        result = await handler(op, ctx)
         path = getattr(op, "path", None)
         ctx.events.emit(
             "permission_granted",

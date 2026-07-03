@@ -3,7 +3,7 @@
 Phase-only capability: gates.router="deny", gates.phase="allow".
 The existing handler in src/reyn/op_runtime/ask_user.py is preserved
 and wrapped via a thin adapter that translates between the old
-(op, ctx, caller) signature and the new (args, ctx) signature.
+(op, ctx) signature and the new (args, ctx) signature.
 """
 from __future__ import annotations
 
@@ -39,7 +39,7 @@ async def _handle(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
     """Adapter wrapping op_runtime.ask_user.handle.
 
     Bridges between the unified (args, ctx) signature and the
-    existing (op, ctx, caller) signature. Once M3 completes, the
+    existing (op, ctx) signature. Once M3 completes, the
     body of handle may be inlined here in M4 cleanup.
 
     ask_user is phase-only (gates.router="deny"), so ctx.caller_kind
@@ -67,7 +67,7 @@ async def _handle(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
     # M4 Phase 3 wires the dispatcher), the handler will raise RuntimeError as designed.
     legacy_ctx = ctx.phase_state.op_context if ctx.phase_state is not None else None
 
-    return await handle(op=op, ctx=legacy_ctx, caller="control_ir")
+    return await handle(op=op, ctx=legacy_ctx)
 
 
 ASK_USER = ToolDefinition(

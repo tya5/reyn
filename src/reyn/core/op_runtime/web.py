@@ -211,7 +211,7 @@ def _resolve_ssl_verify(ctx: OpContext) -> bool | str:
     return get_ssl_verify()
 
 
-async def handle_web_fetch(op: WebFetchIROp, ctx: OpContext, caller: Literal["preprocessor", "control_ir"]) -> dict:
+async def handle_web_fetch(op: WebFetchIROp, ctx: OpContext) -> dict:
     from urllib.parse import urljoin, urlparse
 
     import httpx
@@ -505,7 +505,7 @@ async def handle_web_fetch(op: WebFetchIROp, ctx: OpContext, caller: Literal["pr
     }
 
 
-async def handle_web_search(op: WebSearchIROp, ctx: OpContext, caller: Literal["preprocessor", "control_ir"]) -> dict:
+async def handle_web_search(op: WebSearchIROp, ctx: OpContext) -> dict:
     from reyn.tools.search_backends import get_backend
 
     # FP-0022: Tier 1 config deny path. web_search is read-only (no side effects),

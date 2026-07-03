@@ -83,7 +83,7 @@ def test_read_inside_scope_allowed(tmp_path, monkeypatch):
     resolver = _resolver(tmp_path)
     ctx = _make_ctx(tmp_path, permission_resolver=resolver)
 
-    result = _run(handle(_read_op("src/foo.py"), ctx, "control_ir"))
+    result = _run(handle(_read_op("src/foo.py"), ctx))
 
     # Permission check passed — either ok or not_found, never a PermissionError
     assert result["status"] in ("ok", "not_found")
@@ -97,7 +97,7 @@ def test_read_outside_scope_denied(tmp_path, monkeypatch):
     ctx = _make_ctx(tmp_path, permission_resolver=resolver)
 
     with pytest.raises(PermissionError, match="read from"):
-        _run(handle(_read_op("/etc/passwd"), ctx, "control_ir"))
+        _run(handle(_read_op("/etc/passwd"), ctx))
 
 
 def test_read_with_no_decl_denied(tmp_path, monkeypatch):
@@ -111,7 +111,7 @@ def test_read_with_no_decl_denied(tmp_path, monkeypatch):
     ctx = _make_ctx(tmp_path, permission_resolver=resolver, permission_decl=PermissionDecl())
 
     with pytest.raises(PermissionError, match="read from"):
-        _run(handle(_read_op("/tmp/secret.txt"), ctx, "control_ir"))
+        _run(handle(_read_op("/tmp/secret.txt"), ctx))
 
 
 def test_read_with_no_resolver_skips_check(tmp_path, monkeypatch):
@@ -126,7 +126,7 @@ def test_read_with_no_resolver_skips_check(tmp_path, monkeypatch):
     ctx = _make_ctx(tmp_path, permission_resolver=None)
 
     # Path inside CWD: Workspace allows it, op-level check is skipped (no resolver)
-    result = _run(handle(_read_op("some/file.txt"), ctx, "control_ir"))
+    result = _run(handle(_read_op("some/file.txt"), ctx))
     # File doesn't exist but no PermissionError — op proceeded
     assert result["op"] == "read"
     assert result["status"] in ("ok", "not_found")
@@ -143,7 +143,7 @@ def test_read_config_allow_grants_access(tmp_path, monkeypatch):
     ctx = _make_ctx(tmp_path, permission_resolver=resolver)
 
     # Path inside CWD: both op-level and Workspace checks pass
-    result = _run(handle(_read_op("some/file.txt"), ctx, "control_ir"))
+    result = _run(handle(_read_op("some/file.txt"), ctx))
     assert result["op"] == "read"
     assert result["status"] in ("ok", "not_found")
 
@@ -158,7 +158,7 @@ def test_glob_subject_to_read_check(tmp_path, monkeypatch):
     ctx = _make_ctx(tmp_path, permission_resolver=resolver)
 
     with pytest.raises(PermissionError, match="read from"):
-        _run(handle(_glob_op("/etc/**.conf"), ctx, "control_ir"))
+        _run(handle(_glob_op("/etc/**.conf"), ctx))
 
 
 def test_glob_inside_cwd_allowed(tmp_path, monkeypatch):
@@ -167,7 +167,7 @@ def test_glob_inside_cwd_allowed(tmp_path, monkeypatch):
     resolver = _resolver(tmp_path)
     ctx = _make_ctx(tmp_path, permission_resolver=resolver)
 
-    result = _run(handle(_glob_op("**/*.py"), ctx, "control_ir"))
+    result = _run(handle(_glob_op("**/*.py"), ctx))
     assert result["op"] == "glob"
     assert result["status"] == "ok"
 
@@ -182,7 +182,7 @@ def test_grep_subject_to_read_check(tmp_path, monkeypatch):
     ctx = _make_ctx(tmp_path, permission_resolver=resolver)
 
     with pytest.raises(PermissionError, match="read from"):
-        _run(handle(_grep_op("/etc"), ctx, "control_ir"))
+        _run(handle(_grep_op("/etc"), ctx))
 
 
 def test_grep_inside_cwd_allowed(tmp_path, monkeypatch):
@@ -191,7 +191,7 @@ def test_grep_inside_cwd_allowed(tmp_path, monkeypatch):
     resolver = _resolver(tmp_path)
     ctx = _make_ctx(tmp_path, permission_resolver=resolver)
 
-    result = _run(handle(_grep_op(".", pattern="hello"), ctx, "control_ir"))
+    result = _run(handle(_grep_op(".", pattern="hello"), ctx))
     assert result["op"] == "grep"
     assert result["status"] == "ok"
 
@@ -211,7 +211,7 @@ def test_write_check_unchanged(tmp_path, monkeypatch):
 
     # /tmp is outside the default write zone (not under .reyn/ or reyn/)
     with pytest.raises(PermissionError):
-        _run(handle(_write_op("/tmp/unexpected_write.txt"), ctx, "control_ir"))
+        _run(handle(_write_op("/tmp/unexpected_write.txt"), ctx))
 
 
 def test_write_inside_default_zone_allowed(tmp_path, monkeypatch):
@@ -220,6 +220,6 @@ def test_write_inside_default_zone_allowed(tmp_path, monkeypatch):
     resolver = _resolver(tmp_path)
     ctx = _make_ctx(tmp_path, permission_resolver=resolver)
 
-    result = _run(handle(_write_op(".reyn/some_artifact.txt"), ctx, "control_ir"))
+    result = _run(handle(_write_op(".reyn/some_artifact.txt"), ctx))
     assert result["status"] == "ok"
     assert result["op"] == "write"

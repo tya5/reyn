@@ -816,7 +816,7 @@ class RouterHostAdapter:
             backend="duckduckgo",
         )
         ctx = self.make_router_op_context()
-        return await handle_web_search(op, ctx, caller="control_ir")
+        return await handle_web_search(op, ctx)
 
     async def web_fetch(self, *, url: str, max_length: int) -> dict:
         """Dispatch the OS-native web/fetch op from the router.
@@ -834,7 +834,7 @@ class RouterHostAdapter:
             timeout=15.0,
         )
         ctx = self.make_router_op_context()
-        return await handle_web_fetch(op, ctx, caller="control_ir")
+        return await handle_web_fetch(op, ctx)
 
     async def reyn_src_list(self, *, path: str) -> dict:
         """List entries under ``<reyn_root>/path``.

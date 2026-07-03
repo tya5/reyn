@@ -265,7 +265,7 @@ def test_source_npm_skips_registry_and_installs(tmp_path, monkeypatch):
     monkeypatch.setattr("shutil.which", lambda name: "/usr/bin/npx")
     # RegistryClient._get must NOT be called; if it is, it would fail
     # because we're not patching it.  The test passes only if it's skipped.
-    result = _run(mcp_install_handle(op, ctx, "control_ir"))
+    result = _run(mcp_install_handle(op, ctx))
 
     assert result["status"] == "ok"
     assert result["runtime"] == "npx"
@@ -301,7 +301,7 @@ def test_source_pypi_skips_registry_and_installs(tmp_path, monkeypatch):
     )
 
     monkeypatch.setattr("shutil.which", lambda name: "/usr/bin/uvx")
-    result = _run(mcp_install_handle(op, ctx, "control_ir"))
+    result = _run(mcp_install_handle(op, ctx))
 
     assert result["status"] == "ok"
     assert result["runtime"] == "uvx"
@@ -328,7 +328,7 @@ def test_source_invalid_specifier_returns_error(tmp_path):
         source="ftp://not-a-valid-source",
     )
 
-    result = _run(mcp_install_handle(op, ctx, "control_ir"))
+    result = _run(mcp_install_handle(op, ctx))
 
     assert result["status"] == "error"
     assert "Source resolution failed" in result["error"]
@@ -353,7 +353,7 @@ def test_source_event_includes_source_field(tmp_path, monkeypatch):
     )
 
     monkeypatch.setattr("shutil.which", lambda name: "/usr/bin/npx")
-    _run(mcp_install_handle(op, ctx, "control_ir"))
+    _run(mcp_install_handle(op, ctx))
 
     events = ctx.events.all()
     install_events = [e for e in events if e.type == "mcp_server_installed"]
@@ -379,7 +379,7 @@ def test_source_github_known_installs_npm(tmp_path, monkeypatch):
     )
 
     monkeypatch.setattr("shutil.which", lambda name: "/usr/bin/npx")
-    result = _run(mcp_install_handle(op, ctx, "control_ir"))
+    result = _run(mcp_install_handle(op, ctx))
 
     assert result["status"] == "ok"
     assert result["runtime"] == "npx"
@@ -407,7 +407,7 @@ def test_source_missing_runtime_returns_error(tmp_path, monkeypatch):
     )
 
     monkeypatch.setattr("shutil.which", lambda name: None)
-    result = _run(mcp_install_handle(op, ctx, "control_ir"))
+    result = _run(mcp_install_handle(op, ctx))
 
     assert result["status"] == "error"
     assert "npx" in result["error"].lower() or "node" in result["error"].lower()
@@ -456,7 +456,7 @@ def test_registry_path_unaffected_by_source_field_being_none(tmp_path, monkeypat
     from reyn.core.registry.client import RegistryClient
     monkeypatch.setattr(RegistryClient, "_get", _fake_get)
     monkeypatch.setattr("shutil.which", lambda name: "/usr/bin/npx")
-    result = _run(mcp_install_handle(op, ctx, "control_ir"))
+    result = _run(mcp_install_handle(op, ctx))
 
     assert result["status"] == "ok"
     assert result["source"] == ""  # no source in registry path

@@ -92,10 +92,10 @@ async def test_recovery_create_on_task_as_request_is_owned_by_it_full_live_path(
                         status=TaskState.RUNNING))
     # U owned by T (live create-path), a dependent V, then U fails.
     res_u = await taskmod._create(
-        _create_op("U"), _ctx(b, session_id="worker", current_task_id="T-req"), "control_ir")
+        _create_op("U"), _ctx(b, session_id="worker", current_task_id="T-req"))
     u_id = res_u["task"]["task_id"]
     assert (await b.get(u_id)).requester == "T-req"  # live ownership, not hand-fed
-    await taskmod._create(_create_op("V", deps=[u_id]), _ctx(b, session_id="worker"), "control_ir")
+    await taskmod._create(_create_op("V", deps=[u_id]), _ctx(b, session_id="worker"))
     await b.update_status(u_id, TaskState.FAILED, caller_session_id="worker")
 
     waker = TaskWaker(reg, "alice")
@@ -114,7 +114,7 @@ async def test_recovery_create_on_task_as_request_is_owned_by_it_full_live_path(
         adapter = make_adapter(agent_name="alice", task_backend=b, session_id="main",
                                current_task_id_fn=lambda: managing._current_task_id)
         rctx = adapter.make_router_op_context()
-        res_rep = await taskmod._create(_create_op("U-replacement"), rctx, "control_ir")
+        res_rep = await taskmod._create(_create_op("U-replacement"), rctx)
         replacement = await b.get(res_rep["task"]["task_id"])
         assert replacement.requester == "T-req"  # the recovery-create is owned by T
         assert replacement.requester_kind is TaskRequesterKind.TASK
@@ -149,7 +149,7 @@ async def test_session_requester_recovery_stays_session_owned(tmp_path):
         # a create on this recovery turn stays session-owned.
         res = await taskmod._create(
             _create_op("fix"), _ctx(b, session_id="main",
-                                    current_task_id=managing._current_task_id), "control_ir")
+                                    current_task_id=managing._current_task_id))
         fix = await b.get(res["task"]["task_id"])
         assert fix.requester == "main"
         assert fix.requester_kind is TaskRequesterKind.SESSION

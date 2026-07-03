@@ -143,7 +143,7 @@ async def test_recall_handler_builds_recall_ir_op(monkeypatch):
 
     captured_ops: list = []
 
-    async def fake_execute_op(op, ctx, *, caller):
+    async def fake_execute_op(op, ctx):
         captured_ops.append(op)
         return {"chunks": [], "mode": "fallback"}
 
@@ -183,7 +183,7 @@ async def test_recall_handler_defaults(monkeypatch):
 
     captured_ops: list = []
 
-    async def fake_execute_op(op, ctx, *, caller):
+    async def fake_execute_op(op, ctx):
         captured_ops.append(op)
         return {"chunks": [], "mode": "fallback"}
 

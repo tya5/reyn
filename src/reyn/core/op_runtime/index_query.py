@@ -45,7 +45,6 @@ async def _fallback_enumerate(op: IndexQueryIROp, ctx: OpContext) -> dict:
 async def handle(
     op: IndexQueryIROp,
     ctx: OpContext,
-    caller: Literal["preprocessor", "control_ir"],
 ) -> dict:
     """Execute an index_query op (ADR-0033 §2.1).
 

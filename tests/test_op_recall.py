@@ -105,7 +105,7 @@ async def test_recall_happy_path_returns_chunks(tmp_path: Path, monkeypatch: pyt
         top_k=5,
         embedding_model="standard",
     )
-    result = await execute_op(op, ctx, caller="control_ir")
+    result = await execute_op(op, ctx)
 
     assert result.get("status") != "error", result
     # With the fake provider returning [1,0,0], "relevant result" has score ≈ 1
@@ -131,7 +131,7 @@ async def test_recall_empty_sources_returns_fallback(tmp_path: Path, monkeypatch
         top_k=5,
         embedding_model="standard",
     )
-    result = await execute_op(op, ctx, caller="control_ir")
+    result = await execute_op(op, ctx)
 
     assert result.get("status") != "error", result
     assert result["chunks"] == []
@@ -159,7 +159,7 @@ async def test_recall_merges_multiple_sources(tmp_path: Path, monkeypatch: pytes
         top_k=10,
         embedding_model="standard",
     )
-    result = await execute_op(op, ctx, caller="control_ir")
+    result = await execute_op(op, ctx)
 
     assert result.get("status") != "error", result
     texts = [c["text"] for c in result["chunks"]]
@@ -190,7 +190,7 @@ async def test_recall_top_k_limits_merged_results(tmp_path: Path, monkeypatch: p
         top_k=3,
         embedding_model="standard",
     )
-    result = await execute_op(op, ctx, caller="control_ir")
+    result = await execute_op(op, ctx)
 
     assert result.get("status") != "error", result
     assert not result["chunks"][3:]  # top_k=3 caps result count
@@ -216,7 +216,7 @@ async def test_recall_mode_all_semantic(tmp_path: Path, monkeypatch: pytest.Monk
         top_k=5,
         embedding_model="standard",
     )
-    result = await execute_op(op, ctx, caller="control_ir")
+    result = await execute_op(op, ctx)
 
     assert result.get("status") != "error", result
     # s1 has content, embed returns a vector → semantic
@@ -249,7 +249,7 @@ async def test_recall_embed_failure_falls_back(tmp_path: Path, monkeypatch: pyte
     op = RecallIROp(
         kind="recall", query="q", sources=["s1"], top_k=5, embedding_model="standard",
     )
-    result = await execute_op(op, ctx, caller="control_ir")
+    result = await execute_op(op, ctx)
 
     assert result["chunks"] == []
     assert result["mode"] == "fallback"

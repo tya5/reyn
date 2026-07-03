@@ -80,7 +80,7 @@ async def _handle_compact(args: Mapping[str, Any], ctx: ToolContext) -> ToolResu
             resolver=ctx.resolver,
         )
 
-    return await execute_op(op, legacy_ctx, caller="control_ir")
+    return await execute_op(op, legacy_ctx)
 
 
 COMPACT = ToolDefinition(

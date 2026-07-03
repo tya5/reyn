@@ -52,7 +52,7 @@ async def _handle(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
     """Adapter wrapping op_runtime.sandboxed_exec.handle.
 
     Bridges between the unified (args, ctx) signature and the
-    existing (op, ctx, caller) signature for the sandboxed_exec handler.
+    existing (op, ctx) signature for the sandboxed_exec handler.
     Builds a SandboxedExecIROp from args and a legacy OpContext from
     ToolContext, then delegates to the op_runtime handler.
     """
@@ -91,7 +91,7 @@ async def _handle(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
     )
     if phase_op_ctx is not None:
         return await handle_sandboxed_exec(
-            op=op, ctx=phase_op_ctx, caller="control_ir",
+            op=op, ctx=phase_op_ctx,
         )
 
     # Router-side: use op_context_factory if provided, else minimal synthesis.
@@ -101,7 +101,7 @@ async def _handle(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
         if sandbox_config is not None:
             legacy_ctx = _with_sandbox_config(legacy_ctx, sandbox_config)
         return await handle_sandboxed_exec(
-            op=op, ctx=legacy_ctx, caller="control_ir",
+            op=op, ctx=legacy_ctx,
         )
 
     # Minimal synthesis path (= test sites / narrow callers).
@@ -128,7 +128,7 @@ async def _handle(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
         parent_skill_run_id=None,
         sandbox_config=sandbox_config,
     )
-    return await handle_sandboxed_exec(op=op, ctx=legacy_ctx, caller="control_ir")
+    return await handle_sandboxed_exec(op=op, ctx=legacy_ctx)
 
 
 def _with_sandbox_config(op_ctx: Any, sandbox_config: Any) -> Any:

@@ -164,7 +164,7 @@ def test_verify_ssl_ca_bundle_in_config_passes_to_httpx(monkeypatch: pytest.Monk
     monkeypatch.setattr(
         "reyn.core.op_runtime.web.PinnedAsyncHTTPTransport", _RecordVerifyTransport,
     )
-    asyncio.run(handle_web_fetch(op=op, ctx=ctx, caller="control_ir"))
+    asyncio.run(handle_web_fetch(op=op, ctx=ctx))
 
     assert _CaptureAsyncClient.captured_kwargs["transport"].verify == "/etc/ssl/certs/corp-ca.pem"
 
@@ -191,7 +191,7 @@ def test_verify_ssl_false_in_config_passes_to_httpx(monkeypatch: pytest.MonkeyPa
     monkeypatch.setattr(
         "reyn.core.op_runtime.web.PinnedAsyncHTTPTransport", _RecordVerifyTransport,
     )
-    asyncio.run(handle_web_fetch(op=op, ctx=ctx, caller="control_ir"))
+    asyncio.run(handle_web_fetch(op=op, ctx=ctx))
 
     assert _CaptureAsyncClient.captured_kwargs["transport"].verify is False
 
@@ -216,7 +216,7 @@ def test_verify_ssl_true_in_config_passes_to_httpx(monkeypatch: pytest.MonkeyPat
     monkeypatch.setattr(
         "reyn.core.op_runtime.web.PinnedAsyncHTTPTransport", _RecordVerifyTransport,
     )
-    asyncio.run(handle_web_fetch(op=op, ctx=ctx, caller="control_ir"))
+    asyncio.run(handle_web_fetch(op=op, ctx=ctx))
 
     assert _CaptureAsyncClient.captured_kwargs["transport"].verify is True
 
@@ -245,7 +245,7 @@ def test_ca_bundle_takes_priority_over_verify_ssl(monkeypatch: pytest.MonkeyPatc
     monkeypatch.setattr(
         "reyn.core.op_runtime.web.PinnedAsyncHTTPTransport", _RecordVerifyTransport,
     )
-    asyncio.run(handle_web_fetch(op=op, ctx=ctx, caller="control_ir"))
+    asyncio.run(handle_web_fetch(op=op, ctx=ctx))
 
     assert _CaptureAsyncClient.captured_kwargs["transport"].verify == "/corp/ca.pem"
 
@@ -282,7 +282,7 @@ def test_env_var_fallback_when_config_unset(
     monkeypatch.setattr(
         "reyn.core.op_runtime.web.PinnedAsyncHTTPTransport", _RecordVerifyTransport,
     )
-    asyncio.run(handle_web_fetch(op=op, ctx=ctx, caller="control_ir"))
+    asyncio.run(handle_web_fetch(op=op, ctx=ctx))
 
     # The verify value forwarded to httpx must match what litellm.get_ssl_verify()
     # returns in the same env. We do not pin the exact type/value here because

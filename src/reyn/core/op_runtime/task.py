@@ -236,7 +236,7 @@ async def _authorize(op_kind: str, ctx: OpContext, backend, task_id: str, role: 
     return task, None
 
 
-async def _create(op, ctx: OpContext, caller) -> dict:
+async def _create(op, ctx: OpContext) -> dict:
     # §16 recursive-request: requester + requester_kind are OS-SET from the caller's
     # EXECUTION context — NEVER an op field, so the LLM cannot mark ownership to
     # mis-route a later recovery (the §16 security invariant). When the caller is
@@ -336,7 +336,7 @@ async def _create(op, ctx: OpContext, caller) -> dict:
     return _ok("task.create", task=created.to_dict())
 
 
-async def _update_status(op, ctx: OpContext, caller) -> dict:
+async def _update_status(op, ctx: OpContext) -> dict:
     # #2187 backend-master: the single-writer CAS is OP-LAYER ownership-gating — the
     # caller must be the task's CURRENT assignee (the WAL-subscription binding, hydrated
     # onto the fetched task; mutable, so this is the current owner not a frozen one).
@@ -408,7 +408,7 @@ async def _update_status(op, ctx: OpContext, caller) -> dict:
     return _ok("task.update_status", task=task.to_dict())
 
 
-async def _get(op, ctx: OpContext, caller) -> dict:
+async def _get(op, ctx: OpContext) -> dict:
     # requester-gated: the requester polls its task's status (§model requester-IF).
     task, denied = await _authorize("task.get", ctx, _backend(ctx), op.task_id, "requester")
     if denied is not None:
@@ -416,7 +416,7 @@ async def _get(op, ctx: OpContext, caller) -> dict:
     return _ok("task.get", task=_fence_view(ctx, task.to_dict()))
 
 
-async def _list(op, ctx: OpContext, caller) -> dict:
+async def _list(op, ctx: OpContext) -> dict:
     tasks = await _backend(ctx).list(
         assignee=op.assignee,
         requester=op.requester,
@@ -425,7 +425,7 @@ async def _list(op, ctx: OpContext, caller) -> dict:
     return _ok("task.list", tasks=[_fence_view(ctx, t.to_dict()) for t in tasks])
 
 
-async def _add_dependency(op, ctx: OpContext, caller) -> dict:
+async def _add_dependency(op, ctx: OpContext) -> dict:
     # requester-gated: the decomposing requester owns the dependency topology (§13).
     _task, denied = await _authorize(
         "task.add_dependency", ctx, _backend(ctx), op.task_id, "requester")
@@ -608,7 +608,7 @@ async def _route_terminal_to_requester(
         )
 
 
-async def _remove_dependency(op, ctx: OpContext, caller) -> dict:
+async def _remove_dependency(op, ctx: OpContext) -> dict:
     # requester-gated: the decomposing requester owns the dependency topology (§13).
     _task, denied = await _authorize(
         "task.remove_dependency", ctx, _backend(ctx), op.task_id, "requester")
@@ -623,7 +623,7 @@ async def _remove_dependency(op, ctx: OpContext, caller) -> dict:
     return _ok("task.remove_dependency", task=task.to_dict())
 
 
-async def _repoint_dependency(op, ctx: OpContext, caller) -> dict:
+async def _repoint_dependency(op, ctx: OpContext) -> dict:
     # requester-gated: the parent re-wires the topology (its recovery move, §C).
     _task, denied = await _authorize(
         "task.repoint_dependency", ctx, _backend(ctx), op.task_id, "requester")
@@ -644,7 +644,7 @@ async def _repoint_dependency(op, ctx: OpContext, caller) -> dict:
     return _ok("task.repoint_dependency", task=task.to_dict())
 
 
-async def _abort(op, ctx: OpContext, caller) -> dict:
+async def _abort(op, ctx: OpContext) -> dict:
     # requester-gated remove-op (§model abort=delete). Cooperative-terminal
     # (Option B): the backend archives the task + its sub-tree (DOWN-cascade);
     # the assignee's in-flight work is rejected by the terminal state at its next
@@ -691,7 +691,7 @@ async def _abort(op, ctx: OpContext, caller) -> dict:
     return _ok("task.abort", task=root.to_dict())
 
 
-async def _heartbeat(op, ctx: OpContext, caller) -> dict:
+async def _heartbeat(op, ctx: OpContext) -> dict:
     # assignee-gated: only the worker session heartbeats its own task.
     task, denied = await _authorize("task.heartbeat", ctx, _backend(ctx), op.task_id, "assignee")
     if denied is not None:
@@ -700,7 +700,7 @@ async def _heartbeat(op, ctx: OpContext, caller) -> dict:
     return _ok("task.heartbeat", task_id=op.task_id, state=task.status.value, unblocked=False)
 
 
-async def _register_unblock_predicate(op, ctx: OpContext, caller) -> dict:
+async def _register_unblock_predicate(op, ctx: OpContext) -> dict:
     # assignee-gated: the worker registers its own unblock predicate.
     _task, denied = await _authorize(
         "task.register_unblock_predicate", ctx, _backend(ctx), op.task_id, "assignee")
@@ -710,14 +710,14 @@ async def _register_unblock_predicate(op, ctx: OpContext, caller) -> dict:
     return _ok("task.register_unblock_predicate", task_id=op.task_id)
 
 
-async def _comment(op, ctx: OpContext, caller) -> dict:
+async def _comment(op, ctx: OpContext) -> dict:
     comment_id = await _backend(ctx).add_comment(op.task_id, _actor(ctx) or "unknown", op.body)
     if comment_id is None:
         return _not_found("task.comment", op.task_id)
     return _ok("task.comment", task_id=op.task_id, comment_id=comment_id)
 
 
-async def _assign(op, ctx: OpContext, caller) -> dict:
+async def _assign(op, ctx: OpContext) -> dict:
     """Assign a session to a task (#2187 §27-31, the pending-assignment queue). Gate: an
     UNASSIGNED task may be CLAIMED by anyone; an assigned task may be REASSIGNED only by
     its current owner (the assignee) — owner-initiated hand-off, no concurrent yank. Then

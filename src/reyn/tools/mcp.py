@@ -296,7 +296,7 @@ async def _handle_call_mcp_tool(
     )
     if _op_ctx is not None and isinstance(_op_ctx, OpContext):
         # The phase's OpContext already carries the run's structured mcp_pool.
-        return await mcp_handle(op=op, ctx=_op_ctx, caller="control_ir")
+        return await mcp_handle(op=op, ctx=_op_ctx)
 
     # #a359 P2: direct (non-phase) call → a per-call structured pool, opened + closed in THIS task,
     # so the mcp handler's client lifecycle stays task-affine (no cross-SDK-task teardown).
@@ -324,7 +324,7 @@ async def _handle_call_mcp_tool(
             caller="direct",
             parent_skill_run_id=None,
         )
-        return await mcp_handle(op=op, ctx=legacy_ctx, caller="control_ir")
+        return await mcp_handle(op=op, ctx=legacy_ctx)
 
 
 # ── Private helpers ───────────────────────────────────────────────────────────

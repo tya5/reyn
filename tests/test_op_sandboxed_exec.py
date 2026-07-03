@@ -172,7 +172,7 @@ async def test_dispatch_emits_started_and_completed():
         env_passthrough=["PATH"],
         timeout_seconds=10,
     )
-    result = await execute_op(op, ctx, caller="control_ir")
+    result = await execute_op(op, ctx)
     assert result["status"] == "ok"
     assert result["kind"] == "sandboxed_exec"
     assert result["backend"] in {"noop", "seatbelt", "landlock"}
@@ -194,7 +194,7 @@ async def test_dispatch_timeout_status():
         env_passthrough=["PATH"],
         timeout_seconds=1,
     )
-    result = await execute_op(op, ctx, caller="control_ir")
+    result = await execute_op(op, ctx)
     # returncode -1 surfaces as either "timeout" status; the handler maps -1 -> "timeout".
     assert result["returncode"] == -1
     assert result["status"] == "timeout"
@@ -234,7 +234,7 @@ async def test_injected_sandbox_backend_takes_precedence():
         env_passthrough=["PATH"],
         timeout_seconds=10,
     )
-    result = await execute_op(op, ctx, caller="control_ir")
+    result = await execute_op(op, ctx)
     # The injected instance ran — not the platform default (e.g. seatbelt here).
     assert result["backend"] == "stub-injected"
     assert result["stdout"] == "from-stub"
@@ -257,7 +257,7 @@ async def test_handler_passes_workspace_base_dir_as_cwd():
         kind="sandboxed_exec", argv=["/bin/echo", "x"],
         env_passthrough=["PATH"], timeout_seconds=10,
     )
-    await execute_op(op, ctx, caller="control_ir")
+    await execute_op(op, ctx)
     assert stub.received_cwd == str(ctx.workspace.base_dir)
 
 
@@ -289,7 +289,7 @@ async def test_default_backend_actually_runs_in_workspace_cwd(tmp_path):
         read_paths=[str(tmp_path)],
         env_passthrough=["PATH"], timeout_seconds=10,
     )
-    result = await execute_op(op, ctx, caller="control_ir")
+    result = await execute_op(op, ctx)
     assert result["returncode"] == 0, f"/bin/pwd failed: {result!r}"
     reported = os.path.realpath(result["stdout"].strip())
     assert reported == os.path.realpath(str(ws.base_dir)), (
@@ -309,7 +309,7 @@ async def test_no_injected_backend_falls_back_to_default():
         env_passthrough=["PATH"],
         timeout_seconds=10,
     )
-    result = await execute_op(op, ctx, caller="control_ir")
+    result = await execute_op(op, ctx)
     assert result["backend"] in {"noop", "seatbelt", "landlock"}
 
 

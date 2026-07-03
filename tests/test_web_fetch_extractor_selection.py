@@ -182,7 +182,7 @@ def test_result_envelope_contains_extractor_field_for_html(
 
     ctx = _make_ctx()
     op = WebFetchIROp(kind="web_fetch", url="https://example.com", max_length=50_000)
-    result = asyncio.run(handle_web_fetch(op=op, ctx=ctx, caller="control_ir"))
+    result = asyncio.run(handle_web_fetch(op=op, ctx=ctx))
 
     assert result["status"] == "ok"
     assert "extractor" in result
@@ -200,7 +200,7 @@ def test_result_envelope_extractor_none_for_non_html(
 
     ctx = _make_ctx()
     op = WebFetchIROp(kind="web_fetch", url="https://example.com", max_length=50_000)
-    result = asyncio.run(handle_web_fetch(op=op, ctx=ctx, caller="control_ir"))
+    result = asyncio.run(handle_web_fetch(op=op, ctx=ctx))
 
     assert result["status"] == "ok"
     assert result["extractor"] == "none"
@@ -220,7 +220,7 @@ def test_result_envelope_uses_stdlib_when_trafilatura_unavailable(
 
     ctx = _make_ctx()
     op = WebFetchIROp(kind="web_fetch", url="https://example.com", max_length=50_000)
-    result = asyncio.run(handle_web_fetch(op=op, ctx=ctx, caller="control_ir"))
+    result = asyncio.run(handle_web_fetch(op=op, ctx=ctx))
 
     assert result["status"] == "ok"
     assert result["extractor"] == "stdlib"

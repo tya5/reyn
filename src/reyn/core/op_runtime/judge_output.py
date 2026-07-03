@@ -58,7 +58,6 @@ def _resolve_target(workspace_artifact: dict[str, Any], target: str) -> Any:
 async def handle(
     op: JudgeOutputIROp,
     ctx: OpContext,
-    caller: Literal["preprocessor", "control_ir"],
 ) -> dict:
     """Execute a judge_output op (FP-0007 Component D).
 

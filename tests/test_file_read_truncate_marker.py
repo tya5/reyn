@@ -31,7 +31,7 @@ def _read(tmp_path: Path, text: str, *, offset: int | None = None, limit: int | 
         permission_resolver=None,
     )
     op = FileIROp(kind="file", op="read", path="big.txt", offset=offset, limit=limit)
-    return asyncio.run(handle(op, ctx, "control_ir"))
+    return asyncio.run(handle(op, ctx))
 
 
 def test_large_read_is_truncated_with_llm_visible_marker(tmp_path, monkeypatch):

@@ -81,7 +81,7 @@ def test_index_query_raises_clear_value_error_when_workspace_none():
     ctx = _make_ctx_no_workspace()
 
     with pytest.raises(ValueError, match="index_query") as exc_info:
-        asyncio.run(index_query_handle(op, ctx, caller="control_ir"))
+        asyncio.run(index_query_handle(op, ctx))
 
     msg = str(exc_info.value)
     assert "workspace" in msg.lower()
@@ -105,7 +105,7 @@ def test_index_query_fallback_path_bypasses_workspace_check():
     ctx = _make_ctx_no_workspace()
 
     # No exception, returns the fallback empty result.
-    result = asyncio.run(index_query_handle(op, ctx, caller="control_ir"))
+    result = asyncio.run(index_query_handle(op, ctx))
     assert result == {"chunks": [], "mode": "fallback"}
 
 
@@ -121,7 +121,7 @@ def test_index_drop_raises_clear_value_error_when_workspace_none():
     ctx = _make_ctx_no_workspace()
 
     with pytest.raises(ValueError, match="index_drop") as exc_info:
-        asyncio.run(index_drop_handle(op, ctx, caller="control_ir"))
+        asyncio.run(index_drop_handle(op, ctx))
 
     msg = str(exc_info.value)
     assert "workspace" in msg.lower()
@@ -146,10 +146,10 @@ def test_no_attribute_error_on_workspace_none_for_any_index_op():
         query_vector=[0.1],
     )
     with pytest.raises(ValueError):
-        asyncio.run(index_query_handle(op_q, ctx, caller="control_ir"))
+        asyncio.run(index_query_handle(op_q, ctx))
     # And NOT AttributeError
     try:
-        asyncio.run(index_query_handle(op_q, ctx, caller="control_ir"))
+        asyncio.run(index_query_handle(op_q, ctx))
     except ValueError:
         pass
     except AttributeError as e:
@@ -161,7 +161,7 @@ def test_no_attribute_error_on_workspace_none_for_any_index_op():
     # index_drop
     op_d = IndexDropIROp(kind="index_drop", source="s")
     try:
-        asyncio.run(index_drop_handle(op_d, ctx, caller="control_ir"))
+        asyncio.run(index_drop_handle(op_d, ctx))
     except ValueError:
         pass
     except AttributeError as e:

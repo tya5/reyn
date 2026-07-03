@@ -115,7 +115,7 @@ def test_failed_web_fetch_timeout_emits_web_fetch_failed(monkeypatch) -> None:
 
     events = EventLog()
     op = WebFetchIROp(kind="web_fetch", url="https://example.com")
-    result = asyncio.run(handle_web_fetch(op=op, ctx=_make_ctx(events), caller="control_ir"))
+    result = asyncio.run(handle_web_fetch(op=op, ctx=_make_ctx(events)))
 
     # Return shape: status=timeout
     assert result["status"] == "timeout"
@@ -150,7 +150,7 @@ def test_failed_web_fetch_timeout_no_completed_event(monkeypatch) -> None:
 
     events = EventLog()
     op = WebFetchIROp(kind="web_fetch", url="https://example.com")
-    asyncio.run(handle_web_fetch(op=op, ctx=_make_ctx(events), caller="control_ir"))
+    asyncio.run(handle_web_fetch(op=op, ctx=_make_ctx(events)))
 
     emitted_types = [e.type for e in events.all()]
     assert "web_fetch_completed" not in emitted_types, (
@@ -171,7 +171,7 @@ def test_failed_web_fetch_request_error_emits_web_fetch_failed(monkeypatch) -> N
 
     events = EventLog()
     op = WebFetchIROp(kind="web_fetch", url="https://example.com")
-    result = asyncio.run(handle_web_fetch(op=op, ctx=_make_ctx(events), caller="control_ir"))
+    result = asyncio.run(handle_web_fetch(op=op, ctx=_make_ctx(events)))
 
     # Return shape: status=error
     assert result["status"] == "error"
@@ -198,7 +198,7 @@ def test_failed_web_fetch_request_error_no_completed_event(monkeypatch) -> None:
 
     events = EventLog()
     op = WebFetchIROp(kind="web_fetch", url="https://example.com")
-    asyncio.run(handle_web_fetch(op=op, ctx=_make_ctx(events), caller="control_ir"))
+    asyncio.run(handle_web_fetch(op=op, ctx=_make_ctx(events)))
 
     emitted_types = [e.type for e in events.all()]
     assert "web_fetch_completed" not in emitted_types, (
@@ -219,7 +219,7 @@ def test_web_fetch_started_precedes_web_fetch_failed(monkeypatch) -> None:
 
     events = EventLog()
     op = WebFetchIROp(kind="web_fetch", url="https://example.com")
-    asyncio.run(handle_web_fetch(op=op, ctx=_make_ctx(events), caller="control_ir"))
+    asyncio.run(handle_web_fetch(op=op, ctx=_make_ctx(events)))
 
     all_events = events.all()
     types = [e.type for e in all_events]

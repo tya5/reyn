@@ -218,7 +218,6 @@ def _scan_install_metadata(
 async def handle(
     op: MCPInstallIROp,
     ctx: OpContext,
-    caller: Literal["preprocessor", "control_ir"],
 ) -> dict:
     """Execute an mcp_install op — register an MCP server from registry or source.
 

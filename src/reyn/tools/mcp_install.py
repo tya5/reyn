@@ -127,7 +127,7 @@ async def _handle_mcp_install_op(
             state_log=getattr(ctx, "state_log", None),  # #2259 PR-1: config generation emit
         )
 
-    return await mcp_install_handle(op=op, ctx=legacy_ctx, caller="control_ir")
+    return await mcp_install_handle(op=op, ctx=legacy_ctx)
 
 
 MCP_INSTALL_OP = ToolDefinition(

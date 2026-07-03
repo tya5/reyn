@@ -172,7 +172,7 @@ def test_mcp_drop_server_removes_entry_local_scope(tmp_path: Path) -> None:
         scope="local",
         clear_secrets=False,
     )
-    result = _run(drop_handle(op=op, ctx=_make_op_ctx(tmp_path), caller="control_ir"))
+    result = _run(drop_handle(op=op, ctx=_make_op_ctx(tmp_path)))
 
     assert result["status"] == "ok"
     assert result["server"] == "filesystem"
@@ -198,7 +198,7 @@ def test_mcp_drop_server_auto_detects_scope(tmp_path: Path) -> None:
         scope=None,
         clear_secrets=False,
     )
-    result = _run(drop_handle(op=op, ctx=_make_op_ctx(tmp_path), caller="control_ir"))
+    result = _run(drop_handle(op=op, ctx=_make_op_ctx(tmp_path)))
 
     assert result["status"] == "ok"
     assert result["scope"] == "project"
@@ -221,7 +221,7 @@ def test_mcp_drop_server_prunes_empty_containers(tmp_path: Path) -> None:
         kind="mcp_drop_server", server="filesystem", scope="local",
         clear_secrets=False,
     )
-    _run(drop_handle(op=op, ctx=_make_op_ctx(tmp_path), caller="control_ir"))
+    _run(drop_handle(op=op, ctx=_make_op_ctx(tmp_path)))
 
     data = yaml.safe_load(cfg_path.read_text(encoding="utf-8"))
     # Either entire mcp block gone, or none of its sub-keys remain.
@@ -238,7 +238,7 @@ def test_mcp_drop_server_not_found_in_explicit_scope(tmp_path: Path) -> None:
         kind="mcp_drop_server", server="missing_server", scope="local",
         clear_secrets=False,
     )
-    result = _run(drop_handle(op=op, ctx=_make_op_ctx(tmp_path), caller="control_ir"))
+    result = _run(drop_handle(op=op, ctx=_make_op_ctx(tmp_path)))
 
     assert result["status"] == "not_found"
     assert result["server"] == "missing_server"
@@ -254,7 +254,7 @@ def test_mcp_drop_server_not_found_auto_scope(tmp_path: Path) -> None:
         kind="mcp_drop_server", server="ghost", scope=None,
         clear_secrets=False,
     )
-    result = _run(drop_handle(op=op, ctx=_make_op_ctx(tmp_path), caller="control_ir"))
+    result = _run(drop_handle(op=op, ctx=_make_op_ctx(tmp_path)))
 
     assert result["status"] == "not_found"
     assert result["server"] == "ghost"
@@ -267,7 +267,7 @@ def test_mcp_drop_server_empty_server_raises(tmp_path: Path) -> None:
 
     op = MCPDropServerIROp(kind="mcp_drop_server", server="   ", scope="local")
     with pytest.raises(ValueError, match="non-empty"):
-        _run(drop_handle(op=op, ctx=_make_op_ctx(tmp_path), caller="control_ir"))
+        _run(drop_handle(op=op, ctx=_make_op_ctx(tmp_path)))
 
 
 # ── 3. P6 event emission ──────────────────────────────────────────────────
@@ -293,7 +293,6 @@ def test_mcp_drop_server_emits_p6_event_on_success(tmp_path: Path) -> None:
     _run(drop_handle(
         op=op,
         ctx=_make_op_ctx(tmp_path, events=events),
-        caller="control_ir",
     ))
 
     # P6 event check
@@ -315,7 +314,6 @@ def test_mcp_drop_server_no_event_on_not_found(tmp_path: Path) -> None:
     _run(drop_handle(
         op=op,
         ctx=_make_op_ctx(tmp_path, events=events),
-        caller="control_ir",
     ))
 
     names = [name for name, _ in events.events]
@@ -354,7 +352,7 @@ def test_mcp_drop_server_clears_secrets_when_requested(
         clear_secrets=True,
     )
     result = _run(drop_handle(
-        op=op, ctx=_make_op_ctx(tmp_path), caller="control_ir",
+        op=op, ctx=_make_op_ctx(tmp_path),
     ))
 
     # The two referenced keys should be gone; UNRELATED stays.
@@ -393,7 +391,7 @@ def test_mcp_drop_server_preserves_secrets_when_requested(
         clear_secrets=False,
     )
     result = _run(drop_handle(
-        op=op, ctx=_make_op_ctx(tmp_path), caller="control_ir",
+        op=op, ctx=_make_op_ctx(tmp_path),
     ))
 
     # Secrets file untouched
@@ -506,7 +504,7 @@ def test_mcp_drop_server_sandbox_policy_denies_out_of_cap_write(tmp_path: Path) 
         kind="mcp_drop_server", server="filesystem", scope="local", clear_secrets=False,
     )
     with pytest.raises(PermissionError):
-        _run(drop_handle(op=op, ctx=ctx, caller="control_ir"))
+        _run(drop_handle(op=op, ctx=ctx))
 
 
 def test_mcp_drop_server_realistic_workspace_default_allows_config_write(tmp_path: Path) -> None:
@@ -538,5 +536,5 @@ def test_mcp_drop_server_realistic_workspace_default_allows_config_write(tmp_pat
     op = MCPDropServerIROp(
         kind="mcp_drop_server", server="filesystem", scope="local", clear_secrets=False,
     )
-    result = _run(drop_handle(op=op, ctx=ctx, caller="control_ir"))
+    result = _run(drop_handle(op=op, ctx=ctx))
     assert result["status"] == "ok"  # NOT denied — config write is in-workspace

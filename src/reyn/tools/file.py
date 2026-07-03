@@ -220,7 +220,7 @@ async def _handle_read(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
         limit=args.get("limit"),
     )
     legacy_ctx = _build_legacy_op_context(ctx)
-    return await execute_op(op, legacy_ctx, caller="control_ir")
+    return await execute_op(op, legacy_ctx)
 
 
 async def _handle_write(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
@@ -239,7 +239,7 @@ async def _handle_write(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult
 
     op = FileIROp(kind="file", op="write", path=args["path"], content=args["content"])
     legacy_ctx = _build_legacy_op_context(ctx)
-    return await execute_op(op, legacy_ctx, caller="control_ir")
+    return await execute_op(op, legacy_ctx)
 
 
 async def _handle_delete(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
@@ -252,7 +252,7 @@ async def _handle_delete(args: Mapping[str, Any], ctx: ToolContext) -> ToolResul
 
     op = FileIROp(kind="file", op="delete", path=args["path"])
     legacy_ctx = _build_legacy_op_context(ctx)
-    return await execute_op(op, legacy_ctx, caller="control_ir")
+    return await execute_op(op, legacy_ctx)
 
 
 async def _handle_edit(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
@@ -276,7 +276,7 @@ async def _handle_edit(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
         replace_all=bool(args.get("replace_all", False)),
     )
     legacy_ctx = _build_legacy_op_context(ctx)
-    return await execute_op(op, legacy_ctx, caller="control_ir")
+    return await execute_op(op, legacy_ctx)
 
 
 async def _handle_list(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
@@ -299,7 +299,7 @@ async def _handle_list(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
 
     op = FileIROp(kind="file", op="glob", path=f"{path.rstrip('/')}/*")
     legacy_ctx = _build_legacy_op_context(ctx)
-    result = await execute_op(op, legacy_ctx, caller="control_ir")
+    result = await execute_op(op, legacy_ctx)
 
     # Normalise to {path, entries} shape (= same as session._file_list_directory)
     if result.get("status") == "ok":
@@ -327,7 +327,7 @@ async def _handle_grep(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
         head_limit=args.get("max_results", 50),
     )
     legacy_ctx = _build_legacy_op_context(ctx)
-    return await execute_op(op, legacy_ctx, caller="control_ir")
+    return await execute_op(op, legacy_ctx)
 
 
 async def _handle_glob(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
@@ -348,7 +348,7 @@ async def _handle_glob(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
     combined = pattern if root in ("", ".") else f"{root}/{pattern}"
     op = FileIROp(kind="file", op="glob", path=combined)
     legacy_ctx = _build_legacy_op_context(ctx)
-    result = await execute_op(op, legacy_ctx, caller="control_ir")
+    result = await execute_op(op, legacy_ctx)
 
     # Normalise: surface as {pattern, matches, count} for caller ergonomics.
     if result.get("status") == "ok":

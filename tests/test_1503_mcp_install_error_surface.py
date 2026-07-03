@@ -124,7 +124,7 @@ class TestBug1GitHubUnknownRuntimeGuard:
             source=_REGRESSION_FIXTURE_URL,
         )
 
-        result = _run(mcp_install_handle(op, ctx, "control_ir"))
+        result = _run(mcp_install_handle(op, ctx))
 
         assert result["status"] == "error", (
             f"expected status:error for unknown-runtime GitHub URL, got {result['status']}"
@@ -153,7 +153,7 @@ class TestBug1GitHubUnknownRuntimeGuard:
             source=_REGRESSION_FIXTURE_URL,
         )
 
-        _run(mcp_install_handle(op, ctx, "control_ir"))
+        _run(mcp_install_handle(op, ctx))
 
         # mcp.yaml must not exist (nothing was written) OR it must not contain
         # an empty server entry for the web-search server name.

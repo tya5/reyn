@@ -72,10 +72,10 @@ async def test_ownership_cascade_aborts_owned_subtasks_recursively(backend):
     await backend.create(Task(task_id="X", name="X", assignee="sX", requester="client",
                               status=TaskState.RUNNING))
     res_u = await taskmod._create(
-        _create_op("U"), _ctx(backend, session_id="sX", current_task_id="X"), "control_ir")
+        _create_op("U"), _ctx(backend, session_id="sX", current_task_id="X"))
     u_id = res_u["task"]["task_id"]
     res_w = await taskmod._create(
-        _create_op("W"), _ctx(backend, session_id="sU", current_task_id=u_id), "control_ir")
+        _create_op("W"), _ctx(backend, session_id="sU", current_task_id=u_id))
     w_id = res_w["task"]["task_id"]
 
     # live ownership: U is owned by X via the requester edge (the sole decomposition

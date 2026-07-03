@@ -5083,7 +5083,7 @@ class Session:
 
         op = FileIROp(**op_dict)
         ctx = self._make_router_op_context()
-        return await execute_op(op, ctx, caller="control_ir")
+        return await execute_op(op, ctx)
 
     async def _file_read(self, path: str) -> dict:
         """Read a file through op_runtime.
@@ -5235,7 +5235,7 @@ class Session:
         from reyn.mcp.pool import MCPClientPool
         async with MCPClientPool() as pool:
             ctx.mcp_pool = pool
-            return await execute_op(op, ctx, caller="control_ir")
+            return await execute_op(op, ctx)
 
     # --- RouterLoop orchestration ---
 

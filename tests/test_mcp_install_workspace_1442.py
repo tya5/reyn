@@ -96,9 +96,9 @@ def _drive_verb(verb, args, ws, monkeypatch):
     the OpContext the verb built (the #1442-C crash site)."""
     captured: dict = {}
 
-    async def _recording_handle(op, op_ctx, *, caller):
+    async def _recording_handle(op, op_ctx):
         captured["op_ctx"] = op_ctx
-        return {"installed": True, "caller": caller}
+        return {"installed": True}
 
     monkeypatch.setattr("reyn.core.op_runtime.mcp_install.handle", _recording_handle)
     result = asyncio.run(verb(args, _ctx_with_workspace(ws)))
@@ -165,7 +165,7 @@ def test_chat_path_uses_factory_workspace_not_cwd(tmp_path, monkeypatch):
 
     captured: dict = {}
 
-    async def _rec(op, op_ctx, *, caller):
+    async def _rec(op, op_ctx):
         captured["op_ctx"] = op_ctx
         return {"installed": True}
 

@@ -84,7 +84,7 @@ def test_unbounded_read_over_cap_truncates_with_structural_fields(tmp_path: Path
     assert len(big) > MAX_CONTROL_IR_RESULT_INLINE_BYTES  # ensure over the floor cap
     ctx.workspace.write_file("big.py", big)
 
-    res = _run(handle(FileIROp(kind="file", op="read", path="big.py"), ctx, "control_ir"))
+    res = _run(handle(FileIROp(kind="file", op="read", path="big.py"), ctx))
 
     assert res["status"] == "truncated"
     assert res["shown_lines"] < res["total_lines"] == 400
@@ -101,7 +101,7 @@ def test_unbounded_read_under_cap_returns_full_ok(tmp_path: Path) -> None:
     small = "def f():\n    return 1\n"
     ctx.workspace.write_file("small.py", small)
 
-    res = _run(handle(FileIROp(kind="file", op="read", path="small.py"), ctx, "control_ir"))
+    res = _run(handle(FileIROp(kind="file", op="read", path="small.py"), ctx))
 
     assert res["status"] == "ok"
     assert res["content"] == small
@@ -114,7 +114,7 @@ def test_explicit_offset_limit_honored_verbatim(tmp_path: Path) -> None:
     big = "".join(f"line {i}\n" for i in range(1000))
     ctx.workspace.write_file("big.py", big)
 
-    res = _run(handle(FileIROp(kind="file", op="read", path="big.py", offset=10, limit=5), ctx, "control_ir"))
+    res = _run(handle(FileIROp(kind="file", op="read", path="big.py", offset=10, limit=5), ctx))
 
     assert res["status"] == "ok"  # explicit window → not auto-truncated
     assert res["content"] == "".join(f"line {i}\n" for i in range(10, 15))

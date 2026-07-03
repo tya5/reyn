@@ -67,7 +67,7 @@ async def test_b3_relative_write_resolves_against_base_dir_and_lands(tmp_path):
     ctx = _ctx(tmp_path, testbed, write_cap=testbed, read_cap=testbed)
 
     op = FileIROp(kind="file", op="write", path="astropy/io/html.py", content="X = 1\n")
-    res = await handle(op, ctx, "control_ir")
+    res = await handle(op, ctx)
 
     assert res["status"] == "ok"
     # write-lands: the file is under the workspace base_dir, not the host cwd.
@@ -87,7 +87,7 @@ async def test_b3_sandbox_write_cap_still_load_bearing(tmp_path):
 
     op = FileIROp(kind="file", op="write", path="astropy/io/html.py", content="X = 1\n")
     with pytest.raises(PermissionError):
-        await handle(op, ctx, "control_ir")
+        await handle(op, ctx)
 
 
 @pytest.mark.asyncio
@@ -101,7 +101,7 @@ async def test_b3_relative_read_resolves_against_base_dir(tmp_path):
     ctx = _ctx(tmp_path, testbed, write_cap=testbed, read_cap=testbed)
 
     op = FileIROp(kind="file", op="read", path="astropy/io.py")
-    res = await handle(op, ctx, "control_ir")
+    res = await handle(op, ctx)
 
     assert res.get("status") != "denied"
     # the content read is the file under base_dir (resolved correctly).

@@ -70,7 +70,7 @@ def test_non_self_bounded_large_result_still_offloaded(tmp_path: Path):
 def test_unbounded_truncated_read_is_self_bounded(tmp_path: Path):
     """Tier 2: an unbounded read over the cap (truncated path) is stamped ``_self_bounded``."""
     (tmp_path / "big.py").write_text("x = 1\n" * 20000)  # well over the 8 KB floor
-    res = _run(handle(FileIROp(kind="file", op="read", path="big.py"), _make_ctx(tmp_path), "control_ir"))
+    res = _run(handle(FileIROp(kind="file", op="read", path="big.py"), _make_ctx(tmp_path)))
     assert res["status"] == "truncated" and "next_offset" in res
     assert res.get("_self_bounded") is True, "the truncated self-bounding read is flagged"
 
@@ -79,7 +79,7 @@ def test_unbounded_ok_read_is_self_bounded(tmp_path: Path):
     """Tier 2: an unbounded read whose content is ≤ cap (OK path) is also stamped ``_self_bounded``
     (the OK-near-cap edge — bounded by construction, not by truncation)."""
     (tmp_path / "small.py").write_text("hello = 1\n")
-    res = _run(handle(FileIROp(kind="file", op="read", path="small.py"), _make_ctx(tmp_path), "control_ir"))
+    res = _run(handle(FileIROp(kind="file", op="read", path="small.py"), _make_ctx(tmp_path)))
     assert res["status"] == "ok" and "next_offset" not in res
     assert res.get("_self_bounded") is True, "the OK unbounded read is flagged (bounded by construction)"
 
@@ -92,7 +92,7 @@ def test_oversized_explicit_window_read_is_self_bounded_and_exempt(tmp_path: Pat
     (tmp_path / "big.py").write_text("x = 1\n" * 20000)
     res = _run(handle(
         FileIROp(kind="file", op="read", path="big.py", offset=0, limit=20000),
-        _make_ctx(tmp_path), "control_ir",
+        _make_ctx(tmp_path),
     ))
     assert res["status"] == "truncated", "an oversized explicit window is truncated, not verbatim"
     assert res["_self_bounded"] is True, "the oversized explicit-window read is self-bounded"
@@ -110,7 +110,7 @@ def test_self_bounded_read_terminates_recursion(tmp_path: Path):
     a retrieval read of any offloaded ref (unbounded → self-bounded) is not re-offloaded → the
     offload/read recursion terminates at the source (≤1 hop)."""
     (tmp_path / "big.py").write_text("x = 1\n" * 20000)
-    res = _run(handle(FileIROp(kind="file", op="read", path="big.py"), _make_ctx(tmp_path), "control_ir"))
+    res = _run(handle(FileIROp(kind="file", op="read", path="big.py"), _make_ctx(tmp_path)))
     assert res.get("_self_bounded") is True
     events = EventLog()
     out = offload_control_ir_result(res, 0, tmp_path, events=events, cap=200)  # tiny cap → would offload

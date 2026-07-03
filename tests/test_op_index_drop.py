@@ -121,7 +121,7 @@ async def test_drop_removes_backend_and_manifest(tmp_path: Path, monkeypatch: py
         )
 
         op = IndexDropIROp(kind="index_drop", source="my_source")
-        result = await execute_op(op, ctx, caller="control_ir")
+        result = await execute_op(op, ctx)
 
         assert result.get("status") != "error", result
         assert result["removed"] is True
@@ -156,7 +156,7 @@ async def test_drop_emits_p6_event(tmp_path: Path, monkeypatch: pytest.MonkeyPat
         )
 
         op = IndexDropIROp(kind="index_drop", source="audit_src")
-        await execute_op(op, ctx, caller="control_ir")
+        await execute_op(op, ctx)
 
         # Verify event was emitted (EventLog.all() returns Event objects with .type)
         event_types = [e.type for e in events.all()]
@@ -181,7 +181,7 @@ async def test_drop_nonexistent_source_returns_not_removed(tmp_path: Path, monke
         )
 
         op = IndexDropIROp(kind="index_drop", source="nonexistent")
-        result = await execute_op(op, ctx, caller="control_ir")
+        result = await execute_op(op, ctx)
 
         assert result.get("status") != "error", result
         assert result["removed"] is False
@@ -212,6 +212,6 @@ async def test_drop_denied_when_permission_not_declared(tmp_path: Path, monkeypa
     )
 
     op = IndexDropIROp(kind="index_drop", source="guarded_src")
-    result = await execute_op(op, ctx, caller="control_ir")
+    result = await execute_op(op, ctx)
 
     assert result["status"] == "denied"

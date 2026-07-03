@@ -257,7 +257,7 @@ def test_image_under_limit_returns_media_blocks(tmp_path, monkeypatch) -> None:
         bus_answer="yes",  # if web.fetch prompt fires, accept
     )
     op = WebFetchIROp(kind="web_fetch", url="https://example.com/foo.png")
-    result = asyncio.run(handle_web_fetch(op=op, ctx=ctx, caller="control_ir"))
+    result = asyncio.run(handle_web_fetch(op=op, ctx=ctx))
 
     assert result["status"] == "ok"
     assert result["content"] == ""
@@ -288,7 +288,7 @@ def test_image_over_limit_with_deny_returns_status_denied(tmp_path, monkeypatch)
         bus_answer="yes",
     )
     op = WebFetchIROp(kind="web_fetch", url="https://example.com/big.png")
-    result = asyncio.run(handle_web_fetch(op=op, ctx=ctx, caller="control_ir"))
+    result = asyncio.run(handle_web_fetch(op=op, ctx=ctx))
 
     assert result["status"] == "denied"
     assert "media_blocks" not in result or not result.get("media_blocks")
@@ -311,7 +311,7 @@ def test_image_over_limit_with_ask_no_returns_status_denied(tmp_path, monkeypatc
         bus_answer="no",
     )
     op = WebFetchIROp(kind="web_fetch", url="https://example.com/big.jpg")
-    result = asyncio.run(handle_web_fetch(op=op, ctx=ctx, caller="control_ir"))
+    result = asyncio.run(handle_web_fetch(op=op, ctx=ctx))
 
     assert result["status"] == "denied"
 
@@ -332,7 +332,7 @@ def test_image_over_limit_with_allow_returns_media_blocks(tmp_path, monkeypatch)
         bus_answer="never_called",
     )
     op = WebFetchIROp(kind="web_fetch", url="https://example.com/big.png")
-    result = asyncio.run(handle_web_fetch(op=op, ctx=ctx, caller="control_ir"))
+    result = asyncio.run(handle_web_fetch(op=op, ctx=ctx))
 
     assert result["status"] == "ok"
     assert result["media_blocks"], "expected at least one media block"
@@ -369,7 +369,7 @@ def test_html_response_unchanged_when_image_gate_present(tmp_path, monkeypatch) 
         bus_answer="yes",
     )
     op = WebFetchIROp(kind="web_fetch", url="https://example.com")
-    result = asyncio.run(handle_web_fetch(op=op, ctx=ctx, caller="control_ir"))
+    result = asyncio.run(handle_web_fetch(op=op, ctx=ctx))
 
     assert result["status"] == "ok"
     assert result["media_blocks"] == []

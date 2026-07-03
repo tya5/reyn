@@ -104,7 +104,7 @@ async def test_subtask_create_derives_task_ownership_from_execution_context():
 
     # executing task-as-request T (no waker → no born-startable wake noise).
     res_sub = await taskmod._create(
-        _create_op("sub"), _ctx(b, session_id="executor", current_task_id="T-id"), "control_ir")
+        _create_op("sub"), _ctx(b, session_id="executor", current_task_id="T-id"))
     assert res_sub["status"] == "ok"
     sub = await b.get(res_sub["task"]["task_id"])
     # ownership = the executing task, kind=task (the live derivation, not the caller).
@@ -115,7 +115,7 @@ async def test_subtask_create_derives_task_ownership_from_execution_context():
 
     # a top-level create (no execution context) stays session-owned.
     res_top = await taskmod._create(
-        _create_op("top"), _ctx(b, session_id="executor", current_task_id=None), "control_ir")
+        _create_op("top"), _ctx(b, session_id="executor", current_task_id=None))
     top = await b.get(res_top["task"]["task_id"])
     assert top.requester == "executor"
     assert top.requester_kind is TaskRequesterKind.SESSION
@@ -142,14 +142,14 @@ async def test_failed_subtask_recovery_wakes_managing_session_full_live_path(tmp
 
     # U = a sub-task created WHILE executing T → owned by T via the live create-path.
     res_u = await taskmod._create(
-        _create_op("U"), _ctx(b, session_id="worker", current_task_id="T-req"), "control_ir")
+        _create_op("U"), _ctx(b, session_id="worker", current_task_id="T-req"))
     u_id = res_u["task"]["task_id"]
     u = await b.get(u_id)
     assert u.requester == "T-req" and u.requester_kind is TaskRequesterKind.TASK  # live value
 
     # V depends on U (a still-alive dependent), then U fails → recovery must fire.
     await taskmod._create(
-        _create_op("V", deps=[u_id]), _ctx(b, session_id="worker"), "control_ir")
+        _create_op("V", deps=[u_id]), _ctx(b, session_id="worker"))
     await b.update_status(u_id, TaskState.FAILED, caller_session_id="worker")
 
     waker = TaskWaker(reg, "alice")

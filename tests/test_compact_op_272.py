@@ -57,7 +57,7 @@ def test_compact_routes_to_capability_and_passes_exact_tokens() -> None:
 
     ctx = _ctx(_cap)
     op = CompactIROp(kind="compact", reason="window low before big read")
-    result = asyncio.run(execute_op(op, ctx, caller="control_ir"))
+    result = asyncio.run(execute_op(op, ctx))
     assert result["status"] == "ok"
     assert result["freed_tokens"] == 1200
     assert result["free_window_after"] == 8000
@@ -76,7 +76,7 @@ def test_compact_chat_compression_fields_pass_through_to_result_and_event() -> N
         }
 
     ctx = _ctx(_chat_cap)
-    result = asyncio.run(execute_op(CompactIROp(kind="compact"), ctx, caller="control_ir"))
+    result = asyncio.run(execute_op(CompactIROp(kind="compact"), ctx))
     assert result["status"] == "ok"
     assert result["summarized_turns"] == 4
     assert result["compressed_tokens"] == 1200 and result["bridge_tokens"] == 80
@@ -90,7 +90,7 @@ def test_compact_fail_loud_when_unwired() -> None:
     """Tier 2: no compaction context → structured compaction_unavailable error,
     never a silent no-op (the model must not believe the window was freed)."""
     ctx = _ctx(None)
-    result = asyncio.run(execute_op(CompactIROp(kind="compact"), ctx, caller="control_ir"))
+    result = asyncio.run(execute_op(CompactIROp(kind="compact"), ctx))
     assert result["status"] == "error"
     assert result["error_kind"] == "compaction_unavailable"
     assert "freed_tokens" not in result, "must not fabricate freed tokens when unavailable"
@@ -101,7 +101,7 @@ def test_compact_capability_raise_becomes_error_never_crashes() -> None:
     async def _boom() -> dict:
         raise RuntimeError("force_compact_race_unrecovered")
 
-    result = asyncio.run(execute_op(CompactIROp(kind="compact"), _ctx(_boom), caller="control_ir"))
+    result = asyncio.run(execute_op(CompactIROp(kind="compact"), _ctx(_boom)))
     assert result["status"] == "error"
     assert result["error_kind"] == "compaction_failed"
     assert "force_compact_race_unrecovered" in result["error"]
