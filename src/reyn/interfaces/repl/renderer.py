@@ -392,6 +392,12 @@ def _summarize_result(tool, result) -> str:
             count = result.get("count")
             n = int(count) if isinstance(count, (int, float)) else 0
             return f"{n} match{'es' if n != 1 else ''}"
+        saved = result.get("saved")
+        if isinstance(saved, str):
+            return f"Saved {saved}"
+        forgotten = result.get("deleted")
+        if isinstance(forgotten, str):
+            return f"Forgot {forgotten}"
         tasks = result.get("tasks")
         if isinstance(tasks, list):
             n = len(tasks)

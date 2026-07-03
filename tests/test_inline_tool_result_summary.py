@@ -148,6 +148,30 @@ def test_file_delete_shows_deleted_path() -> None:
     ) == "Deleted file"
 
 
+def test_memory_remember_shows_saved_slug() -> None:
+    """Tier 2: memory_operation__remember_* result ({saved, layer, path}) shows 'Saved {slug}'.
+
+    Without this branch the raw dict repr leaked into the ⎿ row; the result
+    has no 'op', 'status', 'tasks', 'entries', or 'matches' key.
+    """
+    assert summarize_tool_result(
+        "memory_operation__remember_agent",
+        {"saved": "my-memory-slug", "layer": "agent", "path": "/.reyn/memory/agent/my-memory-slug.md"},
+    ) == "Saved my-memory-slug"
+
+
+def test_memory_forget_shows_forgot_slug() -> None:
+    """Tier 2: memory_operation__forget result ({deleted, layer}) shows 'Forgot {slug}'.
+
+    Without this branch the raw dict repr leaked into the ⎿ row; same missing-key
+    condition as the remember case (no 'op', 'status', or list keys).
+    """
+    assert summarize_tool_result(
+        "memory_operation__forget",
+        {"deleted": "old-memory-slug", "layer": "shared"},
+    ) == "Forgot old-memory-slug"
+
+
 def test_file_list_shows_entry_count() -> None:
     """Tier 2: file__list result ({path, entries}) shows 'Listed N entries'.
 
