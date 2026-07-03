@@ -743,9 +743,9 @@ async def run_inline_input(registry, renderer, config=None) -> None:
         # read-only panel has no cursor, so ↑ simply closes it.
         if _actionable_open() and not menu_region.at_first_selectable:
             menu_region.navigate(-1)
-        elif menu["open"]:
-            _menu_close()
         else:
+            if menu["open"]:
+                _menu_close()
             event.app.layout.focus(input_win)
 
     @kb.add("down", filter=has_focus(status_win))
@@ -757,8 +757,7 @@ async def run_inline_input(registry, renderer, config=None) -> None:
     def _menu_esc(event) -> None:
         if menu["open"]:
             _menu_close()
-        else:
-            event.app.layout.focus(input_win)
+        event.app.layout.focus(input_win)
 
     @kb.add("left", filter=has_focus(status_win))
     def _menu_left(event) -> None:
@@ -779,6 +778,7 @@ async def run_inline_input(registry, renderer, config=None) -> None:
             menu_region.select()
         elif menu["open"]:
             _menu_close()
+            event.app.layout.focus(input_win)
         else:
             _menu_open()
 
