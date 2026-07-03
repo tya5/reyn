@@ -307,5 +307,79 @@ class ChatLifecycleForwarder:
         except asyncio.QueueFull:
             pass
 
+    # ── MCP tool progress (issue #264) ───────────────────────────────────────
+    # ``op_runtime/mcp.py`` emits ``mcp_progress`` each time the MCP SDK
+    # delivers a ``notifications/progress`` callback during a tool call.
+    # Source schema: {server, tool, progress, total, message}
 
-__all__ = ["ChatLifecycleForwarder"]
+    def on_mcp_progress(self, data: dict) -> None:
+        """Bridge ``mcp_progress`` into a ``status`` outbox message.
+
+        Emits ``kind="status"`` with ``meta.source="mcp"`` so the sticky
+        status bar shows live MCP tool progress during a long-running call.
+        ``meta.source`` discriminates MCP status from other status sources
+        for future per-source styling.
+        """
+        server = str(data.get("server") or "?")
+        tool = str(data.get("tool") or "?")
+        progress = data.get("progress")
+        total = data.get("total")
+        message = data.get("message")
+
+        text = _format_mcp_progress(server, tool, progress, total, message)
+
+        meta: dict = {
+            "source": "mcp",
+            "server": server,
+            "tool": tool,
+        }
+        if progress is not None:
+            meta["progress"] = progress
+        if total is not None:
+            meta["total"] = total
+        if message:
+            meta["progress_text"] = message
+
+        try:
+            self.outbox.put_nowait(OutboxMessage(kind="status", text=text, meta=meta))
+        except asyncio.QueueFull:
+            pass
+
+
+def _format_mcp_progress(
+    server: str,
+    tool: str,
+    progress: object,
+    total: object,
+    message: object,
+) -> str:
+    """Build the human-readable sticky-status text for an MCP progress event.
+
+    Branches:
+      - progress + total both numeric and total > 0 → percentage
+      - progress numeric, total absent / zero        → raw progress value
+      - neither                                      → bare ``[mcp/<server>] <tool>``
+      - message present                              → appended as ``· <message>``
+    """
+    head = f"[mcp/{server}] {tool}"
+    body = ""
+    try:
+        prog_f: float | None = float(progress) if progress is not None else None
+    except (TypeError, ValueError):
+        prog_f = None
+    try:
+        tot_f: float | None = float(total) if total is not None else None
+    except (TypeError, ValueError):
+        tot_f = None
+    if prog_f is not None and tot_f is not None and tot_f > 0:
+        pct = (prog_f / tot_f) * 100
+        body = f" · {pct:.0f}%"
+    elif prog_f is not None:
+        body = f" · progress={prog_f:g}"
+    text = head + body
+    if message:
+        text += f" · {message}"
+    return text
+
+
+__all__ = ["ChatLifecycleForwarder", "_format_mcp_progress"]
