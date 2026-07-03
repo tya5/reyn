@@ -1,7 +1,7 @@
 """EventExportDispatcher — EventLog subscriber that drives TraceExporter backends.
 
-Wires into the EventLog subscriber pattern (same as ChatEventForwarder and
-EventStore) to dispatch P6 events to configured exporters after a skill run
+Wires into the EventLog subscriber pattern (same as ChatLifecycleForwarder
+and EventStore) to dispatch P6 events to configured exporters after a run
 finishes.
 
 Dispatch fires on ``workflow_finished`` — at that point the EventLog holds the

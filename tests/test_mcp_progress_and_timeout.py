@@ -14,15 +14,6 @@ forwarded end-to-end:
   3. ``op_runtime.mcp._execute`` reads ``call_timeout_seconds`` from the
      server's raw config dict (the per-server entry under
      ``mcp.servers.<name>``) and forwards it to ``MCPClient.call_tool``.
-  4. ``ChatEventForwarder.on_mcp_progress`` converts an ``mcp_progress``
-     event into an ``OutboxMessage(kind="status")`` with
-     ``meta.source="mcp"`` per the issue #264 owner-decision shape.
-
-The outbox shape pin (kind / required meta keys) is the issue #264
-analogue of PR #258's
-``test_outbox_intervention_meta_shape_is_stable``: shape stability is
-inscribed at PR-landing time so a future refactor cannot drift the TUI
-contract silently.
 """
 from __future__ import annotations
 
@@ -35,8 +26,6 @@ import pytest
 
 from reyn.core.events.events import EventLog
 from reyn.mcp.client import MCPClient
-from reyn.runtime.forwarder import ChatEventForwarder
-from reyn.runtime.outbox import OutboxMessage
 from reyn.schemas.models import MCPIROp
 
 
@@ -350,126 +339,6 @@ def test_op_handler_call_timeout_default_finite_and_optout() -> None:
                 f"cfg {cfg!r} is an explicit opt-out (<=0) → NO read_timeout_seconds, "
                 f"got kwargs={captured['kwargs']}"
             )
-
-
-# ── 3. ChatEventForwarder.on_mcp_progress turns events into outbox msgs ─
-
-
-def test_forwarder_on_mcp_progress_emits_status_outbox_message() -> None:
-    """Tier 2: an ``mcp_progress`` event flows through ``ChatEventForwarder``
-    into an ``OutboxMessage(kind="status")`` with ``meta.source="mcp"``
-    and the structured fields the TUI sticky renderer consumes.
-    """
-    outbox: asyncio.Queue[OutboxMessage] = asyncio.Queue(maxsize=10)
-    forwarder = ChatEventForwarder("demo_skill", outbox)
-
-    forwarder.on_mcp_progress({
-        "server": "fs",
-        "tool": "read_file",
-        "progress": 0.5,
-        "total": 1.0,
-        "message": "reading bytes",
-        "run_id": "abc123",
-    })
-
-    msg = outbox.get_nowait()
-    assert msg.kind == "status"
-    # Sticky text: percentage + message + run-id tag in meta.
-    assert "[mcp/fs] read_file" in msg.text
-    assert "50%" in msg.text
-    assert "reading bytes" in msg.text
-
-    # Required meta keys per the issue #264 owner-decision shape.
-    assert msg.meta["source"] == "mcp"
-    assert msg.meta["server"] == "fs"
-    assert msg.meta["tool"] == "read_file"
-    assert msg.meta["progress"] == 0.5
-    assert msg.meta["total"] == 1.0
-    assert msg.meta["progress_text"] == "reading bytes"
-    assert msg.meta["run_id"] == "abc123"
-    assert msg.meta["run_id_short"] == "c123"
-
-
-def test_forwarder_on_mcp_progress_handles_indeterminate_total() -> None:
-    """Tier 2: when the server emits progress without a total (= no known
-    upper bound), the status text shows the raw value rather than a
-    misleading percentage.
-    """
-    outbox: asyncio.Queue[OutboxMessage] = asyncio.Queue(maxsize=10)
-    forwarder = ChatEventForwarder("demo_skill", outbox)
-
-    forwarder.on_mcp_progress({
-        "server": "scraper",
-        "tool": "fetch",
-        "progress": 42,
-        "total": None,
-        "message": None,
-    })
-
-    msg = outbox.get_nowait()
-    assert msg.kind == "status"
-    assert "[mcp/scraper] fetch" in msg.text
-    assert "progress=42" in msg.text
-    assert "total" not in msg.meta or msg.meta.get("total") is None
-
-
-def test_forwarder_on_mcp_progress_dispatch_via_call_routes_event_type() -> None:
-    """Tier 2: an ``mcp_progress`` event delivered via the forwarder's
-    ``__call__`` dispatch (= the actual subscriber call path used by
-    EventLog.emit subscribers) reaches ``on_mcp_progress``.
-
-    Verifies the type-suffix dispatcher (``getattr(self, f"on_{event.type}")``)
-    matches "mcp_progress" → ``on_mcp_progress``.
-    """
-    from reyn.schemas.models import Event
-
-    outbox: asyncio.Queue[OutboxMessage] = asyncio.Queue(maxsize=10)
-    forwarder = ChatEventForwarder("demo_skill", outbox)
-
-    event = Event(
-        type="mcp_progress",
-        data={
-            "server": "fs",
-            "tool": "read",
-            "progress": 1.0,
-            "total": 1.0,
-        },
-    )
-    forwarder(event)
-
-    msg = outbox.get_nowait()
-    assert msg.kind == "status"
-    assert msg.meta["source"] == "mcp"
-
-
-# ── 4. Outbox shape stability commitment (issue #264 owner decision) ───
-
-
-def test_mcp_progress_outbox_meta_required_keys_are_stable() -> None:
-    """Tier 2: the ``kind="status"`` + ``meta.source="mcp"`` shape used for
-    MCP progress notifications has stable required keys per the issue
-    #264 owner decision. This is the issue #264 analogue of PR #258's
-    ``test_outbox_intervention_meta_shape_is_stable`` — pinning the TUI
-    contract at PR landing time.
-
-    Required keys: ``source`` / ``server`` / ``tool``. Optional fields
-    (``progress`` / ``total`` / ``progress_text`` / ``run_id`` /
-    ``run_id_short``) are added when the underlying event carries them.
-    """
-    outbox: asyncio.Queue[OutboxMessage] = asyncio.Queue(maxsize=10)
-    forwarder = ChatEventForwarder("demo_skill", outbox)
-
-    # Minimal event: only server + tool.
-    forwarder.on_mcp_progress({"server": "fs", "tool": "ls"})
-    msg = outbox.get_nowait()
-    assert msg.kind == "status"
-    assert set(msg.meta.keys()) >= {"source", "server", "tool"}, (
-        f"required meta keys are source/server/tool, got: {sorted(msg.meta.keys())}"
-    )
-    assert msg.meta["source"] == "mcp"
-    # Optional fields absent on minimal events.
-    for opt in ("progress", "total", "progress_text", "run_id", "run_id_short"):
-        assert opt not in msg.meta or msg.meta[opt] is None or msg.meta[opt] == 0
 
 
 # ── 5. SDK-passing grep-pin (= belt-and-suspenders against future drift) ─

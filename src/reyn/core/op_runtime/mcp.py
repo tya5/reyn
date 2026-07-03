@@ -50,8 +50,8 @@ async def _execute(op: MCPIROp, ctx: OpContext) -> dict:
     # issue #264 — wire MCP SDK progress + per-call timeout:
     #
     #   progress: forward server-emitted notifications/progress as
-    #   ``mcp_progress`` events so the ChatEventForwarder can surface
-    #   them in the TUI sticky status (= long-running MCP call
+    #   ``mcp_progress`` events on the run's EventLog so a subscriber can
+    #   surface them in the TUI sticky status (= long-running MCP call
     #   visibility, the A2A PR #253 analogue for the client side).
     #
     #   timeout: per-server ``call_timeout_seconds`` from the raw config

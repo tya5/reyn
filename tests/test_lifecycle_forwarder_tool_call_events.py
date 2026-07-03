@@ -2,13 +2,12 @@
 
 issue #427 wiring fix (= post wave-#427 smoke finding 2026-05-22):
 
-Original step 3 (PR #433) added these handlers to ``ChatEventForwarder``
-(= per-skill subscriber), but ``dispatch/dispatcher.py:200-274`` emits
-``tool_called`` / ``tool_returned`` / ``tool_failed`` against the
-session's ``_chat_events`` log — and that log is subscribed by
-``ChatLifecycleForwarder``, not ``ChatEventForwarder``. The handlers
-never fired, ToolCallRow never mounted, end-to-end functional path
-broken in production despite Tier 2 tests passing in isolation.
+``dispatch/dispatcher.py:200-274`` emits ``tool_called`` /
+``tool_returned`` / ``tool_failed`` against the session's
+``_chat_events`` log, which is subscribed by ``ChatLifecycleForwarder``.
+Handlers wired to any other subscriber never fire — ToolCallRow never
+mounts, breaking the end-to-end functional path in production despite
+Tier 2 tests passing in isolation.
 
 This module re-pins the contract against the correct subscriber:
 

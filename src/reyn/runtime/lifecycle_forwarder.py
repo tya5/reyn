@@ -1,10 +1,7 @@
 """ChatLifecycleForwarder — session-scoped event subscriber for non-skill events.
 
-Sibling of :class:`reyn.runtime.forwarder.ChatEventForwarder`.  Where the
-skill forwarder bridges per-skill events (``phase_*`` / ``workflow_*`` /
-``llm_*`` / ``act_executed``) into the chat outbox, this forwarder
-bridges **session-level lifecycle events** that are not tied to a
-specific skill run:
+This forwarder bridges **session-level lifecycle events** into the chat
+outbox:
 
   * ``compaction_completed`` (issue #162) — head/body/tail compaction
     just replaced N early-session turns with a rolling summary. Without
@@ -220,11 +217,7 @@ class ChatLifecycleForwarder:
     # ``dispatch/dispatcher.py:200-274`` emits ``tool_called`` /
     # ``tool_returned`` / ``tool_failed`` against the session's
     # ``_chat_events`` log (= router-level). This forwarder is the
-    # subscriber of that log; per-skill ``ChatEventForwarder`` only sees
-    # the per-skill agent's event log and would never fire on these.
-    # Step 3 of issue #427 originally landed the handlers on the wrong
-    # forwarder class — wave-#427 smoke detected the gap, this PR moves
-    # them to the correct subscriber. See memory
+    # subscriber of that log. See memory
     # ``feedback_verify_existing_event_emission_before_adding`` for the
     # subscriber-layer verification discipline.
 
