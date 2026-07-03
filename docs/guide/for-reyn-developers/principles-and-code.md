@@ -169,8 +169,8 @@ class MyOpIROp(BaseModel):
     target: str
     options: dict = {}
 
-# Add to the ControlIROp union:
-ControlIROp = Annotated[
+# Add to the Op union:
+Op = Annotated[
     FileIROp | MCPIROp | ... | MyOpIROp,
     Field(discriminator="kind")
 ]
@@ -184,11 +184,6 @@ from reyn.schemas.models import MyOpIROp
 OP_KIND_MODEL_MAP: dict[str, type[BaseModel]] = {
     ...
     "my_op": MyOpIROp,
-}
-
-OP_PURITY: dict[str, OpPurity] = {
-    ...
-    "my_op": OpPurity.side_effect,  # or pure / world / external
 }
 ```
 

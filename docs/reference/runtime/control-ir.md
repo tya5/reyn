@@ -401,8 +401,6 @@ Returns:
 
 **Permission**: none required (LLM cost only). Voluntary and independent of the involuntary `retry_loop` backstop, which always runs regardless.
 
-**OpPurity**: `external` (LLM cost + history/state mutation; like `recall`, a macro whose inner engine emits its own events).
-
 **Visibility**: advertised to the LLM (tool / `available_control_ops`) only when the window is filling — paired with the context-size signal — so it is not offered when there is nothing to compact (mirrors the `search_actions` visibility gate). The permission gate stays "allow"; only *when surfaced* is gated.
 
 **Axis scope (chat vs phase)**: the `compact` op is available on **both** axes. On the **chat** axis, it routes to `force_compact_now`; on the **phase** axis, it routes to the `compact_control_ir_results` on-demand seam wired by the phase runtime (in addition to the automatic per-frame compaction that fires regardless). In both cases the OS wires `ctx.compact_now`; the op handler itself is axis-agnostic. Both axes also inject the paired context-size signal so the model knows when to emit `compact`.
