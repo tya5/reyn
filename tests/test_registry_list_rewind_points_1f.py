@@ -9,8 +9,7 @@ audit EventStore is intentionally NOT consulted (WAL and audit stay decoupled).
 Pins:
 - boundary seqs come from the generation store (not every WAL seq);
 - ts + kind are read from the WAL entry at each boundary seq;
-- WAL kind → label mapping (skill_phase_advanced→phase, step_*→plan-step,
-  else→turn);
+- WAL kind → label mapping (step_*→plan-step, else→turn);
 - abandoned (rewound-past) boundaries are filtered out (is_active_seq);
 - rows are ascending by seq.
 
@@ -55,12 +54,14 @@ def _record_gen(reg: AgentRegistry, name: str, seq: int) -> None:
 
 
 def test_rewind_point_kind_mapping() -> None:
-    """Tier 2: WAL entry kind → boundary label (turn / plan-step / phase)."""
-    assert _rewind_point_kind("skill_phase_advanced") == "phase"
+    """Tier 2: WAL entry kind → boundary label (turn / plan-step)."""
     assert _rewind_point_kind("step_completed") == "plan-step"
     assert _rewind_point_kind("step_failed") == "plan-step"
     assert _rewind_point_kind("inbox_consume") == "turn"
     assert _rewind_point_kind("") == "turn"
+    # the skill "phase" boundary was removed with the skill replay/rewind
+    # analysis — a legacy skill_phase_advanced kind now falls through to "turn".
+    assert _rewind_point_kind("skill_phase_advanced") == "turn"
 
 
 # ── integration: enumeration ──────────────────────────────────────────────────
@@ -70,9 +71,8 @@ def test_rewind_point_kind_mapping() -> None:
 async def test_list_rewind_points_reads_ts_and_kind_from_wal(tmp_path) -> None:
     """Tier 2: each boundary seq → {seq, ts, kind} read from the WAL entry.
 
-    Generations cut at seqs 1 (inbox_consume→turn), 2 (step_completed→plan-step),
-    3 (skill_phase_advanced→phase). The returned rows carry the WAL ts + the
-    derived kind, ascending by seq.
+    Generations cut at seqs 1 (inbox_consume→turn) and 2 (step_completed→plan-step).
+    The returned rows carry the WAL ts + the derived kind, ascending by seq.
     """
     reg = _make_registry(tmp_path)
     _seed_agent(tmp_path, "alpha")
@@ -80,14 +80,13 @@ async def test_list_rewind_points_reads_ts_and_kind_from_wal(tmp_path) -> None:
 
     s1 = await log.append("inbox_consume", target="alpha", msg_id="m1")
     s2 = await log.append("step_completed", run_id="r1", step="s")
-    s3 = await log.append("skill_phase_advanced", run_id="r1", phase="p")
-    for s in (s1, s2, s3):
+    for s in (s1, s2):
         _record_gen(reg, "alpha", s)
 
     rows = reg.list_rewind_points()
 
-    assert [r["seq"] for r in rows] == [s1, s2, s3]  # ascending
-    assert [r["kind"] for r in rows] == ["turn", "plan-step", "phase"]
+    assert [r["seq"] for r in rows] == [s1, s2]  # ascending
+    assert [r["kind"] for r in rows] == ["turn", "plan-step"]
     # ts is the WAL entry's timestamp — non-empty ISO string for each.
     assert all(r["ts"] for r in rows)
 

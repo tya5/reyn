@@ -105,9 +105,7 @@ _REWIND_PLAN_STEP_KINDS = frozenset({
 
 
 def _rewind_point_kind(wal_kind: str) -> str:
-    """Map a WAL entry kind to a rewind-point boundary label (turn / plan-step / phase)."""
-    if wal_kind == "skill_phase_advanced":
-        return "phase"
+    """Map a WAL entry kind to a rewind-point boundary label (turn / plan-step)."""
     if wal_kind in _REWIND_PLAN_STEP_KINDS:
         return "plan-step"
     return "turn"

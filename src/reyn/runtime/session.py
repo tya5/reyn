@@ -3839,7 +3839,7 @@ class Session:
             self._current_task_id = meta.get("task_id")
         elif kind == WAKE_REQUESTER_KIND:
             self._current_task_id = meta.get("managing_task_id")
-        elif kind in (HOOK_INBOX_KIND, "agent_response", "skill_completed"):
+        elif kind in (HOOK_INBOX_KIND, "agent_response"):
             pass  # PRESERVE: self-continuation / response to the agent's own action
         else:
             self._current_task_id = None  # user / agent_request / unknown → new context

@@ -214,3 +214,53 @@ def test_truncate_then_iter_from_returns_only_survivors(tmp_path):
     asyncio.run(go())
     seen = list(log.iter_from(0))
     assert {e["seq"] for e in seen} == {4, 5, 6, 7}
+
+
+def test_removed_skill_wal_kinds_recovery_safe(tmp_path):
+    """Tier 2c: removing the skill_* kinds from WAL_EVENT_KINDS is crash-recovery-safe.
+
+    (a) WRITE side — append REJECTS a removed skill_* kind (0 live writers, so live
+        emit is unaffected; a stale/typo writer cannot silently fragment the vocab).
+    (b) READ side — iter_from still READS a legacy skill_* WAL line written by a
+        pre-removal build. The read path does NOT validate against WAL_EVENT_KINDS,
+        so an old on-disk WAL carrying skill_* entries still replays without raising
+        or dropping — and, crucially, the KEPT entry that comes AFTER the legacy
+        line is not lost.
+
+    FALSIFICATION: had the removal gated the READ path on WAL_EVENT_KINDS too, the
+    legacy skill_started line would raise/drop on iter_from and every kept entry
+    after it in the same WAL would be lost on recovery (a #2259/#2260-class
+    data-loss vector). The reconstruction-side fall-through + snapshot-backed
+    truncate-survival (a kept state applied before a snapshot survives WAL
+    truncation below its seq, with a WAL-only control) is covered by
+    ``test_agent_snapshot::test_truncate_falsify_snapshot_backed_kept_state_survives``.
+    """
+    wal = tmp_path / "wal.jsonl"
+    log = StateLog(wal)
+
+    async def scenario() -> int:
+        # (a) WRITE-side: every removed skill_* kind is rejected at append.
+        for dead in ("skill_started", "skill_phase_advanced", "skill_completed",
+                     "skill_discarded", "skill_resumed"):
+            try:
+                await log.append(dead, run_id="r1")
+            except ValueError as exc:
+                assert "unknown WAL event kind" in str(exc)
+            else:
+                raise AssertionError(f"append({dead!r}) must reject a removed kind")
+        s1 = await log.append("step_started", run_id="r1", op="file/read")
+        await log.flush()
+        return s1
+
+    s1 = asyncio.run(scenario())
+
+    # (b) READ-side: a legacy skill_started line written by a pre-removal build
+    #     (bypassing the now-rejecting append), followed by a KEPT entry.
+    with wal.open("a", encoding="utf-8") as f:
+        f.write(json.dumps({"seq": s1 + 1, "kind": "skill_started", "run_id": "r1"}) + "\n")
+        f.write(json.dumps({"seq": s1 + 2, "kind": "step_completed", "run_id": "r1"}) + "\n")
+
+    kinds = [e.get("kind") for e in log.iter_from(0)]
+    assert "step_started" in kinds       # the appended kept entry reads
+    assert "skill_started" in kinds      # legacy removed-kind line reads (no reject/drop)
+    assert "step_completed" in kinds     # the KEPT entry AFTER the legacy line is NOT lost
