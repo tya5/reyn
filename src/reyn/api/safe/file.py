@@ -1,9 +1,9 @@
 """Permission-gated file I/O for safe-mode python preprocessor / postprocessor steps.
 
-FP-0042 — replaces ``reyn.api.unsafe.file`` for stdlib (and any user skill
-that wants to opt into the Reyn permission model). Every file operation
-goes through the path-declaration check that the calling skill's
-``skill.md`` opted into; reads / writes outside the declared paths raise
+FP-0042 — replaces ``reyn.api.unsafe.file`` for safe-mode python steps.
+Every file operation goes through the path-declaration check that the
+calling step's permission config opted into; reads / writes outside the
+declared paths raise
 :class:`PermissionError` and the step fails with a structured error.
 
 Public surface
