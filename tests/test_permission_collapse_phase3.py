@@ -115,10 +115,10 @@ def test_require_http_get_raises_for_undeclared_host(tmp_path):
 def test_require_http_get_passes_for_declared_host(tmp_path):
     """Tier 2: require_http_get passes silently for a persisted approval.
 
-    #571 Phase 7: specific declarations expect to be approved at
-    startup_guard time. This test simulates that via the public
+    #571 Phase 7: specific declarations expect to be approved via an
+    interactive prompt. This test simulates that via the public
     session_approve_path() API (= same persistence write that
-    startup_guard's prompt would do), then verifies runtime
+    the prompt would do), then verifies runtime
     require_http_get passes silently.
     """
     resolver = PermissionResolver(config_permissions={}, project_root=tmp_path)

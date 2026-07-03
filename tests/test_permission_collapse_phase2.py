@@ -99,11 +99,11 @@ async def test_require_file_write_rejects_approvals_yaml(tmp_path, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_require_file_write_accepts_canonical_after_session_approval(tmp_path, monkeypatch):
-    """Tier 2: require_file_write passes when path was approved at startup_guard time.
+    """Tier 2: require_file_write passes when path was approved via a prior interactive prompt.
 
     Phase 2 does not change require_file_write semantics — declaration alone
-    does NOT pass; operator must approve (via startup_guard or persisted
-    approval). This test simulates the post-startup-guard state.
+    does NOT pass; operator must approve (via the interactive prompt or persisted
+    approval). This test simulates the post-approval state.
     """
     monkeypatch.chdir(tmp_path)
     resolver = PermissionResolver(config_permissions={}, project_root=tmp_path)
@@ -111,7 +111,7 @@ async def test_require_file_write_accepts_canonical_after_session_approval(tmp_p
         file_write=[{"path": ".reyn/config/index/sources.yaml", "scope": "just_path"}]
     )
     resolver.session_approve_path(".reyn/config/index/sources.yaml", "skill_x", "file.write")
-    # Should not raise — startup_guard's session approval covers the path.
+    # Should not raise — the session approval covers the path.
     await resolver.require_file_write(decl, ".reyn/config/index/sources.yaml", "skill_x")
 
 
@@ -144,7 +144,7 @@ def test_canonical_path_via_explicit_file_write_requires_startup_approval(tmp_pa
     Phase 5 removed the "skip canonical when bool axis set" carve-out
     because the bool axes themselves are gone. Now every file.write
     entry that's outside the default zone — including canonical paths
-    — flows through the standard startup_guard prompt.
+    — flows through the standard interactive prompt.
     """
     monkeypatch.chdir(tmp_path)
     resolver = PermissionResolver(config_permissions={}, project_root=tmp_path)

@@ -100,7 +100,7 @@ def build_router_op_context(
         mcp=mcp_names,
         allowed_mcp=allowed_mcp,
         # #571 Phase 7: wildcard http.get (per-host 4-layer prompt at runtime) +
-        # the MCP registry host specifically (mcp_install startup_guard pre-approval).
+        # the MCP registry host specifically (mcp_install pre-approval).
         http_get=[
             {"host": "registry.modelcontextprotocol.io"},
             {"host": "*"},
