@@ -101,31 +101,35 @@ def test_task_list_result_shows_count() -> None:
 
 
 def test_dict_with_error_key_shows_error_not_raw_repr() -> None:
-    """Tier 2: a dict with an 'error' key shows the error message, not raw repr.
+    """Tier 2: a dict with an 'error' key shows '✗ <error message>', not raw repr.
 
     `file__list` outside the project returns `{'error': 'glob not permitted…'}`.
-    The summarizer must surface the error string, not dump the raw dict.
+    The summarizer must surface the error string with a '✗' failure prefix so the
+    ⎿ row renders in red (not dim grey), distinguishing failure from success.
     """
     out = summarize_tool_result(
         "file__list",
         {"error": "glob not permitted: '/tmp/*' (outside project, no read permission)"},
     )
+    assert out.startswith("✗"), "error result must carry '✗' failure prefix"
     assert "glob not permitted" in out
     assert "{" not in out, "raw dict repr must not leak into ⎿ row"
 
 
 def test_file_read_not_found_shows_error_not_zero_lines() -> None:
-    """Tier 2: file__read for a missing file shows the error, not 'Read 0 lines'.
+    """Tier 2: file__read for a missing file shows '✗ <error>', not 'Read 0 lines'.
 
     file__read returns {"op": "read", "content": "", "error": "file not found: …"}
     for a non-existent path.  Without the error-first guard the read branch fires
     on op=="read" and returns "Read 0 lines" (empty content → 0 lines), which looks
     identical to an empty file and gives the user no signal that the file is absent.
+    The '✗' prefix ensures the ⎿ row renders in red (tool_call_completed + ✗ → _CC_ERR).
     """
     out = summarize_tool_result(
         "file__read",
         {"op": "read", "content": "", "error": "file not found: README.md"},
     )
+    assert out.startswith("✗"), "error result must carry '✗' failure prefix"
     assert "0 lines" not in out, "missing file must not look like empty file"
     assert "not found" in out or "README" in out, "must surface the error"
     assert "{" not in out, "raw dict repr must not leak"
@@ -193,11 +197,12 @@ def test_recall_success_shows_chunk_count() -> None:
 
 
 def test_error_message_field_shown_not_raw_dict() -> None:
-    """Tier 2: dicts with 'error_message' (no 'error' key) show the message.
+    """Tier 2: dicts with 'error_message' (no 'error' key) show '✗ <message>'.
 
     recall validation errors return {"ok": False, "error_kind": ..., "error_message": ...}
     and task_ops returns the same shape for invalid-args/no-context errors.
     Without the error_message fallback both fell through to raw dict repr.
+    The '✗' prefix ensures the ⎿ row renders in red (tool_call_completed + ✗ → _CC_ERR).
     """
     out = summarize_tool_result(
         "rag_operation__recall",
@@ -208,6 +213,7 @@ def test_error_message_field_shown_not_raw_dict() -> None:
             "missing": ["query"],
         },
     )
+    assert out.startswith("✗"), "error_message result must carry '✗' failure prefix"
     assert "recall requires" in out
     assert "{" not in out, "raw dict repr must not leak"
     assert "ok" not in out.lower() or "False" not in out, "must not dump raw repr"

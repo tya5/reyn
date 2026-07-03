@@ -367,10 +367,10 @@ def _summarize_result(tool, result) -> str:
         # below would short-circuit to "Read 0 lines" and the error is never seen).
         error = result.get("error")
         if isinstance(error, str):
-            return _short(error, 80)
+            return f"✗ {_short(error, 78)}"
         error_message = result.get("error_message")
         if isinstance(error_message, str):
-            return _short(error_message, 80)
+            return f"✗ {_short(error_message, 78)}"
         op = result.get("op")
         path = result.get("path")
         status = result.get("status")
@@ -624,7 +624,9 @@ def format_inline_message(msg: OutboxMessage):
         return _gutter_grid("▸ ", _CC_TEXT, body)
     if kind == "tool_call_completed":
         summary = summarize_tool_result(meta.get("tool"), meta.get("result"))
-        return _gutter_grid("  ⎿ ", _CC_DIM, Text(summary, style=_CC_DIM))
+        err_style = summary.startswith("✗")
+        s = _CC_ERR if err_style else _CC_DIM
+        return _gutter_grid("  ⎿ ", s, Text(summary, style=s))
     if kind == "tool_call_failed":
         err = meta.get("error_message") or meta.get("error_kind") or msg.text
         return _gutter_grid("  ⎿ ", _CC_ERR, Text(f"✗ {_short(err, 80)}", style=_CC_ERR))
