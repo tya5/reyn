@@ -1,6 +1,7 @@
 """Pluggable chat UI backends for reyn chat."""
 from __future__ import annotations
 
+import re
 import sys
 import time
 from io import StringIO
@@ -407,14 +408,73 @@ def _gutter_grid(gutter: str, gutter_style: str, body, *, row_style: str = "",
     return grid
 
 
+# Matches non-fence structural markdown elements outside fenced code blocks:
+# headings, blockquotes, list items (unordered/ordered), code-fence delimiters
+# (``` or ~~~, with optional language tag), and blank lines. Used by
+# _harden_soft_breaks to skip hardening on lines where the markdown parser
+# depends on the raw newline for element recognition. Fenced code block
+# CONTENT is handled separately (in_fence state) so trailing spaces are never
+# added inside a code block.
+_STRUCTURAL_LINE_RE = re.compile(
+    r"^(#|>|```|~~~|\s*[-*+] |\s*\d+\. |$)"
+)
+
+
+def _harden_soft_breaks(text: str) -> str:
+    """Append two trailing spaces to bare paragraph lines before a single newline.
+
+    CommonMark (and rich.Markdown) collapses a single newline inside a paragraph
+    to a space, so ``line1\\nline2`` renders as ``line1 line2``. LLM output often
+    uses single newlines for visual separation; this preserves them as hard line
+    breaks (CommonMark ``  \\n`` = ``<br>``).
+
+    Lines inside fenced code blocks (``` or ~~~ delimiters) are always preserved
+    verbatim — trailing spaces would corrupt code content (invisible on screen but
+    present in copy-paste and significant for whitespace-sensitive tools). Other
+    structural lines (headings, list items, blockquotes, blank lines) are also
+    exempt; the parser uses the raw newlines around them to recognise the element.
+    """
+    if not text:
+        return text
+    lines = text.split("\n")
+    out = []
+    in_fence = False
+    for i, line in enumerate(lines):
+        stripped = line.strip()
+        # Fence delimiters (``` or ~~~ with optional language tag) toggle the
+        # in-fence state. Always append verbatim — the delimiter itself is
+        # structural and must not gain trailing spaces.
+        if stripped.startswith("```") or stripped.startswith("~~~"):
+            in_fence = not in_fence
+            out.append(line)
+            continue
+        # Inside a fenced code block: preserve content bytes exactly.
+        if in_fence:
+            out.append(line)
+            continue
+        # Outside a fence: harden non-structural lines not adjacent to a
+        # structural one (heading / list / blockquote / blank / fence delimiter).
+        is_structural = bool(_STRUCTURAL_LINE_RE.match(line))
+        next_is_structural = i + 1 >= len(lines) or bool(
+            _STRUCTURAL_LINE_RE.match(lines[i + 1])
+        )
+        if is_structural or next_is_structural:
+            out.append(line)
+        else:
+            out.append(line + "  ")
+    return "\n".join(out)
+
+
 def _body_renderable(kind: str, text: str, body_style: str):
     """The body cell: markdown for agent (LLM) output, a styled Text otherwise."""
     from rich.markdown import Markdown
     from rich.text import Text
     if kind == "agent":
         # Render the LLM reply as markdown (headings / bold / lists / code) like
-        # Claude Code, instead of showing the raw markdown source.
-        return Markdown(text or "")
+        # Claude Code. Single newlines are hardened to CommonMark hard line breaks
+        # so the model's per-line output is preserved rather than collapsed to one
+        # paragraph — matching how CC displays LLM output.
+        return Markdown(_harden_soft_breaks(text or ""))
     return Text(text, style=body_style)
 
 
