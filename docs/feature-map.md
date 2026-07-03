@@ -73,8 +73,6 @@ mindmap
       Per-call gate unchanged
     📦 Stdlib Skills
       direct_llm
-      eval
-      eval_builder
       index_docs
       index_events
       judge_phase
@@ -373,8 +371,7 @@ How tools are presented to the LLM and how its calls are dispatched is a **plugg
 | Skill | Description | Documentation |
 |-------|-------------|---------------|
 | `direct_llm` | Single-shot LLM fallback for catalogue gaps | [Reference](reference/stdlib/direct_llm.md) |
-| `eval` | Evaluate a skill against test cases via `judge_phase` as judge | [Reference](reference/stdlib/eval.md) |
-| `eval_builder` | Generate an eval spec with test cases and rubric | [Reference](reference/stdlib/eval_builder.md) |
+
 | `index_docs` | Chunk / embed / index pipeline over file globs | [Reference](reference/stdlib/index_docs.md) |
 | `index_events` | Index P6 event log with incremental cursor tracking | [Reference](reference/stdlib/index_events.md) |
 | `judge_phase` | Score one phase artifact against quality criteria | [Reference](reference/stdlib/judge_phase.md) |

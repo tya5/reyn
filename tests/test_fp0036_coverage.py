@@ -65,15 +65,6 @@ class TestParseFeatureMap:
             f"Got paths sample: {sorted(p for p in paths if 'control' in p)[:10]}"
         )
 
-    def test_known_path_stdlib_skills_eval(self) -> None:
-        """Tier 1: 'stdlib-skills/eval' is parsed from the Stdlib Skills table."""
-        features = parse_feature_map(FEATURE_MAP_PATH)
-        paths = {f.path for f in features}
-        assert "stdlib-skills/eval" in paths, (
-            f"Expected 'stdlib-skills/eval' in feature paths. "
-            f"Got stdlib paths: {sorted(p for p in paths if 'stdlib' in p)[:10]}"
-        )
-
     def test_known_path_cli_reyn_run(self) -> None:
         """Tier 1: 'cli/reyn-run' is parsed from the CLI table."""
         features = parse_feature_map(FEATURE_MAP_PATH)
