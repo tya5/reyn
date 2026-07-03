@@ -131,6 +131,47 @@ def test_file_read_not_found_shows_error_not_zero_lines() -> None:
     assert "{" not in out, "raw dict repr must not leak"
 
 
+def test_recall_success_shows_chunk_count() -> None:
+    """Tier 2: rag_operation__recall success ({chunks, mode}) shows 'N chunks'.
+
+    recall returns {"chunks": [...], "mode": "recall"} with no op/status/matches/
+    entries key, so without this branch the raw dict repr leaked into the ⎿ row.
+    """
+    assert summarize_tool_result(
+        "rag_operation__recall",
+        {"chunks": [{"text": "a"}, {"text": "b"}, {"text": "c"}], "mode": "recall"},
+    ) == "3 chunks"
+    assert summarize_tool_result(
+        "rag_operation__recall",
+        {"chunks": [{"text": "only"}], "mode": "recall"},
+    ) == "1 chunk"
+    assert summarize_tool_result(
+        "rag_operation__recall",
+        {"chunks": [], "mode": "fallback"},
+    ) == "0 chunks"
+
+
+def test_error_message_field_shown_not_raw_dict() -> None:
+    """Tier 2: dicts with 'error_message' (no 'error' key) show the message.
+
+    recall validation errors return {"ok": False, "error_kind": ..., "error_message": ...}
+    and task_ops returns the same shape for invalid-args/no-context errors.
+    Without the error_message fallback both fell through to raw dict repr.
+    """
+    out = summarize_tool_result(
+        "rag_operation__recall",
+        {
+            "ok": False,
+            "error_kind": "missing_required_arg",
+            "error_message": "recall requires ['query']. Available sources are listed …",
+            "missing": ["query"],
+        },
+    )
+    assert "recall requires" in out
+    assert "{" not in out, "raw dict repr must not leak"
+    assert "ok" not in out.lower() or "False" not in out, "must not dump raw repr"
+
+
 def test_file_list_shows_entry_count() -> None:
     """Tier 2: file__list result ({path, entries}) shows 'Listed N entries'.
 
