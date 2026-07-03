@@ -63,7 +63,7 @@ class ChatInterventionBus:
     so the chat session can drop pending interventions when the spawn is
     cancelled. Interventions emitted by ops carry their own `skill_name` from
     `OpContext`; this bus only fills in `run_id` (which the OS layer doesn't
-    have, since chat tracks runs separately from `SkillRuntime.run_id`).
+    have, since chat tracks runs separately from the runtime's run_id).
 
     Phase 2 (issue #254): the canonical method is ``deliver`` (= the
     Agent↔User contract).  ``request`` is retained as an alias so

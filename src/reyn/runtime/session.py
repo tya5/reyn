@@ -684,7 +684,7 @@ class Session:
         hooks_config: "object | None" = None,
         # #1200 PR-F1 (agent-level-uniform backend, FS seam): the agent's
         # EnvironmentBackend INSTANCE, threaded to the chat Workspace so chat's
-        # file ops run on the SAME backend as the OSRuntime path. None → HostBackend (the
+        # file ops run on the SAME backend as the phase path. None → HostBackend (the
         # workspace's own default) → unchanged behaviour. The sibling exec seam
         # (sandbox_backend string via sandbox_config) already flows agent-level.
         environment_backend: "EnvironmentBackend | None" = None,
@@ -692,7 +692,7 @@ class Session:
         workspace_state_dir: "Path | None" = None,  # #187: host-side OS state dir, decoupled from a container base_dir (survives container death)
         # #1200 PR-F2 (exec seam): the agent's SandboxBackend INSTANCE, set on the
         # chat router OpContext so sandboxed_exec runs on the SAME backend as the
-        # OSRuntime path (sandboxed_exec.py: `ctx.sandbox_backend or
+        # phase path (sandboxed_exec.py: `ctx.sandbox_backend or
         # get_default_backend(...)`). REQUIRED — without it chat falls to
         # get_default_backend (rebuild-per-call, no docker) → a DIFFERENT backend
         # than the FS seam → single-shared-sandbox violation. For a docker agent
@@ -714,7 +714,7 @@ class Session:
         eager_embedding_build: bool = False,
         # #1829 S3b: reyn.yaml llm.router.* — set on the LLM chokepoint's
         # ContextVar at construction (mirrors set_llm_request_event_log). None →
-        # the chokepoint's env+default fallback (back-compat). Skill OSRuntimes
+        # the chokepoint's env+default fallback (back-compat). Runs
         # spawned within this session inherit the ContextVar (propagation).
         router_config: "RouterConfig | None" = None,
         retry_config: "object | None" = None,  # #1835: reyn.yaml llm.retry.* timing config
@@ -787,7 +787,7 @@ class Session:
         # (RouterLoop) + control-IR OpContext. None = no narrowing (byte-identical).
         self._contextual_permission = contextual_permission
         # #1953 slice 3a: session-scoped Task backend instance, threaded down to the
-        # task.* op handlers via SkillRuntime → OSRuntime → executors → OpContext
+        # task.* op handlers via the ctx-build seams → OpContext
         # (mirrors contextual_permission). Injected by the session factory (the
         # session-scoped sqlite db path is finalized with §24); None → the op-runtime
         # falls back to its in-memory backend (tests / direct construction).
@@ -1653,7 +1653,7 @@ class Session:
                 # fail (dead-end-critical).
                 # #1679: honor a documented model_class_by_purpose.compaction
                 # override when set; otherwise keep self.model (byte-identical to
-                # the former hardcode, incl. an SkillRuntime(model=…) override).
+                # the former hardcode, incl. a per-run model override).
                 model=self._resolver.purpose_class_or("compaction", self.model),
                 events=self._chat_events,
                 system_prompt_provider=self._history_buffer.build_system_prompt,
@@ -4267,7 +4267,7 @@ class Session:
     ) -> "LimitDecision":
         """FP-0005: chat-side wrapper for ``handle_limit_exceeded``.
 
-        Mirrors ``OSRuntime._handle_limit_checkpoint`` but uses the
+        Mirrors the phase-side limit checkpoint but uses the
         Session's intervention dispatcher (= ``_dispatch_intervention``,
         which records the WAL ``intervention_dispatched`` event before
         delivering the prompt) + on_limit + a session-stable run_id
@@ -5161,10 +5161,6 @@ class Session:
                 "entries": result.get("entries", 0),
             }
         return {"error": result.get("error", "regenerate_index failed")}
-
-    # NOTE: ``_run_skill_awaitable`` moved to
-    # SkillRunner.run_skill_awaitable (RunSpawner wave). The
-    # RouterHostAdapter wiring in __init__ now binds the method directly.
 
     async def _mcp_list_servers(self) -> list[dict]:
         """Returns the configured MCP server list with descriptions."""

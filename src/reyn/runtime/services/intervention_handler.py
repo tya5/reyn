@@ -4,9 +4,8 @@ Extracted from Session (FP-0019 Wave 2 part 1).  Owns the
 ask_user dispatch path, intervention announcement to outbox, and
 answer delivery coordination.
 
-Depends on FP-0019 Wave 1b SkillRunner (commit 9ae66fa) for skill-
-spawn coordination.  Depends on InterventionRegistry (pre-FP-0019
-extraction, snapshot_journal).
+Depends on InterventionRegistry (pre-FP-0019 extraction,
+snapshot_journal).
 
 Design constraints (same pattern as other Wave 1/1b services):
 - Injected deps at construction (typed + Callable callbacks).

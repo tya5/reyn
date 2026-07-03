@@ -195,7 +195,7 @@ class RouterCallerState:
 class PhaseCallerState:
     """Per-protocol state that phase-style invocations need access to.
 
-    Populated by ControlIRExecutor when invoking a ToolDefinition
+    Populated when invoking a ToolDefinition
     handler in phase context. Handlers that need phase-scoped
     resources (already-built OpContext, skill_run_id, run_visit_count,
     etc.) consume them via this object.

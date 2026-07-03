@@ -36,7 +36,7 @@ async def handle(op: AskUserIROp, ctx: OpContext, caller: Literal["preprocessor"
         raise RuntimeError(
             "ask_user invoked without an intervention_bus on OpContext. "
             "Wire a bus (StdinInterventionBus for CLI, ChatInterventionBus "
-            "for chat) when constructing the SkillRuntime."
+            "for chat) when constructing the OpContext."
         )
 
     choices = _options_to_choices(op.options or [])
