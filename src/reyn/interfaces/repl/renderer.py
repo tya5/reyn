@@ -288,6 +288,7 @@ _SPINNER = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
 _KIND_LINE = {
     "user":         ("❯ ",   _CC_TEXT,   _CC_DIM),   # your input  (default fg, + bg block)
     "agent":        ("⏺ ",   _CC_TEXT,   _CC_TEXT),  # normal reply — terminal default fg
+    "reasoning":    ("· ",   _CC_DIM,    _CC_DIM),   # model thinking (dim; only shown when chat.reasoning.display=true)
     "intervention": ("◆ ",   _CC_WARN,   "bold"),    # needs you   — amber
     "error":        ("✗ ",   _CC_ERR,    _CC_ERR),   # error       — red
     "skill_done":   ("✓ ",   _CC_DONE,   _CC_DIM),   # done        — green glyph, dim body
