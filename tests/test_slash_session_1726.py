@@ -89,14 +89,18 @@ async def test_session_switch_known_posts_sentinel():
 
 @pytest.mark.asyncio
 async def test_session_switch_unknown_is_graceful():
-    """Tier 2: #1726 — `/session switch <unknown>` replies an error and posts NO
-    sentinel (no crash — lead completeness pt 1)."""
+    """Tier 2: #1726 — `/session switch <unknown>` replies a decision-enabling error
+    (names the bad sid, explains full-ID/name requirement, no prefix support) and
+    posts NO sentinel (no crash)."""
     reg = _StubRegistry(sids=("main",))
     s = _FakeSession(reg)
     await session_cmd(s, "switch nope")
     assert not [m for m in s.outbox_calls if m.kind == "__session_switch_request__"]
-    assert "nope" in s.reply_text(), "user-facing error names the bad sid"
+    err = s.reply_text()
+    assert "nope" in err, "user-facing error names the bad sid"
     assert any(m.kind == "error" for m in s.outbox_calls), "replied as an error"
+    assert "partial" in err.lower(), "tells user partial prefix is not supported"
+    assert "session name" in err.lower() or "full" in err.lower(), "guides toward name/full-ID"
 
 
 @pytest.mark.asyncio
