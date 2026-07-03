@@ -115,6 +115,52 @@ def test_navigate_skips_non_selectable_rows() -> None:
     assert mixed.at_first_selectable is True
 
 
+def test_scroll_follows_cursor_down() -> None:
+    """Tier 2: when set_max_visible(N) is set and the cursor moves below the visible
+    window, scroll advances so the cursor stays in the visible range [scroll, scroll+N)."""
+    region = Region()
+    region.set_max_visible(3)
+    region.register(_Element(["a", "b", "c", "d", "e"]))
+    # cursor starts at 0, scroll = 0 → visible rows 0..2
+    assert region.cursor == 0
+    assert region.scroll == 0
+    region.navigate(1)   # cursor → 1, still in [0..2]
+    assert region.scroll == 0
+    region.navigate(1)   # cursor → 2, still in [0..2]
+    assert region.scroll == 0
+    region.navigate(1)   # cursor → 3, exceeds scroll+3=3 → scroll → 1
+    assert region.cursor == 3
+    assert region.scroll == 1
+    region.navigate(1)   # cursor → 4, scroll → 2
+    assert region.cursor == 4
+    assert region.scroll == 2
+
+
+def test_scroll_follows_cursor_up() -> None:
+    """Tier 2: when the cursor moves above the visible window, scroll retracts."""
+    region = Region()
+    region.set_max_visible(3)
+    region.register(_Element(["a", "b", "c", "d", "e"]))
+    region.navigate(4)   # jump to last row, scroll follows
+    assert region.cursor == 4
+    region.navigate(-3)  # cursor → 1; scroll retracts to keep cursor visible
+    assert region.cursor == 1
+    assert region.scroll <= 1
+
+
+def test_scroll_resets_on_register() -> None:
+    """Tier 2: registering a new element resets scroll to 0 (cursor back to top)."""
+    region = Region()
+    region.set_max_visible(3)
+    region.register(_Element(["a", "b", "c", "d", "e"]))
+    region.navigate(4)
+    assert region.scroll > 0
+    region.clear()
+    assert region.scroll == 0
+    region.register(_Element(["x", "y"]))
+    assert region.scroll == 0
+
+
 def test_select_inert_until_a_selectable_row_exists() -> None:
     """Tier 2: F5 — select on a read-only-only region is a no-op; once a
     selectable element is added the cursor reaches it and select fires."""

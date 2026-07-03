@@ -72,14 +72,19 @@ def test_rewind_is_registered() -> None:
 
 
 class _StubRewindRegistry:
+    # list_rewind_points() returns ascending seq (oldest first), mirroring the real impl.
     def list_rewind_points(self, **_kw):
-        return [{"seq": 42, "kind": "turn"}, {"seq": 38, "kind": "turn"}]
+        return [{"seq": 38, "kind": "turn"}, {"seq": 42, "kind": "turn"}]
 
 
 @pytest.mark.asyncio
 async def test_bare_rewind_opens_picker_via_command_ui_and_text_fallback() -> None:
     """Tier 2: bare /rewind (F4) publishes a command-UI request (the inline region
-    selector) AND a __rewind_list__ text fallback (the --cui path)."""
+    selector) AND a __rewind_list__ text fallback (the --cui path).
+
+    The slash handler reverses list_rewind_points() so the picker shows most-recent
+    checkpoints first (seq 42 before seq 38 when 42 is the latest WAL seq).
+    """
     session = _CapturingSession(registry=_StubRewindRegistry())
     await _handler().handler(session, "")
     assert session.pending_command_ui == {

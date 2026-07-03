@@ -46,3 +46,18 @@ def test_build_rewind_command_ui_select_submits_rewind_seq() -> None:
     assert el.lines() == ["seq 42 · turn", "seq 38 · turn"]
     el.on_select(0)
     assert submitted == ["/rewind 42"]
+
+
+def test_rewind_rows_preserves_caller_order() -> None:
+    """Tier 2: rewind_rows() is order-preserving — it shows rows in exactly the
+    order the caller provides. The /rewind slash handler is responsible for passing
+    list_rewind_points() in reverse (most-recent first) before calling this."""
+    rows, submits = rewind_rows([
+        {"seq": 100, "kind": "phase"},
+        {"seq": 50, "kind": "turn"},
+        {"seq": 10, "kind": "turn"},
+    ])
+    # Order unchanged — most-recent-first is the caller's responsibility.
+    assert rows[0].startswith("seq 100"), f"expected seq 100 first, got: {rows}"
+    assert rows[-1].startswith("seq 10"), f"expected seq 10 last, got: {rows}"
+    assert submits == ["/rewind 100", "/rewind 50", "/rewind 10"]

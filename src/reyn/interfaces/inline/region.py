@@ -68,6 +68,17 @@ class Region:
     def __init__(self) -> None:
         self._elements: list[RegionElement] = []
         self._cursor = 0
+        self._scroll = 0
+        self._max_visible: int | None = None
+
+    def set_max_visible(self, n: int) -> None:
+        """Cap the rendered viewport to n rows; navigate scrolls to keep the cursor in view."""
+        self._max_visible = n
+
+    @property
+    def scroll(self) -> int:
+        """Viewport row offset (0 = top); advances when the cursor leaves the visible window."""
+        return self._scroll
 
     def register(self, element: RegionElement) -> None:
         """Add an element and reset the focus cursor to the first selectable row."""
@@ -84,6 +95,7 @@ class Region:
         """Drop all elements (e.g. on teardown) and reset the cursor."""
         self._elements.clear()
         self._cursor = 0
+        self._scroll = 0
 
     @staticmethod
     def _selectable(element: RegionElement) -> bool:
@@ -105,6 +117,15 @@ class Region:
     def _reset_cursor(self) -> None:
         sel = self._selectable_indices()
         self._cursor = sel[0] if sel else 0
+        self._scroll = 0
+
+    def _update_scroll(self) -> None:
+        if self._max_visible is None:
+            return
+        if self._cursor < self._scroll:
+            self._scroll = self._cursor
+        elif self._cursor >= self._scroll + self._max_visible:
+            self._scroll = self._cursor - self._max_visible + 1
 
     @property
     def visible(self) -> bool:
@@ -158,6 +179,7 @@ class Region:
             pos = after[0] if after else len(sel) - 1
         pos = max(0, min(pos + delta, len(sel) - 1))
         self._cursor = sel[pos]
+        self._update_scroll()
 
     def select(self) -> None:
         """Activate the focused row → its owning element's ``on_select``.

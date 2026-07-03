@@ -32,7 +32,7 @@ async def rewind_cmd(session: "object", args: str) -> None:
     # consumed (a silent no-op before this).
     if not arg:
         registry = getattr(session, "_registry", None)
-        points = registry.list_rewind_points() if registry is not None else []
+        points = list(reversed(registry.list_rewind_points())) if registry is not None else []
         if not points:
             await reply(session, "/rewind: no earlier checkpoints to rewind to")
             return
