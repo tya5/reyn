@@ -90,6 +90,20 @@ _SLASH_COMPLETER = _SlashCompleter()
 _ABOVE_REGION_MAX_HEIGHT = 12
 
 
+def _picker_hint(has_picker_focus: bool, key: str | None) -> str:
+    """Return the status-bar hint for the above-region picker state.
+
+    Pure function so the focus-dependent and hint-selection logic are
+    separately testable: the caller resolves ``has_picker_focus`` from
+    ``get_app().layout.has_focus()`` and passes the result in.
+    """
+    if not has_picker_focus:
+        return "  [↓ menu · ↑ history · /quit]"
+    if key and key.startswith("iv:"):
+        return "  [↑↓ select · enter confirm]"
+    return "  [↑↓ select · enter · esc cancel]"
+
+
 @dataclass(frozen=True)
 class ChipSpec:
     """One status-bar chip: label + live value + optional expansion element.
@@ -589,7 +603,10 @@ async def run_inline_input(registry, renderer, config=None) -> None:
             if i < len(_CHIP_SPECS) - 1:
                 frags.append((f"fg:{_CC_DIM}", "│"))
         if not focused:
-            hint = "  [↓ menu · ↑ history · /quit]"
+            hint = _picker_hint(
+                get_app().layout.has_focus(above_region_win),
+                region_holder["key"],
+            )
         elif menu["open"] and menu_region.cursor_on_selectable:
             hint = "  [↑↓ select · enter switch · esc close]"
         elif menu["open"]:
