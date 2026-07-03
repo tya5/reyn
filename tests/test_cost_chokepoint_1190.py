@@ -138,11 +138,11 @@ def test_ledger_persists_purpose_and_omits_when_none(tmp_path: Path) -> None:
     """Tier 2: the budget ledger persists `purpose` when given, and omits the
     field entirely when None (pre-#1190 lines stay byte-identical)."""
     ledger = BudgetLedger(tmp_path / "ledger.jsonl")
-    ledger.append(agent="a", model="m", tokens=10, cost_usd=0.0, purpose="phase")
+    ledger.append(agent="a", model="m", tokens=10, cost_usd=0.0, purpose="judge")
     ledger.append(agent="a", model="m", tokens=5, cost_usd=0.0)  # no purpose
 
     lines = [json.loads(line) for line in (tmp_path / "ledger.jsonl").read_text().splitlines() if line.strip()]
-    assert lines[0]["purpose"] == "phase"
+    assert lines[0]["purpose"] == "judge"
     assert "purpose" not in lines[1], "None purpose must be omitted (legacy byte-identical)"
 
 
@@ -160,8 +160,7 @@ def test_recorded_acompletion_rejects_unknown_purpose() -> None:
         ))
     # every advertised purpose is accepted (guards against the list drifting out
     # of sync with the assert).
-    assert set(LLM_PURPOSES) >= {"main", "phase", "compaction", "judge",
-                                 "skill_node_adapt", "dogfood"}
+    assert set(LLM_PURPOSES) >= {"main", "compaction", "judge", "dogfood"}
 
 
 def test_compaction_engine_threads_agent(monkeypatch) -> None:

@@ -1390,7 +1390,7 @@ def routing_for_spec(spec: "ModelSpec | None") -> dict | None:
 # recorded_acompletion call must tag one so /cost can break spend down by where
 # the LLM call originated. ``dogfood`` covers test/trace sites (recorder=None).
 LLM_PURPOSES: tuple[str, ...] = (
-    "main", "phase", "compaction", "judge", "skill_node_adapt", "dogfood",
+    "main", "compaction", "judge", "dogfood",
 )
 
 

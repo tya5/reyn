@@ -172,7 +172,7 @@ class BudgetLedger:
         """Append one LLM-call record and fsync.
 
         ``purpose`` (#1190) is the cost-attribution bucket
-        (main/phase/compaction/judge/skill_node_adapt/dogfood). It is omitted
+        (main/compaction/judge/dogfood). It is omitted
         from the record when None so pre-existing ledger lines stay
         byte-identical.
         """
@@ -305,8 +305,8 @@ class BudgetTracker:
         self._config = config
         self._agent_tokens: dict[str, int] = defaultdict(int)
         self._agent_cost_usd: dict[str, float] = defaultdict(float)
-        # #1190 stage (iii): per-purpose cost attribution (main/phase/compaction/
-        # judge/skill_node_adapt/dogfood) for the /budget breakdown payoff.
+        # #1190 stage (iii): per-purpose cost attribution
+        # (main/compaction/judge/dogfood) for the /budget breakdown payoff.
         self._purpose_tokens: dict[str, int] = defaultdict(int)
         self._purpose_cost_usd: dict[str, float] = defaultdict(float)
         self._call_window: dict[str, deque[float]] = defaultdict(deque)
@@ -1114,7 +1114,7 @@ def format_budget_full(snapshot: dict, attached: str | None) -> str:
         lines.append("")
 
     # #1190 stage (iii): per-purpose cost attribution — where the spend went
-    # (main / phase / compaction / judge / skill_node_adapt / dogfood).
+    # (main / compaction / judge / dogfood).
     purpose_tokens = snapshot.get("purpose_tokens") or {}
     purpose_cost = snapshot.get("purpose_cost_usd") or {}
     if purpose_tokens or purpose_cost:
