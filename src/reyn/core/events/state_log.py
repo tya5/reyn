@@ -14,15 +14,11 @@ like LLM calls live in the audit log under `.reyn/events/`):
   chain_update        — pending_chain's waiting_on shrunk
   chain_resolve       — pending_chain completed
   chain_timeout_fired — PR18 watchdog fired
-  skill_started       — skill execution begun; creates per-skill snapshot
-  skill_phase_advanced — skill transitioned to next phase
-  step_started        — a step within a phase has begun
+  step_started        — a plan step has begun
   step_completed      — a step completed successfully (result stored)
   step_failed         — a step failed (error stored)
   intervention_dispatched — ask_user / permission request emitted
   intervention_resolved   — intervention answered
-  skill_resumed       — audit marker; no agent-level state mutation
-  skill_completed     — skill execution finished; deletes per-skill snapshot
 
 Per P7: this is OS-level generic infrastructure — `kind` strings and
 field names live here, not in any skill/domain code.
@@ -56,18 +52,12 @@ WAL_EVENT_KINDS = (
     "chain_update",
     "chain_resolve",
     "chain_timeout_fired",
-    # NEW (skill resume design — PR-state-foundation)
-    "skill_started",
-    "skill_phase_advanced",
+    # plan-step lifecycle (read by the replay/rewind analysis)
     "step_started",
     "step_completed",
     "step_failed",
     "intervention_dispatched",
     "intervention_resolved",
-    "skill_resumed",
-    "skill_completed",
-    # NEW (PR-resume-ux β U1) — skill discarded by user via prompt or /skill discard
-    "skill_discarded",
     # NEW (R-D12) — durable buffered intervention answer that survives a
     # second crash before the resuming skill consumes it
     "intervention_answer_buffered",

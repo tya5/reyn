@@ -62,7 +62,7 @@ EVENT_AUDIT_REQUIREMENTS: dict[str, frozenset[str]] = {
     # turn_started: emitted in Session.run_one_iteration() after the trigger
     #   is consumed from the inbox and before dispatch to _handle_*.
     # kind: the inbox message kind that triggered this turn (e.g. "user",
-    #   "skill_completed", "task_ready"). Lets subscribers distinguish human
+    #   "agent_response", "task_ready"). Lets subscribers distinguish human
     #   triggers from automated ones without parsing the payload.
     "turn_started": frozenset({"kind"}),
     # turn_completed: emitted in Session._run_router_loop() immediately after

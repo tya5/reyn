@@ -5,7 +5,7 @@ re-drain (no WAL append lands past the reset-record).
     task vs a finished-before-the-cancel-landed task (vs the old hardcoded
     "in-flight cancelled" literal that lied about finished runs).
 (2) Re-drain: await_quiescent loops to a fixpoint, so an append SCHEDULED DURING
-    the join (the join↔append race that let a skill_completed leak past the
+    the join (the join↔append race that let a WAL append leak past the
     reset-record) is still joined before quiescence returns — vector-agnostic.
 
 Real Session + StateLog (no mocks).
