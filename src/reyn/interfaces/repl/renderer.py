@@ -386,6 +386,8 @@ def _summarize_result(tool, result) -> str:
             return f"Wrote {path}" if path else "Wrote file"
         if op == "edit":
             return f"Edited {path}" if path else "Edited file"
+        if op == "delete":
+            return f"Deleted {path}" if path else "Deleted file"
         if op == "grep":
             count = result.get("count")
             n = int(count) if isinstance(count, (int, float)) else 0
