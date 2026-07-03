@@ -9,7 +9,7 @@ audience: [human, agent]
 Reyn's time-travel system lets you rewind the agent to any past checkpoint and
 optionally branch from there. It is a separate feature from crash recovery — the two use different mechanisms and serve different purposes.
 
-> **Crash recovery** (`ReplayEngine` / WAL) automatically restores the agent after an unexpected failure — it is transparent to the user and replays forward to where the run stopped. **Time-travel** is an intentional, user-initiated rewind to an earlier point, with the option to fork a new branch of history.
+> **Crash recovery** (WAL + snapshot reconstruction) automatically restores the agent after an unexpected failure — state is rebuilt from the WAL (`.reyn/state/wal.jsonl`) plus seq-keyed snapshots, transparent to the user, replaying forward to where the run stopped. **Time-travel** is an intentional, user-initiated rewind to an earlier point, with the option to fork a new branch of history.
 
 ## Concepts
 

@@ -15,7 +15,7 @@ There is no separate logger, tracer, or telemetry hook. The same channel powers:
 - **Live debug output.** Console reporters subscribe to the event stream and render each event as it arrives.
 - **Replay.** `reyn events <log_file>` re-renders a saved log to the console without re-invoking the LLM.
 - **Eval analytics.** Eval reports aggregate event data (token usage, phase counts, validation errors) per case.
-- **Time-travel debugging and crash recovery (both implemented).** `ReplayEngine` provides read-only step-by-step inspection of any past run. Crash recovery uses the WAL (`.reyn/state/wal.jsonl`) as its substrate — not the audit log. User-facing rewind/resume (PITR + global rewind) is a separate design tracked in [#1533](https://github.com/tya5/reyn/issues/1533).
+- **Crash recovery (implemented).** Crash recovery reconstructs agent state from the WAL (`.reyn/state/wal.jsonl`) plus seq-keyed snapshots as its substrate — not the audit log. User-facing rewind/resume (PITR + global rewind) is a separate design tracked in [#1533](https://github.com/tya5/reyn/issues/1533).
 
 If the OS is the only mutator (P3) and every mutation emits an event, the log is sufficient. There's no "what else happened" to chase down.
 
@@ -102,7 +102,6 @@ You don't need a debugger; the log already has the information.
 - [Reference: events](../../reference/runtime/events.md) — the full event taxonomy
 - [Reference: events CLI](../../reference/cli/run.md) — `--events` flag on `reyn run`
 
-Events are not just an audit trail — they are the substrate for time-travel
-debugging. See [reference/dogfood-tracing.md](../../reference/dogfood-tracing.md)
-for `--mode replay` (step-by-step walk of a past run) and `--mode compare`
-(side-by-side diff between two runs).
+Events are not just an audit trail — they are the substrate for crash recovery
+and user-facing time-travel (`/rewind`). For payload-level trace inspection,
+see [reference/dogfood-tracing.md](../../reference/dogfood-tracing.md).
