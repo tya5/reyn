@@ -41,7 +41,6 @@ from reyn.config.embedding import (
     EmbeddingConfig,
 )
 from reyn.config.execution import (
-    SkillResumeConfig,
     ToolUseConfig,
 )
 from reyn.config.infra import (
@@ -207,9 +206,6 @@ class ReynConfig:
     events: EventsConfig = field(default_factory=EventsConfig)
     # Budget / rate-limit policy (PR22).
     cost: CostConfig = field(default_factory=CostConfig)
-    # Skill resume policy (PR-skill-resume) — how to handle ambiguous
-    # steps on restart.
-    skill_resume: SkillResumeConfig = field(default_factory=SkillResumeConfig)
     # #1593 — per-layer tool-use scheme selector (chat/step/phase). Default all
     # universal-category (today's behaviour); generalizes universal_wrappers_enabled.
     tool_use: ToolUseConfig = field(default_factory=ToolUseConfig)

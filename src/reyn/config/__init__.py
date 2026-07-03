@@ -16,9 +16,9 @@ Submodules (#1682 grouping, by domain concern not yaml-key shape):
     root       — ReynConfig + model/tier fields + model_class_for
     loader     — load_config / _merge / _load_yaml / shape-wiring (yaml-coupled core)
     chat       — Reasoning/Chat/Loop/Compaction/Timeout/OnLimit/Safety
-    embedding  — Embedding/SkillSearch/ActionRetrieval
+    embedding  — Embedding/ActionRetrieval
     media      — Voice/Multimodal/Web/WebFetch
-    execution  — Plan/SkillResume/SelfImprovement/ToolUse
+    execution  — Plan/ToolUse
     infra      — Agent/Auth/Sandbox/Events/Eval/Cron/Python
 """
 # Commit 1 (#1682 #3): all definitions still live in `root`; the submodule split

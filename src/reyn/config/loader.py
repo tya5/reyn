@@ -18,7 +18,6 @@ from reyn.config.embedding import (  # #1682 #3 cross-section
     _build_embedding_config,
 )
 from reyn.config.execution import (  # #1682 #3 cross-section
-    _build_skill_resume_config,
     _build_tool_use_config,
 )
 from reyn.config.infra import (  # #1682 #3 cross-section
@@ -468,7 +467,6 @@ def load_config(cwd: Path | None = None) -> ReynConfig:
         chat=_build_chat_config(merged.get("chat")),
         events=_build_events_config(merged.get("events")),
         cost=cost,
-        skill_resume=_build_skill_resume_config(merged.get("skill_resume")),
         tool_use=_build_tool_use_config(merged.get("tool_use")),
         voice=_build_voice_config(merged.get("voice")),
         embedding=_build_embedding_config(merged.get("embedding")),
