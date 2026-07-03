@@ -109,15 +109,12 @@ mindmap
       embedding
       voice
       events
-      skill_search
       models
       auth
       mcp
       multimodal
       python
       cron
-      self_improvement
-      skill_resume
       action_retrieval
       hooks
     🔒 Permissions
@@ -427,7 +424,6 @@ Main reference: **[`reyn.yaml`](reference/config/reyn-yaml.md)**
 | `embedding` | Model classes / batch_size / cost_warn_threshold | [RAG concepts](concepts/data-retrieval/rag.md) |
 | `voice` | Whisper model / language / device — optional `reyn[voice]` | [Voice concepts](concepts/tools-integrations/voice.md) |
 | `events` | Rotation size/age + cleanup_period_days | [Events reference](reference/runtime/events.md) |
-| `skill_search` | BM25 threshold / top_k for skill catalogue routing | Skill frontmatter |
 | `models` | Class → LiteLLM model string with `extends` chain | [reyn-yaml § models](reference/config/reyn-yaml.md#models-block) |
 | `permissions` | Project-wide default capability policy | [Permissions config](reference/config/permissions.md) |
 | `multi-agent` | Agent and topology defaults | [Multi-agent config](reference/config/multi-agent.md) |
@@ -437,8 +433,6 @@ Main reference: **[`reyn.yaml`](reference/config/reyn-yaml.md)**
 | `multimodal` | Media handling caps (`max_bytes`, per-part token cost) | [reyn-yaml](reference/config/reyn-yaml.md) |
 | `python` | `python`-step execution policy (safe / unsafe subprocess) | Preprocessor |
 | `cron` | Cron-scheduled skill job definitions | [reyn-yaml](reference/config/reyn-yaml.md) |
-| `self_improvement` | Skill self-improvement (eval-plan-apply) settings | [reyn-yaml](reference/config/reyn-yaml.md) |
-| `skill_resume` | Crash-resume behaviour for skill runs | Skill Resume |
 | `action_retrieval` | Action-catalog `search_actions` retrieval tuning | [Universal catalog](concepts/tools-integrations/universal-catalog.md) |
 | `hooks` | Agent-lifecycle push/shell hooks at 8 points (`turn_start/end`, `session_start/end`, `skill_start/end`, `task_start/end`). `push` mode: `wake:false` passive context ride-along, or `wake:true` self-continuation bounded by `safety.loop.max_hook_driven_turns`. `shell`: sandbox-gated side-effect, output ignored. Shell-hook consent routes through the intervention bus → TUI Pending-tab modal (`[A]lways` / `[y]es` / `[n]o`; `Always` persists to `~/.reyn/shell-hooks-allowlist.json`); falls back to stdin on non-TUI. All shell runs emit `hook_shell_executed` P6 event (Events-tab "tool" group; prefix `shell_exec:` or `shell_push:`). Hooks emit attributed `[hook:name]` messages — history is never silently mutated. | [reyn-yaml § hooks](reference/config/reyn-yaml.md#hooks-block) · [Concepts: hooks](concepts/runtime/hooks.md) |
 | Config hot-reload | Runtime re-read of the IN-set (`.reyn/mcp.yaml` / `cron.yaml` / `hooks.yaml`) at the turn boundary without a process restart. OUT-set (`reyn.yaml`: security / budget / loop valve) is restart-only — the file-split is the structural write-gate. Two triggers: operator `/reload` and agent `hooks_add` LLM-op. Validate-before-apply + per-layer boot resilience + sandbox/loop-valve = safe-by-construction. | [Concepts: Config hot-reload](concepts/runtime/config-hot-reload.md) |
