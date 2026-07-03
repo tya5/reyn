@@ -213,6 +213,26 @@ def test_error_message_field_shown_not_raw_dict() -> None:
     assert "ok" not in out.lower() or "False" not in out, "must not dump raw repr"
 
 
+def test_mcp_result_shows_content_first_line() -> None:
+    """Tier 2: MCP tool result (kind='mcp', content='...') shows first content line.
+
+    MCP op results carry {"kind": "mcp", "status": "ok", "content": <joined text>}.
+    Without this branch the status fallback shows the generic 'ok' with no hint of
+    what the MCP tool returned.  The first line of content is the minimal useful
+    preview — it degrades to 'ok' when content is absent or empty.
+    """
+    assert summarize_tool_result(
+        "mcp__github__get_issue",
+        {"kind": "mcp", "status": "ok", "server": "github", "tool": "get_issue",
+         "content": "Issue #42: Fix the thing\nBody: more detail here", "media_blocks": []},
+    ) == "Issue #42: Fix the thing"
+    assert summarize_tool_result(
+        "mcp__slack__get_message",
+        {"kind": "mcp", "status": "ok", "server": "slack", "tool": "get_message",
+         "content": "", "media_blocks": []},
+    ) == "ok"
+
+
 def test_file_list_shows_entry_count() -> None:
     """Tier 2: file__list result ({path, entries}) shows 'Listed N entries'.
 

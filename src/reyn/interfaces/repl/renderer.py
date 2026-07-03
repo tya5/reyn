@@ -417,6 +417,10 @@ def _summarize_result(tool, result) -> str:
         if isinstance(chunks, list):
             n = len(chunks)
             return f"{n} chunk{'s' if n != 1 else ''}"
+        if result.get("kind") == "mcp":
+            mcp_content = result.get("content")
+            if isinstance(mcp_content, str) and mcp_content:
+                return _short(mcp_content.split("\n")[0], 60)
         if status:
             return str(status)
     return _short(result, 80)
