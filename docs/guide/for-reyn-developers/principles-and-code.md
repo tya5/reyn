@@ -8,7 +8,7 @@ audience: [human]
 
 Each of Reyn's eight OS invariants is enforced by a specific combination of type constraints, compiler checks, and runtime validation — not just by convention. This page maps each principle to the exact files and mechanisms that uphold it.
 
-For the *why* behind each principle, see [concepts/architecture/principles.md](../../concepts/architecture/principles.md).
+This page focuses on the *how*; the conceptual rationale is in CLAUDE.md.
 
 ---
 
@@ -228,7 +228,7 @@ from . import my_op as _my_op  # noqa: F401, E402
 
 ## See also
 
-- [concepts/architecture/principles.md](../../concepts/architecture/principles.md) — full rationale for each principle
+
 - [reference/runtime/control-ir.md](../../reference/runtime/control-ir.md) — op kind catalogue
 - [reference/runtime/llm-output-contract.md](../../reference/runtime/llm-output-contract.md) — the JSON the OS validates
 - [deep-dives/contributing/testing.md](../../deep-dives/contributing/testing.md) — test tier requirements

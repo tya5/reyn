@@ -191,8 +191,5 @@ pre-1.0 の安定性注意書きが適用される: これらの contract はま
 
 ## See also
 
-- [../architecture/principles.md](../architecture/principles.md) — P1–P8 (特に P3、P4、P7)
-- [../architecture/phase-vs-skill-vs-os.md](../architecture/phase-vs-skill-vs-os.md) — レイヤー境界アーキテクチャ
 - [../architecture/llm-as-decision-engine.md](../architecture/llm-as-decision-engine.md) — LLM を制約する理由、レスキューしない理由
 - [../runtime/events.md](../runtime/events.md) — post-call の道具としての observability (P6)
-- [../architecture/architecture.md](../architecture/architecture.md) — component layer と OS-as-constant モデル

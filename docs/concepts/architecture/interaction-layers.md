@@ -125,4 +125,3 @@ the autonomy-first frameworks where these paths are ad hoc.
 
 - [LLM invocation surfaces](llm-invocation-surfaces.md) — router vs. phase (a different axis: how the LLM is *called*, not how the agent is *reached*)
 - [Multi-agent](../multi-agent/multi-agent.md) · [A2A](../multi-agent/a2a.md) · [MCP](../tools-integrations/mcp.md)
-- [Principles](principles.md) — P4 (constrained decision engine), the governance stance behind this model

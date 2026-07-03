@@ -113,4 +113,3 @@ governance-first 側の対応物です。
 
 - [LLM invocation surfaces](llm-invocation-surfaces.md) — router vs phase（別の軸: LLM が *どう呼ばれるか* であって agent に *どう到達するか* ではない）
 - [マルチエージェント](../multi-agent/multi-agent.md) · [A2A](../multi-agent/a2a.md) · [MCP](../tools-integrations/mcp.md)
-- [Principles](principles.md) — P4（制約された decision engine）、本モデルの背後にある governance 姿勢

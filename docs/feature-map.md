@@ -228,10 +228,10 @@ mindmap
 #### Phase Engine
 | Feature | Description | Documentation |
 |---------|-------------|---------------|
-| Act/Decide loop | LLM↔op volleys until the LLM emits a transition/finish/abort decision | [LLM Output Contract](reference/runtime/llm-output-contract.md) · [Principles P3/P4](concepts/architecture/principles.md) |
+| Act/Decide loop | LLM↔op volleys until the LLM emits a transition/finish/abort decision | [LLM Output Contract](reference/runtime/llm-output-contract.md) |
 | Context build | Constructs LLM input from phase instructions, current artifact, candidates, and available ops | [Context Frame](reference/runtime/context-frame.md) |
 | Candidate gate | LLM picks next phase only from OS-provided candidates (P4) | [LLM as Decision Engine](concepts/architecture/llm-as-decision-engine.md) |
-| Phase rollback | Revert to predecessor phase when downstream output is rejected | [Principles P1/P2](concepts/architecture/principles.md) |
+| Phase rollback | Revert to predecessor phase when downstream output is rejected | [LLM Output Contract](reference/runtime/llm-output-contract.md) |
 
 #### LLM Validation
 | Feature | Description | Documentation |
@@ -656,7 +656,7 @@ Cross-surface `ask_user` and permission routing — the same prompt reaches the 
 | `pipeline` topology | Ordered — each member sends only to next | — |
 | `_default` topology | Auto-synthesized full mesh for unassigned agents | [Multi-agent config](reference/config/multi-agent.md) |
 | MessageBus | Quiescence-based coordination with `reply_to` correlation | [Multi-agent config](reference/config/multi-agent.md) |
-| `delegate_to_agent` | Async-dispatch to peer with topology permission gate | [Concepts: principles P4](concepts/architecture/principles.md) |
+| `delegate_to_agent` | Async-dispatch to peer with topology permission gate | [Multi-agent concepts](concepts/multi-agent/multi-agent.md) |
 | Agent hops cap | Max delegation depth via `safety.loop.max_agent_hops` | [reyn-yaml § safety](reference/config/reyn-yaml.md#safety-block) |
 | `chain_id` propagation | Trace multi-hop chains in P6 events | [Events reference](reference/runtime/events.md) |
 

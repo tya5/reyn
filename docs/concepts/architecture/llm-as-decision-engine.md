@@ -58,7 +58,5 @@ So reyn pays the cost of writing skill graphs explicitly and gets predictability
 
 ## See also
 
-- [../architecture/principles.md](../architecture/principles.md) — P3, P4, P8
-- [../architecture/phase-vs-skill-vs-os.md](../architecture/phase-vs-skill-vs-os.md)
 - [Reference: llm-output-contract](../../reference/runtime/llm-output-contract.md)
 - [Reference: context-frame](../../reference/runtime/context-frame.md)

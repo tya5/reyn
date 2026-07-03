@@ -67,4 +67,4 @@ reyn run direct_llm "..." --events
 
 - Reference: skill.md frontmatter
 - `reference/runtime/events.md` — event types (Phase 2)
-- [Concepts: architecture](../../concepts/architecture/architecture.md)
+- Concepts: architecture (architecture doc removed)

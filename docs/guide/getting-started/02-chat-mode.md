@@ -89,7 +89,7 @@ See [concepts/memory](../../concepts/data-retrieval/memory.md) for the full mode
 
 ## What's actually happening
 
-The OS doesn't know about "chat". It just runs a skill — `skill_router` — that happens to pick another skill (or, in multi-agent setups, a peer agent) to delegate to. The router skill is a normal stdlib skill, not special tooling. This is the same composition pattern any of your skills would use ([P7](../../concepts/architecture/principles.md#p7-os-is-skill-agnostic-critical)).
+The OS doesn't know about "chat". It just runs a skill — `skill_router` — that happens to pick another skill (or, in multi-agent setups, a peer agent) to delegate to. The router skill is a normal stdlib skill, not special tooling. This is the same composition pattern any of your skills would use (P7 (principles doc removed)).
 
 ## What you learned
 
@@ -106,4 +106,4 @@ You've seen Reyn deliver value as a chat agent. From here:
 - **[Tutorial 04 — Running a skill](04-running-a-skill.md)** — run a skill from the CLI in depth (input formats, flags, event log).
 - **[Tutorial 05 — Writing an eval](05-writing-an-eval.md)** — pin behaviour with a rubric.
 - **Multi-agent (later):** How-to: Build an agent team walks through `reyn agent new`, role-specific allowlists, and `/attach`. Background reading: [concepts/multi-agent](../../concepts/multi-agent/multi-agent.md), [concepts/topology](../../concepts/multi-agent/topology.md).
-- **The why:** [concepts/principles](../../concepts/architecture/principles.md).
+- **The why:** concepts/principles (principles doc removed).

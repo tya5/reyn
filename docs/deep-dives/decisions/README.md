@@ -125,7 +125,7 @@ discarded paths so future readers understand what was tried and why.
 
 ## Related reading
 
-- [Principles (P1–P8)](../concepts/architecture/principles.md) — invariants the
+- Principles (P1–P8) (principles doc removed) — invariants the
   decisions must respect
 - Skill resume (page removed) — user-facing summary of
   the resulting machinery

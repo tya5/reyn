@@ -191,8 +191,5 @@ This question is P7 applied to the product boundary, not just the code boundary.
 
 ## See also
 
-- [../architecture/principles.md](../architecture/principles.md) — P1–P8 (especially P3, P4, P7)
-- [../architecture/phase-vs-skill-vs-os.md](../architecture/phase-vs-skill-vs-os.md) — layer boundary architecture
 - [../architecture/llm-as-decision-engine.md](../architecture/llm-as-decision-engine.md) — why the LLM is constrained, not rescued
 - [../runtime/events.md](../runtime/events.md) — observability as the post-call tool (P6)
-- [../architecture/architecture.md](../architecture/architecture.md) — component layers and the OS-as-constant model

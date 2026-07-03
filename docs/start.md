@@ -16,7 +16,7 @@ reyn runs LLM workflows as a state machine. Phases are stateless and reusable; a
 | Install and run your first skill | [Getting started](guide/getting-started/01-installation.md) |
 | Solve a specific problem (chat user) | [Guide / for users](guide/for-users/manage-permissions.md) |
 | Look up exact behavior | [Reference](reference/cli/run.md) |
-| Understand the design | [Concepts](concepts/architecture/principles.md) |
+| Understand the design | Concepts |
 | Read reyn through agent-engineering lenses | [Seven lenses](concepts/agent-engineering/index.md) |
 | Contribute | See `docs/deep-dives/contributing/` in the repository |
 

@@ -10,7 +10,7 @@ audience: [human, agent]
 
 ## Reyn の 2 layer マルチ agent
 
-Reyn はマルチ agent 機能を 1 つ持つのではなく、**2 つの独立した agent 間合成サーフェス** を持ちます。差別化の核心は、**両 layer で同じ OS invariant を維持する** ことです — [P4](../architecture/principles.md#p4-llm-is-a-constrained-decision-engine)（候補セット制約）、[P6](../architecture/principles.md#p6-events-are-the-audit-truth)（すべての transition に event）、そして permission システム。
+Reyn はマルチ agent 機能を 1 つ持つのではなく、**2 つの独立した agent 間合成サーフェス** を持ちます。差別化の核心は、**両 layer で同じ OS invariant を維持する** ことです — P4（候補セット制約）、P6（すべての transition に event）、そして permission システム。
 
 ```
 ┌──────────────────────────────────────────────────────────────────┐

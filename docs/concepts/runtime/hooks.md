@@ -236,7 +236,6 @@ The following capabilities are designed but not yet implemented:
 
 ## See also
 
-- [Principles](../architecture/principles.md) — P5 (workspace), P6 (events), P7 (no skill strings in OS)
 - [Workspace](workspace.md) — the single source of truth that hook push messages land in
 - [Events](events.md) — the P6 audit trail that records hook dispatch
 - [Permission model](permission-model.md) — the consent flow for shell hooks
