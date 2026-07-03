@@ -347,3 +347,27 @@ def test_agent_markdown_list_items_still_render_as_bullets() -> None:
     out = _plain("agent", "- alpha\n- beta\n- gamma")
     assert "•" in out
     assert "alpha" in out and "beta" in out and "gamma" in out
+
+
+def test_harden_soft_breaks_preserves_fenced_code_block_content_verbatim() -> None:
+    """Tier 2: content lines inside a fenced code block must NEVER gain trailing
+    spaces. Trailing whitespace is invisible on screen but present in copy-paste
+    and corrupts whitespace-significant tools (make, python indent, etc.).
+
+    The fence toggle (in_fence state) guards all lines between ``` or ~~~ delimiters.
+    """
+    # Plain fenced block — content bytes must survive unchanged.
+    code = "```python\nx = 1\ny = 2\n```"
+    assert _harden_soft_breaks(code) == code
+
+    # Mixed: prose + code block + prose. Code content must stay verbatim;
+    # prose lines may gain trailing spaces, that's expected.
+    mixed = "intro\n```\ncode_line_1\ncode_line_2\n```\noutro"
+    result = _harden_soft_breaks(mixed)
+    assert "code_line_1  " not in result, "trailing spaces leaked into code block"
+    assert "code_line_2  " not in result, "trailing spaces leaked into code block"
+    assert "code_line_1" in result and "code_line_2" in result
+
+    # Language-tagged fence (```python, ```typescript, etc.) — same guarantee.
+    tagged = "```typescript\nconst x = 1;\n```"
+    assert _harden_soft_breaks(tagged) == tagged

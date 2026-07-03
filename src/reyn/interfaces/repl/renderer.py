@@ -408,11 +408,13 @@ def _gutter_grid(gutter: str, gutter_style: str, body, *, row_style: str = "",
     return grid
 
 
-# Matches lines that are structural markdown elements: headings, blockquotes,
-# list items (unordered and ordered), code-fence delimiters, and blank lines.
-# Used by _harden_soft_breaks to decide which transitions must NOT gain a hard
-# line break (the parser uses single newlines between structural elements to
-# identify them; adding ``  `` would break that recognition).
+# Matches non-fence structural markdown elements outside fenced code blocks:
+# headings, blockquotes, list items (unordered/ordered), code-fence delimiters
+# (``` or ~~~, with optional language tag), and blank lines. Used by
+# _harden_soft_breaks to skip hardening on lines where the markdown parser
+# depends on the raw newline for element recognition. Fenced code block
+# CONTENT is handled separately (in_fence state) so trailing spaces are never
+# added inside a code block.
 _STRUCTURAL_LINE_RE = re.compile(
     r"^(#|>|```|~~~|\s*[-*+] |\s*\d+\. |$)"
 )
@@ -426,15 +428,32 @@ def _harden_soft_breaks(text: str) -> str:
     uses single newlines for visual separation; this preserves them as hard line
     breaks (CommonMark ``  \\n`` = ``<br>``).
 
-    Structural lines (headings, list items, blockquotes, code-fence delimiters,
-    blank lines) are left untouched — the parser uses the newlines around them
-    to recognise the element, and adding trailing spaces would break that.
+    Lines inside fenced code blocks (``` or ~~~ delimiters) are always preserved
+    verbatim — trailing spaces would corrupt code content (invisible on screen but
+    present in copy-paste and significant for whitespace-sensitive tools). Other
+    structural lines (headings, list items, blockquotes, blank lines) are also
+    exempt; the parser uses the raw newlines around them to recognise the element.
     """
     if not text:
         return text
     lines = text.split("\n")
     out = []
+    in_fence = False
     for i, line in enumerate(lines):
+        stripped = line.strip()
+        # Fence delimiters (``` or ~~~ with optional language tag) toggle the
+        # in-fence state. Always append verbatim — the delimiter itself is
+        # structural and must not gain trailing spaces.
+        if stripped.startswith("```") or stripped.startswith("~~~"):
+            in_fence = not in_fence
+            out.append(line)
+            continue
+        # Inside a fenced code block: preserve content bytes exactly.
+        if in_fence:
+            out.append(line)
+            continue
+        # Outside a fence: harden non-structural lines not adjacent to a
+        # structural one (heading / list / blockquote / blank / fence delimiter).
         is_structural = bool(_STRUCTURAL_LINE_RE.match(line))
         next_is_structural = i + 1 >= len(lines) or bool(
             _STRUCTURAL_LINE_RE.match(lines[i + 1])
