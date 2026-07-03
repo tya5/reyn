@@ -25,7 +25,6 @@ from reyn.config.infra import (  # #1682 #3 cross-section
     _build_auth_config,
     _build_cron_config,
     _build_delegation_config,
-    _build_eval_config,
     _build_events_config,
     _build_llm_config,
     _build_python_config,
@@ -474,7 +473,6 @@ def load_config(cwd: Path | None = None) -> ReynConfig:
         cost_warn=cost_warn,
         web=_build_web_config(merged.get("web")),
         multimodal=_build_multimodal_config(merged.get("multimodal")),
-        eval=_build_eval_config(merged.get("eval")),
         sandbox=_build_sandbox_config(merged.get("sandbox")),
         # #1800 slice 5b: the raw ``hooks:`` block, passed through (parsed by
         # ``load_hooks`` at Session construction). None/absent → empty list.
