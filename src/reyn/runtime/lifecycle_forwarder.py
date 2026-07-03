@@ -186,23 +186,36 @@ class ChatLifecycleForwarder:
             text = "[↑ history compacted]"
         self._enqueue(text)
 
-    # ── Router cap (session.py _handle_router_cap_exceeded) ──────────────
+    # ── Router cap / iteration limit ─────────────────────────────────────
+    # Two distinct ``limit_denied`` sources:
+    #   kind="router_cap"     — session.py, op-count exceeds operator cap
+    #   kind="max_iterations" — router_loop.py, iteration ceiling reached
 
     def on_limit_denied(self, data: dict) -> None:
-        """Surface a ``[✗ router cap hit: N ops (limit L)]`` error marker.
+        """Surface a ``[✗ … limit hit]`` marker distinguishing the two cap kinds.
 
-        ``session.py`` emits ``limit_denied`` when the loop's op-count exceeds
-        the operator-configured router cap. Without this handler the user only
-        sees whatever LLM wrap-up text the session synthesises — no inline
-        marker signals that the cap is WHY the turn ended early. ``kind``
-        is ``"router_cap"``; ``count`` and ``cap`` carry the numbers.
+        ``router_cap`` fires when the loop's tool-call count exceeds the
+        operator-configured cap (``safety.router_cap``); ``count`` and ``cap``
+        carry the numbers. ``max_iterations`` fires when the router's iteration
+        ceiling is hit; ``limit`` carries the configured maximum. Without this
+        handler the user only sees whatever LLM wrap-up text the session
+        synthesises — no inline marker signals that the cap is WHY the turn
+        ended early.
         """
-        count = data.get("count")
-        cap = data.get("cap")
-        if count is not None and cap is not None:
-            self._enqueue(f"[✗ router cap hit: {count} ops (limit {cap})]")
+        kind = data.get("kind", "")
+        if kind == "max_iterations":
+            limit = data.get("limit")
+            if limit is not None:
+                self._enqueue(f"[✗ iteration limit hit: {limit} iterations]")
+            else:
+                self._enqueue("[✗ iteration limit hit]")
         else:
-            self._enqueue("[✗ router cap hit]")
+            count = data.get("count")
+            cap = data.get("cap")
+            if count is not None and cap is not None:
+                self._enqueue(f"[✗ router cap hit: {count} ops (limit {cap})]")
+            else:
+                self._enqueue("[✗ router cap hit]")
 
     def _enqueue(self, text: str) -> None:
         # Fire-and-forget: lifecycle markers are advisory, never block the
