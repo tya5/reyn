@@ -6,8 +6,8 @@ runner pushes an envelope into the target agent's inbox with
 ``sender="cron:<name>"`` attribution, and the agent's router_loop
 consumes it as a normal attributed turn from a scheduled trigger.
 
-(Legacy skill-based jobs are no longer supported; the skill runtime was
-removed. Config parsing warns-and-skips any surviving ``skill`` entry.)
+(A cron job must be message-based: ``to`` + ``message``. A config entry
+lacking that shape — e.g. a legacy bare ``skill`` name — is rejected at load.)
 
 The transport collaborator is injected (= keeps this factory transport-agnostic):
 
@@ -71,8 +71,8 @@ def build_default_runner(
 
     async def _runner(job: "CronJob") -> str:
         if not job.is_message_based():
-            # All cron jobs are message-based; config warns-and-skips any legacy
-            # skill-based entry. A non-message job here is malformed.
+            # All cron jobs are message-based; config rejects any legacy
+            # non-message entry at load. A non-message job here is malformed.
             logger.warning(
                 "Cron job %r is not message-based (to=%r, message set=%s) — "
                 "skipping. Set both 'to' and 'message'.",
