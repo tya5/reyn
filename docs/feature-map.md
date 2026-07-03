@@ -71,13 +71,6 @@ mindmap
       retrieval
       CodeAct
       Per-call gate unchanged
-    📦 Stdlib Skills
-      direct_llm
-      index_docs
-      index_events
-      judge_phase
-      ops_report
-      word_stats_demo
     ⌨️ CLI
       reyn run
       reyn chat
@@ -363,20 +356,6 @@ How tools are presented to the LLM and how its calls are dispatched is a **plugg
 | `CodeAct` | Code-as-tools — the LLM writes a Python snippet whose in-code `tool()` calls run in a sandboxed subprocess under the same permission gate as a JSON call. Strongest for weak models | [Tool-Use Schemes](concepts/tools-integrations/tool-use-schemes.md) |
 
 > **Differentiation vs general agents:** the tool-use strategy is a swappable scheme — `enumerate-all` / `retrieval` / `CodeAct` / the default catalog — chosen per layer by config, *without* changing the OS. Because every scheme dispatches through the same exclude → permission → `dispatch_tool` gate (P4/P5), swapping the LLM-facing tool surface never weakens the security or validation pipeline. The presentation is data; the gate is constant.
-
----
-
-### Stdlib Skills
-
-| Skill | Description | Documentation |
-|-------|-------------|---------------|
-| `direct_llm` | Single-shot LLM fallback for catalogue gaps | [Reference](reference/stdlib/direct_llm.md) |
-
-| `index_docs` | Chunk / embed / index pipeline over file globs | [Reference](reference/stdlib/index_docs.md) |
-| `index_events` | Index P6 event log with incremental cursor tracking | [Reference](reference/stdlib/index_events.md) |
-| `judge_phase` | Score one phase artifact against quality criteria | [Reference](reference/stdlib/judge_phase.md) |
-| `ops_report` | Execution summary from indexed events for a period | [Reference](reference/stdlib/ops_report.md) |
-| `word_stats_demo` | Demo of the `python` preprocessor step pattern | [Reference](reference/stdlib/word_stats_demo.md) |
 
 ---
 
