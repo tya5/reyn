@@ -13,9 +13,6 @@ from __future__ import annotations
 
 # Events that must carry these audit fields (FP-0021)
 EVENT_AUDIT_REQUIREMENTS: dict[str, frozenset[str]] = {
-    # Workflow lifecycle (runtime.py)
-    "workflow_started": frozenset({"run_id", "skill"}),
-    "workflow_finished": frozenset({"run_id", "skill"}),
     # LLM cost events (llm.py _emit_chat_cost_events — cost-tab observability).
     # Minimal fields: llm_called carries model, llm_response_received carries the
     # usage/cost figures. skill is derived from the events file path (not an event

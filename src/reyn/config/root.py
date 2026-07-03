@@ -48,7 +48,6 @@ from reyn.config.infra import (
     AuthConfig,
     CronConfig,
     DelegationConfig,
-    EvalConfig,
     EventsConfig,
     LLMConfig,
     PythonConfig,
@@ -249,9 +248,6 @@ class ReynConfig:
     # Issue #364 — multi-modal cluster: cap binary media size (= images from
     # web__fetch / file__read / MCP) + iv-gated user permission when exceeded.
     multimodal: MultimodalConfig = field(default_factory=MultimodalConfig)
-    # FP-0007 Component A: trace export adapter config.
-    # Empty exporters list (default) = no export; full backward compat.
-    eval: EvalConfig = field(default_factory=EvalConfig)
     # FP-0017: sandbox backend selection + unsupported-platform policy.
     # Default: auto-select the best available backend for this platform.
     sandbox: SandboxConfig = field(default_factory=SandboxConfig)
