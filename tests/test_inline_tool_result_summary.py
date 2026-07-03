@@ -384,3 +384,48 @@ def test_unknown_shape_degrades_without_raising() -> None:
     weird = {"op": object(), "nested": [object()]}
     out = summarize_tool_result("x", weird)
     assert isinstance(out, str) and out  # some non-empty summary, no crash
+
+
+def test_judge_output_passed_shows_score() -> None:
+    """Tier 2: judge_output pass result shows 'Passed (score)' not raw dict.
+
+    judge_output returns {kind, score, passed, reason, threshold, on_fail} with no
+    status key; without this branch the raw dict repr leaked into the ⎿ row.
+    """
+    out = summarize_tool_result(
+        "judge_output",
+        {"kind": "judge_output", "score": 0.85, "passed": True,
+         "reason": "looks good", "threshold": 0.7, "on_fail": "retry"},
+    )
+    assert out == "Passed (0.85)"
+    assert "{" not in out
+
+
+def test_judge_output_failed_shows_score() -> None:
+    """Tier 2: judge_output fail result shows 'Failed (score)' not raw dict."""
+    out = summarize_tool_result(
+        "judge_output",
+        {"kind": "judge_output", "score": 0.23, "passed": False,
+         "reason": "incomplete", "threshold": 0.7, "on_fail": "retry"},
+    )
+    assert out == "Failed (0.23)"
+    assert "{" not in out
+
+
+def test_web_search_results_shows_count() -> None:
+    """Tier 2: web_search result ({kind, query, status, results: [...]}) shows 'N results'.
+
+    web_search returns {"kind": "web_search", "results": [...], "status": "ok"};
+    adding the 'results' list key means N results is shown rather than the generic 'ok'.
+    """
+    out = summarize_tool_result(
+        "web_search",
+        {"kind": "web_search", "query": "python asyncio", "backend": "brave",
+         "status": "ok", "results": [{"title": "A"}, {"title": "B"}, {"title": "C"}]},
+    )
+    assert out == "3 results"
+    out1 = summarize_tool_result(
+        "web_search",
+        {"kind": "web_search", "query": "x", "status": "ok", "results": [{"title": "X"}]},
+    )
+    assert out1 == "1 result"
