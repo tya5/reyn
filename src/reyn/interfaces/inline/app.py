@@ -956,12 +956,14 @@ async def _deliver_intervention_choice(registry, choice_id: str, label: str) -> 
         return
     if delivered:
         from reyn.runtime.outbox import OutboxMessage
-        # kind="intervention" (not "status") so the echo PERSISTS in scrollback:
-        # "status"/"trace" are transient (cleared by the next message), and the
-        # intervention_resolved event fires right after, so a status echo would be
-        # erased before the user sees it.
+        # kind="system" (not "status"/"trace") so the echo PERSISTS in scrollback
+        # as a dim lifecycle marker (· glyph). "status"/"trace" are transient and
+        # would be erased before the user sees them. "intervention" would also
+        # persist, but renders with the amber ◆ "needs-you" glyph — misleading for
+        # a resolved-answer confirmation. "system" correctly signals historical
+        # record (same visual weight as compaction / budget-warn markers).
         registry.repl_outbox.put_nowait(
-            OutboxMessage(kind="intervention", text=f"answered: {label}")
+            OutboxMessage(kind="system", text=f"answered: {label}")
         )
 
 

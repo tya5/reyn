@@ -130,7 +130,7 @@ class _AnsweringSession:
 @pytest.mark.asyncio
 async def test_deliver_choice_echoes_answer_to_scrollback() -> None:
     """Tier 2: a delivered choice is sent authoritatively AND a uniform
-    'answered: <label>' status line is put on the outbox (so every resolved
+    'answered: <label>' system marker is put on the outbox (so every resolved
     intervention leaves a scrollback trace, not just permission's side effect)."""
     session = _AnsweringSession(ok=True)
     queue: asyncio.Queue = asyncio.Queue()
@@ -140,8 +140,10 @@ async def test_deliver_choice_echoes_answer_to_scrollback() -> None:
 
     assert session.delivered == ["just_path"]  # authoritative id delivered
     msg = queue.get_nowait()
-    # persistent kind (not the transient "status", which the next message erases)
-    assert msg.kind == "intervention"
+    # kind="system" → dim · marker (persistent, not transient "status"/"trace").
+    # "intervention" would also persist but renders with amber ◆ "needs-you" glyph
+    # — semantically wrong for a resolved-answer confirmation.
+    assert msg.kind == "system"
     assert "answered:" in msg.text
     assert "[j]ust this path always" in msg.text
 
