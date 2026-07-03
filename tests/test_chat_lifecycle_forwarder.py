@@ -405,6 +405,42 @@ def test_limit_denied_missing_counts_uses_generic_marker() -> None:
     assert "ops" not in only.text
 
 
+def test_limit_denied_max_iterations_shows_iteration_limit_not_router_cap() -> None:
+    """Tier 2: limit_denied kind='max_iterations' → 'iteration limit hit', not 'router cap hit'.
+
+    router_loop.py emits limit_denied with kind='max_iterations' and limit=N when the
+    iteration ceiling is reached. Previously on_limit_denied always said 'router cap hit'
+    regardless of kind, conflating two distinct stop reasons — a user who hit the iteration
+    limit saw the same marker as one who hit the op-count cap.
+    """
+    q: asyncio.Queue = asyncio.Queue()
+    fwd = ChatLifecycleForwarder(q)
+    fwd(Event(
+        type="limit_denied",
+        data={"kind": "max_iterations", "limit": 20, "chain_id": "xyz"},
+    ))
+    msgs = _drain(q)
+    (only,) = msgs
+    assert only.kind == "system"
+    assert "iteration limit" in only.text, "must say 'iteration limit', not 'router cap'"
+    assert "20" in only.text
+    assert "router cap" not in only.text, "must not conflate with router cap"
+
+
+def test_limit_denied_max_iterations_without_limit_uses_generic() -> None:
+    """Tier 2: limit_denied kind='max_iterations' without limit field → generic marker.
+
+    Forward-compat: still surfaces a marker even if limit is missing.
+    """
+    q: asyncio.Queue = asyncio.Queue()
+    fwd = ChatLifecycleForwarder(q)
+    fwd(Event(type="limit_denied", data={"kind": "max_iterations"}))
+    msgs = _drain(q)
+    (only,) = msgs
+    assert "iteration limit" in only.text
+    assert "router cap" not in only.text
+
+
 # ── summary_resummarize_failed ───────────────────────────────────────────────
 
 
