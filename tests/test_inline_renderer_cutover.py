@@ -230,6 +230,16 @@ def test_system_lifecycle_marker_has_dim_gutter() -> None:
     assert "[↑ 5 turns compacted]" in out
 
 
+def test_reasoning_kind_renders_with_dim_gutter() -> None:
+    """Tier 2: reasoning kind (model thinking, gated on chat.reasoning.display=true)
+    renders with a dim '· ' gutter — not as raw unstyled plain text — so thinking
+    content has visual hierarchy instead of being indistinguishable from an unknown kind.
+    """
+    out = _plain("reasoning", "I should first check the file...")
+    assert "·" in out
+    assert "I should first check the file..." in out
+
+
 def test_unknown_kind_renders_text_without_marker() -> None:
     """Tier 2: an unrecognised kind falls back to plain text (no kind marker)."""
     out = _plain("totally_new_kind", "raw payload")
