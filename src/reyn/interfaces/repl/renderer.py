@@ -417,6 +417,25 @@ def _summarize_result(tool, result) -> str:
         if isinstance(chunks, list):
             n = len(chunks)
             return f"{n} chunk{'s' if n != 1 else ''}"
+        servers = result.get("servers")
+        if isinstance(servers, list):
+            n = len(servers)
+            return f"{n} server{'s' if n != 1 else ''}"
+        mcp_tools = result.get("mcp_tools")
+        if isinstance(mcp_tools, list):
+            n = len(mcp_tools)
+            return f"{n} tool{'s' if n != 1 else ''}"
+        items = result.get("items")
+        if isinstance(items, list):
+            n = len(items)
+            return f"{n} item{'s' if n != 1 else ''}"
+        chunks_dropped = result.get("chunks_dropped")
+        if isinstance(chunks_dropped, int):
+            n = chunks_dropped
+            return f"Dropped {n} chunk{'s' if n != 1 else ''}"
+        if isinstance(result.get("input_schema"), dict):
+            name_or_desc = result.get("name") or result.get("description") or ""
+            return _short(str(name_or_desc), 60)
         if result.get("kind") == "mcp":
             mcp_content = result.get("content")
             if isinstance(mcp_content, str) and mcp_content:

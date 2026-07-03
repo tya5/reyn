@@ -276,6 +276,90 @@ def test_file_glob_shows_match_count() -> None:
     ) == "1 match"
 
 
+def test_list_mcp_servers_shows_server_count() -> None:
+    """Tier 2: list_mcp_servers result ({servers: [...]}) shows 'N servers'.
+
+    list_mcp_servers returns {"servers": [...]} with no op/status/error key;
+    without this branch the raw dict repr leaked into the ⎿ row.
+    """
+    assert summarize_tool_result(
+        "list_mcp_servers", {"servers": ["github", "slack", "linear"]}
+    ) == "3 servers"
+    assert summarize_tool_result(
+        "list_mcp_servers", {"servers": ["only"]}
+    ) == "1 server"
+    assert summarize_tool_result(
+        "list_mcp_servers", {"servers": []}
+    ) == "0 servers"
+
+
+def test_list_mcp_tools_shows_tool_count() -> None:
+    """Tier 2: list_mcp_tools result ({mcp_tools: [...]}) shows 'N tools'.
+
+    list_mcp_tools returns {"mcp_tools": [...]} with no op/status/error key;
+    without this branch the raw dict repr leaked into the ⎿ row.
+    """
+    assert summarize_tool_result(
+        "list_mcp_tools",
+        {"mcp_tools": [{"name": "github__get_issue"}, {"name": "github__list_prs"}]},
+    ) == "2 tools"
+    assert summarize_tool_result(
+        "list_mcp_tools", {"mcp_tools": [{"name": "slack__send_message"}]}
+    ) == "1 tool"
+
+
+def test_search_actions_shows_item_count() -> None:
+    """Tier 2: search_actions/list_actions result ({items: [...], total: N}) shows 'N items'.
+
+    Both search_actions and list_actions return {"items": [...], "total": N} with no
+    op/status/error key; without this branch the raw dict repr leaked into the ⎿ row.
+    """
+    assert summarize_tool_result(
+        "search_actions", {"items": [{"qualified_name": "file__read"}, {"qualified_name": "file__write"}], "total": 2}
+    ) == "2 items"
+    assert summarize_tool_result(
+        "list_actions", {"items": [], "total": 0}
+    ) == "0 items"
+    assert summarize_tool_result(
+        "search_actions", {"items": [{"qualified_name": "recall"}], "total": 1}
+    ) == "1 item"
+
+
+def test_index_drop_shows_chunks_dropped() -> None:
+    """Tier 2: index_drop result ({removed: bool, chunks_dropped: int}) shows 'Dropped N chunks'.
+
+    index_drop returns {"removed": bool, "chunks_dropped": int} with no op/status/error key;
+    without this branch the raw dict repr leaked into the ⎿ row.
+    """
+    assert summarize_tool_result(
+        "index_drop", {"removed": True, "chunks_dropped": 7}
+    ) == "Dropped 7 chunks"
+    assert summarize_tool_result(
+        "index_drop", {"removed": True, "chunks_dropped": 1}
+    ) == "Dropped 1 chunk"
+    assert summarize_tool_result(
+        "index_drop", {"removed": False, "chunks_dropped": 0}
+    ) == "Dropped 0 chunks"
+
+
+def test_describe_tool_shows_name_not_raw_dict() -> None:
+    """Tier 2: describe_action/describe_mcp_tool result ({input_schema, name/description}) shows name.
+
+    Both tools return a dict with an 'input_schema' key (dict) and a 'name' or 'description'
+    key.  Without this branch the raw schema dict leaked into the ⎿ row.
+    """
+    assert summarize_tool_result(
+        "describe_mcp_tool",
+        {"name": "get_issue", "description": "Get a GitHub issue", "input_schema": {"type": "object"}},
+    ) == "get_issue"
+    out = summarize_tool_result(
+        "describe_action",
+        {"description": "Lists actions by category", "input_schema": {"properties": {}}},
+    )
+    assert "Lists actions" in out
+    assert "{" not in out, "raw dict repr must not leak"
+
+
 def test_dict_with_status_shows_status() -> None:
     """Tier 2: an opaque dict with a status field shows the status."""
     assert summarize_tool_result("mcp__call", {"status": "ok", "x": 1}) == "ok"
