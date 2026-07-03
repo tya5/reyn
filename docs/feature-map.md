@@ -27,16 +27,6 @@ mindmap
         Next-phase allowlist
         Artifact schema
         Normalization retry
-      ⏩ Preprocessor
-        run_op
-        iterate
-        validate
-        lint_plan
-        python
-      ⏪ Postprocessor
-        Same step types
-        Skill-finish transform
-        Step memoization
       🗂️ Workspace P5
         Artifact storage
         Permission-gated IO
@@ -241,22 +231,6 @@ mindmap
 | Next-phase allowlist | Transition target must appear in the skill graph candidates | [LLM Output Contract](reference/runtime/llm-output-contract.md) · Graph |
 | Artifact schema validation | `data` validated against the target phase's `input_schema` | Artifact YAML |
 | Normalization retry | Minor JSON errors healed before rejecting, up to `llm_max_retries` | [LLM Output Contract](reference/runtime/llm-output-contract.md) |
-
-#### Preprocessor
-| Feature | Description | Documentation |
-|---------|-------------|---------------|
-| `run_op` step | Invoke any Control IR op deterministically before the LLM call | Preprocessor DSL |
-| `iterate` step | Fan-out `run_op` over array field elements | Preprocessor DSL |
-| `validate` step | JSON Schema check on artifact data | Preprocessor DSL |
-| `lint_plan` step | Structural check on plan-shaped artifacts | Preprocessor DSL |
-| `python` step | User function in sandboxed subprocess (safe/unsafe mode) | Preprocessor DSL |
-
-#### Postprocessor
-| Feature | Description | Documentation |
-|---------|-------------|---------------|
-| Skill-finish transform | Convert LLM `final_output` to caller artifact schema | Postprocessor DSL · Concepts: Postprocessor |
-| Same step types | `run_op` / `iterate` / `validate` / `lint_plan` / `python` | Postprocessor DSL |
-| Step memoization | Skip re-execution on crash resume if step already committed | Postprocessor DSL · Skill Resume |
 
 #### Workspace (P5)
 | Feature | Description | Documentation |

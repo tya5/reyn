@@ -14,8 +14,8 @@ files or adding skill-specific strings anywhere.
 
 **P7 in practice.** The OS's skill-agnostic guarantee (P7) is what makes this
 possible. Op kind strings appear in exactly one place — `OP_KIND_MODEL_MAP` in
-`op_runtime/registry.py`. Every other mechanism (`ControlIRExecutor`,
-`ALL_OP_KINDS`, `_build_phase_tool_catalog`) derives from that single source.
+`schemas/models.py`. Every other mechanism (`ALL_OP_KINDS`, the op dispatcher
+`execute_op`, the `reyn.tools` catalog) derives from that single source.
 Adding a new entry to the map is sufficient; no scattered string literals to
 track down.
 
@@ -34,7 +34,7 @@ for fundamentally different execution semantics.
 
 Every op kind has a typed Pydantic model that doubles as its JSON Schema for
 the LLM. Add your model alongside the existing ones and include it in the
-`ControlIROp` discriminated union.
+`Op` discriminated union.
 
 ```python
 # src/reyn/schemas/models.py
@@ -46,7 +46,7 @@ class NotifyIROp(BaseModel):
     severity: str = "info"   # "info" | "warning" | "error"
 
 # Update the union — append NotifyIROp:
-ControlIROp = Annotated[
+Op = Annotated[
     Union[
         FileIROp, MCPIROp, AskUserIROp, ShellIROp, LintIROp,
         RunSkillIROp, WebFetchIROp, WebSearchIROp,
@@ -64,17 +64,13 @@ Rules for the model:
 
 ---
 
-## Step 2 — Register in the op registry (`op_runtime/registry.py`)
+## Step 2 — Add to the op-kind map (`schemas/models.py`)
 
-Two dicts need an entry. Add the import and the two entries:
+`OP_KIND_MODEL_MAP` lives in the same file as the model (#1983 co-location).
+Add your kind alongside the model you defined in Step 1:
 
 ```python
-# src/reyn/core/op_runtime/registry.py
-
-from reyn.schemas.models import (
-    ...,
-    NotifyIROp,   # ← new import
-)
+# src/reyn/schemas/models.py
 
 OP_KIND_MODEL_MAP: dict[str, type[BaseModel]] = {
     # The coarse "file" kind was retired in #1240 Wave 2b — file ops are now
@@ -90,43 +86,17 @@ OP_KIND_MODEL_MAP: dict[str, type[BaseModel]] = {
     "web_search": WebSearchIROp,
     "notify":     NotifyIROp,   # ← new
 }
-
-OP_PURITY: dict[str, OpPurity] = {
-    "lint":       OpPurity.pure,
-    "web_fetch":  OpPurity.world,
-    "web_search": OpPurity.world,
-    "read_file":  OpPurity.side_effect,
-    "mcp":        OpPurity.external,
-    "shell":      OpPurity.external,
-    "run_skill":  OpPurity.external,
-    "ask_user":   OpPurity.side_effect,
-    "notify":     OpPurity.external,   # ← new
-}
 ```
 
 `ALL_OP_KINDS` is derived from `OP_KIND_MODEL_MAP.keys()` at module load — you
 do not need to touch it.
-
-### Choosing OpPurity
-
-Pick the classification that best describes what your handler actually does:
-
-| Classification | When to use |
-|---|---|
-| `pure` | Pure computation, no I/O (e.g. `lint`) — memo is permanent, resume skips re-execution |
-| `world` | Reads external state without side effects (e.g. `web_fetch`) — result recorded so resume uses cached value |
-| `side_effect` | Writes to local/workspace state (e.g. `file`, `ask_user`) — both step events emitted; crash between them surfaces as ambiguous on resume |
-| `external` | Calls external systems with potential side effects (e.g. `shell`, `mcp`, `run_skill`) — same emission policy as `side_effect`; distinction is audit metadata |
-
-If in doubt, default to `external` (conservative). The cost is a few extra
-events; the risk of under-classifying is silent data loss on resume.
 
 ---
 
 ## Step 3 — Implement the handler (`op_runtime/notify.py`)
 
 Create a new file under `src/reyn/core/op_runtime/`. The handler is an `async`
-function that takes the typed op, an `OpContext`, and a `caller` literal.
+function that takes the typed op and an `OpContext`.
 It must return a JSON-serializable dict. Register it at module level so the
 self-registration mechanism picks it up.
 
@@ -134,8 +104,6 @@ self-registration mechanism picks it up.
 # src/reyn/core/op_runtime/notify.py
 """notify op handler — send a notification to an external channel."""
 from __future__ import annotations
-
-from typing import Literal
 
 from reyn.schemas.models import NotifyIROp
 
@@ -146,7 +114,6 @@ from .context import OpContext
 async def handle(
     op: NotifyIROp,
     ctx: OpContext,
-    caller: Literal["preprocessor", "control_ir"],
 ) -> dict:
     ctx.events.emit("notify_started", channel=op.channel, severity=op.severity)
 
@@ -186,18 +153,6 @@ self-registers at startup:
 # src/reyn/core/op_runtime/__init__.py (end of file, with the other handler imports)
 from . import notify as _notify  # noqa: F401, E402
 ```
-
-### Preprocessor restriction (optional)
-
-If your op cannot be invoked from a phase's `preprocessor` (e.g. it requires
-interactive input similar to `ask_user`), add it to
-`_PREPROCESSOR_FORBIDDEN_KINDS` in `__init__.py`:
-
-```python
-_PREPROCESSOR_FORBIDDEN_KINDS = frozenset({"ask_user", "notify"})
-```
-
-Most ops do not need this restriction.
 
 ---
 
@@ -260,7 +215,7 @@ reyn lint reyn/local/my_skill
 async def test_notify_handler_emits_events():
     ctx = make_real_op_context()   # from your test helpers
     op = NotifyIROp(kind="notify", channel="test", message="hello")
-    result = await execute_op(op, ctx, caller="control_ir")
+    result = await execute_op(op, ctx)
     assert result["status"] in ("ok", "error")  # depends on stub behaviour
     event_kinds = [e.kind for e in ctx.events.to_list()]
     assert "notify_started" in event_kinds
@@ -274,9 +229,8 @@ async def test_notify_handler_emits_events():
 allowed_ops: [read_file, notify]
 ```
 
-The LLM's system prompt will include the `notify` op schema (via
-`_build_phase_tool_catalog`), and the LLM can now emit `notify` ops in its
-`control_ir` list.
+The LLM's system prompt will include the `notify` op schema (via the
+`reyn.tools` catalog), and the LLM can now emit `notify` ops.
 
 ---
 
@@ -287,12 +241,11 @@ After these four steps, no further OS changes are needed:
 | Mechanism | How it picks up your op |
 |---|---|
 | `ALL_OP_KINDS` | Derived from `OP_KIND_MODEL_MAP.keys()` — updated automatically |
-| `ControlIRExecutor` | Reads `_HANDLERS` which was populated by `register("notify", handle)` at import time |
-| LLM system prompt | `_build_phase_tool_catalog` iterates `OP_KIND_MODEL_MAP` and derives JSON Schema from `NotifyIROp` |
-| Resume purity | `get_op_purity("notify")` reads `OP_PURITY` and drives step-event emission policy |
+| `execute_op` (op_runtime) | Reads `_HANDLERS` which was populated by `register("notify", handle)` at import time |
+| LLM system prompt | the `reyn.tools` catalog iterates `OP_KIND_MODEL_MAP` and derives JSON Schema from `NotifyIROp` |
 | DSL linter | Validates `allowed_ops` entries against `ALL_OP_KINDS` |
 
-The OS contains no `"notify"` string outside `registry.py`. Any future skill
+The OS contains no `"notify"` string outside `schemas/models.py`. Any future skill
 that wants to use notifications just adds `notify` to its `allowed_ops` — no
 OS code changes, no new files outside the three touch points above.
 
