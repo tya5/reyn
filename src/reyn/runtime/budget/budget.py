@@ -16,7 +16,7 @@ Hybrid cap behavior:
     pushed to the user as a status message and recorded in events.jsonl
 
 Per P7: this is OS-level generic infrastructure — the dimension names
-are not tied to any specific skill or domain.
+are not tied to any specific domain.
 """
 from __future__ import annotations
 
@@ -548,7 +548,7 @@ class BudgetTracker:
         writes the state file (subject to throttle).
 
         ``throttle_secs`` collapses rapid consecutive writes (LLM call paths
-        are hot in multi-skill scenarios — a per-call fsync would dominate).
+        are hot in multi-agent scenarios — a per-call fsync would dominate).
         Default 1 second. Set to 0 in tests for deterministic save semantics.
         """
         self._state_path = Path(path)

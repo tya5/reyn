@@ -382,7 +382,7 @@ class EventsConfig:
     `.reyn/events/agents/<name>/chat/<YYYY-MM>/` and rotated when either
     the active file's size exceeds `max_bytes` OR its age (or local date)
     exceeds `max_age_seconds`. Setting both to 0 disables rotation, which
-    is the mode skill_run uses (1 run = 1 file).
+    is the single-run mode (1 run = 1 file).
 
     `cleanup_period_days` documents how long closed files should be kept
     before `reyn events purge` may delete them. `null` (default) disables
@@ -574,9 +574,9 @@ class CronJobConfig:
 
 @dataclass
 class CronConfig:
-    """``cron:`` — scheduled skill execution (FP-0009 Component B).
+    """``cron:`` — scheduled message dispatch (FP-0009 Component B).
 
-    Each entry under ``cron.jobs`` triggers a stdlib or project skill
+    Each entry under ``cron.jobs`` dispatches a message to a target agent
     on a cron schedule via ``CronScheduler`` (= attached to
     ``app.state.cron_scheduler`` in web mode, or run foreground via
     ``reyn cron run``).
@@ -630,9 +630,9 @@ def _build_cron_config(raw: object) -> CronConfig:
                 f"cron.jobs[{i}] (name={name!r}): 'schedule' must be a non-empty string "
                 f"(got {schedule!r})"
             )
-        # FP-0041 #489 PR-B: message-based shape (to + message). Legacy
-        # skill-based jobs (a bare ``skill`` name) are no longer supported —
-        # the skill runtime was removed.
+        # FP-0041 #489 PR-B: a job must be message-based (to + message). An
+        # entry lacking that shape (e.g. a legacy bare ``skill`` name) is
+        # rejected below.
         to = entry.get("to")
         message = entry.get("message")
         has_message_shape = (
