@@ -569,3 +569,60 @@ def test_ask_user_shows_answer_text() -> None:
          "answer": long_answer, "status": "ok"},
     )
     assert "…" in out and "\n" not in out  # long answer is truncated to a single line
+
+
+def test_mcp_install_shows_server_name() -> None:
+    """Tier 2: mcp_install success ({status:"ok", server_name, ...}) shows 'Installed {name}'.
+
+    mcp_install returns {kind:"mcp_install", status:"ok", server_id, server_name, ...};
+    without this branch status fires showing 'ok', losing which server was installed.
+    """
+    assert summarize_tool_result(
+        "mcp_install",
+        {"kind": "mcp_install", "status": "ok", "server_id": "github",
+         "server_name": "GitHub MCP", "scope": "project", "installed_path": "/path"},
+    ) == "Installed GitHub MCP"
+    assert summarize_tool_result(
+        "mcp_install",
+        {"kind": "mcp_install", "status": "ok", "server_id": "s",
+         "server_name": "slack", "scope": "user"},
+    ) == "Installed slack"
+
+
+def test_web_fetch_shows_url() -> None:
+    """Tier 2: web_fetch success ({kind:"web_fetch", url, status:"ok", content, ...}) shows URL.
+
+    web_fetch returns {kind, url, status:"ok", content, ...}; without this branch
+    status fires showing 'ok'. Error paths (blocked/timeout/error) all carry 'error'
+    str which is caught by the error-first guard and are unaffected.
+    """
+    out = summarize_tool_result(
+        "web_fetch",
+        {"kind": "web_fetch", "url": "https://example.com/api/v1",
+         "status": "ok", "status_code": 200, "content": "body text"},
+    )
+    assert "example.com" in out and "{" not in out
+    long_url = "https://example.com/" + "a" * 80
+    out2 = summarize_tool_result(
+        "web_fetch",
+        {"kind": "web_fetch", "url": long_url, "status": "ok", "content": ""},
+    )
+    assert "…" in out2 and "\n" not in out2
+
+
+def test_task_heartbeat_shows_state() -> None:
+    """Tier 2: task.heartbeat result ({state, task_id, status:"ok"}) shows the state.
+
+    task.heartbeat returns {kind:"task.heartbeat", status:"ok", task_id, state, unblocked};
+    showing the state ("running"/"awaiting"/"completed") is more informative than 'ok'.
+    """
+    assert summarize_tool_result(
+        "task__heartbeat",
+        {"kind": "task.heartbeat", "status": "ok",
+         "task_id": "t-abc", "state": "running", "unblocked": False},
+    ) == "running"
+    assert summarize_tool_result(
+        "task__heartbeat",
+        {"kind": "task.heartbeat", "status": "ok",
+         "task_id": "t-def", "state": "awaiting", "unblocked": False},
+    ) == "awaiting"
