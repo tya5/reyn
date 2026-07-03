@@ -20,7 +20,8 @@ source of truth.
 The final test is a migration-safety gate: the per-chain skill-spawn cap (and
 its ``kind="spawn"`` ledger records) was removed with the skill machinery, but
 a pre-existing on-disk ledger may still contain those legacy records — hydrate
-must skip them without breaking recovery of the kept LLM counters.
+must tolerate them (they contribute nothing) without breaking recovery of the
+kept LLM counters.
 
 FALSIFICATION (verified out-of-band on pre-fix HEAD): with hydrate not
 restoring per-agent, the same scenario recovers agent_tokens=100 (want 280) —
@@ -123,23 +124,27 @@ def test_per_agent_cap_enforced_after_crash(tmp_path):
 
 def test_hydrate_tolerates_legacy_spawn_records(tmp_path):
     """Tier 2c: a pre-existing ledger containing legacy skill-spawn records
-    (``kind="spawn"``, written before the per-chain skill-spawn cap was
-    removed) still hydrates the live LLM counters correctly.
+    (``kind="spawn"``) still hydrates the live LLM counters correctly after
+    the skill-dependent hydrate-tolerance branch was removed.
 
-    Migration-safety gate for the durable-ledger schema change: hydrate must
-    (i) not raise on the legacy spawn records, (ii) reconstruct the per-agent
-    token/cost totals from the LLM-call records only, and (iii) not resurrect
-    any per-chain skill-spawn state in the snapshot.
+    The per-chain skill-spawn cap, its ``append_spawn`` writer, and the
+    ``kind == "spawn"`` skip branch in ``hydrate`` were all removed with the
+    skill machinery (no live producer writes such records any more). This
+    gate proves the removal is safe: the hydrate loop is *natively* robust to
+    the legacy record shape — a record with no ``tokens``/``cost_usd`` and no
+    string ``agent`` contributes 0 and is not aggregated — so an old on-disk
+    ledger still hydrates. hydrate must (i) not raise on the legacy records,
+    (ii) reconstruct the per-agent token/cost totals from the LLM-call records
+    only, and (iii) not resurrect any per-chain skill-spawn state.
 
-    FALSIFICATION: if hydrate lacked the ``kind == "spawn"`` skip branch, an
-    old spawn record would fall through to the LLM aggregation — harmless for
-    tokens (0) here, but the branch guards against a future spawn-record schema
-    that carries a numeric field, and documents the tolerance as intentional.
+    FALSIFICATION: if the hydrate loop were not robust to unknown record
+    shapes (e.g. it indexed a required field), a legacy spawn record would
+    raise here — so this test would go RED, catching an unsafe removal.
     """
     ledger_path = tmp_path / ".reyn" / "state" / "budget_ledger.jsonl"
     ledger_path.parent.mkdir(parents=True, exist_ok=True)
     # Hand-write a legacy ledger: LLM-call records interleaved with legacy
-    # spawn records (the shape BudgetLedger.append_spawn used to write).
+    # spawn records (the shape the removed ``append_spawn`` used to write).
     records = [
         {"ts": "2026-05-02T10:00:00+09:00", "agent": "alpha",
          "model": "gpt-4", "tokens": 100, "cost_usd": 0.01},

@@ -142,11 +142,6 @@ class BudgetLedger:
         {"ts": "2026-05-02T10:23:00+09:00", "agent": "alice",
          "model": "...", "tokens": 300, "cost_usd": 0.0023}
 
-    Legacy note: pre-existing ledgers may also contain skill-spawn records
-    (``{"kind": "spawn", ...}``) written before the per-chain skill-spawn cap
-    was removed. They are no longer written; ``BudgetTracker.hydrate`` skips
-    them on read (see the legacy-tolerance branch there).
-
     Records are fsync'd on append so a process crash cannot roll back a
     completed LLM call and under-count quota usage. This is the cap-critical
     durability layer; the throttled ``budget_state.json`` is a best-effort
@@ -377,14 +372,6 @@ class BudgetTracker:
             try:
                 ts = _parse_iso_ts(ts_str)
             except (ValueError, OSError):
-                continue
-
-            # Legacy tolerance: a pre-existing ledger may contain skill-spawn
-            # records (``kind="spawn"``) written before the per-chain
-            # skill-spawn cap was removed. They carry no tokens/cost — skip
-            # them so an old ledger still hydrates the live LLM counters
-            # (daily / monthly / per-agent / cost) without error.
-            if record.get("kind") == "spawn":
                 continue
 
             tokens = record.get("tokens", 0)
