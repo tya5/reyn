@@ -209,21 +209,22 @@ def _build_task_tree(task_dicts: list[dict]) -> list[dict]:
     ]
 
 
+def _task_rows(nodes: list[dict], depth: int) -> list[str]:
+    out = []
+    for node in nodes:
+        out.append(f"{'  ' * depth}{node['status']}  {node['name']}")
+        out.extend(_task_rows(node["children"], depth + 1))
+    return out
+
+
 def _task_expansion(snap, dispatch):
     # Phase 3: task tree. Depth-first indented rows (2 spaces per depth).
+    # NOTE: tree is a snapshot captured at call time — callers that need live
+    # updates (e.g. the open dropdown) should substitute a live-reading element.
     tree = snap.get("task_tree") or []
     if not tree:
         return DetailElement(lambda: ["(no active tasks)"])
-
-    def _rows(nodes: list[dict], depth: int) -> list[str]:
-        out = []
-        for node in nodes:
-            out.append(f"{'  ' * depth}{node['status']}  {node['name']}")
-            out.extend(_rows(node["children"], depth + 1))
-        return out
-
-    rows = _rows(tree, 0)
-    return DetailElement(lambda: rows)
+    return DetailElement(lambda: _task_rows(tree, 0))
 
 
 def _more_expansion(snap, dispatch):
@@ -726,6 +727,14 @@ async def run_inline_input(registry, renderer, config=None) -> None:
         snap = _snapshot(registry, task_cache, config)
         if spec.expansion is not None and snap is not None:
             result = spec.expansion(snap, _menu_submit)
+            # Task chip: snap["task_tree"] is frozen at open time but task_cache
+            # updates every second (_task_poll). Swap in a live-reading provider
+            # so the dropdown reflects task state changes while it stays open.
+            if spec.key == "task" and isinstance(result, DetailElement):
+                _tc = task_cache
+                def _live_tasks() -> list[str]:
+                    return _task_rows(_tc.get("tree") or [], 0) or ["(no active tasks)"]
+                result = DetailElement(_live_tasks)
             if isinstance(result, list):
                 for el in result:
                     menu_region.register(el)
