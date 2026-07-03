@@ -4,15 +4,13 @@ These tests verify the public contract of the config-layer dataclasses and
 the reyn.yaml parser for the ``cron:`` block.  No mocking; real config
 loader called with tmp_path YAML files.
 
-Cron jobs are message-based (``to`` + ``message``). Legacy skill-based jobs
-(a bare ``skill`` name) are no longer supported — the skill runtime was
-removed — and are warned-and-skipped at load (degrade-not-raise) so an old
-on-disk cron.yaml does not crash startup. The final test is that
-migration-safety gate.
+Cron jobs are message-based (``to`` + ``message``). A legacy bare ``skill``
+name is not a valid shape — an entry without ``to`` + ``message`` is rejected
+at load with a ValueError naming it (the skill-dependent warn-and-skip
+tolerance was removed). The final test pins that rejection.
 """
 from __future__ import annotations
 
-import logging
 from pathlib import Path
 
 import pytest
@@ -213,37 +211,38 @@ def test_cron_block_non_dict_raw() -> None:
     assert result == CronConfig()
 
 
-# ── Migration-safety gate: legacy skill-based jobs degrade-not-raise ─────────
+# ── Legacy skill-based jobs are rejected (skill-dependent tolerance removed) ──
 
 
-def test_legacy_skill_based_job_warned_and_skipped(caplog) -> None:
-    """Tier 1: an old on-disk cron.yaml with a legacy skill-based entry mixed with a
-    message-based entry (i) does not crash, (ii) warns + skips the skill-based job,
-    (iii) loads the message-based job correctly.
+def test_legacy_skill_based_job_rejected() -> None:
+    """Tier 1: a legacy bare-``skill`` cron entry (no ``to`` + ``message``) is
+    rejected at load with a ValueError naming it. The skill-dependent
+    warn-and-skip tolerance was removed (compat cleanup, pre-release): an
+    entry without the message shape now raises rather than silently degrading.
 
-    Migration-safety for the skill-runtime removal: a bare-``skill`` cron entry
-    (valid before the removal) must degrade — warn-and-skip — rather than raise
-    and crash startup for operators whose ``.reyn/config/cron.yaml`` predates it.
+    The kept message-based path is unaffected — a message-only config parses.
+
+    FALSIFICATION: if the removed warn-and-skip branch were still present, the
+    bare-``skill`` entry would be skipped and ``_build_cron_config`` would
+    return without raising — so ``pytest.raises`` would go RED.
     """
-    raw = {
+    # KEEP: a message-based entry parses unaffected.
+    ok = _build_cron_config({
         "jobs": [
-            # Legacy skill-based (no to/message) — must be warned + skipped.
-            {"name": "legacy_index", "skill": "index_events", "schedule": "0 */6 * * *"},
-            # Message-based — must load unaffected.
             {"name": "morning_news", "to": "news_agent",
              "message": "summarise today", "schedule": "0 9 * * *"},
         ]
+    })
+    assert [j.name for j in ok.jobs] == ["morning_news"]
+    assert ok.jobs[0].to == "news_agent"
+    assert ok.jobs[0].message == "summarise today"
+
+    # CHANGE: a legacy bare-``skill`` entry (no to/message) now raises,
+    # naming the offending entry (was warn-and-skip before the removal).
+    raw = {
+        "jobs": [
+            {"name": "legacy_index", "skill": "index_events", "schedule": "0 */6 * * *"},
+        ]
     }
-    with caplog.at_level(logging.WARNING, logger="reyn.config.infra"):
-        cfg = _build_cron_config(raw)  # (i) must not raise
-
-    # (ii) the skill-based job is skipped, with a user-visible warning naming it.
-    assert [j.name for j in cfg.jobs] == ["morning_news"]
-    assert any(
-        "legacy_index" in r.message and "skill-based" in r.message
-        for r in caplog.records
-    ), "expected a WARNING naming the skipped skill-based job"
-
-    # (iii) the message-based job loaded correctly.
-    assert cfg.jobs[0].to == "news_agent"
-    assert cfg.jobs[0].message == "summarise today"
+    with pytest.raises(ValueError, match="legacy_index"):
+        _build_cron_config(raw)
