@@ -248,7 +248,7 @@ ALL_TOOL_NAMES: frozenset[str] = ALL_OP_KINDS
 # execution op kind "mcp".  The phase frame shows the chat name so phase =
 # chat-tools subset (catalog-axis goal); parse boundaries in op_loop +
 # json-mode rewrite it to the op kind BEFORE ControlIROp validation.  The
-# build_frame allowed-ops filter applies this alias so allowed_ops=[mcp]
+# the allowed-ops filter applies this alias so allowed_ops=[mcp]
 # matches the advertised call_mcp_tool spec.  The execution backend
 # (op_runtime/mcp.py) and ControlIROp model (MCPIROp) use the op-kind name.
 # ---------------------------------------------------------------------------

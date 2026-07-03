@@ -11,8 +11,7 @@ from __future__ import annotations
 
 import pytest
 
-from reyn.llm.llm import call_llm, call_llm_tools
-from reyn.schemas.models import ContextFrame
+from reyn.llm.llm import call_llm_tools
 
 # ---------------------------------------------------------------------------
 # Shared fixtures / helpers
@@ -41,19 +40,6 @@ def _make_budget_tracker(*, per_agent_tokens_hard: int | None = None):
     if per_agent_tokens_hard is not None:
         cfg.per_agent_tokens = CostLimitConfig(hard_limit=per_agent_tokens_hard)
     return BudgetTracker(cfg)
-
-
-def _minimal_context_frame() -> ContextFrame:
-    """Minimal ContextFrame for call_llm replay tests."""
-    from reyn.dev.testing.replay import REPLAY_DATETIME
-    return ContextFrame(
-        current_phase="test",
-        instructions="Reply with a minimal valid JSON decide turn.",
-        input_artifact={},
-        candidate_outputs=[],
-        output_language="en",
-        current_datetime=REPLAY_DATETIME,
-    )
 
 
 # ---------------------------------------------------------------------------
@@ -205,46 +191,8 @@ async def test_call_llm_tools_pre_check_blocks_when_over_quota(monkeypatch):
     assert called == []
 
 
-@pytest.mark.asyncio
-async def test_call_llm_pre_check_blocks_when_over_quota(monkeypatch):
-    """Tier 1: error path: call_llm raises BudgetExceeded before calling litellm when cap exceeded.
-
-    LLMReplay cannot cover this path (litellm is never reached). Framework boundary.
-    """
-    import litellm
-
-    called = []
-
-    async def fake_acompletion(**kwargs):
-        called.append(True)
-        return None
-
-    monkeypatch.setattr(litellm, "acompletion", fake_acompletion)
-
-    from reyn.llm.pricing import TokenUsage
-    from reyn.runtime.budget.budget import BudgetExceeded
-
-    tracker = _make_budget_tracker(per_agent_tokens_hard=5)
-    tracker.record_llm(
-        model="openai/gpt-4o",
-        agent="skill-agent",
-        usage=TokenUsage(prompt_tokens=4, completion_tokens=3),  # total=7 > 5
-    )
-
-    frame = _minimal_context_frame()
-    with pytest.raises(BudgetExceeded):
-        await call_llm(
-            MODEL,
-            frame,
-            budget=tracker,
-            budget_agent="skill-agent",
-        )
-
-    assert called == []
-
-
 # ---------------------------------------------------------------------------
-# Tier 3a — Replay tests: LLM output → call_llm_tools / call_llm behavior
+# Tier 3a — Replay tests: LLM output → call_llm_tools behavior
 # ---------------------------------------------------------------------------
 
 @pytest.mark.replay("fixtures/llm/llm_tools/text_only.jsonl")
@@ -325,25 +273,6 @@ async def test_call_llm_tools_no_budget_kwarg_skips_tracking():
     )
     # Result is valid regardless of budget: content or tool_calls present
     assert isinstance(result.content, str) or len(result.tool_calls) > 0
-
-
-@pytest.mark.replay("fixtures/llm/llm_tools/call_llm_budget.jsonl")
-@pytest.mark.asyncio
-async def test_call_llm_records_tokens_to_budget():
-    """Tier 3a: call_llm records tokens when budget kwarg is provided."""
-    tracker = _make_budget_tracker()
-    frame = _minimal_context_frame()
-    await call_llm(
-        MODEL,
-        frame,
-        prompt_cache_enabled=False,
-        budget=tracker,
-        budget_agent="skill-agent",
-    )
-
-    snap = tracker.snapshot()
-    recorded = snap["agent_tokens"].get("skill-agent", 0)
-    assert recorded > 0, f"Expected non-zero tokens for skill-agent; snapshot={snap}"
 
 
 # ---------------------------------------------------------------------------

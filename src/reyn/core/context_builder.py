@@ -1,5 +1,5 @@
 """
-ContextFrame construction helpers.
+Control-IR result offload / inline-cap helpers.
 
 Standalone functions — no runtime state. All mutable state is passed in explicitly
 so this module stays testable and free of circular imports.
@@ -11,15 +11,9 @@ import uuid
 from pathlib import Path
 from typing import Any, Callable
 
-from reyn.schemas.models import (
-    CandidateOutput,
-    ContextFrame,
-    ControlIROpSpec,
-    ExecutionState,
-)
 from reyn.services.offload.store import offload_value
 
-ARTIFACT_REF_THRESHOLD = 8000  # characters; larger artifacts are stored by ref in ContextFrame
+ARTIFACT_REF_THRESHOLD = 8000  # characters; larger artifacts are stored by ref
 MAX_INLINE_BOOST = 65_536  # characters; artifacts up to 64KB are still inlined (inline-boost range)
 
 # ── control_ir_result per-result offload constants (C5 — FP-0008) ──────────────
@@ -381,77 +375,3 @@ def maybe_ref_artifact(
         "ref_path": artifact_path,
         "size_bytes": len(serialized.encode("utf-8")),
     }
-
-
-def build_frame(
-    phase_name: str,
-    phase: Any,
-    artifact: dict,
-    candidates: list[CandidateOutput],
-    output_language: str,
-    history: list[str],
-    visit_counts: dict[str, int],
-    finish_criteria: list[str],
-    available_ops: list[ControlIROpSpec],
-    effective_model: str,
-    model_resolved: str,
-    events: Any,
-    op_catalog: list[ControlIROpSpec] | None = None,
-    control_ir_results: list[dict] | None = None,
-    artifact_path: str | None = None,
-    run_id: str | None = None,
-    act_turn: int | None = None,
-    offload_dir: Path | None = None,
-    context_size_signal: str | None = None,  # #1176 B1 — pre-rendered, tail field
-    act_turn_reasoning: list[str] | None = None,  # #1212 reasoning-continuity
-    on_offload_ref: Callable[[str], None] | None = None,  # #1383 D12 scoped read-grant
-) -> ContextFrame:
-    allowed_next = [c.next_phase for c in candidates]
-    current_visit = visit_counts.get(phase_name, 1)
-    total_steps = sum(visit_counts.values())
-
-    # C5 (FP-0008): per-result offload for oversized control_ir_results.
-    # A single result exceeding MAX_CONTROL_IR_RESULT_INLINE_BYTES is offloaded
-    # to a workspace scratch file; the inline slot carries head+tail preview +
-    # a ref path so the LLM can file.read the full content when needed.
-    # Orthogonal-complementary to count-axis compaction (PR-N5 / PR-N8).
-    raw_results = list(control_ir_results or [])
-    # #1209: window-derive the per-result inline cap from the resolved model so
-    # a normal file read stays inline instead of being offloaded out of the
-    # editing model's view (fixed 8KB was a root anomaly). model_resolved is the
-    # already-resolved litellm string here (build_frame's caller resolved it).
-    inline_cap = control_ir_inline_cap(model_resolved, events=events, phase=phase_name)
-    offloaded_results = maybe_offload_control_ir_results(
-        raw_results,
-        offload_dir,
-        events=events,
-        phase=phase_name,
-        cap=inline_cap,
-        on_offload_ref=on_offload_ref,
-    )
-
-    frame = ContextFrame(
-        current_phase=phase_name,
-        current_phase_role=phase.role,
-        instructions=phase.instructions,
-        input_artifact=maybe_ref_artifact(artifact, artifact_path, events=events, phase=phase_name,
-                                           on_offload_ref=on_offload_ref),
-        execution=ExecutionState(
-            path=list(history)[-10:],
-            current_visit=current_visit,
-            total_steps=total_steps,
-        ),
-        candidate_outputs=candidates,
-        finish_criteria=finish_criteria if "end" in allowed_next else [],
-        available_control_ops=available_ops,
-        op_catalog=op_catalog or [],
-        output_language=output_language,
-        model=effective_model,
-        model_resolved=model_resolved,
-        control_ir_results=offloaded_results,
-        context_size_signal=context_size_signal,
-        act_turn_reasoning=act_turn_reasoning or [],
-    )
-
-    events.emit("context_built", phase=phase_name, frame=frame.model_dump(mode="json"))
-    return frame

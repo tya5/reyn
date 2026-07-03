@@ -10,7 +10,7 @@ Permission checks happen INSIDE the caller-provided `invoker` callable
 (via PermissionError); dispatch_tool catches and wraps it uniformly.
 
 Budget / rate-limit recording is a SEPARATE concern handled at the LLM
-call boundary (call_llm / call_llm_tools), not here.
+call boundary (call_llm_tools), not here.
 """
 from __future__ import annotations
 
@@ -197,7 +197,7 @@ def _compute_args_hash(args: dict) -> str:
 
 
 # Top-level frame fields excluded from the LLM args_hash. ``current_datetime``
-# is non-deterministic by design (datetime.now() in ContextFrame) and would
+# is non-deterministic by design (datetime.now() in the frame) and would
 # silently break memo lookup on resume if hashed verbatim.
 _LLM_VOLATILE_FRAME_FIELDS: frozenset[str] = frozenset({"current_datetime"})
 
@@ -222,8 +222,8 @@ def _compute_llm_args_hash(
 ) -> str:
     """Stable hash for LLM call args. Used as a memoization key on resume.
 
-    Hashes over the inputs that actually drive ``call_llm`` deterministic
-    output: model, frame (= ContextFrame.model_dump), retry chain, rollback
+    Hashes over the inputs that actually drive the LLM's deterministic
+    output: model, frame (= the frame model_dump), retry chain, rollback
     context, and system-prompt inputs. Volatile fields (current_datetime,
     execution.path) are stripped before hashing — see
     ``_LLM_VOLATILE_FRAME_FIELDS`` / ``_LLM_VOLATILE_NESTED_FIELDS`` for the

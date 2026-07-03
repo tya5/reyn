@@ -1,22 +1,10 @@
 """LLMReplay — deterministic LLM record / replay for Reyn tests.
 
-Datetime stability
-------------------
-``ContextFrame.current_datetime`` is populated with ``datetime.now()`` by
-default and therefore changes on every run.  Tests that call ``call_llm``
-directly must pass a fixed datetime to ``ContextFrame`` so the serialised
-user-turn message is identical to the recorded fixture.  Use the module-level
-constant ``REPLAY_DATETIME`` for this::
-
-    from reyn.dev.testing.replay import REPLAY_DATETIME
-    frame = ContextFrame(..., current_datetime=REPLAY_DATETIME)
-
-
 Design
 ------
-Monkeypatches ``litellm.acompletion`` (the *async* boundary used by both
-``reyn.llm.call_llm`` and ``reyn.skill_node_runner._adapt_artifact``) so
-that all LLM calls in a test are intercepted at a single, stable point.
+Monkeypatches ``litellm.acompletion`` (the *async* boundary used by the
+LLM call path) so that all LLM calls in a test are intercepted at a single,
+stable point.
 
 Fixture format (JSONL, one call per line)
 -----------------------------------------
@@ -49,18 +37,11 @@ from __future__ import annotations
 
 import hashlib
 import json
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
 if TYPE_CHECKING:
     pass
-
-# Fixed datetime used in all replay test fixtures so that ContextFrame's
-# volatile ``current_datetime`` field does not break the SHA-256 key lookup.
-# Tests must pass this constant when constructing ContextFrame objects.
-REPLAY_DATETIME = datetime(2026, 1, 1, 0, 0, 0, tzinfo=timezone.utc)
-
 
 class MissingFixture(Exception):
     """Raised in replay mode when no fixture entry matches the call."""

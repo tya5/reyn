@@ -509,11 +509,11 @@ DESCRIBE_MCP_TOOL = ToolDefinition(
 
 # #1240 Wave 2b: MCP_OP (the coarse phase-side ToolDefinition under the name
 # "mcp") is DROPPED.  Phase Control IR now advertises the chat name
-# "call_mcp_tool" via available_ops() (ControlIROpSpec with kind="call_mcp_tool"),
+# "call_mcp_tool" via available_ops() (op-spec with kind="call_mcp_tool"),
 # which aliases to op kind "mcp" at the parse boundary.  Dispatch falls to the
 # legacy execute_op path (op_runtime/mcp.py register("mcp")).
 # allowed_ops=[mcp] continues to match the call_mcp_tool spec via
-# _PHASE_TOOL_NAME_ALIAS in runtime.build_frame.
+# _PHASE_TOOL_NAME_ALIAS at the frame-build seam.
 # KEPT: CALL_MCP_TOOL (router+phase, gates.phase="allow") is the canonical
 # phase-advertised ToolDefinition.  The call_mcp_tool handler (phase path) builds
 # MCPIROp and delegates to op_runtime.mcp.handle directly.
