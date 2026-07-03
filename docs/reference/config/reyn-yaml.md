@@ -38,10 +38,8 @@ models:
 | `chat` | map | Chat-session compaction settings. See below. |
 | `voice` | map | Voice input (Whisper) settings for the chat TUI. See below. |
 | `events` | map | Audit-log rotation policy for chat-session event files. See below. |
-| `skill_search` | map | BM25 skill pre-filter settings. See below. |
 | `skill_resume` | map | Resume policy for ambiguous steps on restart. See below. |
 | `tool_use` | map | Per-layer tool-use scheme selector (chat/step/phase). See below. |
-| `self_improvement` | map | `skill_improver` apply-gate and version cap. See below. |
 | `mcp` | map | MCP server definitions and `search_threshold`. See below. |
 | `python` | map | Python preprocessor additional allowed-modules. See below. |
 | `agent` | map | Agent identity for P6 event audit trail and outgoing HTTP header. See below. |
@@ -1293,23 +1291,6 @@ voice:
 | `num_workers` | int | `1` | Parallel transcription streams. `1` keeps memory + thread usage low. |
 | `max_duration_s` | float | `300.0` | Auto-cancel recordings longer than this (seconds). Prevents runaway memory growth from unattended recordings. |
 
-## `skill_search` block
-
-BM25 skill pre-filter settings. When the catalogue exceeds `threshold` skills, the router narrows the available skill enum to the top `top_k` BM25 keyword matches before building `tools=`. Falls through to the full enum when BM25 returns zero results — no skill is ever silently hidden.
-
-```yaml
-skill_search:
-  threshold: 20    # catalogue size at which BM25 activates; 0 = always filter
-  top_k: 5         # number of skills returned by BM25
-  backend: bm25    # bm25 (default); embedding / hybrid reserved for future phases
-```
-
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `threshold` | int | `20` | Catalogue size at which BM25 pre-filtering activates. Set `0` to always pre-filter; set a high number to effectively disable. |
-| `top_k` | int | `5` | Number of best-matching skills returned by BM25. Minimum `1`. |
-| `backend` | string | `bm25` | Search backend. `bm25` is the only active backend; `embedding` and `hybrid` are reserved for future phases. |
-
 ## `skill_resume` block
 
 Resume policy for skill runs interrupted mid-step. An *ambiguous step* is one whose `step_started` WAL event has no matching `step_completed` / `step_failed` — the op may have committed externally.
@@ -1333,21 +1314,6 @@ skill_resume:
 |-------|------|---------|-------------|
 | `default` | string | `retry` | Default resume policy for all skills. |
 | `per_skill` | map | `{}` | Per-skill policy overrides. Key is the skill name; value is one of the policies above. |
-
-## `self_improvement` block
-
-`skill_improver` behavior knobs. Controls how the skill improver applies proposed changes back to the skill source.
-
-```yaml
-self_improvement:
-  on_propose: ask_user   # ask_user | auto | disabled
-  max_versions: 10       # max v<N>.md snapshots kept; 0 = no pruning
-```
-
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `on_propose` | string | `ask_user` | What `skill_improver` does when about to apply improvements. `ask_user` — pause and prompt the user via the intervention `RequestBus` (safe default). `auto` — skip the prompt and apply directly (for CI / unattended runs). `disabled` — log a `skill_improvement_dry_run` event and do NOT apply changes. |
-| `max_versions` | int | `10` | Maximum `v<N>.md` snapshots kept under `.reyn/skill-versions/<name>/`. Oldest version is deleted when the cap is exceeded (the current version is never deleted). `0` = disable pruning. |
 
 ## `python` block
 
