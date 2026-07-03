@@ -488,7 +488,7 @@ class TaskAssignIROp(BaseModel):
 # not derive the union from it without a cycle; that dual-source (hand-listed
 # union vs the map) was #1983's root cause. Add a new op kind HERE (kind → IROp
 # model); the union + ALL_OP_KINDS follow by construction. op_runtime/registry.py
-# keeps the *purity* classification (OP_PURITY) and re-imports ALL_OP_KINDS from
+# re-imports ALL_OP_KINDS from
 # here (intentional convenience, not a migration shim).
 #
 # NOTE: the coarse "file" kind is intentionally NOT in the map (#1240 Wave 2b
@@ -530,7 +530,7 @@ OP_KIND_MODEL_MAP: dict[str, type[BaseModel]] = {
     "task.assign": TaskAssignIROp,
 }
 
-# Frozenset of op kinds — DSL linter, OP_PURITY coverage, contextual gate.
+# Frozenset of op kinds — DSL linter, contextual gate.
 ALL_OP_KINDS: frozenset[str] = frozenset(OP_KIND_MODEL_MAP.keys())
 
 # Discriminated union — DERIVED from OP_KIND_MODEL_MAP (#1983, completeness-by-

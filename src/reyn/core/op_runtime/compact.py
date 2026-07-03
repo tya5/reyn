@@ -12,7 +12,7 @@ consistently about "should I compact" and "what fits now".
 P7/P8: no skill-specific strings. The op is OS-level vocabulary only; the
 optional ``reason`` is model-supplied audit text the OS never interprets.
 
-OpPurity: external (LLM cost + history mutation; the inner compaction engine
+Macro op (LLM cost + history mutation; the inner compaction engine
 emits its own events).
 """
 from __future__ import annotations

@@ -4,7 +4,7 @@ The query embedding is computed **provider-direct** (#1303 S-I.4 — mirrors
 ``ActionEmbeddingIndex``); it no longer dispatches an ``embed`` sub-op. The
 ``index_query`` sub-ops still go through ``execute_op`` (P6 per-source events).
 
-ADR-0033 §2.1: macro op, OpPurity.external.
+ADR-0033 §2.1: macro op.
 """
 from __future__ import annotations
 

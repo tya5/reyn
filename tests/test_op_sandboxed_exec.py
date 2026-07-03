@@ -6,7 +6,7 @@ Verifies:
 - NoopBackend.run(["echo", "hi"], ...) returns expected output.
 - sandboxed_exec op dispatches through `execute_op` and emits P6 events.
 - Wall-clock timeout enforces via subprocess timeout.
-- registry: OP_KIND_MODEL_MAP and OP_PURITY include "sandboxed_exec".
+- registry: OP_KIND_MODEL_MAP includes "sandboxed_exec".
 
 No mocks of collaborators — real EventLog, Workspace, NoopBackend, dispatcher.
 """
@@ -19,7 +19,6 @@ import pytest
 from reyn.core.events.events import EventLog
 from reyn.core.op_runtime import execute_op
 from reyn.core.op_runtime.context import OpContext
-from reyn.core.op_runtime.registry import OP_PURITY, OpPurity
 from reyn.data.workspace.workspace import Workspace
 from reyn.schemas.models import ALL_OP_KINDS, OP_KIND_MODEL_MAP, SandboxedExecIROp
 from reyn.security.permissions.permissions import PermissionDecl
@@ -133,11 +132,6 @@ def test_registry_includes_sandboxed_exec():
     assert "sandboxed_exec" in OP_KIND_MODEL_MAP
     assert OP_KIND_MODEL_MAP["sandboxed_exec"] is SandboxedExecIROp
     assert "sandboxed_exec" in ALL_OP_KINDS
-
-
-def test_op_purity_includes_sandboxed_exec():
-    """Tier 2: OP_PURITY classifies sandboxed_exec as external (= same as shell)."""
-    assert OP_PURITY["sandboxed_exec"] == OpPurity.external
 
 
 # ─── 4. Op dispatch + events ──────────────────────────────────────────────────
