@@ -2385,9 +2385,7 @@ class AgentRegistry:
 
         R-D16: skills awaiting an intervention for longer than
         ``_LONG_AWAIT_THRESHOLD_SEC`` are excluded so the WAL can keep
-        advancing — delegated to
-        :meth:`SkillRegistry.iter_applied_phase_seqs` which performs
-        the elapsed check in-memory.
+        advancing — the elapsed check is performed in-memory.
 
         Returns 0 when no watermark is available (no live session, no
         active skill, no active plan).

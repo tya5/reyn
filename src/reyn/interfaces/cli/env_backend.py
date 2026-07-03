@@ -1,6 +1,6 @@
 """Shared CLI helper: --env-backend arg registration + EnvironmentBackend build.
 
-#1289: per-frontend container-chat activation. `reyn run` (the Agent/OSRuntime
+#1289: per-frontend container-chat activation. `reyn run` (the Agent
 entry) originally owned the `--env-backend` args + builder; chat / dogfood now
 reuse the SAME helper so any CLI frontend can launch/attach a container and pass
 the resulting backend uniformly. The single-shared-sandbox invariant (#1200) is

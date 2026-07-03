@@ -91,19 +91,19 @@ class OpContext:
     # Format: "direct" or "agents/<name>" (validated in Agent).
     caller: str = "direct"
 
-    # R-D13: nested skill lineage. The currently-running OSRuntime sets
+    # R-D13: nested skill lineage. The currently-running runtime sets
     # this to its own ``run_id`` when constructing OpContext for control
     # IR execution. ``run_skill`` handlers propagate it to the spawned
     # child run as ``parent_run_id``, so the per-skill snapshot tree
     # records the parent / child relationship for ``/skill list``,
     # debug logs, and future cascade-discard semantics. ``None`` means
     # "no parent visible" (e.g. preprocessor-spawned sub-skills, or
-    # OSRuntime invocations that don't track a run_id).
+    # runtime invocations that don't track a run_id).
     parent_skill_run_id: str | None = None
 
-    # FP-0021: the run_id of the currently-executing OSRuntime run.
-    # Threaded from OSRuntime → ControlIRExecutor / PreprocessorExecutor →
-    # OpContext so event emit helpers can stamp every event with the correct
+    # FP-0021: the run_id of the currently-executing run.
+    # Threaded from the runtime through the ctx-build seams to OpContext so
+    # event emit helpers can stamp every event with the correct
     # run scope. None when the OpContext is created outside a run scope
     # (e.g. chat router, CLI commands).
     run_id: str | None = None
@@ -174,7 +174,7 @@ class OpContext:
     # behaviour; preserves backward compat for top-level / chat-router /
     # CLI-direct OpContext construction). The run_skill handler constructs a
     # ScopedSecretStore based on the sub-skill's required_credentials and
-    # passes it down through Agent → OSRuntime → executors → OpContext.
+    # passes it down through Agent → the ctx-build seams → OpContext.
     secret_store: "ScopedSecretStore | None" = None
 
     # #1470: per-turn asyncio.Event fired by cancel_inflight(). When set,
@@ -185,7 +185,7 @@ class OpContext:
 
     # #1953 slice 3a: the config-selected, session-scoped Task backend instance.
     # Threaded from the Session (which owns the session-scoped db path) down
-    # through SkillRuntime → OSRuntime → executors, exactly like sandbox_backend.
+    # through the ctx-build seams to OpContext, exactly like sandbox_backend.
     # The task.* op handlers use this when set; None → the op-runtime falls back
     # to its process-local in-memory backend (slice-1 stub for tests / direct
     # OpContext construction). Mirrors the contextual_permission (#1912) chain
@@ -195,13 +195,13 @@ class OpContext:
     # #1953 slice 6-ext: the OS TaskWaker driver (parallel to task_backend). The
     # abort/failed → parent-routing hub calls it to wake the parent's session to
     # decide recovery. None = no-op stub here (slice 7 wires the real TaskWaker +
-    # threads it through the same Session → SkillRuntime → OSRuntime chain). Tests
+    # threads it through the same Session → OpContext chain). Tests
     # inject a recording waker to verify the call-site fires.
     task_waker: "object | None" = None
 
     # #2187 backend-master: the Task SUBSCRIPTION writer (a SubscriptionWriter; parallel
-    # to task_backend / task_waker, threaded down the SAME Session → SkillRuntime →
-    # OSRuntime chain). The mutating task ops (create / reassign) call it to append the
+    # to task_backend / task_waker, threaded down the SAME Session → OpContext
+    # chain). The mutating task ops (create / reassign) call it to append the
     # task↔session BINDING to the WAL (the Reyn-internal subscription — what Reyn owns +
     # rewinds; the backend keeps task-STATE). None = no-op (direct/test construction or
     # no state_log) → the op skips the append (the opt-in contract). Tests inject a

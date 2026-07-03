@@ -780,7 +780,7 @@ class ContextFrame(BaseModel):
     # ── volatile across act-turns ──────────────────────────────────────────────
     # Populated when a previous control_ir op in this phase produced a result
     # (file read content, ask_user answer, etc.). Empty on first LLM call for the phase.
-    # Each entry is the raw result dict returned by ControlIRExecutor.execute().
+    # Each entry is the raw result dict returned by the control-IR op executor.
     control_ir_results: list[dict] = Field(default_factory=list)
     # #1212 reasoning-continuity: the model's own inline content emitted on prior
     # op-loop act turns (alongside tool_calls), carried forward so a capable model

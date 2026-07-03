@@ -34,7 +34,7 @@ from reyn.llm.pricing import TokenUsage, estimate_cost
 
 
 class BudgetExceeded(Exception):
-    """Raised by OSRuntime when a pre-call check refuses the LLM call."""
+    """Raised when a pre-call budget check refuses the LLM call."""
 
     def __init__(self, dimension: str, detail: str) -> None:
         super().__init__(detail)

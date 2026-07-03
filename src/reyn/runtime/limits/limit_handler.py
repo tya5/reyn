@@ -2,7 +2,7 @@
 
 Four sites in the codebase raise on a safety limit hit:
 
-  - F (phase_seconds)         — ``OSRuntime._check_phase_budget``
+  - F (phase_seconds)         — the phase-budget check
   - C (router_cap)            — ``BudgetGateway.check_and_increment_router_cap``
   - E (max_hop_depth)         — ``Session._send_to_agent``
   - G (chain_seconds)         — ``ChainManager`` watchdog fire path
@@ -72,7 +72,7 @@ _auto_extend_used: dict[tuple[str, str], int] = {}
 def reset_run_extensions(run_id: str) -> None:
     """Reset auto_extend bookkeeping for ``run_id``.
 
-    Call at the start of a run (= ``OSRuntime.run`` entry,
+    Call at the start of a run (= the run entry,
     ``Session`` turn boundary). After this, ``auto_extend_times``
     grants are fresh.
     """
@@ -153,7 +153,7 @@ async def handle_limit_exceeded(
               for event audit + as part of the ``UserIntervention.kind``
               namespace (``safety.limit.<kind>``).
         run_id: Stable run identifier used for the auto_extend counter.
-                Pass the OSRuntime run_id or chain_id —
+                Pass the run_id or chain_id —
                 whichever scopes the extension correctly for this site.
         prompt: User-facing question text.
         detail: Optional second line of context (= specifics like
