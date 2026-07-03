@@ -410,6 +410,10 @@ def _summarize_result(tool, result) -> str:
         if isinstance(tasks, list):
             n = len(tasks)
             return f"{n} task{'s' if n != 1 else ''}"
+        task_record = result.get("task")
+        if isinstance(task_record, dict):
+            name = task_record.get("name") or task_record.get("task_id") or "task"
+            return _short(str(name), 60)
         entries = result.get("entries")
         if isinstance(entries, list):
             n = len(entries)
@@ -461,6 +465,12 @@ def _summarize_result(tool, result) -> str:
         returncode = result.get("returncode")
         if isinstance(returncode, int) and status == "ok":
             return f"exit {returncode}"
+        freed_tokens = result.get("freed_tokens")
+        if isinstance(freed_tokens, int):
+            return f"Freed {freed_tokens} token{'s' if freed_tokens != 1 else ''}"
+        answer = result.get("answer")
+        if isinstance(answer, str) and answer:
+            return _short(answer, 60)
         if status:
             return str(status)
     return _short(result, 80)
