@@ -94,6 +94,20 @@ class ChatLifecycleForwarder:
         suffix = f" — {cost_str}" if cost_str else ""
         self._enqueue(f"[⚠ high-cost model: {model}{suffix}]")
 
+    def on_model_cost_block(self, data: dict) -> None:
+        """Surface a ``[✗ model switch declined: …]`` marker when the user
+        rejects the high-cost model confirm (#1867 / FP-0052 S4).
+
+        Only fires on ``reason="declined"`` (= the user said No). Approved
+        switches need no extra message — the status-bar chip updates to show
+        the new model. Non-interactive fail-closed (no human present) is also
+        silent.
+        """
+        if data.get("reason") != "declined":
+            return
+        model = str(data.get("model") or data.get("model_class") or "unknown")
+        self._enqueue(f"[✗ model switch declined: {model}]")
+
     # ── Compaction (issue #162) ──────────────────────────────────────────
 
     def on_compaction_completed(self, data: dict) -> None:
