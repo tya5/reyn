@@ -70,7 +70,7 @@ def build_universal_tool_use_slots(
         if discovery_mandate:
             _otherwise_slot = (
                 "Otherwise — i.e. for any action that is NOT obvious or a named "
-                "skill above — your FIRST tool call MUST be `list_actions` before "
+                "action above — your FIRST tool call MUST be `list_actions` before "
                 "reading, writing, or editing anything (the visible tools are "
                 "universal wrappers, not the full catalog; do NOT skip it, refuse, "
                 f"or guess). Then {_wrapper_chain_slot}. To edit a file you MUST use "
@@ -82,14 +82,13 @@ def build_universal_tool_use_slots(
             " `invoke_action(action_name=\"reyn_source__read\","
             " args={\"path\": \"README.md\"})`"
         )
-        _named_skill_call = "`invoke_action`(`skill__X`)"
     else:
         # wrappers-off (enumerate-all): the full action set is advertised flat;
         # the model calls actions DIRECTLY by qualified name — no wrapper vocab.
         if discovery_mandate:
             _otherwise_slot = (
                 "Otherwise — i.e. for any action that is NOT obvious or a named "
-                "skill above — call the matching action DIRECTLY by its qualified "
+                "action above — call the matching action DIRECTLY by its qualified "
                 "`<category>__<entry>` name from your available tools (do NOT "
                 "refuse or guess). To edit a file you MUST use `file__edit`."
             )
@@ -99,7 +98,6 @@ def build_universal_tool_use_slots(
                 "`<category>__<entry>` name from your available tools."
             )
         _reyn_self_call = " `reyn_source__read(path=\"README.md\")`"
-        _named_skill_call = "`skill__X`"
 
     _r1: list[str] = []
     _r1.append("## Capabilities (routing guide)")
@@ -124,13 +122,10 @@ def build_universal_tool_use_slots(
         "- Already in your training: answer directly.",
         "",
         "**A task to perform** — pick by target shape:",
-        "- Single-target action (= one file, one URL, one skill, one"
+        "- Single-target action (= one file, one URL, one"
         " item): if the action is obvious (`file__read` for \"read this"
         " file\", `reyn_source__read` for \"open Reyn doc X\", `web__fetch`"
-        " for a specific URL, "
-        + _named_skill_call
-        + " for an explicit"
-        " named skill), invoke directly. " + _otherwise_slot,
+        " for a specific URL), invoke directly. " + _otherwise_slot,
         "- Multi-target / iteration (= \"do X for each Y\", \"process N"
         " files\", \"run X on every Y\") or multi-step work worth"
         " tracking: decompose into sub-tasks — `task__create` one per"
@@ -259,7 +254,7 @@ def build_universal_tool_use_slots(
     if universal_wrappers_enabled:
         _r3.extend([
             "  ROUTING RULE (ABSOLUTE): When the user message contains an action"
-            " name (= valid `invoke_action` action_name, e.g. `skill__code_review`),"
+            " name (= valid `invoke_action` action_name, e.g. `mcp__brave__search`),"
             " call `invoke_action` immediately. NO clarifying questions. NO text replies.",
             "",
         ])
@@ -267,7 +262,7 @@ def build_universal_tool_use_slots(
         # #1977 wrappers-off: call the action directly (no invoke_action wrapper).
         _r3.extend([
             "  ROUTING RULE (ABSOLUTE): When the user message contains an action"
-            " name (e.g. `skill__code_review`), call that action directly by its"
+            " name (e.g. `mcp__brave__search`), call that action directly by its"
             " name immediately. NO clarifying questions. NO text replies.",
             "",
         ])

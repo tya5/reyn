@@ -39,7 +39,7 @@ _BASE = dict(
 
 # Markers for the B11-R3 named-direct clause + branch-1 Conversation, which must
 # be byte-stable across discovery_mandate on/off (diff-touch-0).
-_B11R3_MARKER = "named skill), invoke directly"
+_B11R3_MARKER = "for a specific URL), invoke directly"
 _CONVERSATION_MARKER = "reply"
 
 
@@ -93,8 +93,8 @@ def test_three_scope_qualified_reinforcements_when_enabled() -> None:
     mandate present in Capabilities, absent from Behaviour.
     """
     on = _on()
-    # ① branch-3 Otherwise (strengthened) — scope: "NOT obvious or a named skill"
-    assert "for any action that is NOT obvious or a named skill above" in on
+    # ① branch-3 Otherwise (strengthened) — scope: "NOT obvious or a named action"
+    assert "for any action that is NOT obvious or a named action above" in on
     # ② §D9 hot-list — scope: "no visible tool obviously matches"
     assert "When no visible tool obviously matches the action you need" in on
     assert "MANDATORY and comes FIRST" in on

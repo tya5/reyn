@@ -102,7 +102,6 @@ def split_qualified_name(qualified_name: str) -> tuple[str, str]:
     further ``__`` sequences (which stay inside the entry portion).
 
     Examples:
-        ``skill__code_review``       → ("skill", "code_review")
         ``mcp.tool__brave.search``   → ("mcp.tool", "brave.search")
         ``mcp.operation__drop_server`` → ("mcp.operation", "drop_server")
         ``rag_corpus__meetings``     → ("rag_corpus", "meetings")
@@ -272,7 +271,7 @@ _LIST_ACTIONS_DESCRIPTION = (
     "Returns {items: [{qualified_name, short_description}, ...], total: int}. "
     "An empty items array means no actions match — report this honestly. "
     "WHEN: PREFERRED FIRST for known-category enumeration (e.g. 'show me all "
-    "memory_entry actions', 'what skills are available?') or exact-name "
+    "memory_entry actions', 'what exec actions are available?') or exact-name "
     "lookup when you already know the category but not the exact entry. "
     "ALWAYS call list_actions BEFORE refusing a category-listable capability "
     "request. Refusing without a list_actions check is a FAILURE MODE "
@@ -285,7 +284,7 @@ _LIST_ACTIONS_DESCRIPTION = (
     "exact action name, skip both and call invoke_action directly. "
     "PREFERRED OVER: Guessing action names + refusing capability requests — "
     "list_actions returns the canonical qualified names (e.g. "
-    "skill__code_review, mcp__call_tool) that invoke_action and "
+    "mcp__call_tool, multi_agent__delegate) that invoke_action and "
     "describe_action expect. "
     "POST_CALL: After list_actions reveals at least one matching action, you "
     "MUST follow with describe_action or invoke_action. Do NOT reply directly "
@@ -302,7 +301,7 @@ _LIST_ACTIONS_PARAMETERS: dict[str, Any] = {
             "items": {"type": "string", "enum": list(CATEGORIES)},
             "description": (
                 "Filter by category. Pass an array of category names "
-                "(e.g. category=['exec'], category=['skill', 'file']). "
+                "(e.g. category=['exec'], category=['web', 'file']). "
                 "Omit or pass [] to include all categories. "
                 "Categories: " + ", ".join(CATEGORIES) + "."
             ),
@@ -337,7 +336,7 @@ _SEARCH_ACTIONS_DESCRIPTION = (
     "Multilingual — works in any language (Japanese, English, etc.). "
     "Handles both semantic descriptions AND free-text keyword lookup "
     "(e.g. 'http' を含む action). "
-    "WHEN NOT: For known-category enumeration (e.g. 'show me all skills', "
+    "WHEN NOT: For known-category enumeration (e.g. 'show me all exec actions', "
     "「memory_entry の一覧」) use list_actions(category=[...]) instead — "
     "it returns the flat catalogue slice rather than relevance-ranked hits. "
     "If you already know the exact action name, skip both and call "
@@ -396,8 +395,7 @@ _DESCRIBE_ACTION_PARAMETERS: dict[str, Any] = {
             "type": "string",
             "description": (
                 "Qualified name of the action/resource to describe "
-                "(e.g. 'skill__code_review', 'mcp__brave__search', "
-                "'rag_corpus__meetings')."
+                "(e.g. 'mcp__brave__search', 'rag_corpus__meetings')."
             ),
         },
     },
@@ -408,11 +406,11 @@ _DESCRIBE_ACTION_PARAMETERS: dict[str, Any] = {
 _INVOKE_ACTION_DESCRIPTION = (
     "WHAT: Execute an action by qualified name (<category>__<entry>). "
     "Executes the action's default semantic operation. "
-    "WHEN: Call this whenever you intend to run any action — skill, MCP tool, "
+    "WHEN: Call this whenever you intend to run any action — MCP tool, "
     "file operation, web search, memory write, recall, etc. All catalog actions "
     "are invoked through this single entry point. "
     "WHEN NOT: For chitchat or self-questions, reply without tools. "
-    "PREFERRED OVER: Legacy per-kind tools (invoke_skill, call_mcp_tool, etc.) — "
+    "PREFERRED OVER: Legacy per-kind tools (call_mcp_tool, etc.) — "
     "invoke_action covers all 13 action categories uniformly. "
     "On unknown action_name, returns an error with similar-name suggestions. "
     ""
@@ -422,15 +420,15 @@ _INVOKE_ACTION_DESCRIPTION = (
     "compose a reply for the spawn-ack turn. "
     ""
     "TASK_SPAWNED: an agent-role message starting with [task_spawned] is "
-    "OS-emitted when an async task is launched (kind=skill | plan, paired "
-    "with run_id for skill or plan_id for plan). The structured header "
+    "OS-emitted when an async task is launched (kind=agent, paired "
+    "with chain_id). The structured header "
     "lets you correlate the spawn with the later [task_completed] message "
     "carrying the same identifier. The trailing human-readable line is "
     "what the user sees; the header is your correlation record. "
     ""
     "TASK_COMPLETED: a user-role message starting with [task_completed] is "
     "OS-injected when a previously-spawned async task finishes "
-    "(kind=skill | plan). The message carries the task's status + result "
+    "(kind=agent). The message carries the task's status + result "
     "fields. status='finished' means normal completion; other values "
     "('loop_limit_exceeded', 'phase_budget_exceeded', 'budget_exceeded', "
     "'error', or any non-'finished' value with result.error present) "
@@ -453,7 +451,7 @@ _INVOKE_ACTION_PARAMETERS: dict[str, Any] = {
             "type": "string",
             "description": (
                 "Qualified name of the action/resource to invoke "
-                "(e.g. 'skill__code_review', 'mcp__brave__search')."
+                "(e.g. 'mcp__brave__search', 'multi_agent__delegate')."
             ),
         },
         "args": {
@@ -519,7 +517,7 @@ def _missing_action_name_error() -> dict[str, Any]:
         "reason": "action_name parameter was not provided",
         "suggestions": [],
         "hint": (
-            "Provide action_name (qualified, e.g. 'skill__code_review') "
+            "Provide action_name (qualified, e.g. 'mcp__brave__search') "
             "from list_actions or search_actions output."
         ),
     }
