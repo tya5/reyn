@@ -45,19 +45,6 @@ class _ScriptedLLM:
         return _make_fake_litellm_response(self._response_content)
 
 
-def _minimal_frame():
-    from reyn.dev.testing.replay import REPLAY_DATETIME
-    from reyn.schemas.models import ContextFrame
-    return ContextFrame(
-        current_phase="test",
-        instructions="Reply with a minimal valid JSON decide turn.",
-        input_artifact={},
-        candidate_outputs=[],
-        output_language="en",
-        current_datetime=REPLAY_DATETIME,
-    )
-
-
 def _minimal_tools():
     return [
         {
@@ -209,26 +196,6 @@ class TestDumpResponseUnit:
 class TestTraceDumpDisabledByDefault:
     """Tier 2: when REYN_LLM_TRACE_DUMP is not set, no file is created."""
 
-    def test_call_llm_no_dump_without_env_var(self, tmp_path: Path, monkeypatch) -> None:
-        """Tier 2: call_llm with env var absent leaves no trace file."""
-        import asyncio
-
-        import litellm
-
-        import reyn.llm.llm as llm_mod
-
-        monkeypatch.delenv("REYN_LLM_TRACE_DUMP", raising=False)
-
-        stub = _ScriptedLLM(_DECIDE_JSON)
-        monkeypatch.setattr(litellm, "acompletion", stub)
-
-        dummy_trace = tmp_path / "should_not_exist.jsonl"
-        frame = _minimal_frame()
-        asyncio.run(llm_mod.call_llm(MODEL, frame, prompt_cache_enabled=False))
-
-        assert not dummy_trace.exists(), "No trace file should be created when env var is absent"
-        assert stub.call_count >= 1
-
     def test_call_llm_tools_no_dump_without_env_var(self, tmp_path: Path, monkeypatch) -> None:
         """Tier 2: call_llm_tools with env var absent leaves no trace file."""
         import asyncio
@@ -257,46 +224,6 @@ class TestTraceDumpDisabledByDefault:
 
 class TestTraceDumpEnabled:
     """Tier 2: when REYN_LLM_TRACE_DUMP is set, call_llm writes paired records."""
-
-    def test_call_llm_creates_jsonl_with_request_and_response(self, tmp_path: Path, monkeypatch) -> None:
-        """Tier 2: call_llm writes 1 request + 1 response entry when env var is set."""
-        import asyncio
-
-        import litellm
-
-        import reyn.llm.llm as llm_mod
-
-        trace_file = tmp_path / "trace.jsonl"
-        monkeypatch.setenv("REYN_LLM_TRACE_DUMP", str(trace_file))
-
-        stub = _ScriptedLLM(_DECIDE_JSON)
-        monkeypatch.setattr(litellm, "acompletion", stub)
-
-        frame = _minimal_frame()
-        asyncio.run(llm_mod.call_llm(MODEL, frame, prompt_cache_enabled=False))
-
-        assert trace_file.exists(), "Trace file must be created"
-        records = [json.loads(line) for line in trace_file.read_text(encoding="utf-8").splitlines() if line.strip()]
-        assert records, "Trace must contain at least one record"
-
-        req = next((r for r in records if r.get("kind") == "request"), None)
-        resp = next((r for r in records if r.get("kind") == "response"), None)
-        assert req is not None, "Must have a 'request' record"
-        assert resp is not None, "Must have a 'response' record"
-
-        # request_id must pair them
-        assert req["request_id"] == resp["request_id"]
-
-        # Required fields on request
-        assert "model" in req
-        assert "messages" in req
-        assert "timestamp" in req
-        assert "caller_hint" in req
-
-        # Required fields on response
-        assert "content" in resp
-        assert "finish_reason" in resp
-        assert "usage" in resp
 
     def test_call_llm_tools_creates_jsonl_with_tools_schema(self, tmp_path: Path, monkeypatch) -> None:
         """Tier 2: call_llm_tools includes tools schema in request record."""
@@ -333,53 +260,6 @@ class TestTraceDumpEnabled:
 class TestCallerHint:
     """Tier 2: trace_caller is reflected in the dump as caller_hint."""
 
-    def test_caller_hint_in_call_llm(self, tmp_path: Path, monkeypatch) -> None:
-        """Tier 2: trace_caller kwarg arrives as caller_hint in the request record."""
-        import asyncio
-
-        import litellm
-
-        import reyn.llm.llm as llm_mod
-
-        trace_file = tmp_path / "trace_caller.jsonl"
-        monkeypatch.setenv("REYN_LLM_TRACE_DUMP", str(trace_file))
-
-        stub = _ScriptedLLM(_DECIDE_JSON)
-        monkeypatch.setattr(litellm, "acompletion", stub)
-
-        frame = _minimal_frame()
-        asyncio.run(
-            llm_mod.call_llm(MODEL, frame, prompt_cache_enabled=False, trace_caller="phase:my_phase")
-        )
-
-        records = [json.loads(line) for line in trace_file.read_text(encoding="utf-8").splitlines() if line.strip()]
-        req = next(r for r in records if r.get("kind") == "request")
-        assert req["caller_hint"] == "phase:my_phase"
-
-    def test_caller_hint_defaults_to_unknown(self, tmp_path: Path, monkeypatch) -> None:
-        """Tier 2: when trace_caller is not passed, caller_hint defaults to 'unknown'."""
-        import asyncio
-
-        import litellm
-
-        import reyn.llm.llm as llm_mod
-
-        trace_file = tmp_path / "trace_default.jsonl"
-        monkeypatch.setenv("REYN_LLM_TRACE_DUMP", str(trace_file))
-
-        stub = _ScriptedLLM(_DECIDE_JSON)
-        monkeypatch.setattr(litellm, "acompletion", stub)
-
-        frame = _minimal_frame()
-        asyncio.run(
-            llm_mod.call_llm(MODEL, frame, prompt_cache_enabled=False)
-            # No trace_caller kwarg
-        )
-
-        records = [json.loads(line) for line in trace_file.read_text(encoding="utf-8").splitlines() if line.strip()]
-        req = next(r for r in records if r.get("kind") == "request")
-        assert req["caller_hint"] == "unknown"
-
     def test_caller_hint_in_call_llm_tools(self, tmp_path: Path, monkeypatch) -> None:
         """Tier 2: trace_caller kwarg arrives as caller_hint in call_llm_tools request record."""
         import asyncio
@@ -411,44 +291,3 @@ class TestCallerHint:
 class TestMultipleCallsAccumulate:
     """Tier 2: consecutive calls append records, request_ids pair correctly."""
 
-    def test_two_calls_produce_four_records(self, tmp_path: Path, monkeypatch) -> None:
-        """Tier 2: 2 consecutive call_llm calls produce 4 records (2 req + 2 resp) with distinct request_ids."""
-        import asyncio
-
-        import litellm
-
-        import reyn.llm.llm as llm_mod
-
-        trace_file = tmp_path / "trace_multi.jsonl"
-        monkeypatch.setenv("REYN_LLM_TRACE_DUMP", str(trace_file))
-
-        stub = _ScriptedLLM(_DECIDE_JSON)
-        monkeypatch.setattr(litellm, "acompletion", stub)
-
-        frame = _minimal_frame()
-
-        async def _run_two():
-            await llm_mod.call_llm(MODEL, frame, prompt_cache_enabled=False, trace_caller="call1")
-            await llm_mod.call_llm(MODEL, frame, prompt_cache_enabled=False, trace_caller="call2")
-
-        asyncio.run(_run_two())
-
-        records = [json.loads(line) for line in trace_file.read_text(encoding="utf-8").splitlines() if line.strip()]
-        assert records, "Trace must contain records from two calls"
-
-        requests = [r for r in records if r.get("kind") == "request"]
-        responses = [r for r in records if r.get("kind") == "response"]
-        assert requests, "Must have request records"
-        assert responses, "Must have response records"
-
-        # request_ids must be distinct — verifies two separate calls were traced
-        req_ids = {r["request_id"] for r in requests}
-        resp_caller_hints = {r.get("caller_hint") for r in requests}
-        # The two calls used different trace_caller values — both must appear
-        assert "call1" in resp_caller_hints and "call2" in resp_caller_hints, (
-            "Each call must produce a distinct traced request"
-        )
-
-        # Each response must be paired with a request
-        resp_ids = {r["request_id"] for r in responses}
-        assert req_ids == resp_ids, "Response request_ids must match request request_ids"

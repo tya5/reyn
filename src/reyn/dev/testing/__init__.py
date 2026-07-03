@@ -5,6 +5,6 @@ Public surface:
   MissingFixture  raised on a replay-mode cache miss.
 """
 
-from .replay import REPLAY_DATETIME, LLMReplay, MissingFixture
+from .replay import LLMReplay, MissingFixture
 
-__all__ = ["LLMReplay", "MissingFixture", "REPLAY_DATETIME"]
+__all__ = ["LLMReplay", "MissingFixture"]
