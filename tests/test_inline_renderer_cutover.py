@@ -20,6 +20,7 @@ from reyn.interfaces.repl.renderer import (
     ChatRenderer,
     ConsoleChatRenderer,
     InlineChatRenderer,
+    _harden_soft_breaks,
     format_inline_message,
     wants_separator,
 )
@@ -288,3 +289,61 @@ def test_console_renderer_bottom_toolbar_clears_on_turn_cancelled() -> None:
     r.on_chat_event(_Ev("turn_started"))
     r.on_chat_event(_Ev("turn_cancelled"))
     assert r.bottom_toolbar() is None
+
+
+# ---------------------------------------------------------------------------
+# _harden_soft_breaks — single-newline preservation for agent output
+# ---------------------------------------------------------------------------
+
+
+def test_harden_soft_breaks_adds_trailing_spaces_to_paragraph_lines() -> None:
+    """Tier 2: _harden_soft_breaks appends two spaces to non-structural paragraph
+    lines so CommonMark treats the following newline as a hard line break instead
+    of collapsing it to a space."""
+    result = _harden_soft_breaks("first\nsecond\nthird")
+    # Each non-last paragraph line gains two trailing spaces.
+    assert result == "first  \nsecond  \nthird"
+
+
+def test_harden_soft_breaks_leaves_structural_lines_untouched() -> None:
+    """Tier 2: heading, list-item, blank-line, and code-fence lines must NOT gain
+    trailing spaces — the markdown parser relies on their raw newlines to identify
+    the element type.
+
+    Also: the LAST line of any input never gains trailing spaces (no newline
+    follows it, so there is nothing to harden).
+    """
+    # heading followed by text: heading is structural; "some text" is the last
+    # line, so no trailing spaces are added to either.
+    assert _harden_soft_breaks("# Title\nsome text") == "# Title\nsome text"
+    # unordered list items — list markers are structural, no trailing spaces.
+    assert _harden_soft_breaks("- alpha\n- beta") == "- alpha\n- beta"
+    # blank line between paragraphs: blank is structural, so para1's next is
+    # structural → no hardening. para2 is last → no hardening.
+    assert _harden_soft_breaks("para1\n\npara2") == "para1\n\npara2"
+    # code fence delimiter is structural; "code" sits between two structural
+    # lines, so it also stays untouched.
+    assert _harden_soft_breaks("```\ncode\n```") == "```\ncode\n```"
+
+
+def test_agent_single_newlines_appear_on_separate_lines() -> None:
+    """Tier 2: agent messages with single-newline-separated lines render on distinct
+    output lines — not collapsed to 'first second third' by the markdown renderer."""
+    out = _plain("agent", "first\nsecond\nthird")
+    output_lines = [ln for ln in out.splitlines() if ln.strip()]
+    # Each word must appear in a different line (not all on one).
+    first_line = next((ln for ln in output_lines if "first" in ln), None)
+    second_line = next((ln for ln in output_lines if "second" in ln), None)
+    assert first_line is not None and second_line is not None
+    assert first_line != second_line, (
+        f"'first' and 'second' collapsed to the same line; output:\n{out}"
+    )
+
+
+def test_agent_markdown_list_items_still_render_as_bullets() -> None:
+    """Tier 2: markdown list items (- item) are NOT affected by _harden_soft_breaks
+    and continue to render as bullet points — structural lines are exempt from
+    the soft-break hardening so the markdown parser still recognises them."""
+    out = _plain("agent", "- alpha\n- beta\n- gamma")
+    assert "•" in out
+    assert "alpha" in out and "beta" in out and "gamma" in out

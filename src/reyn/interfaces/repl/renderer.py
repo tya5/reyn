@@ -1,6 +1,7 @@
 """Pluggable chat UI backends for reyn chat."""
 from __future__ import annotations
 
+import re
 import sys
 import time
 from io import StringIO
@@ -407,14 +408,54 @@ def _gutter_grid(gutter: str, gutter_style: str, body, *, row_style: str = "",
     return grid
 
 
+# Matches lines that are structural markdown elements: headings, blockquotes,
+# list items (unordered and ordered), code-fence delimiters, and blank lines.
+# Used by _harden_soft_breaks to decide which transitions must NOT gain a hard
+# line break (the parser uses single newlines between structural elements to
+# identify them; adding ``  `` would break that recognition).
+_STRUCTURAL_LINE_RE = re.compile(
+    r"^(#|>|```|~~~|\s*[-*+] |\s*\d+\. |$)"
+)
+
+
+def _harden_soft_breaks(text: str) -> str:
+    """Append two trailing spaces to bare paragraph lines before a single newline.
+
+    CommonMark (and rich.Markdown) collapses a single newline inside a paragraph
+    to a space, so ``line1\\nline2`` renders as ``line1 line2``. LLM output often
+    uses single newlines for visual separation; this preserves them as hard line
+    breaks (CommonMark ``  \\n`` = ``<br>``).
+
+    Structural lines (headings, list items, blockquotes, code-fence delimiters,
+    blank lines) are left untouched — the parser uses the newlines around them
+    to recognise the element, and adding trailing spaces would break that.
+    """
+    if not text:
+        return text
+    lines = text.split("\n")
+    out = []
+    for i, line in enumerate(lines):
+        is_structural = bool(_STRUCTURAL_LINE_RE.match(line))
+        next_is_structural = i + 1 >= len(lines) or bool(
+            _STRUCTURAL_LINE_RE.match(lines[i + 1])
+        )
+        if is_structural or next_is_structural:
+            out.append(line)
+        else:
+            out.append(line + "  ")
+    return "\n".join(out)
+
+
 def _body_renderable(kind: str, text: str, body_style: str):
     """The body cell: markdown for agent (LLM) output, a styled Text otherwise."""
     from rich.markdown import Markdown
     from rich.text import Text
     if kind == "agent":
         # Render the LLM reply as markdown (headings / bold / lists / code) like
-        # Claude Code, instead of showing the raw markdown source.
-        return Markdown(text or "")
+        # Claude Code. Single newlines are hardened to CommonMark hard line breaks
+        # so the model's per-line output is preserved rather than collapsed to one
+        # paragraph — matching how CC displays LLM output.
+        return Markdown(_harden_soft_breaks(text or ""))
     return Text(text, style=body_style)
 
 
