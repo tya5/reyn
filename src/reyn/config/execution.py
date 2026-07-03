@@ -1,4 +1,4 @@
-"""reyn.config.execution — execution config: Plan/SkillResume/SelfImprovement/TimeTravel/ToolUse. (#1682 #3 split)."""
+"""reyn.config.execution — execution config: Plan/TimeTravel/ToolUse. (#1682 #3 split)."""
 from __future__ import annotations
 
 import socket
@@ -10,60 +10,6 @@ from reyn.config.chat import (  # #1682 #3: phase compaction config lives in cha
     PhaseActResultsCompactionConfig,
 )
 from reyn.runtime.budget.budget import CostConfig, CostLimitConfig
-
-SKILL_RESUME_POLICIES = ("prompt", "retry", "skip", "discard_skill")
-
-
-@dataclass
-class SkillResumeConfig:
-    """`skill_resume:` — policy for handling ambiguous steps on resume.
-
-    An *ambiguous step* is a ``step_started`` WAL event with no matching
-    ``step_completed`` / ``step_failed``. The op may have committed
-    externally (canonical intermediate-state); only the operator
-    can decide what to do.
-
-    Policies (one of ``SKILL_RESUME_POLICIES``):
-      - ``retry``         — re-execute the step (default). Safe for
-                            read-only ops and for skills the operator
-                            trusts to be idempotent. Risk: duplicate
-                            side effect.
-      - ``skip``          — synthesize an empty / default completion.
-                            The skill continues as if the op succeeded
-                            without actually running it. Risk: missing
-                            data downstream.
-      - ``discard_skill`` — abort the entire skill run, drop the
-                            checkpoint, surface a failure to the
-                            originating chain.
-      - ``prompt``        — legacy/no-op under PR-resume-auto. Retained
-                            for config compatibility. Treated as
-                            ``retry`` by the auto-resume runtime
-                            (no interactive prompt is shown — see the
-                            R-D3 廃案 note in the active plan).
-
-    ``per_skill`` overrides the default for specific skill names —
-    operator declares which skills are safe to retry vs which require
-    careful inspection.
-
-    Default changed from ``prompt`` to ``retry`` in PR-resume-auto: the
-    auto-resume design never blocks on interactive prompt; ``retry`` is
-    the safest non-blocking choice (correct for the common
-    flaky-read-API case after PR-memo-purity-fix invalidates world op
-    memos on resume).
-    """
-
-    default: str = "retry"
-    per_skill: dict[str, str] = field(default_factory=dict)
-
-    def policy_for(self, skill_name: str) -> str:
-        """Return the resume policy for a given skill name.
-
-        Falls back to ``default`` when no per_skill override exists.
-        Caller may further inspect / validate the value (already
-        validated to be in ``SKILL_RESUME_POLICIES`` at config-load
-        time).
-        """
-        return self.per_skill.get(skill_name, self.default)
 
 
 @dataclass
@@ -110,37 +56,5 @@ def _build_tool_use_config(raw: object) -> ToolUseConfig:
         step=_name("step", "universal-category"),
         phase=_name("phase", "universal-category"),
     )
-
-
-def _build_skill_resume_config(raw: object) -> SkillResumeConfig:
-    """Parse `skill_resume:` block; reject unknown policy values up front."""
-    defaults = SkillResumeConfig()
-    if not isinstance(raw, dict):
-        return defaults
-    default = str(raw.get("default", defaults.default))
-    if default not in SKILL_RESUME_POLICIES:
-        # Unknown policy → fall back to default (safe). Don't raise — config
-        # parse failures should never block startup; logger.warning is the
-        # convention used elsewhere for "bad config keys".
-        import logging
-        logging.getLogger(__name__).warning(
-            "skill_resume.default %r is not one of %s; using %r",
-            default, SKILL_RESUME_POLICIES, defaults.default,
-        )
-        default = defaults.default
-    per_skill_raw = raw.get("per_skill") or {}
-    per_skill: dict[str, str] = {}
-    if isinstance(per_skill_raw, dict):
-        for k, v in per_skill_raw.items():
-            v_str = str(v)
-            if v_str not in SKILL_RESUME_POLICIES:
-                import logging
-                logging.getLogger(__name__).warning(
-                    "skill_resume.per_skill[%r] = %r is not one of %s; "
-                    "skipping", k, v_str, SKILL_RESUME_POLICIES,
-                )
-                continue
-            per_skill[str(k)] = v_str
-    return SkillResumeConfig(default=default, per_skill=per_skill)
 
 

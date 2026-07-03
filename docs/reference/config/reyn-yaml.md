@@ -38,7 +38,6 @@ models:
 | `chat` | map | Chat-session compaction settings. See below. |
 | `voice` | map | Voice input (Whisper) settings for the chat TUI. See below. |
 | `events` | map | Audit-log rotation policy for chat-session event files. See below. |
-| `skill_resume` | map | Resume policy for ambiguous steps on restart. See below. |
 | `tool_use` | map | Per-layer tool-use scheme selector (chat/step/phase). See below. |
 | `mcp` | map | MCP server definitions and `search_threshold`. See below. |
 | `python` | map | Python preprocessor additional allowed-modules. See below. |
@@ -1288,30 +1287,6 @@ voice:
 | `cpu_threads` | int | `4` | CPU threads for faster-whisper. `0` = OpenMP default. Pinning to 4 avoids OpenMP/Python-threading deadlocks on Apple Silicon. |
 | `num_workers` | int | `1` | Parallel transcription streams. `1` keeps memory + thread usage low. |
 | `max_duration_s` | float | `300.0` | Auto-cancel recordings longer than this (seconds). Prevents runaway memory growth from unattended recordings. |
-
-## `skill_resume` block
-
-Resume policy for skill runs interrupted mid-step. An *ambiguous step* is one whose `step_started` WAL event has no matching `step_completed` / `step_failed` — the op may have committed externally.
-
-```yaml
-skill_resume:
-  default: retry            # retry | skip | discard_skill | prompt
-  per_skill:
-    my_idempotent_skill: retry
-    my_side_effect_skill: discard_skill
-```
-
-| Policy | Description |
-|--------|-------------|
-| `retry` (default) | Re-execute the ambiguous step. Safe for read-only ops and skills the operator trusts to be idempotent. Risk: duplicate side effects. |
-| `skip` | Synthesise an empty/default completion and continue. Risk: missing data downstream. |
-| `discard_skill` | Abort the entire skill run, drop the checkpoint, and surface a failure to the originating chain. |
-| `prompt` | Legacy/no-op. Retained for config compatibility; treated as `retry` by the auto-resume runtime (no interactive prompt is shown). |
-
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `default` | string | `retry` | Default resume policy for all skills. |
-| `per_skill` | map | `{}` | Per-skill policy overrides. Key is the skill name; value is one of the policies above. |
 
 ## `python` block
 

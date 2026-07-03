@@ -46,7 +46,6 @@ from reyn.config.config_schema import (
 # non-default so the guard stays decisive. Keyed by dotted key; the iteration
 # itself is still live-walk-derived — this only overrides the candidate VALUE.
 _VALID_NONDEFAULT_OVERRIDES: dict[str, object] = {
-    "skill_resume.default": "skip",  # validated against SKILL_RESUME_POLICIES, coerces
     # #1454: embedding_class is closed-world — a class not in embedding.classes
     # degrades to None at load (graceful). "standard" is a real builtin class
     # (!= the "local-mini" default), so it survives the membership check.
