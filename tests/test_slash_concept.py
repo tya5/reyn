@@ -174,7 +174,7 @@ def test_bare_concept_returns_intro_and_path(tmp_path: Path) -> None:
     text = msgs[0]["text"]
     assert "glossary" in text.lower()
     # path reference must be present
-    assert "Ctrl+B" in text or "guide/for-skill-authors/glossary" in text
+    assert "Ctrl+B" in text or "reference/glossary" in text
 
 
 # ── test 2: exact match ────────────────────────────────────────────────────
@@ -295,4 +295,4 @@ def test_default_glossary_loads_canonical_terms() -> None:
         _default_glossary_path().read_text(encoding="utf-8")
     )
     assert len(glossary) > 0
-    assert "skill" in glossary  # foundational reyn concept, stable across edits
+    assert "agent" in glossary  # foundational reyn concept, stable across edits
