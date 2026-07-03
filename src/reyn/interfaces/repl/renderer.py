@@ -471,6 +471,15 @@ def _summarize_result(tool, result) -> str:
         answer = result.get("answer")
         if isinstance(answer, str) and answer:
             return _short(answer, 60)
+        server_name = result.get("server_name")
+        if isinstance(server_name, str) and server_name:
+            return f"Installed {server_name}"
+        url = result.get("url")
+        if isinstance(url, str) and url:
+            return _short(url, 60)
+        state = result.get("state")
+        if isinstance(state, str) and state:
+            return state
         if status:
             return str(status)
     return _short(result, 80)
