@@ -148,6 +148,71 @@ def test_file_delete_shows_deleted_path() -> None:
     ) == "Deleted file"
 
 
+def test_memory_remember_shows_saved_slug() -> None:
+    """Tier 2: memory_operation__remember_* result ({saved, layer, path}) shows 'Saved {slug}'.
+
+    Without this branch the raw dict repr leaked into the ⎿ row; the result
+    has no 'op', 'status', 'tasks', 'entries', or 'matches' key.
+    """
+    assert summarize_tool_result(
+        "memory_operation__remember_agent",
+        {"saved": "my-memory-slug", "layer": "agent", "path": "/.reyn/memory/agent/my-memory-slug.md"},
+    ) == "Saved my-memory-slug"
+
+
+def test_memory_forget_shows_forgot_slug() -> None:
+    """Tier 2: memory_operation__forget result ({deleted, layer}) shows 'Forgot {slug}'.
+
+    Without this branch the raw dict repr leaked into the ⎿ row; same missing-key
+    condition as the remember case (no 'op', 'status', or list keys).
+    """
+    assert summarize_tool_result(
+        "memory_operation__forget",
+        {"deleted": "old-memory-slug", "layer": "shared"},
+    ) == "Forgot old-memory-slug"
+
+
+def test_recall_success_shows_chunk_count() -> None:
+    """Tier 2: rag_operation__recall success ({chunks, mode}) shows 'N chunks'.
+
+    recall returns {"chunks": [...], "mode": "recall"} with no op/status/matches/
+    entries key, so without this branch the raw dict repr leaked into the ⎿ row.
+    """
+    assert summarize_tool_result(
+        "rag_operation__recall",
+        {"chunks": [{"text": "a"}, {"text": "b"}, {"text": "c"}], "mode": "recall"},
+    ) == "3 chunks"
+    assert summarize_tool_result(
+        "rag_operation__recall",
+        {"chunks": [{"text": "only"}], "mode": "recall"},
+    ) == "1 chunk"
+    assert summarize_tool_result(
+        "rag_operation__recall",
+        {"chunks": [], "mode": "fallback"},
+    ) == "0 chunks"
+
+
+def test_error_message_field_shown_not_raw_dict() -> None:
+    """Tier 2: dicts with 'error_message' (no 'error' key) show the message.
+
+    recall validation errors return {"ok": False, "error_kind": ..., "error_message": ...}
+    and task_ops returns the same shape for invalid-args/no-context errors.
+    Without the error_message fallback both fell through to raw dict repr.
+    """
+    out = summarize_tool_result(
+        "rag_operation__recall",
+        {
+            "ok": False,
+            "error_kind": "missing_required_arg",
+            "error_message": "recall requires ['query']. Available sources are listed …",
+            "missing": ["query"],
+        },
+    )
+    assert "recall requires" in out
+    assert "{" not in out, "raw dict repr must not leak"
+    assert "ok" not in out.lower() or "False" not in out, "must not dump raw repr"
+
+
 def test_file_list_shows_entry_count() -> None:
     """Tier 2: file__list result ({path, entries}) shows 'Listed N entries'.
 

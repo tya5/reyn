@@ -368,6 +368,9 @@ def _summarize_result(tool, result) -> str:
         error = result.get("error")
         if isinstance(error, str):
             return _short(error, 80)
+        error_message = result.get("error_message")
+        if isinstance(error_message, str):
+            return _short(error_message, 80)
         op = result.get("op")
         path = result.get("path")
         status = result.get("status")
@@ -392,6 +395,12 @@ def _summarize_result(tool, result) -> str:
             count = result.get("count")
             n = int(count) if isinstance(count, (int, float)) else 0
             return f"{n} match{'es' if n != 1 else ''}"
+        saved = result.get("saved")
+        if isinstance(saved, str):
+            return f"Saved {saved}"
+        forgotten = result.get("deleted")
+        if isinstance(forgotten, str):
+            return f"Forgot {forgotten}"
         tasks = result.get("tasks")
         if isinstance(tasks, list):
             n = len(tasks)
@@ -404,6 +413,10 @@ def _summarize_result(tool, result) -> str:
         if isinstance(matches, list):
             n = len(matches)
             return f"{n} match{'es' if n != 1 else ''}"
+        chunks = result.get("chunks")
+        if isinstance(chunks, list):
+            n = len(chunks)
+            return f"{n} chunk{'s' if n != 1 else ''}"
         if status:
             return str(status)
     return _short(result, 80)
