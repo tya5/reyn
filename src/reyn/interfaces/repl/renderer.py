@@ -395,6 +395,11 @@ def _summarize_result(tool, result) -> str:
             count = result.get("count")
             n = int(count) if isinstance(count, (int, float)) else 0
             return f"{n} match{'es' if n != 1 else ''}"
+        if op == "mkdir":
+            return f"Created {path}" if path else "Created directory"
+        if op == "move":
+            dest = result.get("dest_path")
+            return f"Moved to {dest}" if dest else "Moved"
         saved = result.get("saved")
         if isinstance(saved, str):
             return f"Saved {saved}"
@@ -433,6 +438,10 @@ def _summarize_result(tool, result) -> str:
         if isinstance(results, list):
             n = len(results)
             return f"{n} result{'s' if n != 1 else ''}"
+        jobs = result.get("jobs")
+        if isinstance(jobs, list):
+            n = len(jobs)
+            return f"{n} job{'s' if n != 1 else ''}"
         chunks_dropped = result.get("chunks_dropped")
         if isinstance(chunks_dropped, int):
             n = chunks_dropped
@@ -449,6 +458,9 @@ def _summarize_result(tool, result) -> str:
             score = result.get("score")
             pct = f" ({score:.2f})" if isinstance(score, (int, float)) else ""
             return ("Passed" if passed else "Failed") + pct
+        returncode = result.get("returncode")
+        if isinstance(returncode, int) and status == "ok":
+            return f"exit {returncode}"
         if status:
             return str(status)
     return _short(result, 80)
