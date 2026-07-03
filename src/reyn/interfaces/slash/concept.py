@@ -1,7 +1,7 @@
 """/concept [<term>] — inline glossary lookup for TUI vocabulary.
 
 Surfaces definitions from
-``docs/guide/for-skill-authors/stdlib-authoring-tools/glossary.md``
+``docs/reference/glossary.md``
 without leaving the chat pane.  The glossary uses Markdown tables with
 ``| English | 日本語 | Definition |`` rows (and some two-column variant
 tables); the parser walks all tables and captures every term → definition
@@ -10,9 +10,9 @@ pair it finds.
 Usage::
 
     /concept              # shows intro + path to full glossary
-    /concept skill        # exact match → inline definition
-    /concept SKILL        # case-insensitive
-    /concept skil         # typo → "did you mean skill, …?" via difflib
+    /concept agent        # exact match → inline definition
+    /concept AGENT        # case-insensitive
+    /concept agnt         # typo → "did you mean agent, …?" via difflib
     /concept zxzxzx       # unknown → "no glossary entry" + 0 suggestions
 """
 from __future__ import annotations
@@ -27,9 +27,7 @@ from reyn.interfaces.slash import reply, reply_error, slash
 # Canonical path relative to the project root.  Resolved at call time so
 # tests can inject a custom path via the ``_glossary_path`` kwarg on the
 # internal helpers.
-_GLOSSARY_REL = Path(
-    "docs/guide/for-skill-authors/stdlib-authoring-tools/glossary.md"
-)
+_GLOSSARY_REL = Path("docs/reference/glossary.md")
 
 
 def _project_root() -> Path:
@@ -149,7 +147,7 @@ def _lookup(
 
 _GLOSSARY_PATH_HINT = (
     "Full glossary: Ctrl+B → Docs → "
-    "guide/for-skill-authors/stdlib-authoring-tools/glossary"
+    "reference/glossary"
 )
 
 

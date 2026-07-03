@@ -67,7 +67,7 @@ When translating:
 
 ## Glossary
 
-The DSL/runtime terms are listed in [`docs/guide/for-skill-authors/stdlib-authoring-tools/glossary.md`](../../guide/for-skill-authors/stdlib-authoring-tools/glossary.md). When writing in either language, use the same canonical term names from that glossary so cross-language cross-references stay consistent.
+The runtime terms are listed in [`docs/reference/glossary.md`](../../reference/glossary.md). When writing in either language, use the same canonical term names from that glossary so cross-language cross-references stay consistent.
 
 ## When you change runtime/DSL semantics
 
