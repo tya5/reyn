@@ -14,8 +14,8 @@ files or adding skill-specific strings anywhere.
 
 **P7 in practice.** The OS's skill-agnostic guarantee (P7) is what makes this
 possible. Op kind strings appear in exactly one place — `OP_KIND_MODEL_MAP` in
-`schemas/models.py`. Every other mechanism (`ControlIRExecutor`,
-`ALL_OP_KINDS`, `_build_phase_tool_catalog`) derives from that single source.
+`schemas/models.py`. Every other mechanism (`ALL_OP_KINDS`, the op dispatcher
+`execute_op`, the `reyn.tools` catalog) derives from that single source.
 Adding a new entry to the map is sufficient; no scattered string literals to
 track down.
 
@@ -229,9 +229,8 @@ async def test_notify_handler_emits_events():
 allowed_ops: [read_file, notify]
 ```
 
-The LLM's system prompt will include the `notify` op schema (via
-`_build_phase_tool_catalog`), and the LLM can now emit `notify` ops in its
-`control_ir` list.
+The LLM's system prompt will include the `notify` op schema (via the
+`reyn.tools` catalog), and the LLM can now emit `notify` ops.
 
 ---
 
@@ -242,8 +241,8 @@ After these four steps, no further OS changes are needed:
 | Mechanism | How it picks up your op |
 |---|---|
 | `ALL_OP_KINDS` | Derived from `OP_KIND_MODEL_MAP.keys()` — updated automatically |
-| `ControlIRExecutor` | Reads `_HANDLERS` which was populated by `register("notify", handle)` at import time |
-| LLM system prompt | `_build_phase_tool_catalog` iterates `OP_KIND_MODEL_MAP` and derives JSON Schema from `NotifyIROp` |
+| `execute_op` (op_runtime) | Reads `_HANDLERS` which was populated by `register("notify", handle)` at import time |
+| LLM system prompt | the `reyn.tools` catalog iterates `OP_KIND_MODEL_MAP` and derives JSON Schema from `NotifyIROp` |
 | DSL linter | Validates `allowed_ops` entries against `ALL_OP_KINDS` |
 
 The OS contains no `"notify"` string outside `schemas/models.py`. Any future skill
