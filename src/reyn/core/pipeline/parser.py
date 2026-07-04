@@ -4,14 +4,16 @@ Implements the surface grammar in Appendix B of
 ``docs/proposals/reyn-pipeline-spec-v0.8.md`` (lines 706-835), narrowed to
 exactly the subset :class:`reyn.core.pipeline.executor.PipelineExecutor` can
 run today: a **linear** sequence of ``transform`` / ``tool`` / ``shell`` /
-``agent`` steps plus the first COMPOSITIONAL primitive ``call`` (R7 — runs a
-registered sub-pipeline synchronously), plus the pipeline-level ``description``.
-``for_each`` / ``parallel`` / ``fold`` / ``match`` / ``refine``, and the
-pipeline-level ``input`` / ``defaults`` blocks are all part of the full v0.8
-grammar but have no runtime yet — this parser refuses to accept them rather
-than silently dropping them into a pipeline that "parses" but then either
-crashes at run time in a confusing place or (worse) quietly loses the
-author's intent. Every construct not yet executable raises
+``agent`` steps plus two COMPOSITIONAL primitives — ``call`` (R7 — runs a
+STATIC registered sub-pipeline synchronously) and ``match`` (``call``'s
+runtime-selected sibling: a runtime VALUE picks a case LABEL, whose target
+stays a static literal) — plus the pipeline-level ``description``.
+``for_each`` / ``parallel`` / ``fold`` / ``refine``, and the pipeline-level
+``input`` / ``defaults`` blocks are all part of the full v0.8 grammar but
+have no runtime yet — this parser refuses to accept them rather than
+silently dropping them into a pipeline that "parses" but then either crashes
+at run time in a confusing place or (worse) quietly loses the author's
+intent. Every construct not yet executable raises
 :class:`PipelineParseError` naming it explicitly, so authoring a
 not-yet-supported pipeline fails at parse time, at the DSL text, not deep in
 an executor stack trace.
@@ -72,6 +74,7 @@ from one file per pipeline).
 """
 from __future__ import annotations
 
+import re
 from typing import Any
 
 import yaml
@@ -80,6 +83,8 @@ from reyn.core.pipeline.executor import (
     AgentStep,
     CallStep,
     ExprRef,
+    MatchCase,
+    MatchStep,
     Pipeline,
     Step,
     ToolStep,
@@ -97,7 +102,7 @@ class PipelineParseError(ValueError):
     current linear executor can run — malformed YAML, a malformed R1
     expression, or (most commonly) a construct that is valid Appendix-B
     grammar but not yet supported by `PipelineExecutor` (`for_each`,
-    `parallel`, `fold`, `match`, `call`, `refine`, pipeline-level `input`/
+    `parallel`, `fold`, `refine`, pipeline-level `input`/
     `defaults`, or a per-step field the executor does not consume)."""
 
 
@@ -120,10 +125,42 @@ class _ExprTag:
 
 
 class _PipelineLoader(yaml.SafeLoader):
-    """`yaml.SafeLoader` plus the `!expr` tag constructor. A dedicated
-    subclass (rather than mutating `SafeLoader` globally) keeps this
-    parser's tag vocabulary from leaking into unrelated YAML loads
-    elsewhere in the process."""
+    """`yaml.SafeLoader` plus the `!expr` tag constructor, minus YAML 1.1's
+    `on`/`off`/`yes`/`no` implicit-bool resolution ("the Norway problem"). A
+    dedicated subclass (rather than mutating `SafeLoader` globally) keeps
+    this parser's tag vocabulary / resolver narrowing from leaking into
+    unrelated YAML loads elsewhere in the process.
+
+    The bool-resolver narrowing matters because Appendix B's `match` step
+    names its selector field literally `on` (`match = {on: PATH, cases:
+    ...}`) — under `SafeLoader`'s stock YAML 1.1 resolver, an unquoted `on:`
+    key (or `off`/`yes`/`no`) resolves to the Python `bool` `True`/`False`
+    instead of the string key/value the DSL author wrote, silently breaking
+    every `match` step (and any tool/shell arg literally named or valued
+    `on`/`off`/`yes`/`no`) unless every author remembers to quote it. This
+    loader instead resolves `bool` only for YAML 1.2 core-schema spellings
+    (`true`/`True`/`TRUE`/`false`/`False`/`FALSE`) — `on`/`off`/`yes`/`no`
+    pass through as plain strings, matching how most modern YAML tooling
+    (e.g. `ruamel.yaml`'s default) already resolved this ambiguity."""
+
+
+_BOOL_TAG = "tag:yaml.org,2002:bool"
+# `SafeLoader` registers ONE shared bool regex (matching
+# yes/Yes/YES/no/No/NO/true/True/TRUE/false/False/FALSE/on/On/ON/off/Off/OFF)
+# under EVERY first-character bucket it could start with. Dropping the entry
+# from just the `on`/`off`/`yes`/`no` buckets (o/O/y/Y/n/N) — while leaving
+# the t/T/f/F buckets (`true`/`false`) untouched — is enough: resolution
+# looks up by the scalar's OWN first character, so `"true"` still hits the
+# t-bucket entry while `on`/`off`/`yes`/`no` no longer match anything and
+# fall through to plain strings.
+_PipelineLoader.yaml_implicit_resolvers = {
+    first_char: [
+        (tag, regexp)
+        for tag, regexp in resolvers
+        if not (tag == _BOOL_TAG and first_char in "oOyYnN")
+    ]
+    for first_char, resolvers in _PipelineLoader.yaml_implicit_resolvers.items()
+}
 
 
 def _construct_expr_tag(loader: yaml.SafeLoader, node: yaml.Node) -> _ExprTag:
@@ -134,13 +171,14 @@ _PipelineLoader.add_constructor("!expr", _construct_expr_tag)
 
 # Constructs the union grammar's non-linear step kinds accept as *keys* so a
 # document using them gets a clear "not yet supported" error instead of a
-# generic "unknown step type". ``call`` is now SUPPORTED (R7) — it moved out of
-# this set into ``_STEP_PARSERS``.
-_UNSUPPORTED_STEP_KINDS = ("for_each", "parallel", "fold", "match")
+# generic "unknown step type". ``call``/``match`` are now SUPPORTED (R7) —
+# they moved out of this set into ``_STEP_PARSERS``.
+_UNSUPPORTED_STEP_KINDS = ("for_each", "parallel", "fold")
 _LINEAR_STEP_KINDS = ("transform", "tool", "shell", "agent")
-# ``call`` is compositional, not linear, but it IS executable — listed separately
-# so error text distinguishes "the linear kinds" from the full supported set.
-_SUPPORTED_STEP_KINDS = _LINEAR_STEP_KINDS + ("call",)
+# ``call``/``match`` are compositional, not linear, but ARE executable —
+# listed separately so error text distinguishes "the linear kinds" from the
+# full supported set.
+_SUPPORTED_STEP_KINDS = _LINEAR_STEP_KINDS + ("call", "match")
 _ALL_STEP_KINDS = _SUPPORTED_STEP_KINDS + _UNSUPPORTED_STEP_KINDS
 
 # Pipeline-level fields the full grammar allows but the linear executor has
@@ -213,6 +251,8 @@ _TOOL_KEYS = frozenset({"name", "args", "schema", "output"})
 _SHELL_KEYS = frozenset({"command", "schema", "output"})
 _AGENT_KEYS = frozenset({"prompt", "identity", "capabilities", "schema", "output"})
 _CALL_KEYS = frozenset({"pipeline", "pass", "output"})
+_MATCH_KEYS = frozenset({"on", "cases", "default", "output"})
+_MATCH_CASE_KEYS = frozenset({"pipeline", "pass"})
 
 
 def _parse_transform_step(body: "dict[str, Any]") -> TransformStep:
@@ -310,12 +350,61 @@ def _parse_call_step(body: "dict[str, Any]") -> CallStep:
     return CallStep(pipeline=name, pass_=list(raw_pass), output=output)
 
 
+def _parse_match_case(body: Any, *, where: str) -> MatchCase:
+    """A ``match`` case/``default`` body: ``{pipeline: LIT, pass: [NAME*]}`` —
+    the SAME shape (and Hard-rule-2 static-literal-target rule) as a ``call``
+    step's own ``{pipeline, pass}``, just nested under a case LABEL / the
+    ``default`` key instead of being the step body itself."""
+    if not isinstance(body, dict):
+        _fail(f"{where}: expected a mapping {{pipeline, pass?}}, got {type(body).__name__}")
+    _reject_unknown_keys(body, _MATCH_CASE_KEYS, where=where)
+    if "pipeline" not in body:
+        _fail(f"{where}: missing required field 'pipeline'")
+    name = body["pipeline"]
+    if not isinstance(name, str) or not name:
+        _fail(f"{where} 'pipeline': expected a non-empty literal pipeline name, got {name!r}")
+    raw_pass = body.get("pass") or []
+    if not isinstance(raw_pass, list) or not all(isinstance(n, str) for n in raw_pass):
+        _fail(f"{where} 'pass': expected a list of store-name strings, got {raw_pass!r}")
+    return MatchCase(pipeline=name, pass_=list(raw_pass))
+
+
+def _parse_match_step(body: "dict[str, Any]") -> MatchStep:
+    """``match = {on: PATH, cases: {LABEL: {pipeline: LIT, pass: [NAME*]}}+,
+    default?: {pipeline: LIT, pass: [NAME*]}, output?: NAME}`` (Appendix B).
+    ``on`` is an R1 expression source (same as ``transform.value``) whose
+    RUNTIME VALUE selects a case LABEL by string equality — every case/
+    ``default`` TARGET stays a static literal (Hard rule 2)."""
+    _reject_unknown_keys(body, _MATCH_KEYS, where="match step")
+    if "on" not in body:
+        _fail("match step: missing required field 'on'")
+    on = _validate_expr_source(body["on"], where="match step 'on'")
+    raw_cases = body.get("cases")
+    if not isinstance(raw_cases, dict) or not raw_cases:
+        _fail("match step: 'cases' must be a non-empty mapping of LABEL -> {pipeline, pass?}")
+    cases = {
+        label: _parse_match_case(case_body, where=f"match step case {label!r}")
+        for label, case_body in raw_cases.items()
+    }
+    raw_default = body.get("default")
+    default = (
+        _parse_match_case(raw_default, where="match step 'default'")
+        if raw_default is not None
+        else None
+    )
+    output = body.get("output")
+    if output is not None and not isinstance(output, str):
+        _fail(f"match step 'output': expected a store-name string, got {type(output).__name__}")
+    return MatchStep(on=on, cases=cases, default=default, output=output)
+
+
 _STEP_PARSERS = {
     "transform": _parse_transform_step,
     "tool": _parse_tool_step,
     "shell": _parse_shell_step,
     "agent": _parse_agent_step,
     "call": _parse_call_step,
+    "match": _parse_match_step,
 }
 
 

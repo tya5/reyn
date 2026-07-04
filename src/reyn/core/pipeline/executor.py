@@ -3,10 +3,12 @@ compositional foundation (``_run_scope`` + dotted-path recovery + ``call``).
 
 The executor for ``docs/proposals/reyn-pipeline-v0.9-design-resolutions.md``: a
 sequence of ``transform`` / ``tool`` (``shell`` is just a ``ToolStep(name="shell",
-...)``) / ``agent`` (R5) steps, plus the first COMPOSITIONAL primitive, ``call``
-(R7). Still out of scope for this slice: `for_each`/`parallel`/`fold`/`match`/
-`refine` — those are later primitives that plug into the SAME dispatch + scope
-machinery this module now exposes.
+...)``) / ``agent`` (R5) steps, plus two COMPOSITIONAL primitives: ``call`` (R7,
+a STATIC callee) and ``match`` (``call``'s runtime-selected sibling — the ``on``
+VALUE picks a LABEL, never a target; see :class:`MatchStep`). Still out of scope
+for this slice: `for_each`/`parallel`/`fold`/`refine` — those are later
+primitives that plug into the SAME dispatch + scope machinery this module now
+exposes.
 
 **Dispatch tables (R7 — the parallel-primitive seam).** Step execution is a
 ``dict``-dispatch keyed by the step's dataclass type
@@ -175,7 +177,55 @@ class CallStep:
     output: "str | None" = None
 
 
-Step = Union[TransformStep, ToolStep, AgentStep, CallStep]
+@dataclass(frozen=True)
+class MatchCase:
+    """One ``match`` case target: a REGISTERED sub-pipeline (``pipeline``, a
+    STATIC literal — Hard rule 2, never a runtime expression) plus its own
+    ``pass_`` caller-store projection, run exactly like a ``call`` step's
+    callee (see :class:`CallStep`) once this case's LABEL is selected."""
+
+    pipeline: str
+    pass_: "list[str]" = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class MatchStep:
+    """A COMPOSITIONAL step (R7 — ``call``'s runtime-selected sibling):
+    evaluate ``on`` (an R1 expression source, resolved exactly like
+    ``TransformStep.value``) against the current context to get a VALUE, then
+    select the :class:`MatchCase` whose LABEL string-equals that value —
+    ``default`` runs when no case LABEL matches, and a step with no matching
+    case and no ``default`` fails cleanly (Appendix B: ``match = {on: PATH,
+    cases: {LABEL: {pipeline: LIT, pass: [NAME*]}}+, default?: {pipeline: LIT,
+    pass: [NAME*]}, output?: NAME}``).
+
+    - Hard rule 2: every case/``default`` target is a STATIC literal pipeline
+      name — the runtime VALUE only ever selects a LABEL, never a target.
+    - Hard rule 7: ``on`` should reference a schema-declared field; the
+      analyzer facet (P4) warns when it does not (see ``analyzer.py``).
+    - the SELECTED case runs exactly like ``call``'s callee: its own
+      ``pass_`` projects the caller's named stores into an isolated
+      sub-context, the callee's first step sees the caller's pipe-data at the
+      match site (Hard rule 5), and the callee's FINAL step output is this
+      ``match`` step's N2 return value.
+    - a non-string ``on`` value is stringified the same way
+      ``_interpolate_prompt`` stringifies a non-string interpolation value,
+      before the LABEL string-equality comparison — case LABELs are always
+      strings (YAML mapping keys), so this is the one coercion needed to let
+      e.g. a boolean or numeric ``on`` value select a LABEL at all.
+
+    Recovery: the selected case's callee runs under a dotted scope
+    (``f"{i}.match.{j}"``) — IDENTICAL mechanism to ``call`` (single chosen
+    sub-scope; the other, unselected cases never execute and so leave no
+    dotted keys at all)."""
+
+    on: str
+    cases: "dict[str, MatchCase]"
+    default: "MatchCase | None" = None
+    output: "str | None" = None
+
+
+Step = Union[TransformStep, ToolStep, AgentStep, CallStep, MatchStep]
 
 
 @dataclass(frozen=True)
@@ -438,6 +488,77 @@ async def _run_call_step(inv: "_StepInvocation") -> "tuple[Any, bool, dict[str, 
     return final_pipe, any_durable, completed_step_results
 
 
+def _stringify_match_value(value: Any) -> str:
+    """Coerce an evaluated ``on`` value to the string a case LABEL
+    string-equality-compares against — same non-string stringification
+    :func:`_interpolate_prompt` applies, so ``true``/``42``/etc. select a
+    LABEL the same way they'd splice into a prompt."""
+    return value if isinstance(value, str) else str(value)
+
+
+async def _run_match_step(inv: "_StepInvocation") -> "tuple[Any, bool, dict[str, Any]]":
+    """``call``'s runtime-selected sibling (R7): evaluate ``on`` against the
+    context, select the :class:`MatchCase` whose LABEL string-equals the
+    result (falling back to ``default``, else failing the step), then run
+    that ONE case's callee exactly like :func:`_run_call_step` — same
+    ``pass_`` isolation, same ``f"{label}.match"`` dotted sub-scope, same
+    Hard-rule-5 pipe-data-at-call-site, same N2 final-output threading."""
+    step: MatchStep = inv.step  # type: ignore[assignment]
+    deps = inv.deps
+    try:
+        raw_value = evaluate_expr(step.on, inv.context)
+    except ExprEvalError as exc:
+        raise PipelineExecutionError(
+            f"step {inv.step_label} (match) failed evaluating 'on': {exc}"
+        ) from exc
+    label = _stringify_match_value(raw_value)
+
+    case = step.cases.get(label, step.default)
+    if case is None:
+        raise PipelineExecutionError(
+            f"step {inv.step_label} (match) value {raw_value!r} (label {label!r}) "
+            f"matched no case in {sorted(step.cases)!r} and no 'default' was given"
+        )
+
+    if deps.pipeline_registry is None:
+        raise PipelineExecutionError(
+            f"step {inv.step_label} (match label {label!r}) requires a "
+            "pipeline_registry to resolve its target, but none was passed to "
+            "run/resume"
+        )
+    try:
+        callee = deps.pipeline_registry.get(case.pipeline)
+    except PipelineNotFoundError as exc:
+        raise PipelineExecutionError(
+            f"step {inv.step_label} (match label {label!r}) target pipeline "
+            f"{case.pipeline!r} is not registered"
+        ) from exc
+
+    outer_stores = inv.context["ctx"]
+    sub_stores: "dict[str, Any]" = {}
+    for name in case.pass_:
+        if name not in outer_stores:
+            raise PipelineExecutionError(
+                f"step {inv.step_label} (match label {label!r} -> {case.pipeline!r}) "
+                f"pass: names {name!r}, which is not in the caller's named stores"
+            )
+        sub_stores[name] = outer_stores[name]
+
+    final_pipe, _final_stores, completed_step_results, any_durable = await (
+        inv.executor._run_scope(
+            callee.steps,
+            scope_prefix=f"{inv.step_label}.match",
+            seed_named_stores=sub_stores,
+            # Hard rule 5: the callee's first step gets the caller's pipe-data.
+            seed_pipe_data=inv.context["pipe"],
+            completed_step_results=inv.completed_step_results,
+            deps=deps,
+            record=inv.record,
+        )
+    )
+    return final_pipe, any_durable, completed_step_results
+
+
 # Dispatch table: step dataclass type -> its runner. A future primitive ADDS an
 # entry here (+ serde/parser/analyzer) rather than editing a shared elif chain.
 STEP_DISPATCH: "dict[type, Callable[[_StepInvocation], Awaitable[tuple[Any, bool, dict[str, Any]]]]]" = {
@@ -445,6 +566,7 @@ STEP_DISPATCH: "dict[type, Callable[[_StepInvocation], Awaitable[tuple[Any, bool
     ToolStep: _run_tool_step,
     AgentStep: _run_agent_step,
     CallStep: _run_call_step,
+    MatchStep: _run_match_step,
 }
 
 # Type -> kind-string, the inverse vocabulary the serde ``kind`` marker uses.
@@ -453,6 +575,7 @@ _STEP_KINDS: "dict[type, str]" = {
     ToolStep: "tool",
     AgentStep: "agent",
     CallStep: "call",
+    MatchStep: "match",
 }
 
 
@@ -733,6 +856,8 @@ __all__ = [
     "ToolStep",
     "AgentStep",
     "CallStep",
+    "MatchCase",
+    "MatchStep",
     "Step",
     "Pipeline",
     "PipelineResult",

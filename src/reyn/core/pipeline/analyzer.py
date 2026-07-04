@@ -9,15 +9,15 @@ monolithic walker — each primitive registers the check it is responsible for,
 and the registry is the single place a caller (a future ``analyze_pipeline``
 walker, or the IS-4 inline static-analysis gate) folds them together.
 
-This module is the SEAM plus the first entry (``call``'s facet). It is
-deliberately minimal in this slice: :data:`ANALYZER_FACETS` maps a step
-dataclass type to a facet function returning a list of human-readable problem
-strings ( empty = the step passed its facet), and :func:`analyze_step` looks one
-up. There is no full pipeline walker wired to consume it yet — that arrives with
-the primitives whose facets have real teeth (cost / spawn-tree bounds). What
-matters now is that the registration point EXISTS and ``call`` is registered, so
-every future primitive MUST add its facet here rather than bolting analysis on
-later.
+This module is the SEAM plus its first two entries (``call``'s and ``match``'s
+facets). It is deliberately minimal in this slice: :data:`ANALYZER_FACETS` maps
+a step dataclass type to a facet function returning a list of human-readable
+problem strings ( empty = the step passed its facet), and :func:`analyze_step`
+looks one up. There is no full pipeline walker wired to consume it yet — that
+arrives with the primitives whose facets have real teeth (cost / spawn-tree
+bounds). What matters now is that the registration point EXISTS and
+``call``/``match`` are registered, so every future primitive MUST add its
+facet here rather than bolting analysis on later.
 
 ``call``'s facet is intentionally thin: the target is a STATIC literal pipeline
 name (Hard rule 2), so the only thing to confirm structurally is that it IS a
@@ -27,12 +27,20 @@ want (the callee is registered; the transitive spawn-tree/cost bound folds the
 callee's envelope into the caller's — S5) need cross-pipeline context the
 per-step facet does not have, and land with the analyzer walker + registry
 plumbing, not here.
+
+``match``'s facet has the real path-enumeration teeth this module's docstring
+promises above: it walks every case LABEL (plus ``default``) and confirms each
+target is a non-empty STATIC literal pipeline name (Hard rule 2 — the runtime
+``on`` VALUE only ever selects a LABEL). That enumeration is the seed a future
+cross-pipeline analyzer walker needs to fold every reachable case's transitive
+cost/spawn-tree bound into the caller's own — same "not here yet, but the
+registration point exists" posture as ``call``'s deeper checks.
 """
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Callable
 
-from reyn.core.pipeline.executor import CallStep
+from reyn.core.pipeline.executor import CallStep, MatchStep
 
 if TYPE_CHECKING:
     from reyn.core.pipeline.executor import Step
@@ -50,6 +58,29 @@ def _call_facet(step: "CallStep") -> "list[str]":
     return problems
 
 
+def _match_facet(step: "MatchStep") -> "list[str]":
+    """``match``'s real P4 contribution (more than ``call``'s placeholder):
+    enumerate every (LABEL -> pipeline) case target plus ``default``, and
+    confirm each is a non-empty STATIC literal pipeline name (Hard rule 2 —
+    the runtime ``on`` VALUE only ever selects a LABEL, never a target).
+    Also flags an empty ``cases`` mapping (the parser already rejects this,
+    but the facet stays defensive for a hand-built ``MatchStep``, e.g. one
+    round-tripped through ``serde``). Returns problem strings (empty = OK)."""
+    problems: "list[str]" = []
+    if not step.cases:
+        problems.append("match step has no cases — at least one LABEL -> pipeline is required")
+    targets = dict(step.cases)
+    if step.default is not None:
+        targets["default"] = step.default
+    for label, case in targets.items():
+        if not isinstance(case.pipeline, str) or not case.pipeline:
+            problems.append(
+                f"match case {label!r} target must be a non-empty literal "
+                f"pipeline name, got {case.pipeline!r}"
+            )
+    return problems
+
+
 # Facet registry: step type -> its static-analysis check. A future primitive
 # ADDS an entry here (mirroring the executor's ``STEP_DISPATCH``, serde's
 # ``ENCODERS``/``DECODERS``, and the parser's ``_STEP_PARSERS``) — the P4
@@ -57,6 +88,7 @@ def _call_facet(step: "CallStep") -> "list[str]":
 # structural.
 ANALYZER_FACETS: "dict[type, Callable[[Step], list[str]]]" = {
     CallStep: _call_facet,
+    MatchStep: _match_facet,
 }
 
 
