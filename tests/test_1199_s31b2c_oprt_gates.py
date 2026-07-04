@@ -1,12 +1,9 @@
 """Tier 2: op-runtime gate cutovers + model axis additions (#1199 S3.1b-2c).
 
-The clean op-runtime gates (require_shell / require_secret_write / require_tool)
+The clean op-runtime gates (require_secret_write / require_tool)
 route their static decl authority through the unified EffectivePermission model,
 byte-identical (each gate's existing suite is the broad guard). Adds the TOOL axis
 (decl.tool, require_tool) and the SECRET_WRITE "*" wildcard (require_secret_write).
-The intricate gates (require_http_get / require_python) are deferred — see the
-S3.1b-2c PR / a 2c-2 design call (config-deny tiers / prompt flows / perm-return
-make the model a marginal, awkward fit).
 """
 from __future__ import annotations
 
@@ -43,5 +40,3 @@ def test_require_secret_write_cutover_reproduces_logic(tmp_path: Path) -> None:
     r.require_secret_write(PermissionDecl(secret_write=["*"]), "ANY_KEY")  # wildcard → ok
     with pytest.raises(PermissionError, match="not declared"):
         r.require_secret_write(PermissionDecl(), "K")                      # undeclared → raise
-
-

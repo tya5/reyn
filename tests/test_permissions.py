@@ -103,7 +103,7 @@ def test_require_mcp_still_requires_decl_mcp_even_with_allowed_mcp(tmp_path):
     )
     bus = _make_bus()
 
-    with pytest.raises(PermissionError, match="not declared in skill permissions"):
+    with pytest.raises(PermissionError, match="not declared in actor permissions"):
         _run(resolver.require_mcp(decl, "filesystem", bus))
 
 

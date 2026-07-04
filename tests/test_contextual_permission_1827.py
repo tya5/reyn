@@ -78,7 +78,7 @@ async def test_none_contextual_preserves_undeclared_message(tmp_path):
     r = _resolver(tmp_path)
     bus = _RecordingBus(answer_id="yes")
     decl = PermissionDecl(tool=[])  # web_search NOT declared
-    with pytest.raises(PermissionError, match="not declared in skill permissions"):
+    with pytest.raises(PermissionError, match="not declared in actor permissions"):
         await r.require_tool(decl, "web_search", bus, contextual=None)
 
 
@@ -131,7 +131,7 @@ async def test_contextual_cannot_grant_back_static_deny(tmp_path):
     bus = _RecordingBus(answer_id="yes")
     decl = PermissionDecl(tool=[])  # NOT declared
     ctx = ContextualPermission(tool_allow=frozenset({"web_search"}))  # context "allows"
-    with pytest.raises(PermissionError, match="not declared in skill permissions"):
+    with pytest.raises(PermissionError, match="not declared in actor permissions"):
         await r.require_tool(decl, "web_search", bus, contextual=ctx)
 
 

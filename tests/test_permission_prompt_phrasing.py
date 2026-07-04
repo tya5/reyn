@@ -125,7 +125,7 @@ async def test_announce_meta_carries_natural_prompt() -> None:
     assert "https://example.com" in msg.text
 
 
-# ── 4. require_mcp + require_tool + require_python — natural ────
+# ── 4. require_mcp + require_tool — natural ────────────────────────────────
 #
 # #571 collapse arc Phase 5: the per-op interactive prompts for
 # require_mcp_install / require_index_drop / require_mcp_drop_server /
