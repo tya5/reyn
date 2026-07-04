@@ -1019,7 +1019,102 @@ class AgentRegistry:
         # #2187 §3.6 (5d): the RE-DELIVERY half — now that the actionable sessions are
         # live, re-publish their missed events through each session's OWN production waker.
         await self._redeliver_recovery_wakes(recovery_work)
+
+        # IS-2: pipeline driver-session re-wake — a SELF-SUFFICIENT scan of
+        # `.reyn/pipeline/state/` (invocation.json + terminal marker), deliberately
+        # independent of the task-backend subscription machinery above AND of the
+        # snapshot-driven step-5 loop: a driver-session that crashed before its
+        # first session snapshot has no snapshot.json (never enters all_snaps),
+        # and its start-nudge was already consumed (empty inbox) — the #2187-5d
+        # "RUNNING-but-empty-inbox" trap. The scan re-creates + re-wakes it from
+        # the work-order FILE alone (truncation-surviving, like the R4 gens).
+        await self._rewake_pipeline_runs()
         return snapshots
+
+    async def _rewake_pipeline_runs(self) -> "list[str]":
+        """IS-2: re-create + re-wake the driver-session of every NON-TERMINAL
+        pipeline run found under ``.reyn/pipeline/state/`` (see
+        ``reyn.core.pipeline.work_order`` for the run-dir lifecycle files and
+        the exactly-once/at-least-once contract). Returns the re-woken run ids
+        (for the log / tests).
+
+        Per run dir, in order:
+        - terminal marker present → one-stat skip (a delivered run never
+          resurrects; scan cost over historical runs stays trivial).
+        - work-order absent/corrupt → logged skip (nothing to resume from).
+        - rewind guard (DEFAULT-OPEN polarity): skip ONLY when the recorded
+          ``spawn_seq`` is provably on an abandoned WAL branch
+          (``is_active_seq`` False — the run was rewound away). A missing /
+          truncated-away spawn record keeps the run eligible: requiring the
+          event to be present would make recovery depend on a truncatable WAL
+          entry, exactly what the CLAUDE.md truncate-falsify gate forbids.
+        - bump ``attempts.json`` durably BEFORE the wake (the A8 poison cap's
+          monotonic counter — a resume that crashes the process still counted;
+          the driver terminal-fails past the cap instead of crash-looping).
+        - ensure the driver-session EXISTS (re-create via ``spawn_session(name,
+          sid=...)`` when the crash predated any session record), swap in a
+          fresh ``PipelineExecutorDriver`` built from the work-order, nudge
+          (empty user turn), and boot the run-loop pump — the same
+          wake-triple shape ``TaskWaker._wake`` uses."""
+        if self._state_log is None:
+            return []
+        from reyn.core.events.config_recovery import reyn_root
+        from reyn.core.pipeline.work_order import (
+            bump_resume_attempts,
+            has_result,
+            load_invocation,
+        )
+        from reyn.runtime.services.pipeline_executor_driver import (
+            PipelineExecutorDriver,
+        )
+
+        root = reyn_root(self._state_log.path)
+        if root is None:
+            return []
+        state_root = root / "pipeline" / "state"
+        if not state_root.is_dir():
+            return []
+        rewoken: "list[str]" = []
+        for run_dir in sorted(state_root.iterdir()):
+            if not run_dir.is_dir() or has_result(run_dir):
+                continue
+            work_order = load_invocation(run_dir)
+            if work_order is None:
+                logger.warning(
+                    "pipeline recovery: run dir %s has no readable invocation.json "
+                    "— skipping (nothing to resume from)", run_dir,
+                )
+                continue
+            if work_order.spawn_seq is not None and not is_active_seq(
+                self._state_log, work_order.spawn_seq,
+            ):
+                # Provably rewound-away (abandoned WAL branch) — do not resurrect.
+                continue
+            name, sid = work_order.driver_agent, work_order.driver_sid
+            if not self.exists(name):
+                logger.warning(
+                    "pipeline recovery: run %r's driver agent %r no longer exists "
+                    "— skipping", work_order.run_id, name,
+                )
+                continue
+            bump_resume_attempts(run_dir)
+            if not self._has_session(name, sid):
+                self.spawn_session(name, sid=sid)
+            session = self._peek_session(name, sid)
+            if session is None:
+                continue
+            session.set_loop_driver(PipelineExecutorDriver(
+                work_order, registry=self, state_log=self._state_log,
+            ))
+            await session.submit_user_text("")  # the no-payload resume nudge (D案)
+            self.ensure_session_running(name, sid)
+            rewoken.append(work_order.run_id)
+        if rewoken:
+            logger.info(
+                "pipeline recovery: re-woke %d non-terminal run(s): %s",
+                len(rewoken), ", ".join(rewoken),
+            )
+        return rewoken
 
     # ── Global rewind (ADR-0038 Stage 1c-2, D2 consistent-cut) ──────────────
 

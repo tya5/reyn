@@ -102,6 +102,12 @@ _NOT_EXTERNAL = {
     # own tool-result path when it runs (same "ACK here, fenced at its own
     # seam" pattern as delegate_to_agent / session_spawn above).
     "run_pipeline",
+    # IS-2: run_pipeline_async returns only {status: started, run_id} — an
+    # OS-assembled launch ACK, no content at all. The eventual result arrives
+    # as an OS-framed pipeline_result inbox message; any external content a
+    # step fetched was fenced at that step's own tool-result seam when it
+    # ran (same rationale as run_pipeline above).
+    "run_pipeline_async",
 }
 
 

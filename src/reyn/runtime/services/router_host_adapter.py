@@ -546,6 +546,15 @@ class RouterHostAdapter:
         return self._agent_role
 
     @property
+    def live_session_id(self) -> "str | None":
+        """The owning session's LIVE sid (#2130 pattern: the constructor's cached
+        ``session_id`` is stale for a spawned session — it is stamped
+        post-construction, so the live fn wins when wired). IS-2 reads this as
+        the ``run_pipeline_async`` reply address; the ``spawn_session``
+        result-routing path reads the same expression."""
+        return self._live_session_id_fn() if self._live_session_id_fn else self._session_id
+
+    @property
     def events(self) -> Any:
         """EventLog for dispatch_tool events."""
         return self._events
@@ -961,7 +970,7 @@ class RouterHostAdapter:
         # spawned session, stamped post-construction). This lifts the #2103 S1bc-exec
         # non-main-spawn guard: a non-main session may now spawn — its result routes back
         # correctly by (agent, from_sid). (None / "main" → main-case, byte-identical.)
-        from_sid = self._live_session_id_fn() if self._live_session_id_fn else self._session_id
+        from_sid = self.live_session_id
         sid = await self._registry.spawn_session_recorded(
             self._agent_name, mode=mode, narrowing=narrowing,
         )

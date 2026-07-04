@@ -2082,6 +2082,26 @@ class Session:
         """Forwarding → RouterLoopDriver.is_cancel_requested (PR-3)."""
         return self._loop_driver.is_cancel_requested()
 
+    def set_loop_driver(self, driver: "ExecutionDriver") -> None:
+        """IS-2: swap this session's execution driver post-construction.
+
+        The pipeline driver-session seam: ``spawn_session`` builds every
+        session through the fixed one-arg factory (default ``RouterLoopDriver``),
+        and the crash-recovery scan re-creates driver-sessions through that
+        same factory — so per-session driver injection happens HERE, after
+        construction, at both birth sites uniformly (the post-ctor observer
+        seam; the discarded default driver is accepted overhead). Safe by
+        construction: ``_loop_driver`` is only read at call time (run_turn /
+        cancel forwarding), and the swap always precedes the run-loop start.
+
+        A driver exposing ``bind_session`` (``PipelineExecutorDriver``) is
+        handed this session + its RouterHostAdapter so it can build the
+        tool-step ToolContext from the session's OWN (narrowed) context."""
+        self._loop_driver = driver
+        bind = getattr(driver, "bind_session", None)
+        if callable(bind):
+            bind(self, self._router_host)
+
     async def cancel_inflight(self) -> str:
         """#1468: cancel all in-flight work — running turn + tasks/plans.
 
@@ -3099,6 +3119,27 @@ class Session:
             "responder_sid": responder_sid,
         })
 
+    async def submit_pipeline_result(
+        self, *, run_id: str, pipeline_name: str, status: str, text: str,
+        chain_id: "str | None" = None,
+    ) -> None:
+        """IS-2: deliver an async pipeline run's terminal result to this session.
+
+        The ``agent_response`` mirror for the pipeline driver-session
+        architecture: the invoker's ``run_pipeline_async`` returned
+        ``{status: started}`` immediately (no pending chain), so the result
+        arrives as a NEW turn trigger — ``run_one_iteration`` routes the
+        ``pipeline_result`` kind to one router turn (like a task wake), with
+        ``text`` the OS-framed message the driver formatted. Delivery is
+        at-least-once (the driver's terminal marker is written only after this
+        lands — see ``reyn.core.pipeline.work_order``), so a consumer that
+        must dedup can key on ``run_id``."""
+        await self._put_inbox("pipeline_result", {
+            "run_id": run_id, "pipeline_name": pipeline_name, "status": status,
+            "text": text, "chain_id": chain_id or _new_chain_id(),
+            "sender": "pipeline:os",
+        })
+
     # ── #2103 S1bc-exec: spawned-task correlation record (bounded) ──────────────
 
     def record_spawned_task(self, sid: str, task: str) -> None:
@@ -3827,6 +3868,12 @@ class Session:
                 await self._handle_agent_request(payload)
             elif kind == "agent_response":
                 await self._handle_agent_response(payload)
+            elif kind == "pipeline_result":
+                # IS-2: an async pipeline driver-session posted its terminal
+                # result here (the agent_response mirror — but chainless: the
+                # launch returned immediately, so this is a fresh turn, routed
+                # exactly like a task wake).
+                await self._handle_pipeline_result(payload)
             elif kind in ("task_ready", "task_dependency_aborted"):
                 # #1953 slice 7: the TaskWaker delivered a dep-graph disposition
                 # (a dependent became ready, or a parent must decide recovery). Both
@@ -3919,9 +3966,12 @@ class Session:
           (the #1800 self-continuation), ``agent_response`` (a reply to a request THIS
           agent sent). These never switch tasks, so preserving is interleaving-safe.
         - RESET→None (a genuinely NEW external context = session-owned creates):
-          ``user``, ``agent_request`` (an INCOMING peer ask). An unknown future kind
-          falls here — fail-safe to session-owned (a mis-own/leak is worse than an
-          orphan); a new self-continuation kind must be added to the PRESERVE set.
+          ``user``, ``agent_request`` (an INCOMING peer ask), ``pipeline_result``
+          (IS-2: an async pipeline's terminal result — a fresh external context,
+          not a continuation of a task the receiver was executing). An unknown
+          future kind falls here — fail-safe to session-owned (a mis-own/leak is
+          worse than an orphan); a new self-continuation kind must be added to
+          the PRESERVE set.
 
         Linger note (B1.5, considered + accepted): a post-completion hook can preserve
         current=T past T's completion. Functionally harmless — §16 B2's
@@ -3943,6 +3993,15 @@ class Session:
         """#1953 slice 7: surface a Task dep-graph wake (``task_ready`` /
         ``task_dependency_aborted``) to the LLM as one router turn, so it resumes /
         recovers the work via ordinary task ops."""
+        await self._handle_user_message(
+            payload.get("text", ""),
+            chain_id=payload.get("chain_id") or _new_chain_id(),
+        )
+
+    async def _handle_pipeline_result(self, payload: dict) -> None:
+        """IS-2: surface an async pipeline's terminal result (``pipeline_result``)
+        to the LLM as one router turn — same shape as ``_handle_task_wake``: the
+        driver already formatted the OS-framed ``text``."""
         await self._handle_user_message(
             payload.get("text", ""),
             chain_id=payload.get("chain_id") or _new_chain_id(),
