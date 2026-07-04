@@ -36,35 +36,12 @@ class ConsoleLogger:
 
     # ── Phase lifecycle ────────────────────────────────────────────────────────
 
-    def on_phase_started(self, data: dict) -> None:
-        print(f"[phase:{data['phase']}] started (visit #{data['visit_count']})")
-
     def on_phase_retry(self, data: dict) -> None:
         error = data.get("error", "")
         print(
             f"[phase:{data['phase']}] retry {data['attempt']}/{data['max_retries']}"
             f" — {error[:120]}"
         )
-
-    def on_phase_completed(self, data: dict) -> None:
-        phase = data["phase"]
-        next_phase = data.get("next", "?")
-        confidence = data.get("confidence", 0.0)
-        was_normalized = data.get("was_normalized", False)
-        was_inferred = data.get("was_inferred", False)
-        retries = data.get("retries", 0)
-        artifact_path = data.get("artifact_path", "")
-
-        norm = (
-            " (inferred)" if was_inferred
-            else f" (normalized from '{data.get('original_raw_type')}')" if was_normalized
-            else ""
-        )
-        retry_str = (
-            f" [{retries} retr{'y' if retries == 1 else 'ies'}]" if retries else ""
-        )
-        path_str = f"  → {artifact_path}" if artifact_path else ""
-        print(f"[phase:{phase}] → {next_phase}{norm}{retry_str}  (confidence={confidence}){path_str}")
 
     def on_artifact_created(self, data: dict) -> None:
         phase = data.get("phase", "?")
