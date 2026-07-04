@@ -47,7 +47,7 @@ JSONL files are replayable with `reyn events <file>`. See [events reference](../
 
 Per-agent workspace. One directory per named agent (created by `reyn agent new`). The `default` agent always exists.
 
-- `profile.yaml` — agent identity: name, role, optional `allowed_skills`. See profile-yaml reference.
+- `profile.yaml` — agent identity: name, role, optional `allowed_mcp`. See profile-yaml reference.
 - `history.jsonl` — append-only conversation log (user + assistant turns; cross-agent messages include `chain_id` for tracing).
 - `memory/` — agent-scoped memory (`MEMORY.md` index + body files). Recalled and written automatically during the router phase.
 - `state/skills/<run_id>.snapshot.json` — WAL snapshots for crash recovery of in-flight skill runs.
