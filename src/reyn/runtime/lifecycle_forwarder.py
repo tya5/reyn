@@ -13,11 +13,14 @@ notifications, budget warnings, session-level errors) can land here
 without expanding the lifecycle forwarder's per-handler contract.
 
 Wired up in :class:`reyn.runtime.session.Session` via
-``self._chat_events.add_subscriber(ChatLifecycleForwarder(self.outbox))``.
+``self._chat_events.add_subscriber(ChatLifecycleForwarder(self.outbox, registry=self._registry))``.
+The optional ``registry`` lets a handler bridge-subscribe to another session's
+own EventLog (#2570: a pipeline driver-session's live step progress).
 """
 from __future__ import annotations
 
 import asyncio
+from typing import Any
 
 from reyn.runtime.outbox import OutboxMessage
 from reyn.schemas.models import Event
@@ -26,8 +29,13 @@ from reyn.schemas.models import Event
 class ChatLifecycleForwarder:
     """Callable subscriber that bridges session-level events into the outbox."""
 
-    def __init__(self, outbox: asyncio.Queue) -> None:
+    def __init__(self, outbox: asyncio.Queue, registry: "Any | None" = None) -> None:
         self.outbox = outbox
+        self._registry = registry
+        # #2570: run_id -> (driver EventLog, listener fn, invoking tool name).
+        # Tracks bridge-subscriptions to a pipeline driver-session's own
+        # EventLog for the duration of one sync-attached run_pipeline call.
+        self._pipeline_subs: dict[str, tuple[Any, Any, str | None]] = {}
 
     def __call__(self, event: Event) -> None:
         handler = getattr(self, f"on_{event.type}", None)
@@ -263,6 +271,9 @@ class ChatLifecycleForwarder:
             data=data,
             extra_meta={"result": data.get("result")},
         )
+        result = data.get("result")
+        run_id = result.get("run_id") if isinstance(result, dict) else None
+        self._maybe_unsubscribe_pipeline(data.get("tool"), run_id)
 
     def on_tool_failed(self, data: dict) -> None:
         """Bridge ``dispatch_tool``'s failure event into a ``tool_call_failed``
@@ -279,6 +290,87 @@ class ChatLifecycleForwarder:
                 "error_message": data.get("message"),
             },
         )
+        # No result dict on a raised exception (dispatcher never reached the
+        # handler's return) — fall back to matching by tool name.
+        self._maybe_unsubscribe_pipeline(data.get("tool"), None)
+
+    # ── Pipeline attached live-progress bridge (#2570) ────────────────────
+    # session_api.py's run_pipeline_attached emits pipeline_run_attached onto
+    # THIS session's own _chat_events right after spawning the driver-session
+    # (sync-attached path only). The driver-session's pipeline_step_started /
+    # pipeline_step_completed events land on ITS OWN EventLog — a session
+    # distinct from this one, invisible here unless we bridge-subscribe.
+
+    def on_pipeline_run_attached(self, data: dict) -> None:
+        """Bridge-subscribe to the driver-session's EventLog for one run's duration.
+
+        ``data`` = {tool, run_id, driver_sid, agent_name, pipeline_name} (see
+        ``session_api.run_pipeline_attached``). Looks up the driver session via
+        the injected registry and forwards its ``pipeline_step_started`` /
+        ``pipeline_step_completed`` events (matched by ``run_id``) as transient
+        ``status`` lines — mirroring ``on_mcp_progress``: a many-step pipeline
+        would spam permanent ``system`` markers otherwise. Unsubscribed by
+        ``on_tool_returned`` / ``on_tool_failed`` when the matching
+        ``run_pipeline`` tool call completes. No-ops gracefully if the registry
+        is absent or the driver session can't be found (forward-compat with
+        event-shape drift, same idiom as the rest of this forwarder)."""
+        if self._registry is None:
+            return
+        tool = data.get("tool")
+        run_id = data.get("run_id")
+        driver_sid = data.get("driver_sid")
+        agent_name = data.get("agent_name")
+        pipeline_name = str(data.get("pipeline_name") or "pipeline")
+        if not (run_id and driver_sid and agent_name):
+            return
+        driver_session = self._registry.get_session(agent_name, driver_sid)
+        if driver_session is None:
+            return
+        driver_events = getattr(getattr(driver_session, "router_host", None), "events", None)
+        if driver_events is None:
+            return
+
+        def _on_driver_event(event: Event) -> None:
+            if event.type not in ("pipeline_step_started", "pipeline_step_completed"):
+                return
+            if event.data.get("run_id") != run_id:
+                return
+            self._enqueue_pipeline_step(pipeline_name, event.type, event.data)
+
+        driver_events.add_subscriber(_on_driver_event)
+        self._pipeline_subs[run_id] = (driver_events, _on_driver_event, tool)
+
+    def _enqueue_pipeline_step(self, pipeline_name: str, event_type: str, data: dict) -> None:
+        step_index = data.get("step_index")
+        total_steps = data.get("total_steps")
+        step_kind = data.get("step_kind", "?")
+        if event_type == "pipeline_step_started":
+            n = (step_index or 0) + 1
+            marker, suffix = "▸", ""
+        else:
+            n = step_index or 0
+            marker, suffix = "✓", " done"
+        progress = f"{n}/{total_steps}" if total_steps else str(n)
+        text = f"[{marker} {pipeline_name}: step {progress} ({step_kind}){suffix}]"
+        meta = {"source": "pipeline", "run_id": data.get("run_id")}
+        try:
+            self.outbox.put_nowait(OutboxMessage(kind="status", text=text, meta=meta))
+        except asyncio.QueueFull:
+            pass
+
+    def _maybe_unsubscribe_pipeline(self, tool: "str | None", run_id: "str | None") -> None:
+        if not self._pipeline_subs:
+            return
+        target_rid = run_id
+        if target_rid is None:
+            for rid, (_events, _listener, sub_tool) in list(self._pipeline_subs.items()):
+                if sub_tool == tool:
+                    target_rid = rid
+                    break
+        entry = self._pipeline_subs.pop(target_rid, None) if target_rid else None
+        if entry is not None:
+            events, listener, _ = entry
+            events.remove_subscriber(listener)
 
     def _enqueue_tool_call(
         self,
