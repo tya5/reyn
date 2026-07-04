@@ -1105,6 +1105,31 @@ mcp:
 
 See [Concepts: MCP](../../concepts/tools-integrations/mcp.md) for the protocol overview and How-to: use an MCP server for the end-to-end quickstart.
 
+## `skills` block
+
+Registers `SKILL.md`-based skills — the same explicit-registration model as `mcp.servers` (no directory scan; an entry must exist for a skill to be visible).
+
+```yaml
+skills:
+  entries:
+    pdf_editing:
+      path: skills/pdf-editing/SKILL.md   # project-root-relative or absolute
+      description: "Fill, merge, and extract fields from PDF forms"
+      enabled: true
+      auto_invoke: true
+```
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `path` | string | required | Path to `SKILL.md`, or its containing directory. |
+| `description` | string | `""` | One-line summary shown in the model-facing `## Skills` menu (first line only, 200-char cap). |
+| `enabled` | bool | `true` | `false` removes the entry from the registry entirely. |
+| `auto_invoke` | bool | `true` | `false` keeps the skill registered but excludes it from the system-prompt menu. |
+
+`skills.entries` merges across `~/.reyn/config.yaml` ⊕ `reyn.yaml` ⊕ `reyn.local.yaml` ⊕ the dynamic `<project>/.reyn/config/skills.yaml` (written by the `skill_management__install_local` / `skill_management__install_source` chat tools), later tiers winning on name collision — the same merge shape as `mcp.servers`.
+
+See [Concepts: Skills](../../concepts/tools-integrations/skills.md) for the full registration model, the three-layer exposure model (menu / on-demand read / bundled assets), and the install tools.
+
 ## `embedding` block
 
 RAG embedding model classes and batch settings. Built-in defaults cover the OpenAI path — no `reyn.yaml` changes are required for a fresh install with `OPENAI_API_KEY`.
