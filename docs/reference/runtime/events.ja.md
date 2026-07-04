@@ -14,11 +14,12 @@ Reyn はすべての状態変化に対して構造化イベントを発行しま
 
 ```json
 {
-  "ts": "2026-04-30T10:00:00.123Z",
-  "kind": "<event_kind>",
-  "phase": "<current_phase>",
-  "run_id": "<uuid>",
-  ... // kind 固有のペイロード
+  "type": "<event_kind>",
+  "timestamp": "2026-04-30T10:00:00.123456+00:00",
+  "data": {
+    ... // kind 固有のペイロード。発行元の EventLog が設定されていれば
+        // agent_id / run_id を含むことがある(下記参照)
+  }
 }
 ```
 
