@@ -1735,10 +1735,10 @@ class Session:
             chat_scheme_name=self._chat_tool_use_scheme,  # #1593 PR-2
         )
 
-        # session.py refactor PR-4 (FP-0019 series final): SkillPlanGlue owns
-        # skill/plan completion routing and chain timeout lifecycle.
-        from reyn.runtime.services.skill_plan_glue import SkillPlanGlue
-        self._skill_plan_glue = SkillPlanGlue(
+        # session.py refactor PR-4 (FP-0019 series final): ChainTimeoutGlue owns
+        # chain timeout lifecycle.
+        from reyn.runtime.services.chain_timeout_glue import ChainTimeoutGlue
+        self._chain_timeout_glue = ChainTimeoutGlue(
             append_history_fn=self._append_history,
             events=self._chat_events,
             reset_turn_counter_fn=self._reset_router_turn_counter,
@@ -2227,7 +2227,7 @@ class Session:
         it). Session-scoped (this sid only); live next turn; persists across restart (step2)."""
         if kind not in self._visibility_override:
             raise ValueError(
-                f"unknown capability kind {kind!r} (expected tool / skill / mcp / category)"
+                f"unknown capability kind {kind!r} (expected tool / mcp / category)"
             )
         if visible:
             self._visibility_override[kind].discard(name)
@@ -4772,8 +4772,8 @@ class Session:
     # stays out of the service layer.
 
     async def _on_chain_timeout_fire(self, chain_id: str) -> None:
-        """Forwarding → SkillPlanGlue.on_chain_timeout_fire (PR-4)."""
-        await self._skill_plan_glue.on_chain_timeout_fire(chain_id)
+        """Forwarding → ChainTimeoutGlue.on_chain_timeout_fire (PR-4)."""
+        await self._chain_timeout_glue.on_chain_timeout_fire(chain_id)
     async def _on_chain_peer_discarded(
         self, *, chain_id: str, peer: str, reason: str,
     ) -> None:

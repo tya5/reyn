@@ -18,7 +18,7 @@ models:
 # output_language: en          # en | ja | zh | ...
 
 # ───────────────────────────────────────────────────────────────────────────
-# Pre-approved permissions for chat / skill ops.
+# Pre-approved permissions for chat / agent ops.
 #
 # `file.read` recursive under the project root is on by default so that
 # `reyn chat` can answer questions about the codebase without prompting on
@@ -64,11 +64,10 @@ permissions:
   # want the agent to be able to read specific pages after searching:
   # web.fetch: allow
   #
-  # ── shell — keep off unless you're writing meta-skills ──────────────────
-  # `shell: allow` lets skills run arbitrary subprocesses. Required for
-  # specific meta-skills (skill_builder, skill_improver) but unsafe for
-  # a chat agent — keep commented out unless you understand the
-  # implications.
+  # ── shell — keep off unless agents need subprocess access ───────────────
+  # `shell: allow` lets agents run arbitrary subprocesses. Required for
+  # operator-defined automation agents but unsafe for a basic chat agent —
+  # keep commented out unless you understand the implications.
   # shell: allow
 
 # ───────────────────────────────────────────────────────────────────────────
@@ -88,7 +87,7 @@ permissions:
 # they continue to load. Run `reyn config migrate-mcp` (or `--dry-run` first)
 # to move them to `.reyn/mcp.yaml` and remove from this file.
 #
-# Full setup guide: docs/guide/for-skill-authors/use-an-mcp-server.md
+# Full setup guide: docs/guide/for-users/popular-mcp-servers.md
 # ───────────────────────────────────────────────────────────────────────────
 """
 

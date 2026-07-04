@@ -7,7 +7,7 @@ produces. The tui-coder trace confirmed that router_cap fires exclusively on
 the a2a path (no-reset accumulation) — site C was dead code.
 
 After #1538, InterAgentMessaging receives `emit_router_cap_exhausted_fn` injected from
-Session at construction. Both SkillPlanGlue and InterAgentMessaging paths call the
+Session at construction. Both ChainTimeoutGlue and InterAgentMessaging paths call the
 single Session._emit_router_cap_exhausted_user — zero drift by construction.
 
 Invariants pinned:

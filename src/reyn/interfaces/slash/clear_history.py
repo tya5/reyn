@@ -8,7 +8,7 @@ backs the Memory tab's hot-list augmentation, persisted at
 
 - ``.reyn/events/``                (P6 audit truth — never touched)
 - ``.reyn/state/wal.jsonl``        (run resume — preserved)
-- ``.reyn/agents/<n>/state/``      (snapshot.json / plans / skills)
+- ``.reyn/agents/<n>/state/``      (snapshot.json / plans)
 - ``profile.yaml`` / MEMORY.md     (non-runtime config)
 - ``.input_history``               (operator's typed history)
 

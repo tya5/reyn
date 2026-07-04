@@ -1,4 +1,4 @@
-"""SkillPlanGlue — chain timeout lifecycle for Session.
+"""ChainTimeoutGlue — chain timeout lifecycle for Session.
 
 Handles the chain timeout lifecycle:
 
@@ -15,7 +15,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-class SkillPlanGlue:
+class ChainTimeoutGlue:
     """Handles chain timeout lifecycle for Session.
 
     Constructed once per Session.  All state (chains, journal) is

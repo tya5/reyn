@@ -34,7 +34,7 @@ See ``docs/deep-dives/audits/2026-05-15-pure-mode-stdlib-audit.md`` for
 the full reasoning.
 
 Authors who need *any* of the above must declare `mode: unsafe` (= stdlib
-auto-allowed via `reyn run`, user skills need `--allow-unsafe-python` or
+auto-allowed via `reyn run`, agents/ops need `--allow-unsafe-python` or
 explicit operator approval). The boundary is sharp: if the python step's
 output depends on a value the operator can change without editing the
 input artifact, the step is non-`safe`.
@@ -57,7 +57,7 @@ If a step needs a non-ambient capability (operator files, network, env vars,
 process spawning), use a `run_op` step — that is the proper escape hatch with
 its own permission gate and event log entry.
 
-Full author guide: docs/concepts/skills/python-safe-mode.md
+Full author guide: docs/deep-dives/audits/2026-05-15-pure-mode-stdlib-audit.md
 """
 from __future__ import annotations
 

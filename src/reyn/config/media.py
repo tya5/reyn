@@ -16,7 +16,7 @@ class VoiceConfig:
 
     Lazy-loaded only when the user presses the record key (Ctrl+R) so the
     optional deps (`sounddevice`, `faster-whisper`) stay opt-in. See the
-    user guide at `docs/guide/for-skill-authors/enable-voice-input.md`.
+    user guide at `docs/guide/for-users/chat-and-web-ui.md`.
 
     Defaults reflect Reyn's Japanese-enterprise focus (project_reyn_vision):
     `language="ja"` so short clips don't get auto-detected as a wrong
