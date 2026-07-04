@@ -32,6 +32,7 @@ from reyn.core.events.event_store import EventStore
 from reyn.core.events.events import EventLog
 from reyn.core.events.snapshot_generations import SnapshotGenerationStore
 from reyn.core.events.state_log import StateLog
+from reyn.core.pipeline.registry import PipelineRegistry
 from reyn.hooks.dispatcher import HOOK_INBOX_KIND
 from reyn.llm.model_resolver import ModelResolver
 from reyn.runtime.agent import Agent
@@ -1055,6 +1056,13 @@ class Session:
         # and for agent-to-agent message routing (PR11). The factory in
         # cli/commands/chat.py wires this; tests can leave it None.
         self._registry = registry
+        # IS-5: Session owns a real (initially empty) PipelineRegistry so
+        # ``run_pipeline`` has a live registry to look up against in
+        # production — populating it from disk / a YAML DSL parser is a
+        # later slice; registration is programmatic for now (mirrors the
+        # pre-parser AgentRegistry posture). Threaded to RouterHostAdapter
+        # below (mirrors ``agent_registry=self._registry`` just above).
+        self._pipeline_registry = PipelineRegistry()
         # PR11: max delegation hop depth (LangGraph-style). 0 = user input,
         # each `_send_to_agent` increments. Refuse send when depth > limit.
         self._max_hop_depth = _safety.loop.max_agent_hops
@@ -1466,6 +1474,12 @@ class Session:
             memory=self._memory,
             journal=self._journal,
             agent_registry=self._registry,
+            # IS-5: the session's real (initially empty) PipelineRegistry —
+            # mirrors agent_registry above. Exposed via
+            # RouterHostAdapter.get_pipeline_registry() and read onto
+            # RouterCallerState.pipeline_registry by
+            # RouterLoop._build_router_caller_state.
+            pipeline_registry=self._pipeline_registry,
             # #2103 S1bc-exec: record a spawned session's sid→task (the trusted result
             # header source) + read this session's LIVE sid (the cached session_id above
             # is stale for spawned sessions, stamped post-construction) for the non-main
@@ -2000,6 +2014,22 @@ class Session:
         surface.
         """
         return self._registry
+
+    @property
+    def pipeline_registry(self) -> "PipelineRegistry":
+        """Read-only accessor for the session's owning PipelineRegistry.
+
+        IS-5: Session constructs + owns a real (initially empty)
+        ``PipelineRegistry`` instance — populating it from disk / a YAML
+        DSL parser is a later slice; this property + the constructor
+        wiring below exist so ``run_pipeline`` has a real registry to
+        look up against in production, not the ``None`` landmine
+        (``ctx.router_state.pipeline_registry`` was never populated
+        before this). Threaded into ``RouterHostAdapter`` at
+        construction (mirrors ``agent_registry`` above), then onto
+        ``RouterCallerState`` by ``RouterLoop._build_router_caller_state``.
+        """
+        return self._pipeline_registry
 
     @property
     def interventions(self) -> "InterventionRegistry":

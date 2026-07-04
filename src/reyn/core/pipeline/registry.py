@@ -71,5 +71,14 @@ class PipelineRegistry:
         surfacing, e.g. an L1-style list like the skill registry's)."""
         return tuple(self._pipelines)
 
+    def entries(self) -> "tuple[tuple[str, str], ...]":
+        """``(name, description)`` for every registered pipeline (IS-5:
+        consumed by the universal catalog's ``pipeline`` category
+        enumerator so ``list_actions(category=["pipeline"])`` surfaces
+        each registered pipeline's name + description to the LLM)."""
+        return tuple(
+            (name, pipeline.description) for name, pipeline in self._pipelines.items()
+        )
+
 
 __all__ = ["PipelineRegistry", "PipelineNotFoundError"]

@@ -158,6 +158,29 @@ def _recall_single_source_args(
     return out
 
 
+def _pipeline_run_args(entry_name: str, args: Mapping[str, Any]) -> dict[str, Any]:
+    """``pipeline__<name>`` → ``run_pipeline({name, input})`` (IS-5 D19
+    resource invoke).
+
+    The catalog's ``pipeline`` resource category (``universal_catalog.py:
+    _enumerate_category``) lists each REGISTERED pipeline as
+    ``pipeline__<name>``; invoking that qualified name curries the pipeline
+    name from the entry (same pattern as ``rag_corpus__<name>`` currying
+    ``sources``) and forwards the caller's ``input`` object unchanged as the
+    pipeline's seed context. This is ADDITIVE to the pre-existing static
+    ``pipeline__run`` verb in ``_OPERATION_RULES`` (checked first by
+    ``resolve_invoke_action``/``resolve_describe_action`` — an explicit
+    qualified-name match always wins over this per-category fallback), so
+    both ``invoke_action(action="pipeline__run", args={name, input})`` and
+    ``invoke_action(action="pipeline__<name>", args={input})`` reach
+    ``run_pipeline`` with the same effective args.
+    """
+    out: dict[str, Any] = {"name": entry_name}
+    if "input" in args:
+        out["input"] = args["input"]
+    return out
+
+
 def _mcp_tool_args(entry_name: str, args: Mapping[str, Any]) -> dict[str, Any]:
     """``mcp__<server>__<tool>`` → ``mcp_call_tool({tool, tool_args})`` (#1647).
 
@@ -223,6 +246,9 @@ _RESOURCE_RULES: Final[dict[str, tuple[str, Callable[[str, Mapping[str, Any]], d
     # (mcp__call_tool / mcp__list_tools / …) match _OPERATION_RULES FIRST, so they
     # are unaffected; only dynamic per-tool names reach this rule.
     "mcp":           ("mcp_call_tool",       _mcp_tool_args),
+    # IS-5: pipeline__<name> → run_pipeline({name, input}) — see
+    # _pipeline_run_args. Additive alongside the static pipeline__run verb.
+    "pipeline":      ("run_pipeline",        _pipeline_run_args),
 }
 
 

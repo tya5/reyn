@@ -33,14 +33,22 @@ Dependencies the handler assembles for :class:`~reyn.core.pipeline.executor.Pipe
     ``ctx.router_state.host.agent_name`` when a host is present.
   - ``tool_dispatch`` — see :func:`_make_tool_dispatch`.
 
-NOTE (surfacing): this tool is registered in the unified ``ToolRegistry``
-(dispatch-completeness: routable via ``invoke_action``/``pipeline__run``,
-classified for the content-threat + capability-floor guards) but is NOT yet
-added to ``build_tools()`` — the live LLM tool list. That wiring is the same
-"PR-3b" follow-up already deferred for the other universal-catalog wrappers
-(``list_actions``/``search_actions``/``describe_action``/``invoke_action``);
-``run_pipeline`` rides the same follow-up, tracked as IS-1's "surfacing"
-deferral.
+NOTE (surfacing, IS-5): this tool is registered in the unified
+``ToolRegistry`` (dispatch-completeness: routable via
+``invoke_action``/``pipeline__run``, classified for the content-threat +
+capability-floor guards) and IS surfaced to the live LLM — not via
+``build_tools()`` (which is hand-assembled and strips direct tools once the
+universal-catalog wrappers are on; PR-3b already shipped that default-on),
+but via the same modern path every other universal-catalog wrapper uses: the
+``pipeline`` resource category in ``tools/universal_catalog.py:
+_enumerate_category`` lists each REGISTERED pipeline (name + description)
+from ``ctx.router_state.pipeline_registry``, and the LLM launches a chosen
+one through ``invoke_action(action="pipeline__run", args={name, input})``.
+``Session`` (``runtime/session.py``) constructs + owns the production
+``PipelineRegistry`` that backs this (empty until a later slice populates it
+from disk / a parser); it is threaded through ``RouterHostAdapter`` onto
+``RouterCallerState.pipeline_registry`` by
+``RouterLoop._build_router_caller_state``.
 """
 from __future__ import annotations
 

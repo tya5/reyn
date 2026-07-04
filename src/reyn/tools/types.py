@@ -57,9 +57,11 @@ class RouterCallerState:
     # IS-1 (docs/proposals/reyn-pipeline-v0.9-design-resolutions.md R6): the
     # PipelineRegistry the run_pipeline tool looks up a registered Pipeline by
     # name in. Threaded explicitly (mirrors agent_registry above) rather than a
-    # hidden global, since IS-1 registration is programmatic per-owner. None =
-    # host doesn't support run_pipeline (surfacing to the live LLM catalog is
-    # a later slice; this field exists so the handler + tests have a seam).
+    # hidden global, since IS-1 registration is programmatic per-owner. IS-5:
+    # populated in production by RouterLoop._build_router_caller_state from
+    # Session's real PipelineRegistry (host.get_pipeline_registry()) — no
+    # longer None on the live path. None only for narrow test hosts that
+    # don't support run_pipeline.
     pipeline_registry: Any = None
 
     # Async dispatch callbacks (= for delegate_to_agent / plan

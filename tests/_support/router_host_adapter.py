@@ -72,6 +72,7 @@ def make_adapter(
     session_id: "str | None" = None,
     current_task_id_fn: "object | None" = None,  # #1953 §16: per-turn execution context
     agent_registry: object = None,  # #2103: real AgentRegistry for spawn/topology seams
+    pipeline_registry: object = None,  # IS-5: real PipelineRegistry for run_pipeline lookup
     on_limit: object = None,  # #2175: OnLimitConfig for the spawn-limit checkpoint (None → no checkpoint = unattended reject)
     safety_extensions: "dict | None" = None,  # #2175: shared per-run extension dict
     intervention_answer: "str | None" = None,  # #2175: interactive-mode bus answer (choice_id, e.g. "yes")
@@ -134,6 +135,7 @@ def make_adapter(
         memory=memory,
         journal=None,
         agent_registry=agent_registry,
+        pipeline_registry=pipeline_registry,  # IS-5
         handle_chat_limit_checkpoint=_checkpoint,  # #2175
         safety_extensions=_ext,  # #2175
         agent_workspace_dir=workspace,

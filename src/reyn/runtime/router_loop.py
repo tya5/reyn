@@ -3468,6 +3468,21 @@ class RouterLoop:
             available_skills=(
                 getattr(self.host, "get_available_skills", lambda: None)()
             ),
+            # IS-5: real AgentRegistry / PipelineRegistry so ``run_pipeline``
+            # (and any future AgentStep-bearing pipeline) resolve against
+            # live production state instead of the None landmine — prior to
+            # this, ``rs.agent_registry`` / ``rs.pipeline_registry`` were
+            # never populated by the live router path, so run_pipeline
+            # always errored "no PipelineRegistry" at call time. getattr
+            # fallback keeps narrow test hosts (FakeRouterHost, plan-step
+            # host without these accessors) at None (= graceful degrade,
+            # same posture as mcp_servers / available_skills above).
+            agent_registry=(
+                getattr(self.host, "get_agent_registry", lambda: None)()
+            ),
+            pipeline_registry=(
+                getattr(self.host, "get_pipeline_registry", lambda: None)()
+            ),
         )
 
     async def _invoke_via_registry(self, name: str, args: dict) -> Any:
