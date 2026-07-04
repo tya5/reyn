@@ -1,0 +1,385 @@
+"""Pipeline DSL parser (IS-3): compact YAML text -> :class:`Pipeline` dataclasses.
+
+Implements the surface grammar in Appendix B of
+``docs/proposals/reyn-pipeline-spec-v0.8.md`` (lines 706-835), narrowed to
+exactly the subset :class:`reyn.core.pipeline.executor.PipelineExecutor` can
+run today: a **linear** sequence of ``transform`` / ``tool`` / ``shell`` /
+``agent`` steps, plus the pipeline-level ``description``. ``for_each`` /
+``parallel`` / ``fold`` / ``match`` / ``call`` / ``refine``, and the
+pipeline-level ``input`` / ``defaults`` blocks are all part of the full v0.8
+grammar but have no runtime yet — this parser refuses to accept them rather
+than silently dropping them into a pipeline that "parses" but then either
+crashes at run time in a confusing place or (worse) quietly loses the
+author's intent. Every construct not yet executable raises
+:class:`PipelineParseError` naming it explicitly, so authoring a
+not-yet-supported pipeline fails at parse time, at the DSL text, not deep in
+an executor stack trace.
+
+**Tool/shell ``args`` — the load-bearing divergence from Appendix B.** The
+compact spec writes ``tool = {... args?:{KEY:TPL} ...}`` (a template string
+per arg, interpolated the same way an ``agent.prompt`` is). The executor does
+**not** do that: :class:`~reyn.core.pipeline.executor.ToolStep` resolves an
+``args`` value against the step context only when it is wrapped in
+:class:`~reyn.core.pipeline.executor.ExprRef`; every other value (including a
+bare string) passes through as a Python literal, untouched. Mixing those two
+models — DSL author writes ``{ctx.x}`` expecting interpolation, executor
+treats it as a literal string containing four literal characters — is
+exactly the "parses fine, resolves wrong at runtime" drift this parser must
+not produce. So this parser defines its own explicit surface rule instead of
+mirroring Appendix B literally:
+
+    A tool/shell ``args``/``command`` value is a **literal** UNLESS it is
+    tagged with the YAML tag ``!expr``, e.g. ``query: !expr ctx.brief`` or
+    ``limit: !expr "ctx.n + 1"`` — in which case it becomes an
+    :class:`ExprRef` wrapping the scalar's text as an R1 expression source
+    (validated by ``expr.parse`` at parse time, so a malformed expression is
+    a DSL parse error, not a runtime surprise). A plain untagged value —
+    string, number, list, mapping — is stored as-is and passed straight
+    through to ``tool_dispatch``. ``!expr`` is only honored as the WHOLE
+    value of an args entry; one hiding inside a nested list/mapping is a
+    parse error (it would otherwise silently reach ``tool_dispatch`` as an
+    inert tag object instead of the resolved value the author intended).
+
+``agent.prompt`` keeps the Appendix B ``TPL`` semantics verbatim — it is
+stored as the literal template string and interpolated at run time by the
+executor's own ``_interpolate_prompt`` (``{ctx.NAME.field}`` / ``{pipe}``).
+This parser does not touch it beyond storing it.
+
+``transform.value`` (and nothing else) is an R1 expression SOURCE per
+Appendix B's ``EXPR`` — stored verbatim as a string (never evaluated here,
+the executor evaluates it against the live context), but run through
+``expr.parse`` at parse time so a malformed expression fails immediately.
+
+Standalone ``Schema`` documents (Appendix B: ``Schema = name:NAME
+fields:{...}``) register into a caller-supplied
+:class:`~reyn.core.pipeline.schema.SchemaRegistry` — the same registry the
+caller later hands to ``PipelineExecutor.run``/``resume`` so a step's
+``schema: REF`` resolves. This module never constructs its own registry
+implicitly: the caller owns the registry's lifetime (mirrors how
+``AgentRegistry``/``StateLog`` are threaded explicitly elsewhere in this
+package), so schemas parsed from one DSL file are visible to pipelines
+parsed from another as long as the same registry is passed to both.
+
+A DSL text is one or more YAML documents (``---``-separated). Each document
+is classified as a ``schema:`` document or a ``pipeline:`` document by its
+top-level key; a text may mix both (schemas typically precede the pipeline
+that references them). Exactly one ``pipeline:`` document must be present in
+a call to :func:`parse_pipeline_dsl` — a file with zero or more than one is a
+parse error (unambiguous "what did I just parse" contract for the registry
+caller populating a :class:`~reyn.core.pipeline.registry.PipelineRegistry`
+from one file per pipeline).
+"""
+from __future__ import annotations
+
+from typing import Any
+
+import yaml
+
+from reyn.core.pipeline.executor import (
+    AgentStep,
+    ExprRef,
+    Pipeline,
+    Step,
+    ToolStep,
+    TransformStep,
+)
+from reyn.core.pipeline.expr import ExprParseError
+from reyn.core.pipeline.expr import parse as parse_expr
+from reyn.core.pipeline.schema import SchemaRegistry
+
+__all__ = ["PipelineParseError", "parse_pipeline_dsl"]
+
+
+class PipelineParseError(ValueError):
+    """Raised for any DSL text this parser cannot turn into a `Pipeline` the
+    current linear executor can run — malformed YAML, a malformed R1
+    expression, or (most commonly) a construct that is valid Appendix-B
+    grammar but not yet supported by `PipelineExecutor` (`for_each`,
+    `parallel`, `fold`, `match`, `call`, `refine`, pipeline-level `input`/
+    `defaults`, or a per-step field the executor does not consume)."""
+
+
+# ---------------------------------------------------------------------------
+# `!expr` YAML tag — the tool/shell-arg expression marker (see module
+# docstring). A dedicated tag rather than reusing agent-prompt `{...}`
+# brace syntax so there is no ambiguity between "a literal string that
+# happens to contain braces" and "an expression to resolve".
+# ---------------------------------------------------------------------------
+
+
+class _ExprTag:
+    """Marks a YAML scalar tagged ``!expr`` — carries the raw (untouched)
+    scalar text as the candidate R1 expression source."""
+
+    __slots__ = ("src",)
+
+    def __init__(self, src: str) -> None:
+        self.src = src
+
+
+class _PipelineLoader(yaml.SafeLoader):
+    """`yaml.SafeLoader` plus the `!expr` tag constructor. A dedicated
+    subclass (rather than mutating `SafeLoader` globally) keeps this
+    parser's tag vocabulary from leaking into unrelated YAML loads
+    elsewhere in the process."""
+
+
+def _construct_expr_tag(loader: yaml.SafeLoader, node: yaml.Node) -> _ExprTag:
+    return _ExprTag(loader.construct_scalar(node))
+
+
+_PipelineLoader.add_constructor("!expr", _construct_expr_tag)
+
+# Constructs the union grammar's non-linear step kinds accept as *keys* so a
+# document using them gets a clear "not yet supported" error instead of a
+# generic "unknown step type".
+_UNSUPPORTED_STEP_KINDS = ("for_each", "parallel", "fold", "match", "call")
+_LINEAR_STEP_KINDS = ("transform", "tool", "shell", "agent")
+_ALL_STEP_KINDS = _LINEAR_STEP_KINDS + _UNSUPPORTED_STEP_KINDS
+
+# Pipeline-level fields the full grammar allows but the linear executor has
+# no runtime concept of at all (R4 recovery / R3 threading only understand
+# `steps`; `description` is IS-5 surfacing metadata, also consumed).
+_UNSUPPORTED_PIPELINE_KEYS = ("input", "defaults", "refine")
+_SUPPORTED_PIPELINE_KEYS = frozenset({"pipeline", "description", "steps"})
+
+
+def _fail(message: str) -> "None":
+    raise PipelineParseError(message)
+
+
+def _validate_expr_source(src: Any, *, where: str) -> str:
+    if not isinstance(src, str):
+        _fail(f"{where}: expected an expression string, got {type(src).__name__}")
+    try:
+        parse_expr(src)
+    except ExprParseError as exc:
+        raise PipelineParseError(f"{where}: malformed expression {src!r}: {exc}") from exc
+    return src
+
+
+def _reject_nested_expr_tag(value: Any, *, where: str) -> None:
+    """`!expr` is only meaningful as the WHOLE value of an args entry (see
+    module docstring). One buried inside a list/mapping would otherwise
+    reach `tool_dispatch` as an inert `_ExprTag` object instead of either a
+    literal or a resolved value — a silent-wrong-result trap — so it is a
+    parse error instead."""
+    if isinstance(value, _ExprTag):
+        _fail(
+            f"{where}: '!expr' is only supported as the entire value of an "
+            "args entry, not nested inside a list/mapping"
+        )
+    if isinstance(value, dict):
+        for k, v in value.items():
+            _reject_nested_expr_tag(v, where=f"{where}.{k}")
+    elif isinstance(value, list):
+        for i, v in enumerate(value):
+            _reject_nested_expr_tag(v, where=f"{where}[{i}]")
+
+
+def _resolve_arg_value(value: Any, *, where: str) -> Any:
+    if isinstance(value, _ExprTag):
+        _validate_expr_source(value.src, where=where)
+        return ExprRef(value.src)
+    _reject_nested_expr_tag(value, where=where)
+    return value
+
+
+def _reject_unknown_keys(
+    doc: "dict[str, Any]", allowed: "frozenset[str] | tuple[str, ...]", *, where: str
+) -> None:
+    allowed_set = frozenset(allowed)
+    extra = sorted(set(doc) - allowed_set)
+    if extra:
+        _fail(
+            f"{where}: field(s) {extra!r} are not supported by the linear "
+            "executor (later slice — see PipelineExecutor's module docstring "
+            "for current scope)"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Step parsing
+# ---------------------------------------------------------------------------
+
+_TRANSFORM_KEYS = frozenset({"value", "output"})
+_TOOL_KEYS = frozenset({"name", "args", "schema", "output"})
+_SHELL_KEYS = frozenset({"command", "schema", "output"})
+_AGENT_KEYS = frozenset({"prompt", "identity", "capabilities", "schema", "output"})
+
+
+def _parse_transform_step(body: "dict[str, Any]") -> TransformStep:
+    _reject_unknown_keys(body, _TRANSFORM_KEYS, where="transform step")
+    if "value" not in body:
+        _fail("transform step: missing required field 'value'")
+    value = _validate_expr_source(body["value"], where="transform step 'value'")
+    return TransformStep(value=value, output=body.get("output"))
+
+
+def _parse_tool_step(body: "dict[str, Any]") -> ToolStep:
+    _reject_unknown_keys(body, _TOOL_KEYS, where="tool step")
+    if "name" not in body:
+        _fail("tool step: missing required field 'name'")
+    name = body["name"]
+    if not isinstance(name, str):
+        _fail(f"tool step 'name': expected a literal string, got {type(name).__name__}")
+    raw_args = body.get("args") or {}
+    if not isinstance(raw_args, dict):
+        _fail(f"tool step 'args': expected a mapping, got {type(raw_args).__name__}")
+    args = {
+        k: _resolve_arg_value(v, where=f"tool {name!r} arg {k!r}")
+        for k, v in raw_args.items()
+    }
+    schema = body.get("schema")
+    if schema is not None and not isinstance(schema, str):
+        _fail(f"tool step 'schema': expected a schema-name string, got {type(schema).__name__}")
+    return ToolStep(name=name, args=args, output=body.get("output"), schema=schema)
+
+
+def _parse_shell_step(body: "dict[str, Any]") -> ToolStep:
+    _reject_unknown_keys(body, _SHELL_KEYS, where="shell step")
+    if "command" not in body:
+        _fail("shell step: missing required field 'command'")
+    command = _resolve_arg_value(body["command"], where="shell step 'command'")
+    schema = body.get("schema")
+    if schema is not None and not isinstance(schema, str):
+        _fail(f"shell step 'schema': expected a schema-name string, got {type(schema).__name__}")
+    return ToolStep(
+        name="shell", args={"command": command}, output=body.get("output"), schema=schema,
+    )
+
+
+def _parse_agent_step(body: "dict[str, Any]") -> AgentStep:
+    _reject_unknown_keys(body, _AGENT_KEYS, where="agent step")
+    if "prompt" not in body:
+        _fail("agent step: missing required field 'prompt'")
+    prompt = body["prompt"]
+    if not isinstance(prompt, str):
+        _fail(f"agent step 'prompt': expected a TPL string, got {type(prompt).__name__}")
+    identity = body.get("identity")
+    if identity is not None and not isinstance(identity, str):
+        _fail(f"agent step 'identity': expected a literal string, got {type(identity).__name__}")
+    capabilities = None
+    raw_caps = body.get("capabilities")
+    if raw_caps is not None:
+        if not isinstance(raw_caps, dict) or "tools" not in raw_caps:
+            _fail(
+                "agent step 'capabilities': expected {tools: [NAME*]} per Appendix B, "
+                f"got {raw_caps!r}"
+            )
+        tools = raw_caps["tools"]
+        if not isinstance(tools, list) or not all(isinstance(t, str) for t in tools):
+            _fail("agent step 'capabilities.tools': expected a list of literal strings")
+        capabilities = list(tools)
+    schema = body.get("schema")
+    if schema is not None and not isinstance(schema, str):
+        _fail(f"agent step 'schema': expected a schema-name string, got {type(schema).__name__}")
+    return AgentStep(
+        prompt=prompt, identity=identity, capabilities=capabilities, schema=schema,
+        output=body.get("output"),
+    )
+
+
+_STEP_PARSERS = {
+    "transform": _parse_transform_step,
+    "tool": _parse_tool_step,
+    "shell": _parse_shell_step,
+    "agent": _parse_agent_step,
+}
+
+
+def _parse_step(raw_step: Any, *, index: int) -> Step:
+    if not isinstance(raw_step, dict) or len(raw_step) != 1:
+        _fail(
+            f"step {index}: expected a single-key mapping naming its step kind "
+            f"(one of {_ALL_STEP_KINDS!r}), got {raw_step!r}"
+        )
+    (kind, body), = raw_step.items()
+    if kind in _UNSUPPORTED_STEP_KINDS:
+        _fail(
+            f"step {index}: step kind {kind!r} is not yet supported (later slice) — "
+            f"the linear executor only runs {_LINEAR_STEP_KINDS!r}"
+        )
+    if kind not in _STEP_PARSERS:
+        _fail(
+            f"step {index}: unknown step kind {kind!r} (expected one of "
+            f"{_ALL_STEP_KINDS!r})"
+        )
+    if not isinstance(body, dict):
+        _fail(f"step {index} ({kind}): expected a mapping body, got {type(body).__name__}")
+    return _STEP_PARSERS[kind](body)
+
+
+# ---------------------------------------------------------------------------
+# Pipeline-document / schema-document parsing
+# ---------------------------------------------------------------------------
+
+
+def _parse_pipeline_doc(doc: "dict[str, Any]") -> Pipeline:
+    _reject_unknown_keys(doc, _SUPPORTED_PIPELINE_KEYS, where="pipeline")
+    name = doc.get("pipeline")
+    if not isinstance(name, str) or not name:
+        _fail("pipeline document: 'pipeline' must be a non-empty name string")
+    description = doc.get("description", "")
+    if not isinstance(description, str):
+        _fail(f"pipeline {name!r}: 'description' must be a string, got {type(description).__name__}")
+    raw_steps = doc.get("steps")
+    if not isinstance(raw_steps, list) or not raw_steps:
+        _fail(f"pipeline {name!r}: 'steps' must be a non-empty list")
+    steps = [_parse_step(s, index=i) for i, s in enumerate(raw_steps)]
+    return Pipeline(steps=steps, description=description)
+
+
+def _parse_schema_doc(doc: "dict[str, Any]", schema_registry: SchemaRegistry) -> None:
+    name = doc.get("schema")
+    if not isinstance(name, str) or not name:
+        _fail("schema document: 'schema' must be a non-empty name string")
+    _reject_unknown_keys(doc, frozenset({"schema", "fields"}), where=f"schema {name!r}")
+    fields = doc.get("fields")
+    if not isinstance(fields, dict) or not fields:
+        _fail(f"schema {name!r}: 'fields' must be a non-empty mapping")
+    schema_registry.register(name, {"fields": fields})
+
+
+def parse_pipeline_dsl(text: str, schema_registry: SchemaRegistry) -> Pipeline:
+    """Parse `text` (one or more `---`-separated YAML documents) into exactly
+    one `Pipeline`. Any `schema:`-keyed document found is registered into
+    `schema_registry` (mutated in place — the caller passes the SAME
+    registry to `PipelineExecutor.run`/`resume` so `schema: REF` references
+    resolve). Raises `PipelineParseError` for malformed YAML, a malformed R1
+    expression, any construct outside the linear executor's current scope
+    (see module docstring), or a text with zero or more than one `pipeline:`
+    document."""
+    try:
+        raw_docs = list(yaml.load_all(text, Loader=_PipelineLoader))
+    except yaml.YAMLError as exc:
+        raise PipelineParseError(f"invalid YAML: {exc}") from exc
+
+    pipeline_docs: "list[dict[str, Any]]" = []
+    for doc in raw_docs:
+        if doc is None:
+            continue
+        if not isinstance(doc, dict):
+            _fail(f"top-level document must be a mapping, got {type(doc).__name__}")
+        if "schema" in doc:
+            _parse_schema_doc(doc, schema_registry)
+        elif "pipeline" in doc:
+            pipeline_docs.append(doc)
+        else:
+            for bad_key in _UNSUPPORTED_PIPELINE_KEYS:
+                if bad_key in doc:
+                    _fail(
+                        f"top-level document has {bad_key!r} but no 'pipeline' name — "
+                        f"{bad_key!r} is also not yet supported (later slice) even "
+                        "when a 'pipeline' key is present"
+                    )
+            _fail(
+                "top-level document must have either a 'schema' or a 'pipeline' "
+                f"key, got keys {sorted(doc)!r}"
+            )
+
+    if len(pipeline_docs) != 1:
+        _fail(
+            f"expected exactly one 'pipeline:' document, found {len(pipeline_docs)}"
+        )
+    return _parse_pipeline_doc(pipeline_docs[0])
