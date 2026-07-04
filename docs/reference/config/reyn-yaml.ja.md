@@ -748,6 +748,31 @@ mcp:
 
 [コンセプト: MCP](../../concepts/tools-integrations/mcp.md) でプロトコル概要を参照してください。
 
+## `skills` ブロック
+
+`SKILL.md` ベースの skill を登録します — `mcp.servers` と同じ明示的登録モデルです(ディレクトリスキャンなし。skill が可視になるにはエントリが存在する必要があります)。
+
+```yaml
+skills:
+  entries:
+    pdf_editing:
+      path: skills/pdf-editing/SKILL.md   # project-root 相対または絶対
+      description: "PDF フォームのフィールドを入力・結合・抽出する"
+      enabled: true
+      auto_invoke: true
+```
+
+| フィールド | 型 | デフォルト | 説明 |
+|-----------|-----|----------|------|
+| `path` | string | 必須 | `SKILL.md`、またはそれを含むディレクトリへのパス。 |
+| `description` | string | `""` | モデル向けの `## Skills` メニューに表示される一行サマリー(最初の行のみ、200 文字上限)。 |
+| `enabled` | bool | `true` | `false` にするとエントリはレジストリから完全に除外されます。 |
+| `auto_invoke` | bool | `true` | `false` にすると skill は登録されたままシステムプロンプトメニューから除外されます。 |
+
+`skills.entries` は `~/.reyn/config.yaml` ⊕ `reyn.yaml` ⊕ `reyn.local.yaml` ⊕ 動的な `<project>/.reyn/config/skills.yaml`(`skill_management__install_local` / `skill_management__install_source` chat ツールが書き込む)をまたいでマージされ、名前が衝突した場合は後の tier が優先します — `mcp.servers` と同じマージ形です。
+
+登録モデル全体、3 層の露出モデル(メニュー / オンデマンド読み取り / バンドル資産)、インストールツールについては [コンセプト: Skills](../../concepts/tools-integrations/skills.md) を参照してください。
+
 ## `embedding` ブロック
 
 RAG 埋め込みモデルクラスとバッチ設定。組み込みデフォルトが OpenAI パスをカバーしているため、`OPENAI_API_KEY` を設定した新規インストールでは `reyn.yaml` の変更は不要です。
