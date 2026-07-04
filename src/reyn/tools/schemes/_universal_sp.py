@@ -206,7 +206,9 @@ def build_universal_tool_use_slots(
         _r2.append(
             "- **skill_management** — manage skill definitions: "
             "`skill_management__install_local` to register a local skill directory "
-            "(one containing a SKILL.md file) into .reyn/config/skills.yaml."
+            "(one containing a SKILL.md file) into .reyn/config/skills.yaml; "
+            "`skill_management__install_source` to fetch and install a skill from "
+            "a git/GitHub URL (shallow-clones to .reyn/skills/<name>/)."
         )
         _r2.append("")
         if has_hot_list_aliases:

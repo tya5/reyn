@@ -217,7 +217,7 @@ class MCPDropServerIROp(BaseModel):
 
 
 class SkillInstallIROp(BaseModel):
-    """Register a local skill directory into the project skills config (#2548 PR-C).
+    """Register a skill into the project skills config (#2548 PR-C/PR-D).
 
     Resolves the skill's ``SKILL.md`` frontmatter to extract the name and
     description, then writes a ``skills.entries.<name>`` entry to
@@ -225,16 +225,27 @@ class SkillInstallIROp(BaseModel):
     threat-scan → permission gate → config write → record_config_generation →
     emit event → hot-reload.
 
-    ``path`` may be a directory (resolved to ``<dir>/SKILL.md``) or the direct
-    path to the ``SKILL.md`` file. ``name`` overrides the frontmatter name when
-    set (useful when the directory basename differs from the desired config key).
-    ``scope`` is retained for forward compat with multi-tier support; currently
-    always resolves to ``.reyn/config/skills.yaml``.
+    Two install paths:
+    - **Local path** (``source is None``): ``path`` points at a local directory
+      (resolved to ``<dir>/SKILL.md``) or a direct SKILL.md file.
+    - **Source path** (``source`` set): ``source`` is a git URL or GitHub URL.
+      The handler shallow-clones the repo to ``.reyn/skills/<name>/``, reads the
+      SKILL.md from that clone, and registers the installed copy's path.
+      ``path`` is ignored when ``source`` is set.
+
+    ``name`` overrides the frontmatter name when set (useful when the directory
+    basename differs from the desired config key). ``scope`` is retained for
+    forward compat with multi-tier support; currently always resolves to
+    ``.reyn/config/skills.yaml``.
     """
     kind: Literal["skill_install"]
-    path: str                               # local dir or direct SKILL.md path
+    path: str = ""                          # local dir or direct SKILL.md path (ignored when source set)
     scope: str = ".reyn/config/skills.yaml"  # target config file (no-op tier arg)
     name: str | None = None                 # override the frontmatter / dir-basename name
+    # When set, the skill is fetched from this git/GitHub URL (registry fetch skipped).
+    # Supports optional subdir via "//": "https://github.com/user/repo" (root) or
+    # "https://github.com/user/repo//skills/my-skill" (skills/my-skill subdir).
+    source: str | None = None              # git/GitHub URL (installs to .reyn/skills/<name>/)
 
 
 # ---------------------------------------------------------------------------
