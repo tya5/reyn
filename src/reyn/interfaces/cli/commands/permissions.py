@@ -68,22 +68,22 @@ def _save(data: dict[str, bool]) -> None:
 
 
 def _parse_key(key: str) -> tuple[str, str, str] | None:
-    """Split `<skill>/<kind>/<path-or-dir>` into its parts.
+    """Split `<actor>/<kind>/<path-or-dir>` into its parts.
 
     `kind` is `file.read` or `file.write` (contains a dot, takes 2 segments).
-    Returns (skill, kind, path) or None for keys that don't match the file
+    Returns (actor, kind, path) or None for keys that don't match the file
     pattern (e.g. `mcp.<server>` for MCP approvals).
     """
     parts = key.split("/", 3)
-    # Expect at least: skill / file.read|file.write / path
+    # Expect at least: actor / file.read|file.write / path
     if len(parts) < 3:
         return None
-    skill = parts[0]
+    actor = parts[0]
     kind = parts[1]
     path = "/".join(parts[2:])
     if kind not in ("file.read", "file.write"):
         return None
-    return skill, kind, path
+    return actor, kind, path
 
 
 # ── handlers ─────────────────────────────────────────────────────────────────
@@ -97,24 +97,24 @@ def _cmd_list(args: argparse.Namespace) -> None:
         return
     print(f"# {path}")
     print()
-    file_keys: list[tuple[str, str, str, bool]] = []  # skill, kind, path, approved
+    file_keys: list[tuple[str, str, str, bool]] = []  # actor, kind, path, approved
     other_keys: list[tuple[str, bool]] = []
     for key, approved in data.items():
         parsed = _parse_key(key)
         if parsed is None:
             other_keys.append((key, approved))
         else:
-            skill, kind, p = parsed
-            file_keys.append((skill, kind, p, approved))
+            actor, kind, p = parsed
+            file_keys.append((actor, kind, p, approved))
 
     if file_keys:
-        # Group by skill, then by kind, for readability
+        # Group by actor, then by kind, for readability
         file_keys.sort(key=lambda x: (x[0], x[1], x[2]))
-        cur_skill = None
-        for skill, kind, p, approved in file_keys:
-            if skill != cur_skill:
-                cur_skill = skill
-                print(f"  [{skill}]")
+        cur_actor = None
+        for actor, kind, p, approved in file_keys:
+            if actor != cur_actor:
+                cur_actor = actor
+                print(f"  [{actor}]")
             verb = "read " if kind == "file.read" else "write"
             scope = "recursive" if p.endswith("/") else "just_path"
             mark = "✓" if approved else "✗"

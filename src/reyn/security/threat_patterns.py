@@ -8,7 +8,7 @@ patterns (``.hermes/.env`` / ``.hermes/config.yaml``) become reyn equivalents,
 and a ``severity`` field is added so the warn-vs-block split is config-tunable
 (Hermes blocks all — see FP-0050 §3.1).
 
-This module is **pure**: no I/O, no skill knowledge. The patterns are
+This module is **pure**: no I/O, no actor/phase knowledge. The patterns are
 security-domain regexes (injection / exfiltration / role-hijack / C2), NOT
 domain-specific phase/artifact/field strings, so it lives in ``security/`` and
 the OS-core decision logic stays skill-string-free (P7).
@@ -19,7 +19,7 @@ Scopes (cumulative — a scan at a wider seam includes the narrower sets):
 - ``context`` — role-hijack / C2 / promptware; checked at content→SP/context
   seams (memory / tool-result / context-file / inbound). Includes ``all``.
 - ``strict``  — the most aggressive set; checked at agent-write seams
-  (memory write / skill install). Includes ``all`` + ``context``.
+  (memory write / mcp install). Includes ``all`` + ``context``.
 - ``exec``    — command-string threats (homograph / pipe-to-interpreter /
   terminal-escape). Populated in S6 (Part 2); includes ``all``.
 
@@ -96,7 +96,7 @@ _RAW_PATTERNS: tuple[tuple[str, str, str, str], ...] = (
     (r"\b(?:praxis|cobalt\s*strike|sliver|havoc|mythic|metasploit|brainworm)\b", "known_c2_framework", "context", SEVERITY_BLOCK),
     (r"\bc2\s+(?:server|channel|infrastructure|beacon)\b", "c2_explicit", "context", SEVERITY_BLOCK),
     (r"\bcommand\s+and\s+control\b", "c2_explicit_long", "context", SEVERITY_BLOCK),
-    # ── scope="strict" — agent-write seams (memory write / skill install) ─────
+    # ── scope="strict" — agent-write seams (memory write / mcp install) ──────
     (r"(send|post|upload|transmit)\s+.*\s+(to|at)\s+https?://", "send_to_url", "strict", SEVERITY_BLOCK),
     (r"(include|output|print|share)\s+(?:\w+\s+){0,8}(conversation|chat\s+history|previous\s+messages|full\s+context|entire\s+context)", "context_exfil", "strict", SEVERITY_BLOCK),
     (r"authorized_keys", "ssh_backdoor", "strict", SEVERITY_BLOCK),
@@ -104,8 +104,8 @@ _RAW_PATTERNS: tuple[tuple[str, str, str, str], ...] = (
     # reyn-adapted (was Hermes ``.hermes/.env``): reyn's per-user secret/config dir.
     (r"\$HOME/\.reyn/[^\s]*(?:\.env|secret|credential)|~/\.reyn/[^\s]*(?:\.env|secret|credential)", "reyn_secret_access", "strict", SEVERITY_BLOCK),
     (r"(update|modify|edit|write|change|append\s+to|add\s+to)\s+.*(?:AGENTS\.md|CLAUDE\.md|\.cursorrules|\.clinerules)", "agent_config_mod", "strict", SEVERITY_BLOCK),
-    # reyn-adapted (was Hermes ``.hermes/config.yaml|SOUL.md``): reyn's config + skill specs.
-    (r"(update|modify|edit|write|change|append\s+to|add\s+to)\s+.*(?:reyn\.yaml|\.reyn/[^\s]*\.yaml|skill\.md)", "reyn_config_mod", "strict", SEVERITY_BLOCK),
+    # reyn-adapted (was Hermes ``.hermes/config.yaml|SOUL.md``): reyn's live config files.
+    (r"(update|modify|edit|write|change|append\s+to|add\s+to)\s+.*(?:reyn\.yaml|\.reyn/[^\s]*\.yaml)", "reyn_config_mod", "strict", SEVERITY_BLOCK),
     (r"(?:api[_-]?key|token|secret|password)\s*[=:]\s*[\"'][A-Za-z0-9+/=_-]{20,}", "hardcoded_secret", "strict", SEVERITY_BLOCK),
     # ── scope="exec" — command-string threats (FP-0050 S5 / Q2: own impl, since
     #    tirith is a closed Rust binary). Scanned on the joined argv at the

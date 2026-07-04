@@ -809,7 +809,7 @@ class PermissionResolver:
 
         def _approved(axis: object, value: object) -> bool:
             # #1383: config + offload grant via the shared base (kept in sync with
-            # is_read_allowed); per-skill path-approval inline.
+            # is_read_allowed); per-actor path-approval inline.
             return self._read_base_approved(str(value)) or self._is_path_approved_for(
                 str(value), actor, "file.read"
             )
@@ -914,13 +914,13 @@ class PermissionResolver:
 
         - **Specific declared host** (``http.get: [{host: "api.github.com"}]``):
           the runtime prompt fires once per host and persists the
-          decision to approvals.yaml under ``<skill>/http.get/<host>``.
+          decision to approvals.yaml under ``<actor>/http.get/<host>``.
           A subsequent run is then silent — this method finds the
           persisted approval and passes.
         - **Wildcard** (``http.get: [{host: "*"}]`` or ``["*"]``): host
           set is unknown at write-time (= LLM picks at runtime), so
           the prompt fires here at the actual host gate. Same
-          ``<skill>/http.get/<host>`` persistence; ALWAYS / NEVER
+          ``<actor>/http.get/<host>`` persistence; ALWAYS / NEVER
           choices apply per-host.
         - **No declaration**: legacy ``web.fetch`` compat fallback
           (deprecation-warned). Will become a hard error in a future
@@ -995,7 +995,7 @@ class PermissionResolver:
         # membership (no approval_check; the config/persisted/legacy approvals are
         # the separate disjuncts above). Byte-identical to the prior
         # `has_specific OR has_wildcard`. This is the seam S3.1c uses to ∩
-        # SandboxLayer.network (closing the gap where a sandboxed skill's http_get
+        # SandboxLayer.network (closing the gap where a sandboxed actor's http_get
         # is not network-bound today). has_wildcard stays local for the prompt label.
         from reyn.security.permissions.effective import (
             AgentLayer,
