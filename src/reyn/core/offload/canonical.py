@@ -22,7 +22,7 @@ Each op maps its dict → canonical ONCE, at its boundary (``to_canonical``). ``
 ``_oversized_fields``, the sole-oversized condition, and the six per-op markers then disappear —
 ``text`` is the payload by construction. #2417's file_read truncate is this rule for the file case.
 
-P7: the op-kind → canonical mapping is OS-level (no skill vocabulary). The deref / paging / offload
+P7: the op-kind → canonical mapping is OS-level (no domain-specific vocabulary). The deref / paging / offload
 store machinery is reused unchanged — 案B removes only the field-guessing.
 """
 from __future__ import annotations

@@ -7,7 +7,7 @@ the resulting backend uniformly. The single-shared-sandbox invariant (#1200) is
 the caller's: pass the ONE built backend instance to BOTH `environment_backend`
 (FS seam) and `sandbox_backend` (exec seam) so chat / planner / phase share it.
 
-Generic — no skill-specific knowledge (P7). Image / mount / security are
+Generic — no domain-specific knowledge (P7). Image / mount / security are
 agent-level operator config (#1326), independent of phase sandbox-policy.
 """
 from __future__ import annotations
@@ -89,7 +89,7 @@ def build_environment_backend(args: argparse.Namespace, *, launcher=None):
       base_dir = ``/workspace``; ``cleanup`` tears it down after the run unless
       ``--keep-container``.
 
-    Generic — no skill-specific knowledge (P7). Image / mount / security are
+    Generic — no domain-specific knowledge (P7). Image / mount / security are
     agent-level operator config (#1326), independent of phase sandbox-policy.
     """
     backend_kind = getattr(args, "env_backend", "host")

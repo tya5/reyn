@@ -55,7 +55,7 @@ def _render_command_focus(name: str) -> str:
         lines.append(f"  usage:   {cmd.usage}")
     # Hidden-command hint: ``/help <hidden>`` is the way to discover
     # commands that intentionally don't appear in the bare ``/help``
-    # list (matrix / donut / zen). Surface this once per focus view.
+    # list (matrix / donut). Surface this once per focus view.
     if cmd.hidden:
         lines.append("  (hidden — not listed in /help)")
     if cmd.see_also:

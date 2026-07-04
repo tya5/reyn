@@ -21,7 +21,7 @@ inline.  Pumping from the same task eliminates the anyio stdio-starvation
 failure mode (FP-0013 §ADR-A).
 
 P7: tool names + tool semantics are OS-level (agent / message). No
-skill-specific strings are baked in — what skills an agent runs in
+domain-specific strings are baked in — what skills an agent runs in
 response to a message is its own internal decision.
 """
 from __future__ import annotations
@@ -478,7 +478,7 @@ def build_server(
                 registry, agent_name, server,
             )
             # issue #270 Phase B: build MCP-side iv observer. When a
-            # skill emits a UserIntervention, this bus pushes the
+            # When a UserIntervention is emitted, this bus pushes the
             # iv payload to the peer via progress notification + lets
             # the peer answer via the ``answer_intervention`` tool.
             iv_bus = await _make_mcp_intervention_bus(
@@ -985,7 +985,7 @@ async def serve_stdio(
     #     act_executed during send_to_agent.
     #   - experimental ``reyn.cancellation.cooperative``: PR #279 wired
     #     ``notifications/cancelled`` propagation through
-    #     asyncio.CancelledError → in-flight skill interruption.
+    #     asyncio.CancelledError → in-flight agent turn interruption.
     from mcp.server import NotificationOptions
 
     init_options = server.create_initialization_options(

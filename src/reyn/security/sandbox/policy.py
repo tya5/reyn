@@ -41,7 +41,7 @@ from ._subprocess_io import MAX_SUBPROCESS_OUTPUT_BYTES
 
 # OS-level sensitive paths denied from the broad read surface by default
 # (defense-in-depth). These are universal credential / secret store locations,
-# not skill-specific (P7 ok) — the same class as the system-bootstrap paths a
+# not domain-specific (P7 ok) — the same class as the system-bootstrap paths a
 # backend always allows. A policy may override ``read_deny_paths`` to widen or
 # narrow this set. Workspace-internal secrets (e.g. a project ``.env``) are
 # intentionally NOT in the default — the agent operates inside the workspace,

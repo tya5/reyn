@@ -1,4 +1,4 @@
-"""UserIntervention — unified abstraction for skill→user prompts.
+"""UserIntervention — unified abstraction for agent→user prompts.
 
 Both `ask_user` Control IR ops (free-text questions) and PermissionResolver
 prompts (yes/no/always choice) flow through the intervention plumbing. The
@@ -66,7 +66,7 @@ class InterventionChoice:
 
 @dataclass
 class UserIntervention:
-    """One pending question from a skill to the user.
+    """One pending question from an agent or OS component to the user.
 
     `choices` empty → free-text prompt (current ask_user behavior).
     `choices` non-empty → closed-set selection; consumer matches user input
@@ -224,8 +224,8 @@ class UserChannel(Protocol):
 # All in-tree production callers have migrated to ``RequestBus`` directly
 # (verified at test time by
 # ``tests/test_intervention_legacy_alias_deprecated.py``);
-# the module-level binding is retained so external code (= third-party
-# skills, plugins, restored snapshots) that imports the legacy name
+# the module-level binding is retained so external code (= plugins,
+# restored snapshots, legacy integrations) that imports the legacy name
 # keeps working.
 #
 # **Do not add new usage** — type new code as ``RequestBus``. The alias

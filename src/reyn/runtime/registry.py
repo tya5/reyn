@@ -261,7 +261,7 @@ class AgentRegistry:
         # must follow the attached session across agent switches. None until a
         # front-end binds them; wired to the attached session on bind and re-wired
         # on every attach so a `/attach <other>` doesn't strand them on the old
-        # session. Generic session-level listeners (not skill-specific).
+        # session. Generic session-level listeners (not domain-specific).
         self._focus_chat_listener: "Callable[..., None] | None" = None
         self._focus_intervention_channel: str | None = None
         # WAL truncation throttle (WAL-floor design). monotonic ts of last

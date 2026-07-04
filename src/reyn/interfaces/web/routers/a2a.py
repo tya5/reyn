@@ -27,7 +27,7 @@ Surface (FP-0001 + MVP):
   - ``POST /a2a/tasks/{run_id}/cancel`` — cancel a running task.
   - ``GET /a2a/tasks/{run_id}/events`` — SSE stream of task history.
 
-P7: this module contains no skill-specific strings. Each Reyn agent's
+P7: this module contains no domain-specific strings. Each Reyn agent's
 ``role`` text flows through opaquely into the Agent Card description;
 the request body's ``message.parts[].text`` is forwarded to
 ``send_to_agent_impl`` as-is.

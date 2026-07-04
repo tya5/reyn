@@ -851,7 +851,7 @@ class Session:
         # Issue #383 PR-C — single MediaStore instance per Session,
         # constructed from the multimodal config's storage dirs.
         # Subsequently threaded into spawned Agents (= for control-IR
-        # ops invoked from skills) AND into the router host adapter
+        # ops invoked from sub-agents) AND into the router host adapter
         # (= for ops invoked directly from the chat router via tool
         # calls). ``None`` when no multimodal config is supplied —
         # handlers then fall back to the pre-#383 inline shape.
@@ -1080,7 +1080,7 @@ class Session:
         # snapshot_path here only because other init code references it
         # for diagnostic logging — the journal owns the actual I/O.
         # FP-0043 Stage 5: the conversation session id (default "main"); threaded to
-        # the journal + skill_registry so every WAL append carries it. A spawned
+        # the journal so every WAL append carries it. A spawned
         # session's real sid is set post-construction (set_session_id) by the registry.
         self._session_id = session_id
         self._snapshot_path = snapshot_path or (
@@ -1113,8 +1113,8 @@ class Session:
         # _track_wal_task; await_quiescent joins this set so no such append can land
         # past the rewind reset-record seq. discard-on-done keeps it bounded.
         self._inflight_wal_tasks: set[asyncio.Task] = set()
-        # Track state_log directly for skill resume (PR-skill-resume): the
-        # journal owns it for inbox / chain mutations, but skills launched
+        # Track state_log directly for recovery paths: the
+        # journal owns it for inbox / chain mutations, but ops launched
         # from this session also need it so dispatch_tool can emit step
         # events into the same WAL.
         self._state_log = state_log
@@ -1126,9 +1126,9 @@ class Session:
         self._task_subscription_writer = SubscriptionWriter(state_log) if state_log is not None else None
         # PR-intervention-link L6: in-memory buffer of answers from
         # restored-then-resolved interventions, keyed by run_id. The first
-        # bus.request from the resuming skill at that run_id consumes the
+        # bus.request from the resuming run_id consumes the
         # entry and returns it without re-dispatching. Persistence across
-        # the (user_answered → process_crashed → skill_not_yet_resumed)
+        # the (user_answered → process_crashed → run_not_yet_resumed)
         # window is R-D12 follow-up.
         self._buffered_intervention_answers: dict[str, "InterventionAnswer"] = {}
         # #1800 slice 4b: in-memory staging buffer for wake=false ride-along (C)
@@ -1552,7 +1552,7 @@ class Session:
             # InterventionBus so web_fetch / mcp install / mcp drop
             # handlers can run their interactive (Layer 4) approval
             # flow. The bus is built per make_router_op_context() call
-            # — short-lived, scoped to the chat_router skill, identical
+            # — short-lived, scoped to the chat_router turn, identical
             # to what session._mcp_call_tool wires manually today.
             intervention_bus_factory=lambda: ChatInterventionBus(
                 self, run_id=None, actor="chat_router",
@@ -2036,7 +2036,7 @@ class Session:
         return self._loop_driver.is_cancel_requested()
 
     async def cancel_inflight(self) -> str:
-        """#1468: cancel all in-flight work — running turn + skills + plans.
+        """#1468: cancel all in-flight work — running turn + tasks/plans.
 
         Single seam called by both TUI (local mode) and WS handler (remote
         mode). Returns a human-readable summary string.
@@ -2124,7 +2124,7 @@ class Session:
         set bounded) makes them joinable. Returns the task for call-site chaining.
 
         #2115 CONVENTION: every async WAL-append spawned outside the current turn —
-        ESPECIALLY any skill-completion append — MUST be tracked here so
+        ESPECIALLY any completion append (WAL writes outside the current turn) — MUST be tracked here so
         ``await_quiescent``'s re-drain joins it before
         the rewind reset-record. A new untracked append path would leak past a
         rewind (the #2115 bug class).
@@ -3070,7 +3070,7 @@ class Session:
 
         Use cases (FP-0037 #164):
           - Test scenarios where MCP config changes mid-test.
-          - Skills that install a new MCP server and want it visible within
+          - Chat turns that install a new MCP server and want it visible within
             the same chat session (= without waiting for the operator to
             run ``reyn mcp refresh`` or for a yaml mtime advance).
 
@@ -3408,7 +3408,7 @@ class Session:
         """Drain the inbox up to and including the first ``wake=true`` message.
 
         Each inbox payload carries an optional ``wake`` bool (default ``True``
-        when absent).  Existing producers (user / skill_completed / task_ready
+        when absent).  Existing producers (user / task_ready
         / etc.) never set ``wake``; the absent-means-True default makes them
         all behaviorally identical to wake=true, so the common/back-compat
         path returns immediately after the first blocking get with no
@@ -3519,7 +3519,7 @@ class Session:
         # R-D12: rehydrate the durable buffered intervention answers from
         # the snapshot. If a previous restart had buffered an answer (user
         # answered a restored intervention) and a SECOND crash hit before
-        # the resuming skill consumed it, we still have the answer here.
+        # the resuming run_id consumed it, we still have the answer here.
         for run_id, ans in snapshot.buffered_intervention_answers.items():
             if not isinstance(ans, dict):
                 continue
@@ -3551,10 +3551,10 @@ class Session:
                 # (that event is already in the WAL from the original run).
                 # We do TWO things here:
                 #   1. Buffer the user's answer keyed by run_id so the
-                #      resuming skill's first ask_user picks it up (L6).
+                #      resuming run's first ask_user picks it up (L6).
                 #      R-D12: buffer is also durably persisted via
                 #      ``record_intervention_answer_buffered`` so the
-                #      answer survives a second crash before the skill
+                #      answer survives a second crash before the run
                 #      resumes.
                 #   2. Emit ``intervention_resolved`` to prune the snapshot's
                 #      outstanding_interventions entry.
@@ -3951,8 +3951,8 @@ class Session:
 
         # R-D4: chat turn boundary — opportunistically check WAL size and
         # truncate if it has grown past the safety-net threshold. Long-idle
-        # skills (1 phase + LLM-only loop) and multi-agent / multi-chain
-        # idle sessions don't fire phase-completion events, so without this
+        # multi-agent / multi-chain idle sessions don't fire completion events,
+        # so without this
         # the WAL would grow unboundedly between turns. The check is cheap
         # (one stat() call); the rewrite only fires on bloat. Fire-and-
         # forget so a slow rewrite doesn't block the user's turn.
@@ -4391,8 +4391,7 @@ class Session:
         applies automatically.
 
         Looks up the iv by ``run_id`` in active interventions; for
-        the peer-answer case there's typically one iv per run (skills
-        await serially). Delegates to the handler so history +
+        the peer-answer case there's typically one iv per run. Delegates to the handler so history +
         ``user_answered_intervention`` event + outbox cleanup all fire
         the same way as TUI answers — observers on the audit trail
         see a consistent shape regardless of answer origin.
@@ -4449,7 +4448,7 @@ class Session:
         ``list_stalled_interventions``. The unregister itself does
         NOT move active ivs to stalled — only the next
         ``handle_intervention`` call (= a fresh iv from a still-running
-        skill) sees the change. For existing in-flight ivs that lose
+        caller) sees the change. For existing in-flight ivs that lose
         their origin, the agent layer handles them through
         ``handle_intervention``'s origin-pin check on its next pass.
         """
@@ -4718,7 +4717,7 @@ class Session:
             # is available — the in-memory buffer is already cleared,
             # and a future restart's stale snapshot entry is corrected
             # at restore time when the buffered answer is actually
-            # consumed by a resumed skill.
+            # consumed by the resumed run.
             try:
                 loop = asyncio.get_running_loop()
             except RuntimeError:

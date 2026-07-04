@@ -271,7 +271,7 @@ async def _drain_loop(registry: "AgentRegistry", session: "object") -> None:
             # input**. Hand it off to the round-trip helper so the
             # operator sees a real prompt + buttons (= AskActionMessage)
             # or input box (= AskUserMessage) and the answer flows back
-            # to the awaiting skill via `answer_pending_intervention`.
+            # to the awaiting run via `answer_pending_intervention`.
             await _handle_intervention(registry, msg)
             continue
 

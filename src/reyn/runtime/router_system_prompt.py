@@ -148,7 +148,7 @@ def build_system_prompt(
     # ── 3.4. Environment (CWD context, P7-clean) ─────────────────────────────
     # Tells the LLM where it is running so unqualified references like
     # "this repo" / "this code" / "the codebase" / "ここのコード" map to
-    # the workspace at cwd. P7: no skill-specific strings, only environment
+    # the workspace at cwd. P7: no domain-specific strings, only environment
     # facts and routing hints to existing categories.
     if cwd or environment_info:
         parts.append("## Environment")
@@ -330,7 +330,7 @@ def build_system_prompt(
     # OS-injected, pre-rendered by the caller (router_loop / phase runtime) from
     # the live free-window. Placed LAST because it is the most per-turn-volatile
     # section — keeping it at the tail preserves the cached SP prefix above it.
-    # P8-clean: OS-level vocabulary, no skill-specific enumeration; the `compact`
+    # P8-clean: OS-level vocabulary, no domain-specific enumeration; the `compact`
     # op format itself is advertised separately via the tool/control_ir catalog.
     # #1652 reasoning-continuity: prior turns' reasoning text section (pre-rendered
     # + bounded by the caller via render_reasoning_section/bound_reasoning). Empty

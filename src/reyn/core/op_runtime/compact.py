@@ -9,7 +9,7 @@ and the free window afterwards in EXACT tokens, unit-aligned with the
 context-size signal + the media load-contract error, so the model reasons
 consistently about "should I compact" and "what fits now".
 
-P7/P8: no skill-specific strings. The op is OS-level vocabulary only; the
+P7/P8: no domain-specific strings. The op is OS-level vocabulary only; the
 optional ``reason`` is model-supplied audit text the OS never interprets.
 
 Macro op (LLM cost + history mutation; the inner compaction engine

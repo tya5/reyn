@@ -258,7 +258,7 @@ async def _handle_call_mcp_tool(
 
     Polymorphic args handling: MCPIROp accepts arbitrary server/tool/args,
     making the dynamic MCP tool space available without OS-level changes
-    (P7 compliance — no skill-specific strings in OS code).
+    (P7 compliance — no domain-specific strings in OS code).
     """
     if ctx.caller_kind == "router":
         host = _require_host(ctx)

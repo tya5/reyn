@@ -7,7 +7,7 @@ Two result categories:
   corrections  — auto-fixed issues (unknown/type fields removed)
   errors       — schema violations reported by jsonschema
 
-Custom JSON Schema vocabulary (P7-clean — no skill-specific strings in OS code)
+Custom JSON Schema vocabulary (P7-clean — no domain-specific strings in OS code)
 ------------------------------------------------------------------------------
 ``x-reyn-members-of: <dotted-path>`` (string)
 

@@ -347,7 +347,7 @@ async def handle(
             }
 
     # ── 3. Permission gate (#571 collapse arc Phase 5) ────────────────────────
-    # The skill must declare ``file.write: [.reyn/mcp.yaml]`` (= the
+    # The caller must declare ``file.write: [.reyn/mcp.yaml]`` (= the
     # canonical mutation target) AND ``http.get: [{host:
     # registry.modelcontextprotocol.io}]`` (= the registry the op
     # fetches metadata from) in its frontmatter. Both checks routed

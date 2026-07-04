@@ -235,7 +235,7 @@ class ChunkMetadata(BaseModel):
     chunk_index: int = 0                   # position within source
     size_tokens: int = 0                   # context budget management
     parent_context: str | None = None      # heading / class / function name
-    extra: dict[str, Any] = Field(default_factory=dict)  # skill-defined fields
+    extra: dict[str, Any] = Field(default_factory=dict)  # caller-defined fields
 
 
 # #1303 Stage I: EmbedIROp + IndexWriteIROp deleted. The chunkers stream into
@@ -288,12 +288,12 @@ class JudgeOutputIROp(BaseModel):
     The OS resolves `target` to a value, calls an LLM with `rubric`, and
     returns a score (0.0–1.0) plus a pass/fail flag against `threshold`.
 
-    P7 note: rubric content is owned by the skill author; the OS is rubric-
+    P7 note: rubric content is owned by the phase/agent author; the OS is rubric-
     agnostic and never interprets it. `on_fail` uses OS-level vocabulary only.
     """
     kind: Literal["judge_output"]
     target: str              # JSONPath-like dot path, e.g. "artifact.data.summary"
-    rubric: str              # LLM prompt body; skill author owns content (P7)
+    rubric: str              # LLM prompt body; phase/agent author owns content (P7)
     threshold: float = 0.8  # passing score in [0.0, 1.0]
     on_fail: Literal["transition", "abort", "continue"] = "transition"
     model: str | None = None  # model class override; None = inherit from ctx
@@ -315,7 +315,7 @@ class CompactIROp(BaseModel):
     Voluntary (LLM-initiated) and independent of the mandatory retry_loop
     backstop — this op never replaces it.
 
-    P7/P8 note: carries no skill-specific fields. ``reason`` is optional
+    P7/P8 note: carries no domain-specific fields. ``reason`` is optional
     free-text the model may supply for the audit trail; the OS never
     interprets it.
     """

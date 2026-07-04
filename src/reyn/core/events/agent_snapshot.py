@@ -260,6 +260,5 @@ class AgentSnapshot:
                 self.next_turn_context.append(entry)
         elif kind == "next_turn_context_cleared":
             self.next_turn_context.clear()
-        # skill_phase_advanced, step_started/completed/failed, skill_resumed
-        # mutate per-skill snapshot only — no agent-level state change here.
+        # step_started/completed/failed mutate per-task snapshot only — no agent-level state change here.
         # Unknown kinds: no-op (forward compatibility for future kinds)

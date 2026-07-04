@@ -25,7 +25,7 @@ process?
     stdio_server scheduling) doesn't apply here — we're inside plain
     FastAPI / uvicorn asyncio.
 
-P7: this module contains no skill-specific strings. All tool wiring
+P7: this module contains no domain-specific strings. All tool wiring
 flows through ``build_server``.
 """
 from __future__ import annotations

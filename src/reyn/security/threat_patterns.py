@@ -10,7 +10,7 @@ and a ``severity`` field is added so the warn-vs-block split is config-tunable
 
 This module is **pure**: no I/O, no skill knowledge. The patterns are
 security-domain regexes (injection / exfiltration / role-hijack / C2), NOT
-skill-specific phase/artifact/field strings, so it lives in ``security/`` and
+domain-specific phase/artifact/field strings, so it lives in ``security/`` and
 the OS-core decision logic stays skill-string-free (P7).
 
 Scopes (cumulative — a scan at a wider seam includes the narrower sets):

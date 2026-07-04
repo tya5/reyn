@@ -20,7 +20,7 @@ Protocol (server → client):
     }
 
 The `kind` taxonomy mirrors src/reyn/interfaces/repl/renderer.py (OS-generic — not
-skill-specific per P7). Clients switch on `msg.kind`.
+domain-specific per P7). Clients switch on `msg.kind`.
 
 Lifecycle:
   1. connect   → attach agent via AgentRegistry.attach(); start session.run().
@@ -28,7 +28,7 @@ Lifecycle:
   3. on outbox → serialize OutboxMessage to JSON, send to client.
   4. disconnect → detach agent; outbox drain continues in background.
 
-Per P7: no skill-specific strings. OutboxMessage payloads pass through
+Per P7: no domain-specific strings. OutboxMessage payloads pass through
 as opaque JSON (only `kind`, `text`, `meta` — all engine-defined).
 """
 from __future__ import annotations

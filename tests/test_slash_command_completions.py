@@ -18,7 +18,7 @@ _FIXTURE = [
     SlashCommand(name="model", summary="Override the model class", handler=_noop),
     SlashCommand(name="memory", summary="Memory ops", handler=_noop),
     SlashCommand(name="agents", summary="List agents", handler=_noop),
-    SlashCommand(name="zen", summary="easter egg", handler=_noop, hidden=True),
+    SlashCommand(name="donut", summary="easter egg", handler=_noop, hidden=True),
 ]
 
 
@@ -36,7 +36,7 @@ def test_hidden_commands_never_surface() -> None:
     """Tier 2: hidden commands are excluded even with an empty prefix (they stay
     dispatchable by name, just not offered in the menu)."""
     names = [n for n, _ in slash_command_completions("", commands=_FIXTURE)]
-    assert "zen" not in names
+    assert "donut" not in names
     assert "model" in names and "agents" in names
 
 
@@ -50,4 +50,4 @@ def test_live_registry_smoke() -> None:
     easter eggs (donut / matrix / zen) never appear."""
     assert "model" in [n for n, _ in slash_command_completions("mo")]
     allnames = [n for n, _ in slash_command_completions("")]
-    assert not ({"donut", "matrix", "zen"} & set(allnames))
+    assert not ({"donut", "matrix"} & set(allnames))

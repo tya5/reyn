@@ -23,14 +23,14 @@ is invoked by ``Session._dispatch_intervention`` BEFORE
   - POSTs the same payload to the peer's ``webhook_url`` if registered
     (issue #267 Gap 2 + Gap 4 ``kind`` / ``choices`` / ``detail`` shape).
   - Does NOT await ``iv.future``. The handler awaits it on behalf of
-    the skill; the bus has no in-process answer-resolution role.
+    the caller; the bus has no in-process answer-resolution role.
 
 Peer answers arrive via the A2A router's ``POST /a2a/agents/<name>
 {task_id, answer}`` → ``Session.answer_pending_intervention`` →
 ``handler.deliver_answer_to`` (= same path the TUI uses). The iv future
 is resolved by the handler; the bus is unaware. R-D12's persistent
 answer buffer captures the answer if a crash intervenes before the
-skill consumes it, so restart-resume picks up cleanly.
+the caller consumes it, so restart-resume picks up cleanly.
 
 Wired by ``mcp_server.send_to_agent_impl`` through
 ``Session.register_intervention_override(chain_id, bus)``.
@@ -39,8 +39,8 @@ Scope guard:
   - ⭕ in-scope: notify A2A peer of input-required state via webhook +
     SSE buffer + RunEntry status mirror.
   - ❌ out-of-scope: iv ownership (= Session owns it post-α),
-    iv.future resolution (= handler does it), skill completion
-    narration (= flows through ``_handle_skill_completed``).
+    iv.future resolution (= handler does it), run completion
+    narration (= flows through ``_handle_run_completed``).
 """
 from __future__ import annotations
 

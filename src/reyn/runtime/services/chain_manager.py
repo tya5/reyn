@@ -10,7 +10,7 @@ Design notes
   protocol so this module can be developed/tested without a concrete
   SnapshotJournal instance.
 - max_hop_depth is stored for callers to inspect; depth-exceeded detection
-  is the caller's responsibility (P7 — no skill-specific logic here).
+  is the caller's responsibility (P7 — no domain-specific logic here).
 """
 from __future__ import annotations
 

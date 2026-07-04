@@ -82,7 +82,7 @@ async def _handle_drop_source(
         # the former index_drop bool axis. Tool wrapper synthesises the
         # decl + session-approves so the op handler's require_file_write
         # passes silently (= tool-level authorisation already happened
-        # at the calling skill's permissions.tool gate).
+        # at the caller's permissions.tool gate).
         canonical_manifest = ".reyn/config/index/sources.yaml"
         if ctx.permission_resolver is not None:
             ctx.permission_resolver.session_approve_path(

@@ -75,7 +75,7 @@ class LayerView(Protocol):
 
 
 class AgentLayer:
-    """The GRANT layer: the skill's ``PermissionDecl`` over the default-zone
+    """The GRANT layer: the agent's ``PermissionDecl`` over the default-zone
     baseline, faithful to the ``require_*`` gate logic (reuses the same helpers).
 
     Runtime approvals are folded IN here (#1199 S3.1b ② — NOT a top-level

@@ -18,7 +18,7 @@ Pinned:
     lives in its own field, summary is prose only. Regression
     guard against revert.
 
-Hidden commands (matrix / donut / zen) and no-arg commands
+Hidden commands (matrix / donut) and no-arg commands
 (/list / /skills / /cost / /pending /
 /quit / /exit) intentionally do NOT get a
 usage line — they have no args to document. Pinned by spot
@@ -121,7 +121,7 @@ def test_hidden_commands_have_no_usage() -> None:
     """Tier 2: hidden easter-egg commands don't surface usage either."""
     from reyn.interfaces.slash import REGISTRY
 
-    for name in ("matrix", "donut", "zen"):
+    for name in ("matrix", "donut"):
         cmd = REGISTRY.get(name)
         assert cmd is not None
         assert cmd.hidden is True

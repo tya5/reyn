@@ -21,7 +21,7 @@ like LLM calls live in the audit log under `.reyn/events/`):
   intervention_resolved   — intervention answered
 
 Per P7: this is OS-level generic infrastructure — `kind` strings and
-field names live here, not in any skill/domain code.
+field names live here, not in any domain-specific code.
 
 Off-loop durability (#1765 Step 1a). The fsync runs OFF the event loop via the shared
 `DurabilityWorker` (so a slow disk no longer freezes the loop — TUI repaint + other
@@ -59,7 +59,7 @@ WAL_EVENT_KINDS = (
     "intervention_dispatched",
     "intervention_resolved",
     # NEW (R-D12) — durable buffered intervention answer that survives a
-    # second crash before the resuming skill consumes it
+    # second crash before the resuming run consumes it
     "intervention_answer_buffered",
     "intervention_answer_consumed",
     # NEW (#1800 slice 4b) — next-turn-context staging for wake=false ride-alongs.
@@ -377,8 +377,7 @@ class StateLog:
         """Atomically rewrite the WAL keeping only entries with ``seq >= min_keep_seq``.
 
         Drop policy: ``seq < min_keep_seq`` entries are dropped. Caller computes
-        ``min_keep_seq`` as ``min(全 agent applied_seq, 全 active skill
-        last_phase_applied_seq) + 1`` (i.e. drop everything strictly below the
+        ``min_keep_seq`` as ``min(全 agent applied_seq) + 1`` (i.e. drop everything strictly below the
         last universally-absorbed seq).
 
         ``always_keep_kinds``: entries whose ``kind`` is in this set are kept

@@ -38,7 +38,7 @@ _FIXTURE_NAMES = sorted([
     "agent", "agents", "answer", "attach", "budget", "cancel",
     "copy", "cost", "exit", "expand",
     "help", "image", "list", "memory", "pending", "plan", "quit",
-    "restore", "tasks", "zen",
+    "restore", "tasks",
 ])
 
 

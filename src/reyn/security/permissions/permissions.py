@@ -72,7 +72,7 @@ _DEFAULT_WRITE_ZONES = (".reyn",)
 # permanently — it is the approval store itself and has no downstream
 # use-gate (see below).
 #
-# Skills that legitimately need to mutate a carved-out path must declare
+# Agents that legitimately need to mutate a carved-out path must declare
 # it explicitly via ``file.write: [{path: ...}]`` (or the bool-axis compat
 # shim that auto-expands into the equivalent entry). Letting a safe-mode
 # python step write one via the broad ``.reyn/`` default zone bypasses the

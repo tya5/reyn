@@ -212,7 +212,7 @@ async def handle(
     config_path = _scope_to_path(scope, project_root)
 
     # ── 2. Permission gate (#571 collapse arc Phase 5) ─────────────────
-    # The skill must declare ``file.write: [.reyn/config/mcp.yaml]``. The
+    # The caller must declare ``file.write: [.reyn/config/mcp.yaml]``. The
     # bool-axis ``require_mcp_drop_server`` per-server prompt is
     # removed — per-server granularity in mutations is operator-
     # config-level concern, not per-op runtime concern.
