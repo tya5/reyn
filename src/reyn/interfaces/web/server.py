@@ -263,13 +263,11 @@ from reyn.interfaces.web.routers import budget as _budget_router  # noqa: E402
 from reyn.interfaces.web.routers import mcp as _mcp_router  # noqa: E402
 from reyn.interfaces.web.routers import permissions as _perms_router  # noqa: E402
 from reyn.interfaces.web.routers import resources as _resources_router  # noqa: E402
-from reyn.interfaces.web.routers import runs as _runs_router  # noqa: E402
 from reyn.interfaces.web.routers import topologies as _topos_router  # noqa: E402
 from reyn.interfaces.web.routers import web_config as _web_config_router  # noqa: E402
 from reyn.interfaces.web.routers import web_data as _web_data_router  # noqa: E402
 
 app.include_router(_agents_router.router, prefix="/api")
-app.include_router(_runs_router.router, prefix="/api")
 app.include_router(_topos_router.router, prefix="/api")
 app.include_router(_perms_router.router, prefix="/api")
 app.include_router(_budget_router.router, prefix="/api")

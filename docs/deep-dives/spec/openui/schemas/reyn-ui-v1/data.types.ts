@@ -27,10 +27,6 @@ export interface ReynUiData {
   CONVO_ARIA: ChatMessage[];
   /** Studio-side transcript fixture (same conversation, engine-level annotations). */
   CONVO_ARIA_STUDIO: ChatMessage[];
-  /** Resolved phase graph for the currently inspected skill. */
-  SKILL_GRAPH: SkillGraph;
-  /** Raw Markdown source of the currently inspected skill. */
-  SKILL_MD: string;
   /** Event log for the currently inspected run (Studio Run timeline). */
   RUN_EVENTS: RunEvent[];
   /** List of recent runs for the Runs table. */
@@ -269,7 +265,6 @@ export interface I18nKeys {
   today: string;
   agents: string;
   library: string;
-  skills: string;
   runs: string;
   evals: string;
   topologies: string;

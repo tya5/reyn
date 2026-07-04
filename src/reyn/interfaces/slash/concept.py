@@ -162,7 +162,7 @@ async def concept_cmd(session: object, args: str) -> None:  # noqa: D401
     if not term:
         msg = (
             "Looks up TUI concepts in the glossary. "
-            "Try /concept skill or /concept plan.\n"
+            "Try /concept plan.\n"
             f"{_GLOSSARY_PATH_HINT}"
         )
         await reply(session, msg)

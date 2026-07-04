@@ -367,7 +367,6 @@ async def _handle_cron_list(
                 "name": j.name,
                 "to": j.to,
                 "message": j.message,
-                "skill": j.skill,
                 "schedule": j.schedule,
                 "input": dict(j.input),
                 "enabled": j.enabled,
