@@ -7,7 +7,7 @@ applies_to: [reyn source]
 
 # `reyn source`
 
-Manage indexed sources — the named document collections produced by `reyn run index_docs`. See [Concepts: RAG](../../concepts/data-retrieval/rag.md) for the mental model and indexing workflow.
+Manage indexed sources — the named document collections created by a safe-mode indexing step calling `embed_and_index()`. See [Concepts: RAG](../../concepts/data-retrieval/rag.md) for the mental model and indexing workflow (there is no `reyn run index_docs` one-command indexing skill).
 
 ## Synopsis
 
@@ -19,7 +19,7 @@ reyn source rm     <NAME> [-y]
 
 ## Description
 
-`reyn source` is the primary interface for inspecting and removing the indexed sources stored in `.reyn/index/`. Sources are created by running `reyn run index_docs`; this command group does not create or update them.
+`reyn source` is the primary interface for inspecting and removing the indexed sources stored under `.reyn/cache/index/` (manifest at `.reyn/config/index/sources.yaml`). This command group does not create or update sources — see [Concepts: RAG — Quick start](../../concepts/data-retrieval/rag.md#quick-start) for how to create one.
 
 ---
 
@@ -27,7 +27,7 @@ reyn source rm     <NAME> [-y]
 
 ### `list`
 
-List all indexed sources registered in `.reyn/index/sources.yaml`.
+List all indexed sources registered in `.reyn/config/index/sources.yaml`.
 
 ```
 reyn source list [--json]
@@ -63,6 +63,8 @@ If no sources are indexed:
 No indexed sources yet.
 Try: reyn run index_docs --source <name> --path "<glob>" --description "<description>"
 ```
+
+> This hint text is stale — it references the removed `index_docs` skill. There is no CLI command to create a source today; see [Concepts: RAG — Quick start](../../concepts/data-retrieval/rag.md#quick-start) for the current safe-mode `embed_and_index()` path.
 
 ```bash
 # Machine-readable output
@@ -156,9 +158,9 @@ reyn source rm my_docs -y
 ```
 
 ```bash
-# Typical iteration workflow: drop and re-index with a different strategy
+# Typical iteration workflow: drop, then re-run your indexing step with a different chunking approach
 reyn source rm my_docs -y
-reyn run index_docs --source my_docs --path "docs/**/*.md" --description "Project documentation"
+python my_project/index_docs.py   # see Concepts: RAG — Quick start
 ```
 
 **Exit codes:**

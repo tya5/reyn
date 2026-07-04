@@ -264,11 +264,13 @@ Handler lifecycle:
 
 > **Removed ops.** The `embed` and `index_write` control-IR ops were removed.
 > Embedding + index writing are now done **provider-direct** inside
-> `reyn.api.safe.embed_index` (the index_docs / index_events chunkers stream their
-> chunks into it) and inside the `recall` op (query embedding). The
-> `EmbeddingProvider` and `SqliteIndexBackend` primitives are unchanged — only
-> the run-op wrappers are gone. Skills no longer emit `kind: embed` /
-> `kind: index_write`.
+> `reyn.api.safe.embed_index.embed_and_index()` (a safe-mode `python` step
+> streams its own chunks into it — the bundled `index_docs` / `index_events`
+> chunkers were removed along with the stdlib skills that wrapped them) and
+> inside the `recall` op (query embedding). The `EmbeddingProvider` and
+> `SqliteIndexBackend` primitives are unchanged — only the run-op wrappers and
+> bundled chunkers are gone. Nothing emits `kind: embed` / `kind: index_write`
+> anymore.
 
 ## `index_query`
 

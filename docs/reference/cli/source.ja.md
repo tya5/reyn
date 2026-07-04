@@ -7,7 +7,7 @@ applies_to: [reyn source]
 
 # `reyn source`
 
-`reyn run index_docs` で作成された index 済み source（名前付きドキュメントコレクション）を管理します。メンタルモデルと indexing ワークフローについては [コンセプト: RAG](../../concepts/data-retrieval/rag.md) を参照してください。
+safe-mode の indexing step が `embed_and_index()` を呼んで作成する index 済み source（名前付きドキュメントコレクション）を管理します。メンタルモデルと indexing ワークフローについては [コンセプト: RAG](../../concepts/data-retrieval/rag.md) を参照してください（一発コマンドの `reyn run index_docs` indexing skill はもうありません）。
 
 ## 概要
 
@@ -19,7 +19,7 @@ reyn source rm     <NAME> [-y]
 
 ## 説明
 
-`reyn source` は `.reyn/index/` に保存された index 済み source を確認・削除するための主要インターフェイスです。source は `reyn run index_docs` を実行して作成されます。このコマンドグループは source の作成や更新を行いません。
+`reyn source` は `.reyn/cache/index/` に保存された index 済み source を確認・削除するための主要インターフェイスです（manifest は `.reyn/config/index/sources.yaml`）。このコマンドグループは source の作成や更新を行いません — 作成方法は [コンセプト: RAG — クイックスタート](../../concepts/data-retrieval/rag.md#quick-start) を参照してください。
 
 ---
 
@@ -27,7 +27,7 @@ reyn source rm     <NAME> [-y]
 
 ### `list`
 
-`.reyn/index/sources.yaml` に登録されたすべての index 済み source を一覧表示します。
+`.reyn/config/index/sources.yaml` に登録されたすべての index 済み source を一覧表示します。
 
 ```
 reyn source list [--json]
@@ -63,6 +63,8 @@ source が index されていない場合:
 No indexed sources yet.
 Try: reyn run index_docs --source <name> --path "<glob>" --description "<description>"
 ```
+
+> このヒントテキストは stale です — 削除済みの `index_docs` skill を参照しています。現在 source を作成する CLI コマンドはありません。現行の safe-mode `embed_and_index()` 経路は [コンセプト: RAG — クイックスタート](../../concepts/data-retrieval/rag.md#quick-start) を参照してください。
 
 ```bash
 # 機械可読な出力
@@ -156,9 +158,9 @@ reyn source rm my_docs -y
 ```
 
 ```bash
-# 典型的な試行ワークフロー: 削除して別の戦略で再 index
+# 典型的な試行ワークフロー: 削除して別の chunking 方式で indexing step を再実行
 reyn source rm my_docs -y
-reyn run index_docs --source my_docs --path "docs/**/*.md" --description "プロジェクトドキュメント"
+python my_project/index_docs.py   # コンセプト: RAG — クイックスタート参照
 ```
 
 **Exit codes:**
