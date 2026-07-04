@@ -64,7 +64,6 @@ def _make_ctx() -> ToolContext:
         workspace=None,
         caller_kind="router",
         router_state=None,
-        phase_state=None,
     )
 
 

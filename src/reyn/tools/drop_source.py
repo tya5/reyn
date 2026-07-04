@@ -65,14 +65,7 @@ async def _handle_drop_source(
     )
 
     # Obtain or build OpContext from ToolContext.
-    _op_ctx = (
-        ctx.phase_state.op_context
-        if ctx.phase_state is not None
-        else None
-    )
-    if _op_ctx is not None and isinstance(_op_ctx, OpContext):
-        legacy_ctx = _op_ctx
-    elif (
+    if (
         ctx.router_state is not None
         and ctx.router_state.op_context_factory is not None
     ):

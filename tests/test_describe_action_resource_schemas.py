@@ -122,13 +122,13 @@ def test_operation_category_describe_returns_target_parameters():
 
 
 def test_no_router_state_falls_back_for_resource_categories():
-    """Tier 1: Phase-side / test sites with no router_state get the dispatcher's
+    """Tier 1: test sites with no router_state get the dispatcher's
     schema as a fallback — better than crashing."""
     ctx = ToolContext(
         events=_FakeEvents(),
         permission_resolver=None,
         workspace=None,
-        caller_kind="phase",
+        caller_kind="router",
         router_state=None,
     )
     out = _describe("rag_corpus__my_docs", ctx)

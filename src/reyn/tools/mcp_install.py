@@ -89,43 +89,35 @@ async def _handle_mcp_install_op(
         env_overrides=env_overrides or None,
     )
 
-    # Obtain or build OpContext from ToolContext.
-    _op_ctx = (
-        ctx.phase_state.op_context
-        if ctx.phase_state is not None
-        else None
+    # Build a minimal OpContext from ToolContext.
+    # #571 collapse arc Phase 5: synthesize a PermissionDecl that
+    # declares the explicit list axes the op handler now requires
+    # (= file.write on the canonical config path + http.get for
+    # the registry host). Pre-approves via session so the runtime
+    # require_file_write check passes silently — the tool itself
+    # was already authorised at the permission gate level.
+    canonical_config = ".reyn/config/mcp.yaml"
+    registry_host = "registry.modelcontextprotocol.io"
+    synth_decl = PermissionDecl(
+        file_write=[{"path": canonical_config, "scope": "just_path"}],
+        http_get=[{"host": registry_host}],
+        # #571 Phase 6: wildcard authorises the op handler to save
+        # the user-prompted secret values for whichever env vars
+        # the registry declares as ``isSecret`` at runtime.
+        secret_write=["*"],
     )
-    if _op_ctx is not None and isinstance(_op_ctx, OpContext):
-        legacy_ctx = _op_ctx
-    else:
-        # #571 collapse arc Phase 5: synthesize a PermissionDecl that
-        # declares the explicit list axes the op handler now requires
-        # (= file.write on the canonical config path + http.get for
-        # the registry host). Pre-approves via session so the runtime
-        # require_file_write check passes silently — the tool itself
-        # was already authorised at the phase permission gate level.
-        canonical_config = ".reyn/config/mcp.yaml"
-        registry_host = "registry.modelcontextprotocol.io"
-        synth_decl = PermissionDecl(
-            file_write=[{"path": canonical_config, "scope": "just_path"}],
-            http_get=[{"host": registry_host}],
-            # #571 Phase 6: wildcard authorises the op handler to save
-            # the user-prompted secret values for whichever env vars
-            # the registry declares as ``isSecret`` at runtime.
-            secret_write=["*"],
+    if ctx.permission_resolver is not None:
+        ctx.permission_resolver.session_approve_path(
+            canonical_config, "mcp_install", "file.write",
         )
-        if ctx.permission_resolver is not None:
-            ctx.permission_resolver.session_approve_path(
-                canonical_config, "mcp_install", "file.write",
-            )
-        legacy_ctx = OpContext(
-            workspace=ctx.workspace,
-            events=ctx.events,
-            permission_decl=synth_decl,
-            permission_resolver=ctx.permission_resolver,
-            actor="mcp_install",
-            state_log=getattr(ctx, "state_log", None),  # #2259 PR-1: config generation emit
-        )
+    legacy_ctx = OpContext(
+        workspace=ctx.workspace,
+        events=ctx.events,
+        permission_decl=synth_decl,
+        permission_resolver=ctx.permission_resolver,
+        actor="mcp_install",
+        state_log=getattr(ctx, "state_log", None),  # #2259 PR-1: config generation emit
+    )
 
     return await mcp_install_handle(op=op, ctx=legacy_ctx)
 

@@ -63,7 +63,6 @@ def _make_ctx(router_state: RouterCallerState | None = None) -> ToolContext:
         workspace=None,
         caller_kind="router",
         router_state=router_state,
-        phase_state=None,
     )
 
 

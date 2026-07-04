@@ -109,8 +109,8 @@ async def _handle_recall(args: Mapping[str, Any], ctx: ToolContext) -> ToolResul
     """Dispatch the recall macro op via op_runtime.
 
     Builds a RecallIROp from args and calls the registered recall handler.
-    OpContext is obtained from ctx.phase_state.op_context when available
-    (phase-side call) or constructed minimally (router-side call).
+    OpContext is obtained from ctx.router_state.op_context_factory when
+    available, or constructed minimally otherwise.
     """
     from reyn.core.op_runtime import execute_op
     from reyn.core.op_runtime.context import OpContext
@@ -149,14 +149,7 @@ async def _handle_recall(args: Mapping[str, Any], ctx: ToolContext) -> ToolResul
     )
 
     # Obtain or build OpContext from ToolContext.
-    _op_ctx = (
-        ctx.phase_state.op_context
-        if ctx.phase_state is not None
-        else None
-    )
-    if _op_ctx is not None and isinstance(_op_ctx, OpContext):
-        legacy_ctx = _op_ctx
-    elif (
+    if (
         ctx.router_state is not None
         and ctx.router_state.op_context_factory is not None
     ):
@@ -164,19 +157,10 @@ async def _handle_recall(args: Mapping[str, Any], ctx: ToolContext) -> ToolResul
     else:
         # Minimal context for router-side calls without a factory.
         # Recall is read-only with respect to the workspace (no writes).
-        # Propagate the active phase's PermissionDecl when available
-        # (FP-0008 Tool→OpContext bridge fix 2026-05-28).
-        phase_op_ctx = (
-            ctx.phase_state.op_context if ctx.phase_state is not None else None
-        )
         legacy_ctx = OpContext(
             workspace=ctx.workspace,
             events=ctx.events,
-            permission_decl=(
-                phase_op_ctx.permission_decl
-                if phase_op_ctx is not None
-                else PermissionDecl()
-            ),
+            permission_decl=PermissionDecl(),
             permission_resolver=ctx.permission_resolver,
             actor="",
             subscribers=getattr(ctx.events, "subscribers", []),

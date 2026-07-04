@@ -196,14 +196,13 @@ def _memory_dir(workspace_base: Path, state_dir: Path, layer: str) -> Path:
     """Resolve memory directory from layer.
 
     layer="shared" → <cwd>/.reyn/memory
-    layer="agent"  → not resolved here (agent dir unknown without ToolContext
-                     phase_state; returns state_dir/memory as fallback).
+    layer="agent"  → not resolved here (agent dir unknown without the
+                     agent name; returns state_dir/memory as fallback).
 
-    Design-revisit: phase_state should carry agent_workspace_dir so the
-    "agent" layer resolves correctly for phase-side callers. Router-side callers
-    receive this via ctx.router_state. For now the agent layer always resolves
-    relative to .reyn/agents/ using the agent name from phase_state or
-    router_state if available, falling back to state_dir.
+    Design-revisit: router_state should carry agent_workspace_dir so the
+    "agent" layer resolves correctly. For now the agent layer always resolves
+    relative to .reyn/agents/ using the agent name from router_state if
+    available, falling back to state_dir.
     """
     if layer == "shared":
         return state_dir / "memory"
@@ -220,7 +219,7 @@ def _resolve_memory_paths(
     """Return (mem_dir, body_path_or_None) for the given layer + optional slug.
 
     Uses workspace.state_dir to construct the path hierarchy.
-    phase_state / router_state not yet carrying agent_workspace_dir — see
+    router_state not yet carrying agent_workspace_dir — see
     module-level design-revisit note.
     """
     state_dir = ctx.workspace.state_dir

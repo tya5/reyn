@@ -33,48 +33,26 @@ def build_legacy_op_context(ctx: "ToolContext") -> Any:
     Workspace (rooted at the agent's ``workspace_base_dir``), and the flattened
     MCP servers map.
 
-    Fallback (= phase-side dispatch, test sites): synthesize a minimal OpContext
-    from ToolContext fields with ``PermissionDecl()`` empty. The fallback is
-    documented as M3 transitional in ADR-0026 Open Q #7; callers that need real
-    permission gating must populate ``router_state.op_context_factory`` (router)
-    or supply ``phase_state.op_context`` (phase) when those wirings land.
+    Fallback (= test sites): synthesize a minimal OpContext from
+    ToolContext fields with ``PermissionDecl()`` empty. The fallback is
+    documented as M3 transitional in ADR-0026 Open Q #7; callers that need
+    real permission gating must populate ``router_state.op_context_factory``.
     """
     rs = ctx.router_state
     if rs is not None and rs.op_context_factory is not None:
         return rs.op_context_factory()
 
     from reyn.core.op_runtime.context import OpContext
-    from reyn.security.permissions.permissions import PermissionDecl
-
-    # Propagate the active phase's PermissionDecl via phase_state.op_context
-    # (FP-0008 Tool→OpContext bridge fix 2026-05-28).
-    phase_op_ctx = (
-        ctx.phase_state.op_context if ctx.phase_state is not None else None
-    )
     from reyn.llm.model_resolver import resolve_purpose_class  # #1673
+    from reyn.security.permissions.permissions import PermissionDecl
 
     return OpContext(
         workspace=ctx.workspace,
         events=ctx.events,
-        permission_decl=(
-            phase_op_ctx.permission_decl
-            if phase_op_ctx is not None
-            else PermissionDecl()
-        ),
+        permission_decl=PermissionDecl(),
         permission_resolver=ctx.permission_resolver,
-        # #2415 root 4: propagate actor + intervention_bus from the phase
-        # OpContext so permission checks key correctly on the calling phase's
-        # approval prefix (``{actor}/file.write/{path}``) and the JIT prompt
-        # fires when approval is needed. Without this, actor="" → prefix
-        # ``/file.write/`` → no saved approval matches → PermissionError even
-        # when the operator already approved the path.  intervention_bus=None
-        # suppressed the JIT fallback prompt, giving no recovery path.
-        actor=(
-            phase_op_ctx.actor if phase_op_ctx is not None else ""
-        ),
-        intervention_bus=(
-            phase_op_ctx.intervention_bus if phase_op_ctx is not None else None
-        ),
+        actor="",
+        intervention_bus=None,
         # #1673: thread the config-aware resolver + "tool" purpose class so this
         # ONE shared bridge gives every delegating tool a real resolver instead of
         # the OpContext default resolver=None (+ literal "standard"). Eliminates the
