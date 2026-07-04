@@ -142,7 +142,7 @@ def _check_members_of(
 ) -> None:
     """Walk ``schema`` alongside ``data`` and enforce ``x-reyn-members-of``.
 
-    P7 note: this routine knows nothing about specific skills, artifacts,
+    P7 note: this routine knows nothing about specific agents, artifacts,
     or fields — it only interprets the generic vocabulary keyword.
     """
     if not isinstance(schema, dict):
@@ -186,8 +186,8 @@ def validate_artifact_data(
         Optional dict consulted by cross-field constraints (e.g. the
         ``x-reyn-members-of`` annotation). The caller supplies whatever
         keys the schema's annotations reference; a typical mapping is
-        ``{"input": <input_artifact>}``. Skill-specific paths live in
-        the skill's YAML, never in this OS code (P7).
+        ``{"input": <input_artifact>}``. Agent-specific paths live in
+        the agent's config, never in this OS code (P7).
 
     Returns
     -------

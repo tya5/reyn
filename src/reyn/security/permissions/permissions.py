@@ -1187,7 +1187,7 @@ class PermissionResolver:
     ) -> None:
         # #1199 S3.1b: the static MCP authority flows through the unified
         # EffectivePermission ∩. #2074 S4a unifies the per-agent MCP allowlist
-        # into a ``ProfileLayer`` (symmetric with the SKILL axis), and adds an
+        # into a ``ProfileLayer`` (symmetric with the AGENT axis), and adds an
         # optional per-session ``ContextualLayer`` (MCP contextual narrowing,
         # ⊤-when-unset). The full ∩ is now:
         #   AgentLayer(decl.mcp grant) ∩ ProfileLayer(decl.allowed_mcp allowlist)

@@ -267,10 +267,9 @@ class InterventionRegistry:
         """Register *iv* in the queue, announce or signal queued status, then
         await the user's response.
 
-        Always removes the entry on exit (via ``finally``) so a cancelled
-        skill does not leave dangling queue entries.  ``asyncio.CancelledError``
+        Always removes the entry on exit (via ``finally``) so the run does not leave dangling queue entries.  ``asyncio.CancelledError``
         is re-raised so the calling task is properly cancelled — swallowing it
-        caused the skill to receive an empty answer and re-request the
+        caused the run to receive an empty answer and re-request the
         intervention, producing a teardown hang (#2414-I2).
 
         issue #254 Phase 1: when ``enforce_listener_presence=True`` was set
@@ -453,7 +452,7 @@ class InterventionRegistry:
         coroutine is spawned that awaits its future until the user resolves
         it. The default watcher is a no-op consumer of the answer (it
         merely keeps the dispatch finally clause alive for cleanup); the
-        session can supply a different watcher when L6 lands skill-resume
+        session can supply a different watcher when L6 lands run-resume
         answer routing.
 
         Returns the spawned watcher tasks (so the caller can keep references

@@ -103,7 +103,7 @@ def _base_urls() -> list[str]:
 
     Mirrors :func:`reyn.api.safe.mcp.registry._registry_urls` so both
     surfaces — the async op-handler client (this module) and the
-    safe-mode skill-internal lookup — agree on which registries to
+    safe-mode agent-internal lookup — agree on which registries to
     try and in what order.
 
     Priority:

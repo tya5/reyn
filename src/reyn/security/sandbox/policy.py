@@ -1,6 +1,6 @@
 """SandboxPolicy — declarative description of what a sandboxed exec may do.
 
-The policy is data only: declared in skill.md (= FP-0017) and passed by the OS
+The policy is data only: declared in the agent profile (= FP-0017) and passed by the OS
 to a SandboxBackend. P3/P7-aligned — the policy is mechanism-agnostic; backend
 selection lives in `reyn.security.sandbox.backend.get_default_backend()`.
 

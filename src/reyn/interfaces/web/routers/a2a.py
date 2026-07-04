@@ -598,7 +598,7 @@ async def _handle_answer_injection(
     ``_interventions._active`` and the agent's
     ``answer_pending_intervention`` is the single authoritative entry
     point — R-D12's persistent answer buffer applies automatically so
-    a restart between peer-POST and skill-resume is now survivable.
+    a restart between peer-POST and run-resume is now survivable.
     The RunEntry is only consulted to find the owning agent.
     """
     from reyn.user_intervention import InterventionAnswer  # noqa: PLC0415
@@ -964,7 +964,7 @@ async def _handle_async_mode(
     async def _run() -> None:
         # issue #267 Gap 1 + Gap 2: subscribe a progress bridge to the
         # agent's chat_events for the lifetime of this call. The bridge
-        # fans out skill lifecycle events (phase_started / llm_called /
+        # fans out run lifecycle events (phase_started / llm_called /
         # act_executed) to two sinks:
         #   - SSE buffer (always): append to RunEntry.history_events so
         #     GET /a2a/tasks/{run_id}/events replays progression.

@@ -21,9 +21,9 @@ class Workspace:
     state_dir : .reyn/ — where artifacts, event logs, and invoke sub-dirs live.
 
     Read  policy : any path under base_dir (CWD), plus paths the PermissionResolver
-                   has approved for this skill (declared via `permissions.file.read`).
+                   has approved for this agent (declared via `permissions.file.read`).
     Write policy : any path under base_dir (CWD), plus paths the PermissionResolver
-                   has approved for this skill (declared via `permissions.file.write`).
+                   has approved for this agent (declared via `permissions.file.write`).
     """
 
     def __init__(

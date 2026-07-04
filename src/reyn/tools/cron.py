@@ -61,7 +61,7 @@ _CRON_UNREGISTER_DESCRIPTION = (
 _CRON_LIST_DESCRIPTION = (
     "List all currently-registered cron jobs (= both reyn.yaml legacy "
     "and .reyn/config/cron.yaml dynamic entries, unioned). Returns job name, "
-    "target, message/skill, schedule, enabled state, and next-run time."
+    "target, message/action, schedule, enabled state, and next-run time."
 )
 
 _CRON_ENABLE_DESCRIPTION = (

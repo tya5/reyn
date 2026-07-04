@@ -268,7 +268,7 @@ class ReynConfig:
         A per-purpose override in ``model_class_by_purpose`` wins; otherwise the
         configured default class ``model`` (so unset purposes follow the user's
         configured model — no hidden cheaper tier). Explicit per-call selections
-        (run_skill ``op.model``, phase frontmatter ``model_class``) are applied by
+        ( ``op.model``, phase frontmatter ``model_class``) are applied by
         the caller BEFORE this fallback and still win.
         """
         return self.model_class_by_purpose.get(purpose, self.model)

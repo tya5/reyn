@@ -42,7 +42,7 @@ class InvocationContext:
         """Resolve output_language with CLI > config priority.
 
         Returns None when neither CLI flag nor config provides a value —
-        callers that need a concrete string for skill / phase paths
+        callers that need a concrete string for phase paths
         should fall back to a domain-appropriate default (typically
         "ja"); the chat router uses None to skip the language directive
         in its system prompt entirely (= LLM picks based on user input).

@@ -284,7 +284,7 @@ class SnapshotJournal:
         Called when a UserIntervention has been queued and announced to the
         user. Crash between this call and the user answering means resume
         will re-enqueue the intervention from the snapshot — the original
-        skill_run can then await the answer once it's delivered.
+        the run can then await the answer once it's delivered.
 
         ``iv_dict`` should be the result of ``UserIntervention.to_dict()``
         (excludes the volatile ``future`` field).
@@ -324,7 +324,7 @@ class SnapshotJournal:
         """Append ``intervention_answer_buffered`` to WAL + add to buffer (R-D12).
 
         Called when the user answers a restored intervention post-restart
-        but before the resuming skill consumes the answer. Persisting
+        but before the resuming run consumes the answer. Persisting
         this to the WAL+snapshot lets the answer survive a second crash
         (the buffer would otherwise be lost since it lives in
         Session's in-memory dict).
@@ -348,7 +348,7 @@ class SnapshotJournal:
     ) -> None:
         """Append ``intervention_answer_consumed`` to WAL + drop from buffer (R-D12).
 
-        Called when the resuming skill consumes a buffered answer, OR
+        Called when the resuming run consumes a buffered answer, OR
         when ``_drop_interventions_for_run`` clears the run's state. The
         consumed event prunes the durable buffer entry so a future
         restart doesn't see a stale answer.

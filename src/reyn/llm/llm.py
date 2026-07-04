@@ -1238,7 +1238,7 @@ def routing_for_spec(spec: "ModelSpec | None") -> dict | None:
     (backward-compat — existing single-endpoint configs are byte-identical).
 
     Enables simultaneous multi-provider use (e.g. router=light on a Gemini proxy
-    + skill=capable on Anthropic-direct):
+    + capable on Anthropic-direct):
       - ``api_base`` set → route to that endpoint; ``custom_llm_provider`` =
         ``spec.provider`` or ``"openai"`` (OpenAI-compatible proxy). api_key from
         OPENAI_API_KEY (litellm standard — never a literal secret in config).
@@ -1414,8 +1414,8 @@ def _emit_chat_cost_events(model: str, usage: "TokenUsage | None") -> None:
     """#1683: emit the cost-tab's usage events for the chat path via the #1669
     ambient EventLog. The TUI cost tab reads ``llm_called`` (model) then accumulates
     tokens/cost on ``llm_response_received``, so emit BOTH (in that order). Minimal
-    fields — the cost tab derives skill="(chat)" from the events file path, so no
-    run_id/skill is needed. None EventLog (no active session) → skip. Wrapped so an
+    fields — the cost tab derives the label from the events file path, so no
+    run_id is needed. None EventLog (no active session) → skip. Wrapped so an
     observability emit never breaks the LLM call."""
     if usage is None:
         return

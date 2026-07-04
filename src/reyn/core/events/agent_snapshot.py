@@ -98,7 +98,7 @@ class AgentSnapshot:
             raise SchemaVersionError(
                 f"AgentSnapshot at {path} has version {version!r}, "
                 f"expected {SNAPSHOT_VERSION}. "
-                "Run `reyn chat --reset` to wipe in-flight skill state "
+                "Run `reyn chat --reset` to wipe in-flight run state "
                 "(audit logs in .reyn/events/ are preserved)."
             )
         def _coerce_int(v: object) -> int:

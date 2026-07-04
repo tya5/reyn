@@ -8,14 +8,14 @@ import it through the AST allowlist.
 Permission model (#571 Phase 3)
 -------------------------------
 
-Each call is gated against the calling skill's declared host allowlist
+Each call is gated against the calling agent's declared host allowlist
 (``permissions.http.get: [{host: "..."}]``). The host is parsed from
 the URL and checked at every method entry; an unauthorised host raises
 ``PermissionError`` and the safe-mode step fails with a structured
 error. Bool axes that cover an HTTP host (= ``mcp_install: true`` for
 the MCP registry) auto-expand to the equivalent ``http.get`` entry via
 the ``PermissionDecl.from_dict`` compat shim, so existing bool-decl
-skills keep working without an explicit ``http.get`` declaration.
+agents keep working without an explicit ``http.get`` declaration.
 
 Mirrors :mod:`reyn.api.safe.file`'s permission-context contract: the
 parent process configures the allowlist via :func:`_set_permission_context`
@@ -109,7 +109,7 @@ def _check_host(url: str) -> None:
     raise PermissionError(
         f"reyn.api.safe.http: request to host {host!r} (url={url!r}) is not "
         f"in the declared http_hosts {list(_allowed_hosts)}. Declare it "
-        f"in skill.md frontmatter:\n"
+        f"in the agent profile frontmatter:\n"
         f"  permissions:\n"
         f"    http.get:\n"
         f"      - host: {host}\n"

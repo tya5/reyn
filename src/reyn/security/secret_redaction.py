@@ -13,7 +13,7 @@ the value group for substitution. Kept high-confidence + tight to protect legit
 content (FP-rate is the design gate, FP-0050 §3.4): specific key names + a
 minimum value length, well-known key formats, and PEM private-key blocks.
 
-Pure: no I/O, no config, no skill knowledge.
+Pure: no I/O, no config, no domain knowledge.
 """
 from __future__ import annotations
 

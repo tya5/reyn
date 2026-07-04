@@ -23,7 +23,7 @@ class CronJob:
     reads it as a normal attributed turn from a scheduled trigger.
 
     (A cron job must be message-based: ``to`` + ``message``. A config entry
-    lacking that shape — e.g. a legacy bare ``skill`` name — is rejected at load.)
+    lacking that shape — e.g. a legacy bare ``agent`` name — is rejected at load.)
 
     Mutable on the scheduler side: ``last_run_at`` / ``last_run_status``
     / ``last_run_error`` / ``next_run_at`` are updated after each fire.

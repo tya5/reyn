@@ -164,7 +164,7 @@ class MessageBus:
     def _is_quiescent(agent: "Session") -> bool:
         """Return True when the agent has no pending work for the current call.
 
-        Quiescent ≡ inbox empty AND no running skills AND no running plans.
+        Quiescent ≡ inbox empty AND no running actions AND no running plans.
 
         Cross-chain note: we do not filter by chain_id here — this is
         intentionally conservative.  See module docstring (ADR-E).

@@ -452,7 +452,7 @@ class RouterHistoryBuffer:
         ISSUE #4 (PR-N3): used as the ``system_prompt_provider`` for
         :class:`~reyn.services.compaction.engine.CompactionEngine`
         so that T_SP is measured dynamically — operator-editable REYN.md and
-        skills catalog changes are reflected before each pre-frame budget check.
+        action catalog changes are reflected before each pre-frame budget check.
 
         Note: ``indexed_sources_section`` is omitted (= None) because this
         method is synchronous and cannot await ``get_source_manifest()``.

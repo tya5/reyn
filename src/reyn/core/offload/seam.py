@@ -16,7 +16,7 @@ collapses the offload to a whole-dict JSON envelope (the owner chat-MCP whole-en
 
 Store-parameterized (``save_fn``) so the same seam serves chat (``MediaStore.save_tool_result``) and,
 if the phase path is retained, the phase axis — but only the chat integration is wired now (#2425
-re-scope: the phase-side integration is on hold pending the skill/phase-deletion decision).
+re-scope: the phase-side integration is on hold pending the phase-deletion decision).
 """
 from __future__ import annotations
 

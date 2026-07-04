@@ -28,9 +28,9 @@ class OutboxMessage:
     optional provenance:
 
     Common keys:
-      run_id           full chat-side run id (e.g. "20260501T...Z_skill_foo_abcd")
+      run_id           full chat-side run id (e.g. "20260501T...Z_run_abcd")
       run_id_short     trailing 4 chars of run_id, used in display prefix
-      actor       human-friendly skill name for [skill#abcd] prefix
+      actor       human-friendly actor name for [actor#abcd] prefix
       intervention_id  for kind="intervention", which UI is being announced
 
     Future keys (multi-agent):

@@ -703,7 +703,7 @@ class CompactionEngine:
     Axis 2: measures T_comp_SP at init time (independent of main session SP).
     Axis 4 (ISSUE #4): when ``system_prompt_provider`` is supplied, budgets
         are re-derived dynamically via :meth:`recompute_budgets` so that
-        operator-editable SP changes (REYN.md reloads, skill catalog changes)
+        operator-editable SP changes (REYN.md reloads, action catalog changes)
         are reflected before each pre-frame check.
     Parameters
     ----------
@@ -733,7 +733,7 @@ class CompactionEngine:
         Optional zero-argument callable that returns the current system
         prompt text.  When provided, :meth:`recompute_budgets` measures
         ``T_SP`` dynamically from the returned text so that operator-editable
-        changes (REYN.md, skills catalog reloads) are reflected before each
+        changes (REYN.md, action catalog reloads) are reflected before each
         pre-frame check.  When ``None``, the static ``T_SP`` from ``__init__``
         is used for the lifetime of the engine.
     """
@@ -811,7 +811,7 @@ class CompactionEngine:
         """Re-measure T_SP from the provider and recompute budgets.
 
         Called by session before each pre-frame check so dynamic SP state
-        (= operator-editable REYN.md, skills catalog reloads) is reflected.
+        (= operator-editable REYN.md, action catalog reloads) is reflected.
 
         When no ``system_prompt_provider`` was supplied at init, this method
         is a no-op — the static T_SP from ``__init__`` remains in effect.

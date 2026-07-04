@@ -33,7 +33,7 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-# The OS-generic inbox kinds (P7 — no skill/A2A vocabulary; the run-loop routes
+# The OS-generic inbox kinds (P7 — no run/A2A vocabulary; the run-loop routes
 # them to a router turn). NOT added to the WAL closed vocab (WAL-vs-P6 separation).
 WAKE_READY_KIND = "task_ready"
 # §16: the requester-decide wake kind. The VALUE stays "task_dependency_aborted" (the

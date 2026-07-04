@@ -23,7 +23,7 @@ industry (OpenHands / Hermes / OpenClaw): ``--cap-drop ALL`` / non-root user /
 network off / read-only root filesystem except the writable mounts (+ a tmpfs
 ``/tmp`` so the read-only rootfs can still host scratch).
 
-**P7-clean**: no skill / phase / artifact strings — bound only to launch config.
+**P7-clean**: no domain-specific strings — bound only to launch config.
 The Docker invocation is built by the pure :func:`build_docker_run_argv` and run
 through an injectable runner, so launch / teardown are testable without a live
 Docker daemon.

@@ -158,7 +158,7 @@ def rewrite_index(scope_dir: Path) -> None:
     )
 
 
-# ── direct write (used by CLI import; skills do this through Control IR) ──────
+# ── direct write (used by CLI import; agents do this through Control IR) ──────
 
 
 def render_body(name: str, description: str, type_: str, body: str) -> str:
