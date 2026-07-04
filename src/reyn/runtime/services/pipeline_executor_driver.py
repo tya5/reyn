@@ -44,14 +44,20 @@ Tool steps dispatch through the SAME ``_make_tool_dispatch`` the sync
 ``ToolContext`` built from THIS session's own host adapter (events /
 permission_resolver / resolver / state_log — the session's narrowed
 permission context, ⊆ the invoker's since the driver-session is spawned under
-the invoker's identity). **Known v1 divergence from the sync path**:
-``router_state`` is ``None`` here (there is no RouterLoop to build a
-RouterCallerState, and hand-duplicating ``_build_router_caller_state``'s
-binding map would be a drift trap), so tool steps that resolve through
-resource-category dynamic routes needing router_state (mcp tools, rag
-corpus reads, nested ``pipeline__run``) are unavailable in ASYNC pipelines
-until the caller-state construction is extracted to a shared seam —
-plain registered tools (``file__*``, ``shell``, ...) work identically.
+the invoker's identity). #2567: ``router_state`` is a real
+``RouterCallerState`` built via ``reyn.tools.types.build_resource_caller_state``
+— the shared host-derived-fields factory extracted from
+``RouterLoop._build_router_caller_state`` — so tool steps that resolve through
+resource-category dynamic routes (mcp tools, rag corpus reads) get the SAME
+mcp/rag/skills/sandbox/agent-registry/pipeline-registry wiring a live
+RouterLoop turn gets. The loop-local fields (``send_to_agent`` /
+``spawn_session_fn`` / ``spawn_agent_fn`` / ``topology_create_fn`` /
+``chain_id`` / ``budget`` / catalog-callback / memory-callback fields) stay
+``None`` here by design — there is no RouterLoop turn to own them — but
+``delegate_to_agent`` / ``run_pipeline`` / ``run_pipeline_async`` are already
+structurally denied for pipeline tool steps (R6 S3,
+``pipeline_verbs._PIPELINE_STEP_DENY_TOOLS``), so that gap is moot for the
+tool-step surface.
 
 The driver is bound to its session AFTER construction
 (``Session.set_loop_driver`` calls :meth:`bind_session` — the post-ctor
@@ -142,7 +148,7 @@ class PipelineExecutorDriver:
                 result = await executor.run(
                     pipeline,
                     dict(wo.input) if wo.input else None,
-                    tool_dispatch=self._make_dispatch(),
+                    tool_dispatch=await self._make_dispatch(),
                     state_log=self._state_log,
                     run_id=wo.run_id,
                     registry=self._registry,
@@ -152,7 +158,7 @@ class PipelineExecutorDriver:
                 result = await executor.resume(
                     wo.run_id,
                     pipeline=pipeline,
-                    tool_dispatch=self._make_dispatch(),
+                    tool_dispatch=await self._make_dispatch(),
                     state_log=self._state_log,
                     registry=self._registry,
                     default_identity=wo.reply_to_agent,
@@ -190,13 +196,17 @@ class PipelineExecutorDriver:
             )
         return pipeline_run_dir(root, self._work_order.run_id)
 
-    def _make_dispatch(self) -> Any:
+    async def _make_dispatch(self) -> Any:
         """The SAME tool-step dispatch the sync ``run_pipeline`` tool builds
         (``pipeline_verbs._make_tool_dispatch``), fed a ToolContext from THIS
-        session's host adapter. router_state=None — see the module docstring
-        for the documented v1 degradation."""
+        session's host adapter. #2567: ``router_state`` is now a real
+        ``RouterCallerState`` built via ``build_resource_caller_state(host)``
+        — the same host-derived mcp/rag/skills/sandbox/agent-registry/
+        pipeline-registry resource wiring a live RouterLoop turn gets (S3
+        pipeline-step tool deny is unaffected — it gates on the tool name
+        string before any router_state access)."""
         from reyn.tools.pipeline_verbs import _make_tool_dispatch
-        from reyn.tools.types import ToolContext
+        from reyn.tools.types import ToolContext, build_resource_caller_state
 
         host = self._router_host
         if host is None:
@@ -209,7 +219,7 @@ class PipelineExecutorDriver:
             permission_resolver=getattr(host, "permission_resolver", None),
             workspace=getattr(host, "workspace", None),
             caller_kind="router",
-            router_state=None,
+            router_state=await build_resource_caller_state(host),
             resolver=getattr(host, "resolver", None),
             hot_reloader=getattr(host, "hot_reloader", None),
             state_log=getattr(host, "state_log", None),
