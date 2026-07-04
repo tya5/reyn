@@ -869,7 +869,7 @@ def _build_hot_list_aliases(
     names: list[str],
     short_description_lookup: "dict[str, str] | None" = None,
     *,
-    skill_metadata_lookup: "dict[str, dict] | None" = None,
+    resource_metadata_lookup: "dict[str, dict] | None" = None,
     mcp_tool_lookup: "dict[str, dict] | None" = None,
 ) -> list[dict]:
     """Build OpenAI-format ToolDefinition dicts for hot list direct aliases.
@@ -939,7 +939,7 @@ def _build_hot_list_aliases(
         # resource schema introspection and are out of scope for D2-min.
         rich = _operation_alias_metadata(name) or _resource_alias_metadata(
             name,
-            skill_metadata_lookup=skill_metadata_lookup,
+            resource_metadata_lookup=resource_metadata_lookup,
             mcp_tool_lookup=mcp_tool_lookup,
         )
         if rich is not None:
@@ -1012,7 +1012,7 @@ def _operation_alias_metadata(
 def _resource_alias_metadata(
     qualified_name: str,
     *,
-    skill_metadata_lookup: "dict[str, dict] | None" = None,
+    resource_metadata_lookup: "dict[str, dict] | None" = None,
     mcp_tool_lookup: "dict[str, dict] | None" = None,
 ) -> "tuple[str, dict] | None":
     """Return ``(description, parameters)`` for a resource-category alias
@@ -1031,15 +1031,11 @@ def _resource_alias_metadata(
       - ``mcp.tool__<server>.<tool>`` (step 3) — caller supplies
         ``mcp_tool_lookup`` keyed by qualified name with ``{description?,
         input_schema?}`` from the MCP server's declared tool schema.
+      - ``memory_entry__<slug>`` — caller supplies ``resource_metadata_lookup``
+        keyed by qualified name with ``{description?}`` from the entry's
+        frontmatter; falls back to a generic placeholder when absent.
 
-    Returns ``None`` for:
-      - any unhandled category, e.g. ``memory_entry__X`` — the current
-        ``_read_memory_body_args`` transform sends ``{name: entry}`` but
-        the target ``read_memory_body`` expects ``{layer, slug}``;
-        pre-existing dispatch shape mismatch, surface separately.
-      - ``skill__<name>`` — skill enumeration was removed (stage1 decouple);
-        ``skill_metadata_lookup`` is never populated with ``skill__*`` entries
-        at runtime, so this branch always returned ``None``.
+    Returns ``None`` for any unhandled category.
     """
     from reyn.tools import get_default_registry
     from reyn.tools.universal_catalog import split_qualified_name
@@ -1097,7 +1093,7 @@ def _resource_alias_metadata(
         # canonical {layer: "shared", slug} pair, so the alias can be
         # surfaced with an empty input schema (the qualified name encodes
         # the slug; layer defaults to "shared").
-        meta = (skill_metadata_lookup or {}).get(qualified_name) or {}
+        meta = (resource_metadata_lookup or {}).get(qualified_name) or {}
         desc_body = meta.get("description") or f"shared memory entry {entry_name!r}"
         description = (
             f"Read the body of shared memory entry {entry_name!r}. "
@@ -1386,10 +1382,6 @@ class RouterLoop:
         # method) keep the existing chat-discovery tool-build byte-identically.
         _phase_op_catalog_getter = getattr(host, "get_phase_op_catalog", None)
         _phase_op_catalog = _phase_op_catalog_getter() if _phase_op_catalog_getter else None
-        # Skill enumeration removed (stage1 decouple): the router no longer
-        # surfaces a skill catalogue. Downstream scheme/presentation code keeps
-        # the ``skills_for_tools`` key for shape stability, always empty now.
-        skills_for_tools: list[dict] = []
         # FP-0034 Phase 2 step 5: ActionUsageTracker for hot list recording.
         # Resolved once per run() so recording below can reuse without re-fetching.
         _tracker_getter = getattr(host, "get_action_usage_tracker", None)
@@ -1515,7 +1507,7 @@ class RouterLoop:
                 # without first running list_actions(category=['memory_entry']).
                 # Without this, cross-session memory retrieval requires a
                 # discovery step the weak default model rarely takes.
-                # Populates skill_metadata_lookup so the alias gets a
+                # Populates resource_metadata_lookup so the alias gets a
                 # human-readable description (= the entry's frontmatter
                 # `description`).
                 _memory_entries = _enumerate_shared_memory_entries(host)
@@ -1561,7 +1553,7 @@ class RouterLoop:
                     _hot_list_aliases = _build_hot_list_aliases(
                         _top_names,
                         short_description_lookup=_short_desc_map or None,
-                        skill_metadata_lookup=_skill_meta_map or None,
+                        resource_metadata_lookup=_skill_meta_map or None,
                         mcp_tool_lookup=_mcp_tool_map or None,
                     )
         # #272/#1128: compute the OS context-size signal once. It is None when
@@ -1579,7 +1571,6 @@ class RouterLoop:
         # accumulated `presented` set. Stashed on self (RouterLoop is per-run state,
         # like self._catalog) — NOT the scheme (a registered singleton).
         _scheme_available = {
-            "skills_for_tools": skills_for_tools,
             "hot_list_aliases": _hot_list_aliases,
             # #1593 PR-3: the session exclude-set so a scheme presenting actions
             # outside tools= (CodeAct's code-API) omits excluded ones — presentation

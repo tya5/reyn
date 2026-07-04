@@ -108,24 +108,13 @@ class ReynConfig:
     # map exposes it: an UNSET purpose falls back to ``model`` (the configured
     # main), so by default routing follows the configured model — no hidden
     # cheaper tier. Setting e.g. ``router: light`` is the explicit opt-in to the
-    # cheap per-turn router. Explicit per-call selections (run_skill op.model,
-    # phase frontmatter model_class) still WIN over this fallback.
+    # cheap per-turn router. Explicit per-call model selection (phase frontmatter
+    # model_class) still wins over this fallback.
     model_class_by_purpose: dict[str, str] = field(
         default_factory=dict,
         metadata={"desc": (
             "Per-purpose model class override (router / control_ir / tool / "
             "compaction / judge). Unset purpose → the `model` default."
-        )},
-    )
-    tool_calls_op_loop_skills: list[str] = field(
-        default_factory=list,
-        metadata={"desc": (
-            "TRANSITIONAL: names opted into the native-tools op-loop — the "
-            "phase act-loop drives the shared RouterLoop.run_loop (the converged "
-            "op-loop, #1092). Names not listed use the default json-mode execution "
-            "path, unchanged. Removed once the op-loop becomes the default. (#1092 "
-            "PR-C-3 merged the former separate routerloop_convergence_skills gate "
-            "into this one — the converged path is now the op-loop's implementation.)"
         )},
     )
     # LiteLLM proxy: non-secret base URL only.
@@ -219,7 +208,7 @@ class ReynConfig:
     # Path (relative to project root) of a markdown file whose content is
     # injected into the system prompt for every phase. Use this to put
     # project-wide background, conventions, or references somewhere all
-    # skills implicitly inherit.
+    # agents implicitly inherit.
     #
     # Default (``None``) auto-resolves the cross-tool standard:
     # ``AGENTS.md`` (the convention Claude Code / Codex / opencode / etc.

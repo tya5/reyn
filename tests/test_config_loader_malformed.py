@@ -60,18 +60,6 @@ def test_mcp_as_list_does_not_crash(tmp_path) -> None:
     assert cfg.mcp == {}
 
 
-def test_tool_calls_op_loop_skills_non_list_does_not_crash(tmp_path) -> None:
-    """Tier 2: a non-list `tool_calls_op_loop_skills` defaults to empty.
-
-    Falsification: pre-fix `for s in 42` raised TypeError, and a string
-    silently iterated into garbage per-character entries.
-    """
-    cfg_int = _load(tmp_path, "tool_calls_op_loop_skills: 42\n")
-    assert cfg_int.tool_calls_op_loop_skills == []
-    cfg_str = _load(tmp_path, "tool_calls_op_loop_skills: oops\n")
-    assert cfg_str.tool_calls_op_loop_skills == []
-
-
 def test_valid_models_still_loads(tmp_path) -> None:
     """Tier 2: a well-formed models block is unaffected by the guard (regression)."""
     cfg = _load(tmp_path, "models:\n  light: openai/gpt-4o\n  standard: claude-sonnet\n")
