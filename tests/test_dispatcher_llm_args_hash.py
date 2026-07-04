@@ -73,7 +73,7 @@ def test_rollback_context_affects_hash():
 def test_system_inputs_affect_hash():
     """Tier 2: skill_name / phase_role / project_context / agent_role affect hash.
 
-    These all flow into ``_system_prompt`` in ``call_llm`` and so are part of
+    These all flow into the system prompt in ``call_llm`` and so are part of
     the LLM input. Memo must distinguish them.
     """
     frame = {"phase": "draft"}

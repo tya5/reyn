@@ -8,9 +8,8 @@ config. Semantics:
 - `"all"`        → same as null but explicit in YAML for audit clarity
 - `[a, b]`       → intersect with project allow-list (per-agent narrowing)
 
-The `role` text is injected into the LLM's system prompt by
-`llm._system_prompt` so each agent gets a distinct persona without
-changing the OS layer.
+The `role` text is injected into the LLM's system prompt so each agent
+gets a distinct persona without changing the OS layer.
 """
 from __future__ import annotations
 
