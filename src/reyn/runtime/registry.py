@@ -10,7 +10,7 @@ Lifecycle invariants (PR10):
 - Agents are loaded lazily — `start_attached()` is the first time we
   spin up `session.run()` for the named agent.
 - After `attach(B)`, agent A's `session.run()` keeps running in the
-  background (skills can keep progressing); only the REPL's display
+  background (its turns can keep progressing); only the REPL's display
   pointer moves to B.
 
 The registry deliberately knows nothing about prompt_toolkit, renderers,
@@ -87,7 +87,7 @@ _LIFECYCLE_CREATE_KINDS = frozenset({"agent_created", "session_spawned"})
 
 
 def _count_inflight_disposition(tasks: "list") -> "tuple[int, int]":
-    """#2115: classify settled in-flight skill tasks → (cancelled, finished). A task
+    """#2115: classify settled in-flight tasks → (cancelled, finished). A task
     cancelled at an await reports ``cancelled()``; one that RETURNED before the
     cancel landed is ``done()`` and not cancelled = finished (it won the cancel
     race). Powers the TRUTHFUL /rewind summary (vs the old hardcoded "in-flight
@@ -265,7 +265,7 @@ class AgentRegistry:
         # session. Generic session-level listeners (not skill-specific).
         self._focus_chat_listener: "Callable[..., None] | None" = None
         self._focus_intervention_channel: str | None = None
-        # WAL truncation throttle (skill resume design). monotonic ts of last
+        # WAL truncation throttle (WAL-floor design). monotonic ts of last
         # successful truncation attempt; ``None`` means no throttle is active.
         self._last_truncation_ts: float | None = None
         # ADR-0038 Stage 1c-2: set for the duration of a global rewind. While
@@ -1091,9 +1091,10 @@ class AgentRegistry:
         self._rewind_in_progress = True
         try:
             sessions = self._iter_sessions()
-            # #2115: snapshot the in-flight skill tasks BEFORE the cancel, so the
-            # Skill-execution machinery removed (stage1 decouple): no in-flight
-            # skill tasks exist; the summary always reflects 0 cancelled / 0 finished.
+            # #2115: the in-flight-task snapshot would be taken BEFORE the cancel
+            # here, but background run machinery was removed (stage1 decouple):
+            # no in-flight tasks exist; the summary always reflects 0 cancelled /
+            # 0 finished.
             inflight_tasks: list = []
             # 2. all-cancel (stop-world).
             for session in sessions:
@@ -2043,37 +2044,35 @@ class AgentRegistry:
         )
         return {"recovered_target_n": target, "head": head, "agents": agents}
 
-    # ── WAL truncation (skill resume design) ────────────────────────────────
+    # ── WAL truncation (WAL-floor design) ───────────────────────────────────
     #
-    # Trigger policy: semantic boundary — call this after appending a
-    # `skill_phase_advanced` or `skill_completed` event to the WAL. Throttled
-    # to avoid thrashing on bursty phase completions. Size-based safety net
-    # (long-idle skills) is intentionally deferred until we have real WAL
-    # size telemetry from dogfood.
+    # Trigger policy: semantic boundary — call this at a turn/append boundary.
+    # Throttled to avoid thrashing on bursty boundaries. Size-based safety net
+    # (long-idle sessions) backs it up until we have real WAL size telemetry
+    # from dogfood.
     #
-    # Floor calculation: `min(全 agent applied_seq, 全 active skill
-    # last_phase_applied_seq) + 1` — everything strictly below this seq is
-    # universally absorbed and droppable. Replaying from `floor - 1` would
-    # be a no-op for every snapshot, so dropping below it is safe.
+    # Floor calculation: `min(全 agent applied_seq) + 1` — everything strictly
+    # below this seq is universally absorbed and droppable. Replaying from
+    # `floor - 1` would be a no-op for every snapshot, so dropping below it is
+    # safe.
     #
     # Owner rationale: AgentRegistry is the only layer that has both
-    # (a) the StateLog handle, and (b) visibility into all agents' snapshots
-    # + every active skill snapshot under each agent's `state/skills/`
-    # directory. Pushing this into entry points (`reyn chat`, `reyn web`)
+    # (a) the StateLog handle, and (b) visibility into all agents' snapshots.
+    # Pushing this into entry points (`reyn chat`, `reyn web`)
     # would duplicate the orchestration; pushing it into StateLog itself
-    # would force the WAL to know about agent / skill layout.
+    # would force the WAL to know about agent layout.
 
     _TRUNCATION_THROTTLE_SECS: float = 5.0
     # R-D4: size safety net default. Session's chat-turn-boundary
-    # call uses this threshold. Long-idle skills with no semantic
-    # boundary events (= no phase_advanced / skill_completed) would
-    # otherwise let the WAL grow unboundedly between turns.
+    # call uses this threshold. Long-idle sessions with no semantic
+    # boundary events would otherwise let the WAL grow unboundedly
+    # between turns.
     _SIZE_SAFETY_NET_BYTES: int = 1_000_000
 
     async def truncate_wal_if_eligible(
         self, *, bypass_throttle: bool = False,
     ) -> dict | None:
-        """Compute floor across all agents + active skill snapshots, then
+        """Compute floor across all agents' snapshots, then
         truncate the WAL if eligible.
 
         Returns the truncate stats dict, or ``None`` if skipped (no state
@@ -2250,7 +2249,7 @@ class AgentRegistry:
     ) -> bool:
         """Find the upstream waiter agent and force-resolve their chain.
 
-        When a user runs ``/skill discard <run_id>`` on agent B, and that
+        When a run is discarded on agent B, and that
         run was processing a chain registered on agent A's side, A would
         otherwise stay stuck on ``waiting_on={B}`` until the watchdog
         fires (chain_timeout_seconds, often minutes-to-hours in real
@@ -2304,14 +2303,13 @@ class AgentRegistry:
                 )
         return notified
 
-    # R-D16: skills awaiting an intervention longer than this many seconds
-    # are excluded from the WAL truncation floor calc. Without this, a
-    # single skill stuck on ``ask_user`` (e.g. user away from terminal)
-    # pins the floor at its ``last_phase_applied_seq`` indefinitely and
-    # the WAL grows unbounded. Long-await skills accept memo loss for the
-    # awaited window — at resume they fall through to re-execute the op
-    # whose memo was truncated, which is the same behaviour as a memo
-    # cache miss.
+    # R-D16: a run awaiting an intervention longer than this many seconds
+    # is excluded from the WAL truncation floor calc. Without this, a
+    # single run stuck on ``ask_user`` (e.g. user away from terminal)
+    # could pin the floor indefinitely and let the WAL grow unbounded. A
+    # long-await run accepts memo loss for the awaited window — at resume
+    # it falls through to re-execute the op whose memo was truncated,
+    # which is the same behaviour as a memo cache miss.
     _LONG_AWAIT_THRESHOLD_SEC: float = 300.0
 
     def compute_truncate_floor(self) -> int:
@@ -2346,12 +2344,11 @@ class AgentRegistry:
     def _compute_live_floor(self) -> int:
         """Return the lowest seq that MUST remain in the WAL (live floor).
 
-        ``floor = min(全 active session applied_seq, 全 active skill
-        last_phase_applied_seq, 全 active plan last_step_applied_seq) + 1``
+        ``floor = min(全 active session applied_seq) + 1``
 
         PR-N7 (FP-0008): reads watermarks exclusively from in-memory
-        state — session journal snapshots + per-session skill / plan
-        registries — by walking ``self._agents.values()`` and calling
+        state — session journal snapshots — by walking
+        ``self._agents.values()`` and calling
         each session's ``iter_applied_seqs`` public method. The pre-N7
         implementation walked every snapshot file on disk inside the
         async ``truncate_wal_if_eligible`` caller, which blocked the
@@ -2378,12 +2375,11 @@ class AgentRegistry:
           ``ensure`` instantiates a session that immediately registers
           here, and the next floor recompute picks up its watermark.
 
-        R-D16: skills awaiting an intervention for longer than
-        ``_LONG_AWAIT_THRESHOLD_SEC`` are excluded so the WAL can keep
+        R-D16: a run awaiting an intervention for longer than
+        ``_LONG_AWAIT_THRESHOLD_SEC`` is excluded so the WAL can keep
         advancing — the elapsed check is performed in-memory.
 
-        Returns 0 when no watermark is available (no live session, no
-        active skill, no active plan).
+        Returns 0 when no watermark is available (no live session).
         """
         seqs: list[int] = []
         now = time.monotonic()

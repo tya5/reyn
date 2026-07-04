@@ -1,4 +1,4 @@
-"""Session — long-lived chat loop driving the skill_router stdlib skill."""
+"""Session — long-lived chat loop driving the router turn."""
 from __future__ import annotations
 
 import asyncio
@@ -455,7 +455,7 @@ def _run_short(run_id: str) -> str:
 
 
 def _run_meta(run_id: str | None, actor: str | None) -> dict:
-    """Standard `meta` payload for OutboxMessage produced inside a skill spawn."""
+    """Standard `meta` payload for OutboxMessage produced inside a run."""
     if run_id is None:
         return {"actor": actor} if actor else {}
     return {
@@ -2044,7 +2044,7 @@ class Session:
         V1 boundary: sets the cooperative cancellation flag so the turn's
         run_loop breaks at the next tool-iteration boundary. A slow tool
         already in flight completes before the cancel takes effect (subprocess
-        kill is a follow-up scope). Skills and plans are cancelled immediately
+        kill is a follow-up scope). Any spawned tasks are cancelled immediately
         via asyncio task cancellation (existing behaviour, preserved here).
         """
         self._loop_driver.request_cancel()
@@ -2514,8 +2514,8 @@ class Session:
 
         Surfaces the watermarks AgentRegistry.compute_truncate_floor
         needs from this session, sourced exclusively from in-memory
-        state (= journal snapshot + skill_registry + plan_registry).
-        No disk I/O — preserves the existing reyn architecture choice
+        state (= journal snapshot). No disk I/O — preserves the
+        existing reyn architecture choice
         (event loop friendly, no thread offload, in-memory state is
         event-sourced from WAL apply).
 
@@ -2523,10 +2523,10 @@ class Session:
           - ``journal.snapshot.applied_seq`` when > 0 (dormant agents
             with applied_seq == 0 are skipped — the same skip the
             disk-read path used so behaviour matches)
-          - per active skill: ``last_phase_applied_seq``, with R-D16
-            long-await exclusion (skills awaiting >= long_await_threshold
-            seconds are dropped from the floor so WAL can keep advancing)
-          - per active plan: ``last_step_applied_seq``
+
+        The ``now_ts`` / ``long_await_threshold`` parameters are retained
+        for the caller's uniform signature; there is no longer a per-run
+        registry contributing additional watermarks (stage1 decouple).
         """
         out: list[int] = []
         snap_applied = int(self._journal.snapshot.applied_seq)
@@ -2778,7 +2778,7 @@ class Session:
             the meta key is omitted to keep the storage minimal.
 
         Compaction behaviour (= #398 v4 Q3 decision):
-          state_change entries are NOT consumed by ``chat_compactor``
+          state_change entries are NOT consumed by compaction
           (= CompactionController filters ``role in ("user","agent")``;
           system-role entries are never candidates). Per-event
           preservation is implicit. Phase 2 trigger for threshold-based
@@ -3887,20 +3887,12 @@ class Session:
             await self._put_outbox(OutboxMessage(kind="__end__", text=""))
 
     async def _drain_on_shutdown(self) -> None:
-        """Wait for in-flight skill runs to complete, then cancel stragglers.
+        """Cancel any in-flight background work, then tear down on shutdown.
 
         Memory writes happen inline during each router turn, so there is no
         background extraction to drain — shutdown is teardown of whatever the
         user explicitly launched, plus a final await on the compaction task
         (if any) so the summary entry gets persisted before the process exits.
-
-        B27-H4 fix: give in-flight skill tasks a 30-second grace window to
-        complete naturally before the hard cancel.  Without the grace window,
-        skills whose LLM call is in-progress at session shutdown receive
-        ``asyncio.CancelledError``, which propagates through
-        ``RunOrchestrator.run()`` → ``skill_run_interrupted`` instead of
-        ``skill_run_completed``.  The 30-second limit prevents hanging
-        indefinitely on a stalled LLM call.
 
         #52 fix: also suppress the benign ``coroutine
         'OpenAIChatCompletion.acompletion' was never awaited`` RuntimeWarning
@@ -3932,7 +3924,7 @@ class Session:
         if text.startswith("/"):
             if await self._maybe_handle_slash(text):
                 return
-        # If a spawned skill is waiting on a user intervention (ask_user or
+        # If a spawned run is waiting on a user intervention (ask_user or
         # permission prompt), route this input to that intervention instead of
         # starting a fresh router turn.
         if await self._maybe_answer_oldest_intervention(text):

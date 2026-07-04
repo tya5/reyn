@@ -1,7 +1,7 @@
 """CompactionController — synchronous head/body/tail compaction.
 
 Extracted from Session (FP-0019 Wave 1).  Drives OS-internal compaction
-(PR-N3: direct Python helper, no skill/phase overhead) via
+(PR-N3: a direct Python helper) via
 :meth:`force_compact_now`, the synchronous pre-frame guard path.
 
 #1128 PR-a: the background fire-and-forget path (``spawn_maybe`` →
@@ -66,7 +66,7 @@ def _turn_to_compactor_input(
     Post-PR-E1 (issue #383) the history may contain ``assistant`` entries
     with ``tool_calls``, ``tool`` entries with ``tool_call_id`` + ``name``,
     and ``user``/``assistant`` entries with multimodal ``content`` lists.
-    The compactor skill needs enough structure to reason about tool
+    The compactor needs enough structure to reason about tool
     activity in ``artifacts_referenced`` while staying within token caps.
 
     Shape we emit per turn:
@@ -123,7 +123,7 @@ class CompactionController:
         :class:`~reyn.runtime.chat_message.ChatMessage`, or ``None``.
     compaction_engine:
         :class:`~reyn.services.compaction.engine.CompactionEngine`
-        that owns the single LLM call (PR-N3: OS-internal, no skill/phase).
+        that owns the single LLM call (PR-N3: OS-internal Python helper).
     history_appender:
         Callable ``(ChatMessage) -> None`` that appends a message to the
         persisted history.  Wraps ``Session._append_history``.

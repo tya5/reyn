@@ -1,8 +1,8 @@
 """CompactionEngine — OS-internal LLM-driven chat history compaction.
 
-PR-N3 (FP-0008, 11-axis): replaces the ``chat_compactor`` skill with a
-direct Python helper.  One LLM call is retained but the phase-frame overhead
-(skill loader, artifact YAML, postprocessor sandbox) is gone.
+PR-N3 (FP-0008, 11-axis): a direct Python helper for chat compaction.
+One LLM call is retained, with no phase-frame overhead — the compaction
+prompt and postprocessing are inlined here.
 
 PR-N6 (FP-0008): adds overflow retry loop + adaptive token estimation learner.
 Budget allocation migrated from ratio fields to integer component_weights /
