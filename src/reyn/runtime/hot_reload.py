@@ -58,6 +58,13 @@ def validate_in_set(in_set: "dict") -> "str | None":
     mcp = in_set.get("mcp")
     if mcp is not None and not isinstance(mcp, dict):
         return "mcp section must be a mapping"
+    skills = in_set.get("skills")
+    if skills is not None:
+        if not isinstance(skills, dict):
+            return "skills section must be a mapping"
+        entries = skills.get("entries")
+        if entries is not None and not isinstance(entries, dict):
+            return "skills.entries must be a mapping"
     hooks = in_set.get("hooks")
     if hooks is not None:
         # #2073 S2b: validate the runtime hooks shape via the real loader so a

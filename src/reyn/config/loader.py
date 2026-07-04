@@ -499,6 +499,7 @@ def load_config(cwd: Path | None = None) -> ReynConfig:
 # write-gate boundary (owner-confirmed #2073). Keep this list narrow + explicit.
 _HOT_RELOAD_FILES: tuple[str, ...] = (
     "config/mcp.yaml", "config/cron.yaml", "config/hooks.yaml",
+    "config/skills.yaml",  # #2548 PR-B: skills IN-set hot-reload
 )
 
 
