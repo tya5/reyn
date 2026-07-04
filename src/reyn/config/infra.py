@@ -489,8 +489,8 @@ class CronJobConfig:
     ``message`` (free-form text). Cron dispatches the message to the target
     agent's inbox with a ``sender="cron:<name>"`` envelope.
 
-    (A bare ``skill`` name is not a valid job shape; an entry without
-    ``to`` + ``message`` is rejected at load with a ValueError naming it.)
+    (A bare name without ``to`` + ``message`` is not a valid job shape;
+    an entry missing those fields is rejected at load with a ValueError naming it.)
     """
 
     name: str
@@ -532,7 +532,7 @@ def _build_cron_config(raw: object) -> CronConfig:
     Validates ``name`` + ``schedule`` are non-empty strings + ``to`` +
     ``message`` are set per entry, raising ``ValueError`` naming the
     offending entry on failure. An entry without the ``to`` + ``message``
-    shape (e.g. a legacy bare ``skill`` name) is rejected with that
+    shape (entry missing ``to`` + ``message``) is rejected with that
     ValueError. Unknown extra fields are ignored (= forward-compatible).
     """
     if raw is None:
@@ -561,8 +561,7 @@ def _build_cron_config(raw: object) -> CronConfig:
                 f"(got {schedule!r})"
             )
         # FP-0041 #489 PR-B: a job must be message-based (to + message). An
-        # entry lacking that shape (e.g. a legacy bare ``skill`` name) is
-        # rejected below.
+        # entry lacking that shape is rejected below.
         to = entry.get("to")
         message = entry.get("message")
         has_message_shape = (

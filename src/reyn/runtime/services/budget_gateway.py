@@ -28,7 +28,7 @@ class BudgetGateway:
     agent_name:
         Name of the owning agent; forwarded to tracker queries.
     default_router_cap:
-        Maximum consecutive skill_router invocations per user turn. Mirrors
+        Maximum consecutive router invocations per user turn. Mirrors
         ``CostConfig.router_invocations_per_turn``.  cap<=0 disables check.
     """
 
@@ -106,7 +106,7 @@ class BudgetGateway:
 
     @property
     def router_cap(self) -> int:
-        """Configured cap on consecutive skill_router invocations per turn."""
+        """Configured cap on consecutive router invocations per turn."""
         return self._router_cap
 
     def reset_router_turn_counter(self) -> None:

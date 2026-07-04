@@ -1,4 +1,4 @@
-"""reyn.config.embedding — embedding + retrieval config: Embedding/SkillSearch/ActionRetrieval. (#1682 #3 split)."""
+"""reyn.config.embedding — embedding + retrieval config: Embedding/ActionRetrieval. (#1682 #3 split)."""
 from __future__ import annotations
 
 import socket

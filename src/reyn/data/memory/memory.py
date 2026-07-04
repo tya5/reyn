@@ -1,6 +1,6 @@
 """Memory store helpers — frontmatter-aware reader, indexer, and resolver.
 
-This module centralizes the on-disk format used by `skill_router` (which
+This module centralizes the on-disk format used by the chat router (which
 writes memories inline as it routes) and the `reyn memory` CLI:
 
   <memory_dir>/
