@@ -191,7 +191,7 @@ Adopt Option 2's role separation for Type B, but explicitly close the three Type
 
 **P4 (LLM is a constrained decision engine)** — both invocation kinds present a curated candidate set. The router LLM sees a fixed tool list assembled by `build_tools()`. The phase LLM sees `available_control_ops` built from the phase's `allowed_ops`. Doctrine is about which candidates each kind sees; P4 applies to both sides equally.
 
-**P7 (OS workflow-agnostic)** — neither surface should embed workflow-specific knowledge. Closing Type C gaps via stdlib workflows (Option 3 path) preserves P7: the OS exposes a general `memory` op or `run_skill` mechanism; the workflow author decides whether to use it. Embedding workflow-specific memory keys or catalog paths in the OS layer would violate P7.
+**P7 (OS domain-agnostic)** — neither surface should embed domain-specific knowledge. Closing Type C gaps via stdlib workflows (Option 3 path) preserves P7: the OS exposes a general `memory` op or `run_skill` mechanism; the workflow author decides whether to use it. Embedding domain-specific memory keys or catalog paths in the OS layer would violate P7.
 
 ---
 

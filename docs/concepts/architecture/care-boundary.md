@@ -145,9 +145,9 @@ These primitives are sufficient for a range of downstream products that the LLM-
 
 ### Why this is intentional, not accidental
 
-P7 says OS code must not contain workflow-specific strings. The same logic extends one level up: the OS must not absorb every adjacent product need. Each absorbed feature would require the OS to know something workflow-specific or consumer-specific in order to provide it, defeating the abstraction that makes Reyn extensible.
+P7 says OS code must not contain domain-specific strings. The same logic extends one level up: the OS must not absorb every adjacent product need. Each absorbed feature would require the OS to know something domain-specific or consumer-specific in order to provide it, defeating the abstraction that makes Reyn extensible.
 
-The care boundary is therefore not just about the LLM-behavior split described above — it also defines the downward limit of what upstream products are expected to build themselves. Keeping Reyn small enough to be a foundation is what preserves the foundation's usefulness. An OS that tries to be the analytics platform, the deployment runtime, and the eval service simultaneously would need workflow-specific knowledge at every turn — a cascade of P7 violations.
+The care boundary is therefore not just about the LLM-behavior split described above — it also defines the downward limit of what upstream products are expected to build themselves. Keeping Reyn small enough to be a foundation is what preserves the foundation's usefulness. An OS that tries to be the analytics platform, the deployment runtime, and the eval service simultaneously would need domain-specific knowledge at every turn — a cascade of P7 violations.
 
 ### Concrete examples from the landscape
 
@@ -181,7 +181,7 @@ The pre-1.0 stability caveat applies: these contracts are not yet frozen. But th
 
 ### A soft boundary line for contributors
 
-When evaluating a proposed feature, ask: "Does providing this require Reyn to know workflow-specific or consumer-specific things?"
+When evaluating a proposed feature, ask: "Does providing this require Reyn to know domain-specific or consumer-specific things?"
 
 If yes — if the feature would require the OS to understand what a "successful conversation" means, or which events to aggregate for which consumer, or what retry policy fits which deployment environment — it belongs in a downstream layer, not in the OS. That is not a rejection of the need; it is a correct assignment of responsibility. The OS provides the primitive; the downstream layer provides the product.
 

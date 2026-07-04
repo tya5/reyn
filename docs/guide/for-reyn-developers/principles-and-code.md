@@ -22,7 +22,7 @@ This page focuses on the *how*; the conceptual rationale is in CLAUDE.md.
 | P4 — LLM picks from candidates | `_build_candidates()` gates choices; normalizer rejects unknown | `context_builder.py`, `kernel/runtime.py` |
 | P5 — Workspace is SSoT | All writes go through `Workspace` with permission gate | `workspace/workspace.py`, `op_runtime/file.py` |
 | P6 — Events are audit truth | `EventLog` is append-only; state recovery reads events | `events/events.py`, `events/state_log.py` |
-| P7 — OS is workflow-agnostic | `OP_KIND_MODEL_MAP` is the only op catalogue; linter rejects workflow-specific strings | `op_runtime/registry.py`, `compiler/linter.py` |
+| P7 — OS is domain-agnostic | `OP_KIND_MODEL_MAP` is the only op catalogue; linter rejects domain-specific strings | `op_runtime/registry.py`, `compiler/linter.py` |
 | P8 — Instructions don't list fields | Schema is injected via `candidate_outputs`, not baked into instructions | `context_builder.py`, `kernel/runtime.py` |
 
 ---
@@ -127,7 +127,7 @@ output = normalizer.normalize(raw, allowed_candidates=candidates)
 
 ---
 
-## P7 — OS code contains no workflow-specific strings
+## P7 — OS code contains no domain-specific strings
 
 **What it means**: No phase name, artifact type, or domain-specific field name appears as a literal in OS code.
 
@@ -139,7 +139,7 @@ output = normalizer.normalize(raw, allowed_candidates=candidates)
 
 `kernel/control_ir_executor.py` — `_build_phase_tool_catalog()` derives the tool schema for the LLM *from the Pydantic model* (`OP_KIND_MODEL_MAP[kind]`), not from any hardcoded field list.
 
-**Detection rule (from CLAUDE.md)**: if a literal naming a specific phase, artifact type, or field appears in OS code — it's a P7 violation.
+**Detection rule (from CONTRIBUTING.md)**: if a literal naming a specific phase, artifact type, or field appears in OS code — it's a P7 violation.
 
 ---
 

@@ -10,9 +10,9 @@ This tutorial walks through adding a new op kind to the Reyn OS end-to-end.
 The goal is to make the 3-touch-point constraint tangible: after you finish,
 the OS dispatches your op, the linter validates it in workflow frontmatter, and
 the LLM sees its schema in the system prompt — all without touching any workflow
-files or adding workflow-specific strings anywhere.
+files or adding domain-specific strings anywhere.
 
-**P7 in practice.** The OS's workflow-agnostic guarantee (P7) is what makes this
+**P7 in practice.** The OS's domain-agnostic guarantee (P7) is what makes this
 possible. Op kind strings appear in exactly one place — `OP_KIND_MODEL_MAP` in
 `schemas/models.py`. Every other mechanism (`ALL_OP_KINDS`, the op dispatcher
 `execute_op`, the `reyn.tools` catalog) derives from that single source.
@@ -58,7 +58,7 @@ Op = Annotated[
 
 Rules for the model:
 - `kind` must be a `Literal["<your_kind>"]`. This is the discriminator field.
-- Field names must be generic (not workflow-specific) — `channel`, `message`,
+- Field names must be generic (not domain-specific) — `channel`, `message`,
   `severity` rather than `slack_channel`, `alert_text`, `reyn_severity`.
 - Default values for optional fields keep the LLM's minimal form short.
 
@@ -143,8 +143,8 @@ Handler conventions:
 - Catch exceptions and return `{"kind": op.kind, "status": "error", "error": str(exc)}`
   rather than raising — `execute_op` in `__init__.py` has a catch-all, but
   explicit handling produces cleaner events.
-- Never import workflow-specific modules or reference workflow-specific strings
-  (P7 — the OS must remain workflow-agnostic).
+- Never import domain-specific modules or reference domain-specific strings
+  (P7 — the OS must remain domain-agnostic).
 
 Then add the import to `src/reyn/core/op_runtime/__init__.py` so the module
 self-registers at startup:

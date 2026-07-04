@@ -189,7 +189,7 @@ Type B には Option 2 の役割分離を採用しつつ、3つの Type C conven
 
 **P4（LLM は制約された決定エンジン）** — 両 invocation kind は厳選された candidate set を提示する。router LLM は `build_tools()` で組み立てられた固定ツールリストを見る。Phase LLM は Phase の `allowed_ops` から構築された `available_control_ops` を見る。Doctrine は各 kind がどの候補を見るかについてであり、P4 は両側に等しく適用される。
 
-**P7（OS はワークフローに依存しない）** — どちらの surface もワークフロー固有の知識を埋め込むべきではない。stdlib ワークフローを通じて Type C ギャップを閉じる（Option 3 パス）ことで P7 を保全する — OS は汎用の `memory` op や `run_skill` 機構を公開し、ワークフローオーサーがそれを使用するかどうかを決める。ワークフロー固有のメモリキーやカタログパスを OS 層に埋め込むことは P7 違反となる。
+**P7（OS はドメインに依存しない）** — どちらの surface もドメイン固有の知識を埋め込むべきではない。stdlib ワークフローを通じて Type C ギャップを閉じる（Option 3 パス）ことで P7 を保全する — OS は汎用の `memory` op や `run_skill` 機構を公開し、ワークフローオーサーがそれを使用するかどうかを決める。ドメイン固有のメモリキーやカタログパスを OS 層に埋め込むことは P7 違反となる。
 
 ---
 

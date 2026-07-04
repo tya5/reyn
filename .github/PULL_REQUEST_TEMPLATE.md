@@ -31,7 +31,7 @@ modifying tests: [`docs/deep-dives/contributing/testing.ja.md`](../docs/deep-div
 
 - [ ] Tests pass locally (`pytest`).
 - [ ] Lint / format clean.
-- [ ] No skill-specific strings (phase names, artifact types, fields)
+- [ ] No domain-specific strings (phase names, artifact types, fields)
       added to OS code (P7).
 - [ ] P1-P8 invariants respected (see `CLAUDE.md`).
 - [ ] `CHANGELOG.md` updated if the change is user-visible.
