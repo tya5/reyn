@@ -46,7 +46,7 @@ Reyn does not have a single multi-agent feature. It has two distinct composition
 
 An agent is a directory at `.reyn/agents/<name>/` (its persistent identity) plus one or more in-memory **Sessions** the runtime spins up on demand:
 
-- `profile.yaml` — name, role (system-prompt persona), `allowed_skills` (optional)
+- `profile.yaml` — name, role (system-prompt persona), `allowed_mcp` (optional)
 - `history.jsonl` — append-only conversation log
 - `events.jsonl` — runtime audit log
 - `memory/` — agent-scoped memory layer (the shared layer at `.reyn/memory/` is visible to every agent)
@@ -117,7 +117,6 @@ That preserves the existing chat UX ("you'll see I'm working on it") while letti
 ## What the OS does NOT manage
 
 - **Topology**: who can send to whom is a separate concept (see [../multi-agent/topology.md](../multi-agent/topology.md)) consulted by the registry's `permit()`.
-- **Workflow access**: the LLM-side workflow filter is per-agent via `profile.allowed_skills`; the OS just respects what the profile says.
 - **Memory layering**: shared vs agent layer is read/written by the router's classify phase; the registry doesn't touch memory files.
 
 Agents are first-class identity + state; topology and workflow access are policy layered on top.

@@ -50,7 +50,7 @@ Reyn のコンフィグは、ミュータビリティのルールが異なる 2 
 |--------|------|
 | `cron` | 存在するジョブを追加 / 置換（名前でべき等）。**リムーバルディフ**: `_runtime_cron_names` で追跡されていて再読み込みされた `.reyn/cron.yaml` にないジョブはスケジュール解除されます。スタートアップ（`reyn.yaml`）の cron ジョブは削除不可。 |
 | `mcp` | 既存のターン境界リフレッシュチェーン経由で MCP サーバーを再プローブします。インメモリツールキャッシュが変更されたかどうかを報告します。 |
-| `per_agent_capability` | `.reyn/agents/<name>/profile.yaml` を再読み込みし、セッションが所有する 3 つのホルダー（session / skill_runner / router_host）の `allowed_skills` / `allowed_mcp` を更新します。 |
+| `per_agent_capability` | `.reyn/agents/<name>/profile.yaml` を再読み込みし、セッションが所有する 3 つのホルダー（session / skill_runner / router_host）の `allowed_mcp` を更新します。 |
 | `new_agent` | 確認用の no-op: エージェント検出はファイルシステムライブ（`AgentRegistry` は呼び出しごとに `.reyn/agents/` を走査）のため、新しいエージェントはリロードなしで既に可視です。明示的なシームとしてアカウンティングのために保持。 |
 | `hooks` | グローバルの `.reyn/hooks.yaml` + ペーエージェントの `.reyn/agents/<name>/hooks.yaml` を再読み込みし、固定のスタートアップレイヤーと再結合し、フックディスパッチャーのレジストリを交換します。 |
 

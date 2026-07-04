@@ -102,14 +102,6 @@ See also: [Concepts: secret handling](../../concepts/runtime/secret-handling.md)
 | `chat_started`, `chat_stopped` | Chat session lifecycle |
 | `turn_cancelled` | A user turn was cancelled mid-router-loop (e.g. `/cancel` or a new submission supersedes the running turn). Payload: `chain_id`. |
 
-## Skill spawning (chat)
-
-| Kind | When |
-|------|------|
-| `skill_run_spawned` | A skill was launched from a router decision (`run_id`, `skill`) |
-| `skill_spawn_refused` | `_spawn_skill` rejected a skill not in the agent's `allowed_skills`. Payload: `reason="allowlist"`, `skill`, `agent` |
-| `skill_node_started` | A skill-graph node began executing (sub-skill node in a composite skill graph). Payload: `node` (node id), `skill_path`. |
-
 ## Task management
 
 Events emitted by the task Control IR ops (`task.py`).

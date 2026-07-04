@@ -2,13 +2,13 @@
 type: concept
 topic: runtime
 audience: [human, agent]
-search_hints: [capability profile, agent profile, allowed_skills, allowed_mcp, tool_allow, tool_deny, skill_allow, skill_deny, mcp_allow, mcp_deny, categories, category visibility, ContextualLayer, ProfileLayer, self-edit, untrusted narrowing]
+search_hints: [capability profile, agent profile, allowed_mcp, tool_allow, tool_deny, mcp_allow, mcp_deny, categories, category visibility, ContextualLayer, ProfileLayer, self-edit, untrusted narrowing]
 ---
 
 # Capability profile
 
-The capability profile system is the unified narrowing primitive across all
-`skill` / `mcp` / `tool` / `category` capability axes. It separates the
+The capability profile system is the unified narrowing primitive across the
+`mcp` / `tool` / `category` capability axes. It separates the
 **spec** (what is narrowed) from the **binding** (when and how it applies).
 
 Two binding adapters read one primitive. Both feed the same conjunctive ∩:
@@ -28,7 +28,6 @@ The per-agent identity and baseline allowlists. The operator writes this file
 using the natural key names:
 
 - `name`, `role`, `created_at` — identity
-- `allowed_skills` — workflow allowlist (maps internally to `skill_allow`)
 - `allowed_mcp` — MCP server allowlist (maps internally to `mcp_allow`)
 
 `AgentProfile.default_profile()` converts these keys to a `CapabilityProfile`
@@ -47,28 +46,21 @@ session may have zero or more applied simultaneously. This feeds
 
 All fields are optional; absent or `null` means unrestricted on that axis.
 
-### Axis A — workflow narrowing
-
-| Field | Type | Semantics |
-|-------|------|-----------|
-| `skill_allow` | `list[str] \| null` | Workflow allow-list. `null` = unconstrained. `[]` = none. |
-| `skill_deny` | `list[str]` | Workflow deny-list. Union across composed profiles. |
-
-### Axis B — MCP narrowing
+### Axis A — MCP narrowing
 
 | Field | Type | Semantics |
 |-------|------|-----------|
 | `mcp_allow` | `list[str] \| null` | MCP server allow-list. `null` = unconstrained. |
 | `mcp_deny` | `list[str]` | MCP server deny-list. |
 
-### Axis C — tool narrowing
+### Axis B — tool narrowing
 
 | Field | Type | Semantics |
 |-------|------|-----------|
 | `tool_allow` | `list[str] \| null` | Tool allow-list. `null` = unconstrained (deny-list only). |
 | `tool_deny` | `list[str]` | Tool deny-list. Deny wins over allow on same name. |
 
-### Axis D — category visibility
+### Axis C — category visibility
 
 | Field | Type | Semantics |
 |-------|------|-----------|
@@ -165,7 +157,7 @@ for per-session task-scoped narrowing.
 **Path:** `.reyn/agents/<agent_name>/profile.yaml`
 
 **Effect:** applies via ProfileLayer (the agent's default spec); uses the
-natural `allowed_skills` / `allowed_mcp` keys (no YAML rename).
+natural `allowed_mcp` key (no YAML rename).
 
 **Verification:** `_DEFAULT_WRITE_ZONES = (".reyn",)` and
 `_CANONICAL_PROTECTED_WRITE_PATHS` contains only `.reyn/approvals.yaml` and
@@ -177,8 +169,8 @@ Both surfaces support **turn-boundary hot-reload** (live, no restart needed):
 
 - **ContextualLayer** — changes to `.reyn/capability_profiles/<name>.yaml` are
   picked up by the `per_agent_capability` reapply seam, which re-reads the
-  `AgentProfile` and updates `allowed_skills` / `allowed_mcp` on all three
-  holders the Session owns (session / skill_runner / router_host).
+  `AgentProfile` and updates `allowed_mcp` on all three holders the Session
+  owns (session / skill_runner / router_host).
 - **ProfileLayer** — changes to `.reyn/agents/<name>/profile.yaml` are reloaded
   by the same seam.
 
@@ -199,8 +191,6 @@ description: "Read and reason; no writes, delegation, or execution."
 categories:            # keep visible
   - file
   - web
-skill_allow: null      # all skills available
-skill_deny: []
 mcp_allow: null        # all MCP servers available
 mcp_deny: []
 tool_allow: null       # deny-list only

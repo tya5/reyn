@@ -45,7 +45,7 @@ reyn agent new researcher --role "deep technical research, prefers primary sourc
 
 `<name>` must match the agent name regex: 1–32 characters of `[a-z0-9_-]` starting with `[a-z0-9]`.
 
-The `--role` text is injected into the agent's LLM system prompt — keep it short and specific. To configure `allowed_skills` or any other profile field, edit `profile.yaml` directly after creation; see profile-yaml reference.
+The `--role` text is injected into the agent's LLM system prompt — keep it short and specific. To configure `allowed_mcp` or any other profile field, edit `profile.yaml` directly after creation; see profile-yaml reference.
 
 ## `reyn agent show <name>`
 
@@ -59,16 +59,9 @@ reyn agent show researcher
 name:        researcher
 created_at:  2026-05-01T12:00:00+00:00
 workspace:   /path/to/project/.reyn/agents/researcher
-allowed_skills: (unrestricted — all project + stdlib skills)
 role:
   deep technical research, prefers primary sources
 ```
-
-`allowed_skills` renders as one of:
-
-- `(unrestricted — all project + stdlib workflows)` — field absent / `null`
-- `(none — router-only, no workflow spawn)` — empty list `[]`
-- bullet list — populated allowlist
 
 ## `reyn agent rm <name> [--purge] [--yes]`
 
@@ -106,7 +99,7 @@ Each agent owns `.reyn/agents/<name>/`:
 
 | Path | Purpose |
 |------|---------|
-| `profile.yaml` | name / role / created_at / allowed_skills |
+| `profile.yaml` | name / role / created_at / allowed_mcp |
 | `history.jsonl` | append-only conversation + agent message log |
 | `events.jsonl` | runtime event audit log |
 | `memory/MEMORY.md` + body files | agent-scoped memory layer |

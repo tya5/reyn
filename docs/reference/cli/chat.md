@@ -41,7 +41,7 @@ Chat-specific flags:
 
 Each agent persists state under `.reyn/agents/<name>/`:
 
-- `profile.yaml` — name, role, optional `allowed_skills`
+- `profile.yaml` — name, role, optional `allowed_mcp`
 - `history.jsonl` — append-only conversation log (chat + agent-to-agent messages, with chain_id for cross-agent trace)
 - `events.jsonl` — runtime events for `reyn events`
 - `memory/` — agent-scoped memory layer (`MEMORY.md` + body files)

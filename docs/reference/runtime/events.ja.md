@@ -100,13 +100,6 @@ Reyn はすべての状態変化に対して構造化イベントを発行しま
 | `user_intervention_received` | `ask_user` op が回答を受け取ったとき |
 | `chat_started`、`chat_stopped` | chat セッションのライフサイクル |
 
-## Skill スポーニング（chat）
-
-| 種類 | タイミング |
-|------|------|
-| `skill_run_spawned` | ルーターの決定から Skill が起動されたとき（`run_id`、`skill`） |
-| `skill_spawn_refused` | `_spawn_skill` が agent の `allowed_skills` にない Skill を拒否したとき。ペイロード: `reason="allowlist"`、`skill`、`agent` |
-
 ## タスク管理
 
 タスク Control IR op（`task.py`）が発行するイベントです。

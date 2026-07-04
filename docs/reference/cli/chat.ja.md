@@ -38,7 +38,7 @@ chat 固有のフラグ:
 
 各 agent は `.reyn/agents/<name>/` 配下に状態を永続化します:
 
-- `profile.yaml` — 名前、ロール、オプションの `allowed_skills`（リファレンス）
+- `profile.yaml` — 名前、ロール、オプションの `allowed_mcp`(リファレンス)
 - `history.jsonl` — 追記専用の会話ログ（chat + agent 間メッセージ、クロス agent トレース用の chain_id 付き）
 - `events.jsonl` — `reyn events` 用のランタイムイベント
 - `memory/` — agent スコープの Memory レイヤー（`MEMORY.md` + body ファイル）

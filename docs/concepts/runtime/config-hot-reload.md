@@ -63,7 +63,7 @@ run on every reload:
 |------|--------------|
 | `cron` | Adds / replaces present jobs (idempotent by name). **Removal-diff**: jobs tracked in `_runtime_cron_names` that are absent from the re-read `.reyn/cron.yaml` are unscheduled. Startup (`reyn.yaml`) cron jobs are never removable. |
 | `mcp` | Re-probes MCP servers via the existing turn-boundary refresh chain. Reports whether the in-memory tool cache changed. |
-| `per_agent_capability` | Re-reads `.reyn/agents/<name>/profile.yaml` and updates `allowed_skills` / `allowed_mcp` on the three holders the Session owns (session / skill_runner / router_host). |
+| `per_agent_capability` | Re-reads `.reyn/agents/<name>/profile.yaml` and updates `allowed_mcp` on the three holders the Session owns (session / skill_runner / router_host). |
 | `new_agent` | Confirming no-op: agent discovery is filesystem-live (the `AgentRegistry` walks `.reyn/agents/` per call), so a newly added agent is already visible without a reload step. Kept as an explicit seam for accounting. |
 | `hooks` | Re-reads global `.reyn/hooks.yaml` + per-agent `.reyn/agents/<name>/hooks.yaml`, re-combines with the fixed startup layer, and swaps the hook dispatcher's registry. |
 

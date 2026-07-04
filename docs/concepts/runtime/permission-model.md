@@ -518,14 +518,13 @@ allows(axis, value) = all(layer.allows(axis, value) for layer in layers)
 
 The two narrowing layers are **two bindings of one primitive**: both read a
 `CapabilityProfile` (the single capability-narrowing spec, covering the
-`skill` / `mcp` / `tool` axes + catalog-`category` visibility), separating the
+`mcp` / `tool` axes + catalog-`category` visibility), separating the
 *spec* (what is narrowed) from the *binding* (when/how it is applied):
 
 - **`ProfileLayer` — per-agent default binding.** Reads the agent's
   `AgentProfile.default_profile()` (a `CapabilityProfile`). The operator surface
-  stays the natural `allowed_skills` / `allowed_mcp` keys in
-  `.reyn/agents/<name>/profile.yaml`; these map onto the spec's `skill_allow` /
-  `mcp_allow` axes internally.
+  stays the natural `allowed_mcp` key in `.reyn/agents/<name>/profile.yaml`;
+  this maps onto the spec's `mcp_allow` axis internally.
 - **`ContextualLayer` — per-session dynamic binding.** Reads a `CapabilityProfile`
   resolved per-session from a delegation / topology role / untrusted-content
   auto-profile (`.reyn/capability_profiles/<name>.yaml`), composable
