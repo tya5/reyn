@@ -27,3 +27,17 @@ class RouterCapExceeded(Exception):
         self.count = count
         self.cap = cap
         self.last_reason = last_reason
+
+
+class AgentStepError(Exception):
+    """Raised by ``session_api.run_agent_step`` (R5: agent-step run+collect).
+
+    Covers every way the collected output of a spawned ephemeral session's
+    turn fails to become the caller's requested result: the spawn's session
+    id resolved to no live ``Session`` (mis-wired registry), the collected
+    text is not valid JSON under a declared ``schema``, or the parsed JSON
+    fails ``core.pipeline.schema.validate`` against that schema. In the
+    eventual Pipeline executor this is an ordinary step failure (→ the
+    step's retry/error path), not a construction-time / programming error.
+    """
+
