@@ -1,7 +1,6 @@
 """Tier 2: pure helpers in config/loader.py.
 
 ``_as_config_dict(val, key)``   — coerce to dict, default {} on wrong type
-``_as_config_list(val, key)``   — coerce to list, default [] on wrong type
 ``_parse_mcp_search_threshold`` — extract int from mcp dict, clamp negatives
 ``_merge(base, override)``      — None values skip; unknown key overrides;
                                    models/permissions shallow-merge
@@ -18,7 +17,6 @@ if str(_SRC) not in sys.path:
 
 from reyn.config.loader import (
     _as_config_dict,
-    _as_config_list,
     _find_project_root,
     _merge,
     _parse_mcp_search_threshold,
@@ -53,32 +51,6 @@ def test_as_config_dict_list_returns_empty() -> None:
 def test_as_config_dict_int_returns_empty() -> None:
     """Tier 2: integer → {}."""
     assert _as_config_dict(42, "models") == {}
-
-
-# ---------------------------------------------------------------------------
-# _as_config_list
-# ---------------------------------------------------------------------------
-
-
-def test_as_config_list_none_returns_empty() -> None:
-    """Tier 2: None → empty list."""
-    assert _as_config_list(None, "tool_calls_op_loop_skills") == []
-
-
-def test_as_config_list_list_passthrough() -> None:
-    """Tier 2: list value is returned as-is."""
-    lst = ["a", "b"]
-    assert _as_config_list(lst, "tool_calls_op_loop_skills") is lst
-
-
-def test_as_config_list_string_returns_empty() -> None:
-    """Tier 2: string → [] (prevent per-character iteration)."""
-    assert _as_config_list("skill_router", "tool_calls_op_loop_skills") == []
-
-
-def test_as_config_list_dict_returns_empty() -> None:
-    """Tier 2: dict → []."""
-    assert _as_config_list({"a": 1}, "tool_calls_op_loop_skills") == []
 
 
 # ---------------------------------------------------------------------------

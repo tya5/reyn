@@ -150,7 +150,7 @@ def test_resource_alias_memory_entry_renders_description():
 
     result = _resource_alias_metadata(
         "memory_entry__user_project_phoenix",
-        skill_metadata_lookup=skill_meta,
+        resource_metadata_lookup=skill_meta,
         mcp_tool_lookup=None,
     )
 
@@ -164,7 +164,7 @@ def test_resource_alias_memory_entry_has_empty_params():
     """Tier 2: memory_entry alias takes no args — the slug is encoded in the alias name."""
     result = _resource_alias_metadata(
         "memory_entry__foo",
-        skill_metadata_lookup={"memory_entry__foo": {"description": "any"}},
+        resource_metadata_lookup={"memory_entry__foo": {"description": "any"}},
         mcp_tool_lookup=None,
     )
 
@@ -178,7 +178,7 @@ def test_resource_alias_memory_entry_without_meta_still_resolves():
     so the LLM still discovers the action; description falls back to a placeholder."""
     result = _resource_alias_metadata(
         "memory_entry__orphan",
-        skill_metadata_lookup=None,
+        resource_metadata_lookup=None,
         mcp_tool_lookup=None,
     )
 

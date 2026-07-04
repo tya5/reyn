@@ -76,7 +76,7 @@ async def test_build_presentation_is_base_plus_catalog_flat() -> None:
     (catalog_entries awaited — #1593 PR-2 async seam)."""
     s = EnumerateAllScheme()
     pres = await s.build_presentation(
-        {"skills_for_tools": [], "hot_list_aliases": []}, {"search_visible": False}, _FakeOps(),
+        {"hot_list_aliases": []}, {"search_visible": False}, _FakeOps(),
     )
     names = [t["function"]["name"] for t in pres.llm_tools_payload]
     assert names == ["file__read", "git__commit", "web__fetch"]   # base then catalog, flat
@@ -96,7 +96,7 @@ async def test_build_presentation_tool_use_sp_disable_wrappers() -> None:
     """
     s = EnumerateAllScheme()
     pres = await s.build_presentation(
-        {"skills_for_tools": [], "hot_list_aliases": []},
+        {"hot_list_aliases": []},
         {"search_visible": True},
         _FakeOps(),
     )

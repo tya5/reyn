@@ -61,9 +61,9 @@ def build_scoped_chat_session(
     allowed_mcp: list[str] | None,  # per-profile MCP allow-list
     task_backend: Any,  # #1953 slice R — session-scoped Task backend instance. I-5=(A): cli/chat + MCP pass a per-session sqlite (rewind-participating); A2A/web passes None (the process-singleton A2A surface is read directly, NOT threaded here, so A2A tasks stay durable but un-rewound). None → op-runtime in-memory fallback (_BACKEND)
     # ── per-session config — the UNIFORM, reyn.yaml-derived bundle (#2093) ──
-    # All eight previously-individual uniform args (sandbox_config / multimodal_config
+    # All previously-individual uniform args (sandbox_config / multimodal_config
     # / action_retrieval_config / embedding_config / router_config / retry_config /
-    # tool_calls_op_loop_skills / chat_tool_use_scheme) now arrive as ONE bundle, built
+    # chat_tool_use_scheme) now arrive as ONE bundle, built
     # once per frontend via SessionFactoryConfig.from_config — so a new uniform arg is
     # added in one place and reaches all five factory sites (completeness-by-
     # construction; the sandbox_config drift class is structurally prevented).
