@@ -1,7 +1,7 @@
 """OpContext — execution environment for op handlers.
 
 Bundles the dependencies an op needs from the surrounding frontend
-(workspace, events, permissions, sub-skill resolution helpers) so the
+(workspace, events, permissions, resolver, and sub-run helpers) so the
 handler signatures stay flat. Frontends construct an OpContext once
 and reuse it for the whole phase or act loop.
 """
@@ -45,9 +45,9 @@ class OpContext:
     subscribers: list = field(default_factory=list)
     output_language: str | None = None
 
-    # run_skill state_dir layout strategy
-    # When set, run_skill uses this path verbatim. When None, the handler
-    # computes a layout based on `state_dir_strategy`.
+    # Sub-run state_dir layout strategy.
+    # When set, the sub-run handler uses this path verbatim. When None, the
+    # handler computes a layout based on `state_dir_strategy`.
     sub_state_dir_override: str | None = None
     state_dir_strategy: str = "control_ir"  # "control_ir" or "preprocessor"
     # Used when state_dir_strategy=="preprocessor"
@@ -86,19 +86,18 @@ class OpContext:
     # (control_ir_executor / router_host_adapter); None = unrecorded.
     budget_tracker: object | None = None
 
-    # PR20: caller provenance threaded from the parent Agent so sub-skill
+    # PR20: caller provenance threaded from the parent Agent so sub-run
     # invocations land under the same `events/<caller>/skill_runs/...` tree.
     # Format: "direct" or "agents/<name>" (validated in Agent).
     caller: str = "direct"
 
-    # R-D13: nested skill lineage. The currently-running runtime sets
+    # R-D13: nested run lineage. The currently-running runtime sets
     # this to its own ``run_id`` when constructing OpContext for control
-    # IR execution. ``run_skill`` handlers propagate it to the spawned
-    # child run as ``parent_run_id``, so the per-skill snapshot tree
-    # records the parent / child relationship for ``/skill list``,
-    # debug logs, and future cascade-discard semantics. ``None`` means
-    # "no parent visible" (e.g. preprocessor-spawned sub-skills, or
-    # runtime invocations that don't track a run_id).
+    # IR execution. Sub-run handlers propagate it to the spawned
+    # child run as ``parent_run_id``, so the snapshot tree records the
+    # parent / child relationship for debug logs and future cascade-discard
+    # semantics. ``None`` means "no parent visible" (e.g. preprocessor-spawned
+    # sub-runs, or runtime invocations that don't track a run_id).
     parent_run_id: str | None = None
 
     # FP-0021: the run_id of the currently-executing run.
@@ -111,7 +110,7 @@ class OpContext:
     # #2259 PR-1: the process-shared WAL, threaded so a recovery-core config op
     # (mcp_install / mcp_drop / index_drop) can record a config GENERATION (keyed by the
     # WAL head) after persisting its `.yaml` — making the yaml a derived projection of the
-    # generation truth. None outside a persistence-enabled chat/skill context (tests /
+    # generation truth. None outside a persistence-enabled chat context (tests /
     # non-chat) → the op skips it (the opt-in contract, same as the step-event gate).
     state_log: "StateLog | None" = None
 
@@ -170,11 +169,10 @@ class OpContext:
     # direct-OpContext tests).
     media_store: "MediaStore | None" = None
 
-    # FP-0016 D: per-skill credential scoping. None = unrestricted (= today's
-    # behaviour; preserves backward compat for top-level / chat-router /
-    # CLI-direct OpContext construction). The run_skill handler constructs a
-    # ScopedSecretStore based on the sub-skill's required_credentials and
-    # passes it down through Agent → the ctx-build seams → OpContext.
+    # FP-0016 D: per-run credential scoping. None = unrestricted (= preserves
+    # backward compat for top-level / chat-router / CLI-direct OpContext
+    # construction). When set, restricts secret access to the declared
+    # required_credentials and is passed through Agent → the ctx-build seams.
     secret_store: "ScopedSecretStore | None" = None
 
     # #1470: per-turn asyncio.Event fired by cancel_inflight(). When set,

@@ -24,7 +24,7 @@ is KEPT — fine handlers still build ``FileIROp(kind="file")`` internally.
 Helper:
   - ``is_op_allowed(op_kind, allowed_ops)`` — prefix-wildcard membership
     check (= ADR-0026 Phase 4-2c).  ``COARSE_TO_FINE`` covers ``mcp``
-    and ``run_skill`` coarse→fine mappings (prefix-wildcard).
+    and ``task`` coarse→fine mappings (prefix-wildcard).
 
 Consumers:
   - ``reyn.core.compiler.linter``     — ``ALL_OP_KINDS``
@@ -57,20 +57,18 @@ from reyn.schemas.models import ALL_OP_KINDS
 # ---------------------------------------------------------------------------
 # Coarse → fine prefix-wildcard mapping (ADR-0026 Phase 4)
 # ---------------------------------------------------------------------------
-# Skill frontmatter conventionally declares ``allowed_ops: [file]`` — a
-# coarse name that originally matched ``op.kind == "file"`` 1:1.  As
-# router-side fine-grained names (= read_file / write_file / etc.) become
-# canonical phase-side too, the coarse declaration must continue to match
-# the fine-grained ops by prefix wildcard.  ``is_op_allowed`` consults
-# this map to keep existing skills working without frontmatter migration.
+# A caller may declare ``allowed_ops: [mcp]`` or ``allowed_ops: [task]`` —
+# coarse names that expand to a frozenset of fine-grained op kinds.
+# ``is_op_allowed`` consults this map so callers don't have to enumerate
+# every fine kind when a whole family is intended.
 # ---------------------------------------------------------------------------
 
 COARSE_TO_FINE: dict[str, frozenset[str]] = {
-    # #1240 Wave 2b: "file" entry removed — coarse kind dropped. Skills that
+    # #1240 Wave 2b: "file" entry removed — coarse kind dropped. Callers that
     # still declare allowed_ops: [file] will fail linting (ALL_OP_KINDS no
     # longer includes "file") and should migrate to fine kinds.
     "mcp":       frozenset({"call_mcp_tool", "list_mcp_servers", "list_mcp_tools"}),
-    # #1953 slice 1: coarse "task" → all task.* fine kinds, so a skill can
+    # #1953 slice 1: coarse "task" → all task.* fine kinds, so a caller can
     # declare allowed_ops: [task] to permit the whole Task op family.
     "task": frozenset({
         "task.create", "task.update_status", "task.get", "task.list",
@@ -86,17 +84,13 @@ def is_op_allowed(op_kind: str, allowed_ops: set[str] | frozenset[str]) -> bool:
 
     Membership rules (= ADR-0026 Phase 4):
 
-    1. **Direct match** — ``op_kind in allowed_ops`` (= the legacy 1:1
-       semantics that all existing skill frontmatter relies on).
+    1. **Direct match** — ``op_kind in allowed_ops`` (exact kind name).
     2. **Prefix-wildcard** — when ``allowed_ops`` contains a coarse name
-       (e.g. ``"file"``) and ``op_kind`` is a fine-grained name covered
-       by that coarse (e.g. ``"read_file"``), the op is allowed.
+       (e.g. ``"mcp"``) and ``op_kind`` is a fine-grained name covered
+       by that coarse (e.g. ``"call_mcp_tool"``), the op is allowed.
 
-    This forward-looking helper keeps existing ``allowed_ops: [file]``
-    declarations working as Control IR migrates to fine-grained kinds in
-    later phases.  Today (post Phase 4-2a) phase Control IR still emits
-    coarse ``op.kind`` values, so rule 2 is exercised only by tests and
-    by future migrations.
+    Rule 2 lets callers declare a whole op family (``allowed_ops: [mcp]``,
+    ``allowed_ops: [task]``) without enumerating every fine kind.
     """
     if op_kind in allowed_ops:
         return True

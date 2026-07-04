@@ -11,7 +11,7 @@ The OS:
 P3: OS does target resolution + LLM call + score parse only; rubric content
     is never interpreted by the OS.
 P6: `tool_executed` event is emitted unconditionally.
-P7: rubric content and `on_fail` vocabulary are kept skill-agnostic.
+P7: rubric content and `on_fail` vocabulary are kept OS-agnostic (no domain concepts).
 """
 from __future__ import annotations
 
@@ -73,8 +73,8 @@ async def handle(
     """
     # ── 1. Resolve target value from artifact ────────────────────────────────
     # Build resolution context: {"artifact": <latest_stored_artifact>}.
-    # Skills store their working artifact via workspace.store_artifact; we read
-    # the most recent entry so "artifact.data.summary" resolves against it.
+    # The workspace stores the working artifact via workspace.store_artifact; we
+    # read the most recent entry so "artifact.data.summary" resolves against it.
     # When no artifact has been stored yet, resolution falls back to an empty
     # dict, which will raise KeyError for any non-trivial target.
     latest: dict[str, Any] = {}
@@ -101,9 +101,9 @@ async def handle(
         }
 
     # ── 2. Resolve model string ───────────────────────────────────────────────
-    # op.model is a class-typed (skill-supplied) field → closed-world gate
-    # (#1454 PR-B): a non-class value falls back to the runtime model rather
-    # than passing through as a literal LiteLLM string that bypasses the proxy.
+    # op.model is a class-typed field → closed-world gate (#1454 PR-B): a
+    # non-class value falls back to the runtime model rather than passing
+    # through as a literal LiteLLM string that bypasses the proxy.
     if ctx.resolver is not None:
         # #1672: op.model (explicit) wins, then the runtime ctx.model, then the
         # configured "judge" purpose class (was an implicit "standard" tier) — so an

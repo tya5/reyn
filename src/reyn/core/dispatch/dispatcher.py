@@ -1,4 +1,4 @@
-"""Shared dispatch layer for chat router and skill phase tool invocations.
+"""Shared dispatch layer for chat router and op-loop tool invocations.
 
 Wraps any tool invocation with cross-cutting concerns:
   - name validation (against caller's tool catalog)
@@ -32,7 +32,7 @@ class DispatchContext:
 
     Attributes:
         caller_kind: "router" for chat agent main loop, "skill_phase" for
-            skills' op execution. Used in event taxonomy for filtering.
+            op-loop execution. Used in event taxonomy for filtering.
         caller_id: agent_name (router) or f"{actor}.{phase_name}"
             (skill_phase). Identifies the audit subject.
         chain_id: optional chain id for multi-hop tracing (PR14).
@@ -174,7 +174,7 @@ def _compute_args_hash(args: dict) -> str:
     SHA-256 of canonical JSON; safe across Python runs (unlike Python's
     builtin hash() which is randomized).  First 16 hex chars are kept
     (64 bits) — collision risk is acceptable for resume memoization
-    within a single skill run.
+    within a single run.
     """
     import hashlib
     import json
@@ -195,7 +195,7 @@ _LLM_VOLATILE_FRAME_FIELDS: frozenset[str] = frozenset({"current_datetime"})
 # runtime restores ``_history`` from ``snap.history`` on resume — but
 # ``snap.history`` records phase names while normal operation appends
 # transition strings ("draft → review"). The two formats can't be reconciled
-# without a SkillSnapshot schema extension; until R-D11 lands a proper
+# without a snapshot schema extension; until R-D11 lands a proper
 # ``transition_history`` field, ``execution.path`` is treated as informational
 # (it shows in the LLM context but does not affect memo determinism).
 _LLM_VOLATILE_NESTED_FIELDS: frozenset[str] = frozenset({"execution.path"})
@@ -260,11 +260,11 @@ def _compute_llm_args_hash(
 # denied and HOW to allow it without leaving the chat to read source.
 #
 # Names cover both router-tool catalog entries (read_file, web_fetch, …)
-# and skill_phase op kinds (file, shell, web_fetch, …). Unmapped names
+# and op-loop op kinds (file, shell, web_fetch, …). Unmapped names
 # fall back to a generic "see logs / events tab" suffix — better than
 # fabricating a config key the user can't actually find.
 _PERMISSION_CONFIG_HINTS: dict[str, str] = {
-    # File ops — router catalog + skill_phase "file" op kind.
+    # File ops — router catalog + op-loop "file" op kind.
     "file": "permissions.file.read / file.write: allow",
     "read_file": "permissions.file.read: allow",
     "write_file": "permissions.file.write: allow",
