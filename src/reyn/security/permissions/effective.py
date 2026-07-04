@@ -145,7 +145,7 @@ class AgentLayer:
         if axis is CapabilityAxis.MCP:
             # #1199 S3.1b: the per-actor GRANT (``decl.mcp``). #2074 S4a moved the
             # per-agent allowlist (``decl.allowed_mcp``) OUT to a ProfileLayer in
-            # require_mcp (symmetric with SKILL) — so the full ∩ is now
+            # require_mcp (symmetric with AGENT) — so the full ∩ is now
             # ``AgentLayer(grant) ∩ ProfileLayer(allowlist) ∩ ContextualLayer``,
             # byte-identical to the prior ``grant ∩ allowlist`` (∩ associative).
             return value in d.mcp

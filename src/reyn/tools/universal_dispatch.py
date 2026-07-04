@@ -26,7 +26,7 @@ routing decisions for all 13 categories without invoking any handler.
 
 Not in PR-2:
   - Wire-up to ``ctx.router_state`` callables (= PR-3)
-  - Dynamic enumeration of skills/agents/mcp-tools/memory-entries/
+  - Dynamic enumeration of actions/agents/mcp-tools/memory-entries/
     rag-corpora (= caller-state dependent, PR-3)
   - The ``list_actions`` enumeration body (= PR-3 with caller-state
     integration)

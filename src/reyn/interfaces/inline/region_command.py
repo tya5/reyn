@@ -1,7 +1,7 @@
 """Command-UI consumers of the inline region framework (F4).
 
 A command-UI is a slash-command-driven selector hosted in the region — distinct
-from an intervention (which is skill-driven and blocks a turn). The /rewind
+from an intervention (which is turn-driven and blocks a turn). The /rewind
 checkpoint picker is the first; the generic ``CommandUIElement`` (display rows +
 a submit-text per row) is intentionally command-agnostic so future command UIs
 (and the status bar in F5) can host in the region without bespoke wiring.

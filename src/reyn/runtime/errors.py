@@ -9,7 +9,7 @@ from __future__ import annotations
 
 class RouterCapExceeded(Exception):
     """Raised when a user turn (or top-level agent_request) drives more
-    skill_router invocations than the configured cap. Caught by handlers,
+    router invocations than the configured cap. Caught by handlers,
     which surface a structured fallback reply to the user / requester.
 
     FP-0004: ``hint_config_key`` is the user-facing config knob to raise

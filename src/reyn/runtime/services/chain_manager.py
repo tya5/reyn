@@ -226,7 +226,7 @@ class ChainManager:
         Read-only public API for cross-agent chain lookup (R-D14): the
         AgentRegistry's ``notify_chain_discarded`` scans every session's
         ChainManager via this method to find the upstream waiter for a
-        chain whose downstream skill_run was discarded.
+        chain whose downstream run was discarded.
 
         Distinct from ``resolve``: this does NOT mutate state nor emit
         WAL events — it just answers "do you track this chain_id?".

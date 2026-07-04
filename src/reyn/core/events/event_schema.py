@@ -68,7 +68,7 @@ EVENT_AUDIT_REQUIREMENTS: dict[str, frozenset[str]] = {
     # turn_completed: emitted in Session._run_router_loop() immediately after
     #   RouterLoopDriver.run_turn() returns — the router loop has reached a
     #   terminal condition (the turn's response is complete). One emit per
-    #   turn, independent of skill/routing path. This is the hook point for
+    #   turn, independent of routing path. This is the hook point for
     #   the turn_end lifecycle hook (slice 5b). chain_id matches the turn's
     #   chain_id for cross-agent tracing.
     "turn_completed": frozenset({"chain_id"}),

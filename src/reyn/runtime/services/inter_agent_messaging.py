@@ -520,13 +520,13 @@ class InterAgentMessaging:
         depth = int(payload.get("depth", 1))
         chain_id = payload.get("chain_id") or _new_chain_id()
 
-        # B55 R-7 (2026-05-25): structural symmetry with skill / plan
+        # B55 R-7 (2026-05-25): structural symmetry with agent / plan
         # completion injections. Wrap the peer's reply in a
         # `[task_completed] kind=agent ...` header (role=user) so the
         # SP TASK_COMPLETED rule covers agent-delegation lifecycles
         # too. Prior behaviour appended the raw reply text alone,
         # which the LLM read as a plain user message — no task
-        # lifecycle anchor + no parity with skill / plan paths.
+        # lifecycle anchor + no parity with agent / plan paths.
         # FP-0050/#1822 S4b (EP5, Class A): fence + scan the untrusted peer reply
         # before it enters history. Only the history-bound copy is fenced; the
         # raw ``response`` stays for chain-resolution routing below.
@@ -608,7 +608,7 @@ class InterAgentMessaging:
             # B55 R-7: pass the structured `[task_completed] kind=agent`
             # injection (= history's last entry, also user-role) so the
             # router sees the same lifecycle marker the SP rule covers
-            # — parity with skill / plan completion paths.
+            # — parity with agent / plan completion paths.
             await self._run_router_loop(injected_text, chain_id)
         except RouterCapExceeded as exc:
             await self._emit_router_cap_exhausted_user(exc, chain_id=chain_id)

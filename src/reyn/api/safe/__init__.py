@@ -12,13 +12,13 @@ Available modules:
 
 - :mod:`reyn.api.safe.file` — permission-gated file I/O (`read`, `write`,
   `glob`, `exists`, `stat`, `open`). New in FP-0042. Operates only on
-  paths declared in the calling skill's ``permissions.file.read_paths`` /
+  paths declared in the calling agent's ``permissions.file.read_paths`` /
   ``permissions.file.write_paths``; reads outside the declared set raise
   :class:`PermissionError`.
 
 - :mod:`reyn.api.safe.cache` — 24h-TTL file cache (`get` / `set`). New in
   FP-0042 Phase 3 drift-fix; thin re-export of `reyn.core.registry.cache`
-  so safe-mode skills can use the existing shared cache store.
+  so safe-mode agents can use the existing shared cache store.
 - :mod:`reyn.api.safe.hash` — `sha256` / `sha256_hex`.
 - :mod:`reyn.api.safe.http` — urllib-backed HTTP (`get` / `post` / `put` /
   `delete`). New in FP-0042 Phase 3 drift-fix; no per-call permission

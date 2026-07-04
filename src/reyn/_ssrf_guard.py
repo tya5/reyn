@@ -16,7 +16,7 @@ both ``reyn.api.*`` and ``reyn.core.*`` with no reyn import cycle — mirrors
 Policy (lead-approved, #1956):
   - **HARD deny, no opt-out** — link-local (``169.254.0.0/16``, ``fe80::/10``),
     cloud-metadata (``169.254.169.254``, ``fd00:ec2::254``), loopback
-    (``127.0.0.0/8``, ``::1``), reserved, multicast, unspecified. An LLM/skill
+    (``127.0.0.0/8``, ``::1``), reserved, multicast, unspecified. An LLM/agent
     fetch has no legitimate use for these.
   - **deny by default, operator opt-in** — private RFC1918 / ULA
     (``10/8``, ``172.16/12``, ``192.168/16``, ``fc00::/7``). Allowed only when

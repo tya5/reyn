@@ -1,7 +1,7 @@
 """EventStore — file-backed audit log with rotation.
 
 Used by both chat sessions (long-lived, rotated by size+age+date) and
-skill runs (1 run = 1 file, no rotation). Same API for both — the
+agent runs (1 run = 1 file, no rotation). Same API for both — the
 difference is the rotation policy passed at construction.
 
 Files live under `<dir>/<YYYY-MM>/<YYYY-MM-DDTHHMMSS>[<suffix>].jsonl`.
@@ -12,7 +12,7 @@ place and remains readable. This sidesteps mid-rotation crash hazards
 that rename-based schemes have.
 
 Per P7: this is OS-level generic infrastructure — it never references
-specific event types or skill / chat domain strings.
+specific event types or domain strings.
 """
 from __future__ import annotations
 
@@ -38,7 +38,7 @@ class EventStore:
         max_bytes:       0 disables size-based rotation
         max_age_seconds: 0 disables age-based rotation
                          (date-boundary rotation also gated on this)
-        suffix:          "" for chat, e.g. "_skill_router" for a run
+        suffix:          "" for chat, e.g. "_run" for a run
         """
         self._dir = Path(dir_path)
         self._max_bytes = int(max_bytes)

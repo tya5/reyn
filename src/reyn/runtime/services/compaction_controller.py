@@ -88,7 +88,7 @@ def _turn_to_compactor_input(
         # Compact representation: function names + arg-string lengths.
         # Avoid sending raw arg JSON since it can be large and the
         # compactor only needs the structural shape ("LLM called fn X
-        # with N chars of args"). The skill's ``artifacts_referenced``
+        # with N chars of args"). The agent's ``artifacts_referenced``
         # rule decides whether to surface the call.
         out["tool_calls"] = [
             {

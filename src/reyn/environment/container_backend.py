@@ -24,7 +24,7 @@ recursive ``**``, ``grep`` Python-``re`` matching) rather than shell tools whose
 semantics differ. This is the exec-per-op MVP (one ``docker exec`` per FS op);
 a persistent in-container IO-responder is a later optimization.
 
-Axis-agnostic / P7-clean: no skill / phase / artifact strings; bound to a
+Axis-agnostic / P7-clean: no domain-specific strings; bound to a
 ``(container, repo_dir)`` pair. FS uses a sync runner (the EnvironmentBackend
 Protocol is sync, matching Workspace); ``run()`` uses an async runner (the
 SandboxBackend Protocol is async). Both are injectable so the orchestration is

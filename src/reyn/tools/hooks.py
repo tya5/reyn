@@ -13,7 +13,7 @@ trifecta + the existing hook safeguards:
 - **validate-before-apply** (S2b) rejects a malformed reload; **boot-resilience**
   (S2b) degrades a malformed persisted layer at the next boot. Plus write-time
   validation here (a bad hook → an op error, not a silent bad write).
-- **Permission** is the TOOL axis: the calling skill must list ``hooks_add`` in
+- **Permission** is the TOOL axis: the calling agent must list ``hooks_add`` in
   ``permissions.tool`` (``require_tool``) and the #2074 capability profile
   (``tool_deny``) can deny self-reload. The damage is bounded — F is sandboxed, E is
   loop-valved (``safety.loop.max_hook_driven_turns``), C is benign.
@@ -120,8 +120,8 @@ def _hooks_list(data: dict) -> list:
 
 async def _gate(ctx: ToolContext) -> None:
     """Permission gate: ``require_file_write`` against the canonical .reyn/config/hooks.yaml.
-    TOOL-level authorisation already happened at skill-startup (``require_tool``
-    against the skill's ``permissions.tool``) + the #2074 capability profile. No-op
+    TOOL-level authorisation already happened at agent startup (``require_tool``
+    against the agent's ``permissions.tool``) + the #2074 capability profile. No-op
     in unit-test contexts (``ctx.permission_resolver`` is None)."""
     from reyn.security.permissions.permissions import PermissionDecl
     if ctx.permission_resolver is None:

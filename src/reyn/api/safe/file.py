@@ -171,7 +171,7 @@ def _check_read(path: str) -> None:
     if not _is_under(path, _read_paths):
         raise PermissionError(
             f"reyn.api.safe.file: read from {path!r} is not in the declared "
-            f"read_paths {list(_read_paths)}. Declare it in skill.md "
+            f"read_paths {list(_read_paths)}. Declare it in the agent profile "
             f"frontmatter:\n"
             f"  permissions:\n"
             f"    file.read:\n"
@@ -250,7 +250,7 @@ def _check_write(path: str) -> None:
     if not _is_under(path, _write_paths):
         raise PermissionError(
             f"reyn.api.safe.file: write to {path!r} is not in the declared "
-            f"write_paths {list(_write_paths)}. Declare it in skill.md "
+            f"write_paths {list(_write_paths)}. Declare it in the agent profile "
             f"frontmatter:\n"
             f"  permissions:\n"
             f"    file.write:\n"

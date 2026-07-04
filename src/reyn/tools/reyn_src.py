@@ -2,7 +2,7 @@
 
 Both capabilities are router-only dev-mode tools (gates.router="allow",
 gates.phase="deny"). Phase doesn't need this; dev-debug is an
-operator-side concern, not a skill-author concern.
+operator-side concern, not an agent-author concern.
 
 The existing resolver in src/reyn/runtime/reyn_src.py is preserved and
 called directly from each handler (no OpContext shim needed — these

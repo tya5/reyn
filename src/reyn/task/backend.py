@@ -12,8 +12,8 @@ is a **rebindable WAL subscription binding** (NOT an immutable field): it may be
 (claim / owner-initiated reassign / re-queue), append-only so it stays P6/rewind-clean.
 The single-writer CAS is therefore ``caller_session_id == the CURRENT (hydrated) assignee``
 — a read-then-check against the live WAL binding, enforced at the OP layer (NOT a
-resource-scoped permission gate, and NOT a skill-run claim — a multi-turn Task spans many
-skill-runs, so no one run owns it). ``caller_session_id`` is ``OpContext.session_id``,
+resource-scoped permission gate, and NOT a single-run claim — a multi-turn Task spans many
+runs, so no one run owns it). ``caller_session_id`` is ``OpContext.session_id``,
 threaded down the runtime chain. A non-assignee write is denied at the op layer.
 
 Enforcement deferred to later slices:

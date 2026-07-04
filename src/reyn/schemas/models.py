@@ -198,9 +198,9 @@ class MCPDropServerIROp(BaseModel):
     and emits a P6 ``mcp_server_removed`` event for audit.
 
     Permission gating mirrors mcp_install at the policy level but uses
-    a distinct decl field (``mcp_drop_server``) so a skill must
+    a distinct decl field (``mcp_drop_server``) so an agent must
     explicitly declare drop intent — install intent alone is
-    insufficient. This prevents an install-only skill from
+    insufficient. This prevents an install-only agent from
     accidentally tearing down user-configured servers.
     """
     kind: Literal["mcp_drop_server"]
@@ -221,7 +221,7 @@ class MCPDropServerIROp(BaseModel):
 # ---------------------------------------------------------------------------
 # Phase 1 of FP-0002 / ADR-0033. ChunkMetadata is the OS-level data carrier
 # passed between embed / index_write / index_query / recall. The `source_type`
-# value is NOT interpreted by OS code (= P7); chunker modules and skills
+# value is NOT interpreted by OS code (= P7); chunker modules and agents
 # attach domain-specific labels and read them back via filters.
 # ---------------------------------------------------------------------------
 
@@ -328,7 +328,7 @@ class CompactIROp(BaseModel):
 # ---------------------------------------------------------------------------
 # Agent-facing Task operations as Control IR ops (P4). P7 term-neutral: op
 # names + fields are generic; A2A vocabulary (contextId / TaskState) maps only
-# at the A2A layer. Single-writer is a backend-CAS on the caller's skill-run
+# at the A2A layer. Single-writer is a backend-CAS on the caller's
 # run_id (threaded from OpContext, NOT an op field → unforgeable; audit C2),
 # NOT a permission gate. Enforcement (CAS reject, abort quiescence, cascade,
 # cycle-check, predicate-eval) lands in later slices; these are the shapes.

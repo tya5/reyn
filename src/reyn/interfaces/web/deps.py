@@ -98,7 +98,7 @@ def _get_budget_tracker():
         root = _get_project_root()
         tracker = BudgetTracker(config.cost)
         tracker.hydrate(root / ".reyn" / "state" / "budget_ledger.jsonl")
-        # R-D8: restore in-memory counters (per-agent / per-chain-skill)
+        # R-D8: restore in-memory counters (per-agent / per-chain-run)
         # for cap enforcement across crash.
         budget_state_path = root / ".reyn" / "state" / "budget_state.json"
         tracker.load_state(budget_state_path)
@@ -325,7 +325,7 @@ def _get_registry():
                 budget_tracker=budget_tracker,
                 # #2093: the uniform reyn.yaml-derived per-session config (sandbox /
                 # multimodal / action_retrieval / embedding / router / retry /
-                # op-loop-skills / tool-use-scheme) — one bundle, so a new uniform arg
+                # op-loops / tool-use-scheme) — one bundle, so a new uniform arg
                 # can't be missed here (the sandbox_config B52 drift class is gone).
                 factory_config=SessionFactoryConfig.from_config(config),
                 eager_embedding_build=_eager_embedding_build,

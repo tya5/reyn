@@ -7,7 +7,7 @@ runner pushes an envelope into the target agent's inbox with
 consumes it as a normal attributed turn from a scheduled trigger.
 
 (A cron job must be message-based: ``to`` + ``message``. A config entry
-lacking that shape — e.g. a legacy bare ``skill`` name — is rejected at load.)
+lacking that shape — e.g. a legacy bare ``agent`` name — is rejected at load.)
 
 The transport collaborator is injected (= keeps this factory transport-agnostic):
 

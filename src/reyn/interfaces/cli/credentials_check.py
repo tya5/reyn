@@ -4,7 +4,7 @@ Light/HN-user UX: surface "no API key set" as an actionable startup error
 with explicit fix instructions, instead of a cryptic litellm
 ``InternalServerError: Missing credentials`` that fires after the
 ``reyn chat`` banner appears (and after ``reyn run`` has printed its
-``skill / model / input`` header). The check covers the dominant
+``run`` header). The check covers the dominant
 mis-configuration path — no env var AND no api_base proxy.
 """
 from __future__ import annotations

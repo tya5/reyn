@@ -185,7 +185,7 @@ class RequestBus(Protocol):
     await a response.
 
     Callers in the OS layer (= ``handle_limit_exceeded``, permission
-    gates, skill ``ask_user`` op) know only this interface; they do NOT
+    gates, ``ask_user`` op) know only this interface; they do NOT
     know whether the responder is a TUI listener, an A2A peer, or an
     Agent making a self-decision.  The subscriber on the other end of
     the bus decides routing (Phase 3 onward: Agent inspects context and

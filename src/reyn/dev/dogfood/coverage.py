@@ -203,7 +203,7 @@ def parse_feature_map(path: str | Path) -> list[FeatureNode]:
             label = cells[0]
             # Skip the header row (first cell is a heading word like "Feature", "Op", "Command" etc.)
             _header_words = {
-                "feature", "op", "command", "skill", "block", "description",
+                "feature", "op", "command", "block", "description",
                 "documentation", "layer", "backend",
             }
             if label.lower() in _header_words:

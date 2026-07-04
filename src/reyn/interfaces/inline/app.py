@@ -257,7 +257,7 @@ def _more_expansion(snap, dispatch):
     """
     elements: list = []
 
-    # --- Visibility toggles (tool / skill / mcp) ---
+    # --- Visibility toggles (tool / mcp) ---
     vis_items = snap.get("visibility_items") or []
     if vis_items:
         # Group by kind so each kind gets its own section.

@@ -159,7 +159,7 @@ async def handle_limit_exceeded(
         detail: Optional second line of context (= specifics like
                 "Phase 'revise' visit count 25 / 25").
         extension_amount: How much to extend the counter by on approval.
-        actor: Optional skill name for /list / TUI display.
+        actor: Optional actor name for /list / TUI display.
 
     Returns:
         LimitDecision describing the outcome. Caller is responsible for
