@@ -266,7 +266,10 @@ _FLOORED_QUALIFIED: "dict[str, frozenset[str]]" = {
     # Has a qualified route (pipeline__run) unlike the bare-only spawn
     # trio, so its bare alias (run_pipeline) is derived by
     # _with_unwrapped_aliases below — no _FLOORED_BARE_ONLY entry needed.
-    "pipeline-run": frozenset({"pipeline__run"}),
+    # IS-2: the async launch (pipeline__run_async → run_pipeline_async) is
+    # the SAME threat class — it additionally spawns a driver-session, so it
+    # must not be floored looser than the sync verb.
+    "pipeline-run": frozenset({"pipeline__run", "pipeline__run_async"}),
 }
 
 # Intentionally BARE-ONLY floored names: router-only tools with NO invoke_action

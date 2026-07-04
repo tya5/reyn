@@ -39,10 +39,19 @@ existing primitives — it adds no new session/LLM machinery of its own:
      defensively and validated post-hoc (exactly the executor's
      ``ToolStep`` pattern — there is no schema-constrained *generation* in
      the router path today).
+
+``start_pipeline_run`` (IS-2) is the ASYNC counterpart of the sync
+``run_pipeline`` tool: it spawns a dedicated pipeline driver-session (born
+with its work-order — the D案 architecture), persists ``invocation.json``
+before step 0 can run, swaps in the ``PipelineExecutorDriver`` and nudges the
+run — returning the ``run_id`` immediately while the result arrives later as
+a ``pipeline_result`` inbox message. See its docstring for the crash-safety
+ordering.
 """
 from __future__ import annotations
 
 import json
+import re
 import uuid
 from typing import TYPE_CHECKING, Any
 
@@ -60,15 +69,18 @@ if TYPE_CHECKING:
 #     ``MessageBus.request``'s quiescence predicate (inbox.empty()) return
 #     early on a pending chain the spawned session is still awaiting a reply
 #     for (see the module docstring).
-#   - ``run_pipeline`` (IS-1, R6 S3): nesting a pipeline launch inside an
-#     ``agent`` step would let a step spawn ANOTHER pipeline at runtime,
-#     defeating the transitive-closure cost-bound approval a REGISTERED
-#     pipeline gets at ``run_pipeline`` call time — nesting is ``call``-only.
+#   - ``run_pipeline`` / ``run_pipeline_async`` (IS-1/IS-2, R6 S3): nesting a
+#     pipeline launch inside an ``agent`` step would let a step spawn ANOTHER
+#     pipeline at runtime, defeating the transitive-closure cost-bound approval
+#     a REGISTERED pipeline gets at launch time — nesting is ``call``-only.
+#     The async launch is the same escape hatch as the sync one (sibling).
 # ``_expand_tool_forms`` (capability_profile.py) derives every invocable alias
 # (bare + qualified) from each name here, so listing the bare tool name is
 # sufficient — the qualified catalog form (``multi_agent__delegate`` /
 # ``pipeline__run``) is covered too.
-_DELEGATION_DENY_TOOLS: tuple[str, ...] = ("delegate_to_agent", "run_pipeline")
+_DELEGATION_DENY_TOOLS: tuple[str, ...] = (
+    "delegate_to_agent", "run_pipeline", "run_pipeline_async",
+)
 
 # MessageBus.request has no default — an agent step needs one so callers
 # aren't forced to pick a number for the common case.
@@ -190,3 +202,86 @@ async def run_agent_step(
             f"conform to schema: {details}"
         )
     return parsed
+
+
+async def start_pipeline_run(
+    registry: "AgentRegistry",
+    *,
+    pipeline: "object",
+    pipeline_name: str,
+    input: "dict | None",
+    reply_to_agent: str,
+    reply_to_sid: str,
+    state_log: "object",
+    run_id: "str | None" = None,
+) -> str:
+    """IS-2: launch an async pipeline run in a dedicated driver-session (D案).
+
+    The launch sequence, in crash-safety order:
+
+      1. spawn the driver-session under the INVOKER's identity
+         (``spawn_session_recorded(mode="persistent")`` — the same recorded
+         seam as every other programmatic spawn; persistent because the
+         session must survive a crash to be re-woken, and its reclamation is
+         the driver's own terminal ephemeral-vanish, not inbox-idleness).
+         Same identity ⇒ the driver's permission envelope is the invoker's
+         (⊆ by construction).
+      2. persist the work-order (``invocation.json`` — full serialized
+         pipeline + input + reply address + the driver's own (agent, sid) +
+         the WAL seq at spawn) BEFORE step 0 can possibly run. From this
+         point the run is crash-recoverable: ``AgentRegistry.restore_all``'s
+         pipeline scan re-creates + re-wakes the driver-session from this
+         file alone.
+      3. swap in the :class:`~reyn.runtime.services.pipeline_executor_driver.
+         PipelineExecutorDriver` (``Session.set_loop_driver``) and nudge the
+         run-loop with an empty user turn — the D案 "run/resume" nudge whose
+         text carries no meaning — then boot the detached run-loop pump
+         (``ensure_session_running``; no forwarder — a driver-session has no
+         user-facing output).
+
+    Returns the ``run_id`` immediately; the result arrives later on the
+    invoker's inbox as a ``pipeline_result`` message."""
+    from reyn.core.events.config_recovery import reyn_root
+    from reyn.core.pipeline.serde import pipeline_to_dict
+    from reyn.core.pipeline.work_order import (
+        PipelineWorkOrder,
+        pipeline_run_dir,
+        write_invocation,
+    )
+    from reyn.runtime.services.pipeline_executor_driver import PipelineExecutorDriver
+
+    root = reyn_root(state_log.path)
+    if root is None:
+        raise ValueError(
+            "start_pipeline_run requires a .reyn-anchored StateLog (the "
+            f"work-order/recovery files live under it); got {state_log.path!r}"
+        )
+    # The run_id becomes a directory segment (.reyn/pipeline/state/<run_id>/),
+    # so the embedded pipeline name is sanitized to one safe path component.
+    safe_name = re.sub(r"[^A-Za-z0-9_.-]", "_", pipeline_name) or "pipeline"
+    rid = run_id or f"pipeline-{safe_name}-{uuid.uuid4().hex}"
+    sid = await registry.spawn_session_recorded(reply_to_agent, mode="persistent")
+    work_order = PipelineWorkOrder(
+        run_id=rid,
+        pipeline_name=pipeline_name,
+        pipeline=pipeline_to_dict(pipeline),
+        input=dict(input) if input else None,
+        reply_to_agent=reply_to_agent,
+        reply_to_sid=reply_to_sid,
+        driver_agent=reply_to_agent,
+        driver_sid=sid,
+        spawn_seq=state_log.current_seq,
+    )
+    write_invocation(pipeline_run_dir(root, rid), work_order)
+    session = registry.get_session(reply_to_agent, sid)
+    if session is None:
+        raise RuntimeError(
+            f"start_pipeline_run: spawned driver-session ({reply_to_agent!r}, "
+            f"{sid!r}) not found in the registry"
+        )
+    session.set_loop_driver(
+        PipelineExecutorDriver(work_order, registry=registry, state_log=state_log)
+    )
+    await session.submit_user_text("")  # the no-payload run nudge (D案)
+    registry.ensure_session_running(reply_to_agent, sid)
+    return rid

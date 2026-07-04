@@ -590,6 +590,8 @@ _ROUTE_CONTRACT_SAMPLES: list[tuple[str, dict[str, Any]]] = [
     ("skill_management__install_source", {"source": "https://github.com/user/skill-repo"}),
     # pipeline category (IS-1) — run_pipeline requires name; input is optional.
     ("pipeline__run", {"name": "my_pipeline", "input": {"topic": "x"}}),
+    # pipeline category (IS-2) — async launch, same surface as the sync verb.
+    ("pipeline__run_async", {"name": "my_pipeline", "input": {"topic": "x"}}),
 ]
 
 

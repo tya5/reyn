@@ -86,7 +86,7 @@ def get_default_registry() -> ToolRegistry:
         REMEMBER_AGENT,
         REMEMBER_SHARED,
     )
-    from reyn.tools.pipeline_verbs import RUN_PIPELINE
+    from reyn.tools.pipeline_verbs import RUN_PIPELINE, RUN_PIPELINE_ASYNC
     from reyn.tools.recall import RECALL
     from reyn.tools.reyn_src import (
         REYN_SRC_GLOB,
@@ -213,6 +213,10 @@ def get_default_registry() -> ToolRegistry:
     # universal-catalog wrapper uses, NOT build_tools() (which is
     # hand-assembled and strips direct tools once wrappers are on).
     registry.register(RUN_PIPELINE)
+    # IS-2: run_pipeline_async — background launch in a crash-recoverable
+    # driver-session; returns {status: started, run_id} immediately, the
+    # result arrives later as a pipeline_result inbox message.
+    registry.register(RUN_PIPELINE_ASYNC)
     # ── FP-0034 universal catalog wrappers (router-only) ─────────────────
     # PR-3a registers them in the registry; PR-3b will add them to
     # build_tools() output and refactor the SP. Handlers wire through
