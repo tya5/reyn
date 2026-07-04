@@ -366,3 +366,121 @@ async def test_run_pipeline_via_invoke_action_full_live_loop(
     agent_msgs = [m for m in msgs if m.kind == "agent"]
     assert agent_msgs, "expected an agent outbox message after the tool round"
     assert agent_msgs[-1].text == "the pipeline ran successfully"
+
+
+# ---------------------------------------------------------------------------
+# 5. The D19 pipeline__<name> resource-invoke path (the scope IS-5 adds
+#    beyond IS-1's static pipeline__run verb).
+# ---------------------------------------------------------------------------
+
+
+def test_d19_pipeline_name_resolves_to_run_pipeline_with_curried_args() -> None:
+    """Tier 2: OS invariant — the D19 resource-invoke rule routes
+    ``pipeline__<name>`` to the ``run_pipeline`` target, currying the pipeline
+    name from the qualified name and forwarding ``input`` unchanged. This is
+    the whole point of the IS-5 D19 addition (the enumerate-all default scheme
+    surfaces ``pipeline__<name>`` as a flat callable, so it MUST resolve) — and
+    it is EQUIVALENT to invoking the pre-existing static ``pipeline__run`` verb
+    with an explicit ``name``. Pure routing assertion (no handler invoked),
+    same discipline as ``resolve_invoke_action``'s other resource-category
+    tests."""
+    from reyn.tools.universal_dispatch import resolve_invoke_action
+
+    seed = {"name": "world"}
+
+    # D19 per-name form: pipeline__greet, name curried from the qualified name.
+    by_name = resolve_invoke_action("pipeline__greet", {"input": seed})
+    # Static verb form: pipeline__run, name passed explicitly.
+    by_verb = resolve_invoke_action("pipeline__run", {"name": "greet", "input": seed})
+
+    assert by_name.target_tool_name == "run_pipeline"
+    assert dict(by_name.target_args) == {"name": "greet", "input": seed}
+    # The equivalence the _pipeline_run_args docstring claims: both spellings
+    # reach run_pipeline with the SAME effective args.
+    assert by_name.target_tool_name == by_verb.target_tool_name
+    assert dict(by_name.target_args) == dict(by_verb.target_args)
+
+
+def test_d19_pipeline_name_resolves_without_input_when_omitted() -> None:
+    """Tier 2: OS invariant — ``pipeline__<name>`` with no ``input`` arg
+    resolves to ``run_pipeline`` carrying only the curried ``name`` (a
+    seed-less pipeline is a valid launch; the handler treats a missing
+    ``input`` as no seed). Guards against the transformer injecting a
+    spurious empty ``input`` key."""
+    from reyn.tools.universal_dispatch import resolve_invoke_action
+
+    resolved = resolve_invoke_action("pipeline__greet", {})
+
+    assert resolved.target_tool_name == "run_pipeline"
+    assert dict(resolved.target_args) == {"name": "greet"}
+
+
+def _pipeline_by_name_invoke_result(name: str, seed_input: dict) -> LLMToolCallResult:
+    """LLMToolCallResult that makes RouterLoop call the D19 per-name form
+    ``invoke_action(action_name="pipeline__<name>", args={input})`` (the
+    resource-invoke path, distinct from the static ``pipeline__run`` verb)."""
+    return LLMToolCallResult(
+        content=None,
+        tool_calls=[
+            {
+                "id": "tc_pipeline_byname_001",
+                "type": "function",
+                "function": {
+                    "name": "invoke_action",
+                    "arguments": json.dumps({
+                        "action_name": f"pipeline__{name}",
+                        "args": {"input": seed_input},
+                    }),
+                },
+            }
+        ],
+        finish_reason="tool_calls",
+        usage=_EMPTY_USAGE,
+    )
+
+
+@pytest.mark.asyncio
+async def test_run_pipeline_via_d19_pipeline_name_full_live_loop(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Tier 2c: the D19 ``pipeline__<name>`` resource-invoke path end-to-end
+    through the REAL router loop — proves the surfacing form the enumerator
+    advertises (``pipeline__<name>``, not the generic ``pipeline__run`` verb)
+    actually launches the registered pipeline and returns its real output.
+    Same harness as the ``pipeline__run`` live-loop test above; only the
+    LLM's chosen action name differs (the per-name D19 form), so this closes
+    the coverage gap on exactly the path IS-5 adds."""
+    monkeypatch.chdir(tmp_path)
+    session = Session(
+        agent_name="test_agent",
+        state_log=StateLog(tmp_path / "state.wal"),
+        chat_tool_use_scheme="universal-category",
+    )
+    session.is_attached = True
+
+    session.pipeline_registry.register(
+        "greet",
+        Pipeline(
+            steps=[TransformStep(value="'hello ' + ctx.name", output="greeting")],
+            description="Greet the named recipient.",
+        ),
+    )
+
+    stub = _make_llm_stub([
+        _pipeline_by_name_invoke_result("greet", {"name": "world"}),
+        _text_result("the pipeline ran successfully"),
+    ])
+    monkeypatch.setattr("reyn.runtime.router_loop.call_llm_tools", stub)
+
+    await session._handle_user_message(
+        "please run the greet pipeline", chain_id="chain-is5-002",
+    )
+
+    tool_messages = [m for m in session.history if m.role == "tool"]
+    assert tool_messages, "expected at least one tool-result history entry"
+    payload = json.loads(tool_messages[-1].content)
+    assert payload["status"] == "ok"
+    inner = payload["data"]
+    assert inner["status"] == "ok"
+    assert inner["data"]["output"] == "hello world"
+    assert inner["data"]["named_stores"]["greeting"] == "hello world"
