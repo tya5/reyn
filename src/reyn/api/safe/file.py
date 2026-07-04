@@ -37,8 +37,8 @@ After permission grants, ``read`` performs a single full read and
 permission-checked. The permission contract is "may read this path",
 not "may read these bytes".
 
-Permission context is injected by the python harness
-(``src/reyn/kernel/_python_harness.py``) before the user step runs.
+Permission context is injected by the codeact harness
+(``src/reyn/core/kernel/_codeact_harness.py``) before the user step runs.
 Calling these functions outside that context (= bare unit test, ad-hoc
 script) raises a clear ``PermissionError`` explaining how to set up the
 context — see :func:`_set_permission_context` below.
@@ -117,7 +117,7 @@ def _set_permission_context(
 ) -> None:
     """Wire permission paths into this module.
 
-    Called by :mod:`reyn.core.kernel._python_harness` before the user step
+    Called by :mod:`reyn.core.kernel._codeact_harness` before the user step
     runs. Tests that exercise the file API directly may call this to
     establish a controlled context; production code should not.
 

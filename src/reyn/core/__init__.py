@@ -6,9 +6,7 @@ group (``reyn.data``) and the surface group (``reyn.interfaces``):
 
 - ``kernel``      — context build, LLM call, validation, transitions
 - ``op_runtime``  — Control IR op catalog and dispatch
-- ``compiler``    — skill/phase DSL compilation
-- ``plan``        — phase-graph planning
-- ``registry``    — skill/phase resolution
+- ``registry``    — MCP server registry client and cache
 - ``events``      — append-only event log + replay (P6 audit truth)
 
 This package node is import-only; it deliberately exports nothing so the

@@ -19,7 +19,7 @@ skills keep working without an explicit ``http.get`` declaration.
 
 Mirrors :mod:`reyn.api.safe.file`'s permission-context contract: the
 parent process configures the allowlist via :func:`_set_permission_context`
-before the user step runs; the python harness wires that.
+before the user step runs; the codeact harness wires that.
 
 Internal layering
 -----------------
@@ -52,7 +52,7 @@ from reyn._ssrf_pin import _PinnedHTTPHandler, _PinnedHTTPSHandler
 
 # ── Internal state ─────────────────────────────────────────────────────────
 #
-# Set once at python harness start-up via :func:`_set_permission_context`.
+# Set once at codeact harness start-up via :func:`_set_permission_context`.
 # Used by :func:`_check_host` to gate every outbound call. Mirrors
 # ``reyn.api.safe.file``'s module-globals contract.
 
@@ -66,7 +66,7 @@ def _set_permission_context(
 ) -> None:
     """Wire the host allowlist into this module.
 
-    Called by :mod:`reyn.core.kernel._python_harness` before the user step
+    Called by :mod:`reyn.core.kernel._codeact_harness` before the user step
     runs. Tests that exercise the http API directly may call this to
     establish a controlled context; production code should not.
 
