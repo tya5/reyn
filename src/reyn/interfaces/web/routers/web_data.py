@@ -19,8 +19,8 @@ Field populate strategy:
     PERMISSIONS       — approvals.yaml keys (live)
     COPY              — hardcoded en/ja full I18nKeys
 
-Per P7: no domain-specific strings in this module.  Agent names / skill
-names are read from disk and passed through opaquely.
+Per P7: no domain-specific strings in this module.  Agent names are
+read from disk and passed through opaquely.
 """
 from __future__ import annotations
 

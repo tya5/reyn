@@ -2,7 +2,7 @@
 
 Wraps AgentRegistry and AgentProfile. The gateway treats agent data as
 opaque structured values: it passes profile fields through without
-interpreting skill-domain semantics (P7).
+interpreting agent-domain semantics (P7).
 
 Routes:
     GET  /api/agents            — list all agents

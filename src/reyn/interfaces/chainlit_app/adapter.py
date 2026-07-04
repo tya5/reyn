@@ -24,7 +24,7 @@ Kind coverage:
 - anything else            → author "ℹ system", type "system_message"
 
 The author labels carry visible emoji prefixes so the chainlit UI
-renders distinct avatars + glyphs for the tool / system / skill
+renders distinct avatars + glyphs for the tool / system / status
 streams — without the prefix every author got the same generic
 auto-avatar and tool rows looked indistinguishable from assistant
 prose (user dogfood 2026-05-25 observation).
@@ -93,7 +93,7 @@ _AUTHOR_FALLBACK = "ℹ system"
 # #1642: char caps (NOT byte — multibyte/JA-safe; Python str slicing is char-based)
 # so a large arg/result doesn't fill the conversation (full content out of scope for
 # this inline row). args ~120 / result ~200 per lead; cross-surface-aligned with the
-# TUI renderer (skill_activity.py). _TOOL_VALUE_LIMIT caps one arg value so a single
+# TUI renderer. _TOOL_VALUE_LIMIT caps one arg value so a single
 # big arg can't dominate the whole-args preview.
 _TOOL_ARGS_LIMIT = 120
 _TOOL_RESULT_LIMIT = 200

@@ -16,7 +16,7 @@ PoC scope (= explicitly out of scope for this PR, follow-ons):
   no ``cl.AskUserMessage`` round-trip wiring yet.
 - streaming: ``__stream_*__`` incremental frames are dropped; only the
   final ``agent`` kind reaches the browser.
-- skill selection / per-agent attach / cost panel: none of the right-panel
+- per-agent attach / cost panel: none of the right-panel
   TUI affordances exist; only the central chat thread.
 """
 from __future__ import annotations
@@ -730,8 +730,8 @@ async def _on_settings_update(settings: dict) -> None:
     """Apply the gear-icon settings panel updates to the attached session.
 
     Currently only handles ``output_language``. Future per-session knobs
-    (= e.g. ``REYN_CHAINLIT_HISTORY_CAP`` mid-session change, allowed
-    skill filter) plug into this same dispatcher.
+    (= e.g. ``REYN_CHAINLIT_HISTORY_CAP`` mid-session change, tool
+    filter) plug into this same dispatcher.
     """
     registry = await _get_or_build_registry()
     session = _current_session()

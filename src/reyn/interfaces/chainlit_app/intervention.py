@@ -5,7 +5,7 @@ The reyn-side ``UserIntervention`` carries one of two shapes:
   - **closed-set choices**: e.g. permission gates with
     ``[A]llow once / [B]lock``. Chainlit's ``AskActionMessage`` is the
     right surface (= clickable buttons, no free-text needed).
-  - **free-text**: e.g. ``ask_user`` skill ops with optional
+  - **free-text**: e.g. ``ask_user`` ops with optional
     suggestions. Chainlit's ``AskUserMessage`` (= input box prompt).
 
 This pure helper builds the structured args (= content string +
@@ -39,9 +39,9 @@ class InterventionPrompt:
       then answers via ``session._deliver_answer_to(iv, text,
       choice_id_override=...)``. ``None`` only for malformed meta —
       caller falls back to a plain-text render.
-    - ``run_id`` is the skill's run id when the IV originated from a
-      running skill (= ``ask_user``); ``None`` for permission gates
-      (= ``_prompt`` constructs IVs without a skill context). Not
+    - ``run_id`` is the agent turn run-id when the IV originated from
+      a running agent turn (= ``ask_user``); ``None`` for permission
+      gates (= ``_prompt`` constructs IVs without a turn context). Not
       used for answer dispatch — keep for diagnostic / future use.
     - ``content`` is the rendered text body (prompt + detail +
       suggestions hint, in that order).

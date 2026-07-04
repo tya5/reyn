@@ -38,7 +38,7 @@ async def cost_cmd(session: "Session", args: str) -> None:
 async def budget_cmd(session: "Session", args: str) -> None:
     """``/budget`` (full breakdown) or ``/budget reset`` (clear counters).
 
-    ``reset`` clears per-process counters (agent tokens / cost, chain skill
+    ``reset`` clears per-process counters (agent tokens / cost, sub-agent
     calls, rate-limit window) but leaves daily / monthly counters alone —
     those auto-reset at period boundary and are backed by a persistent
     ledger that the user shouldn't be able to wipe via a chat command.

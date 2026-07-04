@@ -76,7 +76,7 @@ def register(sub) -> None:
         action="store_true",
         default=False,
         help=(
-            "Skip restoring in-flight skill state from disk this run. "
+            "Skip restoring in-flight agent state from disk this run. "
             "Useful for debugging or starting a clean session without "
             "discarding the persisted state (it will be loaded on next run)."
         ),
@@ -86,7 +86,7 @@ def register(sub) -> None:
         action="store_true",
         default=False,
         help=(
-            "Wipe in-flight skill state (snapshots + WAL) before starting. "
+            "Wipe in-flight agent state (snapshots + WAL) before starting. "
             "Audit logs in .reyn/events/ are preserved. "
             "Asks for confirmation before deleting."
         ),
@@ -108,9 +108,10 @@ def register(sub) -> None:
     # resolver layer; the effective scope is bounded by the sandbox write_paths
     # ∩ (the env-backend's repo/workspace zone), so a non-interactive / scripted
     # agent can edit a working tree without a permission prompt but cannot escape
-    # it. General capability (any chat session), not domain-specific — unlike a
-    # skill run, a chat agent has no skill declaring `file.read`, so the flag
-    # grants both read and write (mirrors the eval path, eval_benchmark.py:742).
+    # it. General capability (any chat session), not domain-specific — the chat
+    # agent has no explicit `file.read` permission declaration (unlike the old
+    # skill-declared permission model), so the flag grants both read and write
+    # (mirrors the eval path, eval_benchmark.py:742).
     p.add_argument(
         "--grant-file-write",
         dest="grant_file_write",
@@ -320,7 +321,7 @@ def run(args: argparse.Namespace) -> None:
     budget_tracker = BudgetTracker(session_cfg.config.cost)
     # PR25: hydrate daily / monthly counters from the persistent ledger.
     budget_tracker.hydrate(project_root / ".reyn" / "state" / "budget_ledger.jsonl")
-    # R-D8: restore in-memory counters (per-agent / per-chain-skill) from
+    # R-D8: restore in-memory counters (per-agent / per-sub-agent) from
     # the state snapshot written by the previous run. Together with PR25
     # ledger hydration, this makes cap enforcement survive crash + restart.
     budget_state_path = project_root / ".reyn" / "state" / "budget_state.json"
@@ -412,7 +413,7 @@ def run(args: argparse.Namespace) -> None:
             hooks_config=session_cfg.config.hooks,  # #1800 slice 5b (pass-through, not bundled)
             # #2093: the uniform reyn.yaml-derived per-session config bundle (sandbox /
             # multimodal / action_retrieval / embedding / router / retry /
-            # op-loop-skills / tool-use-scheme) — one source point for all five sites.
+            # tool-use-scheme) — one source point for all five sites.
             factory_config=SessionFactoryConfig.from_config(session_cfg.config),
             eager_embedding_build=getattr(args, "eager_embedding_build", False),
             agent_id=session_cfg.config.agent.id,  # FP-0016 E
@@ -447,7 +448,7 @@ def run(args: argparse.Namespace) -> None:
         # the sole rehydration path (mcp_server.py:15-16); skipping it starts the
         # one-shot with an empty history. Otherwise a one-shot would inherit the
         # `default` agent's stale history (unrelated prior context → the agent
-        # recalled an old skill + hallucinated a fix with 0 edits). Interactive
+        # hallucinated a fix based on prior session context with 0 edits). Interactive
         # chat (no `fresh`) loads history as before. Scoping (env/exclude/grant) is
         # independent of history, so it is unaffected.
         if not getattr(args, "fresh", False):
@@ -479,8 +480,8 @@ def run(args: argparse.Namespace) -> None:
     skip_restore = getattr(args, "no_restore", False)
     if skip_restore:
         print(
-            "⚠ --no-restore: skill state on disk is NOT loaded this run. "
-            "Rerun without --no-restore to resume in-flight skills.",
+            "⚠ --no-restore: agent state on disk is NOT loaded this run. "
+            "Rerun without --no-restore to resume in-flight agent sessions.",
             file=sys.stderr,
         )
 
