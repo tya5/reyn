@@ -506,7 +506,7 @@ logic. Design: [content-threat scan proposal](deep-dives/proposals/0050-content-
 | Action embedding index | `ActionEmbeddingIndex` (SQLite-WAL, class-swap detection, cross-process build lock) — backs the `search_actions` tool the chat LLM uses | [Universal catalog § search_actions](concepts/tools-integrations/universal-catalog.md#what-stays-out-of-phase-1) · [`reyn embeddings`](reference/cli/embeddings.md) |
 | Memory CRUD | `list` / `read` / `remember_shared` / `remember_agent` / `forget` | [Memory concepts](concepts/data-retrieval/memory.md) · [reyn memory CLI](reference/cli/memory.md) |
 
-> **Differentiation vs general agents:** beyond chat memory, Reyn ships a RAG *framework* — you declare an indexing strategy as a `skill.md` (LLM-picked chunking + a deterministic embed/write chain) over a pluggable `IndexBackend`, with a credential-free local-embedding option. A foundation to build on, not a fixed memory feature.
+> **Differentiation vs general agents:** beyond chat memory, Reyn ships a RAG *framework* — a safe-mode Python step calls `embed_and_index()` directly (you own the chunking logic) over a pluggable `IndexBackend`, with a credential-free local-embedding option. A foundation to build on, not a fixed memory feature.
 
 ---
 
