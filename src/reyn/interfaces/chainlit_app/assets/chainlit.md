@@ -1,12 +1,12 @@
 # reyn × Chainlit
 
-[reyn](https://github.com/tya5/reyn) は LLM 駆動の **Phase × Skill × OS** エージェントランタイム。 この画面は `reyn chainlit` で立ち上がる Web チャット surface (= TUI `reyn chat` / FastAPI `reyn web` と並列)。
+[reyn](https://github.com/tya5/reyn) は LLM 駆動の **エージェントランタイム**。 この画面は `reyn chainlit` で立ち上がる Web チャット surface (= TUI `reyn chat` / FastAPI `reyn web` と並列)。
 
 ## できること (PoC scope)
 
 - メッセージを送るとアタッチ済の agent (= 既定 `default`) が応答
-- skill の実行結果 / status / error は author 別 (= `agent` / `skill` / `status` / `error`) で表示
-- 同 agent state (history / skills / events) を TUI / web と共有
+- 実行結果 / status / error は author 別 (= `agent` / `task` / `status` / `error`) で表示
+- 同 agent state (history / events) を TUI / web と共有
 
 ## まだできないこと (= follow-on)
 

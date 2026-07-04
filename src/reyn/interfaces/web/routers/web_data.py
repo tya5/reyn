@@ -55,7 +55,7 @@ _COPY_EN = {
     "today": "Today",
     "agents": "Agents",
     "library": "Library",
-    "skills": "Skills",
+    "skills": "Tools",
     "runs": "Runs",
     "evals": "Evals",
     "topologies": "Topologies",
@@ -85,7 +85,7 @@ _COPY_JA = {
     "today": "今日",
     "agents": "エージェント",
     "library": "ライブラリ",
-    "skills": "スキル",
+    "skills": "ツール",
     "runs": "実行",
     "evals": "評価",
     "topologies": "トポロジー",
@@ -160,9 +160,9 @@ def _build_agents(registry) -> list[dict[str, Any]]:
 def _build_library(project_root: Path) -> list[dict[str, Any]]:
     """Return Library items.
 
-    Skills were the only Library source; skill execution has been retired, so
-    the Library is empty. This function no longer depends on the skill
-    machinery (the web Library UI removal is a deferred cleanup).
+    The Library is empty — the task-based execution model has replaced
+    the former skill-based approach. The web Library UI removal is a
+    deferred cleanup.
     """
     return []
 

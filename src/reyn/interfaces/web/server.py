@@ -30,8 +30,8 @@ def _make_cron_runner():
     """Return an async callable that executes a CronJob headlessly.
 
     FP-0009 Component B + FP-0041 #489 PR-B: dispatches based on job
-    shape via ``build_default_runner``. Skill-based job execution has been
-    retired; only message-based jobs run:
+    shape via ``build_default_runner``. Task-based job execution uses the
+    message-based path; only message-based jobs run:
 
       - Message-based (FP-0041): pushes message into target agent's
         inbox via ``AgentRegistry.ensure_running``, with

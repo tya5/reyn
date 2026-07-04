@@ -179,8 +179,8 @@ def _build_agent_card(agent_name: str, role: str, base_url: str) -> dict:
                 "name": "Chat with agent",
                 "description": (
                     f"Converse with the Reyn agent {agent_name!r}. "
-                    "The agent decides internally which Reyn skills "
-                    "to invoke; multi-turn history persists across calls."
+                    "The agent decides internally how to respond; "
+                    "multi-turn history persists across calls."
                 ),
                 "tags": ["chat", "conversation"],
                 "inputModes": ["text/plain"],
