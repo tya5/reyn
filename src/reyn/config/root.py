@@ -261,6 +261,19 @@ class ReynConfig:
     external_transports: "ExternalTransportRouting" = field(
         default_factory=lambda: _empty_external_transports(),
     )
+    # #2548 PR-A: skill registry config. Raw dict passed to
+    # reyn.data.skills.registry.build_skill_registry at session /
+    # router construction. Shape:
+    #   skills:
+    #     scan_dirs: ["skills"]          # relative to project root; default ["skills"]
+    #     entries:
+    #       <name>:
+    #         path: "skills/foo/SKILL.md"
+    #         description: "One-line description"
+    #         enabled: true
+    #         auto_invoke: true
+    # Merged across config tiers by name (explicit entries win on collision).
+    skills: dict = field(default_factory=dict)
 
     def model_class_for(self, purpose: str) -> str:
         """#1672: the model CLASS for a logical call *purpose*.

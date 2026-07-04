@@ -13,7 +13,10 @@ ToolContext.router_state.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Awaitable, Callable, Literal, Mapping, Protocol
+from typing import TYPE_CHECKING, Any, Awaitable, Callable, Literal, Mapping, Protocol
+
+if TYPE_CHECKING:
+    from reyn.data.skills.registry import SkillEntry
 
 
 # ToolGates: per-protocol allow/deny gate at the registry level.
@@ -182,6 +185,14 @@ class RouterCallerState:
     # is configured (= not "noop" / not None).  ``None`` = sandbox not
     # configured or noop backend; exec category stays hidden.
     sandbox_backend: str | None = None
+
+    # #2548 PR-A: skill registry snapshot — enabled skills available at
+    # router construction time. Filtered to enabled=True by the
+    # builder (build_skill_registry); only auto_invoke=True
+    # entries are rendered into the L1 system-prompt ## Skills block.
+    # None = not populated (test sites / contexts without a project
+    # root). Construction-time only — per-turn hot-reload is a later PR.
+    available_skills: "list[SkillEntry] | None" = None
 
 
 # ToolContext: protocol-agnostic execution context. Built by the

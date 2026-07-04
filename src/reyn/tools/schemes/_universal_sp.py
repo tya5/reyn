@@ -24,6 +24,7 @@ def build_universal_tool_use_slots(
     has_hot_list_aliases: bool,
     non_interactive: bool = False,
     non_claude: bool = False,  # #1791 A2: non-Claude operational-steering hygiene in slot_in_behaviour
+    available_skills: "list | None" = None,  # #2548 PR-A: SkillEntry list for ## Skills block
 ) -> "dict[str, str]":
     """Build the four positional tool-use SP slots for the universal-category path.
 
@@ -296,5 +297,44 @@ def build_universal_tool_use_slots(
             " within the cwd's read scope."
         )
     )
+
+    # ── slot_post_catalog: ## Skills block (#2548 PR-A) ─────────────────────
+    # Only included when there is at least one enabled=True + auto_invoke=True
+    # skill; omit entirely otherwise so callers see no empty section.
+    if available_skills:
+        _sp_skills = [
+            s for s in available_skills
+            if getattr(s, "enabled", True) and getattr(s, "auto_invoke", True)
+        ]
+        if _sp_skills:
+            _s_lines: list[str] = []
+            _s_lines.append("## Skills")
+            _s_lines.append("")
+            _s_lines.append(
+                "Skills are reusable, task-specific instruction sets."
+                " Each entry is `name — description [file]`."
+            )
+            _s_lines.append(
+                "The description tells you when a skill applies; the full instructions"
+                " live in its file. When the"
+            )
+            _s_lines.append(
+                "current task matches a skill, read its file to load the instructions"
+                " (and any files it references),"
+            )
+            _s_lines.append(
+                "then follow them for that task. This list is a menu: read a skill only"
+                " when it is relevant — do not"
+            )
+            _s_lines.append(
+                "preload or apply skills that do not fit the task. If none apply,"
+                " proceed normally."
+            )
+            _s_lines.append("")
+            for _sk in _sp_skills:
+                _s_lines.append(
+                    f"- {_sk.name} — {_sk.description} [{_sk.path}]"
+                )
+            slots["slot_post_catalog"] = "\n".join(_s_lines)
 
     return slots
