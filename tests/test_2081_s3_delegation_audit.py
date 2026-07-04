@@ -169,7 +169,9 @@ def test_reachable_role_that_denies_is_clean(tmp_path: Path, monkeypatch) -> Non
         "skill_management__install_source, skill_install_source, "  # #2548 PR-D: source install
         "session_spawn, agent_spawn, topology_create, "  # #2103: the full spawn class (session + agent + topology)
         "pipeline__run, run_pipeline, "  # IS-1: pipeline-run class (spawn-adjacent)
-        "pipeline__run_async, run_pipeline_async]\n",  # IS-2: async launch, same class
+        "pipeline__run_async, run_pipeline_async, "  # IS-2: async launch, same class
+        "pipeline__run_inline, run_pipeline_inline, "  # IS-4: inline launch, same class
+        "pipeline__run_inline_async, run_pipeline_inline_async]\n",  # IS-4: inline async
         encoding="utf-8",
     )
     assert not _by(_findings(monkeypatch, tmp_path), contains="worker")

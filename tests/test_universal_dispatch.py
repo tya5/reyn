@@ -592,6 +592,12 @@ _ROUTE_CONTRACT_SAMPLES: list[tuple[str, dict[str, Any]]] = [
     ("pipeline__run", {"name": "my_pipeline", "input": {"topic": "x"}}),
     # pipeline category (IS-2) — async launch, same surface as the sync verb.
     ("pipeline__run_async", {"name": "my_pipeline", "input": {"topic": "x"}}),
+    # pipeline category (IS-4) — ad-hoc INLINE launches: a DSL 'definition'
+    # string (+ optional input), sync-attached and async.
+    ("pipeline__run_inline",
+     {"definition": "pipeline: p\nsteps:\n  - transform: {value: \"1\"}\n"}),
+    ("pipeline__run_inline_async",
+     {"definition": "pipeline: p\nsteps:\n  - transform: {value: \"1\"}\n"}),
 ]
 
 

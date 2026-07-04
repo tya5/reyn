@@ -80,17 +80,22 @@ if TYPE_CHECKING:
 #     ``MessageBus.request``'s quiescence predicate (inbox.empty()) return
 #     early on a pending chain the spawned session is still awaiting a reply
 #     for (see the module docstring).
-#   - ``run_pipeline`` / ``run_pipeline_async`` (IS-1/IS-2, R6 S3): nesting a
-#     pipeline launch inside an ``agent`` step would let a step spawn ANOTHER
-#     pipeline at runtime, defeating the transitive-closure cost-bound approval
-#     a REGISTERED pipeline gets at launch time — nesting is ``call``-only.
-#     The async launch is the same escape hatch as the sync one (sibling).
+#   - ``run_pipeline`` / ``run_pipeline_async`` / ``run_pipeline_inline`` /
+#     ``run_pipeline_inline_async`` (IS-1/IS-2/IS-4, R6 S3): nesting a pipeline
+#     launch inside an ``agent`` step would let a step spawn ANOTHER pipeline at
+#     runtime, defeating the transitive-closure cost-bound approval a pipeline
+#     gets at launch time — nesting is ``call``-only. The async + inline launch
+#     verbs are the same escape hatch as the sync registered one (siblings); the
+#     inline verbs get NO exemption (an ad-hoc pipeline is still non-grantable
+#     inside a pipeline). Kept in lock-step with ``pipeline_verbs.
+#     _PIPELINE_STEP_DENY_TOOLS`` (the tool-step sibling of this agent-step deny).
 # ``_expand_tool_forms`` (capability_profile.py) derives every invocable alias
 # (bare + qualified) from each name here, so listing the bare tool name is
 # sufficient — the qualified catalog form (``multi_agent__delegate`` /
 # ``pipeline__run``) is covered too.
 _DELEGATION_DENY_TOOLS: tuple[str, ...] = (
     "delegate_to_agent", "run_pipeline", "run_pipeline_async",
+    "run_pipeline_inline", "run_pipeline_inline_async",
 )
 
 # MessageBus.request has no default — an agent step needs one so callers

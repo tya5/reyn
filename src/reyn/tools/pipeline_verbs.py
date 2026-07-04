@@ -1,11 +1,67 @@
-"""``run_pipeline`` router tool — sync ATTACHED launch of a REGISTERED pipeline.
+"""Pipeline launch router tools — REGISTERED + ad-hoc INLINE, sync + async.
 
 Per ``docs/proposals/reyn-pipeline-v0.9-design-resolutions.md`` R6: an agent
-launches a REGISTERED pipeline (pre-built via
-:class:`reyn.core.pipeline.registry.PipelineRegistry`) and gets its result back
-inline. This module hosts the two launch verbs — ``run_pipeline`` (sync
-attached) and ``run_pipeline_async`` (fire-and-forget) — plus the tool-step
-dispatch they share.
+launches a pipeline and collects its result. This module hosts the four launch
+verbs plus the tool-step dispatch they share:
+
+  - ``run_pipeline`` / ``run_pipeline_async`` — launch a REGISTERED pipeline
+    (pre-built via :class:`reyn.core.pipeline.registry.PipelineRegistry`) by
+    name, sync-attached or fire-and-forget.
+  - ``run_pipeline_inline`` / ``run_pipeline_inline_async`` (IS-4) — launch an
+    ad-hoc, agent-GENERATED pipeline whose ``definition`` is a DSL STRING the
+    agent produced at runtime (Appendix B grammar). The string is parsed
+    (``reyn.core.pipeline.parser.parse_pipeline_dsl``, IS-3 — including any
+    inline ``schema:`` documents in the same string, into a fresh per-call
+    :class:`~reyn.core.pipeline.schema.SchemaRegistry`) into a ``Pipeline``,
+    which then feeds the SAME downstream every registered launch uses. The
+    inline verbs SKIP the registry entirely — the only extra machinery over the
+    registered verbs is the parse ENTRY and a **static-analysis gate** (see
+    :func:`_static_analysis_gate`) that runs BEFORE anything is spawned.
+
+The inline + registered verbs converge immediately after the pipeline is in
+hand: both call ``reyn.runtime.session_api.run_pipeline_attached`` (sync) /
+``start_pipeline_run`` (async), which serialize the FULL ``Pipeline`` into the
+work-order's ``invocation.json`` (NOT a registry name). So an inline run is
+crash-recoverable IDENTICALLY to a registered one — the recovery scan
+(``AgentRegistry._rewake_pipeline_runs``) re-creates the driver-session from
+``invocation.json`` alone, with no registry lookup and no new recovery source.
+
+**The static-analysis gate (IS-4, R6 §7.3 — the validation gate for
+agent-GENERATED artifacts).** A generated pipeline is untrusted-by-shape: it
+must be checked before it can spawn a driver-session. For the LINEAR subset the
+gate is deliberately MINIMAL (the full cost-bound / dataflow / spawn-tree
+analyzer belongs with the non-linear primitives, a later slice) — six checks,
+all statically decidable over the parsed ``Pipeline`` + its ``SchemaRegistry``:
+
+  1. **parse succeeds** — ``parse_pipeline_dsl`` raises ``PipelineParseError``
+     for malformed DSL; the handler turns that into a clear tool error.
+  2. **schema refs resolve** — every step ``schema:`` REF is registered in the
+     parsed registry (i.e. a ``schema:`` document in the SAME definition string
+     defines it). Catches a typo'd / undefined ref before the run.
+  3. **tool names resolve** — every ``tool`` step name resolves to a registered
+     tool (qualified-action routing, then a bare registry lookup — the SAME
+     resolution :func:`_make_tool_dispatch` performs at run time).
+  4. **capability ⊆ invoker** — already STRUCTURAL, no runtime re-check needed:
+     the driver-session is spawned under the INVOKER's own identity
+     (``_spawn_pipeline_driver_session``), and an ``agent`` step narrows
+     RESTRICT-ONLY (``_build_agent_step_narrowing``), so a generated pipeline
+     can never exceed the invoker's envelope by construction. The gate only
+     DOCUMENTS this; check 6 closes the one hole it leaves.
+  5. **S3 no nested launch** — a ``tool`` step must not itself launch a pipeline
+     or delegate (nesting is ``call``-only; enforced structurally at dispatch
+     via ``_PIPELINE_STEP_DENY_TOOLS``, validated statically here so a bad
+     generated pipeline fails fast at the gate, not mid-run).
+  6. **agent-step identity == invoker** (INLINE-ONLY, escalation prevention) —
+     an ``agent`` step may only run under the invoker's own identity
+     (``identity`` unset = inherit invoker, or explicitly the invoker's name).
+     A generated pipeline naming ANOTHER agent's identity would run under that
+     agent's (possibly larger) profile — a capability escalation, since check
+     4's ⊆-invoker guarantee holds only for identity==invoker. Registered
+     pipelines are exempt (a trusted registrant deliberately chose the
+     identity); this check applies to inline definitions only.
+
+A gate failure returns a clear tool error and spawns NOTHING (the checks run
+before ``run_pipeline_attached`` / ``start_pipeline_run`` is called).
 
   - **Sync = async + an attached live view (IS-6).** ``run_pipeline`` no longer
     runs the executor inline on the caller's turn (that was IS-1, which meant a
@@ -21,8 +77,6 @@ dispatch they share.
     Ctrl-C (``Session.cancel_inflight`` → the driver's ``request_cancel``) stops
     the run cooperatively at the next step BOUNDARY, leaving a resumable R4
     journal under a terminal ``cancelled`` marker.
-  - **Registered only.** No ad-hoc ``run_pipeline_inline`` (deferred — needs
-    the §7.3 static-analysis gate first, per R6).
   - **Real tool-step dispatch, not a stub.** A pipeline ``ToolStep``'s
     ``tool_dispatch`` is wired through the SAME routing seam
     ``invoke_action`` uses (``universal_dispatch.resolve_invoke_action`` +
@@ -66,11 +120,19 @@ from disk / a parser); it is threaded through ``RouterHostAdapter`` onto
 """
 from __future__ import annotations
 
-from typing import Any, Callable, Mapping
+from typing import TYPE_CHECKING, Any, Callable, Mapping
 
-from reyn.core.pipeline.executor import PipelineExecutionError
+from reyn.core.pipeline.executor import (
+    AgentStep,
+    Pipeline,
+    PipelineExecutionError,
+    ToolStep,
+)
 from reyn.core.pipeline.registry import PipelineNotFoundError
 from reyn.tools.types import ToolContext, ToolDefinition, ToolGates, ToolResult
+
+if TYPE_CHECKING:
+    from reyn.core.pipeline.schema import SchemaRegistry
 
 _RUN_PIPELINE_DESCRIPTION = (
     "Run a REGISTERED pipeline by name to completion and return its final "
@@ -107,6 +169,11 @@ _RUN_PIPELINE_PARAMETERS: dict[str, Any] = {
 # (``pipeline__run`` / ``multi_agent__delegate``) are covered too.
 _PIPELINE_STEP_DENY_TOOLS: "frozenset[str]" = frozenset({
     "run_pipeline", "run_pipeline_async", "delegate_to_agent",
+    # IS-4 sibling sweep: the inline launch verbs are the same escape hatch as
+    # the registered ones — an inline pipeline is STILL non-grantable inside a
+    # pipeline step (nesting is call-only). Kept in lock-step with the
+    # ``_DELEGATION_DENY_TOOLS`` agent-step deny in ``runtime/session_api.py``.
+    "run_pipeline_inline", "run_pipeline_inline_async",
 })
 
 
@@ -393,4 +460,322 @@ RUN_PIPELINE_ASYNC = ToolDefinition(
     purity="side_effect",
 )
 
-__all__ = ["RUN_PIPELINE", "RUN_PIPELINE_ASYNC"]
+# ── IS-4: ad-hoc INLINE launch (agent-GENERATED DSL + static-analysis gate) ──
+
+_RUN_PIPELINE_INLINE_PARAMETERS: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "definition": {
+            "type": "string",
+            "description": (
+                "The pipeline as a DSL string (Appendix B grammar): one or "
+                "more '---'-separated YAML documents — exactly one 'pipeline:' "
+                "document plus any 'schema:' documents its steps reference. "
+                "Generated at call time; parsed + statically validated before "
+                "anything runs."
+            ),
+        },
+        "input": {
+            "type": "object",
+            "description": (
+                "Initial named context (ctx.*) for the pipeline's first step. "
+                "Omit for a pipeline that needs no seed input."
+            ),
+        },
+    },
+    "required": ["definition"],
+}
+
+_RUN_PIPELINE_INLINE_DESCRIPTION = (
+    "Run an ad-hoc pipeline you DEFINE inline (no pre-registration) to "
+    "completion and return its final output. Blocks until it finishes (sync). "
+    "'definition' is a pipeline DSL string (Appendix B); 'input' seeds the "
+    "first step's ctx.*. The definition is statically validated (parse, schema "
+    "refs, tool names, no nested pipeline launch, agent steps run as you) "
+    "BEFORE anything is spawned — a bad definition fails clearly and runs "
+    "nothing."
+)
+
+_RUN_PIPELINE_INLINE_ASYNC_DESCRIPTION = (
+    "Launch an ad-hoc pipeline you DEFINE inline in the background and return "
+    "immediately with {status: started, run_id}. It runs in a dedicated "
+    "crash-recoverable driver session; its final result arrives later as a "
+    "[pipeline] message on your conversation. 'definition' is a pipeline DSL "
+    "string (Appendix B), statically validated before spawn; 'input' seeds the "
+    "first step's ctx.*."
+)
+
+
+def _static_analysis_gate(
+    pipeline: "Pipeline",
+    schema_registry: "SchemaRegistry",
+    *,
+    invoker_agent: str,
+) -> "str | None":
+    """The IS-4 minimal static-analysis gate for an agent-GENERATED pipeline.
+
+    Runs the six R6 §7.3 checks (see the module docstring) over the already-
+    parsed ``pipeline`` + its ``schema_registry``, returning a clear error
+    string on the FIRST failing check or ``None`` when all pass. Check 1
+    (parse) is handled by the caller (``parse_pipeline_dsl`` raises before this
+    is reached); check 4 (capability ⊆ invoker) is structural and needs no
+    runtime probe here (documented in the module docstring). This function is
+    PURE — it inspects the parsed artifact and the tool registry, spawns
+    nothing, so the caller can run it strictly before any driver-session launch.
+    """
+    from reyn.tools import get_default_registry
+    from reyn.tools.universal_dispatch import (
+        UnknownActionError,
+        resolve_invoke_action,
+    )
+
+    registry = get_default_registry()
+    for i, step in enumerate(pipeline.steps):
+        # Check 2: schema REF resolves in the parsed (inline) registry.
+        schema = getattr(step, "schema", None)
+        if schema is not None and not schema_registry.has(schema):
+            return (
+                f"step {i}: schema ref {schema!r} does not resolve — no "
+                "'schema:' document in the definition defines it"
+            )
+        # Checks 3 + 5: tool-step name resolution + S3 nested-launch deny. Mirror
+        # the run-time resolution ``_make_tool_dispatch`` performs (qualified
+        # action routing first, then a bare registry lookup) so the static verdict
+        # matches what would actually dispatch.
+        if isinstance(step, ToolStep):
+            name = step.name
+            target_name = name
+            try:
+                resolved = resolve_invoke_action(name, {})
+            except UnknownActionError:
+                resolved = None
+            if resolved is not None:
+                target_name = resolved.target_tool_name
+            # Check 5 (S3): reject BEFORE the registry lookup — a launch/delegate
+            # verb IS a registered tool, so lookup would pass; the deny must win.
+            if name in _PIPELINE_STEP_DENY_TOOLS or target_name in _PIPELINE_STEP_DENY_TOOLS:
+                return (
+                    f"step {i}: tool {name!r} is structurally denied (R6 S3) — an "
+                    "inline pipeline step must not launch a pipeline or delegate "
+                    "(nesting is call-only)"
+                )
+            # Check 3: the tool name must resolve to a registered tool.
+            if registry.lookup(target_name) is None:
+                return (
+                    f"step {i}: tool {name!r} does not resolve to a registered "
+                    f"tool (tried qualified-action routing, then a bare lookup of "
+                    f"{target_name!r})"
+                )
+        # Check 6 (INLINE-ONLY): an agent step may only run under the invoker's
+        # own identity — a non-invoker identity is a capability escalation.
+        if isinstance(step, AgentStep):
+            if step.identity is not None and step.identity != invoker_agent:
+                return (
+                    f"step {i}: agent step identity {step.identity!r} is not the "
+                    f"invoker {invoker_agent!r} — an inline pipeline may only run "
+                    "agent steps under the invoker's own identity (capability "
+                    "escalation prevention, R6 constraint b); omit 'identity' to "
+                    "inherit the invoker, or name the invoker explicitly"
+                )
+    return None
+
+
+def _prepare_inline_launch(
+    args: Mapping[str, Any], ctx: ToolContext,
+) -> "tuple[dict | None, tuple | None]":
+    """Shared inline prelude for both inline verbs: validate args, require a
+    fully-wired persistent context, parse the ``definition`` DSL string into a
+    ``Pipeline`` (with a FRESH per-call ``SchemaRegistry`` populated from the
+    definition's own inline ``schema:`` docs), and run the static-analysis gate.
+
+    Returns ``(error_result, None)`` on any validation / parse / gate failure
+    (the caller returns ``error_result`` verbatim, having spawned NOTHING), or
+    ``(None, (pipeline, agent_registry, host, state_log, raw_input))`` when the
+    definition is clean and ready to launch. The fresh registry is deliberately
+    NOT threaded onto the work-order or router state — an inline definition is
+    self-contained (its schemas live only in the string), matching the
+    "no persistent inline registry" design decision."""
+    from reyn.core.pipeline.parser import PipelineParseError, parse_pipeline_dsl
+    from reyn.core.pipeline.schema import SchemaError, SchemaRegistry
+
+    definition = args.get("definition")
+    if not isinstance(definition, str) or not definition.strip():
+        return {
+            "status": "error",
+            "data": {"error": "definition is required (a pipeline DSL string)"},
+        }, None
+
+    raw_input = args.get("input")
+    if raw_input is not None and not isinstance(raw_input, Mapping):
+        return {
+            "status": "error",
+            "data": {"error": "input must be an object (mapping), if given"},
+        }, None
+
+    rs = ctx.router_state
+    agent_registry = rs.agent_registry if rs is not None else None
+    host = rs.host if rs is not None else None
+    if agent_registry is None or host is None:
+        return {
+            "status": "error",
+            "data": {
+                "error": (
+                    "run_pipeline_inline requires a fully-wired router context "
+                    "(agent_registry + host on ctx.router_state) to spawn its "
+                    "driver-session"
+                ),
+            },
+        }, None
+    state_log = ctx.state_log
+    if state_log is None:
+        return {
+            "status": "error",
+            "data": {
+                "error": (
+                    "run_pipeline_inline requires WAL persistence (ctx.state_log) "
+                    "— an inline run is a crash-recoverable driver-session"
+                ),
+            },
+        }, None
+
+    # Check 1 (parse): a fresh registry so an inline definition is self-contained
+    # (its schemas never leak across calls). Malformed DSL / expression / a
+    # schema-shape error surfaces as a clear gate error, nothing spawned.
+    schema_registry = SchemaRegistry()
+    try:
+        pipeline = parse_pipeline_dsl(definition, schema_registry)
+    except (PipelineParseError, SchemaError) as exc:
+        return {
+            "status": "error",
+            "data": {"error": f"inline pipeline definition is invalid: {exc}"},
+        }, None
+
+    # Checks 2/3/5/6 (schema refs, tool names, S3, agent identity).
+    gate_error = _static_analysis_gate(
+        pipeline, schema_registry, invoker_agent=host.agent_name,
+    )
+    if gate_error is not None:
+        return {
+            "status": "error",
+            "data": {"error": f"inline pipeline rejected by static gate: {gate_error}"},
+        }, None
+
+    return None, (pipeline, agent_registry, host, state_log, raw_input)
+
+
+async def _handle_run_pipeline_inline(
+    args: Mapping[str, Any], ctx: ToolContext,
+) -> ToolResult:
+    """IS-4 sync INLINE launch: parse + statically gate the agent-generated
+    ``definition``, then run it in the SAME attached driver-session
+    ``run_pipeline`` uses (``run_pipeline_attached``) — so the inline run is
+    crash-recoverable and returns its output inline, exactly like a registered
+    run. A gate failure returns a clear error and spawns nothing."""
+    error_result, launch = _prepare_inline_launch(args, ctx)
+    if error_result is not None:
+        return error_result
+    pipeline, agent_registry, host, state_log, raw_input = launch
+
+    from reyn.runtime.session_api import run_pipeline_attached
+
+    reply_sid = getattr(host, "live_session_id", None) or "main"
+    try:
+        outcome = await run_pipeline_attached(
+            agent_registry,
+            pipeline=pipeline,
+            pipeline_name="inline",
+            input=dict(raw_input) if raw_input else None,
+            reply_to_agent=host.agent_name,
+            reply_to_sid=reply_sid,
+            state_log=state_log,
+        )
+    except ValueError as exc:
+        return {"status": "error", "data": {"error": str(exc)}}
+
+    status = outcome["status"]
+    if status == "failed":
+        return {
+            "status": "error",
+            "data": {
+                "error": f"inline pipeline failed: {outcome.get('error')}",
+                "run_id": outcome["run_id"],
+            },
+        }
+    if status == "cancelled":
+        return {
+            "status": "cancelled",
+            "data": {"run_id": outcome["run_id"], "error": outcome.get("error")},
+        }
+    if status == "running_async":
+        return {"status": "started", "data": {"run_id": outcome["run_id"]}}
+
+    return {
+        "status": "ok",
+        "data": {
+            "run_id": outcome["run_id"],
+            "output": outcome.get("output"),
+            "named_stores": outcome.get("named_stores"),
+        },
+    }
+
+
+async def _handle_run_pipeline_inline_async(
+    args: Mapping[str, Any], ctx: ToolContext,
+) -> ToolResult:
+    """IS-4 async INLINE launch: parse + statically gate the agent-generated
+    ``definition``, then hand it to the SAME background driver-session
+    ``run_pipeline_async`` uses (``start_pipeline_run``) and return
+    ``{status: started, run_id}`` immediately; the result arrives later as a
+    ``pipeline_result`` inbox message. A gate failure returns a clear error and
+    spawns nothing."""
+    error_result, launch = _prepare_inline_launch(args, ctx)
+    if error_result is not None:
+        return error_result
+    pipeline, agent_registry, host, state_log, raw_input = launch
+
+    from reyn.runtime.session_api import start_pipeline_run
+
+    reply_sid = getattr(host, "live_session_id", None) or "main"
+    try:
+        run_id = await start_pipeline_run(
+            agent_registry,
+            pipeline=pipeline,
+            pipeline_name="inline",
+            input=dict(raw_input) if raw_input else None,
+            reply_to_agent=host.agent_name,
+            reply_to_sid=reply_sid,
+            state_log=state_log,
+        )
+    except ValueError as exc:
+        return {"status": "error", "data": {"error": str(exc)}}
+
+    return {"status": "started", "data": {"run_id": run_id}}
+
+
+RUN_PIPELINE_INLINE = ToolDefinition(
+    name="run_pipeline_inline",
+    description=_RUN_PIPELINE_INLINE_DESCRIPTION,
+    parameters=_RUN_PIPELINE_INLINE_PARAMETERS,
+    gates=ToolGates(router="allow", phase="allow"),
+    handler=_handle_run_pipeline_inline,
+    category="io",
+    purity="side_effect",
+)
+
+
+RUN_PIPELINE_INLINE_ASYNC = ToolDefinition(
+    name="run_pipeline_inline_async",
+    description=_RUN_PIPELINE_INLINE_ASYNC_DESCRIPTION,
+    parameters=_RUN_PIPELINE_INLINE_PARAMETERS,  # same surface: definition + input
+    gates=ToolGates(router="allow", phase="allow"),
+    handler=_handle_run_pipeline_inline_async,
+    category="io",
+    purity="side_effect",
+)
+
+__all__ = [
+    "RUN_PIPELINE",
+    "RUN_PIPELINE_ASYNC",
+    "RUN_PIPELINE_INLINE",
+    "RUN_PIPELINE_INLINE_ASYNC",
+]

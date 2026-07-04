@@ -86,7 +86,12 @@ def get_default_registry() -> ToolRegistry:
         REMEMBER_AGENT,
         REMEMBER_SHARED,
     )
-    from reyn.tools.pipeline_verbs import RUN_PIPELINE, RUN_PIPELINE_ASYNC
+    from reyn.tools.pipeline_verbs import (
+        RUN_PIPELINE,
+        RUN_PIPELINE_ASYNC,
+        RUN_PIPELINE_INLINE,
+        RUN_PIPELINE_INLINE_ASYNC,
+    )
     from reyn.tools.recall import RECALL
     from reyn.tools.reyn_src import (
         REYN_SRC_GLOB,
@@ -217,6 +222,13 @@ def get_default_registry() -> ToolRegistry:
     # driver-session; returns {status: started, run_id} immediately, the
     # result arrives later as a pipeline_result inbox message.
     registry.register(RUN_PIPELINE_ASYNC)
+    # IS-4: run_pipeline_inline / run_pipeline_inline_async — launch an ad-hoc,
+    # agent-GENERATED pipeline (a DSL string in 'definition'), parsed + put
+    # through a static-analysis gate before spawn, then run through the SAME
+    # attached / background driver-session the registered verbs use. Recovery is
+    # identical (invocation.json carries the full serialized Pipeline).
+    registry.register(RUN_PIPELINE_INLINE)
+    registry.register(RUN_PIPELINE_INLINE_ASYNC)
     # ── FP-0034 universal catalog wrappers (router-only) ─────────────────
     # PR-3a registers them in the registry; PR-3b will add them to
     # build_tools() output and refactor the SP. Handlers wire through

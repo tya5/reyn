@@ -338,9 +338,13 @@ _OPERATION_RULES: Final[dict[str, tuple[str, Callable[[str, Mapping[str, Any]], 
     "skill_management__install_source": ("skill_install_source", _passthrough_args),
 
     # pipeline category (IS-1: sync + REGISTERED-only run_pipeline;
-    # IS-2: async launch in a crash-recoverable driver-session).
+    # IS-2: async launch in a crash-recoverable driver-session;
+    # IS-4: ad-hoc INLINE launches — agent-GENERATED DSL + a static-analysis
+    # gate, sync-attached and async, sharing the registered launch downstream).
     "pipeline__run": ("run_pipeline", _passthrough_args),
     "pipeline__run_async": ("run_pipeline_async", _passthrough_args),
+    "pipeline__run_inline": ("run_pipeline_inline", _passthrough_args),
+    "pipeline__run_inline_async": ("run_pipeline_inline_async", _passthrough_args),
 }
 
 

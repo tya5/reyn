@@ -108,6 +108,15 @@ _NOT_EXTERNAL = {
     # step fetched was fenced at that step's own tool-result seam when it
     # ran (same rationale as run_pipeline above).
     "run_pipeline_async",
+    # IS-4: run_pipeline_inline returns the ad-hoc pipeline's OWN final output
+    # (run_id / output / named_stores), and run_pipeline_inline_async returns
+    # only {status: started, run_id} — identical OS-assembled framing to
+    # run_pipeline / run_pipeline_async respectively. The definition is an
+    # AGENT-GENERATED DSL string, not fetched external content; any external
+    # content a step pulls is fenced at THAT step's own tool-result seam when it
+    # runs (same "ACK here, fenced at its own seam" rationale as above).
+    "run_pipeline_inline",
+    "run_pipeline_inline_async",
 }
 
 

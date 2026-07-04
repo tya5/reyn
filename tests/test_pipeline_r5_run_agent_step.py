@@ -218,12 +218,13 @@ def test_build_agent_step_narrowing_no_capabilities_is_restrict_only(tmp_path: P
     """Tier 2: OS invariant — omitting ``capabilities`` (None) leaves
     ``tool_allow`` unset (no re-grant beyond the agent's normal envelope);
     only the structural leaf-worker deny (delegation + the nested pipeline
-    launches, sync AND async — R6 S3) is imposed. Pure function, no session
-    needed."""
+    launches — registered AND inline, sync AND async — R6 S3) is imposed.
+    Pure function, no session needed."""
     narrowing = _build_agent_step_narrowing(None)
     assert "tool_allow" not in narrowing
     assert set(narrowing["tool_deny"]) == {
         "delegate_to_agent", "run_pipeline", "run_pipeline_async",
+        "run_pipeline_inline", "run_pipeline_inline_async",
     }
 
 
