@@ -86,6 +86,9 @@ class UniversalCategoryScheme:
             has_hot_list_aliases=hl,
             non_interactive=ni,
             non_claude=nc,
+            # #2548 PR-A: skill registry snapshot from the OS layer_ctx →
+            # rendered into the ## Skills block (slot_post_skills).
+            available_skills=layer_ctx.get("available_skills"),
         )
         # #1627 Stage 4: sp_params removed from build_presentation (build_system_prompt
         # no longer reads it). tool_use_sp is now the sole SP channel.

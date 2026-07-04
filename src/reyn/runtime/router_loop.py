@@ -1605,6 +1605,14 @@ class RouterLoop:
             "router_model": self.router_model,
             "router_model_family": _rm_family,  # #1791 A2: raw family fact; scheme gates non-Claude
             "non_interactive": self._non_interactive,
+            # #2548 PR-A: skill registry snapshot (enabled skills only). The
+            # scheme layer renders the ## Skills block from this into the
+            # dedicated slot_post_skills. getattr fallback keeps narrow hosts
+            # (plan-step host / FakeRouterHost without the accessor) at None →
+            # no Skills section (byte-identical to no-skills configs).
+            "available_skills": (
+                getattr(self.host, "get_available_skills", lambda: None)()
+            ),
         }
         self._scheme_available = _scheme_available
         self._scheme_layer_ctx = _scheme_layer_ctx
@@ -3453,6 +3461,13 @@ class RouterLoop:
             mcp_servers=self.host.get_mcp_servers() if hasattr(
                 self.host, "get_mcp_servers"
             ) else None,
+            # #2548 PR-A: skill registry snapshot (enabled skills only), so a
+            # future skill-aware handler can read the same list the SP renders.
+            # Same host accessor the scheme layer_ctx uses (single source);
+            # getattr fallback → None for narrow hosts.
+            available_skills=(
+                getattr(self.host, "get_available_skills", lambda: None)()
+            ),
         )
 
     async def _invoke_via_registry(self, name: str, args: dict) -> Any:

@@ -111,6 +111,10 @@ class RetrievalScheme:
             discovery_mandate=tier_wants_discovery_mandate(layer_ctx.get("router_model")),
             has_hot_list_aliases=bool((available or {}).get("hot_list_aliases")),
             non_interactive=bool(layer_ctx.get("non_interactive", False)),
+            # #2548 PR-A: skill registry snapshot → ## Skills block (rendered into
+            # the DEDICATED slot_post_skills, so the slot_post_catalog overwrite
+            # on the next line does NOT clobber it).
+            available_skills=layer_ctx.get("available_skills"),
         )
         slots["slot_post_catalog"] = _search_sp(terminal=terminal)
         return slots

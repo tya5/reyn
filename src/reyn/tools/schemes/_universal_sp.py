@@ -45,6 +45,10 @@ def build_universal_tool_use_slots(
       - ``slot_post_catalog``     — scheme-owned SP appended at the post-catalog
                                     position (e.g. retrieval's search guidance),
                                     before the context-size signal (#1627 Stage 3).
+      - ``slot_post_skills``      — the ``## Skills`` block (#2548 PR-A), rendered
+                                    from ``available_skills`` at a DEDICATED position
+                                    so retrieval's ``slot_post_catalog`` overwrite
+                                    cannot clobber it.
 
     Each slot value equals ``"\\n".join(<elements>)`` where ``<elements>`` is the
     exact list that the corresponding inline region would have appended to ``parts``
@@ -298,9 +302,12 @@ def build_universal_tool_use_slots(
         )
     )
 
-    # ── slot_post_catalog: ## Skills block (#2548 PR-A) ─────────────────────
-    # Only included when there is at least one enabled=True + auto_invoke=True
-    # skill; omit entirely otherwise so callers see no empty section.
+    # ── slot_post_skills: ## Skills block (#2548 PR-A) ──────────────────────
+    # DEDICATED slot (NOT slot_post_catalog): retrieval.py overwrites
+    # slot_post_catalog with its search-guidance block AFTER calling this
+    # builder, which would clobber the skills block. A separate slot lets the
+    # OS frame inject both independently. Only included when there is at least
+    # one enabled=True + auto_invoke=True skill; omitted entirely otherwise.
     if available_skills:
         _sp_skills = [
             s for s in available_skills
@@ -335,6 +342,6 @@ def build_universal_tool_use_slots(
                 _s_lines.append(
                     f"- {_sk.name} — {_sk.description} [{_sk.path}]"
                 )
-            slots["slot_post_catalog"] = "\n".join(_s_lines)
+            slots["slot_post_skills"] = "\n".join(_s_lines)
 
     return slots

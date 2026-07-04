@@ -248,8 +248,8 @@ def test_sp_skills_block_present_when_skills_available() -> None:
         has_hot_list_aliases=False,
         available_skills=skills,
     )
-    sp = slots.get("slot_post_catalog", "")
-    assert "## Skills" in sp, "## Skills heading missing from slot_post_catalog"
+    sp = slots.get("slot_post_skills", "")
+    assert "## Skills" in sp, "## Skills heading missing from slot_post_skills"
     assert "code-review" in sp
     assert "Review pull requests" in sp
     assert "skills/code-review/SKILL.md" in sp
@@ -259,7 +259,7 @@ def test_sp_skills_block_present_when_skills_available() -> None:
 
 
 def test_sp_skills_block_absent_when_no_skills() -> None:
-    """Tier 2: ## Skills section is absent from slot_post_catalog when skills list is empty."""
+    """Tier 2: ## Skills section is absent from slot_post_skills when skills list is empty."""
     slots_empty = build_universal_tool_use_slots(
         universal_wrappers_enabled=True,
         search_actions_enabled=False,
@@ -267,8 +267,8 @@ def test_sp_skills_block_absent_when_no_skills() -> None:
         has_hot_list_aliases=False,
         available_skills=[],
     )
-    assert "slot_post_catalog" not in slots_empty, (
-        "slot_post_catalog should not be set when available_skills is empty"
+    assert "slot_post_skills" not in slots_empty, (
+        "slot_post_skills should not be set when available_skills is empty"
     )
 
     slots_none = build_universal_tool_use_slots(
@@ -278,8 +278,8 @@ def test_sp_skills_block_absent_when_no_skills() -> None:
         has_hot_list_aliases=False,
         available_skills=None,
     )
-    assert "slot_post_catalog" not in slots_none, (
-        "slot_post_catalog should not be set when available_skills is None"
+    assert "slot_post_skills" not in slots_none, (
+        "slot_post_skills should not be set when available_skills is None"
     )
 
 
@@ -298,7 +298,7 @@ def test_sp_skills_block_excludes_disabled_skills() -> None:
         has_hot_list_aliases=False,
         available_skills=skills,
     )
-    sp = slots.get("slot_post_catalog", "")
+    sp = slots.get("slot_post_skills", "")
     assert "visible" in sp, "enabled=True skill should appear in SP"
     assert "hidden" not in sp, "enabled=False skill must not appear in SP"
 
@@ -318,13 +318,13 @@ def test_sp_skills_block_excludes_non_auto_invoke_skills() -> None:
         has_hot_list_aliases=False,
         available_skills=skills,
     )
-    sp = slots.get("slot_post_catalog", "")
+    sp = slots.get("slot_post_skills", "")
     assert "auto" in sp, "auto_invoke=True skill should appear"
     assert "manual" not in sp, "auto_invoke=False skill must not appear in SP"
 
 
 def test_sp_skills_block_absent_when_all_filtered_out() -> None:
-    """Tier 2: slot_post_catalog absent when all skills are filtered out (disabled/no-auto-invoke)."""
+    """Tier 2: slot_post_skills absent when all skills are filtered out (disabled/no-auto-invoke)."""
     skills = [
         SkillEntry(name="no-show", description="filtered", path="skills/no/SKILL.md",
                    enabled=False, auto_invoke=True),
@@ -336,6 +336,170 @@ def test_sp_skills_block_absent_when_all_filtered_out() -> None:
         has_hot_list_aliases=False,
         available_skills=skills,
     )
-    assert "slot_post_catalog" not in slots, (
-        "slot_post_catalog should be absent when all skills are filtered out"
+    assert "slot_post_skills" not in slots, (
+        "slot_post_skills should be absent when all skills are filtered out"
     )
+
+
+# ── end-to-end wiring: config → registry → SP through a REAL scheme ───────────
+# These exercise the real production functions in sequence (no unit-stubs): the
+# config loader, the registry builder, the actual scheme SP builders, and the OS
+# system-prompt injector. They are the regression guard for the "pieces built but
+# never wired" gap (peer review of PR #2550).
+
+
+def _sp_base_kwargs() -> dict:
+    return {
+        "agent_name": "alpha",
+        "agent_role": "test agent",
+        "available_agents": [],
+        "memory_index": {"status": "not_found", "content": ""},
+        "file_permissions": None,
+        "mcp_servers": None,
+        "output_language": None,
+        "project_context": "",
+        "indexed_sources_section": None,
+    }
+
+
+def test_e2e_config_to_system_prompt_universal_scheme(tmp_path: Path) -> None:
+    """Tier 2: skills.yaml → load_config → registry → universal scheme SP renders ## Skills.
+
+    Full production path: a skill declared in reyn.yaml flows through load_config,
+    build_skill_registry, build_universal_tool_use_slots (the universal-category
+    scheme's builder), and build_system_prompt — the rendered SP must contain the
+    skill's name, description, and path.
+    """
+    from reyn.runtime.router_system_prompt import build_system_prompt
+
+    (tmp_path / "reyn.yaml").write_text(
+        "model: standard\n"
+        "skills:\n  entries:\n"
+        "    pdf-filler:\n      path: skills/pdf-filler/SKILL.md\n"
+        "      description: Fill PDF forms from structured data\n",
+        encoding="utf-8",
+    )
+    old = os.getcwd()
+    os.chdir(tmp_path)
+    try:
+        cfg = load_config()
+    finally:
+        os.chdir(old)
+
+    skills = build_skill_registry(cfg.skills)
+    # Simulate the router layer_ctx the scheme reads (available_skills is the seam).
+    slots = build_universal_tool_use_slots(
+        universal_wrappers_enabled=True,
+        search_actions_enabled=False,
+        discovery_mandate=False,
+        has_hot_list_aliases=False,
+        available_skills=skills,
+    )
+    prompt = build_system_prompt(tool_use_sp=slots, **_sp_base_kwargs())
+    assert "## Skills" in prompt, "## Skills section missing from rendered system prompt"
+    assert "pdf-filler" in prompt
+    assert "Fill PDF forms from structured data" in prompt
+    assert "skills/pdf-filler/SKILL.md" in prompt
+
+
+def test_e2e_retrieval_scheme_does_not_clobber_skills_block(tmp_path: Path) -> None:
+    """Tier 2: under the RETRIEVAL scheme, the ## Skills block survives alongside search SP.
+
+    Regression guard for the clobber bug: retrieval overwrites slot_post_catalog
+    with its search-guidance block AFTER build_universal runs. The skills block
+    lives in the DEDICATED slot_post_skills, so both must appear in the final SP.
+    """
+    from reyn.runtime.router_system_prompt import build_system_prompt
+    from reyn.tools.schemes.retrieval import RetrievalScheme
+
+    (tmp_path / "reyn.yaml").write_text(
+        "model: standard\n"
+        "skills:\n  entries:\n"
+        "    data-cleaner:\n      path: skills/data-cleaner/SKILL.md\n"
+        "      description: Normalize and dedupe tabular data\n",
+        encoding="utf-8",
+    )
+    old = os.getcwd()
+    os.chdir(tmp_path)
+    try:
+        cfg = load_config()
+    finally:
+        os.chdir(old)
+
+    skills = build_skill_registry(cfg.skills)
+    scheme = RetrievalScheme()
+    layer_ctx = {
+        "search_visible": True,
+        "router_model": "standard",
+        "non_interactive": False,
+        "available_skills": skills,
+    }
+    # Call the REAL retrieval slot builder (the one that overwrites slot_post_catalog).
+    slots = scheme._slots_for(available={}, layer_ctx=layer_ctx, terminal=True)
+    prompt = build_system_prompt(tool_use_sp=slots, **_sp_base_kwargs())
+
+    # Both the retrieval search-guidance (slot_post_catalog) AND the skills block
+    # (slot_post_skills) must be present — the clobber must not have happened.
+    assert "## Skills" in prompt, (
+        "## Skills clobbered by retrieval's slot_post_catalog overwrite"
+    )
+    assert "data-cleaner" in prompt
+    assert "Normalize and dedupe tabular data" in prompt
+    assert "skills/data-cleaner/SKILL.md" in prompt
+
+
+def test_e2e_enumerate_scheme_threads_skills(tmp_path: Path) -> None:
+    """Tier 2: the enumerate-all scheme also threads available_skills into the SP."""
+    from reyn.runtime.router_system_prompt import build_system_prompt
+
+    (tmp_path / "reyn.yaml").write_text(
+        "model: standard\n"
+        "skills:\n  entries:\n"
+        "    linter:\n      path: skills/linter/SKILL.md\n"
+        "      description: Run project linters and summarize findings\n",
+        encoding="utf-8",
+    )
+    old = os.getcwd()
+    os.chdir(tmp_path)
+    try:
+        cfg = load_config()
+    finally:
+        os.chdir(old)
+
+    skills = build_skill_registry(cfg.skills)
+    # enumerate-all builder signature (universal_wrappers_enabled=False).
+    slots = build_universal_tool_use_slots(
+        universal_wrappers_enabled=False,
+        search_actions_enabled=False,
+        discovery_mandate=False,
+        has_hot_list_aliases=False,
+        available_skills=skills,
+    )
+    prompt = build_system_prompt(tool_use_sp=slots, **_sp_base_kwargs())
+    assert "## Skills" in prompt
+    assert "linter" in prompt
+    assert "skills/linter/SKILL.md" in prompt
+
+
+def test_e2e_no_skills_config_omits_section(tmp_path: Path) -> None:
+    """Tier 2: a config with no skills → registry empty → SP has no ## Skills section."""
+    from reyn.runtime.router_system_prompt import build_system_prompt
+
+    (tmp_path / "reyn.yaml").write_text("model: standard\n", encoding="utf-8")
+    old = os.getcwd()
+    os.chdir(tmp_path)
+    try:
+        cfg = load_config()
+    finally:
+        os.chdir(old)
+
+    skills = build_skill_registry(cfg.skills)
+    slots = build_universal_tool_use_slots(
+        universal_wrappers_enabled=True,
+        search_actions_enabled=False,
+        discovery_mandate=False,
+        has_hot_list_aliases=False,
+        available_skills=skills,
+    )
+    prompt = build_system_prompt(tool_use_sp=slots, **_sp_base_kwargs())
+    assert "## Skills" not in prompt

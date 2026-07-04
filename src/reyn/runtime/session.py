@@ -687,6 +687,11 @@ class Session:
         sandbox_backend: "SandboxBackend | None" = None,
         multimodal_config: "MultimodalConfig | None" = None,
         action_retrieval_config: "ActionRetrievalConfig | None" = None,
+        # #2548 PR-A: enabled skill registry snapshot (list[SkillEntry]), built
+        # from config.skills by SessionFactoryConfig.from_config. Threaded to the
+        # RouterHostAdapter so the router renders the ## Skills block. None → no
+        # skills (byte-identical to no-skills configs / direct test construction).
+        available_skills: Any = None,
         # #1593 PR-2: the chat-layer tool-use scheme name (config.tool_use.chat).
         # Threaded → RouterLoopDriver → RouterLoop(scheme_name=) so the chat
         # router resolves the selected ToolUseScheme. Default "universal-category"
@@ -889,6 +894,10 @@ class Session:
         # constructs an off-flag ActionRetrievalConfig so existing chat
         # behaviour is preserved when callers don't pass one.
         self._action_retrieval = action_retrieval_config or ActionRetrievalConfig()
+        # #2548 PR-A: enabled skill registry snapshot for the ## Skills block.
+        # None (direct construction) → no skills; the accessor / SP degrade
+        # gracefully to an omitted section.
+        self._available_skills = available_skills
         # #1593 PR-2: chat-layer scheme name → passed to RouterLoopDriver below.
         self._chat_tool_use_scheme = chat_tool_use_scheme
         # B25-S5-1 fix: when True, RouterLoop awaits the embedding index build
@@ -1485,6 +1494,7 @@ class Session:
                 self._uncompacted_tool_call_records
             ),
             action_retrieval_config=self._action_retrieval,
+            available_skills=self._available_skills,  # #2548 PR-A
             # FP-0034 Phase 2: sandbox backend for exec D14 visibility gate.
             # #1417: gate on the INJECTED backend's real capability, not the
             # reyn.yaml config STRING. The exec capability comes from the

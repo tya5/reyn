@@ -73,6 +73,8 @@ class EnumerateAllScheme:
             discovery_mandate=tier_wants_discovery_mandate(layer_ctx.get("router_model")),
             has_hot_list_aliases=bool((available or {}).get("hot_list_aliases")),
             non_interactive=bool(layer_ctx.get("non_interactive", False)),
+            # #2548 PR-A: skill registry snapshot → ## Skills block.
+            available_skills=layer_ctx.get("available_skills"),
         )
         # #1627 Stage 4: sp_params removed — build_system_prompt no longer reads it.
         return Presentation(llm_tools_payload=flat_tools, tool_use_sp=slots)
