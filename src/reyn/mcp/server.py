@@ -21,8 +21,8 @@ inline.  Pumping from the same task eliminates the anyio stdio-starvation
 failure mode (FP-0013 §ADR-A).
 
 P7: tool names + tool semantics are OS-level (agent / message). No
-domain-specific strings are baked in — what skills an agent runs in
-response to a message is its own internal decision.
+domain-specific strings are baked in — how the agent handles a message
+is its own internal decision.
 """
 from __future__ import annotations
 
@@ -45,13 +45,13 @@ if TYPE_CHECKING:
 DEFAULT_SEND_TIMEOUT_SECONDS: float = 60.0
 
 # Polling interval while waiting for the agent's run loop to drain its
-# inbox + finish any spawned skills. Small enough that latency feels
-# instant; large enough that the loop is essentially free.
+# inbox and return to idle. Small enough that latency feels instant;
+# large enough that the loop is essentially free.
 _IDLE_POLL_INTERVAL_SECONDS: float = 0.05
 
-# Brief grace period AFTER inbox is empty + skills are idle, before we
-# declare the turn done. Without it we can race the router and miss the
-# final ``kind="agent"`` outbox push.
+# Brief grace period AFTER inbox is empty, before we declare the turn
+# done. Without it we can race the router and miss the final
+# ``kind="agent"`` outbox push.
 _IDLE_GRACE_SECONDS: float = 0.05
 
 
@@ -122,8 +122,8 @@ async def _await_turn_complete(
 ) -> bool:
     """Wait until the agent has produced at least one new ``role="agent"``
     history entry past ``baseline`` AND the run loop is back to idle
-    (inbox empty + no running skills). Returns True on completion, False
-    on timeout.
+    (inbox empty, run loop back to idle). Returns True on completion,
+    False on timeout.
 
     The negative-signal-only approach (= "looks idle, no work in flight")
     used to false-positive: between ``submit_user_text`` returning and
@@ -656,7 +656,7 @@ async def _make_mcp_intervention_bus(
     """Build an MCP iv-observer for the duration of one ``send_to_agent``
     call (issue #270 Phase B).
 
-    issue #292 α extended to MCP: when a skill spawned via
+    issue #292 α extended to MCP: when a request handled via
     ``send_to_agent_impl`` emits a ``UserIntervention``, that iv lands
     in ``Session._interventions._active`` and ``handler.dispatch``
     awaits its future. Pre-#270 Phase B the MCP transport had no
@@ -702,8 +702,8 @@ class _MCPInterventionBus:
       - Pushes an iv-payload notification to the MCP peer (= the
         client that opened the ``send_to_agent`` request) so the
         peer's UI can render the question + collect the answer.
-      - Does NOT await ``iv.future``. The handler awaits on the
-        skill's behalf; the peer answers via the
+      - Does NOT await ``iv.future``. The handler awaits for the
+        in-flight turn; the peer answers via the
         ``answer_intervention`` MCP tool which routes to
         ``Session.answer_pending_intervention``.
 
@@ -982,7 +982,9 @@ async def serve_stdio(
     #   - experimental ``reyn.progress.skill_lifecycle``: PR #279 wired
     #     ``_MCPProgressBridge`` to subscribe chat_events + emit
     #     ``notifications/progress`` for phase_started / llm_called /
-    #     act_executed during send_to_agent.
+    #     act_executed during send_to_agent. Name is a legacy artifact
+    #     from the skill-based era; the key is a published wire-protocol
+    #     string so it is kept as-is for client compatibility.
     #   - experimental ``reyn.cancellation.cooperative``: PR #279 wired
     #     ``notifications/cancelled`` propagation through
     #     asyncio.CancelledError → in-flight agent turn interruption.

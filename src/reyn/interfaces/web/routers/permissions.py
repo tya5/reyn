@@ -2,7 +2,7 @@
 
 Wraps .reyn/approvals.yaml (per-process permission approval store).
 All approval keys and values are passed through as-is (P7): the gateway
-never interprets the semantics of approval keys (which encode skill-name
+never interprets the semantics of approval keys (which encode actor
 and path scoping from the engine's permission system).
 
 Routes:

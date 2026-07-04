@@ -25,7 +25,7 @@ var from the parent process automatically.
 
 This mirrors the resolution chain used by
 :class:`reyn.core.registry.client.RegistryClient`, so both surfaces — the
-async op-handler client and this safe-mode skill-internal lookup —
+async op-handler client and this safe-mode python-step lookup —
 agree on which registries to try and in what order.
 
 Multi-registry semantics
@@ -41,11 +41,11 @@ URL fails the final error is re-raised.
 Threat model
 ------------
 
-Registry lookup remains an *ambient* operation from the skill author's
-perspective — there is no per-skill ``http.get`` declaration required
-for this module's surface. The URLs are operator-trusted via the env
-var / config; the operator setting them is what carries the
-authorisation, not the skill code that calls in.
+Registry lookup remains an *ambient* operation from the python-step
+author's perspective — there is no per-step ``http.get`` declaration
+required for this module's surface. The URLs are operator-trusted via
+the env var / config; the operator setting them is what carries the
+authorisation, not the step code that calls in.
 
 Internal layering
 -----------------
@@ -59,8 +59,8 @@ Public API (returned dict shape)
 --------------------------------
 
 Both ``search`` and ``lookup`` return plain dicts (= JSON-friendly, no
-dataclasses) so safe-mode skills can pass results through artifact
-boundaries without translation:
+dataclasses) so safe-mode python steps can pass results through
+artifact boundaries without translation:
 
 ::
 
@@ -141,7 +141,7 @@ class _SSRFRedirectHandler(urllib.request.HTTPRedirectHandler):
     """#1956 SSRF: re-validate the host (IP-deny) on each redirect hop. Registry
     URLs are operator-configured, but a malicious / compromised registry could
     redirect to an internal IP — Layer 2 stops that reach. No allowlist here
-    (operator URL, not a per-skill http.get axis)."""
+    (operator URL, not a per-step http.get axis)."""
 
     def redirect_request(self, req, fp, code, msg, headers, newurl):
         _ssrf_guard.assert_fetch_host_allowed(

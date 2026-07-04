@@ -461,7 +461,7 @@ def run_serve(args: argparse.Namespace) -> None:
     timeout = float(getattr(args, "timeout", 60.0) or 60.0)
 
     async def _main() -> None:
-        # Replay WAL into per-agent snapshots so any stranded in-flight skills
+        # Replay WAL into per-agent snapshots so any stranded in-flight sessions
         # resume cleanly, the same as `reyn chat` startup. Schema mismatch
         # surfaces a clean stderr line and exits non-zero.
         from reyn.core.events.agent_snapshot import SchemaVersionError
@@ -482,7 +482,7 @@ def run_serve(args: argparse.Namespace) -> None:
 def run_search(args: argparse.Namespace) -> None:
     """Search the MCP registry and display results as a rich table.
 
-    This is a thin CLI wrapper over RegistryClient.search().  No LLM or skill
+    This is a thin CLI wrapper over RegistryClient.search().  No LLM
     invocation is required for the discovery step.
     """
     from reyn.core.registry.client import RegistryClient, RegistryError
@@ -712,7 +712,7 @@ def _run_install_from_source(
         config_permissions=perm_config,
         project_root=project_root,
         interactive=not non_interactive and sys.stdin.isatty(),
-        unsafe_python_allowed=True,  # OS-level install path, no user skill code
+        unsafe_python_allowed=True,  # OS-level install path, no user python step code
     )
 
     events = EventLog()

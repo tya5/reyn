@@ -2,7 +2,7 @@
 
 PR22's BudgetTracker is in-memory; PR25 added daily/monthly persistence
 via budget_ledger.jsonl. R-D8 closes the gap for the remaining
-in-memory counters (per-agent tokens/cost, per-chain-skill calls/tokens)
+in-memory counters (per-agent tokens/cost, per-sub-agent calls/tokens)
 so cap enforcement survives a crash + restart cycle.
 
 The state file (``.reyn/state/budget_state.json``) is overwritten

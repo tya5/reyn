@@ -148,7 +148,7 @@ class ConsoleChatRenderer(ChatRenderer):
         kind_prefix = self._PREFIX.get(msg.kind, "")
         meta_prefix = _meta_prefix(msg.meta)
         # Inject meta prefix between kind tag and text so logs read
-        # "[trace] [skill_builder#abcd] phase started: ..."
+        # "[trace] [default#abcd] llm_called: ..."
         if kind_prefix:
             line = f"{kind_prefix} {meta_prefix}{msg.text}\n"
         else:
@@ -633,7 +633,7 @@ def format_inline_message(msg: OutboxMessage):
     # renders as literal text inside the agent markdown body.
     # Intervention is user-facing: suppress the cryptic run_id_short hash — the
     # user doesn't need disambiguation for a prompt that has one active caller.
-    # actor context (e.g. "[skill_builder] ") is still shown if present.
+    # actor context (e.g. "[default] ") is still shown if present.
     if kind == "intervention":
         actor = meta.get("actor")
         _pfx = f"[{actor}] " if actor else ""

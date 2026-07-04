@@ -165,7 +165,7 @@ async def _discard(session: "Session", supplied_id: str) -> None:
         # First invocation — show warning with iv context, require confirm.
         # Retrieve iv details from the stalled list for the warning line.
         kind_hint = ""
-        skill_hint = ""
+        summary_hint = ""
         try:
             ops = session.list_stalled_interventions()
             match = next(
@@ -174,14 +174,14 @@ async def _discard(session: "Session", supplied_id: str) -> None:
             )
             if match is not None:
                 kind_hint = getattr(match, "kind", "") or ""
-                skill_hint = getattr(match, "summary", "") or ""
+                summary_hint = getattr(match, "summary", "") or ""
         except Exception:  # noqa: BLE001 — best-effort
             pass
         context = ""
         if kind_hint:
             context = f" ({kind_hint}"
-            if skill_hint:
-                context += f": {skill_hint[:40]}"
+            if summary_hint:
+                context += f": {summary_hint[:40]}"
             context += ")"
         await reply(
             session,

@@ -2,7 +2,7 @@
 
 Two new flags exposed on ``reyn chat``:
   --no-restore      Skip restore_all this run (state stays on disk for next).
-  --reset           Wipe in-flight skill state (snapshots + WAL) before
+  --reset           Wipe in-flight agent state (snapshots + WAL) before
                     starting; events/ is preserved (P6 audit truth).
 
 Implementation is split between argparse (flag definition) and a helper
