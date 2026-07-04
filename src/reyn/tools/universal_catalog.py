@@ -63,7 +63,7 @@ CATEGORIES: Final[tuple[str, ...]] = (
     # args carry the agent name explicitly.
     "multi_agent",
     # Issue #879: collapsed the previous mcp.server / mcp.tool /
-    # mcp.operation sub-categories + skill__mcp_search / skill__mcp_install
+    # mcp.operation sub-categories + prior mcp search/install actions
     # into a single ``mcp`` category. 2026-05-25: install surface
     # further split along the source axis into 3 verbs (registry /
     # package / local). Full verb set: mcp__search_registry,
@@ -1398,10 +1398,10 @@ async def _handle_invoke_action(
       3. Invoke target.handler(transformed_args, ctx).
 
     The ToolContext is forwarded verbatim so router_state callbacks
-    (= run_skill_fn / send_to_agent / op_context_factory
-    / list_memory_fn / etc.) reach the target handler as if the caller
-    had invoked it directly. This is what makes invoke_action a
-    transparent wrapper rather than a separate execution path.
+    (= send_to_agent / op_context_factory / list_memory_fn / etc.)
+    reach the target handler as if the caller had invoked it directly.
+    This is what makes invoke_action a transparent wrapper rather than
+    a separate execution path.
 
     Unknown qualified_name → §D12 error-with-suggestions response.
     """

@@ -30,7 +30,7 @@ _SANDBOXED_EXEC_DESCRIPTION = (
 # sandbox policy (network / read_paths / write_paths / allow_subprocess /
 # env_passthrough) is operator-or-default, resolved onto the OpContext — the LLM
 # cannot set it via the tool. (The SandboxedExecIROp keeps those fields for
-# skill-authored Control IR; only this tool surface is trimmed.)
+# phase-authored Control IR; only this tool surface is trimmed.)
 _SANDBOXED_EXEC_PARAMETERS: dict[str, Any] = {
     "type": "object",
     "properties": {
@@ -114,7 +114,7 @@ async def _handle(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
         # #1673: real config-aware resolver + "tool" purpose class (was None +
         # literal "standard"). This handler makes no LLM call, but threading the
         # resolver eliminates the resolver=None → litellm-BadRequestError class by
-        # construction (uniform with invoke_skill, the LLM-bearing sibling).
+        # construction (uniform with other op handlers that may make LLM calls).
         model=resolve_purpose_class(None, ctx.resolver, "tool"),
         resolver=ctx.resolver,
         subscribers=getattr(ctx.events, "subscribers", []),

@@ -42,7 +42,7 @@ JSON object::
 
     {
       "file__read": {"count": 12, "last_ts": 1716000000.0},
-      "skill__code_review": {"count": 4, "last_ts": 1716000100.0}
+      "mcp__call_tool": {"count": 4, "last_ts": 1716000100.0}
     }
 
 Scoring
@@ -77,30 +77,27 @@ import time
 from pathlib import Path
 from typing import Callable
 
-# OS default seed: universal file/web ops + Reyn flagship skills.
+# OS default seed: universal file/web ops + core catalog actions.
 # Referenced by ActionRetrievalConfig when hot_list_seed="default".
 # Seed growth log:
 #   B27-M2: file__grep removed (no routing rule yet).
 #   B27-M5: file__list + reyn_source__list added (cold-start directory listing).
-#   B28-MED-1: skill__index_docs added (RAG indexing intent).
-#   B30-NEW-2: skill__eval added (eval discoverability).
+#   B28-MED-1: index_docs op added (RAG indexing intent).
+#   B30-NEW-2: eval op added (eval discoverability).
 #   B34: file__grep + file__glob re-added (ToolDefinitions implemented).
 #   B37 W4/W6: file__write + rag_operation__drop_source added (arg-canonical
 #              gap — D2-wrapper scope is hot-list-only; seeding ensures schema
 #              guidance is present at first use).
-#   #879: skill__mcp_search → mcp__search_server; mcp__install_server added
-#         as a sibling (= verb-collapse of the previous skill-space hidden
-#         install action, so installation requests don't require list_actions
-#         discovery first).
+#   #879: mcp__search_registry + mcp__install_registry added (= verb-collapse
+#         of the previous mcp search/install actions into the mcp category, so
+#         installation requests don't require list_actions discovery first).
 #   2026-05-25 (post-#898): mcp__list_tools + mcp__call_tool added (= the
 #         "USE installed server" cold-start path observed missing in the
-#         5-server walkthrough). skill__skill_importer + rag_operation__
-#         drop_source dropped to keep seed size constant — skill_importer
-#         is the niche of the three flagship skill__skill_* verbs (=
-#         external import flow vs builder/improver), and drop_source's
-#         B37 schema-hallucination protection is now covered by the ARS
-#         scope expansion (= ``KNOWN_STATIC_QUALIFIED_NAMES`` is always in
-#         ARS regardless of hot-list per the B38 contract; see
+#         5-server walkthrough). rag_operation__drop_source dropped to keep
+#         seed size constant — drop_source's B37 schema-hallucination
+#         protection is now covered by the ARS scope expansion
+#         (= ``KNOWN_STATIC_QUALIFIED_NAMES`` is always in ARS regardless of
+#         hot-list per the B38 contract; see
 #         ``_collect_all_session_ars_entries``), so seed presence is no
 #         longer load-bearing for that invariant.
 #   2026-05-25 (mcp install 3-verb split): mcp__search_server →

@@ -24,11 +24,11 @@ from __future__ import annotations
 # carrying a "NON-obvious / unknown / not-named action" scope qualifier.
 #
 # Why scoped, not unconditional (owner decision + B11-R3 evidence): a bare
-# "list_actions FIRST always" reverses B11-R3 (named-skill → invoke directly,
+# "list_actions FIRST always" reverses B11-R3 (named action → invoke directly,
 # skip the list-hop) whose mandatory hop made weak models fall through to
 # clarification = the exact non-invoke attractor #187 fights. The obvious/named
 # clause (branch-3) and the Conversation (branch-1) / Question (branch-2)
-# branches are UNTOUCHED, so chitchat / named-skill / direct routing are
+# branches are UNTOUCHED, so chitchat / named-action / direct routing are
 # preserved by construction. The mechanical lever (MUST) + 3x reinforcement
 # lifts list_actions-first ~25-55% → ~75-85% for genuine unnamed-discovery.
 #

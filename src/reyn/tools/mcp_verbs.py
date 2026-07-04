@@ -22,9 +22,9 @@ so each verb has a structurally narrow input and no XOR ambiguity:
   - ``mcp__drop_server``      — remove an installed server
                                 (existing ``MCP_DROP_SERVER``)
 
-No skills are spawned. All install paths converge on the same
-``.reyn/mcp.yaml`` entry shape via op_runtime helpers; the verbs differ
-only in how they obtain the package metadata before that write.
+All install paths converge on the same ``.reyn/mcp.yaml`` entry
+shape via op_runtime helpers; the verbs differ only in how they
+obtain the package metadata before that write.
 
 Secret handling for the two registry-aware verbs
 (``mcp__install_registry``, ``mcp__install_package``) is **strict args
@@ -75,10 +75,10 @@ async def _handle_mcp_search_registry(
     ``reyn mcp search`` so chat and CLI surfaces stay in lock-step.
 
     Passes the user's text verbatim to the registry; the registry's own
-    indexing handles multilingual matching. The pre-#882 ``mcp_search``
-    skill applied a Japanese→English keyword extraction preprocessor
-    (= `_extract_keyword`); that workaround is dropped now that the
-    handler runs in the router context with full async HTTP available.
+    indexing handles multilingual matching. A Japanese→English keyword
+    extraction preprocessor (``_extract_keyword``) was used in the
+    pre-#882 mcp_search handler; that workaround is no longer needed now
+    that this handler runs in the router context with full async HTTP.
     """
     text = str(args.get("text", "") or "").strip()
     if not text:

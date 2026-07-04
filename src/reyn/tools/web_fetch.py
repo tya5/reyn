@@ -84,9 +84,8 @@ async def _handle(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
         # control_ir_executor — it carries the InterventionBus that
         # ``handle_web_fetch`` needs for the Tier 1 4-layer approval
         # check (= ``op_runtime/web.py``). Without this, a phase that
-        # legitimately emits a ``web_fetch`` op (e.g. ``skill_importer``
-        # search/convert) fails with ``RuntimeError: web_fetch op
-        # requires intervention_bus on OpContext``.
+        # legitimately emits a ``web_fetch`` op fails with
+        # ``RuntimeError: web_fetch op requires intervention_bus on OpContext``.
         legacy_ctx = ps.op_context
     else:
         # Narrow test sites + future surfaces that aren't router/phase.

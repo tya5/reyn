@@ -42,7 +42,7 @@ class RouterCallerState:
 
     Populated by RouterLoop / dispatch_tool when invoking a
     ToolDefinition handler in router context. Handlers that need
-    session-scoped resources (skill registry, agent registry, etc.)
+    session-scoped resources (agent registry, MCP servers, etc.)
     or async-dispatch callbacks (send_to_agent)
     consume them via this object.
 
@@ -258,9 +258,9 @@ class ToolContext:
     router_state: RouterCallerState | None = None    # populated for caller_kind="router"
     phase_state: PhaseCallerState | None = None      # populated for caller_kind="phase"
     # #1673: the config-aware ModelResolver, threaded so tool handlers that spawn a
-    # sub-run (invoke_skill → run_skill) hand the spawned OpContext a REAL resolver
-    # + a config-following model class instead of resolver=None + the literal
-    # "standard" (which litellm rejects with BadRequestError — the latent bug).
+    # sub-run hand the spawned OpContext a REAL resolver + a config-following model
+    # class instead of resolver=None + the literal "standard" (which litellm rejects
+    # with BadRequestError — the latent bug).
     # Also completes #1672 CAT-3 (tool sub-runs follow model_class_by_purpose).
     resolver: Any | None = None                      # ModelResolver | None
     # #2073 S3: the CALLING session's HotReloader, so a self-reload tool
@@ -335,14 +335,13 @@ class ToolDefinition:
     # When set, callers (= build_tools / phase catalog builder) invoke
     # this hook AFTER render_for_router/render_for_phase to inject
     # per-session dynamic data into the schema (canonical example:
-    # invoke_skill.name enum from available_skills, delegate_to_agent.to
-    # enum from available_agents).
+    # delegate_to_agent.to enum from available_agents).
     #
     # Signature: (rendered_tool_dict, RouterCallerState) -> rendered_tool_dict
     #   - rendered_tool_dict: the dict produced by render_for_router /
     #     render_for_phase (= function/parameters/etc shape)
-    #   - RouterCallerState: contains available_skills / available_agents
-    #     and other per-session data the enricher may consult
+    #   - RouterCallerState: contains available_agents and other
+    #     per-session data the enricher may consult
     #   - returns: a NEW dict with dynamic enrichment applied (do NOT
     #     mutate the input; static schema is the canonical render)
     #
@@ -364,8 +363,8 @@ class ToolDefinition:
 
         M4 Phase 3: when ``schema_enricher`` is set on the ToolDefinition AND
         ``state`` is provided, the static render is post-processed by the
-        enricher to inject per-call dynamic data (e.g. invoke_skill.name enum
-        from RouterCallerState.available_skills). When either is None (= 24/26
+        enricher to inject per-call dynamic data (e.g. delegate_to_agent.to
+        enum from RouterCallerState.available_agents). When either is None (= 24/26
         capabilities, plus all callers that don't supply state), the static
         render is returned as-is.
         """
