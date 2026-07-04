@@ -13,7 +13,6 @@ import dataclasses
 import pytest
 
 from reyn.tools import (
-    PhaseCallerState,
     RouterCallerState,
     ToolContext,
     ToolDefinition,
@@ -433,16 +432,6 @@ def test_router_caller_state_defaults_all_none():
     assert state.memory_service is None
 
 
-def test_phase_caller_state_defaults_all_none():
-    """Tier 2: PhaseCallerState() with no arguments defaults all fields to None."""
-    state = PhaseCallerState()
-    assert state.run_id is None
-    assert state.phase_name is None
-    assert state.run_visit_count is None
-    assert state.op_context is None
-    assert state.workspace_callbacks is None
-
-
 def test_tool_context_with_router_caller_state():
     """Tier 2: ToolContext with caller_kind='router' can hold a RouterCallerState."""
 
@@ -464,36 +453,6 @@ def test_tool_context_with_router_caller_state():
     assert ctx.router_state is state
     assert ctx.router_state.chain_id == "chain-123"
     assert ctx.router_state.router_model == "gpt-4o"
-    assert ctx.phase_state is None
-
-
-def test_tool_context_with_phase_caller_state():
-    """Tier 2: ToolContext with caller_kind='phase' can hold a PhaseCallerState."""
-
-    class _SentinelEvents:
-        pass
-
-    class _SentinelWorkspace:
-        pass
-
-    state = PhaseCallerState(
-        run_id="run-abc",
-        phase_name="analyze",
-        run_visit_count=3,
-    )
-    ctx = ToolContext(
-        events=_SentinelEvents(),
-        permission_resolver=None,
-        workspace=_SentinelWorkspace(),
-        caller_kind="phase",
-        phase_state=state,
-    )
-    assert ctx.caller_kind == "phase"
-    assert ctx.phase_state is state
-    assert ctx.phase_state.run_id == "run-abc"
-    assert ctx.phase_state.phase_name == "analyze"
-    assert ctx.phase_state.run_visit_count == 3
-    assert ctx.router_state is None
 
 
 def test_tool_context_fields_attribute_access():
@@ -518,7 +477,6 @@ def test_tool_context_fields_attribute_access():
     assert ctx.permission_resolver is None
     assert ctx.caller_kind == "router"
     assert ctx.router_state is None
-    assert ctx.phase_state is None
 
 
 def test_router_caller_state_partial_population():

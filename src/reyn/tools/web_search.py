@@ -63,28 +63,17 @@ async def _handle(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
         max_results=int(args.get("max_results", 5)),
     )
 
-    # Build a legacy OpContext from the new ToolContext.
-    # Propagate the active phase's PermissionDecl via
-    # phase_state.op_context (FP-0008 Tool→OpContext bridge fix
-    # 2026-05-28). Web search is read-only / public queries today, but
-    # uniform bridge wiring avoids future class bugs if web_search
-    # gains permission-gated paths.
+    # Build a legacy OpContext from the new ToolContext. Web search is
+    # read-only / public queries today, so an empty PermissionDecl is used.
     #
     # events.subscribers: the existing OpContext constructor requires
     # this to forward subscribers to nested op invocations. Web search
     # does not spawn nested ops, but OpContext.subscribers is set
     # defensively via getattr fallback.
-    phase_op_ctx = (
-        ctx.phase_state.op_context if ctx.phase_state is not None else None
-    )
     legacy_ctx = OpContext(
         workspace=ctx.workspace,
         events=ctx.events,
-        permission_decl=(
-            phase_op_ctx.permission_decl
-            if phase_op_ctx is not None
-            else PermissionDecl()
-        ),
+        permission_decl=PermissionDecl(),
         permission_resolver=ctx.permission_resolver,
         actor="",
         # #1673: real resolver + "tool" purpose class (was None + literal

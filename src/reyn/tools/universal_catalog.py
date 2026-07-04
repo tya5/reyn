@@ -1434,7 +1434,7 @@ async def _handle_invoke_action(
         ))
 
     # Forward ctx verbatim — target handlers consume their slice of
-    # router_state / phase_state via the typed sub-objects.
+    # router_state via the typed sub-object.
     return await target.handler(resolved.target_args, ctx)
 
 

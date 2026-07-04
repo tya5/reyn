@@ -1,13 +1,11 @@
 """Reyn unified tool registry — single source of truth for capabilities
-exposed to both router-style (function calling) and phase-style
-(Control IR JSON output) LLM invocations.
+exposed to router-style (function calling) LLM invocations.
 
 Per ADR-0026 (Status: Proposed). M1 lays the infrastructure;
 capability migrations land in M2/M3.
 """
 from reyn.tools.registry import ToolRegistry
 from reyn.tools.types import (
-    PhaseCallerState,
     RouterCallerState,
     ToolContext,
     ToolDefinition,
@@ -21,7 +19,6 @@ __all__ = [
     "ToolGates",
     "ToolContext",
     "RouterCallerState",
-    "PhaseCallerState",
     "ToolHandler",
     "ToolResult",
     "ToolRegistry",

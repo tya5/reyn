@@ -82,7 +82,6 @@ async def _handle_mcp_drop_server_op(
     permission gate, yaml edit, secrets cleanup, P6 event emit).
 
     OpContext resolution mirrors drop_source / mcp_install:
-      - Phase context: reuse ctx.phase_state.op_context when present
       - Router context: use ctx.router_state.op_context_factory when
         bound (= RouterLoop wires this with permission_decl populated)
       - Fallback: minimal OpContext with mcp_drop_server decl
@@ -104,13 +103,8 @@ async def _handle_mcp_drop_server_op(
         clear_secrets=clear_secrets,
     )
 
-    # Resolve OpContext — prefer caller-supplied, fall back to minimal.
-    _op_ctx = (
-        ctx.phase_state.op_context if ctx.phase_state is not None else None
-    )
-    if _op_ctx is not None and isinstance(_op_ctx, OpContext):
-        legacy_ctx = _op_ctx
-    elif (
+    # Resolve OpContext — prefer the router factory, fall back to minimal.
+    if (
         ctx.router_state is not None
         and ctx.router_state.op_context_factory is not None
     ):

@@ -118,23 +118,16 @@ def _make_handler(op_kind: str, model: type):
                 "error_message": f"{op_kind} args invalid: {exc}",
             }
 
-        # Obtain a REAL-session OpContext. Phase-side: the phase's op_context
-        # (threads task_session_id/task_backend). Router-side: the host factory
+        # Obtain a REAL-session OpContext via the host factory
         # (RouterHostAdapter.make_router_op_context → real session_id + backend).
         # A task op is a gated WRITE keyed on OpContext.session_id; we must NOT
         # fall back to a session-less context (it would mask-pass the CAS).
-        op_ctx = (
-            ctx.phase_state.op_context
-            if ctx.phase_state is not None
+        factory = (
+            ctx.router_state.op_context_factory
+            if ctx.router_state is not None
             else None
         )
-        if not isinstance(op_ctx, OpContext):
-            factory = (
-                ctx.router_state.op_context_factory
-                if ctx.router_state is not None
-                else None
-            )
-            op_ctx = factory() if factory is not None else None
+        op_ctx = factory() if factory is not None else None
         if not isinstance(op_ctx, OpContext):
             return {
                 "ok": False,

@@ -1,9 +1,11 @@
 """ToolRegistry — collection of ToolDefinition by name.
 
-Per ADR-0026 §2. The registry is the canonical source for both
-router-style (build_tools) and phase-style (control_ir_executor)
-dispatchers. M1 establishes the registry shape; M2/M3 migrate
-capabilities into it; M4 sunsets the legacy dual-source structures.
+Per ADR-0026 §2. The registry is the canonical source for the
+router-style (build_tools) dispatcher. M1 establishes the registry
+shape; M2/M3 migrate capabilities into it; M4 sunsets the legacy
+dual-source structures. (The phase-style dispatcher was removed with
+the control-IR executor; ``for_phase`` / ``gates.phase`` remain as a
+metadata query pending a follow-on cleanup — see #2542.)
 """
 from __future__ import annotations
 

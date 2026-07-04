@@ -85,16 +85,7 @@ async def _handle(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
             except ValueError:
                 sandbox_config = None
 
-    # Phase-side: prefer the pre-built OpContext when available.
-    phase_op_ctx = (
-        ctx.phase_state.op_context if ctx.phase_state is not None else None
-    )
-    if phase_op_ctx is not None:
-        return await handle_sandboxed_exec(
-            op=op, ctx=phase_op_ctx,
-        )
-
-    # Router-side: use op_context_factory if provided, else minimal synthesis.
+    # Use op_context_factory if provided, else minimal synthesis.
     if rs is not None and rs.op_context_factory is not None:
         legacy_ctx = rs.op_context_factory()
         # Inject derived sandbox_config so the handler uses the configured backend.
