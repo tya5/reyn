@@ -18,12 +18,12 @@ def _meta_prefix(meta: dict) -> str:
     Returns "" when neither actor nor run_id_short is set, so generic
     status / error messages stay clean.
     """
-    skill = meta.get("actor")
+    actor = meta.get("actor")
     short = meta.get("run_id_short")
-    if skill and short:
-        return f"[{skill}#{short}] "
-    if skill:
-        return f"[{skill}] "
+    if actor and short:
+        return f"[{actor}#{short}] "
+    if actor:
+        return f"[{actor}] "
     if short:
         return f"[#{short}] "
     return ""
@@ -629,14 +629,14 @@ def format_inline_message(msg: OutboxMessage):
     if line is None:
         return Text(f"{_meta_prefix(meta)}{msg.text}")
     gutter, gutter_style, body_style = line
-    # A provenance prefix ([skill#id]) is kept inline (rare for agent replies); it
+    # A provenance prefix ([actor#id]) is kept inline (rare for agent replies); it
     # renders as literal text inside the agent markdown body.
     # Intervention is user-facing: suppress the cryptic run_id_short hash — the
     # user doesn't need disambiguation for a prompt that has one active caller.
     # actor context (e.g. "[skill_builder] ") is still shown if present.
     if kind == "intervention":
-        skill = meta.get("actor")
-        _pfx = f"[{skill}] " if skill else ""
+        actor = meta.get("actor")
+        _pfx = f"[{actor}] " if actor else ""
     else:
         _pfx = _meta_prefix(meta)
     body_text = f"{_pfx}{msg.text}"

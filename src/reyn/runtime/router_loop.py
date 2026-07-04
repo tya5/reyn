@@ -1469,8 +1469,8 @@ class RouterLoop:
         # metadata maps when universal wrappers are enabled — regardless of
         # whether a tracker is present. These maps feed both the hot-list
         # alias builder (below) AND _collect_all_session_ars_entries (which
-        # needs skill / MCP tool schemas to populate the full ARS block).
-        _skill_meta_map: dict[str, dict] = {}
+        # needs resource / MCP tool schemas to populate the full ARS block).
+        _resource_meta_map: dict[str, dict] = {}
         _mcp_tool_map: dict[str, dict] = {}
         if _univ_enabled:
             # Skill enumeration removed (stage1 decouple): the short-description
@@ -1514,10 +1514,9 @@ class RouterLoop:
                 for _qn, _meta in _memory_entries.items():
                     if _qn not in _seed:
                         _seed.append(_qn)
-                    # _skill_meta_map is reused as a generic
-                    # qualified-name → metadata lookup; see
-                    # _resource_alias_metadata's memory_entry branch.
-                    _skill_meta_map.setdefault(_qn, _meta)
+                    # _resource_meta_map: qualified-name → metadata lookup;
+                    # see _resource_alias_metadata's memory_entry branch.
+                    _resource_meta_map.setdefault(_qn, _meta)
                 # FP-0034 refactor: live (= uncompacted) tool-call records
                 # are scanned on demand so the hot-list reflects in-session
                 # invocations without needing per-call disk writes. Hosts
@@ -1553,7 +1552,7 @@ class RouterLoop:
                     _hot_list_aliases = _build_hot_list_aliases(
                         _top_names,
                         short_description_lookup=_short_desc_map or None,
-                        resource_metadata_lookup=_skill_meta_map or None,
+                        resource_metadata_lookup=_resource_meta_map or None,
                         mcp_tool_lookup=_mcp_tool_map or None,
                     )
         # #272/#1128: compute the OS context-size signal once. It is None when

@@ -163,7 +163,7 @@ def _check_read(path: str) -> None:
     if not _context_initialised:
         raise PermissionError(
             "reyn.api.safe.file: permission context not initialised. This "
-            "module must be invoked from a PythonRunner-managed safe-mode "
+            "module must be invoked from a harness-managed safe-mode "
             "step; bare-process use requires calling "
             "_set_permission_context(read_paths=..., write_paths=...) "
             f"first (read attempted: {path!r})."

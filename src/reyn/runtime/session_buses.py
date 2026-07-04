@@ -59,8 +59,8 @@ class ChatInterventionBus:
     """``UserChannel`` implementation that routes through Session's
     outbox/inbox to the attached TUI listener.
 
-    One instance per skill spawn — captures `run_id` and a default `actor`
-    so the chat session can drop pending interventions when the spawn is
+    One instance per sub-run — captures `run_id` and a default `actor`
+    so the chat session can drop pending interventions when the run is
     cancelled. Interventions emitted by ops carry their own `actor` from
     `OpContext`; this bus only fills in `run_id` (which the OS layer doesn't
     have, since chat tracks runs separately from the runtime's run_id).
@@ -112,8 +112,8 @@ class ChatInterventionBus:
         can attribute the iv to this channel for cross-channel
         observe / discard / claim routing. The override-aware skip
         matters because the SAME ChatInterventionBus instance services
-        A2A-spawned skills (= ``_build_agent`` constructs one per
-        skill spawn regardless of caller), and A2AInterventionBus needs
+        A2A-spawned sub-runs (= ``_build_agent`` constructs one per
+        sub-run regardless of caller), and A2AInterventionBus needs
         a clean slot to stamp ``a2a:<run_id>`` downstream. Respects
         pre-existing stamping (= upstream-set origin wins for
         multi-hop delegation provenance).

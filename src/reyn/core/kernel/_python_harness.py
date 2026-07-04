@@ -186,10 +186,10 @@ def main() -> int:
         mode = str(req.get("mode", "safe"))
         artifact = req.get("artifact", {})
         allowed_modules = frozenset(req.get("allowed_modules") or [])
-        # FP-0042: file-permission paths declared by the op, forwarded
-        # by the parent's PreprocessorExecutor / PythonRunner. Either may
-        # be empty (= no read / write granted). The values gate every
-        # ``reyn.api.safe.file.*`` call from the user step.
+        # FP-0042: file-permission paths carried on the harness request
+        # (the ``file_read_paths`` / ``file_write_paths`` request keys).
+        # Either may be empty (= no read / write granted). The values gate
+        # every ``reyn.api.safe.file.*`` call from the user step.
         file_read_paths = list(req.get("file_read_paths") or [])
         file_write_paths = list(req.get("file_write_paths") or [])
         # #571 collapse arc Phase 3: host allowlist for reyn.api.safe.http
