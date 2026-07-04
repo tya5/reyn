@@ -1,12 +1,17 @@
 """Skill verb-object handlers — local install (#2548 PR-C).
 
-Router-callable skill verbs under the ``skill`` category. Currently exposes
-the local install surface:
+Router-callable skill management verbs under the ``skill_management`` category.
+Currently exposes the local install surface:
 
-  - ``skill__install_local`` — register a local skill directory
+  - ``skill_management__install_local`` — register a local skill directory
     (one containing a ``SKILL.md`` file) into the project
     ``.reyn/config/skills.yaml``, making it available to sessions
     that load the config cascade.
+
+NOTE: ``skill__`` is the RESOURCE category prefix used for per-skill dynamic
+dispatch (e.g. ``skill__code_review``). Management operations use
+``skill_management__`` to avoid colliding with that resource namespace —
+mirrors ``mcp__`` (management) vs dynamic ``mcp.<server>.<tool>`` (resource).
 
 The install verb delegates to ``op_runtime/skill_install.py`` via the
 ``build_legacy_op_context`` bridge (same pattern as the mcp-install verbs).
@@ -17,7 +22,7 @@ from typing import Any, Mapping
 
 from reyn.tools.types import ToolContext, ToolDefinition, ToolGates, ToolResult
 
-# ── skill__install_local ──────────────────────────────────────────────────────
+# ── skill_management__install_local ──────────────────────────────────────────
 
 _SKILL_INSTALL_LOCAL_DESCRIPTION = (
     "Register a local skill directory into the project config "
@@ -96,7 +101,7 @@ async def _handle_skill_install_local(
 
     op_ctx = build_legacy_op_context(ctx)
     op_ctx.permission_decl = decl
-    op_ctx.actor = "skill__install_local"
+    op_ctx.actor = "skill_management__install_local"
 
     result = await skill_install_handle(op, op_ctx)
     return {"status": "ok", "data": result}

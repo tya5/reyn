@@ -242,7 +242,7 @@ _FLOORED_QUALIFIED: "dict[str, frozenset[str]]" = {
     }),
     # skill install — no registering skills from untrusted content (mirrors mcp-install)
     "skill-install": frozenset({
-        "skill__install_local",
+        "skill_management__install_local",
     }),
     # session/agent spawn — no spawning sub-sessions/agents from untrusted content / an
     # unbound delegate (#2103: unbounded spawn is a DoS vector; the ⊆-parent model

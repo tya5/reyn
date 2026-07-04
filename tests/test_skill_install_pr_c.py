@@ -8,7 +8,7 @@ Tests:
      SURVIVES.
   3. threat-scan block: SKILL.md body that triggers a blocking threat → handler returns
      status="blocked", no config write.
-  4. trust floor: skill__install_local is denied under the builtin_untrusted_profile
+  4. trust floor: skill_management__install_local is denied under the builtin_untrusted_profile
      (mirrors the mcp-install floor).
 
 Real PermissionResolver + StateLog + OpContext + AgentRegistry throughout (no mocks).
@@ -251,7 +251,7 @@ async def test_skill_install_threat_scan_blocks_on_matching_description(tmp_path
 
 
 def test_skill_install_local_is_denied_under_untrusted_floor() -> None:
-    """Tier 2: skill__install_local is in the builtin_untrusted_profile deny set
+    """Tier 2: skill_management__install_local is in the builtin_untrusted_profile deny set
     (the trust floor mirrors mcp-install). RED if the floor lets an untrusted-content
     turn call the install verb."""
     from reyn.security.permissions.capability_profile import (
@@ -265,23 +265,23 @@ def test_skill_install_local_is_denied_under_untrusted_floor() -> None:
 
     # The qualified form must be in the skill-install floor class.
     assert "skill-install" in _FLOORED_QUALIFIED, "skill-install class missing from _FLOORED_QUALIFIED"
-    assert "skill__install_local" in _FLOORED_QUALIFIED["skill-install"], \
-        "skill__install_local not in the skill-install floor class"
+    assert "skill_management__install_local" in _FLOORED_QUALIFIED["skill-install"], \
+        "skill_management__install_local not in the skill-install floor class"
 
     # The qualified form must be denied by the untrusted floor.
-    assert "skill__install_local" in _BUILTIN_UNTRUSTED_DENY, \
-        "skill__install_local not in _BUILTIN_UNTRUSTED_DENY"
+    assert "skill_management__install_local" in _BUILTIN_UNTRUSTED_DENY, \
+        "skill_management__install_local not in _BUILTIN_UNTRUSTED_DENY"
 
     # The bare unwrapped name must also be denied (the live-gate receives the bare form).
-    bare = unwrapped_tool_name("skill__install_local")
+    bare = unwrapped_tool_name("skill_management__install_local")
     assert bare is not None, \
-        "skill__install_local has no _OPERATION_RULES entry — bare alias cannot be derived"
+        "skill_management__install_local has no _OPERATION_RULES entry — bare alias cannot be derived"
     assert bare in _BUILTIN_UNTRUSTED_DENY, \
         f"bare alias {bare!r} not in _BUILTIN_UNTRUSTED_DENY (#2111 gap)"
 
     # The real contextual gate must deny both forms.
     contextual, _ = resolve_profile(builtin_untrusted_profile())
-    assert tool_contextually_denied(contextual, "skill__install_local"), \
-        "untrusted floor does not deny skill__install_local at the live gate"
+    assert tool_contextually_denied(contextual, "skill_management__install_local"), \
+        "untrusted floor does not deny skill_management__install_local at the live gate"
     assert tool_contextually_denied(contextual, bare), \
         f"untrusted floor does not deny bare alias {bare!r} at the live gate"

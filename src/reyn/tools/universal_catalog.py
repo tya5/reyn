@@ -80,6 +80,10 @@ CATEGORIES: Final[tuple[str, ...]] = (
     "rag_operation",
     "exec",
     "task",  # #1953 dynamic-wire: task.* control-IR ops as invoke_action targets
+    # #2548 PR-C: skill management ops (install, future: list, drop). NOT the
+    # ``skill__`` resource category (per-skill dynamic dispatch); this is the
+    # management plane — mirrors the ``mcp`` category pattern.
+    "skill_management",
 )
 
 
