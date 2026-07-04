@@ -2092,7 +2092,7 @@ class AgentRegistry:
 
         On computation or rewrite failure, the exception is caught and
         logged; the next trigger naturally retries. We never let truncation
-        bubble up to disturb the caller's hot path (phase advance / skill
+        bubble up to disturb the caller's hot path (phase advance / run
         completion).
         """
         if self._state_log is None:

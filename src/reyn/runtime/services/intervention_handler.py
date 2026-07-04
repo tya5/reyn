@@ -241,7 +241,7 @@ class InterventionHandler:
             from reyn.security.content_guard import fence_if_enabled
             history_text = fence_if_enabled(text, self._threat_scan)
         meta = {
-            "answered_skill": iv.actor or "",
+            "answered_actor": iv.actor or "",
             "answered_run_id": iv.run_id or "",
             "intervention_id": iv.id,
             "intervention_kind": iv.kind,
@@ -259,7 +259,7 @@ class InterventionHandler:
             intervention_id=iv.id,
             kind=iv.kind,
             run_id=iv.run_id,
-            skill=iv.actor,
+            actor=iv.actor,
             choice_id=choice.id if choice else None,
             answer_text=text if not iv.choices else "",
         )
@@ -268,8 +268,9 @@ class InterventionHandler:
     async def announce(self, iv: UserIntervention) -> None:
         """Format and publish an intervention to the outbox for the renderer.
 
-        Skill / run_id provenance lives in ``meta`` — the renderer prepends a
-        ``[skill#abcd]`` tag, so we don't repeat it in ``text``.
+        Actor / run_id provenance lives in ``meta`` — the renderer prepends a
+        ``[actor#abcd]`` tag via ``meta["actor"]`` + ``meta["run_id_short"]``,
+        so we don't repeat it in ``text``.
 
         Corresponds to session._announce_intervention.
         """

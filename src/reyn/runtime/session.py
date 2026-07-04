@@ -1568,7 +1568,7 @@ class Session:
         )
 
         # #2073 S2: register the per-component hot-reload reapply seams now that the
-        # sub-components they orchestrate (skill_runner / router_host) exist. Each
+        # sub-components they orchestrate (router_host etc.) exist. Each
         # seam reapplies one IN-set component live at the turn boundary; the Session
         # owns + orchestrates them (the multi-holder per-agent swap is one method
         # here, not scattered captures). Hooks → S2b. Set validate-before-apply too.
@@ -3147,10 +3147,11 @@ class Session:
 
     def _register_hot_reload_seams(self) -> None:
         """Register the per-component reapply seams + validate-before-apply on the
-        HotReloader (#2073 S2). Called once at construction after skill_runner +
-        router_host exist. Each seam reapplies one IN-set component live at the turn
-        boundary; the Session orchestrates them (it owns the sub-components). Hooks =
-        S2b (global .reyn/hooks.yaml); per-agent-hooks add-on = a separate decision."""
+        HotReloader (#2073 S2). Called once at construction after router_host and
+        other sub-components exist. Each seam reapplies one IN-set component live at
+        the turn boundary; the Session orchestrates them (it owns the sub-components).
+        Hooks = S2b (global .reyn/hooks.yaml); per-agent-hooks add-on = a separate
+        decision."""
         hr = self._hot_reloader
         # validate-before-apply is the HotReloader's built-in structural check
         # (hot_reload.validate_in_set) — no per-Session override needed.
@@ -3284,8 +3285,8 @@ class Session:
 
     async def _reapply_per_agent_capability(self, in_set: dict) -> bool:
         """Reapply the per-agent capability (#2073 S2) — Session-orchestrated. Re-read
-        .reyn/agents/<name>/profile.yaml and update the per-agent allowlists on the 3
-        holders the Session owns (itself / skill_runner / router_host) from the new
+        .reyn/agents/<name>/profile.yaml and update the per-agent allowlists on the
+        holders the Session owns (itself / router_host) from the new
         AgentProfile (the #2074 unified per-agent spec). No profile / no change →
         no-op. (Single-source-of-truth is a beauty-follow-up, out of hot-reload scope.)"""
         from reyn.runtime.profile import AgentProfile
@@ -4630,7 +4631,7 @@ class Session:
         # Branch 3: user_channel — emit route decision + delegate to
         # ``_dispatch_intervention``. issue #268 Phase 2 continuation
         # moved the origin-pin stall check INTO ``_dispatch_intervention``
-        # so it fires uniformly for the bus-emit path too (= skill
+        # so it fires uniformly for the bus-emit path too (= an op
         # ask_user via ChatInterventionBus.deliver bypasses
         # ``handle_intervention``); when the check fires, it emits its
         # own ``user_channel_stalled`` event so the audit trail remains
@@ -4777,7 +4778,7 @@ class Session:
         self, *, chain_id: str, peer: str, reason: str,
     ) -> None:
         """R-D14: AgentRegistry calls this when a peer agent's
-        skill_run for ``chain_id`` was discarded by the user.
+        run for ``chain_id`` was discarded by the user.
 
         Mirrors ``_on_chain_timeout_fire`` but for the discard path:
         force-resolves the pending chain immediately, emits a
@@ -4794,7 +4795,7 @@ class Session:
         waiting = sorted(pending.waiting_on)
         error_text = (
             f"chain interrupted: peer agent {peer!r} discarded its "
-            f"skill_run ({reason}); waiting_on={waiting}"
+            f"run ({reason}); waiting_on={waiting}"
         )
         self._chat_events.emit(
             "chain_peer_discarded",
