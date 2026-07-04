@@ -14,7 +14,12 @@ crash-restore machinery all work on this session exactly as on a chat session,
 which is the entire point (crash auto-resume rides the existing session
 substrate).
 
-One nudge = drive the run to a terminal:
+One nudge = drive the run to a terminal (#2572: including the run's
+``SchemaRegistry``, rebuilt from ``work_order.schema_defs`` via
+``reyn.core.pipeline.serde.schema_registry_from_dict`` and threaded into
+``executor.run``/``resume`` so a ``verify: schema`` step is enforced —
+previously it raised ``PipelineExecutionError``/``AgentStepError`` unconditionally
+because no registry ever reached the executor):
 
 - **new vs resume** is decided by whether an R4 generation snapshot exists for
   the run (``latest_pipeline_state``): none → ``executor.run`` seeded with the
@@ -147,7 +152,7 @@ class PipelineExecutorDriver:
             PipelineExecutionError,
             PipelineExecutor,
         )
-        from reyn.core.pipeline.serde import pipeline_from_dict
+        from reyn.core.pipeline.serde import pipeline_from_dict, schema_registry_from_dict
         from reyn.core.pipeline.work_order import has_result, read_resume_attempts
 
         wo = self._work_order
@@ -170,6 +175,13 @@ class PipelineExecutorDriver:
             return
 
         pipeline = pipeline_from_dict(wo.pipeline)
+        # #2572: rebuild the launch's SchemaRegistry from the persisted
+        # work-order field — the SAME recovery source as ``pipeline`` above
+        # (a FILE, not a live constructor arg), so a ``verify: schema`` step
+        # is enforced identically on the original run and on a re-created,
+        # crash-resumed driver-session (the recovery scan builds this driver
+        # from ``work_order`` alone — see ``AgentRegistry._rewake_pipeline_runs``).
+        schema_registry = schema_registry_from_dict(wo.schema_defs)
         executor = PipelineExecutor()
         # IS-6: emit step-boundary progress to THIS session's EventLog (an
         # attached caller subscribes to it) and poll THIS driver's cooperative
@@ -189,6 +201,7 @@ class PipelineExecutorDriver:
                     default_identity=wo.reply_to_agent,
                     events=events,
                     cancel_check=self.is_cancel_requested,
+                    schema_registry=schema_registry,
                 )
             else:
                 result = await executor.resume(
@@ -200,6 +213,7 @@ class PipelineExecutorDriver:
                     default_identity=wo.reply_to_agent,
                     events=events,
                     cancel_check=self.is_cancel_requested,
+                    schema_registry=schema_registry,
                 )
         except PipelineCancelled as exc:
             # IS-6: an intentional Ctrl-C stop at a step boundary. TERMINAL (so

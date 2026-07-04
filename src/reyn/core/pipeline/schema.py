@@ -145,6 +145,15 @@ class SchemaRegistry:
     def has(self, name: str) -> bool:
         return name in self._schemas
 
+    def as_dict(self) -> "dict[str, dict[str, Any]]":
+        """A plain ``name -> schema dict`` snapshot of every registered schema
+        (#2572: the work-order persistence shape — see
+        ``reyn.core.pipeline.serde.schema_registry_from_dict`` for the
+        inverse). A PUBLIC accessor over the already-JSON-primitive
+        ``_schemas`` values, so a caller needs no private-state reach to
+        serialize a registry."""
+        return dict(self._schemas)
+
 
 # ---------------------------------------------------------------------------
 # Schema-shape validation (registration-time — catches malformed schemas

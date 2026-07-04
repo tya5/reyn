@@ -329,3 +329,49 @@ def test_resolve_path_descending_past_unresolved_ref_returns_none() -> None:
     reg = SchemaRegistry()
     reg.register("orphan", {"fields": {"thing": {"type": "ref", "schema": "missing"}}})
     assert resolve_path("orphan", "thing.anything", reg) is None
+
+
+# ── #2572: SchemaRegistry.as_dict() / schema_registry_from_dict round-trip ──
+
+
+def test_schema_registry_as_dict_round_trips_through_serde_with_nested_schema() -> None:
+    """Tier 1: ``SchemaRegistry.as_dict()`` ⇄ ``schema_registry_from_dict`` (the
+    work-order ``schema_defs`` persistence shape, #2572) round-trips a
+    registry with NON-DEFAULT, nested field values (a ``list of ref`` plus an
+    ``enum``, not a bare scalar) — the recovery-source shape a crash-resumed
+    driver-session must rebuild identically to the original. Also proves the
+    intermediate value is JSON-primitive (no custom encoder needed): it
+    survives a real ``json.dumps``/``json.loads`` hop."""
+    import json
+
+    from reyn.core.pipeline.serde import schema_registry_from_dict
+
+    reg = SchemaRegistry()
+    reg.register("file", FILE_SCHEMA)
+    reg.register("suspects", SUSPECTS_SCHEMA)
+
+    wire = json.loads(json.dumps(reg.as_dict()))
+    rebuilt = schema_registry_from_dict(wire)
+
+    assert rebuilt.has("file") and rebuilt.has("suspects")
+    # Validate a conforming AND a non-conforming value against the REBUILT
+    # registry to prove the nested ref/list/enum shape survived, not just the
+    # top-level keys.
+    ok = validate(
+        {"suspects": [{"path": "a.py", "risk": "high"}]}, "suspects", rebuilt,
+    )
+    assert ok.conforming
+    bad = validate(
+        {"suspects": [{"path": "a.py", "risk": "not-a-risk-level"}]}, "suspects", rebuilt,
+    )
+    assert not bad.conforming and bad.errors[0].kind == "enum_invalid"
+
+
+def test_schema_registry_from_dict_none_and_empty_yield_empty_registry() -> None:
+    """Tier 1: ``schema_defs=None`` (a work-order with no schemas, or one
+    written before this field existed) and ``{}`` both rebuild to an empty,
+    usable registry rather than raising."""
+    from reyn.core.pipeline.serde import schema_registry_from_dict
+
+    assert schema_registry_from_dict(None).as_dict() == {}
+    assert schema_registry_from_dict({}).as_dict() == {}

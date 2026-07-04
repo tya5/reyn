@@ -15,6 +15,16 @@ callers (a session, a test) construct their own ``PipelineRegistry`` and thread
 it through explicitly (mirrors how ``AgentRegistry`` / ``StateLog`` are threaded
 rather than reached via a hidden global), keeping registrations scoped to the
 owner that created them.
+
+(#2572) A registered pipeline may also carry a
+:class:`~reyn.core.pipeline.schema.SchemaRegistry` alongside it — a bare
+``name -> Pipeline`` map has no other home for the schemas its ``verify:
+schema`` steps validate against, unlike an inline launch (whose schemas live
+in the same DSL string that parses into the ``Pipeline``). ``register``'s
+``schema_registry`` param and :meth:`PipelineRegistry.get_schema_registry`
+close that gap; the registered launch handlers thread the retrieved registry
+into ``start_pipeline_run``/``run_pipeline_attached`` alongside the pipeline
+itself.
 """
 from __future__ import annotations
 
@@ -22,6 +32,7 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from reyn.core.pipeline.executor import Pipeline
+    from reyn.core.pipeline.schema import SchemaRegistry
 
 
 class PipelineNotFoundError(KeyError):
@@ -42,11 +53,21 @@ class PipelineRegistry:
 
     def __init__(self) -> None:
         self._pipelines: "dict[str, Pipeline]" = {}
+        self._schema_registries: "dict[str, SchemaRegistry | None]" = {}
 
-    def register(self, name: str, pipeline: "Pipeline") -> None:
+    def register(
+        self, name: str, pipeline: "Pipeline",
+        schema_registry: "SchemaRegistry | None" = None,
+    ) -> None:
         """Register ``pipeline`` under ``name``. Re-registration under an
         already-used name raises ``ValueError`` (prevents accidentally
-        shadowing a previously registered pipeline)."""
+        shadowing a previously registered pipeline).
+
+        ``schema_registry`` (#2572, additive/optional — a registered pipeline
+        with no ``verify: schema`` steps needs none) carries the schemas a
+        registered pipeline's ``verify: schema`` steps validate against; a
+        plain name -> Pipeline map has no other home for them. Retrieve it via
+        :meth:`get_schema_registry`."""
         if name in self._pipelines:
             raise ValueError(
                 f"a pipeline is already registered under name {name!r}; "
@@ -54,6 +75,7 @@ class PipelineRegistry:
                 "registration first."
             )
         self._pipelines[name] = pipeline
+        self._schema_registries[name] = schema_registry
 
     def get(self, name: str) -> "Pipeline":
         """Look up the ``Pipeline`` registered under ``name``.
@@ -65,6 +87,16 @@ class PipelineRegistry:
             return self._pipelines[name]
         except KeyError:
             raise PipelineNotFoundError(name) from None
+
+    def get_schema_registry(self, name: str) -> "SchemaRegistry | None":
+        """The ``SchemaRegistry`` registered alongside ``name`` (#2572), or
+        ``None`` when the pipeline was registered without one.
+
+        Raises :class:`PipelineNotFoundError` when ``name`` itself is not
+        registered — same contract as :meth:`get`."""
+        if name not in self._pipelines:
+            raise PipelineNotFoundError(name)
+        return self._schema_registries[name]
 
     def names(self) -> "tuple[str, ...]":
         """All registered pipeline names (for introspection / future

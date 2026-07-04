@@ -269,6 +269,98 @@ async def test_inline_async_happy_path_launches_and_delivers(
     assert await _wait_for(lambda: scripted.calls >= 1)
 
 
+# ── #2572: inline pipeline runtime verify:schema enforcement ────────────────
+#
+# ``_prepare_inline_launch`` parses a per-call SchemaRegistry from the
+# definition's own ``schema:`` documents (IS-3) but, before this fix,
+# discarded it instead of threading it to the launch — so ANY inline
+# ``verify: schema`` step (declared alongside a ``schema:`` doc that the
+# static gate itself requires resolve, check 2) crashed the driver-session
+# with "no schema_registry was provided" REGARDLESS of whether the tool's
+# result actually conformed. These tests prove the registry now reaches the
+# executor: a conforming result runs to ``ok``; a violating one fails with a
+# real schema-validation error.
+
+_SCHEMA_OK_DEF = """
+schema: Out
+fields:
+  content: {type: string, required: true}
+---
+pipeline: schema_ok
+steps:
+  - tool: {name: is4_write, args: {path: !expr ctx.out_path, content: "hello"}, schema: Out}
+"""
+
+_SCHEMA_BAD_DEF = """
+schema: Out
+fields:
+  nonexistent_field: {type: string, required: true}
+---
+pipeline: schema_bad
+steps:
+  - tool: {name: is4_write, args: {path: !expr ctx.out_path, content: "hello"}, schema: Out}
+"""
+
+
+@pytest.mark.asyncio
+async def test_inline_sync_enforces_verify_schema_pass_and_fail(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    """Tier 2: an inline pipeline's ``verify: schema`` step is enforced in the
+    sync-attached driver-session — a conforming tool result runs to ``ok``, a
+    violating one fails with a real schema-validation error naming the
+    schema (not the "no schema_registry" construction error the runtime used
+    to raise unconditionally, since the per-call registry was parsed then
+    discarded instead of threaded to the launch)."""
+    _install_write_tool(monkeypatch)
+    state_log = StateLog(tmp_path / ".reyn" / "wal.jsonl")
+    reg = _agent_registry(tmp_path, state_log, None)
+    caller = reg.get_or_load("worker")
+    out_file = tmp_path / "out.txt"
+
+    ok_result = await _handle_run_pipeline_inline(
+        {"definition": _SCHEMA_OK_DEF, "input": {"out_path": str(out_file)}},
+        _ctx(reg, caller, state_log),
+    )
+    assert ok_result["status"] == "ok"
+    assert out_file.read_text(encoding="utf-8").splitlines() == ["hello"]
+
+    bad_result = await _handle_run_pipeline_inline(
+        {"definition": _SCHEMA_BAD_DEF, "input": {"out_path": str(out_file)}},
+        _ctx(reg, caller, state_log),
+    )
+    assert bad_result["status"] == "error"
+    assert "failed schema" in bad_result["data"]["error"]
+    assert "no schema_registry was provided" not in bad_result["data"]["error"]
+
+
+@pytest.mark.asyncio
+async def test_inline_async_enforces_verify_schema_failure(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    """Tier 2: the SAME enforcement on the async inline launch path — the
+    terminal marker records ``failed`` with a real schema error."""
+    _install_write_tool(monkeypatch)
+    state_log = StateLog(tmp_path / ".reyn" / "wal.jsonl")
+    scripted = _ScriptedAgentReply("ack")
+    reg = _agent_registry(tmp_path, state_log, scripted)
+    caller = reg.get_or_load("worker")
+    out_file = tmp_path / "out.txt"
+
+    result = await _handle_run_pipeline_inline_async(
+        {"definition": _SCHEMA_BAD_DEF, "input": {"out_path": str(out_file)}},
+        _ctx(reg, caller, state_log),
+    )
+    assert result["status"] == "started"
+    run_dir = pipeline_run_dir(tmp_path / ".reyn", result["data"]["run_id"])
+
+    assert await _wait_for(lambda: _result_json(run_dir) is not None)
+    terminal = _result_json(run_dir)
+    assert terminal["status"] == "failed"
+    assert "failed schema" in terminal["error"]
+    assert "no schema_registry was provided" not in terminal["error"]
+
+
 # ── static gate rejections — each fails, NOTHING spawned ─────────────────────
 
 
