@@ -37,7 +37,7 @@ _SCAN_SUFFIXES = (".md", ".py", ".yaml", ".yml", ".json", ".toml", ".sh")
 
 @dataclass
 class Finding:
-    location: str   # where (skill/plugin + file)
+    location: str   # where (agent/plugin + file)
     rule: str       # which rule fired
     severity: str   # HIGH / MED / INFO
     detail: str
@@ -46,7 +46,7 @@ class Finding:
 def register(sub) -> None:
     p = sub.add_parser(
         "audit",
-        help="Static safety scan of installed skills / plugins (code/config + secrets + gateway)",
+        help="Static safety scan of installed agents / plugins (code/config + secrets + gateway)",
     )
     p.add_argument("--json", action="store_true", help="Emit findings as JSON.")
     p.set_defaults(func=run)

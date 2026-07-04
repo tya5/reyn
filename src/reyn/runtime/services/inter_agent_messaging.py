@@ -764,7 +764,7 @@ class InterAgentMessaging:
         """User-facing wrap-up when the per-turn router cap is reached.
 
         Delegates to Session._emit_router_cap_exhausted_user (injected at
-        construction) so both the SkillPlanGlue and InterAgentMessaging paths call a
+        construction) so both the ChainTimeoutGlue and InterAgentMessaging paths call a
         single implementation — zero drift by construction (#1538).
         """
         await self._emit_router_cap_exhausted_fn(exc, chain_id=chain_id)

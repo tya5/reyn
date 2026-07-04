@@ -235,7 +235,7 @@ class SafetyConfig:
     ``cost:`` because they are financial knobs (per-agent / daily /
     monthly token + USD limits) rather than runaway-detection knobs.
 
-    See ``docs/guide/for-skill-authors/understand-why-reyn-stops.md`` for
+    See ``docs/reference/config/budget.md`` for
     the operator's mental model.
 
     ``on_limit`` (FP-0005) controls what happens when a loop / timeout

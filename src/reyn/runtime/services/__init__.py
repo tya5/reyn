@@ -1,6 +1,7 @@
 """Service classes extracted from Session (waves 1, 2, and 3)."""
 from reyn.runtime.services.budget_gateway import BudgetGateway
 from reyn.runtime.services.chain_manager import ChainManager, _PendingChain
+from reyn.runtime.services.chain_timeout_glue import ChainTimeoutGlue
 from reyn.runtime.services.compaction_controller import CompactionController
 from reyn.runtime.services.context_budget_advisor import ContextBudgetAdvisor
 from reyn.runtime.services.inter_agent_messaging import InterAgentMessaging
@@ -11,7 +12,6 @@ from reyn.runtime.services.memory_service import MemoryService
 from reyn.runtime.services.router_history_buffer import RouterHistoryBuffer
 from reyn.runtime.services.router_host_adapter import RouterHostAdapter
 from reyn.runtime.services.router_loop_driver import RouterLoopDriver
-from reyn.runtime.services.skill_plan_glue import SkillPlanGlue
 from reyn.runtime.services.snapshot_journal import SnapshotJournal
 from reyn.services.compaction.engine import (
     ChatSummary,
@@ -35,7 +35,7 @@ __all__ = [
     "RouterHistoryBuffer",
     "RouterHostAdapter",
     "RouterLoopDriver",
-    "SkillPlanGlue",
+    "ChainTimeoutGlue",
     "SnapshotJournal",
     "_PendingChain",
 ]
