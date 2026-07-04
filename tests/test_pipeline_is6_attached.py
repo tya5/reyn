@@ -31,6 +31,13 @@ The four behaviors, each with a falsifiable assertion:
   crashes before terminal is re-woken by the recovery scan with
   ``notify_reply=True`` and delivered to the caller's inbox (sync degrades to
   async-recovery) — exactly-once.
+- **TUI bridge marker + total_steps (§5, #2570)**: step events carry
+  ``total_steps`` (= ``len(pipeline.steps)``), and a sync ATTACHED run, when
+  given ``caller_events``, emits a ``pipeline_run_attached`` marker onto the
+  CALLER's own ``EventLog`` (a different EventLog than the driver-session's,
+  where the ``pipeline_step_*`` events land) right after the driver spawns —
+  the bridge signal a live view (the TUI) uses to subscribe to the driver's
+  events. The ASYNC path (``start_pipeline_run``) never emits this marker.
 """
 from __future__ import annotations
 
@@ -61,7 +68,7 @@ from reyn.llm.pricing import TokenUsage
 from reyn.runtime.registry import AgentRegistry
 from reyn.runtime.services.pipeline_executor_driver import PipelineExecutorDriver
 from reyn.runtime.session import Session
-from reyn.runtime.session_api import run_pipeline_attached
+from reyn.runtime.session_api import run_pipeline_attached, start_pipeline_run
 from reyn.tools.pipeline_verbs import _make_tool_dispatch
 from reyn.tools.types import ToolContext
 
@@ -469,3 +476,98 @@ async def test_crash_while_attached_recovers_and_delivers_via_inbox(
     assert out_file.read_text(encoding="utf-8").splitlines() == ["s0", "s1", "s2"]
     # The caller consumed the re-delivered pipeline_result.
     assert await _wait_for(lambda: scripted.calls >= 1)
+
+
+# ── §5: TUI bridge marker + total_steps (#2570) ───────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_attached_run_emits_bridge_marker_on_callers_own_eventlog(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    """Tier 2: §5 — a sync attached run, given ``caller_events``, emits a
+    ``pipeline_run_attached`` marker onto the CALLER's own EventLog (observed
+    via a real subscriber on the caller session, NOT the driver-session) right
+    after the driver-session spawns, carrying the run_id/driver_sid/agent_name/
+    pipeline_name/tool the TUI needs to bridge-subscribe to the driver's own
+    events. RED if the marker were dropped, emitted on the wrong EventLog, or
+    missing a field the bridge contract requires."""
+    state_log = StateLog(tmp_path / ".reyn" / "wal.jsonl")
+    out_file = tmp_path / "out.txt"
+    _install_counting_tool(monkeypatch, out_file)
+    reg = _agent_registry(tmp_path, state_log, None)
+    caller = reg.get_or_load("worker")  # (worker, main) = the reply/caller address
+    caller_events: list = []
+    caller.router_host.events.add_subscriber(caller_events.append)
+
+    outcome = await run_pipeline_attached(
+        reg,
+        pipeline=_steps(2),
+        pipeline_name="p",
+        input=None,
+        reply_to_agent="worker",
+        reply_to_sid="main",
+        state_log=state_log,
+        tool="run_pipeline",
+        caller_events=caller.router_host.events,
+    )
+    assert outcome["status"] == "ok"
+
+    markers = [e for e in caller_events if e.type == "pipeline_run_attached"]
+    (marker,) = markers  # exactly one — unpack fails RED if 0 or >1 landed
+    assert marker.data["tool"] == "run_pipeline"
+    assert marker.data["run_id"] == outcome["run_id"]
+    assert marker.data["agent_name"] == "worker"
+    assert marker.data["pipeline_name"] == "p"
+    driver_sid = marker.data["driver_sid"]
+    assert isinstance(driver_sid, str) and driver_sid
+
+    # The driver_sid actually names a real, distinct session (the driver, not
+    # the caller's own "main" sid) whose EventLog carries the step events.
+    assert driver_sid != "main"
+    driver_session = reg.get_session("worker", driver_sid)
+    assert driver_session is not None
+    driver_events = driver_session.router_host.events.all()
+    started = [e for e in driver_events if e.type == "pipeline_step_started"]
+    completed = [e for e in driver_events if e.type == "pipeline_step_completed"]
+    assert {e.data["step_index"] for e in started} == {0, 1}
+    assert {e.data["step_index"] for e in completed} == {1, 2}
+    assert all(e.data["total_steps"] == 2 for e in started + completed)
+    assert all(e.data["step_kind"] == "tool" for e in started + completed)
+
+
+@pytest.mark.asyncio
+async def test_async_launch_does_not_emit_bridge_marker(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    """Tier 2: §5 negative — the ASYNC launch path (``start_pipeline_run``) has
+    no attached live viewer to bridge, so it must never emit the
+    ``pipeline_run_attached`` marker onto the caller's EventLog. RED if the
+    marker leaked onto an async-launched caller's events (it has no
+    ``caller_events``/``tool`` param at all — this asserts the runtime effect,
+    not just the absent parameter)."""
+    state_log = StateLog(tmp_path / ".reyn" / "wal.jsonl")
+    out_file = tmp_path / "out.txt"
+    _install_counting_tool(monkeypatch, out_file)
+    scripted = _ScriptedAgentReply("ack")
+    reg = _agent_registry(tmp_path, state_log, scripted)
+    caller = reg.get_or_load("worker")
+    caller_events: list = []
+    caller.router_host.events.add_subscriber(caller_events.append)
+
+    rid = await start_pipeline_run(
+        reg,
+        pipeline=_steps(1),
+        pipeline_name="p",
+        input=None,
+        reply_to_agent="worker",
+        reply_to_sid="main",
+        state_log=state_log,
+    )
+    assert rid
+
+    # Let the detached pump run to completion so the async result actually
+    # reaches the caller's inbox — the marker-absence check covers the whole
+    # async lifecycle, not just the launch instant.
+    assert await _wait_for(lambda: scripted.calls >= 1)
+    assert not any(e.type == "pipeline_run_attached" for e in caller_events)

@@ -39,7 +39,9 @@ result.
 **IS-6 (attached run: live events + step-boundary cancel)**: two optional hooks let a
 caller *attach* to a run without changing the core loop. ``events`` (an ``EventLog``)
 receives a ``pipeline_step_started`` / ``pipeline_step_completed`` pair around every step
-boundary — the emit half of the emit+subscribe seam a sync ``run_pipeline`` tool (or the
+boundary — each carrying ``total_steps`` (``len(pipeline.steps)``) alongside ``run_id`` /
+``step_index`` / ``step_kind`` so a "step i/N" display never needs a second lookup — the
+emit half of the emit+subscribe seam a sync ``run_pipeline`` tool (or the
 TUI) uses to render live progress; when None the executor stays silent (pure callers are
 unaffected). ``cancel_check`` (a ``Callable[[], bool]``) is polled at each step BOUNDARY,
 before the next step starts — never mid-step, so a step's side effect is never half-applied
@@ -369,9 +371,11 @@ class PipelineExecutor:
                 raise PipelineCancelled(run_id=run_id, step_index=i)
             step = steps[i]
             kind = _step_kind(step)
+            total_steps = len(steps)
             if events is not None:
                 events.emit(
-                    "pipeline_step_started", run_id=run_id, step_index=i, step_kind=kind,
+                    "pipeline_step_started",
+                    run_id=run_id, step_index=i, step_kind=kind, total_steps=total_steps,
                 )
             context = {"ctx": named_stores, "pipe": pipe_data}
 
@@ -454,6 +458,7 @@ class PipelineExecutor:
                 events.emit(
                     "pipeline_step_completed",
                     run_id=run_id, step_index=step_index, step_kind=kind,
+                    total_steps=total_steps,
                 )
 
         return PipelineResult(
