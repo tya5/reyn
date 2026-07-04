@@ -1738,7 +1738,7 @@ class Session:
         # session.py refactor PR-4 (FP-0019 series final): ChainTimeoutGlue owns
         # chain timeout lifecycle.
         from reyn.runtime.services.chain_timeout_glue import ChainTimeoutGlue
-        self._skill_plan_glue = ChainTimeoutGlue(
+        self._chain_timeout_glue = ChainTimeoutGlue(
             append_history_fn=self._append_history,
             events=self._chat_events,
             reset_turn_counter_fn=self._reset_router_turn_counter,
@@ -4773,7 +4773,7 @@ class Session:
 
     async def _on_chain_timeout_fire(self, chain_id: str) -> None:
         """Forwarding → ChainTimeoutGlue.on_chain_timeout_fire (PR-4)."""
-        await self._skill_plan_glue.on_chain_timeout_fire(chain_id)
+        await self._chain_timeout_glue.on_chain_timeout_fire(chain_id)
     async def _on_chain_peer_discarded(
         self, *, chain_id: str, peer: str, reason: str,
     ) -> None:
