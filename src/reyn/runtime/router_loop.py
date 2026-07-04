@@ -56,7 +56,7 @@ def _resolve_tool_use_scheme(name: "str | None" = None):
 
 # Localized user-facing message when the model returns an empty response
 # (finish_reason=stop, no content, no tool calls). Deterministic i18n so
-# output_language is always honoured.  P7-clean: no skill / tool names.
+# output_language is always honoured.  P7-clean: no tool names.
 # "en" is the global-safe default.
 _EMPTY_RESPONSE_MSG: dict[str, str] = {
     "ja": (
@@ -70,15 +70,15 @@ _EMPTY_RESPONSE_MSG: dict[str, str] = {
 }
 
 
-# Localized OS-level acknowledgment emitted when a skill spawns asynchronously
-# (= invoke_skill / invoke_action returns ``{status: "spawned", ...}``). The
+# Localized OS-level acknowledgment emitted when a request is dispatched
+# asynchronously (= a tool call returns ``{status: "spawned", ...}``). The
 # H3 ablation exits the router loop before any further LLM call, so without
 # this OS-injected message the user sees silence between request and the
 # eventual ``[task_completed]`` arrival. The previous (pre-H3) LLM-composed
-# spawn-ack was hallucinating skill output that hadn't happened yet (B32
+# ack was hallucinating output that hadn't happened yet (B32
 # W3 S1); this deterministic OS message carries the same UX guarantee
 # (= "/tasks" hint) without LLM composition, so the race condition does
-# not re-emerge.  P7-clean: no skill names, no qualified action names.
+# not re-emerge.  P7-clean: no tool names, no qualified action names.
 # #1593 PR-4: the OS-generic synthetic tool-response the RePresent arm appends for
 # an intercepted re-present tool_call (a retrieval search). The scheme's interpret
 # turned the tool_call into a RePresent (it is never dispatched), but the message
@@ -96,15 +96,15 @@ _REPRESENT_ACK = (
 # realistic search-refine sequence. The outer max_iterations is the ultimate cap.
 _MAX_REPRESENT_ROUNDS = 64
 
-# B55 R-7 (2026-05-25): agent-side spawn alignment — symmetric with
-# skill/plan spawn_ack so the LLM sees a structured task lifecycle
-# event for delegate_to_agent / other peer-async tools too. Prior
-# behaviour pushed a generic `dispatched N async requests; awaiting
-# peer reply` status row with no `[task_spawned]` header, leaving
-# the SP TASK_SPAWNED rule un-anchored for the agent path. Now mirrors
-# the skill / plan format: `[task_spawned] kind=agent ...` header +
-# user-facing trailer. Pairs with the `[task_completed] kind=agent
-# ...` injection on peer reply receipt (see inter_agent_messaging).
+# B55 R-7 (2026-05-25): agent-side spawn alignment — the LLM sees a
+# structured task lifecycle event for delegate_to_agent / other
+# peer-async tools too. Prior behaviour pushed a generic `dispatched N
+# async requests; awaiting peer reply` status row with no
+# `[task_spawned]` header, leaving the SP TASK_SPAWNED rule
+# un-anchored for the agent path. Now emits the uniform
+# `[task_spawned] kind=agent ...` header + user-facing trailer. Pairs
+# with the `[task_completed] kind=agent ...` injection on peer reply
+# receipt (see inter_agent_messaging).
 _AGENT_SPAWN_ACK_MSG: dict[str, str] = {
     "ja": (
         "ピアエージェントにリクエストを送信しました。"
@@ -2115,11 +2115,11 @@ class RouterLoop:
                 # tool_calls list, which would inbox_put the same
                 # request twice and double-charge the peer.
                 # G3 fix (dogfood batch 5 B5-M1): extend dedupe to
-                # invoke_skill — same skill + same args in one round
-                # spawns redundant runs (333k tokens / 51 LLM calls
-                # observed). invoke_skill is sync but NOT idempotent
-                # from a cost perspective; deduping is safe because
-                # same args → same deterministic result.
+                # sync tool calls too — same tool + same args in one
+                # round spawns redundant runs (333k tokens / 51 LLM
+                # calls observed). A sync call is NOT idempotent from a
+                # cost perspective; deduping is safe because same args →
+                # same deterministic result.
                 # #1593: execute the Execute round (interpret already ran at the
                 # loop level above → ``interp`` carries the resolved actions). The OS
                 # exclude-gates pre-dispatch inside _run_execute_round → dispatch →
@@ -2829,7 +2829,7 @@ class RouterLoop:
         list/describe via ``_enumerate_category`` + ``_describe_one``, #1455
         invariant; name-sorted; ``parameters`` never None). Async because the
         complete caller-state is built async (caveat-1: a ``ToolContext`` WITHOUT
-        ``router_state`` drops the resource categories — skills/agents/mcp — and
+        ``router_state`` drops the resource categories — agents/mcp — and
         the rag manifest fetch is the genuine await). Maps each generic entry →
         the OpenAI ``{type: function, function: {name, description, parameters}}``
         shape so the flat tools= is uniform with ``base_tools``."""
@@ -3424,7 +3424,7 @@ class RouterLoop:
             describe_agent_fn=self._describe_agent,
             # getattr-guarded (symmetric with ``op_context_factory`` below, #1092
             # PR-C-0): a RouterLoopCore host that is not the chat RouterHostAdapter
-            # (e.g. PhaseRouterLoopHost — a phase has no skills/agents catalog) need
+            # (e.g. PhaseRouterLoopHost — a phase has no agents catalog) need
             # not implement these chat-discovery methods. Without the guard the
             # eager call AttributeError'd every op dispatch on the converged path.
             available_agents=list(getattr(self.host, "list_available_agents", list)()),

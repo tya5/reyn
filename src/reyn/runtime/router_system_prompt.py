@@ -266,8 +266,8 @@ def build_system_prompt(
         )
         parts.append("")
 
-    # ── 7 & 8. Skills / Agents catalog ──────────────────────────────────────
-    # Wrapper-only path: skill / agent are 2 of the action categories (now
+    # ── 7 & 8. Agents catalog ────────────────────────────────────────────────
+    # Wrapper-only path: agent is one of the action categories (now
     # scheme-owned, no longer rendered by the OS). Dedicated sections would
     # impose a per-category special-case structure that contradicts FP-0034's
     # uniform-invoke design — so they are omitted here. (Resource discovery
