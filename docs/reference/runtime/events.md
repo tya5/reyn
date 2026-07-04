@@ -28,26 +28,11 @@ Every event emitted from a session whose `agent.id` is configured (in `reyn.yaml
 
 See [Concepts: multi-agent](../../concepts/multi-agent/multi-agent.md) — "Agent ID propagation" for details.
 
-## Lifecycle events
-
-| Kind | When | Key payload |
-|------|------|-------------|
-| `workflow_started` | First phase enters | `entry_phase`, `input_type`, `default_model` |
-| `workflow_finished` | Skill completes cleanly | `phase`, `reason`, `confidence`, `total_phase_count`, `final_output_keys` |
-| `phase_started` | Each phase visit begins | `phase`, `visit_count` |
-| `phase_completed` | Each phase visit ends | `phase`, `next_phase`, `decision` |
-| `phase_failed` | Phase raised an unrecoverable error | `phase`, `error` |
-| `loop_limit_exceeded` | A phase exceeded `limits.phase.max_visits` | `phase`, `visit_count`, `max` |
-| `phase_budget_exceeded` | A phase exceeded its wall-clock budget (`limits.phase.max_wall_seconds`) | `phase`, `elapsed`, `budget` |
-
 ## LLM and context
 
 | Kind | Key payload |
 |------|-------------|
-| `context_built` | `phase`, `candidate_count`, `prompt_token_estimate` |
 | `llm_called` | `phase`, `model`, `input_tokens`, `output_tokens`, `latency_ms` |
-| `validation_error` | What the LLM emitted that the OS rejected |
-| `normalization_error` | LLM output couldn't be parsed at all |
 
 ## Control IR
 
@@ -56,34 +41,27 @@ Each Control IR op kind emits its own event:
 | Kind | When |
 |------|------|
 | `read_file`, `write_file`, `edit_file`, `delete_file`, `glob_files`, `grep`, `regenerate_index` | `file` op variants — all via `tool_executed` with `op=<sub_op>` |
-| `shell_started`, `shell` (completed), `shell_timeout`, `shell_not_allowed` | `shell` op |
 | `sandboxed_exec_started`, `sandboxed_exec_completed` | `sandboxed_exec` op — `started`: `argv`, `backend`; `completed`: `argv`, `backend`, `returncode` |
-| `run_skill_started`, `skill_run_spawned`, `skill_run_failed` | `run_skill` op — `run_skill_started` carries `skill_version_hash: str` (sha256 hex of `skill.md` content at execution time; `"unknown"` if `skill.md` is absent) |
 | `mcp_called`, `mcp_completed`, `mcp_failed` | MCP tool ops |
 | `mcp_server_installed` | `mcp_install` op — `name`, key names only (no values) |
 | `web_search_started`, `web_search_completed`, `web_search_failed` | web_search ops — `started`: `query`, `backend`; `completed`: adds `result_count`; `failed`: adds `error` |
 | `web_fetch_started`, `web_fetch_completed`, `web_fetch_failed` | web_fetch ops — `started`: `url`; `completed`: `url`, `status_code`, `content_length`, `extractor`; `failed`: `url`, `status` (`"timeout"` or `"error"`), `error` |
-| `embed_progress` | `embed` op (Form B artifact reference only) — `embedded: int`, `skipped: int` cumulative per batch |
 | `recall_embed_failed` | `recall` op — emitted when the embed sub-op fails; `query`, `error` |
 | `index_dropped` | `index_drop` op — `source`, `chunks_dropped: int` |
-| `skill_resolve_completed` | `skill_resolve` op — `name`, `resolved: bool`, `source: "local"\|"project"\|"stdlib"\|null` |
-| `control_ir_skipped`, `control_ir_failed`, `control_ir_validation_error` | dispatch failures (`control_ir_skipped` reasons include `shell_not_allowed`, `handler_not_implemented`, `not_allowed_in_phase`) |
+| `control_ir_skipped`, `control_ir_failed` | dispatch failures (`control_ir_skipped` reasons include `handler_not_implemented`, `not_allowed_in_phase`) |
 | `permission_denied` | When an op is denied by the resolver |
-| `control_ir_offload_pruned` | Offloaded Control IR results were pruned from the in-memory frame after persistence. Payload: `count` (number pruned). |
 
 ## Credentials and OAuth
 
 | Kind | Trigger | Key payload |
 |------|---------|-------------|
-| `sub_skill_credential_scope` | Emitted by the `run_skill` op handler at sub-skill entry, after the OS computes the effective credential scope (intersection of the sub-skill's `required_credentials` with the parent scope). | `skill: str` — sub-skill reference (same value as `op.skill`); `allowed_keys: list[str]` — sorted, deduplicated list of allowed secret keys, or `["*"]` if the effective scope is unrestricted. |
 | `token_refreshed` | Emitted by `reyn.secrets.get_valid_token(key)` after a successful OAuth refresh against the provider's token endpoint (RFC 6749 §6). | `key: str` — OAuth token key (same as the `~/.reyn/oauth_tokens.json` entry); `expires_at: str` — ISO-8601 timestamp of the new access token's expiry. |
 | `token_refresh_failed` | Emitted by `get_valid_token` when the token endpoint returns a non-2xx response or the response payload is malformed. Raises `OAuthRefreshError`. | `key: str`; `error: str` — short error description (HTTP status + provider error code if available). |
 
 **Notes:**
-- `sub_skill_credential_scope` is audit-grade; used to reconstruct the credential authorisation chain across nested skill runs. Pairs with `run_skill_started` (same `skill` name).
 - `token_refresh_failed` pairs with `token_refreshed` — exactly one is emitted per `get_valid_token` call that performs a network refresh.
 
-See also: [Concepts: secret handling](../../concepts/runtime/secret-handling.md) — OAuth lifecycle and credential scoping; [Concepts: permission model](../../concepts/runtime/permission-model.md) — per-skill credential scoping; DSL reference: `required_credentials`.
+See also: [Concepts: secret handling](../../concepts/runtime/secret-handling.md) — OAuth lifecycle and credential scoping; [Concepts: permission model](../../concepts/runtime/permission-model.md) — per-skill credential scoping.
 
 ## Action catalog routing
 
@@ -130,12 +108,7 @@ Events emitted by the task Control IR ops (`task.py`).
 | Kind | When |
 |------|------|
 | `workspace_updated` | Any artifact is written |
-| `tool` / `tool_executed` | Generic tool dispatch |
-
-## Skill management {#skill-management}
-
-| Kind | Payload fields | Emitted when |
-|------|---------------|--------------|
+| `tool_executed` | Generic tool dispatch |
 
 ## Memory
 
@@ -167,9 +140,6 @@ intervention flow and force-close wrap-up.
 | Kind | When | Key payload |
 |------|------|-------------|
 | `limit_denied` | A safety limit was denied (no extension granted) and the OS is about to attempt the force-close wrap-up. | `kind` (`max_iterations` \| `router_cap`), `chain_id`, plus `limit` (router iterations) or `count`/`cap` (router cap) |
-
-`loop_limit_exceeded` and `phase_budget_exceeded` (see [Lifecycle
-events](#lifecycle-events)) cover phase-visit and wall-clock limits.
 
 ## Replay
 
