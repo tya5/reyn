@@ -187,6 +187,11 @@ class PipelineExecutorDriver:
         # attached caller subscribes to it) and poll THIS driver's cooperative
         # cancel flag at each step boundary.
         events = getattr(self._router_host, "events", None)
+        # R7: a `call` step resolves its target through the session's
+        # PipelineRegistry (the same host-derived registry the sync run_pipeline
+        # tool resolves against). None-safe: a pipeline with no `call` step never
+        # touches it; a `call` with no registry available fails the step cleanly.
+        pipeline_registry = self._pipeline_registry()
         try:
             if latest_pipeline_state(wo.run_id, self._state_log) is None:
                 # Fresh run (or crashed before the first R4 snapshot): seed the
@@ -199,6 +204,7 @@ class PipelineExecutorDriver:
                     run_id=wo.run_id,
                     registry=self._registry,
                     default_identity=wo.reply_to_agent,
+                    pipeline_registry=pipeline_registry,
                     events=events,
                     cancel_check=self.is_cancel_requested,
                     schema_registry=schema_registry,
@@ -211,6 +217,7 @@ class PipelineExecutorDriver:
                     state_log=self._state_log,
                     registry=self._registry,
                     default_identity=wo.reply_to_agent,
+                    pipeline_registry=pipeline_registry,
                     events=events,
                     cancel_check=self.is_cancel_requested,
                     schema_registry=schema_registry,
@@ -254,6 +261,17 @@ class PipelineExecutorDriver:
         return None
 
     # ── internals ──────────────────────────────────────────────────────────────
+
+    def _pipeline_registry(self) -> Any:
+        """R7: the session's ``PipelineRegistry`` (or None) — the resolution
+        source a ``call`` step's target name is looked up in, via the host
+        adapter's ``get_pipeline_registry()`` (the SAME registry the sync
+        ``run_pipeline`` tool resolves against through
+        ``RouterCallerState.pipeline_registry``). None-safe: a pipeline with no
+        ``call`` step never touches it."""
+        host = self._router_host
+        getter = getattr(host, "get_pipeline_registry", None) if host is not None else None
+        return getter() if getter is not None else None
 
     def _run_dir(self) -> "Path":
         from reyn.core.events.config_recovery import reyn_root

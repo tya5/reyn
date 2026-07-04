@@ -4,8 +4,9 @@ Implements the surface grammar in Appendix B of
 ``docs/proposals/reyn-pipeline-spec-v0.8.md`` (lines 706-835), narrowed to
 exactly the subset :class:`reyn.core.pipeline.executor.PipelineExecutor` can
 run today: a **linear** sequence of ``transform`` / ``tool`` / ``shell`` /
-``agent`` steps, plus the pipeline-level ``description``. ``for_each`` /
-``parallel`` / ``fold`` / ``match`` / ``call`` / ``refine``, and the
+``agent`` steps plus the first COMPOSITIONAL primitive ``call`` (R7 — runs a
+registered sub-pipeline synchronously), plus the pipeline-level ``description``.
+``for_each`` / ``parallel`` / ``fold`` / ``match`` / ``refine``, and the
 pipeline-level ``input`` / ``defaults`` blocks are all part of the full v0.8
 grammar but have no runtime yet — this parser refuses to accept them rather
 than silently dropping them into a pipeline that "parses" but then either
@@ -77,6 +78,7 @@ import yaml
 
 from reyn.core.pipeline.executor import (
     AgentStep,
+    CallStep,
     ExprRef,
     Pipeline,
     Step,
@@ -132,10 +134,14 @@ _PipelineLoader.add_constructor("!expr", _construct_expr_tag)
 
 # Constructs the union grammar's non-linear step kinds accept as *keys* so a
 # document using them gets a clear "not yet supported" error instead of a
-# generic "unknown step type".
-_UNSUPPORTED_STEP_KINDS = ("for_each", "parallel", "fold", "match", "call")
+# generic "unknown step type". ``call`` is now SUPPORTED (R7) — it moved out of
+# this set into ``_STEP_PARSERS``.
+_UNSUPPORTED_STEP_KINDS = ("for_each", "parallel", "fold", "match")
 _LINEAR_STEP_KINDS = ("transform", "tool", "shell", "agent")
-_ALL_STEP_KINDS = _LINEAR_STEP_KINDS + _UNSUPPORTED_STEP_KINDS
+# ``call`` is compositional, not linear, but it IS executable — listed separately
+# so error text distinguishes "the linear kinds" from the full supported set.
+_SUPPORTED_STEP_KINDS = _LINEAR_STEP_KINDS + ("call",)
+_ALL_STEP_KINDS = _SUPPORTED_STEP_KINDS + _UNSUPPORTED_STEP_KINDS
 
 # Pipeline-level fields the full grammar allows but the linear executor has
 # no runtime concept of at all (R4 recovery / R3 threading only understand
@@ -206,6 +212,7 @@ _TRANSFORM_KEYS = frozenset({"value", "output"})
 _TOOL_KEYS = frozenset({"name", "args", "schema", "output"})
 _SHELL_KEYS = frozenset({"command", "schema", "output"})
 _AGENT_KEYS = frozenset({"prompt", "identity", "capabilities", "schema", "output"})
+_CALL_KEYS = frozenset({"pipeline", "pass", "output"})
 
 
 def _parse_transform_step(body: "dict[str, Any]") -> TransformStep:
@@ -280,11 +287,35 @@ def _parse_agent_step(body: "dict[str, Any]") -> AgentStep:
     )
 
 
+def _parse_call_step(body: "dict[str, Any]") -> CallStep:
+    """``call = {pipeline: LIT, pass: [NAME*], output: NAME}`` (Appendix B, R7).
+    ``pipeline`` is a STATIC literal name (Hard rule 2 — never an expression);
+    ``pass`` is the caller-store projection the callee may reference; ``output``
+    binds the callee's final result to a caller named store."""
+    _reject_unknown_keys(body, _CALL_KEYS, where="call step")
+    if "pipeline" not in body:
+        _fail("call step: missing required field 'pipeline'")
+    name = body["pipeline"]
+    if not isinstance(name, str) or not name:
+        _fail(
+            f"call step 'pipeline': expected a non-empty literal pipeline name, "
+            f"got {name!r}"
+        )
+    raw_pass = body.get("pass") or []
+    if not isinstance(raw_pass, list) or not all(isinstance(n, str) for n in raw_pass):
+        _fail(f"call step 'pass': expected a list of store-name strings, got {raw_pass!r}")
+    output = body.get("output")
+    if output is not None and not isinstance(output, str):
+        _fail(f"call step 'output': expected a store-name string, got {type(output).__name__}")
+    return CallStep(pipeline=name, pass_=list(raw_pass), output=output)
+
+
 _STEP_PARSERS = {
     "transform": _parse_transform_step,
     "tool": _parse_tool_step,
     "shell": _parse_shell_step,
     "agent": _parse_agent_step,
+    "call": _parse_call_step,
 }
 
 
@@ -298,7 +329,7 @@ def _parse_step(raw_step: Any, *, index: int) -> Step:
     if kind in _UNSUPPORTED_STEP_KINDS:
         _fail(
             f"step {index}: step kind {kind!r} is not yet supported (later slice) — "
-            f"the linear executor only runs {_LINEAR_STEP_KINDS!r}"
+            f"the executor runs {_SUPPORTED_STEP_KINDS!r}"
         )
     if kind not in _STEP_PARSERS:
         _fail(
