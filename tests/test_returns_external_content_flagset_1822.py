@@ -64,6 +64,12 @@ _NOT_EXTERNAL = {
     # install status dict (path / name / status), not fetched external content.
     # Same classification rationale as mcp_install_local (writes config, not content).
     "skill_install_local",
+    # #2548 PR-D: skill_install_source shallow-clones a git repo and writes
+    # .reyn/config/skills.yaml — returns an install status dict, not the fetched
+    # repo content. The cloned SKILL.md is threat-scanned before registration;
+    # the scan result is internal OS state, not forwarded external content.
+    # Same classification rationale as mcp_install_package (installs, does not relay).
+    "skill_install_source",
     "cron_register", "cron_unregister", "cron_enable", "cron_disable",
     # #2073 S3: hooks_add writes .reyn/hooks.yaml + schedules a reload — returns a
     # status dict (on / added / reload_scheduled / path), not external content.

@@ -304,11 +304,12 @@ _OPERATION_RULES: Final[dict[str, tuple[str, Callable[[str, Mapping[str, Any]], 
     # exec category (FP-0017 sandboxed_exec, D14 visibility gating).
     "exec__sandboxed_exec": ("sandboxed_exec", _passthrough_args),
 
-    # skill_management category (#2548 PR-C: local skill directory install).
+    # skill_management category (#2548 PR-C/PR-D: skill directory install verbs).
     # NOTE: skill__ is the RESOURCE category prefix (per-skill dynamic dispatch, e.g.
     # skill__code_review). Management operations use skill_management__ to avoid
     # colliding with that resource namespace — mirrors mcp__ (mgmt) vs mcp.<s>.<t> (res).
-    "skill_management__install_local": ("skill_install_local", _passthrough_args),
+    "skill_management__install_local":  ("skill_install_local",  _passthrough_args),
+    "skill_management__install_source": ("skill_install_source", _passthrough_args),
 }
 
 

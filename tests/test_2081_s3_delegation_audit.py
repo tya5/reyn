@@ -166,6 +166,7 @@ def test_reachable_role_that_denies_is_clean(tmp_path: Path, monkeypatch) -> Non
         "remember_agent, forget_memory, mcp__install_registry, mcp__install_package, "
         "mcp__install_local, mcp_install_registry, mcp_install_package, mcp_install_local, "
         "skill_management__install_local, skill_install_local, "  # #2548 PR-C: skill-install class
+        "skill_management__install_source, skill_install_source, "  # #2548 PR-D: source install
         "session_spawn, agent_spawn, topology_create]\n",  # #2103: the full spawn class (session + agent + topology)
         encoding="utf-8",
     )

@@ -240,9 +240,12 @@ _FLOORED_QUALIFIED: "dict[str, frozenset[str]]" = {
     "mcp-install": frozenset({
         "mcp__install_registry", "mcp__install_package", "mcp__install_local",
     }),
-    # skill install — no registering skills from untrusted content (mirrors mcp-install)
+    # skill install — no registering skills from untrusted content (mirrors mcp-install).
+    # PR-D adds install_source (git/GitHub fetch) — same threat surface as install_local,
+    # and higher (remote fetch adds a new HTTP trust boundary).
     "skill-install": frozenset({
         "skill_management__install_local",
+        "skill_management__install_source",
     }),
     # session/agent spawn — no spawning sub-sessions/agents from untrusted content / an
     # unbound delegate (#2103: unbounded spawn is a DoS vector; the ⊆-parent model

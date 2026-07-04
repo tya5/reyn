@@ -586,6 +586,8 @@ _ROUTE_CONTRACT_SAMPLES: list[tuple[str, dict[str, Any]]] = [
     ("task__assign",                     {"task_id": "t1", "assignee": "s1"}),
     # skill_management category (#2548 PR-C) — install_local requires path.
     ("skill_management__install_local",  {"path": "/tmp/my-skill"}),
+    # skill_management category (#2548 PR-D) — install_source requires source URL.
+    ("skill_management__install_source", {"source": "https://github.com/user/skill-repo"}),
 ]
 
 

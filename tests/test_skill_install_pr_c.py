@@ -285,3 +285,36 @@ def test_skill_install_local_is_denied_under_untrusted_floor() -> None:
         "untrusted floor does not deny skill_management__install_local at the live gate"
     assert tool_contextually_denied(contextual, bare), \
         f"untrusted floor does not deny bare alias {bare!r} at the live gate"
+
+
+def test_skill_install_source_is_denied_under_untrusted_floor() -> None:
+    """Tier 2: skill_management__install_source is in the builtin_untrusted_profile deny set
+    (#2548 PR-D: source/git install — higher risk than local, adds HTTP trust boundary).
+    RED if the floor lets an untrusted-content turn call the source install verb."""
+    from reyn.security.permissions.capability_profile import (
+        _BUILTIN_UNTRUSTED_DENY,
+        _FLOORED_QUALIFIED,
+        builtin_untrusted_profile,
+        resolve_profile,
+    )
+    from reyn.security.permissions.effective import tool_contextually_denied
+    from reyn.tools.universal_dispatch import unwrapped_tool_name
+
+    assert "skill-install" in _FLOORED_QUALIFIED, "skill-install class missing from _FLOORED_QUALIFIED"
+    assert "skill_management__install_source" in _FLOORED_QUALIFIED["skill-install"], \
+        "skill_management__install_source not in the skill-install floor class"
+
+    assert "skill_management__install_source" in _BUILTIN_UNTRUSTED_DENY, \
+        "skill_management__install_source not in _BUILTIN_UNTRUSTED_DENY"
+
+    bare = unwrapped_tool_name("skill_management__install_source")
+    assert bare is not None, \
+        "skill_management__install_source has no _OPERATION_RULES entry — bare alias cannot be derived"
+    assert bare in _BUILTIN_UNTRUSTED_DENY, \
+        f"bare alias {bare!r} not in _BUILTIN_UNTRUSTED_DENY (#2111 gap)"
+
+    contextual, _ = resolve_profile(builtin_untrusted_profile())
+    assert tool_contextually_denied(contextual, "skill_management__install_source"), \
+        "untrusted floor does not deny skill_management__install_source at the live gate"
+    assert tool_contextually_denied(contextual, bare), \
+        f"untrusted floor does not deny bare alias {bare!r} at the live gate"
