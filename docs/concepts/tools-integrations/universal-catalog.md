@@ -94,7 +94,6 @@ Examples:
 
 | Qualified name | Parses to |
 |---|---|
-| `skill__index_docs` | (`skill`, `index_docs`) |
 | `agent.peer__alice` | (`agent.peer`, `alice`) |
 | `mcp__call_tool` | (`mcp`, `call_tool`) |
 | `mcp__install_registry` | (`mcp`, `install_registry`) |

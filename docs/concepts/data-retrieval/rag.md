@@ -6,26 +6,52 @@ audience: [human, agent]
 
 # RAG (Retrieval-Augmented Generation)
 
-reyn ships a RAG **framework foundation** — five primitive ops, an extensible `IndexBackend` protocol, an `EmbeddingProvider` protocol, and the stdlib `index_docs` workflow — that lets you index any document corpus and have the LLM retrieve relevant chunks at query time, without ever overloading the context window with the full corpus.
+reyn ships a RAG **framework foundation** — five primitive ops, an extensible `IndexBackend` protocol, an `EmbeddingProvider` protocol, and a safe-mode `embed_and_index()` entry point — that lets you index any document corpus and have the LLM retrieve relevant chunks at query time, without ever overloading the context window with the full corpus.
 
-**The differentiation: workflow-driven indexing.** LangChain and LlamaIndex give you a Python pipeline; reyn gives you a `skill.md`. Override the chunker per-source by swapping a single python step in the postprocessor chain. The Phase 1 LLM still picks the chunking strategy, but it picks from a closed candidate set defined in your strategy workflow — not from open-ended training memory.
+**The differentiation: retrieval is a built-in tool, not a library call.** LangChain and LlamaIndex give you a Python pipeline you call from your own driver code. reyn's `recall` and `drop_source` are built-in tools the LLM itself calls during a normal `reyn chat` session — no orchestration code required on the search side.
 
-**Phase 1 scope (= 1.0 release).** The framework foundation, the SQLite default backend (≤100K chunks, sub-second query), the LiteLLM embedding passthrough, and the stdlib `index_docs` workflow ship in 1.0. Vector store plugin variety (Qdrant / FAISS / Weaviate / Pinecone), advanced retrieval (rerank / HyDE / contextual retrieval), RAG eval frameworks, and IDE integration are post-1.0 (= phase 2) territory — see [../architecture/care-boundary.md](../architecture/care-boundary.md). If you need that ecosystem today, LangChain / LlamaIndex are the better fit.
+**Phase 1 scope (= 1.0 release).** The framework foundation, the SQLite default backend (≤100K chunks, sub-second query), and the LiteLLM embedding passthrough ship in 1.0. Vector store plugin variety (Qdrant / FAISS / Weaviate / Pinecone), advanced retrieval (rerank / HyDE / contextual retrieval), RAG eval frameworks, and IDE integration are post-1.0 (= phase 2) territory — see [../architecture/care-boundary.md](../architecture/care-boundary.md). If you need that ecosystem today, LangChain / LlamaIndex are the better fit.
 
-**TL;DR:** Index once with `reyn run index_docs`. The LLM calls the built-in `recall` tool automatically when it needs information. Override the chunking strategy per-source with a single `skill.md` file.
+**TL;DR:** Search is automatic — the LLM calls the built-in `recall` tool whenever it needs information from an indexed source. Creating a source requires a short safe-mode Python step that reads your files and calls `embed_and_index()` (there is no bundled one-command indexing skill).
 
 ## Quick start
 
-```bash
-# 1. Index your docs (= the index_docs skill takes a JSON artifact as input)
-reyn run index_docs '{"source": "my_docs", "path": "docs/**/*.md", "description": "Project documentation"}'
+Indexing a corpus is a small script run once as a safe-mode `python` step — read the files, split them into chunks, hand them to `embed_and_index`:
 
-# 2. Start chatting — the LLM will recall chunks when needed
+```python
+# my_project/index_docs.py — run once via a `python` step (mode: safe by default)
+from reyn.api.safe import file, embed_index
+
+paths = file.glob("docs/**/*.md")
+chunks = []
+for path in paths:
+    text = file.read(path)
+    # naive paragraph split — replace with whatever chunking suits your corpus
+    for i, para in enumerate(text.split("\n\n")):
+        if not para.strip():
+            continue
+        chunks.append({
+            "text": para,
+            "metadata": {"content_hash": f"{path}:{i}", "source_path": path},
+        })
+
+embed_index.embed_and_index(
+    chunks,
+    source="my_docs",
+    model="text-embedding-3-small",
+    mode="replace",
+    description="Project documentation",
+    path="docs/**/*.md",
+)
+```
+
+```bash
+# Start chatting — the LLM will recall chunks when needed
 reyn chat
 > Summarise the authentication design from the docs
 ```
 
-Verified end-to-end with real `gemini-embedding-001` via the LiteLLM proxy: 21 EN concept docs → 418 chunks indexed (~$0.001), and natural concept queries ("What is X in Reyn?", "Explain Reyn's permission model") returned the indexed semantic answers in 3/3 chat runs (= batch 22, 2026-05-10). See `docs/deep-dives/journal/dogfood/2026-05-10-batch-22-affordance-bias-fix/findings.md`.
+Verified end-to-end with real `gemini-embedding-001` via the LiteLLM proxy: 21 EN concept docs → 418 chunks indexed (~$0.001), and natural concept queries ("What is X in Reyn?", "Explain Reyn's permission model") returned the indexed semantic answers in 3/3 chat runs (= batch 22, 2026-05-10). See `docs/deep-dives/journal/dogfood/2026-05-10-batch-22-affordance-bias-fix/findings.md`. (That run predates the `embed_and_index()` entry point and used the since-removed `index_docs` skill — the underlying embed/index/recall mechanics are unchanged.)
 
 Behind the scenes the LLM calls `recall` and retrieves the top matching chunks:
 
@@ -33,11 +59,7 @@ Behind the scenes the LLM calls `recall` and retrieves the top matching chunks:
 LLM internally calls: recall(query="authentication design", sources=["my_docs"], top_k=5)
 ```
 
-You can also index user notes or any file glob:
-
-```bash
-reyn run index_docs '{"source": "memory", "path": ".reyn/memory/*.md", "description": "User notes and session memos"}'
-```
+The same script pattern indexes any file glob — user notes, source code, or JSONL logs — just point `file.glob()` at a different path and pick a `source` name.
 
 ## What is a "source"
 
@@ -49,7 +71,7 @@ A **source** is a named collection of chunks from a set of files. You give it:
 | `path` | `docs/**/*.md` | Single glob pattern — all matching files are indexed together |
 | `description` | `"Project documentation"` | Required. Helps the LLM decide when to search this source |
 
-One invocation covers one source, one path, one chunking strategy. To index multiple file types with different strategies, run `index_docs` once per source and then combine them at query time using `sources=[...]`:
+One indexing run covers one source, one path, one chunking approach. To index multiple file types with different chunking, run the indexing script once per source and then combine them at query time using `sources=[...]`:
 
 ```
 recall(query="...", sources=["python_src", "my_docs", "memory"], top_k=5)
@@ -85,44 +107,11 @@ A second built-in tool, `drop_source`, lets the LLM drop an index on your behalf
 drop_source(source="my_docs")
 ```
 
-## Indexing strategy
+## Chunking is your own code
 
-When you run `index_docs`, the LLM examines a sample of your files and decides on a chunking strategy. Three built-in chunkers are available:
+There is no bundled chunker and no LLM-driven strategy selection — the chunking logic in the [Quick start](#quick-start) example (paragraph split) is plain Python you write and adapt per corpus. For specialised corpora — Python source code, SQL schemas, structured YAML — swap in whatever splitting logic fits (e.g. an AST-based splitter for source code, a heading-based splitter for Markdown) before calling `embed_and_index`.
 
-| Chunker | Best for |
-|---------|---------|
-| `heading` | Markdown / RST — splits on heading boundaries |
-| `blank_line` | Plain prose — splits on paragraph breaks |
-| `sentence` | Dense text — splits sentence-by-sentence |
-
-The LLM's strategy decision is constrained by the same P4 mechanism used for all phase transitions: it picks from the declared chunker options, cannot invent new ones, and the choice is validated against the schema before the postprocessor runs.
-
-The chunking step runs deterministically in `Skill.postprocessor` — no LLM involvement, no attractor surface. The LLM's one decision (strategy selection) takes place in Phase 1; all subsequent steps (split → embed → write) are pure computation.
-
-## Override the chunker
-
-The default chunker covers common cases. For specialised corpora — Python source code, SQL schemas, structured YAML — you can replace the chunking logic entirely with a custom Python module and a minimal `skill.md` overlay:
-
-```yaml
-# reyn/project/index_python_src/skill.md
-extends: stdlib/index_docs
-
-phases:
-  strategy:
-    instructions_override: |
-      Python AST chunking — split on function and class boundaries.
-      Each chunk includes the full function or class body.
-
-postprocessor:
-  steps:
-    - type: python
-      module: reyn.project.index_python_src.ast_chunkers
-      function: apply_strategy
-```
-
-Your `ast_chunkers.py` module receives the strategy artifact and the file path glob, and returns a list of chunks. The rest of the pipeline (embed → index_write) is unchanged.
-
-This is the core workflow-DSL differentiator: you describe your chunking logic in natural language and Python; the OS handles embedding and indexing. See the workflow author guide for a full walkthrough.
+The chunking step runs deterministically in your `python` step — no LLM involvement, no attractor surface. `embed_and_index` handles embedding and index writes; everything upstream of that call (reading files, splitting into chunks) is ordinary Python.
 
 ## Storage location
 
@@ -130,56 +119,34 @@ All index data is stored inside your project's `.reyn/` directory:
 
 ```
 .reyn/
-  index/
-    sources.yaml                   # Source manifest — name, path, model, chunk count
-    my_docs/
-      index.db                     # SQLite vector store for this source
-    memory/
-      index.db
+  config/
+    index/
+      sources.yaml                 # Source manifest — name, path, model, chunk count
+  cache/
+    index/
+      my_docs/
+        index.db                   # SQLite vector store for this source
+      memory/
+        index.db
 ```
 
-`sources.yaml` is the single source of truth for what is indexed. The SQLite files contain the chunk text and embedding vectors. You can inspect them with any SQLite client, though the schema is internal.
+`sources.yaml` is the single source of truth for what is indexed; it lives under `config/` because it is operator-editable state. The SQLite index data lives under `cache/` because it is derived/rebuildable. See [`.reyn/` directory layout](../../reference/runtime/reyn-dir-layout.md) for the full recovery-core/cache/audit split. The SQLite files contain the chunk text and embedding vectors. You can inspect them with any SQLite client, though the schema is internal.
 
 Phase 1 uses SQLite as the only storage backend. Phase 2 will add pluggable backends (Qdrant, FAISS, Pinecone) via a `register_backend()` extension point.
 
 ## Permissions
 
-Two permission gates protect RAG operations:
+One permission gate protects RAG operations on the LLM-facing side:
 
 | Permission | Default | Trigger |
 |-----------|---------|---------|
-| `permissions.embed` | `ask` | First embedding call per workflow run |
 | `permissions.index_drop` | `ask` | `drop_source` tool call or `reyn source rm` |
 
-`permissions.embed: ask` means the first time `index_docs` tries to call the embedding API, reyn prompts you to approve. You can pre-approve in `reyn.yaml`:
-
-```yaml
-permissions:
-  embed: allow
-```
-
-The stdlib `index_docs` workflow ships with `embed: allow` in its own permissions block, so the prompt only fires if you are running a custom override that hasn't inherited this setting.
+There is no dedicated permission gate on `embed_and_index()` itself — a safe-mode `python` step that calls it runs under the calling phase's ordinary python-step permissions, not a RAG-specific one.
 
 ## Cost
 
-Embedding costs are linear in chunk count. A single `index_docs` run for a typical documentation set costs around **$0.0003** for the strategy-selection LLM call (one call per invocation, using the default model). Embedding cost depends on your corpus size and embedding model — `text-embedding-3-small` is the default.
-
-reyn protects against unexpected large bills with a cost preflight gate:
-
-- Before embedding begins, reyn estimates the chunk count from the file glob.
-- If the estimate exceeds `cost_warn_threshold` (default: 10,000 chunks), reyn prompts you for confirmation before starting.
-- You can adjust the threshold in `reyn.yaml`:
-
-```yaml
-embedding:
-  cost_warn_threshold: 5000    # ask before indexing more than 5K chunks
-```
-
-Progress feedback is emitted during long indexing runs:
-
-```
-Embedded 5K / 100K chunks (5%), ETA 25 min
-```
+Embedding cost is linear in chunk count and depends on your corpus size and embedding model — `text-embedding-3-small` is the default. There is no built-in cost preflight or progress reporting for a hand-written indexing step (unlike the removed `index_docs` skill's wrapper) — estimate chunk count from your own file glob before running a large indexing job if cost matters.
 
 ## Embedding configuration
 
@@ -221,13 +188,11 @@ For chat-side action retrieval specifically (= `search_actions`), see [Guide: en
 
 **Included in Phase 1 (1.0 release):**
 
-- `index_docs` stdlib workflow with heading / blank_line / sentence chunkers
+- `embed_and_index()` safe-mode entry point for indexing (`reyn.api.safe.embed_index`)
 - `recall` tool available to the LLM in every chat session
 - `drop_source` tool for cleanup
 - SQLite vector store backend
 - `reyn source list / describe / rm` CLI
-- Cost preflight gate and progress feedback
-- Override pattern (`extends: stdlib/index_docs` + custom Python module)
 - Empty-state hint in the chat system prompt
 
 **Deferred to Phase 1.5 (1.1+):**
@@ -249,7 +214,7 @@ For chat-side action retrieval specifically (= `search_actions`), see [Guide: en
 ## Limitations
 
 - **100K chunks recommended maximum** per source for Phase 1 SQLite backend. Larger corpora will work but query latency increases.
-- **No incremental indexing.** Re-running `index_docs` with `mode: replace` (the default) re-indexes the full source. Use `mode: append` only when you know the new files do not overlap with existing chunks.
+- **No incremental indexing.** `embed_and_index`'s `mode="append"` default skips chunks whose `content_hash` is already indexed but does not detect deleted/changed source files; pass `mode="replace"` to rebuild a source from scratch when files change.
 - **Memory layer is unchanged in Phase 1.** Session memory still uses inline system-prompt expansion. The `recall` tool and memory are independent systems in this release.
 - **No advanced retrieval.** Phase 1 uses cosine similarity only — no reranking, HyDE, or contextual retrieval.
 - **Sensitive data.** reyn does not redact sensitive content before indexing. Do not index secrets, credentials, or PII unless you understand the implications. A redaction policy is planned for Phase 2.
@@ -257,144 +222,13 @@ For chat-side action retrieval specifically (= `search_actions`), see [Guide: en
 
 ## Operational Intelligence — `recall` on events
 
-The `index_events` stdlib workflow (FP-0009 Component A) populates a source named
-`"events"` by chunking the P6 event log (`.reyn/events/*.jsonl`) on run
-boundaries: one chunk per workflow execution. This makes Reyn's own execution
-history semantically searchable through the standard `recall` op — no new
-op kinds required.
-
-### Source name
-
-```
-sources: ["events"]
-```
-
-`index_events` always writes to this fixed source name. Run it once (or
-schedule it periodically) to keep the index current:
-
-```bash
-reyn run index_events '{"period": "last-7d"}'
-```
-
-### Chunk metadata
-
-Each chunk carries structured metadata in `extra`:
-
-| Field | Type | Example |
-|-------|------|---------|
-| `skill` | string | `"swe_bench"` |
-| `skill_version_hash` | string | `"abc123..."` |
-| `started_at` / `completed_at` | ISO datetime | `"2026-05-10T09:15:00Z"` |
-| `duration_seconds` | number | `43` |
-| `status` | `"success"` \| `"failed"` \| `"aborted"` | `"failed"` |
-| `phases` | list[string] | `["explore","plan","verify"]` |
-| `errors` | list | `[{"phase": "verify", "msg": "..."}]` |
-| `tool_calls` | object | `{"grep": 3, "shell": 1}` |
-| `cost_usd` | number | `0.18` |
-
-The chunk text is a human-readable run summary; `extra` fields are attached as
-metadata but are not directly filterable — the LLM cannot issue structured
-`WHERE status="failed"` queries. The recommended pattern is: issue a semantic
-query to surface relevant chunks, then filter in post-processing logic.
-
-### Typical queries
-
-**Failure patterns for a specific workflow:**
-
-```yaml
-- type: run_op
-  op:
-    kind: recall
-    query: "my_skill failure error phase"
-    sources: ["events"]
-    top_k: 20
-  output_name: trace_summary
-```
-
-This returns chunks where `my_skill` appears prominently in the run text,
-biased toward runs that mention errors and failures. Combine with a
-post-filter on `chunk.metadata.extra.status == "failed"` for precise results.
-
-**Surfacing error excerpts:**
-
-```
-query: "PermissionError が起きた run"
-sources: ["events"]
-top_k: 10
-```
-
-Because error messages are embedded in the chunk text itself, semantic
-similarity surfaces runs where that error class appeared — even without
-structured filtering.
-
-**Top-cost workflows (recent period):**
-
-```
-query: "高コスト high cost expensive run"
-sources: ["events"]
-top_k: 20
-```
-
-The LLM cannot directly sort by `cost_usd` (no numeric range query in Phase 1
-SQLite backend). Return top-K semantically relevant chunks and sort in Python
-using `chunk.metadata.extra["cost_usd"]`.
-
-### Example workflow usage
-
-A workflow phase that collects execution traces before analysis:
-
-```yaml
-- type: run_op
-  op:
-    kind: recall
-    query: "{{ input.skill_name }} failure error phase"
-    sources: ["events"]
-    top_k: 20
-  output_name: trace_summary
-```
-
-The `trace_summary` artifact contains `trace_summary.chunks` — a list of the
-top-K matching run summaries. Downstream phases read this list directly.
-
-### Empty-index fallback
-
-If `index_events` has never been run, `sources=["events"]` returns an empty
-result (`trace_summary.chunks` has length 0). A workflow should detect this and
-either:
-
-1. Emit a `run_skill` op to invoke `index_events` first, then retry `recall`.
-2. Fall back to direct file reads:
-   ```yaml
-   - type: run_op
-     op:
-       kind: file
-       op: glob
-       path: ".reyn/events/*.jsonl"
-     output_name: event_files
-   ```
-
-The `ops_report` stdlib workflow (FP-0009 Component D) implements option 1
-as its `collect` phase.
-
-### Cross-references
-
-| Consumer | Uses events source for |
-|----------|----------------------|
-| FP-0006 `collect_traces` | failure pattern retrieval for workflow self-improvement |
-| FP-0007 evaluation reports | regression detection across eval runs |
-| FP-0008 SWE-bench | past-case retrieval for analogous repository fixes |
-| `ops_report` stdlib workflow | weekly/periodic operational summary generation |
-
-See [FP-0006](../../deep-dives/proposals/0006-skill-self-improvement.md),
-[FP-0007](../../deep-dives/proposals/0007-evaluation-infrastructure.md),
-[FP-0008](../../deep-dives/proposals/0008-swe-bench-integration.md) for consumer
-design details.
+The same `recall` op works on Reyn's own P6 execution event log once it has been indexed into a source (conventionally named `"events"`) using the same `embed_and_index()` pattern as any other corpus. See [Concepts: Operational Intelligence](operational-intelligence.md) for the chunk-metadata shape, example queries, and the current state of that indexing path.
 
 ## See also
 
 - [Reference: `reyn source`](../../reference/cli/source.md) — manage indexed sources from the CLI
 - [ADR-0033](../../deep-dives/decisions/0033-rag-extensible-os.md) — design rationale and full technical spec (internal)
 - [Concepts: workspace](../runtime/workspace.md) — how `.reyn/` state is structured
-- [Concepts: permission model](../runtime/permission-model.md) — `embed` and `index_drop` permission gates
+- [Concepts: permission model](../runtime/permission-model.md) — `index_drop` permission gate
 - [Concepts: secret handling](../runtime/secret-handling.md) — embedding API key management
 - [Reference: `reyn.yaml`](../../reference/config/reyn-yaml.md) — `embedding:` section schema

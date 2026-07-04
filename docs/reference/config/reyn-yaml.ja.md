@@ -407,9 +407,9 @@ action_retrieval:
 
 有効時（デフォルト）、 チャット Router の `tools=` 末尾に wrapper が含まれる。 LLM は以下を呼び出し可能:
 
-- `list_actions(category=["skill"])` → qualified name 形式 (例: `skill__index_docs`) で利用可能 skill を列挙
-- `describe_action(action_name="skill__index_docs")` → input schema を取得
-- `invoke_action(action_name="skill__index_docs", args={...})` → 既存 handler 経由で実行
+- `list_actions(category=["mcp"])` → qualified name 形式(例: `mcp__call_tool`)でカテゴリ内の利用可能 action を列挙
+- `describe_action(action_name="mcp__call_tool")` → input schema を取得
+- `invoke_action(action_name="mcp__call_tool", args={...})` → 既存 handler 経由で実行
 
 リソースカテゴリ (`mcp.server`, `rag_corpus`, `memory_entry`, …) も `invoke_action` をサポート。 不明な action 名は文字列類似度でランクされた `suggestions` を含む構造化エラーを返し、 LLM は 1 turn で復帰可能。
 
@@ -512,8 +512,8 @@ cron:
 ### 関連情報
 
 - `docs/reference/cli/cron.md` — `reyn cron run/list/status`
-- `docs/concepts/data-retrieval/operational-intelligence.md` — `index_events` /
-  `ops_report` のユースケース
+- `docs/concepts/data-retrieval/operational-intelligence.md` — イベントログの定期
+  indexing agent をスケジュールする
 
 ## `permissions` ブロック
 

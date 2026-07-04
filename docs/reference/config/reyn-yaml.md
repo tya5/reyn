@@ -676,7 +676,7 @@ action_retrieval:
 | `embedding_class` | string \| null | `"local-mini"` | Name of an entry in [`embedding.classes`](../../concepts/data-retrieval/rag.md) to use for action-retrieval semantic search.  Default `local-mini` (= `sentence-transformers/all-MiniLM-L6-v2`).  When `null` or empty, `search_actions` is excluded from `tools=` even when wrappers are enabled.  Setting this also enables eager embedding build on cold-start sessions to avoid first-turn hallucinations.  **Graceful degrade**: if the chosen class points at a `sentence-transformers/` model but the `local-embed` extras aren't installed, reyn silently treats this as `null` and `list_actions` surfaces the install command to the LLM. Set explicitly to `standard` (= OpenAI) or `null` (= opt out) to override. |
 | `hot_list_n` | int | `0` | Hot-list projection size for top-N `freq+recency` direct aliases. `0` (default) disables hot-list entirely — `list_actions` is the canonical discovery path. Set to `10` or higher to opt in; the seed, usage tracker, and alias-builder remain fully operative. |
 | `mode` | string | `"default"` | Operational mode label: `"minimal"` (max cache stability, no hot list) / `"default"` (balanced) / `"performance"` (large hot list).  Free-form string; callers layer semantics on top. |
-| `hot_list_seed` | list \| string | `"default"` | Seed for the hot-list projection. `"default"` uses the built-in freq+recency seeding; a list of qualified action names (e.g. `["skill__index_docs"]`) pins those as the initial hot list before usage stats accumulate. |
+| `hot_list_seed` | list \| string | `"default"` | Seed for the hot-list projection. `"default"` uses the built-in freq+recency seeding; a list of qualified action names (e.g. `["mcp__call_tool"]`) pins those as the initial hot list before usage stats accumulate. |
 
 ### Quick-start — opt out
 
@@ -688,9 +688,9 @@ action_retrieval:
 
 When enabled (default), the chat router's `tools=` includes the wrappers at the tail.  The LLM can call:
 
-- `list_actions(category=["skill"])` → enumerate available skills as qualified names (e.g. `skill__index_docs`)
-- `describe_action(action_name="skill__index_docs")` → fetch the input schema
-- `invoke_action(action_name="skill__index_docs", args={...})` → execute via the existing handler
+- `list_actions(category=["mcp"])` → enumerate available actions in a category as qualified names (e.g. `mcp__call_tool`)
+- `describe_action(action_name="mcp__call_tool")` → fetch the input schema
+- `invoke_action(action_name="mcp__call_tool", args={...})` → execute via the existing handler
 
 Resource categories (`mcp.server`, `rag_corpus`, `memory_entry`, …) also support `invoke_action`.  Unknown action names return a structured error with `suggestions` ranked by string similarity, so the LLM recovers in one turn.
 
@@ -818,8 +818,8 @@ cron:
 ### Cross-references
 
 - `docs/reference/cli/cron.md` — `reyn cron run/list/status`
-- `docs/concepts/data-retrieval/operational-intelligence.md` — `index_events` /
-  `ops_report` use-cases
+- `docs/concepts/data-retrieval/operational-intelligence.md` — scheduling a
+  recurring events-log indexing agent
 
 ## `permissions` block
 

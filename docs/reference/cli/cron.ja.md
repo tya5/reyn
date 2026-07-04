@@ -7,7 +7,7 @@ applies_to: [reyn cron]
 
 # `reyn cron`
 
-cron スケジュール駆動のスキル実行を管理します。ジョブは `reyn.yaml` の `cron.jobs` に宣言し、スケジューラーは各有効ジョブを cron 式のタイミングで `reyn run` と同じヘッドレス `Agent.run` パスで実行します。
+cron スケジュール駆動のジョブを実行・確認します。ジョブは `reyn.yaml` の `cron.jobs` に宣言し、スケジューラーは各有効ジョブを cron 式のタイミングでメッセージ（`to` + `message`）として named agent の inbox に配送します（`sender="cron:<name>"` 付き）。
 
 ## 概要
 
@@ -36,7 +36,7 @@ reyn cron run
 1. `reyn.yaml` の `cron.jobs` を読み込みます。
 2. 各有効ジョブについて、cron 式から次回実行時刻を計算します。
 3. 有効ジョブの一覧と次回実行時刻を含む起動バナーを表示します。
-4. 各ジョブを独立した asyncio タスクで実行します。タスクは次回実行時刻までスリープし、時刻になったら `Agent.run` でスキルを実行します。
+4. 各ジョブを独立した asyncio タスクで実行します。タスクは次回実行時刻までスリープし、時刻になったらジョブのメッセージを対象 agent の inbox に push します（`sender="cron:<name>"`）。agent の router loop がそれを通常の attributed turn として処理します。スタンドアロン/フォアグラウンドモード（稼働中の `AgentRegistry` が無い場合）では配送はエラーになります — このモードは対象 agent が `reyn web` 側で稼働しているジョブに向いています。
 5. Ctrl-C 時は実行中ジョブの完了を最大 5 秒待ってからクリーンに終了します。
 
 **例:**
@@ -44,8 +44,8 @@ reyn cron run
 ```bash
 $ reyn cron run
 Started cron scheduler with 2 enabled job(s):
-  • index_events_hourly  (0 */6 * * *)  next: 2026-05-16T18:00:00+00:00
-  • weekly_ops_report    (0 9 * * MON)  next: 2026-05-19T09:00:00+00:00
+  • morning_news       (0 9 * * *)     next: 2026-05-16T09:00:00+00:00
+  • weekly_ops_report  (0 9 * * MON)   next: 2026-05-19T09:00:00+00:00
 ^C
 Cron scheduler stopped.
 ```
@@ -68,9 +68,9 @@ reyn cron list
 **出力形式:**
 
 ```
-NAME                     SKILL          SCHEDULE        ENABLED  NEXT RUN
-index_events_hourly      index_events   0 */6 * * *     true     2026-05-16T18:00:00+00:00
-weekly_ops_report        ops_report     0 9 * * MON     true     2026-05-19T09:00:00+00:00
+NAME                     TO             SCHEDULE        ENABLED  NEXT RUN
+morning_news             news_agent     0 9 * * *       true     2026-05-16T09:00:00+00:00
+weekly_ops_report        ops_agent      0 9 * * MON     true     2026-05-19T09:00:00+00:00
 ```
 
 ジョブが設定されていない場合:
@@ -99,9 +99,9 @@ reyn cron status
 **出力形式（スタンドアロンモード）:**
 
 ```
-NAME                     SKILL          SCHEDULE        ENABLED  NEXT RUN                    LAST RUN AT   LAST STATUS   LAST ERROR
-index_events_hourly      index_events   0 */6 * * *     true     2026-05-16T18:00:00+00:00   -             -             -
-weekly_ops_report        ops_report     0 9 * * MON     true     2026-05-19T09:00:00+00:00   -             -             -
+NAME                     TO             SCHEDULE        ENABLED  NEXT RUN                    LAST RUN AT   LAST STATUS   LAST ERROR
+morning_news             news_agent     0 9 * * *       true     2026-05-16T09:00:00+00:00   -             -             -
+weekly_ops_report        ops_agent      0 9 * * MON     true     2026-05-19T09:00:00+00:00   -             -             -
 ```
 
 **Exit codes:**
@@ -112,32 +112,35 @@ weekly_ops_report        ops_report     0 9 * * MON     true     2026-05-19T09:0
 
 ## 設定
 
-ジョブは `reyn.yaml` の `cron.jobs` に宣言します。各エントリがスケジュールされたスキル実行 1 件に対応します。
+ジョブは `reyn.yaml` の `cron.jobs` に宣言します。各エントリがスケジュールされたメッセージ配送 1 件に対応します。
 
 ```yaml
 cron:
   jobs:
-    - name: index_events_hourly
-      skill: index_events
-      schedule: "0 */6 * * *"
-      input: {}
+    - name: morning_news
+      to: news_agent
+      message: "今日の主要ニュースをまとめて"
+      schedule: "0 9 * * *"
       enabled: true
 
     - name: weekly_ops_report
-      skill: ops_report
+      to: ops_agent
+      message: "週次運用レポートを生成して"
       schedule: "0 9 * * MON"
-      input:
-        report_period: weekly
       enabled: true
 ```
 
 | フィールド | 必須 | 説明 |
 |-----------|------|------|
-| `name` | はい | ジョブの一意な識別子。ログメッセージや（将来の）ステータス照会で使用されます。 |
-| `skill` | はい | 実行するスキル名。標準のスキル検索順（`reyn/project/` → `reyn/local/` → stdlib）で解決されます。 |
+| `name` | はい | ジョブの一意な識別子。ログメッセージやステータス照会で使用されます。 |
+| `to` | はい | 対象 agent 名。メッセージは `sender="cron:<name>"` 付きでその inbox に配送されます。 |
+| `message` | はい | 対象 agent に配送される自由形式テキスト。 |
 | `schedule` | はい | 5 フィールドの cron 式（分 時 日 月 曜日）。 |
-| `input` | いいえ | `Agent.run(skill, input)` に渡す初期入力アーティファクト。デフォルトは `{}`。 |
+| `notify` | いいえ | opt-in の unattended 通知チャンネル（例: `"telegram"`）。デフォルトは event-log のみ。 |
+| `input` | いいえ | ジョブに付随する追加入力 dict。デフォルトは `{}`。 |
 | `enabled` | いいえ | `false` にするとエントリを削除せずに無効化できます。デフォルトは `true`。 |
+
+`to` + `message` を持たない bare な `skill` 名だけのジョブ形は config load 時に `ValueError` で拒否されます — cron ジョブはメッセージベースであり、スキルの直接実行ではありません。
 
 完全なスキーマについては [Reference: `reyn.yaml`](../config/reyn-yaml.md) を参照してください。
 
@@ -171,4 +174,4 @@ cron:
 - [Reference: `reyn.yaml`](../config/reyn-yaml.md) — `cron:` 設定ブロック
 - [コンセプト: Operational Intelligence](../../concepts/data-retrieval/operational-intelligence.md) — スケジュール実行のユースケース
 - [コンセプト: A2A プロトコル](../../concepts/multi-agent/a2a.md) — `RunRegistry` パターンと将来の Web モードステータス API
-- [Reference: `reyn run-once`](run-once.md) — ヘッドレス単発実行（同じ Agent.run パス）
+- [Reference: `reyn run-once`](run-once.md) — ヘッドレス単発 agent 実行(cron の inbox メッセージ配送とは別の dispatch パス)
