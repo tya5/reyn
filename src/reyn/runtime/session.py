@@ -810,7 +810,7 @@ class Session:
         # authorized set — visible ⊆ authorized by construction. In-memory (step1 live); step2 will
         # persist it to the per-session config.yaml so resolved_profile_for(sid) re-derives it.
         self._visibility_override: "dict[str, set[str]]" = {
-            "tool": set(), "mcp": set(), "category": set(),
+            "tool": set(), "mcp": set(), "category": set(), "skill": set(),
         }
         # #2285: session-scoped hook APPLICABILITY override — hook names the user disabled via the
         # status-bar. The HookDispatcher (per-session) skips a hook whose name is in this set at
@@ -2228,22 +2228,43 @@ class Session:
         self._contextual_permission = final_ctx
         self._excluded_categories = final_excl
 
+    def _reapply_skill_visibility(self) -> None:
+        """#2548 PR-B: recompute the live skill list from the base registered set minus the session override.
+
+        Mutates ``_router_host._available_skills`` so the next turn's ``get_available_skills()``
+        returns the filtered view. Re-derives from ``self._available_skills`` (the base registered
+        set captured at construction / reapply) so toggle-ON correctly restores a skill — it is NOT
+        a union of the current view, which would lose previously-disabled skills."""
+        base = self._available_skills or []
+        disabled = self._visibility_override.get("skill", set())
+        filtered = [s for s in base if s.name not in disabled]
+        self._router_host._available_skills = filtered or None
+
     def set_capability_visible(self, kind: str, name: str, visible: bool) -> None:
-        """#2285: toggle the session-visibility of a tool / mcp / category (status-bar seam).
+        """#2285: toggle the session-visibility of a tool / mcp / category / skill (status-bar seam).
 
         ``visible=False`` hides it from the LLM catalog next turn; ``visible=True`` restores it —
         but only UP TO the agent envelope (toggling ON a capability the envelope denies is a no-op
         for visibility: ``_reapply_visibility_override`` re-resolves from base, which still denies
-        it). Session-scoped (this sid only); live next turn; persists across restart (step2)."""
+        it). Session-scoped (this sid only); live next turn; persists across restart (step2).
+
+        For ``kind="skill"``: restrict-only within the registered set — disabling a skill name not
+        in the registered set is silently ignored (no error; the override is a no-op). Enabling a
+        skill name not in the registered set is also silently ignored (can never re-grant beyond the
+        registered set). ``_reapply_skill_visibility`` re-derives the filtered list from
+        ``_available_skills`` (the base registered set) each time."""
         if kind not in self._visibility_override:
             raise ValueError(
-                f"unknown capability kind {kind!r} (expected tool / mcp / category)"
+                f"unknown capability kind {kind!r} (expected tool / mcp / category / skill)"
             )
         if visible:
             self._visibility_override[kind].discard(name)
         else:
             self._visibility_override[kind].add(name)
-        self._reapply_visibility_override()
+        if kind == "skill":
+            self._reapply_skill_visibility()
+        else:
+            self._reapply_visibility_override()
         self._persist_visibility_override()  # #2285 step2 — survive restart (best-effort)
 
     def capability_visibility_state(self) -> dict:
@@ -2253,9 +2274,9 @@ class Session:
         delegate ∩ per-session config, WITHOUT the visibility override) — the full togglable
         universe. ``hidden_by_session`` = the override set (what the user turned OFF). The UI renders
         ``on = item not in hidden_by_session``. authorized is computed from the live catalogs
-        (tools / mcp / categories) filtered by the envelope's ``allows`` — so it always
+        (tools / mcp / categories / skills) filtered by the envelope's ``allows`` — so it always
         reflects visible ⊆ authorized (nothing outside the envelope is ever togglable).
-        Kind ∈ tool / mcp / category."""
+        Kind ∈ tool / mcp / category / skill."""
         from reyn.security.permissions.effective import CapabilityAxis, ContextualLayer
         from reyn.tools import get_default_registry
         from reyn.tools.universal_catalog import CATEGORIES
@@ -2279,6 +2300,9 @@ class Session:
         for category in CATEGORIES:
             if category not in base_excl:
                 authorized.append({"kind": "category", "name": category})
+        # #2548 PR-B: skills are togglable per-session; the registered base set is the envelope.
+        for entry in (self._available_skills or []):
+            authorized.append({"kind": "skill", "name": entry.name})
 
         hidden = [
             {"kind": kind, "name": name}
@@ -2363,9 +2387,10 @@ class Session:
         state_dir = self._toggle_store_dir()
         # Reset to a clean baseline first so the load fully re-derives from THIS (final) state dir —
         # idempotent + leak-free if called more than once or after the per-session dir is re-keyed.
-        self._visibility_override = {"tool": set(), "mcp": set(), "category": set()}
+        self._visibility_override = {"tool": set(), "mcp": set(), "category": set(), "skill": set()}
         self._disabled_hooks = set()
         loaded_visibility = False
+        loaded_skill_visibility = False
         try:
             vpath = state_dir / "visibility.yaml"
             if vpath.is_file():
@@ -2376,6 +2401,11 @@ class Session:
                         if isinstance(vals, list):
                             self._visibility_override[kind] = {str(v) for v in vals}
                             loaded_visibility = True
+                    # #2548 PR-B: restore skill visibility override
+                    skill_vals = data.get("skill")
+                    if isinstance(skill_vals, list):
+                        self._visibility_override["skill"] = {str(v) for v in skill_vals}
+                        loaded_skill_visibility = True
         except Exception as exc:  # noqa: BLE001
             logger.warning("#2285: load visibility override failed: %r", exc)
         try:
@@ -2389,6 +2419,8 @@ class Session:
             logger.warning("#2285: load hook disabled-set failed: %r", exc)
         if loaded_visibility:
             self._reapply_visibility_override()  # only re-resolve when something was actually loaded
+        if loaded_skill_visibility:
+            self._reapply_skill_visibility()  # #2548 PR-B: restore skill filter on the host
 
     def hook_state(self) -> "list[dict]":
         """#2285: the status-bar's hook read model — each NAMED hook in this session's merged
@@ -3170,6 +3202,7 @@ class Session:
         hr.register_seam("per_agent_capability", self._reapply_per_agent_capability)
         hr.register_seam("new_agent", self._reapply_new_agent)
         hr.register_seam("hooks", self._reapply_hooks)  # #2073 S2b (global hooks)
+        hr.register_seam("skills", self._reapply_skills)  # #2548 PR-B: skills hot-reload
 
     def _build_hook_registry(self, in_set: "dict | None" = None) -> "object":
         """Build the LAYERED hook registry — the three-layer COMBINE (#2073 S2b + the
@@ -3292,6 +3325,45 @@ class Session:
         in-memory tool cache changed."""
         result = await self.refresh_mcp_servers()
         return bool(result.get("refreshed"))
+
+    async def _reapply_skills(self, in_set: dict) -> bool:
+        """Reapply the skill registry (#2548 PR-B) — re-read the full config cascade
+        (OUT-set reyn.yaml ∪ IN-set .reyn/config/skills.yaml) to rebuild the merged skill
+        list, then update the LIVE available_skills on BOTH holders the Session owns
+        (self._available_skills = base registered set; self._router_host._available_skills =
+        filtered view after the per-session visibility override).
+
+        The OUT-set (reyn.yaml-declared skills) survives because the full cascade merge
+        in load_config() always includes it — the hot-reload never drops OUT-set entries.
+
+        ``in_set`` is ignored; the full cascade re-read is the correct source (same pattern
+        as refresh_mcp_servers roster re-read for the MCP roster gap fix). Returns True
+        iff the base registered set actually changed."""
+        from reyn.config.loader import load_config
+        from reyn.data.skills.registry import build_skill_registry
+        try:
+            fresh_cfg = load_config(self._hot_reload_project_root())
+            new_skills = build_skill_registry(fresh_cfg.skills)
+        except Exception as exc:  # noqa: BLE001 — skills re-read is best-effort
+            logger.warning("_reapply_skills: config re-read failed: %r", exc)
+            return False
+        old_names = {s.name for s in (self._available_skills or [])}
+        new_names = {s.name for s in new_skills}
+        if old_names == new_names:
+            # Check if any entry fields changed (description / path / enabled / auto_invoke).
+            old_map = {s.name: s for s in (self._available_skills or [])}
+            if all(
+                new_s.description == old_map[new_s.name].description
+                and new_s.path == old_map[new_s.name].path
+                and new_s.enabled == old_map[new_s.name].enabled
+                and new_s.auto_invoke == old_map[new_s.name].auto_invoke
+                for new_s in new_skills
+            ):
+                return False  # no change
+        # Update the base registered set (Session) + the filtered view (router_host).
+        self._available_skills = new_skills or None
+        self._reapply_skill_visibility()  # re-derives router_host._available_skills from new base
+        return True
 
     async def _reapply_per_agent_capability(self, in_set: dict) -> bool:
         """Reapply the per-agent capability (#2073 S2) — Session-orchestrated. Re-read
