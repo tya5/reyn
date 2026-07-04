@@ -261,7 +261,7 @@ class InterventionRegistry:
         # applies. Returning the iv signals "ready to dispatch again".
         return iv
 
-    # ── Bus interface (called by ChatInterventionBus from skills) ────────────
+    # ── Bus interface (called by ChatInterventionBus from chat turns) ────────────
 
     async def dispatch(self, iv: UserIntervention) -> InterventionAnswer:
         """Register *iv* in the queue, announce or signal queued status, then
@@ -494,7 +494,7 @@ class InterventionRegistry:
                     exc_info=True,
                 )
         # answer is intentionally unused at this layer; L6 wires it through
-        # to the resuming skill via the watcher.
+        # to the resuming run via the watcher.
         del answer
 
     # ── Slash-command id-prefix lookup ───────────────────────────────────────

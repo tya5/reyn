@@ -17,7 +17,7 @@ The dependency graph is:
 All heavy objects are created once via module-level singletons and exposed
 as FastAPI Depends callables so the router files stay thin.
 
-Per P7: no skill-specific strings anywhere in this module. All engine data
+Per P7: no domain-specific strings anywhere in this module. All engine data
 is treated as opaque from the gateway's perspective.
 """
 from __future__ import annotations

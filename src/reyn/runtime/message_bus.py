@@ -12,7 +12,7 @@ Quiescence predicate (ADR-E):
         has dispatched all of them).
     (b) The agent's inbox is empty.
 
-P7: no skill-specific strings are embedded here.
+P7: no domain-specific strings are embedded here.
 """
 from __future__ import annotations
 

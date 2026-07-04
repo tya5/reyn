@@ -150,7 +150,7 @@ class OpContext:
     # FP-0008 #1115 Stage 2 (D): phase-level default SandboxPolicy (dict of
     # SandboxPolicy kwargs) declared in the phase frontmatter. When set, the
     # sandboxed_exec handler builds the policy from this (phase-default WINS over
-    # the op's own fields) so a skill declares the policy once + the LLM cannot
+    # the op's own fields) so a phase declares the policy once + the LLM cannot
     # override it (deterministic + P8-clean). None → use the op-level fields.
     default_sandbox_policy: dict | None = None
 

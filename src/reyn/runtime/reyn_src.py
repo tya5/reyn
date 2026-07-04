@@ -27,7 +27,7 @@ tracked separately as a packaging-side change (``MANIFEST.in`` /
 ``package-data``) — not part of this MVP.
 
 P7-clean: this module is OS infrastructure; it carries no
-skill-specific strings.
+domain-specific strings.
 """
 from __future__ import annotations
 

@@ -55,11 +55,10 @@ class EventLog:
         # (= tests + emit_cli_event) that don't have a session identity.
         self._agent_id = agent_id
         # Issue #134: run_id is auto-injected into every event payload
-        # when set, mirroring the agent_id pattern. The skill run that
+        # when set, mirroring the agent_id pattern. The run that
         # emits the event is recorded so that subscribers (= forwarder /
-        # TUI) can distinguish events from a parent skill versus a
-        # sub-skill spawned via the ``run_skill`` op (which currently
-        # inherits the parent's subscriber list).
+        # TUI) can distinguish events from a parent agent turn versus a
+        # sub-agent turn (which inherits the parent's subscriber list).
         self._run_id = run_id
 
     @property
@@ -109,8 +108,7 @@ class EventLog:
             data = {**data, "agent_id": self._agent_id}
         # Issue #134: stamp run_id with the same caller-wins convention
         # as agent_id. Lets subscribers route events to the correct
-        # skill row when a child skill spawned via ``run_skill`` shares
-        # the parent's subscriber list.
+        # row when a child agent shares the parent's subscriber list.
         if self._run_id and "run_id" not in data:
             data = {**data, "run_id": self._run_id}
         event = Event(type=type, data=data)

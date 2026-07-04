@@ -86,9 +86,9 @@ class ChatInterventionBus:
         self._run_id = run_id
         self._actor = actor
         # issue #268 Phase 2 continuation: optional channel_id stamping.
-        # Production wiring (= Session._build_intervention_bus_for_skill)
+        # Production wiring (= Session._build_intervention_bus_for_run)
         # passes the session's canonical channel_id (e.g. "tui") so
-        # skill-emitted ivs carry provenance for cross-channel routing.
+        # emitted ivs carry provenance for cross-channel routing.
         # Test fixtures that construct ChatInterventionBus directly
         # without passing channel_id see unchanged behaviour (= no
         # stamping → no stall check → existing dispatch path).
@@ -127,7 +127,7 @@ class ChatInterventionBus:
         # PR-intervention-link L6: short-circuit if a previous (crashed-then-
         # restored) run's intervention was already answered post-restart.
         # The L5 watcher buffered the answer keyed by run_id; the resuming
-        # skill's first ask_user picks it up here without dispatching a
+        # run's first ask_user picks it up here without dispatching a
         # duplicate prompt.
         if iv.run_id is not None:
             buffered = self._session.consume_buffered_intervention_answer(iv.run_id)

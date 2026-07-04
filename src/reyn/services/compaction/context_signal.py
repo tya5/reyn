@@ -7,7 +7,7 @@ are EXACT tokens, unit-aligned with the media load-contract error
 (``free_window`` / ``media_size``), so the model reasons consistently about
 "should I compact" and "what fits now".
 
-P8-clean: OS-level vocabulary only, no skill-specific enumeration. The ``compact``
+P8-clean: OS-level vocabulary only, no domain-specific enumeration. The ``compact``
 op format itself is advertised separately (tool catalog / available_control_ops);
 this section only states the budget + a neutral pointer.
 

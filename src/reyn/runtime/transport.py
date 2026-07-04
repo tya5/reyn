@@ -7,7 +7,7 @@ RoutingLayer can fan replies to the correct transport surface:
   McpRef    → one MCP JSON-RPC request (``reyn mcp serve``)
   A2aRef    → one FastAPI A2A request (``reyn web``)
   AgentRef  → peer-agent inbox (agent-to-agent delegation)
-  SystemRef → internal OS messages (skill_completed, plan_completed, etc.)
+  SystemRef → internal OS messages (task_completed, plan_completed, etc.)
 
 FP-0013: TransportRef is additive. ``reply_to=None`` on Inbox/OutboxMessage
 is interpreted as the default surface (TuiRef or SystemRef, depending on
@@ -67,7 +67,7 @@ class SystemRef:
     """Internal OS message with no external sender.
 
     Used for inbox kinds that originate from background tasks within the
-    OS (``skill_completed``, ``plan_completed``, etc.).  The routing layer
+    OS (``task_completed``, ``plan_completed``, etc.).  The routing layer
     ignores these — they are consumed by ``run()`` internally and produce
     outbox messages with whatever reply_to the turn inherited.
     """

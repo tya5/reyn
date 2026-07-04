@@ -503,7 +503,7 @@ class RouterLoopCore(Protocol):
     ONLY this (via PhaseRouterLoopHost) — no chat-extra stubs. The chat
     ``RouterHostAdapter`` is a superset and satisfies this for free.
 
-    The chat-extras (skills/agents/mcp/memory/web/file/reyn_src/embedding/
+    The chat-extras (agents/mcp/memory/web/file/reyn_src/embedding/
     discovery/spawn/send_to_agent) live on ``RouterLoopHost``
     below; they are reached only via the chat-discovery setup, the chat
     system-prompt build, or chat-dispatch handlers — a phase never reaches them
@@ -582,7 +582,7 @@ class RouterLoopHost(RouterLoopCore, Protocol):
         """Project context text (= REYN.md / `project_context_path` content),
         or empty string when the operator has not configured one. Threaded
         into the router's system prompt so the chat reply path knows about
-        the user's project — without this, only the skill execution path
+        the user's project — without this, only the phase-execution path
         sees REYN.md and casual chat queries get answered without
         project-specific context."""
         ...
@@ -984,10 +984,10 @@ def _operation_alias_metadata(
     target ``ToolDefinition.description`` and ``ToolDefinition.parameters``
     are the correct alias metadata.
 
-    Returns ``None`` for resource-category aliases (skill / agent.peer /
+    Returns ``None`` for resource-category aliases (agent.peer /
     mcp.tool / memory_entry / rag_corpus) — those route through
-    ``_RESOURCE_RULES`` whose target is a generic dispatcher (``invoke_skill``
-    etc.) whose parameters do NOT match the resource's actual input schema.
+    ``_RESOURCE_RULES`` whose target is a generic dispatcher
+    whose parameters do NOT match the resource's actual input schema.
     Those need per-resource schema introspection (D2-full).
     """
     # Late imports to avoid circular dependency at module load time.
@@ -3040,7 +3040,7 @@ class RouterLoop:
         kept calls are interpreted, executed, and appended).
 
         Scheme-agnostic (operates on the generic ``result.tool_calls`` shape, no
-        skill-specific strings — P7-clean). Emits the P6 ``tool_call_cap_exceeded``
+        domain-specific strings — P7-clean). Emits the P6 ``tool_call_cap_exceeded``
         event recording the **original attempted count** so history is bounded to
         ``kept`` while the true magnitude survives in the audit log.
 

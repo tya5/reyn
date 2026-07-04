@@ -1,4 +1,4 @@
-"""ChatLifecycleForwarder — session-scoped event subscriber for non-skill events.
+"""ChatLifecycleForwarder — session-scoped event subscriber for lifecycle events.
 
 This forwarder bridges **session-level lifecycle events** into the chat
 outbox:
@@ -10,7 +10,7 @@ outbox:
 
 Designed for growth — additional lifecycle handlers (attach / detach
 notifications, budget warnings, session-level errors) can land here
-without expanding the skill forwarder's per-skill contract.
+without expanding the lifecycle forwarder's per-handler contract.
 
 Wired up in :class:`reyn.runtime.session.Session` via
 ``self._chat_events.add_subscriber(ChatLifecycleForwarder(self.outbox))``.
@@ -306,8 +306,8 @@ class ChatLifecycleForwarder:
             "caller_id": data.get("caller_id"),
         }
         # Surface run_id when present so consumers can attribute the
-        # row to a parent skill thread (= sub-skill spawned tool calls
-        # carry the spawned skill's run_id from the dispatcher's caller_id).
+        # row to a parent agent thread (= sub-agent spawned tool calls
+        # carry the spawned run's run_id from the dispatcher's caller_id).
         run_id = data.get("run_id") or data.get("caller_id")
         if run_id:
             meta["run_id"] = run_id

@@ -110,14 +110,13 @@ def list_secret_keys(path: Path | None = None) -> list[str]:
 
 
 class CredentialScopeError(PermissionError):
-    """Raised when a skill attempts to read a credential outside its declared scope (FP-0016 D)."""
+    """Raised when a caller attempts to read a credential outside its declared scope (FP-0016 D)."""
 
 
 class ScopedSecretStore:
-    """Per-skill read-only view of the secret store (FP-0016 Component D).
+    """Per-agent scoped read-only view of the secret store (FP-0016 Component D).
 
-    Constructed at the run_skill boundary from the sub-skill's
-    `required_credentials` declaration in skill.md frontmatter. Reads
+    Constructed from the agent's `required_credentials` declaration. Reads
     outside the allowed set raise CredentialScopeError. The literal "*"
     in allowed_keys means full delegation (= unrestricted view, preserves
     pre-FP-0016 behaviour for backward compat).

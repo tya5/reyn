@@ -5,7 +5,7 @@ NOT enforced at emit() runtime (to keep production overhead zero); each
 feature's invariant test asserts that its event kinds are declared here
 with the required fields.
 
-P7 note: kind names here are OS-level event kinds, not skill-specific
+P7 note: kind names here are OS-level event kinds, not domain-specific
 identifiers, so this file stays within the OS layer's allowed vocabulary.
 """
 
@@ -15,7 +15,7 @@ from __future__ import annotations
 EVENT_AUDIT_REQUIREMENTS: dict[str, frozenset[str]] = {
     # LLM cost events (llm.py _emit_chat_cost_events — cost-tab observability).
     # Minimal fields: llm_called carries model, llm_response_received carries the
-    # usage/cost figures. skill is derived from the events file path (not an event
+    # usage/cost figures. agent is derived from the events file path (not an event
     # field), and run_id is not threaded on this path.
     "llm_called": frozenset({"model"}),
     "llm_response_received": frozenset({"prompt_tokens", "completion_tokens", "cost_usd"}),
@@ -33,7 +33,7 @@ EVENT_AUDIT_REQUIREMENTS: dict[str, frozenset[str]] = {
     "mcp_tool_loaded": frozenset({"tool_name", "server_name"}),
     # FP-0034 Phase 3: Universal catalog routing decision (Self-improvement Loop)
     # Emitted by RouterLoop when invoke_action or a hot list alias is executed.
-    # action_name: the resolved qualified_name (e.g. "skill__code_review")
+    # action_name: the resolved qualified_name (e.g. "agent.peer__alice")
     # source: how the routing happened ("invoke_action" | "hot_list_alias")
     # outcome: "success" | "error" based on the tool result status
     # chain_id: for cross-agent tracing (P6)
@@ -47,7 +47,7 @@ EVENT_AUDIT_REQUIREMENTS: dict[str, frozenset[str]] = {
     #   reserved in the schema for future analytics but NOT emitted by the router
     #   yet (both collapse to "inline_reply" at emit time).
     # tool_calls_attempted: count of tool_call rounds in earlier iterations of
-    #   this turn where the LLM did try a non-catalog tool (e.g. list_skills).
+    #   this turn where the LLM did try a non-catalog tool (e.g. an unknown tool name).
     # chain_id: for cross-agent tracing (P6)
     "chat_turn_completed_inline": frozenset({"chain_id", "decision", "tool_calls_attempted"}),
     # #1800 slice 5a: session + turn lifecycle events (P6 audit — hook dispatch

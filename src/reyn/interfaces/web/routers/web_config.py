@@ -19,7 +19,7 @@ Default-design resolution priority:
     2. reyn.yaml  web.default_design
     3. first available alphabetically
 
-Per P7: no skill-specific strings; design metadata treated as opaque config.
+Per P7: no domain-specific strings; design metadata treated as opaque config.
 """
 from __future__ import annotations
 

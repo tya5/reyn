@@ -80,8 +80,8 @@ class ReynConfig:
     )
     # Optional. None = user did not configure; downstream callers decide
     # how to handle (chat router skips the language directive in its
-    # system prompt; phase / skill paths default to "ja" preserving the
-    # Japanese-enterprise default for skill artifacts). Setting an
+    # system prompt; absent means the router defaults to "ja" preserving the
+    # Japanese-enterprise default). Setting an
     # explicit value (e.g. "ja", "en") forces a strict directive in the
     # chat router prompt — see `_ROUTER_RETRY_EXHAUSTED_MSG` and
     # `build_system_prompt(output_language=...)`.

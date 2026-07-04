@@ -167,7 +167,7 @@ def slash_command_completions(
 
     Returns non-hidden commands whose name starts with ``prefix`` (the text typed
     after the leading ``/``), sorted by name. Hidden commands (donut / matrix /
-    zen) are still dispatchable by name but never surface in the completion menu.
+    donut / matrix) are still dispatchable by name but never surface in the completion menu.
     Pure (no I/O) so it's directly testable.
     """
     cmds = commands if commands is not None else REGISTRY.all_commands()
@@ -273,7 +273,6 @@ from reyn.interfaces.slash import rewind as _rewind_mod  # noqa: E402, F401
 from reyn.interfaces.slash import session as _session_mod  # noqa: E402, F401
 from reyn.interfaces.slash import tasks as _tasks_mod  # noqa: E402, F401
 from reyn.interfaces.slash import visibility as _visibility_mod  # noqa: E402, F401
-from reyn.interfaces.slash import zen as _zen_mod  # noqa: E402, F401
 
 __all__ = [
     "REGISTRY",

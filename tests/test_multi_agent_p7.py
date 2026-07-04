@@ -206,10 +206,9 @@ async def test_two_simultaneous_delegations_both_resolve(tmp_path: Path):
 # Test 2: OS topology dispatch code has no skill-specific strings (P7 grep)
 # ---------------------------------------------------------------------------
 
-# Skill names that must never appear as string literals in OS-layer modules.
-# This list is the canonical set of known stdlib + internal skill names.
-# Add entries here when new skills are created — a new skill appearing in
-# OS code immediately triggers this regression net.
+# Domain-specific names that must never appear as string literals in OS-layer modules.
+# This list is the canonical set of former stdlib skill names (skills removed #2104/#2434).
+# The regression net still guards against domain-specific vocabulary leaking into OS code (P7).
 _KNOWN_SKILL_NAMES: frozenset[str] = frozenset({
     "skill_router",
     "skill_improver",

@@ -23,7 +23,7 @@ Design constraints (same pattern as Wave 1/1b/2 services):
 - Injected deps at construction (typed + Callable callbacks).
 - No direct reference to Session.
 - All state mutations go through injected event_log (P6).
-- No skill-specific strings (P7).
+- No domain-specific strings (P7).
 """
 from __future__ import annotations
 

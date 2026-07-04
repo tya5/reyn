@@ -16,7 +16,7 @@ Fallback behaviour (migration safety):
     kinds (e.g. ``__end__``) are consumed directly by the caller's loop and
     should not be re-dispatched.
 
-P7: this module contains no skill-specific strings — handler registration is
+P7: this module contains no domain-specific strings — handler registration is
 driven entirely by the caller (transport adapters).
 """
 from __future__ import annotations

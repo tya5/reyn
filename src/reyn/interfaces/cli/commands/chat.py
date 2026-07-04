@@ -108,7 +108,7 @@ def register(sub) -> None:
     # resolver layer; the effective scope is bounded by the sandbox write_paths
     # ∩ (the env-backend's repo/workspace zone), so a non-interactive / scripted
     # agent can edit a working tree without a permission prompt but cannot escape
-    # it. General capability (any chat session), not skill-specific — unlike a
+    # it. General capability (any chat session), not domain-specific — unlike a
     # skill run, a chat agent has no skill declaring `file.read`, so the flag
     # grants both read and write (mirrors the eval path, eval_benchmark.py:742).
     p.add_argument(

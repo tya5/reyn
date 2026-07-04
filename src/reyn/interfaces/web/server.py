@@ -9,7 +9,7 @@ Static mounts (PR30 — OpenUI shell):
     /static/{path}           → src/reyn/web/openui/static/
     /web/designs/{slug}/{path} → design files from three roots (project → local → stdlib)
 
-Per P7: this module contains no skill-specific strings. All engine data
+Per P7: this module contains no domain-specific strings. All engine data
 passes through as opaque JSON payloads.
 """
 from __future__ import annotations

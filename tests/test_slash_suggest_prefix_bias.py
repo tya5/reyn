@@ -33,7 +33,7 @@ _NAMES = sorted([
     "agent", "agents", "answer", "budget", "cancel", "clear-history",
     "copy", "cost", "exit", "find", "help", "image",
     "list", "memory", "plan", "quit", "reset", "save", "skill",
-    "skills", "tasks", "zen",
+    "skills", "tasks",
 ])
 
 

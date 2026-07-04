@@ -34,7 +34,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 # Default timeout — short enough that a slow webhook doesn't stall
-# the skill's ask_user dispatch path.
+# the ask_user dispatch path.
 _DEFAULT_TIMEOUT = 10.0
 
 

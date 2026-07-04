@@ -186,7 +186,7 @@ def main() -> int:
         mode = str(req.get("mode", "safe"))
         artifact = req.get("artifact", {})
         allowed_modules = frozenset(req.get("allowed_modules") or [])
-        # FP-0042: file-permission paths declared by the skill, forwarded
+        # FP-0042: file-permission paths declared by the op, forwarded
         # by the parent's PreprocessorExecutor / PythonRunner. Either may
         # be empty (= no read / write granted). The values gate every
         # ``reyn.api.safe.file.*`` call from the user step.
