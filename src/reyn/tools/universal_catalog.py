@@ -84,11 +84,13 @@ CATEGORIES: Final[tuple[str, ...]] = (
     # ``skill__`` resource category (per-skill dynamic dispatch); this is the
     # management plane — mirrors the ``mcp`` category pattern.
     "skill_management",
-    # IS-1/IS-2 (docs/proposals/reyn-pipeline-v0.9-design-resolutions.md R6):
-    # pipeline launch verbs. ``pipeline__run`` = run_pipeline (sync,
+    # IS-1/IS-2/IS-4 (docs/proposals/reyn-pipeline-v0.9-design-resolutions.md
+    # R6): pipeline launch verbs. ``pipeline__run`` = run_pipeline (sync,
     # REGISTERED-only); ``pipeline__run_async`` = run_pipeline_async (IS-2:
-    # background launch in a crash-recoverable driver-session).
-    # run_pipeline_inline / the ad-hoc-async combo join in later slices.
+    # background launch in a crash-recoverable driver-session);
+    # ``pipeline__run_inline`` / ``pipeline__run_inline_async`` (IS-4) = the
+    # ad-hoc INLINE launches of an agent-GENERATED DSL definition, gated by a
+    # static-analysis pass before spawn.
     "pipeline",
 )
 

@@ -269,7 +269,16 @@ _FLOORED_QUALIFIED: "dict[str, frozenset[str]]" = {
     # IS-2: the async launch (pipeline__run_async → run_pipeline_async) is
     # the SAME threat class — it additionally spawns a driver-session, so it
     # must not be floored looser than the sync verb.
-    "pipeline-run": frozenset({"pipeline__run", "pipeline__run_async"}),
+    # IS-4: the ad-hoc INLINE launches (pipeline__run_inline /
+    # pipeline__run_inline_async → run_pipeline_inline{,_async}) run an
+    # agent-GENERATED pipeline — an even STRICTER-to-trust surface than a
+    # registered one (no trusted registrant chose the steps), so they belong on
+    # the SAME spawn-adjacent floor. Bare aliases are auto-derived by
+    # ``_with_unwrapped_aliases`` (both have an invoke_action route).
+    "pipeline-run": frozenset({
+        "pipeline__run", "pipeline__run_async",
+        "pipeline__run_inline", "pipeline__run_inline_async",
+    }),
 }
 
 # Intentionally BARE-ONLY floored names: router-only tools with NO invoke_action
