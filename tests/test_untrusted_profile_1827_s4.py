@@ -74,7 +74,7 @@ def test_load_untrusted_malformed_falls_back_to_builtin(tmp_path: Path):
 def test_metas_have_untrusted_detects_marker():
     """Tier 2: the marker is detected regardless of which seam stamped it."""
     assert metas_have_untrusted([{"x": 1}, {UNTRUSTED_META_KEY: True}]) is True
-    assert metas_have_untrusted([{"x": 1}, {"answered_skill": "s"}]) is False
+    assert metas_have_untrusted([{"x": 1}, {"answered_actor": "s"}]) is False
     assert metas_have_untrusted([]) is False
     assert metas_have_untrusted(None) is False  # non-iterable is safe
 

@@ -934,7 +934,7 @@ def _build_hot_list_aliases(
         # external sites") and refuses, or hallucinates control-character
         # tool-call text. The FP-0034 D2 "hot list direct alias は full
         # schema 提供" intent is realised here for the passthrough
-        # categories; resource categories (skill__X / agent.peer__X /
+        # categories; resource categories (agent.peer__X /
         # mcp.tool__X.Y / memory_entry__X / rag_corpus__X) need per-
         # resource schema introspection and are out of scope for D2-min.
         rich = _operation_alias_metadata(name) or _resource_alias_metadata(
@@ -1377,7 +1377,7 @@ class RouterLoop:
         host = self.host
         # #1092 PR-A (FD1, ADR-0036): catalog-source REPLACE seam. A phase host
         # supplies its op tool catalog (allowed_ops via _build_phase_tool_catalog),
-        # which REPLACES chat-discovery — a phase has no skills/agents/mcp/universal
+        # which REPLACES chat-discovery — a phase has no actions/agents/mcp/universal
         # (#1212 PR3 decision A). getattr-fallback so chat / plan-step hosts (no such
         # method) keep the existing chat-discovery tool-build byte-identically.
         _phase_op_catalog_getter = getattr(host, "get_phase_op_catalog", None)
@@ -1537,7 +1537,7 @@ class RouterLoop:
                 # B38 W2: registry-existence check — filter names that pass
                 # structural validation but no longer resolve to a real action
                 # in the current session registry. Runs after get_top_n so
-                # RouterState (skill / mcp / agent registry) is available.
+                # RouterState (mcp / agent registry) is available.
                 _top_names = _filter_ghost_names_by_registry(
                     _top_names,
                     mcp_tool_map=_mcp_tool_map or None,
@@ -2100,7 +2100,7 @@ class RouterLoop:
                 if async_count:
                     # B55 R-7 (2026-05-25): non-plan async dispatch (=
                     # delegate_to_agent or other peer-async tools). Mirror
-                    # skill / plan spawn_ack format: `[task_spawned]
+                    # task / plan spawn_ack format: `[task_spawned]
                     # kind=agent ...` header + user-facing trailer so the
                     # SP TASK_SPAWNED rule covers this path too. Prior
                     # behaviour pushed a generic `status` row with no
@@ -2802,7 +2802,7 @@ class RouterLoop:
             caller_kind="router",
             router_state=rs,
             # #1673: thread the config-aware resolver so a tool handler that spawns
-            # a sub-run (invoke_skill) hands the spawned OpContext a real resolver
+            # a sub-run hands the spawned OpContext a real resolver
             # instead of resolver=None (→ literal "standard" → litellm BadRequestError).
             resolver=getattr(self.host, "resolver", None),
             hot_reloader=getattr(self.host, "hot_reloader", None),  # #2073 S3
@@ -3482,7 +3482,7 @@ class RouterLoop:
             caller_kind="router",
             router_state=rs,
             # #1673: thread the config-aware resolver so a tool handler that spawns
-            # a sub-run (invoke_skill) hands the spawned OpContext a real resolver
+            # a sub-run hands the spawned OpContext a real resolver
             # instead of resolver=None (→ literal "standard" → litellm BadRequestError).
             resolver=getattr(self.host, "resolver", None),
             hot_reloader=getattr(self.host, "hot_reloader", None),  # #2073 S3
