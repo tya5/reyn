@@ -368,7 +368,8 @@ def load_config(cwd: Path | None = None) -> ReynConfig:
         # name collision with operator-edited reyn.yaml skill entries.
         # Shape: {"skills": {"entries": {<name>: {<entry>}}}} — same
         # as the skills section in reyn.yaml, handled by _merge skills
-        # branch above. NOT added to _HOT_RELOAD_FILES (per spec).
+        # branch above. #2548 PR-B: this file is also in _HOT_RELOAD_FILES
+        # (the IN-set) so skill declarations hot-reload at the turn boundary.
         dynamic_skills = _load_yaml(project_root / ".reyn" / "config" / "skills.yaml")
         merged = _merge(merged, dynamic_skills)
 
