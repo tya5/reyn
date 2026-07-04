@@ -12,7 +12,7 @@ if TYPE_CHECKING:
 @slash("list", summary="List pending interventions")
 async def list_cmd(session: "Session", args: str) -> None:
     """``/list`` — show pending interventions."""
-    lines: list[str] = ["running skills: (none)"]
+    lines: list[str] = ["running tasks: (none)"]
     active_ivs = session._interventions.list_active()
     if active_ivs:
         lines.append("pending interventions:")

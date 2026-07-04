@@ -1,4 +1,4 @@
-"""``/reset`` — wipe in-flight skill state from inside the TUI.
+"""``/reset`` — wipe in-flight run state from inside the TUI.
 
 The pre-existing ``reyn chat --reset`` CLI flag prompts for confirmation
 via ``input()`` BEFORE the TUI mounts, so users who realise mid-session
@@ -25,19 +25,19 @@ from reyn.interfaces.slash import reply, reply_error, slash
 
 @slash(
     "reset",
-    summary="Reset in-flight skill state (snapshots + WAL; audit logs preserved)",
+    summary="Reset in-flight run state (snapshots + WAL; audit logs preserved)",
     usage="/reset confirm",
-    see_also=("docs/guide/for-skill-authors/crash-recovery-and-resume.md",),
+    see_also=("docs/guide/crash-recovery-and-resume.md",),
 )
 async def reset_cmd(session: "object", args: str) -> None:
     token = args.strip().lower()
     if token != "confirm":
         await reply(
             session,
-            "⚠ This will delete all in-flight skill state "
+            "⚠ This will delete all in-flight run state "
             "(snapshots + WAL). Audit logs are preserved.\n"
             "Type `/reset confirm` to proceed, or anything else to abort.\n"
-            "See docs/guide/for-skill-authors/crash-recovery-and-resume.md "
+            "See docs/guide/crash-recovery-and-resume.md "
             "for what snapshots+WAL hold.",
         )
         return

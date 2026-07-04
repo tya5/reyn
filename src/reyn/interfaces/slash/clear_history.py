@@ -1,13 +1,13 @@
 """``/clear-history`` — wipe chat history + action-usage table.
 
-Sibling to ``/reset`` (skill state) at a different scope: this command
+Sibling to ``/reset`` (run state) at a different scope: this command
 clears the conversation thread (``Session.history`` + per-agent
 ``history.jsonl``) and the action-usage tracker (= the ranking that
 backs the Memory tab's hot-list augmentation, persisted at
 ``.reyn/agents/<name>/action_usage.json`` — #2357 docstring-drift fix). Everything else stays intact:
 
 - ``.reyn/events/``                (P6 audit truth — never touched)
-- ``.reyn/state/wal.jsonl``        (skill resume — preserved)
+- ``.reyn/state/wal.jsonl``        (run resume — preserved)
 - ``.reyn/agents/<n>/state/``      (snapshot.json / plans / skills)
 - ``profile.yaml`` / MEMORY.md     (non-runtime config)
 - ``.input_history``               (operator's typed history)
@@ -51,7 +51,7 @@ def _format_currently_line(session: "object") -> str:
     aliases=("clear",),
     summary=(
         "Clear conversation history + action-usage table (= events, "
-        "skill state, profile preserved)"
+        "run state, profile preserved)"
     ),
     usage="/clear-history confirm",
 )
@@ -64,7 +64,7 @@ async def clear_history_cmd(session: "object", args: str) -> None:
             session,
             f"{preamble}"
             "⚠ This will clear the chat history and the action-usage "
-            "ranking. Audit logs (.reyn/events/), in-flight skill state "
+            "ranking. Audit logs (.reyn/events/), in-flight run state "
             "(WAL + snapshots), agent profile, and MEMORY.md are all "
             "preserved.\n"
             "Type `/clear-history confirm` to proceed, or anything else "
@@ -119,5 +119,5 @@ async def clear_history_cmd(session: "object", args: str) -> None:
     await reply(
         session,
         "✓ Cleared: " + ", ".join(cleared_parts) + ". "
-        "Audit logs and skill state preserved.",
+        "Audit logs and run state preserved.",
     )

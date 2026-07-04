@@ -353,7 +353,7 @@ def build_server(
                 description=(
                     "Send a single user-style message to a named Reyn agent "
                     "and return its reply text. The agent decides internally "
-                    "what skills (if any) to run; multi-turn conversation "
+                    "how to respond; multi-turn conversation "
                     "accumulates because per-agent chat history persists."
                 ),
                 inputSchema={

@@ -582,7 +582,7 @@ def run_install(args: argparse.Namespace) -> None:
     ``--source SPECIFIER`` resolves server metadata from the specifier directly
     and installs via the IR op handler (permission gate, credential flow, and
     config write included). Registry-id install (positional ``SERVER_ID``) was
-    implemented via the ``mcp_install`` skill, which has been retired — it now
+    implemented via a skill that has been retired — it now
     prints a message pointing at ``--source``.
 
     When ``--non-interactive`` is set the ``REYN_MCP_INSTALL_AUTO_APPROVE``
@@ -664,11 +664,11 @@ def run_install(args: argparse.Namespace) -> None:
         return
 
     # ── Registry mode (retired) ───────────────────────────────────────────────
-    # Registry-id install was implemented via the ``mcp_install`` skill, which
-    # has been retired. Direct source installs (``--source``) remain fully
-    # supported above; registry-id resolution has no non-skill implementation.
+    # Registry-id install was implemented via a skill that has been retired.
+    # Direct source installs (``--source``) remain fully supported above;
+    # registry-id resolution has no non-skill implementation.
     print(
-        "error: 'reyn mcp install <registry-id>' (skill-based registry mode) "
+        "error: 'reyn mcp install <registry-id>' (registry mode) "
         "has been retired.\n"
         "Install directly from a source instead: "
         "'reyn mcp install --source <spec>'.",
