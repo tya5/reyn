@@ -120,9 +120,9 @@ class ReynConfig:
     tool_calls_op_loop_skills: list[str] = field(
         default_factory=list,
         metadata={"desc": (
-            "TRANSITIONAL: skill names opted into the native-tools op-loop — the "
+            "TRANSITIONAL: names opted into the native-tools op-loop — the "
             "phase act-loop drives the shared RouterLoop.run_loop (the converged "
-            "op-loop, #1092). Skills not listed use the default json-mode execution "
+            "op-loop, #1092). Names not listed use the default json-mode execution "
             "path, unchanged. Removed once the op-loop becomes the default. (#1092 "
             "PR-C-3 merged the former separate routerloop_convergence_skills gate "
             "into this one — the converged path is now the op-loop's implementation.)"
@@ -262,7 +262,7 @@ class ReynConfig:
     action_retrieval: "ActionRetrievalConfig" = field(
         default_factory=lambda: ActionRetrievalConfig(),
     )
-    # FP-0009 Component B — cron-driven scheduled skill execution.
+    # FP-0009 Component B — cron-driven scheduled message dispatch.
     # Empty by default; operator declares jobs in reyn.yaml ``cron.jobs``.
     cron: CronConfig = field(default_factory=CronConfig)
     # FP-0041 #489 PR-D2 — external chat transport routing (= Slack /

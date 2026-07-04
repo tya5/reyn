@@ -593,7 +593,7 @@ class PermissionResolver:
     ) -> bool:
         if self._is_config_approved(key):
             return True
-        # Composite keys (e.g. "skill_router/python.safe/./mod.py:fn") accept
+        # Composite keys (e.g. "<actor>/python.safe/./mod.py:fn") accept
         # a kind-level blanket grant in config (e.g. "python.safe: allow").
         # Honor the same config blanket-grant here at the
         # runtime check so config and runtime stay consistent.

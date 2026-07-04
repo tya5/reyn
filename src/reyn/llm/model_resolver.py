@@ -53,7 +53,7 @@ class ModelSpec:
     kwargs: dict[str, Any] = field(default_factory=dict)
     # #309 per-class routing (multi-provider). Explicit routing fields (NOT in
     # ``kwargs``) so a class can target its own endpoint/provider while others
-    # use the global default — e.g. router=light on a Gemini proxy + skill=
+    # use the global default — e.g. router=light on a Gemini proxy + strong=
     # capable on Anthropic-direct, simultaneously. Mirrors EmbeddingClassSpec
     # (which carries ``api_base``); ``provider`` is added for the direct-vs-proxy
     # opt-out. NO per-class api_key field by design: a literal secret must never
@@ -348,18 +348,18 @@ class ModelResolver:
     def resolve_class_or_fallback(
         self, requested: str | None, fallback: str | None, *, where: str = "",
     ) -> str:
-        """Resolve a CLASS-TYPED model selection (op/skill-supplied) closed-world.
+        """Resolve a CLASS-TYPED model selection (op- or phase-supplied) closed-world.
 
         #1454 PR-B (the unified class/name rule): a class-typed position is
         closed-world — a ``requested`` value that is NOT a known class is NOT
-        passed through as a literal LiteLLM model (that would let a
-        skill-authored / LLM-injected string bypass the proxy config, which is
+        passed through as a literal LiteLLM model (that would let an
+        LLM-injected string bypass the proxy config, which is
         the single source of truth for model selection). Returns ``requested``
         only when it is a known class; otherwise logs ONE decision-enabling
         warning and returns the trusted ``fallback``.
 
         This is the "standard gate" promotion of :meth:`is_known_class` — every
-        op/skill-supplied model field (``op.model``) routes through here rather
+        op- or phase-supplied model field (``op.model``) routes through here rather
         than each call site re-implementing the guard. Operator-config model
         references (``cfg.model`` etc., from reyn.yaml) deliberately do NOT use
         this gate: literal LiteLLM strings there are an intentional
