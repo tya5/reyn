@@ -71,7 +71,7 @@ class CodeActRunner:
         # cannot cross a ``docker exec`` boundary), so the harness must run on the
         # reyn host under the reyn-process interpreter. It deliberately does NOT
         # honor ``REYN_HARNESS_PYTHON``: that override targets the in-container
-        # #1356 *preprocessor* harness (PythonRunner), which is routed through
+        # #1356 *preprocessor* harness, which is routed through
         # ``backend.run`` (= ``docker exec``) and so needs the container's python.
         # Picking it up here pointed codeact's host Popen at a container-only path
         # (``/opt/reyn-venv/bin/python``) under ``--env-backend=docker`` → the
