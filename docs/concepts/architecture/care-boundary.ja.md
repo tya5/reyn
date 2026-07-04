@@ -145,9 +145,9 @@ Reyn は OS 層に一連の raw primitive を公開する:
 
 ### なぜこれが意図的なものか
 
-P7 は OS コードがワークフロー固有の文字列を含んではならないと定める。同じロジックが一段上にも適用される: OS はあらゆる隣接 product ニーズを吸収してはならない。吸収された機能はそれぞれ、OS が何かしらワークフロー固有あるいは consumer 固有のことを知ることを要求し、Reyn を拡張可能にしている抽象を破壊する。
+P7 は OS コードがドメイン固有の文字列を含んではならないと定める。同じロジックが一段上にも適用される: OS はあらゆる隣接 product ニーズを吸収してはならない。吸収された機能はそれぞれ、OS が何かしらドメイン固有あるいは consumer 固有のことを知ることを要求し、Reyn を拡張可能にしている抽象を破壊する。
 
-したがって care boundary は上述の LLM-behavior split だけを意味するのではない — 上位 product が自分で build すべきものの下方限界も定義する。Reyn を基盤として使えるほど小さく保つことが、基盤としての有用性を守る。analytics platform であり deployment runtime であり eval service でもある OS は、あらゆる場面でワークフロー固有の知識を必要とし — P7 違反の連鎖を生む。
+したがって care boundary は上述の LLM-behavior split だけを意味するのではない — 上位 product が自分で build すべきものの下方限界も定義する。Reyn を基盤として使えるほど小さく保つことが、基盤としての有用性を守る。analytics platform であり deployment runtime であり eval service でもある OS は、あらゆる場面でドメイン固有の知識を必要とし — P7 違反の連鎖を生む。
 
 ### Landscape からの具体例
 
@@ -181,7 +181,7 @@ pre-1.0 の安定性注意書きが適用される: これらの contract はま
 
 ### contributor へのソフトな境界線
 
-新機能を評価するとき、問う: 「これを提供するために Reyn はワークフロー固有あるいは consumer 固有のことを知る必要があるか?」
+新機能を評価するとき、問う: 「これを提供するために Reyn はドメイン固有あるいは consumer 固有のことを知る必要があるか?」
 
 もし yes なら — 「成功した会話」が何を意味するかを OS が理解する必要がある、あるいはどの consumer のためにどの event を集計するかを知る必要がある、あるいはどの deployment 環境にどの retry policy が合うかを知る必要がある — それは downstream layer に属し、OS には属さない。これはニーズの否定ではない; 責任の正しい割り当てだ。OS が primitive を提供し、downstream layer が product を提供する。
 

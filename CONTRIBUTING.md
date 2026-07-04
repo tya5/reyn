@@ -102,9 +102,10 @@ hard rules:
 - **P5** All inter-phase data lives in the workspace. Phases read and write
   only through Control IR.
 - **P6** Every state change emits an event. The event log is append-only.
-- **P7** OS code must not contain skill-specific strings (phase names, artifact
-  types, field names). This is the most commonly violated rule — read the
-  detection guidance in `CLAUDE.md` before touching `src/reyn/`.
+- **P7** OS code must not contain domain-specific strings (phase names, artifact
+  types, field names). This is the most commonly violated rule — grep for a
+  literal naming a specific phase, artifact type, or field before touching
+  `src/reyn/`.
 - **P8** Phase instructions describe what/when/domain rules. They must not
   enumerate output artifact fields or describe Control IR format.
 
