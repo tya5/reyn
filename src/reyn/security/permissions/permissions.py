@@ -1,11 +1,11 @@
 """
-Skill-level permission declarations and approval resolution.
+Actor-level permission declarations and approval resolution.
 
 Default grants (no declaration needed):
   file read/glob/grep  — any path within the project root (CWD)
   file write/edit/delete — under project/.reyn/ only
 
-Outside the defaults → the skill must declare the path AND the user must approve:
+Outside the defaults → the actor must declare the path AND the user must approve:
   file.read:  [{path: <path>, scope: just_path|recursive}]   (paths outside CWD)
   file.write: [{path: <path>, scope: just_path|recursive}]
   mcp        — declare permissions.mcp: [server_name, ...]
@@ -13,8 +13,8 @@ Outside the defaults → the skill must declare the path AND the user must appro
 
 Approval choices (shown once at startup before execution starts):
   [y]es                        — allow for this run only
-  [j]ust this path always      — persist approval for this exact path + skill
-  [r]ecursive from parent      — persist approval for the parent directory + skill (covers all files under it)
+  [j]ust this path always      — persist approval for this exact path + actor
+  [r]ecursive from parent      — persist approval for the parent directory + actor (covers all files under it)
   [N]o                         — deny
 
 Approval keys are actor-scoped to prevent external-actor privilege escalation:
@@ -23,7 +23,7 @@ Approval keys are actor-scoped to prevent external-actor privilege escalation:
 
 Config pre-approval (reyn.yaml / reyn.local.yaml):
   permissions:
-    file.write: allow   # grants all write-class ops for all skills
+    file.write: allow   # grants all write-class ops for all actors
 """
 from __future__ import annotations
 
@@ -39,7 +39,6 @@ from reyn.intervention_choices import (
     YES,
     file_access_choices,
     generic_yn_choices,
-    python_choices,
 )
 from reyn.user_intervention import (
     RequestBus,
@@ -192,30 +191,8 @@ def _in_default_read_zone(path_str: str, base: "Path | None" = None) -> bool:
 
 
 @dataclass
-class PythonPermission:
-    """Per-(module, function) permission for a python preprocessor step.
-
-    Declared in a skill's frontmatter `permissions.python: [{...}]` block.
-    `safe` mode is AST-validated (import allowlist + banned builtin
-    references, see _python_harness); `unsafe` requires --allow-unsafe-python
-    at runtime AND startup-guard approval. `timeout` is wall-clock seconds;
-    the parent SIGKILLs the child when it elapses.
-
-    FP-0014 renamed `pure` → `safe` and `trusted` → `unsafe`. The legacy
-    keywords are still accepted at parse time during the Track A → B
-    transition (stdlib YAML lags); they are normalised to the new keywords
-    here and rejected by the linter.
-    """
-    module: str
-    function: str
-    mode: str = "safe"   # "safe" | "unsafe"
-    timeout: int = 30
-
-
-
-@dataclass
 class PermissionDecl:
-    """Permissions declared in a skill's frontmatter `permissions:` block."""
+    """Permissions declared for an actor (via reyn.yaml `permissions:` or programmatically)."""
 
     mcp: list[str] = field(default_factory=list)
     tool: list[str] = field(default_factory=list)
@@ -224,8 +201,6 @@ class PermissionDecl:
     # Write-class ops (write, edit, delete) outside the default zone.
     # Each entry: {"path": str, "scope": "just_path" | "recursive"}
     file_write: list[dict] = field(default_factory=list)
-    # Python preprocessor steps the phase intends to run.
-    python: list[PythonPermission] = field(default_factory=list)
     # PR37: per-agent MCP allowlist. None = no per-agent restriction (only
     # project-wide config applies). list[str] = agent must be in this list
     # AND the server must pass project-wide checks. "all" sentinel is
@@ -245,12 +220,11 @@ class PermissionDecl:
     # ``mcp_install`` / ``mcp_drop_server`` / ``cron_register`` /
     # ``index_drop`` — have been removed. Each was redundant with the
     # corresponding ``file.write`` (+ ``http.get`` for the registry
-    # fetch in ``mcp_install``) declaration. Skills that previously
-    # declared the bool axis migrate to the explicit list axes; see
-    # the ``mcp_install`` stdlib skill for the canonical example. The
-    # legacy ``PermissionDecl.from_dict`` keys (``mcp_install`` /
+    # fetch in ``mcp_install``) declaration. Configs that previously
+    # declared the bool axis migrate to the explicit list axes.
+    # The legacy ``PermissionDecl.from_dict`` keys (``mcp_install`` /
     # ``mcp_drop_server`` / ``cron_register`` / ``index_drop``) emit
-    # ``DeprecationWarning`` when encountered so user-side skills can
+    # ``DeprecationWarning`` when encountered so existing configs can
     # be migrated; they no longer establish any runtime authority.
 
     @staticmethod
@@ -305,37 +279,12 @@ class PermissionDecl:
             raw = [raw]
         return [str(item) for item in raw if isinstance(item, (str, int))]
 
-    @staticmethod
-    def _parse_python_list(raw: object) -> list[PythonPermission]:
-        if not raw:
-            return []
-        if not isinstance(raw, list):
-            raw = [raw]
-        out: list[PythonPermission] = []
-        for item in raw:
-            if not isinstance(item, dict):
-                continue
-            module = str(item.get("module", ""))
-            function = str(item.get("function", ""))
-            if not module or not function:
-                continue
-            mode = str(item.get("mode", "safe"))
-            if mode not in ("safe", "unsafe"):
-                raise ValueError(
-                    f"permissions.python: mode must be 'safe' or 'unsafe', got {mode!r}"
-                )
-            timeout = int(item.get("timeout", 30))
-            out.append(PythonPermission(
-                module=module, function=function, mode=mode, timeout=timeout,
-            ))
-        return out
-
     # #571 collapse arc Phase 5: legacy bool-axis keys carried for
     # deprecation-warning purposes only. The compat shim that previously
     # expanded these into ``file_write`` / ``http_get`` entries was
     # removed because the corresponding ``require_*`` methods no longer
     # exist — declaring a legacy bool axis no longer establishes any
-    # runtime authority. Skills must migrate to the explicit list axes.
+    # runtime authority. Configs must migrate to the explicit list axes.
     _LEGACY_BOOL_AXIS_KEYS: ClassVar[tuple[str, ...]] = (
         "mcp_install",
         "mcp_drop_server",
@@ -346,21 +295,18 @@ class PermissionDecl:
     @classmethod
     def from_dict(cls, d: dict | None) -> "PermissionDecl":
         # Fail-secure on a missing OR malformed (non-dict) permissions block. A
-        # skill.md with ``permissions: <string|list>`` (an authoring typo) is not
-        # coerced by the parser (parser.py ``or {}`` keeps a truthy non-dict) and
-        # reaches the compiler via ``expander.py`` unguarded — ``d.get(...)`` on a
+        # reyn.yaml ``permissions:`` block with a non-dict value (an authoring typo) is
+        # not coerced by the loader and reaches here unguarded — ``d.get(...)`` on a
         # str/list would then crash with an unclear AttributeError. Default to an
         # EMPTY decl (no grants): crash-safe AND the secure default for a
-        # permissions primitive. (The skill validator surfaces the malformed
-        # block separately with a clear message.)
+        # permissions primitive.
         if not isinstance(d, dict):
             return cls()
         # #571 collapse arc Phase 5: warn on legacy bool-axis keys so
-        # user-side skills get a visible migration prompt. The values
-        # themselves are no longer consulted — skills must declare the
+        # existing configs get a visible migration prompt. The values
+        # themselves are no longer consulted — actors must declare the
         # equivalent file.write / http.get / secret.write entries
-        # explicitly. See the ``mcp_install`` stdlib skill for the
-        # canonical migration pattern.
+        # explicitly.
         for legacy_key in cls._LEGACY_BOOL_AXIS_KEYS:
             if d.get(legacy_key):
                 import warnings
@@ -377,7 +323,7 @@ class PermissionDecl:
             tool=_normalize_paths(d.get("tool")),
             file_read=cls._parse_path_list(d.get("file.read")),
             file_write=cls._parse_path_list(d.get("file.write")),
-            python=cls._parse_python_list(d.get("python")),
+            # "python" key ignored — PYTHON axis removed (zero live enforcement).
             http_get=cls._parse_host_list(d.get("http.get")),
             secret_write=cls._parse_secret_key_list(d.get("secret.write")),
         )
@@ -648,7 +594,7 @@ class PermissionResolver:
     # ── File access approval (read + write) ───────────────────────────────────
 
     def _is_path_approved_for(self, path: str, actor: str, kind: str) -> bool:
-        """Return True if path is covered by any saved/session approval for this skill+kind.
+        """Return True if path is covered by any saved/session approval for this actor+kind.
 
         kind is "file.read" or "file.write".
         """
@@ -666,7 +612,7 @@ class PermissionResolver:
             # ``.reyn/``), so a persisted relative grant like ``reyn/local/`` means "under the
             # project root". ``_expand`` resolved it CWD-relative, so a run whose cwd != project_root
             # (e.g. launched from a subdirectory) failed the ``relative_to`` match even with the
-            # grant present in-memory — the recursive grant was silently not honored (skill_builder).
+            # grant present in-memory — the recursive grant was silently not honored (#2415).
             approved_raw = Path(approved_str.rstrip("/")).expanduser()
             approved_p = (
                 approved_raw.resolve() if approved_raw.is_absolute()
@@ -715,7 +661,7 @@ class PermissionResolver:
         config grant + offload grant are the part they MUST agree on, so they
         live here — a single source both gates call, so the offload-grant
         decision cannot diverge (the merged D12 bug: only one gate had it). The
-        per-skill path-approval term differs (is_read_allowed guards it on a
+        per-actor path-approval term differs (is_read_allowed guards it on a
         non-empty actor) and stays inline in each gate.
         """
         return self._is_config_approved("file.read") or self._is_offload_read_granted(path)
@@ -726,7 +672,7 @@ class PermissionResolver:
         """Return True if ``host`` is covered by a saved/session approval.
 
         Hosts are exact-string-matched against the persisted approval
-        key (= ``<skill>/http.get/<host>``). Mirrors
+        key (= ``<actor>/http.get/<host>``). Mirrors
         :meth:`_is_path_approved_for` but skips the filesystem
         resolution because hosts are network identifiers, not paths.
         """
@@ -801,13 +747,13 @@ class PermissionResolver:
         )
         answer = await bus.request(iv)
         choice = answer.choice_id
-        # #2415: honor the DECLARED scope on approval. When the skill declared this path as
+        # #2415: honor the DECLARED scope on approval. When the actor declared this path as
         # ``recursive`` (confirming a declared grant), an affirmative approval grants
         # the declared RECURSIVE dir — the operator approves/denies the declared grant, they do not
         # re-scope it narrower. Otherwise (a JIT prompt, or a ``just_path`` declaration) an
-        # affirmative grants the exact path. Without this, a skill that declares ``reyn/local``
+        # affirmative grants the exact path. Without this, an actor that declares ``reyn/local``
         # recursive but writes ``reyn/local/{name}/…`` (a SUBPATH) was silently denied unless the
-        # operator happened to pick [r] — the declared recursive intent was not honored (skill_builder).
+        # operator happened to pick [r] — the declared recursive intent was not honored (#2415).
         affirmative_key = recursive_target if scope == "recursive" else path
         if choice == YES:
             self._session[f"{actor}/{kind}/{affirmative_key}"] = True
@@ -1091,14 +1037,14 @@ class PermissionResolver:
             return
 
         # No declaration at all — legacy ``web_fetch`` compat path
-        # for the segmented migration window. Skills that previously
+        # for the segmented migration window. Actors that previously
         # relied on the Tier-1 default-allow behaviour still work
         # while we wait for them to declare ``http.get`` explicitly.
         import warnings
         warnings.warn(
-            f"HTTP access to host {host!r} from skill {actor!r} "
+            f"HTTP access to host {host!r} from actor {actor!r} "
             f"without an http.get declaration. This will become a hard "
-            f"error in a future release. Add to skill.md:\n"
+            f"error in a future release. Add to reyn.yaml permissions:\n"
             f"  permissions:\n"
             f"    http.get:\n"
             f"      - host: '*'   # LLM-driven host selection\n"
@@ -1130,7 +1076,7 @@ class PermissionResolver:
         Two declaration shapes are accepted:
 
         - **Specific key** — ``secret.write: ["GITHUB_TOKEN"]`` authorises
-          only that exact key. Use when the skill knows at write-time
+          only that exact key. Use when the actor knows at write-time
           which env-var names it will save.
         - **Wildcard** ``"*"`` — ``secret.write: ["*"]`` authorises any
           key. Use when the key set is determined at runtime from
@@ -1138,10 +1084,10 @@ class PermissionResolver:
           environment variables from the registry response). The
           security gate in this case is the operator's per-value prompt
           at op-execution time; the wildcard declaration is the
-          author's acknowledgement that the skill will route through
+          author's acknowledgement that the actor will route through
           that prompt-then-save flow.
 
-        Specific entries take precedence — a skill that lists both
+        Specific entries take precedence — an actor that lists both
         ``"GITHUB_TOKEN"`` and ``"*"`` is functionally equivalent to
         just ``"*"`` but conveys intent more clearly.
         """
@@ -1160,8 +1106,8 @@ class PermissionResolver:
         ):
             return
         raise PermissionError(
-            f"Secret-store write of key {key!r} not declared in skill permissions. "
-            f"Add to skill.md frontmatter:\n"
+            f"Secret-store write of key {key!r} not declared in actor permissions. "
+            f"Add to reyn.yaml permissions:\n"
             f"  permissions:\n"
             f"    secret.write:\n"
             f"      - {key}\n"
@@ -1175,7 +1121,7 @@ class PermissionResolver:
         """Check if reading `path` is allowed.
 
         Allowed if: the path is in the default read zone (under CWD), OR config
-        grants `file.read: allow`, OR a per-skill approval covers it.
+        grants `file.read: allow`, OR a per-actor approval covers it.
 
         #1199 S3.1b-2b / S3.1c-1 (the Workspace read gate): routed through the
         unified EffectivePermission model — a decl-less AgentLayer (zone OR
@@ -1193,7 +1139,7 @@ class PermissionResolver:
             # #1383 follow-up: config + offload grant via the shared base (same
             # source as require_file_read → the offload decision cannot diverge;
             # the merged D12 bug was this gate lacking the offload grant, leaving
-            # astropy-13236 denied at Workspace._resolve_read). Per-skill
+            # astropy-13236 denied at Workspace._resolve_read). Per-actor
             # path-approval inline (guarded on a non-empty actor here).
             return self._read_base_approved(str(value)) or (
                 bool(actor)
@@ -1209,7 +1155,7 @@ class PermissionResolver:
         """Check if writing `path` is allowed.
 
         Allowed if: default write zone, OR config grants `file.write: allow`, OR
-        a per-skill approval covers it.
+        a per-actor approval covers it.
 
         #1199 S3.1b-2a / S3.1c-1 (the Workspace write gate): routed through the
         unified EffectivePermission model — the single conjunctive-∩ source. A
@@ -1284,10 +1230,10 @@ class PermissionResolver:
                     f"MCP server {server!r} is blocked by the active capability "
                     f"context (delegation / topology / ephemeral narrowing)."
                 )
-            # 3. per-skill grant (AgentLayer) — "not declared in skill permissions"
+            # 3. per-actor grant (AgentLayer) — "not declared in actor permissions"
             raise PermissionError(
-                f"MCP server {server!r} not declared in skill permissions. "
-                f"Add `permissions:\\n  mcp: [{server}]` to the skill.md frontmatter."
+                f"MCP server {server!r} not declared in actor permissions. "
+                f"Add `permissions:\\n  mcp: [{server}]` to reyn.yaml permissions."
             )
         if not await self._approve(
             f"mcp.{server}",
@@ -1296,87 +1242,6 @@ class PermissionResolver:
             user_prompt=f"Allow access to MCP server {server!r}?",
         ):
             raise PermissionError(f"MCP server {server!r} access denied")
-
-    async def require_python(
-        self, decl: PermissionDecl, module: str, function: str,
-        bus: "RequestBus | None",
-        actor: str = "",
-    ) -> PythonPermission:
-        """Resolve which python permission entry applies; raise if denied.
-
-        Lookup is by (module, function). Safe-mode steps need a one-time
-        interactive approval (saved per skill+module:function). Unsafe-mode
-        steps additionally require unsafe_python_allowed=True (set by the
-        --allow-unsafe-python CLI flag).
-
-        B49 W2-S5 fix (2026-05-22): ``bus`` may be ``None`` in
-        non-interactive contexts (= preprocessor / postprocessor python
-        step invoked from a sub-skill run). ``_approve`` short-circuits
-        before reaching the prompt path when the permission is
-        config-approved or saved/session-approved, so the bus is only
-        consulted when an interactive prompt is genuinely required.
-        With ``self._interactive=False`` and no prior approval,
-        ``_approve`` returns False without touching the bus, and this
-        method raises PermissionError as before.
-        """
-        matching = [
-            p for p in decl.python
-            if p.module == module and p.function == function
-        ]
-        if not matching:
-            raise PermissionError(
-                f"python step {module}:{function} is not declared in skill permissions. "
-                f"Add to the skill.md frontmatter:\n"
-                f"  permissions:\n"
-                f"    python:\n"
-                f"      - module: {module}\n"
-                f"        function: {function}\n"
-                f"        mode: safe"
-            )
-        perm = matching[0]
-        if perm.mode == "unsafe":
-            if not self._unsafe_python_allowed:
-                raise PermissionError(
-                    f"python step {module}:{function} declares mode='unsafe' "
-                    f"but --allow-unsafe-python was not provided. "
-                    f"Unsafe python runs unrestricted user code; pass the flag "
-                    f"only when you trust the skill source."
-                )
-            key = f"{actor}/python.unsafe/{module}:{function}"
-            # Non-interactive + unsafe_python_allowed=True (stdlib skills) must
-            # auto-approve without a prompt.  Pre-seed the session key so _approve()
-            # returns True instead of auto-denying the non-interactive branch.
-            if not self._interactive and self._unsafe_python_allowed:
-                self._session.setdefault(key, True)
-            if not await self._approve(
-                key,
-                f"unsafe python step: {module}:{function}",
-                bus,
-                user_prompt=f"Run unsafe python {module}.{function}?",
-            ):
-                raise PermissionError(
-                    f"unsafe python step {module}:{function} denied by user"
-                )
-            return perm
-        # safe mode
-        key = f"{actor}/python.safe/{module}:{function}"
-        # Mirror the unsafe-mode stdlib auto-allow path. Safe mode is more
-        # restricted (per _python_allowlist.py), so any context that auto-allows
-        # unsafe MUST auto-allow safe. Without this, stdlib skills declaring
-        # mode: safe fail in non-interactive `reyn run` while their unsafe
-        # siblings succeed — semantically backwards.
-        if not self._interactive and self._unsafe_python_allowed:
-            self._session.setdefault(key, True)
-        if not await self._approve(
-            key,
-            f"safe python step: {module}:{function}",
-            bus,
-            user_prompt=f"Run python {module}.{function}?",
-        ):
-            raise PermissionError(
-                f"safe python step {module}:{function} denied by user"
-            )
-        return perm
 
     async def require_tool(
         self, decl: PermissionDecl, tool: str, bus: RequestBus,
@@ -1413,11 +1278,11 @@ class PermissionResolver:
                 raise PermissionError(
                     f"tool {tool!r} is blocked by the active capability context "
                     f"(delegation / topology / ephemeral narrowing). It is declared "
-                    f"in skill permissions but removed by the current context."
+                    f"in actor permissions but removed by the current context."
                 )
             raise PermissionError(
-                f"tool {tool!r} not declared in skill permissions. "
-                f"Add `permissions:\\n  tool: [{tool}]` to the skill.md frontmatter."
+                f"tool {tool!r} not declared in actor permissions. "
+                f"Add `permissions:\\n  tool: [{tool}]` to reyn.yaml permissions."
             )
         if not await self._approve(
             f"tool.{tool}",

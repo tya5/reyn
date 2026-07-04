@@ -55,9 +55,10 @@ class CapabilityAxis(Enum):
     SUBPROCESS = "subprocess"
     MCP = "mcp"
     SECRET_WRITE = "secret_write"
-    PYTHON = "python"
+    # PYTHON axis removed — require_python had zero production callers; the
+    # preprocessor step dispatch never routed through PermissionResolver.
     ENV = "env"
-    # #1199 S3.1b-2c: the per-skill tool allowlist (decl.tool) — a distinct
+    # #1199 S3.1b-2c: the per-actor tool allowlist (decl.tool) — a distinct
     # capability axis (gated by require_tool) not in the original 9; added here
     # for the require_tool cutover.
     TOOL = "tool"
@@ -159,14 +160,9 @@ class AgentLayer:
                 or self._approved(axis, value)
             )
         if axis is CapabilityAxis.TOOL:
-            # #1199 S3.1b-2c: the per-skill tool allowlist (require_tool).
+            # #1199 S3.1b-2c: the per-actor tool allowlist (require_tool).
             return value in d.tool
-        if axis is CapabilityAxis.PYTHON:
-            # value = (module, function)
-            return any(
-                (p.module, p.function) == tuple(value) for p in d.python
-            )
-        # ENV / SUBPROCESS / SKILL: the decl does not constrain → ⊤.
+        # ENV / SUBPROCESS / PYTHON(removed) / SKILL(removed): the decl does not constrain → ⊤.
         # (#1352-L3: the shell-permission SUBPROCESS gate was retired with the
         # shell op; subprocess is now bounded by SandboxLayer.allow_subprocess
         # at the sandboxed_exec seam, not the AgentLayer.)
@@ -200,7 +196,7 @@ class SandboxLayer:
             return bool(p.allow_subprocess)
         if axis is CapabilityAxis.ENV:
             return not p.env_passthrough or value in p.env_passthrough
-        # MCP / SKILL / SECRET_WRITE / PYTHON: sandbox does not constrain → ⊤.
+        # MCP / SKILL(removed) / SECRET_WRITE / PYTHON(removed): sandbox does not constrain → ⊤.
         return True
 
 
