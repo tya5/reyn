@@ -68,6 +68,7 @@ from reyn.runtime.services import (
     SnapshotJournal,
 )
 from reyn.runtime.services.chain_manager import _PendingChain
+from reyn.runtime.services.execution_driver import ExecutionDriver
 from reyn.runtime.services.inter_agent_messaging import InterAgentMessaging
 from reyn.runtime.services.task_wake import WAKE_READY_KIND, WAKE_REQUESTER_KIND
 from reyn.runtime.session_buses import AgentRequestBus, ChatInterventionBus
@@ -721,6 +722,10 @@ class Session:
         # (spawn_session → set_session_id) before its run-loop goes live, so every
         # WAL append carries the right session_id for per-session snapshot routing.
         session_id: str = "main",
+        # Injectable execution driver seam: when provided, replaces the default
+        # RouterLoopDriver construction.  None (default) = build RouterLoopDriver
+        # from the existing args unchanged (byte-identical behaviour).
+        loop_driver: "ExecutionDriver | None" = None,
     ) -> None:
         """
         snapshot_path: optional override for the per-agent snapshot file
@@ -1720,29 +1725,31 @@ class Session:
         # session.py refactor PR-3: RouterLoopDriver owns the per-turn loop
         # orchestration (run_turn, shrink/overflow, cap enforcement, cancel).
         from reyn.runtime.services.router_loop_driver import RouterLoopDriver
-        self._loop_driver = RouterLoopDriver(
-            router_host=self._router_host,
-            safety=self._safety,
-            router_max_iterations=self._router_max_iterations,
-            budget_tracker=self._budget_tracker,
-            non_interactive=self._non_interactive,
-            exclude_tools=self._exclude_tools,
-            contextual_permission=self._contextual_permission,  # #1827 S3 → RouterLoop live gate
-            contextual_for_turn_fn=self._effective_contextual_for_turn,  # #1827 S4b context-auto
-            excluded_categories=self._excluded_categories,
-            budget=self._budget,
-            resolver=self._resolver,
-            compaction=self._compaction,
-            compaction_controller=self._compaction_controller,
-            token_learner=self._token_learner,
-            events=self._chat_events,
-            model_override_fn=lambda: self._model_override,
-            history_buffer=self._history_buffer,
-            budget_advisor=self._budget_advisor,
-            limit_checkpoint_fn=self._handle_chat_limit_checkpoint,
-            next_seq_fn=lambda: self._next_seq,
-            append_history_fn=self._append_history,
-            chat_scheme_name=self._chat_tool_use_scheme,  # #1593 PR-2
+        self._loop_driver: ExecutionDriver = (
+            loop_driver if loop_driver is not None else RouterLoopDriver(
+                router_host=self._router_host,
+                safety=self._safety,
+                router_max_iterations=self._router_max_iterations,
+                budget_tracker=self._budget_tracker,
+                non_interactive=self._non_interactive,
+                exclude_tools=self._exclude_tools,
+                contextual_permission=self._contextual_permission,  # #1827 S3 → RouterLoop live gate
+                contextual_for_turn_fn=self._effective_contextual_for_turn,  # #1827 S4b context-auto
+                excluded_categories=self._excluded_categories,
+                budget=self._budget,
+                resolver=self._resolver,
+                compaction=self._compaction,
+                compaction_controller=self._compaction_controller,
+                token_learner=self._token_learner,
+                events=self._chat_events,
+                model_override_fn=lambda: self._model_override,
+                history_buffer=self._history_buffer,
+                budget_advisor=self._budget_advisor,
+                limit_checkpoint_fn=self._handle_chat_limit_checkpoint,
+                next_seq_fn=lambda: self._next_seq,
+                append_history_fn=self._append_history,
+                chat_scheme_name=self._chat_tool_use_scheme,  # #1593 PR-2
+            )
         )
 
         # session.py refactor PR-4 (FP-0019 series final): ChainTimeoutGlue owns
