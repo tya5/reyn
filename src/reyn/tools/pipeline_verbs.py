@@ -69,11 +69,22 @@ before ``run_pipeline_attached`` / ``start_pipeline_run`` is called).
     ``PipelineExecutorDriver`` driver-session as ``run_pipeline_async`` and
     ATTACHES: ``reyn.runtime.session_api.run_pipeline_attached`` pumps the run on
     the caller's own task via ``MessageBus.request``, streams
-    ``pipeline_step_started`` / ``pipeline_step_completed`` events to the
-    driver-session's ``EventLog`` (the emit+subscribe seam a live view / the TUI
-    consumes), and reads the terminal marker back in-band — no redundant reply
-    turn (``notify_reply=False``). A crash mid-attach degrades to async recovery:
-    the recovery scan resumes the run and delivers to THIS caller's inbox.
+    ``pipeline_step_started`` / ``pipeline_step_completed`` events (each carrying
+    ``total_steps``, #2570) to the driver-session's ``EventLog`` (the emit+
+    subscribe seam a live view / the TUI consumes), and reads the terminal marker
+    back in-band — no redundant reply turn (``notify_reply=False``). A crash
+    mid-attach degrades to async recovery: the recovery scan resumes the run and
+    delivers to THIS caller's inbox.
+    **TUI bridge marker (#2570)**: the ``pipeline_step_*`` events above land on
+    the DRIVER-session's own ``EventLog`` — a session distinct from the
+    human-attached caller the TUI actually watches. So both sync handlers pass
+    ``tool``/``caller_events=ctx.events`` through to ``run_pipeline_attached``,
+    which emits a ``pipeline_run_attached`` marker (``{tool, run_id, driver_sid,
+    agent_name, pipeline_name}``) onto the CALLER's own ``EventLog`` right after
+    the driver-session spawns — the signal a live view uses to bridge-subscribe
+    to the driver_sid's events for the run's duration. The async handlers
+    (``_handle_run_pipeline_async`` / ``_handle_run_pipeline_inline_async``) have
+    no attached live viewer and never pass these — no marker.
     Ctrl-C (``Session.cancel_inflight`` → the driver's ``request_cancel``) stops
     the run cooperatively at the next step BOUNDARY, leaving a resumable R4
     journal under a terminal ``cancelled`` marker.
@@ -318,6 +329,8 @@ async def _handle_run_pipeline(
             reply_to_agent=host.agent_name,
             reply_to_sid=reply_sid,
             state_log=state_log,
+            tool="run_pipeline",
+            caller_events=ctx.events,
         )
     except ValueError as exc:
         return {"status": "error", "data": {"error": str(exc)}}
@@ -688,6 +701,8 @@ async def _handle_run_pipeline_inline(
             reply_to_agent=host.agent_name,
             reply_to_sid=reply_sid,
             state_log=state_log,
+            tool="run_pipeline_inline",
+            caller_events=ctx.events,
         )
     except ValueError as exc:
         return {"status": "error", "data": {"error": str(exc)}}

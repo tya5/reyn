@@ -58,6 +58,11 @@ prefix and differing only in how the caller drives + collects:
     driver-session, a crash mid-attach is auto-resumed by the existing recovery
     scan (which re-creates the driver with ``notify_reply=True`` → the result
     degrades to inbox delivery), so sync pipelines are crash-recoverable too.
+    Optional ``tool``/``caller_events`` params (#2570, the TUI bridge) let it
+    also emit a ``pipeline_run_attached`` marker onto the CALLER's own
+    ``EventLog`` (see the function docstring) — the driver-session's live
+    events are on a DIFFERENT EventLog than the one the human-attached caller
+    (the TUI) watches, so this marker is the signal that bridges the two.
 """
 from __future__ import annotations
 
@@ -353,6 +358,8 @@ async def run_pipeline_attached(
     state_log: "object",
     timeout: "float | None" = None,
     run_id: "str | None" = None,
+    tool: "str | None" = None,
+    caller_events: "Any | None" = None,
 ) -> dict:
     """IS-6: launch a SYNC pipeline run in a driver-session the caller ATTACHES to.
 
@@ -372,6 +379,21 @@ async def run_pipeline_attached(
     the driver is destroyed and the recovery scan re-creates it with
     ``notify_reply=True`` → the result then degrades to async inbox delivery to
     this same caller. One reply address serves both paths; no new plumbing.
+
+    **TUI bridge marker (#2570)**: the driver-session's ``pipeline_step_*``
+    events land on the DRIVER's own ``EventLog`` — a session distinct from the
+    human-attached caller, which the TUI has no signal to bridge-subscribe to.
+    When ``caller_events`` (an ``EventLog``) is given, right after the driver-
+    session is spawned this emits a ``pipeline_run_attached`` marker onto it —
+    ``{kind: "pipeline_run_attached", tool, run_id, driver_sid, agent_name,
+    pipeline_name}`` — so a live view (the TUI) watching the CALLER's own
+    EventLog learns the driver_sid to bridge-subscribe to for the run's
+    duration (unsubscribing on the matching ``tool_call_completed``). ``tool``
+    is the caller-supplied invoking tool name (``run_pipeline`` /
+    ``run_pipeline_inline``) — this helper is shared by both, so it never
+    hardcodes one. None (the default) skips the emit — used by callers with no
+    attached live viewer to bridge to. Sync-attached-only: the async path
+    (``start_pipeline_run``) has no attached caller and never emits this.
 
     Returns a ``dict``:
       - terminal reached → ``{"status": <ok|failed|cancelled>, "run_id", "output",
@@ -400,6 +422,12 @@ async def run_pipeline_attached(
         notify_reply=False,
         run_id=run_id,
     )
+    if caller_events is not None:
+        caller_events.emit(
+            "pipeline_run_attached",
+            tool=tool, run_id=rid, driver_sid=sid,
+            agent_name=reply_to_agent, pipeline_name=pipeline_name,
+        )
     run_dir = pipeline_run_dir(reyn_root(state_log.path), rid)
 
     bus = MessageBus()
