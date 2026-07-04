@@ -313,11 +313,18 @@ Fields:
   forward compat; currently unused (all installs write to `.reyn/config/skills.yaml`).
 - `name` (optional) — config key override. When absent the handler resolves:
   frontmatter `name:` field → directory basename → repo/subdir basename (in that order).
+  The resolved name is **sanitized to a single safe path component** (`[A-Za-z0-9._-]`;
+  no `/`, `\`, `..`, or leading `.`) — an unsafe name (from caller `op.name` OR third-party
+  SKILL.md frontmatter) is **rejected** with `status="error"`, never used to build a path.
 
 Handler lifecycle (source path inserts steps 0a–0d before step 1):
-0. **Source path only**: (a) Gate `require_http_get` for the source host. (b) Shallow-clone
-   repo to `.reyn/skills/<candidate_name>/`. (c) Locate `SKILL.md` in root or subdir.
-   (d) After name is resolved from frontmatter, rename clone dir if name ≠ candidate.
+0. **Source path only**: (a) Gate `require_http_get` for the source host. (b) Sanitize the
+   candidate name (`_safe_skill_name`) + verify the clone destination is contained under
+   `.reyn/skills/` (`_contained_under`) — refuse before any filesystem mutation if either
+   fails (path-traversal → arbitrary-rmtree guard). Shallow-clone repo to
+   `.reyn/skills/<candidate_name>/`. (c) Locate `SKILL.md` in root or subdir.
+   (d) After the frontmatter name is resolved AND sanitized, containment-check + rename
+   clone dir if name ≠ candidate.
 1. Resolve `SKILL.md` path (dir → `<dir>/SKILL.md` or direct file)
 2. Read `SKILL.md` and `split_frontmatter()` — extract `name` and `description`
 3. Apply `op.name` override when set

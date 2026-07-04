@@ -10,6 +10,10 @@ Tests:
      the cloned repo.
   5. config-generation smoke: source install records a config generation (handler
      calls record_config_generation — same recovery contract as install_local).
+  6/7. SECURITY: path-traversal → arbitrary rmtree is refused for both the
+     frontmatter ``name:`` (third-party content) and caller ``op.name`` — a sentinel
+     dir outside .reyn/skills/ survives the attempted install.
+  8. _safe_skill_name unit: rejects traversal / separators / hidden names.
 
 Real PermissionResolver + StateLog + OpContext throughout (no mocks for
 collaborators; monkeypatch used only for the threat-scan scan_for_threats callable
@@ -328,3 +332,107 @@ async def test_skill_install_source_records_config_generation(tmp_path):
     gen_files = list(gen_dir.glob("*.yaml"))
     assert gen_files, \
         f"no generation files in {gen_dir} — record_config_generation did not write a snapshot"
+
+
+# ── Test 6/7: SECURITY — path-traversal → arbitrary rmtree is refused ─────────
+
+
+@pytest.mark.asyncio
+async def test_skill_install_source_frontmatter_name_traversal_refused(tmp_path):
+    """Tier 2: SECURITY — a malicious SKILL.md frontmatter ``name: ../../../evil``
+    (third-party content) must NOT let the install escape .reyn/skills/. The
+    install is refused (status='error') and a sentinel directory OUTSIDE
+    .reyn/skills/ is neither created nor removed.
+
+    RED against the pre-fix code (unsanitized frontmatter name flows into
+    new_dest → shutil.rmtree of an arbitrary directory)."""
+    from reyn.core.op_runtime.skill_install import handle
+
+    # Sentinel dir OUTSIDE .reyn/skills/ — the traversal target would land here.
+    sentinel = tmp_path / "victim"
+    sentinel.mkdir(parents=True, exist_ok=True)
+    (sentinel / "important.txt").write_text("do not delete me", encoding="utf-8")
+
+    # A git repo whose SKILL.md frontmatter name traverses up to the sentinel.
+    # ../../../../<tmp>/victim would, unsanitized, resolve to the sentinel dir.
+    malicious_name = "../../../../victim"
+    repo = _make_git_skill_repo(
+        tmp_path / "repos", name=malicious_name, description="Traversal attack",
+    )
+    source_url = repo.as_uri()
+
+    ctx, _events = _make_ctx(tmp_path)
+    # Pass op.name that is safe so the candidate/clone step succeeds, then the
+    # MALICIOUS frontmatter name is picked up at the rename step (the vuln point).
+    op = SkillInstallIROp(kind="skill_install", source=source_url)
+    result = await handle(op=op, ctx=ctx)
+
+    # Frontmatter name wins over the URL basename in precedence; the malicious
+    # name must be rejected → status='error', not 'installed'.
+    assert result["status"] == "error", f"traversal name was not refused: {result}"
+    assert "invalid skill name" in result.get("error", "").lower() or \
+           "escapes" in result.get("error", "").lower(), \
+        f"error did not indicate name rejection / containment: {result}"
+
+    # The sentinel dir and its file MUST still exist (no arbitrary rmtree).
+    assert sentinel.exists(), "SECURITY: sentinel directory was deleted (arbitrary rmtree)"
+    assert (sentinel / "important.txt").exists(), \
+        "SECURITY: sentinel file was deleted (path-traversal succeeded)"
+
+    # No skills.yaml entry for the malicious name.
+    config_path = tmp_path / ".reyn" / "config" / "skills.yaml"
+    raw = yaml.safe_load(config_path.read_text(encoding="utf-8")) if config_path.exists() else {}
+    entries = (raw or {}).get("skills", {}).get("entries", {})
+    assert not any(".." in k for k in entries), \
+        f"SECURITY: a traversal-named entry was registered: {list(entries)}"
+
+
+@pytest.mark.asyncio
+async def test_skill_install_source_op_name_traversal_refused(tmp_path):
+    """Tier 2: SECURITY — a caller-supplied ``op.name = '../../x'`` must NOT let
+    the clone destination escape .reyn/skills/. The install is refused and a
+    sentinel directory outside .reyn/skills/ is neither created nor removed.
+
+    RED against the pre-fix code (unsanitized op.name flows into _candidate_name
+    → clone_dest → shutil.rmtree in _shallow_clone)."""
+    from reyn.core.op_runtime.skill_install import handle
+
+    sentinel = tmp_path / "victim2"
+    sentinel.mkdir(parents=True, exist_ok=True)
+    (sentinel / "keep.txt").write_text("keep", encoding="utf-8")
+
+    repo = _make_git_skill_repo(tmp_path / "repos", name="benign", description="Benign")
+    source_url = repo.as_uri()
+
+    ctx, _events = _make_ctx(tmp_path)
+    op = SkillInstallIROp(
+        kind="skill_install", source=source_url, name="../../../../victim2",
+    )
+    result = await handle(op=op, ctx=ctx)
+
+    assert result["status"] == "error", f"op.name traversal was not refused: {result}"
+    assert "invalid skill name" in result.get("error", "").lower() or \
+           "escapes" in result.get("error", "").lower(), \
+        f"error did not indicate name rejection / containment: {result}"
+
+    # Sentinel must survive — no clone dir was created there and nothing removed.
+    assert sentinel.exists(), "SECURITY: sentinel2 directory was deleted (arbitrary rmtree)"
+    assert (sentinel / "keep.txt").exists(), \
+        "SECURITY: sentinel2 file was deleted (path-traversal via op.name succeeded)"
+
+
+def test_safe_skill_name_rejects_traversal_and_separators():
+    """Tier 2: SECURITY — _safe_skill_name rejects traversal / separator / hidden
+    names and accepts plain slugs. Direct unit coverage of the sanitizer contract."""
+    from reyn.core.op_runtime.skill_install import _safe_skill_name
+
+    # Unsafe → None.
+    for unsafe in [
+        "", "   ", "..", ".", "../evil", "../../x", "a/b", "a\\b",
+        ".hidden", "foo/../bar", "a b", "na\x00me", "évil",  # non-ascii homoglyph
+    ]:
+        assert _safe_skill_name(unsafe) is None, f"expected None for unsafe name {unsafe!r}"
+
+    # Safe → unchanged.
+    for safe in ["my-skill", "code_review", "skill.v2", "ABC123", "a-b_c.d"]:
+        assert _safe_skill_name(safe) == safe, f"expected {safe!r} accepted unchanged"

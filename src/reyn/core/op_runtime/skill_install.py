@@ -119,6 +119,62 @@ def _write_yaml(path: Path, data: dict) -> None:
     )
 
 
+def _safe_skill_name(raw: str) -> str | None:
+    """Reduce a raw skill name to a safe SINGLE path component, or None if unsafe.
+
+    Third-party content (SKILL.md frontmatter ``name:``) and caller-supplied
+    ``op.name`` both flow into the ``.reyn/skills/<name>/`` clone destination,
+    which is then ``shutil.rmtree``-d and cloned into. An unsanitized ``name``
+    like ``../../../../tmp/victim`` escapes ``.reyn/skills/`` and deletes an
+    arbitrary directory (path-traversal → arbitrary rmtree). This helper is the
+    FIRST line of defence: it rejects any name that is not a plain slug.
+
+    Rules (all must hold; else return None):
+      - non-empty after ``strip()``
+      - no path separators (``/`` or ``\\``)
+      - no ``..`` anywhere (traversal), no leading ``.`` (hidden / ``.``/``..``)
+      - charset restricted to ``[A-Za-z0-9._-]`` (no NUL, no whitespace, no
+        shell metacharacters, no unicode homoglyphs)
+      - not a reserved single/double dot component
+
+    Returns the name UNCHANGED when it is already safe (deterministic; no
+    silent slugification that could collide two distinct skills). Callers that
+    get None must refuse the install with a clear error — never construct a
+    filesystem path from an unsafe name.
+    """
+    import re
+
+    name = (raw or "").strip()
+    if not name:
+        return None
+    # Reject path separators and traversal outright (defence-in-depth: the
+    # charset check below also catches "/" and "\\", but ".." is within charset).
+    if "/" in name or "\\" in name or ".." in name:
+        return None
+    # Reject leading dot ("." / hidden files) — keeps the component non-special.
+    if name.startswith("."):
+        return None
+    # Restrict to a conservative slug charset.
+    if not re.fullmatch(r"[A-Za-z0-9._-]+", name):
+        return None
+    return name
+
+
+def _contained_under(candidate: Path, root: Path) -> bool:
+    """Return True iff ``candidate`` resolves to a path inside ``root``.
+
+    Belt-and-suspenders containment check performed BEFORE any rmtree / clone /
+    rename, so even a gap in ``_safe_skill_name`` cannot let a filesystem
+    mutation escape ``.reyn/skills/``. Both paths are ``resolve()``-d (symlinks
+    + ``..`` collapsed) before the relativity test.
+    """
+    try:
+        candidate.resolve().relative_to(root.resolve())
+        return True
+    except (ValueError, OSError):
+        return False
+
+
 def _parse_source_spec(source: str) -> tuple[str, str]:
     """Split a source specifier into (git_url, subdir).
 
@@ -237,9 +293,42 @@ async def handle(
         _url_basename = git_url.rstrip("/").split("/")[-1]
         if _url_basename.endswith(".git"):
             _url_basename = _url_basename[:-4]
-        _candidate_name = (op.name or "").strip() or (subdir.split("/")[-1] if subdir else _url_basename)
+        _raw_candidate = (op.name or "").strip() or (subdir.split("/")[-1] if subdir else _url_basename)
 
-        clone_dest = project_root / ".reyn" / "skills" / _candidate_name
+        # SECURITY: sanitize the candidate name BEFORE any path construction.
+        # op.name is caller-controlled and the URL basename is attacker-influenced;
+        # an unsafe name would let clone_dest escape .reyn/skills/ (path-traversal
+        # → arbitrary rmtree). Reject rather than silently rewrite.
+        _candidate_name = _safe_skill_name(_raw_candidate)
+        if _candidate_name is None:
+            return {
+                "kind": "skill_install",
+                "status": "error",
+                "source": op.source,
+                "error": (
+                    f"invalid skill name derived from source: {_raw_candidate!r}. "
+                    "The install destination name must be a single path component "
+                    "(letters, digits, '.', '_', '-'; no '/', '\\', '..', or leading '.'). "
+                    "Set a safe 'name' or use a repo/subdir with a valid basename."
+                ),
+            }
+
+        _skills_root = project_root / ".reyn" / "skills"
+        clone_dest = _skills_root / _candidate_name
+
+        # SECURITY: belt-and-suspenders containment — refuse if clone_dest escapes
+        # .reyn/skills/ even after sanitization (guards a sanitizer gap). No
+        # filesystem mutation happens before this check passes.
+        if not _contained_under(clone_dest, _skills_root):
+            return {
+                "kind": "skill_install",
+                "status": "error",
+                "source": op.source,
+                "error": (
+                    f"refused: install destination for {_candidate_name!r} escapes "
+                    ".reyn/skills/. This is a path-containment violation."
+                ),
+            }
 
         # 0c. Shallow-clone the repo.
         clone_err = _shallow_clone(git_url, clone_dest)
@@ -290,14 +379,19 @@ async def handle(
 
     # Name resolution precedence: op.name override > frontmatter name > dir basename.
     if op.name:
-        name = op.name.strip()
+        raw_name = op.name.strip()
     elif fm_name:
-        name = fm_name
+        raw_name = fm_name
     else:
         # Default: directory name (or stem of a direct SKILL.md reference)
-        name = skill_md.parent.name if skill_md.name == "SKILL.md" else skill_md.stem
+        raw_name = skill_md.parent.name if skill_md.name == "SKILL.md" else skill_md.stem
 
-    if not name:
+    # SECURITY: sanitize the resolved name BEFORE it is used as a config key OR
+    # (for source installs) a filesystem path component. The frontmatter ``name:``
+    # is third-party content — a malicious ``name: ../../../evil`` would escape
+    # .reyn/skills/ at the rename step (path-traversal → arbitrary rmtree).
+    name = _safe_skill_name(raw_name)
+    if name is None:
         if op.source:
             shutil.rmtree(clone_dest, ignore_errors=True)
         return {
@@ -305,13 +399,30 @@ async def handle(
             "status": "error",
             "path": op.path,
             "source": op.source or "",
-            "error": "Could not determine skill name. Set a 'name:' in SKILL.md frontmatter or use op.name.",
+            "error": (
+                f"invalid skill name {raw_name!r}. The name must be a single path "
+                "component (letters, digits, '.', '_', '-'; no '/', '\\', '..', or "
+                "leading '.'). Fix the SKILL.md 'name:' frontmatter or pass a safe 'name'."
+            ),
         }
 
     # For source installs: if the resolved name differs from the candidate we used
     # for the clone destination, rename the clone dir to the resolved name.
     if op.source and name != _candidate_name:
-        new_dest = project_root / ".reyn" / "skills" / name
+        new_dest = _skills_root / name
+        # SECURITY: containment check BEFORE any rmtree/rename — refuse if new_dest
+        # escapes .reyn/skills/ even after sanitization (guards a sanitizer gap).
+        if not _contained_under(new_dest, _skills_root):
+            shutil.rmtree(clone_dest, ignore_errors=True)
+            return {
+                "kind": "skill_install",
+                "status": "error",
+                "source": op.source or "",
+                "error": (
+                    f"refused: install destination for {name!r} escapes .reyn/skills/. "
+                    "This is a path-containment violation."
+                ),
+            }
         if new_dest.exists():
             shutil.rmtree(new_dest)
         clone_dest.rename(new_dest)
