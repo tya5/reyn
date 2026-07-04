@@ -1,35 +1,14 @@
-"""Child-process entry point for the Python preprocessor step.
+"""Helper functions for Python sandbox execution shared with ``_codeact_harness``.
 
-Invoked as `python -m reyn._python_harness`. Reads a JSON request from
-stdin, executes the user-supplied function under the requested mode
-(safe | unsafe), and writes a JSON response to stdout.
-
-Wire format
------------
-Request (stdin, single JSON object):
-    {
-      "module_path": "/abs/path/to/preprocessing.py",
-      "function":    "compute_text_stats",
-      "mode":        "safe" | "unsafe",
-      "artifact":    {...},                  # passed as the function's argument
-      "allowed_modules": ["numpy", ...]      # extra imports allowed in safe mode
-    }
-
-Response (stdout, single JSON object):
-    {"ok": true,  "result": <JSON>}                          # success
-    {"ok": false, "error": "<message>", "kind": "<class>"}   # failure
-
-Errors are also surfaced via a non-zero exit code so the parent's
-subprocess handler catches them even when stdout is malformed.
+Provides AST-level validation (safe mode) and restricted built-ins construction
+used by the CodeAct harness subprocess entry point.  The subprocess-entry
+(``main`` / stdin-wire-format) that was previously here was deleted when
+``PythonRunner`` was removed (F1 #2537).
 """
 from __future__ import annotations
 
 import ast
 import builtins as _builtins_module
-import copy
-import json
-import sys
-import traceback
 from typing import Any
 
 # Re-exported to keep parent and child agreeing on the constants.
@@ -161,117 +140,3 @@ def _exec_user_module(
     }
     exec(code, namespace)
     return namespace
-
-
-# ── Main entry ──────────────────────────────────────────────────────────────
-
-
-def _read_request() -> dict[str, Any]:
-    raw = sys.stdin.read()
-    if not raw:
-        raise ValueError("harness received empty stdin")
-    return json.loads(raw)
-
-
-def _write_response(payload: dict[str, Any]) -> None:
-    sys.stdout.write(json.dumps(payload, ensure_ascii=False))
-    sys.stdout.flush()
-
-
-def main() -> int:
-    try:
-        req = _read_request()
-        module_path = str(req["module_path"])
-        function_name = str(req["function"])
-        mode = str(req.get("mode", "safe"))
-        artifact = req.get("artifact", {})
-        allowed_modules = frozenset(req.get("allowed_modules") or [])
-        # FP-0042: file-permission paths carried on the harness request
-        # (the ``file_read_paths`` / ``file_write_paths`` request keys).
-        # Either may be empty (= no read / write granted). The values gate
-        # every ``reyn.api.safe.file.*`` call from the user step.
-        file_read_paths = list(req.get("file_read_paths") or [])
-        file_write_paths = list(req.get("file_write_paths") or [])
-        # #571 collapse arc Phase 3: host allowlist for reyn.api.safe.http
-        # gating. Empty = no HTTP via safe.http.
-        http_hosts = list(req.get("http_hosts") or [])
-        # #1199 S3.4 Part1: the phase sandbox policy's write_paths cap (None =
-        # no sandbox cap on the host-direct index write). Only present when the
-        # phase declares a default_sandbox_policy with write_paths.
-        sandbox_write_paths = req.get("sandbox_write_paths")
-
-        if mode not in ("safe", "unsafe"):
-            raise ValueError(f"unknown mode: {mode!r}")
-
-        with open(module_path, encoding="utf-8") as f:
-            source = f.read()
-
-        namespace = _exec_user_module(source, module_path, mode, allowed_modules)
-
-        fn = namespace.get(function_name)
-        if fn is None or not callable(fn):
-            raise AttributeError(
-                f"function {function_name!r} not found in {module_path}"
-            )
-
-        # FP-0042: initialise reyn.api.safe.file's permission context before
-        # the user step runs. The user code already executed (= module
-        # exec at _exec_user_module) but the file-call paths only fire
-        # when the function below is invoked. Safe either way: the
-        # context is established before any guarded call.
-        try:
-            from reyn.api.safe import file as _safe_file
-            _safe_file._set_permission_context(
-                read_paths=file_read_paths,
-                write_paths=file_write_paths,
-            )
-        except ImportError:
-            # reyn.api.safe.file may not be available in older parent
-            # installations (= shouldn't happen post-FP-0042 land but
-            # defence-in-depth for parent / harness version skew).
-            pass
-
-        # #571 collapse arc Phase 3: initialise reyn.api.safe.http's host
-        # allowlist before the user step runs. Mirrors the file-context
-        # wiring above.
-        try:
-            from reyn.api.safe import http as _safe_http
-            _safe_http._set_permission_context(http_hosts=http_hosts)
-        except ImportError:
-            pass
-
-        # #1199 S3.4 Part1: forward the phase sandbox write_paths cap to
-        # reyn.api.safe.embed_index so the host-direct index write (SqliteIndexBackend)
-        # self-gates the DB path against it. Only set when present (None = no cap).
-        if sandbox_write_paths is not None:
-            try:
-                from reyn.api.safe import embed_index as _safe_embed_index
-                _safe_embed_index._set_context(
-                    sandbox_write_paths=list(sandbox_write_paths),
-                )
-            except ImportError:
-                pass
-
-        # Defensive copy so user mutations don't affect the parent's data.
-        result = fn(copy.deepcopy(artifact))
-
-        # Round-trip through JSON to fail fast on non-serializable returns.
-        _write_response({"ok": True, "result": json.loads(json.dumps(result, default=str))})
-        return 0
-
-    except _SafeModeViolation as exc:
-        _write_response({
-            "ok": False, "kind": "SafeModeViolation", "error": str(exc),
-        })
-        return 2
-    except Exception as exc:
-        _write_response({
-            "ok": False, "kind": type(exc).__name__,
-            "error": str(exc),
-            "traceback": traceback.format_exc(limit=20),
-        })
-        return 1
-
-
-if __name__ == "__main__":
-    sys.exit(main())
