@@ -14,11 +14,12 @@ Every event has:
 
 ```json
 {
-  "ts": "2026-04-30T10:00:00.123Z",
-  "kind": "<event_kind>",
-  "phase": "<current_phase>",
-  "run_id": "<uuid>",
-  ... // kind-specific payload
+  "type": "<event_kind>",
+  "timestamp": "2026-04-30T10:00:00.123456+00:00",
+  "data": {
+    ... // kind-specific payload; may include agent_id / run_id when the
+        // emitting EventLog was configured with them (see below)
+  }
 }
 ```
 
