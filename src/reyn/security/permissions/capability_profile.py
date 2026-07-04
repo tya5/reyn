@@ -258,6 +258,15 @@ _FLOORED_QUALIFIED: "dict[str, frozenset[str]]" = {
     # future qualified route would be floored by the same _with_unwrapped_aliases
     # derivation.
     "spawn": frozenset({"session_spawn", "agent_spawn", "topology_create"}),
+    # IS-1 (pipeline v0.9 R6): no launching a registered pipeline from
+    # untrusted content / an unbound delegate — a pipeline step can itself
+    # write / exec / delegate (bounded ⊆ the invoker per R6, but still a
+    # cost-bound multi-step dispatch), so pipeline launch gets the same
+    # spawn-adjacent floor as session_spawn/agent_spawn/topology_create.
+    # Has a qualified route (pipeline__run) unlike the bare-only spawn
+    # trio, so its bare alias (run_pipeline) is derived by
+    # _with_unwrapped_aliases below — no _FLOORED_BARE_ONLY entry needed.
+    "pipeline-run": frozenset({"pipeline__run"}),
 }
 
 # Intentionally BARE-ONLY floored names: router-only tools with NO invoke_action
@@ -390,6 +399,7 @@ _FLOORED_AUDIT_SEVERITY: "dict[str, str]" = {
     "skill-install": "HIGH",  # #2548: registering skills from untrusted content is a persistence vector
     "memory-write": "MED",
     "spawn": "HIGH",  # #2103: unbounded sub-session spawn (DoS) — peer of re-delegation
+    "pipeline-run": "HIGH",  # IS-1: pipeline launch is spawn-adjacent (peer of "spawn")
 }
 DELEGATION_AUDIT_CLASSES: "dict[str, tuple[str, frozenset[str]]]" = {
     cls: (_FLOORED_AUDIT_SEVERITY[cls], tools)

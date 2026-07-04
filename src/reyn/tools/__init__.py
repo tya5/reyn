@@ -86,6 +86,7 @@ def get_default_registry() -> ToolRegistry:
         REMEMBER_AGENT,
         REMEMBER_SHARED,
     )
+    from reyn.tools.pipeline_verbs import RUN_PIPELINE
     from reyn.tools.recall import RECALL
     from reyn.tools.reyn_src import (
         REYN_SRC_GLOB,
@@ -204,6 +205,10 @@ def get_default_registry() -> ToolRegistry:
     registry.register(SKILL_INSTALL_LOCAL)
     # #2548 PR-D: skill install verb (git/GitHub URL source fetch).
     registry.register(SKILL_INSTALL_SOURCE)
+    # IS-1 (pipeline v0.9 R6): run_pipeline — sync launch of a REGISTERED
+    # pipeline. Router+phase allow; not yet in build_tools() (surfacing is a
+    # later slice, mirrors the universal-catalog wrappers' own PR-3b deferral).
+    registry.register(RUN_PIPELINE)
     # ── FP-0034 universal catalog wrappers (router-only) ─────────────────
     # PR-3a registers them in the registry; PR-3b will add them to
     # build_tools() output and refactor the SP. Handlers wire through

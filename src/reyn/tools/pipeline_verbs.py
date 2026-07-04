@@ -1,0 +1,207 @@
+"""``run_pipeline`` router tool — IS-1 (sync + REGISTERED pipeline launch).
+
+Per ``docs/proposals/reyn-pipeline-v0.9-design-resolutions.md`` R6: an agent
+launches a REGISTERED pipeline (pre-built via
+:class:`reyn.core.pipeline.registry.PipelineRegistry` — a YAML DSL parser is a
+later slice) and gets its result back inline. IS-1 is deliberately narrow:
+
+  - **Sync only.** ``run_pipeline`` runs the pipeline to completion on the
+    caller's own turn via :meth:`~reyn.core.pipeline.executor.PipelineExecutor.run`
+    and returns the final output — no separate driver-session spawn (R6's
+    ``run_pipeline_async`` + the driver-session-per-run architecture are
+    deferred; this slice proves the "launch registered pipeline, get result"
+    round trip in-process).
+  - **Registered only.** No ad-hoc ``run_pipeline_inline`` (deferred — needs
+    the §7.3 static-analysis gate first, per R6).
+  - **Real tool-step dispatch, not a stub.** A pipeline ``ToolStep``'s
+    ``tool_dispatch`` is wired through the SAME routing seam
+    ``invoke_action`` uses (``universal_dispatch.resolve_invoke_action`` +
+    the unified ``ToolRegistry`` — see :func:`_make_tool_dispatch`), so a
+    ``tool`` step actually executes a real capability (qualified action name
+    OR bare registered tool name), not a caller-supplied fake.
+  - **S3 cost-bound**: denied to pipeline-internal ``agent`` steps (an
+    ``agent`` step is a leaf worker — nesting is ``call``-only, a later
+    slice) — enforced structurally in
+    ``reyn.runtime.session_api._build_agent_step_narrowing``, not here.
+
+Dependencies the handler assembles for :class:`~reyn.core.pipeline.executor.PipelineExecutor`:
+  - ``registry`` (an ``AgentRegistry``, only needed if the pipeline has an
+    ``AgentStep``) from ``ctx.router_state.agent_registry``.
+  - ``state_log`` (for R4 step-boundary recovery) from ``ctx.state_log`` —
+    the SAME process-shared WAL every other recovery-aware tool threads.
+  - ``default_identity`` (the calling actor) from
+    ``ctx.router_state.host.agent_name`` when a host is present.
+  - ``tool_dispatch`` — see :func:`_make_tool_dispatch`.
+
+NOTE (surfacing): this tool is registered in the unified ``ToolRegistry``
+(dispatch-completeness: routable via ``invoke_action``/``pipeline__run``,
+classified for the content-threat + capability-floor guards) but is NOT yet
+added to ``build_tools()`` — the live LLM tool list. That wiring is the same
+"PR-3b" follow-up already deferred for the other universal-catalog wrappers
+(``list_actions``/``search_actions``/``describe_action``/``invoke_action``);
+``run_pipeline`` rides the same follow-up, tracked as IS-1's "surfacing"
+deferral.
+"""
+from __future__ import annotations
+
+import uuid
+from typing import Any, Callable, Mapping
+
+from reyn.core.pipeline.executor import PipelineExecutionError, PipelineExecutor
+from reyn.core.pipeline.registry import PipelineNotFoundError
+from reyn.tools.types import ToolContext, ToolDefinition, ToolGates, ToolResult
+
+_RUN_PIPELINE_DESCRIPTION = (
+    "Run a REGISTERED pipeline by name to completion and return its final "
+    "output. Blocks until the pipeline finishes (sync). 'input' seeds the "
+    "pipeline's initial named context (ctx.*) for its first step. Fails "
+    "clearly if 'name' is not a registered pipeline, or if any step fails."
+)
+
+_RUN_PIPELINE_PARAMETERS: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "name": {
+            "type": "string",
+            "description": "The registered pipeline's name.",
+        },
+        "input": {
+            "type": "object",
+            "description": (
+                "Initial named context (ctx.*) for the pipeline's first "
+                "step. Omit for a pipeline that needs no seed input."
+            ),
+        },
+    },
+    "required": ["name"],
+}
+
+
+def _make_tool_dispatch(ctx: ToolContext) -> "Callable[[str, dict], Any]":
+    """Build the real ``tool_dispatch`` a pipeline ``ToolStep`` invokes through.
+
+    Routes ``step.name`` through the SAME seam ``invoke_action`` uses
+    (``universal_dispatch.resolve_invoke_action`` — see
+    ``tools/universal_catalog.py:_handle_invoke_action``, the precedent this
+    mirrors): a qualified action name (``file__read``) resolves to its target
+    tool + shaped args; a name with no operation-rule route falls back to a
+    direct bare-name lookup in the unified registry (so a pipeline can also
+    name a tool directly, e.g. ``"web_search"``). Either way the target
+    handler is invoked with ``ctx`` forwarded VERBATIM — same as
+    ``invoke_action`` forwards it — so router_state callbacks (permission
+    resolver, workspace, etc.) reach the target exactly as if the caller had
+    invoked it directly. No stub, no op_runtime bridge: this IS the real
+    tool-execution path.
+    """
+
+    async def _dispatch(name: str, resolved_args: "dict[str, Any]") -> Any:
+        from reyn.tools import get_default_registry
+        from reyn.tools.universal_dispatch import (
+            UnknownActionError,
+            resolve_invoke_action,
+        )
+
+        registry = get_default_registry()
+        target_name = name
+        target_args: "dict[str, Any]" = dict(resolved_args)
+        try:
+            resolved = resolve_invoke_action(name, resolved_args)
+        except UnknownActionError:
+            resolved = None
+        if resolved is not None:
+            target_name = resolved.target_tool_name
+            target_args = dict(resolved.target_args)
+
+        target = registry.lookup(target_name)
+        if target is None:
+            raise PipelineExecutionError(
+                f"pipeline tool step {name!r} does not resolve to a "
+                f"registered tool (tried qualified-action routing, then a "
+                f"bare lookup of {target_name!r})"
+            )
+        return await target.handler(target_args, ctx)
+
+    return _dispatch
+
+
+async def _handle_run_pipeline(
+    args: Mapping[str, Any], ctx: ToolContext,
+) -> ToolResult:
+    """Look up the registered pipeline, run it synchronously, return its
+    final output. See the module docstring for the dependency wiring."""
+    name = str(args.get("name") or "").strip()
+    if not name:
+        return {"status": "error", "data": {"error": "name is required"}}
+
+    raw_input = args.get("input")
+    if raw_input is not None and not isinstance(raw_input, Mapping):
+        return {
+            "status": "error",
+            "data": {"error": "input must be an object (mapping), if given"},
+        }
+
+    rs = ctx.router_state
+    pipeline_registry = rs.pipeline_registry if rs is not None else None
+    if pipeline_registry is None:
+        return {
+            "status": "error",
+            "data": {
+                "error": (
+                    "no PipelineRegistry available — run_pipeline requires "
+                    "ctx.router_state.pipeline_registry to be populated"
+                ),
+            },
+        }
+
+    try:
+        pipeline = pipeline_registry.get(name)
+    except PipelineNotFoundError:
+        return {
+            "status": "error",
+            "data": {"error": f"pipeline {name!r} is not registered"},
+        }
+
+    agent_registry = rs.agent_registry if rs is not None else None
+    host = rs.host if rs is not None else None
+    default_identity = getattr(host, "agent_name", None) if host is not None else None
+    state_log = ctx.state_log
+
+    executor = PipelineExecutor()
+    run_id = f"pipeline-{name}-{uuid.uuid4().hex}"
+    try:
+        result = await executor.run(
+            pipeline,
+            dict(raw_input) if raw_input else None,
+            tool_dispatch=_make_tool_dispatch(ctx),
+            state_log=state_log,
+            run_id=run_id,
+            registry=agent_registry,
+            default_identity=default_identity,
+        )
+    except PipelineExecutionError as exc:
+        return {
+            "status": "error",
+            "data": {"error": f"pipeline {name!r} failed: {exc}"},
+        }
+
+    return {
+        "status": "ok",
+        "data": {
+            "run_id": result.run_id,
+            "output": result.pipe_data,
+            "named_stores": result.named_stores,
+        },
+    }
+
+
+RUN_PIPELINE = ToolDefinition(
+    name="run_pipeline",
+    description=_RUN_PIPELINE_DESCRIPTION,
+    parameters=_RUN_PIPELINE_PARAMETERS,
+    gates=ToolGates(router="allow", phase="allow"),
+    handler=_handle_run_pipeline,
+    category="io",
+    purity="side_effect",
+)
+
+__all__ = ["RUN_PIPELINE"]

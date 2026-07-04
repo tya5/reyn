@@ -68,6 +68,8 @@ def test_categories_master_table_order() -> None:
         # #2548 PR-C: skill management ops (install_local). NOT the ``skill__``
         # resource category; this is the management plane (mirrors ``mcp``).
         "skill_management",
+        # IS-1: pipeline launch verb(s) (pipeline__run = run_pipeline).
+        "pipeline",
     )
 
 

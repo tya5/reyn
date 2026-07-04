@@ -95,6 +95,13 @@ _NOT_EXTERNAL = {
     "task.add_dependency", "task.remove_dependency", "task.repoint_dependency",
     "task.abort", "task.heartbeat", "task.register_unblock_predicate",
     "task.comment", "task.assign",
+    # IS-1 (pipeline v0.9 R6): run_pipeline returns the pipeline's OWN final
+    # output (run_id / output / named_stores) — an OS-assembled result of
+    # internal step execution, not fetched external content. Any external
+    # content a tool/agent step's own result carries is fenced on THAT step's
+    # own tool-result path when it runs (same "ACK here, fenced at its own
+    # seam" pattern as delegate_to_agent / session_spawn above).
+    "run_pipeline",
 }
 
 

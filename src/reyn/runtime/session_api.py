@@ -53,12 +53,22 @@ if TYPE_CHECKING:
     from reyn.core.pipeline.schema import SchemaRegistry
     from reyn.runtime.registry import AgentRegistry
 
-# Tool names that let a session hand a turn off to a peer / sub-session mid-run
-# (a pending chain / async dispatch the caller's inbox-emptiness check cannot
-# see). ``_expand_tool_forms`` (capability_profile.py) derives every invocable
-# alias (bare + qualified) from each name here, so listing the bare tool name
-# is sufficient — the qualified catalog form is covered too.
-_DELEGATION_DENY_TOOLS: tuple[str, ...] = ("delegate_to_agent",)
+# Tool names an ``agent`` pipeline step must never reach — a leaf worker (R6
+# session-hierarchy constraint 4: "E_i are spawn-tree LEAVES"). Two distinct
+# reasons collapse into one deny-set:
+#   - ``delegate_to_agent``: a mid-turn delegation would make
+#     ``MessageBus.request``'s quiescence predicate (inbox.empty()) return
+#     early on a pending chain the spawned session is still awaiting a reply
+#     for (see the module docstring).
+#   - ``run_pipeline`` (IS-1, R6 S3): nesting a pipeline launch inside an
+#     ``agent`` step would let a step spawn ANOTHER pipeline at runtime,
+#     defeating the transitive-closure cost-bound approval a REGISTERED
+#     pipeline gets at ``run_pipeline`` call time — nesting is ``call``-only.
+# ``_expand_tool_forms`` (capability_profile.py) derives every invocable alias
+# (bare + qualified) from each name here, so listing the bare tool name is
+# sufficient — the qualified catalog form (``multi_agent__delegate`` /
+# ``pipeline__run``) is covered too.
+_DELEGATION_DENY_TOOLS: tuple[str, ...] = ("delegate_to_agent", "run_pipeline")
 
 # MessageBus.request has no default — an agent step needs one so callers
 # aren't forced to pick a number for the common case.
