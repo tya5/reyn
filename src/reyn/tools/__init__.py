@@ -206,8 +206,12 @@ def get_default_registry() -> ToolRegistry:
     # #2548 PR-D: skill install verb (git/GitHub URL source fetch).
     registry.register(SKILL_INSTALL_SOURCE)
     # IS-1 (pipeline v0.9 R6): run_pipeline — sync launch of a REGISTERED
-    # pipeline. Router+phase allow; not yet in build_tools() (surfacing is a
-    # later slice, mirrors the universal-catalog wrappers' own PR-3b deferral).
+    # pipeline. Router+phase allow. IS-5: surfaced to the live LLM catalog
+    # via the ``pipeline`` universal-catalog category enumerator (lists
+    # registered pipelines) + invoke_action (``pipeline__run`` /
+    # ``run_pipeline``) — the same PR-3b-shipped path every other
+    # universal-catalog wrapper uses, NOT build_tools() (which is
+    # hand-assembled and strips direct tools once wrappers are on).
     registry.register(RUN_PIPELINE)
     # ── FP-0034 universal catalog wrappers (router-only) ─────────────────
     # PR-3a registers them in the registry; PR-3b will add them to

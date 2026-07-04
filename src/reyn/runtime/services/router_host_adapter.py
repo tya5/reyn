@@ -54,6 +54,9 @@ class RouterHostAdapter:
         SnapshotJournal instance for plan-lifecycle persistence.
     agent_registry:
         AgentRegistry (or None) for listing reachable peers.
+    pipeline_registry:
+        PipelineRegistry (or None, IS-5) — the ``run_pipeline`` tool's
+        lookup source, exposed via ``get_pipeline_registry()``.
     agent_workspace_dir:
         Path to ``.reyn/agents/<agent_name>`` — used for ``get_memory_index``.
     file_read:
@@ -103,6 +106,7 @@ class RouterHostAdapter:
         journal: Any,                           # SnapshotJournal
         state_log: Any = None,                  # StateLog | None — #2248 PR-A2 (config emit)
         agent_registry: Any,                    # AgentRegistry | None
+        pipeline_registry: Any = None,          # PipelineRegistry | None — IS-5
         record_spawned_task: "Callable[[str, str], None] | None" = None,  # #2103 S1bc-exec
         live_session_id_fn: "Callable[[], str | None] | None" = None,     # #2103 S1bc-exec
         current_task_id_fn: "Callable[[], str | None] | None" = None,     # #1953 §16
@@ -319,6 +323,7 @@ class RouterHostAdapter:
         self._journal = journal
         self._state_log = state_log  # #2259 PR-1: WAL head for config generation emit
         self._registry = agent_registry
+        self._pipeline_registry = pipeline_registry  # IS-5: run_pipeline lookup source
         self._record_spawned_task = record_spawned_task   # #2103 S1bc-exec
         self._live_session_id_fn = live_session_id_fn      # #2103 S1bc-exec
         self._current_task_id_fn = current_task_id_fn      # #1953 §16
@@ -585,6 +590,22 @@ class RouterHostAdapter:
 
     def get_mcp_servers(self) -> list[dict]:
         return self._get_mcp_servers_for_router()
+
+    def get_agent_registry(self) -> Any:
+        """The real AgentRegistry (or None) — IS-5: exposes the private
+        ``self._registry`` (already threaded in for peer-listing/delegation)
+        through a public accessor so ``RouterLoop._build_router_caller_state``
+        can populate ``RouterCallerState.agent_registry`` without reaching
+        into the adapter's private attribute."""
+        return self._registry
+
+    def get_pipeline_registry(self) -> Any:
+        """The real PipelineRegistry (or None) — IS-5: read by
+        ``RouterLoop._build_router_caller_state`` to populate
+        ``RouterCallerState.pipeline_registry`` so ``run_pipeline`` resolves
+        against the session's actual registered pipelines instead of the
+        None landmine."""
+        return self._pipeline_registry
 
     def get_web_fetch_allowed(self) -> bool:
         """Always returns True — FP-0022: web_fetch is now always in the catalog.

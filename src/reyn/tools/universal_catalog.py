@@ -716,6 +716,28 @@ def _enumerate_category(category: str, ctx: ToolContext) -> list[dict[str, str]]
             })
         return out2
 
+    if category == "pipeline":
+        # IS-5: enumerate REGISTERED pipelines from the caller state's
+        # PipelineRegistry (mirrors the rag_corpus branch above). Each
+        # ``pipeline__<name>`` entry is directly invokable — D19 resource
+        # invoke, ``universal_dispatch._RESOURCE_RULES["pipeline"]`` curries
+        # ``name`` and forwards ``input`` to ``run_pipeline`` — same pattern
+        # as ``rag_corpus__<name>`` currying ``sources`` into ``recall``. The
+        # pre-existing static ``pipeline__run`` verb (``args={name, input}``)
+        # keeps working unchanged (exact _OPERATION_RULES match wins first).
+        # None registry (narrow test hosts / a host that doesn't support
+        # run_pipeline) → empty list.
+        pipeline_registry = getattr(rs, "pipeline_registry", None) if rs is not None else None
+        if pipeline_registry is None:
+            return []
+        return [
+            {
+                "qualified_name": build_qualified_name("pipeline", name),
+                "short_description": _truncate_short_description(description),
+            }
+            for name, description in pipeline_registry.entries()
+        ]
+
     # exec category — sandboxed_exec (FP-0017).
     # Visible only when a real sandbox backend is configured (D14-ext).
     # RouterCallerState.sandbox_backend carries the backend name (None = noop).
@@ -1294,6 +1316,9 @@ def _resource_input_schema(
       - ``mcp__<server>__<tool>`` — scans ``ctx.router_state.mcp_servers``
         for the tool's declared ``inputSchema`` (#1647 per-tool action; static
         mcp verbs fall through to the verb's parameters).
+      - ``pipeline__<name>`` (IS-5) — ``run_pipeline`` parameters minus
+        ``name`` (the registered pipeline's own name, curried from the
+        qualified name).
 
     Returns ``None`` when the category isn't a resource category, or when
     the per-resource metadata isn't reachable (= test sites with stub
@@ -1322,6 +1347,17 @@ def _resource_input_schema(
         if t is not None and isinstance(t.get("inputSchema"), Mapping):
             return dict(t["inputSchema"])
         return None
+
+    if category == "pipeline":
+        # IS-5: pipeline__<name> curries the pipeline name (mirrors rag_corpus
+        # currying ``sources``) — strip ``name`` from run_pipeline's
+        # parameters so the LLM only sees ``input``. The static
+        # ``pipeline__run`` verb itself is an exact _OPERATION_RULES match
+        # (checked first) so it never reaches this per-category fallback.
+        tool = registry.lookup("run_pipeline")
+        if tool is None:
+            return None
+        return _drop_field_from_schema(tool.parameters, "name")
 
     # memory_entry__X and any other category: pre-existing dispatch shape
     # mismatch (memory_entry's transform sends {name} but read_memory_body
@@ -1354,6 +1390,8 @@ def _resource_description(
         action; static mcp verbs fall through to the verb's description).
       - ``mcp.server__<name>`` — pulls server-level ``description`` from
         ``ctx.router_state.mcp_servers``.
+      - ``pipeline__<name>`` (IS-5) — pulls the registered ``Pipeline``'s
+        own ``description`` from ``ctx.router_state.pipeline_registry``.
 
     Falls through to ``target.description`` (= caller default) for:
       - ``rag_corpus__<name>`` — no per-corpus description metadata
@@ -1390,6 +1428,22 @@ def _resource_description(
             desc = t.get("description")
             return str(desc) if desc else None
         return None
+
+    if category == "pipeline":
+        # IS-5: pipeline__<name> — the REGISTERED pipeline's own description
+        # (so describe_action / the enumerate-all flat tool description shows
+        # what THIS pipeline does, not the generic run_pipeline blurb).
+        # None registry / not-found → caller falls back to run_pipeline's text.
+        from reyn.core.pipeline.registry import PipelineNotFoundError
+
+        pipeline_registry = getattr(rs, "pipeline_registry", None) if rs is not None else None
+        if pipeline_registry is None:
+            return None
+        try:
+            pipeline = pipeline_registry.get(entry_name)
+        except PipelineNotFoundError:
+            return None
+        return pipeline.description or None
 
     # rag_corpus / memory_entry / unknown — fall through to target.description
     return None

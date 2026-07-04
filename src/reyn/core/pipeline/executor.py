@@ -118,9 +118,18 @@ Step = Union[TransformStep, ToolStep, AgentStep]
 
 @dataclass(frozen=True)
 class Pipeline:
-    """A linear sequence of steps."""
+    """A linear sequence of steps.
+
+    ``description`` (IS-5): optional human-readable summary surfaced to the
+    LLM by the universal catalog's ``pipeline`` category enumerator
+    (``tools/universal_catalog.py:_enumerate_category``), so an agent
+    deciding whether to ``run_pipeline`` a registered pipeline sees what it
+    does, not just its bare name. Empty string when the registrant omits
+    it — the enumerator still lists the pipeline (name is enough to invoke
+    it), just with no description text."""
 
     steps: "list[Step]"
+    description: str = ""
 
 
 @dataclass(frozen=True)
