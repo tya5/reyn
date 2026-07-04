@@ -52,7 +52,6 @@ class QuickAction:
 # chainlit welcome button row.
 QUICK_ACTIONS: tuple[QuickAction, ...] = (
     QuickAction(name="agents", label="/agents", slash_text="/agents"),
-    QuickAction(name="skills", label="/skills", slash_text="/skills"),
     QuickAction(name="list", label="/list", slash_text="/list"),
     QuickAction(name="cost", label="/cost", slash_text="/cost"),
 )

@@ -221,7 +221,7 @@ def test_web_data_200_shape(tmp_project: Path, monkeypatch: pytest.MonkeyPatch) 
         )
         data = response.json()
         for key in ("AGENTS", "RECAP", "QUICKSTARTS", "LIBRARY", "COPY",
-                    "CONVO_ARIA", "CONVO_ARIA_STUDIO", "SKILL_GRAPH",
+                    "CONVO_ARIA", "CONVO_ARIA_STUDIO",
                     "RUN_EVENTS", "RUNS_LIST", "PERMISSIONS"):
             assert key in data, f"Missing key {key!r} in /api/web/data response"
     finally:

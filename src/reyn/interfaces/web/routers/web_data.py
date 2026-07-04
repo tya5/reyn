@@ -14,8 +14,6 @@ Field populate strategy:
     LIBRARY           — live filesystem reads
     CONVO_ARIA        — empty list
     CONVO_ARIA_STUDIO — empty list
-    SKILL_GRAPH       — default empty graph
-    SKILL_MD          — ""
     RUN_EVENTS        — empty list  (EventStore integration deferred)
     RUNS_LIST         — empty list
     PERMISSIONS       — approvals.yaml keys (live)
@@ -55,7 +53,6 @@ _COPY_EN = {
     "today": "Today",
     "agents": "Agents",
     "library": "Library",
-    "skills": "Tools",
     "runs": "Runs",
     "evals": "Evals",
     "topologies": "Topologies",
@@ -85,7 +82,6 @@ _COPY_JA = {
     "today": "今日",
     "agents": "エージェント",
     "library": "ライブラリ",
-    "skills": "ツール",
     "runs": "実行",
     "evals": "評価",
     "topologies": "トポロジー",
@@ -219,14 +215,6 @@ async def web_data(
         "LIBRARY": library,
         "CONVO_ARIA": [],
         "CONVO_ARIA_STUDIO": [],
-        "SKILL_GRAPH": {
-            "name": "",
-            "source": "",
-            "entry": "",
-            "finish_criteria": "",
-            "phases": [],
-        },
-        "SKILL_MD": "",
         "RUN_EVENTS": [],
         "RUNS_LIST": [],
         "PERMISSIONS": permissions,

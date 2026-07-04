@@ -233,11 +233,6 @@ class AgentSnapshot:
                 chain["waiting_on"] = list(event.get("waiting_on", []))
         elif kind in ("chain_resolve", "chain_timeout_fired"):
             self.pending_chains.pop(event.get("chain_id"), None)
-        # Note: skill_started / skill_completed / skill_discarded are still
-        # valid WAL kinds (read by the replay/rewind engine) but no longer
-        # mutate agent-snapshot state — the per-skill run-id tracking they
-        # populated was removed with the skill runtime. An old-WAL skill_*
-        # entry therefore falls through here (no-op) on reconstruction.
         elif kind == "intervention_dispatched":
             iv_id = event.get("intervention_id")
             if iv_id:
