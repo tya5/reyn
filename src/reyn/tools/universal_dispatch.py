@@ -310,6 +310,9 @@ _OPERATION_RULES: Final[dict[str, tuple[str, Callable[[str, Mapping[str, Any]], 
     # colliding with that resource namespace — mirrors mcp__ (mgmt) vs mcp.<s>.<t> (res).
     "skill_management__install_local":  ("skill_install_local",  _passthrough_args),
     "skill_management__install_source": ("skill_install_source", _passthrough_args),
+
+    # pipeline category (IS-1: sync + REGISTERED-only run_pipeline).
+    "pipeline__run": ("run_pipeline", _passthrough_args),
 }
 
 

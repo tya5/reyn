@@ -84,6 +84,11 @@ CATEGORIES: Final[tuple[str, ...]] = (
     # ``skill__`` resource category (per-skill dynamic dispatch); this is the
     # management plane — mirrors the ``mcp`` category pattern.
     "skill_management",
+    # IS-1 (docs/proposals/reyn-pipeline-v0.9-design-resolutions.md R6):
+    # pipeline launch verb(s). ``pipeline__run`` = run_pipeline (sync,
+    # REGISTERED-only). run_pipeline_inline / run_pipeline_async / the
+    # ad-hoc-async combo join this category in later slices.
+    "pipeline",
 )
 
 

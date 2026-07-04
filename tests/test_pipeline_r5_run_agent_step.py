@@ -192,28 +192,34 @@ async def test_agent_step_narrowing_denies_delegation_when_spawned(tmp_path: Pat
     (``_build_agent_step_narrowing``), spawned via ``spawn_ephemeral_session``,
     is LIVE-enforced (``registry.resolved_profile_for``) to deny
     ``delegate_to_agent`` (+ its qualified ``multi_agent__delegate`` alias)
-    even when the caller's own ``capabilities`` list explicitly names it —
+    AND ``run_pipeline`` (+ its qualified ``pipeline__run`` alias, IS-1 R6 S3:
+    an agent step is a spawn-tree LEAF — no launching a nested pipeline)
+    even when the caller's own ``capabilities`` list explicitly names them —
     ``capability_profile`` resolution is deny-always-wins
-    (``profile_permits``), so an ``agent`` step cannot re-open delegation via
-    its ``capabilities`` argument. Purely structural: no LLM turn / actual
-    delegation attempt needed to prove the gate."""
+    (``profile_permits``), so an ``agent`` step cannot re-open either via its
+    ``capabilities`` argument. Purely structural: no LLM turn / actual
+    delegation or pipeline-launch attempt needed to prove the gate."""
     reg = _registry(tmp_path, scripted=None)
-    narrowing = _build_agent_step_narrowing(["delegate_to_agent", "file__read"])
+    narrowing = _build_agent_step_narrowing(
+        ["delegate_to_agent", "run_pipeline", "file__read"]
+    )
 
     sid = await spawn_ephemeral_session(reg, identity="worker", narrowing=narrowing)
     contextual, _excluded = reg.resolved_profile_for("worker", sid=sid)
 
     assert contextual is not None
     assert {"delegate_to_agent", "multi_agent__delegate"} <= contextual.tool_deny
+    assert {"run_pipeline", "pipeline__run"} <= contextual.tool_deny
 
 
 def test_build_agent_step_narrowing_no_capabilities_is_restrict_only(tmp_path: Path) -> None:
     """Tier 2: OS invariant — omitting ``capabilities`` (None) leaves
     ``tool_allow`` unset (no re-grant beyond the agent's normal envelope);
-    only the delegation deny is imposed. Pure function, no session needed."""
+    only the structural leaf-worker deny (delegation + IS-1's nested
+    run_pipeline, R6 S3) is imposed. Pure function, no session needed."""
     narrowing = _build_agent_step_narrowing(None)
     assert "tool_allow" not in narrowing
-    assert narrowing["tool_deny"] == ["delegate_to_agent"]
+    assert narrowing["tool_deny"] == ["delegate_to_agent", "run_pipeline"]
 
 
 # ── ephemeral cleanup ────────────────────────────────────────────────────────

@@ -210,6 +210,11 @@ def build_universal_tool_use_slots(
             "`skill_management__install_source` to fetch and install a skill from "
             "a git/GitHub URL (shallow-clones to .reyn/skills/<name>/)."
         )
+        _r2.append(
+            "- **pipeline** — launch a registered pipeline: "
+            "`pipeline__run` runs a REGISTERED pipeline by name to completion "
+            "and returns its final output (synchronous — blocks until done)."
+        )
         _r2.append("")
         if has_hot_list_aliases:
             _r2.append(
