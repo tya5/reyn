@@ -14,9 +14,9 @@ What is pinned:
      emits a single ``("error", …, {retry_hint: …})`` event with the
      canonical install command in the hint before raising.
   3. A successful load emits exactly
-        ``status`` → ``skill_done`` (in that order).
+        ``status`` → ``model_loaded`` (in that order).
      ``status.meta`` carries ``model`` / ``target_dir`` / ``device``;
-     ``skill_done.meta`` carries ``model`` / ``dimension``.
+     ``model_loaded.meta`` carries ``model`` / ``dimension``.
   4. A load that fails after the import succeeded (= simulated by a
      SentenceTransformer constructor raising) emits
         ``status`` → ``error``.
@@ -156,14 +156,14 @@ def test_import_error_emits_error_event_with_install_hint(
     assert meta["model"] == "sentence-transformers/all-MiniLM-L6-v2"
 
 
-# ── 3. Successful load emits status → skill_done ─────────────────────────────
+# ── 3. Successful load emits status → model_loaded ─────────────────────────────
 
 
 def test_successful_load_emits_status_then_done(
     monkeypatch, tmp_path,
 ) -> None:
     """Tier 2: load lifecycle = status (with model/target_dir/device) then
-    skill_done (with model/dimension), in that order.
+    model_loaded (with model/dimension), in that order.
     """
     monkeypatch.setenv("REYN_CACHE_DIR", str(tmp_path))
     monkeypatch.setenv("REYN_EMBED_DEVICE", "cpu")
@@ -180,8 +180,8 @@ def test_successful_load_emits_status_then_done(
         "sentence-transformers/all-MiniLM-L6-v2",
     ))
     kinds = [k for k, _t, _m in events]
-    assert kinds == ["status", "skill_done"], (
-        f"expected [status, skill_done]; got {kinds}"
+    assert kinds == ["status", "model_loaded"], (
+        f"expected [status, model_loaded]; got {kinds}"
     )
     status_meta = events[0][2]
     done_meta = events[1][2]
@@ -213,7 +213,7 @@ def test_subsequent_load_emits_no_events_when_cached(
     _run(p.embed(["a"], "sentence-transformers/all-MiniLM-L6-v2"))
     _run(p.embed(["b"], "sentence-transformers/all-MiniLM-L6-v2"))
     # Only the first call's two events; second call hits the cache.
-    assert [k for k, _t, _m in events] == ["status", "skill_done"]
+    assert [k for k, _t, _m in events] == ["status", "model_loaded"]
 
 
 # ── 4. Load failure after import emits status → error ───────────────────────
@@ -309,7 +309,7 @@ def test_routing_wrapper_forwards_event_sink_to_st_backend(
     provider = RoutingEmbeddingProvider(config=cfg, event_sink=sink)
     _run(provider.embed(["x"], "local-mini"))
     # Backend was lazily constructed and emitted lifecycle events.
-    assert [k for k, _t, _m in events] == ["status", "skill_done"]
+    assert [k for k, _t, _m in events] == ["status", "model_loaded"]
 
 
 # ── 7. get_provider passes the sink through ──────────────────────────────────
@@ -346,7 +346,7 @@ def test_get_provider_threads_event_sink_through_routing_wrapper(
     )
     provider = get_provider("litellm", cfg, event_sink=sink)
     _run(provider.embed(["x"], "local-mini"))
-    assert [k for k, _t, _m in events] == ["status", "skill_done"]
+    assert [k for k, _t, _m in events] == ["status", "model_loaded"]
 
 
 def test_get_provider_without_event_sink_keeps_backward_compat(

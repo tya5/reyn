@@ -281,7 +281,7 @@ def test_caller_kind_and_id_propagated_in_events():
         async def invoker(args):
             return None
         ctx, ev = make_ctx(
-            caller_kind="skill_phase",
+            caller_kind="router",
             caller_id="article_writer.write",
             chain_id="cabc",
             catalog=_SAMPLE_CATALOG,
@@ -291,7 +291,7 @@ def test_caller_kind_and_id_propagated_in_events():
             ctx=ctx, invoker=invoker,
         )
         for ev_type, ev_data in ev.events:
-            assert ev_data["caller_kind"] == "skill_phase"
+            assert ev_data["caller_kind"] == "router"
             assert ev_data["caller_id"] == "article_writer.write"
             assert ev_data["chain_id"] == "cabc"
     asyncio.run(main())

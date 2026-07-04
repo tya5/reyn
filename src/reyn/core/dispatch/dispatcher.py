@@ -31,10 +31,9 @@ class DispatchContext:
     """Per-call context passed into dispatch_tool.
 
     Attributes:
-        caller_kind: "router" for chat agent main loop, "skill_phase" for
-            op-loop execution. Used in event taxonomy for filtering.
-        caller_id: agent_name (router) or f"{actor}.{phase_name}"
-            (skill_phase). Identifies the audit subject.
+        caller_kind: Always "router" — the chat agent main loop.
+            Used in event taxonomy for filtering.
+        caller_id: agent_name. Identifies the audit subject.
         chain_id: optional chain id for multi-hop tracing (PR14).
         tool_catalog: dict[str, dict] mapping tool name → tool definition
             ({"function": {"name", "description", "parameters": <json schema>}}).
@@ -44,7 +43,7 @@ class DispatchContext:
         chain_id is included as an event field automatically.
     """
 
-    caller_kind: Literal["router", "skill_phase"]
+    caller_kind: Literal["router"]
     caller_id: str
     chain_id: str | None
     tool_catalog: dict[str, dict]
