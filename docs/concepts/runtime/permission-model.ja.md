@@ -14,9 +14,9 @@ reyn のパーミッションシステムは 4 種類のケイパビリティを
 ┌──────────────────────────────┐  常に許可。宣言不要
 │  デフォルト（読み取り専用プロジェクト）│
 └──────────────────────────────┘
-             ↓ Skill がさらに必要とする場合
-┌──────────────────────────────┐  skill.md frontmatter で宣言。ユーザーが承認
-│  Skill 宣言                  │  承認は .reyn/approvals.yaml に永続化
+             ↓ actor がさらに必要とする場合
+┌──────────────────────────────┐  reyn.yaml `permissions:` で宣言。実際の使用時
+│  宣言されたケイパビリティ      │  点で 1 回プロンプト（起動時ではない）
 └──────────────────────────────┘
              ↓ プロジェクトを広く信頼する場合
 ┌──────────────────────────────┐  reyn.yaml: permissions.<key>: allow
@@ -28,21 +28,23 @@ reyn のパーミッションシステムは 4 種類のケイパビリティを
 
 プロジェクトルート配下のどこでも読み取り/glob/grep。書き込み/編集/削除は `.reyn/` 配下のみ。シェル、MCP、Python は不可。
 
-### レイヤー 2：ワークフロー宣言
+### レイヤー 2：宣言されたケイパビリティ
 
-デフォルト外のものが必要なワークフローは `skill.md` frontmatter でパーミッションを宣言します。ワークフローの起動時、ランタイムは単一の承認プロンプトを表示します：
+デフォルト外のものが必要な actor は `reyn.yaml` の `permissions:` ブロック（`PermissionDecl`、`permissions.file.write` / `file.read` / `mcp` / `tool` / `http.get` / `secret.write` リストから構築）で宣言します。パスを宣言してもそれ自体はアクセスを付与しません — ランタイムがその actor がそのパスを必要とし得ることを認識するだけです。プロンプトは実際にそのパスへアクセスする時点（起動時ではない）で just-in-time に発火します：
 
 ```
-[approval] my_skill/file.write needs:
+[approval] chat_router/file.write needs:
   /tmp/output (just_path)
 
   [y] この実行のみ許可
-  [j] この正確なパス + Skill について永続化
-  [r] 親ディレクトリ（再帰的）+ Skill について永続化
+  [j] この正確なパス + actor について永続化
+  [r] 親ディレクトリ（再帰的）+ actor について永続化
   [N] 拒否
 ```
 
-永続的な選択は `.reyn/approvals.yaml` に `<skill>/<op>/<path>` のキーで保存されます。キーは Skill スコープです。ある Skill の承認が別の Skill に漏れることはありません。
+永続的な選択は `.reyn/approvals.yaml` に `<actor>/<op>/<path>`（例: `chat_router/file.write//tmp/output`）のキーで保存されます。キーは actor スコープです。ある actor の承認が別の actor に漏れることはありません（`security/permissions/permissions.py`: "Approval keys are actor-scoped to prevent external-actor privilege escalation"）。`actor` は呼び出し元サブシステムを識別します(例: LLM ルーター駆動の op パスなら `chat_router`、バックグラウンド呼び出しなら `hooks`/`cron` など) — 個々の named agent ではありません。
+
+呼び出しに intervention bus が配線されていない場合（`bus=None` — 非インタラクティブなコンテキスト）、JIT プロンプトはスキップされ、ゾーン外アクセスは保留せずに拒否されます。
 
 ### レイヤー 3：プロジェクト全体の事前承認
 
@@ -61,15 +63,15 @@ permissions:
 
 ## 非インタラクティブ実行
 
-`reyn eval` はプロンプトなしで実行されます。承認は事前に整っている必要があります。`reyn.yaml` で事前承認されているか、以前のインタラクティブ実行から `.reyn/approvals.yaml` に永続化されているかです。
+intervention bus が配線されていない実行(CI、スクリプト自動化、インタラクティブな TTY の無いコンテキスト)はプロンプトなしで進みます。承認は事前に整っている必要があります。`reyn.yaml` で事前承認されているか、以前のインタラクティブ実行から `.reyn/approvals.yaml` に永続化されているかです。
 
-これは同じ信頼モデルです。eval が何が安全かを決めるのではなく、あなたが事前に決めます。
+これは同じ信頼モデルです。自動化側が何が安全かを決めるのではなく、あなたが事前に決めます。
 
-## なぜ Skill スコープのキーなのか
+## なぜ actor スコープのキーなのか
 
-承認はグローバルではなく Skill でキー付けされます。Skill A が「`/tmp/foo` に書き込んでよいか？」と尋ね、それを承認しても、Skill B に同じアクセスを付与することにはなりません。
+承認はグローバルではなく actor でキー付けされます。actor A が「`/tmp/foo` に書き込んでよいか？」と尋ね、それを承認しても、actor B に同じアクセスを付与することにはなりません。
 
-理由はコンポジションの安全性です。Skill A は信頼されているかもしれません。Skill A が（`run_skill` を通じて）サブスキル B を呼び出しても、B のパーミッションが推移的に付与されるわけではありません。B は自分自身のために求める必要があります。
+理由はコンポジションの安全性です: ある actor の承認済みケイパビリティが別の actor のアクセスを推移的に解放してはいけません — 各 actor は自分自身のために求める必要があります。
 
 ## `mcp_install` パーミッション {#mcp_install-パーミッション}
 
@@ -134,10 +136,10 @@ grep '"mcp_server_installed"' .reyn/events.jsonl
 
 Reyn のパーミッションは 2 つの軸で機能します：
 
-**軸 1 — 使用宣言** (skill.md frontmatter の `permissions:` ブロック):
-ワークフローの作者が使用する op を宣言します。宣言されていない op は即座に `PermissionError`
-を発生させます（Android のマニフェストに登録されていない API を呼び出した場合の
-`SecurityException` に相当）。
+**軸 1 — 使用宣言** (`reyn.yaml` の `permissions:` ブロック、`PermissionDecl` にパース):
+オペレーターが actor がデフォルト外で到達できる範囲を宣言します。宣言されていないゾーン外の
+op は `PermissionError` を発生させます（Android のマニフェストに登録されていない API を
+呼び出した場合の `SecurityException` に相当）。
 
 **軸 2 — 認可** (オペレーター / ユーザーによるアクセス付与):
 `PermissionResolver._approve()` の 4 層解決：
@@ -153,7 +155,7 @@ Reyn のパーミッションは 2 つの軸で機能します：
 
 | Tier | 代表的な op | 宣言 | デフォルト | 設定制限 |
 |---|---|---|---|---|
-| 0 | `run_skill`, `ask_user` | 不要 | 無条件パス | 不可 |
+| 0 | `ask_user` | 不要 | 無条件パス | 不可 |
 | 1 | `web_search`, `web_fetch` | 不要 | allow | `deny` でブロック |
 | 2 | `mcp` | 必須 | ask (4 層) | `allow` で事前承認 |
 | 3 | `shell`, `file` (ゾーン外) | 必須 | ✅ ask（JIT — `bus≠None` でゲート時プロンプト; `bus=None` で deny） | `allow` で事前承認; `deny` はデフォルトゾーンも含めブロック |
@@ -351,85 +353,22 @@ Phase 7 は `http.get` 軸を `file.write` と同じ prompt model に揃えて a
 
 `PURE_STDLIB_ALLOWLIST` は `src/reyn/core/kernel/_python_allowlist.py` で定義されています。`__future__` はコンパイラディレクティブとして一覧に含まれており、ランタイムのケイパビリティを持ちません。
 
-**非インタラクティブ自動許可**: stdlib ワークフローが `reyn run`（非インタラクティブコンテキスト）経由で呼び出される場合、`mode: safe` と `mode: unsafe` の両方の python ステップはプロンプトなしで自動許可されます。これは eval / CI 実行で他の op に既に適用されている非インタラクティブ動作と同等です。
+**非インタラクティブ自動許可**: 非インタラクティブなコンテキスト（intervention bus 未配線）では、`mode: safe` と `mode: unsafe` の両方の python ステップはプロンプトなしで自動許可されます。これは CI 実行で他の op に既に適用されている非インタラクティブ動作と同等です。
 
 **`mode: safe` の形式的契約**（= "ambient sources only"）は allowlist の根拠・コンテキスト別の safe/unsafe 自動許可ルール・unsafe ステップを safe に変換するリファクタリングパターンを網羅しています。
 
-## スキルごとのクレデンシャルスコーピング (FP-0016 D)
+## クレデンシャルスコーピング（トリガーポイントは削除済み）
 
-### 脅威モデル：Confused Deputy
-
-親スキルが `run_skill` でサブスキルを呼び出す際、スコーピングが適用されていないと
-サブスキルは親の全権限で実行されます。サブスキルが処理する悪意あるドキュメントが、
-正当なアクセス権のないクレデンシャルを読み取り、その内容を出力に含めるよう
-サブスキルに指示する可能性があります。これは OS が攻撃者のために自身の権限を
-悪用させられる古典的な **Confused Deputy** 攻撃です。
-
-### `required_credentials` の宣言
-
-サブスキルは `skill.md` フロントマターでクレデンシャルの必要性を宣言します：
-
-```yaml
-# skill.md
-name: github_pr_reviewer
-required_credentials:
-  - github_token
-  - atlassian_token
-```
-
-`required_credentials` が省略された場合のデフォルトは `["*"]` で、完全なクレデンシャル委譲を意味します。
-FP-0016 以前に記述された既存ワークフローとの後方互換性を保つためです。
-
-クレデンシャルが一切不要なワークフローを明示的に宣言するには、空リストを使います：
-
-```yaml
-required_credentials: []
-```
-
-### `run_skill` によるスコープの絞り込み
-
-`run_skill` の境界で、OS はサブスキルの `required_credentials` 宣言から
-`ScopedSecretStore` を構築し、親のスコープ済みストアと交差（intersection）します。
-サブスキルが親自身が保持しないクレデンシャルを取得することはできません：
-
-```
-親のスコープ: {"github_token", "stripe_key", "datadog_key"}
-サブスキルの宣言: ["github_token", "slack_token"]
-有効スコープ: {"github_token"}  ← 交差結果; slack_token は親になし
-```
-
-親ストアが非制限（`["*"]`）の場合は、サブスキルの宣言リストがそのまま採用されます
-（交差は不要）。
-
-### `CredentialScopeError`
-
-サブスキルが有効な許可セット外のクレデンシャルを読み取ろうとすると、
-`CredentialScopeError`（`PermissionError` のサブクラス）が発生します。
-列挙操作もブロックされます。`list_visible_keys()` は許可かつ存在するキーのみを返し、
-スコープ外のキーは「読めない」のではなく「見えない」状態になります。
-
-```python
-from reyn.secrets import ScopedSecretStore, CredentialScopeError
-
-store = ScopedSecretStore(allowed_keys=["github_token"], path=secrets_path)
-store.get("github_token")    # OK — 値を返す
-store.get("stripe_key")      # CredentialScopeError を発生
-"stripe_key" in store        # False — 例外なし、漏洩なし
-store.list_visible_keys()    # ["github_token"] のみ
-```
-
-### 監査証跡
-
-すべての `run_skill` 呼び出しは、その呼び出しで有効な許可キーセットを記録した
-`sub_skill_credential_scope` P6 イベントを発行します：
-
-```bash
-grep '"sub_skill_credential_scope"' .reyn/events.jsonl
-```
-
-イベントペイロードには `skill`（サブスキル名）と `allowed_keys`
-（ソート済みリスト、または非制限の場合 `["*"]`）が含まれます。
-これにより、すべてのサブスキルへのクレデンシャル付与が監査可能かつリプレイ可能になります（P6）。
+FP-0016 Component D は、当時 `run_skill` op（現在は削除済み）経由で spawn されるサブスキルに対する
+呼び出し単位のクレデンシャルスコーピングを導入しました: サブスキルは自身が宣言した
+`required_credentials` にスコープされ、親のスコープと交差した `ScopedSecretStore` を受け取る
+（Confused Deputy 対策）という仕組みでした。そのトリガーポイントは `run_skill` と共に
+消滅しており(#2104)、現在他のどの呼び出し箇所も `ScopedSecretStore` を構築していません
+— `security/secrets/store.py` の `ScopedSecretStore` / `CredentialScopeError` クラス自体は
+まだ存在しますが、`OpContext.secret_store` は現行ランタイムで常に `None` です。現在
+クレデンシャルスコーピングの enforcement は機能していません。シークレットアクセスは
+[`secret.write` 宣言軸](#宣言軸の-taxonomy) と `~/.reyn/secrets.env` に対する
+OS レベルのファイルパーミッションでのみゲートされています。
 
 ## パーミッションシステムではないもの
 
