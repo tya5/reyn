@@ -7,6 +7,18 @@ The thin vertical-slice executor for
 `match`/`call`/`refine`, the YAML DSL parser, and driver-as-session integration — those
 are later slices; this module proves the core loop + recovery (+ agent-step wiring) only.
 
+**Dispatch table (the parallel-primitive seam).** Step execution is a ``dict``-dispatch
+keyed by the step's dataclass type (:data:`STEP_DISPATCH`) rather than an ``isinstance``
+chain — so a future primitive ADDS one registry entry (plus a serde encoder/decoder and a
+parser) instead of editing a shared ``elif`` block. Every runner has the uniform signature
+``(_StepInvocation) -> (result, durable, completed_step_results)``: a leaf runner
+(``transform``/``tool``/``agent``) returns ``completed_step_results`` unchanged and never
+records (its caller records after threading). ``_StepInvocation`` also carries a
+``record`` recorder + a ``step_label`` (the step's path, for error messages) that a
+future COMPOSITIONAL runner will use for its own sub-scope recording; leaf runners ignore
+both, but the surface is uniform so the compositional primitive plugs in without touching
+the leaf runners.
+
 **R3 (uniform pipe-data / output rule)**: every step produces exactly one return value.
 That value is simultaneously (1) the pipe data handed to the next step and (2) written
 to a named store under ``output`` iff the step declares one. A ``transform`` step's
@@ -57,7 +69,7 @@ from __future__ import annotations
 import inspect
 import re
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Callable, Union
+from typing import TYPE_CHECKING, Any, Awaitable, Callable, Union
 
 from reyn.core.events.pipeline_recovery import latest_pipeline_state, record_pipeline_state
 from reyn.core.pipeline.expr import ExprEvalError, ExprParseError, evaluate_expr
@@ -194,6 +206,12 @@ class PipelineCancelled(PipelineError):
 
 ToolDispatch = Callable[[str, "dict[str, Any]"], Any]
 
+# An async recorder handed to a step runner: it writes a full-state R4 generation
+# given the current ``completed_step_results`` + a durability flag. Leaf runners
+# ignore it (their caller records); the surface exists so a future compositional
+# runner can record its own sub-steps without a signature change.
+Recorder = Callable[..., Awaitable[None]]
+
 _PROMPT_REF_RE = re.compile(r"\{([^{}]+)\}")
 
 
@@ -226,13 +244,126 @@ def _step_kind(step: Step) -> str:
     """The step's kind string (``transform`` / ``tool`` / ``agent``) for the
     IS-6 live-progress events — the same vocabulary the serde ``kind`` marker
     uses, derived from the dataclass type so it never drifts from the union."""
-    if isinstance(step, TransformStep):
-        return "transform"
-    if isinstance(step, ToolStep):
-        return "tool"
-    if isinstance(step, AgentStep):
-        return "agent"
-    return "unknown"  # pragma: no cover - Step is a closed union
+    return _STEP_KINDS.get(type(step), "unknown")
+
+
+# ---------------------------------------------------------------------------
+# Per-run collaborators + step-invocation bundle (dispatch-table plumbing)
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class _RunDeps:
+    """The read-only per-run collaborators, bundled once so a step runner has a
+    single uniform argument surface instead of a long positional signature."""
+
+    tool_dispatch: ToolDispatch
+    state_log: "StateLog | None"
+    run_id: str
+    schema_registry: "SchemaRegistry | None"
+    registry: "AgentRegistry | None"
+    default_identity: "str | None"
+    events: "EventLog | None"
+    cancel_check: "Callable[[], bool] | None"
+
+
+@dataclass(frozen=True)
+class _StepInvocation:
+    """One dispatch call's inputs. ``step_label`` is the step's path (``"3"`` at
+    top level) — used for error messages. ``record`` is the R4 recorder a future
+    compositional runner uses for its sub-steps; leaf runners ignore it (their
+    caller records)."""
+
+    executor: "PipelineExecutor"
+    step: Step
+    context: "dict[str, Any]"
+    step_label: str
+    deps: _RunDeps
+    completed_step_results: "dict[str, Any]"
+    record: Recorder
+
+
+async def _run_transform_step(inv: "_StepInvocation") -> "tuple[Any, bool, dict[str, Any]]":
+    step: TransformStep = inv.step  # type: ignore[assignment]
+    try:
+        result = evaluate_expr(step.value, inv.context)
+    except ExprEvalError as exc:
+        raise PipelineExecutionError(
+            f"step {inv.step_label} (transform) failed: {exc}"
+        ) from exc
+    return result, False, inv.completed_step_results
+
+
+async def _run_tool_step(inv: "_StepInvocation") -> "tuple[Any, bool, dict[str, Any]]":
+    step: ToolStep = inv.step  # type: ignore[assignment]
+    deps = inv.deps
+    resolved_args = {
+        k: (evaluate_expr(v.src, inv.context) if isinstance(v, ExprRef) else v)
+        for k, v in step.args.items()
+    }
+    raw = deps.tool_dispatch(step.name, resolved_args)
+    result = await raw if inspect.isawaitable(raw) else raw
+    if step.schema is not None:
+        if deps.schema_registry is None:
+            raise PipelineExecutionError(
+                f"step {inv.step_label} (tool {step.name!r}) declares verify: schema "
+                f"{step.schema!r} but no schema_registry was provided"
+            )
+        validation = validate(result, step.schema, deps.schema_registry)
+        if not validation.conforming:
+            raise PipelineExecutionError(
+                f"step {inv.step_label} (tool {step.name!r}) output failed schema "
+                f"{step.schema!r}: {validation.errors}"
+            )
+    return result, True, inv.completed_step_results
+
+
+async def _run_agent_step(inv: "_StepInvocation") -> "tuple[Any, bool, dict[str, Any]]":
+    step: AgentStep = inv.step  # type: ignore[assignment]
+    deps = inv.deps
+    identity = step.identity or deps.default_identity
+    if identity is None:
+        raise PipelineExecutionError(
+            f"step {inv.step_label} (agent) has no identity and no default_identity "
+            "was given to run/resume — the design doc's 'identity "
+            "defaults to invoker' requires the caller to supply one"
+        )
+    if deps.registry is None:
+        raise PipelineExecutionError(
+            f"step {inv.step_label} (agent) requires a registry (AgentRegistry) to "
+            "spawn its session, but none was passed to run/resume"
+        )
+    prompt = _interpolate_prompt(step.prompt, inv.context)
+    try:
+        result = await run_agent_step(
+            deps.registry,
+            identity=identity,
+            prompt=prompt,
+            capabilities=step.capabilities,
+            schema=step.schema,
+            schema_registry=deps.schema_registry,
+        )
+    except AgentStepError as exc:
+        raise PipelineExecutionError(
+            f"step {inv.step_label} (agent) failed: {exc}"
+        ) from exc
+    return result, True, inv.completed_step_results
+
+
+# Dispatch table: step dataclass type -> its runner. A future primitive ADDS an
+# entry here (+ serde/parser) rather than editing a shared elif chain.
+STEP_DISPATCH: "dict[type, Callable[[_StepInvocation], Awaitable[tuple[Any, bool, dict[str, Any]]]]]" = {
+    TransformStep: _run_transform_step,
+    ToolStep: _run_tool_step,
+    AgentStep: _run_agent_step,
+}
+
+# Type -> kind-string, the inverse vocabulary the serde ``kind`` marker uses.
+_STEP_KINDS: "dict[type, str]" = {
+    TransformStep: "transform",
+    ToolStep: "tool",
+    AgentStep: "agent",
+}
 
 
 # ---------------------------------------------------------------------------
@@ -361,8 +492,19 @@ class PipelineExecutor:
         events: "EventLog | None" = None,
         cancel_check: "Callable[[], bool] | None" = None,
     ) -> PipelineResult:
+        deps = _RunDeps(
+            tool_dispatch=tool_dispatch,
+            state_log=state_log,
+            run_id=run_id,
+            schema_registry=schema_registry,
+            registry=registry,
+            default_identity=default_identity,
+            events=events,
+            cancel_check=cancel_check,
+        )
         steps = pipeline.steps
-        for i in range(start_index, len(steps)):
+        total_steps = len(steps)
+        for i in range(start_index, total_steps):
             # IS-6 cancel checkpoint: poll at the step BOUNDARY, before this step
             # starts. Every step < i is already complete + snapshotted, so the
             # last record_pipeline_state (at step_index=i) is a consistent resume
@@ -371,7 +513,6 @@ class PipelineExecutor:
                 raise PipelineCancelled(run_id=run_id, step_index=i)
             step = steps[i]
             kind = _step_kind(step)
-            total_steps = len(steps)
             if events is not None:
                 events.emit(
                     "pipeline_step_started",
@@ -379,64 +520,31 @@ class PipelineExecutor:
                 )
             context = {"ctx": named_stores, "pipe": pipe_data}
 
-            if isinstance(step, TransformStep):
-                try:
-                    result = evaluate_expr(step.value, context)
-                except ExprEvalError as exc:
-                    raise PipelineExecutionError(
-                        f"step {i} (transform) failed: {exc}"
-                    ) from exc
-                durable = False
-            elif isinstance(step, ToolStep):
-                resolved_args = {
-                    k: (evaluate_expr(v.src, context) if isinstance(v, ExprRef) else v)
-                    for k, v in step.args.items()
-                }
-                raw = tool_dispatch(step.name, resolved_args)
-                result = await raw if inspect.isawaitable(raw) else raw
-                if step.schema is not None:
-                    if schema_registry is None:
-                        raise PipelineExecutionError(
-                            f"step {i} (tool {step.name!r}) declares verify: schema "
-                            f"{step.schema!r} but no schema_registry was provided"
-                        )
-                    validation = validate(result, step.schema, schema_registry)
-                    if not validation.conforming:
-                        raise PipelineExecutionError(
-                            f"step {i} (tool {step.name!r}) output failed schema "
-                            f"{step.schema!r}: {validation.errors}"
-                        )
-                durable = True
-            elif isinstance(step, AgentStep):
-                identity = step.identity or default_identity
-                if identity is None:
-                    raise PipelineExecutionError(
-                        f"step {i} (agent) has no identity and no default_identity "
-                        "was given to run/resume — the design doc's 'identity "
-                        "defaults to invoker' requires the caller to supply one"
-                    )
-                if registry is None:
-                    raise PipelineExecutionError(
-                        f"step {i} (agent) requires a registry (AgentRegistry) to "
-                        "spawn its session, but none was passed to run/resume"
-                    )
-                prompt = _interpolate_prompt(step.prompt, context)
-                try:
-                    result = await run_agent_step(
-                        registry,
-                        identity=identity,
-                        prompt=prompt,
-                        capabilities=step.capabilities,
-                        schema=step.schema,
-                        schema_registry=schema_registry,
-                    )
-                except AgentStepError as exc:
-                    raise PipelineExecutionError(
-                        f"step {i} (agent) failed: {exc}"
-                    ) from exc
-                durable = True
-            else:  # pragma: no cover - Step is a closed union
+            # A recorder bound to THIS step's frame, for a compositional runner's
+            # sub-steps (leaf runners never invoke it; their record happens below,
+            # post-threading).
+            async def _record(
+                *, completed_step_results: "dict[str, Any]", durable: bool,
+                _i: int = i, _named: "dict[str, Any]" = named_stores, _pipe: Any = pipe_data,
+            ) -> None:
+                await record_pipeline_state(
+                    state_log, run_id,
+                    {
+                        "run_id": run_id, "step_index": _i,
+                        "named_stores": _named, "pipe_data": _pipe,
+                        "completed_step_results": completed_step_results,
+                    },
+                    durable=durable,
+                )
+
+            runner = STEP_DISPATCH.get(type(step))
+            if runner is None:  # pragma: no cover - Step is a closed union
                 raise PipelineExecutionError(f"unknown step type: {step!r}")
+            inv = _StepInvocation(
+                executor=self, step=step, context=context, step_label=str(i),
+                deps=deps, completed_step_results=completed_step_results, record=_record,
+            )
+            result, durable, completed_step_results = await runner(inv)
 
             pipe_data = result
             step_index = i + 1
@@ -444,15 +552,14 @@ class PipelineExecutor:
             if step.output:
                 named_stores = {**named_stores, step.output: result}
 
-            control_plane_state = {
-                "run_id": run_id,
-                "step_index": step_index,
-                "named_stores": named_stores,
-                "pipe_data": pipe_data,
-                "completed_step_results": completed_step_results,
-            }
             await record_pipeline_state(
-                state_log, run_id, control_plane_state, durable=durable,
+                state_log, run_id,
+                {
+                    "run_id": run_id, "step_index": step_index,
+                    "named_stores": named_stores, "pipe_data": pipe_data,
+                    "completed_step_results": completed_step_results,
+                },
+                durable=durable,
             )
             if events is not None:
                 events.emit(
@@ -466,7 +573,7 @@ class PipelineExecutor:
             pipe_data=pipe_data,
             named_stores=named_stores,
             completed_step_results=completed_step_results,
-            step_index=len(steps),
+            step_index=total_steps,
         )
 
 
@@ -482,4 +589,5 @@ __all__ = [
     "PipelineExecutionError",
     "PipelineCancelled",
     "PipelineExecutor",
+    "STEP_DISPATCH",
 ]

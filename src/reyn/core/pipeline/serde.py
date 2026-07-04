@@ -34,7 +34,7 @@ alone on a crash-resume.
 """
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Callable
 
 from reyn.core.pipeline.executor import (
     AgentStep,
@@ -80,52 +80,86 @@ def _decode_arg(value: Any) -> Any:
     return value
 
 
+def _encode_transform(step: "TransformStep") -> "dict[str, Any]":
+    return {"kind": "transform", "value": step.value, "output": step.output}
+
+
+def _encode_tool(step: "ToolStep") -> "dict[str, Any]":
+    return {
+        "kind": "tool",
+        "name": step.name,
+        "args": {k: _encode_arg(step.name, k, v) for k, v in step.args.items()},
+        "output": step.output,
+        "schema": step.schema,
+    }
+
+
+def _encode_agent(step: "AgentStep") -> "dict[str, Any]":
+    return {
+        "kind": "agent",
+        "prompt": step.prompt,
+        "identity": step.identity,
+        "capabilities": list(step.capabilities) if step.capabilities is not None else None,
+        "schema": step.schema,
+        "output": step.output,
+    }
+
+
+def _decode_transform(data: "dict[str, Any]") -> "TransformStep":
+    return TransformStep(value=data["value"], output=data.get("output"))
+
+
+def _decode_tool(data: "dict[str, Any]") -> "ToolStep":
+    return ToolStep(
+        name=data["name"],
+        args={k: _decode_arg(v) for k, v in dict(data.get("args") or {}).items()},
+        output=data.get("output"),
+        schema=data.get("schema"),
+    )
+
+
+def _decode_agent(data: "dict[str, Any]") -> "AgentStep":
+    caps = data.get("capabilities")
+    return AgentStep(
+        prompt=data["prompt"],
+        identity=data.get("identity"),
+        capabilities=list(caps) if caps is not None else None,
+        schema=data.get("schema"),
+        output=data.get("output"),
+    )
+
+
+# Dispatch tables: encoder keyed by step type, decoder keyed by ``kind`` marker.
+# A future primitive ADDS one entry to each (mirroring the executor's
+# ``STEP_DISPATCH`` and the parser's ``_STEP_PARSERS``) rather than editing a
+# shared isinstance/``kind==`` chain.
+ENCODERS: "dict[type, Callable[[Step], dict[str, Any]]]" = {
+    TransformStep: _encode_transform,
+    ToolStep: _encode_tool,
+    AgentStep: _encode_agent,
+}
+DECODERS: "dict[str, Callable[[dict[str, Any]], Step]]" = {
+    "transform": _decode_transform,
+    "tool": _decode_tool,
+    "agent": _decode_agent,
+}
+
+
 def step_to_dict(step: "Step") -> "dict[str, Any]":
     """One executor step dataclass → a JSON-serializable dict (``kind`` tagged)."""
-    if isinstance(step, TransformStep):
-        return {"kind": "transform", "value": step.value, "output": step.output}
-    if isinstance(step, ToolStep):
-        return {
-            "kind": "tool",
-            "name": step.name,
-            "args": {k: _encode_arg(step.name, k, v) for k, v in step.args.items()},
-            "output": step.output,
-            "schema": step.schema,
-        }
-    if isinstance(step, AgentStep):
-        return {
-            "kind": "agent",
-            "prompt": step.prompt,
-            "identity": step.identity,
-            "capabilities": list(step.capabilities) if step.capabilities is not None else None,
-            "schema": step.schema,
-            "output": step.output,
-        }
-    raise PipelineSerdeError(f"unknown step type: {step!r}")
+    encoder = ENCODERS.get(type(step))
+    if encoder is None:
+        raise PipelineSerdeError(f"unknown step type: {step!r}")
+    return encoder(step)
 
 
 def step_from_dict(data: "dict[str, Any]") -> "Step":
     """The inverse of :func:`step_to_dict`."""
     kind = data.get("kind")
-    if kind == "transform":
-        return TransformStep(value=data["value"], output=data.get("output"))
-    if kind == "tool":
-        return ToolStep(
-            name=data["name"],
-            args={k: _decode_arg(v) for k, v in dict(data.get("args") or {}).items()},
-            output=data.get("output"),
-            schema=data.get("schema"),
-        )
-    if kind == "agent":
-        caps = data.get("capabilities")
-        return AgentStep(
-            prompt=data["prompt"],
-            identity=data.get("identity"),
-            capabilities=list(caps) if caps is not None else None,
-            schema=data.get("schema"),
-            output=data.get("output"),
-        )
-    raise PipelineSerdeError(f"unknown step kind in stored pipeline: {kind!r}")
+    decoder = DECODERS.get(kind) if isinstance(kind, str) else None
+    if decoder is None:
+        raise PipelineSerdeError(f"unknown step kind in stored pipeline: {kind!r}")
+    return decoder(data)
 
 
 def pipeline_to_dict(pipeline: "Pipeline") -> "dict[str, Any]":
