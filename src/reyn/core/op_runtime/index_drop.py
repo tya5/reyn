@@ -3,7 +3,7 @@
 Destructive op: drops the SQLite backend + removes the SourceManifest entry.
 
 Permission gate: mirrors require_mcp_install pattern (ADR-0029).
-  - Skill must declare `permissions.index_drop: true`.
+  - Caller must declare `permissions.index_drop: true`.
   - Config may hard-allow or hard-deny (permissions.index_drop: allow/deny).
   - Interactive prompt or REYN_INDEX_DROP_AUTO_APPROVE=1 CI escape hatch.
 
@@ -43,7 +43,7 @@ async def handle(
 
     workspace_root = ctx.workspace.base_dir
 
-    # Permission gate (#571 collapse arc Phase 5): the skill must
+    # Permission gate (#571 collapse arc Phase 5): the caller must
     # declare ``file.write: [.reyn/config/index/sources.yaml]``. The
     # bool-axis ``require_index_drop`` per-source prompt is removed;
     # per-source granularity is not preserved (= drop is destructive
