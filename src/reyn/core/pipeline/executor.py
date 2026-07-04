@@ -2,10 +2,10 @@
 
 The thin vertical-slice executor for
 ``docs/proposals/reyn-pipeline-v0.9-design-resolutions.md``: a **linear** sequence of
-``transform`` / ``tool`` (``shell`` is just a ``ToolStep(name="shell", ...)``) steps.
-Deliberately out of scope for this slice: `agent` steps, `for_each`/`parallel`/`fold`/
+``transform`` / ``tool`` (``shell`` is just a ``ToolStep(name="shell", ...)``) / ``agent``
+(R5) steps. Deliberately out of scope for this slice: `for_each`/`parallel`/`fold`/
 `match`/`call`/`refine`, the YAML DSL parser, and driver-as-session integration — those
-are later slices; this module proves the core loop + recovery only.
+are later slices; this module proves the core loop + recovery (+ agent-step wiring) only.
 
 **R3 (uniform pipe-data / output rule)**: every step produces exactly one return value.
 That value is simultaneously (1) the pipe data handed to the next step and (2) written
@@ -16,32 +16,42 @@ module never hand-rolls expression evaluation), evaluated against a context of
 named output and bare ``pipe`` reaches the immediately-preceding step's return value even
 when it had no ``output:``. A ``tool`` step's ``args`` may mark any value as an
 expression to resolve (rather than a literal) by wrapping it in :class:`ExprRef`; both
-resolve through the same context via the same evaluator.
+resolve through the same context via the same evaluator. An ``agent`` step's ``prompt``
+is a R5-spec ``TPL`` string — ``{ctx.NAME.field}`` / ``{pipe}`` references interpolated
+via :func:`_interpolate_prompt` (which reuses ``expr.evaluate_expr``'s ``Path``
+resolution for the dotted lookup — no second path-resolver) — then handed to
+:func:`reyn.runtime.session_api.run_agent_step` to spawn+run+collect; its return value
+is threaded exactly like the other step kinds.
 
 **R4 (step-boundary recovery)**: after each step completes (before advancing), the
 executor calls :func:`reyn.core.events.pipeline_recovery.record_pipeline_state` with the
 full control-plane state — ``{run_id, step_index, named_stores, pipe_data,
-completed_step_results}`` — keyed at the durable WAL head. Side-effecting ``tool`` steps
-use the awaited-durable path (narrowing the effect-done/snapshot-not-yet-durable crash
-window); pure ``transform`` steps use the non-blocking path. :meth:`PipelineExecutor.run`
-starts a run from scratch; :meth:`PipelineExecutor.resume` loads the latest recorded
-generation for a run and REPLAYS every step already present in
+completed_step_results}`` — keyed at the durable WAL head. Side-effecting ``tool``/
+``agent`` steps use the awaited-durable path (narrowing the effect-done/snapshot-not-yet-
+durable crash window); pure ``transform`` steps use the non-blocking path.
+:meth:`PipelineExecutor.run` starts a run from scratch; :meth:`PipelineExecutor.resume`
+loads the latest recorded generation for a run and REPLAYS every step already present in
 ``completed_step_results`` (not re-executing it — the exactly-once contract that keeps a
-crash from re-running a `tool` step's side effect), resuming live execution at the first
-step with no recorded result.
+crash from re-running a `tool` step's side effect, or an ``agent`` step's LLM turn and any
+tool side effects it made), resuming live execution at the first step with no recorded
+result.
 """
 from __future__ import annotations
 
 import inspect
+import re
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Callable, Union
 
 from reyn.core.events.pipeline_recovery import latest_pipeline_state, record_pipeline_state
-from reyn.core.pipeline.expr import ExprEvalError, evaluate_expr
+from reyn.core.pipeline.expr import ExprEvalError, ExprParseError, evaluate_expr
 from reyn.core.pipeline.schema import SchemaRegistry, validate
+from reyn.runtime.errors import AgentStepError
+from reyn.runtime.session_api import run_agent_step
 
 if TYPE_CHECKING:
     from reyn.core.events.state_log import StateLog
+    from reyn.runtime.registry import AgentRegistry
 
 # ---------------------------------------------------------------------------
 # Pipeline representation (pre-built dataclasses — no YAML parser in scope)
@@ -83,7 +93,27 @@ class ToolStep:
     schema: "str | None" = None
 
 
-Step = Union[TransformStep, ToolStep]
+@dataclass(frozen=True)
+class AgentStep:
+    """An LLM-driven step (R5): ``prompt`` (a ``TPL`` template — see
+    :func:`_interpolate_prompt`) is interpolated against the current context and handed
+    to :func:`reyn.runtime.session_api.run_agent_step`, which spawns an ephemeral
+    session under ``identity`` (``None`` = inherit the run's ``default_identity``, per
+    the design doc's "identity defaults to invoker"), runs one turn, and collects the
+    result — capability-narrowed to ``capabilities`` plus a structural delegation deny
+    (``run_agent_step``'s own contract; this step introduces no additional narrowing).
+    ``schema``, if set, names a ``SchemaRegistry``-registered schema the parsed JSON
+    reply must conform to — non-conformance fails the step exactly like a ``tool``
+    step's ``verify: schema``."""
+
+    prompt: str
+    identity: "str | None" = None
+    capabilities: "list[str] | None" = None
+    schema: "str | None" = None
+    output: "str | None" = None
+
+
+Step = Union[TransformStep, ToolStep, AgentStep]
 
 
 @dataclass(frozen=True)
@@ -118,6 +148,33 @@ class PipelineExecutionError(PipelineError):
 
 ToolDispatch = Callable[[str, "dict[str, Any]"], Any]
 
+_PROMPT_REF_RE = re.compile(r"\{([^{}]+)\}")
+
+
+def _interpolate_prompt(template: str, context: "dict[str, Any]") -> str:
+    """Resolve every ``{ctx.dotted.path}`` / ``{pipe}`` reference in an ``AgentStep``
+    prompt (R5 spec ``TPL``: "string with {item} {ctx.NAME.field} interpolation
+    (values only)") against ``context`` (the SAME ``{"ctx": named_stores, "pipe":
+    pipe_data}`` shape a ``transform``/``tool`` step resolves against). Each ``{...}``
+    reference is evaluated as a bare R1 ``expr`` source via ``evaluate_expr`` — reusing
+    its ``Path`` resolution for the dotted lookup rather than a second path-resolver —
+    NOT a full expression (no operators/combinators inside the braces; that keeps this
+    pure string interpolation, matching the spec's "values only"). A non-string value
+    is stringified for splicing into the prompt text. A missing path or malformed
+    reference raises :class:`PipelineExecutionError` naming the failing ``{...}``."""
+
+    def _sub(match: "re.Match[str]") -> str:
+        ref = match.group(1).strip()
+        try:
+            value = evaluate_expr(ref, context)
+        except (ExprEvalError, ExprParseError) as exc:
+            raise PipelineExecutionError(
+                f"prompt template reference {{{ref}}} could not be resolved: {exc}"
+            ) from exc
+        return value if isinstance(value, str) else str(value)
+
+    return _PROMPT_REF_RE.sub(_sub, template)
+
 
 # ---------------------------------------------------------------------------
 # Executor
@@ -137,10 +194,15 @@ class PipelineExecutor:
         state_log: "StateLog | None",
         run_id: str,
         schema_registry: "SchemaRegistry | None" = None,
+        registry: "AgentRegistry | None" = None,
+        default_identity: "str | None" = None,
     ) -> PipelineResult:
         """Run `pipeline` from the first step. `initial_context` seeds the named
         stores (``ctx.*``) available to the first step; there is no incoming pipe
-        data (``pipe`` resolves to ``None`` until the first step produces one)."""
+        data (``pipe`` resolves to ``None`` until the first step produces one).
+        `registry` (an `AgentRegistry`) and `default_identity` are required only if
+        `pipeline` contains an `AgentStep` — a pipeline with none never touches
+        either, so existing transform/tool-only callers are unaffected."""
         named_stores: "dict[str, Any]" = dict(initial_context) if initial_context else {}
         return await self._run_from(
             pipeline,
@@ -152,6 +214,8 @@ class PipelineExecutor:
             state_log=state_log,
             run_id=run_id,
             schema_registry=schema_registry,
+            registry=registry,
+            default_identity=default_identity,
         )
 
     async def resume(
@@ -162,9 +226,13 @@ class PipelineExecutor:
         tool_dispatch: ToolDispatch,
         state_log: "StateLog",
         schema_registry: "SchemaRegistry | None" = None,
+        registry: "AgentRegistry | None" = None,
+        default_identity: "str | None" = None,
     ) -> PipelineResult:
         """Resume `run_id`: load the latest recorded generation (R4) and replay every
-        step already in ``completed_step_results`` (no re-execution — exactly-once),
+        step already in ``completed_step_results`` (no re-execution — exactly-once —
+        this covers a completed ``AgentStep`` exactly like a completed ``tool`` step:
+        its recorded result replays from the snapshot, the LLM turn never re-runs),
         resuming live execution at the first step with no recorded result. With no
         snapshot at all, resume == run from scratch."""
         snapshot = latest_pipeline_state(run_id, state_log)
@@ -176,6 +244,8 @@ class PipelineExecutor:
                 state_log=state_log,
                 run_id=run_id,
                 schema_registry=schema_registry,
+                registry=registry,
+                default_identity=default_identity,
             )
         return await self._run_from(
             pipeline,
@@ -187,6 +257,8 @@ class PipelineExecutor:
             state_log=state_log,
             run_id=run_id,
             schema_registry=schema_registry,
+            registry=registry,
+            default_identity=default_identity,
         )
 
     async def _run_from(
@@ -201,6 +273,8 @@ class PipelineExecutor:
         state_log: "StateLog | None",
         run_id: str,
         schema_registry: "SchemaRegistry | None",
+        registry: "AgentRegistry | None" = None,
+        default_identity: "str | None" = None,
     ) -> PipelineResult:
         steps = pipeline.steps
         for i in range(start_index, len(steps)):
@@ -235,6 +309,34 @@ class PipelineExecutor:
                             f"{step.schema!r}: {validation.errors}"
                         )
                 durable = True
+            elif isinstance(step, AgentStep):
+                identity = step.identity or default_identity
+                if identity is None:
+                    raise PipelineExecutionError(
+                        f"step {i} (agent) has no identity and no default_identity "
+                        "was given to run/resume — the design doc's 'identity "
+                        "defaults to invoker' requires the caller to supply one"
+                    )
+                if registry is None:
+                    raise PipelineExecutionError(
+                        f"step {i} (agent) requires a registry (AgentRegistry) to "
+                        "spawn its session, but none was passed to run/resume"
+                    )
+                prompt = _interpolate_prompt(step.prompt, context)
+                try:
+                    result = await run_agent_step(
+                        registry,
+                        identity=identity,
+                        prompt=prompt,
+                        capabilities=step.capabilities,
+                        schema=step.schema,
+                        schema_registry=schema_registry,
+                    )
+                except AgentStepError as exc:
+                    raise PipelineExecutionError(
+                        f"step {i} (agent) failed: {exc}"
+                    ) from exc
+                durable = True
             else:  # pragma: no cover - Step is a closed union
                 raise PipelineExecutionError(f"unknown step type: {step!r}")
 
@@ -268,6 +370,7 @@ __all__ = [
     "ExprRef",
     "TransformStep",
     "ToolStep",
+    "AgentStep",
     "Step",
     "Pipeline",
     "PipelineResult",
