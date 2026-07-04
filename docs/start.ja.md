@@ -14,7 +14,6 @@ reyn は LLM ワークフローを「状態機械」として実行します。P
 | 目的 | 行き先 |
 |---|---|
 | インストールして最初の skill を動かす | [Getting started](guide/getting-started/01-installation.md) |
-| 仕様を正確に知りたい | [Reference](reference/cli/run.md) |
 | 設計思想を理解したい | コンセプト |
 
 !!! note "翻訳状況"

@@ -16,12 +16,10 @@ The reyn CLI is structured as small, composable subcommands rather than one mono
 
 | Command | Purpose |
 |---------|---------|
-| `reyn run` | Run a workflow end-to-end |
-| `reyn eval` | Run an eval spec |
-| `reyn lint` | Lint a workflow (graph, frontmatter, Python AST) |
+| `reyn run-once` | Run the general agent once on a stdin prompt |
 | `reyn chat` | Interactive REPL with router + memory |
+| `reyn agent` | Create and manage named persistent agents |
 | `reyn init` | Scaffold `reyn.yaml` and `.reyn/` |
-| `reyn skills` | List available workflows, show one |
 | `reyn permissions` | Inspect / revoke saved approvals |
 | `reyn memory` | List / show / edit / search / export memory |
 | `reyn events` | Replay a saved event log |
@@ -33,8 +31,8 @@ Each one can be learned in isolation; they compose by sharing the same `reyn.yam
 
 Three levers, all surfaced as flags or config:
 
-- **Model classes (`light` / `standard` / `strong`).** A workflow is written without naming a specific model; the resolver maps the class to a concrete LiteLLM model string from `reyn.yaml`. Switching cost tiers per project (or per run with `--model`) is a one-line change. Eval can run on `light` during iteration and `strong` for final grading.
-- **Per-run cost reporting.** `reyn run` and `reyn eval` print token usage and USD cost on the final line. Eval reports persist per-case cost so cost regressions show up in the same place quality regressions do.
+- **Model classes (`light` / `standard` / `strong`).** A workflow is written without naming a specific model; the resolver maps the class to a concrete LiteLLM model string from `reyn.yaml`. Switching cost tiers per project (or per run with `--model`) is a one-line change.
+- **Per-agent cost reporting.** `reyn chat`'s `/cost` slash command gives a quick token + USD summary for the current agent.
 - **`limits.phase.max_visits` and `limits.phase.max_wall_seconds`.** Cap runaway loops and per-phase time budgets — both are cost ceilings (each visit is at least one LLM call, and time-bounded phases prevent slow-LLM blowups).
 
 ### Predictable UX
@@ -42,12 +40,12 @@ Three levers, all surfaced as flags or config:
 A few small choices that compound:
 
 - **`output_language`.** One config key controls the language of user-facing output across every workflow. No per-workflow localization code.
-- **`--events` / `--conversation`.** When a run does something unexpected, the artifact-of-record is one CLI call away.
-- **State is on disk.** `.reyn/` holds events, chats, eval reports, approvals, memory. Nothing important is in process memory only.
+- **`reyn events`.** When a run does something unexpected, the artifact-of-record is one CLI call away.
+- **State is on disk.** `.reyn/` holds events, chats, approvals, memory. Nothing important is in process memory only.
 
 ### Composition without programming
 
-The system rewards thinking in workflows rather than functions. `chat` is a router workflow; eval is a workflow that iterates a judge workflow; importer/improver/builder are themselves workflows. New high-level capabilities tend to be new workflows rather than new CLI subcommands.
+The system rewards thinking in workflows rather than functions. `chat` is a router workflow; importer/improver/builder are themselves workflows. New high-level capabilities tend to be new workflows rather than new CLI subcommands.
 
 ## Where it's still thin
 
@@ -61,7 +59,6 @@ These are addressable without changing the OS — they're product polish on top 
 
 ## See also
 
-- [Reference: cli/run](../../reference/cli/run.md)
 - [Reference: cli/chat](../../reference/cli/chat.md)
 - [Reference: cli/common-flags](../../reference/cli/common-flags.md)
 

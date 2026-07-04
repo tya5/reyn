@@ -173,6 +173,5 @@ reyn run index_docs --source my_docs --path "docs/**/*.md" --description "プロ
 ## 関連項目
 
 - [コンセプト: RAG](../../concepts/data-retrieval/rag.md) — indexing ワークフロー、source モデル、chunker の概要
-- [`reyn run index_docs`](run.md) — source index を作成または更新する
 - [`recall` ツール](../../concepts/data-retrieval/rag.md) — LLM 向けの retrieval ツール
 - [コンセプト: パーミッションモデル](../../concepts/runtime/permission-model.md) — `index_drop` パーミッションゲート

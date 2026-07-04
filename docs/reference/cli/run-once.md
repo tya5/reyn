@@ -37,7 +37,7 @@ The prompt is read from stdin in full (not line by line).
 | `--exclude-categories NAMES` | Comma-separated catalog category names to hide at the catalog source (e.g. `reyn_source` when the agent's own source is irrelevant to the task). Same as `reyn chat --exclude-categories`. |
 
 Environment-backend flags and the [common flags](common-flags.md) are shared with
-`reyn chat` / `reyn run`.
+`reyn chat`.
 
 ## Behavior notes
 
@@ -72,5 +72,4 @@ cat task.md | reyn run-once --exclude-tools web__search,web__fetch --exclude-cat
 ## See also
 
 - [`reyn chat`](chat.md) — the interactive counterpart (shares the scoped-session construction)
-- [`reyn run`](run.md) — run a specific workflow end-to-end
 - [Common flags](common-flags.md)
