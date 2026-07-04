@@ -203,6 +203,21 @@ def _merge(base: dict, override: dict) -> dict:
                 else:
                     merged_llm[sub_key] = sub_val
             result["llm"] = merged_llm
+        elif key == "skills" and isinstance(val, dict):
+            # #2548 PR-A: skill registry entries union across config tiers —
+            # mirrors the mcp.servers merge pattern exactly. Scalar keys
+            # last-layer-wins; ``entries`` dict is a union with later tier
+            # winning on name collision. Lets ~/.reyn/config.yaml declare
+            # global skills while reyn.yaml / .reyn/config/skills.yaml add
+            # project-local ones.
+            existing = result.get("skills", {})
+            existing_entries = existing.get("entries", {}) if isinstance(existing, dict) else {}
+            new_entries = val.get("entries", {}) if isinstance(val, dict) else {}
+            result["skills"] = {
+                **existing,
+                **val,
+                "entries": {**existing_entries, **new_entries},
+            }
         else:
             result[key] = val
     return result
@@ -347,6 +362,16 @@ def load_config(cwd: Path | None = None) -> ReynConfig:
         dynamic_cron = _load_yaml(project_root / ".reyn" / "config" / "cron.yaml")
         merged = _merge(merged, dynamic_cron)
 
+        # #2548 PR-A: skill registry separated from static config — same
+        # #470 invariant as MCP. .reyn/config/skills.yaml carries
+        # project-local skill declarations; merged LAST so it wins on
+        # name collision with operator-edited reyn.yaml skill entries.
+        # Shape: {"skills": {"entries": {<name>: {<entry>}}}} — same
+        # as the skills section in reyn.yaml, handled by _merge skills
+        # branch above. NOT added to _HOT_RELOAD_FILES (per spec).
+        dynamic_skills = _load_yaml(project_root / ".reyn" / "config" / "skills.yaml")
+        merged = _merge(merged, dynamic_skills)
+
         # ADR-0031: <project>/.reyn/config.yaml is DEPRECATED (removed from
         # the 3-layer cascade).  Emit a one-time warning if the file exists so
         # users know to migrate.  The file is intentionally NOT loaded.
@@ -457,6 +482,7 @@ def load_config(cwd: Path | None = None) -> ReynConfig:
         external_transports=_build_external_transports_config(
             merged.get("external_transports"),
         ),
+        skills=_as_config_dict(merged.get("skills"), "skills"),
     )
     _reconcile_embedding_class(_cfg)
     return _cfg

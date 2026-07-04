@@ -326,6 +326,17 @@ def build_system_prompt(
         parts.append("")
         parts.append(_frag)
 
+    # ── 13c. Skills block (#2548 PR-A) ───────────────────────────────────────
+    # slot_post_skills is a DEDICATED slot (distinct from slot_post_catalog) so
+    # the retrieval scheme's slot_post_catalog overwrite cannot clobber the
+    # ## Skills block. Rendered from available_skills by the scheme layer
+    # (build_universal_tool_use_slots); the OS only injects. Empty/absent slot
+    # → no Skills section (byte-identical to no-skills configs).
+    _skills_slot = _slots.get("slot_post_skills") if _slots else None
+    if _skills_slot:
+        parts.append("")
+        parts.append(_skills_slot)
+
     # ── 14. Context-size signal (#272/#1128) ─────────────────────────────────
     # OS-injected, pre-rendered by the caller (router_loop / phase runtime) from
     # the live free-window. Placed LAST because it is the most per-turn-volatile

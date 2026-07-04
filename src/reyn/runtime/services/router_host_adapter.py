@@ -192,6 +192,11 @@ class RouterHostAdapter:
         # FP-0034 Phase 2 step 5: ActionRetrievalConfig for hot_list_n /
         # hot_list_seed.  Session passes its config; None → default.
         action_retrieval_config: Any = None,
+        # #2548 PR-A: enabled skill registry snapshot (list[SkillEntry]).
+        # Session builds it via build_skill_registry(config.skills) and passes
+        # it in; RouterLoop reads it via get_available_skills() to render the
+        # ## Skills block. None → no skills (byte-identical to no-skills config).
+        available_skills: Any = None,
         # B25-S5-1: when True, RouterLoop awaits the action embedding index
         # build synchronously on the first turn before computing the D14
         # search_actions visibility gate. Off by default (= lazy bg build).
@@ -343,6 +348,8 @@ class RouterHostAdapter:
         self._action_embedding_index = action_embedding_index
         self._embedding_provider = embedding_provider
         self._embedding_model_class = embedding_model_class
+        # #2548 PR-A: enabled skill registry snapshot for the ## Skills block.
+        self._available_skills = available_skills
         # FP-0034 Phase 2
         self._sandbox_backend = sandbox_backend
         self._sandbox_backend_instance = sandbox_backend_instance
@@ -765,6 +772,18 @@ class RouterHostAdapter:
         ``"landlock"`` / ``"auto"``) makes it visible.
         """
         return self._sandbox_backend
+
+    def get_available_skills(self) -> Any:
+        """Return the enabled skill registry snapshot (list[SkillEntry]) or None.
+
+        #2548 PR-A.  Mirror of ``skills.entries`` from the config cascade,
+        built by ``build_skill_registry(config.skills)`` at Session
+        construction and filtered to ``enabled=True``.  RouterLoop reads this
+        (via the scheme ``layer_ctx`` and ``RouterCallerState.available_skills``)
+        to render the ``## Skills`` block in the system prompt.  ``None`` (or an
+        empty list) → no Skills section.
+        """
+        return self._available_skills
 
     def get_action_usage_tracker(self) -> Any:
         """Return the ActionUsageTracker for hot list freq+recency, or None.

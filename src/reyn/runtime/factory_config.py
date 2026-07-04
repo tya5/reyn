@@ -36,6 +36,9 @@ class SessionFactoryConfig:
     router_config: Any
     retry_config: Any
     chat_tool_use_scheme: str
+    # #2548 PR-A: enabled skill registry snapshot (list[SkillEntry]), built from
+    # config.skills. Uniform config-derived arg → reaches all factory sites.
+    available_skills: Any
     # ── AgentRegistry uniform config (3) ────────────────────────────────────
     delegation_capability_default: str
     # #2103 C3: operator spawn-tree bounds (safety.spawn.*) — the LLM spawn seams
@@ -47,6 +50,7 @@ class SessionFactoryConfig:
     def from_config(cls, config: Any) -> "SessionFactoryConfig":
         """The single mapping point ``ReynConfig`` → the uniform factory args. Add a
         new uniform arg HERE (and as a field above) → all five factory sites get it."""
+        from reyn.data.skills.registry import build_skill_registry
         return cls(
             sandbox_config=config.sandbox,
             multimodal_config=config.multimodal,
@@ -55,6 +59,9 @@ class SessionFactoryConfig:
             router_config=config.llm.router,
             retry_config=config.llm.retry,
             chat_tool_use_scheme=config.tool_use.chat,
+            # #2548 PR-A: build the enabled skill registry once here (filtered to
+            # enabled=True) so every factory site threads the same snapshot.
+            available_skills=build_skill_registry(config.skills),
             delegation_capability_default=config.delegation.capability_default,
             max_spawn_depth=config.safety.spawn.max_depth,
             max_spawn_children=config.safety.spawn.max_children,
