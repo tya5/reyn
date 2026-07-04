@@ -282,6 +282,7 @@ async def _handle_run_pipeline(
 
     try:
         pipeline = pipeline_registry.get(name)
+        schema_registry = pipeline_registry.get_schema_registry(name)
     except PipelineNotFoundError:
         return {
             "status": "error",
@@ -331,6 +332,7 @@ async def _handle_run_pipeline(
             state_log=state_log,
             tool="run_pipeline",
             caller_events=ctx.events,
+            schema_registry=schema_registry,
         )
     except ValueError as exc:
         return {"status": "error", "data": {"error": str(exc)}}
@@ -438,6 +440,7 @@ async def _handle_run_pipeline_async(
 
     try:
         pipeline = pipeline_registry.get(name)
+        schema_registry = pipeline_registry.get_schema_registry(name)
     except PipelineNotFoundError:
         return {
             "status": "error",
@@ -456,6 +459,7 @@ async def _handle_run_pipeline_async(
             reply_to_agent=host.agent_name,
             reply_to_sid=reply_sid,
             state_log=state_log,
+            schema_registry=schema_registry,
         )
     except ValueError as exc:
         return {"status": "error", "data": {"error": str(exc)}}
@@ -603,11 +607,18 @@ def _prepare_inline_launch(
 
     Returns ``(error_result, None)`` on any validation / parse / gate failure
     (the caller returns ``error_result`` verbatim, having spawned NOTHING), or
-    ``(None, (pipeline, agent_registry, host, state_log, raw_input))`` when the
-    definition is clean and ready to launch. The fresh registry is deliberately
-    NOT threaded onto the work-order or router state — an inline definition is
-    self-contained (its schemas live only in the string), matching the
-    "no persistent inline registry" design decision."""
+    ``(None, (pipeline, schema_registry, agent_registry, host, state_log,
+    raw_input))`` when the definition is clean and ready to launch.
+
+    ``schema_registry`` is NOT threaded onto ``ctx.router_state`` or any
+    persistent registry — an inline definition is self-contained (its schemas
+    live only in the DSL string), matching the "no persistent inline
+    registry" design decision. It IS (#2572) threaded to the launch call
+    (``run_pipeline_attached``/``start_pipeline_run``), which persists it onto
+    the work-order (``schema_defs``) so the driver-session's ``verify:
+    schema`` steps are actually enforced — the per-call registry was
+    previously parsed and then discarded, so an inline ``verify: schema`` step
+    crashed the driver with "no schema_registry" instead of validating."""
     from reyn.core.pipeline.parser import PipelineParseError, parse_pipeline_dsl
     from reyn.core.pipeline.schema import SchemaError, SchemaRegistry
 
@@ -673,7 +684,7 @@ def _prepare_inline_launch(
             "data": {"error": f"inline pipeline rejected by static gate: {gate_error}"},
         }, None
 
-    return None, (pipeline, agent_registry, host, state_log, raw_input)
+    return None, (pipeline, schema_registry, agent_registry, host, state_log, raw_input)
 
 
 async def _handle_run_pipeline_inline(
@@ -687,7 +698,7 @@ async def _handle_run_pipeline_inline(
     error_result, launch = _prepare_inline_launch(args, ctx)
     if error_result is not None:
         return error_result
-    pipeline, agent_registry, host, state_log, raw_input = launch
+    pipeline, schema_registry, agent_registry, host, state_log, raw_input = launch
 
     from reyn.runtime.session_api import run_pipeline_attached
 
@@ -703,6 +714,7 @@ async def _handle_run_pipeline_inline(
             state_log=state_log,
             tool="run_pipeline_inline",
             caller_events=ctx.events,
+            schema_registry=schema_registry,
         )
     except ValueError as exc:
         return {"status": "error", "data": {"error": str(exc)}}
@@ -746,7 +758,7 @@ async def _handle_run_pipeline_inline_async(
     error_result, launch = _prepare_inline_launch(args, ctx)
     if error_result is not None:
         return error_result
-    pipeline, agent_registry, host, state_log, raw_input = launch
+    pipeline, schema_registry, agent_registry, host, state_log, raw_input = launch
 
     from reyn.runtime.session_api import start_pipeline_run
 
@@ -760,6 +772,7 @@ async def _handle_run_pipeline_inline_async(
             reply_to_agent=host.agent_name,
             reply_to_sid=reply_sid,
             state_log=state_log,
+            schema_registry=schema_registry,
         )
     except ValueError as exc:
         return {"status": "error", "data": {"error": str(exc)}}

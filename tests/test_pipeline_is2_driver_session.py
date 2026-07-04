@@ -42,6 +42,7 @@ from reyn.core.pipeline.executor import (
     TransformStep,
 )
 from reyn.core.pipeline.registry import PipelineRegistry
+from reyn.core.pipeline.schema import SchemaRegistry
 from reyn.core.pipeline.serde import (
     PipelineSerdeError,
     pipeline_from_dict,
@@ -59,6 +60,7 @@ from reyn.llm.pricing import TokenUsage
 from reyn.runtime.registry import AgentRegistry
 from reyn.runtime.session import Session
 from reyn.tools.pipeline_verbs import (
+    _handle_run_pipeline,
     _handle_run_pipeline_async,
     _make_tool_dispatch,
 )
@@ -189,6 +191,7 @@ def _result_json(run_dir: Path) -> "dict | None":
 def _crash_state_work_order(
     run_id: str, pipeline: Pipeline, *, input: "dict | None",
     driver_sid: str = "drv1", spawn_seq: "int | None" = None,
+    schema_defs: "dict | None" = None,
 ) -> PipelineWorkOrder:
     return PipelineWorkOrder(
         run_id=run_id,
@@ -200,6 +203,7 @@ def _crash_state_work_order(
         driver_agent="worker",
         driver_sid=driver_sid,
         spawn_seq=spawn_seq,
+        schema_defs=schema_defs,
     )
 
 
@@ -371,6 +375,127 @@ async def test_run_pipeline_async_error_contracts(tmp_path: Path) -> None:
     assert "state_log" in no_wal["data"]["error"]
 
 
+# ── #2572: registered pipeline runtime verify:schema enforcement ───────────
+#
+# Before this fix the driver-session's ``executor.run``/``resume`` never
+# received a ``schema_registry`` (regardless of what the caller registered
+# it with), so ANY ``verify: schema`` step — pass or fail — crashed with
+# "declares verify: schema ... but no schema_registry was provided". The
+# tests below prove the registry now actually reaches the executor: a
+# CONFORMING result runs to ``ok``, and a VIOLATING result fails with a real
+# schema-validation error (not the old "no schema_registry" construction
+# error).
+
+
+def _line_schema_registry(*, required_field: str) -> SchemaRegistry:
+    """A one-field schema registry naming the schema "LineOut". Passing
+    ``required_field="line"`` matches the ``is2_append`` tool's real return
+    shape (``{"line": <str>}``) — conforming; any other name makes every
+    result violate it (the required field is always absent) — a controlled
+    non-conforming case that never depends on value content."""
+    schema_registry = SchemaRegistry()
+    schema_registry.register(
+        "LineOut", {"fields": {required_field: {"type": "string", "required": True}}},
+    )
+    return schema_registry
+
+
+def _schema_checked_pipeline(out_file: Path, *, line: str) -> Pipeline:
+    return Pipeline(steps=[
+        ToolStep(
+            name="is2_append", args={"path": str(out_file), "line": line},
+            output="t", schema="LineOut",
+        ),
+    ])
+
+
+@pytest.mark.asyncio
+async def test_registered_pipeline_enforces_verify_schema_sync_attached(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    """Tier 2c: a REGISTERED pipeline's ``verify: schema`` step is enforced in
+    the sync-attached driver-session: a conforming tool result runs to
+    ``ok``, a violating one fails with a real schema-validation error naming
+    the schema (not the "no schema_registry" construction error the runtime
+    used to raise unconditionally, since it never threaded a registry)."""
+    _install_side_effect_tool(monkeypatch)
+    state_log = StateLog(tmp_path / ".reyn" / "wal.jsonl")
+    reg = _agent_registry(tmp_path, state_log, None)
+    caller = reg.get_or_load("worker")
+    out_file = tmp_path / "out.txt"
+
+    pipeline_registry = PipelineRegistry()
+    pipeline_registry.register(
+        "ok", _schema_checked_pipeline(out_file, line="10"),
+        _line_schema_registry(required_field="line"),
+    )
+    pipeline_registry.register(
+        "bad", _schema_checked_pipeline(out_file, line="11"),
+        _line_schema_registry(required_field="nonexistent_field"),
+    )
+
+    def _ctx() -> ToolContext:
+        return ToolContext(
+            events=caller._router_host.events, permission_resolver=None,
+            workspace=None, caller_kind="router",
+            router_state=RouterCallerState(
+                pipeline_registry=pipeline_registry, agent_registry=reg,
+                host=caller._router_host,
+            ),
+            state_log=state_log,
+        )
+
+    ok_result = await _handle_run_pipeline({"name": "ok"}, _ctx())
+    assert ok_result["status"] == "ok"
+
+    bad_result = await _handle_run_pipeline({"name": "bad"}, _ctx())
+    assert bad_result["status"] == "error"
+    assert "failed schema" in bad_result["data"]["error"]
+    assert "no schema_registry was provided" not in bad_result["data"]["error"]
+
+
+@pytest.mark.asyncio
+async def test_registered_pipeline_enforces_verify_schema_async(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    """Tier 2c: the SAME enforcement on the async launch path
+    (``run_pipeline_async``) — the terminal marker records ``failed`` with a
+    real schema error for a violating result, ``ok`` for a conforming one."""
+    _install_side_effect_tool(monkeypatch)
+    state_log = StateLog(tmp_path / ".reyn" / "wal.jsonl")
+    scripted = _ScriptedAgentReply("ack")
+    reg = _agent_registry(tmp_path, state_log, scripted)
+    caller = reg.get_or_load("worker")
+    out_file = tmp_path / "out.txt"
+
+    pipeline_registry = PipelineRegistry()
+    pipeline_registry.register(
+        "bad-async", _schema_checked_pipeline(out_file, line="20"),
+        _line_schema_registry(required_field="nonexistent_field"),
+    )
+
+    ctx = ToolContext(
+        events=caller._router_host.events, permission_resolver=None,
+        workspace=None, caller_kind="router",
+        router_state=RouterCallerState(
+            pipeline_registry=pipeline_registry, agent_registry=reg,
+            host=caller._router_host,
+        ),
+        state_log=state_log,
+    )
+
+    result = await _handle_run_pipeline_async({"name": "bad-async"}, ctx)
+    assert result["status"] == "started"
+    run_id = result["data"]["run_id"]
+    run_dir = pipeline_run_dir(tmp_path / ".reyn", run_id)
+
+    assert await _wait_for(lambda: _result_json(run_dir) is not None)
+    terminal = _result_json(run_dir)
+    assert terminal["status"] == "failed"
+    assert "failed schema" in terminal["error"]
+    assert "no schema_registry was provided" not in terminal["error"]
+
+
 # ── recovery: the CLAUDE.md truncate-falsify gate + kill/restore/resume ─────
 
 
@@ -432,6 +557,86 @@ async def test_truncate_falsify_recovery_source_survives_wal_truncation(
     # Exactly-once: steps 0-1 replayed (no new "11" line), only step 2 ran.
     assert out_file.read_text(encoding="utf-8").splitlines() == ["11", "second"]
     # The invoker consumed the re-delivered result.
+    assert await _wait_for(lambda: scripted.calls >= 1)
+
+
+@pytest.mark.asyncio
+async def test_truncate_falsify_schema_defs_survives_wal_truncation(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    """Tier 2: CLAUDE.md recovery gate for #2572's ``schema_defs`` specifically
+    — the run's SchemaRegistry must survive WAL truncation via
+    ``invocation.json`` ALONE, not a WAL event, same as the pipeline
+    definition itself. Steps 0-1 (no schema) run to completion pre-crash;
+    step 2 declares ``verify: schema`` against a schema that step's real tool
+    result does NOT conform to. The WAL is truncated below the crash-state's
+    source seqs (incl. spawn_seq), then a FRESH StateLog + registry recovers.
+    RED if ``schema_defs`` rode a truncatable WAL event (the resumed step
+    would either crash with "no schema_registry" instead of a real schema
+    failure, or the recovery source would be gone entirely) — the resumed
+    run must reach a real, enforced schema failure on step 2."""
+    _install_side_effect_tool(monkeypatch)
+    wal_path = tmp_path / ".reyn" / "wal.jsonl"
+    state_log = StateLog(wal_path)
+    out_file = tmp_path / "out.txt"
+    # step 2 (the one NOT yet run at crash time) declares a schema the real
+    # is2_append return ({"line": ...}) does not conform to (required field
+    # "nonexistent_field" is never present) — a controlled, guaranteed failure
+    # that proves the schema was actually reached and enforced, not skipped.
+    full = Pipeline(steps=[
+        *_three_step_pipeline(out_file).steps[:2],
+        ToolStep(
+            name="is2_append", args={"path": str(out_file), "line": "second"},
+            output="t2", schema="LineOut",
+        ),
+    ])
+    schema_defs = _line_schema_registry(required_field="nonexistent_field").as_dict()
+    reg = _agent_registry(tmp_path, state_log, None)  # creates agent "worker"
+
+    # Crash state: the first TWO steps completed (schema-free), gens recorded
+    # at real WAL seqs.
+    prefix = Pipeline(steps=list(full.steps[:2]))
+    await PipelineExecutor().run(
+        prefix, {"seed": 10},
+        tool_dispatch=_make_tool_dispatch(_bare_ctx(state_log)),
+        state_log=state_log, run_id="run-schema-t",
+    )
+    await state_log.flush()
+    assert out_file.read_text(encoding="utf-8").splitlines() == ["11"]
+
+    run_dir = pipeline_run_dir(tmp_path / ".reyn", "run-schema-t")
+    write_invocation(run_dir, _crash_state_work_order(
+        "run-schema-t", full, input={"seed": 10}, spawn_seq=1,
+        schema_defs=schema_defs,
+    ))
+
+    # Other activity advances the WAL head; truncate below 40 — the crash
+    # state's source seqs (incl. spawn_seq=1) are GONE from the WAL. schema_defs
+    # lives only in invocation.json, never in a WAL record, so it is untouched.
+    for i in range(50):
+        await state_log.append("inbox_put", n=100 + i)
+    await state_log.truncate_below(40)
+    await state_log.flush()
+    assert all(e["seq"] >= 40 for e in state_log.iter_from(0))
+
+    # ── restart: fresh StateLog + fresh registry, then recovery. ──
+    state_log2 = StateLog(wal_path)
+    scripted = _ScriptedAgentReply("resumed")
+    reg2 = _agent_registry(tmp_path, state_log2, scripted)
+    await reg2.restore_all()
+
+    assert await _wait_for(lambda: _result_json(run_dir) is not None)
+    terminal = _result_json(run_dir)
+    # The resumed step 2 hit a REAL schema violation (schema_defs survived
+    # truncation intact) — not "no schema_registry was provided", which is
+    # what would happen if the recovery path lost/never rebuilt the registry.
+    assert terminal["status"] == "failed"
+    assert "failed schema" in terminal["error"]
+    assert "no schema_registry was provided" not in terminal["error"]
+    # Exactly-once on the schema-free prefix (no new "11" line from a re-run);
+    # step 2's tool call DOES execute (the schema check runs on its result,
+    # AFTER the real side effect — same order as a live, non-recovered run).
+    assert out_file.read_text(encoding="utf-8").splitlines() == ["11", "second"]
     assert await _wait_for(lambda: scripted.calls >= 1)
 
 

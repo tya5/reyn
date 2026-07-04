@@ -236,6 +236,7 @@ async def _spawn_pipeline_driver_session(
     state_log: "object",
     notify_reply: bool,
     run_id: "str | None" = None,
+    schema_registry: "SchemaRegistry | None" = None,
 ) -> "tuple[Any, str, str]":
     """Spawn + arm a pipeline driver-session, up to (but NOT including) the
     run/resume nudge — the shared launch prefix of the async (``start_pipeline_run``)
@@ -250,10 +251,14 @@ async def _spawn_pipeline_driver_session(
          permission envelope is the invoker's (⊆ by construction).
       2. persist the work-order (``invocation.json`` — full serialized pipeline +
          input + reply address + the driver's own (agent, sid) + the WAL seq at
-         spawn) BEFORE step 0 can possibly run. From this point the run is
-         crash-recoverable: the recovery scan re-creates + re-wakes the
-         driver-session from this file alone (with ``notify_reply=True`` — the
-         originally-attached caller is gone after a crash).
+         spawn + (#2572) ``schema_defs``, the launch's ``schema_registry``
+         serialized via ``SchemaRegistry.as_dict()``) BEFORE step 0 can possibly
+         run. From this point the run is crash-recoverable: the recovery scan
+         re-creates + re-wakes the driver-session from this file alone (with
+         ``notify_reply=True`` — the originally-attached caller is gone after a
+         crash), and ``PipelineExecutorDriver.run_turn`` rebuilds the registry
+         from ``schema_defs`` on every wake — so a ``verify: schema`` step is
+         enforced on the original run and on a re-created driver-session alike.
       3. swap in the :class:`~reyn.runtime.services.pipeline_executor_driver.
          PipelineExecutorDriver` (``Session.set_loop_driver``), carrying the
          runtime ``notify_reply`` — True for the async fire-and-forget path
@@ -292,6 +297,7 @@ async def _spawn_pipeline_driver_session(
         driver_agent=reply_to_agent,
         driver_sid=sid,
         spawn_seq=state_log.current_seq,
+        schema_defs=schema_registry.as_dict() if schema_registry is not None else None,
     )
     write_invocation(pipeline_run_dir(root, rid), work_order)
     session = registry.get_session(reply_to_agent, sid)
@@ -319,6 +325,7 @@ async def start_pipeline_run(
     reply_to_sid: str,
     state_log: "object",
     run_id: "str | None" = None,
+    schema_registry: "SchemaRegistry | None" = None,
 ) -> str:
     """IS-2: launch an ASYNC pipeline run in a dedicated driver-session (D案).
 
@@ -328,6 +335,10 @@ async def start_pipeline_run(
     text carries no meaning), then boots the DETACHED run-loop pump
     (``ensure_session_running``; no forwarder — a driver-session has no
     user-facing output).
+
+    ``schema_registry`` (#2572), when given, is persisted onto the work-order
+    (``schema_defs``) so the driver-session's ``verify: schema`` steps are
+    enforced — on the original run and on any later crash-recovery re-wake.
 
     Returns the ``run_id`` immediately; the result arrives later on the invoker's
     inbox as a ``pipeline_result`` message."""
@@ -341,6 +352,7 @@ async def start_pipeline_run(
         state_log=state_log,
         notify_reply=True,
         run_id=run_id,
+        schema_registry=schema_registry,
     )
     await session.submit_user_text("")  # the no-payload run nudge (D案)
     registry.ensure_session_running(reply_to_agent, sid)
@@ -360,6 +372,7 @@ async def run_pipeline_attached(
     run_id: "str | None" = None,
     tool: "str | None" = None,
     caller_events: "Any | None" = None,
+    schema_registry: "SchemaRegistry | None" = None,
 ) -> dict:
     """IS-6: launch a SYNC pipeline run in a driver-session the caller ATTACHES to.
 
@@ -406,7 +419,11 @@ async def run_pipeline_attached(
         NOTE: with the D案 single-nudge driver a step runs to completion inside one
         non-preemptible ``run_one_iteration``, so ``timeout`` bounds the
         quiescence-polling loop, not a step already in flight — it is a safety net
-        against a pump that returns non-terminal, not a mid-step wall-clock kill."""
+        against a pump that returns non-terminal, not a mid-step wall-clock kill.
+
+    ``schema_registry`` (#2572), when given, is persisted onto the work-order
+    (``schema_defs``) so the driver-session's ``verify: schema`` steps are
+    enforced — on the original run and on any later crash-recovery re-wake."""
     from reyn.core.events.config_recovery import reyn_root
     from reyn.core.pipeline.work_order import pipeline_run_dir, read_result
     from reyn.runtime.message_bus import MessageBus
@@ -421,6 +438,7 @@ async def run_pipeline_attached(
         state_log=state_log,
         notify_reply=False,
         run_id=run_id,
+        schema_registry=schema_registry,
     )
     if caller_events is not None:
         caller_events.emit(

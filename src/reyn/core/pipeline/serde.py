@@ -23,10 +23,18 @@ would misread it) nor silently survive (a literal that decodes differently
 than it encoded is corruption). Decode only recognises the exact one-key
 marker shape ``{"__exprref__": <str>}`` as an ``ExprRef``; any other dict is
 a literal.
+
+(#2572) :func:`schema_registry_from_dict` is the same round-trip idea applied
+to a launch's :class:`~reyn.core.pipeline.schema.SchemaRegistry` —
+``PipelineWorkOrder.schema_defs`` persists ``SchemaRegistry.as_dict()`` (an
+already plain-JSON-primitive ``name -> schema dict`` map, no custom encoder
+needed), and this rebuilds the registry so a ``verify: schema`` step is
+enforceable on a fresh driver-session, including one re-created from disk
+alone on a crash-resume.
 """
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from reyn.core.pipeline.executor import (
     AgentStep,
@@ -36,6 +44,9 @@ from reyn.core.pipeline.executor import (
     ToolStep,
     TransformStep,
 )
+
+if TYPE_CHECKING:
+    from reyn.core.pipeline.schema import SchemaRegistry
 
 _EXPRREF_KEY = "__exprref__"
 
@@ -133,10 +144,34 @@ def pipeline_from_dict(data: "dict[str, Any]") -> "Pipeline":
     )
 
 
+def schema_registry_from_dict(data: "dict[str, dict[str, Any]] | None") -> "SchemaRegistry":
+    """(#2572) The inverse of :meth:`~reyn.core.pipeline.schema.SchemaRegistry.
+    as_dict`: rebuild a :class:`~reyn.core.pipeline.schema.SchemaRegistry` from
+    a persisted ``name -> schema dict`` map (``PipelineWorkOrder.schema_defs``),
+    mirroring how :func:`pipeline_from_dict` rebuilds the ``Pipeline`` from its
+    own work-order field.
+
+    Registers each entry via ``SchemaRegistry.register`` — the same
+    shape/cycle validation a live registration goes through, so a corrupted
+    ``schema_defs`` fails loudly here rather than silently at first use. Entry
+    order does not matter: the cycle check tolerates forward refs among
+    schemas not yet registered (see ``SchemaRegistry.register``'s docstring),
+    so registering in dict-iteration order round-trips correctly regardless of
+    the original registration order. ``None`` (no schemas at launch) and
+    ``{}`` both yield an empty registry."""
+    from reyn.core.pipeline.schema import SchemaRegistry
+
+    registry = SchemaRegistry()
+    for name, schema in (data or {}).items():
+        registry.register(name, schema)
+    return registry
+
+
 __all__ = [
     "PipelineSerdeError",
     "pipeline_to_dict",
     "pipeline_from_dict",
     "step_to_dict",
     "step_from_dict",
+    "schema_registry_from_dict",
 ]

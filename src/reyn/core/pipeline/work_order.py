@@ -13,8 +13,17 @@ under its run dir:
   pipeline (``reyn.core.pipeline.serde``), the seed input, the reply
   address, the (agent, sid) of the driver-session itself (so recovery can
   re-create the session from scratch when it crashed before its own session
-  snapshot ever landed), and the WAL seq at spawn (the rewind guard's
-  default-open predicate — see ``AgentRegistry._rewake_pipeline_runs``).
+  snapshot ever landed), the WAL seq at spawn (the rewind guard's
+  default-open predicate — see ``AgentRegistry._rewake_pipeline_runs``), and
+  (#2572) ``schema_defs`` — the launch's :class:`~reyn.core.pipeline.schema.
+  SchemaRegistry` serialized to a plain dict (``SchemaRegistry.as_dict()``).
+  A ``verify: schema`` step needs its registry at RUN time (including on a
+  recovery re-wake), and this file is the run's only crash-truncation-proof
+  recovery source — so the schemas travel with the work-order itself, same
+  as the pipeline definition, rather than a live constructor arg the
+  recovery path would have no way to reach. ``None`` (the default) is
+  backward-compatible with on-disk ``invocation.json`` files written before
+  this field existed, and with a launch that has no schemas at all.
 - ``attempts.json`` — the poison-pipeline cap: a monotonic resume-attempt
   counter the recovery scan bumps durably BEFORE each re-wake. A run whose
   resume crashes the process every restart increments this on every scan;
@@ -73,6 +82,7 @@ class PipelineWorkOrder:
     driver_agent: str
     driver_sid: str
     spawn_seq: "int | None" = None
+    schema_defs: "dict[str, dict[str, Any]] | None" = None
 
 
 def _atomic_write(path: "Path", content: dict) -> None:
