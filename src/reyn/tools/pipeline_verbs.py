@@ -1,16 +1,26 @@
-"""``run_pipeline`` router tool — IS-1 (sync + REGISTERED pipeline launch).
+"""``run_pipeline`` router tool — sync ATTACHED launch of a REGISTERED pipeline.
 
 Per ``docs/proposals/reyn-pipeline-v0.9-design-resolutions.md`` R6: an agent
 launches a REGISTERED pipeline (pre-built via
-:class:`reyn.core.pipeline.registry.PipelineRegistry` — a YAML DSL parser is a
-later slice) and gets its result back inline. IS-1 is deliberately narrow:
+:class:`reyn.core.pipeline.registry.PipelineRegistry`) and gets its result back
+inline. This module hosts the two launch verbs — ``run_pipeline`` (sync
+attached) and ``run_pipeline_async`` (fire-and-forget) — plus the tool-step
+dispatch they share.
 
-  - **Sync only.** ``run_pipeline`` runs the pipeline to completion on the
-    caller's own turn via :meth:`~reyn.core.pipeline.executor.PipelineExecutor.run`
-    and returns the final output — no separate driver-session spawn (R6's
-    ``run_pipeline_async`` + the driver-session-per-run architecture are
-    deferred; this slice proves the "launch registered pipeline, get result"
-    round trip in-process).
+  - **Sync = async + an attached live view (IS-6).** ``run_pipeline`` no longer
+    runs the executor inline on the caller's turn (that was IS-1, which meant a
+    sync run could not crash-recover). It now spawns the SAME crash-recoverable
+    ``PipelineExecutorDriver`` driver-session as ``run_pipeline_async`` and
+    ATTACHES: ``reyn.runtime.session_api.run_pipeline_attached`` pumps the run on
+    the caller's own task via ``MessageBus.request``, streams
+    ``pipeline_step_started`` / ``pipeline_step_completed`` events to the
+    driver-session's ``EventLog`` (the emit+subscribe seam a live view / the TUI
+    consumes), and reads the terminal marker back in-band — no redundant reply
+    turn (``notify_reply=False``). A crash mid-attach degrades to async recovery:
+    the recovery scan resumes the run and delivers to THIS caller's inbox.
+    Ctrl-C (``Session.cancel_inflight`` → the driver's ``request_cancel``) stops
+    the run cooperatively at the next step BOUNDARY, leaving a resumable R4
+    journal under a terminal ``cancelled`` marker.
   - **Registered only.** No ad-hoc ``run_pipeline_inline`` (deferred — needs
     the §7.3 static-analysis gate first, per R6).
   - **Real tool-step dispatch, not a stub.** A pipeline ``ToolStep``'s
@@ -24,13 +34,17 @@ later slice) and gets its result back inline. IS-1 is deliberately narrow:
     slice) — enforced structurally in
     ``reyn.runtime.session_api._build_agent_step_narrowing``, not here.
 
-Dependencies the handler assembles for :class:`~reyn.core.pipeline.executor.PipelineExecutor`:
-  - ``registry`` (an ``AgentRegistry``, only needed if the pipeline has an
-    ``AgentStep``) from ``ctx.router_state.agent_registry``.
-  - ``state_log`` (for R4 step-boundary recovery) from ``ctx.state_log`` —
-    the SAME process-shared WAL every other recovery-aware tool threads.
-  - ``default_identity`` (the calling actor) from
-    ``ctx.router_state.host.agent_name`` when a host is present.
+Dependencies the sync handler assembles for the attached driver-session launch
+(the SAME set ``run_pipeline_async`` needs — a driver-session spawns under an
+identity, anchors its work-order on a WAL, and replies to the caller):
+  - ``agent_registry`` (spawn the driver-session under the invoker) from
+    ``ctx.router_state.agent_registry``.
+  - ``state_log`` (anchors ``invocation.json`` + the R4 recovery generations)
+    from ``ctx.state_log`` — the SAME process-shared WAL every other
+    recovery-aware tool threads.
+  - ``host`` (the calling actor's ``agent_name`` + ``live_session_id`` = the
+    reply address, so a crash-recovered run delivers back here) from
+    ``ctx.router_state.host``.
   - ``tool_dispatch`` — see :func:`_make_tool_dispatch`.
 
 NOTE (surfacing, IS-5): this tool is registered in the unified
@@ -52,10 +66,9 @@ from disk / a parser); it is threaded through ``RouterHostAdapter`` onto
 """
 from __future__ import annotations
 
-import uuid
 from typing import Any, Callable, Mapping
 
-from reyn.core.pipeline.executor import PipelineExecutionError, PipelineExecutor
+from reyn.core.pipeline.executor import PipelineExecutionError
 from reyn.core.pipeline.registry import PipelineNotFoundError
 from reyn.tools.types import ToolContext, ToolDefinition, ToolGates, ToolResult
 
@@ -155,8 +168,16 @@ def _make_tool_dispatch(ctx: ToolContext) -> "Callable[[str, dict], Any]":
 async def _handle_run_pipeline(
     args: Mapping[str, Any], ctx: ToolContext,
 ) -> ToolResult:
-    """Look up the registered pipeline, run it synchronously, return its
-    final output. See the module docstring for the dependency wiring."""
+    """Look up the registered pipeline, run it in an ATTACHED driver-session,
+    return its final output inline. See the module docstring for the wiring.
+
+    IS-6: reworked from IS-1's inline ``PipelineExecutor().run`` to spawn the
+    SAME crash-recoverable driver-session as ``run_pipeline_async`` and ATTACH
+    to it (``run_pipeline_attached`` — ``MessageBus.request`` pumps the run on
+    this task, live ``pipeline_step_*`` events flow to the driver-session's
+    EventLog, the terminal marker is read back in-band). Sync therefore inherits
+    crash auto-resume: if the process dies mid-run the recovery scan resumes it
+    and delivers to THIS caller's inbox (sync degrades to async-recovery)."""
     name = str(args.get("name") or "").strip()
     if not name:
         return {"status": "error", "data": {"error": "name is required"}}
@@ -189,35 +210,79 @@ async def _handle_run_pipeline(
             "data": {"error": f"pipeline {name!r} is not registered"},
         }
 
+    # IS-6: the attached driver-session needs the same wiring as the async path
+    # (agent_registry to spawn under + host for the caller identity/reply sid +
+    # a WAL to anchor the work-order/recovery files). A non-persistent context
+    # has no crash-recoverable run — same contract as run_pipeline_async.
     agent_registry = rs.agent_registry if rs is not None else None
     host = rs.host if rs is not None else None
-    default_identity = getattr(host, "agent_name", None) if host is not None else None
-    state_log = ctx.state_log
-
-    executor = PipelineExecutor()
-    run_id = f"pipeline-{name}-{uuid.uuid4().hex}"
-    try:
-        result = await executor.run(
-            pipeline,
-            dict(raw_input) if raw_input else None,
-            tool_dispatch=_make_tool_dispatch(ctx),
-            state_log=state_log,
-            run_id=run_id,
-            registry=agent_registry,
-            default_identity=default_identity,
-        )
-    except PipelineExecutionError as exc:
+    if agent_registry is None or host is None:
         return {
             "status": "error",
-            "data": {"error": f"pipeline {name!r} failed: {exc}"},
+            "data": {
+                "error": (
+                    "run_pipeline requires a fully-wired router context "
+                    "(agent_registry + host on ctx.router_state) to spawn its "
+                    "attached driver-session"
+                ),
+            },
         }
+    state_log = ctx.state_log
+    if state_log is None:
+        return {
+            "status": "error",
+            "data": {
+                "error": (
+                    "run_pipeline requires WAL persistence (ctx.state_log) — the "
+                    "attached run is a crash-recoverable driver-session"
+                ),
+            },
+        }
+
+    from reyn.runtime.session_api import run_pipeline_attached
+
+    reply_sid = getattr(host, "live_session_id", None) or "main"
+    try:
+        outcome = await run_pipeline_attached(
+            agent_registry,
+            pipeline=pipeline,
+            pipeline_name=name,
+            input=dict(raw_input) if raw_input else None,
+            reply_to_agent=host.agent_name,
+            reply_to_sid=reply_sid,
+            state_log=state_log,
+        )
+    except ValueError as exc:
+        return {"status": "error", "data": {"error": str(exc)}}
+
+    status = outcome["status"]
+    if status == "failed":
+        return {
+            "status": "error",
+            "data": {
+                "error": f"pipeline {name!r} failed: {outcome.get('error')}",
+                "run_id": outcome["run_id"],
+            },
+        }
+    if status == "cancelled":
+        return {
+            "status": "cancelled",
+            "data": {
+                "run_id": outcome["run_id"],
+                "error": outcome.get("error"),
+            },
+        }
+    if status == "running_async":
+        # The attached wait did not reach terminal within the bound; the run was
+        # handed to detached completion + inbox delivery (never lost).
+        return {"status": "started", "data": {"run_id": outcome["run_id"]}}
 
     return {
         "status": "ok",
         "data": {
-            "run_id": result.run_id,
-            "output": result.pipe_data,
-            "named_stores": result.named_stores,
+            "run_id": outcome["run_id"],
+            "output": outcome.get("output"),
+            "named_stores": outcome.get("named_stores"),
         },
     }
 

@@ -40,13 +40,24 @@ existing primitives — it adds no new session/LLM machinery of its own:
      ``ToolStep`` pattern — there is no schema-constrained *generation* in
      the router path today).
 
-``start_pipeline_run`` (IS-2) is the ASYNC counterpart of the sync
-``run_pipeline`` tool: it spawns a dedicated pipeline driver-session (born
-with its work-order — the D案 architecture), persists ``invocation.json``
-before step 0 can run, swaps in the ``PipelineExecutorDriver`` and nudges the
-run — returning the ``run_id`` immediately while the result arrives later as
-a ``pipeline_result`` inbox message. See its docstring for the crash-safety
-ordering.
+``start_pipeline_run`` (IS-2) and ``run_pipeline_attached`` (IS-6) are the two
+launch paths onto the SAME pipeline driver-session (the D案 architecture — a
+session born with its work-order, ``invocation.json`` persisted before step 0,
+a ``PipelineExecutorDriver`` swapped in), sharing the ``_spawn_pipeline_driver_session``
+prefix and differing only in how the caller drives + collects:
+
+  - ``start_pipeline_run`` (ASYNC) nudges the run and boots a DETACHED pump
+    (``ensure_session_running``), returning ``run_id`` immediately; the result
+    arrives later as a ``pipeline_result`` inbox message (``notify_reply=True``).
+  - ``run_pipeline_attached`` (SYNC) drives the driver-session INLINE on the
+    caller's own task via ``MessageBus.request`` (the same run+collect primitive
+    ``run_agent_step`` uses), so the caller blocks, sees live ``pipeline_step_*``
+    events on the driver-session's ``EventLog``, and collects the terminal marker
+    in-band via ``read_result`` (``notify_reply=False`` — no redundant reply
+    turn). "Sync = async + an attached live view": because it is the SAME
+    driver-session, a crash mid-attach is auto-resumed by the existing recovery
+    scan (which re-creates the driver with ``notify_reply=True`` → the result
+    degrades to inbox delivery), so sync pipelines are crash-recoverable too.
 """
 from __future__ import annotations
 
@@ -204,7 +215,7 @@ async def run_agent_step(
     return parsed
 
 
-async def start_pipeline_run(
+async def _spawn_pipeline_driver_session(
     registry: "AgentRegistry",
     *,
     pipeline: "object",
@@ -213,34 +224,34 @@ async def start_pipeline_run(
     reply_to_agent: str,
     reply_to_sid: str,
     state_log: "object",
+    notify_reply: bool,
     run_id: "str | None" = None,
-) -> str:
-    """IS-2: launch an async pipeline run in a dedicated driver-session (D案).
+) -> "tuple[Any, str, str]":
+    """Spawn + arm a pipeline driver-session, up to (but NOT including) the
+    run/resume nudge — the shared launch prefix of the async (``start_pipeline_run``)
+    and sync-attached (``run_pipeline_attached``) paths.
 
-    The launch sequence, in crash-safety order:
+    In crash-safety order:
 
       1. spawn the driver-session under the INVOKER's identity
-         (``spawn_session_recorded(mode="persistent")`` — the same recorded
-         seam as every other programmatic spawn; persistent because the
-         session must survive a crash to be re-woken, and its reclamation is
-         the driver's own terminal ephemeral-vanish, not inbox-idleness).
-         Same identity ⇒ the driver's permission envelope is the invoker's
-         (⊆ by construction).
-      2. persist the work-order (``invocation.json`` — full serialized
-         pipeline + input + reply address + the driver's own (agent, sid) +
-         the WAL seq at spawn) BEFORE step 0 can possibly run. From this
-         point the run is crash-recoverable: ``AgentRegistry.restore_all``'s
-         pipeline scan re-creates + re-wakes the driver-session from this
-         file alone.
+         (``spawn_session_recorded(mode="persistent")`` — the same recorded seam
+         as every other programmatic spawn; persistent because the session must
+         survive a crash to be re-woken). Same identity ⇒ the driver's
+         permission envelope is the invoker's (⊆ by construction).
+      2. persist the work-order (``invocation.json`` — full serialized pipeline +
+         input + reply address + the driver's own (agent, sid) + the WAL seq at
+         spawn) BEFORE step 0 can possibly run. From this point the run is
+         crash-recoverable: the recovery scan re-creates + re-wakes the
+         driver-session from this file alone (with ``notify_reply=True`` — the
+         originally-attached caller is gone after a crash).
       3. swap in the :class:`~reyn.runtime.services.pipeline_executor_driver.
-         PipelineExecutorDriver` (``Session.set_loop_driver``) and nudge the
-         run-loop with an empty user turn — the D案 "run/resume" nudge whose
-         text carries no meaning — then boot the detached run-loop pump
-         (``ensure_session_running``; no forwarder — a driver-session has no
-         user-facing output).
+         PipelineExecutorDriver` (``Session.set_loop_driver``), carrying the
+         runtime ``notify_reply`` — True for the async fire-and-forget path
+         (the caller awaits the inbox), False for the sync attached path (the
+         caller collects the result in-band via ``read_result``).
 
-    Returns the ``run_id`` immediately; the result arrives later on the
-    invoker's inbox as a ``pipeline_result`` message."""
+    Returns ``(driver_session, run_id, driver_sid)``; the caller drives the run
+    (nudge + detached pump, or attached ``MessageBus.request``)."""
     from reyn.core.events.config_recovery import reyn_root
     from reyn.core.pipeline.serde import pipeline_to_dict
     from reyn.core.pipeline.work_order import (
@@ -253,7 +264,7 @@ async def start_pipeline_run(
     root = reyn_root(state_log.path)
     if root is None:
         raise ValueError(
-            "start_pipeline_run requires a .reyn-anchored StateLog (the "
+            "pipeline launch requires a .reyn-anchored StateLog (the "
             f"work-order/recovery files live under it); got {state_log.path!r}"
         )
     # The run_id becomes a directory segment (.reyn/pipeline/state/<run_id>/),
@@ -276,12 +287,141 @@ async def start_pipeline_run(
     session = registry.get_session(reply_to_agent, sid)
     if session is None:
         raise RuntimeError(
-            f"start_pipeline_run: spawned driver-session ({reply_to_agent!r}, "
+            f"pipeline launch: spawned driver-session ({reply_to_agent!r}, "
             f"{sid!r}) not found in the registry"
         )
     session.set_loop_driver(
-        PipelineExecutorDriver(work_order, registry=registry, state_log=state_log)
+        PipelineExecutorDriver(
+            work_order, registry=registry, state_log=state_log,
+            notify_reply=notify_reply,
+        )
+    )
+    return session, rid, sid
+
+
+async def start_pipeline_run(
+    registry: "AgentRegistry",
+    *,
+    pipeline: "object",
+    pipeline_name: str,
+    input: "dict | None",
+    reply_to_agent: str,
+    reply_to_sid: str,
+    state_log: "object",
+    run_id: "str | None" = None,
+) -> str:
+    """IS-2: launch an ASYNC pipeline run in a dedicated driver-session (D案).
+
+    Spawns + arms the driver-session (``_spawn_pipeline_driver_session`` with
+    ``notify_reply=True`` — the caller got ``{started}`` and awaits the inbox),
+    nudges the run-loop with an empty user turn (the D案 "run/resume" nudge whose
+    text carries no meaning), then boots the DETACHED run-loop pump
+    (``ensure_session_running``; no forwarder — a driver-session has no
+    user-facing output).
+
+    Returns the ``run_id`` immediately; the result arrives later on the invoker's
+    inbox as a ``pipeline_result`` message."""
+    session, rid, sid = await _spawn_pipeline_driver_session(
+        registry,
+        pipeline=pipeline,
+        pipeline_name=pipeline_name,
+        input=input,
+        reply_to_agent=reply_to_agent,
+        reply_to_sid=reply_to_sid,
+        state_log=state_log,
+        notify_reply=True,
+        run_id=run_id,
     )
     await session.submit_user_text("")  # the no-payload run nudge (D案)
     registry.ensure_session_running(reply_to_agent, sid)
     return rid
+
+
+async def run_pipeline_attached(
+    registry: "AgentRegistry",
+    *,
+    pipeline: "object",
+    pipeline_name: str,
+    input: "dict | None",
+    reply_to_agent: str,
+    reply_to_sid: str,
+    state_log: "object",
+    timeout: "float | None" = None,
+    run_id: "str | None" = None,
+) -> dict:
+    """IS-6: launch a SYNC pipeline run in a driver-session the caller ATTACHES to.
+
+    "Sync = async + an attached live view": the SAME driver-session as
+    ``start_pipeline_run`` (so a crash mid-run is auto-resumed by the existing
+    recovery scan — sync pipelines are crash-recoverable, not a regression), but
+    instead of a detached pump the caller drives the driver-session INLINE on its
+    own task via ``MessageBus.request`` — the same run+collect primitive
+    ``run_agent_step`` uses. The driver runs the whole pipeline to terminal in one
+    nudge, emitting ``pipeline_step_*`` events to its own ``EventLog`` as it goes
+    (a concurrent subscriber sees live progress), then the caller reads the
+    terminal marker in-band via ``read_result`` (``notify_reply=False`` — no
+    redundant ``pipeline_result`` turn to the caller's own session).
+
+    Reply address = the INVOKING caller's own (agent, sid): on the attached happy
+    path it is unused (delivery suppressed), but if the process CRASHES mid-attach
+    the driver is destroyed and the recovery scan re-creates it with
+    ``notify_reply=True`` → the result then degrades to async inbox delivery to
+    this same caller. One reply address serves both paths; no new plumbing.
+
+    Returns a ``dict``:
+      - terminal reached → ``{"status": <ok|failed|cancelled>, "run_id", "output",
+        "named_stores", "error"}`` from the marker (the caller shapes its tool
+        result from this).
+      - ``timeout`` elapsed with the pump still non-terminal → the run is NOT
+        lost: the driver is flipped to ``notify_reply=True`` and handed to the
+        detached pump (``ensure_session_running``), so it finishes and delivers to
+        the caller's inbox later; returns ``{"status": "running_async", "run_id"}``.
+        NOTE: with the D案 single-nudge driver a step runs to completion inside one
+        non-preemptible ``run_one_iteration``, so ``timeout`` bounds the
+        quiescence-polling loop, not a step already in flight — it is a safety net
+        against a pump that returns non-terminal, not a mid-step wall-clock kill."""
+    from reyn.core.events.config_recovery import reyn_root
+    from reyn.core.pipeline.work_order import pipeline_run_dir, read_result
+    from reyn.runtime.message_bus import MessageBus
+
+    session, rid, sid = await _spawn_pipeline_driver_session(
+        registry,
+        pipeline=pipeline,
+        pipeline_name=pipeline_name,
+        input=input,
+        reply_to_agent=reply_to_agent,
+        reply_to_sid=reply_to_sid,
+        state_log=state_log,
+        notify_reply=False,
+        run_id=run_id,
+    )
+    run_dir = pipeline_run_dir(reyn_root(state_log.path), rid)
+
+    bus = MessageBus()
+    await bus.request(
+        session,
+        kind="user",
+        payload={"text": "", "chain_id": uuid.uuid4().hex},  # the D案 run nudge
+        reply_to=SystemRef(),
+        timeout=timeout if timeout is not None else _DEFAULT_AGENT_STEP_TIMEOUT_S,
+    )
+
+    marker = read_result(run_dir)
+    if marker is not None:
+        return {
+            "status": marker.get("status", "ok"),
+            "run_id": rid,
+            "output": marker.get("output"),
+            "named_stores": marker.get("named_stores"),
+            "error": marker.get("error"),
+        }
+
+    # Non-terminal after the attached pump returned (the timeout safety net, or a
+    # pump that yielded early): do NOT lose the run. Flip to inbox delivery and
+    # hand it to the detached pump — it will finish and deliver to the caller's
+    # inbox. Preserves the "never silently lose an in-flight run" contract.
+    driver = getattr(session, "_loop_driver", None)
+    if driver is not None:
+        driver._notify_reply = True  # noqa: SLF001 — same-module runtime flag
+    registry.ensure_session_running(reply_to_agent, sid)
+    return {"status": "running_async", "run_id": rid}

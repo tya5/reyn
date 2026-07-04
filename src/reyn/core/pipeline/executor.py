@@ -35,6 +35,20 @@ loads the latest recorded generation for a run and REPLAYS every step already pr
 crash from re-running a `tool` step's side effect, or an ``agent`` step's LLM turn and any
 tool side effects it made), resuming live execution at the first step with no recorded
 result.
+
+**IS-6 (attached run: live events + step-boundary cancel)**: two optional hooks let a
+caller *attach* to a run without changing the core loop. ``events`` (an ``EventLog``)
+receives a ``pipeline_step_started`` / ``pipeline_step_completed`` pair around every step
+boundary — the emit half of the emit+subscribe seam a sync ``run_pipeline`` tool (or the
+TUI) uses to render live progress; when None the executor stays silent (pure callers are
+unaffected). ``cancel_check`` (a ``Callable[[], bool]``) is polled at each step BOUNDARY,
+before the next step starts — never mid-step, so a step's side effect is never half-applied
+— and a True reading raises :class:`PipelineCancelled` from that boundary. Because every
+step before the boundary is already complete AND its R4 generation is on disk, the last
+recorded snapshot is a consistent resume point: an intentional cancel is a *clean* stop the
+driver-session turns into a terminal ``cancelled`` marker while preserving the R4 journal
+(abort-now, resume-later). Both hooks default off, so the sync/async driver-session paths
+opt in without disturbing the R3/R4 contract above.
 """
 from __future__ import annotations
 
@@ -50,6 +64,7 @@ from reyn.runtime.errors import AgentStepError
 from reyn.runtime.session_api import run_agent_step
 
 if TYPE_CHECKING:
+    from reyn.core.events.events import EventLog
     from reyn.core.events.state_log import StateLog
     from reyn.runtime.registry import AgentRegistry
 
@@ -155,6 +170,26 @@ class PipelineExecutionError(PipelineError):
     silently continues past a failed step."""
 
 
+class PipelineCancelled(PipelineError):
+    """Raised when a cooperative cancel (``cancel_check``) is observed at a step
+    BOUNDARY (IS-6). ``step_index`` is the index of the step that would have run
+    next — the run stopped cleanly *before* it, so every step ``< step_index``
+    is complete and its R4 generation snapshot is on disk. This is NOT a failure:
+    the caller (the driver-session) writes a TERMINAL ``cancelled`` marker but
+    preserves the R4 snapshots, so the run is abortable-now yet resumable-later
+    (R6 "clean abort OR later resume") from ``step_index``. Distinct from
+    :class:`PipelineExecutionError` so the driver can tell an intentional stop
+    from a genuine step failure."""
+
+    def __init__(self, *, run_id: str, step_index: int) -> None:
+        self.run_id = run_id
+        self.step_index = step_index
+        super().__init__(
+            f"pipeline run {run_id!r} cancelled at step boundary {step_index} "
+            "(steps before it are complete + snapshotted; resumable from here)"
+        )
+
+
 ToolDispatch = Callable[[str, "dict[str, Any]"], Any]
 
 _PROMPT_REF_RE = re.compile(r"\{([^{}]+)\}")
@@ -185,6 +220,19 @@ def _interpolate_prompt(template: str, context: "dict[str, Any]") -> str:
     return _PROMPT_REF_RE.sub(_sub, template)
 
 
+def _step_kind(step: Step) -> str:
+    """The step's kind string (``transform`` / ``tool`` / ``agent``) for the
+    IS-6 live-progress events — the same vocabulary the serde ``kind`` marker
+    uses, derived from the dataclass type so it never drifts from the union."""
+    if isinstance(step, TransformStep):
+        return "transform"
+    if isinstance(step, ToolStep):
+        return "tool"
+    if isinstance(step, AgentStep):
+        return "agent"
+    return "unknown"  # pragma: no cover - Step is a closed union
+
+
 # ---------------------------------------------------------------------------
 # Executor
 # ---------------------------------------------------------------------------
@@ -205,13 +253,24 @@ class PipelineExecutor:
         schema_registry: "SchemaRegistry | None" = None,
         registry: "AgentRegistry | None" = None,
         default_identity: "str | None" = None,
+        events: "EventLog | None" = None,
+        cancel_check: "Callable[[], bool] | None" = None,
     ) -> PipelineResult:
         """Run `pipeline` from the first step. `initial_context` seeds the named
         stores (``ctx.*``) available to the first step; there is no incoming pipe
         data (``pipe`` resolves to ``None`` until the first step produces one).
         `registry` (an `AgentRegistry`) and `default_identity` are required only if
         `pipeline` contains an `AgentStep` — a pipeline with none never touches
-        either, so existing transform/tool-only callers are unaffected."""
+        either, so existing transform/tool-only callers are unaffected.
+
+        `events` (IS-6), when given, receives a ``pipeline_step_started`` /
+        ``pipeline_step_completed`` event around each step boundary so an attached
+        caller (a sync ``run_pipeline`` tool, the TUI) can render live progress —
+        the emit+subscribe seam; None keeps the executor silent for pure callers.
+        `cancel_check` (IS-6), when given, is polled at each step BOUNDARY (before
+        the next step starts, never mid-step); a True reading raises
+        :class:`PipelineCancelled` leaving the last-recorded R4 snapshot intact
+        (resumable). None disables cooperative cancel."""
         named_stores: "dict[str, Any]" = dict(initial_context) if initial_context else {}
         return await self._run_from(
             pipeline,
@@ -225,6 +284,8 @@ class PipelineExecutor:
             schema_registry=schema_registry,
             registry=registry,
             default_identity=default_identity,
+            events=events,
+            cancel_check=cancel_check,
         )
 
     async def resume(
@@ -237,13 +298,20 @@ class PipelineExecutor:
         schema_registry: "SchemaRegistry | None" = None,
         registry: "AgentRegistry | None" = None,
         default_identity: "str | None" = None,
+        events: "EventLog | None" = None,
+        cancel_check: "Callable[[], bool] | None" = None,
     ) -> PipelineResult:
         """Resume `run_id`: load the latest recorded generation (R4) and replay every
         step already in ``completed_step_results`` (no re-execution — exactly-once —
         this covers a completed ``AgentStep`` exactly like a completed ``tool`` step:
         its recorded result replays from the snapshot, the LLM turn never re-runs),
         resuming live execution at the first step with no recorded result. With no
-        snapshot at all, resume == run from scratch."""
+        snapshot at all, resume == run from scratch.
+
+        `events` / `cancel_check` (IS-6) behave exactly as in :meth:`run` — a
+        cancel observed at the first not-yet-run step boundary raises
+        :class:`PipelineCancelled` from the resumed position, so a resumed run is
+        as interruptible as a fresh one."""
         snapshot = latest_pipeline_state(run_id, state_log)
         if snapshot is None:
             return await self.run(
@@ -255,6 +323,8 @@ class PipelineExecutor:
                 schema_registry=schema_registry,
                 registry=registry,
                 default_identity=default_identity,
+                events=events,
+                cancel_check=cancel_check,
             )
         return await self._run_from(
             pipeline,
@@ -268,6 +338,8 @@ class PipelineExecutor:
             schema_registry=schema_registry,
             registry=registry,
             default_identity=default_identity,
+            events=events,
+            cancel_check=cancel_check,
         )
 
     async def _run_from(
@@ -284,10 +356,23 @@ class PipelineExecutor:
         schema_registry: "SchemaRegistry | None",
         registry: "AgentRegistry | None" = None,
         default_identity: "str | None" = None,
+        events: "EventLog | None" = None,
+        cancel_check: "Callable[[], bool] | None" = None,
     ) -> PipelineResult:
         steps = pipeline.steps
         for i in range(start_index, len(steps)):
+            # IS-6 cancel checkpoint: poll at the step BOUNDARY, before this step
+            # starts. Every step < i is already complete + snapshotted, so the
+            # last record_pipeline_state (at step_index=i) is a consistent resume
+            # point — raising here never leaves a half-applied step.
+            if cancel_check is not None and cancel_check():
+                raise PipelineCancelled(run_id=run_id, step_index=i)
             step = steps[i]
+            kind = _step_kind(step)
+            if events is not None:
+                events.emit(
+                    "pipeline_step_started", run_id=run_id, step_index=i, step_kind=kind,
+                )
             context = {"ctx": named_stores, "pipe": pipe_data}
 
             if isinstance(step, TransformStep):
@@ -365,6 +450,11 @@ class PipelineExecutor:
             await record_pipeline_state(
                 state_log, run_id, control_plane_state, durable=durable,
             )
+            if events is not None:
+                events.emit(
+                    "pipeline_step_completed",
+                    run_id=run_id, step_index=step_index, step_kind=kind,
+                )
 
         return PipelineResult(
             run_id=run_id,
@@ -385,5 +475,6 @@ __all__ = [
     "PipelineResult",
     "PipelineError",
     "PipelineExecutionError",
+    "PipelineCancelled",
     "PipelineExecutor",
 ]

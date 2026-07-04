@@ -28,7 +28,22 @@ One nudge = drive the run to a terminal:
   is the terminal marker (``result.json``) written. Terminal =
   "result delivered", so a crash between last step and delivery re-delivers
   on recovery: execution exactly-once, delivery at-least-once (the
-  work_order module docstring states the full contract).
+  work_order module docstring states the full contract). IS-6: the inbox
+  post is gated on the runtime ``notify_reply`` flag — the sync ATTACHED
+  launch path sets it False (the attached caller collects the result in-band
+  via ``read_result``, so a reply turn to that same session would be a
+  redundant unprompted LLM turn); the terminal marker is written either way.
+
+- IS-6 attached run: the driver threads THIS session's ``EventLog`` as the
+  executor's ``events`` sink (``pipeline_step_started`` / ``_completed`` per
+  step — the emit half of the seam an attached caller / the TUI subscribes to)
+  and its own ``is_cancel_requested`` as the executor's ``cancel_check``. A
+  Ctrl-C reaching ``Session.cancel_inflight`` → ``request_cancel`` is observed
+  at the next step boundary, raising ``PipelineCancelled``: the driver writes a
+  TERMINAL ``cancelled`` marker (so the recovery scan never resurrects an
+  intentionally-cancelled run) while LEAVING the R4 generation snapshots on
+  disk (abort-now, resume-later — R6). Cancel only reaches a sync/attached run
+  (async is detached), so a cancelled run is always ``notify_reply=False``.
 - after terminal, the driver marks its session ephemeral so the standard
   post-turn vanish teardown (``Session._maybe_schedule_ephemeral_vanish`` →
   ``registry.remove_session``) reclaims it — the driver-session never leaks
@@ -93,6 +108,7 @@ class PipelineExecutorDriver:
         *,
         registry: "AgentRegistry",
         state_log: "StateLog",
+        notify_reply: bool = True,
     ) -> None:
         self._work_order = work_order
         self._registry = registry
@@ -100,6 +116,16 @@ class PipelineExecutorDriver:
         self._cancel_requested = False
         self._session: Any = None
         self._router_host: Any = None
+        # IS-6: whether terminal delivery posts a ``pipeline_result`` to the
+        # reply address. RUNTIME-only (deliberately NOT a persisted work-order
+        # field): each LAUNCH PATH sets it, and a crash DESTROYS the driver, so
+        # the recovery scan re-creates a fresh driver with the recovery default
+        # (True) — a crashed sync run then correctly degrades to inbox delivery.
+        #   - async ``run_pipeline_async``  → True  (caller got {started}, awaits inbox)
+        #   - recovery ``_rewake_pipeline_runs`` → True (the attached caller is gone)
+        #   - sync attached ``run_pipeline`` → False (the caller reads the result
+        #     inline via ``read_result``; a redundant reply turn would be a defect)
+        self._notify_reply = notify_reply
 
     # ── post-ctor binding (Session.set_loop_driver calls this) ────────────────
 
@@ -116,7 +142,11 @@ class PipelineExecutorDriver:
         nudge payload (D案) and is ignored. Idempotent: a nudge after terminal
         no-ops (delivery is at-least-once, so double wakes are expected)."""
         from reyn.core.events.pipeline_recovery import latest_pipeline_state
-        from reyn.core.pipeline.executor import PipelineExecutionError, PipelineExecutor
+        from reyn.core.pipeline.executor import (
+            PipelineCancelled,
+            PipelineExecutionError,
+            PipelineExecutor,
+        )
         from reyn.core.pipeline.serde import pipeline_from_dict
         from reyn.core.pipeline.work_order import has_result, read_resume_attempts
 
@@ -141,6 +171,10 @@ class PipelineExecutorDriver:
 
         pipeline = pipeline_from_dict(wo.pipeline)
         executor = PipelineExecutor()
+        # IS-6: emit step-boundary progress to THIS session's EventLog (an
+        # attached caller subscribes to it) and poll THIS driver's cooperative
+        # cancel flag at each step boundary.
+        events = getattr(self._router_host, "events", None)
         try:
             if latest_pipeline_state(wo.run_id, self._state_log) is None:
                 # Fresh run (or crashed before the first R4 snapshot): seed the
@@ -153,6 +187,8 @@ class PipelineExecutorDriver:
                     run_id=wo.run_id,
                     registry=self._registry,
                     default_identity=wo.reply_to_agent,
+                    events=events,
+                    cancel_check=self.is_cancel_requested,
                 )
             else:
                 result = await executor.resume(
@@ -162,19 +198,40 @@ class PipelineExecutorDriver:
                     state_log=self._state_log,
                     registry=self._registry,
                     default_identity=wo.reply_to_agent,
+                    events=events,
+                    cancel_check=self.is_cancel_requested,
                 )
+        except PipelineCancelled as exc:
+            # IS-6: an intentional Ctrl-C stop at a step boundary. TERMINAL (so
+            # the recovery scan never zombie-resurrects a user-cancelled run) but
+            # the R4 generation snapshots are LEFT ON DISK — abort-now, yet a
+            # future explicit-resume tool could continue from ``step_index``.
+            # Cancel only reaches here on the sync/attached path (async is
+            # detached, no Ctrl-C), so ``notify_reply`` is False → no inbox turn;
+            # the attached caller reads ``status=cancelled`` inline.
+            await self._finish(
+                status="cancelled",
+                error=str(exc),
+                output={"cancelled_at_step_index": exc.step_index},
+            )
+            return
         except PipelineExecutionError as exc:
             await self._finish(status="failed", error=str(exc))
             return
-        await self._finish(status="ok", output=result.pipe_data)
+        await self._finish(
+            status="ok", output=result.pipe_data, named_stores=result.named_stores,
+        )
 
     def is_cancel_requested(self) -> bool:
-        """Cooperative cancel flag (protocol conformance; the executor has no
-        mid-step cancel hook yet, so this only reports the request)."""
+        """Cooperative cancel flag. IS-6: passed as the executor's
+        ``cancel_check`` — polled at each step BOUNDARY, so a True reading stops
+        the run cleanly before the next step (see ``run_turn``)."""
         return self._cancel_requested
 
     def request_cancel(self) -> None:
-        """Record a cancel request (see ``is_cancel_requested``)."""
+        """Record a cancel request (``Session.cancel_inflight`` → here on Ctrl-C).
+        The executor observes it at the next step boundary via
+        ``is_cancel_requested`` and raises ``PipelineCancelled``."""
         self._cancel_requested = True
 
     async def _check_cap(self, user_text: str) -> None:
@@ -228,16 +285,28 @@ class PipelineExecutorDriver:
 
     async def _finish(
         self, *, status: str, output: Any = None, error: "str | None" = None,
+        named_stores: "dict | None" = None,
     ) -> None:
-        """Deliver the result to the reply address, THEN write the terminal
-        marker, then arm the standard ephemeral vanish for this session (A10:
-        the driver-session must not leak past terminal)."""
+        """Deliver the result to the reply address (when ``notify_reply``), THEN
+        write the terminal marker, then arm the standard ephemeral vanish for
+        this session (A10: the driver-session must not leak past terminal).
+
+        IS-6: on the sync ATTACHED path ``notify_reply`` is False — the attached
+        caller reads the terminal marker in-band via ``read_result``, so posting
+        a ``pipeline_result`` turn to that same session would be a redundant,
+        unprompted extra LLM turn. The terminal marker is ALWAYS written
+        (``delivered=False`` records "no inbox delivery attempted"); only the
+        cross-session reply is gated."""
         from reyn.core.pipeline.work_order import write_result
 
-        delivered = await self._deliver(status=status, output=output, error=error)
+        delivered = (
+            await self._deliver(status=status, output=output, error=error)
+            if self._notify_reply else False
+        )
         write_result(
             self._run_dir(), status=status, delivered=delivered,
             output=_json_safe(output), error=error,
+            named_stores=_json_safe(named_stores) if named_stores is not None else None,
         )
         # Reuse the existing ephemeral auto-vanish teardown (quiesce + cancel
         # run-loop + drop + session_vanished + per-session dir purge) instead of
