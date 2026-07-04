@@ -209,7 +209,7 @@ def _cmd_show(args: argparse.Namespace) -> None:
     print(f"workspace:   {target}")
     # PR15: allowlist visibility.
     if profile.allowed_skills is None:
-        print("allowed_skills: (unrestricted — all project + stdlib skills)")
+        print("allowed_skills: (unrestricted — no per-agent restriction)")
     elif not profile.allowed_skills:
         print("allowed_skills: (none — router-only, no skill spawn)")
     else:
