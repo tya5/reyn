@@ -149,7 +149,7 @@ def test_rm_short_yes_flag():
 
 @pytest.mark.asyncio
 async def test_cmd_list_empty_manifest(tmp_path, capsys, monkeypatch):
-    """Tier 2: cmd_list with empty manifest prints a 'No indexed sources' hint."""
+    """Tier 2: cmd_list with empty manifest prints a 'No indexed sources' message."""
     import reyn.interfaces.cli.commands.source as _src_mod
 
     manifest = SourceManifest(tmp_path)
@@ -161,7 +161,6 @@ async def test_cmd_list_empty_manifest(tmp_path, capsys, monkeypatch):
 
     assert rc == 0
     assert "No indexed sources" in captured.out
-    assert "index_docs" in captured.out  # hint mentions the command
 
 
 # ── cmd_list — populated manifest ────────────────────────────────────────────

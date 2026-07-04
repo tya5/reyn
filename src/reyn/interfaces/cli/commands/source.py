@@ -91,11 +91,7 @@ async def _cmd_list_async(args: argparse.Namespace) -> int:
         return 0
 
     if not sources:
-        print(
-            "No indexed sources. Run:\n"
-            '  reyn run index_docs \'{"source":"<name>","path":"<glob>",'
-            '"description":"<text>"}\''
-        )
+        print("No indexed sources found.")
         return 0
 
     for name, entry in sorted(sources.items()):
