@@ -38,6 +38,7 @@ from typing import TYPE_CHECKING, Any, Callable
 
 from reyn.core.pipeline.executor import (
     AgentStep,
+    CallStep,
     ExprRef,
     Pipeline,
     Step,
@@ -129,6 +130,26 @@ def _decode_agent(data: "dict[str, Any]") -> "AgentStep":
     )
 
 
+def _encode_call(step: "CallStep") -> "dict[str, Any]":
+    # ``pass_`` (the Python field — ``pass`` is a keyword) serializes under the
+    # Appendix-B wire/DSL key ``"pass"``. This is the one place a step field name
+    # differs from its wire key.
+    return {
+        "kind": "call",
+        "pipeline": step.pipeline,
+        "pass": list(step.pass_),
+        "output": step.output,
+    }
+
+
+def _decode_call(data: "dict[str, Any]") -> "CallStep":
+    return CallStep(
+        pipeline=data["pipeline"],
+        pass_=list(data.get("pass") or []),
+        output=data.get("output"),
+    )
+
+
 # Dispatch tables: encoder keyed by step type, decoder keyed by ``kind`` marker.
 # A future primitive ADDS one entry to each (mirroring the executor's
 # ``STEP_DISPATCH`` and the parser's ``_STEP_PARSERS``) rather than editing a
@@ -137,11 +158,13 @@ ENCODERS: "dict[type, Callable[[Step], dict[str, Any]]]" = {
     TransformStep: _encode_transform,
     ToolStep: _encode_tool,
     AgentStep: _encode_agent,
+    CallStep: _encode_call,
 }
 DECODERS: "dict[str, Callable[[dict[str, Any]], Step]]" = {
     "transform": _decode_transform,
     "tool": _decode_tool,
     "agent": _decode_agent,
+    "call": _decode_call,
 }
 
 

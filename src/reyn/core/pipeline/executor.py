@@ -1,68 +1,67 @@
-"""Linear Pipeline executor — R3 pipe-data threading + R4 step-boundary recovery.
+"""Pipeline executor — R3 pipe-data threading + R4 recovery + the non-linear
+compositional foundation (``_run_scope`` + dotted-path recovery + ``call``).
 
-The thin vertical-slice executor for
-``docs/proposals/reyn-pipeline-v0.9-design-resolutions.md``: a **linear** sequence of
-``transform`` / ``tool`` (``shell`` is just a ``ToolStep(name="shell", ...)``) / ``agent``
-(R5) steps. Deliberately out of scope for this slice: `for_each`/`parallel`/`fold`/
-`match`/`call`/`refine`, the YAML DSL parser, and driver-as-session integration — those
-are later slices; this module proves the core loop + recovery (+ agent-step wiring) only.
+The executor for ``docs/proposals/reyn-pipeline-v0.9-design-resolutions.md``: a
+sequence of ``transform`` / ``tool`` (``shell`` is just a ``ToolStep(name="shell",
+...)``) / ``agent`` (R5) steps, plus the first COMPOSITIONAL primitive, ``call``
+(R7). Still out of scope for this slice: `for_each`/`parallel`/`fold`/`match`/
+`refine` — those are later primitives that plug into the SAME dispatch + scope
+machinery this module now exposes.
 
-**Dispatch table (the parallel-primitive seam).** Step execution is a ``dict``-dispatch
-keyed by the step's dataclass type (:data:`STEP_DISPATCH`) rather than an ``isinstance``
-chain — so a future primitive ADDS one registry entry (plus a serde encoder/decoder and a
-parser) instead of editing a shared ``elif`` block. Every runner has the uniform signature
-``(_StepInvocation) -> (result, durable, completed_step_results)``: a leaf runner
-(``transform``/``tool``/``agent``) returns ``completed_step_results`` unchanged and never
-records (its caller records after threading). ``_StepInvocation`` also carries a
-``record`` recorder + a ``step_label`` (the step's path, for error messages) that a
-future COMPOSITIONAL runner will use for its own sub-scope recording; leaf runners ignore
-both, but the surface is uniform so the compositional primitive plugs in without touching
-the leaf runners.
+**Dispatch tables (R7 — the parallel-primitive seam).** Step execution is a
+``dict``-dispatch keyed by the step's dataclass type
+(:data:`STEP_DISPATCH`) rather than an ``isinstance`` chain — so a future
+primitive ADDS one registry entry (here, plus a serde encoder/decoder, a parser,
+and an analyzer facet) instead of editing a shared ``elif`` block. Every runner
+has the uniform signature ``(_StepInvocation) -> (result, durable,
+completed_step_results)``: leaf runners (``transform``/``tool``/``agent``) return
+``completed_step_results`` unchanged and never record; a COMPOSITIONAL runner
+(``call``) recurses into :meth:`PipelineExecutor._run_scope`, grows
+``completed_step_results`` with its sub-scope's dotted keys, and records each
+sub-step through the frozen recovery closure it is handed.
 
-**R3 (uniform pipe-data / output rule)**: every step produces exactly one return value.
-That value is simultaneously (1) the pipe data handed to the next step and (2) written
-to a named store under ``output`` iff the step declares one. A ``transform`` step's
-``value`` is a R1 expression (``reyn.core.pipeline.expr`` — the total evaluator; this
-module never hand-rolls expression evaluation), evaluated against a context of
-``{"ctx": named_stores, "pipe": pipe_data}`` — so ``ctx.NAME`` reaches an earlier step's
-named output and bare ``pipe`` reaches the immediately-preceding step's return value even
-when it had no ``output:``. A ``tool`` step's ``args`` may mark any value as an
-expression to resolve (rather than a literal) by wrapping it in :class:`ExprRef`; both
-resolve through the same context via the same evaluator. An ``agent`` step's ``prompt``
-is a R5-spec ``TPL`` string — ``{ctx.NAME.field}`` / ``{pipe}`` references interpolated
-via :func:`_interpolate_prompt` (which reuses ``expr.evaluate_expr``'s ``Path``
-resolution for the dotted lookup — no second path-resolver) — then handed to
-:func:`reyn.runtime.session_api.run_agent_step` to spawn+run+collect; its return value
-is threaded exactly like the other step kinds.
+**R3 (uniform pipe-data / output rule)**: every step produces exactly one return
+value. That value is simultaneously (1) the pipe data handed to the next step and
+(2) written to a named store under ``output`` iff the step declares one. N2's
+uniform rule extends this to compositional steps: a ``call`` step's return value
+is its callee pipeline's FINAL step output (see :class:`CallStep`). A
+``transform`` step's ``value`` is a R1 expression (``reyn.core.pipeline.expr``);
+a ``tool`` step's ``args`` may mark a value as an expression via :class:`ExprRef`;
+an ``agent`` step's ``prompt`` is an R5 ``TPL`` string interpolated by
+:func:`_interpolate_prompt`. All resolve against a context of ``{"ctx":
+named_stores, "pipe": pipe_data}``.
 
-**R4 (step-boundary recovery)**: after each step completes (before advancing), the
-executor calls :func:`reyn.core.events.pipeline_recovery.record_pipeline_state` with the
-full control-plane state — ``{run_id, step_index, named_stores, pipe_data,
-completed_step_results}`` — keyed at the durable WAL head. Side-effecting ``tool``/
-``agent`` steps use the awaited-durable path (narrowing the effect-done/snapshot-not-yet-
-durable crash window); pure ``transform`` steps use the non-blocking path.
-:meth:`PipelineExecutor.run` starts a run from scratch; :meth:`PipelineExecutor.resume`
-loads the latest recorded generation for a run and REPLAYS every step already present in
-``completed_step_results`` (not re-executing it — the exactly-once contract that keeps a
-crash from re-running a `tool` step's side effect, or an ``agent`` step's LLM turn and any
-tool side effects it made), resuming live execution at the first step with no recorded
-result.
+**R4 + dotted-path recovery (R7 — THE load-bearing decision)**: after each step
+completes (before advancing), the executor records the full control-plane state —
+``{run_id, step_index, named_stores, pipe_data, completed_step_results}`` — as a
+truncation-surviving generation (``reyn.core.events.pipeline_recovery``). The
+``completed_step_results`` key space is a DOTTED SCOPE PATH: a top-level step ``i``
+keeps its flat key ``str(i)`` (byte-identical to the pre-``call`` linear format —
+a pipeline with no ``call`` records exactly as before), and a ``call`` at index
+``i`` records its callee's sub-steps under ``f"{i}.call.{j}"`` while the callee
+runs, then records its OWN N2 scalar result at ``str(i)`` once the callee is done.
+Nesting composes (``"3.call.1.call.0"``). The persisted ``named_stores`` /
+``pipe_data`` / ``step_index`` stay the OUTER scope's throughout a call (a
+callee's local stores NEVER leak into the outer snapshot — this is what gives
+``pass:[...]`` isolation on the RECOVERY axis, not just the live one); a callee's
+local state is reconstructed at resume by RE-WALKING its pipeline definition and
+replaying the dotted keys already present — the same one recursive
+:meth:`PipelineExecutor._run_scope` used live. Resume detects a completed
+sub-step by EXACT key membership (``f"{prefix}.{j}" in completed_step_results``) —
+never a string-prefix scan — so a mid-``call`` crash resumes replaying the
+finished callee sub-steps EXACTLY-ONCE (a side-effecting sub-step does not
+re-fire) and executes only the remainder.
 
-**IS-6 (attached run: live events + step-boundary cancel)**: two optional hooks let a
-caller *attach* to a run without changing the core loop. ``events`` (an ``EventLog``)
-receives a ``pipeline_step_started`` / ``pipeline_step_completed`` pair around every step
-boundary — each carrying ``total_steps`` (``len(pipeline.steps)``) alongside ``run_id`` /
-``step_index`` / ``step_kind`` so a "step i/N" display never needs a second lookup — the
-emit half of the emit+subscribe seam a sync ``run_pipeline`` tool (or the
-TUI) uses to render live progress; when None the executor stays silent (pure callers are
-unaffected). ``cancel_check`` (a ``Callable[[], bool]``) is polled at each step BOUNDARY,
-before the next step starts — never mid-step, so a step's side effect is never half-applied
-— and a True reading raises :class:`PipelineCancelled` from that boundary. Because every
-step before the boundary is already complete AND its R4 generation is on disk, the last
-recorded snapshot is a consistent resume point: an intentional cancel is a *clean* stop the
-driver-session turns into a terminal ``cancelled`` marker while preserving the R4 journal
-(abort-now, resume-later). Both hooks default off, so the sync/async driver-session paths
-opt in without disturbing the R3/R4 contract above.
+**IS-6 (attached run: live events + step-boundary cancel)**: two optional hooks
+let a caller *attach* to a run. ``events`` (an ``EventLog``) receives a
+``pipeline_step_started`` / ``pipeline_step_completed`` pair around every
+TOP-LEVEL step boundary (a ``call`` is ONE such boundary — its callee sub-steps
+do not emit their own ``i/N`` events, keeping the "step i/N" display coherent),
+each carrying ``total_steps``. ``cancel_check`` (a ``Callable[[], bool]``) is
+polled at each TOP-LEVEL step boundary before the next step starts — never
+mid-step — and a True reading raises :class:`PipelineCancelled` from that
+boundary, leaving the last recorded snapshot as a consistent resume point. Both
+hooks default off.
 """
 from __future__ import annotations
 
@@ -73,6 +72,7 @@ from typing import TYPE_CHECKING, Any, Awaitable, Callable, Union
 
 from reyn.core.events.pipeline_recovery import latest_pipeline_state, record_pipeline_state
 from reyn.core.pipeline.expr import ExprEvalError, ExprParseError, evaluate_expr
+from reyn.core.pipeline.registry import PipelineNotFoundError
 from reyn.core.pipeline.schema import SchemaRegistry, validate
 from reyn.runtime.errors import AgentStepError
 from reyn.runtime.session_api import run_agent_step
@@ -80,6 +80,7 @@ from reyn.runtime.session_api import run_agent_step
 if TYPE_CHECKING:
     from reyn.core.events.events import EventLog
     from reyn.core.events.state_log import StateLog
+    from reyn.core.pipeline.registry import PipelineRegistry
     from reyn.runtime.registry import AgentRegistry
 
 # ---------------------------------------------------------------------------
@@ -142,12 +143,44 @@ class AgentStep:
     output: "str | None" = None
 
 
-Step = Union[TransformStep, ToolStep, AgentStep]
+@dataclass(frozen=True)
+class CallStep:
+    """A COMPOSITIONAL step (R7 — the first non-linear primitive): synchronously
+    run a REGISTERED sub-pipeline and thread ITS final output out as this step's
+    N2 return value (Appendix B: ``call = {pipeline: LIT, pass: [NAME*], output:
+    NAME}``).
+
+    - ``pipeline`` is a STATIC literal name (Hard rule 2 — never a runtime
+      expression), resolved through the run's ``PipelineRegistry`` at execution.
+      An absent target fails the step (never a silent no-op).
+    - ``pass_`` (wire/DSL key ``pass`` — the Python field can't be the ``pass``
+      keyword) is the ONLY channel by which the caller's named stores reach the
+      callee: the callee's context is built FRESH from ``{name: caller_ctx[name]
+      for name in pass_}``, so the callee structurally cannot see any caller
+      store not listed here (Hard rule 8's ``{ctx.X}``-only-for-X-in-``pass``
+      isolation). A ``pass_`` name absent from the caller's stores fails the step.
+    - the callee's FIRST step receives the caller's pipe-data at the call site
+      (Hard rule 5) — bare ``{pipe}`` in the callee's first step is the outer
+      pipe-data.
+    - the callee's FINAL step output is this ``call`` step's return value (N2),
+      re-entering the caller's uniform pipe-data / ``output`` threading unchanged.
+    - callee failure fails THIS step (the ``PipelineExecutionError`` propagates
+      out of the sub-scope unchanged — Hard rule 5/8).
+
+    Recovery: the callee runs under a dotted scope (``f"{i}.call.{j}"``); its
+    completed sub-steps replay EXACTLY-ONCE on resume (see the module docstring)."""
+
+    pipeline: str
+    pass_: "list[str]" = field(default_factory=list)
+    output: "str | None" = None
+
+
+Step = Union[TransformStep, ToolStep, AgentStep, CallStep]
 
 
 @dataclass(frozen=True)
 class Pipeline:
-    """A linear sequence of steps.
+    """A sequence of steps.
 
     ``description`` (IS-5): optional human-readable summary surfaced to the
     LLM by the universal catalog's ``pipeline`` category enumerator
@@ -164,8 +197,11 @@ class Pipeline:
 @dataclass(frozen=True)
 class PipelineResult:
     """The outcome of a completed `run`/`resume`: the final pipe data, every named
-    store, and every step's result (keyed by ``step_path`` — the linear step index as a
-    string; a later multi-scope slice would use dotted scope paths)."""
+    store, and every step's result keyed by ``step_path`` — a DOTTED SCOPE PATH
+    (R7). A top-level step ``i`` keys as ``str(i)``; a ``call``'s callee sub-steps
+    key as ``f"{i}.call.{j}"`` (nesting composes). ``step_index`` is the OUTER
+    scope's next-step cursor (a mid-``call`` snapshot keeps it at the ``call``
+    step's index — the callee's progress lives entirely in the dotted keys)."""
 
     run_id: str
     pipe_data: Any
@@ -180,8 +216,9 @@ class PipelineError(Exception):
 
 class PipelineExecutionError(PipelineError):
     """Raised when a step fails: an expression error, an unresolvable tool result
-    against its declared schema, or an unrecognized step type. The executor never
-    silently continues past a failed step."""
+    against its declared schema, a ``call`` whose target/pass is unresolvable or
+    whose callee failed, or an unrecognized step type. The executor never silently
+    continues past a failed step."""
 
 
 class PipelineCancelled(PipelineError):
@@ -206,10 +243,10 @@ class PipelineCancelled(PipelineError):
 
 ToolDispatch = Callable[[str, "dict[str, Any]"], Any]
 
-# An async recorder handed to a step runner: it writes a full-state R4 generation
-# given the current ``completed_step_results`` + a durability flag. Leaf runners
-# ignore it (their caller records); the surface exists so a future compositional
-# runner can record its own sub-steps without a signature change.
+# An async recorder handed down into every nested scope: it writes a full-state
+# R4 generation using a FROZEN outer frame (the top-level ``call`` step's
+# step_index / named_stores / pipe_data at the moment the call was entered),
+# with only ``completed_step_results`` growing. See ``_run_from``/``_run_scope``.
 Recorder = Callable[..., Awaitable[None]]
 
 _PROMPT_REF_RE = re.compile(r"\{([^{}]+)\}")
@@ -241,8 +278,8 @@ def _interpolate_prompt(template: str, context: "dict[str, Any]") -> str:
 
 
 def _step_kind(step: Step) -> str:
-    """The step's kind string (``transform`` / ``tool`` / ``agent``) for the
-    IS-6 live-progress events — the same vocabulary the serde ``kind`` marker
+    """The step's kind string (``transform`` / ``tool`` / ``agent`` / ``call``) for
+    the IS-6 live-progress events — the same vocabulary the serde ``kind`` marker
     uses, derived from the dataclass type so it never drifts from the union."""
     return _STEP_KINDS.get(type(step), "unknown")
 
@@ -255,7 +292,9 @@ def _step_kind(step: Step) -> str:
 @dataclass(frozen=True)
 class _RunDeps:
     """The read-only per-run collaborators, bundled once so a step runner has a
-    single uniform argument surface instead of a long positional signature."""
+    single uniform argument surface instead of a 9-parameter signature. Threaded
+    unchanged into every nested scope (a ``call``'s callee runs under the SAME
+    deps — same tool dispatch, same registries)."""
 
     tool_dispatch: ToolDispatch
     state_log: "StateLog | None"
@@ -263,16 +302,18 @@ class _RunDeps:
     schema_registry: "SchemaRegistry | None"
     registry: "AgentRegistry | None"
     default_identity: "str | None"
+    pipeline_registry: "PipelineRegistry | None"
     events: "EventLog | None"
     cancel_check: "Callable[[], bool] | None"
 
 
 @dataclass(frozen=True)
 class _StepInvocation:
-    """One dispatch call's inputs. ``step_label`` is the step's path (``"3"`` at
-    top level) — used for error messages. ``record`` is the R4 recorder a future
-    compositional runner uses for its sub-steps; leaf runners ignore it (their
-    caller records)."""
+    """One dispatch call's inputs. ``step_label`` is the step's DOTTED SCOPE PATH
+    (``"3"`` at top level, ``"3.call.0"`` in a callee) — used both for error
+    messages and (by a compositional runner) as the prefix for its sub-scope's
+    dotted keys. ``record`` is the frozen R4 recorder a compositional runner uses
+    for its sub-steps; leaf runners ignore it (their caller records)."""
 
     executor: "PipelineExecutor"
     step: Step
@@ -350,12 +391,60 @@ async def _run_agent_step(inv: "_StepInvocation") -> "tuple[Any, bool, dict[str,
     return result, True, inv.completed_step_results
 
 
+async def _run_call_step(inv: "_StepInvocation") -> "tuple[Any, bool, dict[str, Any]]":
+    """The first COMPOSITIONAL runner (R7): resolve the callee, build its isolated
+    ``pass_`` context, and recurse into ``_run_scope`` under a ``f"{label}.call"``
+    prefix. Returns the callee's FINAL output (N2), whether any executed sub-step
+    was side-effecting (so the outer record durability is right), and the GROWN
+    ``completed_step_results`` (with the callee's dotted keys)."""
+    step: CallStep = inv.step  # type: ignore[assignment]
+    deps = inv.deps
+    if deps.pipeline_registry is None:
+        raise PipelineExecutionError(
+            f"step {inv.step_label} (call {step.pipeline!r}) requires a "
+            "pipeline_registry to resolve its target, but none was passed to "
+            "run/resume"
+        )
+    try:
+        callee = deps.pipeline_registry.get(step.pipeline)
+    except PipelineNotFoundError as exc:
+        raise PipelineExecutionError(
+            f"step {inv.step_label} (call) target pipeline {step.pipeline!r} is "
+            "not registered"
+        ) from exc
+
+    outer_stores = inv.context["ctx"]
+    sub_stores: "dict[str, Any]" = {}
+    for name in step.pass_:
+        if name not in outer_stores:
+            raise PipelineExecutionError(
+                f"step {inv.step_label} (call {step.pipeline!r}) pass: names "
+                f"{name!r}, which is not in the caller's named stores"
+            )
+        sub_stores[name] = outer_stores[name]
+
+    final_pipe, _final_stores, completed_step_results, any_durable = await (
+        inv.executor._run_scope(
+            callee.steps,
+            scope_prefix=f"{inv.step_label}.call",
+            seed_named_stores=sub_stores,
+            # Hard rule 5: the callee's first step gets the caller's pipe-data.
+            seed_pipe_data=inv.context["pipe"],
+            completed_step_results=inv.completed_step_results,
+            deps=deps,
+            record=inv.record,
+        )
+    )
+    return final_pipe, any_durable, completed_step_results
+
+
 # Dispatch table: step dataclass type -> its runner. A future primitive ADDS an
-# entry here (+ serde/parser) rather than editing a shared elif chain.
+# entry here (+ serde/parser/analyzer) rather than editing a shared elif chain.
 STEP_DISPATCH: "dict[type, Callable[[_StepInvocation], Awaitable[tuple[Any, bool, dict[str, Any]]]]]" = {
     TransformStep: _run_transform_step,
     ToolStep: _run_tool_step,
     AgentStep: _run_agent_step,
+    CallStep: _run_call_step,
 }
 
 # Type -> kind-string, the inverse vocabulary the serde ``kind`` marker uses.
@@ -363,6 +452,7 @@ _STEP_KINDS: "dict[type, str]" = {
     TransformStep: "transform",
     ToolStep: "tool",
     AgentStep: "agent",
+    CallStep: "call",
 }
 
 
@@ -372,8 +462,10 @@ _STEP_KINDS: "dict[type, str]" = {
 
 
 class PipelineExecutor:
-    """Runs a :class:`Pipeline` sequentially, threading pipe data + named stores
-    (R3) and recording a step-boundary recovery generation after each step (R4)."""
+    """Runs a :class:`Pipeline`, threading pipe data + named stores (R3),
+    recording a dotted-path step-boundary recovery generation after each step
+    (R4/R7), and executing compositional steps (``call``) via a recursive
+    sub-scope (:meth:`_run_scope`)."""
 
     async def run(
         self,
@@ -386,24 +478,21 @@ class PipelineExecutor:
         schema_registry: "SchemaRegistry | None" = None,
         registry: "AgentRegistry | None" = None,
         default_identity: "str | None" = None,
+        pipeline_registry: "PipelineRegistry | None" = None,
         events: "EventLog | None" = None,
         cancel_check: "Callable[[], bool] | None" = None,
     ) -> PipelineResult:
         """Run `pipeline` from the first step. `initial_context` seeds the named
         stores (``ctx.*``) available to the first step; there is no incoming pipe
         data (``pipe`` resolves to ``None`` until the first step produces one).
-        `registry` (an `AgentRegistry`) and `default_identity` are required only if
-        `pipeline` contains an `AgentStep` — a pipeline with none never touches
-        either, so existing transform/tool-only callers are unaffected.
+        `registry` / `default_identity` are required only if `pipeline` contains an
+        `AgentStep`; `pipeline_registry` (a `PipelineRegistry`) is required only if
+        it contains a `CallStep` — a pipeline with neither never touches either, so
+        existing transform/tool-only callers are unaffected.
 
-        `events` (IS-6), when given, receives a ``pipeline_step_started`` /
-        ``pipeline_step_completed`` event around each step boundary so an attached
-        caller (a sync ``run_pipeline`` tool, the TUI) can render live progress —
-        the emit+subscribe seam; None keeps the executor silent for pure callers.
-        `cancel_check` (IS-6), when given, is polled at each step BOUNDARY (before
-        the next step starts, never mid-step); a True reading raises
-        :class:`PipelineCancelled` leaving the last-recorded R4 snapshot intact
-        (resumable). None disables cooperative cancel."""
+        `events` / `cancel_check` (IS-6) behave as documented on the module: an
+        attached caller renders live progress from `events`, and a True
+        `cancel_check` at a step boundary raises :class:`PipelineCancelled`."""
         named_stores: "dict[str, Any]" = dict(initial_context) if initial_context else {}
         return await self._run_from(
             pipeline,
@@ -417,6 +506,7 @@ class PipelineExecutor:
             schema_registry=schema_registry,
             registry=registry,
             default_identity=default_identity,
+            pipeline_registry=pipeline_registry,
             events=events,
             cancel_check=cancel_check,
         )
@@ -431,20 +521,21 @@ class PipelineExecutor:
         schema_registry: "SchemaRegistry | None" = None,
         registry: "AgentRegistry | None" = None,
         default_identity: "str | None" = None,
+        pipeline_registry: "PipelineRegistry | None" = None,
         events: "EventLog | None" = None,
         cancel_check: "Callable[[], bool] | None" = None,
     ) -> PipelineResult:
         """Resume `run_id`: load the latest recorded generation (R4) and replay every
-        step already in ``completed_step_results`` (no re-execution — exactly-once —
-        this covers a completed ``AgentStep`` exactly like a completed ``tool`` step:
-        its recorded result replays from the snapshot, the LLM turn never re-runs),
-        resuming live execution at the first step with no recorded result. With no
-        snapshot at all, resume == run from scratch.
+        step already in ``completed_step_results`` (no re-execution — exactly-once).
+        For a mid-``call`` crash this means resuming at the ``call`` step's index and
+        replaying the finished callee sub-steps from their dotted keys (the callee's
+        side effects do not re-fire), executing only the remainder. With no snapshot
+        at all, resume == run from scratch.
 
-        `events` / `cancel_check` (IS-6) behave exactly as in :meth:`run` — a
-        cancel observed at the first not-yet-run step boundary raises
-        :class:`PipelineCancelled` from the resumed position, so a resumed run is
-        as interruptible as a fresh one."""
+        `pipeline_registry` (R7) is required only if the resumed run re-enters a
+        `CallStep` — the callee is re-resolved by name and re-walked to reconstruct
+        its local state from the dotted keys. `events` / `cancel_check` behave as in
+        :meth:`run`."""
         snapshot = latest_pipeline_state(run_id, state_log)
         if snapshot is None:
             return await self.run(
@@ -456,6 +547,7 @@ class PipelineExecutor:
                 schema_registry=schema_registry,
                 registry=registry,
                 default_identity=default_identity,
+                pipeline_registry=pipeline_registry,
                 events=events,
                 cancel_check=cancel_check,
             )
@@ -471,6 +563,7 @@ class PipelineExecutor:
             schema_registry=schema_registry,
             registry=registry,
             default_identity=default_identity,
+            pipeline_registry=pipeline_registry,
             events=events,
             cancel_check=cancel_check,
         )
@@ -489,6 +582,7 @@ class PipelineExecutor:
         schema_registry: "SchemaRegistry | None",
         registry: "AgentRegistry | None" = None,
         default_identity: "str | None" = None,
+        pipeline_registry: "PipelineRegistry | None" = None,
         events: "EventLog | None" = None,
         cancel_check: "Callable[[], bool] | None" = None,
     ) -> PipelineResult:
@@ -499,16 +593,16 @@ class PipelineExecutor:
             schema_registry=schema_registry,
             registry=registry,
             default_identity=default_identity,
+            pipeline_registry=pipeline_registry,
             events=events,
             cancel_check=cancel_check,
         )
         steps = pipeline.steps
         total_steps = len(steps)
         for i in range(start_index, total_steps):
-            # IS-6 cancel checkpoint: poll at the step BOUNDARY, before this step
-            # starts. Every step < i is already complete + snapshotted, so the
-            # last record_pipeline_state (at step_index=i) is a consistent resume
-            # point — raising here never leaves a half-applied step.
+            # IS-6 cancel checkpoint: poll at the TOP-LEVEL step BOUNDARY, before
+            # this step starts. Every step < i is complete + snapshotted, so the
+            # last record_pipeline_state is a consistent resume point.
             if cancel_check is not None and cancel_check():
                 raise PipelineCancelled(run_id=run_id, step_index=i)
             step = steps[i]
@@ -520,9 +614,12 @@ class PipelineExecutor:
                 )
             context = {"ctx": named_stores, "pipe": pipe_data}
 
-            # A recorder bound to THIS step's frame, for a compositional runner's
-            # sub-steps (leaf runners never invoke it; their record happens below,
-            # post-threading).
+            # A frozen R4 recorder for any nested scope this step opens (a call):
+            # every generation recorded WHILE inside the call carries THIS outer
+            # frame (step_index=i, the pre-threading outer stores/pipe) with only
+            # completed_step_results growing — the callee's local stores never
+            # persist, giving pass:[...] isolation on the recovery axis. Leaf
+            # steps never invoke it (their record happens below, post-threading).
             async def _record(
                 *, completed_step_results: "dict[str, Any]", durable: bool,
                 _i: int = i, _named: "dict[str, Any]" = named_stores, _pipe: Any = pipe_data,
@@ -576,12 +673,66 @@ class PipelineExecutor:
             step_index=total_steps,
         )
 
+    async def _run_scope(
+        self,
+        steps: "list[Step]",
+        *,
+        scope_prefix: str,
+        seed_named_stores: "dict[str, Any]",
+        seed_pipe_data: Any,
+        completed_step_results: "dict[str, Any]",
+        deps: _RunDeps,
+        record: Recorder,
+    ) -> "tuple[Any, dict[str, Any], dict[str, Any], bool]":
+        """Run a SUB-scope's ``steps`` under ``scope_prefix`` (e.g. ``"3.call"``),
+        threading its OWN local ``named_stores`` / ``pipe_data`` seeded from the
+        call site. Each sub-step keys as ``f"{scope_prefix}.{j}"``: if that key is
+        ALREADY in ``completed_step_results`` it REPLAYS (no execution, no record —
+        the exactly-once contract for a mid-scope crash), else it executes via the
+        same :data:`STEP_DISPATCH` and records through the frozen ``record`` closure.
+        A nested ``call`` sub-step recurses here again (``"3.call.1.call"``), sharing
+        the SAME ``record`` (the frozen outer frame propagates all the way down).
+        Returns ``(final_pipe_data, final_local_named_stores, grown_completed, any_durable)``.
+
+        Note: no ``cancel_check`` / ``events`` here — a ``call`` is ONE top-level
+        boundary; its sub-steps neither emit ``i/N`` progress nor add cancel points,
+        keeping the attached-caller view coherent. The callee runs to completion or
+        failure once entered; cancel takes effect at the next TOP-LEVEL boundary."""
+        named_stores = seed_named_stores
+        pipe_data = seed_pipe_data
+        any_durable = False
+        for j, step in enumerate(steps):
+            key = f"{scope_prefix}.{j}"
+            if key in completed_step_results:
+                # REPLAY exactly-once: the finished sub-step's result comes from the
+                # snapshot; it is NOT re-executed (no side effect refires).
+                result = completed_step_results[key]
+            else:
+                context = {"ctx": named_stores, "pipe": pipe_data}
+                runner = STEP_DISPATCH.get(type(step))
+                if runner is None:  # pragma: no cover - Step is a closed union
+                    raise PipelineExecutionError(f"unknown step type: {step!r}")
+                inv = _StepInvocation(
+                    executor=self, step=step, context=context, step_label=key,
+                    deps=deps, completed_step_results=completed_step_results,
+                    record=record,
+                )
+                result, durable, completed_step_results = await runner(inv)
+                any_durable = any_durable or durable
+                completed_step_results = {**completed_step_results, key: result}
+                await record(completed_step_results=completed_step_results, durable=durable)
+            pipe_data = result
+            if step.output:
+                named_stores = {**named_stores, step.output: result}
+        return pipe_data, named_stores, completed_step_results, any_durable
+
 
 __all__ = [
     "ExprRef",
     "TransformStep",
     "ToolStep",
     "AgentStep",
+    "CallStep",
     "Step",
     "Pipeline",
     "PipelineResult",
