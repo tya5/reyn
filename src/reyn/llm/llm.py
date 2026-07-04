@@ -1065,44 +1065,6 @@ Artifact rules:
 """
 
 
-def _system_prompt(
-    skill_name: str = "",
-    skill_description: str = "",
-    phase_role: str | None = None,
-    project_context: str = "",
-    agent_role: str = "",
-) -> str:
-    """Compose the system prompt: format contract + skill goal + role + project context.
-
-    Stable, persona-bearing fields live here (system) so the LLM treats them
-    as authoritative role definitions; volatile per-phase data stays in the
-    user-turn JSON.
-
-    `agent_role` (multi-agent: PR10) is the persona text from
-    `.reyn/agents/<name>/profile.yaml`. It applies to every phase the agent
-    runs and sits between the project context and the per-phase role so the
-    agent's overall persona doesn't shadow phase-specific responsibilities.
-    """
-    sections: list[str] = [_SYSTEM_BASE]
-    if skill_name or skill_description:
-        sections.append(
-            f"━━━ SKILL ━━━\n{skill_name}\n{skill_description}".strip()
-        )
-    if phase_role:
-        sections.append(
-            f"━━━ ROLE ━━━\nYou are acting as: {phase_role}"
-        )
-    if project_context:
-        sections.append(
-            f"━━━ PROJECT CONTEXT ━━━\n{project_context.strip()}"
-        )
-    if agent_role:
-        sections.append(
-            f"━━━ AGENT ROLE ━━━\n{agent_role.strip()}"
-        )
-    return "\n\n".join(sections)
-
-
 def _extract_json(text: str) -> str:
     """
     Strip markdown code fences wrapping the entire response.
@@ -1802,8 +1764,6 @@ async def call_llm_tools(
     tool_choice: str = "auto",       # "auto" | "required" | "none" (note: "none" not Gemini-safe)
     timeout: float | None = None,
     max_retries: int = 1,
-    skill_name: str = "router",      # for budget/event tagging
-    skill_description: str = "",
     prompt_cache_enabled: bool = True,
     budget: "BudgetTracker | None" = None,
     budget_agent: str | None = None,
