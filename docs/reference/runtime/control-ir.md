@@ -25,6 +25,7 @@ Control IR is the list of side-effect operations the LLM may emit alongside its 
 | `mcp` | Call a tool on a configured MCP server | `permissions.mcp: [server_name]` in skill frontmatter |
 | `mcp_install` | Install an MCP server from the registry into the project config | `permissions.mcp_install: true` in skill frontmatter |
 | `mcp_drop_server` | Remove an MCP server from project/local/user config (inverse of `mcp_install`) | `permissions.mcp_drop_server: true` in skill frontmatter |
+| `skill_install` | Register a local skill directory (containing `SKILL.md`) into the project skills config | `file.write: [.reyn/config/skills.yaml]` in skill frontmatter |
 | `index_query` | Semantic vector search over one indexed source | none |
 | `recall` | Macro: embed query (provider-direct) → index_query per source → merge top-K | none (embedding API cost) |
 | `index_drop` | Remove an indexed source entirely (destructive) | `permissions.index_drop: ask` in skill frontmatter |
@@ -271,6 +272,45 @@ Handler lifecycle:
 > `SqliteIndexBackend` primitives are unchanged — only the run-op wrappers and
 > bundled chunkers are gone. Nothing emits `kind: embed` / `kind: index_write`
 > anymore.
+
+## `skill_install`
+
+Registers a local skill directory (containing a `SKILL.md` file) into the
+project's `skills.entries` config. The router tool surface is
+`skill__install_local`; phase-side code emits this op kind directly. Both
+converge on the same `op_runtime/skill_install.py` handler.
+
+```json
+{
+  "kind": "skill_install",
+  "path": "skills/my-skill",
+  "name": "my-skill"
+}
+```
+
+Fields:
+- `path` (required) — path to the skill directory (containing `SKILL.md`) or
+  the direct path to the `SKILL.md` file. May be absolute or project-root-relative.
+  When pointing at a directory the handler appends `/SKILL.md` automatically.
+- `scope` (optional, default `".reyn/config/skills.yaml"`) — retained for
+  forward compat; currently unused (all installs write to `.reyn/config/skills.yaml`).
+- `name` (optional) — config key override. When absent the handler resolves:
+  frontmatter `name:` field → directory basename (in that precedence order).
+
+Handler lifecycle:
+1. Resolve `SKILL.md` path (dir → `<dir>/SKILL.md` or direct file)
+2. Read `SKILL.md` and `split_frontmatter()` — extract `name` and `description`
+3. Apply `op.name` override when set
+4. Threat-scan description via `content_guard.scan_for_threats(scope="strict")` — block on blocking-severity match
+5. Gate via `PermissionResolver.require_file_write` (= `.reyn/config/skills.yaml`)
+6. Write `skills.entries.<name>` to `.reyn/config/skills.yaml` with `{path, description, enabled: true, auto_invoke: true}`
+7. Call `record_config_generation` (recovery-core: truncation-surviving snapshot, #2259 / CLAUDE.md gate)
+8. Emit `skill_installed` event (P6 audit trail)
+9. Request hot-reload via `get_active_hot_reloader().request_reload(source="skill_install")`
+
+Result fields: `status` (`"installed"` / `"blocked"` / `"error"`), `name`, `path`, `description`, `config_path`.
+
+Events emitted: `skill_install_threat_match`, `skill_install_threat_blocked` (threat scan), `skill_installed` (P6 on success).
 
 ## `index_query`
 

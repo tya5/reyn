@@ -240,6 +240,10 @@ _FLOORED_QUALIFIED: "dict[str, frozenset[str]]" = {
     "mcp-install": frozenset({
         "mcp__install_registry", "mcp__install_package", "mcp__install_local",
     }),
+    # skill install — no registering skills from untrusted content (mirrors mcp-install)
+    "skill-install": frozenset({
+        "skill__install_local",
+    }),
     # session/agent spawn — no spawning sub-sessions/agents from untrusted content / an
     # unbound delegate (#2103: unbounded spawn is a DoS vector; the ⊆-parent model
     # blocks ESCALATION, but spawning ITSELF is restrict-floored like re-delegation —
@@ -380,6 +384,7 @@ _FLOORED_AUDIT_SEVERITY: "dict[str, str]" = {
     "re-delegation": "HIGH",
     "exec": "HIGH",
     "mcp-install": "HIGH",
+    "skill-install": "HIGH",  # #2548: registering skills from untrusted content is a persistence vector
     "memory-write": "MED",
     "spawn": "HIGH",  # #2103: unbounded sub-session spawn (DoS) — peer of re-delegation
 }

@@ -303,6 +303,9 @@ _OPERATION_RULES: Final[dict[str, tuple[str, Callable[[str, Mapping[str, Any]], 
 
     # exec category (FP-0017 sandboxed_exec, D14 visibility gating).
     "exec__sandboxed_exec": ("sandboxed_exec", _passthrough_args),
+
+    # skill category (#2548 PR-C: local skill directory install).
+    "skill__install_local": ("skill_install_local", _passthrough_args),
 }
 
 

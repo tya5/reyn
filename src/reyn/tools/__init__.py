@@ -95,6 +95,7 @@ def get_default_registry() -> ToolRegistry:
     )
     from reyn.tools.sandboxed_exec import SANDBOXED_EXEC
     from reyn.tools.session_spawn import SESSION_SPAWN
+    from reyn.tools.skill_verbs import SKILL_INSTALL_LOCAL
     from reyn.tools.topology_create import TOPOLOGY_CREATE
 
     # FP-0034 PR-3a: universal catalog wrappers (registered in registry;
@@ -199,6 +200,8 @@ def get_default_registry() -> ToolRegistry:
     registry.register(MCP_INSTALL_PACKAGE)
     registry.register(MCP_INSTALL_LOCAL)
     registry.register(MCP_CALL_TOOL)
+    # #2548 PR-C: skill install verb (local SKILL.md dir registration).
+    registry.register(SKILL_INSTALL_LOCAL)
     # ── FP-0034 universal catalog wrappers (router-only) ─────────────────
     # PR-3a registers them in the registry; PR-3b will add them to
     # build_tools() output and refactor the SP. Handlers wire through
