@@ -551,10 +551,10 @@ async def _starters() -> list[cl.Starter]:
             message="このプロジェクトに設定されている agent を一覧してください。",
         ),
         cl.Starter(
-            label="reyn の Skill を 1 つ動かしてみる",
+            label="このプロジェクトについて質問してみる",
             message=(
-                "今このプロジェクトで使える stdlib skill を 1 つ選んで、"
-                "短い試走をしてください。 何が起きるか教えてください。"
+                "このプロジェクトで今すぐ試せる簡単なタスクや質問を 1 つ実行してください。"
+                " 何が起きるか教えてください。"
             ),
         ),
         cl.Starter(
