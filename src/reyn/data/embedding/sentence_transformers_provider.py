@@ -68,7 +68,7 @@ from reyn.data.embedding.provider import EmbedBatchResult
 # lazy model load. The provider emits:
 #
 #   ("status",     "<msg>", {model, target_dir, device})   on DL start
-#   ("skill_done", "<msg>", {model, dimension})            on load complete
+#   ("model_loaded", "<msg>", {model, dimension})          on load complete
 #   ("error",      "<msg>", {model, retry_hint})           on load failure
 #
 # The sink is called synchronously from inside ``_load`` (= which itself
@@ -223,7 +223,7 @@ class SentenceTransformersEmbeddingProvider:
           * ``status`` before the load begins, carrying ``model`` /
             ``target_dir`` / ``device`` so the TUI can render a sticky
             status row.
-          * ``skill_done`` after the load succeeds, with the resolved
+          * ``model_loaded`` after the load succeeds, with the resolved
             dimension for cross-checking.
           * ``error`` if the load (or the underlying import) fails,
             with a ``retry_hint`` pointing at the relevant recovery
@@ -288,7 +288,7 @@ class SentenceTransformersEmbeddingProvider:
         except Exception:
             dim = 0
         self._emit(
-            "skill_done",
+            "model_loaded",
             f"loaded embedding model {resolved_model!r} ({dim}d)",
             {"model": resolved_model, "dimension": dim},
         )
