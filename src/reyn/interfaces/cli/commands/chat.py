@@ -7,7 +7,6 @@ instances; switching agents mid-REPL via `/attach <name>` happens through it.
 from __future__ import annotations
 
 import argparse
-import shutil
 import sys
 from pathlib import Path
 
@@ -170,12 +169,11 @@ def register(sub) -> None:
 
 
 def _reset_project_state(project_root: Path, *, confirm: bool = True) -> bool:
-    """Wipe in-flight skill state under ``project_root/.reyn/``.
+    """Wipe in-flight state under ``project_root/.reyn/``.
 
     Removes:
       - ``.reyn/state/wal.jsonl`` (process WAL)
       - ``.reyn/agents/<name>/state/snapshot.json`` (per-agent snapshots)
-      - ``.reyn/agents/<name>/state/skills/`` (per-skill snapshots)
 
     Preserves:
       - ``.reyn/events/`` (audit log, P6 truth — must not be wiped)
@@ -188,7 +186,7 @@ def _reset_project_state(project_root: Path, *, confirm: bool = True) -> bool:
     if confirm:
         try:
             answer = input(
-                "This will delete all in-flight skill state "
+                "This will delete all in-flight state "
                 "(snapshots + WAL). Audit logs are preserved.\n"
                 "Continue? [yes/no]: "
             ).strip().lower()
@@ -201,7 +199,7 @@ def _reset_project_state(project_root: Path, *, confirm: bool = True) -> bool:
     wal_path = project_root / ".reyn" / "state" / "wal.jsonl"
     wal_path.unlink(missing_ok=True)
 
-    # Delete per-agent snapshots + per-skill snapshots dir
+    # Delete per-agent snapshots
     agents_dir = project_root / ".reyn" / "agents"
     if agents_dir.is_dir():
         for agent_dir in agents_dir.iterdir():
@@ -211,9 +209,6 @@ def _reset_project_state(project_root: Path, *, confirm: bool = True) -> bool:
             if not state_dir.is_dir():
                 continue
             (state_dir / "snapshot.json").unlink(missing_ok=True)
-            skills_dir = state_dir / "skills"
-            if skills_dir.is_dir():
-                shutil.rmtree(skills_dir, ignore_errors=True)
 
     return True
 

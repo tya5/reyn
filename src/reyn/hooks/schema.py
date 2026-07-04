@@ -5,11 +5,10 @@ and ``PushBlock`` (the inline inbox-push sub-schema).  Template strings are
 stored **raw** — rendering is a later slice.
 
 Hook-point identifiers are normalised lowercase; the allowed set is the
-starter set agreed in #1800:
+starter set agreed in #1800 (skill_start/skill_end removed — never dispatched):
 
     turn_start   turn_end
     session_start  session_end
-    skill_start  skill_end
     task_start   task_end
 """
 from __future__ import annotations
@@ -26,8 +25,6 @@ ALLOWED_HOOK_POINTS: frozenset[str] = frozenset({
     "turn_end",
     "session_start",
     "session_end",
-    "skill_start",
-    "skill_end",
     "task_start",
     "task_end",
 })

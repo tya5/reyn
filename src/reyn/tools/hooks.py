@@ -27,7 +27,7 @@ from reyn.tools.types import ToolContext, ToolDefinition, ToolGates, ToolResult
 
 _HOOK_POINTS = [
     "turn_start", "turn_end", "session_start", "session_end",
-    "skill_start", "skill_end", "task_start", "task_end",
+    "task_start", "task_end",
 ]
 
 _HOOKS_ADD_DESCRIPTION = (

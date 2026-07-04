@@ -87,7 +87,7 @@ class OpContext:
     budget_tracker: object | None = None
 
     # PR20: caller provenance threaded from the parent Agent so sub-run
-    # invocations land under the same `events/<caller>/skill_runs/...` tree.
+    # invocations land under the same `events/<caller>/...` tree.
     # Format: "direct" or "agents/<name>" (validated in Agent).
     caller: str = "direct"
 

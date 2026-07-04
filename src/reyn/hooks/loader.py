@@ -107,10 +107,10 @@ def _parse_entry(raw: object, entry_index: int) -> HookDef:
 
     # ── on (required) ──────────────────────────────────────────────────────
     # YAML 1.1 (PyYAML default) parses the bare keyword ``on`` as boolean
-    # ``True``; quote-free ``on: skill_end`` in reyn.yaml becomes
-    # ``{True: 'skill_end', ...}``.  Try the string key first (= quoted
+    # ``True``; quote-free ``on: turn_end`` in reyn.yaml becomes
+    # ``{True: 'turn_end', ...}``.  Try the string key first (= quoted
     # ``"on"``), then fall back to the boolean key ``True`` so that both
-    # ``on: skill_end`` and ``"on": skill_end`` work.
+    # ``on: turn_end`` and ``"on": turn_end`` work.
     on_raw = raw.get("on", raw.get(True))
     if on_raw is None:
         raise HookConfigError(

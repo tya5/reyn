@@ -25,7 +25,6 @@ from reyn.runtime.outbox import OutboxMessage
     [
         ("agent",        "message", "agent",          MSG_TYPE_ASSISTANT),
         ("status",       "message", "⚙ status",       MSG_TYPE_SYSTEM),
-        ("skill_done",   "message", "✨ skill",       MSG_TYPE_SYSTEM),
         ("intervention", "message", "❓ intervention", MSG_TYPE_SYSTEM),
         ("system",       "message", "ℹ system",       MSG_TYPE_SYSTEM),
         ("error",        "error",   "error",          MSG_TYPE_SYSTEM),
@@ -37,7 +36,7 @@ def test_known_kinds_map_to_expected_payload(
     expected_author: str,
     expected_type: str,
 ):
-    """Tier 1: each PoC-supported kind lands the right (role, author, type)."""
+    """Tier 1: each supported kind lands the right (role, author, type)."""
     msg = OutboxMessage(kind=kind, text="hello")
     payload = outbox_to_chainlit(msg)
     assert isinstance(payload, ChainlitPayload)

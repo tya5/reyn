@@ -137,9 +137,8 @@ class AgentRegistry:
     `repl._output_loop`) read regardless of which agent is attached. A
     per-agent forwarder task pumps the agent's own `outbox` into this queue
     only while that agent is the attached one — detached agents drop
-    transient outbox items, durable kinds (agent / skill_done) still
-    persist to history via the agent's `_append_history` (handled at the
-    Session layer, not here).
+    transient outbox items, durable kinds (agent) still persist to history
+    via the agent's `_append_history` (handled at the Session layer, not here).
     """
 
     def __init__(
@@ -2481,14 +2480,9 @@ class AgentRegistry:
         # session's run-loop / forwarder go live (that is attach_session, S4a,
         # strictly later) — so there is NO "main"-tagged append window for the
         # spawned session. The journal is built eagerly in __init__ (set_session_id
-        # propagates to the in-memory snapshot too); the skill_registry is lazy and
-        # reads _session_id at construction, so setting the attribute covers a later
-        # build, and we also fix up an already-built one defensively.
+        # propagates to the in-memory snapshot too).
         session._session_id = new_sid
         session._journal.set_session_id(new_sid)
-        existing_skill_registry = getattr(session, "_skill_registry", None)
-        if existing_skill_registry is not None:
-            existing_skill_registry.set_session_id(new_sid)
         # FP-0043 Stage 5: re-key the spawned session's persistence to its OWN
         # per-session location so it does NOT collide with the agent's "main"
         # snapshot.json / generations. Derived from the session's own base (the

@@ -330,15 +330,13 @@ class TestVerifyEventsCountComparators:
 # ===========================================================================
 
 
-def _art(skill: str | None = None, **data) -> dict:
+def _art(**data) -> dict:
     """Build a minimal artifact dict.
 
     Pass ``type="..."`` explicitly in data if needed. All other keyword
     arguments become the inner data payload.
     """
     a: dict = {}
-    if skill is not None:
-        a["skill"] = skill
     # Pull out "type" from data if caller supplied it as a kwarg
     if "type" in data:
         a["type"] = data.pop("type")
@@ -348,20 +346,6 @@ def _art(skill: str | None = None, **data) -> dict:
 
 class TestVerifyArtifactsPresent:
     """Tier 1: present=True assertions."""
-
-    def test_present_skill_filter_matches_verified(self):
-        """Tier 1: present=True + skill filter matches → verified."""
-        expected = ExpectedArtifacts(items=[ArtifactAssertion(skill="direct_llm", present=True)])
-        artifacts = [_art(skill="direct_llm", key="val")]
-        result = verify_artifacts(expected, artifacts)
-        assert result.outcome == "verified"
-
-    def test_present_skill_filter_no_match_refuted(self):
-        """Tier 1: present=True + skill filter not matched → refuted."""
-        expected = ExpectedArtifacts(items=[ArtifactAssertion(skill="direct_llm", present=True)])
-        artifacts = [_art(skill="other_skill", key="val")]
-        result = verify_artifacts(expected, artifacts)
-        assert result.outcome == "refuted"
 
     def test_present_type_filter_matches_verified(self):
         """Tier 1: present=True + type filter matches → verified."""
@@ -377,21 +361,28 @@ class TestVerifyArtifactsPresent:
         result = verify_artifacts(expected, artifacts)
         assert result.outcome == "refuted"
 
+    def test_present_no_filter_any_artifact_verified(self):
+        """Tier 1: present=True + no type filter → any artifact satisfies."""
+        expected = ExpectedArtifacts(items=[ArtifactAssertion(present=True)])
+        artifacts = [_art(key="val")]
+        result = verify_artifacts(expected, artifacts)
+        assert result.outcome == "verified"
+
 
 class TestVerifyArtifactsAbsent:
     """Tier 1: present=False assertions."""
 
-    def test_absent_skill_not_in_artifacts_verified(self):
-        """Tier 1: present=False + skill not found → verified."""
-        expected = ExpectedArtifacts(items=[ArtifactAssertion(skill="direct_llm", present=False)])
-        artifacts = [_art(skill="other_skill")]
+    def test_absent_type_not_in_artifacts_verified(self):
+        """Tier 1: present=False + type not found → verified."""
+        expected = ExpectedArtifacts(items=[ArtifactAssertion(type="plan_result", present=False)])
+        artifacts = [{"type": "other_type", "data": {}}]
         result = verify_artifacts(expected, artifacts)
         assert result.outcome == "verified"
 
-    def test_absent_skill_in_artifacts_refuted(self):
-        """Tier 1: present=False + skill found → refuted."""
-        expected = ExpectedArtifacts(items=[ArtifactAssertion(skill="direct_llm", present=False)])
-        artifacts = [_art(skill="direct_llm")]
+    def test_absent_type_in_artifacts_refuted(self):
+        """Tier 1: present=False + type found → refuted."""
+        expected = ExpectedArtifacts(items=[ArtifactAssertion(type="plan_result", present=False)])
+        artifacts = [{"type": "plan_result", "data": {}}]
         result = verify_artifacts(expected, artifacts)
         assert result.outcome == "refuted"
         assert any(f["check"] == "absent" for f in result.detail["failures"])
@@ -405,9 +396,9 @@ class TestVerifyArtifactsFingerprint:
         data = {"answer": 42, "text": "hello"}
         fp = _fp(data)
         expected = ExpectedArtifacts(
-            items=[ArtifactAssertion(skill="my_skill", present=True, fingerprint=fp)]
+            items=[ArtifactAssertion(type="eval_result", present=True, fingerprint=fp)]
         )
-        artifacts = [{"skill": "my_skill", "data": data}]
+        artifacts = [{"type": "eval_result", "data": data}]
         result = verify_artifacts(expected, artifacts)
         assert result.outcome == "verified"
 
@@ -417,9 +408,9 @@ class TestVerifyArtifactsFingerprint:
         fp = _fp(data)
         wrong_data = {"answer": 99}
         expected = ExpectedArtifacts(
-            items=[ArtifactAssertion(skill="my_skill", present=True, fingerprint=fp)]
+            items=[ArtifactAssertion(type="eval_result", present=True, fingerprint=fp)]
         )
-        artifacts = [{"skill": "my_skill", "data": wrong_data}]
+        artifacts = [{"type": "eval_result", "data": wrong_data}]
         result = verify_artifacts(expected, artifacts)
         assert result.outcome == "refuted"
         assert any(f["check"] == "fingerprint" for f in result.detail["failures"])
@@ -429,7 +420,7 @@ class TestVerifyArtifactsFingerprint:
         data = {"answer": 42}
         fp = _fp(data)
         expected = ExpectedArtifacts(
-            items=[ArtifactAssertion(skill="my_skill", present=True, fingerprint=fp)]
+            items=[ArtifactAssertion(type="eval_result", present=True, fingerprint=fp)]
         )
         artifacts = []  # no artifacts
         result = verify_artifacts(expected, artifacts)
@@ -441,13 +432,13 @@ class TestVerifyArtifactsEdgeCases:
 
     def test_empty_artifacts_assertion_present_refuted(self):
         """Tier 1: empty artifacts list + present=True assertion → refuted."""
-        expected = ExpectedArtifacts(items=[ArtifactAssertion(skill="any_skill", present=True)])
+        expected = ExpectedArtifacts(items=[ArtifactAssertion(present=True)])
         result = verify_artifacts(expected, [])
         assert result.outcome == "refuted"
 
     def test_none_expected_blocked(self):
         """Tier 1: expected=None → blocked."""
-        result = verify_artifacts(None, [_art(skill="direct_llm")])
+        result = verify_artifacts(None, [_art(key="val")])
         assert result.outcome == "blocked"
 
     def test_no_assertions_empty_artifacts_verified(self):

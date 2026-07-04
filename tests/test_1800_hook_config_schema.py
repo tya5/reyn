@@ -89,9 +89,9 @@ def test_hookdef_shell_shape() -> None:
 
 def test_hookdef_is_frozen() -> None:
     """Tier 1: ``HookDef`` and ``PushBlock`` are immutable (frozen dataclasses)."""
-    hd = HookDef(on="skill_start", shell_exec="echo hi")
+    hd = HookDef(on="turn_start", shell_exec="echo hi")
     with pytest.raises(Exception):  # FrozenInstanceError
-        hd.on = "skill_end"  # type: ignore[misc]
+        hd.on = "turn_end"  # type: ignore[misc]
 
     pb = PushBlock(message="hi")
     with pytest.raises(Exception):
@@ -131,25 +131,25 @@ def test_load_hooks_push_all_fields_accepted() -> None:
     """Tier 1: a push hook with all optional fields is accepted and parsed correctly."""
     raw = [
         {
-            "on": "skill_end",
+            "on": "task_end",
             "template_push": {
-                "message": "{{ skill.name }} finished",
+                "message": "{{ task.name }} finished",
                 "wake": "{{ ctx.wake_needed }}",
                 "push_when": "{{ ctx.should_push }}",
                 "session": "{{ ctx.target_session }}",
             },
-            "matcher": "my-skill-filter",
+            "matcher": "my-task-filter",
         }
     ]
     registry = load_hooks(raw)
-    hooks = registry.hooks_for("skill_end")
+    hooks = registry.hooks_for("task_end")
     (hd,) = hooks  # exactly one — unpack enforces count
     assert hd.template_push is not None
-    assert hd.template_push.message == "{{ skill.name }} finished"
+    assert hd.template_push.message == "{{ task.name }} finished"
     assert hd.template_push.wake == "{{ ctx.wake_needed }}"
     assert hd.template_push.push_when == "{{ ctx.should_push }}"
     assert hd.template_push.session == "{{ ctx.target_session }}"
-    assert hd.matcher == "my-skill-filter"
+    assert hd.matcher == "my-task-filter"
 
 
 def test_load_hooks_shell_valid() -> None:
@@ -282,7 +282,7 @@ def test_registry_hooks_for_preserves_registration_order() -> None:
     """Tier 1: ``hooks_for`` returns hooks in registration (list) order."""
     raw = [
         {"on": "turn_end", "template_push": {"message": "first"}},
-        {"on": "skill_start", "shell_exec": "echo a"},
+        {"on": "task_start", "shell_exec": "echo a"},
         {"on": "turn_end", "template_push": {"message": "second"}},
         {"on": "turn_end", "shell_exec": "echo b"},
     ]
@@ -307,7 +307,7 @@ def test_registry_hooks_for_no_match_returns_empty() -> None:
     """Tier 1: ``hooks_for`` returns an empty list when no hooks match the point."""
     raw = [{"on": "turn_end", "shell_exec": "echo hi"}]
     registry = load_hooks(raw)
-    assert registry.hooks_for("skill_start") == []
+    assert registry.hooks_for("task_start") == []
 
 
 # ===========================================================================
@@ -324,13 +324,13 @@ def test_load_hooks_round_trip_from_yaml(tmp_path: Path) -> None:
 
     yaml_content = """
 hooks:
-  - on: skill_end
+  - on: task_end
     template_push:
-      message: "skill {{ skill.name }} done"
+      message: "task {{ task.name }} done"
       wake: false
       push_when: "{{ ctx.should_notify }}"
       session: "{{ ctx.target_session }}"
-    matcher: skill-done-filter
+    matcher: task-done-filter
 
   - on: session_start
     shell_exec: "scripts/on-session-start.sh"
@@ -343,12 +343,12 @@ hooks:
     raw_cfg = yaml.safe_load(reyn_yaml.read_text(encoding="utf-8"))
     registry = load_hooks(raw_cfg.get("hooks"))
 
-    # ── Hook 1: push hook at skill_end ────────────────────────────────────
-    skill_end_hooks = registry.hooks_for("skill_end")
-    (h1,) = skill_end_hooks  # exactly one — unpack enforces count
-    assert h1.on == "skill_end"
+    # ── Hook 1: push hook at task_end ────────────────────────────────────
+    task_end_hooks = registry.hooks_for("task_end")
+    (h1,) = task_end_hooks  # exactly one — unpack enforces count
+    assert h1.on == "task_end"
     assert h1.template_push is not None
-    assert h1.template_push.message == "skill {{ skill.name }} done"
+    assert h1.template_push.message == "task {{ task.name }} done"
     # non-default wake=False (default is True)
     assert h1.template_push.wake is False
     # non-default push_when template (default is "true")
@@ -356,7 +356,7 @@ hooks:
     # non-default session template (default is None)
     assert h1.template_push.session == "{{ ctx.target_session }}"
     # non-default matcher (default is None)
-    assert h1.matcher == "skill-done-filter"
+    assert h1.matcher == "task-done-filter"
 
     # ── Hook 2: shell hook at session_start ───────────────────────────────
     session_start_hooks = registry.hooks_for("session_start")

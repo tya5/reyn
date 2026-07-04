@@ -1,8 +1,8 @@
 """Tier 2: ChatMessage Design-B schema + read-time migration (issue #383).
 
 E-full Phase 1 (PR-A + PR-B) final state pins:
-  - Constructor: ``role`` ∈ {user, assistant, tool, system, summary,
-    skill_event}; ``content`` is ``str | list[dict]``;
+  - Constructor: ``role`` ∈ {user, assistant, tool, system, summary};
+    ``content`` is ``str | list[dict]``;
     ``tool_calls`` / ``tool_call_id`` / ``name`` for tool-turn fields.
   - PR-B removed the PR-A compat shim:
       * legacy ``text=`` / ``media=`` kwargs → constructor raises TypeError

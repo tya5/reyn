@@ -6,7 +6,6 @@ exercise this without installing the ``[chainlit]`` extra.
 Kind coverage:
 - ``agent``                → main reply, author "agent",
                               type "assistant_message"
-- ``skill_done``           → author "✨ skill", type "system_message"
 - ``status``               → author "⚙ status", type "system_message"
 - ``error``                → red note via ``cl.ErrorMessage``
 - ``intervention``         → author "❓ intervention" (full handler in
@@ -83,7 +82,6 @@ _TOOL_KINDS = frozenset({
 _AUTHOR_BY_KIND: dict[str, str] = {
     "agent": "agent",
     "status": "⚙ status",
-    "skill_done": "✨ skill",
     "intervention": "❓ intervention",
     "system": "ℹ system",
 }

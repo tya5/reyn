@@ -62,7 +62,7 @@ class ChatRenderer:
     def message(self, msg: OutboxMessage) -> None:
         """Render one outbox item.
 
-        msg.kind ∈ {"agent","status","error","intervention","trace","skill_done"}
+        msg.kind ∈ {"agent","status","error","intervention","trace"}
         msg.meta carries provenance (actor, run_id, run_id_short, ...)
         """
 
@@ -107,7 +107,6 @@ class ConsoleChatRenderer(ChatRenderer):
         "error": "[error]",
         "intervention": "[ask]",
         "trace": "[trace]",
-        "skill_done": "[done]",
     }
 
     def __init__(self) -> None:
@@ -235,10 +234,6 @@ class RichChatRenderer(ChatRenderer):
             c.print(Panel(Text(text), border_style="yellow"))
         elif kind == "trace":
             c.print(f"  · {text}", style="dim", markup=False)
-        elif kind == "skill_done":
-            from rich.panel import Panel
-            from rich.text import Text
-            c.print(Panel(Text(text), border_style="green"))
         else:
             c.print(text, markup=False)
         self._flush()
@@ -291,7 +286,6 @@ _KIND_LINE = {
     "reasoning":    ("· ",   _CC_DIM,    _CC_DIM),   # model thinking (dim; only shown when chat.reasoning.display=true)
     "intervention": ("◆ ",   _CC_WARN,   "bold"),    # needs you   — amber
     "error":        ("✗ ",   _CC_ERR,    _CC_ERR),   # error       — red
-    "skill_done":   ("✓ ",   _CC_DONE,   _CC_DIM),   # done        — green glyph, dim body
     "status":       ("· ",   _CC_DIM,    _CC_DIM),   # ambient     — dim
     "system":       ("· ",   _CC_DIM,    _CC_DIM),   # lifecycle marker (compaction / budget / cost-warn)
     "trace":        ("  ⎿ ", _CC_DIM,    _CC_DIM),   # detail      [low]  nested

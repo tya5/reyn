@@ -192,10 +192,9 @@ async def _output_loop(
         except Exception:
             logger.exception("output loop: render failed for message kind=%r", msg.kind)
         # Signal end-of-turn for the input loop's pacing gate. "agent" is
-        # the canonical reply kind; "skill_done" / "error" also count as
-        # turn-terminal so a skill-launch chat or a failed router round
-        # doesn't deadlock the next iteration.
-        if reply_seen is not None and msg.kind in {"agent", "skill_done", "error"}:
+        # the canonical reply kind; "error" also counts as turn-terminal so
+        # a failed router round doesn't deadlock the next iteration.
+        if reply_seen is not None and msg.kind in {"agent", "error"}:
             reply_seen.set()
 
 

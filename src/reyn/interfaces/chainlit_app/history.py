@@ -14,7 +14,7 @@ returned tuple via ``cl.Message`` before starting the live drain.
 
 Filter policy (= mirrors the CUI / TUI renderer's visible set):
 - ``user`` / ``assistant`` → kept, author label same as live outbox
-- ``tool`` / ``system`` / ``summary`` / ``skill_event`` → dropped
+- ``tool`` / ``system`` / ``summary`` → dropped
   (= LLM-wire entries or Reyn-internal markers, not chat-thread turns)
 
 Multimodal content (= list-of-dict parts on user / tool turns) is
@@ -63,7 +63,7 @@ _AUTHOR_BY_ROLE = {
 # silent drop (= caller can grep for this set when adding a new
 # role) instead of accidentally rendering as a fallback.
 _DROPPED_ROLES = frozenset({
-    "tool", "system", "summary", "skill_event",
+    "tool", "system", "summary",
 })
 
 

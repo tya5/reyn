@@ -136,14 +136,6 @@ def test_trace_line_uses_corner_marker() -> None:
     assert "phase started" in out
 
 
-def test_skill_done_leads_with_check_marker() -> None:
-    """Tier 2: a finished skill leads with the ✓ completion marker (distinct from
-    the ⏺ assistant marker), and keeps its text."""
-    out = _plain("skill_done", "skill finished")
-    assert "✓" in out
-    assert "skill finished" in out
-
-
 def test_intervention_keeps_question_text() -> None:
     """Tier 2: an intervention line preserves the question text."""
     out = _plain("intervention", "Which file?")
@@ -172,15 +164,12 @@ def test_intervention_keeps_actor_prefix_when_present() -> None:
 
 def test_kinds_use_distinct_markers() -> None:
     """Tier 2: message kinds carry distinct glyphs so the eye separates them — the
-    assistant ⏺ is not reused for an intervention (◆), a finished skill (✓), or a
-    tool invocation (▸)."""
+    assistant ⏺ is not reused for an intervention (◆) or a tool invocation (▸)."""
     agent = _plain("agent", "x")
     interv = _plain("intervention", "x")
-    done = _plain("skill_done", "x")
     tool = _plain("tool_call_started", "", {"tool": "Bash", "args": {}})
     assert "⏺" in agent
     assert "◆" in interv and "⏺" not in interv
-    assert "✓" in done and "⏺" not in done
     assert "▸" in tool and "⏺" not in tool
 
 
