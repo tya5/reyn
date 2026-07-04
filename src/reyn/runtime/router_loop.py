@@ -756,26 +756,22 @@ _UNIVERSAL_WRAPPER_NAMES: frozenset[str] = frozenset({
 
 def _filter_ghost_names_by_registry(
     names: "list[str]",
-    skill_meta_map: "dict[str, dict] | None",
     mcp_tool_map: "dict[str, dict] | None",
     available_agents: "list[dict] | None",
     *,
-    known_skill_names: "frozenset[str] | None" = None,
     known_memory_entries: "frozenset[str]",
     _warned: "set[str] | None" = None,
 ) -> "list[str]":
     """Filter hot-list names that pass structural check but don't exist in the registry.
 
     B38 W2 finding: ``_is_valid_qualified_name`` only validates shape
-    (= category + separator + entry). A renamed skill like
-    ``skill__create_skill`` passes structural check but is a ghost — the
-    skill no longer exists under that name. This filter adds the
-    existence check at hot-list materialization time, when session
-    registry data is available.
+    (= category + separator + entry). A stale alias (e.g. a renamed MCP
+    tool) passes structural check but is a ghost — it no longer resolves
+    in the current registry. This filter adds the existence check at
+    hot-list materialization time, when session registry data is
+    available.
 
     Categories and their existence signals:
-    - ``skill__*`` → must be a key in ``skill_meta_map``
-      (= resolved skill list from ``host.list_available_skills()``).
     - ``agent.peer__*`` → must match a name in ``available_agents``.
     - ``mcp.tool__*`` / ``mcp.server__*`` → must be a key in ``mcp_tool_map``
       (or any server name prefix for ``mcp.server__*``).
@@ -807,13 +803,6 @@ def _filter_ghost_names_by_registry(
         _warned = set()
 
     # Build existence sets from session state.
-    # Skills: use the broader ``known_skill_names`` set when provided
-    # (= covers empty-input-schema skills too); fall back to
-    # ``skill_meta_map`` keys for backwards-compat.
-    if known_skill_names is not None:
-        known_skills: frozenset[str] = known_skill_names
-    else:
-        known_skills = frozenset(skill_meta_map or {})
     known_mcp_tools: frozenset[str] = frozenset(mcp_tool_map or {})
     # Extract MCP server names from mcp_tool_map keys (mcp.tool__<server>.<tool>)
     known_mcp_servers: set[str] = set()
@@ -840,9 +829,7 @@ def _filter_ghost_names_by_registry(
             continue
 
         exists = True
-        if category == "skill":
-            exists = name in known_skills
-        elif category == "mcp.tool":
+        if category == "mcp.tool":
             exists = name in known_mcp_tools
         elif category == "mcp.server":
             exists = entry_name in known_mcp_servers
@@ -1041,11 +1028,6 @@ def _resource_alias_metadata(
       - ``rag_corpus__<name>`` (step 1) — accepts ``{query, top_k?, ...}``;
         rule curries ``sources=[<name>]``. Source: ``recall`` parameters
         minus ``sources``.
-      - ``skill__<name>`` (step 2) — caller supplies ``skill_metadata_lookup``
-        keyed by qualified name with ``{description?, input_schema?,
-        input_wrapped?}``. The transform ``_invoke_skill_args`` wraps caller
-        args under the artifact ``data`` slot, so the alias's parameters
-        are the artifact's data schema directly (= ``input_schema``).
       - ``mcp.tool__<server>.<tool>`` (step 3) — caller supplies
         ``mcp_tool_lookup`` keyed by qualified name with ``{description?,
         input_schema?}`` from the MCP server's declared tool schema.
@@ -1055,6 +1037,9 @@ def _resource_alias_metadata(
         ``_read_memory_body_args`` transform sends ``{name: entry}`` but
         the target ``read_memory_body`` expects ``{layer, slug}``;
         pre-existing dispatch shape mismatch, surface separately.
+      - ``skill__<name>`` — skill enumeration was removed (stage1 decouple);
+        ``skill_metadata_lookup`` is never populated with ``skill__*`` entries
+        at runtime, so this branch always returned ``None``.
     """
     from reyn.tools import get_default_registry
     from reyn.tools.universal_catalog import split_qualified_name
@@ -1090,19 +1075,6 @@ def _resource_alias_metadata(
             f"Single-source variant of: {first_line}"
         )
         return description, params
-
-    if category == "skill":
-        meta = (skill_metadata_lookup or {}).get(qualified_name)
-        if not meta or "input_schema" not in meta:
-            return None
-        schema = dict(meta["input_schema"])
-        desc_body = meta.get("description") or f"Skill {entry_name!r}"
-        description = (
-            f"{desc_body}. Hot-list direct alias for skill {entry_name!r} "
-            f"— pass the skill's input fields as args; the dispatcher wraps "
-            f"them into the input artifact for invoke_skill."
-        )
-        return description, schema
 
     if category == "mcp.tool":
         meta = (mcp_tool_lookup or {}).get(qualified_name)
@@ -1510,11 +1482,9 @@ class RouterLoop:
         _mcp_tool_map: dict[str, dict] = {}
         if _univ_enabled:
             # Skill enumeration removed (stage1 decouple): the short-description
-            # and known-skill-name maps stay declared (empty) because downstream
-            # hot-list / ghost-filter code still reads them for the memory_entry
-            # and mcp branches.
+            # map stays declared (empty) because downstream hot-list code still
+            # reads it for the memory_entry alias descriptions.
             _short_desc_map: dict[str, str] = {}
-            _known_skill_names: set[str] = set()
             # Issue #879: per-mcp-tool aliases (``mcp.tool__<srv>.<tool>``)
             # were removed when the mcp surface collapsed to six verb
             # actions. LLMs now dispatch tool calls through
@@ -1579,10 +1549,8 @@ class RouterLoop:
                 # RouterState (skill / mcp / agent registry) is available.
                 _top_names = _filter_ghost_names_by_registry(
                     _top_names,
-                    skill_meta_map=_skill_meta_map or None,
                     mcp_tool_map=_mcp_tool_map or None,
                     available_agents=host.list_available_agents() or None,
-                    known_skill_names=frozenset(_known_skill_names) or None,
                     # Dynamic memory_entry__<slug> names enumerated above
                     # from .reyn/memory/*.md. Empty set means "no entries
                     # exist this session" — filter rejects any stale

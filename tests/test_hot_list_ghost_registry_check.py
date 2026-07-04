@@ -1,9 +1,9 @@
 """Tier 2: Ghost alias registry-existence check at hot-list materialization.
 
 B38 W2 finding: ``_is_valid_qualified_name`` only validates structural shape
-(category + separator + entry). A renamed skill like ``skill__create_skill``
-passes structural check but is a ghost — the skill no longer exists under
-that name. ``_filter_ghost_names_by_registry`` adds the existence check at
+(category + separator + entry). A stale alias (e.g. a renamed MCP tool) passes
+structural check but is a ghost — it no longer resolves in the current
+registry. ``_filter_ghost_names_by_registry`` adds the existence check at
 hot-list materialization time, when session registry data is available.
 
 This is additive to structural rejection (``test_hot_list_ghost_alias_rejection.py``).
@@ -11,24 +11,17 @@ Names must pass BOTH structural check AND registry-existence check to enter
 the hot list.
 
 Test plan:
-  R1. skill ghost (passes structural, absent from skill_meta_map) is filtered.
-  R2. valid skill alias (present in skill_meta_map) passes through.
   R3. valid static-op alias (in KNOWN_STATIC_QUALIFIED_NAMES) passes through.
   R4. ghost static-op (structurally valid category, not in static ops) is filtered.
-  R5. agent.peer ghost (not in available_agents) is filtered.
-  R6. valid agent.peer (in available_agents) passes through.
   R7. mcp.tool ghost (not in mcp_tool_map) is filtered.
   R8. valid mcp.tool (in mcp_tool_map) passes through.
-  R9. Warning logged once per unique ghost name (deduplication).
-  R10. Integration: ActionUsageTracker freq-loaded jsonl with 1 valid skill +
-       1 ghost skill → hot-list excludes ghost.
   R11. memory_entry name in known_memory_entries passes through (dynamic
        enumeration from .reyn/memory/*.md).
   R12. memory_entry name NOT in known_memory_entries is filtered (stale name
        from action_usage tracker after the entry was deleted).
 
-No mocks. Uses real _filter_ghost_names_by_registry + real ActionUsageTracker
-+ real KNOWN_STATIC_QUALIFIED_NAMES. No RouterLoop instantiation required.
+No mocks. Uses real _filter_ghost_names_by_registry + real
+KNOWN_STATIC_QUALIFIED_NAMES. No RouterLoop instantiation required.
 """
 from __future__ import annotations
 
@@ -40,7 +33,6 @@ from reyn.tools.universal_dispatch import KNOWN_STATIC_QUALIFIED_NAMES
 
 def _call_filter(
     names: list[str],
-    skill_meta_map: dict | None = None,
     mcp_tool_map: dict | None = None,
     available_agents: list[dict] | None = None,
     known_memory_entries: frozenset[str] | None = None,
@@ -54,27 +46,10 @@ def _call_filter(
     """
     return _filter_ghost_names_by_registry(
         names,
-        skill_meta_map=skill_meta_map,
         mcp_tool_map=mcp_tool_map,
         available_agents=available_agents,
         known_memory_entries=known_memory_entries if known_memory_entries is not None else frozenset(),
     )
-
-
-# ── R2. valid skill alias passes ─────────────────────────────────────────────
-
-
-def test_r2_valid_skill_alias_passes_registry_check() -> None:
-    """Tier 2: a skill alias present in skill_meta_map passes registry check."""
-    skill_meta_map = {
-        "skill__word_stats_demo": {
-            "description": "Word statistics demo",
-            "input_schema": {"type": "object", "properties": {"text": {"type": "string"}}},
-        },
-    }
-    result = _call_filter(["skill__word_stats_demo"], skill_meta_map=skill_meta_map)
-
-    assert "skill__word_stats_demo" in result
 
 
 # ── R3. valid static-op alias passes ─────────────────────────────────────────
@@ -163,7 +138,6 @@ def test_r11_memory_entry_passes_when_in_known_set() -> None:
     """
     filtered = _filter_ghost_names_by_registry(
         ["memory_entry__user_project_phoenix"],
-        skill_meta_map=None,
         mcp_tool_map=None,
         available_agents=None,
         known_memory_entries=frozenset({"memory_entry__user_project_phoenix"}),
@@ -186,7 +160,6 @@ def test_r12_memory_entry_filtered_when_absent_from_known_set() -> None:
     """
     filtered = _filter_ghost_names_by_registry(
         ["memory_entry__deleted_slug"],
-        skill_meta_map=None,
         mcp_tool_map=None,
         available_agents=None,
         known_memory_entries=frozenset(),  # zero entries this session
