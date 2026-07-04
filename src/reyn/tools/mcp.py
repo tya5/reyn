@@ -226,9 +226,13 @@ def _require_host(ctx: ToolContext) -> Any:
 
     Production wiring (Phase 3.5-B-mid): RouterLoop sets
     ``ctx.router_state.host`` to the RouterHostAdapter instance so MCP
-    handlers can call ``host.mcp_list_servers()`` etc. directly,
-    preserving the existing session-level mcp_clients cache (= no
-    re-handshake per call).
+    handlers can call ``host.mcp_list_servers()`` etc. directly. #2567:
+    ``build_resource_caller_state`` populates the same field for any
+    host-holding caller (e.g. a pipeline driver-session), not only a live
+    RouterLoop turn. Note the MCP client pool is per-call
+    (``session.py``'s ``_mcp_call_tool`` opens a fresh ``MCPClientPool``
+    per invocation) — there is no session-level connection cache here to
+    preserve; ``router_state.host`` is just the resource-lookup seam.
 
     Backward-compat: pre-Phase-3-step-2 tests that assigned
     ``ctx.router_state = some_host_stub`` (= router_state IS the host

@@ -3304,8 +3304,25 @@ class RouterLoop:
         Forward-looking fields (``available_agents`` for schema enrichment,
         identity / cost / model context) are also populated so future handler
         activations have what they need.
+
+        #2567: the host-derived (resource) fields — ``available_agents``,
+        ``op_context_factory``, ``host``, ``available_rag_sources``,
+        ``action_embedding_index``/``embedding_provider``/
+        ``embedding_model_class``, ``sandbox_backend``, ``mcp_servers``,
+        ``available_skills``, ``agent_registry``, ``pipeline_registry`` — are
+        built by the shared ``build_resource_caller_state(host)`` factory (a
+        byte-identical extraction of what this method used to inline) so any
+        caller with just a host reference (e.g. the async pipeline driver's
+        tool-step dispatch) gets the SAME resource wiring a router turn gets.
+        This method overlays the remaining loop-local fields (chain_id,
+        budget, dispatch callbacks, catalog/memory bindings, ...) that only
+        exist mid-RouterLoop-turn.
         """
-        from reyn.tools.types import RouterCallerState
+        import dataclasses
+
+        from reyn.tools.types import build_resource_caller_state
+
+        resource_state = await build_resource_caller_state(self.host)
 
         async def _send_to_agent_bound(*, to: str, request: str) -> None:
             await self.host.send_to_agent(
@@ -3358,42 +3375,19 @@ class RouterLoop:
                 )
             _topology_create_bound = _topology_create_bound_impl
 
-        # FP-0034 Phase 2 prep: snapshot indexed RAG corpora for the
-        # universal catalog's rag_corpus enumeration. SourceManifest
-        # caches the parsed YAML in-process so this is O(1) when the
-        # cache is warm (= when the system-prompt path already loaded
-        # the manifest earlier in this turn). Failures (= missing file,
-        # malformed YAML) degrade to an empty list — the catalog
-        # handler then reports zero corpora rather than crashing.
-        _rag_sources: list[Mapping[str, Any]] | None = None
-        try:
-            _manifest = get_source_manifest(Path.cwd())
-            _entries = await _manifest.get_all()
-            _rag_sources = [
-                {
-                    "name": e.name,
-                    "description": e.description,
-                    "backend": e.backend,
-                    "chunk_count": e.chunk_count,
-                }
-                for e in _entries.values()
-            ]
-        except Exception:
-            # Manifest unavailable (= no workspace, no .reyn/index/
-            # sources.yaml, transient I/O). Treat as empty catalogue
-            # rather than failing the entire tool dispatch.
-            _rag_sources = None
-
-        return RouterCallerState(
+        # #2567: overlay the loop-local ((b)/(c)) fields onto the host-derived
+        # ``resource_state`` built above — the resource (a)-fields
+        # (available_agents / op_context_factory / host / available_rag_sources
+        # / action_embedding_index / embedding_provider / embedding_model_class
+        # / sandbox_backend / mcp_servers / available_skills / agent_registry /
+        # pipeline_registry) are UNTOUCHED here; only fields this method alone
+        # can populate (chain_id, budget, catalog/memory bindings, dispatch
+        # callbacks, ...) are set.
+        return dataclasses.replace(
+            resource_state,
             # Catalog access (= activated handlers)
             list_agents_fn=self._list_agents,
             describe_agent_fn=self._describe_agent,
-            # getattr-guarded (symmetric with ``op_context_factory`` below, #1092
-            # PR-C-0): a RouterLoopCore host that is not the chat RouterHostAdapter
-            # (e.g. PhaseRouterLoopHost — a phase has no agents catalog) need
-            # not implement these chat-discovery methods. Without the guard the
-            # eager call AttributeError'd every op dispatch on the converged path.
-            available_agents=list(getattr(self.host, "list_available_agents", list)()),
             # Async dispatch (= activated handlers)
             send_to_agent=_send_to_agent_bound,
             # #2103 S1bc: session-spawn dispatch (None for non-multi-session hosts).
@@ -3419,70 +3413,6 @@ class RouterLoop:
             available_tool_names=list(self._tool_names),
             # #1667: catalog categories the universal catalog skips at source.
             excluded_categories=self._excluded_categories,
-            # OpContext factory (= for file / mcp / web handlers; Phase 3.5-A+C).
-            # ``getattr`` fallback keeps test stubs (= FakeRouterHost without
-            # the method) compatible — the handler then uses its minimal
-            # synthesis path, which is fine for tests that don't exercise
-            # permission gating.
-            op_context_factory=getattr(self.host, "make_router_op_context", None),
-            # Host duck-type (= for mcp handlers; Phase 3.5-B-mid).  MCP
-            # handlers call ``host.mcp_list_servers / mcp_list_tools /
-            # mcp_call_tool`` directly to preserve the session-level
-            # MCPClient cache (= no per-call re-handshake).
-            host=self.host,
-            # FP-0034 Phase 2 prep: rag_corpus enumeration snapshot.
-            available_rag_sources=_rag_sources,
-            # FP-0034 Phase 2 step 1: search_actions wiring.  All
-            # three resolve via getattr fallback so narrow hosts
-            # (= plan-step host, FakeRouterHost) get None and
-            # search_actions degrades gracefully.
-            action_embedding_index=(
-                getattr(self.host, "get_action_embedding_index", lambda: None)()
-            ),
-            embedding_provider=(
-                getattr(self.host, "get_embedding_provider", lambda: None)()
-            ),
-            embedding_model_class=(
-                getattr(self.host, "get_embedding_model_class", lambda: None)()
-            ),
-            # FP-0034 Phase 2: sandbox backend name for exec D14 gate.
-            # getattr fallback so narrow hosts (= FakeRouterHost, plan-step
-            # host) without this method default to None, hiding exec category.
-            sandbox_backend=(
-                getattr(self.host, "get_sandbox_backend", lambda: None)()
-            ),
-            # FP-0032 follow-up: mcp_servers must be populated so the
-            # universal_catalog ``mcp.server`` / ``mcp.tool`` category
-            # enumerations surface the actually-configured servers.
-            # Without this the enumeration sees ``rs.mcp_servers is None``
-            # and returns [], leaving ``list_actions(category="mcp.server")``
-            # silently empty even when ``reyn mcp list`` shows servers.
-            # Shape: list[Mapping[name, description, tools?]] from host.
-            mcp_servers=self.host.get_mcp_servers() if hasattr(
-                self.host, "get_mcp_servers"
-            ) else None,
-            # #2548 PR-A: skill registry snapshot (enabled skills only), so a
-            # future skill-aware handler can read the same list the SP renders.
-            # Same host accessor the scheme layer_ctx uses (single source);
-            # getattr fallback → None for narrow hosts.
-            available_skills=(
-                getattr(self.host, "get_available_skills", lambda: None)()
-            ),
-            # IS-5: real AgentRegistry / PipelineRegistry so ``run_pipeline``
-            # (and any future AgentStep-bearing pipeline) resolve against
-            # live production state instead of the None landmine — prior to
-            # this, ``rs.agent_registry`` / ``rs.pipeline_registry`` were
-            # never populated by the live router path, so run_pipeline
-            # always errored "no PipelineRegistry" at call time. getattr
-            # fallback keeps narrow test hosts (FakeRouterHost, plan-step
-            # host without these accessors) at None (= graceful degrade,
-            # same posture as mcp_servers / available_skills above).
-            agent_registry=(
-                getattr(self.host, "get_agent_registry", lambda: None)()
-            ),
-            pipeline_registry=(
-                getattr(self.host, "get_pipeline_registry", lambda: None)()
-            ),
         )
 
     async def _invoke_via_registry(self, name: str, args: dict) -> Any:

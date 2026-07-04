@@ -205,6 +205,83 @@ class RouterCallerState:
     available_skills: "list[SkillEntry] | None" = None
 
 
+# #2567: the host-derived subset of RouterCallerState — every field a
+# RouterHostAdapter (or compatible host) alone can populate, with NO
+# loop-local state (chain_id / budget / router_model / available_tool_names /
+# excluded_categories / send_to_agent / spawn_*_fn / topology_create_fn /
+# catalog-callback / memory-callback fields — those belong to a live
+# RouterLoop turn and stay None here by construction).
+#
+# Extracted from ``RouterLoop._build_router_caller_state`` (which now calls
+# this factory with ``self.host`` and overlays its own loop-local fields) so
+# a caller with only a host reference — no RouterLoop turn in flight, e.g. the
+# async pipeline driver-session's tool-step dispatch (#2567) — gets the SAME
+# mcp/rag/skills/sandbox/agent-registry/pipeline-registry resource wiring a
+# normal chat router turn gets, instead of a hardcoded ``router_state=None``
+# landmine. Every accessor expression below is copied verbatim from
+# ``_build_router_caller_state`` (same getattr-guard / same default) so a
+# narrow test host degrades identically in both callers.
+async def build_resource_caller_state(host: Any) -> "RouterCallerState":
+    """Build the host-derived (resource) subset of a RouterCallerState.
+
+    ``host`` is a ``RouterLoopHost``-compatible object (typically a
+    ``RouterHostAdapter``). Loop-local fields (chain_id, budget, dispatch
+    callbacks, ...) are NOT populated — callers without a RouterLoop turn
+    (e.g. a pipeline driver-session) have none to give.
+    """
+    from pathlib import Path
+
+    from reyn.data.index.source_manifest import get_source_manifest
+
+    # FP-0034 Phase 2 prep: snapshot indexed RAG corpora for the universal
+    # catalog's rag_corpus enumeration (same try/except degrade as the
+    # RouterLoop original — manifest unavailable → None, not a crash).
+    rag_sources: "list[Mapping[str, Any]] | None" = None
+    try:
+        manifest = get_source_manifest(Path.cwd())
+        entries = await manifest.get_all()
+        rag_sources = [
+            {
+                "name": e.name,
+                "description": e.description,
+                "backend": e.backend,
+                "chunk_count": e.chunk_count,
+            }
+            for e in entries.values()
+        ]
+    except Exception:
+        rag_sources = None
+
+    return RouterCallerState(
+        available_agents=list(getattr(host, "list_available_agents", list)()),
+        op_context_factory=getattr(host, "make_router_op_context", None),
+        host=host,
+        available_rag_sources=rag_sources,
+        action_embedding_index=(
+            getattr(host, "get_action_embedding_index", lambda: None)()
+        ),
+        embedding_provider=(
+            getattr(host, "get_embedding_provider", lambda: None)()
+        ),
+        embedding_model_class=(
+            getattr(host, "get_embedding_model_class", lambda: None)()
+        ),
+        sandbox_backend=(
+            getattr(host, "get_sandbox_backend", lambda: None)()
+        ),
+        mcp_servers=host.get_mcp_servers() if hasattr(host, "get_mcp_servers") else None,
+        available_skills=(
+            getattr(host, "get_available_skills", lambda: None)()
+        ),
+        agent_registry=(
+            getattr(host, "get_agent_registry", lambda: None)()
+        ),
+        pipeline_registry=(
+            getattr(host, "get_pipeline_registry", lambda: None)()
+        ),
+    )
+
+
 # ToolContext: protocol-agnostic execution context. Built by the
 # router dispatcher before invoking the handler.
 # Universal fields: events / permission_resolver / workspace.
