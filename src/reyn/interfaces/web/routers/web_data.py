@@ -151,7 +151,6 @@ def _build_agents(registry) -> list[dict[str, Any]]:
             "role": role[:20] if role else "Assistant",
             "blurb": f"Agent {name}",
             "role_prompt": role,
-            "allowed_skills": [],
             "last_active": last_at.strftime("%-d %b %H:%M") if last_at else "never",
             "activity": "",
         })

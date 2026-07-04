@@ -651,7 +651,6 @@ class Session:
         compaction_config: "CompactionConfig | None" = None,
         reasoning_config: "ReasoningConfig | None" = None,  # #1652 chat.reasoning
         registry: "AgentRegistry | None" = None,
-        allowed_skills: list[str] | None = None,
         allowed_mcp: list[str] | None = None,
         events_config: EventsConfig | None = None,
         # #2230: the resolved ``cost_warn:`` config so the high-cost model warn /
@@ -1059,13 +1058,6 @@ class Session:
         # since the last human user turn. In-memory only (NOT snapshot-persisted);
         # resets on each user turn (re-arm). Bounds hook self-continuation.
         self._hook_driven_turns: int = 0
-        # PR15: optional skill allowlist sourced from profile.allowed_skills.
-        # None = unrestricted (default, BC). Empty list = router runs but no
-        # skill spawn. stdlib router/compactor are NOT subject to this — they're
-        # always available regardless. (FP-0011: skill_narrator removed.)
-        self._allowed_skills: list[str] | None = (
-            list(allowed_skills) if allowed_skills is not None else None
-        )
         # PR37: optional MCP server allowlist from agent profile. None = no
         # per-agent restriction (inherits project config). list[str] = only
         # these servers pass the per-agent check in require_mcp.
@@ -3302,12 +3294,10 @@ class Session:
             prof = AgentProfile.load(agent_dir)
         except (FileNotFoundError, OSError):
             return False  # single-agent / no profile → nothing per-agent to reapply
-        if prof.allowed_skills == self._allowed_skills and prof.allowed_mcp == self._allowed_mcp:
+        if prof.allowed_mcp == self._allowed_mcp:
             return False  # unchanged
         # Session orchestrates the multi-holder swap (the holders it owns).
-        self._allowed_skills = prof.allowed_skills
         self._allowed_mcp = prof.allowed_mcp
-        self._router_host._allowed_skills = prof.allowed_skills    # SKILL catalog gate
         self._router_host._allowed_mcp = prof.allowed_mcp          # MCP gate (decl source)
         return True
 

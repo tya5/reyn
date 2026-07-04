@@ -2,15 +2,15 @@
 
 S4a completes the MCP axis of the unification:
 - **MCP source migration**: the per-agent MCP allowlist moves OUT of
-  ``AgentLayer.MCP`` (now grant-only) INTO a ``ProfileLayer`` in ``require_mcp``
-  (symmetric with SKILL). Byte-identical at the gate (∩ associative) — guarded by
-  the existing require_mcp suite (test_permissions.py) + test_1199_s31b_mcp_cutover.
+  ``AgentLayer.MCP`` (now grant-only) INTO a ``ProfileLayer`` in ``require_mcp``.
+  Byte-identical at the gate (∩ associative) — guarded by the existing
+  require_mcp suite (test_permissions.py) + test_1199_s31b_mcp_cutover.
 - **per-context MCP**: ``ContextualLayer`` now enforces the MCP axis, and
   ``require_mcp`` adds it (⊤-when-unset — byte-identical for any context that does
-  not narrow MCP). Mirrors S3's SKILL.
+  not narrow MCP).
 - **identity factor**: ``AgentProfile.default_profile()`` exposes the canonical
-  unified capability spec (maps the user-facing allowed_skills/allowed_mcp onto the
-  internal skill_allow/mcp_allow; no user-facing rename).
+  unified capability spec (maps the user-facing ``allowed_mcp`` onto the internal
+  ``mcp_allow``).
 
 No mocks: real ContextualPermission / ContextualLayer / PermissionResolver (via
 the support factory) / AgentProfile / CapabilityProfile.
@@ -115,11 +115,10 @@ def test_require_mcp_contextual_does_not_regrant_allowlist(tmp_path) -> None:
 
 
 def test_default_profile_maps_allowlists_to_spec() -> None:
-    """Tier 1: default_profile() maps the user-facing allowed_skills/allowed_mcp
-    onto the unified spec's skill_allow/mcp_allow (internal representation)."""
-    prof = AgentProfile(name="a", allowed_skills=["s1", "s2"], allowed_mcp=["m1"])
+    """Tier 1: default_profile() maps the user-facing allowed_mcp onto the unified
+    spec's mcp_allow (internal representation)."""
+    prof = AgentProfile(name="a", allowed_mcp=["m1"])
     spec = prof.default_profile()
-    assert spec.skill_allow == ("s1", "s2")
     assert spec.mcp_allow == ("m1",)
     assert spec.name == "a"
 
@@ -127,7 +126,6 @@ def test_default_profile_maps_allowlists_to_spec() -> None:
 def test_default_profile_none_passthrough() -> None:
     """Tier 1: None allowlists pass through as None (= ⊤, unrestricted)."""
     spec = AgentProfile(name="a").default_profile()
-    assert spec.skill_allow is None
     assert spec.mcp_allow is None
 
 

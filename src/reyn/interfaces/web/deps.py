@@ -320,7 +320,6 @@ def _get_registry():
                 compaction_config=config.chat.compaction,
                 reasoning_config=config.chat.reasoning,  # #1652
                 registry=registry,
-                allowed_skills=profile.allowed_skills,
                 events_config=config.events,
                 state_log=state_log,
                 budget_tracker=budget_tracker,

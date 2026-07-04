@@ -682,7 +682,6 @@ class AgentRegistry:
                     "name": profile.name,
                     "role": profile.role,
                     "created_at": profile.created_at,
-                    "allowed_skills": profile.allowed_skills,
                     "allowed_mcp": profile.allowed_mcp,
                 },
             )
@@ -1504,7 +1503,6 @@ class AgentRegistry:
             name=name,
             role=str(profile_payload.get("role", "")),
             created_at=str(profile_payload.get("created_at", "")),
-            allowed_skills=profile_payload.get("allowed_skills"),
             allowed_mcp=profile_payload.get("allowed_mcp"),
         )
         prof.save(self._dir / name)

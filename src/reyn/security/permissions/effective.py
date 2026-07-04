@@ -54,7 +54,6 @@ class CapabilityAxis(Enum):
     NETWORK_HOST = "network_host"
     SUBPROCESS = "subprocess"
     MCP = "mcp"
-    SKILL = "skill"
     SECRET_WRITE = "secret_write"
     PYTHON = "python"
     ENV = "env"
@@ -167,7 +166,7 @@ class AgentLayer:
             return any(
                 (p.module, p.function) == tuple(value) for p in d.python
             )
-        # SKILL / ENV / SUBPROCESS: the decl does not constrain → ⊤.
+        # ENV / SUBPROCESS / SKILL: the decl does not constrain → ⊤.
         # (#1352-L3: the shell-permission SUBPROCESS gate was retired with the
         # shell op; subprocess is now bounded by SandboxLayer.allow_subprocess
         # at the sandboxed_exec seam, not the AgentLayer.)
@@ -207,13 +206,13 @@ class SandboxLayer:
 
 class ProfileLayer:
     """The per-agent ALLOWLIST layer (#2074) — reads the agent's **default
-    capability spec** (a :class:`CapabilityProfile`) on the SKILL / MCP axes, so one
-    primitive (the unified spec) feeds both binding adapters (per-agent + per-context).
+    capability spec** (a :class:`CapabilityProfile`) on the MCP axis, so one
+    primitive (the unified spec) feeds the binding adapter.
 
     The spec is ``AgentProfile.default_profile()`` where the profile is available
     (the canonical source), else built from already-extracted allowlists via
-    :meth:`from_allowlists` (byte-identical — the same ``skill_allow`` / ``mcp_allow``
-    values). A ``None`` spec, or a ``None`` axis allow-list, is unrestricted (⊤)."""
+    :meth:`from_allowlists` (byte-identical — the same ``mcp_allow`` value).
+    A ``None`` spec, or a ``None`` axis allow-list, is unrestricted (⊤)."""
 
     def __init__(self, spec: "CapabilityProfile | None") -> None:
         self._spec = spec
@@ -222,18 +221,14 @@ class ProfileLayer:
     def from_allowlists(
         cls,
         *,
-        allowed_skills: "object | None" = None,
         allowed_mcp: "object | None" = None,
     ) -> "ProfileLayer":
-        """Build a per-agent layer from already-extracted ``allowed_skills`` /
-        ``allowed_mcp`` by wrapping them in the canonical capability spec (#2074 S4b).
-        Byte-identical to ``AgentProfile.default_profile()`` (same skill_allow/
-        mcp_allow values). ``None`` = unrestricted on that axis."""
+        """Build a per-agent layer from already-extracted ``allowed_mcp`` by wrapping
+        it in the canonical capability spec (#2074 S4b). ``None`` = unrestricted."""
         from reyn.security.permissions.capability_profile import CapabilityProfile
 
         return cls(CapabilityProfile(
             name="_per_agent_default",
-            skill_allow=tuple(allowed_skills) if allowed_skills is not None else None,
             mcp_allow=tuple(allowed_mcp) if allowed_mcp is not None else None,
         ))
 
@@ -241,11 +236,9 @@ class ProfileLayer:
         sp = self._spec
         if sp is None:
             return True
-        if axis is CapabilityAxis.SKILL:
-            return sp.skill_allow is None or value in sp.skill_allow
         if axis is CapabilityAxis.MCP:
             return sp.mcp_allow is None or value in sp.mcp_allow
-        return True  # the per-agent spec constrains only skill / mcp (allow-lists)
+        return True  # the per-agent spec constrains only mcp (allow-list)
 
 
 @dataclass(frozen=True)
@@ -255,20 +248,12 @@ class ContextualPermission:
     from a delegation / topology role / ephemeral profile (later slices wire those
     sources) and carried on ``OpContext.contextual_permission``.
 
-    Per-axis ``*_allow`` (None = unconstrained ⊤) ∩ ``¬*_deny``. The TOOL axis is
-    enforced by :class:`ContextualLayer` today; the SKILL / MCP axes are **carried
-    but not yet enforced** by ContextualLayer (the unified-spec resolver #2074 S1
-    populates them; #2074 S3 wires ContextualLayer to consume them — until then
-    this term is ⊤ on SKILL/MCP, so adding the fields changes no gate outcome).
+    Per-axis ``*_allow`` (None = unconstrained ⊤) ∩ ``¬*_deny``. The TOOL and MCP
+    axes are enforced by :class:`ContextualLayer`.
     """
 
     tool_allow: "frozenset[str] | None" = None
     tool_deny: "frozenset[str]" = field(default_factory=frozenset)
-    # #2074 S1 (additive, inert): the SKILL / MCP axes of the unified capability
-    # spec. Carried here so one resolved term covers all axes; ContextualLayer
-    # still enforces only TOOL (S3 wires SKILL/MCP). Inert defaults = ⊤.
-    skill_allow: "frozenset[str] | None" = None
-    skill_deny: "frozenset[str]" = field(default_factory=frozenset)
     mcp_allow: "frozenset[str] | None" = None
     mcp_deny: "frozenset[str]" = field(default_factory=frozenset)
 
@@ -295,12 +280,6 @@ class ContextualLayer:
             in_allow = c.tool_allow is None or value in c.tool_allow
             not_denied = value not in c.tool_deny
             return in_allow and not_denied
-        if axis is CapabilityAxis.SKILL:
-            # #2074 S3: per-context SKILL narrowing. ⊤ when unset (skill_allow=None
-            # + empty skill_deny) → byte-identical for any context that does not
-            # narrow SKILL (= every production context today).
-            in_allow = c.skill_allow is None or value in c.skill_allow
-            return in_allow and value not in c.skill_deny
         if axis is CapabilityAxis.MCP:
             # #2074 S4a: per-context MCP narrowing (paired with the require_mcp
             # gate wiring). ⊤ when unset (mcp_allow=None + empty mcp_deny) →
@@ -329,38 +308,6 @@ def tool_contextually_denied(
     if contextual is None:
         return False
     return not ContextualLayer(contextual).allows(CapabilityAxis.TOOL, effective_name)
-
-
-def skill_allowed(
-    allowed_skills: "object | None",
-    actor: str,
-    *,
-    contextual: "ContextualPermission | None" = None,
-) -> bool:
-    """The single SKILL-axis ∩ decision (#2074 S2/S3).
-
-    Routes the per-agent ``allowed_skills`` allowlist (``ProfileLayer``) AND the
-    per-session contextual narrowing (``ContextualLayer``, #2074 S3) so the
-    skill-spawn gates (skill_runner) AND the catalog filter (router host) share
-    ONE enforcement path — completing #1199's ∩ convergence for the SKILL axis.
-
-    Per-agent (``allowed_skills``) byte-identical to the legacy ``allowed_skills
-    is None or name in allowed_skills``: ``None`` = unrestricted (⊤); ``[]`` =
-    nothing allowed; ``[a,b]`` = only those. ``skill_router`` is never passed here
-    (excluded from the catalog upstream + never a spawn target), preserving its
-    exemption.
-
-    Per-context (``contextual``, #2074 S3): ``None`` or a context that does not
-    narrow SKILL (``skill_allow=None`` + empty ``skill_deny``) → ⊤, so every
-    existing outcome is preserved (the contextual SKILL narrowing is NEW
-    capability that activates only when a bound profile sets it).
-    """
-    layers: "list[LayerView]" = [
-        ProfileLayer.from_allowlists(allowed_skills=allowed_skills)
-    ]
-    if contextual is not None:
-        layers.append(ContextualLayer(contextual))
-    return EffectivePermission(layers).allows(CapabilityAxis.SKILL, actor)
 
 
 def _path_under(path_str: str, root: str) -> bool:

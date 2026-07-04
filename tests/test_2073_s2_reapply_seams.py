@@ -78,12 +78,11 @@ async def test_bad_in_set_is_rejected_no_seam_runs(tmp_path: Path) -> None:
 # ── the real reapply seams (real minimal Session) ──────────────────────────
 
 
-def _make_session(tmp_path: Path, *, agent_name: str = "test-agent", allowed_skills=None) -> Session:
+def _make_session(tmp_path: Path, *, agent_name: str = "test-agent") -> Session:
     return Session(
         agent_name=agent_name,
         state_log=StateLog(tmp_path / "s.wal"),
         snapshot_path=tmp_path / "snap.json",
-        allowed_skills=allowed_skills,
     )
 
 

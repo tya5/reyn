@@ -483,7 +483,6 @@ def _build_live_runner(agent_name: str, *, env_backend=None, ws_base_dir=None, w
                 compaction_config=config.chat.compaction,
                 reasoning_config=config.chat.reasoning,  # #1652
                 registry=_reg_cell[0] if _reg_cell else None,
-                allowed_skills=profile.allowed_skills,
                 allowed_mcp=profile.allowed_mcp,
                 task_backend=None,  # #1953 slice R: dogfood eval has no WAL/rewind → op-runtime fallback
                 events_config=config.events,

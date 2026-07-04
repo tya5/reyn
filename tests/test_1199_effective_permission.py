@@ -67,14 +67,18 @@ def test_falsification_removing_a_layer_regrants_a_denied_capability() -> None:
     without_sandbox = EffectivePermission([AgentLayer(decl)])
     assert without_sandbox.allows(AX.NETWORK_HOST, "api.example.com") is True  # over-grant
 
-    # Same shape for a profile deny (skill allowlist):
-    prof = AgentProfile(name="a", allowed_skills=["allowed_skill"])
+    # Same shape for a profile deny (mcp allowlist):
+    # The agent declares "blocked_srv" (grants it); the profile allows only "allowed_srv".
+    # Full ∩: AgentLayer grants + ProfileLayer narrows → blocked_srv denied.
+    # Without ProfileLayer: AgentLayer grant stands → blocked_srv re-granted (over-grant).
+    prof = AgentProfile(name="a", allowed_mcp=["allowed_srv"])
+    declared_mcp = PermissionDecl(mcp=["blocked_srv", "allowed_srv"])  # agent grants both
     eff = EffectivePermission(
-        [AgentLayer(PermissionDecl()), ProfileLayer(prof.default_profile())]
+        [AgentLayer(declared_mcp), ProfileLayer(prof.default_profile())]
     )
-    assert eff.allows(AX.SKILL, "blocked_skill") is False
-    assert EffectivePermission([AgentLayer(PermissionDecl())]).allows(
-        AX.SKILL, "blocked_skill"
+    assert eff.allows(AX.MCP, "blocked_srv") is False
+    assert EffectivePermission([AgentLayer(declared_mcp)]).allows(
+        AX.MCP, "blocked_srv"
     ) is True  # remove profile layer → re-granted
 
 
@@ -107,9 +111,9 @@ def test_file_axes_are_decl_less_zone_or_approved() -> None:
 
 def test_unconstrained_axis_is_top() -> None:
     """Tier 2: a layer returns True for axes it doesn't constrain, so it never
-    narrows the ∩ on those axes (the sandbox doesn't gate skills; the profile
+    narrows the ∩ on those axes (the sandbox doesn't gate tools; the profile
     doesn't gate files)."""
-    assert SandboxLayer(SandboxPolicy()).allows(AX.SKILL, "any") is True
+    assert SandboxLayer(SandboxPolicy()).allows(AX.TOOL, "any") is True
     assert ProfileLayer(AgentProfile(name="a").default_profile()).allows(AX.FILE_WRITE, "/x") is True
     # None layers are fully ⊤.
     assert SandboxLayer(None).allows(AX.FILE_WRITE, "/anything") is True
