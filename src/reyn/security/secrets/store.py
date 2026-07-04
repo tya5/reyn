@@ -147,9 +147,9 @@ class ScopedSecretStore:
         if key not in self._allowed_keys:
             allowed_repr = ", ".join(sorted(self._allowed_keys)) if self._allowed_keys else "(none)"
             raise CredentialScopeError(
-                f"Credential '{key}' is not in the declared scope for this skill. "
+                f"Credential '{key}' is not in the declared scope for this actor. "
                 f"Allowed keys: [{allowed_repr}]. "
-                f"To grant access, add '{key}' to required_credentials in skill.md frontmatter."
+                f"To grant access, add '{key}' to this actor's required_credentials declaration."
             )
 
     def get(self, key: str, default: str | None = None) -> str | None:

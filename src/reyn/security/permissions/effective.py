@@ -7,12 +7,12 @@ only narrow.
 
 Four inputs, three ⋂ layers:
 - **agent** (`PermissionDecl` + the default zone): the GRANT layer. Its allow-set
-  is the default zone (layer-0 baseline) ∪ the skill's explicit declarations. The
+  is the default zone (layer-0 baseline) ∪ the actor's explicit declarations. The
   zone is folded in here as the baseline — NOT a separate ∩ restrictor (a
   separate zone restrictor would cancel the decl grants that intentionally extend
   beyond the zone; the byte-identical requirement forces zone-as-baseline).
 - **sandbox** (`SandboxPolicy`): runtime caps (paths / network / subprocess / env).
-- **profile** (`AgentProfile`): agent-level allowlists (skills / mcp).
+- **profile** (`AgentProfile`): agent-level allowlists (agents / mcp).
 
 Per #1199 design call (issuecomment-4620567488): Q2 = per-VALUE membership
 conjunction (no materialized intersected sets — `allows(axis, value) = ∀L:
@@ -88,7 +88,7 @@ class AgentLayer:
       lets the conjunction restrict approvals too (grant-back forbidden preserved).
 
     #1199 S3.1c-1: the FILE axes are **decl-less** — a file path is permitted iff
-    it is in the default zone OR explicitly approved. The skill's declared file
+    it is in the default zone OR explicitly approved. The actor's declared file
     paths are NOT auto-granted (the prior non-interactive ``decl_covers`` disjunct
     + the ``include_decl`` flag are gone). This resolves the S3.1b-2 transitional
     divergence: ``require_file_*`` (op-runtime) and ``is_read/write_allowed``
@@ -143,7 +143,7 @@ class AgentLayer:
                 or self._approved(axis, value)
             )
         if axis is CapabilityAxis.MCP:
-            # #1199 S3.1b: the per-skill GRANT (``decl.mcp``). #2074 S4a moved the
+            # #1199 S3.1b: the per-actor GRANT (``decl.mcp``). #2074 S4a moved the
             # per-agent allowlist (``decl.allowed_mcp``) OUT to a ProfileLayer in
             # require_mcp (symmetric with SKILL) — so the full ∩ is now
             # ``AgentLayer(grant) ∩ ProfileLayer(allowlist) ∩ ContextualLayer``,
