@@ -46,7 +46,36 @@ from reyn.core.pipeline.executor import Pipeline, TransformStep
 from reyn.core.pipeline.registry import PipelineRegistry
 from reyn.llm.llm import LLMToolCallResult
 from reyn.llm.pricing import TokenUsage
+from reyn.runtime.registry import AgentRegistry
 from reyn.runtime.session import Session
+
+
+def _registry_backed_session(tmp_path: Path):
+    """A production-shaped, registry-backed session for the full-loop tests.
+
+    IS-6 reworked sync ``run_pipeline`` to spawn an ATTACHED driver-session, so
+    it now needs the same substrate as the async verb: an ``AgentRegistry`` to
+    spawn the driver-session under, and a ``.reyn``-anchored WAL for its
+    work-order/recovery files. A live production router turn always has both
+    (its session is registry-spawned); these tests wire them explicitly. Returns
+    ``(registry, session)`` with the session pinned to the universal-category
+    scheme (matching the scripted ``invoke_action`` tool-call shape)."""
+    state_log = StateLog(tmp_path / ".reyn" / "state.wal")
+    holder: dict = {}
+
+    def _factory(profile) -> Session:
+        return Session(
+            agent_name=profile.name, state_log=state_log,
+            registry=holder.get("reg"), non_interactive=True,
+            chat_tool_use_scheme="universal-category",
+        )
+
+    reg = AgentRegistry(project_root=tmp_path, session_factory=_factory, state_log=state_log)
+    holder["reg"] = reg
+    reg.create("test_agent")
+    session = reg.get_or_load("test_agent")
+    session.is_attached = True
+    return reg, session
 
 # ---------------------------------------------------------------------------
 # 1. RouterCallerState wiring (RouterLoop + minimal fake host — mirrors
@@ -314,17 +343,10 @@ async def test_run_pipeline_via_invoke_action_full_live_loop(
     just the handler in isolation (which test_run_pipeline_tool_is1.py
     already covers)."""
     monkeypatch.chdir(tmp_path)
-    session = Session(
-        agent_name="test_agent",
-        state_log=StateLog(tmp_path / "state.wal"),
-        # #1657 precedent: pin the scheme to match the scripted invoke_action
-        # tool-call shape (universal-category interprets the wrapper; the
-        # owner-default enumerate-all scheme would advertise a DIFFERENT flat
-        # tool name for the same pipeline — see the per-pipeline qualified
-        # name test above for that path).
-        chat_tool_use_scheme="universal-category",
-    )
-    session.is_attached = True
+    # #1657 precedent: pin the scheme (in the helper) to match the scripted
+    # invoke_action tool-call shape. IS-6: registry-backed so the reworked sync
+    # run_pipeline can spawn its attached driver-session.
+    _reg, session = _registry_backed_session(tmp_path)
 
     # Register a real pipeline into the session's OWN production registry —
     # not a test-local instance — proving Session.pipeline_registry is what
@@ -451,12 +473,7 @@ async def test_run_pipeline_via_d19_pipeline_name_full_live_loop(
     LLM's chosen action name differs (the per-name D19 form), so this closes
     the coverage gap on exactly the path IS-5 adds."""
     monkeypatch.chdir(tmp_path)
-    session = Session(
-        agent_name="test_agent",
-        state_log=StateLog(tmp_path / "state.wal"),
-        chat_tool_use_scheme="universal-category",
-    )
-    session.is_attached = True
+    _reg, session = _registry_backed_session(tmp_path)
 
     session.pipeline_registry.register(
         "greet",

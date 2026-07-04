@@ -1105,6 +1105,12 @@ class AgentRegistry:
                 continue
             session.set_loop_driver(PipelineExecutorDriver(
                 work_order, registry=self, state_log=self._state_log,
+                # IS-6: recovery always delivers via inbox — the originally-
+                # attached sync caller (if any) is gone after the crash, so the
+                # result must route back through the reply address, never
+                # in-band. (A run launched async was already notify_reply=True;
+                # a crashed sync run degrades to async inbox delivery here.)
+                notify_reply=True,
             ))
             await session.submit_user_text("")  # the no-payload resume nudge (D案)
             self.ensure_session_running(name, sid)

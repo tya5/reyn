@@ -1,15 +1,22 @@
-"""Tier 2c: run_pipeline router tool (IS-1 — sync + REGISTERED pipeline launch).
+"""Tier 2c: run_pipeline router tool (sync ATTACHED driver-session launch).
 
-Covers ``docs/proposals/reyn-pipeline-v0.9-design-resolutions.md`` R6's first
-end-to-end slice: an agent (here, the tool handler's caller) launches a
-REGISTERED pipeline and gets its result inline. Real collaborators throughout
-— a real ``PipelineRegistry``, real ``Workspace``/``PermissionResolver`` (so
-the ``tool`` step's ``file__write`` actually writes through
-``op_runtime.execute_op``, not a stub), and a real ``AgentRegistry``/
-``Session`` for the ``agent`` step (same real-collaborator discipline as
-``test_pipeline_r5_agent_step_executor.py`` — the ONLY faked collaborator is
-the LLM completion call, injected via the real ``RouterLoopDriver``
-``_loop_observer`` seam).
+Covers ``docs/proposals/reyn-pipeline-v0.9-design-resolutions.md`` R6's sync
+launch verb: an agent (here, the tool handler's caller) launches a REGISTERED
+pipeline and gets its result inline. IS-6 reworked the sync surface from an
+inline ``PipelineExecutor().run`` to an ATTACHED driver-session (so a sync run
+is crash-recoverable) — this file exercises the reworked handler's contract:
+the full-wiring requirement (agent_registry + host + WAL, like the async verb),
+the inline ``{run_id, output, named_stores}`` result, and the early-validation
+error paths. The step-boundary live-events / Ctrl-C-cancel / crash-while-attached
+behaviors get their own file (``test_pipeline_is6_attached.py``).
+
+Real collaborators throughout — a real ``PipelineRegistry``, real ``Workspace``/
+``PermissionResolver`` (so the ``tool`` step's ``file__write`` actually writes
+through ``op_runtime.execute_op``, not a stub), and a real ``AgentRegistry``/
+``Session`` for the driver-session + ``agent`` step (same real-collaborator
+discipline as ``test_pipeline_is2_driver_session.py`` — the ONLY faked
+collaborator is the LLM completion call, injected via the real
+``RouterLoopDriver`` ``_loop_observer`` seam).
 """
 from __future__ import annotations
 
@@ -79,8 +86,9 @@ def _ctx(
     pipeline_registry: "PipelineRegistry | None" = None,
     agent_registry: "AgentRegistry | None" = None,
     state_log: "StateLog | None" = None,
+    host: "object | None" = None,
 ) -> ToolContext:
-    events = EventLog()
+    events = host.events if host is not None else EventLog()
     return ToolContext(
         events=events,
         permission_resolver=PermissionResolver(
@@ -93,6 +101,7 @@ def _ctx(
         router_state=RouterCallerState(
             pipeline_registry=pipeline_registry,
             agent_registry=agent_registry,
+            host=host,
         ),
         state_log=state_log,
     )
@@ -101,25 +110,69 @@ def _ctx(
 # ── end-to-end: transform -> tool -> agent ──────────────────────────────────
 
 
+def _install_side_effect_tool(monkeypatch, out_file: Path) -> None:
+    """Register a REAL side-effecting tool (direct file append, workspace-
+    independent — the driver-session's ToolContext has no workspace in this bare
+    factory, so a workspace-relative tool like file__write would not resolve to
+    this test's tmp dir). Same monkeypatch idiom as
+    ``test_pipeline_is2_driver_session.py``: every lookup still goes through the
+    real ``ToolRegistry.register``/``lookup`` contract."""
+    import reyn.tools as tools_pkg
+    from reyn.tools.types import ToolDefinition, ToolGates
+
+    async def _handler(args, ctx):
+        p = Path(out_file)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        with p.open("a", encoding="utf-8") as f:
+            f.write(str(args["content"]) + "\n")
+        return {"written": str(args["content"])}
+
+    tool = ToolDefinition(
+        name="is1_write",
+        description="IS-1 test: append content to a fixed file (real side effect).",
+        parameters={"type": "object", "properties": {}},
+        gates=ToolGates(router="allow", phase="allow"),
+        handler=_handler,
+        category="io",
+        purity="side_effect",
+    )
+    base = tools_pkg.get_default_registry
+
+    def _with_tool():
+        registry = base()
+        registry.register(tool)
+        return registry
+
+    monkeypatch.setattr(tools_pkg, "get_default_registry", _with_tool)
+
+
 @pytest.mark.asyncio
-async def test_run_pipeline_e2e_transform_tool_agent(tmp_path: Path) -> None:
-    """Tier 2c: register a transform->tool->agent pipeline, invoke the
-    run_pipeline handler with a real OpContext/AgentRegistry/StateLog, assert
-    the pipeline runs to completion, the tool step's file__write REALLY wrote
-    the file (op_runtime execute_op, not a stub), and the final output is the
-    agent step's (scripted) reply."""
+async def test_run_pipeline_e2e_transform_tool_agent(tmp_path: Path, monkeypatch) -> None:
+    """Tier 2c: register a transform->tool->agent pipeline, invoke the reworked
+    run_pipeline handler (attached driver-session) with a real host/AgentRegistry/
+    StateLog, assert the pipeline runs to completion, the tool step's file__write
+    REALLY wrote the file (op_runtime execute_op, not a stub), and the final
+    output is the agent step's (scripted) reply — returned INLINE.
+
+    The scripted LLM is called EXACTLY ONCE (the agent step). The driver-session
+    and the caller session invoke no LLM, so ``scripted.calls == 1`` is also an
+    implicit check that the attached path did not trigger a redundant reply turn
+    on the caller (the dedicated no-duplicate assertion lives in the IS-6 file)."""
     state_log = StateLog(tmp_path / ".reyn" / "wal.jsonl")
     scripted = _ScriptedAgentReply("the pipeline's final answer")
     agent_reg = _agent_registry(tmp_path, state_log, scripted)
+    caller = agent_reg.get_or_load("worker")
 
+    out_file = tmp_path / "out.txt"
+    _install_side_effect_tool(monkeypatch, out_file)
     pipeline_registry = PipelineRegistry()
     pipeline_registry.register(
         "greet_and_review",
         Pipeline(steps=[
             TransformStep(value="'hello ' + ctx.name", output="msg"),
             ToolStep(
-                name="file__write",
-                args={"path": "out.txt", "content": ExprRef("pipe")},
+                name="is1_write",
+                args={"content": ExprRef("pipe")},
                 output="write_result",
             ),
             AgentStep(prompt="review: {ctx.msg}", identity="worker", output="verdict"),
@@ -128,7 +181,7 @@ async def test_run_pipeline_e2e_transform_tool_agent(tmp_path: Path) -> None:
 
     ctx = _ctx(
         tmp_path, pipeline_registry=pipeline_registry,
-        agent_registry=agent_reg, state_log=state_log,
+        agent_registry=agent_reg, state_log=state_log, host=caller._router_host,
     )
 
     result = await _handle_run_pipeline(
@@ -139,9 +192,8 @@ async def test_run_pipeline_e2e_transform_tool_agent(tmp_path: Path) -> None:
     assert result["data"]["output"] == "the pipeline's final answer"
     assert result["data"]["named_stores"]["msg"] == "hello world"
     assert scripted.calls == 1
-    # the tool step's file__write is the REAL op_runtime path — assert the
-    # file was actually written, not a stubbed pass-through.
-    assert (tmp_path / "out.txt").read_text() == "hello world"
+    # the tool step ran a REAL side effect (not a stubbed pass-through).
+    assert out_file.read_text().splitlines() == ["hello world"]
 
 
 # ── missing pipeline ─────────────────────────────────────────────────────────
@@ -189,13 +241,20 @@ async def test_run_pipeline_no_registry_returns_clear_error(tmp_path: Path) -> N
 @pytest.mark.asyncio
 async def test_run_pipeline_unknown_tool_step_fails_clearly(tmp_path: Path) -> None:
     """Tier 2: a ToolStep naming an unresolvable tool fails the run with a
-    clear error (the real tool_dispatch seam, not a silent no-op)."""
+    clear error (the real tool_dispatch seam in the driver-session, not a silent
+    no-op) — the failure surfaces INLINE to the attached caller."""
+    state_log = StateLog(tmp_path / ".reyn" / "wal.jsonl")
+    agent_reg = _agent_registry(tmp_path, state_log, None)
+    caller = agent_reg.get_or_load("worker")
     pipeline_registry = PipelineRegistry()
     pipeline_registry.register(
         "bad_tool_step",
         Pipeline(steps=[ToolStep(name="does_not_exist__nope", args={})]),
     )
-    ctx = _ctx(tmp_path, pipeline_registry=pipeline_registry)
+    ctx = _ctx(
+        tmp_path, pipeline_registry=pipeline_registry,
+        agent_registry=agent_reg, state_log=state_log, host=caller._router_host,
+    )
 
     result = await _handle_run_pipeline({"name": "bad_tool_step"}, ctx)
 

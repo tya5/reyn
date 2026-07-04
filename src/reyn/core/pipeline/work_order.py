@@ -105,20 +105,52 @@ def load_invocation(run_dir: "Path") -> "PipelineWorkOrder | None":
 def write_result(
     run_dir: "Path", *, status: str, delivered: bool,
     output: Any = None, error: "str | None" = None,
+    named_stores: "dict | None" = None,
 ) -> "Path":
     """Write the terminal marker (atomic). ``delivered=False`` records a
     permanently-undeliverable result (reply target gone) — still terminal, so
-    a vanished consumer can never turn the run into an infinite re-wake."""
+    a vanished consumer can never turn the run into an infinite re-wake.
+
+    ``named_stores`` (IS-6) carries the run's final named-store map so a SYNC
+    attached caller can reconstruct the full IS-1 tool result
+    (``{run_id, output, named_stores}``) from the marker alone, in-band, without
+    the reply inbox. ``None`` on non-ok terminals (a failed/cancelled run has no
+    meaningful store snapshot to surface). The marker is a TERMINAL stop-signal,
+    NOT a recovery source (the R4 generations are), so extending it does not
+    touch the truncation-survival contract."""
     path = Path(run_dir) / _RESULT_FILE
     _atomic_write(path, {
-        "status": status, "delivered": delivered, "output": output, "error": error,
+        "status": status, "delivered": delivered, "output": output,
+        "error": error, "named_stores": named_stores,
     })
     return path
 
 
 def has_result(run_dir: "Path") -> bool:
-    """True when the run reached terminal (result delivered / terminal-failed)."""
+    """True when the run reached terminal (result delivered / terminal-failed /
+    cancelled — any terminal marker halts the recovery re-wake scan)."""
     return (Path(run_dir) / _RESULT_FILE).is_file()
+
+
+def read_result(run_dir: "Path") -> "dict | None":
+    """Read the terminal marker written by ``write_result``, or ``None`` when the
+    run has not reached terminal (no marker yet) or the marker is unreadable.
+
+    Symmetric with :func:`write_result` — the read seam a SYNC attached caller
+    (IS-6 ``run_pipeline``) uses to collect its run's outcome after it has pumped
+    the driver-session to quiescence: the driver delivers the value in-band via
+    this file (``{status, delivered, output, error}``), not through the reply
+    inbox (that path is suppressed on the attached happy path so the attached
+    caller does not also get a redundant ``pipeline_result`` turn). A corrupt /
+    partially-written marker reads as ``None`` (the caller treats it as
+    not-yet-terminal, same defensive shape as ``load_invocation``)."""
+    path = Path(run_dir) / _RESULT_FILE
+    if not path.is_file():
+        return None
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (ValueError, TypeError):
+        return None
 
 
 def read_resume_attempts(run_dir: "Path") -> int:
@@ -148,6 +180,7 @@ __all__ = [
     "load_invocation",
     "write_result",
     "has_result",
+    "read_result",
     "read_resume_attempts",
     "bump_resume_attempts",
 ]
