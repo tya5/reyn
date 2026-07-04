@@ -27,14 +27,12 @@ class AgentSummary(BaseModel):
     name: str
     role: str
     created_at: str
-    allowed_skills: list[str] | None
     last_activity_at: str | None
 
 
 class CreateAgentRequest(BaseModel):
     name: str
     role: str = ""
-    allowed_skills: list[str] | None = None
 
 
 class AgentDetail(AgentSummary):
@@ -51,7 +49,6 @@ def _profile_to_summary(registry, name: str) -> AgentSummary:
         name=profile.name,
         role=profile.role,
         created_at=profile.created_at,
-        allowed_skills=profile.allowed_skills,
         last_activity_at=last_at.isoformat() if last_at else None,
     )
 
@@ -84,24 +81,10 @@ async def create_agent(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=str(exc),
         )
-    # Save allowed_skills if provided.
-    if body.allowed_skills is not None:
-        from reyn.runtime.profile import AgentProfile
-        updated = AgentProfile(
-            name=profile.name,
-            role=profile.role,
-            created_at=profile.created_at,
-            allowed_skills=body.allowed_skills,
-        )
-        agent_dir = registry._dir / profile.name
-        updated.save(agent_dir)
-        profile = updated
-
     return AgentDetail(
         name=profile.name,
         role=profile.role,
         created_at=profile.created_at,
-        allowed_skills=profile.allowed_skills,
         last_activity_at=None,
     )
 

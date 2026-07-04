@@ -5,7 +5,7 @@ capabilities, loaded from ``.reyn/capability_profiles/<name>.yaml``. It is the
 **single capability-narrowing primitive** across all #1199 ∩ axes (#2074):
 
 - **authority (enforcement)** → a :class:`ContextualPermission` carrying the
-  TOOL / SKILL / MCP axes (``*_allow`` / ``*_deny``) that ride the live ∩-gate.
+  TOOL / MCP axes (``*_allow`` / ``*_deny``) that ride the live ∩-gate.
 - **visibility (cognitive)** → an ``excluded_categories`` set derived from
   ``categories`` against the canonical catalog.
 
@@ -15,10 +15,10 @@ allowlist baseline, #2074 S2/S4a). Both feed the UNCHANGED ``EffectivePermission
 ∩ — the spec is separated from the binding.
 
 This module is PURE — schema + loader + resolver + compose. Enforcement wiring
-lives in the binding adapters: the TOOL axis rides the live gate today; SKILL /
-MCP axes are carried by the resolver (#2074 S1) and consumed by the per-agent
-adapter (S2) + ContextualLayer (S3). With no profile applied the session is
-byte-identical to pre-#1827.
+lives in the binding adapters: the TOOL axis rides the live gate today; the MCP
+axis is carried by the resolver and consumed by the per-agent adapter (S2) +
+ContextualLayer (S4a). With no profile applied the session is byte-identical to
+pre-#1827.
 
 The resolver never *grants* — both products are restrict-only:
 ``ContextualPermission`` is an ∩ term (never-elevate is the ``all()`` in
@@ -44,11 +44,7 @@ class CapabilityProfile:
       = no visibility narrowing (show everything). An explicit (possibly empty)
       tuple narrows the view to that set.
     - ``tool_allow`` / ``tool_deny`` — the TOOL axis (allow-list / deny-list).
-    - ``skill_allow`` / ``skill_deny`` — the SKILL axis (#2074 S1). ``skill_allow``
-      None = unrestricted; ``()`` = none allowed; a set = only those. This matches
-      ``AgentProfile.allowed_skills`` semantics exactly (None / [] / [a,b]) so the
-      per-agent binding adapter (#2074 S2/S4a) routes through it byte-identically.
-    - ``mcp_allow`` / ``mcp_deny`` — the MCP axis (#2074 S1), same allow/deny shape.
+    - ``mcp_allow`` / ``mcp_deny`` — the MCP axis, same allow/deny shape.
 
     Tuples (not sets) so the dataclass stays frozen/hashable; the resolver
     converts to frozensets.
@@ -59,9 +55,7 @@ class CapabilityProfile:
     categories: "tuple[str, ...] | None" = None
     tool_allow: "tuple[str, ...] | None" = None
     tool_deny: "tuple[str, ...]" = ()
-    # #2074 S1 — the SKILL / MCP axes of the unified spec (additive).
-    skill_allow: "tuple[str, ...] | None" = None
-    skill_deny: "tuple[str, ...]" = ()
+    # #2074 S1 — the MCP axis of the unified spec.
     mcp_allow: "tuple[str, ...] | None" = None
     mcp_deny: "tuple[str, ...]" = ()
 
@@ -93,9 +87,6 @@ def load_capability_profile(path: "str | Path") -> CapabilityProfile:
         categories=_as_tuple(data["categories"]) if "categories" in data else None,
         tool_allow=_as_tuple(data["tool_allow"]) if "tool_allow" in data else None,
         tool_deny=_as_tuple(data.get("tool_deny")) or (),
-        # #2074 S1 — SKILL / MCP axes (additive; absent → None/() = ⊤).
-        skill_allow=_as_tuple(data["skill_allow"]) if "skill_allow" in data else None,
-        skill_deny=_as_tuple(data.get("skill_deny")) or (),
         mcp_allow=_as_tuple(data["mcp_allow"]) if "mcp_allow" in data else None,
         mcp_deny=_as_tuple(data.get("mcp_deny")) or (),
     )
@@ -119,8 +110,8 @@ def resolve_profile(
 ) -> "tuple[ContextualPermission, frozenset[str]]":
     """Resolve a profile into ``(ContextualPermission, excluded_categories)``.
 
-    - enforcement: a ``ContextualPermission`` carrying the TOOL / SKILL / MCP axes
-      (``*_allow`` / ``*_deny``) — the ∩ term (#2074 S1 adds SKILL / MCP).
+    - enforcement: a ``ContextualPermission`` carrying the TOOL / MCP axes
+      (``*_allow`` / ``*_deny``) — the ∩ term.
     - view: ``excluded_categories = CATEGORIES − categories`` when ``categories``
       is set; ``∅`` (no view narrowing) when ``categories is None``.
 
@@ -140,11 +131,6 @@ def resolve_profile(
             if profile.tool_allow is not None else None
         ),
         tool_deny=_expand_tool_forms(profile.tool_deny),
-        # #2074 S1 — SKILL / MCP axes (carried; ContextualLayer enforces them in S3).
-        skill_allow=(
-            frozenset(profile.skill_allow) if profile.skill_allow is not None else None
-        ),
-        skill_deny=frozenset(profile.skill_deny),
         mcp_allow=(
             frozenset(profile.mcp_allow) if profile.mcp_allow is not None else None
         ),
@@ -163,7 +149,7 @@ def compose_resolved(
     """Compose N resolved profiles, most-restrictive-wins (#1827 multi-membership).
 
     Monotonic with the ∩ model: **union of denials, intersection of allows** —
-    applied uniformly to every axis (#2074 S1: TOOL / SKILL / MCP).
+    applied uniformly to every axis (TOOL / MCP).
     - ``*_deny`` → union (any profile's deny wins).
     - ``*_allow`` → intersection of the *set* allow-lists (``None`` = ⊤, skipped);
       a value stays allowed only if every constraining profile allows it.
@@ -188,7 +174,6 @@ def compose_resolved(
         return combined_allow, frozenset(deny)
 
     tool_allow, tool_deny = _compose_axis("tool_allow", "tool_deny")
-    skill_allow, skill_deny = _compose_axis("skill_allow", "skill_deny")
     mcp_allow, mcp_deny = _compose_axis("mcp_allow", "mcp_deny")
     excluded: "set[str]" = set()
     for _c, excl in resolved:
@@ -196,7 +181,6 @@ def compose_resolved(
     return (
         ContextualPermission(
             tool_allow=tool_allow, tool_deny=tool_deny,
-            skill_allow=skill_allow, skill_deny=skill_deny,
             mcp_allow=mcp_allow, mcp_deny=mcp_deny,
         ),
         frozenset(excluded),

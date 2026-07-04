@@ -169,21 +169,19 @@ async def test_agent_edit_role_persists_to_profile_and_session(tmp_path):
 
 @pytest.mark.asyncio
 async def test_agent_edit_role_preserves_other_profile_fields(tmp_path):
-    """Tier 2: role edit MUST NOT clobber name / created_at / allowed_skills /
-    allowed_mcp."""
+    """Tier 2: role edit MUST NOT clobber name / created_at / allowed_mcp."""
     from reyn.interfaces.slash.agent import _edit_role
     from reyn.runtime.profile import PROFILE_FILENAME, AgentProfile
 
     registry = _build_real_registry(tmp_path)
     registry.create("delta", role="initial")
-    # Hand-write an allowed_skills + allowed_mcp config the create() flow
-    # doesn't set, to verify the edit doesn't drop them.
+    # Hand-write an allowed_mcp config the create() flow doesn't set,
+    # to verify the edit doesn't drop it.
     agent_dir = tmp_path / ".reyn" / "agents" / "delta"
     profile = AgentProfile.load(agent_dir)
     from dataclasses import replace
     enriched = replace(
         profile,
-        allowed_skills=["skill_a", "skill_b"],
         allowed_mcp=["mcp_x"],
     )
     enriched.save(agent_dir)
@@ -196,7 +194,6 @@ async def test_agent_edit_role_preserves_other_profile_fields(tmp_path):
     assert reloaded.role == "edited persona"
     assert reloaded.name == "delta"
     assert reloaded.created_at == original_created_at
-    assert reloaded.allowed_skills == ["skill_a", "skill_b"]
     assert reloaded.allowed_mcp == ["mcp_x"]
 
 

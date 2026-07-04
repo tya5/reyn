@@ -72,7 +72,6 @@ async def _drive(ws: Path, prompt: str, *, worker_sid: str, timeout_s: float) ->
             compaction_config=config.chat.compaction,
             reasoning_config=config.chat.reasoning,
             registry=registry,
-            allowed_skills=profile.allowed_skills,
             allowed_mcp=profile.allowed_mcp,
             task_backend=registry.task_backend,
             events_config=config.events,

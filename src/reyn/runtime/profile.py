@@ -1,22 +1,10 @@
 """AgentProfile — per-agent metadata persisted to .reyn/agents/<name>/profile.yaml.
 
 PR10 introduced the file with the minimal schema (`name`, `role`,
-`created_at`). PR15 adds `allowed_skills`: an optional allowlist of
-project skill names this agent may invoke. `skill_router`
-is always available — the allowlist only constrains user-visible skills
-the router would otherwise hand off to. (FP-0011: `skill_narrator` was
-removed; the router LLM narrates inline. PR-N3: `chat_compactor` skill
-retired — compaction is now OS-internal Python.)
-
-Semantics for `allowed_skills`:
-- absent / null  → no restriction (every project skill, default)
-- empty list `[]` → router runs (LLM-only replies) but no skill spawn
-- `[a, b]`        → only those skill names
-
-PR37 adds `allowed_mcp`: an optional allowlist of MCP server names this
+`created_at`). PR37 adds `allowed_mcp`: an optional allowlist of MCP server names this
 agent may access, layered on top of the project-wide `permissions.mcp`
 config. Semantics:
-- absent / null  → no per-agent restriction (inherits project config)
+- absent / null  → no restriction (inherits project config)
 - `"all"`        → same as null but explicit in YAML for audit clarity
 - `[a, b]`       → intersect with project allow-list (per-agent narrowing)
 
@@ -44,10 +32,6 @@ class AgentProfile:
     name: str
     role: str = ""
     created_at: str = ""
-    # PR15: optional skill allowlist. None = unrestricted (default), [] = no
-    # skills at all, [...] = only those names. stdlib router/compactor are NOT
-    # subject to this list. (FP-0011: skill_narrator removed.)
-    allowed_skills: list[str] | None = None
     # PR37: optional MCP server allowlist. None = no per-agent restriction
     # (inherits project config). "all" in YAML normalizes to None here.
     # list[str] = intersect with project allow-list.
@@ -68,12 +52,6 @@ class AgentProfile:
         if not path.is_file():
             raise FileNotFoundError(path)
         data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-        raw_allowed = data.get("allowed_skills", None)
-        if raw_allowed is None:
-            allowed: list[str] | None = None
-        else:
-            # Accept yaml empty mapping `[]` or list of strings; coerce to list[str].
-            allowed = [str(s) for s in raw_allowed]
         # PR37: parse allowed_mcp — "all" sentinel normalizes to None.
         raw_allowed_mcp = data.get("allowed_mcp", None)
         if raw_allowed_mcp is None or raw_allowed_mcp == "all":
@@ -84,22 +62,19 @@ class AgentProfile:
             name=str(data.get("name", agent_dir.name)),
             role=str(data.get("role", "") or ""),
             created_at=str(data.get("created_at", "") or ""),
-            allowed_skills=allowed,
             allowed_mcp=allowed_mcp,
         )
 
     def save(self, agent_dir: Path) -> None:
         agent_dir.mkdir(parents=True, exist_ok=True)
         path = agent_dir / PROFILE_FILENAME
-        # Hand-roll the dict so absent allowed_skills (None) doesn't appear
+        # Hand-roll the dict so absent allowed_mcp (None) doesn't appear
         # in the yaml as `null` — keep the on-disk shape minimal.
         payload: dict = {
             "name": self.name,
             "role": self.role,
             "created_at": self.created_at,
         }
-        if self.allowed_skills is not None:
-            payload["allowed_skills"] = list(self.allowed_skills)
         if self.allowed_mcp is not None:
             payload["allowed_mcp"] = list(self.allowed_mcp)
         path.write_text(
@@ -109,19 +84,16 @@ class AgentProfile:
 
     def default_profile(self) -> "CapabilityProfile":
         """The agent's default capability spec (#2074 S4a) — the canonical unified
-        representation of this agent's per-agent baseline narrowing.
+        representation of this agent's per-agent baseline narrowing on the MCP axis.
 
-        The profile.yaml user keys stay ``allowed_skills`` / ``allowed_mcp`` (the
-        natural operator surface); this maps them onto the unified spec's
-        ``skill_allow`` / ``mcp_allow`` axes (the INTERNAL representation, no
-        user-facing rename). ``None`` allowlists pass through as ``None`` (= ⊤,
-        unrestricted). #2074 S4b repoints the per-agent ∩ layers to read this spec
-        object so one primitive feeds both binding adapters."""
+        The profile.yaml user key ``allowed_mcp`` maps onto the unified spec's
+        ``mcp_allow`` axis (the INTERNAL representation). ``None`` passes through
+        as ``None`` (= ⊤, unrestricted). #2074 S4b repoints the per-agent ∩ layer
+        to read this spec object so one primitive feeds the MCP binding adapter."""
         from reyn.security.permissions.capability_profile import CapabilityProfile
 
         return CapabilityProfile(
             name=self.name,
-            skill_allow=tuple(self.allowed_skills) if self.allowed_skills is not None else None,
             mcp_allow=tuple(self.allowed_mcp) if self.allowed_mcp is not None else None,
         )
 

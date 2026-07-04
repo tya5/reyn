@@ -412,7 +412,6 @@ def run_serve(args: argparse.Namespace) -> None:
             compaction_config=session_cfg.config.chat.compaction,
             reasoning_config=session_cfg.config.chat.reasoning,  # #1652
             registry=registry,
-            allowed_skills=profile.allowed_skills,
             allowed_mcp=profile.allowed_mcp,
             # #1953 slice R, I-5=(A): stdio-MCP is single-tenant per process, so the
             # agent's sqlite backend (rewind-participating) ≈ the singleton — durable

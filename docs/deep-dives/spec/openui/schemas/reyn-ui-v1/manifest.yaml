@@ -68,7 +68,6 @@ actions:
       role_prompt: string
       animal: AgentAnimal
       color: string
-      allowed_skills?: string[]
     returns: Agent
 
   agent.remove:
