@@ -1326,7 +1326,9 @@ class Session:
         # today; attach/detach + budget warnings as growth) into the
         # conv pane via OutboxMessage(kind="system").
         from reyn.runtime.lifecycle_forwarder import ChatLifecycleForwarder
-        self._chat_events.add_subscriber(ChatLifecycleForwarder(self.outbox))
+        self._chat_events.add_subscriber(
+            ChatLifecycleForwarder(self.outbox, registry=self._registry)
+        )
         # #398 v4 emitter family — generic events-log subscriber that
         # converts known op-emitted events (= mcp_server_installed,
         # future: config_reloaded / sp_version_changed) to
