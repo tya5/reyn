@@ -216,6 +216,27 @@ class MCPDropServerIROp(BaseModel):
     clear_secrets: bool = True
 
 
+class SkillInstallIROp(BaseModel):
+    """Register a local skill directory into the project skills config (#2548 PR-C).
+
+    Resolves the skill's ``SKILL.md`` frontmatter to extract the name and
+    description, then writes a ``skills.entries.<name>`` entry to
+    ``.reyn/config/skills.yaml``. Mirrors the ``mcp_install`` handler pipeline:
+    threat-scan → permission gate → config write → record_config_generation →
+    emit event → hot-reload.
+
+    ``path`` may be a directory (resolved to ``<dir>/SKILL.md``) or the direct
+    path to the ``SKILL.md`` file. ``name`` overrides the frontmatter name when
+    set (useful when the directory basename differs from the desired config key).
+    ``scope`` is retained for forward compat with multi-tier support; currently
+    always resolves to ``.reyn/config/skills.yaml``.
+    """
+    kind: Literal["skill_install"]
+    path: str                               # local dir or direct SKILL.md path
+    scope: str = ".reyn/config/skills.yaml"  # target config file (no-op tier arg)
+    name: str | None = None                 # override the frontmatter / dir-basename name
+
+
 # ---------------------------------------------------------------------------
 # RAG-extensible OS (ADR-0033) — embed / index_* / recall ops + ChunkMetadata
 # ---------------------------------------------------------------------------
@@ -528,6 +549,9 @@ OP_KIND_MODEL_MAP: dict[str, type[BaseModel]] = {
     "task.register_unblock_predicate": TaskRegisterUnblockPredicateIROp,
     "task.comment": TaskCommentIROp,
     "task.assign": TaskAssignIROp,
+    # #2548 PR-C: local skill directory install — register a SKILL.md dir into
+    # skills.entries (parallel to mcp_install writing mcp.servers).
+    "skill_install": SkillInstallIROp,
 }
 
 # Frozenset of op kinds — DSL linter, contextual gate.
@@ -557,6 +581,7 @@ if TYPE_CHECKING:
             TaskAbortIROp,
             TaskHeartbeatIROp, TaskRegisterUnblockPredicateIROp,
             TaskCommentIROp,
+            SkillInstallIROp,
         ],
         Field(discriminator="kind"),
     ]

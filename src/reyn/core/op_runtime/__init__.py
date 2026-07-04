@@ -114,6 +114,9 @@ from . import mcp_install as _mcp_install  # noqa: F401, E402
 from . import recall as _recall  # noqa: F401, E402
 from . import sandboxed_exec as _sandboxed_exec  # noqa: F401, E402
 
+# #2548 PR-C: local skill install op (register a SKILL.md dir into skills.entries).
+from . import skill_install as _skill_install  # noqa: F401, E402
+
 # #1953 slice 1: Task ops (first-class trackable work-units).
 from . import task as _task  # noqa: F401, E402
 from . import web as _web  # noqa: F401, E402

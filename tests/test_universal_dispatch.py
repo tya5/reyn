@@ -584,6 +584,8 @@ _ROUTE_CONTRACT_SAMPLES: list[tuple[str, dict[str, Any]]] = [
     ("task__register_unblock_predicate", {"task_id": "t1", "predicate": "x>0"}),
     ("task__comment",                    {"task_id": "t1", "body": "note"}),
     ("task__assign",                     {"task_id": "t1", "assignee": "s1"}),
+    # skill_management category (#2548 PR-C) — install_local requires path.
+    ("skill_management__install_local",  {"path": "/tmp/my-skill"}),
 ]
 
 

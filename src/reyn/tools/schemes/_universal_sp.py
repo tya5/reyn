@@ -203,6 +203,11 @@ def build_universal_tool_use_slots(
             "`task__update_status` / `task__list` / `task__abort`. Use when a "
             "request needs multi-step tracking or delegation, not a single reply."
         )
+        _r2.append(
+            "- **skill_management** — manage skill definitions: "
+            "`skill_management__install_local` to register a local skill directory "
+            "(one containing a SKILL.md file) into .reyn/config/skills.yaml."
+        )
         _r2.append("")
         if has_hot_list_aliases:
             _r2.append(

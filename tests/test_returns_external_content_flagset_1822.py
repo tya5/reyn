@@ -60,6 +60,10 @@ _NOT_EXTERNAL = {
     "remember_shared", "remember_agent", "forget_memory",
     "mcp_install", "mcp_install_local", "mcp_install_package",
     "mcp_install_registry", "mcp_drop_server",
+    # #2548 PR-C: skill_install_local writes .reyn/config/skills.yaml — returns an
+    # install status dict (path / name / status), not fetched external content.
+    # Same classification rationale as mcp_install_local (writes config, not content).
+    "skill_install_local",
     "cron_register", "cron_unregister", "cron_enable", "cron_disable",
     # #2073 S3: hooks_add writes .reyn/hooks.yaml + schedules a reload — returns a
     # status dict (on / added / reload_scheduled / path), not external content.

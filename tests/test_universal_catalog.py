@@ -65,6 +65,9 @@ def test_categories_master_table_order() -> None:
         "exec",
         # #1953 dynamic-wire: task.* control-IR ops as invoke_action targets.
         "task",
+        # #2548 PR-C: skill management ops (install_local). NOT the ``skill__``
+        # resource category; this is the management plane (mirrors ``mcp``).
+        "skill_management",
     )
 
 
@@ -242,14 +245,14 @@ def test_universal_tools_render_for_router_shape(
 
 
 def test_list_actions_category_enum_matches_categories() -> None:
-    """Tier 2: list_actions.category enum exposes all 13 CATEGORIES."""
+    """Tier 2: list_actions.category enum exposes all CATEGORIES."""
     props = LIST_ACTIONS.parameters["properties"]
     cat_items_enum = props["category"]["items"]["enum"]
     assert cat_items_enum == list(CATEGORIES)
 
 
 def test_search_actions_category_enum_matches_categories() -> None:
-    """Tier 2: search_actions.category enum exposes all 13 CATEGORIES."""
+    """Tier 2: search_actions.category enum exposes all CATEGORIES."""
     props = SEARCH_ACTIONS.parameters["properties"]
     cat_items_enum = props["category"]["items"]["enum"]
     assert cat_items_enum == list(CATEGORIES)
