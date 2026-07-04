@@ -1,9 +1,9 @@
 """mcp_install ToolDefinition (ADR-0026 + ADR-0029).
 
 MCP_INSTALL_OP is phase-only (gates.router="deny", gates.phase="allow").
-Install operations must flow through the mcp_install skill — not from
-the router directly — to ensure proper registry lookup, permission gating,
-and credential prompting are executed in a structured skill context.
+Install operations are gated at the phase level — not callable directly
+from the router — to ensure proper registry lookup, permission gating,
+and credential prompting are executed via op_runtime.
 
 The handler delegates to op_runtime.mcp_install.handle, which performs:
   1. Registry fetch (RegistryClient.get_server)
@@ -103,7 +103,7 @@ async def _handle_mcp_install_op(
         # (= file.write on the canonical config path + http.get for
         # the registry host). Pre-approves via session so the runtime
         # require_file_write check passes silently — the tool itself
-        # was already authorised via the calling skill's permissions.tool.
+        # was already authorised at the phase permission gate level.
         canonical_config = ".reyn/config/mcp.yaml"
         registry_host = "registry.modelcontextprotocol.io"
         synth_decl = PermissionDecl(

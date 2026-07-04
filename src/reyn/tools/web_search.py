@@ -71,8 +71,8 @@ async def _handle(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
     # gains permission-gated paths.
     #
     # events.subscribers: the existing OpContext constructor requires
-    # this to forward subscribers to sub-skill invocations. Web search
-    # does not spawn sub-skills, but OpContext.subscribers is set
+    # this to forward subscribers to nested op invocations. Web search
+    # does not spawn nested ops, but OpContext.subscribers is set
     # defensively via getattr fallback.
     phase_op_ctx = (
         ctx.phase_state.op_context if ctx.phase_state is not None else None
@@ -89,7 +89,7 @@ async def _handle(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
         actor="",
         # #1673: real resolver + "tool" purpose class (was None + literal
         # "standard") — eliminates the resolver=None → litellm-BadRequestError class
-        # by construction (uniform with invoke_skill; this handler makes no LLM call).
+        # by construction (uniform with other op handlers; this handler makes no LLM call).
         model=resolve_purpose_class(None, ctx.resolver, "tool"),
         resolver=ctx.resolver,
         subscribers=getattr(ctx.events, "subscribers", []),

@@ -4,9 +4,9 @@ MCP_DROP_SERVER_OP is the destructor counterpart to MCP_INSTALL_OP:
   - install adds an entry to ``mcp.servers.<short>``
   - drop_server removes that entry, optionally cleans secrets
 
-Unlike mcp_install (which requires a multi-step skill flow due to
-registry lookup + runtime detection + secret prompting), drop is
-purely mechanical and can run as a single op invocation. Per
+Unlike mcp_install (which requires registry lookup + runtime detection
++ secret prompting across multiple op steps), drop is purely
+mechanical and can run as a single op invocation. Per
 FP-0034 §D23, this op lives in the universal catalog under
 ``mcp.operation__drop_server`` and is reachable from both:
 

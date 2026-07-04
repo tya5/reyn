@@ -63,8 +63,8 @@ def build_legacy_op_context(ctx: "ToolContext") -> Any:
         ),
         permission_resolver=ctx.permission_resolver,
         # #2415 root 4: propagate actor + intervention_bus from the phase
-        # OpContext so permission checks key correctly on the calling skill's
-        # approval prefix (``{skill}/file.write/{path}``) and the JIT prompt
+        # OpContext so permission checks key correctly on the calling phase's
+        # approval prefix (``{actor}/file.write/{path}``) and the JIT prompt
         # fires when approval is needed. Without this, actor="" → prefix
         # ``/file.write/`` → no saved approval matches → PermissionError even
         # when the operator already approved the path.  intervention_bus=None

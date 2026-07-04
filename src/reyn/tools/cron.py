@@ -33,8 +33,8 @@ Persistence + live update:
 Permission gating:
 
   ``cron_register`` permission key (= shared across register / unregister
-  / enable / disable). Skill must declare ``cron_register: true`` AND
-  per-job approval is collected via ``PermissionResolver.require_cron_register``.
+  / enable / disable). The calling phase must be permitted to use this tool
+  AND per-job approval is collected via ``PermissionResolver.require_cron_register``.
 """
 from __future__ import annotations
 
@@ -215,12 +215,12 @@ async def _gate(ctx: ToolContext, job_name: str) -> None:
     The bool-axis ``require_cron_register`` per-job approval prompt was
     removed in Phase 5. Authorisation is now layered:
 
-    - The calling skill must list this tool in ``permissions.tool`` so
+    - The calling phase must have this tool in its permitted op set so
       the LLM is permitted to invoke it (= operator authorisation
-      happens at skill-startup time via ``require_tool``).
+      happens at phase-startup time via the permission resolver).
     - The runtime gate here is the standard ``require_file_write``
       against the canonical ``.reyn/config/cron.yaml`` path. Since the tool
-      is OS-internal (= no per-tool skill frontmatter), we synthesise
+      is OS-internal (= no phase-specific frontmatter), we synthesise
       a minimal PermissionDecl listing the canonical path explicitly
       and route it through ``session_approve_path`` once per resolver
       instance so subsequent calls pass silently.
@@ -234,8 +234,8 @@ async def _gate(ctx: ToolContext, job_name: str) -> None:
     decl = PermissionDecl(file_write=[{"path": cron_yaml_path, "scope": "just_path"}])
     # OS-internal tool: session-approve the canonical path so the
     # require_file_write check passes without an interactive prompt.
-    # The TOOL-level authorisation already happened at skill-startup
-    # time (= require_tool against the calling skill's permissions.tool).
+    # The tool-level authorisation already happened at phase-startup
+    # time via the permission resolver's op-permission check.
     ctx.permission_resolver.session_approve_path(
         cron_yaml_path, "cron", "file.write",
     )

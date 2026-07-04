@@ -176,7 +176,7 @@ Interpretation = Execute | RePresent | CodeBlock | PlainText
 class ExecutionResult:
     """The outcome of executing an ``Interpretation`` — per-action tool results
     (JSON-serialisable dicts), consumed by ``format_feedback`` and by the OS loop's
-    scheme-agnostic op-specific handling (plan / invoke_skill).
+    scheme-agnostic op-specific handling (plan / op dispatch).
 
     ``tool_calls`` + ``assistant_content`` (#1608) enrich the result so a scheme's
     ``format_feedback`` can build the **full** appendable message sequence (the
@@ -219,8 +219,8 @@ class SchemeOps(Protocol):
       (so the OS can exclude-gate pre-dispatch).
     - ``dispatch`` → per-action ``dispatch_tool`` (DispatchContext / phase-memo /
       permission — the pure-OS substrate, P5).
-    - ``feedback`` → the basic tool_result→message formatting (op-specific plan /
-      invoke_skill handling stays in the OS loop, around this).
+    - ``feedback`` → the basic tool_result→message formatting (op-specific plan
+      handling stays in the OS loop, around this).
     """
 
     def present(self, available: Any, layer_ctx: Any) -> Presentation: ...
@@ -235,7 +235,7 @@ class SchemeOps(Protocol):
     # (no PR-1 regression).
     def base_tools(self, available: Any, layer_ctx: Any) -> list[dict]:
         """The prior-shape base tools (``build_tools`` with wrappers OFF): the
-        common base every scheme starts from (skills/agents/mcp/file/web)."""
+        common base every scheme starts from (agents/mcp/file/web)."""
         ...
 
     async def catalog_entries(self) -> list[dict]:
@@ -244,8 +244,8 @@ class SchemeOps(Protocol):
         what enumerate-all adds on top of ``base_tools`` instead of the wrappers.
 
         Async (#1593 PR-2 seam call): enumerating the live catalog requires the
-        async-built router caller-state (resource categories — skills/agents/mcp/
-        rag — drop without it; the rag manifest fetch is the genuine await)."""
+        async-built router caller-state (resource categories — agents/mcp/rag
+        — drop without it; the rag manifest fetch is the genuine await)."""
         ...
 
     async def search_actions(self, query: str, *, top_k: int = 10) -> list[str]:

@@ -51,7 +51,7 @@ class ResolvedAction:
     """Result of routing a qualified action name to a target ToolDefinition.
 
     ``target_tool_name`` is the canonical name in get_default_registry()
-    (= e.g. ``"invoke_skill"``, ``"call_mcp_tool"``, ``"read_file"``).
+    (= e.g. ``"mcp_call_tool"``, ``"read_file"``, ``"web_search"``).
     ``target_args`` is the dict of arguments to pass to that target's
     handler after any category-specific transformation (= D19 resource
     invoke or qualified-name expansion).
@@ -204,9 +204,9 @@ def _passthrough_args(
 #
 # Categories with multiple discrete entry-name choices (file, web,
 # memory_operation, reyn_source, rag_operation) list each pair
-# explicitly. Resource categories (skill, agent.peer, mcp.server,
-# mcp.tool, memory_entry, rag_corpus) use the entry_name as the
-# resource id and so have a single rule per category.
+# explicitly. Resource categories (mcp, memory_entry, rag_corpus)
+# use the entry_name as the resource id and so have a single rule
+# per category.
 
 # Per-category default rule (= used when entry_name is the resource id)
 # Issue #879: mcp.server / mcp.tool resource rules removed; verb actions
@@ -311,7 +311,7 @@ _OPERATION_RULES: Final[dict[str, tuple[str, Callable[[str, Mapping[str, Any]], 
 # This is the set of qualified names that PR-2 can route statically
 # (= without consulting runtime caller state). Used by
 # ``suggest_similar_names`` when callers don't supply a candidate list.
-# Dynamic items (skill__*, multi_agent__*, mcp__* tools, memory_entry__*,
+# Dynamic items (multi_agent__*, per-tool mcp__* entries, memory_entry__*,
 # rag_corpus__*) live in caller state and are not enumerated here. PR-3
 # combines this static set with the dynamic items from RouterCallerState to
 # feed the actual suggestion engine. (The legacy agent.peer / mcp.tool /
@@ -468,14 +468,14 @@ def suggest_similar_names(
 def known_qualified_name_for_category(category: str) -> tuple[str, ...]:
     """Return the static qualified names PR-2 knows about for ``category``.
 
-    Resource categories (skill / agent.peer / mcp.{server,tool} /
-    memory_entry / rag_corpus) return an empty tuple because their
-    entries are dynamic (= populated by caller state in PR-3).
+    Resource categories (mcp dynamic per-tool entries / memory_entry /
+    rag_corpus) return an empty tuple because their entries are dynamic
+    (= populated by caller state in PR-3).
 
     Operation categories (file / web / memory_operation / reyn_source /
-    rag_operation / mcp.operation / exec) return the qualified names
-    this module has routing rules for. ``mcp.operation`` returns
-    ``("mcp.operation__drop_server",)`` (= PR-4 landed). ``exec``
+    rag_operation / mcp / exec) return the qualified names this module
+    has routing rules for. ``mcp__drop_server`` is a static verb
+    (= PR-4 landed). ``exec``
     returns ``("exec__sandboxed_exec",)`` — the route is now wired
     (FP-0034 Phase 2); D14 visibility gating stays in the catalog
     enumeration layer (``_enumerate_category`` checks sandbox_backend).
