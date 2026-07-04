@@ -4,9 +4,8 @@ Pinned invariants:
 
 1. ``user`` / ``assistant`` roles land in the output; chainlit-side
    author labels match the live outbox adapter's mapping.
-2. ``tool`` / ``system`` / ``summary`` / ``skill_event`` roles are
-   dropped (= LLM-wire / Reyn-internal markers that don't belong in
-   the chat thread).
+2. ``tool`` / ``system`` / ``summary`` roles are dropped
+   (= LLM-wire / Reyn-internal markers that don't belong in the chat thread).
 3. Unknown role (= future ChatMessage role addition) is dropped, not
    rendered with a fallback author — same conservative posture as
    the ``_DROPPED_ROLES`` set so a new role surfaces as a silent
@@ -44,12 +43,11 @@ def test_user_and_assistant_roles_pass_through():
 
 
 def test_internal_roles_dropped():
-    """Tier 1: tool / system / summary / skill_event filtered out."""
+    """Tier 1: tool / system / summary filtered out."""
     out = history_to_chainlit([
         _FakeMsg(role="tool", content="tool result"),
         _FakeMsg(role="system", content="system prompt"),
         _FakeMsg(role="summary", content="compaction summary"),
-        _FakeMsg(role="skill_event", content="skill marker"),
     ])
     assert out == []
 

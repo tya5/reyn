@@ -2572,7 +2572,7 @@ class Session:
 
     def _append_history(self, msg: ChatMessage) -> None:
         # Assign monotonic seq for conversational entries (user/agent). Other
-        # roles (skill_event, summary) keep seq=0 — they aren't part of the
+        # roles (summary) keep seq=0 — they aren't part of the
         # turn ordering used by the slicer.
         if msg.role in ("user", "agent") and msg.seq == 0:
             msg.seq = self._next_seq
@@ -4064,8 +4064,8 @@ class Session:
 
         While `is_attached=False` (PR10 multi-agent: agent running in the
         background), `status`/`trace` carry no value to a detached display
-        and would just accumulate in the queue. `agent`/`skill_done`/
-        `intervention`/`error`/`__end__` are kept so they reach the user
+        and would just accumulate in the queue. `agent`/`intervention`/
+        `error`/`__end__` are kept so they reach the user
         when re-attached or remain in history (history append happens
         independently in callers).
 

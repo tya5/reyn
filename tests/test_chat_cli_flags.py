@@ -60,9 +60,7 @@ def _seed_project_state(project_root: Path) -> dict:
     paths = {
         "wal": project_root / ".reyn" / "state" / "wal.jsonl",
         "agent_snap": project_root / ".reyn" / "agents" / "alpha" / "state" / "snapshot.json",
-        "skill_snap": project_root / ".reyn" / "agents" / "alpha" / "state" / "skills" / "run_x.snapshot.json",
         "events": project_root / ".reyn" / "events" / "agents" / "alpha" / "chat" / "log.jsonl",
-        "events_skill": project_root / ".reyn" / "events" / "agents" / "alpha" / "skill_runs" / "run_x.jsonl",
     }
     for p in paths.values():
         p.parent.mkdir(parents=True, exist_ok=True)
@@ -71,13 +69,12 @@ def _seed_project_state(project_root: Path) -> dict:
 
 
 def test_reset_deletes_wal_and_snapshots(tmp_path):
-    """Tier 2: --reset removes WAL + per-agent snapshot + per-skill snapshots."""
+    """Tier 2: --reset removes WAL + per-agent snapshot."""
     paths = _seed_project_state(tmp_path)
     _reset_project_state(tmp_path, confirm=False)
 
     assert not paths["wal"].exists(), "WAL must be deleted by --reset"
     assert not paths["agent_snap"].exists(), "agent snapshot must be deleted"
-    assert not paths["skill_snap"].exists(), "per-skill snapshot must be deleted"
 
 
 def test_reset_preserves_events_dir(tmp_path):
@@ -88,7 +85,6 @@ def test_reset_preserves_events_dir(tmp_path):
     assert paths["events"].exists(), (
         "events/ is audit log (P6) — --reset must preserve it"
     )
-    assert paths["events_skill"].exists()
     # Read content unchanged
     assert paths["events"].read_text() == "seed\n"
 

@@ -1,7 +1,7 @@
 """Artifact presence verifier (FP-0036 Component C).
 
 Each ArtifactAssertion matches against the workspace's artifact records.
-``artifacts`` is a list of dicts shaped {"skill": str, "type": str, "data": dict, ...}.
+``artifacts`` is a list of dicts shaped {"type": str, "data": dict, ...}.
 """
 from __future__ import annotations
 
@@ -35,12 +35,10 @@ def _fingerprint(data: dict) -> str:
 
 
 def _artifact_matches_filters(artifact: dict, assertion: "ArtifactAssertion") -> bool:
-    """Return True if artifact passes the skill/type filters of assertion.
+    """Return True if artifact passes the type filter of assertion.
 
     None filter means "any" (= no restriction on that dimension).
     """
-    if assertion.skill is not None and artifact.get("skill") != assertion.skill:
-        return False
     if assertion.type is not None and artifact.get("type") != assertion.type:
         return False
     return True
@@ -58,7 +56,6 @@ def _check_assertion(
         if not candidates:
             return {
                 "check": "present",
-                "skill": assertion.skill,
                 "type": assertion.type,
                 "reason": "no matching artifact found",
             }
@@ -72,7 +69,6 @@ def _check_assertion(
                 computed = [_fingerprint(a.get("data", a)) for a in candidates]
                 return {
                     "check": "fingerprint",
-                    "skill": assertion.skill,
                     "type": assertion.type,
                     "expected_fingerprint": assertion.fingerprint,
                     "found_fingerprints": computed,
@@ -83,7 +79,6 @@ def _check_assertion(
         if candidates:
             return {
                 "check": "absent",
-                "skill": assertion.skill,
                 "type": assertion.type,
                 "found_count": len(candidates),
                 "reason": "artifact found but expected to be absent",
@@ -104,7 +99,6 @@ def verify_artifacts(
     """Score the workspace artifacts list against expected.
 
     For each ArtifactAssertion:
-      - skill filter: match artifacts whose skill == assertion.skill (None = any)
       - type filter: match artifacts whose type == assertion.type (None = any)
       - present: True → at least one matching artifact required; False → none
       - fingerprint: SHA256 of normalised JSON content; when set, at least one

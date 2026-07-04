@@ -11,7 +11,7 @@ Protocol (client → server):
 
 Protocol (server → client):
     {
-        "kind": "<kind>",     # agent | status | error | intervention | trace | skill_done
+        "kind": "<kind>",     # agent | status | error | intervention | trace
         "text": "<text>",
         "meta": {             # optional provenance: run_id, run_id_short, actor,
                               # intervention_id, intervention_kind, choices, ...
@@ -54,7 +54,7 @@ logger = logging.getLogger(__name__)
 # header label + conv pane stay in sync when a remote ``/attach``
 # triggers the server-side swap. Issue #276 Phase B (4/5).
 _FORWARDED_KINDS = frozenset({
-    "agent", "status", "error", "intervention", "trace", "skill_done",
+    "agent", "status", "error", "intervention", "trace",
     "__attach_request__",
 })
 

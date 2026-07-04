@@ -3,7 +3,7 @@
 One ``ChatMessage`` is a single entry in the LLM-facing conversation history,
 shaped to mirror the OpenAI/Anthropic message-list wire format so the history
 serialises straight to the LLM (``user`` / ``assistant`` / ``tool`` / ``system``
-/ ``summary`` / ``skill_event`` roles; ``str`` or list-of-parts ``content``;
+/ ``summary`` roles; ``str`` or list-of-parts ``content``;
 OpenAI tool-turn fields). Also provides the read-time migration that rewrites
 pre-#383 on-disk history entries into this shape (``_migrate_legacy_chat_message``)
 and the ``_now_iso`` timestamp helper. Pure value object — no dependency on
@@ -34,10 +34,9 @@ class ChatMessage:
       - ``tool`` — tool response (= new)
       - ``system`` — system prompt (rare; usually built at wire time)
       - ``summary`` — chat-compactor output (Reyn-internal, filtered at wire boundary)
-      - ``skill_event`` — TUI display marker (Reyn-internal, filtered at wire boundary)
     """
     role: Literal[
-        "user", "assistant", "tool", "system", "summary", "skill_event",
+        "user", "assistant", "tool", "system", "summary",
     ]
     # ``content`` is either:
     #   - a ``str`` (= text-only turn), or
@@ -126,7 +125,7 @@ class ChatMessage:
 # ── Legacy ChatMessage migration ───────────────────────────────────────
 #
 # history.jsonl files written before issue #383 used the pre-Design-B
-# shape: ``role`` ∈ {"user","agent","skill_event","summary"}; ``text:
+# shape: ``role`` ∈ {"user","agent","summary"}; ``text:
 # str``; ``media: list[dict]`` (= inline base64 image_url parts from
 # #366). On load, ``_migrate_legacy_chat_message`` rewrites such
 # entries into the new wire shape so the runtime only ever sees

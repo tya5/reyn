@@ -280,8 +280,8 @@ class RouterHistoryBuffer:
 
         Returns [{role: 'user'|'assistant', content: str}, ...] ordered
         chronologically. The system prompt is prepended by RouterLoop itself.
-        Only user/agent conversational turns are included; ``summary`` /
-        ``skill_event`` remain Reyn-internal and are filtered out.
+        Only user/agent conversational turns are included; ``summary``
+        remains Reyn-internal and is filtered out.
         """
         from reyn.services.compaction.engine import (
             estimate_tokens_for_turn,
@@ -292,8 +292,8 @@ class RouterHistoryBuffer:
         history = self._history_fn()
         # E-full (#383): include tool-turn entries (= assistant w/ tool_calls,
         # tool responses) in the slice. The wire-shape builder below
-        # forwards them as-is to the LLM. ``summary`` / ``skill_event``
-        # remain Reyn-internal and filtered out.
+        # forwards them as-is to the LLM. ``summary`` remains
+        # Reyn-internal and filtered out.
         turns = [
             m for m in history
             if m.role in ("user", "assistant", "tool", "agent")

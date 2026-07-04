@@ -525,7 +525,7 @@ def test_scenario_by_id_unknown_returns_none(tmp_path: Path) -> None:
 
 
 def test_artifact_assertion_optional_fields_load(tmp_path: Path) -> None:
-    """Tier 1: ArtifactAssertion with optional skill/type/present/fingerprint loads correctly."""
+    """Tier 1: ArtifactAssertion with optional type/present/fingerprint loads correctly."""
     p = write_yaml(
         tmp_path,
         """\
@@ -536,13 +536,11 @@ def test_artifact_assertion_optional_fields_load(tmp_path: Path) -> None:
             input: "hello"
             expected:
               artifacts:
-                - skill: direct_llm
-                  present: true
+                - present: true
                 - type: plan_artifact
                   present: false
                   fingerprint: "abc123def456"
-                - skill: eval_skill
-                  type: eval_result
+                - type: eval_result
         """,
     )
     ss = load_scenario_set(p)
@@ -552,17 +550,14 @@ def test_artifact_assertion_optional_fields_load(tmp_path: Path) -> None:
     items = ea.items
     assert items, "expected_artifacts must have at least one item"
 
-    assert items[0].skill == "direct_llm"
     assert items[0].type is None
     assert items[0].present is True
     assert items[0].fingerprint is None
 
-    assert items[1].skill is None
     assert items[1].type == "plan_artifact"
     assert items[1].present is False
     assert items[1].fingerprint == "abc123def456"
 
-    assert items[2].skill == "eval_skill"
     assert items[2].type == "eval_result"
     assert items[2].present is True
 
@@ -605,7 +600,7 @@ def test_full_featured_scenario_loads(tmp_path: Path) -> None:
                   - skill_run_spawned
                   - skill_run_completed
               artifacts:
-                - skill: direct_llm
+                - type: eval_result
                   present: true
             outcome_prediction:
               verified: 0.7
@@ -644,7 +639,7 @@ def test_full_featured_scenario_loads(tmp_path: Path) -> None:
 
     ea = s.expected_artifacts
     assert ea is not None
-    assert ea.items[0].skill == "direct_llm"
+    assert ea.items[0].type == "eval_result"
     assert ea.items[0].present is True
 
     op = s.outcome_prediction

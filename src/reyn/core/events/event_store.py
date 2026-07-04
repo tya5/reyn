@@ -35,8 +35,7 @@ class EventStore:
     ) -> None:
         """
         dir_path: e.g. `events/agents/researcher/chat`
-                  or  `events/agents/researcher/skill_runs`
-        max_bytes:       0 disables size-based rotation (skill_run mode)
+        max_bytes:       0 disables size-based rotation
         max_age_seconds: 0 disables age-based rotation
                          (date-boundary rotation also gated on this)
         suffix:          "" for chat, e.g. "_skill_router" for a run

@@ -7,7 +7,7 @@ don't require dataclass schema changes. This mirrors the `ChatMessage.meta`
 convention already used for history entries.
 
 Outbox is the **presentation stream**, distinct from history (durable log).
-- agent / skill_done → also persisted to history.jsonl by Session
+- agent → also persisted to history.jsonl by Session
 - status / error / trace / intervention → display-only, never in history
 - __end__ → control signal for _output_loop shutdown
 """

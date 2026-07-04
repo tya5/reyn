@@ -102,12 +102,10 @@ class ExpectedEvents:
 class ArtifactAssertion:
     """One workspace-artifact assertion.
 
-    skill: source skill name (= the spawning skill)
     type: artifact type name (= matches ``Artifact.type``)
     present: True/False — assert artifact exists / doesn't exist
     fingerprint: optional SHA256 hex of normalised content; pinned regression
     """
-    skill: str | None = None
     type: str | None = None
     present: bool = True
     fingerprint: str | None = None
@@ -259,7 +257,6 @@ def _parse_artifact_assertion(raw: Any, context: str) -> ArtifactAssertion:
     if not isinstance(raw, dict):
         raise ScenarioLoadError(f"{context}: artifact assertion must be a mapping")
     return ArtifactAssertion(
-        skill=raw.get("skill"),
         type=raw.get("type"),
         present=bool(raw.get("present", True)),
         fingerprint=raw.get("fingerprint"),

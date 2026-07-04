@@ -2,17 +2,14 @@
 
   ``resources._mime_for(artifact)``           — extension → Content-Type string
   ``resources._browser_headers(artifact, *)`` — hardened response header dict
-  ``runs._run_id_from_file(path)``            — path stem → run_id string
   ``budget._cap_detail(cap_cfg)``             — config object → BudgetCapDetail
 """
 from __future__ import annotations
 
-from pathlib import Path
 from types import SimpleNamespace
 
 from reyn.interfaces.web.routers.budget import BudgetCapDetail, _cap_detail
 from reyn.interfaces.web.routers.resources import _browser_headers, _mime_for
-from reyn.interfaces.web.routers.runs import _run_id_from_file
 
 # ---------------------------------------------------------------------------
 # _mime_for
@@ -81,29 +78,6 @@ def test_browser_headers_cors_present_on_download() -> None:
     """Tier 2: CORS header present even when download=True."""
     headers = _browser_headers("file.txt", download=True)
     assert headers["access-control-allow-origin"] == "*"
-
-
-# ---------------------------------------------------------------------------
-# _run_id_from_file
-# ---------------------------------------------------------------------------
-
-
-def test_run_id_from_file_standard_format() -> None:
-    """Tier 2: well-formed timestamp_slug stem returns the matched group."""
-    path = Path("/events/direct/skill_runs/2026/20260601T120000Z_my-skill.jsonl")
-    assert _run_id_from_file(path) == "20260601T120000Z_my-skill"
-
-
-def test_run_id_from_file_non_matching_returns_stem() -> None:
-    """Tier 2: stem not matching the timestamp pattern falls back to stem."""
-    path = Path("/events/direct/skill_runs/2026/plainname.jsonl")
-    assert _run_id_from_file(path) == "plainname"
-
-
-def test_run_id_from_file_longer_slug_extracted() -> None:
-    """Tier 2: longer run_id slug is extracted correctly."""
-    path = Path("/foo/20261231T235959Z_complex-skill-name.jsonl")
-    assert _run_id_from_file(path) == "20261231T235959Z_complex-skill-name"
 
 
 # ---------------------------------------------------------------------------
