@@ -32,7 +32,7 @@ from reyn.core.events.event_store import EventStore
 from reyn.core.events.events import EventLog
 from reyn.core.events.snapshot_generations import SnapshotGenerationStore
 from reyn.core.events.state_log import StateLog
-from reyn.core.pipeline.registry import PipelineRegistry
+from reyn.core.pipeline.registry import PipelineNotFoundError, PipelineRegistry
 from reyn.hooks.dispatcher import HOOK_INBOX_KIND
 from reyn.llm.model_resolver import ModelResolver
 from reyn.runtime.agent import Agent
@@ -1226,6 +1226,11 @@ class Session:
             # (cross-session); `current_session_id` keeps a self/unnamed push local.
             cross_session_put=self._cross_session_hook_put,
             current_session_id=self._session_id,
+            # #2608 H3: launch a registered pipeline from a hook's
+            # pipeline_launch action (async/detached start_pipeline_run) —
+            # the closure resolves against THIS session's own PipelineRegistry
+            # / AgentRegistry / StateLog / (agent, sid) identity.
+            launch_pipeline=self._launch_pipeline_from_hook,
             # #2285: per-session hook applicability gate — skip a hook this session disabled. A
             # callable (not a snapshot) so a toggle applies live to the next dispatch.
             is_hook_disabled=lambda hook: hook.name is not None and hook.name in self._disabled_hooks,
@@ -3708,6 +3713,63 @@ class Session:
         inbox). Byte-behavior-identical extraction of the prior inline pair."""
         self._next_turn_context.append({"kind": kind, "payload": payload})
         await self._journal.record_next_turn_context_staged(kind=kind, payload=payload)
+
+    async def _launch_pipeline_from_hook(self, name: str, input_data: "dict | None") -> None:
+        """#2608 H3: launch a registered Pipeline from a hook's
+        ``pipeline_launch`` action — the ``HookDispatcher``'s injected
+        ``launch_pipeline`` seam.
+
+        Async/detached (``start_pipeline_run``, same call the
+        ``run_pipeline_async`` tool verb makes): fire-and-continue — the
+        pipeline runs in its own recoverable driver-session, spawned under
+        THIS session's own (agent, sid) identity (permission-bounded ⊆ this
+        session's own capability), and the result arrives later on THIS
+        session's inbox as a ``pipeline_result`` message.
+
+        Fail-fast-but-non-crashing: a missing collaborator (no AgentRegistry /
+        no WAL) or an unregistered ``name`` logs a decision-enabling WARNING
+        naming exactly what's missing and returns — never raises. The
+        dispatcher's own per-hook ``try/except`` isolation is a second line of
+        defense; resolving the failure HERE (rather than letting
+        ``PipelineRegistry.get`` raise a bare ``PipelineNotFoundError`` up
+        through the dispatcher's generic catch) gives the operator a clearer,
+        more specific message.
+        """
+        if self._registry is None:
+            logger.warning(
+                "hook pipeline_launch %r: this session has no AgentRegistry — "
+                "cannot launch a pipeline from a hook. Skipping.", name,
+            )
+            return
+        if self._state_log is None:
+            logger.warning(
+                "hook pipeline_launch %r: this session has no WAL (state_log) "
+                "— an async pipeline launch requires persistence. Skipping.",
+                name,
+            )
+            return
+        try:
+            pipeline = self._pipeline_registry.get(name)
+            schema_registry = self._pipeline_registry.get_schema_registry(name)
+        except PipelineNotFoundError:
+            logger.warning(
+                "hook pipeline_launch: pipeline %r is not registered on this "
+                "session's PipelineRegistry — register it before referencing "
+                "it from a hook. Skipping launch.", name,
+            )
+            return
+
+        from reyn.runtime.session_api import start_pipeline_run
+        await start_pipeline_run(
+            self._registry,
+            pipeline=pipeline,
+            pipeline_name=name,
+            input=input_data,
+            reply_to_agent=self.agent_name,
+            reply_to_sid=self._session_id,
+            state_log=self._state_log,
+            schema_registry=schema_registry,
+        )
 
     async def _drain_to_wake(
         self,

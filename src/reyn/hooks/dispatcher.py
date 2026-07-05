@@ -13,13 +13,16 @@ No-hooks equivalence (the critical property): an empty registry makes
 ``dispatch()`` a no-op (the ``hooks_for`` loop body never runs), so the run-loop
 is byte-identical to a hooks-free build.
 
-The three Session seams the dispatcher needs are injected as bound callables
+The four Session seams the dispatcher needs are injected as bound callables
 (DI), so the dispatcher is decoupled from ``Session`` and unit-testable against a
 real Session's methods (no mocks):
 
 - ``put_inbox(kind, payload)``           — E (wake=true): a turn trigger.
 - ``stage_next_turn_context(kind, payload)`` — C (wake=false): a passive ride-along.
 - ``run_shell(command, event_context, **sandbox)`` — F: an external side-effect.
+- ``launch_pipeline(name, input)``       — #2608 H3: launch a registered
+  Pipeline (async/detached — the launched pipeline's result arrives later on
+  the session's own inbox as a ``pipeline_result`` message).
 """
 from __future__ import annotations
 
@@ -28,7 +31,7 @@ import logging
 from typing import Any, Awaitable, Callable
 
 from reyn.hooks.registry import HookRegistry
-from reyn.hooks.render import ResolvedPush, render_push
+from reyn.hooks.render import ResolvedPush, render_pipeline_input, render_push
 from reyn.hooks.schema import HookDef
 from reyn.hooks.shell_runner import run_shell_hook
 
@@ -45,6 +48,10 @@ HOOK_STAGE_KIND = "hook"
 PutInbox = Callable[[str, dict], Awaitable[Any]]
 StageContext = Callable[[str, dict], Awaitable[Any]]
 RunShell = Callable[..., Awaitable[Any]]
+# #2608 H3: launch a registered pipeline by name with a rendered input dict
+# (or None). Returns whatever the injected callable returns (unused by the
+# dispatcher — the launch is fire-and-continue).
+LaunchPipeline = Callable[[str, "dict | None"], Awaitable[Any]]
 
 
 class HookDispatcher:
@@ -57,6 +64,11 @@ class HookDispatcher:
         put_inbox: PutInbox,
         stage_next_turn_context: StageContext,
         run_shell: RunShell = run_shell_hook,
+        # #2608 H3: launch a registered pipeline (async/detached). None (the
+        # default — e.g. a unit test that never configures pipeline_launch) →
+        # a pipeline_launch hook logs a clear warning and is skipped, same
+        # per-hook-isolation posture as every other action.
+        launch_pipeline: "LaunchPipeline | None" = None,
         sandbox_config: Any = None,
         sandbox_backend: Any = None,
         consent_bus: Any = None,
@@ -83,6 +95,7 @@ class HookDispatcher:
         self._cross_session_put = cross_session_put
         self._current_session_id = current_session_id
         self._run_shell = run_shell
+        self._launch_pipeline = launch_pipeline
         self._sandbox_config = sandbox_config
         self._sandbox_backend = sandbox_backend
         # #2095 P3: P6-event sink for shell-hook executions, so an auto-run
@@ -140,7 +153,9 @@ class HookDispatcher:
 
     async def _dispatch_one(self, hook: HookDef, point: str, template_vars: dict) -> None:
         """Dispatch a single hook by scheme: template_push (C/E) / shell_exec (F)
-        / shell_push (run + parse stdout → the same C/E path as template_push)."""
+        / shell_push (run + parse stdout → the same C/E path as template_push)
+        / pipeline_launch (#2608 H3: render input_template, launch via the
+        injected ``launch_pipeline`` callable)."""
         if hook.template_push is not None:
             resolved = render_push(hook.template_push, template_vars)
             await self._push_resolved(resolved, hook, point)
@@ -178,6 +193,37 @@ class HookDispatcher:
             resolved = _parse_shell_push(stdout)
             if resolved is not None:
                 await self._push_resolved(resolved, hook, point)
+        elif hook.pipeline_launch is not None:
+            # pipeline_launch (#2608 H3) — render input_template against
+            # template_vars, then hand off to the injected launch_pipeline
+            # callable (async/detached — the result returns later on this
+            # session's own inbox as a pipeline_result message, same as the
+            # run_pipeline_async tool verb). Fail-safe on either failure mode:
+            # a render error (bad Jinja2 / non-JSON-object output) or no
+            # launch_pipeline callable injected both log a clear WARNING and
+            # skip the launch — never raise out of this branch (dispatch()'s
+            # per-hook isolation would catch it anyway, but a specific message
+            # here names exactly what went wrong).
+            try:
+                input_data = render_pipeline_input(
+                    hook.pipeline_launch.input_template, template_vars,
+                )
+            except Exception as exc:  # noqa: BLE001 — render failure must not crash; skip launch
+                _log.warning(
+                    "Hook pipeline_launch input_template render failed — launch "
+                    "skipped. hook=%r pipeline=%r error=%s: %s",
+                    hook.name, hook.pipeline_launch.name, type(exc).__name__, exc,
+                )
+                return
+            if self._launch_pipeline is None:
+                _log.warning(
+                    "Hook %r declares pipeline_launch (pipeline=%r) but this "
+                    "session's HookDispatcher has no launch_pipeline callable "
+                    "injected — launch skipped.",
+                    hook.name or point, hook.pipeline_launch.name,
+                )
+                return
+            await self._launch_pipeline(hook.pipeline_launch.name, input_data)
 
     async def _push_resolved(self, resolved, hook: HookDef, point: str) -> None:
         """Dispatch a resolved push directive via C/E (#1800 slice 5b/6) — shared

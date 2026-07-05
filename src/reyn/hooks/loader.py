@@ -4,8 +4,9 @@ Entry point: ``load_hooks(raw)`` — accepts the raw value of the ``hooks:``
 key from a reyn.yaml dict and returns a ``HookRegistry``.
 
 Validation is *structural only* (field presence, types, hook-point membership,
-the template_push / shell_exec / shell_push mutual-exclusion — exactly one).
-Template *semantics* are not validated here — rendering is a later slice.
+the template_push / shell_exec / shell_push / pipeline_launch mutual-exclusion
+— exactly one, #2608 H3 adds ``pipeline_launch``). Template *semantics* are
+not validated here — rendering is a later slice.
 
 Validation errors raise ``HookConfigError`` with a decision-enabling message
 that names the entry index and the failing field so the operator can fix the
@@ -20,6 +21,7 @@ from reyn.hooks.schema import (
     ALLOWED_HOOK_POINTS,
     HookConfigError,
     HookDef,
+    PipelineLaunchBlock,
     PushBlock,
 )
 
@@ -97,6 +99,45 @@ def _parse_push_block(raw: object, entry_index: int) -> PushBlock:
     )
 
 
+def _parse_pipeline_launch_block(raw: object, entry_index: int) -> PipelineLaunchBlock:
+    """Validate and convert the ``pipeline_launch:`` sub-dict to a
+    ``PipelineLaunchBlock`` (#2608 H3).
+
+    ``input_template`` is stored raw (a dict or a Jinja2 template string); no
+    rendering here — rendering happens at dispatch time against the hook's
+    ``template_vars`` (``reyn.hooks.render.render_pipeline_input``).
+    """
+    if not isinstance(raw, dict):
+        raise HookConfigError(
+            f"hooks[{entry_index}].pipeline_launch must be a mapping, "
+            f"got {type(raw).__name__!r}."
+        )
+
+    name = raw.get("name")
+    if name is None:
+        raise HookConfigError(
+            f"hooks[{entry_index}].pipeline_launch.name is required."
+        )
+    if not isinstance(name, str):
+        raise HookConfigError(
+            f"hooks[{entry_index}].pipeline_launch.name must be a string, "
+            f"got {type(name).__name__!r}."
+        )
+    if not name.strip():
+        raise HookConfigError(
+            f"hooks[{entry_index}].pipeline_launch.name must not be empty."
+        )
+
+    input_template = raw.get("input_template", None)
+    if input_template is not None and not isinstance(input_template, (dict, str)):
+        raise HookConfigError(
+            f"hooks[{entry_index}].pipeline_launch.input_template must be a "
+            f"mapping, string, or null, got {type(input_template).__name__!r}."
+        )
+
+    return PipelineLaunchBlock(name=name, input_template=input_template)
+
+
 def _parse_entry(raw: object, entry_index: int) -> HookDef:
     """Validate one raw hooks list entry and return a ``HookDef``."""
     if not isinstance(raw, dict):
@@ -129,17 +170,22 @@ def _parse_entry(raw: object, entry_index: int) -> HookDef:
             f"Allowed: {sorted_points}."
         )
 
-    # ── scheme: exactly one of template_push / shell_exec / shell_push (#2069) ─
-    present = [k for k in ("template_push", "shell_exec", "shell_push") if k in raw]
+    # ── scheme: exactly one of template_push / shell_exec / shell_push /
+    # pipeline_launch (#2069, #2608 H3) ─────────────────────────────────────
+    present = [
+        k for k in ("template_push", "shell_exec", "shell_push", "pipeline_launch")
+        if k in raw
+    ]
     if len(present) > 1:
         raise HookConfigError(
-            f"hooks[{entry_index}]: template_push / shell_exec / shell_push are "
-            f"mutually exclusive; specify exactly one (got {present})."
+            f"hooks[{entry_index}]: template_push / shell_exec / shell_push / "
+            f"pipeline_launch are mutually exclusive; specify exactly one "
+            f"(got {present})."
         )
     if not present:
         raise HookConfigError(
             f"hooks[{entry_index}]: exactly one of template_push / shell_exec / "
-            f"shell_push is required."
+            f"shell_push / pipeline_launch is required."
         )
 
     # ── template_push block ──────────────────────────────────────────────────
@@ -161,6 +207,11 @@ def _parse_entry(raw: object, entry_index: int) -> HookDef:
 
     shell_exec: str | None = _shell_cmd("shell_exec") if "shell_exec" in raw else None
     shell_push: str | None = _shell_cmd("shell_push") if "shell_push" in raw else None
+
+    # ── pipeline_launch block (#2608 H3) ──────────────────────────────────────
+    pipeline_launch: PipelineLaunchBlock | None = None
+    if "pipeline_launch" in raw:
+        pipeline_launch = _parse_pipeline_launch_block(raw["pipeline_launch"], entry_index)
 
     # ── matcher (optional, reserved) ───────────────────────────────────────
     matcher_raw = raw.get("matcher", None)
@@ -187,6 +238,7 @@ def _parse_entry(raw: object, entry_index: int) -> HookDef:
         template_push=template_push,
         shell_exec=shell_exec,
         shell_push=shell_push,
+        pipeline_launch=pipeline_launch,
         matcher=matcher,
     )
 

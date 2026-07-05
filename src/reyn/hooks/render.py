@@ -51,6 +51,7 @@ must **not** crash the agent.  On any exception in ``render_push``:
 """
 from __future__ import annotations
 
+import json
 import logging
 from dataclasses import dataclass
 
@@ -205,3 +206,69 @@ def _render_push_inner(push: PushBlock, context: dict) -> ResolvedPush:
         push_when=push_when,
         session=session,
     )
+
+
+# ---------------------------------------------------------------------------
+# pipeline_launch input rendering (#2608 H3)
+# ---------------------------------------------------------------------------
+
+
+def render_pipeline_input(input_template: "dict | str | None", context: dict) -> "dict | None":
+    """Render a hook's ``pipeline_launch.input_template`` against ``context``
+    into the ``input: dict`` a launched Pipeline receives (#2608 H3).
+
+    ``input_template`` shapes
+    --------------------------
+    - ``None``: no input — the launched pipeline gets ``input=None``.
+    - ``dict``: every STRING leaf (recursively, through nested dicts/lists) is
+      rendered as a Jinja2 template against ``context``; non-string leaves
+      (int/float/bool/None) pass through unchanged. The dict's STRUCTURE
+      (keys, nesting) is never templated — only leaf strings are.
+    - ``str``: the whole string is rendered as ONE Jinja2 template, and the
+      rendered text is parsed as JSON — the result must be a JSON object
+      (mirrors ``shell_push``'s stdout-is-a-JSON-object contract). Use this
+      form to build the input from a single templated JSON blob.
+
+    Rendering uses a ``SandboxedEnvironment`` with silent ``Undefined`` (an
+    undefined variable renders as the empty string) — an event payload
+    missing a referenced field yields an empty string in that slot rather
+    than crashing; this mirrors the ``wake``/``push_when``/``session`` fields
+    in ``render_push``, not ``message`` (which is intentionally strict).
+
+    Raises on a genuine failure (bad Jinja2 syntax, a ``str`` template that
+    does not render to valid JSON or a JSON object, or an unsupported
+    ``input_template`` type). Unlike ``render_push``, this function does NOT
+    swallow errors itself — a silently-empty pipeline input is a worse
+    failure mode than a loud skip, so the caller (the hook dispatcher) is
+    responsible for catching and skipping the launch.
+    """
+    if input_template is None:
+        return None
+    env = _make_env_silent()
+    if isinstance(input_template, str):
+        rendered = env.from_string(input_template).render(context)
+        obj = json.loads(rendered)
+        if not isinstance(obj, dict):
+            raise ValueError(
+                f"pipeline_launch.input_template rendered to a JSON "
+                f"{type(obj).__name__}, expected a JSON object: {rendered!r}"
+            )
+        return obj
+    if isinstance(input_template, dict):
+        return _render_template_leaves(input_template, env, context)
+    raise TypeError(
+        f"pipeline_launch.input_template must be a dict, string, or null, "
+        f"got {type(input_template).__name__!r}."
+    )
+
+
+def _render_template_leaves(value: object, env: SandboxedEnvironment, context: dict) -> object:
+    """Recursively render every STRING leaf of ``value`` (through nested dicts
+    and lists) as a Jinja2 template; non-string leaves pass through unchanged."""
+    if isinstance(value, str):
+        return env.from_string(value).render(context)
+    if isinstance(value, dict):
+        return {k: _render_template_leaves(v, env, context) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_render_template_leaves(v, env, context) for v in value]
+    return value

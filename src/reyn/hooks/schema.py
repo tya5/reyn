@@ -21,6 +21,19 @@ from the MCP receive-loop task via a bounded queue drained on the session's
 event loop. ``HookDef.matcher`` stays reserved/uninterpreted for this
 point in H1 (scoping is via which resources the user subscribed to) — a
 later slice (H2) may add matcher filtering.
+
+#2608 H3 adds the 4th action, ``pipeline_launch`` — a hook can launch a
+REGISTERED Pipeline (``reyn.core.pipeline.registry.PipelineRegistry.get``)
+with an ``input`` built from the event payload (``PipelineLaunchBlock.
+input_template``, Jinja2-rendered over the hook's ``template_vars`` — see
+``reyn.hooks.render.render_pipeline_input``). Works from ANY hook-point
+(the six lifecycle points and ``mcp_resource_updated``) since it dispatches
+through the same ``HookDispatcher._dispatch_one`` scheme-branch as the other
+three actions. Launch is ASYNC/detached (``reyn.runtime.session_api.
+start_pipeline_run`` — the same call the ``run_pipeline_async`` tool verb
+makes): the hook fires-and-continues, the pipeline runs in its own
+recoverable driver-session, and the result arrives later on the hook's own
+session inbox as a ``pipeline_result`` message.
 """
 from __future__ import annotations
 
@@ -96,6 +109,37 @@ class PushBlock:
 
 
 # ---------------------------------------------------------------------------
+# PipelineLaunchBlock — launch-a-registered-pipeline sub-schema (#2608 H3)
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class PipelineLaunchBlock:
+    """Launch-a-registered-pipeline directive for a hook definition (#2608 H3).
+
+    Fields
+    ------
+    name:
+        The pipeline's registered name — resolved via
+        ``PipelineRegistry.get(name)`` at dispatch time.  Required.
+    input_template:
+        Optional input for the launched pipeline, Jinja2-rendered against the
+        hook's ``template_vars`` (see ``reyn.hooks.render.render_pipeline_input``
+        for the exact rendering contract):
+
+        - a ``dict``: every STRING leaf (recursively, through nested dicts/
+          lists) is rendered as a Jinja2 template; the dict's structure and
+          non-string leaves pass through unchanged.
+        - a ``str``: rendered as ONE Jinja2 template whose output is parsed as
+          a JSON object (mirrors the ``shell_push`` stdout-is-JSON contract).
+        - ``None`` (default): the pipeline launches with ``input=None``.
+    """
+
+    name: str
+    input_template: "dict | str | None" = None
+
+
+# ---------------------------------------------------------------------------
 # HookDef — the top-level hook entry
 # ---------------------------------------------------------------------------
 
@@ -104,10 +148,11 @@ class PushBlock:
 class HookDef:
     """A single lifecycle hook definition.
 
-    Exactly one of ``template_push`` / ``shell_exec`` / ``shell_push`` must be set
-    (validated by the loader, not by the dataclass itself — the dataclass is a
-    plain data container). The three consistent ``<source>_<action>`` keywords
-    (#2069 converged design):
+    Exactly one of ``template_push`` / ``shell_exec`` / ``shell_push`` /
+    ``pipeline_launch`` must be set (validated by the loader, not by the
+    dataclass itself — the dataclass is a plain data container). The
+    consistent ``<source>_<action>`` keywords (#2069 converged design;
+    #2608 H3 adds ``pipeline_launch``):
 
     Fields
     ------
@@ -120,15 +165,21 @@ class HookDef:
     template_push:
         Declarative inbox-push block from config Jinja2 templates (C/E). The
         push directive is computed from the template against event/context.
-        Mutually exclusive with ``shell_exec`` / ``shell_push``.
+        Mutually exclusive with the other actions.
     shell_exec:
         Shell command run as a pure side-effect — **output IGNORED**. Mutually
-        exclusive with ``template_push`` / ``shell_push``.
+        exclusive with the other actions.
     shell_push:
         Shell command whose **stdout is a JSON push-directive**
         (``{push_when, wake, message, session?}``, #2069) → pushed via the same
         C/E dispatch path as ``template_push``. Mutually exclusive with the
-        other two.
+        other actions.
+    pipeline_launch:
+        Launch a registered Pipeline (#2608 H3) with an input built from the
+        event payload — see ``PipelineLaunchBlock``. Async/detached (the
+        launched pipeline runs in its own driver-session; the result arrives
+        later on this session's inbox as a ``pipeline_result`` message).
+        Mutually exclusive with the other actions.
     matcher:
         Reserved optional filter string.  Not interpreted in this slice.
     """
@@ -138,4 +189,5 @@ class HookDef:
     template_push: PushBlock | None = field(default=None)
     shell_exec: str | None = field(default=None)
     shell_push: str | None = field(default=None)
+    pipeline_launch: PipelineLaunchBlock | None = field(default=None)
     matcher: str | None = field(default=None)
