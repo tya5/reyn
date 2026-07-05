@@ -42,9 +42,15 @@ because no registry ever reached the executor):
 - IS-6 attached run: the driver threads THIS session's ``EventLog`` as the
   executor's ``events`` sink (``pipeline_step_started`` / ``_completed`` per
   step — the emit half of the seam an attached caller / the TUI subscribes to)
-  and its own ``is_cancel_requested`` as the executor's ``cancel_check``. A
-  Ctrl-C reaching ``Session.cancel_inflight`` → ``request_cancel`` is observed
-  at the next step boundary, raising ``PipelineCancelled``: the driver writes a
+  and its own ``is_cancel_requested`` as the executor's ``cancel_check``, polled
+  at each step boundary. #2588: a Ctrl-C hits ``cancel_inflight`` on the
+  ATTACHED CALLER session (a DIFFERENT session than this driver-session), which
+  by itself cancels only the caller's own turn-driver. ``run_pipeline_attached``
+  bridges the gap: for the duration of the attached pump it registers THIS
+  driver's ``request_cancel`` as a cancel-forward on the caller session (via
+  ``Session.register_cancel_forward``), so the caller's ``cancel_inflight`` also
+  flips this driver's ``_cancel_requested``. The executor then observes it at
+  the next step boundary and raises ``PipelineCancelled``: the driver writes a
   TERMINAL ``cancelled`` marker (so the recovery scan never resurrects an
   intentionally-cancelled run) while LEAVING the R4 generation snapshots on
   disk (abort-now, resume-later — R6). Cancel only reaches a sync/attached run
@@ -254,9 +260,12 @@ class PipelineExecutorDriver:
         return self._cancel_requested
 
     def request_cancel(self) -> None:
-        """Record a cancel request (``Session.cancel_inflight`` → here on Ctrl-C).
-        The executor observes it at the next step boundary via
-        ``is_cancel_requested`` and raises ``PipelineCancelled``."""
+        """Record a cancel request. #2588: reached from the ATTACHED CALLER
+        session's ``cancel_inflight`` — ``run_pipeline_attached`` registers this
+        method as a cancel-forward on that caller session for the attached run's
+        duration, so a Ctrl-C on the caller flips THIS driver-session's flag. The
+        executor observes it at the next step boundary via ``is_cancel_requested``
+        and raises ``PipelineCancelled``."""
         self._cancel_requested = True
 
     async def _check_cap(self, user_text: str) -> None:

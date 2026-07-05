@@ -421,6 +421,101 @@ async def test_driver_cancel_writes_terminal_marker_recovery_skips(
     assert out_file.read_text(encoding="utf-8").splitlines() == ["s0", "s1", "s2"]
 
 
+# ── §3b: the ATTACHED CALLER's Ctrl-C reaches the driver (#2588) ─────────────
+
+
+@pytest.mark.asyncio
+async def test_attached_caller_cancel_inflight_stops_pipeline_at_boundary(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    """Tier 2: #2588 — a Ctrl-C on the ATTACHED CALLER session drives the cancel
+    through the CALLER's public ``cancel_inflight`` seam (NOT a direct
+    ``driver.request_cancel``), and it must reach the spawned driver-session so
+    the pipeline STOPS at the next step boundary: step 1 (index 1) never runs and
+    the caller collects ``status="cancelled"`` inline. This is the end-to-end
+    caller→driver bridge IS-6 lacked. RED against pre-#2588 main — there the
+    caller's ``cancel_inflight`` only cancelled the caller's OWN turn-driver, the
+    driver-session never saw it, both steps ran, and the result was ``ok``.
+
+    A real gate (``asyncio.Event``) makes step 0 an AWAITING step so a concurrent
+    task can fire the caller cancel WHILE step 0 is in flight and the event loop
+    is free — the same shape a human Ctrl-C takes against a running pipeline. No
+    mock: real Session/AgentRegistry/StateLog/MessageBus/PipelineExecutor and a
+    real gated tool; the cancel is driven only through ``Session.cancel_inflight``.
+    """
+    state_log = StateLog(tmp_path / ".reyn" / "wal.jsonl")
+    out_file = tmp_path / "out.txt"
+
+    step0_running = asyncio.Event()
+    release_step0 = asyncio.Event()
+
+    import reyn.tools as tools_pkg
+    from reyn.tools.types import ToolDefinition, ToolGates
+
+    async def _handler(args, ctx):
+        tag = str(args.get("tag", "x"))
+        p = Path(out_file)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        with p.open("a", encoding="utf-8") as f:
+            f.write(tag + "\n")
+        if tag == "s0":  # gate step 0 so the loop is free for a concurrent cancel
+            step0_running.set()
+            await release_step0.wait()
+        return {"tag": tag}
+
+    tool = ToolDefinition(
+        name="is6_step",
+        description="#2588 test: a gated step tool (real side effect + await gate).",
+        parameters={"type": "object", "properties": {}},
+        gates=ToolGates(router="allow", phase="allow"),
+        handler=_handler, category="io", purity="side_effect",
+    )
+    base = tools_pkg.get_default_registry
+
+    def _with_tool():
+        registry = base()
+        registry.register(tool)
+        return registry
+
+    monkeypatch.setattr(tools_pkg, "get_default_registry", _with_tool)
+
+    reg = _agent_registry(tmp_path, state_log, None)
+    caller = reg.get_or_load("worker")  # (worker, main) — the reply/caller address
+
+    run_task = asyncio.ensure_future(run_pipeline_attached(
+        reg,
+        pipeline=_steps(2),
+        pipeline_name="p",
+        input=None,
+        reply_to_agent="worker",
+        reply_to_sid="main",
+        state_log=state_log,
+    ))
+    try:
+        # Wait until step 0 is really in flight (started + awaiting the gate).
+        assert await _wait_for(step0_running.is_set)
+        # THE BUG UNDER TEST: cancel via the CALLER session's public seam — the
+        # SAME instance run_pipeline_attached resolves as the reply address. Not
+        # a direct driver.request_cancel.
+        assert caller is reg.get_session("worker", "main")  # same live instance
+        await caller.cancel_inflight()
+        # Release step 0 → the executor reaches the step-1 boundary and observes
+        # the now-forwarded cancel.
+        release_step0.set()
+        outcome = await run_task
+    finally:
+        release_step0.set()  # never wedge the loop if an assertion above fired
+
+    assert outcome["status"] == "cancelled"
+    # Step 1 (index 1) never executed — only step 0's line is present.
+    await state_log.flush()
+    assert out_file.read_text(encoding="utf-8").splitlines() == ["s0"]
+    # Terminal cancelled marker on disk (so recovery won't resurrect it).
+    run_dir = pipeline_run_dir(tmp_path / ".reyn", outcome["run_id"])
+    marker = _result_json(run_dir)
+    assert marker is not None and marker["status"] == "cancelled"
+
+
 # ── §4: crash while attached → recovery re-wakes + delivers via inbox ────────
 
 

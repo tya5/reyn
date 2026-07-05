@@ -393,6 +393,21 @@ async def run_pipeline_attached(
     ``notify_reply=True`` → the result then degrades to async inbox delivery to
     this same caller. One reply address serves both paths; no new plumbing.
 
+    **Cancel bridge (#2588)**: because the caller drives the driver-session inline
+    via ``MessageBus.request`` (which is cancel-agnostic — it only pumps to
+    quiescence), a Ctrl-C reaching ``cancel_inflight`` on the CALLER session would
+    otherwise only cancel the caller's own turn-driver, never the spawned
+    driver-session's ``PipelineExecutorDriver`` whose ``cancel_check`` the
+    executor polls at each step boundary. Since the reply address IS the caller's
+    own (agent, sid), it resolves (via ``registry.get_session``) to the SAME live
+    Session instance whose ``cancel_inflight`` the Ctrl-C fires; this registers
+    the driver's ``request_cancel`` as a cancel-forward on that caller session for
+    the DURATION of the attached pump (unregistered in a ``finally`` so it never
+    leaks past the run). A Ctrl-C then stops the pipeline at the next step
+    boundary with a terminal ``cancelled`` marker, which ``read_result`` below
+    returns to the caller as ``status="cancelled"``. Best-effort: an unresolvable
+    caller session (should not happen on the attached path) skips the bridge.
+
     **TUI bridge marker (#2570)**: the driver-session's ``pipeline_step_*``
     events land on the DRIVER's own ``EventLog`` — a session distinct from the
     human-attached caller, which the TUI has no signal to bridge-subscribe to.
@@ -448,14 +463,40 @@ async def run_pipeline_attached(
         )
     run_dir = pipeline_run_dir(reyn_root(state_log.path), rid)
 
+    # #2588: bridge the attached caller's Ctrl-C to the DRIVER-session. The
+    # caller drives the driver-session inline via ``MessageBus.request`` below,
+    # but a Ctrl-C reaches ``Session.cancel_inflight`` on the CALLER session and
+    # (pre-fix) only cancelled the caller's OWN RouterLoopDriver — never the
+    # spawned driver-session's ``PipelineExecutorDriver`` whose ``cancel_check``
+    # the executor polls at each step boundary. The reply address is the caller's
+    # own (agent, sid) by construction (see this function's contract), so it
+    # resolves to the SAME live Session instance whose ``cancel_inflight`` the
+    # human Ctrl-C fires. Register the driver's ``request_cancel`` as a
+    # cancel-forward for the DURATION of the attached pump, unregistered in
+    # ``finally`` so it never leaks past the run. Best-effort: if the caller
+    # session is not resolvable (should not happen on the attached path — the
+    # caller is live), skip the bridge (degrades to the pre-fix behavior, never
+    # blocks the run).
+    driver = getattr(session, "_loop_driver", None)
+    caller_session = registry.get_session(reply_to_agent, reply_to_sid)
+    unregister_cancel: "Any | None" = None
+    if caller_session is not None and driver is not None:
+        register = getattr(caller_session, "register_cancel_forward", None)
+        if callable(register):
+            unregister_cancel = register(driver.request_cancel)
+
     bus = MessageBus()
-    await bus.request(
-        session,
-        kind="user",
-        payload={"text": "", "chain_id": uuid.uuid4().hex},  # the D案 run nudge
-        reply_to=SystemRef(),
-        timeout=timeout if timeout is not None else _DEFAULT_AGENT_STEP_TIMEOUT_S,
-    )
+    try:
+        await bus.request(
+            session,
+            kind="user",
+            payload={"text": "", "chain_id": uuid.uuid4().hex},  # the D案 run nudge
+            reply_to=SystemRef(),
+            timeout=timeout if timeout is not None else _DEFAULT_AGENT_STEP_TIMEOUT_S,
+        )
+    finally:
+        if unregister_cancel is not None:
+            unregister_cancel()
 
     marker = read_result(run_dir)
     if marker is not None:
