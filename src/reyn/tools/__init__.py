@@ -67,6 +67,8 @@ def get_default_registry() -> ToolRegistry:
     from reyn.tools.mcp import (
         CALL_MCP_TOOL,
         DESCRIBE_MCP_TOOL,
+        GET_MCP_PROMPT,
+        LIST_MCP_PROMPTS,
         LIST_MCP_RESOURCE_TEMPLATES,
         LIST_MCP_RESOURCES,
         LIST_MCP_SERVERS,
@@ -162,6 +164,9 @@ def get_default_registry() -> ToolRegistry:
     # #2597 slice ②b: resource subscriptions.
     registry.register(SUBSCRIBE_MCP_RESOURCE)
     registry.register(UNSUBSCRIBE_MCP_RESOURCE)
+    # #2597 slice ②c: prompts consumption (list/get).
+    registry.register(LIST_MCP_PROMPTS)
+    registry.register(GET_MCP_PROMPT)
     # Memory ops (Wave 2 — Type C closure: memory write phase-side)
     registry.register(LIST_MEMORY)
     registry.register(READ_MEMORY_BODY)

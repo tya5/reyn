@@ -26,6 +26,7 @@ Control IR is the list of side-effect operations the LLM may emit alongside its 
 | `mcp_read_resource` | Read one resource (or a resolved resource-template URI) on a configured MCP server | `permissions.mcp: [server_name]` in skill frontmatter (same axis as `mcp`) |
 | `mcp_subscribe_resource` | Subscribe to server-pushed `resources/updated` notifications for one resource URI (requires a persistent connection — see below) | `permissions.mcp: [server_name]` in skill frontmatter (same axis as `mcp`) |
 | `mcp_unsubscribe_resource` | Cancel a previous `mcp_subscribe_resource` | `permissions.mcp: [server_name]` in skill frontmatter (same axis as `mcp`) |
+| `mcp_get_prompt` | Fetch one rendered prompt (messages) by name from a configured MCP server | `permissions.mcp: [server_name]` in skill frontmatter (same axis as `mcp`) |
 | `mcp_install` | Install an MCP server from the registry into the project config | `permissions.mcp_install: true` in skill frontmatter |
 | `mcp_drop_server` | Remove an MCP server from project/local/user config (inverse of `mcp_install`) | `permissions.mcp_drop_server: true` in skill frontmatter |
 | `skill_install` | Register a skill (local dir or git/URL source) into the project skills config | `file.write: [.reyn/config/skills.yaml]` in skill frontmatter; `http.get: [{host: <source_host>}]` when `source` is set |
@@ -283,6 +284,32 @@ Gated by the **same** `permissions.mcp` axis as `mcp` / `mcp_read_resource` (sub
 **The push notification itself is an EventLog event, not a `control_ir_results` value.** When the server sends `notifications/resources/updated {uri}`, `reyn.mcp.message_handler.ReynMCPMessageHandler.on_resource_updated` emits an `mcp_resource_updated` event (`server`, `uri`) onto the session's `EventLog` — asynchronously, independent of any op call. This slice deliberately stops at the EventLog: wiring `mcp_resource_updated` into the hook dispatcher is a later (hooks-arc) slice. Re-reading subscribed resources on reconnect to catch updates missed while disconnected (a resync-READ, distinct from the re-**subscribe** above) is also a follow-up, not this slice.
 
 Advertised to the LLM under the chat-tool names `subscribe_mcp_resource` / `unsubscribe_mcp_resource` — same alias pattern as `mcp`/`call_mcp_tool`.
+
+## `mcp_get_prompt`
+
+Fetches one rendered prompt (its messages) from a configured MCP server. #2597 slice ②c (prompts consumption) — gated by the **same** `permissions.mcp` axis as `mcp` (call_tool) / `mcp_read_resource`: a rendered prompt returns external, potentially sensitive server-authored content, so it is permission-gated identically.
+
+```json
+{
+  "kind": "mcp_get_prompt",
+  "server": "filesystem",
+  "name": "summarize",
+  "arguments": {"style": "brief"}
+}
+```
+
+Fields: `server` (required — must match a key under `mcp.servers:` in `reyn.yaml`), `name` (required — prompt name as advertised by the server's `prompts/list` response), `arguments` (optional, default `{}` — rendering arguments matching the prompt's declared `arguments` schema).
+
+> **Advertised name.** Phases advertise this op to the LLM under the chat-tool
+> name `get_mcp_prompt`; the OS aliases it back to the `mcp_get_prompt` kind
+> at the parse boundary — same pattern as `mcp`/`call_mcp_tool` and
+> `mcp_read_resource`/`read_mcp_resource`.
+
+The OS resolves the server's transport, dispatches via `MCPClient.get_prompt` (gated on the server's negotiated `prompts` capability — see `require_capability` in `mcp/client.py`), and returns `{"description": str | None, "messages": [...]}` — each message a flattened `PromptMessage` (`role` + `content`). Every call emits `mcp_prompt_get`, `mcp_prompt_get_completed`, and (on failure) `mcp_prompt_get_failed` events.
+
+**Discovery is NOT gated.** `list_mcp_prompts` (the chat-tool name for `MCPClient.list_prompts`) mirrors `list_mcp_resources`/`list_mcp_tools`: no `control-ir` op kind, no permission gate — pure discovery, routed directly through `MCPGateway` from the router host adapter. Only the content-returning get is a gated op kind, matching the existing `mcp`/`mcp_read_resource` vs. discovery split.
+
+**Prompts have no subscribe concept.** Unlike resources (`mcp_subscribe_resource`/`mcp_unsubscribe_resource`), MCP's `prompts` capability has no server-push notification for a specific prompt's content changing — only the coarser `notifications/prompts/list_changed` (bridged to an EventLog event by `reyn.mcp.message_handler.ReynMCPMessageHandler.on_prompt_list_changed`, independent of this op kind). There is no `mcp_subscribe_prompt` to build.
 
 ## `mcp_install`
 

@@ -110,6 +110,9 @@ from . import index_query as _index_query  # noqa: F401, E402
 from . import judge_output as _judge_output  # noqa: F401, E402
 from . import mcp as _mcp  # noqa: F401, E402
 from . import mcp_drop_server as _mcp_drop_server  # noqa: F401, E402
+
+# #2597 slice ②c: mcp_get_prompt — permission-gated prompt fetch (mirrors mcp_read_resource.py).
+from . import mcp_get_prompt as _mcp_get_prompt  # noqa: F401, E402
 from . import mcp_install as _mcp_install  # noqa: F401, E402
 
 # #2597 slice ②a: mcp_read_resource — permission-gated resource read (mirrors mcp.py).

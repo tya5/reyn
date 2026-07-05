@@ -1539,6 +1539,9 @@ class Session:
             # #2597 slice ②b: resource subscriptions.
             mcp_subscribe_resource=self._mcp_subscribe_resource,
             mcp_unsubscribe_resource=self._mcp_unsubscribe_resource,
+            # #2597 slice ②c: prompts consumption (list/get).
+            mcp_list_prompts=self._mcp_list_prompts,
+            mcp_get_prompt=self._mcp_get_prompt,
             send_to_agent=self._send_to_agent,
             put_outbox=self._put_outbox,
             append_history=self._append_history,
@@ -5668,6 +5671,79 @@ class Session:
         )
         ctx.mcp_connection_service = self._mcp_connection_service
         return await execute_op(op, ctx)
+
+    async def _mcp_list_prompts(self, server: str) -> list[dict]:
+        """Query the MCP server for its prompts list.
+
+        #2597 slice ②c: mirrors ``_mcp_list_resources`` exactly — discovery-only,
+        NOT permission-gated (no op-kind), routed through the same
+        ``MCPGateway`` seam (held connection service on a non-ephemeral
+        session, one-shot pool otherwise). Emits ``mcp_prompts_listed`` for
+        observability, same rationale as ``mcp_resources_listed``.
+        """
+        from reyn.mcp.client import expand_env
+        from reyn.mcp.gateway import MCPFault, MCPGateway
+
+        servers = self._mcp_servers_flat()
+        if not servers:
+            return [{"error": "no MCP servers configured"}]
+        server_cfg = servers.get(server)
+        if not server_cfg:
+            return [{"error": f"MCP server {server!r} not configured"}]
+
+        expanded = expand_env(server_cfg)
+        if not isinstance(expanded, dict):
+            return [{"error": f"MCP server {server!r} config must be a dict"}]
+        if "type" not in expanded and expanded.get("url"):
+            expanded = {**expanded, "type": "http"}
+
+        gateway = (
+            MCPGateway(pool=self._mcp_connection_service, agent_id=self._agent_id)
+            if not self._ephemeral
+            else MCPGateway(agent_id=self._agent_id)
+        )
+        try:
+            prompts = await gateway.list_prompts(server, expanded)
+        except MCPFault as exc:
+            return [{"error": str(exc)}]
+        self._chat_events.emit(
+            "mcp_prompts_listed", server=server, count=len(prompts),
+        )
+        return prompts
+
+    async def _mcp_get_prompt(self, server: str, name: str, arguments: "dict | None" = None) -> dict:
+        """Fetch one rendered MCP prompt by name and return its messages.
+
+        #2597 slice ②c: mirrors ``_mcp_read_resource`` exactly — permission-gated
+        (``require_mcp``, same server-scoped axis a tool call / resource read
+        uses) + routed through ``execute_op`` on the ``mcp_get_prompt`` op kind,
+        so the SAME connection-service-vs-per-call-pool split ``_mcp_call_tool``
+        documents applies here too.
+        """
+        from reyn.core.op_runtime import execute_op
+        from reyn.schemas.models import MCPGetPromptIROp
+        from reyn.security.permissions.permissions import PermissionDecl
+
+        op = MCPGetPromptIROp(
+            kind="mcp_get_prompt", server=server, name=name, arguments=dict(arguments or {}),
+        )
+        ctx = self._make_router_op_context()
+        ctx.intervention_bus = ChatInterventionBus(
+            self, run_id=None, actor="chat_router",
+            channel_id=DEFAULT_CHAT_CHANNEL_ID,
+        )
+        ctx.permission_decl = PermissionDecl(
+            file_read=ctx.permission_decl.file_read,
+            file_write=ctx.permission_decl.file_write,
+            mcp=[server],
+        )
+        if not self._ephemeral:
+            ctx.mcp_connection_service = self._mcp_connection_service
+            return await execute_op(op, ctx)
+        from reyn.mcp.pool import MCPClientPool
+        async with MCPClientPool() as pool:
+            ctx.mcp_pool = pool
+            return await execute_op(op, ctx)
 
     async def _mcp_call_tool(self, server: str, tool: str, args: dict) -> dict:
         """Invoke an MCP tool and return its result.

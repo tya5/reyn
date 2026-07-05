@@ -345,6 +345,7 @@ The op kinds below mirror `OP_KIND_MODEL_MAP` in `op_runtime/registry.py`.
 | `mcp` | Call a configured MCP server tool by name |
 | `mcp_read_resource` | Read one MCP resource by URI (permission-gated, same axis as `mcp`) |
 | `mcp_subscribe_resource` / `mcp_unsubscribe_resource` | Subscribe/unsubscribe to server-pushed `resources/updated` for one URI (requires a persistent connection; push lands as an `mcp_resource_updated` event) |
+| `mcp_get_prompt` | Fetch one rendered MCP prompt's messages by name (permission-gated, same axis as `mcp`) |
 | `mcp_install` | Install / register an MCP server (registry / package / local source) |
 | `index_query` | Vector similarity search over one indexed source |
 | `recall` | Macro: embed query → `index_query` per source → merge top-K |
@@ -532,6 +533,7 @@ logic. Design: [content-threat scan proposal](deep-dives/proposals/0050-content-
 | Tool dispatch | Lazy-load and cache `MCPClient` per server connection | [Concepts: MCP](concepts/tools-integrations/mcp.md) |
 | Resources consumption | List/read MCP resources + resource templates (`list_mcp_resources` / `read_mcp_resource` / `list_mcp_resource_templates`), gated by the negotiated `resources` capability | [Concepts: MCP](concepts/tools-integrations/mcp.md) · [Control IR: `mcp_read_resource`](reference/runtime/control-ir.md) |
 | Resource subscriptions | Subscribe/unsubscribe to server-pushed `resources/updated` (`subscribe_mcp_resource` / `unsubscribe_mcp_resource`), gated by the negotiated `resources.subscribe` sub-capability; runtime-only subscribed-URI set survives a transport-death reconnect (re-subscribed); push lands as an `mcp_resource_updated` EventLog event | [Concepts: MCP](concepts/tools-integrations/mcp.md) · [Control IR: `mcp_subscribe_resource`](reference/runtime/control-ir.md) |
+| Prompts consumption | List/get MCP prompts (`list_mcp_prompts` / `get_mcp_prompt`), gated by the negotiated `prompts` capability; no subscribe concept | [Concepts: MCP](concepts/tools-integrations/mcp.md) · [Control IR: `mcp_get_prompt`](reference/runtime/control-ir.md) |
 
 > **Differentiation vs general agents:** Reyn is both an MCP client (consumes external servers) and an MCP server (exposes its own agents) — standard-protocol interop in both directions, with stdio MCP servers subprocess-sandboxed under Seatbelt.
 

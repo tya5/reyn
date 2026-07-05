@@ -729,6 +729,13 @@ class RouterLoopHost(RouterLoopCore, Protocol):
 
     async def mcp_unsubscribe_resource(self, server: str, uri: str) -> dict: ...
 
+    # #2597 slice ②c: prompts consumption (list / get). Prompts have no
+    # subscribe concept.
+    async def mcp_list_prompts(self, server: str) -> list[dict]: ...
+
+    async def mcp_get_prompt(self, server: str, name: str,
+                              arguments: dict | None = None) -> dict: ...
+
     # OpContext factory for unified-registry handlers (ADR-0026 Phase 3.5).
     # Builds a permission-aware OpContext with the operator-declared
     # PermissionDecl + Workspace(actor="chat_router") + mcp_servers,
@@ -2959,7 +2966,7 @@ class RouterLoop:
                             and set(r) <= {"status", "data", "error"})
             _inner = r["data"] if _is_envelope else r
             _media_store = getattr(host, "media_store", None)
-            if (isinstance(_inner, dict) and _inner.get("kind") in ("mcp", "mcp_read_resource")
+            if (isinstance(_inner, dict) and _inner.get("kind") in ("mcp", "mcp_read_resource", "mcp_get_prompt")
                     and _media_store is not None):
                 # #2425 案B: an MCP tool result normalises to a canonical shape so ``text`` (the joined
                 # content) is the SOLE offload payload and ``structured``/media are attachments held OUT
@@ -2974,6 +2981,10 @@ class RouterLoop:
                 # ``contents`` can carry a large ``blob`` alongside joined ``text``, the identical
                 # second-oversized-field risk a tool's ``structuredContent`` posed (see
                 # ``_mcp_read_resource_to_canonical``).
+                # #2597 slice ②c: ``mcp_get_prompt`` reuses the SAME canonical path — a rendered
+                # prompt's ``messages`` can carry a large non-text content block alongside joined
+                # ``text``, the identical second-oversized-field risk (see
+                # ``_mcp_get_prompt_to_canonical``).
                 from reyn.core.offload.canonical import to_canonical
                 from reyn.core.offload.seam import build_offload_body
                 _body, _mcp_media = build_offload_body(

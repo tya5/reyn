@@ -27,6 +27,9 @@ _EXTERNAL = {
     # #2597 slice ②a: resources consumption — same fencing rationale as the tools
     # surface above (external server-authored listing / content).
     "list_mcp_resources", "list_mcp_resource_templates", "read_mcp_resource",
+    # #2597 slice ②c: prompts consumption — same fencing rationale as the
+    # resources surface above (external server-authored listing / content).
+    "list_mcp_prompts", "get_mcp_prompt",
     "web_search", "web_fetch",           # internet
 }
 

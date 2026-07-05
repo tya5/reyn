@@ -35,13 +35,20 @@ event-source itself — the resulting notification lands as an
                                the server)
   UNSUBSCRIBE_MCP_RESOURCE  — gates.router=allow
 
+#2597 slice ②c adds TWO more, parallel to the ②a resources set (prompts
+have no subscribe concept, so no ②b-style pair here):
+
+  LIST_MCP_PROMPTS  — gates.router=allow (mirrors LIST_MCP_RESOURCES)
+  GET_MCP_PROMPT    — gates.router=allow (mirrors READ_MCP_RESOURCE's
+                       external-content + permission-gated shape)
+
 ## Router-side dispatch
 
 The router-side handlers are thin adapters over the existing session-level
 callbacks (mcp_list_servers / mcp_list_tools / mcp_call_tool / #2597
-mcp_list_resources / mcp_list_resource_templates / mcp_read_resource). The
-ToolContext router_state carries the host adapter; adapters pull from
-ctx.router_state.
+mcp_list_resources / mcp_list_resource_templates / mcp_read_resource /
+mcp_list_prompts / mcp_get_prompt). The ToolContext router_state carries the
+host adapter; adapters pull from ctx.router_state.
 
 ## DO NOT TOUCH shared files
 
@@ -254,6 +261,53 @@ _UNSUBSCRIBE_MCP_RESOURCE_PARAMETERS: dict[str, Any] = {
 }
 
 
+# ── #2597 slice ②c: prompts consumption parameters ────────────────────────────
+
+_LIST_MCP_PROMPTS_DESCRIPTION = (
+    "List prompts exposed by one MCP server "
+    "(with name + description + arguments per prompt)."
+)
+
+_LIST_MCP_PROMPTS_PARAMETERS: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "server": {
+            "type": "string",
+            "description": "MCP server name — choose from the enum (verbatim).",
+        },
+    },
+    "required": ["server"],
+}
+
+_GET_MCP_PROMPT_DESCRIPTION = (
+    "Fetch one rendered MCP prompt's messages by name. Get the name (and its "
+    "argument schema) from list_mcp_prompts."
+)
+
+_GET_MCP_PROMPT_PARAMETERS: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "server": {
+            "type": "string",
+            "description": "MCP server name — choose from the enum (verbatim).",
+        },
+        "name": {
+            "type": "string",
+            "description": "Prompt name, verbatim from list_mcp_prompts.",
+        },
+        "arguments": {
+            "type": "object",
+            "description": (
+                "Arguments to render the prompt with, matching the shape "
+                "from list_mcp_prompts' arguments field. Optional — omit "
+                "for a prompt that takes none."
+            ),
+        },
+    },
+    "required": ["server", "name"],
+}
+
+
 # ── Handlers ──────────────────────────────────────────────────────────────────
 
 async def _handle_list_mcp_servers(
@@ -395,6 +449,40 @@ async def _handle_unsubscribe_mcp_resource(
     server = str(args["server"])
     uri = str(args["uri"])
     return await host.mcp_unsubscribe_resource(server, uri)
+
+
+async def _handle_list_mcp_prompts(
+    args: Mapping[str, Any], ctx: ToolContext
+) -> ToolResult:
+    """Adapter for list_mcp_prompts.
+
+    Delegates to host.mcp_list_prompts(server) via ctx.router_state —
+    mirrors _handle_list_mcp_resources exactly (prompts are addressed by
+    name, not URI, but the discovery shape is otherwise identical).
+    """
+    host = _require_host(ctx)
+    server = str(args["server"])
+    result = await host.mcp_list_prompts(server)
+    if result and isinstance(result[0], Mapping) and "error" in result[0]:
+        return {"error": result[0]["error"]}
+    return {"prompts": list(result or [])}
+
+
+async def _handle_get_mcp_prompt(
+    args: Mapping[str, Any], ctx: ToolContext
+) -> ToolResult:
+    """Adapter for get_mcp_prompt.
+
+    Delegates to host.mcp_get_prompt(server, name, arguments) via
+    ctx.router_state. Mirrors _handle_read_mcp_resource's delegation shape;
+    the gated content itself is enforced upstream (require_mcp on the
+    mcp_get_prompt op kind), not here.
+    """
+    host = _require_host(ctx)
+    server = str(args["server"])
+    name = str(args["name"])
+    arguments = dict(args.get("arguments") or {})
+    return await host.mcp_get_prompt(server, name, arguments)
 
 
 async def _handle_call_mcp_tool(
@@ -657,6 +745,38 @@ UNSUBSCRIBE_MCP_RESOURCE = ToolDefinition(
     handler=_handle_unsubscribe_mcp_resource,
     category="discovery",
     purity="side_effect",
+    schema_enricher=_enrich_router_schema,
+)
+
+
+# ── #2597 slice ②c: prompts consumption ToolDefinitions ───────────────────────
+# Parallel to LIST_MCP_RESOURCES / READ_MCP_RESOURCE above — same gates, same
+# schema-enrichment reuse (server enum only; _enrich_router_schema no-ops on
+# the absent mcp_tool_name prop for these two). No subscribe analogue.
+
+LIST_MCP_PROMPTS = ToolDefinition(
+    name="list_mcp_prompts",
+    router_dispatched=True,
+    description=_LIST_MCP_PROMPTS_DESCRIPTION,
+    parameters=_LIST_MCP_PROMPTS_PARAMETERS,
+    gates=ToolGates(router="allow", phase="allow"),
+    handler=_handle_list_mcp_prompts,
+    category="discovery",
+    purity="read_only",
+    returns_external_content=True,  # FP-0050/#1822: external server-authored prompt listing
+    schema_enricher=_enrich_router_schema,
+)
+
+GET_MCP_PROMPT = ToolDefinition(
+    name="get_mcp_prompt",
+    router_dispatched=True,
+    description=_GET_MCP_PROMPT_DESCRIPTION,
+    parameters=_GET_MCP_PROMPT_PARAMETERS,
+    gates=ToolGates(router="allow", phase="allow"),
+    handler=_handle_get_mcp_prompt,
+    category="discovery",
+    purity="read_only",  # a prompt fetch has no reyn-side side effects (unlike call_mcp_tool)
+    returns_external_content=True,  # FP-0050/#1822: external MCP server prompt content
     schema_enricher=_enrich_router_schema,
 )
 
