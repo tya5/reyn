@@ -195,6 +195,90 @@ async def test_seatbelt_real_runner_round_trip() -> None:
     assert seen == [("m", {"n": 41})]
 
 
+# ── #2628: single-abstraction — codeact delegates to SandboxBackend.wrap_command ──
+
+
+def test_seatbelt_resolve_spawn_delegates_to_wrap_command(monkeypatch) -> None:
+    """Tier 2: #2628 — CodeActRunner._resolve_sandbox_spawn no longer hand-rolls
+    the Seatbelt wrap (importing ``_build_sbpl_profile`` + writing its own temp
+    ``.sb`` directly); it now calls ``SandboxBackend.wrap_command(argv, policy)``
+    — the SAME abstraction every other command-level launch route uses (#2626).
+    The wrapped argv's shape (``sandbox-exec -f <profile> <base_argv>``) matches
+    a direct ``backend.wrap_command()`` call on an equivalent policy, and the
+    returned cleanup actually unlinks the temp profile (no leak).
+
+    ``wrap_command`` builds a plain-text SBPL profile with local I/O only — it
+    does not itself invoke ``sandbox-exec`` — so this pins the delegation on
+    any host (the real ``SeatbeltBackend.available()`` platform gate is
+    exercised separately by ``test_seatbelt_real_runner_round_trip`` above);
+    only ``available()`` is monkeypatched here (a real instance's method, not a
+    mock collaborator) so the delegation itself is tested off-macOS too."""
+    import os
+
+    from reyn.security.sandbox.backends.seatbelt import SeatbeltBackend
+    from reyn.security.sandbox.policy import SandboxPolicy
+
+    backend = SeatbeltBackend()
+    monkeypatch.setattr(backend, "available", lambda: True)
+    runner = CodeActRunner()
+    base_argv = [runner.python_executable, "-m", "reyn.core.kernel._codeact_harness"]
+    sandbox_policy = {"network": False, "env_passthrough": ["PATH"]}
+
+    argv, cleanup, error = runner._resolve_sandbox_spawn(
+        base_argv, backend, sandbox_policy, 30.0, False,
+    )
+    assert error is None
+    assert argv is not None
+    assert cleanup is not None
+
+    # Same shape as a direct wrap_command() call: sandbox-exec -f <profile> <base_argv>.
+    # The profile PATH differs (each call gets its own fresh temp file), so compare
+    # everything else — the exact same code path codeact now runs.
+    direct = backend.wrap_command(base_argv, SandboxPolicy(network=False, env_passthrough=["PATH"], timeout_seconds=30.0))
+    assert argv[0] == direct.argv[0] == "sandbox-exec"
+    assert argv[1] == direct.argv[1] == "-f"
+    assert argv[3:] == direct.argv[3:] == base_argv
+
+    profile_path = argv[2]
+    assert os.path.exists(profile_path)
+    cleanup()
+    assert not os.path.exists(profile_path)  # cleanup unlinks the temp profile
+    direct.cleanup()  # tidy up the independently-created profile too
+
+
+def test_landlock_resolve_spawn_now_wraps_via_abstraction(monkeypatch) -> None:
+    """Tier 2: #2628 — Landlock is no longer a "S2c pending" stub that refuses
+    to run. ``LandlockBackend.wrap_command`` builds the re-exec shim argv
+    deterministically (no temp file, no randomness), so codeact's resolved argv
+    is BYTE-IDENTICAL to a direct ``backend.wrap_command()`` call — this is the
+    safety-preserving case: Landlock's wrap_command applies REAL isolation (the
+    re-exec shim restricts itself via Landlock then execs the target), so
+    delegating to it correctly ENABLES Landlock rather than weakening the prior
+    fail-closed refusal. ``available()`` is monkeypatched on the real instance
+    (its genuine platform/kernel-ABI gate is exercised separately by
+    ``tests/test_sandbox_landlock.py``) so this delegation is pinned on any host,
+    including this macOS dev box."""
+    from reyn.security.sandbox.backends.landlock import LandlockBackend
+    from reyn.security.sandbox.policy import SandboxPolicy
+
+    backend = LandlockBackend()
+    monkeypatch.setattr(backend, "available", lambda: True)
+    runner = CodeActRunner()
+    base_argv = [runner.python_executable, "-m", "reyn.core.kernel._codeact_harness"]
+    sandbox_policy = {"network": False, "env_passthrough": ["PATH"]}
+
+    argv, cleanup, error = runner._resolve_sandbox_spawn(
+        base_argv, backend, sandbox_policy, 30.0, False,
+    )
+    assert error is None
+    assert cleanup is None  # Landlock owns no cleanup resource (no temp file)
+
+    direct = backend.wrap_command(
+        base_argv, SandboxPolicy(network=False, env_passthrough=["PATH"], timeout_seconds=30.0),
+    )
+    assert argv == direct.argv  # byte-identical — same deterministic build
+
+
 # ── #1609: harness subprocess PYTHONPATH propagation (multi-worktree drift) ───
 
 
