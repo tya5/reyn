@@ -109,7 +109,7 @@ class MCPClientPool:
                 "ops in the pool's owning task."
             )
         if server not in self._clients:
-            client = MCPClient(config, agent_id=agent_id)
+            client = MCPClient(config, agent_id=agent_id, server_name=server)
             await client.__aenter__()  # enter (initialize) in the pool's task
             self._clients[server] = client
         return self._clients[server]

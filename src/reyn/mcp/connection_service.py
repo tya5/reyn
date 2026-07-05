@@ -164,9 +164,25 @@ class MCPConnectionService:
                     self._emit_sink, server,
                     tools_cache_invalidate=self._tools_cache_invalidate,
                 )
-            client = MCPClient(config, agent_id=agent_id, message_handler=handler)
+            client = MCPClient(
+                config, agent_id=agent_id, message_handler=handler, server_name=server,
+            )
             await client.__aenter__()  # initialize; held open (no matching __aexit__ until aclose/reconnect)
             self._clients[server] = client
+            # #2597 capability/version gate: observability seam. This is the first
+            # point in the live (non-ephemeral) session path that HAS the emit_sink
+            # (the ephemeral per-call MCPClientPool path never wires one — see class
+            # docstring — so it stays silent, matching pre-#2597 behaviour there).
+            # Fires once per (re)connect, including reconnects (a version/capability
+            # renegotiation is itself worth a trace event, not just the first
+            # connect).
+            if self._emit_sink is not None:
+                self._emit_sink(
+                    "mcp_initialized",
+                    server=server,
+                    negotiated_version=client.negotiated_version,
+                    capabilities=client.advertised_capabilities(),
+                )
         return client
 
     async def _reconnect(

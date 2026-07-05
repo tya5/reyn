@@ -120,7 +120,7 @@ async def test_pool_contains_teardown_exception_group(monkeypatch):
     raising = _RaisingCloseClient(
         BaseExceptionGroup("teardown", [RuntimeError("BrokenResourceError"), RuntimeError("ConnectionReset")])
     )
-    monkeypatch.setattr(pool_mod, "MCPClient", lambda cfg, *, agent_id=None: raising)
+    monkeypatch.setattr(pool_mod, "MCPClient", lambda cfg, *, agent_id=None, server_name=None: raising)
 
     async with MCPClientPool() as pool:
         await pool.get("srv", {"type": "stdio", "command": "x"})
@@ -138,7 +138,7 @@ async def test_pool_contains_spurious_cancel_in_teardown(monkeypatch):
     raising = _RaisingCloseClient(
         BaseExceptionGroup("teardown", [ConnectionResetError("subprocess died"), asyncio.CancelledError()])
     )
-    monkeypatch.setattr(pool_mod, "MCPClient", lambda cfg, *, agent_id=None: raising)
+    monkeypatch.setattr(pool_mod, "MCPClient", lambda cfg, *, agent_id=None, server_name=None: raising)
 
     async with MCPClientPool() as pool:  # no raise — the spurious cancel-mixed teardown is contained
         await pool.get("srv", {"type": "stdio", "command": "x"})
@@ -237,7 +237,7 @@ async def test_pool_reraises_keyboardinterrupt_in_teardown(monkeypatch):
     """Tier 2: the pool re-raises a KeyboardInterrupt-containing teardown group (control flow is
     never contained) — the required refinement beyond cancellation."""
     raising = _RaisingCloseClient(BaseExceptionGroup("teardown", [KeyboardInterrupt()]))
-    monkeypatch.setattr(pool_mod, "MCPClient", lambda cfg, *, agent_id=None: raising)
+    monkeypatch.setattr(pool_mod, "MCPClient", lambda cfg, *, agent_id=None, server_name=None: raising)
 
     with pytest.raises(BaseException) as ei:
         async with MCPClientPool() as pool:

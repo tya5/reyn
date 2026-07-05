@@ -48,6 +48,32 @@ class _StubPool:
     def owner_task(self): return None
     async def get(self, server, config, *, agent_id=None): return self._client
 
+
+class _FakeServerCapabilities:
+    """Stand-in for ``mcp.types.ServerCapabilities`` — advertises "tools" only
+    (non-None), matching the transport-level fakes in this file, which only ever
+    exercise ``call_tool_mcp``. #2597 capability/version gate: the tests below
+    hand-construct a half-initialised ``MCPClient`` that bypasses the real
+    ``initialize()`` handshake (see each test), so ``supports("tools")`` must be
+    primed the same way ``_initialized``/``_client`` are, or the gate added in
+    ``MCPClient.call_tool`` fails these fakes fast for a reason unrelated to what
+    they're testing (progress/timeout wiring, not the capability gate)."""
+    tools: Any = object()
+    resources: Any = None
+    prompts: Any = None
+    logging: Any = None
+    completions: Any = None
+
+
+def _bypass_initialize(client: MCPClient, fake_fastmcp_client: Any) -> None:
+    """Prime ``client`` as if ``initialize()`` had run against a real server that
+    advertises "tools" (protocol version fixed for determinism), without spawning
+    a real transport. See ``_FakeServerCapabilities``."""
+    client._initialized = True
+    client._client = fake_fastmcp_client
+    client._negotiated_version = "2025-11-25"
+    client._server_capabilities = _FakeServerCapabilities()
+
 # ── 1. MCPClient.call_tool signature accepts the new kwargs ────────────
 
 
@@ -98,8 +124,7 @@ def test_call_tool_passes_progress_callback_and_timedelta_to_fastmcp_client() ->
     # transport. The signature accepts a config dict + sets internal
     # state directly so we don't have to spawn a subprocess.
     client = MCPClient({"type": "stdio", "command": "/bin/true"})
-    client._initialized = True
-    client._client = _FakeFastMCPClient()
+    _bypass_initialize(client, _FakeFastMCPClient())
 
     async def _on_progress(progress: float, total: float | None, msg: str | None) -> None:
         return None
@@ -144,8 +169,7 @@ def test_call_tool_omits_kwargs_when_none_for_backwards_compat() -> None:
             return _FakeResult()
 
     client = MCPClient({"type": "stdio", "command": "/bin/true"})
-    client._initialized = True
-    client._client = _FakeFastMCPClient()
+    _bypass_initialize(client, _FakeFastMCPClient())
 
     asyncio.run(client.call_tool("demo", {"x": 1}))
 
@@ -202,8 +226,7 @@ def test_op_handler_progress_callback_emits_mcp_progress_event() -> None:
     )
     # Pre-install a fake client so MCPClient construction is skipped.
     client = MCPClient({"type": "stdio", "command": "/bin/true"})
-    client._initialized = True
-    client._client = _CapturingFastMCPClient()
+    _bypass_initialize(client, _CapturingFastMCPClient())
     ctx.mcp_pool = _StubPool(client)
 
     op = MCPIROp(kind="mcp", server="demo", tool="thing", args={})
@@ -272,8 +295,7 @@ def test_op_handler_reads_call_timeout_from_server_config() -> None:
     client = MCPClient(
         {"type": "stdio", "command": "/bin/true", "call_timeout_seconds": 7.5},
     )
-    client._initialized = True
-    client._client = _CapturingFastMCPClient()
+    _bypass_initialize(client, _CapturingFastMCPClient())
     ctx.mcp_pool = _StubPool(client)
 
     op = MCPIROp(kind="mcp", server="demo", tool="thing", args={})
@@ -328,8 +350,7 @@ def test_op_handler_call_timeout_default_finite_and_optout() -> None:
             mcp_servers={"demo": cfg},
             )
         client = MCPClient(cfg)
-        client._initialized = True
-        client._client = _CapturingFastMCPClient()
+        _bypass_initialize(client, _CapturingFastMCPClient())
         ctx.mcp_pool = _StubPool(client)
 
         op = MCPIROp(kind="mcp", server="demo", tool="thing", args={})

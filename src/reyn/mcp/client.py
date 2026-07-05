@@ -20,6 +20,26 @@ Environment variable expansion:
   ``os.environ.get("VAR_NAME", "")``. Missing variables expand to empty
   string and a warning is emitted. Apply :func:`expand_env` BEFORE
   handing config to the SDK.
+
+Capability / version gate (#2597 capability slice):
+  MCP's ``initialize`` handshake natively negotiates BOTH a protocol version
+  and a set of server capabilities (tools/resources/prompts/logging/
+  completions) in one round trip — rather than sprinkling version checks
+  across reyn, :meth:`initialize` captures both ONCE, right after FastMCP's
+  ``client.__aenter__()`` completes the handshake (verified against fastmcp
+  3.4.2: ``Client.initialize_result`` — an ``mcp.types.InitializeResult`` —
+  is populated at that point; see ``initialize()``'s inline comment for the
+  exact source-file/line trail). :meth:`supports` answers "did the server
+  advertise capability X" (conservative False before initialize / on a
+  missing result); :func:`require_capability` is the enforcement seam —
+  call it before issuing a request for a gated feature so an unsupported
+  one fails fast with a reyn-authored error instead of a confusing raw
+  protocol error. Today only ``call_tool``/``list_tools`` call it (gated on
+  ``"tools"``); a later slice plugs resources/prompts requests into the
+  SAME helper before they reach the server. :attr:`negotiated_version`
+  exposes the raw protocol version string for callers/later slices to
+  branch on — this slice deliberately does not build a version-semantics
+  matrix, just makes the version + capabilities readable and gated.
 """
 from __future__ import annotations
 
@@ -42,6 +62,36 @@ class MCPError(RuntimeError):
 
 
 _SUPPORTED_TYPES = {"stdio", "http", "sse"}
+
+# #2597 capability/version gate slice: the ``ServerCapabilities`` fields FastMCP's
+# ``mcp.types.InitializeResult.capabilities`` may carry — each is either a capability
+# object (server advertises it) or None (server does not). ``experimental`` and
+# ``tasks`` are deliberately excluded: they aren't reyn features today (no gate to
+# apply), unlike the five below which map 1:1 onto MCP feature surfaces reyn calls
+# or will call in a later slice (resources/prompts).
+_CAPABILITY_NAMES = frozenset({"tools", "resources", "prompts", "logging", "completions"})
+
+
+def require_capability(client: "MCPClient", capability: str) -> None:
+    """Fail fast with a clear reyn error if ``client``'s connected server did not
+    advertise ``capability`` in its initialize handshake — the #2597 enforcement
+    seam. Call this BEFORE issuing a request for a gated feature (today: tool
+    calls, gated on ``"tools"``; a later slice plugs resources/prompts requests
+    into this same helper before they reach the server) so an unsupported feature
+    fails with a reyn-authored message instead of a confusing raw protocol error
+    from the server.
+
+    Raises :class:`MCPError` if not supported; no-op (returns None) otherwise.
+    """
+    if client.supports(capability):
+        return
+    server = client.server_name or "<unknown>"
+    version = client.negotiated_version or "<unknown>"
+    raise MCPError(
+        f"MCP server {server!r} does not advertise the {capability!r} capability "
+        f"(negotiated protocol version {version}). Refusing to call a "
+        f"{capability!r} feature against it."
+    )
 
 
 # ── Client ───────────────────────────────────────────────────────────────────
@@ -66,6 +116,7 @@ class MCPClient:
         *,
         agent_id: str | None = None,
         message_handler: Any = None,
+        server_name: str | None = None,
     ) -> None:
         if not isinstance(config, dict):
             raise ValueError(f"MCP server config must be a dict, got {type(config).__name__}")
@@ -83,6 +134,13 @@ class MCPClient:
         # agent. None preserves prior behaviour for direct callers (= the
         # session factory passes ReynConfig.agent.id; tests can omit).
         self._agent_id: str | None = agent_id
+        # #2597 capability/version gate: the server name this client connects to, for
+        # error messages only (this object never uses it to look itself up — callers
+        # that construct MCPClient directly, e.g. tests, may omit it; the fail-fast
+        # message then falls back to "<unknown>"). Threaded in by MCPClientPool /
+        # MCPConnectionService, both of which already know the server name at
+        # construction time.
+        self._server_name: str | None = server_name
         # #2597 S2b: optional async server->client notifications bridge — a
         # ReynMCPMessageHandler (fastmcp.client.tasks.TaskNotificationHandler subclass;
         # see reyn.mcp.message_handler) that receives tools/prompts list_changed +
@@ -107,6 +165,54 @@ class MCPClient:
         # stdio MCP server's subprocess, if one was generated in _open_stdio.
         # Unlinked in close(). None for non-stdio / non-seatbelt / unsandboxed.
         self._sandbox_profile_path: str | None = None
+        # #2597 capability/version gate: captured in initialize() right after
+        # ``client.__aenter__()`` completes FastMCP's initialize handshake (verified
+        # against fastmcp 3.4.2: ``fastmcp.Client.initialize_result`` is populated at
+        # that point — see client.py module docstring's fact-check). None until then
+        # (or if the server's InitializeResult was unavailable — handled defensively,
+        # never raises).
+        self._negotiated_version: str | None = None
+        self._server_capabilities: Any = None  # mcp.types.ServerCapabilities | None
+
+    @property
+    def server_name(self) -> str | None:
+        """The configured name of the server this client connects to, or None if
+        the caller didn't supply one at construction. Used only for error-message
+        context (:func:`require_capability`) — never for lookup."""
+        return self._server_name
+
+    @property
+    def negotiated_version(self) -> str | None:
+        """The MCP protocol version negotiated at connect (e.g. ``"2025-11-25"``),
+        or None before :meth:`initialize` runs (or if the server's
+        ``InitializeResult`` was unavailable). Read-only — later slices branch on
+        this to apply version-specific behaviour; this slice only exposes it."""
+        return self._negotiated_version
+
+    def supports(self, capability: str) -> bool:
+        """Return True iff the connected server advertised ``capability`` in its
+        initialize handshake. ``capability`` must be one of ``"tools"``,
+        ``"resources"``, ``"prompts"``, ``"logging"``, ``"completions"``.
+
+        Conservative False before :meth:`initialize` runs (or if the server's
+        capabilities were unavailable) — an un-negotiated connection advertises
+        nothing rather than everything.
+        """
+        if capability not in _CAPABILITY_NAMES:
+            raise ValueError(
+                f"Unknown MCP capability: {capability!r}. "
+                f"Expected one of {sorted(_CAPABILITY_NAMES)}."
+            )
+        if self._server_capabilities is None:
+            return False
+        return getattr(self._server_capabilities, capability, None) is not None
+
+    def advertised_capabilities(self) -> list[str]:
+        """Sorted list of capability names the connected server advertised (subset
+        of the five :meth:`supports` recognizes). Empty before :meth:`initialize`
+        runs. Used for observability (the ``mcp_initialized`` event) — see
+        :mod:`reyn.mcp.connection_service`."""
+        return sorted(name for name in _CAPABILITY_NAMES if self.supports(name))
 
     @property
     def stderr_capture(self) -> "Any":
@@ -197,6 +303,21 @@ class MCPClient:
 
         self._client = client
         self._initialized = True
+        # #2597 capability/version gate: read the negotiated version + capabilities
+        # right after the handshake completes. ``initialize_result`` is populated by
+        # ``client.__aenter__()`` above (fastmcp 3.4.2: ``Client.initialize_result``
+        # property backed by ``_session_state.initialize_result``, set inside
+        # ``Client.initialize()`` which ``__aenter__`` calls) — but read it
+        # defensively: None here would mean FastMCP's own contract changed
+        # underneath us, not a reyn bug, so degrade to "unknown" (supports() ->
+        # False, negotiated_version -> None) rather than raise.
+        init_result = getattr(client, "initialize_result", None)
+        if init_result is not None:
+            self._negotiated_version = str(init_result.protocolVersion)
+            self._server_capabilities = init_result.capabilities
+        else:
+            self._negotiated_version = None
+            self._server_capabilities = None
 
     async def __aenter__(self) -> "MCPClient":
         """#a359: structured lifecycle. ``initialize()`` here + ``close()`` in ``__aexit__`` run in
@@ -241,6 +362,10 @@ class MCPClient:
             transport-level default.
         """
         await self.initialize()
+        # #2597 capability/version gate: fail fast with a clear reyn error if the
+        # server never advertised "tools" rather than let the request reach the
+        # server and bounce back as a confusing raw protocol error.
+        require_capability(self, "tools")
         kwargs: dict[str, Any] = {}
         if progress_callback is not None:
             kwargs["progress_handler"] = progress_callback
@@ -266,6 +391,8 @@ class MCPClient:
         longer silently truncate.
         """
         await self.initialize()
+        # #2597 capability/version gate: same seam as call_tool — see there.
+        require_capability(self, "tools")
         try:
             tools = await self._client.list_tools()
         except Exception as exc:
@@ -280,6 +407,12 @@ class MCPClient:
         client = self._client
         self._client = None
         self._initialized = False
+        # #2597 capability/version gate: a closed client re-negotiates on the next
+        # initialize() (or duck-typed callers who happen to keep querying supports()
+        # on a closed client should see the conservative False, not stale state from
+        # the old connection).
+        self._negotiated_version = None
+        self._server_capabilities = None
         try:
             await client.close()
         except Exception:
