@@ -722,6 +722,13 @@ class RouterLoopHost(RouterLoopCore, Protocol):
 
     async def mcp_read_resource(self, server: str, uri: str) -> dict: ...
 
+    # #2597 slice ②b: resource subscriptions (subscribe/unsubscribe — the async
+    # push event-source; the resulting notifications land on the EventLog as
+    # mcp_resource_updated, not through this Protocol).
+    async def mcp_subscribe_resource(self, server: str, uri: str) -> dict: ...
+
+    async def mcp_unsubscribe_resource(self, server: str, uri: str) -> dict: ...
+
     # OpContext factory for unified-registry handlers (ADR-0026 Phase 3.5).
     # Builds a permission-aware OpContext with the operator-declared
     # PermissionDecl + Workspace(actor="chat_router") + mcp_servers,

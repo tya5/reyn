@@ -120,7 +120,14 @@ Alongside tools, a server can expose **resources** (server-hosted content addres
 
 Both list and read are additionally gated by the server's **negotiated capabilities**: a server that never advertised `resources` in its `initialize` handshake fails fast with a clear error (`require_capability` in `reyn/mcp/client.py`) instead of a raw protocol error.
 
-`resources/subscribe` (push notifications on resource change) is not yet implemented — today's surface is list + read only.
+### Resource subscriptions: the async push event-source
+
+`resources/subscribe` is a **state-sync/watch** mechanism, not a message queue: subscribe to a URI, and the server pushes a thin `notifications/resources/updated {uri}` signal (no content) whenever that resource changes — the client re-reads (`read_mcp_resource`) to see what changed.
+
+- `subscribe_mcp_resource(server, uri)` / `unsubscribe_mcp_resource(server, uri)` — both gated the same way `read_mcp_resource` is (`mcp_subscribe_resource` / `mcp_unsubscribe_resource` Control IR ops, `permissions.mcp: [server_name]`), plus an ADDITIONAL gate on the server's negotiated `resources.subscribe` sub-capability — a server can advertise `resources` (list/read work) without advertising `subscribe` (e.g. every server built with FastMCP's high-level `FastMCP()` class today — the underlying SDK hard-codes `resources.subscribe=False` regardless of what handlers a FastMCP server registers).
+- **Persistent connection required.** A subscription only makes sense on a held (session-lifetime) connection — the subscribed-URI set lives in-memory on `MCPConnectionService` (runtime-only; a subscription carries no data of its own, so it's fully re-establishable, never WAL'd). An ephemeral chat session refuses both ops with a clear error rather than accept a subscription that dies the instant its one-shot connection closes.
+- **Survives a transport-death reconnect.** A dropped connection (subprocess death, broken HTTP) re-opens a fresh MCP session with no memory of prior subscriptions; `MCPConnectionService` automatically re-issues every tracked subscription against the fresh connection, so a subscription set up before a drop keeps delivering pushes after reyn heals the connection.
+- **The push lands on the EventLog, not in a tool result.** `mcp_resource_updated` (`server`, `uri`) is emitted asynchronously whenever the notification arrives — independent of any Control IR op call. Wiring it into the hook dispatcher (so a workflow can react to it directly) is a later slice; today it's an audit-trail signal a workflow author reads back via the EventLog.
 
 ## Transport choice (stdio vs HTTP)
 

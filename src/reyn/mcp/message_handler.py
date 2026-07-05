@@ -75,9 +75,12 @@ class ReynMCPMessageHandler(TaskNotificationHandler):
     ``EventLog`` (#2597 S2b). One instance per held server connection.
 
     Scope (S2b): ``tools/list_changed``, ``prompts/list_changed``. ``resources/
-    updated`` / ``resources/subscribe`` are DEFERRED to the resources-consumption
-    slice (nothing is subscribed yet) — the inherited ``on_resource_updated`` /
-    ``on_resource_list_changed`` stay base-class no-ops.
+    updated`` is bridged by slice ②b (see :meth:`on_resource_updated`) now that
+    :class:`~reyn.mcp.connection_service.MCPConnectionService` actually tracks
+    subscribed URIs — S2b itself deferred it because nothing was subscribed yet.
+    ``on_resource_list_changed`` stays a base-class no-op (out of ②b's scope —
+    no reyn caller subscribes to the resource LIST changing, only individual
+    resource content updates).
 
     #2597 F2 (live-verified, NOT emitted here — see :meth:`on_progress`):
     ``notifications/progress`` is NOT bridged to ``mcp_progress`` by this handler.
@@ -145,6 +148,18 @@ class ReynMCPMessageHandler(TaskNotificationHandler):
     async def on_prompt_list_changed(self, message: Any) -> None:
         self._emit("mcp_prompt_list_changed", server=self._server_name)
         await super().on_prompt_list_changed(message)
+
+    async def on_resource_updated(self, message: Any) -> None:
+        # #2597 slice ②b: the async push event-source this bridge exists for. The
+        # notification carries ONLY the uri (MCP's resources/subscribe model is a
+        # thin "something changed, re-read if you care" signal — see
+        # reyn.mcp.client.MCPClient.subscribe_resource's docstring), so that's all
+        # this event needs to carry too; a caller that wants the new content reads
+        # the resource again. EventLog-only — deliberately NOT wired into the hook
+        # dispatcher here (that's a future hooks-arc slice, per ②b's scope note).
+        uri = getattr(getattr(message, "params", None), "uri", None)
+        self._emit("mcp_resource_updated", server=self._server_name, uri=str(uri) if uri is not None else None)
+        await super().on_resource_updated(message)
 
     async def on_progress(self, message: Any) -> None:
         # #2597 F2: deliberately does NOT emit ``mcp_progress`` — see this class's

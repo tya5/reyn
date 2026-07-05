@@ -509,7 +509,7 @@ class MCPClient:
             _classify_and_raise(exc, f"MCP tools/list error: {exc}")
         return [_tool_to_dict(t) for t in tools]
 
-    # ── resources (#2597 slice ②a — consumption only; subscribe is ②b) ─────────
+    # ── resources (#2597 slice ②a — consumption; ②b adds subscribe below) ──────
 
     async def list_resources(self) -> list[dict[str, Any]]:
         """Return the resources advertised by this server as plain dicts.
@@ -556,6 +556,70 @@ class MCPClient:
         except Exception as exc:
             _classify_and_raise(exc, f"MCP resources/read error: {exc}")
         return _read_resource_result_to_dict(result)
+
+    # ── resource subscriptions (#2597 slice ②b) ─────────────────────────────────
+
+    def _require_resources_subscribe_capability(self) -> None:
+        """Fail fast with :class:`MCPCapabilityError` if the connected server
+        does not advertise the ``resources.subscribe`` sub-capability.
+
+        Verified against the installed mcp SDK 3.4.2's ``ServerCapabilities``:
+        ``resources: ResourcesCapability | None`` where ``ResourcesCapability``
+        carries its OWN ``subscribe: bool | None`` field, independent of whether
+        the server advertises ``resources`` at all (a server may support reading
+        resources but not subscribing to their updates — the base SDK's
+        ``mcp.server.lowlevel.server.Server.get_capabilities`` in fact hard-codes
+        ``subscribe=False`` for every server that doesn't explicitly override it,
+        including every server built with FastMCP's high-level ``FastMCP()``
+        class — see ``tests/_support/mcp_subscribable_resources_server.py``'s
+        module docstring for the full fact-check). This is a REFUSAL, the same
+        shape as :func:`require_capability` — not a transport failure.
+        """
+        server = self.server_name or "<unknown>"
+        version = self.negotiated_version or "<unknown>"
+        resources_cap = getattr(self._server_capabilities, "resources", None)
+        if resources_cap is None or not getattr(resources_cap, "subscribe", False):
+            raise MCPCapabilityError(
+                f"MCP server {server!r} does not advertise the resources.subscribe "
+                f"sub-capability (negotiated protocol version {version}). Refusing "
+                f"to subscribe to a resource on it."
+            )
+
+    async def subscribe_resource(self, uri: str) -> None:
+        """Subscribe to server-pushed ``notifications/resources/updated`` for
+        ``uri``. Gated on BOTH the ``resources`` capability (via
+        :func:`require_capability`, same as :meth:`read_resource`) AND the
+        resources ``subscribe`` sub-capability (via
+        :meth:`_require_resources_subscribe_capability`) — a server may support
+        reading resources without supporting subscriptions to them.
+
+        Uses the RAW ``mcp.ClientSession.subscribe_resource`` (verified: FastMCP's
+        ``Client`` has no subscribe convenience method of its own — only the
+        underlying ``mcp.ClientSession``, reached via ``Client.session``, does).
+        The notification itself carries no payload (just ``uri``) — callers
+        re-read the resource to see the new content; see
+        :mod:`reyn.mcp.message_handler`'s ``on_resource_updated`` for the
+        EventLog bridge.
+        """
+        await self.initialize()
+        require_capability(self, "resources")
+        self._require_resources_subscribe_capability()
+        try:
+            await self._client.session.subscribe_resource(uri)
+        except Exception as exc:
+            _classify_and_raise(exc, f"MCP resources/subscribe error: {exc}")
+
+    async def unsubscribe_resource(self, uri: str) -> None:
+        """Unsubscribe from server-pushed updates for ``uri``. Same gating as
+        :meth:`subscribe_resource`; mirrors it via the raw
+        ``mcp.ClientSession.unsubscribe_resource``."""
+        await self.initialize()
+        require_capability(self, "resources")
+        self._require_resources_subscribe_capability()
+        try:
+            await self._client.session.unsubscribe_resource(uri)
+        except Exception as exc:
+            _classify_and_raise(exc, f"MCP resources/unsubscribe error: {exc}")
 
     async def close(self) -> None:
         """Tear down the transport and session. Safe to call repeatedly."""

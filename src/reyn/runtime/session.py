@@ -1536,6 +1536,9 @@ class Session:
             mcp_list_resources=self._mcp_list_resources,
             mcp_list_resource_templates=self._mcp_list_resource_templates,
             mcp_read_resource=self._mcp_read_resource,
+            # #2597 slice ②b: resource subscriptions.
+            mcp_subscribe_resource=self._mcp_subscribe_resource,
+            mcp_unsubscribe_resource=self._mcp_unsubscribe_resource,
             send_to_agent=self._send_to_agent,
             put_outbox=self._put_outbox,
             append_history=self._append_history,
@@ -5596,6 +5599,75 @@ class Session:
         async with MCPClientPool() as pool:
             ctx.mcp_pool = pool
             return await execute_op(op, ctx)
+
+    async def _mcp_subscribe_resource(self, server: str, uri: str) -> dict:
+        """Subscribe to server-pushed ``resources/updated`` for ``uri`` on
+        ``server``. #2597 slice ②b: mirrors ``_mcp_read_resource`` — permission-
+        gated (``require_mcp``, same server-scoped axis) + routed through
+        ``execute_op`` on the ``mcp_subscribe_resource`` op kind.
+
+        Unlike ``_mcp_read_resource``, a subscription is only meaningful on a
+        PERSISTENT connection — the subscribed-URI set lives on
+        ``MCPConnectionService`` (runtime-only, Q4) and the push notification
+        arrives asynchronously, sometime after this call returns. An ephemeral
+        session's per-call ``MCPClientPool`` closes the connection before this
+        method even returns, so a "successful" subscribe there could never
+        actually observe a push — refuse fast with a clear error instead of a
+        silently-useless no-op subscription.
+        """
+        if self._ephemeral:
+            return {
+                "kind": "mcp_subscribe_resource", "status": "error", "server": server,
+                "uri": uri,
+                "error": "MCP resource subscriptions require a persistent connection "
+                         "(not available in an ephemeral session).",
+            }
+        from reyn.core.op_runtime import execute_op
+        from reyn.schemas.models import MCPSubscribeResourceIROp
+        from reyn.security.permissions.permissions import PermissionDecl
+
+        op = MCPSubscribeResourceIROp(kind="mcp_subscribe_resource", server=server, uri=uri)
+        ctx = self._make_router_op_context()
+        ctx.intervention_bus = ChatInterventionBus(
+            self, run_id=None, actor="chat_router",
+            channel_id=DEFAULT_CHAT_CHANNEL_ID,
+        )
+        ctx.permission_decl = PermissionDecl(
+            file_read=ctx.permission_decl.file_read,
+            file_write=ctx.permission_decl.file_write,
+            mcp=[server],
+        )
+        ctx.mcp_connection_service = self._mcp_connection_service
+        return await execute_op(op, ctx)
+
+    async def _mcp_unsubscribe_resource(self, server: str, uri: str) -> dict:
+        """Unsubscribe from server-pushed updates for ``uri`` on ``server``.
+        Mirrors :meth:`_mcp_subscribe_resource` — same persistent-connection
+        requirement, same permission gate."""
+        if self._ephemeral:
+            return {
+                "kind": "mcp_unsubscribe_resource", "status": "error", "server": server,
+                "uri": uri,
+                "error": "MCP resource subscriptions require a persistent connection "
+                         "(not available in an ephemeral session).",
+            }
+        from reyn.core.op_runtime import execute_op
+        from reyn.schemas.models import MCPUnsubscribeResourceIROp
+        from reyn.security.permissions.permissions import PermissionDecl
+
+        op = MCPUnsubscribeResourceIROp(kind="mcp_unsubscribe_resource", server=server, uri=uri)
+        ctx = self._make_router_op_context()
+        ctx.intervention_bus = ChatInterventionBus(
+            self, run_id=None, actor="chat_router",
+            channel_id=DEFAULT_CHAT_CHANNEL_ID,
+        )
+        ctx.permission_decl = PermissionDecl(
+            file_read=ctx.permission_decl.file_read,
+            file_write=ctx.permission_decl.file_write,
+            mcp=[server],
+        )
+        ctx.mcp_connection_service = self._mcp_connection_service
+        return await execute_op(op, ctx)
 
     async def _mcp_call_tool(self, server: str, tool: str, args: dict) -> dict:
         """Invoke an MCP tool and return its result.

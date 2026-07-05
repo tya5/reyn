@@ -37,6 +37,8 @@ _EXPECTED_DISPATCH: "frozenset[str]" = frozenset({
     "list_mcp_servers", "list_mcp_tools", "call_mcp_tool", "describe_mcp_tool",
     # #2597 slice ②a: resources consumption — parallel to the tools surface above.
     "list_mcp_resources", "list_mcp_resource_templates", "read_mcp_resource",
+    # #2597 slice ②b: resource subscriptions — the async push event-source.
+    "subscribe_mcp_resource", "unsubscribe_mcp_resource",
     "remember_shared", "remember_agent", "forget_memory", "list_memory", "read_memory_body",
     "recall", "drop_source", "compact",
     "list_actions", "search_actions", "describe_action", "invoke_action",
