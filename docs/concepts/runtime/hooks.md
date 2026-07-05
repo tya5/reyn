@@ -10,7 +10,8 @@ Hooks are a thin operator-scoped layer that lets you inject context,
 trigger self-continuation, run a sandboxed side-effect, or launch a pipeline
 at any of the six **lifecycle points** in a reyn session — or, at an
 **external-event point** fired by something outside the session's own
-run-loop (today: a subscribed MCP resource changing).
+run-loop (a subscribed MCP resource changing, a watched file changing, a
+cron job firing, or an inbound webhook).
 
 They are built on two mechanisms that already exist: the **unified inbox** (the
 channel that feeds messages into a turn) and the **P6 lifecycle** (the event
@@ -94,6 +95,40 @@ or widen a watch; a filesystem-wide change feed is treated as the same class
 of concern as sandbox policy. Bursts of events for one logical change (an
 editor's temp-file dance, a create-then-modify) are debounced per path — one
 burst fires the hook once, not once per underlying filesystem event.
+
+### `cron_fired`
+
+Fires when a message-based `cron:` job delivers to its own session.
+
+Template vars:
+
+| Var | Meaning |
+|-----|---------|
+| `job_name` | The fired job's configured name. |
+| `to` | The target agent name. |
+
+### `webhook_received`
+
+Fires when an inbound webhook (Slack, LINE, a generic plugin) resolves to a
+session.
+
+Template vars:
+
+| Var | Meaning |
+|-----|---------|
+| `transport` | The logical transport (`slack`, `line`, `webhook`, ...). |
+| `sender` | The full routing sender string (`"<transport>:<external_id>"`). |
+
+The template context deliberately carries only this routing metadata —
+**never the raw inbound request body**, which may carry tokens or PII the
+operator never intended a hook action to see. Contrast `cron_fired`'s
+`job_name`/`to`, which are operator-authored config, never end-user-supplied.
+
+Both `cron_fired` and `webhook_received` are **non-blocking relative to their
+ingress**: the cron job's own inbox delivery and the webhook's HTTP response
+never wait on a hook action — dispatch is scheduled as a fire-and-forget
+background task, so a slow hook (e.g. a multi-second `shell_exec`) can never
+stall the ingress that triggered it.
 
 ## Matcher: narrowing which events fire a hook
 
@@ -360,8 +395,6 @@ The following capabilities are designed but not yet implemented:
 
 - **Agent-level and phase-level hooks** — fine-grained points inside a turn
   (rare use cases; session/turn/task covers the common ones).
-- **More external-event sources** — cron/webhook triggers beyond
-  `mcp_resource_updated` and `file_changed`.
 
 ## See also
 

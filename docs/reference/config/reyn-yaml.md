@@ -603,7 +603,7 @@ messages.
 ```yaml
 hooks:
   - name: next_step              # optional → the [hook:next_step] attribution (absent → the point)
-    on: turn_end                 # turn_start|turn_end|session_start|session_end|task_start|task_end|mcp_resource_updated|file_changed
+    on: turn_end                 # turn_start|turn_end|session_start|session_end|task_start|task_end|mcp_resource_updated|file_changed|cron_fired|webhook_received
     template_push:
       message: "Turn complete — consider the next step."
       wake: false                # false = passive context (C); true = start a turn (E)
@@ -618,11 +618,19 @@ hooks:
     pipeline_launch:
       name: reindex_docs
       input_template: {uri: "{{ uri }}"}
+  - on: cron_fired                # external-event point — a message-based cron job fires
+    matcher: {job_name: "backup"}
+    shell_exec: "echo backup ran >> /tmp/reyn-hooks.log"
+  - on: webhook_received          # external-event point — an inbound webhook resolves to a session
+    matcher: {transport: "slack"}
+    template_push:
+      message: "New Slack message routed in."
+      wake: false
 ```
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `on` | string | _required_ | Lifecycle point (`turn_start`, `turn_end`, `session_start`, `session_end`, `task_start`, `task_end`) or an external-event point — `mcp_resource_updated` (a subscribed MCP resource changing) or `file_changed` (a watched path changing, requires [`fs_watch`](#fs_watch-block)). See [Concepts: hooks § External-event points](../../concepts/runtime/hooks.md#external-event-points). |
+| `on` | string | _required_ | Lifecycle point (`turn_start`, `turn_end`, `session_start`, `session_end`, `task_start`, `task_end`) or an external-event point — `mcp_resource_updated` (a subscribed MCP resource changing), `file_changed` (a watched path changing, requires [`fs_watch`](#fs_watch-block)), `cron_fired` (a message-based cron job fires), or `webhook_received` (an inbound webhook resolves to a session). `cron_fired`/`webhook_received` are non-blocking relative to their ingress — dispatch never delays the cron job's delivery or the webhook's HTTP response. See [Concepts: hooks § External-event points](../../concepts/runtime/hooks.md#external-event-points). |
 | `name` | string | _the point_ | Optional operator label surfaced as the `[hook:<name>]` attribution prefix on a push. Absent → defaults to the hook-point (e.g. `[hook:turn_end]`). |
 | `matcher` | map[string,string] | _none_ | Optional filter, evaluated against the firing event's template vars before the hook's action runs. Every named field must match: exact string equality, except `uri`/`path` (shell-style glob via `fnmatch`). A field the event doesn't carry never matches. Absent/empty → the hook always fires (unaffected for lifecycle hooks, which carry no `server`/`uri`/`path`). |
 | `template_push` | map | _none_ | Inbox-push hook from a Jinja2 template (one of the four schemes). `message` (Jinja2 → text), `wake` (bool/Jinja2, default `true`: `true` starts a new turn = self-continuation; `false` rides along with the next turn as passive context), `push_when` (Jinja2 → bool, default `true`; `false` skips), `session` (parsed + carried; naming a different session routes the push to that session's inbox — **cross-session push**; omitted or the current session → the local path). |
