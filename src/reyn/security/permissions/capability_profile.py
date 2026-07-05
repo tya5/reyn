@@ -234,8 +234,10 @@ _FLOORED_QUALIFIED: "dict[str, frozenset[str]]" = {
     }),
     # re-delegation — no spawning peers from untrusted content
     "re-delegation": frozenset({"multi_agent__delegate"}),
-    # code execution
-    "exec": frozenset({"exec__sandboxed_exec"}),
+    # code execution. #2593: `shell` (the pipeline DSL `shell` step's sugar
+    # tool — thin sugar over sandboxed_exec, same subprocess-exec threat
+    # surface) joins the same class for untrusted/delegate deny-parity.
+    "exec": frozenset({"exec__sandboxed_exec", "shell"}),
     # MCP install — no installing servers from untrusted content
     "mcp-install": frozenset({
         "mcp__install_registry", "mcp__install_package", "mcp__install_local",
@@ -291,7 +293,9 @@ _FLOORED_QUALIFIED: "dict[str, frozenset[str]]" = {
 # opposite direction). Invariant (enforced by tests/test_2111_floor_alias_completeness):
 # every name in ``_FLOORED_QUALIFIED`` either unwraps to a bare alias OR is listed here.
 _FLOORED_BARE_ONLY: "frozenset[str]" = frozenset(
-    {"session_spawn", "agent_spawn", "topology_create"}
+    # #2593: `shell` is a bare-registry tool with no invoke_action qualified
+    # route (unlike `exec__sandboxed_exec`), same shape as the spawn trio.
+    {"session_spawn", "agent_spawn", "topology_create", "shell"}
 )
 
 

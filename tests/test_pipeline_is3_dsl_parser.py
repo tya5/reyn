@@ -61,7 +61,10 @@ steps:
             ),
             ToolStep(
                 name="shell",
-                args={"command": ExprRef("'echo ' + ctx.bumped")},
+                args={
+                    "command": ExprRef("'echo ' + ctx.bumped"),
+                    "stdin_pipe": ExprRef("pipe"),
+                },
                 output="shelled",
                 schema=None,
             ),

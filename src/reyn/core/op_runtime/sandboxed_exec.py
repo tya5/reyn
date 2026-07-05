@@ -88,7 +88,7 @@ async def handle(
     )
 
     result = await backend.run(
-        list(op.argv), policy, cwd=cwd, cancel_event=ctx.cancel_event,
+        list(op.argv), policy, cwd=cwd, cancel_event=ctx.cancel_event, stdin=op.stdin,
     )
 
     stdout_text = result.stdout.decode("utf-8", errors="replace")
