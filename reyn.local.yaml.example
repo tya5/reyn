@@ -827,6 +827,26 @@
 
 
 # -----------------------------------------------------------------------------
+# fs_watch: operator-declared filesystem watch paths (#2608 H4). Each path is
+# watched recursively for create/modify/delete events; a change fires the
+# ``file_changed`` external-event hook (see ``hooks:`` above, ``on:
+# file_changed``, matcher field ``path`` globs via fnmatch).
+#
+# SECURITY: this is the ONLY place watched paths are declared — there is no
+# op/tool verb an agent can use to register or widen a watch (same OUT-set-
+# only gate as ``sandbox:``). Requires the optional ``watchdog`` package
+# (`pip install reyn[fs-watch]`); absent -> the feature logs a warning and
+# stays off, rest of the session unaffected. Empty ``paths`` (default) -> the
+# watcher never starts.
+# -----------------------------------------------------------------------------
+# fs_watch:
+#   paths:
+#     - /repo/src
+#     - /repo/docs
+#   debounce_seconds: 0.2   # coalesce a write-burst on one path into ONE fire
+
+
+# -----------------------------------------------------------------------------
 # external_transports: map external transport names
 # (Slack / LINE / Discord / ...) to the MCP tool that delivers replies, plus
 # an ``args_template`` describing how router output is shaped into the tool's

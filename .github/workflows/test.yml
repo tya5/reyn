@@ -30,7 +30,8 @@ jobs:
         #   dev  — pytest + pytest-asyncio + ruff + mypy
         #   mcp  — `fastmcp` (v3.4.2; #2597 S1), used by tests/test_mcp_client.py
         #   web  — fastapi + uvicorn + websockets, used by tests/web/
-        run: pip install -e ".[dev,mcp,web]"
+        #   fs-watch — `watchdog` (#2608 H4), used by tests/test_fs_watcher.py
+        run: pip install -e ".[dev,mcp,web,fs-watch]"
 
       - name: Run tests
         # --timeout=120: a per-test wall-clock cap (pytest-timeout). Without it a

@@ -592,6 +592,62 @@ def _build_cron_config(raw: object) -> CronConfig:
     return CronConfig(jobs=jobs)
 
 
+@dataclass
+class FsWatchConfig:
+    """``fs_watch:`` — operator-declared filesystem watch paths (#2608 H4).
+
+    Each entry in ``paths`` is a directory watched (recursively) for
+    create/modify/delete events; a change fires the ``file_changed``
+    external-event hook (see ``reyn.runtime.fs_watcher.FsWatcher`` and
+    ``reyn.hooks.schema.ALLOWED_HOOK_POINTS``).
+
+    SECURITY (F7-5, do not relitigate): this is the ONLY place watched paths
+    are declared. There is no runtime op or tool verb that lets an agent
+    register or widen a watch — like ``sandbox:``'s policy, ``fs_watch:``
+    is OUT-set-only (restart-only, ``reyn.yaml``/``reyn.local.yaml``, never
+    a ``.reyn/*.yaml`` hot-reload file — see ``config/loader.py``'s
+    ``_HOT_RELOAD_FILES``), so an LLM-driven config-write op can never touch
+    it. Letting an agent name arbitrary watch paths would be an
+    info-gathering surface (a filesystem-wide change-notification feed) —
+    same class of concern as sandbox policy, hence the same OUT-set gate.
+    """
+
+    paths: list[str] = field(default_factory=list)
+    debounce_seconds: float = 0.2
+
+
+def _build_fs_watch_config(raw: object) -> FsWatchConfig:
+    """Parse the ``fs_watch:`` section from ``reyn.yaml``/``reyn.local.yaml``
+    (OUT-set only — see :class:`FsWatchConfig`'s docstring).
+
+    Shape::
+
+        fs_watch:
+          paths:
+            - /repo/src
+            - /repo/docs
+          debounce_seconds: 0.2   # optional, default 0.2
+
+    ``None`` / missing block / empty dict / non-dict → ``FsWatchConfig()``
+    (``paths=[]`` — the watcher never starts; see
+    ``reyn.runtime.fs_watcher.FsWatcher.start``'s no-op-when-empty
+    contract). Non-string / blank entries in ``paths`` are dropped
+    (forward-compatible / defensive — never raises on a malformed entry).
+    """
+    if not isinstance(raw, dict):
+        return FsWatchConfig()
+    raw_paths = raw.get("paths") or []
+    if not isinstance(raw_paths, list):
+        raw_paths = []
+    paths = [p for p in (str(p).strip() for p in raw_paths if p) if p]
+    debounce = raw.get("debounce_seconds", 0.2)
+    try:
+        debounce_seconds = float(debounce)
+    except (TypeError, ValueError):
+        debounce_seconds = 0.2
+    return FsWatchConfig(paths=paths, debounce_seconds=debounce_seconds)
+
+
 def _build_python_config(raw: object) -> PythonConfig:
     if not isinstance(raw, dict):
         return PythonConfig()

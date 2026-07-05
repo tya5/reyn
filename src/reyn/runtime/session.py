@@ -668,6 +668,11 @@ class Session:
         # mirroring sandbox_config's seam). None/absent → empty registry → every
         # HookDispatcher.dispatch() is a no-op (the no-hooks equivalence property).
         hooks_config: "object | None" = None,
+        # #2608 H4: the resolved ``fs_watch:`` config block (``FsWatchConfig``,
+        # mirroring ``hooks_config``'s seam). None/absent -> FsWatchConfig()
+        # (paths=[]) -> the session-owned FsWatcher never starts (byte-identical
+        # to pre-H4). OUT-set-only in practice (see reyn.config.infra.FsWatchConfig).
+        fs_watch_config: "object | None" = None,
         # #1200 PR-F1 (agent-level-uniform backend, FS seam): the agent's
         # EnvironmentBackend INSTANCE, threaded to the chat Workspace so chat's
         # file ops run on the SAME backend as the phase path. None → HostBackend (the
@@ -1092,6 +1097,26 @@ class Session:
             elicitation_bus=self.as_request_bus(),
             elicitation_gate=lambda: self._interventions.has_active_listener(),
             agent_name=self.agent_name,
+        )
+        # #2608 H4: the session-owned filesystem watcher (see
+        # reyn.runtime.fs_watcher's module docstring for the thread->async
+        # bridge design). Constructed unconditionally (cheap — no OS thread
+        # spun up here, only inside FsWatcher.start()); ``hook_trigger`` is the
+        # SAME deferred-lambda-over-``self._hook_dispatcher`` pattern H1 uses
+        # above (the dispatcher itself is built later in this __init__, but
+        # this lambda is never CALLED until FsWatcher.start() is awaited from
+        # ``run()``, long after __init__ has finished). ``paths``/
+        # ``debounce_seconds`` default to empty/0.2 when no ``fs_watch:``
+        # config block was resolved (mirrors ``hooks_config`` defaulting to []).
+        from reyn.config.infra import FsWatchConfig
+        from reyn.runtime.fs_watcher import FsWatcher
+        _fs_watch_cfg = (
+            fs_watch_config if isinstance(fs_watch_config, FsWatchConfig) else FsWatchConfig()
+        )
+        self._fs_watcher = FsWatcher(
+            paths=_fs_watch_cfg.paths,
+            debounce_seconds=_fs_watch_cfg.debounce_seconds,
+            hook_trigger=lambda point, template_vars: self._hook_dispatcher.dispatch(point, template_vars),
         )
         self.output_language = output_language
         self._prompt_cache_enabled = prompt_cache_enabled
@@ -4260,6 +4285,9 @@ class Session:
             "session_start",
             {"point": "session_start", "agent_name": self.agent_name},
         )
+        # #2608 H4: start the filesystem watcher (no-op if no fs_watch.paths
+        # configured or 'watchdog' isn't installed — see FsWatcher.start).
+        await self._fs_watcher.start()
 
         # #1830 / FP-0052: warn if the startup model is above the cost threshold.
         # Fires once per session per model class (de-duped in maybe_emit_model_cost_warn).
@@ -4270,19 +4298,30 @@ class Session:
             while await self.run_one_iteration():
                 pass
         finally:
-            await self._drain_on_shutdown()
-            self._chat_events.emit("chat_stopped", agent_name=self.agent_name)
-            # #1800 slice 5a: session lifecycle audit event (P6). Emitted alongside
-            # chat_stopped; marks the end of the session's resource scope.
-            self._chat_events.emit("session_completed", agent_name=self.agent_name)
-            # #1800 slice 5b: session_end lifecycle hooks (F's natural resource
-            # scope). The run-loop has exited, so an E push here is not drained
-            # (harmless); session_end is the C/F point in practice.
-            await self._hook_dispatcher.dispatch(
-                "session_end",
-                {"point": "session_end", "agent_name": self.agent_name},
-            )
-            await self._put_outbox(OutboxMessage(kind="__end__", text=""))
+            try:
+                await self._drain_on_shutdown()
+            finally:
+                # #2608 H4: stop the filesystem watcher (join the observer
+                # thread). Nested finally so a raising ``_drain_on_shutdown``
+                # can never skip this — the watcher must be torn down whenever
+                # ``run()`` exits, cleanly or not. FsWatcher.aclose() itself is
+                # idempotent + CancelledError-safe (see its own finally).
+                try:
+                    await self._fs_watcher.aclose()
+                except Exception:  # noqa: BLE001 — teardown fault isolation, never blocks shutdown
+                    logger.warning("FsWatcher.aclose() raised during session teardown", exc_info=True)
+                self._chat_events.emit("chat_stopped", agent_name=self.agent_name)
+                # #1800 slice 5a: session lifecycle audit event (P6). Emitted alongside
+                # chat_stopped; marks the end of the session's resource scope.
+                self._chat_events.emit("session_completed", agent_name=self.agent_name)
+                # #1800 slice 5b: session_end lifecycle hooks (F's natural resource
+                # scope). The run-loop has exited, so an E push here is not drained
+                # (harmless); session_end is the C/F point in practice.
+                await self._hook_dispatcher.dispatch(
+                    "session_end",
+                    {"point": "session_end", "agent_name": self.agent_name},
+                )
+                await self._put_outbox(OutboxMessage(kind="__end__", text=""))
 
     async def _drain_on_shutdown(self) -> None:
         """Cancel any in-flight background work, then tear down on shutdown.
@@ -5877,6 +5916,22 @@ class Session:
         async with MCPClientPool() as pool:
             ctx.mcp_pool = pool
             return await execute_op(op, ctx)
+
+    def fs_watcher_is_started(self) -> bool:
+        """Read-only introspection: whether this session's filesystem watcher
+        (#2608 H4) is currently running (``False`` when no ``fs_watch.paths``
+        were configured, or ``watchdog`` isn't installed, or ``start()``
+        hasn't run yet). Public surface for callers/tests to observe lifecycle
+        state without reaching into ``_fs_watcher`` directly."""
+        return self._fs_watcher.is_started()
+
+    async def aclose_fs_watcher(self) -> None:
+        """#2608 H4 teardown: stop this session's filesystem watcher (join the
+        observer thread). Idempotent (``FsWatcher.aclose`` is idempotent).
+        ``run()`` already calls this in its own ``finally`` (session_end
+        scope); exposed publicly for a caller/test that tears a session down
+        without going through ``run()``."""
+        await self._fs_watcher.aclose()
 
     def mcp_held_servers(self) -> list[str]:
         """Read-only introspection: names of MCP servers with a currently held-open

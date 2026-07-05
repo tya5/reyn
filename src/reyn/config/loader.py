@@ -26,6 +26,7 @@ from reyn.config.infra import (  # #1682 #3 cross-section
     _build_cron_config,
     _build_delegation_config,
     _build_events_config,
+    _build_fs_watch_config,
     _build_llm_config,
     _build_python_config,
     _build_sandbox_config,
@@ -480,6 +481,10 @@ def load_config(cwd: Path | None = None) -> ReynConfig:
         hooks=merged.get("hooks") or [],
         action_retrieval=_build_action_retrieval_config(merged.get("action_retrieval")),
         cron=_build_cron_config(merged.get("cron")),
+        # #2608 H4: OUT-set only — read from ``merged`` (reyn.yaml/reyn.local.yaml),
+        # never from the ``.reyn/*.yaml`` hot-reload IN-set (see
+        # ``_HOT_RELOAD_FILES`` below + ``FsWatchConfig``'s docstring for why).
+        fs_watch=_build_fs_watch_config(merged.get("fs_watch")),
         external_transports=_build_external_transports_config(
             merged.get("external_transports"),
         ),
