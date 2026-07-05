@@ -584,8 +584,9 @@ All exporters are fire-and-forget: export failures are logged but do not abort t
 ## `hooks` block
 
 Agent-lifecycle hooks — a thin operator layer over the unified inbox
-and the P6 lifecycle. A **list** of entries; each fires at a lifecycle point (`on`)
-and carries **exactly one** of three mutually-exclusive schemes:
+and the P6 lifecycle. A **list** of entries; each fires at a lifecycle point
+or an external-event point (`on`), optionally narrowed by `matcher`, and
+carries **exactly one** of four mutually-exclusive schemes:
 
 - **`template_push`** — inject an attributed `[hook:<name>]` message from a config
   Jinja2 template.
@@ -593,6 +594,8 @@ and carries **exactly one** of three mutually-exclusive schemes:
 - **`shell_push`** — run a command whose **stdout is a JSON push-directive**, pushed
   via the same path as `template_push` (the only difference is the directive's
   source: captured stdout vs a Jinja2 render).
+- **`pipeline_launch`** — launch a registered [pipeline](../../concepts/runtime/pipelines.md)
+  with input rendered from the event's template vars, async/detached.
 
 Hooks never silently mutate tool results; pushes are new, attributed, evented
 messages.
@@ -600,7 +603,7 @@ messages.
 ```yaml
 hooks:
   - name: next_step              # optional → the [hook:next_step] attribution (absent → the point)
-    on: turn_end                 # turn_start|turn_end|session_start|session_end|task_start|task_end
+    on: turn_end                 # turn_start|turn_end|session_start|session_end|task_start|task_end|mcp_resource_updated|file_changed
     template_push:
       message: "Turn complete — consider the next step."
       wake: false                # false = passive context (C); true = start a turn (E)
@@ -610,15 +613,45 @@ hooks:
   - name: dynamic                # stdout decides whether/what/how to push
     on: turn_end
     shell_push: "scripts/decide-next.sh"   # emits {"push_when":true,"wake":true,"message":"..."}
+  - on: mcp_resource_updated      # external-event point — fired by a subscribed MCP resource
+    matcher: {server: "github", uri: "file:///repo/docs/**"}
+    pipeline_launch:
+      name: reindex_docs
+      input_template: {uri: "{{ uri }}"}
 ```
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `on` | string | _required_ | Lifecycle point: `turn_start`, `turn_end`, `session_start`, `session_end`, `task_start`, `task_end`. |
+| `on` | string | _required_ | Lifecycle point (`turn_start`, `turn_end`, `session_start`, `session_end`, `task_start`, `task_end`) or an external-event point — `mcp_resource_updated` (a subscribed MCP resource changing) or `file_changed` (a watched path changing, requires [`fs_watch`](#fs_watch-block)). See [Concepts: hooks § External-event points](../../concepts/runtime/hooks.md#external-event-points). |
 | `name` | string | _the point_ | Optional operator label surfaced as the `[hook:<name>]` attribution prefix on a push. Absent → defaults to the hook-point (e.g. `[hook:turn_end]`). |
-| `template_push` | map | _none_ | Inbox-push hook from a Jinja2 template (one of the three schemes). `message` (Jinja2 → text), `wake` (bool/Jinja2, default `true`: `true` starts a new turn = self-continuation; `false` rides along with the next turn as passive context), `push_when` (Jinja2 → bool, default `true`; `false` skips), `session` (parsed + carried forward-compat; cross-session routing is **not yet wired** — a no-op today, tracked follow-up). |
-| `shell_exec` | string | _none_ | A shell command run as a pure side-effect (one of the three schemes). Sandbox-gated + consent-allowlisted; stdout/stderr are logs, never parsed. |
+| `matcher` | map[string,string] | _none_ | Optional filter, evaluated against the firing event's template vars before the hook's action runs. Every named field must match: exact string equality, except `uri`/`path` (shell-style glob via `fnmatch`). A field the event doesn't carry never matches. Absent/empty → the hook always fires (unaffected for lifecycle hooks, which carry no `server`/`uri`/`path`). |
+| `template_push` | map | _none_ | Inbox-push hook from a Jinja2 template (one of the four schemes). `message` (Jinja2 → text), `wake` (bool/Jinja2, default `true`: `true` starts a new turn = self-continuation; `false` rides along with the next turn as passive context), `push_when` (Jinja2 → bool, default `true`; `false` skips), `session` (parsed + carried; naming a different session routes the push to that session's inbox — **cross-session push**; omitted or the current session → the local path). |
+| `shell_exec` | string | _none_ | A shell command run as a pure side-effect (one of the four schemes). Sandbox-gated + consent-allowlisted; stdout/stderr are logs, never parsed. |
 | `shell_push` | string | _none_ | A shell command whose **stdout is a single JSON object** `{"push_when": bool, "wake": bool, "message": str, "session"?: str}` (first three required), pushed via the same path as `template_push`. stdout must be pure JSON (logs → stderr). Sandbox-gated + consent-allowlisted. Any failure (non-zero exit, invalid JSON, missing/wrong-typed field) skips the push (fail-safe). |
+| `pipeline_launch` | map | _none_ | Launch a registered pipeline (one of the four schemes). `name` (required — the pipeline's registered name; unregistered → warns and skips the launch, the hook point still completes), `input_template` (optional — a `dict`'s string leaves are each Jinja2-rendered against the event's template vars; a plain string is rendered once and its output parsed as a JSON object; omitted → `input=None`). Async/detached: the result arrives later on this session's own inbox as a `pipeline_result` message. |
+
+## `fs_watch` block
+
+Declares filesystem paths whose changes fire the `file_changed`
+[external-event hook](../../concepts/runtime/hooks.md#file_changed). Restart-only
+(OUT-set) — there is no op or tool verb that lets an agent register or widen
+a watch; a filesystem-wide change feed is treated as the same class of
+concern as sandbox policy.
+
+```yaml
+fs_watch:
+  paths: ["src", "docs"]
+  debounce_seconds: 0.2   # optional
+```
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `paths` | list[string] | `[]` | Directories watched recursively for create/modify/delete events. Empty (the default) → the watcher never starts, byte-identical to a build with no `fs_watch:` config. |
+| `debounce_seconds` | float | `0.2` | A burst of events for the same path within this window coalesces into a single `file_changed` fire (one logical change = one hook fire, not one fire per underlying filesystem event). |
+
+Requires the `watchdog` package: `pip install reyn[fs-watch]`. `paths`
+configured without the extra installed logs a warning once and disables the
+watcher for that session — the rest of the session is unaffected.
 
 ## `sandbox` block
 
@@ -1123,12 +1156,14 @@ mcp:
 | `url` | string | http, sse | Endpoint URL. |
 | `headers` | map[string,string] | http, sse (optional) | Static request headers. Values support `${VAR}` expansion. |
 | `call_timeout_seconds` | float | all (optional) | Per-call request timeout passed to the MCP SDK's `read_timeout_seconds`. Unset → SDK default applies (= no Reyn-level override; the SDK's transport-specific timeout governs). Set when a specific server is known to be slow or known to be quick + you want `fail-fast`. Independent of `timeout` (which is the HTTP transport's connect timeout for `type: http`). |
+| `elicitation` | string | all (optional) | `prompt` (default) — a server-initiated structured-input request (`elicitation/create`) surfaces as a consent prompt; `auto_decline` — every such request is declined without prompting. See [Concepts: MCP § Elicitation](../../concepts/tools-integrations/mcp.md#elicitation-structured-input-requests-from-a-server). |
+| `elicitation_timeout_seconds` | float | all (optional) | Wall-clock deadline for a human to answer an elicitation prompt. Default `120`. An unanswered request past the deadline is cancelled. |
 
 `${VAR}` in any string value is expanded from `os.environ` at startup (after `~/.reyn/secrets.env` is loaded). Missing variables expand to `""` and emit a runtime warning. Use `reyn secret set` to store values in `~/.reyn/secrets.env` — never paste tokens into `reyn.yaml` directly.
 
 Servers are merged across config sources: `~/.reyn/config.yaml` ⊕ `reyn.yaml` ⊕ `reyn.local.yaml`. The merge is a shallow union on `mcp.servers` keys — a per-machine `reyn.local.yaml` can add or override a single server without re-stating the rest.
 
-The MCP runtime is an optional dependency: install with `pip install -e ".[mcp]"` to pull in the official `mcp` Python SDK. Without the extra, configured servers are still parsed but any `mcp` op fails at dispatch.
+The MCP runtime is an optional dependency: install with `pip install -e ".[mcp]"` to pull in `fastmcp`. Without the extra, configured servers are still parsed but any `mcp` op fails at dispatch.
 
 ### `mcp.search_threshold`
 

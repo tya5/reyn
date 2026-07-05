@@ -127,7 +127,7 @@ Both list and read are additionally gated by the server's **negotiated capabilit
 - `subscribe_mcp_resource(server, uri)` / `unsubscribe_mcp_resource(server, uri)` — both gated the same way `read_mcp_resource` is (`mcp_subscribe_resource` / `mcp_unsubscribe_resource` Control IR ops, `permissions.mcp: [server_name]`), plus an ADDITIONAL gate on the server's negotiated `resources.subscribe` sub-capability — a server can advertise `resources` (list/read work) without advertising `subscribe` (e.g. every server built with FastMCP's high-level `FastMCP()` class today — the underlying SDK hard-codes `resources.subscribe=False` regardless of what handlers a FastMCP server registers).
 - **Persistent connection required.** A subscription only makes sense on a held (session-lifetime) connection — the subscribed-URI set lives in-memory on `MCPConnectionService` (runtime-only; a subscription carries no data of its own, so it's fully re-establishable, never WAL'd). An ephemeral chat session refuses both ops with a clear error rather than accept a subscription that dies the instant its one-shot connection closes.
 - **Survives a transport-death reconnect.** A dropped connection (subprocess death, broken HTTP) re-opens a fresh MCP session with no memory of prior subscriptions; `MCPConnectionService` automatically re-issues every tracked subscription against the fresh connection, so a subscription set up before a drop keeps delivering pushes after reyn heals the connection.
-- **The push lands on the EventLog, not in a tool result.** `mcp_resource_updated` (`server`, `uri`) is emitted asynchronously whenever the notification arrives — independent of any Control IR op call. Wiring it into the hook dispatcher (so a workflow can react to it directly) is a later slice; today it's an audit-trail signal a workflow author reads back via the EventLog.
+- **The push lands on the EventLog, not in a tool result.** `mcp_resource_updated` (`server`, `uri`, `resync`) is emitted asynchronously whenever the notification arrives — independent of any Control IR op call. It is also wired into the hook dispatcher as an **external-event hook-point**, so a hook can react to it directly — see [Hooks § External-event points](../runtime/hooks.md#external-event-points) — while the EventLog remains an audit-trail signal a workflow author can read back independent of any hook.
 
 ### Prompts: list + get
 
@@ -139,6 +139,17 @@ Alongside tools and resources, a server can expose **prompts** (named, server-au
 Both list and get are additionally gated by the server's **negotiated capabilities**: a server that never advertised `prompts` in its `initialize` handshake fails fast with a clear error (`require_capability` in `reyn/mcp/client.py`) instead of a raw protocol error.
 
 Prompts have no subscribe concept — MCP defines no per-prompt push notification (only the coarser `notifications/prompts/list_changed`, already bridged to an `mcp_prompt_list_changed` EventLog event); there is no `subscribe_mcp_prompt`.
+
+### Elicitation: structured input requests from a server
+
+A server can ask the user a flat/primitive-schema question through reyn's own consent path — the server issues an `elicitation/create` request, and reyn turns it into a user intervention prompt.
+
+- **Server attribution.** The prompt always names the asking server and states this is not reyn (e.g. `⚠️ MCP server 'github' asks (this is NOT reyn): ...`); individual field prompts carry the same `[MCP server '<name>']` prefix.
+- **Sensitive-field warning.** A field whose name or description contains `password`, `token`, `key`, `secret`, or `credential` gets an extra confirmation step first, stating explicitly that the answer will be sent to the server and that reyn never autofills it from env vars or stored secrets.
+- **No autofill.** Every answer is human-typed — this path never reads env vars or the secrets store to prefill a field.
+- **Configuration** (per server, under `mcp.servers.<name>`): `elicitation` (`prompt` (default) | `auto_decline`), `elicitation_timeout_seconds` (default 120).
+- **Semantics**: a timeout returns `cancel`; an explicit human decline, an `auto_decline`-configured server, or a headless context (no live listener) all return `decline`.
+- **Audit records field *keys* only, never values.** The `mcp_elicitation_requested`/`_answered`/`_timed_out`/`_auto_declined` events carry only the requested schema's property names (e.g. `field_keys: ["reason", "priority"]`) — never the human's typed answer.
 
 ## Transport choice (stdio vs HTTP)
 
@@ -191,6 +202,42 @@ mcp:
 The `${VAR}` syntax works in **all** YAML string fields, not just `mcp.servers`. This means `models.<name>.api_key`, `litellm.api_base`, and future fields all use the same mechanism. See [Reference: `reyn.yaml` — `${VAR}` interpolation](../../reference/config/reyn-yaml.md#var-interpolation) for the full picture.
 
 API keys and tokens belong in `~/.reyn/secrets.env` (managed via `reyn secret set`), referenced as `${VAR}` in `reyn.yaml` — never as literal values inline. See [Concepts: secret handling](../runtime/secret-handling.md).
+
+### OAuth
+
+For a server that requires OAuth 2.1 rather than a static bearer token, add
+`auth` to its `http`-transport entry — OAuth is **only supported over
+Streamable HTTP**; `stdio`/`sse` servers reject an `auth` key outright.
+
+```yaml
+mcp:
+  servers:
+    hosted_tool:
+      type: http
+      url: https://tools.example.com/mcp
+      auth: oauth   # shorthand for {type: oauth}
+      # or the long form, when you need scopes / a specific client:
+      # auth:
+      #   type: oauth
+      #   scopes: [read, write]
+      #   client_id: ${HOSTED_TOOL_CLIENT_ID}
+      #   client_secret: ${HOSTED_TOOL_CLIENT_SECRET}
+```
+
+- **First auth is interactive**: reyn opens a browser and a localhost
+  callback server to complete the authorization code flow. A headless run
+  (no interactive session, no cached token yet) fails with a clear error
+  instead of hanging on a browser round-trip nobody can complete — run reyn
+  interactively once against the server first.
+- **Tokens are cached** in `~/.reyn/oauth_tokens.json` (mode `0600`,
+  per-server) — the same store reyn's device-grant OAuth already uses, in
+  the "outside" bucket of the [`.reyn/` layout](../../reference/runtime/reyn-dir-layout.md):
+  operator/user-owned, never written through a WAL-emitting op, never
+  captured by rewind/PITR. Once cached, subsequent runs — including
+  headless ones — reuse the token without a browser round-trip.
+- **Static bearer auth is unaffected**: a server that just needs
+  `headers: {Authorization: "Bearer ${TOKEN}"}` keeps working exactly as
+  before — `auth` is only for the OAuth 2.1 flow.
 
 ## Security model
 
@@ -314,4 +361,5 @@ If you find yourself wishing MCP could do one of these, you're at the wrong laye
 - [Concepts: secret handling](../runtime/secret-handling.md) — `~/.reyn/secrets.env` and `${VAR}` interpolation
 - [Reference: `reyn.yaml`](../../reference/config/reyn-yaml.md#mcp-servers) — full `mcp.servers:` schema
 - [Concepts: permission model](../runtime/permission-model.md) — `file.write` / `http.get` / `permissions.mcp` and the collapse arc
+- [Concepts: hooks](../runtime/hooks.md#external-event-points) — the `mcp_resource_updated` external-event hook-point
 - [modelcontextprotocol.io](https://modelcontextprotocol.io) — the spec, server registry, official SDKs

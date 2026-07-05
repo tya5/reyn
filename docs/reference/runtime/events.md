@@ -52,6 +52,25 @@ Each Control IR op kind emits its own event:
 | `control_ir_skipped`, `control_ir_failed` | dispatch failures (`control_ir_skipped` reasons include `handler_not_implemented`, `not_allowed_in_phase`) |
 | `permission_denied` | When an op is denied by the resolver |
 
+## MCP
+
+Unlike the Control IR `mcp_*` events above (tied to a tool-call op), these
+fire asynchronously from the MCP connection/receive-loop, independent of any
+op dispatch:
+
+| Kind | Trigger | Key payload |
+|------|---------|-------------|
+| `mcp_initialized` | Emitted on every (re)connect, once the server's `initialize` handshake completes. | `server`, `negotiated_version`, `capabilities` |
+| `mcp_resource_updated` | A subscribed resource's server-pushed `resources/updated` notification, or a synthetic resync fired per re-subscribed URI after a transport-death reconnect. Also wired into the hook dispatcher as an external-event hook-point — see [Concepts: hooks](../../concepts/runtime/hooks.md#mcp_resource_updated). | `server`, `uri`, `resync` (`true` for a reconnect resync, `false` for a real push) |
+| `mcp_elicitation_requested` | A server issues an `elicitation/create` structured-input request. | `server`, `field_keys` (the requested schema's property **names** only — never values) |
+| `mcp_elicitation_answered` | The request resolves to `accept` or `decline` (human choice, or a `decline` from `auto_decline` config). | `server`, `field_keys`, `action` (`"accept"` \| `"decline"`) |
+| `mcp_elicitation_timed_out` | No answer arrived before `elicitation_timeout_seconds`. | `server`, `field_keys` |
+| `mcp_elicitation_auto_declined` | Declined without prompting — `reason` distinguishes a server configured `elicitation: auto_decline` from a headless context (no live intervention listener). | `server`, `field_keys`, `reason` (`"server_configured"` \| `"headless"`) |
+
+None of these events include the human's typed answer or any field *value* —
+only the requested schema's property names, matching the sensitive-field
+handling described in [Concepts: MCP § Elicitation](../../concepts/tools-integrations/mcp.md#elicitation-structured-input-requests-from-a-server).
+
 ## Credentials and OAuth
 
 | Kind | Trigger | Key payload |
