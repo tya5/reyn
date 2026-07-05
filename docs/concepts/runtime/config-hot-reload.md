@@ -143,7 +143,7 @@ Hot-reload is safe-by-construction through five layers:
 
 ## See also
 
-- [Concepts: Hooks](hooks.md) — the 8 lifecycle points, push/shell schemes, wake-loop behavior
+- [Concepts: Hooks](hooks.md) — the 6 lifecycle points, push/shell schemes, wake-loop behavior
 - [Concepts: Capability profile](capability-profile.md) — `tool_deny` gate for `hooks_add`; per-agent-capability reapply seam
 - [Concepts: Permission model](permission-model.md) — the ∩ model and the write-gate boundary
 - [Reference: reyn.yaml § hooks](../../reference/config/reyn-yaml.md#hooks-block) — startup hooks config (OUT-set)
