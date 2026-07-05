@@ -11,14 +11,16 @@ Why a dedicated runner (not ``SandboxBackend.run``): ``run`` is single-shot
 (``subprocess.run`` capture — stdout read only after exit), but CodeAct needs a
 duplex channel **live during execution**. The runner does its own
 ``Popen(pass_fds=...)`` so the socketpair fd is inherited, and services the channel
-concurrently with the child. The OS sandbox is applied by reusing the backend's
-profile builder (S2b: Seatbelt ``_build_sbpl_profile`` + ``sandbox-exec`` wrapper;
-S2c: Landlock preexec ruleset) — the inherited socketpair fd survives both (an
-AF_UNIX socketpair is not a ``network*`` socket; verified on Seatbelt under
-``(deny default)+(deny network*)``).
+concurrently with the child. The OS sandbox is applied via the SAME
+``SandboxBackend.wrap_command(argv, policy)`` abstraction every other
+command-level launch route uses (#2626, #2628) — Seatbelt's ``sandbox-exec -f
+<profile>`` wrap or Landlock's re-exec shim, whichever backend is available —
+so the inherited socketpair fd survives both (an AF_UNIX socketpair is not a
+``network*`` socket; verified on Seatbelt under ``(deny default)+(deny
+network*)``).
 
 This module is the S2a core: the protocol + service loop + the direct (no-sandbox)
-spawn. The sandbox-wrapping spawn lands in S2b/S2c.
+spawn, plus the ``wrap_command``-delegated sandboxed spawn.
 """
 from __future__ import annotations
 
@@ -106,8 +108,8 @@ class CodeActRunner:
         for exercising the transport/proxy core without a sandbox; production callers
         (the CodeAct scheme) never set it.
 
-        S2b wires the Seatbelt wrap (reusing ``_build_sbpl_profile``); S2c wires
-        Landlock.
+        The wrap (Seatbelt or Landlock, whichever the backend is) is resolved via
+        ``sandbox_backend.wrap_command(...)`` — see ``_resolve_sandbox_spawn``.
         """
         base_argv = [self.python_executable, "-m", "reyn.core.kernel._codeact_harness"]
         argv, cleanup, spawn_error = self._resolve_sandbox_spawn(
@@ -226,12 +228,16 @@ class CodeActRunner:
         error string (fail-closed). Returns ``(argv, cleanup, error)``; exactly one
         of ``argv`` / ``error`` is non-None.
 
-        - Seatbelt (available): wrap ``base_argv`` with ``sandbox-exec -f <profile>``
-          using the REUSED ``_build_sbpl_profile`` (the inherited socketpair fd
-          survives — an AF_UNIX socketpair is not a ``network*`` socket).
-        - Landlock (available): S2c (preexec ruleset) — not yet wired → fail-closed.
+        - Any AVAILABLE real backend (Seatbelt / Landlock): delegate to the
+          backend's own ``wrap_command(base_argv, policy)`` (#2626's
+          ``SandboxBackend`` abstraction) — the SAME wrap logic every other
+          command-level launch route uses (single-abstraction, #2628). The
+          inherited socketpair fd survives both backends' wraps (an AF_UNIX
+          socketpair is not a ``network*`` socket).
         - noop / None / unavailable: fail-closed unless ``allow_unsandboxed`` (a
-          test-only escape for the transport/proxy core).
+          test-only escape for the transport/proxy core). NoopBackend's
+          ``wrap_command`` is a passthrough (no isolation), so it is deliberately
+          excluded here — CodeAct must never silently run unsandboxed.
         """
         name = getattr(sandbox_backend, "name", None)
         available = bool(sandbox_backend is not None and sandbox_backend.available())
@@ -250,40 +256,12 @@ class CodeActRunner:
         policy_dict["timeout_seconds"] = timeout
         policy = SandboxPolicy(**policy_dict)
 
-        if name == "seatbelt":
-            import tempfile  # noqa: PLC0415
+        try:
+            wrapped = sandbox_backend.wrap_command(base_argv, policy)
+        except Exception as exc:  # noqa: BLE001 — fail-closed on any wrap failure
+            return None, None, f"CodeAct: sandbox_backend.wrap_command failed: {exc}"
 
-            from reyn.security.sandbox.backends.seatbelt import (  # noqa: PLC0415
-                _build_sbpl_profile,
-            )
-
-            profile_text = _build_sbpl_profile(policy)
-            try:
-                fh = tempfile.NamedTemporaryFile(
-                    suffix=".sb", mode="w", delete=False, encoding="utf-8",
-                )
-                fh.write(profile_text)
-                fh.close()
-            except OSError as exc:
-                return None, None, f"CodeAct: failed to write Seatbelt profile: {exc}"
-
-            def _cleanup() -> None:
-                try:
-                    os.unlink(fh.name)
-                except OSError:
-                    pass
-
-            return ["sandbox-exec", "-f", fh.name, *base_argv], _cleanup, None
-
-        if name == "landlock":
-            return None, None, (
-                "CodeAct Landlock wrap is S2c (pending Linux+Landlock env "
-                "verification) — not yet available (fail-closed)."
-            )
-
-        return None, None, (
-            f"CodeAct does not support sandbox backend {name!r} yet (fail-closed)."
-        )
+        return wrapped.argv, wrapped.cleanup, None
 
     async def _service(
         self, sock: socket.socket, dispatch: DispatchFn, loop: asyncio.AbstractEventLoop,
