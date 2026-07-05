@@ -151,6 +151,13 @@ mindmap
       Session visibility toggle
       install_local
       install_source
+    🔗 Pipeline
+      Step kinds
+      Primitives
+      Invocation tools
+      Driver-as-session
+      Crash recovery
+      Registration
     🌐 Web and Protocol
       FastAPI gateway
       WebSocket chat
@@ -539,6 +546,26 @@ logic. Design: [content-threat scan proposal](deep-dives/proposals/0050-content-
 | `skill_management__install_source` | Fetch + shallow-clone a skill from a git/GitHub URL into `.reyn/skills/<name>/`; same threat-scan/gate/recovery pipeline, plus path-traversal-hardened name sanitization and containment checks | [Concepts: Skills](concepts/tools-integrations/skills.md) |
 
 > **Differentiation vs general agents:** skills are instructions the model chooses to read, not programs the OS executes — the same layered-disclosure shape (menu → on-demand load) as MCP tool discovery, applied to task-specific technique instead of external APIs.
+
+---
+
+### Pipeline
+
+| Feature | Description | Documentation |
+|---------|-------------|---------------|
+| Step kinds | `transform` (pure R1 expression), `tool` (+ `shell` sugar; `!expr` YAML tag marks an expression arg vs a literal), `agent` (LLM leaf-worker, capability-narrowed to ⊆ the invoker) | [Reference: Pipeline DSL](reference/runtime/pipeline-dsl.md) |
+| Compositional primitives | `call` (sub-pipeline), `match` (runtime-value-selected sub-pipeline), `fold` (sequential accumulator), `for_each` (concurrent fan-out over a list + collect, S5-bounded), `parallel` (concurrent heterogeneous named branches + collect) — the full Appendix-B primitive set | [Reference: Pipeline DSL](reference/runtime/pipeline-dsl.md) |
+| R1 expression language | Field refs, comparisons, `map`/`filter`/`all`/`any`/`count`/`join`, lambdas in combinator slots — the total expression language `transform.value` / `tool.args` (`!expr`) / `match.on` resolve against | [Reference: Pipeline DSL](reference/runtime/pipeline-dsl.md) |
+| Nested schemas + `verify: schema` | `SchemaRegistry`-backed schema documents a `tool`/`agent` step's result is validated against | [Reference: Pipeline DSL](reference/runtime/pipeline-dsl.md) |
+| Registration from disk | Drop `pipelines/*.yaml` (Appendix-B DSL) into a scanned directory (default `pipelines/`, configurable via `reyn.yaml`'s `pipelines.scan_dirs`); auto-loaded + registered at session start; surfaces as `pipeline__<name>`. Declared `pipeline:` name is authoritative, not the file name. Fail-loud: malformed DSL or a name collision fails session start | [Concepts: Pipeline registration](concepts/runtime/pipeline-registration.md) |
+| `run_pipeline` / `run_pipeline_async` | Launch a registered pipeline by name — sync-attached (live step-progress events, Ctrl-C cancel) or detached (result delivered later as an inbox message) | [Reference: Pipeline DSL](reference/runtime/pipeline-dsl.md) |
+| `run_pipeline_inline` / `run_pipeline_inline_async` | Launch an ad-hoc, agent-generated DSL string — parsed and passed through a static-analysis gate (schema refs resolve, tool names resolve, no nested pipeline/delegate launch, agent steps run only under the invoker's own identity) before anything spawns | [Reference: Pipeline DSL](reference/runtime/pipeline-dsl.md) |
+| Driver-as-session architecture | A pipeline run executes inside a spawned `PipelineExecutorDriver` session — reuses the ordinary session's run-loop, inbox, and WAL/crash-restore substrate rather than a bespoke execution path | [Concepts: Pipelines](concepts/runtime/pipelines.md) |
+| Crash recovery | Per-run work-order (`invocation.json`) persisted before step 0; step-boundary generation snapshots give exactly-once, truncation-surviving resume (including mid-`call`/`fold`/`for_each` state) | [Concepts: Pipelines](concepts/runtime/pipelines.md) |
+| S5 spawn bounds | `safety.spawn.max_pipeline_fan_out_depth` (`for_each` nesting depth, default 5) and `safety.spawn.max_pipeline_spawns` (ephemeral sessions per run, default 100) — both `0` = unlimited (operator opt-out) | [Reference: Pipeline DSL](reference/runtime/pipeline-dsl.md) |
+| Security floor | Launching a pipeline (any of the 4 tools) sits on the same `HIGH`-severity spawn-adjacent floor as `delegate_to_agent` — an `_untrusted`- or `_delegate`-narrowed context cannot launch one, registered or inline | [Concepts: Pipeline registration § Security](concepts/runtime/pipeline-registration.md) |
+
+> **Differentiation vs general agents:** a pipeline is a deterministic, Turing-incomplete control-plane DSL, not another agent loop — the composition primitives are structurally closed (no nested launch, no arbitrary recursion), so safety and crash-recovery come from the DSL's shape rather than runtime policy layered on top of an unbounded execution graph.
 
 ---
 
