@@ -71,6 +71,21 @@ receive loop running, so server-pushed notifications (tools/prompts ``list_chang
 behaviour) are threaded down to a per-server :class:`~reyn.mcp.message_handler.
 ReynMCPMessageHandler` built fresh each time :meth:`_ensure_open` opens (or reopens, on
 reconnect) a held client — see that module for the notification->EventLog bridge design.
+
+#2597 slice ②b — resource subscriptions (Q4, decided, do not relitigate): the
+subscribed-URI set is RUNTIME-ONLY, in-memory, per server, held on THIS service
+(``self._subscriptions``) — never WAL'd. A subscription carries no data of its own (MCP's
+resources/subscribe is a thin "something changed, re-read if you care" signal, not a
+message queue — see ``reyn.mcp.client.MCPClient.subscribe_resource``'s docstring), so it
+is fully re-establishable and matches the gen-store runtime-only-state invariant. The
+consequence: a fresh session (post-restart) starts with NO subscriptions (same as a fresh
+``MCPClient`` starts with none), and a RECONNECT within the same live session (the F1
+transport-death path) must explicitly RE-ISSUE ``subscribe_resource`` for every URI
+tracked for that server on the fresh client — a brand-new ``mcp.ClientSession`` has no
+memory of what the OLD (now-dead) session's client subscribed to. :meth:`_ensure_open`
+does this re-subscribe immediately after opening a NEW client (whether that is the very
+first open, where the tracked set is empty and the loop is a no-op, or a reconnect, where
+it is the whole point) — see that method's inline comment.
 """
 from __future__ import annotations
 
@@ -114,6 +129,13 @@ class MCPConnectionService:
         self._emit_sink = emit_sink
         self._tools_cache_invalidate = tools_cache_invalidate
         self._clients: dict[str, MCPClient] = {}
+        # #2597 slice ②b: runtime-only, in-memory, NO WAL (Q4 — see module docstring).
+        # server name -> set of URIs currently subscribed on that server's held
+        # connection. Populated by _HeldConnection.subscribe_resource on success,
+        # discarded by unsubscribe_resource, and consulted by _ensure_open to
+        # re-subscribe every tracked URI on a fresh client (first open: empty, no-op;
+        # reconnect: the whole point).
+        self._subscriptions: dict[str, set[str]] = {}
         # One handle per server, cached so repeated get() calls for the same server
         # return the SAME object (connection-reuse identity) across the connection's
         # whole lifetime, including through a reconnect: the handle looks up the
@@ -194,6 +216,24 @@ class MCPConnectionService:
                     negotiated_version=client.negotiated_version,
                     capabilities=client.advertised_capabilities(),
                 )
+            # #2597 slice ②b: re-issue subscribe_resource for every URI tracked for
+            # THIS server on the fresh client. On the very first open the tracked set
+            # is empty (nothing to do yet); on a reconnect (this same branch runs
+            # because the dead client was already popped from self._clients by
+            # _reconnect below) this is what makes a subscription survive a
+            # transport-death reconnect — a brand-new mcp.ClientSession has no
+            # memory of what the OLD session subscribed to. Per-URI try/except: a
+            # server that no longer supports subscribe post-reconnect (or a single
+            # bad URI) must not abort re-subscribing the REST of the tracked set,
+            # and must not crash the reconnect itself.
+            for uri in self._subscriptions.get(server, ()):
+                try:
+                    await client.subscribe_resource(uri)
+                except Exception:  # noqa: BLE001 — one bad re-subscribe must not block the rest
+                    logger.warning(
+                        "MCPConnectionService: failed to re-subscribe %r on %r after "
+                        "(re)connect", uri, server, exc_info=True,
+                    )
         return client
 
     async def _reconnect(
@@ -214,6 +254,18 @@ class MCPConnectionService:
                     server, exc,
                 )
         return await self._ensure_open(server, config, agent_id=agent_id)
+
+    def subscribed_uris(self, server: str) -> list[str]:
+        """Sorted list of URIs currently tracked as subscribed for ``server``.
+        Read-only introspection for callers/tests (mirrors :meth:`held_servers`'s
+        public-surface pattern) — never reach into ``_subscriptions`` directly."""
+        return sorted(self._subscriptions.get(server, ()))
+
+    def _track_subscription(self, server: str, uri: str) -> None:
+        self._subscriptions.setdefault(server, set()).add(uri)
+
+    def _untrack_subscription(self, server: str, uri: str) -> None:
+        self._subscriptions.get(server, set()).discard(uri)
 
     async def aclose(self) -> None:
         """Close every held connection. Idempotent — safe to call repeatedly (e.g. a
@@ -244,7 +296,8 @@ class _HeldConnection:
     :meth:`MCPConnectionService.get`. Exposes exactly the surface
     :class:`~reyn.mcp.gateway.MCPGateway` calls (``call_tool`` / ``list_tools`` /
     ``list_resources`` / ``list_resource_templates`` / ``read_resource`` /
-    ``is_initialized``) so it's usable anywhere a bare ``MCPClient`` is expected.
+    ``subscribe_resource`` / ``unsubscribe_resource`` / ``is_initialized``) so it's
+    usable anywhere a bare ``MCPClient`` is expected.
 
     Looks up the currently-live held ``MCPClient`` by server name on every call
     instead of binding to one instance at construction time, so this handle's
@@ -307,6 +360,23 @@ class _HeldConnection:
 
     async def read_resource(self, uri: str) -> dict[str, Any]:
         return await self._heal(lambda c: c.read_resource(uri), heal_only=False)
+
+    # #2597 slice ②b: resource subscriptions. Unlike call_tool, subscribe/unsubscribe
+    # are connection-MANAGEMENT operations, not data reads — but they still go through
+    # _heal (heal_only=False) rather than a bespoke path: if the connection is dead,
+    # heal reconnects it (which — via MCPConnectionService._ensure_open — re-issues
+    # subscribe for every ALREADY-tracked URI, but NOT this one, since it is only
+    # tracked below AFTER the call succeeds) and then _heal's heal_only=False retries
+    # THIS call once on the fresh connection. That sequencing is what avoids a double
+    # subscribe: the reconnect's re-subscribe loop and this method's own retry never
+    # target the same URI in the same pass.
+    async def subscribe_resource(self, uri: str) -> None:
+        await self._heal(lambda c: c.subscribe_resource(uri), heal_only=False)
+        self._service._track_subscription(self._server, uri)
+
+    async def unsubscribe_resource(self, uri: str) -> None:
+        await self._heal(lambda c: c.unsubscribe_resource(uri), heal_only=False)
+        self._service._untrack_subscription(self._server, uri)
 
     async def _heal(
         self, op: "Callable[[MCPClient], Awaitable[Any]]", *, heal_only: bool,

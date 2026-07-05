@@ -127,6 +127,27 @@ class MCPReadResourceIROp(BaseModel):
     uri: str
 
 
+class MCPSubscribeResourceIROp(BaseModel):
+    """#2597 slice ②b: subscribe to server-pushed ``resources/updated`` for one
+    URI on a configured MCP server. Permission-gated like ``MCPReadResourceIROp``
+    (same server-scoped ``require_mcp`` axis — subscribing is a stateful action
+    against the server, gated the same way a read is). The push notification
+    itself lands as an ``mcp_resource_updated`` EventLog event (see
+    ``reyn.mcp.message_handler.ReynMCPMessageHandler.on_resource_updated``), not
+    as this op's return value — this op only confirms the subscribe request
+    succeeded."""
+    kind: Literal["mcp_subscribe_resource"]
+    server: str
+    uri: str
+
+
+class MCPUnsubscribeResourceIROp(BaseModel):
+    """#2597 slice ②b: inverse of ``MCPSubscribeResourceIROp``."""
+    kind: Literal["mcp_unsubscribe_resource"]
+    server: str
+    uri: str
+
+
 class AskUserIROp(BaseModel):
     kind: Literal["ask_user"]
     question: str
@@ -550,6 +571,12 @@ OP_KIND_MODEL_MAP: dict[str, type[BaseModel]] = {
     # content); list/list-templates stay op-kind-free, mirroring list_tools (see
     # op_runtime/mcp_read_resource.py + session.py's _mcp_list_resources).
     "mcp_read_resource": MCPReadResourceIROp,
+    # #2597 slice ②b: resource subscriptions — subscribe/unsubscribe are
+    # permission-gated the same way read is (stateful action against the
+    # server); the resulting push notification is an EventLog event
+    # (mcp_resource_updated), not routed through the Op union at all.
+    "mcp_subscribe_resource": MCPSubscribeResourceIROp,
+    "mcp_unsubscribe_resource": MCPUnsubscribeResourceIROp,
     "ask_user":    AskUserIROp,
     "web_fetch":   WebFetchIROp,
     "web_search":  WebSearchIROp,
@@ -598,7 +625,9 @@ if TYPE_CHECKING:
             FileIROp,
             ReadFileIROp, WriteFileIROp, EditFileIROp, DeleteFileIROp,
             GlobFilesIROp, GrepFilesIROp,
-            MCPIROp, MCPReadResourceIROp, AskUserIROp,
+            MCPIROp, MCPReadResourceIROp,
+            MCPSubscribeResourceIROp, MCPUnsubscribeResourceIROp,
+            AskUserIROp,
             WebFetchIROp, WebSearchIROp, MCPInstallIROp,
             MCPDropServerIROp,
             IndexQueryIROp, RecallIROp, IndexDropIROp,

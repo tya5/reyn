@@ -157,6 +157,28 @@ class MCPGateway:
         return await self._run(server, config, lambda c: c.read_resource(uri),
                                timeout=resolve_call_timeout(config))
 
+    async def subscribe_resource(self, server: str, uri: str, config: dict) -> None:
+        """Subscribe to server-pushed ``resources/updated`` for ``uri``. Raises
+        :class:`MCPFault` on any contained fault (mirrors :meth:`read_resource`).
+
+        #2597 slice ②b: the injected pool MUST be a
+        :class:`~reyn.mcp.connection_service.MCPConnectionService` (a HELD
+        connection) for a subscription to be meaningful — see
+        ``session.py``'s ``_mcp_subscribe_resource`` docstring, which refuses
+        the call before it ever reaches here for an ephemeral (one-shot-pool)
+        session. This method itself doesn't re-check that (the gateway is a
+        thin dispatch seam, not a policy seam) — it just runs the op against
+        whatever pool the caller injected.
+        """
+        return await self._run(server, config, lambda c: c.subscribe_resource(uri),
+                               timeout=resolve_call_timeout(config))
+
+    async def unsubscribe_resource(self, server: str, uri: str, config: dict) -> None:
+        """Unsubscribe from ``uri``. Raises :class:`MCPFault` on any contained
+        fault (mirrors :meth:`subscribe_resource`)."""
+        return await self._run(server, config, lambda c: c.unsubscribe_resource(uri),
+                               timeout=resolve_call_timeout(config))
+
     async def probe(self, server: str, config: dict) -> None:
         """Open the server (MCP initialize handshake) to verify reachability, then release it.
         Returns None on success; raises :class:`MCPFault` if the server cannot be reached/opened."""

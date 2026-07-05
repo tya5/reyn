@@ -26,8 +26,14 @@ analogue):
                                 external-content + permission-gated shape)
   LIST_MCP_RESOURCE_TEMPLATES — gates.router=allow
 
-``resources/subscribe`` + ``resources/updated`` push notifications are OUT
-OF SCOPE (slice ②b) — these three are list/read only.
+#2597 slice ②b adds TWO more, parallel to the ②a set (the async push
+event-source itself — the resulting notification lands as an
+``mcp_resource_updated`` EventLog event, not through either of these):
+
+  SUBSCRIBE_MCP_RESOURCE    — gates.router=allow (permission-gated like
+                               READ_MCP_RESOURCE — a stateful action against
+                               the server)
+  UNSUBSCRIBE_MCP_RESOURCE  — gates.router=allow
 
 ## Router-side dispatch
 
@@ -203,6 +209,51 @@ _READ_MCP_RESOURCE_PARAMETERS: dict[str, Any] = {
 }
 
 
+# ── #2597 slice ②b: resource subscriptions parameters ─────────────────────────
+
+_SUBSCRIBE_MCP_RESOURCE_DESCRIPTION = (
+    "Subscribe to server-pushed updates for one MCP resource by URI. When the "
+    "server-side content changes, a mcp_resource_updated event is recorded — "
+    "call read_mcp_resource again to see the new content (the push notification "
+    "itself carries no content, just a signal that something changed)."
+)
+
+_SUBSCRIBE_MCP_RESOURCE_PARAMETERS: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "server": {
+            "type": "string",
+            "description": "MCP server name — choose from the enum (verbatim).",
+        },
+        "uri": {
+            "type": "string",
+            "description": "Resource URI, verbatim from list_mcp_resources.",
+        },
+    },
+    "required": ["server", "uri"],
+}
+
+_UNSUBSCRIBE_MCP_RESOURCE_DESCRIPTION = (
+    "Unsubscribe from server-pushed updates for one MCP resource by URI "
+    "(previously subscribed via subscribe_mcp_resource)."
+)
+
+_UNSUBSCRIBE_MCP_RESOURCE_PARAMETERS: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "server": {
+            "type": "string",
+            "description": "MCP server name — choose from the enum (verbatim).",
+        },
+        "uri": {
+            "type": "string",
+            "description": "Resource URI, verbatim from list_mcp_resources.",
+        },
+    },
+    "required": ["server", "uri"],
+}
+
+
 # ── Handlers ──────────────────────────────────────────────────────────────────
 
 async def _handle_list_mcp_servers(
@@ -316,6 +367,34 @@ async def _handle_read_mcp_resource(
     server = str(args["server"])
     uri = str(args["uri"])
     return await host.mcp_read_resource(server, uri)
+
+
+async def _handle_subscribe_mcp_resource(
+    args: Mapping[str, Any], ctx: ToolContext
+) -> ToolResult:
+    """Adapter for subscribe_mcp_resource.
+
+    Delegates to host.mcp_subscribe_resource(server, uri) via ctx.router_state.
+    Mirrors _handle_read_mcp_resource's delegation shape; the persistent-
+    connection requirement + permission gate are enforced upstream (session.py
+    ``_mcp_subscribe_resource`` / the ``mcp_subscribe_resource`` op kind), not
+    here.
+    """
+    host = _require_host(ctx)
+    server = str(args["server"])
+    uri = str(args["uri"])
+    return await host.mcp_subscribe_resource(server, uri)
+
+
+async def _handle_unsubscribe_mcp_resource(
+    args: Mapping[str, Any], ctx: ToolContext
+) -> ToolResult:
+    """Adapter for unsubscribe_mcp_resource. Mirrors
+    _handle_subscribe_mcp_resource."""
+    host = _require_host(ctx)
+    server = str(args["server"])
+    uri = str(args["uri"])
+    return await host.mcp_unsubscribe_resource(server, uri)
 
 
 async def _handle_call_mcp_tool(
@@ -549,6 +628,35 @@ READ_MCP_RESOURCE = ToolDefinition(
     category="discovery",
     purity="read_only",  # a resource read has no reyn-side side effects (unlike call_mcp_tool)
     returns_external_content=True,  # FP-0050/#1822: external MCP server resource content
+    schema_enricher=_enrich_router_schema,
+)
+
+
+# ── #2597 slice ②b: resource subscriptions ToolDefinitions ────────────────────
+# Parallel to READ_MCP_RESOURCE above — same gates, same schema-enrichment
+# reuse (server enum only).
+
+SUBSCRIBE_MCP_RESOURCE = ToolDefinition(
+    name="subscribe_mcp_resource",
+    router_dispatched=True,
+    description=_SUBSCRIBE_MCP_RESOURCE_DESCRIPTION,
+    parameters=_SUBSCRIBE_MCP_RESOURCE_PARAMETERS,
+    gates=ToolGates(router="allow", phase="allow"),
+    handler=_handle_subscribe_mcp_resource,
+    category="discovery",
+    purity="side_effect",  # registers server-side subscription state
+    schema_enricher=_enrich_router_schema,
+)
+
+UNSUBSCRIBE_MCP_RESOURCE = ToolDefinition(
+    name="unsubscribe_mcp_resource",
+    router_dispatched=True,
+    description=_UNSUBSCRIBE_MCP_RESOURCE_DESCRIPTION,
+    parameters=_UNSUBSCRIBE_MCP_RESOURCE_PARAMETERS,
+    gates=ToolGates(router="allow", phase="allow"),
+    handler=_handle_unsubscribe_mcp_resource,
+    category="discovery",
+    purity="side_effect",
     schema_enricher=_enrich_router_schema,
 )
 

@@ -24,6 +24,8 @@ Control IR is the list of side-effect operations the LLM may emit alongside its 
 | `web_fetch` | Fetch a single URL and return extracted text | Tier 1 — default allow; `web.fetch: deny` in `reyn.yaml` blocks |
 | `mcp` | Call a tool on a configured MCP server | `permissions.mcp: [server_name]` in skill frontmatter |
 | `mcp_read_resource` | Read one resource (or a resolved resource-template URI) on a configured MCP server | `permissions.mcp: [server_name]` in skill frontmatter (same axis as `mcp`) |
+| `mcp_subscribe_resource` | Subscribe to server-pushed `resources/updated` notifications for one resource URI (requires a persistent connection — see below) | `permissions.mcp: [server_name]` in skill frontmatter (same axis as `mcp`) |
+| `mcp_unsubscribe_resource` | Cancel a previous `mcp_subscribe_resource` | `permissions.mcp: [server_name]` in skill frontmatter (same axis as `mcp`) |
 | `mcp_install` | Install an MCP server from the registry into the project config | `permissions.mcp_install: true` in skill frontmatter |
 | `mcp_drop_server` | Remove an MCP server from project/local/user config (inverse of `mcp_install`) | `permissions.mcp_drop_server: true` in skill frontmatter |
 | `skill_install` | Register a skill (local dir or git/URL source) into the project skills config | `file.write: [.reyn/config/skills.yaml]` in skill frontmatter; `http.get: [{host: <source_host>}]` when `source` is set |
@@ -256,7 +258,31 @@ The OS resolves the server's transport, dispatches via `MCPClient.read_resource`
 
 **Discovery is NOT gated.** `list_mcp_resources` / `list_mcp_resource_templates` (the chat-tool names for `MCPClient.list_resources` / `list_resource_templates`) mirror `list_mcp_tools`: no `control-ir` op kind, no permission gate — pure discovery, routed directly through `MCPGateway` from the router host adapter. Only the content-returning read is a gated op kind, matching the existing `mcp` (call_tool) vs. discovery (`list_tools`) split.
 
-`resources/subscribe` + `resources/updated` push notifications are a separate, later slice (②b) — out of scope here.
+`resources/subscribe` + `resources/updated` push notifications are `mcp_subscribe_resource` / `mcp_unsubscribe_resource` below (#2597 slice ②b).
+
+## `mcp_subscribe_resource` / `mcp_unsubscribe_resource`
+
+Subscribe to (or cancel a subscription to) server-pushed `notifications/resources/updated` for one resource URI on a configured MCP server. #2597 slice ②b — the async push event-source: MCP's `resources/subscribe` is a **state-sync/watch** mechanism, not a message queue — the server pushes a thin "this URI changed" signal (no payload), and the OS re-reads (`mcp_read_resource` / `read_mcp_resource`) to see the new content.
+
+```json
+{"kind": "mcp_subscribe_resource", "server": "filesystem", "uri": "file:///README.md"}
+```
+
+```json
+{"kind": "mcp_unsubscribe_resource", "server": "filesystem", "uri": "file:///README.md"}
+```
+
+Fields (both kinds): `server` (required), `uri` (required — a resource URI as advertised by `resources/list`).
+
+Gated by the **same** `permissions.mcp` axis as `mcp` / `mcp_read_resource` (subscribing is a stateful action against the server). Gated ALSO on the server's negotiated `resources.subscribe` sub-capability — distinct from the coarser `resources` capability `mcp_read_resource` gates on: a server may support reading resources without supporting subscriptions to them (`MCPClient.subscribe_resource` fails fast with `MCPCapabilityError` if the server didn't advertise `resources.subscribe=True` at connect).
+
+**Persistent connection required.** A subscription is only meaningful on a HELD (session-lifetime) MCP connection — the subscribed-URI set is tracked in-memory on `MCPConnectionService` (runtime-only, no WAL: a subscription carries no data of its own, so it is fully re-establishable and matches the gen-store runtime-only-state invariant). An ephemeral session (whose per-call `MCPClientPool` closes the connection immediately after the op returns) refuses both ops with a clear error rather than silently accept a subscription that can never observe a push.
+
+**Reconnect re-subscribes automatically.** A transport-death reconnect (the same F1 healing path `mcp`/`mcp_read_resource` use) opens a fresh `mcp.ClientSession`, which starts with no subscriptions of its own — `MCPConnectionService` re-issues `subscribe_resource` for every URI still tracked for that server immediately after the fresh connection opens, so a subscription survives a dropped transport transparently.
+
+**The push notification itself is an EventLog event, not a `control_ir_results` value.** When the server sends `notifications/resources/updated {uri}`, `reyn.mcp.message_handler.ReynMCPMessageHandler.on_resource_updated` emits an `mcp_resource_updated` event (`server`, `uri`) onto the session's `EventLog` — asynchronously, independent of any op call. This slice deliberately stops at the EventLog: wiring `mcp_resource_updated` into the hook dispatcher is a later (hooks-arc) slice. Re-reading subscribed resources on reconnect to catch updates missed while disconnected (a resync-READ, distinct from the re-**subscribe** above) is also a follow-up, not this slice.
+
+Advertised to the LLM under the chat-tool names `subscribe_mcp_resource` / `unsubscribe_mcp_resource` — same alias pattern as `mcp`/`call_mcp_tool`.
 
 ## `mcp_install`
 

@@ -73,6 +73,12 @@ _NOT_EXTERNAL = {
     # repo content. The cloned SKILL.md is threat-scanned before registration;
     # the scan result is internal OS state, not forwarded external content.
     # Same classification rationale as mcp_install_package (installs, does not relay).
+    # #2597 slice ②b: subscribe_mcp_resource / unsubscribe_mcp_resource return an
+    # {status, server, uri} subscribe-confirmation ACK, never resource CONTENT (the
+    # push notification itself carries no payload — a caller re-reads via
+    # read_mcp_resource, which IS fenced above). Same "status ACK, not content"
+    # classification rationale as mcp_install_local / topology_create.
+    "subscribe_mcp_resource", "unsubscribe_mcp_resource",
     "skill_install_source",
     "cron_register", "cron_unregister", "cron_enable", "cron_disable",
     # #2073 S3: hooks_add writes .reyn/hooks.yaml + schedules a reload — returns a
