@@ -250,7 +250,7 @@ async def test_skill_install_source_gates_http_get(tmp_path, monkeypatch):
 
     # Monkeypatch _shallow_clone to succeed (would only be reached on allow; on deny
     # the gate raises before clone). This avoids real network calls for https sources.
-    def _fake_clone(git_url, dest):
+    async def _fake_clone(git_url, dest, ctx):
         dest.mkdir(parents=True, exist_ok=True)
         (dest / "SKILL.md").write_text(
             "---\nname: gated-skill\ndescription: Gated\n---\nBody.\n",
@@ -419,6 +419,51 @@ async def test_skill_install_source_op_name_traversal_refused(tmp_path):
     assert sentinel.exists(), "SECURITY: sentinel2 directory was deleted (arbitrary rmtree)"
     assert (sentinel / "keep.txt").exists(), \
         "SECURITY: sentinel2 file was deleted (path-traversal via op.name succeeded)"
+
+
+# ── Test 9: SECURITY — clone routes through the sandbox abstraction (#2620) ──
+
+
+@pytest.mark.asyncio
+async def test_skill_install_clone_routes_through_sandbox_abstraction(tmp_path):
+    """Tier 2: SECURITY (#2620) — _shallow_clone's git clone subprocess must go
+    THROUGH the sandbox abstraction (``backend.run()``), not a raw
+    ``subprocess.run`` that never consults any backend. Verified via a REAL
+    ``NoopBackend`` subclass that records each ``run()`` invocation (not a
+    mock) injected on ``ctx.sandbox_backend`` — RED if the clone bypasses the
+    injected backend (e.g. reverts to a bare subprocess.run call)."""
+    from reyn.core.op_runtime.skill_install import handle
+    from reyn.security.sandbox.noop_backend import NoopBackend
+
+    class _RecordingBackend(NoopBackend):
+        """A real NoopBackend subclass that records each run() call's argv."""
+
+        def __init__(self) -> None:
+            super().__init__()
+            self.calls: list[list[str]] = []
+
+        async def run(self, argv, policy, **kwargs):
+            self.calls.append(list(argv))
+            return await super().run(argv, policy, **kwargs)
+
+    repo = _make_git_skill_repo(tmp_path / "repos", "routed-skill", "Routed through sandbox")
+    source_url = repo.as_uri()
+
+    ctx, _events = _make_ctx(tmp_path)
+    recording_backend = _RecordingBackend()
+    ctx.sandbox_backend = recording_backend
+
+    op = SkillInstallIROp(kind="skill_install", source=source_url)
+    result = await handle(op=op, ctx=ctx)
+
+    assert result["status"] == "installed", f"expected installed, got {result}"
+    assert recording_backend.calls, (
+        "git clone did not route through the injected sandbox backend's run() — "
+        "the abstraction was bypassed"
+    )
+    clone_call = recording_backend.calls[0]
+    assert clone_call[:2] == ["git", "clone"], f"unexpected clone argv: {clone_call}"
+    assert source_url in clone_call
 
 
 def test_safe_skill_name_rejects_traversal_and_separators():

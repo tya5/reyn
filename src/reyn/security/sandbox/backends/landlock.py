@@ -28,7 +28,7 @@ import signal
 import subprocess
 
 from .._subprocess_io import communicate_capped
-from ..backend import SandboxResult
+from ..backend import SandboxResult, WrappedCommand
 from ..policy import SandboxPolicy
 
 _logger = logging.getLogger(__name__)
@@ -114,6 +114,20 @@ class LandlockBackend:
 
         self._available = True
         return True
+
+    def wrap_command(self, argv: list[str], policy: SandboxPolicy) -> WrappedCommand:
+        """Prepend the ``landlock_exec`` re-exec shim to *argv* for a
+        persistent-process launch (e.g. a stdio MCP server, #1344 follow-up E).
+        Landlock has no CLI wrapper, so the shim (a re-exec-and-restrict-self
+        module) IS the command-level wrap — the COMMAND-level analog of the
+        Seatbelt ``sandbox-exec -f <profile>`` wrap. No cleanup resource is
+        owned (unlike Seatbelt's temp profile)."""
+        if not argv:
+            raise ValueError("wrap_command: argv must be non-empty (command + args)")
+        from ..landlock_exec import build_landlock_exec_argv
+
+        executable, shim_argv = build_landlock_exec_argv(policy, argv[0], list(argv[1:]))
+        return WrappedCommand(argv=[executable, *shim_argv], cleanup=None)
 
     async def run(
         self,

@@ -98,6 +98,7 @@ import os
 import sys
 import tempfile
 import warnings
+from collections.abc import Callable
 from typing import Any, NoReturn
 
 # ── Env var expansion ─────────────────────────────────────────────────────────
@@ -347,10 +348,12 @@ class MCPClient:
         # underlying anyio subprocess), but ``tempfile.TemporaryFile``
         # does. Lazily created in ``_open_stdio``; closed in ``close``.
         self._stderr_capture: Any = None  # tempfile.TemporaryFile | None
-        # #1344: path of the temp Seatbelt profile (.sb) used to sandbox a
-        # stdio MCP server's subprocess, if one was generated in _open_stdio.
-        # Unlinked in close(). None for non-stdio / non-seatbelt / unsandboxed.
-        self._sandbox_profile_path: str | None = None
+        # #1344 / #2620: cleanup callable for whatever resource the sandbox
+        # backend's ``wrap_command()`` allocated for a stdio MCP server's
+        # subprocess wrap (e.g. Seatbelt's temp ``.sb`` profile file), if any.
+        # Invoked in close_stderr_capture(). None when the backend's wrap owns
+        # no such resource (Noop / Landlock).
+        self._sandbox_cleanup: Callable[[], None] | None = None
         # #2597 capability/version gate: captured in initialize() right after
         # ``client.__aenter__()`` completes FastMCP's initialize handshake (verified
         # against fastmcp 3.4.2: ``fastmcp.Client.initialize_result`` is populated at
@@ -799,16 +802,17 @@ class MCPClient:
         return text
 
     def close_stderr_capture(self) -> None:
-        """Close + delete the stderr temp file + the #1344 Seatbelt profile, if
-        any. Idempotent — called at every teardown path."""
-        # #1344: unlink the temp Seatbelt profile (.sb) generated for a
-        # sandboxed stdio MCP server. Best-effort; a leaked temp file must not
-        # break teardown.
-        profile_path = self._sandbox_profile_path
-        if profile_path is not None:
-            self._sandbox_profile_path = None
+        """Close + delete the stderr temp file + the #1344/#2620 sandbox wrap's
+        cleanup resource (e.g. Seatbelt's temp ``.sb`` profile), if any.
+        Idempotent — called at every teardown path."""
+        # #1344/#2620: invoke the sandbox backend's wrap_command() cleanup
+        # (Seatbelt: unlink the temp .sb profile; Noop/Landlock: no-op).
+        # Best-effort; a leaked temp file must not break teardown.
+        cleanup = self._sandbox_cleanup
+        if cleanup is not None:
+            self._sandbox_cleanup = None
             try:
-                os.unlink(profile_path)
+                cleanup()
             except OSError:
                 pass
         capture = self._stderr_capture
@@ -861,51 +865,39 @@ class MCPClient:
         )
 
     def _sandbox_wrap_stdio(self, command: str, args: list[str]) -> "tuple[str, list[str]]":
-        """Wrap ``(command, args)`` so the MCP server subprocess runs sandboxed (#1344).
+        """Wrap ``(command, args)`` so the MCP server subprocess runs sandboxed
+        (#1344, uniformly rerouted through the abstraction #2620).
 
-        Seatbelt (macOS): returns ``("sandbox-exec", ["-f", <profile>, command,
-        *args])`` with a generated SBPL profile (a temp ``.sb`` unlinked in
-        ``close``). Landlock (Linux, #1344 follow-up E): returns the
-        ``reyn.security.sandbox.landlock_exec`` re-exec shim argv (the COMMAND-level
-        analog — Landlock has no CLI wrapper). MCP stdio is persistent, so the
-        wrap is at the COMMAND level (the backend's one-shot ``run()`` does not
-        fit). Other backends (docker) are not yet wrapped here — the server then
-        runs UNSANDBOXED with a warning (never silently).
+        Routes through ``get_default_backend().wrap_command()`` UNIFORMLY — no
+        per-backend-name branching here. Every backend implements
+        ``wrap_command`` (Seatbelt: ``sandbox-exec -f <profile>``; Landlock: the
+        ``landlock_exec`` re-exec shim; NoopBackend: argv unchanged), so there is
+        no agent-reachable code path here that skips the abstraction — a
+        NoopBackend passthrough still went THROUGH ``wrap_command``, it just
+        enforces nothing (the owner-acceptable no-isolation case). MCP stdio is
+        a persistent subprocess, so the wrap is at the COMMAND level (the
+        backend's one-shot ``run()`` does not fit).
+
+        A failure while resolving/probing the backend itself (not a normal
+        outcome — defensive only) falls back to an unwrapped launch WITH a
+        loud warning, so a launch is never silently unsandboxed.
         """
         from reyn.security.sandbox import get_default_backend
 
+        argv = [command, *args]
         try:
             backend = get_default_backend()
-            name = getattr(backend, "name", None)
-            available = backend.available()
-        except Exception:  # noqa: BLE001 — a backend probe must not block a launch
-            name, available = None, False
-        if name == "seatbelt" and available:
-            from reyn.security.sandbox.backends.seatbelt import _build_sbpl_profile
-
-            profile = _build_sbpl_profile(self._build_mcp_sandbox_policy())
-            fh = tempfile.NamedTemporaryFile(
-                suffix=".sb", mode="w", delete=False, encoding="utf-8",
+            wrapped = backend.wrap_command(argv, self._build_mcp_sandbox_policy())
+        except Exception as exc:  # noqa: BLE001 — a backend probe/wrap must not block a launch
+            warnings.warn(
+                f"MCP stdio server {command!r} runs UNSANDBOXED "
+                f"(sandbox backend probe/wrap failed: {exc}).",
+                stacklevel=2,
             )
-            fh.write(profile)
-            fh.close()
-            self._sandbox_profile_path = fh.name
-            return "sandbox-exec", ["-f", fh.name, command, *args]
-        if name == "landlock" and available:
-            # #1344 follow-up E: the Landlock re-exec shim restricts itself then
-            # execs the target (Linux-validation-pending — see landlock_exec).
-            from reyn.security.sandbox.landlock_exec import build_landlock_exec_argv
+            return command, args
 
-            return build_landlock_exec_argv(
-                self._build_mcp_sandbox_policy(), command, args
-            )
-        warnings.warn(
-            f"MCP stdio server {command!r} runs UNSANDBOXED "
-            f"(sandbox backend={name or 'none'}); only Seatbelt + Landlock wraps "
-            f"are implemented (#1344) — docker wrapping is a follow-up.",
-            stacklevel=2,
-        )
-        return command, args
+        self._sandbox_cleanup = wrapped.cleanup
+        return wrapped.argv[0], list(wrapped.argv[1:])
 
     def _open_stdio(self) -> "Any":
         from fastmcp.client.transports import StdioTransport

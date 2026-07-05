@@ -38,7 +38,6 @@ P6 audit trail).
 from __future__ import annotations
 
 import shutil
-import subprocess
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -217,35 +216,78 @@ def _source_host(git_url: str) -> str | None:
         return git_url
 
 
-def _shallow_clone(git_url: str, dest: Path) -> str | None:
-    """Shallow-clone a git repo to ``dest``.
+async def _shallow_clone(git_url: str, dest: Path, ctx: OpContext) -> str | None:
+    """Shallow-clone a git repo to ``dest`` — routed through the sandbox
+    abstraction (#2620: agent-reachable subprocess launches must never bypass
+    ``reyn.security.sandbox``; a NoopBackend passthrough on an unsupported
+    platform is acceptable, a raw ``subprocess.run`` that never consults any
+    backend is not).
 
     Returns ``None`` on success, or an error message string on failure.
     The destination directory is REMOVED before cloning so this function
     is idempotent (re-install overwrites the previous clone).
+
+    Uses ``ctx.sandbox_backend`` (an injected stateful backend) or
+    ``get_default_backend(ctx.sandbox_config)`` for backend SELECTION (so the
+    operator's configured enforcement mechanism governs it, same as
+    ``sandboxed_exec``) but a purpose-built ``SandboxPolicy`` for this specific
+    operation: ``network=True`` is not overridable here because cloning over
+    the network is what the operation IS — an operator policy that forces
+    ``network: false`` globally would make every git-sourced skill install
+    fail outright, so the clone's policy is scoped independently, write-tight
+    to the install root (``dest.parent`` = ``.reyn/skills/``).
     """
     if dest.exists():
         shutil.rmtree(dest)
     dest.parent.mkdir(parents=True, exist_ok=True)
+
+    from reyn.security.sandbox import SandboxPolicy, get_default_backend
+
+    backend = ctx.sandbox_backend or get_default_backend(ctx.sandbox_config)
+    policy = SandboxPolicy(
+        network=True,
+        write_paths=[str(dest.parent)],
+        timeout_seconds=120,
+        # git internally forks a subprocess for the transport helper
+        # (git-upload-pack over ssh/https) even for a plain clone — without
+        # this a fork-denying backend (Seatbelt's default policy denies
+        # process-fork) makes EVERY clone fail with "cannot fork()", not just
+        # a hardened corner case. Scoped to this one already-gated operation
+        # (require_http_get already ran), not a global relaxation.
+        allow_subprocess=True,
+        # git needs more than PATH to actually work (HOME for ~/.gitconfig,
+        # SSH/proxy/CA vars for non-file:// remotes) — pass these through so
+        # routing the clone through the sandbox abstraction does not itself
+        # break git's normal env-dependent behavior (parity with the
+        # previously-inherited-full-env ``subprocess.run`` call).
+        env_passthrough=[
+            "HOME", "PATH", "GIT_SSH_COMMAND", "SSH_AUTH_SOCK",
+            "HTTPS_PROXY", "HTTP_PROXY", "NO_PROXY",
+            "https_proxy", "http_proxy", "no_proxy",
+            "SSL_CERT_FILE", "SSL_CERT_DIR",
+        ],
+    )
     try:
-        result = subprocess.run(  # noqa: S603
+        result = await backend.run(
             ["git", "clone", "--depth", "1", "--", git_url, str(dest)],
-            capture_output=True,
-            text=True,
-            timeout=120,
+            policy,
+            cwd=str(dest.parent),
         )
-        if result.returncode != 0:
-            return (
-                f"git clone failed (exit {result.returncode}): "
-                f"{result.stderr.strip() or result.stdout.strip()}"
-            )
-        return None
-    except FileNotFoundError:
-        return "git is not installed or not in PATH. Install git and retry."
-    except subprocess.TimeoutExpired:
-        return "git clone timed out after 120 s. The repository may be unreachable."
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:  # noqa: BLE001 — surface as a clone error, not a crash
         return f"git clone error: {exc}"
+
+    if result.returncode != 0:
+        detail = (
+            result.stderr.decode("utf-8", errors="replace").strip()
+            or result.stdout.decode("utf-8", errors="replace").strip()
+        )
+        if result.returncode == -1:
+            return (
+                f"git clone did not complete: {detail or 'timed out or failed to start'}. "
+                "Ensure git is installed and the repository is reachable."
+            )
+        return f"git clone failed (exit {result.returncode}): {detail}"
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -331,7 +373,7 @@ async def handle(
             }
 
         # 0c. Shallow-clone the repo.
-        clone_err = _shallow_clone(git_url, clone_dest)
+        clone_err = await _shallow_clone(git_url, clone_dest, ctx)
         if clone_err:
             return {
                 "kind": "skill_install",
