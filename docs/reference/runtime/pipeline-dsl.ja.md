@@ -166,6 +166,9 @@ FieldType     ::= "{" "type:" ("bool" | "string" | "number") "}"
 - shell: {command: !expr "'ls ' + ctx.dir", output: listing}
 ```
 
+!!! warning "`shell` は現在実行時に機能しません"
+    `shell` ステップ(または `"shell"` を直接指定する `tool` ステップ)は正しく parse されますが、現在 `"shell"` という名前のツールは登録されていません — すべての `shell` ステップは実行時に「登録済みツールに解決しない」エラーで失敗します。他のステップ種別には影響ありません。これが解消されるまでは、`shell` の代わりに実際に登録されているツール / アクションを指定する `tool` ステップを使ってください。
+
 | キー | 必須 | 意味 |
 |-----|------|------|
 | `command` | 必須 | リテラルまたは `!expr`。`tool` ステップの `args` の値と同じルール。 |
@@ -520,7 +523,9 @@ steps:
       value: "review.passed and 'OK' or 'NEEDS WORK'"
       output: verdict
   - tool:
-      name: shell
-      args: {command: !expr "'echo ' + verdict"}
-      output: shouted
+      name: file__write
+      args: {path: "verdict.txt", content: !expr verdict}
+      output: written
 ```
+
+注: これは `shell` ではなく `file__write` を使っています — `shell` は現在実行時に失敗するため(上記の警告参照)、それが解消されるまで生成する定義では避けてください。
