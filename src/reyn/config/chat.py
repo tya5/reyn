@@ -664,6 +664,12 @@ def _build_safety_config(raw: object) -> SafetyConfig:
     spawn = SpawnConfig(
         max_depth=int(spawn_raw.get("max_depth", spawn_defaults.max_depth)),
         max_children=int(spawn_raw.get("max_children", spawn_defaults.max_children)),
+        max_pipeline_fan_out_depth=int(spawn_raw.get(
+            "max_pipeline_fan_out_depth", spawn_defaults.max_pipeline_fan_out_depth,
+        )),
+        max_pipeline_spawns=int(spawn_raw.get(
+            "max_pipeline_spawns", spawn_defaults.max_pipeline_spawns,
+        )),
     )
     return SafetyConfig(
         loop=loop, timeout=timeout, on_limit=on_limit, threat_scan=threat_scan,

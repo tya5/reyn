@@ -601,6 +601,8 @@
 #   spawn:                          # #2103 C3: operator bounds on the LLM spawn tree (DoS guard)
 #     max_depth: 10                 # max spawn-lineage chain depth (agent_spawn); 0 = unlimited
 #     max_children: 20              # max fan-out: direct children per parent AND topology size; 0 = unlimited
+#     max_pipeline_fan_out_depth: 5 # #2187 for_each: max pipeline for_each fan-out NESTING depth; 0 = unlimited
+#     max_pipeline_spawns: 100      # #2187 for_each: max ephemeral sessions ONE pipeline run may spawn; 0 = unlimited
 
 
 # -----------------------------------------------------------------------------
