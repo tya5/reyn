@@ -1,5 +1,15 @@
 """MCPConnectionService — per-session held-open MCP connections (#2597 S2a).
 
+#2597 slice ③ (elicitation): every held connection installs an
+``elicitation_handler`` (see :mod:`reyn.mcp.elicitation`), built fresh on
+every open/reopen alongside the existing ``ReynMCPMessageHandler`` (mirrors
+the S2b per-open handler-rebuild pattern). ``elicitation_bus``/
+``elicitation_gate`` (both optional, mirroring ``hook_trigger``'s None-
+default no-op pattern) are the SAME "fixed bus + per-call gate" split #2095's
+shell-hook consent uses (``session.py`` wires ``consent_bus=
+self.as_request_bus()`` / ``consent_gate=lambda: self._interventions.
+has_active_listener()``) — see :meth:`_resolve_elicitation_bus`.
+
 Option C from the S2-pre spike (owner-delegated, do not relitigate): a persistent MCP
 connection lives as a service INSIDE the agent's own session — not a separate driver
 session. The spike proved the key precondition: FastMCP holds its client session in a
@@ -143,11 +153,15 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Any, Awaitable, Callable
+from typing import TYPE_CHECKING, Any, Awaitable, Callable
 
 from reyn.mcp.client import MCPClient, MCPTransportError
+from reyn.mcp.elicitation import DEFAULT_ELICITATION_TIMEOUT_SECONDS, build_elicitation_handler
 from reyn.mcp.message_handler import EmitSink, ReynMCPMessageHandler, ToolsCacheInvalidate
 from reyn.mcp.pool import describe_fault, is_real_control_flow
+
+if TYPE_CHECKING:
+    from reyn.user_intervention import RequestBus
 
 logger = logging.getLogger(__name__)
 
@@ -158,6 +172,14 @@ logger = logging.getLogger(__name__)
 _HOOK_EVENT_QUEUE_MAXSIZE = 32
 
 HookTrigger = Callable[[str, dict], Awaitable[Any]]
+
+# #2597 slice ③: same "bus + gate" split #2095's shell-hook consent uses
+# (session.py wires ``consent_bus=self.as_request_bus()`` /
+# ``consent_gate=lambda: self._interventions.has_active_listener()``) — a
+# fixed bus REFERENCE plus a per-call GATE, so "is a human attached right
+# now" is re-evaluated fresh on every elicitation, not frozen at connection-
+# open time (a TUI can mount/unmount between one elicitation and the next).
+ElicitationGate = Callable[[], bool]
 
 
 class MCPConnectionService:
@@ -182,6 +204,8 @@ class MCPConnectionService:
         emit_sink: EmitSink | None = None,
         tools_cache_invalidate: ToolsCacheInvalidate | None = None,
         hook_trigger: "HookTrigger | None" = None,
+        elicitation_bus: "RequestBus | None" = None,
+        elicitation_gate: "ElicitationGate | None" = None,
         agent_name: str | None = None,
     ) -> None:
         # #2597 S2b: threaded into a fresh ReynMCPMessageHandler per held server
@@ -193,6 +217,19 @@ class MCPConnectionService:
         # #2608 H1: the async closure over the owning session's HookDispatcher.dispatch.
         # None = no external-event hook bridge — see module docstring's H1 section.
         self._hook_trigger = hook_trigger
+        # #2597 slice ③: mirrors #2095's consent_bus/consent_gate split (see
+        # ElicitationGate's field comment above). None/None (the default —
+        # every call site that doesn't explicitly wire elicitation, including
+        # every existing test that constructs this service directly) means
+        # every held connection's elicitation_bus_resolver always returns
+        # None, i.e. every elicitation auto-declines (headless) — byte-
+        # identical to pre-③ behaviour (no elicitation_handler installed
+        # would have meant no elicitation capability declared at all; a
+        # resolver that always returns None still declares the capability
+        # per D6, but a server that never gets asked because no test
+        # exercises it sees no behaviour change).
+        self._elicitation_bus = elicitation_bus
+        self._elicitation_gate = elicitation_gate
         self._agent_name = agent_name
         self._hook_event_queue: "asyncio.Queue[tuple[str, dict]] | None" = None
         self._hook_drain_task: "asyncio.Task | None" = None
@@ -285,8 +322,29 @@ class MCPConnectionService:
                     ),
                     agent_name=self._agent_name,
                 )
+            # #2597 slice ③ D6: EVERY held connection installs an elicitation
+            # handler (unconditionally — no "does this session have a bus"
+            # branch here; that branch lives INSIDE the handler, see
+            # reyn.mcp.elicitation's module docstring), so every held
+            # connection always declares the ``elicitation`` client
+            # capability. Per-server config overrides:
+            #   - ``elicitation: "auto_decline"`` — always decline, even with
+            #     a live listener (operator wants this server silenced).
+            #   - ``elicitation_timeout_seconds`` — per-server deadline
+            #     override (default DEFAULT_ELICITATION_TIMEOUT_SECONDS).
+            elicitation_handler = build_elicitation_handler(
+                server_name=server,
+                bus_resolver=self._resolve_elicitation_bus,
+                emit_sink=self._emit_sink,
+                timeout_seconds=float(
+                    config.get("elicitation_timeout_seconds")
+                    or DEFAULT_ELICITATION_TIMEOUT_SECONDS
+                ),
+                mode=str(config.get("elicitation") or "prompt"),
+            )
             client = MCPClient(
-                config, agent_id=agent_id, message_handler=handler, server_name=server,
+                config, agent_id=agent_id, message_handler=handler,
+                elicitation_handler=elicitation_handler, server_name=server,
             )
             await client.__aenter__()  # initialize; held open (no matching __aexit__ until aclose/reconnect)
             self._clients[server] = client
@@ -366,6 +424,21 @@ class MCPConnectionService:
         Read-only introspection for callers/tests (mirrors :meth:`held_servers`'s
         public-surface pattern) — never reach into ``_subscriptions`` directly."""
         return sorted(self._subscriptions.get(server, ()))
+
+    def _resolve_elicitation_bus(self) -> "RequestBus | None":
+        """#2597 slice ③ D4/D6: called by an elicitation handler at request
+        time (never cached) — mirrors #2095's ``consent_gate`` re-check.
+        Returns None (= headless, auto-decline) when either no
+        ``elicitation_bus`` was wired for this service (the default — no
+        session behaviour change for any caller that doesn't opt in) or the
+        wired ``elicitation_gate`` reports no live listener attached right
+        now (a TUI can mount/unmount between one elicitation and the next).
+        """
+        if self._elicitation_bus is None:
+            return None
+        if self._elicitation_gate is not None and not self._elicitation_gate():
+            return None
+        return self._elicitation_bus
 
     # ── #2608 H1: bounded sync->async external-event->hook bridge ──────────────────
 
