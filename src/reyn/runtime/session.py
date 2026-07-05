@@ -1067,10 +1067,20 @@ class Session:
         # when the RouterHostAdapter is built), but neither lambda is ever CALLED until
         # a held MCP connection actually receives a server-pushed notification, long
         # after __init__ has finished.
+        # #2608 H1: ``hook_trigger`` is the SAME deferred-lambda pattern, over
+        # ``self._hook_dispatcher`` — constructed further below in this __init__ (the
+        # HookDispatcher itself needs ``self._put_inbox`` / ``self._stage_next_turn_context``
+        # / etc, already bound methods, so it's built after this point) — but, like
+        # ``emit_sink``/``tools_cache_invalidate`` above, never CALLED until a held MCP
+        # connection's receive loop enqueues an external event, long after __init__ has
+        # finished. ``self.agent_name`` IS already resolvable here (``self._agent`` is
+        # set earlier in this __init__), so it's passed eagerly (not deferred).
         from reyn.mcp.connection_service import MCPConnectionService
         self._mcp_connection_service = MCPConnectionService(
             emit_sink=lambda et, **d: self._chat_events.emit(et, **d),
             tools_cache_invalidate=lambda server: self._router_host.invalidate_mcp_tools_cache(server),
+            hook_trigger=lambda point, template_vars: self._hook_dispatcher.dispatch(point, template_vars),
+            agent_name=self.agent_name,
         )
         self.output_language = output_language
         self._prompt_cache_enabled = prompt_cache_enabled

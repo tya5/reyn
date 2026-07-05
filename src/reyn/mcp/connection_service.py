@@ -86,6 +86,35 @@ memory of what the OLD (now-dead) session's client subscribed to. :meth:`_ensure
 does this re-subscribe immediately after opening a NEW client (whether that is the very
 first open, where the tracked set is empty and the loop is a no-op, or a reconnect, where
 it is the whole point) — see that method's inline comment.
+
+#2608 H1 — external-event->hooks bridge (the first slice of the external-event arc):
+``hook_trigger`` (optional, mirrors ``emit_sink``'s None-default no-op pattern) is an
+ASYNC callable ``(point, template_vars) -> Awaitable`` — in practice a closure over the
+owning session's ``HookDispatcher.dispatch``. It is never called directly from the MCP
+receive-loop task (:class:`~reyn.mcp.message_handler.ReynMCPMessageHandler` runs
+SYNCHRONOUSLY there and cannot ``await`` it — see that module's docstring). Instead this
+service exposes :meth:`enqueue_external_event` — a SYNCHRONOUS, non-blocking
+``put_nowait`` onto a BOUNDED ``asyncio.Queue`` (``_HOOK_EVENT_QUEUE_MAXSIZE`` entries)
+— and drains it with a single background task (:meth:`_drain_hook_events`) running on
+THIS service's (= the session's) event loop, which is what actually ``await``s
+``hook_trigger``. Two invariants this buys:
+
+  - **The receive loop never blocks and never stalls** on a slow/stuck hook — enqueue is
+    O(1) and non-blocking; on overflow (a burst of resource updates arriving faster than
+    hooks can be dispatched) the newest event is DROPPED + logged, never queued
+    unboundedly and never backpressured onto the receive loop. This is the same
+    "never stall / never delay other notification routing" discipline the module
+    docstring establishes for the synchronous EventLog emit.
+  - **Per-session dispatcher identity holds naturally**: because ``MCPConnectionService``
+    is constructed per-session (see ``session.py``), the ``hook_trigger`` closure it is
+    given targets THAT session's own ``HookDispatcher`` — a resource update on session A's
+    held connection can only ever fire session A's hooks.
+
+The drain task is lazily created on first ``enqueue_external_event`` call (mirrors the
+lazy client-open pattern elsewhere in this class) and cancelled in :meth:`aclose`.
+``hook_trigger=None`` (the ephemeral ``MCPClientPool`` path, or any session that never
+wires one) → :meth:`enqueue_external_event` and the whole queue/drain-task machinery
+never activate — byte-identical to pre-H1 behaviour.
 """
 from __future__ import annotations
 
@@ -98,6 +127,14 @@ from reyn.mcp.message_handler import EmitSink, ReynMCPMessageHandler, ToolsCache
 from reyn.mcp.pool import describe_fault, is_real_control_flow
 
 logger = logging.getLogger(__name__)
+
+# #2608 H1: bound on the sync->async external-event bridge queue. Small and fixed —
+# a burst of resource-update pushes beyond this is dropped (+logged), never queued
+# unboundedly. Not currently exposed as config (H1 scope: prove the trigger mechanism;
+# tuning the bound is a follow-up if a real workload needs it).
+_HOOK_EVENT_QUEUE_MAXSIZE = 32
+
+HookTrigger = Callable[[str, dict], Awaitable[Any]]
 
 
 class MCPConnectionService:
@@ -121,6 +158,8 @@ class MCPConnectionService:
         *,
         emit_sink: EmitSink | None = None,
         tools_cache_invalidate: ToolsCacheInvalidate | None = None,
+        hook_trigger: "HookTrigger | None" = None,
+        agent_name: str | None = None,
     ) -> None:
         # #2597 S2b: threaded into a fresh ReynMCPMessageHandler per held server
         # connection (see _ensure_open). None (default) = no notifications bridge —
@@ -128,6 +167,12 @@ class MCPConnectionService:
         # a sink, so it stays byte-identical to pre-S2b behaviour.
         self._emit_sink = emit_sink
         self._tools_cache_invalidate = tools_cache_invalidate
+        # #2608 H1: the async closure over the owning session's HookDispatcher.dispatch.
+        # None = no external-event hook bridge — see module docstring's H1 section.
+        self._hook_trigger = hook_trigger
+        self._agent_name = agent_name
+        self._hook_event_queue: "asyncio.Queue[tuple[str, dict]] | None" = None
+        self._hook_drain_task: "asyncio.Task | None" = None
         self._clients: dict[str, MCPClient] = {}
         # #2597 slice ②b: runtime-only, in-memory, NO WAL (Q4 — see module docstring).
         # server name -> set of URIs currently subscribed on that server's held
@@ -196,6 +241,13 @@ class MCPConnectionService:
                 handler = ReynMCPMessageHandler(
                     self._emit_sink, server,
                     tools_cache_invalidate=self._tools_cache_invalidate,
+                    # #2608 H1: wired only when a hook_trigger was injected (this
+                    # service's enqueue_external_event is itself a no-op without one) —
+                    # so a session with no hook_trigger stays byte-identical to pre-H1.
+                    on_external_event=(
+                        self.enqueue_external_event if self._hook_trigger is not None else None
+                    ),
+                    agent_name=self._agent_name,
                 )
             client = MCPClient(
                 config, agent_id=agent_id, message_handler=handler, server_name=server,
@@ -261,6 +313,53 @@ class MCPConnectionService:
         public-surface pattern) — never reach into ``_subscriptions`` directly."""
         return sorted(self._subscriptions.get(server, ()))
 
+    # ── #2608 H1: bounded sync->async external-event->hook bridge ──────────────────
+
+    def enqueue_external_event(self, point: str, template_vars: dict) -> None:
+        """SYNCHRONOUS, non-blocking entry point called from the MCP receive-loop task
+        (``ReynMCPMessageHandler.on_resource_updated``). Never awaits, never raises,
+        never blocks — see module docstring's H1 section for the full bridge design.
+
+        No-op when ``hook_trigger`` is None (no hook wired for this session)."""
+        if self._hook_trigger is None:
+            return
+        self._ensure_hook_drain_task()
+        assert self._hook_event_queue is not None
+        try:
+            self._hook_event_queue.put_nowait((point, template_vars))
+        except asyncio.QueueFull:
+            # Bounded by construction (#2608 H1): a burst of resource updates faster
+            # than hooks can be dispatched DROPS the newest event rather than growing
+            # the queue unboundedly or blocking the receive loop.
+            logger.warning(
+                "MCPConnectionService: external-event hook queue full (maxsize=%d) — "
+                "dropping %r event (server=%r)",
+                _HOOK_EVENT_QUEUE_MAXSIZE, point, template_vars.get("server"),
+            )
+
+    def _ensure_hook_drain_task(self) -> None:
+        if self._hook_event_queue is None:
+            self._hook_event_queue = asyncio.Queue(maxsize=_HOOK_EVENT_QUEUE_MAXSIZE)
+        if self._hook_drain_task is None or self._hook_drain_task.done():
+            self._hook_drain_task = asyncio.create_task(self._drain_hook_events())
+
+    async def _drain_hook_events(self) -> None:
+        """Runs on the session's event loop (this service's owning loop — the same
+        loop the held ``fastmcp.Client`` was opened on, see module docstring), so it
+        can safely ``await hook_trigger(...)``. Per-event ``try/except``: a raising
+        (or hanging-then-raising) hook dispatch must not kill the drain task — the
+        NEXT queued event still gets a chance."""
+        assert self._hook_event_queue is not None
+        assert self._hook_trigger is not None
+        while True:
+            point, template_vars = await self._hook_event_queue.get()
+            try:
+                await self._hook_trigger(point, template_vars)
+            except Exception:  # noqa: BLE001 — one bad dispatch must not kill the drain task
+                logger.warning(
+                    "MCPConnectionService: hook_trigger failed for %r", point, exc_info=True,
+                )
+
     def _track_subscription(self, server: str, uri: str) -> None:
         self._subscriptions.setdefault(server, set()).add(uri)
 
@@ -270,6 +369,19 @@ class MCPConnectionService:
     async def aclose(self) -> None:
         """Close every held connection. Idempotent — safe to call repeatedly (e.g. a
         session teardown seam that may run more than once)."""
+        # #2608 H1: cancel the hook-event drain task FIRST (finally-guaranteed, not
+        # except-Exception — CancelledError is a BaseException) so a client-teardown
+        # fault below can never leave the drain task orphaned across session teardown.
+        try:
+            if self._hook_drain_task is not None and not self._hook_drain_task.done():
+                self._hook_drain_task.cancel()
+                try:
+                    await self._hook_drain_task
+                except asyncio.CancelledError:
+                    pass
+        finally:
+            self._hook_drain_task = None
+
         clients = list(self._clients.items())
         self._clients.clear()
         self._handles.clear()

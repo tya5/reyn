@@ -68,6 +68,14 @@ logger = logging.getLogger(__name__)
 # MCPConnectionService's emit_sink wiring.
 EmitSink = Callable[..., Any]
 ToolsCacheInvalidate = Callable[[str], None]
+# #2608 H1: SYNCHRONOUS enqueue callable (never awaited here — the handler runs on the
+# receive-loop task, see module docstring's "synchronous hook bodies"). Matches
+# ``MCPConnectionService.enqueue_external_event(point, template_vars)`` — a bounded,
+# non-blocking hand-off to the session's async HookDispatcher, drained by a task on the
+# session's own event loop. None = no external-event hook bridge (byte-identical to
+# pre-H1 behaviour — the ephemeral MCPClientPool path and any session with no
+# ``mcp_resource_updated`` hook configured never wire this).
+OnExternalEvent = Callable[[str, dict], None]
 
 
 class ReynMCPMessageHandler(TaskNotificationHandler):
@@ -81,6 +89,10 @@ class ReynMCPMessageHandler(TaskNotificationHandler):
     ``on_resource_list_changed`` stays a base-class no-op (out of ②b's scope —
     no reyn caller subscribes to the resource LIST changing, only individual
     resource content updates).
+
+    #2608 H1: ``on_resource_updated`` ALSO fires a user-configured
+    ``mcp_resource_updated`` hook (external-event->hooks arc, first slice) via
+    ``self._on_external_event`` — see that method for the sync->async bridge design.
 
     #2597 F2 (live-verified, NOT emitted here — see :meth:`on_progress`):
     ``notifications/progress`` is NOT bridged to ``mcp_progress`` by this handler.
@@ -114,6 +126,8 @@ class ReynMCPMessageHandler(TaskNotificationHandler):
         server_name: str,
         *,
         tools_cache_invalidate: ToolsCacheInvalidate | None = None,
+        on_external_event: "OnExternalEvent | None" = None,
+        agent_name: str | None = None,
     ) -> None:
         # Deliberately bypass TaskNotificationHandler.__init__ — see module docstring
         # ("two-phase client binding"). MessageHandler.__init__ takes no arguments.
@@ -122,6 +136,10 @@ class ReynMCPMessageHandler(TaskNotificationHandler):
         self._emit_sink = emit_sink
         self._server_name = server_name
         self._tools_cache_invalidate = tools_cache_invalidate
+        # #2608 H1: the bounded sync->async bridge into this session's HookDispatcher.
+        # None = no bridge (no hook trigger wired — byte-identical to pre-H1).
+        self._on_external_event = on_external_event
+        self._agent_name = agent_name
 
     def bind_client(self, client: Any) -> None:
         """Complete the ``TaskNotificationHandler`` weakref binding once the owning
@@ -155,10 +173,35 @@ class ReynMCPMessageHandler(TaskNotificationHandler):
         # thin "something changed, re-read if you care" signal — see
         # reyn.mcp.client.MCPClient.subscribe_resource's docstring), so that's all
         # this event needs to carry too; a caller that wants the new content reads
-        # the resource again. EventLog-only — deliberately NOT wired into the hook
-        # dispatcher here (that's a future hooks-arc slice, per ②b's scope note).
+        # the resource again. EventLog emit stays the audit-trail write (unchanged).
+        #
+        # #2608 H1: in ADDITION to the EventLog emit, this ALSO fires a user-configured
+        # ``mcp_resource_updated`` hook (external-event trigger, first slice of the
+        # external-event->hooks arc). The hook trigger goes through
+        # ``self._on_external_event`` — a SYNCHRONOUS, non-blocking enqueue (never
+        # awaited here; this method runs on the receive-loop task and cannot await the
+        # async HookDispatcher.dispatch — see MCPConnectionService's bounded queue +
+        # drain-task bridge). None (no hook wired for this session, or the ephemeral
+        # per-call MCPClientPool path) → this call is a no-op, byte-identical to pre-H1.
         uri = getattr(getattr(message, "params", None), "uri", None)
-        self._emit("mcp_resource_updated", server=self._server_name, uri=str(uri) if uri is not None else None)
+        uri_str = str(uri) if uri is not None else None
+        self._emit("mcp_resource_updated", server=self._server_name, uri=uri_str)
+        if self._on_external_event is not None:
+            try:
+                self._on_external_event(
+                    "mcp_resource_updated",
+                    {
+                        "point": "mcp_resource_updated",
+                        "server": self._server_name,
+                        "uri": uri_str,
+                        "agent_name": self._agent_name,
+                    },
+                )
+            except Exception:  # noqa: BLE001 — a trigger fault must not break the receive loop
+                logger.warning(
+                    "ReynMCPMessageHandler: on_external_event failed for %r on server %r",
+                    "mcp_resource_updated", self._server_name, exc_info=True,
+                )
         await super().on_resource_updated(message)
 
     async def on_progress(self, message: Any) -> None:

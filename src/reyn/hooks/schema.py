@@ -10,6 +10,17 @@ starter set agreed in #1800 (skill_start/skill_end removed — never dispatched)
     turn_start   turn_end
     session_start  session_end
     task_start   task_end
+
+#2608 H1 adds the first EXTERNAL-event hook-point, ``mcp_resource_updated``
+(fired by a server-pushed MCP ``resources/updated`` notification on a
+subscribed resource — see ``reyn.mcp.message_handler.on_resource_updated``
+and ``reyn.mcp.connection_service.MCPConnectionService``'s bounded
+sync->async bridge). Unlike the six lifecycle points above (fired from the
+session/turn/task run-loop on the agent's own task), this point is fired
+from the MCP receive-loop task via a bounded queue drained on the session's
+event loop. ``HookDef.matcher`` stays reserved/uninterpreted for this
+point in H1 (scoping is via which resources the user subscribed to) — a
+later slice (H2) may add matcher filtering.
 """
 from __future__ import annotations
 
@@ -27,6 +38,9 @@ ALLOWED_HOOK_POINTS: frozenset[str] = frozenset({
     "session_end",
     "task_start",
     "task_end",
+    # #2608 H1: external-event point — fired by a pushed MCP resources/updated
+    # notification for a subscribed resource, NOT by the lifecycle run-loop.
+    "mcp_resource_updated",
 })
 
 
