@@ -4,13 +4,16 @@ Implements the surface grammar in Appendix B of
 ``docs/proposals/reyn-pipeline-spec-v0.8.md`` (lines 706-835), narrowed to
 exactly the subset :class:`reyn.core.pipeline.executor.PipelineExecutor` can
 run today: a **linear** sequence of ``transform`` / ``tool`` / ``shell`` /
-``agent`` steps plus three COMPOSITIONAL primitives — ``call`` (R7 — runs a
+``agent`` steps plus FIVE COMPOSITIONAL primitives — ``call`` (R7 — runs a
 STATIC registered sub-pipeline synchronously), ``match`` (``call``'s
 runtime-selected sibling: a runtime VALUE picks a case LABEL, whose target
-stays a static literal), and ``fold`` (sequential accumulator — runs a nested
-``do`` step once per list item) — plus the pipeline-level ``description``.
-``for_each`` / ``parallel`` / ``refine``, and the pipeline-level ``input`` /
-``defaults`` blocks are all part of the full v0.8 grammar but have no runtime
+stays a static literal), ``fold`` (sequential accumulator — runs a nested
+``do`` step once per list item), ``for_each`` (concurrent fan-out over a
+runtime-sized list, one ``do``), and ``parallel`` (concurrent fan-out over a
+STATIC, FINITE dict of heterogeneous NAMED branches — the LAST non-linear
+primitive; every Appendix-B step kind is now executable) — plus the
+pipeline-level ``description``. ``refine``, and the pipeline-level ``input``
+/ ``defaults`` blocks are part of the full v0.8 grammar but have no runtime
 yet — this parser refuses to accept them rather than silently dropping them
 into a pipeline that "parses" but then either crashes at run time in a
 confusing place or (worse) quietly loses the author's intent. Every construct
@@ -88,6 +91,7 @@ from reyn.core.pipeline.executor import (
     ForEachStep,
     MatchCase,
     MatchStep,
+    ParallelStep,
     Pipeline,
     Step,
     ToolStep,
@@ -104,9 +108,9 @@ class PipelineParseError(ValueError):
     """Raised for any DSL text this parser cannot turn into a `Pipeline` the
     current linear executor can run — malformed YAML, a malformed R1
     expression, or (most commonly) a construct that is valid Appendix-B
-    grammar but not yet supported by `PipelineExecutor` (`for_each`,
-    `parallel`, `refine`, pipeline-level `input`/
-    `defaults`, or a per-step field the executor does not consume)."""
+    grammar but not yet supported by `PipelineExecutor` (`refine`,
+    pipeline-level `input`/`defaults`, or a per-step field the executor does
+    not consume)."""
 
 
 # ---------------------------------------------------------------------------
@@ -175,16 +179,18 @@ _PipelineLoader.add_constructor("!expr", _construct_expr_tag)
 # Constructs the union grammar's non-linear step kinds accept as *keys* so a
 # document using them gets a clear "not yet supported" error instead of a
 # generic "unknown step type". ``call`` (R7), ``match`` (runtime-selected
-# sibling), ``fold`` (sequential accumulator), and ``for_each`` (concurrent
-# fan-out) are now SUPPORTED — they moved out of this set into ``_STEP_PARSERS``
-# (``fold``/``for_each`` are dispatched specially in ``_parse_step`` since their
-# ``do``/``collect`` sub-steps recurse). ``parallel`` is the last primitive.
-_UNSUPPORTED_STEP_KINDS = ("parallel",)
+# sibling), ``fold`` (sequential accumulator), ``for_each`` (concurrent
+# fan-out), and ``parallel`` (heterogeneous named-branch fan-out — the LAST
+# non-linear primitive) are all now SUPPORTED — every Appendix-B step kind is
+# executable, so this set is currently EMPTY (kept as a tuple, not deleted,
+# so a future Appendix-B step kind beyond this module's current scope has an
+# obvious place to land — see the parser module docstring).
+_UNSUPPORTED_STEP_KINDS: "tuple[str, ...]" = ()
 _LINEAR_STEP_KINDS = ("transform", "tool", "shell", "agent")
-# ``call``/``match``/``fold``/``for_each`` are compositional, not linear, but ARE
-# executable — listed separately so error text distinguishes "the linear
-# kinds" from the full supported set.
-_SUPPORTED_STEP_KINDS = _LINEAR_STEP_KINDS + ("call", "match", "fold", "for_each")
+# ``call``/``match``/``fold``/``for_each``/``parallel`` are compositional, not
+# linear, but ARE executable — listed separately so error text distinguishes
+# "the linear kinds" from the full supported set.
+_SUPPORTED_STEP_KINDS = _LINEAR_STEP_KINDS + ("call", "match", "fold", "for_each", "parallel")
 _ALL_STEP_KINDS = _SUPPORTED_STEP_KINDS + _UNSUPPORTED_STEP_KINDS
 
 # Pipeline-level fields the full grammar allows but the linear executor has
@@ -510,6 +516,48 @@ def _parse_for_each_step(body: "dict[str, Any]", *, index: "int | str") -> ForEa
     )
 
 
+_PARALLEL_KEYS = frozenset({"branches", "collect", "on_error", "output"})
+
+
+def _parse_parallel_step(body: "dict[str, Any]", *, index: "int | str") -> ParallelStep:
+    """``parallel = {on_error?:abort|continue|retry(n), branches:{NAME:Step}+,
+    collect:Step}`` (Appendix B) — the heterogeneous NAMED-branch fan-out
+    primitive, ``for_each``'s static-branch-set sibling. ``branches`` is a
+    non-empty mapping of NAME -> a full nested Step (parsed the same way
+    top-level steps are, so a branch may be any supported step kind,
+    including a nested ``call``/``fold``/``for_each``/``parallel``) — there is
+    NO ``max_parallel`` field (unlike ``for_each``): the branch set is
+    statically finite, so its own size is the concurrency bound.
+    ``on_error`` is OPTIONAL (Appendix B gives it a ``?`` — UNLIKE
+    ``for_each`` where it is required), defaulting to ``abort`` when omitted;
+    when given, it must be ``continue``/``abort``/``retry(n)``, exactly like
+    ``for_each.on_error``. ``collect`` is a full nested Step, REQUIRED (it
+    produces the primitive's N2 result over the named map)."""
+    _reject_unknown_keys(body, _PARALLEL_KEYS, where="parallel step")
+    raw_branches = body.get("branches")
+    if not isinstance(raw_branches, dict) or not raw_branches:
+        _fail("parallel step: 'branches' must be a non-empty mapping of NAME -> Step")
+    branches = {
+        name: _parse_step(branch_body, index=f"{index} (parallel branch {name!r})")
+        for name, branch_body in raw_branches.items()
+    }
+    on_error = body.get("on_error", "abort")
+    if not isinstance(on_error, str) or (
+        on_error not in ("continue", "abort") and _ON_ERROR_RE.match(on_error) is None
+    ):
+        _fail(
+            "parallel step 'on_error': must be 'continue', 'abort', or "
+            f"'retry(n)' (a positive integer n), got {on_error!r}"
+        )
+    if "collect" not in body:
+        _fail("parallel step: missing required field 'collect'")
+    collect = _parse_step(body["collect"], index=f"{index} (parallel collect)")
+    output = body.get("output")
+    if output is not None and not isinstance(output, str):
+        _fail(f"parallel step 'output': expected a store-name string, got {type(output).__name__}")
+    return ParallelStep(branches=branches, collect=collect, on_error=on_error, output=output)
+
+
 _STEP_PARSERS = {
     "transform": _parse_transform_step,
     "tool": _parse_tool_step,
@@ -542,6 +590,13 @@ def _parse_step(raw_step: Any, *, index: "int | str") -> Step:
         if not isinstance(body, dict):
             _fail(f"step {index} (for_each): expected a mapping body, got {type(body).__name__}")
         return _parse_for_each_step(body, index=index)
+    if kind == "parallel":
+        # Special-dispatched like ``fold``/``for_each``: its ``branches``/``collect``
+        # sub-steps recurse through ``_parse_step``, so it needs ``index`` for
+        # nested error context.
+        if not isinstance(body, dict):
+            _fail(f"step {index} (parallel): expected a mapping body, got {type(body).__name__}")
+        return _parse_parallel_step(body, index=index)
     if kind not in _STEP_PARSERS:
         _fail(
             f"step {index}: unknown step kind {kind!r} (expected one of "

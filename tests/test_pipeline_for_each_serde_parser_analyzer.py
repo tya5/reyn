@@ -191,10 +191,15 @@ steps:
         parse_pipeline_dsl(text, SchemaRegistry())
 
 
-def test_for_each_dsl_rejects_unsupported_nested_kind():
-    """Tier 1: a ``do:``/``collect:`` naming a still-unsupported step kind (e.g.
-    `parallel`) fails at parse time, at the DSL text — the same "not yet
-    supported" error a top-level step of that kind raises."""
+def test_for_each_dsl_rejects_malformed_nested_step():
+    """Tier 1: a ``do:``/``collect:`` naming ANY step kind still validates that
+    kind's own body — a malformed nested step (here a ``parallel`` with an
+    empty ``branches``) fails at parse time, at the DSL text, through the
+    SAME per-kind parser a top-level step uses (not a bespoke "nested step"
+    validation path). (``parallel`` is now a fully-supported step kind — see
+    ``test_pipeline_parallel_primitive.py`` / ``test_pipeline_parallel_serde_
+    parser_analyzer.py`` — this test only pins that a malformed nested body,
+    of any kind, still fails cleanly.)"""
     text = """
 pipeline: o
 steps:

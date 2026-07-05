@@ -144,10 +144,13 @@ steps:
 
 
 @pytest.mark.parametrize("kind", ["for_each", "parallel", "fold", "match", "call"])
-def test_nonlinear_step_kind_raises_naming_the_construct(kind: str) -> None:
-    """Tier 1: the HARD CONTRACT — a step kind the linear executor cannot run
-    is a `PipelineParseError` naming that kind, never a silently-accepted
-    step the executor would later choke on or (worse) ignore."""
+def test_nonlinear_step_kind_with_empty_body_raises_naming_the_construct(kind: str) -> None:
+    """Tier 1: every non-linear step kind is now executable (`for_each` /
+    `parallel` / `fold` / `match` / `call` all have a runtime + parser), but
+    an EMPTY (`{}`) body is still missing that kind's required fields — the
+    HARD CONTRACT is that this is a `PipelineParseError` naming the
+    construct, never a silently-accepted malformed step the executor would
+    later choke on or (worse) ignore."""
     dsl = f"""
 pipeline: rejects-nonlinear
 steps:

@@ -9,16 +9,17 @@ monolithic walker — each primitive registers the check it is responsible for,
 and the registry is the single place a caller (a future ``analyze_pipeline``
 walker, or the IS-4 inline static-analysis gate) folds them together.
 
-This module is the SEAM plus its first three entries (``call``'s, ``match``'s,
-and ``fold``'s facets). It is deliberately minimal in this slice:
+This module is the SEAM plus one facet per non-linear primitive (``call``'s,
+``match``'s, ``fold``'s, ``for_each``'s, and ``parallel``'s — every Appendix-B
+non-linear primitive now registers here). It is deliberately minimal:
 :data:`ANALYZER_FACETS` maps
 a step dataclass type to a facet function returning a list of human-readable
 problem strings ( empty = the step passed its facet), and :func:`analyze_step`
 looks one up. There is no full pipeline walker wired to consume it yet — that
-arrives with the primitives whose facets have real teeth (cost / spawn-tree
-bounds). What matters now is that the registration point EXISTS and
-``call``/``match``/``fold`` are registered, so every future primitive MUST add
-its facet here rather than bolting analysis on later.
+arrives later (cost / spawn-tree bounds folded ACROSS steps, not just within
+one). What matters now is that the registration point EXISTS and every
+non-linear primitive is registered, so a FUTURE primitive (beyond Appendix B)
+MUST add its facet here rather than bolting analysis on later.
 
 ``call``'s facet is intentionally thin: the target is a STATIC literal pipeline
 name (Hard rule 2), so the only thing to confirm structurally is that it IS a
@@ -50,7 +51,14 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Callable
 
-from reyn.core.pipeline.executor import CallStep, FoldStep, ForEachStep, MatchStep
+from reyn.core.pipeline.executor import (
+    AgentStep,
+    CallStep,
+    FoldStep,
+    ForEachStep,
+    MatchStep,
+    ParallelStep,
+)
 
 if TYPE_CHECKING:
     from reyn.core.pipeline.executor import Step
@@ -147,6 +155,35 @@ def _for_each_facet(step: "ForEachStep") -> "list[str]":
     return problems
 
 
+def _parallel_facet(step: "ParallelStep") -> "list[str]":
+    """``parallel``'s S5 contribution — mirrors ``_for_each_facet``'s
+    WARNING-only posture, adapted to a STATIC branch-set fan-out. Unlike
+    ``for_each``, ``parallel`` has no ``max_parallel``/``over`` field at all:
+    the branch COUNT is always statically known (a finite named dict), so
+    there is nothing to warn about there. Instead this facet confirms
+    structural completeness (``branches`` non-empty) and flags a statically
+    large agent-branch fan-out — a coarse, per-step-visible proxy for the
+    "would this alone approach the operator's spawn cap" question the deeper
+    cross-pipeline cost fold (not here yet, same deferral ``call``/``match``
+    make) will answer precisely. Returns problem strings (empty = OK)."""
+    problems: "list[str]" = []
+    if not step.branches:
+        problems.append(
+            "parallel step has no branches — at least one NAME -> Step is required"
+        )
+    agent_branches = sorted(
+        name for name, s in step.branches.items() if isinstance(s, AgentStep)
+    )
+    if len(agent_branches) > 3:
+        problems.append(
+            f"parallel step fans out {len(agent_branches)} agent-step branches "
+            f"({agent_branches!r}) concurrently — a statically large spawn "
+            "footprint for one step (S5 cost-bound caution; the runtime "
+            "SpawnBudget still enforces the hard cap)"
+        )
+    return problems
+
+
 # Facet registry: step type -> its static-analysis check. A future primitive
 # ADDS an entry here (mirroring the executor's ``STEP_DISPATCH``, serde's
 # ``ENCODERS``/``DECODERS``, and the parser's ``_STEP_PARSERS``) — the P4
@@ -157,6 +194,7 @@ ANALYZER_FACETS: "dict[type, Callable[[Step], list[str]]]" = {
     MatchStep: _match_facet,
     FoldStep: _fold_facet,
     ForEachStep: _for_each_facet,
+    ParallelStep: _parallel_facet,
 }
 
 

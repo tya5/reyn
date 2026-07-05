@@ -7,12 +7,14 @@ sequence of ``transform`` / ``tool`` (``shell`` is just a ``ToolStep(name="shell
 ...)``) / ``agent`` (R5) steps, plus three COMPOSITIONAL primitives: ``call``
 (R7, a STATIC callee), ``match`` (``call``'s runtime-selected sibling — the
 ``on`` VALUE picks a LABEL, never a target; see :class:`MatchStep`), and
-``fold`` (the sequential accumulator, Appendix B), and ``for_each`` (the
+``fold`` (the sequential accumulator, Appendix B), ``for_each`` (the
 CONCURRENT fan-out — ``fold``'s parallel, isolated-sub-scope sibling; see
-:class:`ForEachStep` and :func:`_run_for_each_step`). Still out of scope for
-this slice: `parallel`/`refine` — those are later primitives that plug into the
-SAME dispatch + scope machinery this module now exposes (``parallel`` is the
-additive follow-up built on ``for_each``'s fan-out substrate).
+:class:`ForEachStep` and :func:`_run_for_each_step`), and ``parallel`` (the
+LAST non-linear primitive — ``for_each``'s HETEROGENEOUS NAMED-branch
+sibling, built additively on the SAME fan-out substrate; see
+:class:`ParallelStep` and :func:`_run_parallel_step`). All Appendix-B
+non-linear primitives are now implemented; ``refine`` (a pipeline-level
+construct, not a step kind) stays out of scope.
 
 **Fan-out recovery commit unit = the ITEM (READ THIS before touching
 ``for_each`` recovery).** ``for_each`` runs ``do`` over each list item as an
@@ -381,7 +383,63 @@ class ForEachStep:
     output: "str | None" = None
 
 
-Step = Union[TransformStep, ToolStep, AgentStep, CallStep, MatchStep, FoldStep, ForEachStep]
+@dataclass(frozen=True)
+class ParallelStep:
+    """The LAST non-linear primitive (Appendix B: ``parallel = {on_error?:abort|
+    continue|retry(n), branches:{NAME:Step}+, collect:Step}``) — ``for_each``'s
+    HETEROGENEOUS NAMED-branch sibling. Where ``for_each`` fans a SINGLE ``do``
+    step out over a runtime-sized list of items, ``parallel`` fans a STATIC,
+    FINITE dict of DISTINCT named branches out concurrently, then runs
+    ``collect`` ONCE over the NAMED MAP ``{branch_name: result}`` (not an
+    ordered list — Appendix B's compact grammar, N2).
+
+    - ``branches`` is a non-empty ``{NAME: Step}`` mapping; each branch is its
+      OWN heterogeneous Step (a different kind/config per NAME, unlike
+      ``for_each``'s one ``do`` re-invoked per item). Every branch runs
+      concurrently — the branch set is statically finite, so there is NO
+      ``max_parallel`` field (unlike ``for_each``): the branch COUNT is the
+      concurrency bound.
+    - ``on_error`` is OPTIONAL (Appendix B: ``on_error?:`` — UNLIKE
+      ``for_each`` where it is REQUIRED), defaulting to ``abort`` when
+      omitted. Same three values, same semantics as ``for_each``: ``continue``
+      (a failed branch is DROPPED — recorded with the shared
+      ``__fan_out_dropped__`` kind-marker so resume never re-runs it —
+      ``collect`` MUST handle the absent branch); ``abort`` (a branch failure
+      cancels the still-pending branches and fails the whole step);
+      ``retry(n)`` (re-run the failed branch's Step up to ``n`` more times,
+      falling back to ``abort`` if still failing — only ``continue`` ever
+      silently drops).
+    - each branch's context is ``{"ctx": <a COPY of the outer named stores —
+      isolation, Hard rule 6>, "pipe": <this parallel step's OWN incoming
+      pipe-data, held constant across every branch — the per-branch analog of
+      Hard rule 5>}`` — no ``item``/``acc`` (those are ``for_each``/
+      ``fold``-only) and no sibling visibility (a branch cannot see any other
+      branch's result; writes happen only in ``collect``).
+    - ``collect`` runs ONCE, over the NAMED MAP of surviving branch results
+      (dropped branches filtered out by the SAME shared
+      :func:`_is_dropped_marker` filter ``for_each`` uses, adapted to a dict)
+      — its result is this step's N2 return value / pipe-data.
+
+    Recovery: reuses the EXACT fan-out substrate ``for_each`` established (see
+    the module docstring's "commit unit = the ITEM") — the commit unit here is
+    the BRANCH (keyed by NAME, not index): a branch's result records at the
+    FLAT dotted key ``f"{label}.parallel.{branch_name}"``; ``collect`` records
+    at ``f"{label}.parallel.collect"``. A landed branch is exactly-once; a
+    dropped branch stays dropped forever (its marker key is present, so
+    resume never re-runs it); resume re-runs ONLY the branches whose key is
+    ABSENT, then runs ``collect`` iff its key is absent — see
+    :func:`_run_parallel_step`."""
+
+    branches: "dict[str, Step]"
+    collect: "Step"
+    on_error: str = "abort"
+    output: "str | None" = None
+
+
+Step = Union[
+    TransformStep, ToolStep, AgentStep, CallStep, MatchStep, FoldStep, ForEachStep,
+    ParallelStep,
+]
 
 
 @dataclass(frozen=True)
@@ -1102,6 +1160,175 @@ async def _run_for_each_step(inv: "_StepInvocation") -> "tuple[Any, bool, dict[s
     return collect_result, any_durable, completed
 
 
+def _parallel_results(
+    completed_step_results: "dict[str, Any]", label: str, names: "list[str]",
+) -> "dict[str, Any]":
+    """Build ``collect``'s NAMED-MAP input ``{branch_name: result}`` from the
+    recorded per-branch results, FILTERING OUT dropped markers
+    (:func:`_is_dropped_marker`) — ``for_each``'s :func:`_for_each_results`,
+    adapted from an ordered list to a dict keyed by branch NAME. The same one
+    shared filter used identically live (all branches just landed) AND on
+    resume-replay (every branch key read back from a snapshot). Every name in
+    ``names`` MUST have a key by the time this runs (the coordinator only
+    reaches ``collect`` once every branch is present)."""
+    out: "dict[str, Any]" = {}
+    for name in names:
+        value = completed_step_results[f"{label}.parallel.{name}"]
+        if _is_dropped_marker(value):
+            continue
+        out[name] = value
+    return out
+
+
+async def _run_parallel_step(inv: "_StepInvocation") -> "tuple[Any, bool, dict[str, Any]]":
+    """The heterogeneous NAMED-branch fan-out runner (S5-bounded) — reuses the
+    EXACT fan-out substrate :func:`_run_for_each_step` established (concurrent
+    recovery via a single serializing coordinator + a NO-OP recorder inside
+    each branch task, the ``__fan_out_dropped__`` kind-marker, the
+    fan_out_depth/SpawnBudget S5 guards). The one structural difference: the
+    source is a STATIC FINITE dict of DISTINCT named branches (each its own
+    heterogeneous Step) rather than one ``do`` re-invoked per list item, so
+    every branch runs concurrently with NO Semaphore (the branch count IS the
+    bound — there is no ``max_parallel`` field), and ``collect`` runs ONCE
+    over the NAMED MAP of surviving branch results (:func:`_parallel_results`),
+    not an ordered list.
+
+    ``on_error`` (optional, default ``abort`` — normalized the same way
+    ``for_each.on_error`` is, via :func:`_parse_on_error`) decides a branch
+    failure: ``continue`` records a DROPPED kind-marker (so resume never
+    re-runs it); ``retry(n)`` re-runs the branch's Step up to ``n`` more times
+    then falls back to ``abort``; ``abort`` cancels the still-pending branches
+    and fails the step (the already-landed branches stay durably recorded, so
+    a resume after an abort-crash skips them).
+
+    S5 guards: (b) ``fan_out_depth`` is +1'd through ``_RunDeps`` into every
+    branch/collect sub-scope, failing the step if it would exceed
+    ``max_fan_out_depth``; (c) each ``AgentStep`` reached below charges the
+    shared per-run :class:`SpawnBudget`."""
+    step: ParallelStep = inv.step  # type: ignore[assignment]
+    deps = inv.deps
+    context = inv.context
+    label = inv.step_label
+    completed = inv.completed_step_results
+
+    # Full-completion replay: if collect already ran (its key is present) the
+    # whole parallel is done — replay its N2 result, execute nothing.
+    collect_key = f"{label}.parallel.collect"
+    if collect_key in completed:
+        return completed[collect_key], False, completed
+
+    names = list(step.branches)
+    on_err = _parse_on_error(step.on_error)
+
+    # S5 guard (b): entering this parallel deepens the fan-out nesting by one
+    # (same guard, same semantics as for_each — a parallel scope counts as a
+    # fan-out level too).
+    next_depth = deps.fan_out_depth + 1
+    if deps.max_fan_out_depth and next_depth > deps.max_fan_out_depth:
+        raise PipelineExecutionError(
+            f"step {label} (parallel) fan-out depth {next_depth} exceeds the "
+            f"operator cap {deps.max_fan_out_depth} (S5 depth guard) — a "
+            "parallel nested deeper than allowed fails the step rather than "
+            "spawning"
+        )
+    child_deps = replace(deps, fan_out_depth=next_depth)
+
+    outer_stores = context["ctx"]
+    outer_pipe = context["pipe"]
+
+    async def _noop_record(**_kw: Any) -> None:
+        # Branch tasks NEVER record: only the single coordinator does
+        # (serialized), so concurrent branches cannot race the
+        # read-modify-write of the snapshot (identical to for_each's item
+        # tasks).
+        return None
+
+    async def _run_branch(name: str) -> "tuple[str, Any, bool, Exception | None]":
+        branch_step = step.branches[name]
+        # Retry(n) re-runs INSIDE the same task. Any Exception is a branch
+        # failure (CancelledError is BaseException, so an abort-cancel
+        # propagates out and the task is gathered in the finally).
+        attempts = 1 + (on_err.retries if on_err.kind == "retry" else 0)
+        last_exc: "Exception | None" = None
+        for _attempt in range(attempts):
+            branch_ctx = {"ctx": dict(outer_stores), "pipe": outer_pipe}
+            runner = STEP_DISPATCH.get(type(branch_step))
+            if runner is None:  # pragma: no cover - Step is a closed union
+                raise PipelineExecutionError(f"unknown step type: {branch_step!r}")
+            branch_inv = _StepInvocation(
+                executor=inv.executor, step=branch_step, context=branch_ctx,
+                step_label=f"{label}.parallel.{name}", deps=child_deps,
+                completed_step_results=completed, record=_noop_record,
+            )
+            try:
+                result, durable, _ = await runner(branch_inv)
+                return name, result, durable, None
+            except Exception as exc:  # noqa: BLE001 - branch-failure boundary (on_error policy)
+                last_exc = exc
+        return name, None, False, last_exc
+
+    # Only branches whose key is ABSENT run (resume re-runs exactly the absent
+    # ones; a present success key replays, a present dropped-marker stays
+    # dropped).
+    pending = [n for n in names if f"{label}.parallel.{n}" not in completed]
+    any_durable = False
+    if pending:
+        # No Semaphore: the branch set is statically finite (there is no
+        # max_parallel field) — every pending branch runs concurrently.
+        tasks = [asyncio.create_task(_run_branch(n)) for n in pending]
+        try:
+            for fut in asyncio.as_completed(tasks):
+                name, result, durable, exc = await fut
+                key = f"{label}.parallel.{name}"
+                if exc is None:
+                    completed = {**completed, key: result}
+                    any_durable = any_durable or durable
+                    await inv.record(completed_step_results=completed, durable=durable)
+                elif on_err.kind == "continue":
+                    # DROP the failed branch: record a kind-marker (NOT absent
+                    # — else resume re-runs it forever; NOT bare None — a
+                    # legit branch result).
+                    completed = {
+                        **completed,
+                        key: {_FAN_OUT_DROPPED_KEY: True, "error": str(exc)},
+                    }
+                    any_durable = True  # a drop MUST survive to resume (awaited-durable)
+                    await inv.record(completed_step_results=completed, durable=True)
+                else:
+                    # abort (incl. retry(n) exhausted): the landed branches
+                    # above are already durably recorded; fail the step now.
+                    raise PipelineExecutionError(
+                        f"step {label} (parallel) branch {name!r} failed "
+                        f"(on_error={step.on_error!r}): {exc}"
+                    ) from exc
+        finally:
+            # Never leave orphaned live fan-out tasks (an abort-raise cancels
+            # the still-pending branches; a clean finish finds them all
+            # already done).
+            for task in tasks:
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+
+    # collect runs ONCE over the NAMED MAP of surviving results (dropped
+    # filtered out).
+    results_map = _parallel_results(completed, label, names)
+    collect_ctx = {"ctx": outer_stores, "pipe": results_map}
+    collect_runner = STEP_DISPATCH.get(type(step.collect))
+    if collect_runner is None:  # pragma: no cover - Step is a closed union
+        raise PipelineExecutionError(f"unknown step type: {step.collect!r}")
+    collect_inv = _StepInvocation(
+        executor=inv.executor, step=step.collect, context=collect_ctx,
+        step_label=collect_key, deps=child_deps,
+        completed_step_results=completed, record=inv.record,
+    )
+    collect_result, collect_durable, completed = await collect_runner(collect_inv)
+    completed = {**completed, collect_key: collect_result}
+    any_durable = any_durable or collect_durable
+    await inv.record(completed_step_results=completed, durable=collect_durable)
+    return collect_result, any_durable, completed
+
+
 # Dispatch table: step dataclass type -> its runner. A future primitive ADDS an
 # entry here (+ serde/parser/analyzer) rather than editing a shared elif chain.
 STEP_DISPATCH: "dict[type, Callable[[_StepInvocation], Awaitable[tuple[Any, bool, dict[str, Any]]]]]" = {
@@ -1112,6 +1339,7 @@ STEP_DISPATCH: "dict[type, Callable[[_StepInvocation], Awaitable[tuple[Any, bool
     MatchStep: _run_match_step,
     FoldStep: _run_fold_step,
     ForEachStep: _run_for_each_step,
+    ParallelStep: _run_parallel_step,
 }
 
 # Type -> kind-string, the inverse vocabulary the serde ``kind`` marker uses.
@@ -1123,6 +1351,7 @@ _STEP_KINDS: "dict[type, str]" = {
     MatchStep: "match",
     FoldStep: "fold",
     ForEachStep: "for_each",
+    ParallelStep: "parallel",
 }
 
 
@@ -1440,6 +1669,7 @@ __all__ = [
     "MatchStep",
     "FoldStep",
     "ForEachStep",
+    "ParallelStep",
     "SpawnBudget",
     "Step",
     "Pipeline",
