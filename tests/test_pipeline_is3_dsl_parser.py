@@ -50,6 +50,7 @@ steps:
 
     assert pipeline == Pipeline(
         description="a small linear pipeline",
+        name="demo",  # #2575: the parser now carries the declared ``pipeline:`` name
         steps=[
             TransformStep(value="ctx.x + 1", output="bumped"),
             ToolStep(

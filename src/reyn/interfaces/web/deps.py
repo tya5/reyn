@@ -327,7 +327,7 @@ def _get_registry():
                 # multimodal / action_retrieval / embedding / router / retry /
                 # op-loops / tool-use-scheme) — one bundle, so a new uniform arg
                 # can't be missed here (the sandbox_config B52 drift class is gone).
-                factory_config=SessionFactoryConfig.from_config(config),
+                factory_config=SessionFactoryConfig.from_config(config, root),
                 eager_embedding_build=_eager_embedding_build,
                 # #1401: the 3 scoped capabilities, filled from the CLI override
                 # holder (env-backend INSTANCE → both FS+exec seams = single-shared
@@ -375,7 +375,7 @@ def _get_registry():
             # #2093: the uniform reyn.yaml-derived registry config
             # (delegation_capability_default) — one bundle, so a new one can't be
             # missed here (the delegation_capability_default #2081 drift).
-            factory_config=SessionFactoryConfig.from_config(config),
+            factory_config=SessionFactoryConfig.from_config(config, root),
             # ``_scoped`` is local to the session factory above; fetch the overrides
             # at this scope via the accessor.
             environment_backend=get_cli_scoped_overrides().environment_backend,

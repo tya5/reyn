@@ -426,7 +426,7 @@ def run_serve(args: argparse.Namespace) -> None:
             # #2093: the uniform reyn.yaml-derived per-session config bundle. (The same
             # sandbox_config the A2A/MCP-serve factory once dropped — now it's in the
             # bundle, so it can't be missed here.)
-            factory_config=SessionFactoryConfig.from_config(session_cfg.config),
+            factory_config=SessionFactoryConfig.from_config(session_cfg.config, project_root),
             # #1402: scoped capability surface, passed EXPLICITLY (required by
             # build_scoped_chat_session). The stdio-MCP factory's current
             # behaviour — defaults that document the gaps, NOT new capabilities
@@ -455,7 +455,7 @@ def run_serve(args: argparse.Namespace) -> None:
         session_factory=_session_factory,
         state_log=state_log,
         # #2093: the uniform reyn.yaml-derived registry config bundle.
-        factory_config=SessionFactoryConfig.from_config(session_cfg.config),
+        factory_config=SessionFactoryConfig.from_config(session_cfg.config, project_root),
     )
 
     timeout = float(getattr(args, "timeout", 60.0) or 60.0)

@@ -39,6 +39,13 @@ class SessionFactoryConfig:
     # #2548 PR-A: enabled skill registry snapshot (list[SkillEntry]), built from
     # config.skills. Uniform config-derived arg → reaches all factory sites.
     available_skills: Any
+    # #2575: the populated PipelineRegistry, built ONCE per frontend from
+    # config.pipelines (disk scan → parse → register). Threaded to every Session
+    # (incl. spawns, which reuse this bundle) so the pipelines dir is parsed once
+    # per session tree, not re-globbed per session — mirrors the build-once
+    # available_skills snapshot. Empty registry when project_root is unknown
+    # (direct/test from_config(config)) → byte-identical to pre-#2575.
+    pipeline_registry: Any
     # ── AgentRegistry uniform config (3) ────────────────────────────────────
     delegation_capability_default: str
     # #2103 C3: operator spawn-tree bounds (safety.spawn.*) — the LLM spawn seams
@@ -47,10 +54,27 @@ class SessionFactoryConfig:
     max_spawn_children: int
 
     @classmethod
-    def from_config(cls, config: Any) -> "SessionFactoryConfig":
+    def from_config(
+        cls, config: Any, project_root: "Any | None" = None,
+    ) -> "SessionFactoryConfig":
         """The single mapping point ``ReynConfig`` → the uniform factory args. Add a
-        new uniform arg HERE (and as a field above) → all five factory sites get it."""
+        new uniform arg HERE (and as a field above) → all five factory sites get it.
+
+        ``project_root`` (#2575) is required only to LOAD pipelines from disk (the
+        scan is project-root-relative). The five frontend factory sites pass it;
+        utility/test callers may omit it → an empty PipelineRegistry (no pipelines,
+        byte-identical to pre-#2575). It stays optional (not a bundle field) because
+        it is a filesystem locus, not a ``ReynConfig``-derived value."""
+        from pathlib import Path
+
+        from reyn.data.pipelines.registry import build_pipeline_registry
         from reyn.data.skills.registry import build_skill_registry
+        root = Path(project_root) if project_root is not None else None
+        pipeline_registry = (
+            build_pipeline_registry(config.pipelines, root)
+            if root is not None
+            else build_pipeline_registry(None, Path.cwd())
+        )
         return cls(
             sandbox_config=config.sandbox,
             multimodal_config=config.multimodal,
@@ -62,6 +86,8 @@ class SessionFactoryConfig:
             # #2548 PR-A: build the enabled skill registry once here (filtered to
             # enabled=True) so every factory site threads the same snapshot.
             available_skills=build_skill_registry(config.skills),
+            # #2575: built once here (empty when project_root is unknown).
+            pipeline_registry=pipeline_registry,
             delegation_capability_default=config.delegation.capability_default,
             max_spawn_depth=config.safety.spawn.max_depth,
             max_spawn_children=config.safety.spawn.max_children,

@@ -252,15 +252,23 @@ def pipeline_to_dict(pipeline: "Pipeline") -> "dict[str, Any]":
     """A :class:`Pipeline` → a JSON-serializable dict (the work-order shape)."""
     return {
         "description": pipeline.description,
+        # #2575: the declared ``pipeline:`` name travels with the work-order so
+        # a recovered pipeline keeps its identity (``call``/``match`` targets).
+        "name": pipeline.name,
         "steps": [step_to_dict(s) for s in pipeline.steps],
     }
 
 
 def pipeline_from_dict(data: "dict[str, Any]") -> "Pipeline":
-    """The inverse of :func:`pipeline_to_dict`."""
+    """The inverse of :func:`pipeline_to_dict`.
+
+    ``name`` is default-tolerant (#2575): an invocation.json persisted before
+    the field existed has no ``name`` key → ``""`` (a benign identity gap for a
+    long-since-launched inline run, which does not re-resolve by name)."""
     return Pipeline(
         steps=[step_from_dict(s) for s in data.get("steps", [])],
         description=str(data.get("description") or ""),
+        name=str(data.get("name") or ""),
     )
 
 

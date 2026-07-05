@@ -127,5 +127,6 @@ def build_scoped_chat_session(
         retry_config=factory_config.retry_config,  # #1835
         chat_tool_use_scheme=factory_config.chat_tool_use_scheme,
         available_skills=factory_config.available_skills,  # #2548 PR-A
+        pipeline_registry=factory_config.pipeline_registry,  # #2575
         **base,
     )

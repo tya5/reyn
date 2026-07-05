@@ -215,7 +215,7 @@ async def _get_or_build_registry() -> "AgentRegistry":
                 state_log=state_log,
                 budget_tracker=budget_tracker,
                 # #2093: the uniform reyn.yaml-derived per-session config bundle.
-                factory_config=SessionFactoryConfig.from_config(session_cfg.config),
+                factory_config=SessionFactoryConfig.from_config(session_cfg.config, project_root),
                 agent_id=session_cfg.config.agent.id,
                 # #1402: scoped surface passed EXPLICITLY (required by
                 # build_scoped_chat_session). chainlit's current behaviour
@@ -244,7 +244,7 @@ async def _get_or_build_registry() -> "AgentRegistry":
             session_factory=_session_factory,
             state_log=state_log,
             # #2093: the uniform reyn.yaml-derived registry config bundle.
-            factory_config=SessionFactoryConfig.from_config(session_cfg.config),
+            factory_config=SessionFactoryConfig.from_config(session_cfg.config, project_root),
         )
         registry_ref.append(registry)
         _REGISTRY = registry
