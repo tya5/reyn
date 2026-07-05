@@ -31,12 +31,6 @@ All limits are read from `reyn.yaml`'s `safety:` block by default and can be ove
 | `--llm-timeout SECONDS` | `safety.timeout.llm_call_seconds` (or `60`) | Per-call HTTP timeout passed to LiteLLM. |
 | `--llm-max-retries N` | `safety.timeout.llm_max_retries` (or `3`) | Transient-error retries per LLM call (LiteLLM exponential backoff). |
 
-## Permission gating
-
-| Flag | Available on | Default | Description |
-|------|--------------|---------|-------------|
-| `--allow-unsafe-python` | `chat` | off | Allow `mode: unsafe` Python preprocessor steps (no AST sandbox). Safe-mode steps run without this. `--allow-untrusted-python` is a legacy alias. |
-
 ## Resolution order
 
 For each flag, the runtime checks (highest precedence first):

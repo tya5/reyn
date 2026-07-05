@@ -447,7 +447,6 @@ def _build_live_runner(agent_name: str, *, env_backend=None, ws_base_dir=None, w
         config_permissions=perm_config,
         project_root=project_root,
         interactive=False,  # headless — never block on stdin
-        unsafe_python_allowed=False,
     )
     budget_tracker = BudgetTracker(config.cost)
     budget_tracker.hydrate(project_root / ".reyn" / "state" / "budget_ledger.jsonl")

@@ -1,6 +1,6 @@
 """Permission-gated file I/O for safe-mode python preprocessor / postprocessor steps.
 
-FP-0042 — replaces ``reyn.api.unsafe.file`` for safe-mode python steps.
+FP-0042 — the permission-gated file surface for safe-mode python steps.
 Every file operation goes through the path-declaration check that the
 calling step's permission config opted into; reads / writes outside the
 declared paths raise
@@ -9,7 +9,7 @@ declared paths raise
 Public surface
 --------------
 
-High-level (drop-in replacement for ``reyn.api.unsafe.file``):
+High-level:
 
 - :func:`read(path, *, encoding="utf-8")` → str
 - :func:`write(path, content, *, encoding="utf-8")` → None
@@ -259,7 +259,7 @@ def _check_write(path: str) -> None:
         )
 
 
-# ── High-level API (drop-in for reyn.api.unsafe.file) ───────────────────────
+# ── High-level API ──────────────────────────────────────────────────────────
 
 
 def _nofollow_opener(path: str, flags: int) -> int:
@@ -390,8 +390,8 @@ def delete(path: str, *, missing_ok: bool = False) -> None:
     Permission-checked as a write — the path must resolve under one of
     the declared ``write_paths``. Mirrors :meth:`pathlib.Path.unlink`:
     ``missing_ok=True`` swallows :class:`FileNotFoundError`. Directory
-    removal isn't part of the safe surface — explicit unsafe-mode is the
-    right gate when needed.
+    removal isn't part of the safe surface — split it out via a ``run_op``
+    when needed.
     """
     _check_write(path)
     try:

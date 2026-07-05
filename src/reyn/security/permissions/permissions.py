@@ -302,6 +302,24 @@ class PermissionDecl:
         # permissions primitive.
         if not isinstance(d, dict):
             return cls()
+        # Unsafe python step removed (tech debt). A skill / pipeline that still
+        # declares ``mode: unsafe`` under ``permissions.python`` is rejected at
+        # load — NEVER silently downgraded to safe (a silent downgrade would run
+        # code the author believed was unsandboxed → confusing failures). Python
+        # steps are now ALWAYS sandboxed (AST-allowlisted + restricted builtins).
+        python_entries = d.get("python")
+        if isinstance(python_entries, list):
+            for entry in python_entries:
+                if isinstance(entry, dict) and entry.get("mode") == "unsafe":
+                    fn = entry.get("function") or "<unnamed>"
+                    raise ValueError(
+                        f"permissions.python: mode: unsafe was removed; python "
+                        f"steps are always sandboxed (offending function: {fn!r}). "
+                        f"Delete the 'mode: unsafe' line — safe mode is the only "
+                        f"behaviour. If the step needs raw I/O, use the "
+                        f"reyn.api.safe.* surface (permission-gated) or split the "
+                        f"I/O out via a run_op."
+                    )
         # #571 collapse arc Phase 5: warn on legacy bool-axis keys so
         # existing configs get a visible migration prompt. The values
         # themselves are no longer consulted — actors must declare the
@@ -323,7 +341,9 @@ class PermissionDecl:
             tool=_normalize_paths(d.get("tool")),
             file_read=cls._parse_path_list(d.get("file.read")),
             file_write=cls._parse_path_list(d.get("file.write")),
-            # "python" key ignored — PYTHON axis removed (zero live enforcement).
+            # "python" key grants no runtime authority — PYTHON axis removed
+            # (zero live enforcement). It is only inspected above to fail-closed
+            # on a removed ``mode: unsafe`` declaration.
             http_get=cls._parse_host_list(d.get("http.get")),
             secret_write=cls._parse_secret_key_list(d.get("secret.write")),
         )
@@ -344,10 +364,6 @@ class PermissionResolver:
         config_permissions: dict,
         project_root: Path | None = None,
         interactive: bool = True,
-        unsafe_python_allowed: bool = False,
-        # FP-0014 compat: accept the legacy keyword name during the Track A → B
-        # transition. New callers should use `unsafe_python_allowed`.
-        trusted_python_allowed: bool | None = None,
         # #1414: the default file read/write ZONE anchor. Distinct from
         # ``project_root`` (= the host-side approvals/config base). Under a
         # container backend the agent's file ops target the in-container repo
@@ -375,9 +391,6 @@ class PermissionResolver:
         # whole state-dir → least-privilege); the read gate consults it. Resolved
         # absolute paths only; exact-match (no prefix grant).
         self._offload_read_paths: set[str] = set()
-        if trusted_python_allowed is not None:
-            unsafe_python_allowed = trusted_python_allowed
-        self._unsafe_python_allowed = unsafe_python_allowed
         # #398 v4 emitter wiring: subscribers fired when ``_persist`` lands
         # an approval (= "always allow") or revoke decision to approvals.yaml.
         # Session registers a callback that mints a ``state_change``

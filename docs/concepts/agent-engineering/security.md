@@ -32,12 +32,9 @@ Approvals are keyed by skill, not by user. If skill A is granted `file.write:/tm
 
 ### AST sandbox for Python preprocessor steps
 
-`python` preprocessor steps run in one of two modes:
+`python` preprocessor steps are always sandboxed: AST-validated against an allowlist (no `open`, `eval`, `exec`, `__import__`, `compile`, `subprocess`, etc.). Imports are limited to a curated allowlist (`math`, `statistics`, `json`, `re`, `random`, `time`, `datetime`, …), extensible via `reyn.yaml`. Restricted `__builtins__`. Executes in a subprocess with a wall-clock timeout for crash isolation.
 
-- **`safe`** — AST-validated against an allowlist (no `open`, `eval`, `exec`, `__import__`, `compile`, `subprocess`, etc.). Imports limited to a curated allowlist (`math`, `statistics`, `json`, `re`, `random`, `time`, `datetime`, …), extensible via `reyn.yaml`. Restricted `__builtins__`. Executes in a subprocess with a wall-clock timeout for crash isolation.
-- **`unsafe`** — no AST checks, full Python. Requires `--allow-unsafe-python` at runtime and a `permissions.python` entry with `mode: unsafe` in `skill.md`. Used only when `safe` blocks something genuinely needed.
-
-Workflow authors are nudged toward `safe`; reaching for `unsafe` is a deliberate choice that the linter can flag.
+A step that needs a non-ambient capability (operator files, network, env vars, process spawning) must split that I/O out into a `run_op` step — which carries its own permission gate and event-log entry — or use the permission-gated `reyn.api.safe.*` surface. There is no unsandboxed escape valve: a `mode: unsafe` declaration is rejected at load.
 
 ### Non-interactive approval (eval, CI)
 
@@ -82,7 +79,7 @@ Memory is therefore covered on **both** directions: a memory **read** (recall or
 
 **Content-layer defense is seam-based regex detection, not a prompt-injection guarantee.** Pattern scans catch known attack shapes at OS seams; novel or obfuscated payloads that don't match a regex pass through. Once untrusted content is fenced and in the prompt, the LLM may still follow embedded instructions that read as natural language rather than a recognisable attack pattern. The OS does not gate the LLM's *response* for injection residue — capability damage is bounded by the permission system (no writes outside approved paths, no `sandboxed_exec` outside its declared `SandboxPolicy`) but response-level interception is not implemented. Direct operator input (`ask_user`, chat messages) is trusted by definition and not scanned. Workflow design still matters: keep untrusted content summarised rather than passed verbatim, validate structured outputs, and use `judge_output` to gate critical decisions.
 
-**`mode: unsafe` is OS-level trust, not OS-level sandbox.** An unsafe Python step runs as the same user with the same filesystem access; it is not kernel-sandboxed. The system trusts that the user authorized the specific (module, function) pair. This is the right boundary for a developer tool — but it means unsafe steps deserve code review the way a Makefile target does.
+**The AST sandbox is honor-system, not a kernel sandbox.** The safe-mode validator + restricted builtins stop honest authoring mistakes (an accidental `import os`, a stray `open`), but a motivated author using `getattr` chains or other metaprogramming can still escape it. The real safety boundary is the subprocess isolation + the permission gate on the `run_op` / `reyn.api.safe.*` surfaces, not the validator. This is the right boundary for a developer tool — but it means python steps deserve code review the way a Makefile target does.
 
 ## See also
 

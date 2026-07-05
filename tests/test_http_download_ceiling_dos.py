@@ -1,7 +1,7 @@
 """Tier 2: HTTP response-body download ceiling (unbounded-body DoS, #1913 class).
 
-The urllib HTTP helpers (`reyn.api.safe.http` / `reyn.api.unsafe.http` /
-`reyn.mcp.registry`) read response bodies with a single shared `read_capped`
+The urllib HTTP helpers (`reyn.api.safe.http` / `reyn.mcp.registry`) read
+response bodies with a single shared `read_capped`
 seam (`reyn._http_limits`) so a hostile / oversized response is rejected before
 more than `MAX_DOWNLOAD_BYTES` is materialised — the urllib-adapted sibling of
 the web_fetch ceiling (#1925). One mechanism, single-sourced constant.

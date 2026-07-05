@@ -116,27 +116,3 @@ def _build_restricted_builtins(allowed_modules: frozenset[str] = frozenset()) ->
 
     safe["__import__"] = guarded_import
     return safe
-
-
-def _exec_user_module(
-    source: str,
-    module_path: str,
-    mode: str,
-    allowed_modules: frozenset[str],
-) -> dict[str, Any]:
-    """Compile + exec the user file. Returns its module namespace."""
-    tree = ast.parse(source, filename=module_path)
-    if mode == "safe":
-        _validate_safe_ast(tree, allowed_modules)
-        builtins_dict = _build_restricted_builtins(allowed_modules)
-    else:
-        builtins_dict = _builtins_module.__dict__
-
-    code = compile(tree, filename=module_path, mode="exec")
-    namespace: dict[str, Any] = {
-        "__builtins__": builtins_dict,
-        "__name__": "__reyn_python_step__",
-        "__file__": module_path,
-    }
-    exec(code, namespace)
-    return namespace

@@ -1,9 +1,9 @@
 """Safe-mode HTTP for safe-mode python steps.
 
-Exposes the same ``get`` / ``post`` / ``put`` / ``delete`` surface as
-``reyn.api.unsafe.http`` (= ``urllib.request``-backed, no extra deps),
-but in the ``reyn.api.safe.*`` namespace so safe-mode python steps can
-import it through the AST allowlist.
+Exposes a ``get`` / ``post`` / ``put`` / ``delete`` surface
+(= ``urllib.request``-backed, no extra deps) in the ``reyn.api.safe.*``
+namespace so safe-mode python steps can import it through the AST
+allowlist.
 
 Permission model (#571 Phase 3)
 -------------------------------
@@ -34,7 +34,7 @@ Return envelope
 
 All four methods return ``{status: int, body: str, headers: dict}``.
 HTTP error statuses (4xx / 5xx) are NOT raised — callers inspect
-``status``. Mirrors ``reyn.api.unsafe.http`` exactly.
+``status``.
 """
 from __future__ import annotations
 

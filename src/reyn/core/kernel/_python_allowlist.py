@@ -29,15 +29,16 @@ file content. The carveout was made explicit by the 2026-05-15
 ``index_docs.extract_and_split`` (= ``mode: safe`` python step calling
 ``glob.glob``) on the grounds that path enumeration without content read
 preserves the safe-mode contract for the step's *output* (= the path
-list; downstream content reads happen in a paired ``mode: unsafe`` step).
+list; downstream content reads happen in a paired ``run_op`` step).
 See ``docs/deep-dives/audits/2026-05-15-pure-mode-stdlib-audit.md`` for
 the full reasoning.
 
-Authors who need *any* of the above must declare `mode: unsafe` (= stdlib
-auto-allowed via `reyn run`, agents/ops need `--allow-unsafe-python` or
-explicit operator approval). The boundary is sharp: if the python step's
-output depends on a value the operator can change without editing the
-input artifact, the step is non-`safe`.
+Python steps are ALWAYS safe: `mode: safe` is the only behaviour (the
+former `mode: unsafe` escape valve was removed as tech debt). Authors who
+need a non-ambient capability must split the I/O out via a `run_op` step
+(see below). The boundary is sharp: if the python step's output depends on
+a value the operator can change without editing the input artifact, the
+step must move that dependency into a `run_op`.
 
 Honest scope: import allowlist + banned-builtin reference detection at AST
 parse time. The real safety boundary is the subprocess execution sandbox +
@@ -84,7 +85,7 @@ PURE_STDLIB_ALLOWLIST: frozenset[str] = frozenset({
 
     # --- restricted ambient: filesystem path enumeration (no content read) ---
     "glob",        # restricted: path-list reads only (= operator filesystem
-                   #             state, but content reads stay in mode: unsafe).
+                   #             state, but content reads stay in a run_op).
                    #             Carveout endorsed by the 2026-05-15
                    #             R-PURE-MODE-REDEFINE stdlib audit; see
                    #             docs/deep-dives/audits/2026-05-15-pure-mode-

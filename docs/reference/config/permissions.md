@@ -75,8 +75,9 @@ For paths outside the default zones. Each entry has:
 Per-(module, function) declarations for `python` preprocessor steps. See `reference/dsl/preprocessor.md`.
 
 - `module`, `function` — must match the corresponding preprocessor step.
-- `mode` — `safe` (sandboxed) or `unsafe` (no AST sandbox; needs `--allow-unsafe-python` at runtime).
 - `timeout` — wall-clock seconds before the parent SIGKILLs the child. Default `30`.
+
+Python steps are always sandboxed (AST allowlist + restricted builtins). A `mode: unsafe` declaration is rejected at load — split any raw I/O out via a `run_op` step, or use the permission-gated `reyn.api.safe.*` surface.
 
 ### `http.get`
 
@@ -134,7 +135,6 @@ permissions:
   file.write: allow         # grants ALL write-class ops for ALL skills
   python:
     safe: allow             # auto-approve all safe-mode python steps
-    unsafe: allow           # also requires --allow-unsafe-python at runtime
     allowed_modules:
       - math
       - statistics

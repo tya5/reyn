@@ -56,7 +56,7 @@ Reyn が行う 2 つの別物を分けると理解しやすくなります。ス
 
 結果が workspace tree 内に land せず、tree capture が決して見ない書き込み:
 
-- **workspace tree 外への書き込み** — `sandboxed_exec` や unsafe-mode Python が
+- **workspace tree 外への書き込み** — `sandboxed_exec` や `run_op` ステップが
   `/tmp` や `$HOME` などの絶対パスへ書くもの。
 - **MCP / 外部プロセスのファイルシステムアクセス** — 構造上外部ゆえ、tree capture の
   完全に外。

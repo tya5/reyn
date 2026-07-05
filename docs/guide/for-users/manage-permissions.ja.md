@@ -66,8 +66,7 @@ permissions:
   shell: allow
   file.write: allow
   python:
-    safe: allow
-    unsafe: allow      # ランタイムの --allow-unsafe-python も必要
+    safe: allow        # python ステップは常にサンドボックス化（safe モードのみ）
 ```
 
 `allow` はプロンプトを完全に削除します。`ask`（デフォルト）はプロンプトを表示します。`deny` は拒否します。

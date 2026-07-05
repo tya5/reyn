@@ -66,8 +66,7 @@ permissions:
   shell: allow
   file.write: allow
   python:
-    safe: allow
-    unsafe: allow      # also requires --allow-unsafe-python at runtime
+    safe: allow        # python steps are always sandboxed (safe mode only)
 ```
 
 `allow` removes the prompt entirely. `ask` (default) prompts. `deny` rejects.

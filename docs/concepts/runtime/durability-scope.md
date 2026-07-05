@@ -63,7 +63,7 @@ Writes whose result does **not** land in the workspace tree, so tree capture
 never sees them:
 
 - **Writes outside the workspace tree** — absolute paths such as `/tmp` or
-  `$HOME` from `sandboxed_exec` or unsafe-mode Python.
+  `$HOME` from `sandboxed_exec` or a `run_op` step.
 - **MCP / external-process filesystem access** — external by construction, so
   outside the tree capture entirely.
 - **Noop-sandbox platforms** — on platforms without an enforcing sandbox

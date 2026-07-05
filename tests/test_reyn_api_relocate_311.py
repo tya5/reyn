@@ -1,12 +1,13 @@
-"""Tier 2: #311 — reyn.safe / reyn.interfaces.api.{safe,unsafe} relocated to
-reyn.api.{safe,unsafe} as a CLEAN BREAK (no backward-compat shims, owner policy).
+"""Tier 2: #311 — reyn.safe / reyn.interfaces.api.safe relocated to
+reyn.api.safe as a CLEAN BREAK (no backward-compat shims, owner policy).
 
-The safe-mode helpers moved to reyn.api.safe.* and the unsafe helpers to
-reyn.api.unsafe.*; the old import paths are DELETED (no shim). This pins: the
-canonical reyn.api.* imports work; the old paths no longer import; and the
-safe-mode allowlist is allow-of-one (only reyn.api.safe.*; everything else,
-incl reyn.api.unsafe.* and the removed reyn.safe.*/reyn.unsafe.*, is
-default-deny).
+The safe-mode helpers moved to reyn.api.safe.*; the old import paths are
+DELETED (no shim). The unsafe-mode API package (reyn.api.unsafe.*) was
+removed entirely along with the unsafe python step — python steps are now
+always sandboxed. This pins: the canonical reyn.api.safe.* imports work; the
+old paths no longer import; and the safe-mode allowlist is allow-of-one
+(only reyn.api.safe.*; everything else, incl the removed
+reyn.api.unsafe.*/reyn.safe.*/reyn.unsafe.*, is default-deny).
 
 Local dev note (#2374 follow-up): a stale UNTRACKED ``src/reyn/safe/`` (or
 ``src/reyn/plugins/``) dir — only ``__pycache__`` left from before the relocate — is
@@ -30,18 +31,15 @@ def test_canonical_api_safe_imports() -> None:
     assert importlib.import_module("reyn.api.safe.http") is not None
 
 
-def test_canonical_api_unsafe_imports() -> None:
-    """Tier 2: reyn.api.unsafe.* (the canonical path) imports."""
-    import reyn.api.unsafe.shell  # noqa: F401
-    assert importlib.import_module("reyn.api.unsafe.workspace") is not None
-
-
 @pytest.mark.parametrize("old_path", [
     "reyn.safe",
     "reyn.safe.file",
     "reyn.interfaces.api.safe",
     "reyn.interfaces.api.unsafe",
     "reyn.interfaces.api.unsafe.shell",
+    # unsafe python step removed — the whole reyn.api.unsafe.* package is gone.
+    "reyn.api.unsafe",
+    "reyn.api.unsafe.shell",
 ])
 def test_old_paths_are_gone_clean_break(old_path: str) -> None:
     """Tier 2: clean break — the pre-#311 paths no longer import (no shim)."""
