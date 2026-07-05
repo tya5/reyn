@@ -208,6 +208,8 @@ class PipelineExecutorDriver:
                     events=events,
                     cancel_check=self.is_cancel_requested,
                     schema_registry=schema_registry,
+                    max_fan_out_depth=self._registry.max_pipeline_fan_out_depth,
+                    max_pipeline_spawns=self._registry.max_pipeline_spawns,
                 )
             else:
                 result = await executor.resume(
@@ -221,6 +223,8 @@ class PipelineExecutorDriver:
                     events=events,
                     cancel_check=self.is_cancel_requested,
                     schema_registry=schema_registry,
+                    max_fan_out_depth=self._registry.max_pipeline_fan_out_depth,
+                    max_pipeline_spawns=self._registry.max_pipeline_spawns,
                 )
         except PipelineCancelled as exc:
             # IS-6: an intentional Ctrl-C stop at a step boundary. TERMINAL (so

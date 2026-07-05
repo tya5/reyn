@@ -85,6 +85,7 @@ from reyn.core.pipeline.executor import (
     CallStep,
     ExprRef,
     FoldStep,
+    ForEachStep,
     MatchCase,
     MatchStep,
     Pipeline,
@@ -174,15 +175,16 @@ _PipelineLoader.add_constructor("!expr", _construct_expr_tag)
 # Constructs the union grammar's non-linear step kinds accept as *keys* so a
 # document using them gets a clear "not yet supported" error instead of a
 # generic "unknown step type". ``call`` (R7), ``match`` (runtime-selected
-# sibling), and ``fold`` (sequential accumulator) are now SUPPORTED — they
-# moved out of this set into ``_STEP_PARSERS`` (``fold`` is dispatched
-# specially in ``_parse_step`` since its ``do`` recurses).
-_UNSUPPORTED_STEP_KINDS = ("for_each", "parallel")
+# sibling), ``fold`` (sequential accumulator), and ``for_each`` (concurrent
+# fan-out) are now SUPPORTED — they moved out of this set into ``_STEP_PARSERS``
+# (``fold``/``for_each`` are dispatched specially in ``_parse_step`` since their
+# ``do``/``collect`` sub-steps recurse). ``parallel`` is the last primitive.
+_UNSUPPORTED_STEP_KINDS = ("parallel",)
 _LINEAR_STEP_KINDS = ("transform", "tool", "shell", "agent")
-# ``call``/``match``/``fold`` are compositional, not linear, but ARE
+# ``call``/``match``/``fold``/``for_each`` are compositional, not linear, but ARE
 # executable — listed separately so error text distinguishes "the linear
 # kinds" from the full supported set.
-_SUPPORTED_STEP_KINDS = _LINEAR_STEP_KINDS + ("call", "match", "fold")
+_SUPPORTED_STEP_KINDS = _LINEAR_STEP_KINDS + ("call", "match", "fold", "for_each")
 _ALL_STEP_KINDS = _SUPPORTED_STEP_KINDS + _UNSUPPORTED_STEP_KINDS
 
 # Pipeline-level fields the full grammar allows but the linear executor has
@@ -449,6 +451,65 @@ def _parse_fold_step(body: "dict[str, Any]", *, index: "int | str") -> FoldStep:
     )
 
 
+_FOR_EACH_KEYS = frozenset(
+    {"over", "items", "max_parallel", "on_error", "do", "collect", "output"}
+)
+_ON_ERROR_RE = re.compile(r"^retry\(\d+\)$")
+
+
+def _parse_for_each_step(body: "dict[str, Any]", *, index: "int | str") -> ForEachStep:
+    """``for_each = {over?:PATH | items?:[LIT*] max_parallel? on_error:continue|
+    abort|retry(n) do:Step collect:Step}`` (Appendix B) — the concurrent fan-out
+    primitive. ``over``/``items`` are mutually exclusive (both together is an
+    ambiguous list source); neither falls back to the incoming pipe data at run
+    time (like ``fold``). ``on_error`` is REQUIRED (Appendix B gives it no ``?`` —
+    a fan-out author MUST state the completeness policy; unlike ``parallel`` whose
+    ``on_error?`` defaults to ``abort``) and must be ``continue``/``abort``/
+    ``retry(n)``. ``do`` AND ``collect`` are each a full nested Step (parsed the
+    same way top-level steps are, so either may be a nested ``call``/``fold``/
+    ``for_each``); ``collect`` is REQUIRED (it produces the primitive's N2
+    result). ``max_parallel`` (S5 Semaphore cap) is an optional positive int."""
+    _reject_unknown_keys(body, _FOR_EACH_KEYS, where="for_each step")
+    if "over" in body and "items" in body:
+        _fail("for_each step: 'over' and 'items' are mutually exclusive list sources")
+    over = body.get("over")
+    if over is not None:
+        over = _validate_expr_source(over, where="for_each step 'over'")
+    raw_items = body.get("items")
+    items: "list[Any] | None" = None
+    if raw_items is not None:
+        if not isinstance(raw_items, list):
+            _fail(f"for_each step 'items': expected a list, got {type(raw_items).__name__}")
+        _reject_nested_expr_tag(raw_items, where="for_each step 'items'")
+        items = list(raw_items)
+    on_error = body.get("on_error")
+    if not isinstance(on_error, str) or (
+        on_error not in ("continue", "abort") and _ON_ERROR_RE.match(on_error) is None
+    ):
+        _fail(
+            "for_each step 'on_error': REQUIRED — must be 'continue', 'abort', or "
+            f"'retry(n)' (a positive integer n), got {on_error!r}"
+        )
+    if "do" not in body:
+        _fail("for_each step: missing required field 'do'")
+    do = _parse_step(body["do"], index=f"{index} (for_each do)")
+    if "collect" not in body:
+        _fail("for_each step: missing required field 'collect'")
+    collect = _parse_step(body["collect"], index=f"{index} (for_each collect)")
+    max_parallel = body.get("max_parallel")
+    if max_parallel is not None and (
+        isinstance(max_parallel, bool) or not isinstance(max_parallel, int) or max_parallel <= 0
+    ):
+        _fail(f"for_each step 'max_parallel': expected a positive integer, got {max_parallel!r}")
+    output = body.get("output")
+    if output is not None and not isinstance(output, str):
+        _fail(f"for_each step 'output': expected a store-name string, got {type(output).__name__}")
+    return ForEachStep(
+        do=do, collect=collect, on_error=on_error, over=over, items=items,
+        max_parallel=max_parallel, output=output,
+    )
+
+
 _STEP_PARSERS = {
     "transform": _parse_transform_step,
     "tool": _parse_tool_step,
@@ -475,6 +536,12 @@ def _parse_step(raw_step: Any, *, index: "int | str") -> Step:
         if not isinstance(body, dict):
             _fail(f"step {index} (fold): expected a mapping body, got {type(body).__name__}")
         return _parse_fold_step(body, index=index)
+    if kind == "for_each":
+        # Special-dispatched like ``fold``: its ``do``/``collect`` sub-steps recurse
+        # through ``_parse_step``, so it needs ``index`` for nested error context.
+        if not isinstance(body, dict):
+            _fail(f"step {index} (for_each): expected a mapping body, got {type(body).__name__}")
+        return _parse_for_each_step(body, index=index)
     if kind not in _STEP_PARSERS:
         _fail(
             f"step {index}: unknown step kind {kind!r} (expected one of "

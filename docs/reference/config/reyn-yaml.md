@@ -411,8 +411,10 @@ safety:
     block_severity: block      # min severity that blocks at write seams: block | warn
     custom_patterns: []        # operator [regex, id, scope, severity] extensions
   spawn:
-    max_depth: 10              # max LLM spawn-lineage chain depth (agent_spawn); 0 = unlimited
-    max_children: 20           # max fan-out: direct children per parent AND topology size; 0 = unlimited
+    max_depth: 10                     # max LLM spawn-lineage chain depth (agent_spawn); 0 = unlimited
+    max_children: 20                  # max fan-out: direct children per parent AND topology size; 0 = unlimited
+    max_pipeline_fan_out_depth: 5     # max pipeline for_each fan-out NESTING depth; 0 = unlimited
+    max_pipeline_spawns: 100          # max ephemeral sessions ONE pipeline run may spawn; 0 = unlimited
 ```
 
 ### `safety.loop` fields
@@ -470,6 +472,8 @@ When a spawn would exceed a limit, the `safety.on_limit` checkpoint fires — th
 |------|------|---------|-------------|
 | `safety.spawn.max_depth` | int | `10` | Maximum spawn-lineage chain depth (operator-top = 0; each `agent_spawn` +1). Exceeding this fires the `safety.on_limit` checkpoint. `0` = unlimited. |
 | `safety.spawn.max_children` | int | `20` | Maximum fan-out: governs BOTH the direct spawn-children per parent (`agent_spawn`) AND the member count of a `topology_create`d topology (org size). Exceeding this fires the `safety.on_limit` checkpoint. `0` = unlimited. |
+| `safety.spawn.max_pipeline_fan_out_depth` | int | `5` | Pipeline fan-out NESTING bound: the max depth of nested `for_each` scopes (a top-level `for_each` = 1; a `for_each` inside another's `do`/`collect` = 2; …). A `for_each` exceeding this FAILS the step (bounded-by-construction; no `on_limit` prompt — pipeline runs are non-interactive). Distinct from `max_depth` (spawn lineage): a pipeline agent-step carries no lineage, so `max_depth` does not cover fan-out. `0` = unlimited. |
+| `safety.spawn.max_pipeline_spawns` | int | `100` | Pipeline spawn-COUNT bound: the max ephemeral sessions ONE pipeline run may spawn across all its `agent` steps (top-level or fanned out via `for_each`). A per-run monotonic counter; the spawn past the cap FAILS the step. The ONLY spawn-count enforcement for lineage-less pipeline agent-steps (`max_children` does not cover them). `0` = unlimited. |
 
 See [`safety.on_limit` fields](#safetyonlimit-fields) for the mode settings.
 

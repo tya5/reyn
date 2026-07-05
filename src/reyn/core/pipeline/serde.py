@@ -41,6 +41,7 @@ from reyn.core.pipeline.executor import (
     CallStep,
     ExprRef,
     FoldStep,
+    ForEachStep,
     MatchCase,
     MatchStep,
     Pipeline,
@@ -209,6 +210,34 @@ def _decode_fold(data: "dict[str, Any]") -> "FoldStep":
     )
 
 
+def _encode_for_each(step: "ForEachStep") -> "dict[str, Any]":
+    # ``do`` AND ``collect`` are each a Step — recurse through `step_to_dict` so a
+    # for_each whose `do`/`collect` is a `call` (or nested for_each) round-trips
+    # faithfully. ``on_error`` is a plain DSL string (normalized at execution).
+    return {
+        "kind": "for_each",
+        "over": step.over,
+        "items": list(step.items) if step.items is not None else None,
+        "max_parallel": step.max_parallel,
+        "on_error": step.on_error,
+        "do": step_to_dict(step.do),
+        "collect": step_to_dict(step.collect),
+        "output": step.output,
+    }
+
+
+def _decode_for_each(data: "dict[str, Any]") -> "ForEachStep":
+    return ForEachStep(
+        do=step_from_dict(data["do"]),
+        collect=step_from_dict(data["collect"]),
+        on_error=data["on_error"],
+        over=data.get("over"),
+        items=list(data["items"]) if data.get("items") is not None else None,
+        max_parallel=data.get("max_parallel"),
+        output=data.get("output"),
+    )
+
+
 # Dispatch tables: encoder keyed by step type, decoder keyed by ``kind`` marker.
 # A future primitive ADDS one entry to each (mirroring the executor's
 # ``STEP_DISPATCH`` and the parser's ``_STEP_PARSERS``) rather than editing a
@@ -220,6 +249,7 @@ ENCODERS: "dict[type, Callable[[Step], dict[str, Any]]]" = {
     CallStep: _encode_call,
     MatchStep: _encode_match,
     FoldStep: _encode_fold,
+    ForEachStep: _encode_for_each,
 }
 DECODERS: "dict[str, Callable[[dict[str, Any]], Step]]" = {
     "transform": _decode_transform,
@@ -228,6 +258,7 @@ DECODERS: "dict[str, Callable[[dict[str, Any]], Step]]" = {
     "call": _decode_call,
     "match": _decode_match,
     "fold": _decode_fold,
+    "for_each": _decode_for_each,
 }
 
 
