@@ -46,26 +46,56 @@ async def test_second_get_returns_same_held_client_no_rehandshake():
 
 
 @pytest.mark.asyncio
-async def test_dead_connection_transparently_reconnects():
-    """Tier 2: S2a reconnect-on-demand — killing the server subprocess (the ``die`` tool,
-    a REAL transport death) does not permanently wedge the server: the next call on the
-    SAME handle transparently reconnects (new subprocess PID) and succeeds, instead of
-    failing forever."""
+async def test_dead_connection_heals_next_call_after_transport_error():
+    """Tier 2: S2a reconnect-on-demand (heal-then-propagate) — killing the server
+    subprocess (the ``die`` tool, a REAL transport death) raises the transport MCPError
+    to the caller ONCE (call_tool is NOT auto-retried — at-most-once for side-effectful
+    tools), but HEALS the connection so the NEXT call transparently succeeds on a fresh
+    subprocess (new PID) instead of the server being permanently wedged."""
     service = MCPConnectionService()
     try:
         client = await service.get("srv", _CFG)
         pid_before = (await client.call_tool("pid", {}))["content"][0]["text"]
 
+        # The failing call raises (propagated, not silently retried).
         with pytest.raises(MCPError):
             await client.call_tool("die", {})
 
-        # transparent reconnect: the SAME handle keeps working post-death.
+        # ...but the connection was HEALED: the NEXT call succeeds on a fresh subprocess.
         result = await client.call_tool("echo", {"text": "still alive"})
         assert result["isError"] is False
         assert result["content"][0]["text"] == "still alive"
 
         pid_after = (await client.call_tool("pid", {}))["content"][0]["text"]
-        assert pid_after != pid_before, "reconnect opened a FRESH subprocess"
+        assert pid_after != pid_before, "heal opened a FRESH subprocess"
+    finally:
+        await service.aclose()
+
+
+@pytest.mark.asyncio
+async def test_call_tool_executed_at_most_once_across_mid_call_drop(tmp_path: Path):
+    """Tier 2: S2a at-most-once — a side-effectful call_tool whose connection drops
+    AFTER the server executed the tool (the drop-after-execution window) is NOT
+    re-executed by the reconnect. ``bump_then_die`` durably records ONE execution on
+    disk then kills the subprocess; the handle heals-then-propagates (raises), and the
+    file shows the side effect ran EXACTLY ONCE — not twice (which a naive retry-on-error
+    would cause: once per subprocess). This is the correctness guarantee the pre-S2a
+    per-call pool had and the reconnect must preserve."""
+    marker = tmp_path / "side_effects"
+    # The stdio server subprocess is Seatbelt-sandboxed to its cwd, so point cwd at
+    # tmp_path to make the marker file writable by the sandboxed tool.
+    cfg = {**_CFG, "cwd": str(tmp_path)}
+    service = MCPConnectionService()
+    try:
+        client = await service.get("srv", cfg)
+        with pytest.raises(MCPError):
+            await client.call_tool("bump_then_die", {"path": str(marker)})
+        # the tool ran once (one appended byte), NOT twice (a retried re-execution).
+        assert marker.read_text() == "x", "side-effectful call executed exactly once"
+
+        # the connection still healed — a subsequent healthy call works on the fresh sub.
+        result = await client.call_tool("echo", {"text": "post"})
+        assert result["content"][0]["text"] == "post"
     finally:
         await service.aclose()
 

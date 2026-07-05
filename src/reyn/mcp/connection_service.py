@@ -25,13 +25,29 @@ loop / ping): a subprocess death or HTTP disconnect mid-session does NOT flip
 ``MCPClient.is_initialized()`` or the underlying ``fastmcp.Client.is_connected()``
 (verified empirically against the real echo test server's ``die`` tool — both stay
 True after the transport is gone) — the only observable signal is an :class:`MCPError`
-raised on the NEXT use. So the held-connection handle catches an ``MCPError`` from
-``call_tool``/``list_tools``, discards + reopens the connection ONCE, and retries the
-SAME call on the fresh connection. If the retry also fails, the fault propagates
-unchanged (the caller's existing MCPGateway fault boundary contains it into an
-LLM-visible error result, same as the pre-S2a per-call path) — a dropped connection
-must not permanently wedge the server for the rest of the session, but this is not a
-silent-retry-forever loop.
+raised on the NEXT use. So the held-connection handle catches an ``MCPError``, discards
++ reopens the dead connection so the NEXT call lands on a healthy transport — a dropped
+connection must not permanently wedge the server for the rest of the session.
+
+CRITICAL — the reconnect must NOT silently retry a side-effectful call (at-most-once):
+post-S1 ``call_tool`` raises ``MCPError`` on ANY transport failure, including the
+drop-AFTER-execution window (the server RAN the tool, then the connection dropped before
+its response arrived). Auto-retrying the same call on the fresh connection would
+RE-EXECUTE the tool — an at-most-once → at-least-once regression vs the pre-S2a per-call
+pool (a duplicated ``create_issue`` / ``send_email`` / counter increment). So the two op
+classes are healed differently:
+
+  - :meth:`_HeldConnection.call_tool` — **reconnect-then-propagate**: on ``MCPError``,
+    heal the connection (reopen) but RE-RAISE the original error. The call is NOT
+    retried, so a tool is executed at most once. The first ``call_tool`` right after an
+    idle drop fails once; the healed connection makes every subsequent call succeed
+    (S2b's proactive ping loop will detect the drop BEFORE the next call, delivering
+    transparent healing SAFELY — S2a does not trade correctness for that UX).
+  - :meth:`_HeldConnection.list_tools` — **retry-once**: an idempotent read is safe to
+    re-run on the fresh connection, so it heals transparently (no user-visible failure).
+
+Either way the fault the caller ultimately sees is contained by the existing MCPGateway
+boundary into an LLM-visible error result, same as the pre-S2a per-call path.
 
 Runtime-only state (S2a scope note): held connections are NOT WAL-derived / recoverable
 state — they are reconstructed fresh (lazy-connect) after any process restart, exactly
@@ -205,20 +221,34 @@ class _HeldConnection:
         progress_callback: Any = None,
         timeout_seconds: float | None = None,
     ) -> dict[str, Any]:
-        return await self._with_reconnect(
+        # Reconnect-then-propagate (heal_only): a tool call is potentially
+        # side-effectful, so on a transport MCPError we HEAL the connection (for the
+        # next call) but RE-RAISE — never re-run the call — to preserve at-most-once
+        # (a mid-execution drop must not double-execute the tool). See module docstring.
+        return await self._heal(
             lambda c: c.call_tool(
                 name, args, progress_callback=progress_callback, timeout_seconds=timeout_seconds,
-            )
+            ),
+            heal_only=True,
         )
 
     async def list_tools(self) -> list[dict[str, Any]]:
-        return await self._with_reconnect(lambda c: c.list_tools())
+        # Retry-once: tools/list is an idempotent read, safe to re-run on the fresh
+        # connection, so it heals transparently (no user-visible failure).
+        return await self._heal(lambda c: c.list_tools(), heal_only=False)
 
-    async def _with_reconnect(self, op: "Callable[[MCPClient], Awaitable[Any]]") -> Any:
+    async def _heal(
+        self, op: "Callable[[MCPClient], Awaitable[Any]]", *, heal_only: bool,
+    ) -> Any:
         """Run ``op`` against the currently-held client. On an :class:`MCPError` —
         the only observable signal of a dead connection (see module docstring) —
-        discard + reopen the connection ONCE and retry ``op`` on the fresh client.
-        A second failure propagates unchanged (no silent retry loop)."""
+        discard + reopen the connection.
+
+        ``heal_only=True`` (side-effectful ``call_tool``): re-raise the ORIGINAL error
+        after healing — do NOT re-run ``op`` (preserves at-most-once; the healed
+        connection serves the NEXT call). ``heal_only=False`` (idempotent ``list_tools``):
+        retry ``op`` ONCE on the fresh connection; a second failure propagates unchanged
+        (no silent retry loop)."""
         client = await self._service._ensure_open(
             self._server, self._config, agent_id=self._agent_id,
         )
@@ -228,4 +258,6 @@ class _HeldConnection:
             fresh = await self._service._reconnect(
                 self._server, self._config, agent_id=self._agent_id,
             )
+            if heal_only:
+                raise  # at-most-once: connection healed for the next call, but this call is NOT retried
             return await op(fresh)
