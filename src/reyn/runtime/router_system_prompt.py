@@ -39,6 +39,7 @@ def build_system_prompt(
     environment_info: "dict | None" = None,  # #1479: date/platform/shell/git from get_environment_info()
     scheme_sp_fragment: str = "",  # kept for backward compat; prefer tool_use_sp slot_post_catalog
     reasoning_continuity_section: str = "",  # #1652: pre-rendered prior-reasoning text section ("" = omit, byte-identical)
+    non_interactive: bool = False,  # sp-autonomy-revision: gates the OS-frame ambiguity/proceed-vs-ask Behaviour rule
 ) -> str:
     """Render the system prompt for the tool_use router loop.
 
@@ -90,6 +91,11 @@ def build_system_prompt(
         environment_info: system info dict (date/platform/shell/git).
         scheme_sp_fragment: backward-compat legacy free-form SP fragment
             (prefer ``tool_use_sp["slot_post_catalog"]`` for new schemes).
+        non_interactive: True for non-interactive (ephemeral/headless) sessions
+            with no user to ask. Gates the wording of the OS-frame ambiguity/
+            proceed-vs-ask Behaviour rule (scheme-agnostic — reaches every
+            tool-use scheme, including CodeAct, unlike the old scheme-owned
+            fork this superseded).
     """
     parts: list[str] = []
 
@@ -210,13 +216,38 @@ def build_system_prompt(
         " deliverable is a working result backed by REAL tool output — not a"
         " description of one. Do not stop after a stub, a plan, or a single command;"
         " keep working until you have actually produced the requested result, then"
-        " report what real execution returned.",
+        " report what real execution returned. Only end your turn when the request"
+        " is fully resolved or genuinely blocked: never yield half-done to ask"
+        " whether to continue, and when an approach fails, try an alternative"
+        " before stopping. If a real blocker remains, report it honestly.",
         "  - NEVER substitute fabricated output (invented data, file contents, or"
         " tool/command results) for results you could not actually produce. If a tool"
         " or call fails and blocks the real path, say so directly and try an"
         " alternative — reporting a blocker honestly is always better than inventing"
         " a result.",
     ])
+    # sp-autonomy-revision: ambiguity/proceed-vs-ask Behaviour rule, promoted to
+    # the OS frame (was scheme-owned in _universal_sp.py, which only reached the
+    # universal/enumerate/retrieval schemes — CodeAct's tool_use_sp REPLACES that
+    # scheme's SP region entirely, so it never got the rule). Living here in the
+    # static core makes it scheme-agnostic and reaches every scheme, incl CodeAct.
+    parts.append(
+        "  - Ambiguous or missing information: default to proceeding — make the"
+        " most reasonable assumption, state it explicitly, and continue. Ask ONE"
+        " targeted clarifying question ONLY when the ambiguity is BOTH"
+        " consequential (a wrong guess causes real, hard-to-undo work) AND cannot"
+        " be resolved from context or by inspecting the workspace. When the user"
+        " asks HOW to approach something, or whether to do it, answer first — do"
+        " not jump into actions they haven't asked for."
+        if non_interactive else
+        "  - Ambiguous or missing information: prefer proceeding with a stated,"
+        " reasonable assumption over asking. Ask ONE targeted clarifying question"
+        " ONLY when the ambiguity is BOTH consequential (a wrong guess causes"
+        " real, hard-to-undo work) AND cannot be resolved from context or by"
+        " inspecting the workspace. When the user asks HOW to approach something,"
+        " or whether to do it, answer first — do not jump into actions they"
+        " haven't asked for."
+    )
 
     # #1791 #3 (adopted by design judgment, GATED): memory-quality guidance, rendered
     # ONLY when the memory tool is active (memory_index present) — mirrors Hermes
