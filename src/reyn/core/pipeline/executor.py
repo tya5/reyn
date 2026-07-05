@@ -1,14 +1,15 @@
 """Pipeline executor — R3 pipe-data threading + R4 recovery + the non-linear
-compositional foundation (``_run_scope`` + dotted-path recovery + ``call``).
+compositional foundation (``_run_scope`` + dotted-path recovery + ``call`` +
+``fold``).
 
 The executor for ``docs/proposals/reyn-pipeline-v0.9-design-resolutions.md``: a
 sequence of ``transform`` / ``tool`` (``shell`` is just a ``ToolStep(name="shell",
-...)``) / ``agent`` (R5) steps, plus two COMPOSITIONAL primitives: ``call`` (R7,
-a STATIC callee) and ``match`` (``call``'s runtime-selected sibling — the ``on``
-VALUE picks a LABEL, never a target; see :class:`MatchStep`). Still out of scope
-for this slice: `for_each`/`parallel`/`fold`/`refine` — those are later
-primitives that plug into the SAME dispatch + scope machinery this module now
-exposes.
+...)``) / ``agent`` (R5) steps, plus three COMPOSITIONAL primitives: ``call``
+(R7, a STATIC callee), ``match`` (``call``'s runtime-selected sibling — the
+``on`` VALUE picks a LABEL, never a target; see :class:`MatchStep`), and
+``fold`` (the sequential accumulator, Appendix B). Still out of scope for this
+slice: `for_each`/`parallel`/`refine` — those are later primitives that plug
+into the SAME dispatch + scope machinery this module now exposes.
 
 **Dispatch tables (R7 — the parallel-primitive seam).** Step execution is a
 ``dict``-dispatch keyed by the step's dataclass type
@@ -18,9 +19,14 @@ and an analyzer facet) instead of editing a shared ``elif`` block. Every runner
 has the uniform signature ``(_StepInvocation) -> (result, durable,
 completed_step_results)``: leaf runners (``transform``/``tool``/``agent``) return
 ``completed_step_results`` unchanged and never record; a COMPOSITIONAL runner
-(``call``) recurses into :meth:`PipelineExecutor._run_scope`, grows
-``completed_step_results`` with its sub-scope's dotted keys, and records each
-sub-step through the frozen recovery closure it is handed.
+(``call``, ``fold``) grows ``completed_step_results`` with its sub-scope's
+dotted keys and records each sub-step through the frozen recovery closure it is
+handed. ``call`` recurses into :meth:`PipelineExecutor._run_scope` (a LIST of
+distinct sub-steps sharing one evolving local scope); ``fold`` instead loops
+its OWN dispatch calls directly (see :func:`_run_fold_step`) because each
+iteration re-invokes the SAME ``do`` step under a fresh ``{item, acc}``
+binding — a shape ``_run_scope``'s "walk this fixed step list once" model does
+not fit.
 
 **R3 (uniform pipe-data / output rule)**: every step produces exactly one return
 value. That value is simultaneously (1) the pipe data handed to the next step and
@@ -39,10 +45,16 @@ completes (before advancing), the executor records the full control-plane state 
 truncation-surviving generation (``reyn.core.events.pipeline_recovery``). The
 ``completed_step_results`` key space is a DOTTED SCOPE PATH: a top-level step ``i``
 keeps its flat key ``str(i)`` (byte-identical to the pre-``call`` linear format —
-a pipeline with no ``call`` records exactly as before), and a ``call`` at index
-``i`` records its callee's sub-steps under ``f"{i}.call.{j}"`` while the callee
-runs, then records its OWN N2 scalar result at ``str(i)`` once the callee is done.
-Nesting composes (``"3.call.1.call.0"``). The persisted ``named_stores`` /
+a pipeline with no ``call``/``fold`` records exactly as before), and a ``call``
+at index ``i`` records its callee's sub-steps under ``f"{i}.call.{j}"`` while
+the callee runs, then records its OWN N2 scalar result at ``str(i)`` once the
+callee is done. A ``fold`` at index ``i`` records each iteration's ``do``
+result under ``f"{i}.fold.{k}"`` (``k`` = iteration index, NOT a nested scope —
+each key is ``do``'s own flat result, since every iteration runs the SAME
+``do`` step once) as it walks the list in order, then records its own final
+``acc`` at ``str(i)``. Nesting composes (``"3.call.1.call.0"``,
+``"3.fold.2.call.0"`` for a ``call`` used as a fold's ``do``). The persisted
+``named_stores`` /
 ``pipe_data`` / ``step_index`` stay the OUTER scope's throughout a call (a
 callee's local stores NEVER leak into the outer snapshot — this is what gives
 ``pass:[...]`` isolation on the RECOVERY axis, not just the live one); a callee's
@@ -225,7 +237,67 @@ class MatchStep:
     output: "str | None" = None
 
 
-Step = Union[TransformStep, ToolStep, AgentStep, CallStep, MatchStep]
+@dataclass(frozen=True)
+class FoldStep:
+    """The second COMPOSITIONAL primitive: a SEQUENTIAL walk over a list,
+    threading an accumulator (Appendix B: ``fold = {over?:PATH | items?:[LIT*]
+    init:EXPR do:Step output:NAME max_items?}``). Unlike ``call``, ``do`` is a
+    single :data:`Step` re-invoked once PER ITEM, not a fixed list of distinct
+    sub-steps — see :func:`_run_fold_step` for the loop.
+
+    - List source (mutually exclusive; the parser rejects both together):
+      ``over`` (an R1 expression source, evaluated against ``{ctx, pipe}``
+      exactly like ``transform.value`` — e.g. ``"ctx.items"``) | ``items``
+      (a static Python literal list, stored as-is — Appendix B's ``[LIT*]``)
+      | neither, which falls back to the incoming PIPE DATA (the same
+      "over (ctx path) | items (static) | pipe data" convention Appendix B
+      states for ``for_each``).
+    - ``init`` is an R1 expression evaluated ONCE, before the first iteration,
+      against the fold step's own ``{ctx, pipe}`` — its result seeds ``acc``.
+    - ``do`` runs once per list item, in order; item ``k``'s context is
+      ``{"ctx": <a LOCAL named-store copy, seeded from the outer ctx and
+      grown by ``do.output`` across iterations>, "pipe": <this fold step's
+      OWN incoming pipe-data, held CONSTANT across every iteration — the
+      per-iteration analog of Hard rule 5's "callee's first step sees the
+      caller's pipe-data at the call site">, "item": <the k-th list element>,
+      "acc": <the running accumulator>}``. ``item``/``acc`` are bare
+      top-level context names, so a transform ``do`` reads them as
+      ``acc + item`` and an agent ``do`` prompt interpolates them as
+      ``{item}``/``{acc}`` — the SAME ``Path``/``{...}`` resolution
+      ``ctx.NAME``/``pipe`` already use, just against two more top-level keys.
+    - ``do``'s RETURN VALUE becomes the next ``acc`` (never its ``pipe``/
+      ``ctx`` output — those are local bookkeeping only); the FINAL ``acc``
+      (after the last item, or ``init`` unchanged for an empty list) is this
+      step's N2 return value and — per R3 — its named ``output``.
+    - No ``collect`` (unlike ``for_each``): a fold's whole point is that each
+      item depends on the accumulated result of the ones before it, so there
+      is nothing to collect independently.
+    - Item failure (``do`` raising, after any retry the leaf step itself
+      implements) fails the WHOLE fold — the exception propagates unchanged,
+      mirroring ``call``'s "callee failure fails this step".
+    - ``max_items`` (Hard rule 9 — always finite): caps the walk to the first
+      ``max_items`` elements of the resolved list; a longer source is
+      silently truncated, never an error (the cap is a bound, not a
+      length-equality assertion).
+
+    Recovery: iteration ``k`` records at the FLAT dotted key
+    ``f"{label}.fold.{k}"`` (not a nested scope prefix — every iteration runs
+    the exact same ``do``, so there is no sub-scope of distinct steps to
+    prefix, unlike ``call``). On resume, a key already present in
+    ``completed_step_results`` REPLAYS: ``acc`` is read back from the stored
+    result and ``do`` is NOT re-executed (its side effect does not re-fire) —
+    walking the dotted keys in order rebuilds ``acc`` exactly as the live run
+    computed it, then execution resumes at the first absent iteration."""
+
+    init: str
+    do: "Step"
+    output: str
+    over: "str | None" = None
+    items: "list[Any] | None" = None
+    max_items: "int | None" = None
+
+
+Step = Union[TransformStep, ToolStep, AgentStep, CallStep, MatchStep, FoldStep]
 
 
 @dataclass(frozen=True)
@@ -559,6 +631,85 @@ async def _run_match_step(inv: "_StepInvocation") -> "tuple[Any, bool, dict[str,
     return final_pipe, any_durable, completed_step_results
 
 
+async def _run_fold_step(inv: "_StepInvocation") -> "tuple[Any, bool, dict[str, Any]]":
+    """The second COMPOSITIONAL runner (the sequential-accumulator primitive):
+    resolve the list source, evaluate ``init``, then walk the list IN ORDER
+    running ``do`` once per item — see :class:`FoldStep` for the full context-
+    injection + recovery contract. Returns the FINAL ``acc`` (N2), whether any
+    executed iteration was side-effecting, and the GROWN
+    ``completed_step_results`` (with this fold's ``f"{label}.fold.{k}"`` keys)."""
+    step: FoldStep = inv.step  # type: ignore[assignment]
+    context = inv.context
+
+    if step.over is not None and step.items is not None:  # pragma: no cover - parser-enforced
+        raise PipelineExecutionError(
+            f"step {inv.step_label} (fold): 'over' and 'items' are mutually "
+            "exclusive list sources"
+        )
+    if step.over is not None:
+        try:
+            source = evaluate_expr(step.over, context)
+        except ExprEvalError as exc:
+            raise PipelineExecutionError(
+                f"step {inv.step_label} (fold) 'over' failed: {exc}"
+            ) from exc
+    elif step.items is not None:
+        source = list(step.items)
+    else:
+        source = context["pipe"]
+    if not isinstance(source, list):
+        raise PipelineExecutionError(
+            f"step {inv.step_label} (fold) list source resolved to a "
+            f"{type(source).__name__}, not a list"
+        )
+    if step.max_items is not None:
+        source = source[: step.max_items]
+
+    try:
+        acc = evaluate_expr(step.init, context)
+    except ExprEvalError as exc:
+        raise PipelineExecutionError(
+            f"step {inv.step_label} (fold) 'init' failed: {exc}"
+        ) from exc
+
+    # Hard rule 5's per-iteration analog: `do` sees the fold step's OWN
+    # incoming pipe-data, held constant across every iteration (never the
+    # running acc/item — those get their own dedicated names).
+    outer_pipe = context["pipe"]
+    # A LOCAL named-store copy `do.output` (if set) grows across iterations;
+    # it never writes back to the outer scope (only `fold.output` does, via
+    # the caller's normal step.output handling — same as `call`).
+    local_stores: "dict[str, Any]" = dict(context["ctx"])
+    completed_step_results = inv.completed_step_results
+    any_durable = False
+
+    for k, item in enumerate(source):
+        key = f"{inv.step_label}.fold.{k}"
+        if key in completed_step_results:
+            # REPLAY exactly-once: rebuild `acc` from the recorded result; `do`
+            # does NOT re-execute (its side effect must not re-fire).
+            acc = completed_step_results[key]
+            continue
+        do_context = {"ctx": local_stores, "pipe": outer_pipe, "item": item, "acc": acc}
+        runner = STEP_DISPATCH.get(type(step.do))
+        if runner is None:  # pragma: no cover - Step is a closed union
+            raise PipelineExecutionError(f"unknown step type: {step.do!r}")
+        do_inv = _StepInvocation(
+            executor=inv.executor, step=step.do, context=do_context, step_label=key,
+            deps=inv.deps, completed_step_results=completed_step_results,
+            record=inv.record,
+        )
+        result, durable, completed_step_results = await runner(do_inv)
+        any_durable = any_durable or durable
+        acc = result
+        completed_step_results = {**completed_step_results, key: result}
+        if step.do.output:
+            local_stores = {**local_stores, step.do.output: result}
+        await inv.record(completed_step_results=completed_step_results, durable=durable)
+
+    return acc, any_durable, completed_step_results
+
+
 # Dispatch table: step dataclass type -> its runner. A future primitive ADDS an
 # entry here (+ serde/parser/analyzer) rather than editing a shared elif chain.
 STEP_DISPATCH: "dict[type, Callable[[_StepInvocation], Awaitable[tuple[Any, bool, dict[str, Any]]]]]" = {
@@ -567,6 +718,7 @@ STEP_DISPATCH: "dict[type, Callable[[_StepInvocation], Awaitable[tuple[Any, bool
     AgentStep: _run_agent_step,
     CallStep: _run_call_step,
     MatchStep: _run_match_step,
+    FoldStep: _run_fold_step,
 }
 
 # Type -> kind-string, the inverse vocabulary the serde ``kind`` marker uses.
@@ -576,6 +728,7 @@ _STEP_KINDS: "dict[type, str]" = {
     AgentStep: "agent",
     CallStep: "call",
     MatchStep: "match",
+    FoldStep: "fold",
 }
 
 
@@ -858,6 +1011,7 @@ __all__ = [
     "CallStep",
     "MatchCase",
     "MatchStep",
+    "FoldStep",
     "Step",
     "Pipeline",
     "PipelineResult",

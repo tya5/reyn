@@ -4,16 +4,17 @@ Implements the surface grammar in Appendix B of
 ``docs/proposals/reyn-pipeline-spec-v0.8.md`` (lines 706-835), narrowed to
 exactly the subset :class:`reyn.core.pipeline.executor.PipelineExecutor` can
 run today: a **linear** sequence of ``transform`` / ``tool`` / ``shell`` /
-``agent`` steps plus two COMPOSITIONAL primitives — ``call`` (R7 — runs a
-STATIC registered sub-pipeline synchronously) and ``match`` (``call``'s
+``agent`` steps plus three COMPOSITIONAL primitives — ``call`` (R7 — runs a
+STATIC registered sub-pipeline synchronously), ``match`` (``call``'s
 runtime-selected sibling: a runtime VALUE picks a case LABEL, whose target
-stays a static literal) — plus the pipeline-level ``description``.
-``for_each`` / ``parallel`` / ``fold`` / ``refine``, and the pipeline-level
-``input`` / ``defaults`` blocks are all part of the full v0.8 grammar but
-have no runtime yet — this parser refuses to accept them rather than
-silently dropping them into a pipeline that "parses" but then either crashes
-at run time in a confusing place or (worse) quietly loses the author's
-intent. Every construct not yet executable raises
+stays a static literal), and ``fold`` (sequential accumulator — runs a nested
+``do`` step once per list item) — plus the pipeline-level ``description``.
+``for_each`` / ``parallel`` / ``refine``, and the pipeline-level ``input`` /
+``defaults`` blocks are all part of the full v0.8 grammar but have no runtime
+yet — this parser refuses to accept them rather than silently dropping them
+into a pipeline that "parses" but then either crashes at run time in a
+confusing place or (worse) quietly loses the author's intent. Every construct
+not yet executable raises
 :class:`PipelineParseError` naming it explicitly, so authoring a
 not-yet-supported pipeline fails at parse time, at the DSL text, not deep in
 an executor stack trace.
@@ -83,6 +84,7 @@ from reyn.core.pipeline.executor import (
     AgentStep,
     CallStep,
     ExprRef,
+    FoldStep,
     MatchCase,
     MatchStep,
     Pipeline,
@@ -102,7 +104,7 @@ class PipelineParseError(ValueError):
     current linear executor can run — malformed YAML, a malformed R1
     expression, or (most commonly) a construct that is valid Appendix-B
     grammar but not yet supported by `PipelineExecutor` (`for_each`,
-    `parallel`, `fold`, `refine`, pipeline-level `input`/
+    `parallel`, `refine`, pipeline-level `input`/
     `defaults`, or a per-step field the executor does not consume)."""
 
 
@@ -171,14 +173,16 @@ _PipelineLoader.add_constructor("!expr", _construct_expr_tag)
 
 # Constructs the union grammar's non-linear step kinds accept as *keys* so a
 # document using them gets a clear "not yet supported" error instead of a
-# generic "unknown step type". ``call``/``match`` are now SUPPORTED (R7) —
-# they moved out of this set into ``_STEP_PARSERS``.
-_UNSUPPORTED_STEP_KINDS = ("for_each", "parallel", "fold")
+# generic "unknown step type". ``call`` (R7), ``match`` (runtime-selected
+# sibling), and ``fold`` (sequential accumulator) are now SUPPORTED — they
+# moved out of this set into ``_STEP_PARSERS`` (``fold`` is dispatched
+# specially in ``_parse_step`` since its ``do`` recurses).
+_UNSUPPORTED_STEP_KINDS = ("for_each", "parallel")
 _LINEAR_STEP_KINDS = ("transform", "tool", "shell", "agent")
-# ``call``/``match`` are compositional, not linear, but ARE executable —
-# listed separately so error text distinguishes "the linear kinds" from the
-# full supported set.
-_SUPPORTED_STEP_KINDS = _LINEAR_STEP_KINDS + ("call", "match")
+# ``call``/``match``/``fold`` are compositional, not linear, but ARE
+# executable — listed separately so error text distinguishes "the linear
+# kinds" from the full supported set.
+_SUPPORTED_STEP_KINDS = _LINEAR_STEP_KINDS + ("call", "match", "fold")
 _ALL_STEP_KINDS = _SUPPORTED_STEP_KINDS + _UNSUPPORTED_STEP_KINDS
 
 # Pipeline-level fields the full grammar allows but the linear executor has
@@ -398,6 +402,53 @@ def _parse_match_step(body: "dict[str, Any]") -> MatchStep:
     return MatchStep(on=on, cases=cases, default=default, output=output)
 
 
+_FOLD_KEYS = frozenset({"over", "items", "init", "do", "output", "max_items"})
+
+
+def _parse_fold_step(body: "dict[str, Any]", *, index: "int | str") -> FoldStep:
+    """``fold = {over?:PATH | items?:[LIT*] init:EXPR do:Step output:NAME
+    max_items?}`` (Appendix B) — the sequential-accumulator primitive.
+    ``over``/``items`` are mutually exclusive (both together is an ambiguous
+    list source, never silently resolved one way); neither given falls back to
+    the incoming pipe data at run time (the executor's own fallback — see
+    ``FoldStep``'s docstring), so the parser does not require either. ``do`` is
+    itself a full nested Step definition, parsed the same way a pipeline's
+    top-level steps are (so a fold's ``do`` may be any supported step kind,
+    including a nested ``call``/``fold``). ``output`` (unlike ``call``'s,
+    which is optional) is REQUIRED — Appendix B gives it no ``?``, since a
+    fold's whole point is producing a named accumulator result."""
+    _reject_unknown_keys(body, _FOLD_KEYS, where="fold step")
+    if "over" in body and "items" in body:
+        _fail("fold step: 'over' and 'items' are mutually exclusive list sources")
+    over = body.get("over")
+    if over is not None:
+        over = _validate_expr_source(over, where="fold step 'over'")
+    raw_items = body.get("items")
+    items: "list[Any] | None" = None
+    if raw_items is not None:
+        if not isinstance(raw_items, list):
+            _fail(f"fold step 'items': expected a list, got {type(raw_items).__name__}")
+        _reject_nested_expr_tag(raw_items, where="fold step 'items'")
+        items = list(raw_items)
+    if "init" not in body:
+        _fail("fold step: missing required field 'init'")
+    init = _validate_expr_source(body["init"], where="fold step 'init'")
+    if "do" not in body:
+        _fail("fold step: missing required field 'do'")
+    do = _parse_step(body["do"], index=f"{index} (fold do)")
+    output = body.get("output")
+    if not isinstance(output, str) or not output:
+        _fail(f"fold step 'output': expected a non-empty store-name string, got {output!r}")
+    max_items = body.get("max_items")
+    if max_items is not None and (
+        isinstance(max_items, bool) or not isinstance(max_items, int) or max_items <= 0
+    ):
+        _fail(f"fold step 'max_items': expected a positive integer, got {max_items!r}")
+    return FoldStep(
+        init=init, do=do, output=output, over=over, items=items, max_items=max_items,
+    )
+
+
 _STEP_PARSERS = {
     "transform": _parse_transform_step,
     "tool": _parse_tool_step,
@@ -408,7 +459,7 @@ _STEP_PARSERS = {
 }
 
 
-def _parse_step(raw_step: Any, *, index: int) -> Step:
+def _parse_step(raw_step: Any, *, index: "int | str") -> Step:
     if not isinstance(raw_step, dict) or len(raw_step) != 1:
         _fail(
             f"step {index}: expected a single-key mapping naming its step kind "
@@ -420,6 +471,10 @@ def _parse_step(raw_step: Any, *, index: int) -> Step:
             f"step {index}: step kind {kind!r} is not yet supported (later slice) — "
             f"the executor runs {_SUPPORTED_STEP_KINDS!r}"
         )
+    if kind == "fold":
+        if not isinstance(body, dict):
+            _fail(f"step {index} (fold): expected a mapping body, got {type(body).__name__}")
+        return _parse_fold_step(body, index=index)
     if kind not in _STEP_PARSERS:
         _fail(
             f"step {index}: unknown step kind {kind!r} (expected one of "
