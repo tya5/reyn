@@ -22,7 +22,10 @@ Surface:
 
 Out of scope: anything beyond identity + liveness. Process spawning,
 signal sending, environment / argv reads, and file-descriptor mucking
-are correctly gated to unsafe-mode.
+are not available to python steps at all — there is no unsafe escape
+hatch. A step that genuinely needs those must split the work out into a
+``run_op`` step, which carries its own permission gate and event-log
+entry.
 """
 from __future__ import annotations
 
