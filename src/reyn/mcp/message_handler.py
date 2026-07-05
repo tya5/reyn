@@ -94,6 +94,11 @@ class ReynMCPMessageHandler(TaskNotificationHandler):
     ``mcp_resource_updated`` hook (external-event->hooks arc, first slice) via
     ``self._on_external_event`` — see that method for the sync->async bridge design.
 
+    #2597 P1 (reconnect resync-read, follow-up to ②b): :meth:`emit_resource_updated`
+    factors the real-push producer logic out so ``MCPConnectionService`` can also
+    call it synthetically, once per re-subscribed URI, on a transport-death
+    reconnect — see that method's docstring.
+
     #2597 F2 (live-verified, NOT emitted here — see :meth:`on_progress`):
     ``notifications/progress`` is NOT bridged to ``mcp_progress`` by this handler.
     A live probe (real fastmcp 3.4.2 stdio server + a held ``MCPConnectionService``
@@ -175,17 +180,40 @@ class ReynMCPMessageHandler(TaskNotificationHandler):
         # this event needs to carry too; a caller that wants the new content reads
         # the resource again. EventLog emit stays the audit-trail write (unchanged).
         #
-        # #2608 H1: in ADDITION to the EventLog emit, this ALSO fires a user-configured
-        # ``mcp_resource_updated`` hook (external-event trigger, first slice of the
-        # external-event->hooks arc). The hook trigger goes through
-        # ``self._on_external_event`` — a SYNCHRONOUS, non-blocking enqueue (never
-        # awaited here; this method runs on the receive-loop task and cannot await the
-        # async HookDispatcher.dispatch — see MCPConnectionService's bounded queue +
-        # drain-task bridge). None (no hook wired for this session, or the ephemeral
-        # per-call MCPClientPool path) → this call is a no-op, byte-identical to pre-H1.
+        # #2608 H1 / #2597 P1: the actual emit + hook-trigger work is factored into
+        # :meth:`emit_resource_updated` — see its docstring — so P1's synthetic
+        # reconnect-resync path (``MCPConnectionService._ensure_open``) can produce
+        # the IDENTICAL event shape and hook fire as a real push, just with
+        # ``resync=True``.
         uri = getattr(getattr(message, "params", None), "uri", None)
         uri_str = str(uri) if uri is not None else None
-        self._emit("mcp_resource_updated", server=self._server_name, uri=uri_str)
+        self.emit_resource_updated(uri_str, resync=False)
+        await super().on_resource_updated(message)
+
+    def emit_resource_updated(self, uri: str | None, *, resync: bool) -> None:
+        """The shared ``mcp_resource_updated`` producer: EventLog emit +
+        (#2608 H1) hook-trigger enqueue. Called from two places:
+
+          - :meth:`on_resource_updated` (a REAL server push, ``resync=False``).
+          - ``MCPConnectionService._ensure_open`` (#2597 P1: on a genuine
+            transport-death RECONNECT, once per re-subscribed tracked URI,
+            ``resync=True``) — a synthetic "may have changed while disconnected,
+            re-read if you care" signal. reyn keeps NO resource content cache
+            (Q4 spike decision — subscriptions are runtime-only, no baseline to
+            diff against), so it cannot tell whether a specific resource
+            actually changed during the down window; it conservatively
+            re-signals EVERY re-subscribed URI rather than silently dropping a
+            real update that happened while the connection was dead.
+
+        Both call sites produce the SAME event TYPE (``mcp_resource_updated``)
+        through the SAME two downstream paths (EventLog ``emit_sink`` + H1's
+        ``_on_external_event`` bridge into the hook dispatcher), so an existing
+        ``mcp_resource_updated`` consumer or hook fires unchanged either way —
+        only the added ``resync`` field distinguishes a synthetic re-signal
+        from a real push for anyone inspecting the payload. Never raises: a
+        fault in either downstream path must not break the receive loop (real
+        push) or the reconnect (synthetic path)."""
+        self._emit("mcp_resource_updated", server=self._server_name, uri=uri, resync=resync)
         if self._on_external_event is not None:
             try:
                 self._on_external_event(
@@ -193,8 +221,9 @@ class ReynMCPMessageHandler(TaskNotificationHandler):
                     {
                         "point": "mcp_resource_updated",
                         "server": self._server_name,
-                        "uri": uri_str,
+                        "uri": uri,
                         "agent_name": self._agent_name,
+                        "resync": resync,
                     },
                 )
             except Exception:  # noqa: BLE001 — a trigger fault must not break the receive loop
@@ -202,7 +231,6 @@ class ReynMCPMessageHandler(TaskNotificationHandler):
                     "ReynMCPMessageHandler: on_external_event failed for %r on server %r",
                     "mcp_resource_updated", self._server_name, exc_info=True,
                 )
-        await super().on_resource_updated(message)
 
     async def on_progress(self, message: Any) -> None:
         # #2597 F2: deliberately does NOT emit ``mcp_progress`` — see this class's

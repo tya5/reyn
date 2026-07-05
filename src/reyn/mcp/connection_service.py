@@ -115,6 +115,29 @@ lazy client-open pattern elsewhere in this class) and cancelled in :meth:`aclose
 ``hook_trigger=None`` (the ephemeral ``MCPClientPool`` path, or any session that never
 wires one) → :meth:`enqueue_external_event` and the whole queue/drain-task machinery
 never activate — byte-identical to pre-H1 behaviour.
+
+#2597 P1 — reconnect resync-read (follow-up to ②b, higher-priority now that H1 makes a
+missed update a missed hook fire): ②b re-subscribes every tracked URI on a
+transport-death reconnect (the loop in :meth:`_ensure_open`, described above), but a
+resource that actually CHANGED while the connection was dead never produced a
+``resources/updated`` push — that notification simply never arrived on the dead
+transport, and the fresh ``mcp.ClientSession`` has no way to redeliver a notification it
+never received. Q4 (S2-pre spike, decided, do not relitigate): reyn keeps NO resource
+content cache — subscriptions are runtime-only (see ②b's docstring above), so there is
+no baseline to diff the post-reconnect content against and no way to know WHICH tracked
+URIs, if any, actually changed during the down window. The chosen trade-off:
+conservatively treat every reconnect as an implicit "may have changed, re-read if you
+care" signal for every re-subscribed URI, rather than silently dropping a real update. So
+:meth:`_ensure_open` distinguishes the very first open for a server (``_ever_opened`` has
+not seen it yet — nothing to resync, no synthetic emit) from a RE-open (``is_reopen`` —
+the same server was already opened once before in this service's lifetime): on a
+re-open, after each successful re-subscribe, it calls
+:meth:`~reyn.mcp.message_handler.ReynMCPMessageHandler.emit_resource_updated` (the
+producer factored out of ``on_resource_updated`` for exactly this reuse) with
+``resync=True`` — the SAME event type, through the SAME emit_sink + H1 hook-trigger
+path a real push uses, so EventLog subscribers and H1 hooks fire identically to a real
+push. A possibly-spurious re-read on a (rare) reconnect is cheap; a silently dropped real
+update is not.
 """
 from __future__ import annotations
 
@@ -181,6 +204,13 @@ class MCPConnectionService:
         # re-subscribe every tracked URI on a fresh client (first open: empty, no-op;
         # reconnect: the whole point).
         self._subscriptions: dict[str, set[str]] = {}
+        # #2597 P1 (reconnect resync-read): servers for which _ensure_open has
+        # completed at least one successful open in THIS service's lifetime — the
+        # boundary that distinguishes the very first open (nothing to resync yet,
+        # no synthetic emit) from a RE-open after a transport-death drop (every
+        # tracked subscription may have missed a real update while dead, so each
+        # gets a synthetic mcp_resource_updated). See _ensure_open.
+        self._ever_opened: set[str] = set()
         # One handle per server, cached so repeated get() calls for the same server
         # return the SAME object (connection-reuse identity) across the connection's
         # whole lifetime, including through a reconnect: the handle looks up the
@@ -233,6 +263,12 @@ class MCPConnectionService:
             self._clients.pop(server, None)
             client = None
         if client is None:
+            # #2597 P1: computed BEFORE this open completes — True iff a PRIOR open
+            # for this server already succeeded in this service's lifetime, i.e.
+            # this is a RE-open (reconnect after a transport-death drop), not the
+            # very first open. See _ever_opened's field comment + the re-subscribe
+            # loop below.
+            is_reopen = server in self._ever_opened
             # #2597 S2b: a fresh handler per open (including every reconnect) — bound
             # to the server name closed over here, so a reconnected client's
             # notifications keep landing under the same server attribution.
@@ -254,6 +290,7 @@ class MCPConnectionService:
             )
             await client.__aenter__()  # initialize; held open (no matching __aexit__ until aclose/reconnect)
             self._clients[server] = client
+            self._ever_opened.add(server)
             # #2597 capability/version gate: observability seam. This is the first
             # point in the live (non-ephemeral) session path that HAS the emit_sink
             # (the ephemeral per-call MCPClientPool path never wires one — see class
@@ -278,6 +315,20 @@ class MCPConnectionService:
             # server that no longer supports subscribe post-reconnect (or a single
             # bad URI) must not abort re-subscribing the REST of the tracked set,
             # and must not crash the reconnect itself.
+            #
+            # #2597 P1 (reconnect resync-read, follow-up to ②b): on a RE-open
+            # (``is_reopen`` — NOT the very first open), reyn cannot know whether any
+            # of these URIs actually changed during the disconnect window (Q4: no
+            # content cache to diff against — see message_handler.py's
+            # ``emit_resource_updated`` docstring), so it conservatively fires a
+            # SYNTHETIC ``mcp_resource_updated`` for each URI it successfully
+            # re-subscribes — through the exact same emit_sink + H1 hook-trigger path
+            # a real push uses, so a missed-during-disconnect update is never
+            # silently dropped. A URI whose re-subscribe itself failed gets no
+            # synthetic event (there's no live subscription to have missed anything
+            # on). First open: the tracked set is empty, so this loop is a no-op and
+            # nothing is ever emitted — only a genuine re-open with tracked URIs
+            # produces synthetic events.
             for uri in self._subscriptions.get(server, ()):
                 try:
                     await client.subscribe_resource(uri)
@@ -286,6 +337,9 @@ class MCPConnectionService:
                         "MCPConnectionService: failed to re-subscribe %r on %r after "
                         "(re)connect", uri, server, exc_info=True,
                     )
+                    continue
+                if is_reopen and handler is not None:
+                    handler.emit_resource_updated(uri, resync=True)
         return client
 
     async def _reconnect(
