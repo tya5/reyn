@@ -730,10 +730,13 @@ mcp:
 | `url` | string | http, sse | エンドポイント URL。 |
 | `headers` | map[string,string] | http, sse（任意） | 静的リクエストヘッダー。値は `${VAR}` 展開に対応。 |
 | `call_timeout_seconds` | float | すべて（任意） | MCP SDK の `read_timeout_seconds` に渡される per-call リクエストタイムアウト。 未設定の場合は SDK デフォルトが適用される（= Reyn 側で override しない、 transport-specific の SDK timeout が支配）。 特定 server が遅いと分かっている場合、 あるいは速い + fail-fast したい場合に設定する。 `timeout` (= `type: http` の HTTP transport connect timeout) とは独立。 |
+| `auth` | string \| map | すべて（任意、`http` のみ） | サーバーごとの OAuth 2.1 設定。文字列 `"oauth"` または `{type: oauth, scopes?, client_id?, client_secret?}`。`http` トランスポート以外(`stdio`/`sse`)で指定するとエラー。詳細は [コンセプト: MCP § OAuth](../../concepts/tools-integrations/mcp.ja.md#oauth) 参照。 |
+| `elicitation` | string | すべて（任意） | `prompt`(デフォルト) — サーバー起動の構造化入力要求(`elicitation/create`)がコンセントプロンプトとして表示される。`auto_decline` — そのようなすべての要求をプロンプトせずに decline する。[コンセプト: MCP § Elicitation](../../concepts/tools-integrations/mcp.ja.md#elicitation) 参照。 |
+| `elicitation_timeout_seconds` | float | すべて（任意） | elicitation プロンプトに人間が回答するためのウォールクロック期限。デフォルト `120`。期限を過ぎた未回答の要求はキャンセルされます。 |
 
 サーバーは設定ソースをまたいでマージされます: `~/.reyn/config.yaml` ⊕ `reyn.yaml` ⊕ `reyn.local.yaml`。マージは `mcp.servers` キーの shallow union です。マシンごとの `reyn.local.yaml` が残りを再宣言せずに単一サーバーを追加・上書きできます。
 
-MCP ランタイムはオプション依存です。公式の `mcp` Python SDK を取り込むには `pip install -e ".[mcp]"` でインストールします。
+MCP ランタイムはオプション依存です。`fastmcp` を取り込むには `pip install -e ".[mcp]"` でインストールします。
 
 ### `mcp.search_threshold`
 

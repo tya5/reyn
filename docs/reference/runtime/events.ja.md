@@ -52,6 +52,21 @@ Reyn はすべての状態変化に対して構造化イベントを発行しま
 | `control_ir_skipped`、`control_ir_failed` | ディスパッチ失敗（`control_ir_skipped` の理由は `handler_not_implemented`、`not_allowed_in_phase` を含む） |
 | `permission_denied` | op がリゾルバーに拒否されたとき |
 
+## MCP
+
+上記の Control IR の `mcp_*` イベント（ツール呼び出し op に紐づく）とは異なり、これらは op ディスパッチとは独立に、MCP 接続 / receive-loop から非同期に発行されます:
+
+| 種類 | トリガー | 主要なペイロード |
+|------|---------|-------------|
+| `mcp_initialized` | （再）接続のたびに、サーバーの `initialize` ハンドシェイクが完了した時点で発行。 | `server`、`negotiated_version`、`capabilities` |
+| `mcp_resource_updated` | 購読中の resource のサーバープッシュ `resources/updated` 通知、またはトランスポート断からの reconnect 後に再購読された URI ごとに発火する合成 resync。フックディスパッチャーにも外部イベントフックポイントとして配線されています — [コンセプト: フック](../../concepts/runtime/hooks.ja.md#_2) 参照。 | `server`、`uri`、`resync`（reconnect resync なら `true`、実際のプッシュなら `false`） |
+| `mcp_elicitation_requested` | サーバーが `elicitation/create` 構造化入力要求を発行。 | `server`、`field_keys`（要求されたスキーマのプロパティ*名*のみ — 値は決して含まない） |
+| `mcp_elicitation_answered` | 要求が `accept` または `decline` に解決される（人間の選択、または `auto_decline` 設定による `decline`）。 | `server`、`field_keys`、`action`（`"accept"` \| `"decline"`） |
+| `mcp_elicitation_timed_out` | `elicitation_timeout_seconds` までに回答が届かなかった。 | `server`、`field_keys` |
+| `mcp_elicitation_auto_declined` | プロンプトせずに decline された — `reason` はサーバーが `elicitation: auto_decline` を設定している場合とヘッドレスコンテキスト（ライブの介入リスナーが無い）を区別する。 | `server`、`field_keys`、`reason`（`"server_configured"` \| `"headless"`） |
+
+これらのイベントはいずれも、人間が入力した回答やフィールドの*値*を一切含みません — 要求されたスキーマのプロパティ名のみです。[コンセプト: MCP § Elicitation](../../concepts/tools-integrations/mcp.ja.md#elicitation) で説明されているセンシティブフィールドの扱いと一致します。
+
 ## クレデンシャルと OAuth
 
 | 種類 | トリガー | 主要なペイロード |

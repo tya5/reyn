@@ -7,8 +7,10 @@ audience: [human, agent]
 # Agent lifecycle hooks
 
 Hooks are a thin operator-scoped layer that lets you inject context,
-trigger self-continuation, or run a sandboxed side-effect at any of the six
-lifecycle points in a reyn session.
+trigger self-continuation, run a sandboxed side-effect, or launch a pipeline
+at any of the six **lifecycle points** in a reyn session — or, at an
+**external-event point** fired by something outside the session's own
+run-loop (today: a subscribed MCP resource changing).
 
 They are built on two mechanisms that already exist: the **unified inbox** (the
 channel that feeds messages into a turn) and the **P6 lifecycle** (the event
@@ -17,7 +19,7 @@ OS change (P7).
 
 ## Lifecycle points
 
-Hooks fire at six points, one for each combination of scope and direction:
+Hooks fire at six lifecycle points, one for each combination of scope and direction:
 
 | Scope   | `_start` | `_end` |
 |---------|----------|--------|
@@ -37,19 +39,106 @@ Implementation anchors:
   `_update_status` (status → completed) AND at `_abort` (status → aborted) —
   every task that starts is guaranteed a matching `task_end` regardless of how it terminates
 
-## Three config schemes
+## External-event points
 
-Each entry carries **exactly one** of three mutually-exclusive schemes:
+Unlike the six lifecycle points above — fired from the session's own
+turn/task run-loop — an **external-event point** is fired by something
+outside that loop: today, a subscribed MCP resource changing.
+
+### `mcp_resource_updated`
+
+Fires when a server pushes a `resources/updated` notification for a resource
+this session subscribed to via `subscribe_mcp_resource` (see
+[Resource subscriptions](../tools-integrations/mcp.md#resource-subscriptions-the-async-push-event-source)).
+Delivered from the MCP receive-loop task through a bounded queue drained on
+the session's own event loop — not from the agent's own turn/task machinery
+— so it can fire between turns, not only at a turn/task boundary.
+
+Template vars available to `template_push` / `pipeline_launch` rendering:
+
+| Var | Meaning |
+|-----|---------|
+| `server` | The MCP server name the resource belongs to. |
+| `uri` | The updated resource's URI. |
+| `resync` | `true` if this firing is a reconnect resync (see below), `false` for a real server push. |
+
+**Resync on reconnect.** Reyn keeps no resource-content cache, so a dropped
+connection could silently miss updates that happened while disconnected.
+After a transport-death reconnect re-establishes every previously-tracked
+subscription, this hook-point fires once per re-subscribed URI with
+`resync: true` — a conservative "this may have changed while you were
+disconnected, re-read if you care" signal, using the exact same hook-point
+and template-var shape as a real push. It never fires on a session's very
+first connection (there is nothing to resync).
+
+### `file_changed`
+
+Fires when a file under an operator-declared watch path is created, modified,
+or deleted. Requires the `watchdog` extra (`pip install reyn[fs-watch]`) and
+at least one path under `fs_watch.paths` in `reyn.yaml` — see
+[reyn-yaml § `fs_watch` block](../../reference/config/reyn-yaml.md#fs_watch-block).
+Without either, the feature is off (a clear warning is logged once if paths
+are configured but the extra is missing; no config at all is silently
+byte-identical to a build with no watcher).
+
+Template vars:
+
+| Var | Meaning |
+|-----|---------|
+| `path` | The changed file's path. |
+| `event_type` | `created`, `modified`, or `deleted`. |
+
+Watched paths are declared once, at startup, in the OUT-set (`reyn.yaml` /
+`reyn.local.yaml`) — there is no op or tool verb that lets an agent register
+or widen a watch; a filesystem-wide change feed is treated as the same class
+of concern as sandbox policy. Bursts of events for one logical change (an
+editor's temp-file dance, a create-then-modify) are debounced per path — one
+burst fires the hook once, not once per underlying filesystem event.
+
+## Matcher: narrowing which events fire a hook
+
+A hook may set `matcher`, a `dict[str, str]` of field → pattern, evaluated
+against the firing event's template vars **before** the hook's action runs:
+
+```yaml
+hooks:
+  - on: mcp_resource_updated
+    matcher: {server: "github", uri: "file:///repo/**"}
+    template_push:
+      message: "{{ uri }} changed on {{ server }}."
+```
+
+- Every named field must match: **exact string equality**, except `uri` and
+  `path`, which match via a shell-style glob (`fnmatch`) — so
+  `file:///repo/**` matches any URI under that prefix, and `/repo/src/**`
+  matches any watched path under that directory.
+- A field named in the matcher that the firing event doesn't carry (e.g. a
+  lifecycle point's vars have no `server`/`uri`) **never matches** — a
+  matcher can only narrow an event source, never invent a signal that was
+  never fired.
+- **Absent or empty matcher → the hook always fires** — the default, and the
+  behavior every pre-`matcher` hook keeps unchanged.
+
+The rule is keyed off the field *name* (`uri`/`path` glob, everything else is
+exact), not the hook-point — so a future external-event source that also
+emits a `uri`- or `path`-shaped field gets glob matching for free.
+
+## Four config schemes
+
+Each entry carries **exactly one** of four mutually-exclusive schemes:
 
 - **`template_push`** — a push directive built from config Jinja2 templates.
 - **`shell_exec`** — a sandboxed command run as a pure side-effect (output ignored).
 - **`shell_push`** — a sandboxed command whose **stdout is a JSON push-directive**,
   pushed via the same path as `template_push` (the only difference is the
   directive's source: captured stdout vs a Jinja2 render).
+- **`pipeline_launch`** — launch a registered [pipeline](pipelines.md) with
+  input rendered from the event's template vars. See
+  [Pipeline launch](#pipeline-launch-pipeline_launch) below.
 
-## Three capabilities
+## Four capabilities
 
-Those schemes deliver three behavioral capabilities, uniformly:
+Those schemes deliver four behavioral capabilities, uniformly:
 
 ### C — context inject (a push with `wake: false`)
 
@@ -82,9 +171,48 @@ produces, then dispatched via the identical C/E path — so the command *decides
 at runtime* whether to push (`push_when`), how (`wake`), and what (`message`).
 stdout must be pure JSON (logs go to stderr). Any failure — non-zero exit,
 invalid JSON, or a missing / wrong-typed field — **skips the push** (fail-safe);
-the lifecycle point always proceeds. `session` is parsed and carried for
-forward-compatibility, but cross-session routing is not yet wired (a no-op
-today; the dispatcher pushes to the current session).
+the lifecycle point always proceeds. `session` names the target session for
+**cross-session push** (see below) — omitted, it defaults to the current
+session.
+
+### Pipeline launch (`pipeline_launch`)
+
+Launches a registered [pipeline](pipelines.md) by name, with an `input`
+built from the firing event's template vars:
+
+```yaml
+hooks:
+  - on: mcp_resource_updated
+    matcher: {uri: "file:///repo/docs/**"}
+    pipeline_launch:
+      name: reindex_docs
+      input_template: {uri: "{{ uri }}"}
+```
+
+- `name` — the pipeline's registered name, resolved at dispatch time. If it
+  isn't registered, the hook logs a warning and skips the launch — the
+  lifecycle/external-event point still completes normally, exactly like any
+  other hook failure.
+- `input_template` — optional. A `dict`'s string leaves (recursively) are
+  each Jinja2-rendered against the template vars; a plain string is rendered
+  once and its output parsed as a JSON object (mirroring `shell_push`'s
+  "stdout is JSON" contract); omitted, the pipeline launches with no input.
+- **Async/detached**, works from any hook-point (lifecycle or
+  `mcp_resource_updated`): the launch is the same
+  [`run_pipeline_async`](../../reference/runtime/pipeline-dsl.md#registered-launch)
+  path — the hook fires-and-continues, the pipeline runs in its own
+  crash-recoverable driver-session, and the result arrives later on this
+  session's own inbox as a `pipeline_result` message.
+
+### Cross-session push
+
+A `template_push` or `shell_push` directive's `session` field routes the
+push to a *different* session's inbox instead of the current one — the
+target session processes it exactly as it would its own hook push (`wake`
+rides along: `true` triggers a turn there, `false` rides passively into its
+next turn). Naming the current session, omitting `session` entirely, or
+running in a context with no cross-session routing capability all fall back
+to the local (current-session) push.
 
 ## wake flag and the run-loop
 
@@ -194,7 +322,8 @@ Hooks are declared under the `hooks:` key in `reyn.yaml`. See the
 for the full schema.
 
 Brief example — a `turn_end` self-continuation `template_push`, a `session_start`
-`shell_exec`, and a `turn_end` `shell_push` whose stdout decides the push:
+`shell_exec`, a `turn_end` `shell_push` whose stdout decides the push, and a
+matcher-narrowed `mcp_resource_updated` `pipeline_launch`:
 
 ```yaml
 hooks:
@@ -209,23 +338,30 @@ hooks:
   - name: dynamic
     on: turn_end
     shell_push: "scripts/decide-next.sh"   # emits {"push_when":true,"wake":true,"message":"..."}
+
+  - on: mcp_resource_updated
+    matcher: {server: "github", uri: "file:///repo/docs/**"}
+    pipeline_launch:
+      name: reindex_docs
+      input_template: {uri: "{{ uri }}"}
 ```
 
 The `wake: true` on the first hook triggers a new turn after each `turn_end`,
 with the message injected as the system context. The `shell_exec` on
 `session_start` appends a log line; its output is discarded. The `shell_push`
 runs its command, parses stdout, and pushes only if the directive says so.
+The last hook only fires for a `github`-server resource under
+`docs/` — and, when it does, launches the `reindex_docs` pipeline
+asynchronously with the changed URI as input.
 
 ## Deferred
 
 The following capabilities are designed but not yet implemented:
 
-- **Cross-session push** — a push directive's `session` field is parsed and
-  carried (both `template_push` and `shell_push`) but routing it to *another*
-  session's inbox is not yet wired; today a push always lands in the current
-  session.
 - **Agent-level and phase-level hooks** — fine-grained points inside a turn
   (rare use cases; session/turn/task covers the common ones).
+- **More external-event sources** — cron/webhook triggers beyond
+  `mcp_resource_updated` and `file_changed`.
 
 ## See also
 
@@ -234,3 +370,5 @@ The following capabilities are designed but not yet implemented:
 - [Permission model](permission-model.md) — the consent flow for shell hooks
 - [Sandbox](sandbox.md) — the backend-agnostic execution environment for shell hooks
 - [reyn-yaml § hooks](../../reference/config/reyn-yaml.md#hooks-block) — full config reference
+- [MCP § Resource subscriptions](../tools-integrations/mcp.md#resource-subscriptions-the-async-push-event-source) — the source of the `mcp_resource_updated` external-event point
+- [Pipelines](pipelines.md) — what a `pipeline_launch` hook launches
