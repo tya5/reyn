@@ -1,10 +1,30 @@
-"""ReynMCPMessageHandler — server->client notifications bridge (#2597 S2b).
+"""ReynMCPMessageHandler — server->client notifications bridge (#2597 S2b / S2b-log).
 
 S2a (``MCPConnectionService``) holds one ``fastmcp.Client`` open per server for the
 whole session lifetime. Because the connection stays open, FastMCP's ``session_task``
 keeps its receive loop running — so server-pushed notifications (``tools/list_changed``,
-``prompts/list_changed``, ``notifications/progress``) ARRIVE on the wire, but nothing
-consumed them before S2b. This module installs the consumer.
+``prompts/list_changed``, ``notifications/progress``, ``notifications/message``
+logging) ARRIVE on the wire, but nothing consumed them before S2b. This module installs
+the consumer.
+
+S2b-log routing (verified against the installed ``fastmcp`` 3.4.2 / ``mcp`` SDK source
+— a live experiment against a real log-emitting FastMCP server, not guessed): MCP
+logging (``notifications/message`` / ``LoggingMessageNotification``) reaches a held
+client via TWO independent paths that both fire for the SAME wire message —
+``mcp.client.session.ClientSession._received_notification`` routes it to the
+Client-level ``log_handler`` kwarg (FastMCP's own ``default_log_handler`` if none is
+given), AND ``shared.session.BaseSession._handle_incoming`` separately calls the
+``message_handler`` (our ``ReynMCPMessageHandler``, via the inherited
+``MessageHandler.dispatch`` match/case) — both call sites run unconditionally for every
+notification (``shared/session.py``'s receive loop calls
+``_received_notification(...)`` THEN ``_handle_incoming(...)``, not either/or). Since
+``ReynMCPMessageHandler`` is already installed as the ``message_handler`` on every held
+connection (S2b), the correct wiring is to add an ``on_logging_message`` hook to THIS
+class (mirroring the existing hooks) rather than also wiring the separate
+``log_handler`` kwarg — the latter would double-emit the same notification through a
+second, redundant code path. No ``logging/setLevel`` is required to receive logs: the
+experiment server emitted at its default level with no client-side ``setLevel`` call
+and the notification arrived normally.
 
 Design (verified against the installed ``fastmcp`` 3.4.2 source — see S2-pre spike):
 
@@ -72,12 +92,13 @@ ToolsCacheInvalidate = Callable[[str], None]
 
 class ReynMCPMessageHandler(TaskNotificationHandler):
     """Bridges FastMCP server-pushed notifications on a held connection to reyn's
-    ``EventLog`` (#2597 S2b). One instance per held server connection.
+    ``EventLog`` (#2597 S2b / S2b-log). One instance per held server connection.
 
-    Scope (S2b): ``tools/list_changed``, ``prompts/list_changed``, ``notifications/
-    progress``. ``resources/updated`` / ``resources/subscribe`` are DEFERRED to the
-    resources-consumption slice (nothing is subscribed yet) — the inherited
-    ``on_resource_updated`` / ``on_resource_list_changed`` stay base-class no-ops.
+    Scope (S2b + S2b-log): ``tools/list_changed``, ``prompts/list_changed``,
+    ``notifications/progress``, ``notifications/message`` (logging). ``resources/
+    updated`` / ``resources/subscribe`` are DEFERRED to the resources-consumption slice
+    (nothing is subscribed yet) — the inherited ``on_resource_updated`` /
+    ``on_resource_list_changed`` stay base-class no-ops.
     """
 
     def __init__(
@@ -134,6 +155,17 @@ class ReynMCPMessageHandler(TaskNotificationHandler):
             progress_token=str(token) if token is not None else None,
         )
         await super().on_progress(message)
+
+    async def on_logging_message(self, message: Any) -> None:
+        params = getattr(message, "params", None)
+        self._emit(
+            "mcp_log",
+            server=self._server_name,
+            level=getattr(params, "level", None),
+            logger=getattr(params, "logger", None),
+            data=getattr(params, "data", None),
+        )
+        await super().on_logging_message(message)
 
     # ── sink dispatch ───────────────────────────────────────────────────────────────
 

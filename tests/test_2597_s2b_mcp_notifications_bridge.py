@@ -1,12 +1,13 @@
-"""Tests for the async server->client notifications bridge (#2597 S2b).
+"""Tests for the async server->client notifications bridge (#2597 S2b / S2b-log).
 
 Real instances only, per the testing policy: no ``mock.patch`` / ``MagicMock``. The
 notification-carrying tests spawn a REAL subprocess running
 ``tests/_support/mcp_fastmcp_echo_server.py`` (a real FastMCP server) whose
-``notify_tool_list_changed`` / ``notify_prompt_list_changed`` / ``progress`` tools send
-REAL SEP-1686 notifications over the wire on a held (S2a) connection — proving
-``ReynMCPMessageHandler`` actually receives server-pushed notifications on a held
-connection, not just that its methods work if called directly.
+``notify_tool_list_changed`` / ``notify_prompt_list_changed`` / ``progress`` /
+``notify_log`` tools send REAL SEP-1686 / MCP-logging notifications over the wire on a
+held (S2a) connection — proving ``ReynMCPMessageHandler`` actually receives
+server-pushed notifications on a held connection, not just that its methods work if
+called directly.
 """
 from __future__ import annotations
 
@@ -198,6 +199,38 @@ async def test_progress_notification_emits_mcp_progress_event(tmp_path: Path):
         assert (
             first_step.data.get("message"), second_step.data.get("message"),
         ) == ("step-1", "step-2")
+    finally:
+        await service.aclose()
+
+
+# ── (b2) real server-pushed logging notification -> mcp_log event ─────────────────
+
+
+@pytest.mark.asyncio
+async def test_logging_notification_emits_mcp_log_event(tmp_path: Path):
+    """Tier 2: a REAL server-pushed ``notifications/message`` (MCP logging) on a held
+    connection lands as an ``mcp_log`` event on the session's EventLog — routing
+    verified against the installed fastmcp/mcp SDK (see message_handler.py's module
+    docstring, S2b-log section): the base ``MessageHandler.dispatch`` match/case calls
+    ``on_logging_message`` for a ``LoggingMessageNotification`` on the SAME
+    ``message_handler`` that already bridges ``tools/list_changed`` etc, no separate
+    ``log_handler`` wiring needed."""
+    events = EventLog(subscribers=[])
+    service = MCPConnectionService(emit_sink=lambda et, **d: events.emit(et, **d))
+    try:
+        client = await service.get("srv", _CFG)
+        result = await client.call_tool(
+            "notify_log",
+            {"level": "warning", "logger_name": "exp.logger", "msg": "hello from server"},
+        )
+        assert result["isError"] is False
+
+        matching = [e for e in events.all() if e.type == "mcp_log"]
+        (only_event,) = matching  # exactly one — the single real notification sent
+        assert only_event.data.get("server") == "srv"
+        assert only_event.data.get("level") == "warning"
+        assert only_event.data.get("logger") == "exp.logger"
+        assert only_event.data.get("data", {}).get("msg") == "hello from server"
     finally:
         await service.aclose()
 

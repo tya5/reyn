@@ -18,6 +18,10 @@ Tools:
                             async notifications bridge).
   - ``notify_prompt_list_changed()`` -> sends a real
                             ``notifications/prompts/list_changed`` (#2597 S2b).
+  - ``notify_log(level, logger_name, msg)`` -> sends a real
+                            ``notifications/message`` (logging) via ``Context.log``
+                            (#2597 S2b-log — the logging-notification consumption
+                            slice of the async notifications bridge).
   - ``pid()``            -> returns ``os.getpid()`` of THIS server process. Used
                             by #2597 S2a connection-reuse tests to prove a second
                             ``call_tool`` hit the SAME held subprocess (no
@@ -128,6 +132,16 @@ async def notify_prompt_list_changed(ctx: Context) -> str:
     import mcp.types as types
 
     await ctx.send_notification(types.PromptListChangedNotification())
+    return "sent"
+
+
+# #2597 S2b-log: a real server-pushed logging notification (``notifications/message``),
+# for the logging-consumption bridge test (ReynMCPMessageHandler.on_logging_message).
+# ``Context.log`` sends immediately on the session (real MCP logging notification, per
+# the 2025-11-25 spec — not a fake).
+@mcp.tool()
+async def notify_log(level: str, logger_name: str, msg: str, ctx: Context) -> str:
+    await ctx.log(msg, level=level, logger_name=logger_name)
     return "sent"
 
 
