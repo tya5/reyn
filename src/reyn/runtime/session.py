@@ -2654,6 +2654,27 @@ class Session:
             })
         return out
 
+    async def dispatch_external_event(self, point: str, template_vars: dict) -> None:
+        """#2608 H5: public entry point for an OUT-OF-SESSION external-event
+        source (cron / webhook ingress) to fire a hook on THIS session's
+        dispatcher.
+
+        H1 (``mcp_resource_updated``) and H4 (``file_changed``) both fire
+        their hook via a ``hook_trigger`` closure captured over
+        ``self._hook_dispatcher.dispatch`` INSIDE ``__init__`` (the source is
+        constructed there too — ``MCPConnectionService`` / ``FsWatcher``).
+        Cron and webhook ingress resolve a Session from the ``AgentRegistry``
+        at fire/request time (``reyn.runtime.cron.routing.
+        resolve_cron_session`` / ``reyn.runtime.webhook_routing.
+        resolve_webhook_session``), long after ``__init__`` — they have no
+        closure to capture, so they need a public method to reach the same
+        dispatcher instead. This is a thin pass-through: ``HookDispatcher.
+        dispatch`` already gives every H1/H4 guarantee (per-hook isolation —
+        never raises; H2 matcher evaluated before a hook's action runs;
+        empty-registry is a byte-identical no-op).
+        """
+        await self._hook_dispatcher.dispatch(point, template_vars)
+
     @property
     def current_snapshot(self) -> "AgentSnapshot":
         """Read-only view of the live in-memory AgentSnapshot (ADR-0038).

@@ -41,6 +41,30 @@ start_pipeline_run`` — the same call the ``run_pipeline_async`` tool verb
 makes): the hook fires-and-continues, the pipeline runs in its own
 recoverable driver-session, and the result arrives later on the hook's own
 session inbox as a ``pipeline_result`` message.
+
+#2608 H5 (LAST slice of the external-event->hooks arc) adds the final two
+external-event points, ``cron_fired`` and ``webhook_received`` — completing
+the source set alongside H1's ``mcp_resource_updated`` and H4's
+``file_changed``. Unlike H1/H4 (a source running INSIDE the target session's
+own process — an MCP receive-loop task / a watchdog thread bridged onto the
+session's event loop), cron and webhook ingress run OUTSIDE any Session:
+``reyn.runtime.cron.routing.resolve_cron_session`` /
+``reyn.runtime.webhook_routing.resolve_webhook_session`` get-or-spawn the
+target Session from the ``AgentRegistry`` at fire/request time. H5 therefore
+reaches the resolved session's dispatcher through a new public accessor,
+``Session.dispatch_external_event(point, template_vars)`` (see
+``reyn.runtime.session``), called via ``reyn.hooks.external_fire.
+fire_and_forget`` — a background ``asyncio.create_task`` wrapper so a slow
+hook action (e.g. ``shell_exec``) can never stall the cron job's own inbox
+delivery or the webhook's HTTP response (see
+``reyn.runtime.cron.routing.dispatch_cron_fired`` /
+``reyn.runtime.webhook_routing.dispatch_webhook_received``). ``cron_fired``
+carries ``{point, job_name, to}`` (all operator-config metadata, never
+secret); ``webhook_received`` carries ONLY ``{point, transport, sender}`` —
+deliberately NOT the raw inbound body/text, which may carry tokens/PII the
+operator never intended a hook action to see. Matchable fields: ``job_name``
+(cron, exact) / ``transport`` + ``sender`` (webhook, exact) — none of the
+three are glob fields (only ``uri``/``path`` are, per ``hooks/matcher.py``).
 """
 from __future__ import annotations
 
@@ -66,6 +90,13 @@ ALLOWED_HOOK_POINTS: frozenset[str] = frozenset({
     # operator-declared ``fs_watch.paths`` entry. Matchable field: ``path``
     # (glob via fnmatch — see hooks/matcher.py's _GLOB_FIELDS).
     "file_changed",
+    # #2608 H5 (final external-event source): a message-based cron job fires.
+    # Matchable field: ``job_name`` (exact). See reyn.runtime.cron.routing.
+    "cron_fired",
+    # #2608 H5 (final external-event source): an inbound webhook resolves to a
+    # session. Matchable fields: ``transport`` / ``sender`` (both exact). See
+    # reyn.runtime.webhook_routing.
+    "webhook_received",
 })
 
 

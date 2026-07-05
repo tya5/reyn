@@ -55,12 +55,17 @@ def _make_cron_runner():
         ``sender="cron:<name>"`` driving the PR-A attribution state_change.
         """
         from reyn.interfaces.web.deps import _get_registry
-        from reyn.runtime.cron.routing import resolve_cron_session
+        from reyn.runtime.cron.routing import dispatch_cron_fired, resolve_cron_session
         registry = _get_registry()
         try:
             session = resolve_cron_session(registry, to, native_id)
         except (FileNotFoundError, KeyError):
             return "error"
+        # #2608 H5: fire the cron_fired external-event hook on the job's own
+        # resolved session — non-blocking, so a slow hook action never stalls
+        # this fire's own inbox delivery below. See dispatch_cron_fired's
+        # docstring.
+        dispatch_cron_fired(session, native_id, to)
         payload = dict(envelope)
         # FP-0043 S4b-3b: opt-in notify → tag the inbox with reply_to=ExternalRef so
         # the agent's final reply is relayed to the channel by the (already

@@ -14,6 +14,13 @@ the agent's shared "main" session to a per-sender mapping — peer/external traf
 no longer pollutes the user's REPL/web conversation. Output is UNCHANGED: the plugin
 sets ``reply_to=ExternalRef`` and the factory-wired outbox interceptor routes the
 agent's reply back to the source (fire-and-forget; reuse, no new output code).
+
+#2608 H5: :func:`dispatch_webhook_received` fires the ``webhook_received``
+external-event hook on the resolved session — the LAST source in the
+external-event->hooks arc (after H1's MCP push, H4's fs-watcher, H5's own
+``cron_fired``). Called from ``reyn.gateway.api.push_to_agent`` (the single
+stable ingress every webhook plugin routes through), right after
+:func:`resolve_webhook_session`.
 """
 from __future__ import annotations
 
@@ -50,3 +57,26 @@ def resolve_webhook_session(registry, agent_name: str, sender: str):
     session = registry.resolve_session(agent_name, transport, native_id)
     registry.ensure_session_running(agent_name, f"{transport}:{native_id}")
     return session
+
+
+def dispatch_webhook_received(session, sender: str) -> None:
+    """#2608 H5: fire the ``webhook_received`` external-event hook on
+    ``session`` (the sender's own resolved Session — pass the object
+    :func:`resolve_webhook_session` returned).
+
+    Non-blocking (``reyn.hooks.external_fire.fire_and_forget``) — a slow hook
+    action must never stall the webhook plugin's HTTP response. ``template_vars``
+    carry ONLY ``transport`` + ``sender`` (safe routing metadata already used for
+    dispatch attribution) — deliberately NOT the raw inbound body/text, which may
+    carry tokens/PII the operator never intended a hook action to see (contrast
+    ``reyn.runtime.cron.routing.dispatch_cron_fired``, whose ``job_name``/``to``
+    are operator-authored config, never end-user-supplied). Both ``transport``
+    and ``sender`` are exact-match fields (not glob — see ``reyn.hooks.matcher``),
+    e.g. ``matcher: {transport: "slack"}``.
+    """
+    from reyn.hooks.external_fire import fire_and_forget
+    transport, _external_id = parse_webhook_sender(sender)
+    fire_and_forget(
+        session, "webhook_received",
+        {"point": "webhook_received", "transport": transport, "sender": sender},
+    )
