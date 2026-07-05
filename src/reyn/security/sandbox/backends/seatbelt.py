@@ -30,7 +30,7 @@ import tempfile
 from pathlib import Path
 
 from reyn.security.sandbox._subprocess_io import communicate_capped
-from reyn.security.sandbox.backend import SandboxResult
+from reyn.security.sandbox.backend import SandboxResult, WrappedCommand
 from reyn.security.sandbox.policy import SandboxPolicy
 
 _logger = logging.getLogger(__name__)
@@ -166,6 +166,30 @@ class SeatbeltBackend:
         if shutil.which("sandbox-exec") is None:
             return False
         return True
+
+    def wrap_command(self, argv: list[str], policy: SandboxPolicy) -> WrappedCommand:
+        """Prepend ``sandbox-exec -f <profile>`` to *argv* for a persistent-process
+        launch (e.g. a stdio MCP server, #1344). The SBPL profile is written to a
+        temp ``.sb`` file; the returned ``cleanup`` unlinks it — the caller invokes
+        it once the wrapped subprocess is torn down (mirrors ``run()``'s own
+        temp-profile lifecycle, above)."""
+        profile_text = _build_sbpl_profile(policy)
+        with tempfile.NamedTemporaryFile(
+            suffix=".sb", mode="w", delete=False, encoding="utf-8",
+        ) as fh:
+            fh.write(profile_text)
+            profile_path = fh.name
+
+        def _cleanup() -> None:
+            try:
+                os.unlink(profile_path)
+            except OSError:
+                pass
+
+        return WrappedCommand(
+            argv=["sandbox-exec", "-f", profile_path, *argv],
+            cleanup=_cleanup,
+        )
 
     async def run(
         self,

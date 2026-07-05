@@ -17,7 +17,7 @@ import logging
 import platform
 from typing import TYPE_CHECKING
 
-from .backend import SandboxBackend, SandboxResult
+from .backend import SandboxBackend, SandboxResult, WrappedCommand
 from .noop_backend import NoopBackend
 from .policy import SandboxPolicy
 
@@ -191,6 +191,7 @@ __all__ = [
     "SandboxPolicy",
     "SandboxBackend",
     "SandboxResult",
+    "WrappedCommand",
     "NoopBackend",
     "get_default_backend",
 ]

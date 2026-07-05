@@ -8,10 +8,32 @@ execution under the declared policy.
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 
 from .policy import SandboxPolicy
+
+
+@dataclass
+class WrappedCommand:
+    """Result of ``SandboxBackend.wrap_command()`` — a command-level sandbox wrap.
+
+    Command-level wrapping (as opposed to the one-shot ``run()``) is the seam
+    for a PERSISTENT subprocess launch that the backend does not itself spawn
+    (e.g. a stdio MCP server held open by the caller's transport) — the wrap
+    prepends whatever the backend needs (a sandbox-exec invocation, a re-exec
+    shim, ...) and hands the full argv back for the caller to Popen/exec.
+
+    ``argv`` is the full wrapped argv (wrapper prefix + the original command),
+    ready to launch directly. ``cleanup``, when set, releases a wrap-owned
+    resource (e.g. Seatbelt's temp ``.sb`` profile file) — the caller MUST
+    invoke it once the wrapped subprocess is torn down. ``None`` means the
+    wrap owns no such resource.
+    """
+
+    argv: list[str]
+    cleanup: "Callable[[], None] | None" = None
 
 
 @dataclass
@@ -43,6 +65,25 @@ class SandboxBackend(Protocol):
 
     def available(self) -> bool:
         """Return True if this backend can be used on the current platform."""
+        ...
+
+    def wrap_command(self, argv: list[str], policy: SandboxPolicy) -> WrappedCommand:
+        """Return a command-level sandbox wrap of *argv* for a persistent-process
+        launch (e.g. a stdio MCP server) that cannot go through the one-shot
+        ``run()``. Every backend implements this uniformly so NO agent-reachable
+        command-level launch ever bypasses the abstraction:
+
+        - Seatbelt: prepends ``sandbox-exec -f <profile>`` (a generated SBPL
+          profile written to a temp file; the returned ``cleanup`` unlinks it).
+        - Landlock: prepends the ``landlock_exec`` re-exec shim argv.
+        - NoopBackend: returns *argv* UNCHANGED — passthrough, but the call
+          still went THROUGH this method (the owner-acceptable no-enforcement
+          case, as opposed to a raw bypass that never consulted the backend).
+
+        Synchronous and side-effect-light (may perform local I/O such as
+        writing a temp profile file) — it does not itself spawn the wrapped
+        process; the caller owns that.
+        """
         ...
 
     async def run(

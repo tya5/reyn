@@ -40,7 +40,7 @@ from pathlib import Path
 from typing import Any, Awaitable, Callable, Pattern
 
 from reyn.environment.backend import GrepResult
-from reyn.security.sandbox.backend import SandboxResult
+from reyn.security.sandbox.backend import SandboxResult, WrappedCommand
 from reyn.security.sandbox.policy import SandboxPolicy
 
 # Sync runner: execute argv (optionally stdin), return SandboxResult. Injected so
@@ -376,6 +376,22 @@ class DockerEnvironmentBackend:
         except (OSError, subprocess.TimeoutExpired):
             return False
         return completed.returncode == 0
+
+    def wrap_command(self, argv: list[str], policy: SandboxPolicy) -> WrappedCommand:
+        """Prepend a ``docker exec`` invocation to *argv* for a PERSISTENT-process
+        launch (e.g. a stdio MCP server, #2620) inside the SAME container
+        ``run()`` execs into. Mirrors ``run()``'s login-shell + argv-faithful
+        re-exec construction (see that method's docstring for the ``bash -lc
+        'exec "$@"'`` rationale); ``-i`` is always passed (unlike ``run()``,
+        which only opens stdin when the caller supplies some) because a
+        persistent stdio server holds bidirectional pipes open for its whole
+        lifetime. No cleanup resource is owned (unlike Seatbelt's temp profile)."""
+        wrapped_argv = [
+            self.docker_bin, "exec", "-i",
+            "-w", self.repo_dir, self.container,
+            "bash", "-lc", 'exec "$@"', "reyn-exec", *argv,
+        ]
+        return WrappedCommand(argv=wrapped_argv, cleanup=None)
 
     async def run(
         self, argv: list[str], policy: SandboxPolicy, *, stdin: bytes | None = None,

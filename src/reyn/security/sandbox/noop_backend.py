@@ -17,7 +17,7 @@ import signal
 import subprocess
 
 from ._subprocess_io import communicate_capped
-from .backend import SandboxBackend, SandboxResult
+from .backend import SandboxBackend, SandboxResult, WrappedCommand
 from .policy import SandboxPolicy
 
 _logger = logging.getLogger(__name__)
@@ -110,6 +110,14 @@ class NoopBackend:
 
     def available(self) -> bool:
         return True
+
+    def wrap_command(self, argv: list[str], policy: SandboxPolicy) -> WrappedCommand:
+        """Passthrough: argv is returned UNCHANGED — no enforcement — but the
+        call still went THROUGH the sandbox abstraction (the owner-acceptable
+        no-isolation case, #2620), as opposed to a caller that never consulted
+        any backend at all."""
+        _warn_once()
+        return WrappedCommand(argv=list(argv), cleanup=None)
 
     async def run(
         self,
