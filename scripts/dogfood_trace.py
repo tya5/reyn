@@ -1,7 +1,7 @@
 """dogfood_trace.py — consolidate batch observation greps into one tool.
 
 Usage:
-    python scripts/dogfood_trace.py [--root .reyn] [--mode summary|full|chain|cost]
+    python scripts/dogfood_trace.py [--root .reyn] [--mode summary|full|chain|cost|hook-liveness]
                                     [--filter <event_kind>]
 
     # LLM payload trace modes (requires REYN_LLM_TRACE_DUMP to have been set during dogfood):
@@ -116,6 +116,141 @@ def mode_cost(root: Path) -> None:
         print(f"  LLM-call memoizations:     {llm_memo_hits} events  (= sub-loop LLM memo replay)")
         print(f"  estimated saved cost:      ${saved_usd:.4f}   (= {llm_memo_hits} LLM-call hits × ${avg_usd:.5f} avg)")
         print(f"  estimated saved tokens:    ~{int(saved_tokens):,}    (= {llm_memo_hits} hits × {int(avg_tokens):,} avg per call)")
+
+
+def _load_wal(root: Path) -> list[dict]:
+    """Load the WAL (``<root>/state/wal.jsonl``), oldest-first (by ``seq``).
+
+    Reuses ``_load_jsonl`` (the same tolerant-parse reader every other mode
+    uses) — no hand-rolled WAL parser. Returns ``[]`` when the file doesn't
+    exist (e.g. a non-persistent/no-WAL run): callers report a clean "no hook
+    pushes found" rather than crashing.
+    """
+    entries = _load_jsonl(root / "state" / "wal.jsonl")
+    entries.sort(key=lambda e: e.get("seq", 0))
+    return entries
+
+
+def _parse_ts_naive(ts: "str | None") -> "datetime | None":
+    """Best-effort ISO-8601 parse, normalised to a NAIVE (tzinfo-stripped) wall-clock
+    value so a WAL entry's naive ``ts`` (``datetime.now().isoformat()``) and an
+    EventLog event's tz-aware ``timestamp`` (``datetime.now().astimezone()``) — both
+    stamped from the SAME machine's local clock — can be ordered against each other.
+    Returns ``None`` on any parse failure (caller falls back to string comparison)."""
+    if not ts:
+        return None
+    try:
+        dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return dt.replace(tzinfo=None) if dt.tzinfo is not None else dt
+
+
+def _is_after(candidate_ts: "str | None", reference_ts: "str | None") -> bool:
+    """True iff *candidate_ts* is chronologically after *reference_ts*.
+
+    Parses both as naive wall-clock datetimes when possible; falls back to a
+    plain string comparison (works for same-format ISO strings, the common
+    case) when either fails to parse.
+    """
+    a, b = _parse_ts_naive(reference_ts), _parse_ts_naive(candidate_ts)
+    if a is not None and b is not None:
+        return b > a
+    return (candidate_ts or "") > (reference_ts or "")
+
+
+def mode_hook_liveness(root: Path) -> None:
+    """--mode hook-liveness: the direct detector for the "hook fired but never
+    drained/ran" failure class (#2608 observability gap).
+
+    Previously invisible: the packaged dogfood_trace modes read ONLY the
+    EventLog (``<root>/events/**/*.jsonl``), never the WAL
+    (``<root>/state/wal.jsonl``) — so a ``template_push`` hook that landed in a
+    session's inbox (WAL ``inbox_put(msg_kind="hook")``) but was never drained
+    by the run-loop (no ``turn_started(kind="hook")`` ever followed) left NO
+    trace in the artifact the tooling actually read.
+
+    This mode reads BOTH: every WAL ``inbox_put`` entry with ``msg_kind ==
+    "hook"`` is an E-push (wake=true) landing in the inbox; it is paired
+    against the earliest not-yet-claimed EventLog ``turn_started(kind="hook")``
+    event timestamped after it (FIFO — the inbox drains in order, one turn per
+    push; exact for the common single-session case, a documented best-effort
+    approximation when many hook pushes race across sessions, since neither
+    artifact carries a shared correlation id back to `turn_started`). A push
+    with NO such match is flagged **INERT** — pushed, never ran.
+
+    The new ``hook_push_fired`` P6 event (emitted at fire-time by every push
+    path, #2608 part A) is cross-referenced ONLY for display (the lifecycle
+    ``point`` that triggered the push, absent from the WAL entry itself) — it
+    does not change the INERT verdict, so an OLDER WAL (pre-#2608 build, no
+    ``hook_push_fired`` events) still gets a correct liveness read.
+    """
+    wal_entries = _load_wal(root)
+    hook_pushes = [
+        e for e in wal_entries
+        if e.get("kind") == "inbox_put" and e.get("msg_kind") == "hook"
+    ]
+    if not hook_pushes:
+        print("no hook pushes found (no WAL inbox_put(msg_kind=hook) entries under "
+              f"{root / 'state' / 'wal.jsonl'})")
+        return
+
+    events = _all_events(root)
+    turn_started_hook = [
+        e for e in events
+        if e.get("type") == "turn_started" and (e.get("data") or {}).get("kind") == "hook"
+    ]
+    # hook_push_fired (part A) fires at the SAME call site as the WAL inbox_put
+    # for an E-push (wake=True), back-to-back with no await between — so the
+    # wake=True subset is in the same relative order as `hook_pushes`. Zipped
+    # positionally for DISPLAY (the `point` field) only; a length mismatch
+    # (older WAL / no emit_event sink configured for that run) just leaves
+    # `point` as "?" past the shorter list — never affects the INERT verdict.
+    push_fired_e = [
+        e for e in events
+        if e.get("type") == "hook_push_fired" and (e.get("data") or {}).get("wake") is True
+    ]
+
+    claimed = [False] * len(turn_started_hook)
+    rows: list[dict] = []
+    inert_count = 0
+    for i, push in enumerate(hook_pushes):
+        push_ts = push.get("ts", "")
+        payload = push.get("payload") or {}
+        name = payload.get("name", "?")
+        fired = push_fired_e[i] if i < len(push_fired_e) else None
+        point = (fired.get("data") or {}).get("point", "?") if fired else "?"
+
+        ran_at = None
+        for j, ts_ev in enumerate(turn_started_hook):
+            if claimed[j]:
+                continue
+            if _is_after(ts_ev.get("timestamp"), push_ts):
+                claimed[j] = True
+                ran_at = ts_ev.get("timestamp")
+                break
+        if ran_at is None:
+            inert_count += 1
+        rows.append({
+            "fired_at": push_ts, "name": name, "point": point,
+            "ran": ran_at is not None, "ran_at": ran_at,
+        })
+
+    print("=" * 60)
+    print("HOOK LIVENESS  (WAL inbox_put(kind=hook)  <->  EventLog turn_started(kind=hook))")
+    print("=" * 60)
+    print(f"{'fired-at':<26} {'point':<16} {'name':<16} {'ran?':<6} INERT?")
+    for r in rows:
+        ran_str = "yes" if r["ran"] else "no"
+        inert_str = "" if r["ran"] else "  <-- INERT (pushed, never ran)"
+        print(f"{r['fired_at']:<26} {r['point']:<16} {r['name']:<16} {ran_str:<6}{inert_str}")
+
+    print(f"\n{len(rows)} hook push(es): {len(rows) - inert_count} ran, {inert_count} INERT "
+          "(pushed but never drained into a turn)")
+    if inert_count:
+        print("INERT = the inert-hook failure signature: a push landed in the inbox "
+              "(WAL inbox_put) with no subsequent turn_started(kind=hook) — the run-loop "
+              "never picked it up.")
 
 
 def mode_full(root: Path, filter_kind: str | None) -> None:
@@ -977,7 +1112,7 @@ def main() -> None:
     parser.add_argument(
         "--mode",
         choices=[
-            "summary", "full", "chain", "cost",
+            "summary", "full", "chain", "cost", "hook-liveness",
             "llm-payloads", "llm-detail", "llm-tools-schema",
             "llm-context", "llm-advertised-ops", "llm-emitted-ops",
         ],
@@ -1054,7 +1189,10 @@ def main() -> None:
         print(f"no events found (root not found: {root})")
         sys.exit(0)
 
-    {"summary": mode_summary, "full": mode_full, "chain": mode_chain, "cost": mode_cost}[args.mode](
+    {
+        "summary": mode_summary, "full": mode_full, "chain": mode_chain, "cost": mode_cost,
+        "hook-liveness": mode_hook_liveness,
+    }[args.mode](
         *([root, args.filter_kind] if args.mode == "full" else [root])
     )
 

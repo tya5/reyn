@@ -199,6 +199,62 @@ development only.
 
 ---
 
+# Hook Liveness (`--mode hook-liveness`)
+
+External-event hooks (`mcp_resource_updated` / `file_changed` / `cron_fired` /
+`webhook_received`, plus in-session `template_push`/`shell_push` hooks) can
+fail silently in one specific way: the push lands in a session's inbox but the
+run-loop never drains it into a turn. Before this mode existed, that failure
+left no trace an operator could find — the packaged `dogfood_trace.py` modes
+(`summary`/`full`/`chain`/`cost`) read only the EventLog
+(`.reyn/events/**/*.jsonl`); the WAL (`.reyn/state/wal.jsonl`), where the push
+landing is actually recorded (`inbox_put`), was never cross-checked against it.
+
+```bash
+python scripts/dogfood_trace.py --mode hook-liveness --root .reyn
+```
+
+## What it does
+
+1. Reads every WAL `inbox_put` entry with `msg_kind == "hook"` — each one is a
+   hook's E (wake=true) push landing in a session's inbox.
+2. Reads the EventLog for `turn_started` events carrying `kind == "hook"` —
+   the run-loop actually picking up the trigger and running a turn.
+3. Pairs each push against the earliest not-yet-claimed `turn_started(kind=hook)`
+   timestamped after it (FIFO — exact for the common single-session case).
+4. Any push with **no match** is flagged `INERT` — pushed into the inbox, but
+   the run-loop never ran a turn for it. This is the direct detector for the
+   "hook fired but never drained/ran" failure signature.
+
+The `point` column (the lifecycle point / external-event source that
+triggered the push) is cross-referenced from the `hook_push_fired` P6 event
+(emitted at fire-time by `HookDispatcher._push_resolved` for every push path —
+`template_push`, `shell_push`, E and C, cross-session or local). Its absence
+(an older WAL, or a session with no `emit_event` sink configured) only
+degrades the `point` column to `?`; it never changes the INERT verdict, which
+depends solely on the WAL/EventLog pairing.
+
+## Example output
+
+```
+============================================================
+HOOK LIVENESS  (WAL inbox_put(kind=hook)  <->  EventLog turn_started(kind=hook))
+============================================================
+fired-at                   point            name             ran?   INERT?
+2026-07-05T18:48:25.406416 turn_end         turn_end         yes
+2026-07-05T18:48:25.408589 cron_fired       cron_fired       no      <-- INERT (pushed, never ran)
+
+2 hook push(es): 1 ran, 1 INERT (pushed but never drained into a turn)
+INERT = the inert-hook failure signature: a push landed in the inbox (WAL
+inbox_put) with no subsequent turn_started(kind=hook) — the run-loop never
+picked it up.
+```
+
+A `.reyn/` with no WAL and no hook pushes prints a clean `no hook pushes
+found` — the mode never crashes on missing files.
+
+---
+
 # LLM Replay (`scripts/llm_replay.py`)
 
 `llm_replay.py` takes a trace file, finds a specific request by `request_id`,
