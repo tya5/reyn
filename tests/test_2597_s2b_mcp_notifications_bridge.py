@@ -165,23 +165,36 @@ async def test_tool_list_changed_notification_emits_event_and_invalidates_cache(
         await service.aclose()
 
 
-# ── (b) real server-pushed progress -> mcp_progress event ─────────────────────────
+# ── (b) real server-pushed progress: per-call callback is the ONE mcp_progress
+#        source; the bridge does not double-emit (#2597 F2) ───────────────────────
 
 
 @pytest.mark.asyncio
-async def test_progress_notification_emits_mcp_progress_event(tmp_path: Path):
-    """Tier 2: a REAL server-pushed ``notifications/progress`` on a held connection
-    lands as an ``mcp_progress`` event on the EventLog — the SAME event type
-    ``op_runtime/mcp.py`` already emits for the per-call progress_handler path
-    (issue #264/#271), so ``ChatLifecycleForwarder.on_mcp_progress`` surfaces it
-    without a new consumer."""
+async def test_progress_notification_not_double_emitted_by_bridge(tmp_path: Path):
+    """Tier 2: #2597 F2 — a REAL server-pushed ``notifications/progress`` on a held
+    connection with BOTH a per-call ``progress_callback`` (the ``op_runtime/mcp.py``
+    path, which itself emits ``mcp_progress`` with tool-name context) AND the
+    S2b notifications bridge installed simultaneously must NOT double-emit
+    ``mcp_progress`` — a live probe proved the SDK dual-delivers each in-call
+    progress notification to BOTH the per-call callback AND the installed
+    ``message_handler`` (``ReynMCPMessageHandler.on_progress``); emitting from both
+    would double every in-call progress event on the EventLog. The bridge is fixed to
+    never emit ``mcp_progress`` (see ``ReynMCPMessageHandler.on_progress``'s
+    docstring) — this test proves that with the caller's own per-call callback
+    ALSO emitting (mirroring ``op_runtime/mcp.py``'s ``_on_progress``), exactly ONE
+    ``mcp_progress`` event lands per reported progress step, not two."""
     events = EventLog(subscribers=[])
     service = MCPConnectionService(emit_sink=lambda et, **d: events.emit(et, **d))
     try:
         client = await service.get("srv", _CFG)
 
         async def _progress_cb(progress, total, message) -> None:
-            pass
+            # Mirrors op_runtime/mcp.py's _on_progress — the ONE place that should
+            # emit mcp_progress for call-scoped progress.
+            events.emit(
+                "mcp_progress", server="srv", tool="progress",
+                progress=progress, total=total, message=message,
+            )
 
         result = await client.call_tool(
             "progress", {"steps": 2}, progress_callback=_progress_cb,
@@ -189,9 +202,13 @@ async def test_progress_notification_emits_mcp_progress_event(tmp_path: Path):
         assert result["isError"] is False
 
         matching = [e for e in events.all() if e.type == "mcp_progress"]
-        first_step, second_step = matching  # one event per reported progress step
+        first_step, second_step = matching  # exactly ONE event per progress step, not two
         assert first_step.data.get("server") == "srv"
         assert second_step.data.get("server") == "srv"
+        assert first_step.data.get("tool") == "progress", (
+            "the surviving mcp_progress event carries tool-name context — "
+            "proof it came from the per-call callback, not the (tool-blind) bridge"
+        )
         assert (first_step.data.get("progress"), second_step.data.get("progress")) == (
             1.0, 2.0,
         )

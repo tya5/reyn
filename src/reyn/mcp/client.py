@@ -46,7 +46,7 @@ from __future__ import annotations
 import os
 import tempfile
 import warnings
-from typing import Any
+from typing import Any, NoReturn
 
 # ── Env var expansion ─────────────────────────────────────────────────────────
 # Shared resolver lives in reyn.security.secrets.interpolation (ADR-0030).
@@ -59,6 +59,33 @@ from reyn.security.secrets.interpolation import expand_env as expand_env  # noqa
 
 class MCPError(RuntimeError):
     """Raised on any MCP transport / protocol / tool error."""
+
+
+class MCPCapabilityError(MCPError):
+    """Raised by :func:`require_capability` when the connected server did not
+    advertise the requested capability. This is a REFUSAL, not a transport
+    failure — the connection is healthy, reyn is just declining to send a
+    request the server never said it supports. :class:`~reyn.mcp.
+    connection_service.MCPConnectionService`'s ``_HeldConnection._heal`` must
+    NOT treat this as a dead-connection signal (see :class:`MCPTransportError`
+    for the one exception type that IS)."""
+
+
+class MCPTransportError(MCPError):
+    """Raised in place of plain :class:`MCPError` when the underlying failure is
+    genuine transport-death — a dead subprocess (stdio) or a broken connection
+    (http/sse) — as opposed to an application-level protocol error (unknown
+    tool/resource, invalid params, a tool that raised) or a capability-gate
+    refusal (:class:`MCPCapabilityError`). Raised by :func:`_classify_and_raise`
+    at every SDK-call boundary in this module (``call_tool``/``list_tools``/
+    ``read_resource``/``list_resources``/``list_resource_templates``) — see that
+    function's docstring for the exact predicate, verified against the
+    installed fastmcp 3.4.2 + mcp SDK. This is the ONLY exception type
+    ``_HeldConnection._heal`` (connection_service.py) treats as a dead-
+    connection signal that should discard + reopen the held connection; a
+    plain ``MCPError`` (app-level) or ``MCPCapabilityError`` (gate refusal)
+    propagates WITHOUT recycling a perfectly healthy connection (#2597 F1 —
+    the pre-fix ``except MCPError:`` over-caught both of those)."""
 
 
 _SUPPORTED_TYPES = {"stdio", "http", "sse"}
@@ -81,17 +108,100 @@ def require_capability(client: "MCPClient", capability: str) -> None:
     fails with a reyn-authored message instead of a confusing raw protocol error
     from the server.
 
-    Raises :class:`MCPError` if not supported; no-op (returns None) otherwise.
+    Raises :class:`MCPCapabilityError` (an :class:`MCPError` subclass — existing
+    ``except MCPError`` callers keep working unchanged) if not supported; no-op
+    (returns None) otherwise. #2597 F1: this is a REFUSAL raised before any
+    request reaches the server, never a transport failure — a distinct
+    subclass from :class:`MCPTransportError` so ``_HeldConnection._heal`` can
+    tell "gate refused this call" apart from "the connection died" and leave a
+    healthy held connection alone on a gate refusal.
     """
     if client.supports(capability):
         return
     server = client.server_name or "<unknown>"
     version = client.negotiated_version or "<unknown>"
-    raise MCPError(
+    raise MCPCapabilityError(
         f"MCP server {server!r} does not advertise the {capability!r} capability "
         f"(negotiated protocol version {version}). Refusing to call a "
         f"{capability!r} feature against it."
     )
+
+
+def _is_transport_death(exc: BaseException) -> bool:
+    """Return True iff ``exc`` (caught at an SDK-call boundary in this module)
+    signals genuine MCP transport death — as opposed to an application-level
+    protocol error the server responded with while alive and connected.
+
+    #2597 F1 predicate — verified by reading the installed fastmcp 3.4.2 +
+    mcp SDK source AND by live-probing both branches against the real
+    ``tests/_support/mcp_fastmcp_echo_server.py`` test double over stdio:
+
+      - ``mcp.shared.exceptions.McpError`` whose ``.error.code`` equals
+        ``mcp.types.CONNECTION_CLOSED`` (``-32000``). ``mcp.shared.session.
+        BaseSession``'s receive loop (session.py) catches
+        ``anyio.ClosedResourceError`` when the transport's read stream closes
+        underneath it and, in the ``finally``, synthesizes exactly this
+        ``ErrorData`` for every still-pending in-flight request — this is how
+        a dead stdio subprocess actually surfaces to an in-flight
+        ``call_tool``/``read_resource``/etc. call. **Live-verified**: killing
+        the echo server's subprocess mid-call (the ``die`` tool) raised
+        ``MCPError('MCP tools/call error: Connection closed')`` whose
+        ``__cause__`` was ``McpError(error=ErrorData(code=-32000,
+        message='Connection closed', ...))`` — exactly this branch.
+      - ``RuntimeError("Server session was closed unexpectedly")`` — fastmcp's
+        ``Client._context_manager`` (client.py) wraps a
+        ``anyio.ClosedResourceError`` leaking out of the session's context
+        scope in this EXACT message. Not observed directly in the stdio-die
+        probe above (that death surfaced via the McpError branch instead),
+        but included defensively per fastmcp's own source — a different
+        failure timing (e.g. mid-``initialize``, or the read stream closing
+        while the caller is inside the ``async with`` scope rather than
+        mid-request) could route through this wrapper instead.
+      - Raw ``anyio.ClosedResourceError`` / ``anyio.BrokenResourceError`` /
+        ``ConnectionError`` — defensive: these are anyio's/stdlib's own
+        dead-stream / dead-socket signal types; not observed leaking
+        unwrapped to this call site in the probes above, but a conservative
+        predicate treats them as transport-death if they ever do.
+
+    Anything else — including OTHER ``McpError`` codes (**live-verified**:
+    calling an unknown resource URI raised ``McpError(error=ErrorData(
+    code=-32002, message="Resource not found: ..."))``; ``METHOD_NOT_FOUND``/
+    ``INVALID_PARAMS`` are the same "server responded, it's just an app-level
+    error" shape), a tool-level failure (a tool raising inside its handler
+    comes back as a normal ``CallToolResult`` with ``isError: True`` — never
+    an exception at all, so it never reaches this predicate), or any other
+    exception type — is NOT transport death: the server is alive and
+    responded, just with an error. Default is False (= NOT transport) so an
+    unrecognized exception propagates as a plain :class:`MCPError` rather
+    than triggering an unnecessary reconnect.
+    """
+    import anyio
+
+    if isinstance(exc, (anyio.ClosedResourceError, anyio.BrokenResourceError, ConnectionError)):
+        return True
+    if isinstance(exc, RuntimeError) and str(exc) == "Server session was closed unexpectedly":
+        return True
+    try:
+        from mcp.shared.exceptions import McpError as _SdkMcpError
+        from mcp.types import CONNECTION_CLOSED
+    except ImportError:  # pragma: no cover — mcp SDK always installed alongside fastmcp
+        return False
+    if isinstance(exc, _SdkMcpError):
+        error = getattr(exc, "error", None)
+        return getattr(error, "code", None) == CONNECTION_CLOSED
+    return False
+
+
+def _classify_and_raise(exc: Exception, message: str) -> NoReturn:
+    """Raise :class:`MCPTransportError` if ``exc`` is genuine transport-death
+    (see :func:`_is_transport_death`), else plain :class:`MCPError` — either
+    way with ``exc`` preserved as ``__cause__``. Shared by every SDK-call
+    boundary below (``call_tool``/``list_tools``/``read_resource``/
+    ``list_resources``/``list_resource_templates``) so the classification
+    logic lives in exactly one place."""
+    if _is_transport_death(exc):
+        raise MCPTransportError(message) from exc
+    raise MCPError(message) from exc
 
 
 # ── Client ───────────────────────────────────────────────────────────────────
@@ -379,7 +489,7 @@ class MCPClient:
             # consumed shape stays byte-identical.
             result = await self._client.call_tool_mcp(name, args or {}, **kwargs)
         except Exception as exc:
-            raise MCPError(f"MCP tools/call error: {exc}") from exc
+            _classify_and_raise(exc, f"MCP tools/call error: {exc}")
         return _result_to_dict(result)
 
     async def list_tools(self) -> list[dict[str, Any]]:
@@ -396,7 +506,7 @@ class MCPClient:
         try:
             tools = await self._client.list_tools()
         except Exception as exc:
-            raise MCPError(f"MCP tools/list error: {exc}") from exc
+            _classify_and_raise(exc, f"MCP tools/list error: {exc}")
         return [_tool_to_dict(t) for t in tools]
 
     # ── resources (#2597 slice ②a — consumption only; subscribe is ②b) ─────────
@@ -413,7 +523,7 @@ class MCPClient:
         try:
             resources = await self._client.list_resources()
         except Exception as exc:
-            raise MCPError(f"MCP resources/list error: {exc}") from exc
+            _classify_and_raise(exc, f"MCP resources/list error: {exc}")
         return [_resource_to_dict(r) for r in resources]
 
     async def list_resource_templates(self) -> list[dict[str, Any]]:
@@ -425,7 +535,7 @@ class MCPClient:
         try:
             templates = await self._client.list_resource_templates()
         except Exception as exc:
-            raise MCPError(f"MCP resources/templates/list error: {exc}") from exc
+            _classify_and_raise(exc, f"MCP resources/templates/list error: {exc}")
         return [_resource_to_dict(t) for t in templates]
 
     async def read_resource(self, uri: str) -> dict[str, Any]:
@@ -444,7 +554,7 @@ class MCPClient:
         try:
             result = await self._client.read_resource_mcp(uri)
         except Exception as exc:
-            raise MCPError(f"MCP resources/read error: {exc}") from exc
+            _classify_and_raise(exc, f"MCP resources/read error: {exc}")
         return _read_resource_result_to_dict(result)
 
     async def close(self) -> None:

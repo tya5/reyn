@@ -24,10 +24,21 @@ Reconnect-on-demand (S2a-level resilience — deliberately NOT S2b's background 
 loop / ping): a subprocess death or HTTP disconnect mid-session does NOT flip
 ``MCPClient.is_initialized()`` or the underlying ``fastmcp.Client.is_connected()``
 (verified empirically against the real echo test server's ``die`` tool — both stay
-True after the transport is gone) — the only observable signal is an :class:`MCPError`
-raised on the NEXT use. So the held-connection handle catches an ``MCPError``, discards
-+ reopens the dead connection so the NEXT call lands on a healthy transport — a dropped
+True after the transport is gone) — the only observable signal is an exception raised
+on the NEXT use. So the held-connection handle catches that signal, discards + reopens
+the dead connection so the NEXT call lands on a healthy transport — a dropped
 connection must not permanently wedge the server for the rest of the session.
+
+#2597 F1 fix (post-S1 over-catch): ``MCPClient`` wraps EVERY exception (transport
+death, application-level protocol errors, capability-gate refusals) into some
+``MCPError`` subclass — so catching bare ``MCPError`` here would reconnect a perfectly
+healthy connection on a capability-gate refusal or an app-level error (e.g. an unknown
+tool/resource), needlessly killing+respawning a live stdio subprocess. ``_heal`` below
+catches ONLY :class:`~reyn.mcp.client.MCPTransportError` — the narrower subclass
+``reyn.mcp.client`` raises (via its ``_is_transport_death`` predicate, verified against
+fastmcp 3.4.2 + the mcp SDK) exclusively for genuine transport-death. A
+``MCPCapabilityError`` (gate refusal) or a plain ``MCPError`` (app-level) propagates
+WITHOUT touching the connection.
 
 CRITICAL — the reconnect must NOT silently retry a side-effectful call (at-most-once):
 post-S1 ``call_tool`` raises ``MCPError`` on ANY transport failure, including the
@@ -67,7 +78,7 @@ import asyncio
 import logging
 from typing import Any, Awaitable, Callable
 
-from reyn.mcp.client import MCPClient, MCPError
+from reyn.mcp.client import MCPClient, MCPTransportError
 from reyn.mcp.message_handler import EmitSink, ReynMCPMessageHandler, ToolsCacheInvalidate
 from reyn.mcp.pool import describe_fault, is_real_control_flow
 
@@ -300,9 +311,20 @@ class _HeldConnection:
     async def _heal(
         self, op: "Callable[[MCPClient], Awaitable[Any]]", *, heal_only: bool,
     ) -> Any:
-        """Run ``op`` against the currently-held client. On an :class:`MCPError` —
-        the only observable signal of a dead connection (see module docstring) —
-        discard + reopen the connection.
+        """Run ``op`` against the currently-held client. On an :class:`MCPTransportError`
+        — genuine transport-death, the only signal that actually means the held
+        connection is dead (see module docstring + ``client.py``'s ``_is_transport_death``
+        predicate) — discard + reopen the connection.
+
+        #2597 F1: this deliberately catches ONLY ``MCPTransportError``, not the base
+        ``MCPError``. Post-S1, every ``MCPClient`` method wraps ALL exceptions into some
+        ``MCPError`` subclass, so a bare ``except MCPError:`` here used to over-catch two
+        cases that are NOT a dead connection: a capability-gate refusal
+        (``MCPCapabilityError`` — the server is alive, reyn just declined to send the
+        request) and an application-level protocol error (unknown tool/resource, invalid
+        params — the server responded, just with an error). Both of those propagate
+        WITHOUT touching the connection now; only ``MCPTransportError`` triggers
+        discard+reopen.
 
         ``heal_only=True`` (side-effectful ``call_tool``): re-raise the ORIGINAL error
         after healing — do NOT re-run ``op`` (preserves at-most-once; the healed
@@ -314,7 +336,7 @@ class _HeldConnection:
         )
         try:
             return await op(client)
-        except MCPError:
+        except MCPTransportError:
             fresh = await self._service._reconnect(
                 self._server, self._config, agent_id=self._agent_id,
             )
