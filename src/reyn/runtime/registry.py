@@ -153,6 +153,8 @@ class AgentRegistry:
         delegation_capability_default: str = "inherit",
         max_spawn_depth: int = 0,
         max_spawn_children: int = 0,
+        max_pipeline_fan_out_depth: int = 0,
+        max_pipeline_spawns: int = 0,
         factory_config: "object | None" = None,
         create_event_kinds: "frozenset[str] | None" = None,
     ) -> None:
@@ -178,12 +180,19 @@ class AgentRegistry:
             delegation_capability_default = factory_config.delegation_capability_default
             max_spawn_depth = factory_config.max_spawn_depth
             max_spawn_children = factory_config.max_spawn_children
+            max_pipeline_fan_out_depth = factory_config.max_pipeline_fan_out_depth
+            max_pipeline_spawns = factory_config.max_pipeline_spawns
         # #2103 C3: operator spawn-tree bounds (safety.spawn.*), enforced at the LLM
         # spawn seams (host adapter). 0 = unlimited. Util/test callers default to
         # unlimited (byte-identical); the 5 frontend factory sites supply them via the
         # factory_config bundle.
         self._max_spawn_depth = max_spawn_depth
         self._max_spawn_children = max_spawn_children
+        # #2187 for_each S5: pipeline fan-out spawn bounds (safety.spawn.*),
+        # enforced by the pipeline executor (guards b/c). The driver-session reads
+        # them off this registry and threads them into run()/resume(). 0 = unlimited.
+        self._max_pipeline_fan_out_depth = max_pipeline_fan_out_depth
+        self._max_pipeline_spawns = max_pipeline_spawns
         self._dir = project_root / ".reyn" / "agents"
         self._dir.mkdir(parents=True, exist_ok=True)
         self._topology_dir = project_root / ".reyn" / TOPOLOGY_DIRNAME
@@ -631,6 +640,18 @@ class AgentRegistry:
         """#2175: the operator base max fan-out — direct children + topology size
         (0 = unlimited)."""
         return self._max_spawn_children
+
+    @property
+    def max_pipeline_fan_out_depth(self) -> int:
+        """#2187 for_each S5: the operator max ``for_each`` fan-out NESTING depth
+        the pipeline executor enforces (guard b; 0 = unlimited)."""
+        return self._max_pipeline_fan_out_depth
+
+    @property
+    def max_pipeline_spawns(self) -> int:
+        """#2187 for_each S5: the operator max ephemeral-session spawn COUNT per
+        pipeline run the executor enforces (guard c; 0 = unlimited)."""
+        return self._max_pipeline_spawns
 
     async def create_agent(
         self, name: str, *, role: str = "", parent: "str | None" = None

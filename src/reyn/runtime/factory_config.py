@@ -52,6 +52,10 @@ class SessionFactoryConfig:
     # enforce these; 0 = unlimited.
     max_spawn_depth: int
     max_spawn_children: int
+    # #2187 for_each S5: pipeline fan-out spawn bounds (safety.spawn.*) — the
+    # pipeline executor enforces these (guards b/c); 0 = unlimited.
+    max_pipeline_fan_out_depth: int
+    max_pipeline_spawns: int
 
     @classmethod
     def from_config(
@@ -91,4 +95,6 @@ class SessionFactoryConfig:
             delegation_capability_default=config.delegation.capability_default,
             max_spawn_depth=config.safety.spawn.max_depth,
             max_spawn_children=config.safety.spawn.max_children,
+            max_pipeline_fan_out_depth=config.safety.spawn.max_pipeline_fan_out_depth,
+            max_pipeline_spawns=config.safety.spawn.max_pipeline_spawns,
         )

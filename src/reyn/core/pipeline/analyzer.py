@@ -50,7 +50,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Callable
 
-from reyn.core.pipeline.executor import CallStep, FoldStep, MatchStep
+from reyn.core.pipeline.executor import CallStep, FoldStep, ForEachStep, MatchStep
 
 if TYPE_CHECKING:
     from reyn.core.pipeline.executor import Step
@@ -110,6 +110,43 @@ def _fold_facet(step: "FoldStep") -> "list[str]":
     return problems
 
 
+def _for_each_facet(step: "ForEachStep") -> "list[str]":
+    """``for_each``'s S5 STATIC contribution (the analysis-time half of the
+    spawn-bound guards — the runtime half is the Semaphore / fan_out_depth /
+    SpawnBudget in the executor). WARNING-only, mirroring ``_fold_facet``'s
+    posture (the runtime defaults keep an omitted cap finite per Hard rule 9):
+
+    - flags a ``max_parallel``-less fan-out (runtime falls back to a bounded
+      default, but the concurrency width is not a number the analyzer can state
+      ahead of time — same "not statically known" caution ``fold`` raises for an
+      uncapped ``over``);
+    - flags an ``over``-sourced fan-out (the item COUNT is a runtime ctx value,
+      so the total spawn footprint = count x do-spawns is not statically
+      computable — ``for_each`` has no ``max_items`` field to bound it, unlike
+      ``fold``).
+
+    The precise items x depth x do-spawn total-spawn computation (rejecting at
+    analysis time when a STATICALLY-countable fan-out already exceeds the total
+    cap) needs cross-pipeline context — the callee/do's own transitive spawn
+    footprint — which the per-step facet does not have; it lands with the
+    cross-pipeline analyzer walker, the same deferral ``call``/``match`` make.
+    Returns problem strings (empty = OK)."""
+    problems: "list[str]" = []
+    if step.max_parallel is None:
+        problems.append(
+            "for_each step has no 'max_parallel' — live concurrency falls back to a "
+            "runtime-bounded default (never unbounded), but the fan-out width is not "
+            "statically known ahead of run time"
+        )
+    if step.over is not None:
+        problems.append(
+            "for_each step reads its item list from 'over' (a runtime ctx path) — the "
+            "item COUNT, hence the total spawn footprint, is not statically known "
+            "ahead of run time (for_each has no 'max_items' bound)"
+        )
+    return problems
+
+
 # Facet registry: step type -> its static-analysis check. A future primitive
 # ADDS an entry here (mirroring the executor's ``STEP_DISPATCH``, serde's
 # ``ENCODERS``/``DECODERS``, and the parser's ``_STEP_PARSERS``) — the P4
@@ -119,6 +156,7 @@ ANALYZER_FACETS: "dict[type, Callable[[Step], list[str]]]" = {
     CallStep: _call_facet,
     MatchStep: _match_facet,
     FoldStep: _fold_facet,
+    ForEachStep: _for_each_facet,
 }
 
 

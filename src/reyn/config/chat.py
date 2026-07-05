@@ -219,10 +219,29 @@ class SpawnConfig:
             single parent may have (``agent_spawn``) AND (b) the member count of a
             ``topology_create``d topology (org size). A spawn/wire that would exceed
             it is rejected. ``0`` = unlimited.
+        max_pipeline_fan_out_depth:
+            Pipeline S5 guard (b): the maximum NESTING depth of ``for_each``
+            fan-out scopes (a top-level for_each = depth 1; a for_each inside
+            another for_each's ``do``/``collect`` = depth 2; …). A for_each that
+            would exceed this fails the step rather than spawning. Distinct from
+            ``max_depth`` (the spawn-LINEAGE chain): a pipeline agent-step reaches
+            ``spawn_ephemeral_session`` with no lineage, so ``max_depth`` does not
+            cover fan-out — this is the fan-out-nesting bound. ``0`` = unlimited.
+        max_pipeline_spawns:
+            Pipeline S5 guard (c): the maximum number of ephemeral sessions ONE
+            pipeline run may spawn across ALL its ``agent`` steps (top-level or
+            fanned out via ``for_each``). The ONLY spawn-COUNT enforcement for
+            pipeline agent-steps (they carry no spawn lineage, so ``max_children``
+            does not cover them). A per-run monotonic counter; a spawn past the cap
+            fails the step. ``0`` = unlimited.
     """
 
     max_depth: int = 10
     max_children: int = 20
+    # Pipeline S5 fan-out spawn bounds (#2187 for_each). Conservative finite
+    # defaults; 0 = unlimited (operator opt-out).
+    max_pipeline_fan_out_depth: int = 5
+    max_pipeline_spawns: int = 100
 
 
 @dataclass

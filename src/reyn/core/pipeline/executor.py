@@ -7,9 +7,29 @@ sequence of ``transform`` / ``tool`` (``shell`` is just a ``ToolStep(name="shell
 ...)``) / ``agent`` (R5) steps, plus three COMPOSITIONAL primitives: ``call``
 (R7, a STATIC callee), ``match`` (``call``'s runtime-selected sibling — the
 ``on`` VALUE picks a LABEL, never a target; see :class:`MatchStep`), and
-``fold`` (the sequential accumulator, Appendix B). Still out of scope for this
-slice: `for_each`/`parallel`/`refine` — those are later primitives that plug
-into the SAME dispatch + scope machinery this module now exposes.
+``fold`` (the sequential accumulator, Appendix B), and ``for_each`` (the
+CONCURRENT fan-out — ``fold``'s parallel, isolated-sub-scope sibling; see
+:class:`ForEachStep` and :func:`_run_for_each_step`). Still out of scope for
+this slice: `parallel`/`refine` — those are later primitives that plug into the
+SAME dispatch + scope machinery this module now exposes (``parallel`` is the
+additive follow-up built on ``for_each``'s fan-out substrate).
+
+**Fan-out recovery commit unit = the ITEM (READ THIS before touching
+``for_each`` recovery).** ``for_each`` runs ``do`` over each list item as an
+ISOLATED concurrent sub-scope (Hard rule 6: read-only ctx, no sibling comm), a
+coordinator recording each item's result AS IT LANDS via ``asyncio.as_completed``
+(never bare ``gather``). The recovery commit unit is the ITEM: a LANDED item is
+exactly-once (its key is durable before the next boundary; resume replays it,
+never re-runs it). A single-step ``do`` (the common case) therefore has NO
+recovery gap — it is exactly-once identical to a durable step. The ONE gap: a
+COMPOSITIONAL ``do`` (``call``/``match``/``fold``) that is IN-FLIGHT at a crash
+re-runs ATOMICALLY on resume (its item key was never recorded), so its already-
+completed INTERNAL side effects may re-fire — because item tasks record through a
+NO-OP recorder (only the single coordinator coroutine calls the real ``record``,
+serialized by construction, avoiding the read-modify-write race concurrent
+per-task recording would cause). Per-internal-sub-step durability for
+compositional fan-out items (a lock-guarded serialized-recorder path) is a
+tracked follow-up, not a silent gap.
 
 **Dispatch tables (R7 — the parallel-primitive seam).** Step execution is a
 ``dict``-dispatch keyed by the step's dataclass type
@@ -79,9 +99,10 @@ hooks default off.
 """
 from __future__ import annotations
 
+import asyncio
 import inspect
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, Awaitable, Callable, Union
 
 from reyn.core.events.pipeline_recovery import latest_pipeline_state, record_pipeline_state
@@ -297,7 +318,70 @@ class FoldStep:
     max_items: "int | None" = None
 
 
-Step = Union[TransformStep, ToolStep, AgentStep, CallStep, MatchStep, FoldStep]
+@dataclass(frozen=True)
+class ForEachStep:
+    """The CONCURRENT fan-out primitive (Appendix B: ``for_each = {over?:PATH |
+    items?:[LIT*] max_parallel? on_error:continue|abort|retry(n) do:Step
+    collect:Step}``) — ``fold``'s parallel, isolated sibling. Where ``fold``
+    walks a list SEQUENTIALLY threading an accumulator, ``for_each`` runs ``do``
+    over each item as an ISOLATED concurrent sub-scope (Hard rule 6: each item
+    gets its OWN copied ``ctx``, no sibling communication), then runs ``collect``
+    ONCE over the ordered results list — ``collect``'s result is this step's N2
+    return value / pipe-data.
+
+    - List source (mutually exclusive; the parser rejects both together):
+      ``over`` (an R1 expression source, evaluated against ``{ctx, pipe}`` like
+      ``transform.value``) | ``items`` (a static Python literal list) | neither,
+      falling back to the incoming PIPE DATA (the same convention ``fold`` uses).
+    - ``do`` runs once per item; item ``item_idx``'s context is ``{"ctx": <a
+      COPY of the outer named stores — isolation>, "pipe": <this for_each step's
+      OWN incoming pipe-data, held constant across every item, the per-item analog
+      of Hard rule 5's "callee's first step sees the caller's pipe-data at the
+      call site">, "item": <the item_idx-th element>}``. There is NO ``acc``
+      (that is ``fold``-only) and NO sibling visibility — an item cannot see any
+      other item's result (writes happen only in ``collect``, Hard rule 6).
+    - ``max_parallel`` (S5 guard a — the Semaphore cap): live concurrency is
+      gated to ``max_parallel`` items at once; omitted, it defaults to a
+      conservative finite value (``min(len(items), _DEFAULT_MAX_PARALLEL)``) —
+      NEVER unbounded-by-omission.
+    - ``on_error`` is REQUIRED (Appendix B gives it no ``?`` — a fan-out author
+      MUST state the completeness policy explicitly, unlike ``parallel`` whose
+      ``on_error?`` defaults to ``abort``). One of: ``continue`` (a failed item
+      is DROPPED from the results list — recorded with a kind-marker so resume
+      does not re-run it, see :func:`_run_for_each_step`); ``abort`` (a failed
+      item cancels the still-pending items and fails the whole step); or
+      ``retry(n)`` (re-run the failed item's ``do`` up to ``n`` more times, then
+      fall back to ``abort`` if still failing — only ``continue`` ever silently
+      drops).
+    - ``collect`` runs ONCE, sequentially, AFTER the fan-out, over the ordered
+      list of surviving item results (dropped items filtered out via the ONE
+      shared filter used identically live and on resume-replay).
+
+    Recovery (see the module docstring's "commit unit = the ITEM"): item
+    ``item_idx``'s ``do`` result records at the FLAT dotted key
+    ``f"{label}.for_each.{item_idx}"`` (a compositional ``do`` adds its own
+    deeper levels naturally, e.g. ``f"{label}.for_each.{item_idx}.call.{j}"`` —
+    ``for_each`` invents no extra index level of its own, same as ``fold``).
+    ``collect`` records at ``f"{label}.for_each.collect"``. A landed item is
+    exactly-once; a dropped item stays dropped forever (its kind-marker key is
+    present, so resume never re-runs it); resume re-runs ONLY the items whose key
+    is ABSENT, then runs ``collect`` iff its key is absent."""
+
+    do: "Step"
+    collect: "Step"
+    on_error: str
+    over: "str | None" = None
+    items: "list[Any] | None" = None
+    max_parallel: "int | None" = None
+    # R3's uniform output rule: ``collect``'s result is this step's N2 return /
+    # pipe-data, and is ALSO written to a named store iff ``output`` is declared
+    # (optional, like ``call``/``match`` — Appendix B's compact grammar omits it,
+    # but the uniform rule applies to every step). The executor's outer loop reads
+    # ``step.output`` on every Step, so this field must exist on the union member.
+    output: "str | None" = None
+
+
+Step = Union[TransformStep, ToolStep, AgentStep, CallStep, MatchStep, FoldStep, ForEachStep]
 
 
 @dataclass(frozen=True)
@@ -384,6 +468,95 @@ Recorder = Callable[..., Awaitable[None]]
 
 _PROMPT_REF_RE = re.compile(r"\{([^{}]+)\}")
 
+# S5 spawn-bound conservative defaults (used when run/resume is called without
+# explicit operator caps — never unbounded-by-omission). ``0`` on the effective
+# cap means "unlimited" (operator opt-out), mirroring ``SpawnConfig``'s convention.
+_DEFAULT_MAX_PARALLEL = 8
+_DEFAULT_MAX_FAN_OUT_DEPTH = 5
+_DEFAULT_MAX_PIPELINE_SPAWNS = 100
+
+# The kind-marker an ``on_error:continue`` DROPPED fan-out item records under its
+# item key — NOT absent (resume would re-run an absent key) and NOT bare None
+# (a legit ``do`` result). Recognised on read by EXACT key-set equality (see
+# :func:`_is_dropped_marker`), the same collision-narrowing discipline
+# ``serde``'s ``__exprref__`` marker uses.
+_FAN_OUT_DROPPED_KEY = "__fan_out_dropped__"
+
+_ON_ERROR_RETRY_RE = re.compile(r"^retry\((?P<n>\d+)\)$")
+
+
+@dataclass(frozen=True)
+class _OnError:
+    """The normalized ``for_each.on_error`` policy. ``kind`` is ``"continue"`` |
+    ``"abort"`` | ``"retry"``; ``retries`` is the extra-attempt count (>0 only
+    for ``retry``). Parsed from the DSL string once (see :func:`_parse_on_error`)
+    so the coordinator branches on an enum, not a re-parsed string."""
+
+    kind: str
+    retries: int = 0
+
+
+def _parse_on_error(raw: str) -> "_OnError":
+    """Normalize a ``for_each.on_error`` DSL string (``"continue"`` / ``"abort"``
+    / ``"retry(N)"``) to an :class:`_OnError`. Raises :class:`PipelineExecutionError`
+    on an unrecognized value (the parser validates this at parse time too — this
+    is the runtime-side defensive parse for a hand-built / serde-round-tripped
+    ``ForEachStep``)."""
+    if raw in ("continue", "abort"):
+        return _OnError(kind=raw)
+    m = _ON_ERROR_RETRY_RE.match(raw)
+    if m is not None:
+        return _OnError(kind="retry", retries=int(m.group("n")))
+    raise PipelineExecutionError(
+        f"for_each on_error {raw!r} is not one of continue|abort|retry(n)"
+    )
+
+
+def _is_dropped_marker(value: Any) -> bool:
+    """True iff ``value`` is a fan-out DROPPED kind-marker (exact 2-key set
+    ``{_FAN_OUT_DROPPED_KEY, 'error'}``) — the ONE shared predicate the collect
+    filter uses identically live AND on resume-replay so a dropped item is
+    excluded from ``collect``'s input the same way both times."""
+    return isinstance(value, dict) and set(value) == {_FAN_OUT_DROPPED_KEY, "error"}
+
+
+class SpawnBudget:
+    """S5 guard (c) — a per-RUN monotonic session-spawn counter. Constructed ONCE
+    per top-level ``run``/``resume`` and shared BY REFERENCE across every nested
+    scope (the one deliberate piece of run-scoped mutable state in this otherwise
+    immutable-threading executor). Every ``AgentStep`` — top-level or reached from
+    a ``call``/``match``/``fold``/``for_each`` — funnels through
+    :func:`_run_agent_step`, which calls :meth:`consume` before spawning, so the
+    cap is COMPLETE-BY-CONSTRUCTION across the whole surface, not just fan-out.
+
+    This closes the CRITICAL GAP the fan-out design found: pipeline agent-steps
+    reach ``spawn_ephemeral_session`` with NO parent/lineage, so the registry's
+    ``SpawnConfig`` (max_depth/max_children over the spawn-lineage) does NOT cover
+    them — this counter is the ONLY enforcement. ``cap == 0`` = unlimited
+    (operator opt-out), mirroring ``SpawnConfig``. Monotonic counter vs a static
+    operator-set finite cap: no LLM-writable path raises it."""
+
+    def __init__(self, cap: int) -> None:
+        self._cap = cap
+        self._spent = 0
+
+    def consume(self, *, label: str) -> None:
+        """Charge one spawn; raise :class:`PipelineExecutionError` (fail the step,
+        never silent) if the cap is already reached."""
+        if self._cap and self._spent >= self._cap:
+            raise PipelineExecutionError(
+                f"step {label} (agent) would exceed the per-run pipeline spawn cap "
+                f"({self._cap}): {self._spent} ephemeral session(s) already spawned "
+                "this run — a for_each fanned out more agent-steps than the operator "
+                "bound allows (S5 spawn guard)"
+            )
+        self._spent += 1
+
+    @property
+    def spent(self) -> int:
+        """The number of spawns charged so far this run (test/observability read)."""
+        return self._spent
+
 
 def _interpolate_prompt(template: str, context: "dict[str, Any]") -> str:
     """Resolve every ``{ctx.dotted.path}`` / ``{pipe}`` reference in an ``AgentStep``
@@ -438,6 +611,17 @@ class _RunDeps:
     pipeline_registry: "PipelineRegistry | None"
     events: "EventLog | None"
     cancel_check: "Callable[[], bool] | None"
+    # S5 fan-out spawn bounds. ``fan_out_depth`` is a PER-BRANCH frozen value:
+    # entering a ``for_each`` threads a ``replace(deps, fan_out_depth=+1)`` copy
+    # into its item/collect sub-scopes, so a nested for_each sees a deeper value
+    # (guard b). ``max_fan_out_depth`` is the run-constant cap (0 = unlimited).
+    # ``spawn_budget`` is the per-RUN mutable counter (guard c), shared by
+    # reference through every ``replace`` (so a bumped ``fan_out_depth`` copy
+    # still charges the SAME budget). Defaults keep pre-for_each callers (and any
+    # ``_RunDeps`` built without these) safe: depth 0, a fresh unlimited budget.
+    fan_out_depth: int = 0
+    max_fan_out_depth: int = _DEFAULT_MAX_FAN_OUT_DEPTH
+    spawn_budget: SpawnBudget = field(default_factory=lambda: SpawnBudget(0))
 
 
 @dataclass(frozen=True)
@@ -507,6 +691,12 @@ async def _run_agent_step(inv: "_StepInvocation") -> "tuple[Any, bool, dict[str,
             f"step {inv.step_label} (agent) requires a registry (AgentRegistry) to "
             "spawn its session, but none was passed to run/resume"
         )
+    # S5 guard (c): charge the per-run spawn budget BEFORE spawning the ephemeral
+    # session. This is the ONLY spawn-count enforcement for pipeline agent-steps
+    # (they reach spawn_ephemeral_session with no parent/lineage, so the
+    # registry's SpawnConfig does not cover them). Every AgentStep — top-level or
+    # fanned out inside a for_each — funnels here, so the cap is complete.
+    deps.spawn_budget.consume(label=inv.step_label)
     prompt = _interpolate_prompt(step.prompt, inv.context)
     try:
         result = await run_agent_step(
@@ -721,6 +911,197 @@ async def _run_fold_step(inv: "_StepInvocation") -> "tuple[Any, bool, dict[str, 
     return acc, any_durable, completed_step_results
 
 
+def _resolve_list_source(
+    step: "ForEachStep | FoldStep", context: "dict[str, Any]", label: str, kind: str,
+) -> "list[Any]":
+    """Resolve a ``for_each``/``fold`` list source (``over`` R1 expr | ``items``
+    static literal | fallback to incoming pipe-data), validating it IS a list.
+    Shared shape both primitives use (see :class:`FoldStep`/:class:`ForEachStep`)."""
+    if step.over is not None and step.items is not None:  # pragma: no cover - parser-enforced
+        raise PipelineExecutionError(
+            f"step {label} ({kind}): 'over' and 'items' are mutually exclusive list sources"
+        )
+    if step.over is not None:
+        try:
+            source = evaluate_expr(step.over, context)
+        except ExprEvalError as exc:
+            raise PipelineExecutionError(
+                f"step {label} ({kind}) 'over' failed: {exc}"
+            ) from exc
+    elif step.items is not None:
+        source = list(step.items)
+    else:
+        source = context["pipe"]
+    if not isinstance(source, list):
+        raise PipelineExecutionError(
+            f"step {label} ({kind}) list source resolved to a "
+            f"{type(source).__name__}, not a list"
+        )
+    return source
+
+
+def _for_each_results(
+    completed_step_results: "dict[str, Any]", label: str, n: int,
+) -> "list[Any]":
+    """Build ``collect``'s ORDERED input list from the recorded per-item results,
+    FILTERING OUT dropped markers (:func:`_is_dropped_marker`). The ONE shared
+    filter used identically live (all items just landed) AND on resume-replay
+    (all item keys read back from a snapshot) — so a dropped item is excluded
+    from ``collect``'s input exactly the same way both times. Every index in
+    ``range(n)`` MUST have a key by the time this runs (the coordinator only
+    reaches ``collect`` once all items are present)."""
+    out: "list[Any]" = []
+    for item_idx in range(n):
+        value = completed_step_results[f"{label}.for_each.{item_idx}"]
+        if _is_dropped_marker(value):
+            continue
+        out.append(value)
+    return out
+
+
+async def _run_for_each_step(inv: "_StepInvocation") -> "tuple[Any, bool, dict[str, Any]]":
+    """The CONCURRENT fan-out runner (S5-bounded) — ``fold``'s parallel sibling.
+
+    Resolve the list source, then a SINGLE coordinator coroutine fans ``do`` out
+    over the items via ``asyncio.as_completed`` gated by a ``Semaphore`` (S5 guard
+    a), recording each item's result AS IT LANDS (only the coordinator ever calls
+    the real ``record`` — item tasks use a NO-OP recorder, so there is no
+    concurrent read-modify-write race on ``completed_step_results``; see the
+    module docstring's "commit unit = the ITEM"). ``on_error`` decides an item
+    failure: ``continue`` records a DROPPED kind-marker (so resume never re-runs
+    it); ``retry(n)`` re-runs the item up to ``n`` more times then falls back to
+    ``abort``; ``abort`` cancels the still-pending items and fails the step (the
+    already-landed items stay durably recorded, so a resume after an abort-crash
+    skips them). After every item index has a key, ``collect`` runs ONCE over the
+    filtered ordered results and its result is this step's N2 return value.
+
+    S5 guards: (a) the ``Semaphore`` caps live concurrency; (b) ``fan_out_depth``
+    is +1'd through ``_RunDeps`` into every item/collect sub-scope, failing the
+    step if it would exceed ``max_fan_out_depth``; (c) each ``AgentStep`` reached
+    below charges the shared per-run :class:`SpawnBudget`."""
+    step: ForEachStep = inv.step  # type: ignore[assignment]
+    deps = inv.deps
+    context = inv.context
+    label = inv.step_label
+    completed = inv.completed_step_results
+
+    # Full-completion replay: if collect already ran (its key is present) the whole
+    # for_each is done — replay its N2 result, execute nothing.
+    collect_key = f"{label}.for_each.collect"
+    if collect_key in completed:
+        return completed[collect_key], False, completed
+
+    source = _resolve_list_source(step, context, label, "for_each")
+    n = len(source)
+    on_err = _parse_on_error(step.on_error)
+
+    # S5 guard (b): entering this for_each deepens the fan-out nesting by one.
+    next_depth = deps.fan_out_depth + 1
+    if deps.max_fan_out_depth and next_depth > deps.max_fan_out_depth:
+        raise PipelineExecutionError(
+            f"step {label} (for_each) fan-out depth {next_depth} exceeds the "
+            f"operator cap {deps.max_fan_out_depth} (S5 depth guard) — a for_each "
+            "nested deeper than allowed fails the step rather than spawning"
+        )
+    # Same spawn_budget by reference (guard c is per-run, not per-branch); only the
+    # per-branch fan_out_depth is bumped. Threaded into every item task AND collect.
+    child_deps = replace(deps, fan_out_depth=next_depth)
+
+    outer_stores = context["ctx"]
+    outer_pipe = context["pipe"]
+
+    async def _noop_record(**_kw: Any) -> None:
+        # Item tasks NEVER record: only the single coordinator does (serialized),
+        # so concurrent items cannot race the read-modify-write of the snapshot.
+        return None
+
+    async def _run_item(item_idx: int, item: Any) -> "tuple[int, Any, bool, Exception | None]":
+        # Retry(n) re-runs INSIDE the same task (same semaphore slot — a retry
+        # does not raise live concurrency). Any Exception is an item failure
+        # (CancelledError is BaseException, so it is NOT swallowed here — an
+        # abort-cancel propagates out and the task is gathered in the finally).
+        attempts = 1 + (on_err.retries if on_err.kind == "retry" else 0)
+        last_exc: "Exception | None" = None
+        for _attempt in range(attempts):
+            item_ctx = {"ctx": dict(outer_stores), "pipe": outer_pipe, "item": item}
+            runner = STEP_DISPATCH.get(type(step.do))
+            if runner is None:  # pragma: no cover - Step is a closed union
+                raise PipelineExecutionError(f"unknown step type: {step.do!r}")
+            do_inv = _StepInvocation(
+                executor=inv.executor, step=step.do, context=item_ctx,
+                step_label=f"{label}.for_each.{item_idx}", deps=child_deps,
+                completed_step_results=completed, record=_noop_record,
+            )
+            try:
+                result, durable, _ = await runner(do_inv)
+                return item_idx, result, durable, None
+            except Exception as exc:  # noqa: BLE001 - item-failure boundary (on_error policy)
+                last_exc = exc
+        return item_idx, None, False, last_exc
+
+    # Only items whose key is ABSENT run (resume re-runs exactly the absent ones;
+    # a present success key replays, a present dropped-marker stays dropped).
+    pending = [i for i in range(n) if f"{label}.for_each.{i}" not in completed]
+    any_durable = False
+    if pending:
+        effective_max_parallel = step.max_parallel or min(len(pending), _DEFAULT_MAX_PARALLEL)
+        sem = asyncio.Semaphore(effective_max_parallel)
+
+        async def _gated(item_idx: int, item: Any) -> "tuple[int, Any, bool, Exception | None]":
+            async with sem:
+                return await _run_item(item_idx, item)
+
+        tasks = [asyncio.create_task(_gated(i, source[i])) for i in pending]
+        try:
+            for fut in asyncio.as_completed(tasks):
+                item_idx, result, durable, exc = await fut
+                key = f"{label}.for_each.{item_idx}"
+                if exc is None:
+                    completed = {**completed, key: result}
+                    any_durable = any_durable or durable
+                    await inv.record(completed_step_results=completed, durable=durable)
+                elif on_err.kind == "continue":
+                    # DROP the failed item: record a kind-marker (NOT absent — else
+                    # resume re-runs it forever; NOT bare None — a legit result).
+                    completed = {
+                        **completed,
+                        key: {_FAN_OUT_DROPPED_KEY: True, "error": str(exc)},
+                    }
+                    any_durable = True  # a drop MUST survive to resume (awaited-durable)
+                    await inv.record(completed_step_results=completed, durable=True)
+                else:
+                    # abort (incl. retry(n) exhausted): the landed items above are
+                    # already durably recorded; fail the step now.
+                    raise PipelineExecutionError(
+                        f"step {label} (for_each) item {item_idx} failed "
+                        f"(on_error={step.on_error!r}): {exc}"
+                    ) from exc
+        finally:
+            # Never leave orphaned live fan-out tasks (an abort-raise cancels the
+            # still-pending items; a clean finish finds them all already done).
+            for task in tasks:
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+
+    # collect runs ONCE over the ordered surviving results (dropped filtered out).
+    results_list = _for_each_results(completed, label, n)
+    collect_ctx = {"ctx": outer_stores, "pipe": results_list}
+    collect_runner = STEP_DISPATCH.get(type(step.collect))
+    if collect_runner is None:  # pragma: no cover - Step is a closed union
+        raise PipelineExecutionError(f"unknown step type: {step.collect!r}")
+    collect_inv = _StepInvocation(
+        executor=inv.executor, step=step.collect, context=collect_ctx,
+        step_label=collect_key, deps=child_deps,
+        completed_step_results=completed, record=inv.record,
+    )
+    collect_result, collect_durable, completed = await collect_runner(collect_inv)
+    completed = {**completed, collect_key: collect_result}
+    any_durable = any_durable or collect_durable
+    await inv.record(completed_step_results=completed, durable=collect_durable)
+    return collect_result, any_durable, completed
+
+
 # Dispatch table: step dataclass type -> its runner. A future primitive ADDS an
 # entry here (+ serde/parser/analyzer) rather than editing a shared elif chain.
 STEP_DISPATCH: "dict[type, Callable[[_StepInvocation], Awaitable[tuple[Any, bool, dict[str, Any]]]]]" = {
@@ -730,6 +1111,7 @@ STEP_DISPATCH: "dict[type, Callable[[_StepInvocation], Awaitable[tuple[Any, bool
     CallStep: _run_call_step,
     MatchStep: _run_match_step,
     FoldStep: _run_fold_step,
+    ForEachStep: _run_for_each_step,
 }
 
 # Type -> kind-string, the inverse vocabulary the serde ``kind`` marker uses.
@@ -740,6 +1122,7 @@ _STEP_KINDS: "dict[type, str]" = {
     CallStep: "call",
     MatchStep: "match",
     FoldStep: "fold",
+    ForEachStep: "for_each",
 }
 
 
@@ -768,6 +1151,8 @@ class PipelineExecutor:
         pipeline_registry: "PipelineRegistry | None" = None,
         events: "EventLog | None" = None,
         cancel_check: "Callable[[], bool] | None" = None,
+        max_fan_out_depth: "int | None" = None,
+        max_pipeline_spawns: "int | None" = None,
     ) -> PipelineResult:
         """Run `pipeline` from the first step. `initial_context` seeds the named
         stores (``ctx.*``) available to the first step; there is no incoming pipe
@@ -779,7 +1164,14 @@ class PipelineExecutor:
 
         `events` / `cancel_check` (IS-6) behave as documented on the module: an
         attached caller renders live progress from `events`, and a True
-        `cancel_check` at a step boundary raises :class:`PipelineCancelled`."""
+        `cancel_check` at a step boundary raises :class:`PipelineCancelled`.
+
+        `max_fan_out_depth` / `max_pipeline_spawns` are the S5 fan-out spawn caps
+        (guards b/c). Both default to conservative finite module constants when
+        omitted (NEVER unbounded-by-omission); the operator wires reyn.yaml's
+        ``safety.spawn.*`` values here via the driver. ``0`` = unlimited (opt-out).
+        Deliberately decoupled from `registry`: a `for_each` needs its caps even
+        with no `AgentStep` (so no `registry`) in the pipeline."""
         named_stores: "dict[str, Any]" = dict(initial_context) if initial_context else {}
         return await self._run_from(
             pipeline,
@@ -796,6 +1188,8 @@ class PipelineExecutor:
             pipeline_registry=pipeline_registry,
             events=events,
             cancel_check=cancel_check,
+            max_fan_out_depth=max_fan_out_depth,
+            max_pipeline_spawns=max_pipeline_spawns,
         )
 
     async def resume(
@@ -811,6 +1205,8 @@ class PipelineExecutor:
         pipeline_registry: "PipelineRegistry | None" = None,
         events: "EventLog | None" = None,
         cancel_check: "Callable[[], bool] | None" = None,
+        max_fan_out_depth: "int | None" = None,
+        max_pipeline_spawns: "int | None" = None,
     ) -> PipelineResult:
         """Resume `run_id`: load the latest recorded generation (R4) and replay every
         step already in ``completed_step_results`` (no re-execution — exactly-once).
@@ -837,6 +1233,8 @@ class PipelineExecutor:
                 pipeline_registry=pipeline_registry,
                 events=events,
                 cancel_check=cancel_check,
+                max_fan_out_depth=max_fan_out_depth,
+                max_pipeline_spawns=max_pipeline_spawns,
             )
         return await self._run_from(
             pipeline,
@@ -853,6 +1251,8 @@ class PipelineExecutor:
             pipeline_registry=pipeline_registry,
             events=events,
             cancel_check=cancel_check,
+            max_fan_out_depth=max_fan_out_depth,
+            max_pipeline_spawns=max_pipeline_spawns,
         )
 
     async def _run_from(
@@ -872,7 +1272,20 @@ class PipelineExecutor:
         pipeline_registry: "PipelineRegistry | None" = None,
         events: "EventLog | None" = None,
         cancel_check: "Callable[[], bool] | None" = None,
+        max_fan_out_depth: "int | None" = None,
+        max_pipeline_spawns: "int | None" = None,
     ) -> PipelineResult:
+        # S5 caps: default to conservative finite constants when the caller omits
+        # them (never unbounded-by-omission). ``0`` (an explicit operator opt-out)
+        # is preserved as unlimited by the guards. The SpawnBudget is constructed
+        # ONCE here — this is the single funnel both run() and resume() reach — and
+        # shared by reference through every nested scope's _RunDeps (guard c).
+        eff_max_depth = (
+            _DEFAULT_MAX_FAN_OUT_DEPTH if max_fan_out_depth is None else max_fan_out_depth
+        )
+        eff_max_spawns = (
+            _DEFAULT_MAX_PIPELINE_SPAWNS if max_pipeline_spawns is None else max_pipeline_spawns
+        )
         deps = _RunDeps(
             tool_dispatch=tool_dispatch,
             state_log=state_log,
@@ -883,6 +1296,9 @@ class PipelineExecutor:
             pipeline_registry=pipeline_registry,
             events=events,
             cancel_check=cancel_check,
+            fan_out_depth=0,
+            max_fan_out_depth=eff_max_depth,
+            spawn_budget=SpawnBudget(eff_max_spawns),
         )
         steps = pipeline.steps
         total_steps = len(steps)
@@ -1023,6 +1439,8 @@ __all__ = [
     "MatchCase",
     "MatchStep",
     "FoldStep",
+    "ForEachStep",
+    "SpawnBudget",
     "Step",
     "Pipeline",
     "PipelineResult",
