@@ -155,8 +155,7 @@ accepting the prompts, or by granting in `reyn.yaml`:
 
 ```yaml
 permissions:
-  python.safe: allow
-  python.unsafe: allow   # also requires --allow-unsafe-python at runtime
+  python.safe: allow   # python steps are always sandboxed (safe mode only)
 ```
 
 Without prior approval a task fails and is reported as not-finished. See the

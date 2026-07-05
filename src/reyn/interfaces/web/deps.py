@@ -126,10 +126,6 @@ def _get_perm_resolver():
         root = _get_project_root()
         # Copy so the #1401 grant setdefault below never mutates the shared config.
         perm_config = dict(getattr(config, "permissions", {}) or {})
-        # Mirror the CLI path: unsafe python steps require an explicit opt-in.
-        # In the web gateway (non-interactive) the equivalent of --allow-unsafe-python
-        # is python.unsafe: allow in reyn.yaml / reyn.local.yaml permissions.
-        unsafe_python_allowed = perm_config.get("python.unsafe") == "allow"
         # #1401: --grant-file-write grants file.read/write at the resolver layer
         # (mirrors `reyn chat`/run.py/eval). Bounded by the sandbox write_paths ∩
         # the env-backend repo zone. setdefault preserves explicit operator config.
@@ -146,7 +142,6 @@ def _get_perm_resolver():
             # Web gateway: non-interactive. Permission prompts become denials
             # unless pre-approved in reyn.yaml / .reyn/approvals.yaml.
             interactive=False,
-            unsafe_python_allowed=unsafe_python_allowed,
         )
     return _perm_resolver
 

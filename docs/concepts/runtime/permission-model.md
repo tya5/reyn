@@ -312,14 +312,10 @@ The execution surfaces that perform side-effects, ordered by enforcement strengt
 │    OS-kernel enforcement (Seatbelt / Landlock / Seccomp)         │
 │    argv-scoped, network-scoped, fs-scoped per-call               │
 ├──────────────────────────────────────────────────────────────────┤
-│  safe-mode python step (FP-0042)                                 │
+│  python step (always safe; FP-0042)                             │
 │    AST validation (= rejects `import os` at compile-time)        │
 │    + reyn.api.safe.* honor-system path checks at function call   │
 │    NOT kernel-sandboxed; subprocess runs with full user UID      │
-├──────────────────────────────────────────────────────────────────┤
-│  unsafe-mode python step                                         │
-│    No gate after the `--allow-unsafe-python` opt-in              │
-│    Trusted-by-declaration: author asserts the step is safe       │
 ├──────────────────────────────────────────────────────────────────┤
 │  reyn package internal code (op handlers, registry client)       │
 │    Uses the same `reyn.api.safe.*` primitives as skill code,     │
@@ -329,8 +325,7 @@ The execution surfaces that perform side-effects, ordered by enforcement strengt
 
 - **Top (sandboxed_exec)** is the only layer with OS-kernel enforcement. argv / network / fs scope is declarative per call and enforced by the platform sandbox.
 - **Internal OS code** uses the same `reyn.api.safe.*` primitives as workflow code, against the calling workflow's PermissionDecl. There is no inside/outside split — the OS exercises its own permission mechanism uniformly.
-- **Safe-mode python** is honor-system: AST validation prevents `import os`, and `reyn.api.safe.*` checks declared paths / hosts / keys. A motivated user with `mode: unsafe` access can bypass; a non-motivated `mode: safe` author cannot accidentally bypass via normal coding patterns.
-- **Unsafe-mode python** is trust-by-declaration: the operator approves `--allow-unsafe-python` at runtime and accepts that the step has full host access.
+- **Python steps** are always safe-mode and honor-system: AST validation prevents `import os`, and `reyn.api.safe.*` checks declared paths / hosts / keys. A non-motivated author cannot accidentally bypass via normal coding patterns; a motivated author using metaprogramming still can, so the real boundary is the subprocess isolation + the permission gate on the `run_op` / `reyn.api.safe.*` surfaces. There is no unsandboxed mode: a `mode: unsafe` declaration is rejected at load. A step that genuinely needs raw host access splits that I/O into a `run_op`.
 
 ### Sandbox scoping model (sandboxed_exec)
 
@@ -404,18 +399,19 @@ This unifies the two HTTP surfaces (`safe.http` workflow-internal + `web_fetch` 
 
 ## `python` permission and `mode: safe` allowlist
 
-The `python` permission has two levels:
+Python steps are always sandboxed. The `python` permission has one level:
 
 | Level | Config key | What it allows |
 |-------|-----------|----------------|
 | `safe` | `python.safe: allow` | Steps that import only from `PURE_STDLIB_ALLOWLIST` — clock, entropy, pure compute, and `__future__` (compiler directive). No filesystem, network, or process access. |
-| `unsafe` | `python.unsafe: allow` | Steps that may import any module, including filesystem and network. |
 
 `PURE_STDLIB_ALLOWLIST` is defined in `src/reyn/core/kernel/_python_allowlist.py`. `__future__` is in the list as a compiler directive — it carries no runtime capability.
 
-**Non-interactive auto-allow**: in a non-interactive context (no intervention bus wired), both `mode: safe` and `mode: unsafe` python steps are auto-allowed without a prompt. This mirrors the same non-interactive behavior already in place for other ops in CI runs.
+There is no unsandboxed level: a step declaring `mode: unsafe` is rejected at load with an actionable error. A step that needs raw host access (filesystem, network, process spawning) splits that I/O out into a `run_op` step — which carries its own permission gate and event-log entry.
 
-**The formal contract for `mode: safe`** (= "ambient sources only") covers the full allowlist rationale, the safe-vs-unsafe auto-allow rules by context, and the refactor pattern for converting unsafe steps to safe.
+**Non-interactive auto-allow**: in a non-interactive context (no intervention bus wired), safe-mode python steps are auto-allowed without a prompt. This mirrors the same non-interactive behavior already in place for other ops in CI runs.
+
+**The formal contract for `mode: safe`** (= "ambient sources only") covers the full allowlist rationale and the refactor pattern for splitting raw I/O out into a `run_op` step.
 
 ## Credential scoping (removed trigger point)
 
@@ -543,7 +539,7 @@ See [reyn-yaml § safety.spawn](../../reference/config/reyn-yaml.md#safetyspawn-
 
 ## What the permission system is NOT
 
-- **Not a Linux capability sandbox.** A Python step in `mode: unsafe` runs as the same user; reyn doesn't sandbox the kernel.
+- **Not a Linux capability sandbox.** A Python step's subprocess runs as the same user; the AST allowlist is honor-system, and reyn doesn't sandbox the kernel (that layer is `sandboxed_exec`).
 - **Not a secret keeper.** Don't put credentials in approvals.yaml or rely on permissions to hide environment variables. Use [Concepts: secret handling](../runtime/secret-handling.md) for credentials.
 - **Not protection against the user.** If you `permissions: shell: allow` in reyn.yaml, you've authorized shell. The system is protecting against accidental capability creep, not user intent.
 

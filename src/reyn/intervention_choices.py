@@ -34,22 +34,12 @@ def shell_hook_choices() -> list[InterventionChoice]:
 
     No `NEVER`: the shell-hook allowlist persists approvals only (there is no
     persistent-deny entry), so `ALWAYS` records to the allowlist and a plain
-    `[n]o` skips this run without persisting. Mirrors the python-preprocessor
-    yes/always/no shape.
+    `[n]o` skips this run without persisting.
     """
     return [
         InterventionChoice(id=YES, label="[y]es", hotkey="y"),
         InterventionChoice(id=ALWAYS, label="[A]lways", hotkey="A"),
         InterventionChoice(id=NO, label="[n]o", hotkey="n"),
-    ]
-
-
-def python_choices() -> list[InterventionChoice]:
-    """`[y]es / [A]lways / [N]o` for python preprocessor approval (no NEVER)."""
-    return [
-        InterventionChoice(id=YES, label="[y]es", hotkey="y"),
-        InterventionChoice(id=ALWAYS, label="[A]lways", hotkey="A"),
-        InterventionChoice(id=NO, label="[N]o", hotkey="N"),
     ]
 
 
@@ -99,6 +89,5 @@ __all__ = [
     "elicitation_gate_choices",
     "file_access_choices",
     "generic_yn_choices",
-    "python_choices",
     "shell_hook_choices",
 ]

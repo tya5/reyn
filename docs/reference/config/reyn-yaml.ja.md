@@ -526,8 +526,7 @@ permissions:
     read:  [".reyn/", "src/stdlib/"]
     write: [".reyn/state/", "reyn/local/"]
   python:
-    safe:    allow      # safe モードの python ステップのデフォルト
-    unsafe:  deny       # unsafe モードには --allow-unsafe-python も必要
+    safe:    allow      # python ステップは常にサンドボックス化（safe モードのみ）
     allowed_modules:
       - math
       - statistics
@@ -967,7 +966,7 @@ python:
 |-------|------|---------|-------------|
 | `allowed_modules` | list[string] | `[]` | セーフモード Python preprocessor ステップが組み込み stdlib 許可リストに加えてインポートできる追加モジュール名。内部で I/O を行うライブラリ（例: `pandas`、`requests`）はセーフモードのサンドボックスを無効化します — 慎重に管理してください。 |
 
-> unsafe Python ステップ（preprocessor フロントマターの `mode: unsafe`）はこのリストで制限されず、ランタイムで `--allow-unsafe-python` も必要です。完全な Permission 文法は [Reference: permissions](permissions.md) を参照してください。
+> Python ステップは常にサンドボックス化されます。`mode: unsafe` の宣言はロード時に拒否されます — 生の I/O は `run_op` ステップに分離するか、permission でゲートされた `reyn.api.safe.*` サーフェスを使用してください。完全な Permission 文法は [Reference: permissions](permissions.md) を参照してください。
 
 ## `multimodal` ブロック
 

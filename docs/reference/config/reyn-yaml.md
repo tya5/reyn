@@ -913,8 +913,7 @@ permissions:
     read:  [".reyn/", "src/stdlib/"]
     write: [".reyn/state/", "reyn/local/"]
   python:
-    safe:    allow      # default for safe-mode python steps
-    unsafe:  deny       # unsafe mode also requires --allow-unsafe-python
+    safe:    allow      # python steps are always sandboxed (safe mode only)
     allowed_modules:
       - math
       - statistics
@@ -1419,7 +1418,7 @@ python:
 |-------|------|---------|-------------|
 | `allowed_modules` | list[string] | `[]` | Additional module names that safe-mode Python preprocessor steps may import, on top of the built-in stdlib allowlist. Libraries with internal I/O (e.g. `pandas`, `requests`) defeat safe-mode sandboxing — curate carefully. |
 
-> Unsafe Python steps (`mode: unsafe` in the preprocessor frontmatter) are not restricted by this list and also require `--allow-unsafe-python` at runtime. See [Reference: permissions](permissions.md) for the full permission grammar.
+> Python steps are always sandboxed. A `mode: unsafe` declaration is rejected at load — split raw I/O out via a `run_op` step, or use the permission-gated `reyn.api.safe.*` surface. See [Reference: permissions](permissions.md) for the full permission grammar.
 
 ## `multimodal` block
 

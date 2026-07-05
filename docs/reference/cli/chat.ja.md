@@ -32,7 +32,6 @@ chat 固有のフラグ:
 | `--reset` | オフ | 起動前に進行中 Skill ステート（スナップショット + WAL）を消去。`.reyn/events/` の監査ログは保持されます。 |
 | `--banner` | オフ | ASCII アートの起動バナー（グラデーション REYN ロゴ + agent/モデル情報）を表示。 |
 | `--eager-embedding-build` | オフ | 初回ターンでアクション埋め込みインデックスのビルドを同期的に待機（1 回のみ約 2〜5 秒）。`search_actions` を即時利用可能にする。 |
-| `--allow-unsafe-python` | オフ | `mode: unsafe` の Python preprocessor ステップを有効化。`--allow-untrusted-python` はレガシーエイリアス。 |
 
 ## agent Workspace
 

@@ -390,7 +390,6 @@ def run_serve(args: argparse.Namespace) -> None:
         config_permissions=perm_config,
         project_root=project_root,
         interactive=False,
-        unsafe_python_allowed=False,
     )
 
     project_context = load_project_context(session_cfg.config, project_root)
@@ -712,7 +711,6 @@ def _run_install_from_source(
         config_permissions=perm_config,
         project_root=project_root,
         interactive=not non_interactive and sys.stdin.isatty(),
-        unsafe_python_allowed=True,  # OS-level install path, no user python step code
     )
 
     events = EventLog()

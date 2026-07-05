@@ -185,7 +185,6 @@ async def _get_or_build_registry() -> "AgentRegistry":
             config_permissions=perm_config,
             project_root=project_root,
             interactive=True,
-            unsafe_python_allowed=False,
         )
 
         project_context = load_project_context(session_cfg.config, project_root)

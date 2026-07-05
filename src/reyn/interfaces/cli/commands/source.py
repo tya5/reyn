@@ -206,7 +206,6 @@ async def _cmd_rm_async(args: argparse.Namespace) -> int:
         config_permissions=perm_config,
         project_root=_find_project_root_safe(workspace_root),
         interactive=sys.stdin.isatty(),
-        unsafe_python_allowed=False,
     )
 
     # #571 collapse arc Phase 5: explicit list axis replaces the

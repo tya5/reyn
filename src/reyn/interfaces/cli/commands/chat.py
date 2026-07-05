@@ -91,18 +91,6 @@ def register(sub) -> None:
             "Asks for confirmation before deleting."
         ),
     )
-    # FP-0014: --allow-untrusted-python renamed → --allow-unsafe-python.
-    # Both flags target the same dest so legacy invocations keep working
-    # during the Track A → B transition.
-    p.add_argument(
-        "--allow-unsafe-python", "--allow-untrusted-python",
-        dest="allow_unsafe_python",
-        action="store_true",
-        help=(
-            "Enable unsafe-mode Python preprocessor steps (no AST sandboxing). "
-            "Safe-mode python steps run without this flag. Off by default."
-        ),
-    )
     # #187: scoped file grant for the agent, symmetric with `reyn run
     # --grant-file-write` (run.py:85). Grants file.read/file.write at the
     # resolver layer; the effective scope is bounded by the sandbox write_paths
@@ -336,7 +324,6 @@ def run(args: argparse.Namespace) -> None:
     if getattr(args, "grant_file_write", False):
         perm_config.setdefault("file.read", "allow")
         perm_config.setdefault("file.write", "allow")
-    unsafe_python = bool(getattr(args, "allow_unsafe_python", False))
     # #187: parse --exclude-tools (comma-separated tool names) → frozenset, threaded
     # to Session → the MAIN RouterLoop's exclude_tools (LLM-visible catalog filter).
     _exclude_tools = frozenset(
@@ -375,7 +362,6 @@ def run(args: argparse.Namespace) -> None:
         project_root=project_root,
         file_zone_root=ws_base_dir,
         interactive=sys.stdin.isatty(),
-        unsafe_python_allowed=unsafe_python,
     )
 
     def _session_factory(profile: AgentProfile):
