@@ -766,6 +766,16 @@ class AgentRegistry:
         ``agent_purged``) so rewind reconstructs the as-of-cut archived-state and
         honors the permanent purge (fork A). The ONE delete seam the action-layer
         callers (CLI / web + the spawn op) route through. Emit no-ops without a WAL."""
+        # #2597 S2a: close held MCP connections (Option C) for EVERY loaded session of
+        # this agent (main + any spawned sids still in memory) before ``self.remove``
+        # (sync) drops them from the in-memory map — ``remove`` has no async seam of
+        # its own, so this async wrapper is the teardown seam for the main session
+        # (mirrors ``remove_session``'s teardown for spawned sessions).
+        for sid in list(self._sessions.get(name, {}).keys()):
+            session = self._peek_session(name, sid)
+            aclose_mcp = getattr(session, "aclose_mcp_connections", None)
+            if callable(aclose_mcp):
+                await aclose_mcp()
         cascade_changes = self.remove(name, purge=purge)
         if self._state_log is not None:
             await self._state_log.append(
@@ -1907,6 +1917,15 @@ class AgentRegistry:
             quiesce = getattr(session, "await_quiescent", None)
             if callable(quiesce):
                 await quiesce()
+            # #2597 S2a: close any held MCP connections (Option C — persistent
+            # per-server connections opened for this session's lifetime) BEFORE the
+            # session drops out of the in-memory map below, so a dropped/rewound
+            # session doesn't leak an open subprocess/HTTP connection. A no-op for an
+            # ephemeral session (never populates the connection service) or a
+            # session built without one (getattr guard).
+            aclose_mcp = getattr(session, "aclose_mcp_connections", None)
+            if callable(aclose_mcp):
+                await aclose_mcp()
         for task_dict in (self._tasks, self._forward_tasks):
             task = task_dict.pop((name, sid), None)
             if task is not None:

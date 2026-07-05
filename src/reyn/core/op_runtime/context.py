@@ -20,6 +20,7 @@ if TYPE_CHECKING:
     from reyn.data.workspace.media_store import MediaStore
     from reyn.data.workspace.workspace import Workspace
     from reyn.llm.model_resolver import ModelResolver
+    from reyn.mcp.connection_service import MCPConnectionService
     from reyn.mcp.pool import MCPClientPool
     from reyn.security.permissions.permissions import PermissionDecl, PermissionResolver
     from reyn.security.sandbox import SandboxBackend
@@ -61,6 +62,13 @@ class OpContext:
     # in a possibly-different task → the cross-SDK-task cancel-scope crash). None outside an MCP
     # context (non-MCP ops never invoke the mcp handler).
     mcp_pool: "MCPClientPool | None" = None
+    # #2597 S2a: the session-owned held-open connection service (Option C — one
+    # persistent MCPClient per server, reused for the session's lifetime). When
+    # set, the mcp op handler prefers THIS over ``mcp_pool`` (pool-compatible
+    # ``get()`` — see connection_service.py). None for the ephemeral-session /
+    # one-shot-probe path, which intentionally keeps the per-call ``mcp_pool``
+    # (held connections would just churn for a sub-second-lived session).
+    mcp_connection_service: "MCPConnectionService | None" = None
     # FP-0016 Component E: agent identity for X-Reyn-Agent-Id header on
     # outgoing MCP / external HTTP calls. Plumbed from Session's
     # ReynConfig.agent.id (= `reyn/<hostname>` by default). None

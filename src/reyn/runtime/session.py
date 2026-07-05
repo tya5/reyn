@@ -1050,6 +1050,17 @@ class Session:
             except Exception:
                 self._action_usage_tracker = None
         self._mcp_servers = mcp_servers
+        # #2597 S2a: the session-owned held-open MCP connection service (Option C —
+        # one persistent MCPClient per server, reused across chat turns/tasks for
+        # this session's whole lifetime). Constructed unconditionally (cheap — an
+        # empty dict until first ``get()``); ONLY the non-ephemeral MCP call sites
+        # (_mcp_call_tool / _mcp_list_tools) route through it — an ephemeral session
+        # (``self._ephemeral`` set post-construction by the registry) keeps using the
+        # per-call MCPClientPool so a sub-second-lived session never holds a
+        # connection open. Closed at session teardown via aclose_mcp_connections
+        # (registry.remove_session / archive_agent's main-session path).
+        from reyn.mcp.connection_service import MCPConnectionService
+        self._mcp_connection_service = MCPConnectionService()
         self.output_language = output_language
         self._prompt_cache_enabled = prompt_cache_enabled
         self._project_context = project_context
@@ -5451,27 +5462,40 @@ class Session:
         # (open + list + teardown inside the contain-all boundary, a task-affine pool, a per-call
         # timeout) and raises ONLY MCPFault, never a bare BaseExceptionGroup. This is the owner's
         # Windows crash path: a server that dies mid-list can no longer escape as an uncontained
-        # group. A one-shot pool per call (no injected pool) — list is not batched across ops.
+        # group.
+        # #2597 S2a: a non-ephemeral session routes through its held-open connection service (Option
+        # C — no re-handshake on every list call); an ephemeral session keeps the pre-existing
+        # one-shot pool (no injected pool — list is not batched across ops), since holding a
+        # connection open for a sub-second-lived session is pure churn.
+        gateway = (
+            MCPGateway(pool=self._mcp_connection_service, agent_id=self._agent_id)
+            if not self._ephemeral
+            else MCPGateway(agent_id=self._agent_id)
+        )
         try:
-            return await MCPGateway(agent_id=self._agent_id).list_tools(server, expanded)
+            return await gateway.list_tools(server, expanded)
         except MCPFault as exc:
             return [{"error": str(exc)}]
 
     async def _mcp_call_tool(self, server: str, tool: str, args: dict) -> dict:
         """Invoke an MCP tool and return its result.
 
-        Close the per-call MCP clients in the same task that opened
-        them — the MCP SDK's ``stdio_client`` uses anyio cancel scopes
-        that are task-affine, and leaving them open until asyncio loop
-        teardown produces a "cancel scope crossed task boundary"
-        RuntimeError (= recurring crash on every chat session end
-        observed during the 2026-05-20 8-server smoke round).
+        #2597 S2a: a non-ephemeral session routes through its session-owned
+        ``MCPConnectionService`` (Option C) — the connection is opened ONCE and held
+        open for the rest of the session's lifetime (reused across chat turns/tasks;
+        the S2-pre spike proved this is cross-task-safe for a FastMCP client), closed
+        only at session teardown (``aclose_mcp_connections``, wired from
+        ``registry.remove_session`` / the main-session archive path).
 
-        Per-call open/close is fine for now: the chat router invokes
-        MCP tools individually and there's no value in caching across
-        unrelated tool calls. A future optimisation could pool clients
-        per-server within a single chat-turn act batch, but the same-
-        task-close discipline still applies.
+        An ephemeral session (``self._ephemeral``, set post-construction by the
+        registry) keeps the PRE-#2597 per-call ``MCPClientPool`` path below: close
+        the per-call MCP clients in the same task that opened them — the MCP SDK's
+        ``stdio_client`` uses anyio cancel scopes that are task-affine, and leaving
+        them open until asyncio loop teardown produces a "cancel scope crossed task
+        boundary" RuntimeError (= recurring crash on every chat session end observed
+        during the 2026-05-20 8-server smoke round). Holding a connection open for a
+        sub-second-lived ephemeral session is pure churn (F4 decision), so it keeps
+        opening + closing fresh per call.
         """
         from reyn.core.op_runtime import execute_op
         from reyn.schemas.models import MCPIROp
@@ -5491,6 +5515,9 @@ class Session:
             file_write=ctx.permission_decl.file_write,
             mcp=[server],
         )
+        if not self._ephemeral:
+            ctx.mcp_connection_service = self._mcp_connection_service
+            return await execute_op(op, ctx)
         # #a359 P2: a per-call structured pool — the client opens (pool.get in the op handler) AND
         # closes (pool __aexit__) in THIS task, and teardown faults (incl. BaseExceptionGroup) are
         # contained. Replaces the manual finally-close over ``ctx.mcp_clients`` (which closed a
@@ -5499,6 +5526,26 @@ class Session:
         async with MCPClientPool() as pool:
             ctx.mcp_pool = pool
             return await execute_op(op, ctx)
+
+    def mcp_held_servers(self) -> list[str]:
+        """Read-only introspection: names of MCP servers with a currently held-open
+        connection (#2597 S2a). Always ``[]`` for an ephemeral session (never
+        populates the connection service — see ``_mcp_call_tool``). Public surface
+        for callers/tests to observe connection-reuse/teardown without reaching into
+        ``_mcp_connection_service`` directly."""
+        return self._mcp_connection_service.held_servers()
+
+    async def aclose_mcp_connections(self) -> None:
+        """#2597 S2a teardown: close every held MCP connection this session opened.
+
+        Idempotent (``MCPConnectionService.aclose`` is idempotent). Called from the
+        registry's session-teardown seams (``remove_session`` for a spawned session;
+        ``archive_agent`` for the main session) — no new lifecycle owner, rides the
+        existing quiesce-then-teardown seam. Ephemeral sessions never populate the
+        service (they route MCP calls through the one-shot pool instead), so this is
+        a no-op for them.
+        """
+        await self._mcp_connection_service.aclose()
 
     # --- RouterLoop orchestration ---
 

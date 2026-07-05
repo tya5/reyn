@@ -25,10 +25,13 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import asynccontextmanager
-from typing import Any, Awaitable, Callable
+from typing import TYPE_CHECKING, Any, Awaitable, Callable
 
 from reyn.mcp.client import MCPClient
 from reyn.mcp.pool import MCPClientPool, describe_fault, is_real_control_flow
+
+if TYPE_CHECKING:
+    from reyn.mcp.connection_service import MCPConnectionService
 
 # Generous finite default (owner S3): a hung server must not wedge the run, but the default is
 # lenient; operators tighten per server via ``call_timeout_seconds`` (``<= 0`` opts out).
@@ -61,11 +64,22 @@ def resolve_call_timeout(config: dict) -> "float | None":
 class MCPGateway:
     """The one object that touches :class:`MCPClient`. All MCP ops (list / call / probe) run here.
 
-    Pass an existing ``pool`` to REUSE cached clients within a turn (op-call path); omit it for a
+    Pass an existing ``pool`` to REUSE cached clients across calls (op-call path); omit it for a
     one-shot op (list / probe) — the gateway opens and closes its own pool for that call.
+
+    ``pool`` accepts anything with a pool-compatible ``get(server, config, *, agent_id=None)``:
+    :class:`~reyn.mcp.pool.MCPClientPool` (per-turn, task-affine) or
+    :class:`~reyn.mcp.connection_service.MCPConnectionService` (#2597 S2a — held open for the
+    whole session, cross-task-safe). The gateway itself never constructs either; it only calls
+    ``get()`` on whatever the caller injects.
     """
 
-    def __init__(self, *, pool: "MCPClientPool | None" = None, agent_id: str | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        pool: "MCPClientPool | MCPConnectionService | None" = None,
+        agent_id: str | None = None,
+    ) -> None:
         self._injected_pool = pool
         self._agent_id = agent_id
 
