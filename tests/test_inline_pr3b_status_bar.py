@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from reyn.interfaces.inline.app import (
     _CHIP_SPECS,
+    _MENU_REGION_MAX_HEIGHT,
     _agent_expansion,
     _build_task_tree,
     _cost_expansion,
@@ -684,3 +685,29 @@ def test_task_rows_empty_tree_replacement_shows_fallback() -> None:
 
     tc["tree"] = []
     assert el.lines() == ["(no active tasks)"]
+
+
+# ---------------------------------------------------------------------------
+# _more_expansion overflow (the "…" chip dropdown "Window too small" bug)
+# ---------------------------------------------------------------------------
+
+
+def test_more_expansion_many_tools_exceeds_menu_region_cap() -> None:
+    """Tier 2: a real session's per-tool visibility list (one row per registered
+    tool, dozens in production — 76 observed live) produces MORE total lines than
+    _MENU_REGION_MAX_HEIGHT. Pins the exact scenario that made app.py's
+    dropdown_height() (unbounded Dimension.exact(len(menu_region.lines()))) crash
+    prompt_toolkit with "Window too small" for the "…" chip specifically — the
+    model/cost/agent/task chips' expansions never approach this size, so the bug
+    was invisible until a session with many registered tools opened "…". The fix
+    (menu_region.set_max_visible + windowed dropdown_frags/height, mirroring
+    above_region) lives in local closures inside run_inline_input and isn't
+    unit-testable directly; this pins the upstream content-volume precondition.
+    """
+    many_tools = [
+        {"kind": "tool", "name": f"tool_{i}", "on": True} for i in range(76)
+    ]
+    snap = _snap(visibility_items=many_tools)
+    result = _more_expansion(snap, lambda _: None)
+    total_lines = sum(len(el.lines()) for el in result)
+    assert total_lines > _MENU_REGION_MAX_HEIGHT
