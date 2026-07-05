@@ -600,7 +600,7 @@ messages.
 ```yaml
 hooks:
   - name: next_step              # optional → the [hook:next_step] attribution (absent → the point)
-    on: turn_end                 # turn_start|turn_end|session_start|session_end|skill_start|skill_end|task_start|task_end
+    on: turn_end                 # turn_start|turn_end|session_start|session_end|task_start|task_end
     template_push:
       message: "Turn complete — consider the next step."
       wake: false                # false = passive context (C); true = start a turn (E)
@@ -614,7 +614,7 @@ hooks:
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `on` | string | _required_ | Lifecycle point: `turn_start`, `turn_end`, `session_start`, `session_end`, `skill_start`, `skill_end`, `task_start`, `task_end`. |
+| `on` | string | _required_ | Lifecycle point: `turn_start`, `turn_end`, `session_start`, `session_end`, `task_start`, `task_end`. |
 | `name` | string | _the point_ | Optional operator label surfaced as the `[hook:<name>]` attribution prefix on a push. Absent → defaults to the hook-point (e.g. `[hook:turn_end]`). |
 | `template_push` | map | _none_ | Inbox-push hook from a Jinja2 template (one of the three schemes). `message` (Jinja2 → text), `wake` (bool/Jinja2, default `true`: `true` starts a new turn = self-continuation; `false` rides along with the next turn as passive context), `push_when` (Jinja2 → bool, default `true`; `false` skips), `session` (parsed + carried forward-compat; cross-session routing is **not yet wired** — a no-op today, tracked follow-up). |
 | `shell_exec` | string | _none_ | A shell command run as a pure side-effect (one of the three schemes). Sandbox-gated + consent-allowlisted; stdout/stderr are logs, never parsed. |

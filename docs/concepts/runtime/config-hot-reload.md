@@ -114,7 +114,7 @@ seam.
 
 | Parameter | Required | Description |
 |-----------|----------|-------------|
-| `on` | yes | Lifecycle point: `turn_start`, `turn_end`, `session_start`, `session_end`, `skill_start`, `skill_end`, `task_start`, `task_end` |
+| `on` | yes | Lifecycle point: `turn_start`, `turn_end`, `session_start`, `session_end`, `task_start`, `task_end` |
 | `message` | yes | Push message (Jinja2 template allowed) |
 | `wake` | no | `true` → starts a new turn (self-continuation, bounded by `safety.loop.max_hook_driven_turns`); `false` → rides along as context with the next turn. Default `true`. |
 | `push_when` | no | Jinja2 → bool guard; the push is skipped when this renders false. |
