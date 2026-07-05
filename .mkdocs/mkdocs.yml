@@ -92,6 +92,7 @@ nav:
               - guide/for-users/popular-mcp-servers.md
               - guide/for-users/oauth-login.md
               - guide/for-users/manage-memory.md
+              - guide/for-users/write-a-pipeline.md
       - For Reyn developers:
           - guide/for-reyn-developers/index.md
           - Concepts & principles:
@@ -139,6 +140,7 @@ nav:
           - reference/runtime/llm-output-contract.md
           - reference/runtime/control-ir.md
           - reference/runtime/events.md
+          - reference/runtime/pipeline-dsl.md
       - Config:
           - Core:
               - reference/config/reyn-yaml.md
@@ -180,6 +182,8 @@ nav:
           - concepts/runtime/delegation-policy.md
           - concepts/runtime/sandbox.md
           - concepts/runtime/secret-handling.md
+          - concepts/runtime/pipelines.md
+          - concepts/runtime/pipeline-registration.md
       - Multi-agent:
           - concepts/multi-agent/sessions.md
           - concepts/multi-agent/multi-agent.md
