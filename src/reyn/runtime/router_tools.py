@@ -3,7 +3,7 @@
 Public API
 ----------
 build_tools(available_agents, *, file_permissions, mcp_servers)
-    Returns 14–23 tools in fixed order for litellm.acompletion.
+    Returns 14–30 tools in fixed order for litellm.acompletion.
 
 Gemini-safe schema rules enforced throughout:
 - No oneOf / anyOf / additionalProperties / format keys
@@ -212,7 +212,7 @@ def build_tools(
 ) -> list[dict]:
     """Build the tools= argument for litellm.acompletion.
 
-    Returns 14–23 tools in fixed order (Anthropic prompt cache compatibility).
+    Returns 14–30 tools in fixed order (Anthropic prompt cache compatibility).
     Tool order matches the plan's canonical ordering:
       A1 list_agents, A2 describe_agent,
       A3 list_memory, A4 read_memory_body,
@@ -220,7 +220,11 @@ def build_tools(
       B2 remember_shared, B3 remember_agent, B4 forget_memory,
       C1 list_directory, C2 read_file (when any file scope),
       C3 write_file, C4 delete_file (only when write scope),
-      D1 list_mcp_servers, D2 list_mcp_tools, D3 call_mcp_tool, D4 describe_mcp_tool (when mcp configured).
+      D1 list_mcp_servers, D2 list_mcp_tools, D3 call_mcp_tool, D4 describe_mcp_tool,
+      D5 list_mcp_resources, D6 list_mcp_resource_templates, D7 read_mcp_resource,
+      D8 subscribe_mcp_resource, D9 unsubscribe_mcp_resource,
+      D10 list_mcp_prompts, D11 get_mcp_prompt (all D1–D11 when mcp configured,
+      #2597 slices ②a/②b/②c).
 
     Internally collects ToolSpec objects (= single source of truth for name,
     description, parameters, dispatch_kind) and returns the OpenAI dict shape
@@ -714,6 +718,113 @@ def build_tools(
                     description=_describe_mcp_tool_rendered["function"]["description"],
                     parameters=_describe_mcp_tool_rendered["function"]["parameters"],
                     dispatch_kind=_describe_mcp_tool_def.dispatch_kind,
+                ))
+
+            # ── #2597 slice ②a/②b/②c fix: D5–D11 resources/prompts/subscribe ──
+            #
+            # BUG: list_mcp_resources, list_mcp_resource_templates,
+            # read_mcp_resource, subscribe_mcp_resource,
+            # unsubscribe_mcp_resource, list_mcp_prompts, get_mcp_prompt were
+            # registered in get_default_registry() with gates.router="allow"
+            # and fully dispatchable, but had ZERO entries in build_tools() —
+            # the same "registered + dispatchable but never advertised" class
+            # of bug as #2589 (pipelines) and the #2120 session_spawn drift
+            # (see the B2b comment above). A real chat agent could never
+            # discover or call these seven verbs. All seven take a `server`
+            # arg (per tools/mcp.py's *_PARAMETERS dicts) and declare
+            # schema_enricher=_enrich_router_schema, so — exactly like D3/D4
+            # — they are rendered with the shared `_mcp_state` for the
+            # per-call `server` enum injection.
+
+            # ── D5: list_mcp_resources ───────────────────────────────────────
+            _list_mcp_resources_def = _registry.lookup("list_mcp_resources")
+            if _list_mcp_resources_def is not None and _list_mcp_resources_def.gates.router == "allow":
+                _list_mcp_resources_rendered = _list_mcp_resources_def.render_for_router(
+                    state=_mcp_state
+                )
+                specs.append(ToolSpec(
+                    name=_list_mcp_resources_rendered["function"]["name"],
+                    description=_list_mcp_resources_rendered["function"]["description"],
+                    parameters=_list_mcp_resources_rendered["function"]["parameters"],
+                    dispatch_kind=_list_mcp_resources_def.dispatch_kind,
+                ))
+
+            # ── D6: list_mcp_resource_templates ──────────────────────────────
+            _list_mcp_resource_templates_def = _registry.lookup("list_mcp_resource_templates")
+            if _list_mcp_resource_templates_def is not None and _list_mcp_resource_templates_def.gates.router == "allow":
+                _list_mcp_resource_templates_rendered = _list_mcp_resource_templates_def.render_for_router(
+                    state=_mcp_state
+                )
+                specs.append(ToolSpec(
+                    name=_list_mcp_resource_templates_rendered["function"]["name"],
+                    description=_list_mcp_resource_templates_rendered["function"]["description"],
+                    parameters=_list_mcp_resource_templates_rendered["function"]["parameters"],
+                    dispatch_kind=_list_mcp_resource_templates_def.dispatch_kind,
+                ))
+
+            # ── D7: read_mcp_resource ─────────────────────────────────────────
+            _read_mcp_resource_def = _registry.lookup("read_mcp_resource")
+            if _read_mcp_resource_def is not None and _read_mcp_resource_def.gates.router == "allow":
+                _read_mcp_resource_rendered = _read_mcp_resource_def.render_for_router(
+                    state=_mcp_state
+                )
+                specs.append(ToolSpec(
+                    name=_read_mcp_resource_rendered["function"]["name"],
+                    description=_read_mcp_resource_rendered["function"]["description"],
+                    parameters=_read_mcp_resource_rendered["function"]["parameters"],
+                    dispatch_kind=_read_mcp_resource_def.dispatch_kind,
+                ))
+
+            # ── D8: subscribe_mcp_resource ────────────────────────────────────
+            _subscribe_mcp_resource_def = _registry.lookup("subscribe_mcp_resource")
+            if _subscribe_mcp_resource_def is not None and _subscribe_mcp_resource_def.gates.router == "allow":
+                _subscribe_mcp_resource_rendered = _subscribe_mcp_resource_def.render_for_router(
+                    state=_mcp_state
+                )
+                specs.append(ToolSpec(
+                    name=_subscribe_mcp_resource_rendered["function"]["name"],
+                    description=_subscribe_mcp_resource_rendered["function"]["description"],
+                    parameters=_subscribe_mcp_resource_rendered["function"]["parameters"],
+                    dispatch_kind=_subscribe_mcp_resource_def.dispatch_kind,
+                ))
+
+            # ── D9: unsubscribe_mcp_resource ──────────────────────────────────
+            _unsubscribe_mcp_resource_def = _registry.lookup("unsubscribe_mcp_resource")
+            if _unsubscribe_mcp_resource_def is not None and _unsubscribe_mcp_resource_def.gates.router == "allow":
+                _unsubscribe_mcp_resource_rendered = _unsubscribe_mcp_resource_def.render_for_router(
+                    state=_mcp_state
+                )
+                specs.append(ToolSpec(
+                    name=_unsubscribe_mcp_resource_rendered["function"]["name"],
+                    description=_unsubscribe_mcp_resource_rendered["function"]["description"],
+                    parameters=_unsubscribe_mcp_resource_rendered["function"]["parameters"],
+                    dispatch_kind=_unsubscribe_mcp_resource_def.dispatch_kind,
+                ))
+
+            # ── D10: list_mcp_prompts ─────────────────────────────────────────
+            _list_mcp_prompts_def = _registry.lookup("list_mcp_prompts")
+            if _list_mcp_prompts_def is not None and _list_mcp_prompts_def.gates.router == "allow":
+                _list_mcp_prompts_rendered = _list_mcp_prompts_def.render_for_router(
+                    state=_mcp_state
+                )
+                specs.append(ToolSpec(
+                    name=_list_mcp_prompts_rendered["function"]["name"],
+                    description=_list_mcp_prompts_rendered["function"]["description"],
+                    parameters=_list_mcp_prompts_rendered["function"]["parameters"],
+                    dispatch_kind=_list_mcp_prompts_def.dispatch_kind,
+                ))
+
+            # ── D11: get_mcp_prompt ───────────────────────────────────────────
+            _get_mcp_prompt_def = _registry.lookup("get_mcp_prompt")
+            if _get_mcp_prompt_def is not None and _get_mcp_prompt_def.gates.router == "allow":
+                _get_mcp_prompt_rendered = _get_mcp_prompt_def.render_for_router(
+                    state=_mcp_state
+                )
+                specs.append(ToolSpec(
+                    name=_get_mcp_prompt_rendered["function"]["name"],
+                    description=_get_mcp_prompt_rendered["function"]["description"],
+                    parameters=_get_mcp_prompt_rendered["function"]["parameters"],
+                    dispatch_kind=_get_mcp_prompt_def.dispatch_kind,
                 ))
     else:
         _mcp_search_tool_raw = []
