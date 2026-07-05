@@ -3293,6 +3293,7 @@ class Session:
         hr.register_seam("new_agent", self._reapply_new_agent)
         hr.register_seam("hooks", self._reapply_hooks)  # #2073 S2b (global hooks)
         hr.register_seam("skills", self._reapply_skills)  # #2548 PR-B: skills hot-reload
+        hr.register_seam("pipelines", self._reapply_pipelines)  # #2581: pipeline hot-reload
 
     def _build_hook_registry(self, in_set: "dict | None" = None) -> "object":
         """Build the LAYERED hook registry — the three-layer COMBINE (#2073 S2b + the
@@ -3453,6 +3454,55 @@ class Session:
         # Update the base registered set (Session) + the filtered view (router_host).
         self._available_skills = new_skills or None
         self._reapply_skill_visibility()  # re-derives router_host._available_skills from new base
+        return True
+
+    async def _reapply_pipelines(self, in_set: dict) -> bool:
+        """Reapply the pipeline registry (#2581) — re-read the full config cascade
+        (``load_config(project_root).pipelines``) and rebuild the ``pipelines/`` dir
+        scan via :func:`~reyn.data.pipelines.registry.build_pipeline_registry`, mirroring
+        ``_reapply_skills`` exactly (same disk-loader shape, same dual-write need).
+
+        ``PipelineRegistry`` is append-only by design (no clear/unregister — a
+        shadowing-prevention invariant), so an added/changed/removed ``pipelines/*.yaml``
+        can only be picked up by building a FRESH registry and SWAPPING the reference —
+        never by mutating the old one in place.
+
+        The swap is a dual-write, exactly like ``_available_skills`` /
+        ``_router_host._available_skills``: ``RouterHostAdapter`` holds its OWN
+        ``_pipeline_registry`` attribute captured at construction and never re-reads
+        Session, so both holders must be reassigned or the adapter's copy (the one
+        ``run_pipeline`` actually resolves against, via ``get_pipeline_registry()``)
+        would silently keep serving the stale registry.
+
+        Fail-loud-but-non-fatal: ``build_pipeline_registry`` raises ``PipelineLoadError``
+        (malformed DSL / duplicate declared name) on a broken on-disk file. That is
+        caught here (alongside any other unexpected error) — the reload seam logs +
+        returns False, leaving the OLD registry (on both holders) fully intact. The new
+        registry object is only ever assigned after a fully successful build, so a
+        malformed file at reload-time can never half-apply or clear the live registry
+        (atomic-by-construction, same guarantee as skills).
+
+        Note (R7): a pipeline run already in flight resolves its OWN definition from
+        the snapshotted work order (``invocation.json``), never the live registry, so a
+        reload never changes an in-flight run's own steps/schema. A not-yet-executed
+        ``call`` step inside that run DOES resolve its target against the LIVE registry
+        at the time that step executes (call-by-name is a live lookup by design) — so a
+        mid-run reload can still change a pending call's target. Existing design, not a
+        gap introduced here."""
+        from reyn.config.loader import load_config
+        from reyn.data.pipelines.registry import build_pipeline_registry
+        try:
+            fresh_cfg = load_config(self._hot_reload_project_root())
+            new_registry = build_pipeline_registry(
+                fresh_cfg.pipelines, self._hot_reload_project_root(),
+            )
+        except Exception as exc:  # noqa: BLE001 — best-effort, last-good on failure (incl. PipelineLoadError)
+            logger.warning("_reapply_pipelines: registry rebuild failed: %r", exc)
+            return False
+        # Dual-write swap (Session + the adapter's own captured copy) — only reached
+        # after a fully successful build, so a failure above never half-applies.
+        self._pipeline_registry = new_registry
+        self._router_host._pipeline_registry = new_registry
         return True
 
     async def _reapply_per_agent_capability(self, in_set: dict) -> bool:
