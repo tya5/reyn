@@ -4,9 +4,15 @@
 session-side `_build_router_system_prompt` (override/budget path) — but the LIVE
 chat-router SP that `reyn run-once` actually renders is built separately inside
 `RouterLoop.run()` (router_loop.py), which omitted the flag → run-once still
-rendered the "ask ONE clarifying question" directive and dead-stopped (13398).
-The original #1440 test called `build_system_prompt` directly, so it unit-passed
-while the live path stayed broken.
+rendered the ask-first directive and dead-stopped (13398). The original #1440
+test called `build_system_prompt` directly, so it unit-passed while the live
+path stayed broken.
+
+sp-autonomy-revision (2026-07): the ambiguity/proceed-vs-ask directive was
+promoted from the scheme-owned `_universal_sp.py` fork to the OS-frame
+`build_system_prompt(non_interactive=...)` Behaviour rule (reaches every
+scheme, incl. CodeAct). `RouterLoop.run()`'s wiring of `self._non_interactive`
+into `build_system_prompt` is exactly this test's live-path assertion.
 
 This test drives `RouterLoop.run()` with a recording `call_llm_tools` and asserts
 on the system message the loop ACTUALLY builds — exercising the live path the
@@ -28,8 +34,10 @@ from reyn.llm.pricing import TokenUsage
 from reyn.runtime.router_loop import RouterLoop
 
 _EMPTY_USAGE = TokenUsage(prompt_tokens=5, completion_tokens=2)
-_CLARIFY = "ask ONE"
-_PROCEED = "no interactive user to ask"
+# Substrings unique to each branch's wording (behavior-pinned, not a full-text
+# snapshot) — see test_router_sp_non_interactive_1439.py for the same pair.
+_NON_INTERACTIVE_ONLY = "make the most reasonable assumption, state it explicitly"
+_INTERACTIVE_ONLY = "prefer proceeding with a stated,"
 
 
 class _FakeEventLog:
@@ -124,18 +132,19 @@ def _live_system_prompt(*, non_interactive: bool, monkeypatch: pytest.MonkeyPatc
 
 
 def test_run_once_live_router_sp_proceeds_not_clarifies(monkeypatch):
-    """Tier 3a: #1443 — a non_interactive RouterLoop's LIVE rendered SP omits the
-    clarifying-question directive and carries the proceed directive. This is the
+    """Tier 3a: #1443 — a non_interactive RouterLoop's LIVE rendered SP carries the
+    unconditional proceed directive, not the interactive one. This is the
     path `reyn run-once` renders; the #1440 unit test never exercised it."""
     sp = _live_system_prompt(non_interactive=True, monkeypatch=monkeypatch)
-    assert _CLARIFY not in sp, "live run-once SP must not tell the agent to ask a clarifying question"
-    assert _PROCEED in sp
+    assert _NON_INTERACTIVE_ONLY in sp
+    assert _INTERACTIVE_ONLY not in sp
 
 
 def test_interactive_live_router_sp_keeps_clarifying(monkeypatch):
-    """Tier 3a: #1443 — the interactive default LIVE SP keeps the clarifying
-    directive (byte-compatible). The differential proves the flag threads through
-    RouterLoop into the live build_system_prompt call, not just the session path."""
+    """Tier 3a: #1443 — the interactive default LIVE SP keeps the "prefer
+    proceeding" wording (byte-compatible). The differential proves the flag
+    threads through RouterLoop into the live build_system_prompt call, not just
+    the session path."""
     sp = _live_system_prompt(non_interactive=False, monkeypatch=monkeypatch)
-    assert _CLARIFY in sp
-    assert _PROCEED not in sp
+    assert _INTERACTIVE_ONLY in sp
+    assert _NON_INTERACTIVE_ONLY not in sp

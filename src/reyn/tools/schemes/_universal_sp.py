@@ -22,7 +22,10 @@ def build_universal_tool_use_slots(
     search_actions_enabled: bool,
     discovery_mandate: bool,
     has_hot_list_aliases: bool,
-    non_interactive: bool = False,
+    non_interactive: bool = False,  # sp-autonomy-revision: accepted for backward compat only —
+    # the ambiguity/proceed-vs-ask fork this used to gate moved to the OS-frame
+    # ``build_system_prompt(non_interactive=...)`` Behaviour rule (scheme-
+    # agnostic, reaches CodeAct too); no longer read in this function's body.
     non_claude: bool = False,  # #1791 A2: non-Claude operational-steering hygiene in slot_in_behaviour
     available_skills: "list | None" = None,  # #2548 PR-A: SkillEntry list for ## Skills block
 ) -> "dict[str, str]":
@@ -140,15 +143,6 @@ def build_universal_tool_use_slots(
         " via `task__create`'s `assignee`. Do NOT invoke a per-target"
         " action directly without decomposition — it loses the iteration"
         " shape and gets stuck on the first item.",
-        "",
-        (
-            "**Ambiguous or missing essential information** → there is no"
-            " interactive user to ask; state your best assumption and proceed"
-            " (do NOT stop to ask a clarifying question)."
-            if non_interactive else
-            "**Ambiguous or missing essential information** → ask ONE"
-            " clarifying question instead of guessing."
-        ),
         "",
     ])
     slots["slot_pre_environment"] = "\n".join(_r1)

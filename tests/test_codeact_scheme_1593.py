@@ -24,6 +24,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from reyn.runtime.router_system_prompt import build_system_prompt
 from reyn.tools.scheme import CodeBlock, ExecContext, ExecutionResult, PlainText
 from reyn.tools.schemes.codeact import CodeActScheme
 
@@ -197,6 +198,39 @@ async def test_build_presentation_omits_excluded_actions() -> None:
     )
     assert "file__read" in pres.tool_use_sp   # kept
     assert "web__fetch" not in pres.tool_use_sp  # excluded → omitted
+
+
+@pytest.mark.asyncio
+async def test_full_sp_for_codeact_session_carries_os_frame_autonomy_rule() -> None:
+    """Tier 2: sp-autonomy-revision — the ambiguity/proceed-vs-ask and
+    finish-the-job/persistence Behaviour rules were promoted from the
+    scheme-owned `_universal_sp.py` fork to the OS-frame
+    `build_system_prompt` static core specifically because CodeAct's
+    `tool_use_sp` (a bare string) REPLACES the universal scheme's whole
+    `slot_pre_environment` region — so a rule living only in that region
+    (the old location) never reached a CodeAct-scheme agent. This builds a
+    full CodeAct session's tool_use_sp via the real `build_presentation` and
+    feeds it through the real `build_system_prompt`, proving the rule now
+    reaches CodeAct too."""
+    pres = await CodeActScheme().build_presentation({}, {}, _CatalogOps())
+    # CodeAct's tool_use_sp is a bare str (the REPLACE channel) — sanity-check
+    # it still normalises into slot_pre_environment (no dict/list slots leak).
+    assert isinstance(pres.tool_use_sp, str)
+
+    sp = build_system_prompt(
+        agent_name="chat",
+        agent_role="general agent",
+        available_agents=[],
+        memory_index={},
+        tool_use_sp=pres.tool_use_sp,
+    )
+    # The CodeAct code-API is present (REPLACE channel reached the OS frame).
+    assert "def file__read(" in sp
+    # The promoted ambiguity/proceed-vs-ask Behaviour rule reaches CodeAct.
+    assert "Ask ONE targeted clarifying question ONLY when the ambiguity is BOTH" in sp
+    assert "prefer proceeding with a stated," in sp  # interactive default wording
+    # The promoted persistence/anti-premature-yield clause reaches CodeAct.
+    assert "never yield" in sp and "half-done" in sp
 
 
 # ── S4: registration + selectability ─────────────────────────────────────────

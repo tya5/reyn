@@ -500,4 +500,5 @@ class RouterHistoryBuffer:
             reasoning_continuity_section=getattr(
                 rh, "reasoning_continuity_section", lambda: ""
             )(),
+            non_interactive=self._non_interactive,
         )

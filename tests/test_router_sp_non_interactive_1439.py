@@ -1,60 +1,60 @@
 """Tier 2: #1439 Fix #1 — autonomy-mode router SP signal (run-once path).
 
-#1627 Stage 4: ``build_system_prompt`` is now a pure slot-injector. The
-``non_interactive`` parameter has been REMOVED from ``build_system_prompt``.
-Tests now call ``build_universal_tool_use_slots`` directly (with
-``non_interactive=True/False``) and pass the result as ``tool_use_sp``.
+sp-autonomy-revision (2026-07): the ambiguity/proceed-vs-ask directive was
+promoted from the scheme-owned ``_universal_sp.py`` fork to the OS-frame
+``build_system_prompt(non_interactive=...)`` Behaviour rule, so it reaches
+every tool-use scheme (universal / enumerate / retrieval / CodeAct), not just
+the universal-category path. ``build_universal_tool_use_slots`` still accepts
+``non_interactive`` for backward compat, but no longer branches on it — the
+fork now lives solely in ``build_system_prompt``.
 
-In run-once (piped stdin, no TTY) there is no user to answer, so the
-"ask ONE clarifying question" directive is a structural dead-end (stalls
-the agent, #13398). The ``non_interactive`` flag in
-``build_universal_tool_use_slots`` swaps that one directive for a
-proceed-with-assumption directive; everything else is unchanged.
+In run-once (piped stdin, no TTY) there is no user to answer, so an ask-first
+directive is a structural dead-end (stalls the agent, #13398).
+``build_system_prompt(non_interactive=True)`` swaps in a proceed-with-
+assumption directive; everything else is unchanged.
 
-Real ``build_system_prompt`` + real ``build_universal_tool_use_slots``,
-no mocks.
+Real ``build_system_prompt``, no mocks.
 """
 from __future__ import annotations
 
 from reyn.runtime.router_system_prompt import build_system_prompt
-from reyn.tools.schemes._universal_sp import build_universal_tool_use_slots
 
-_CLARIFY = "ask ONE"
-_PROCEED = "no interactive user to ask"
+# Substrings unique to each branch's wording (behavior-pinned, not a full-text
+# snapshot): the non_interactive branch leads with an unconditional "default
+# to proceeding" framing; the interactive branch leads with a softer
+# "prefer proceeding" framing that still allows asking.
+_NON_INTERACTIVE_ONLY = "make the most reasonable assumption, state it explicitly"
+_INTERACTIVE_ONLY = "prefer proceeding with a stated,"
+_ASK_ONE_COMMON = "Ask ONE targeted clarifying question ONLY when the ambiguity is BOTH"
 
 
 def _sp(*, non_interactive: bool) -> str:
-    slots = build_universal_tool_use_slots(
-        universal_wrappers_enabled=False,
-        search_actions_enabled=True,
-        discovery_mandate=False,
-        has_hot_list_aliases=False,
-        non_interactive=non_interactive,
-    )
     return build_system_prompt(
         agent_name="chat",
         agent_role="general agent",
         available_agents=[],
         memory_index={},
-        tool_use_sp=slots,
+        non_interactive=non_interactive,
     )
 
 
-def test_interactive_default_keeps_clarifying_question() -> None:
-    """Tier 2: #1439 Fix #1 — non_interactive=False keeps the "ask ONE
-    clarifying question" directive."""
+def test_interactive_default_keeps_prefer_proceeding_wording() -> None:
+    """Tier 2: #1439 Fix #1 — non_interactive=False keeps the interactive
+    "prefer proceeding" wording, and the shared one-question cap."""
     sp = _sp(non_interactive=False)
-    assert _CLARIFY in sp
-    assert _PROCEED not in sp
+    assert _INTERACTIVE_ONLY in sp
+    assert _NON_INTERACTIVE_ONLY not in sp
+    assert _ASK_ONE_COMMON in sp
 
 
-def test_non_interactive_replaces_clarifying_with_proceed() -> None:
-    """Tier 2: #1439 Fix #1 — non_interactive=True omits the clarifying-
-    question directive and instead tells the agent to proceed with an assumption
-    (no user to ask). This is the 13398 dead-stop fix."""
+def test_non_interactive_uses_unconditional_proceed_wording() -> None:
+    """Tier 2: #1439 Fix #1 — non_interactive=True swaps in the unconditional
+    "default to proceeding" wording (no user to ask). This is the 13398
+    dead-stop fix, now living in the OS frame."""
     sp = _sp(non_interactive=True)
-    assert _CLARIFY not in sp, "run-once SP must not tell the agent to ask a clarifying question"
-    assert _PROCEED in sp
+    assert _NON_INTERACTIVE_ONLY in sp
+    assert _INTERACTIVE_ONLY not in sp
+    assert _ASK_ONE_COMMON in sp
     assert "proceed" in sp.lower()
 
 
@@ -66,12 +66,5 @@ def test_default_param_is_interactive() -> None:
         agent_role="general agent",
         available_agents=[],
         memory_index={},
-        tool_use_sp=build_universal_tool_use_slots(
-            universal_wrappers_enabled=False,
-            search_actions_enabled=True,
-            discovery_mandate=False,
-            has_hot_list_aliases=False,
-            non_interactive=False,
-        ),
     )
     assert default_sp == _sp(non_interactive=False)

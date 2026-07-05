@@ -1704,6 +1704,7 @@ class RouterLoop:
                 reasoning_continuity_section=getattr(
                     host, "reasoning_continuity_section", lambda: ""
                 )(),
+                non_interactive=self._non_interactive,
             )
         # Session._handle_user_message appends the user turn to history
         # BEFORE invoking _run_router_loop, so by the time we get here the
