@@ -22,6 +22,30 @@ docs. That scheduled callable does the actual (loop-thread-only) bounded
 bound+drop+log discipline (``_QUEUE_MAXSIZE``, overflow drops the newest event
 + logs, never grows unboundedly, never blocks the watchdog thread).
 
+Path normalization (#2623): on macOS ``/tmp`` is a symlink to ``/private/tmp``
+(same class of footgun exists anywhere an operator's configured
+``fs_watch.paths`` entry traverses a symlink). Left unhandled, a naive matcher
+written against the operator's CONFIGURED path (e.g. ``matcher: {path:
+'/tmp/x/**'}``) silently never matches, because the reported event path is the
+symlink-resolved ``/private/tmp/x/...``. Worse, the two OS backends disagree on
+how they report/handle a symlinked watch (fsevents reports the realpath;
+inotify's recursive watch on a symlink *root* is inconsistent) — so a naive
+"watch the configured path" is not even portable.
+
+Fixed at registration (:meth:`FsWatcher.start`) by making the behavior UNIFORM:
+each watch is scheduled on the ``os.path.realpath`` of its configured path (safe
+— inotify watches INODES, which the symlink and its realpath target share, and
+fsevents already resolves), and for each path whose ``realpath`` differs from
+its normalized configured form a resolved-path -> configured-path REWRITE is
+recorded (:attr:`_path_rewrites`). Every fired event now arrives under the
+resolved prefix on BOTH platforms, and :meth:`_rewrite_path` maps it back onto
+the operator's configured prefix before it ever reaches ``hook_trigger`` — so
+``matcher: {path: <the path the operator wrote in fs_watch.paths>}`` Just Works,
+and the ``file_changed`` event's ``path`` template var is exactly the configured
+path (not a resolved alias of it). A path with no symlink component is
+unaffected (``resolved == configured``, no rewrite entry, watch scheduled on the
+same path as before).
+
 Debounce (F7-3): editors emit event BURSTS for one logical change (temp files,
 multiple writes, create-then-modify). Coalesced per-path on the watchdog
 thread with a simple leading-edge scheme: :meth:`_FsEventHandler._maybe_fire`
@@ -61,6 +85,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import time
 from typing import TYPE_CHECKING, Any, Awaitable, Callable
 
@@ -126,6 +151,9 @@ class FsWatcher:
         self._queue: "asyncio.Queue[tuple[str, str]] | None" = None
         self._drain_task: "asyncio.Task | None" = None
         self._started = False
+        # #2623: resolved-symlink-path -> operator-configured-path rewrites,
+        # built in :meth:`start` — see module docstring "Path normalization".
+        self._path_rewrites: "list[tuple[str, str]]" = []
 
     def is_started(self) -> bool:
         """Read-only introspection for callers/tests — mirrors
@@ -162,13 +190,47 @@ class FsWatcher:
         self._queue = asyncio.Queue(maxsize=_QUEUE_MAXSIZE)
         self._drain_task = asyncio.create_task(self._drain_events())
 
+        # #2623: schedule each watch on the RESOLVED (symlink-free) path and
+        # build a resolved->configured rewrite table, so the reported event
+        # path is UNIFORM across OS backends and always maps back onto what the
+        # operator wrote in ``fs_watch.paths`` (for a ``matcher: {path:
+        # <configured>}`` to match). Watching the resolved path is the
+        # cross-platform-deterministic choice:
+        #   - inotify (Linux) watches INODES — the symlink and its realpath
+        #     target share one inode, so a write via the configured symlink
+        #     path fires on the realpath-registered watch; but a recursive
+        #     watch scheduled on a symlink *root* reports/handles the tree
+        #     inconsistently (the macOS→Linux CI-RED that motivated this).
+        #   - fsevents (macOS) already reports the realpath in every event.
+        # So: watch realpath everywhere -> events always arrive under the
+        # resolved prefix -> _rewrite_path() maps every one back to the
+        # configured prefix, on both platforms.
+        self._path_rewrites = []
         handler = _build_handler(FileSystemEventHandler, self)
         observer = Observer()
-        for path in self._paths:
-            observer.schedule(handler, path, recursive=True)
+        for configured in self._paths:
+            resolved = os.path.realpath(configured)
+            normalized_configured = os.path.normpath(configured)
+            if resolved != normalized_configured:
+                self._path_rewrites.append((resolved, normalized_configured))
+            observer.schedule(handler, resolved, recursive=True)
         observer.start()
         self._observer = observer
         self._started = True
+
+    def _rewrite_path(self, path: str) -> str:
+        """#2623: rewrite a fired event's (possibly symlink-resolved) path back
+        onto the operator's configured ``fs_watch.paths`` prefix, so
+        ``matcher: {path: <configured>}`` matches regardless of a
+        macOS-``/tmp``-style symlink in the watched path. A path with no
+        matching resolved-prefix (no symlink was involved) passes through
+        unchanged."""
+        for resolved, configured in self._path_rewrites:
+            if path == resolved:
+                return configured
+            if path.startswith(resolved + os.sep):
+                return configured + path[len(resolved):]
+        return path
 
     # ── thread->async bridge (called from the watchdog OS thread) ──────────
 
@@ -181,6 +243,12 @@ class FsWatcher:
         loop = self._loop
         if loop is None:
             return  # stopped/never started — defensive, should not happen mid-callback
+        # #2623: rewrite the (possibly symlink-resolved) path back onto the
+        # operator's configured prefix BEFORE it ever reaches hook_trigger —
+        # _path_rewrites is built once in start() (loop thread) before the
+        # observer thread is started, so this read-only lookup from the
+        # watchdog thread is race-free (no further writes after start()).
+        path = self._rewrite_path(path)
         try:
             loop.call_soon_threadsafe(self._enqueue, event_type, path)
         except RuntimeError:
