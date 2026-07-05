@@ -40,6 +40,7 @@ from reyn.core.pipeline.executor import (
     AgentStep,
     CallStep,
     ExprRef,
+    FoldStep,
     MatchCase,
     MatchStep,
     Pipeline,
@@ -183,6 +184,31 @@ def _decode_match(data: "dict[str, Any]") -> "MatchStep":
     )
 
 
+def _encode_fold(step: "FoldStep") -> "dict[str, Any]":
+    # ``do`` is itself a Step — recurse through `step_to_dict` so a fold whose
+    # `do` is a `call` (or a nested `fold`) round-trips just as faithfully.
+    return {
+        "kind": "fold",
+        "over": step.over,
+        "items": list(step.items) if step.items is not None else None,
+        "init": step.init,
+        "do": step_to_dict(step.do),
+        "output": step.output,
+        "max_items": step.max_items,
+    }
+
+
+def _decode_fold(data: "dict[str, Any]") -> "FoldStep":
+    return FoldStep(
+        init=data["init"],
+        do=step_from_dict(data["do"]),
+        output=data["output"],
+        over=data.get("over"),
+        items=list(data["items"]) if data.get("items") is not None else None,
+        max_items=data.get("max_items"),
+    )
+
+
 # Dispatch tables: encoder keyed by step type, decoder keyed by ``kind`` marker.
 # A future primitive ADDS one entry to each (mirroring the executor's
 # ``STEP_DISPATCH`` and the parser's ``_STEP_PARSERS``) rather than editing a
@@ -193,6 +219,7 @@ ENCODERS: "dict[type, Callable[[Step], dict[str, Any]]]" = {
     AgentStep: _encode_agent,
     CallStep: _encode_call,
     MatchStep: _encode_match,
+    FoldStep: _encode_fold,
 }
 DECODERS: "dict[str, Callable[[dict[str, Any]], Step]]" = {
     "transform": _decode_transform,
@@ -200,6 +227,7 @@ DECODERS: "dict[str, Callable[[dict[str, Any]], Step]]" = {
     "agent": _decode_agent,
     "call": _decode_call,
     "match": _decode_match,
+    "fold": _decode_fold,
 }
 
 
