@@ -89,6 +89,13 @@ _SLASH_COMPLETER = _SlashCompleter()
 # than the terminal height minus the fixed chrome (rules + input + status).
 _ABOVE_REGION_MAX_HEIGHT = 12
 
+# Same cap, for the below-input status-bar dropdown (menu_region). The "…"
+# overflow chip's panel can list one row per tool-visibility toggle (dozens of
+# entries in a real session) — without this cap dropdown_height() requests an
+# unbounded Dimension.exact(), which prompt_toolkit cannot satisfy past the
+# terminal's remaining rows and renders "Window too small" instead of the menu.
+_MENU_REGION_MAX_HEIGHT = 12
+
 
 def _picker_hint(has_picker_focus: bool, key: str | None) -> str:
     """Return the status-bar hint for the above-region picker state.
@@ -547,6 +554,7 @@ async def run_inline_input(registry, renderer, config=None) -> None:
     # a CommandUIElement model picker (selectable) or a read-only DetailElement
     # (live detail, no cursor). Empty (cleared) while the menu is closed.
     menu_region = Region()
+    menu_region.set_max_visible(_MENU_REGION_MAX_HEIGHT)
     # Guards against a second quit (rapid Ctrl-C / `/quit` then Ctrl-C) racing the
     # first: shutdown has a grace window, so two _quit tasks could both reach
     # app.exit() — the second raises "Return value already set". _quit checks+sets
@@ -625,20 +633,37 @@ async def run_inline_input(registry, renderer, config=None) -> None:
         # The focus cursor is drawn only on a selectable row (the model picker) —
         # a read-only DetailElement reports cursor_on_selectable False, so its
         # detail panel shows no highlight, exactly as before.
+        # Windowed like above_region_frags: the "…" overflow chip can list one
+        # row per tool-visibility toggle (dozens in a real session), so this
+        # slices to _MENU_REGION_MAX_HEIGHT rows + a "↓ N more" hint instead of
+        # requesting an unbounded height (prompt_toolkit "Window too small").
         draw_cursor = menu_region.cursor_on_selectable
+        scroll = menu_region.scroll
+        lines = menu_region.lines()
+        visible = lines[scroll : scroll + _MENU_REGION_MAX_HEIGHT]
+        cursor_local = menu_region.cursor - scroll
         out: list = []
-        for i, ln in enumerate(menu_region.lines()):
+        for i, ln in enumerate(visible):
             if i:
                 out.append(("", "\n"))
-            if draw_cursor and i == menu_region.cursor:
+            if draw_cursor and i == cursor_local:
                 out.append((f"fg:#0d0f12 bg:{_CC_ACCENT} bold", f" {ln} "))
             else:
                 style = _CC_DONE if ln.startswith("▸") else _CC_DIM
                 out.append((f"fg:{style}", f"   {ln}"))
+        items_below = len(lines) - scroll - _MENU_REGION_MAX_HEIGHT
+        if items_below > 0:
+            out.append(("", "\n"))
+            out.append((f"fg:{_CC_DIM}", f"   ↓ {items_below} more"))
         return out
 
     def dropdown_height() -> Dimension:
-        return Dimension.exact(len(menu_region.lines()))
+        lines = menu_region.lines()
+        n = len(lines)
+        scroll = menu_region.scroll
+        visible = min(n, _MENU_REGION_MAX_HEIGHT)
+        hint = 1 if n > scroll + _MENU_REGION_MAX_HEIGHT else 0
+        return Dimension.exact(visible + hint)
 
     dropdown = ConditionalContainer(
         Window(FormattedTextControl(dropdown_frags), height=dropdown_height),
