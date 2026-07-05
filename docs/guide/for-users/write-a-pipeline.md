@@ -11,15 +11,15 @@ for the why/architecture, see [Pipelines](../../concepts/runtime/pipelines.md).
 
 Create a `pipelines/` directory at your project root (the default scan
 directory) and drop in a `*.yaml` file. This one takes a `name`, greets it,
-and shouts the result:
+and writes the greeting to a file:
 
 ```yaml
 # pipelines/greet.yaml
 pipeline: greet
-description: Greet a name and shout it.
+description: Greet a name and write the greeting to a file.
 steps:
   - transform: {value: "'Hello, ' + ctx.name + '!'", output: greeting}
-  - tool: {name: shell, args: {command: !expr "'echo ' + greeting"}, output: shouted}
+  - tool: {name: file__write, args: {path: "greeting.txt", content: !expr greeting}, output: written}
 ```
 
 A few things worth noting about this file:
@@ -34,8 +34,16 @@ A few things worth noting about this file:
   in later steps — here referenced bare as `greeting` inside the `!expr`
   string-concat, since the second step's context still exposes it as a named
   store.
-- `!expr` marks `command` as an expression to evaluate, not a literal string
+- `!expr` marks `content` as an expression to evaluate, not a literal string
   — see [Literals vs `!expr`](../../reference/runtime/pipeline-dsl.md#literals-vs-expr).
+
+!!! warning "`shell` is not yet functional at runtime"
+    This guide uses `file__write` rather than the `shell` step-kind sugar
+    deliberately — `shell` currently parses but fails at every invocation
+    (no `"shell"` tool is registered yet). See the
+    [reference doc's warning](../../reference/runtime/pipeline-dsl.md#tool-shell-sugar)
+    for details; use a `tool` step naming a real registered tool/action
+    instead until this closes.
 
 ## 2. Start (or restart) the session
 
@@ -66,7 +74,8 @@ pipeline__greet({name: "Reyn"})
 ```
 
 Both block until the pipeline finishes and return its final output — here,
-the shouted greeting. Live step-progress is visible in the TUI for the
+the `file__write` result confirming `greeting.txt` was written. Live
+step-progress is visible in the TUI for the
 duration of the run, and Ctrl-C stops it cleanly at the next step boundary
 rather than killing it mid-step.
 

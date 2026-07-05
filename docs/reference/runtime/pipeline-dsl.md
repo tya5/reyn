@@ -197,6 +197,13 @@ registered tool name (`web_search`).
 - shell: {command: !expr "'ls ' + ctx.dir", output: listing}
 ```
 
+!!! warning "`shell` is not yet functional at runtime"
+    A `shell` step (or a `tool` step naming `"shell"` directly) parses
+    correctly, but no `"shell"` tool is currently registered — every `shell`
+    step fails at run time with a "does not resolve to a registered tool"
+    error. The other step kinds are unaffected. Until this closes, use a
+    `tool` step naming a real registered tool/action instead of `shell`.
+
 | Key | Required | Meaning |
 |-----|----------|---------|
 | `command` | yes | Literal or `!expr`, same rule as a `tool` step's `args` values. |
@@ -675,7 +682,11 @@ steps:
       value: "review.passed and 'OK' or 'NEEDS WORK'"
       output: verdict
   - tool:
-      name: shell
-      args: {command: !expr "'echo ' + verdict"}
-      output: shouted
+      name: file__write
+      args: {path: "verdict.txt", content: !expr verdict}
+      output: written
 ```
+
+Note: this uses `file__write`, not `shell` — `shell` currently fails at run
+time (see the warning above), so avoid it in a generated definition until
+that closes.
