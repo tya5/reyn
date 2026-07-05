@@ -1,9 +1,12 @@
 """Tier 2: ToolSpec dataclass invariants (ToolSpec refactor, PR-next).
 
-Three contract tests:
+Four contract tests:
   1. ToolSpec.to_openai_dict() round-trip produces a valid OpenAI tool shape.
   2. build_tools() specs are consistent with get_dispatch_kind().
   3. Unknown tool name defaults to "sync" from get_dispatch_kind().
+  4. build_tools() advertises every router=allow MCP verb (#2597 regression
+     guard — resources/subscribe/prompts verbs were registered + dispatchable
+     but not wired into the live tool schema).
 
 No mocks. No private-state assertions.
 """
@@ -146,6 +149,57 @@ def test_get_dispatch_kind_unknown_defaults_to_sync() -> None:
     unregistered tool will not cause RouterLoop to exit prematurely."""
     assert get_dispatch_kind("no_such_tool") == "sync"
     assert get_dispatch_kind("") == "sync"
+
+
+# ── 4. All MCP verbs actually reach the live tool schema ──────────────────────
+#
+# #2597 regression guard: list_mcp_resources, list_mcp_resource_templates,
+# read_mcp_resource, subscribe_mcp_resource, unsubscribe_mcp_resource,
+# list_mcp_prompts, get_mcp_prompt were registered in get_default_registry()
+# with gates.router="allow" and were fully dispatchable, but build_tools()
+# had ZERO wiring for them (grep-confirmed) — a real chat agent could never
+# see or call them (same advertising-gap class as #2589/#2555/#2120). This
+# test builds the live tool schema via build_tools() with an MCP server
+# configured and asserts every MCP verb (the existing D1-D4 plus the new
+# D5-D11 seven) is present by name. It fails on pre-fix code (7 missing
+# names) and passes post-fix. Uses the real ToolRegistry — no mocks.
+
+
+def test_build_tools_advertises_all_mcp_verbs() -> None:
+    """Tier 2: build_tools() must advertise every router=allow MCP verb.
+
+    Regression guard for the #2597 advertising gap: resources / resource
+    templates / subscribe / unsubscribe / prompts verbs were registered +
+    dispatchable but never wired into build_tools(), so a real chat agent
+    could not discover or call them even though the handlers worked.
+    """
+    tools = build_tools(
+        _SAMPLE_AGENTS,
+        mcp_servers=[{"name": "fs", "description": "FS"}],
+    )
+    tool_names = {t["function"]["name"] for t in tools}
+
+    expected_mcp_verbs = {
+        # D1-D4: pre-existing MCP tool-consumption verbs.
+        "list_mcp_servers",
+        "list_mcp_tools",
+        "call_mcp_tool",
+        "describe_mcp_tool",
+        # D5-D11: #2597 slices ②a/②b/②c resources/subscribe/prompts verbs.
+        "list_mcp_resources",
+        "list_mcp_resource_templates",
+        "read_mcp_resource",
+        "subscribe_mcp_resource",
+        "unsubscribe_mcp_resource",
+        "list_mcp_prompts",
+        "get_mcp_prompt",
+    }
+    missing = expected_mcp_verbs - tool_names
+    assert not missing, (
+        f"MCP verbs registered as gates.router='allow' but absent from the "
+        f"live build_tools() schema (undiscoverable by a real chat agent): "
+        f"{sorted(missing)}"
+    )
     assert get_dispatch_kind("list_skills") == "sync"
     assert get_dispatch_kind("invoke_skill") == "sync"
     assert get_dispatch_kind("web_search") == "sync"
