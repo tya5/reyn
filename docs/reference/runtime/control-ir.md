@@ -23,6 +23,7 @@ Control IR is the list of side-effect operations the LLM may emit alongside its 
 | `web_search` | Search the public web via DuckDuckGo | Tier 1 — default allow; `web.search: deny` in `reyn.yaml` blocks |
 | `web_fetch` | Fetch a single URL and return extracted text | Tier 1 — default allow; `web.fetch: deny` in `reyn.yaml` blocks |
 | `mcp` | Call a tool on a configured MCP server | `permissions.mcp: [server_name]` in skill frontmatter |
+| `mcp_read_resource` | Read one resource (or a resolved resource-template URI) on a configured MCP server | `permissions.mcp: [server_name]` in skill frontmatter (same axis as `mcp`) |
 | `mcp_install` | Install an MCP server from the registry into the project config | `permissions.mcp_install: true` in skill frontmatter |
 | `mcp_drop_server` | Remove an MCP server from project/local/user config (inverse of `mcp_install`) | `permissions.mcp_drop_server: true` in skill frontmatter |
 | `skill_install` | Register a skill (local dir or git/URL source) into the project skills config | `file.write: [.reyn/config/skills.yaml]` in skill frontmatter; `http.get: [{host: <source_host>}]` when `source` is set |
@@ -232,6 +233,30 @@ Fields: `server` (required — must match a key under `mcp.servers:` in `reyn.ya
 The OS resolves the server's transport (`stdio`, `http`, or `sse`), dispatches via `MCPClient`, and returns the tool result. Every call emits `mcp_called`, `mcp_completed`, and (on failure) `mcp_failed` events.
 
 See [concepts/tools-integrations/mcp.md](../../concepts/tools-integrations/mcp.md) for server configuration, transport options, and the security model.
+
+## `mcp_read_resource`
+
+Reads one resource (or a resolved resource-template URI) from a configured MCP server. #2597 slice ②a (resources consumption) — gated by the **same** `permissions.mcp` axis as `mcp` (call_tool): a resource read returns external, potentially sensitive server-authored content, so it is permission-gated identically to a tool call.
+
+```json
+{
+  "kind": "mcp_read_resource",
+  "server": "filesystem",
+  "uri": "file:///README.md"
+}
+```
+
+Fields: `server` (required — must match a key under `mcp.servers:` in `reyn.yaml`), `uri` (required — a resource URI as advertised by the server's `resources/list`, or a resolved `resources/templates/list` template).
+
+> **Advertised name.** Phases advertise this op to the LLM under the chat-tool
+> name `read_mcp_resource`; the OS aliases it back to the `mcp_read_resource`
+> kind at the parse boundary — same pattern as `mcp`/`call_mcp_tool`.
+
+The OS resolves the server's transport, dispatches via `MCPClient.read_resource` (gated on the server's negotiated `resources` capability — see `require_capability` in `mcp/client.py`), and returns `{"contents": [...]}`. Every call emits `mcp_resource_read`, `mcp_resource_read_completed`, and (on failure) `mcp_resource_read_failed` events.
+
+**Discovery is NOT gated.** `list_mcp_resources` / `list_mcp_resource_templates` (the chat-tool names for `MCPClient.list_resources` / `list_resource_templates`) mirror `list_mcp_tools`: no `control-ir` op kind, no permission gate — pure discovery, routed directly through `MCPGateway` from the router host adapter. Only the content-returning read is a gated op kind, matching the existing `mcp` (call_tool) vs. discovery (`list_tools`) split.
+
+`resources/subscribe` + `resources/updated` push notifications are a separate, later slice (②b) — out of scope here.
 
 ## `mcp_install`
 

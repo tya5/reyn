@@ -67,8 +67,11 @@ def get_default_registry() -> ToolRegistry:
     from reyn.tools.mcp import (
         CALL_MCP_TOOL,
         DESCRIBE_MCP_TOOL,
+        LIST_MCP_RESOURCE_TEMPLATES,
+        LIST_MCP_RESOURCES,
         LIST_MCP_SERVERS,
         LIST_MCP_TOOLS,
+        READ_MCP_RESOURCE,
     )
     from reyn.tools.mcp_drop import MCP_DROP_SERVER_OP
     from reyn.tools.mcp_install import MCP_INSTALL_OP
@@ -149,6 +152,11 @@ def get_default_registry() -> ToolRegistry:
     registry.register(LIST_MCP_SERVERS)
     registry.register(LIST_MCP_TOOLS)
     registry.register(DESCRIBE_MCP_TOOL)
+    # #2597 slice ②a: resources consumption (list/read/templates) — parallel
+    # to the tools surface above.
+    registry.register(LIST_MCP_RESOURCES)
+    registry.register(LIST_MCP_RESOURCE_TEMPLATES)
+    registry.register(READ_MCP_RESOURCE)
     # Memory ops (Wave 2 — Type C closure: memory write phase-side)
     registry.register(LIST_MEMORY)
     registry.register(READ_MEMORY_BODY)

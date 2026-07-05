@@ -24,6 +24,9 @@ _EXTERNAL = {
     "call_mcp_tool", "mcp_call_tool",    # external MCP server result
     "list_mcp_tools", "describe_mcp_tool",  # external server-authored descriptions
     "mcp_search_registry",               # external registry listing
+    # #2597 slice ②a: resources consumption — same fencing rationale as the tools
+    # surface above (external server-authored listing / content).
+    "list_mcp_resources", "list_mcp_resource_templates", "read_mcp_resource",
     "web_search", "web_fetch",           # internet
 }
 

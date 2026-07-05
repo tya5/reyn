@@ -64,10 +64,45 @@ def _mcp_to_canonical(result: dict) -> CanonicalToolResult:
     )
 
 
+def _mcp_read_resource_to_canonical(result: dict) -> CanonicalToolResult:
+    """MCP resource-read result → canonical (#2597 slice ②a). ``contents`` is a
+    list of flattened ``TextResourceContents``/``BlobResourceContents``: a
+    ``text`` entry joins into the canonical ``text`` (same offload-safe path
+    as a tool's joined ``content``); a ``blob`` entry (base64, arbitrary
+    mimeType — not necessarily an image) becomes a ``structured`` attachment
+    rather than a ``media`` one, since the existing ``media`` attachment path
+    assumes vision-follow-up-shaped image blocks that an arbitrary resource
+    blob does not fit. ``structured`` attachments are still size-gated
+    (:data:`~reyn.core.offload.seam.STRUCTURED_INLINE_MAX_CHARS`) — a large
+    blob is offloaded to its own ref rather than competing with ``text``, the
+    same guarantee ``_mcp_to_canonical`` gives a tool's ``structuredContent``.
+    """
+    attachments: list[dict] = []
+    text_parts: list[str] = []
+    for item in result.get("contents") or []:
+        if not isinstance(item, dict):
+            continue
+        if "text" in item and item["text"] is not None:
+            text_parts.append(str(item["text"]))
+        elif "blob" in item:
+            attachments.append({"kind": "structured", "data": item})
+    meta = {
+        k: v for k, v in result.items()
+        if k in ("kind", "status", "server", "uri", "error")
+    }
+    return CanonicalToolResult(
+        text="\n".join(text_parts),
+        attachments=attachments,
+        source_ref=None,
+        meta=meta,
+    )
+
+
 # op-kind → canonical mapper. New ops register here (or return canonical directly); a raw dict with no
 # registered mapper falls back to a whole-dict wrap so nothing is ever lost (see ``to_canonical``).
 _MAPPERS: dict[str, Any] = {
     "mcp": _mcp_to_canonical,
+    "mcp_read_resource": _mcp_read_resource_to_canonical,
 }
 
 

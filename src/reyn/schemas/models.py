@@ -116,6 +116,17 @@ class MCPIROp(BaseModel):
     args: dict[str, Any] = Field(default_factory=dict)
 
 
+class MCPReadResourceIROp(BaseModel):
+    """#2597 slice ②a: read one MCP resource (or a resolved resource-template URI)
+    by URI. Permission-gated + event-emitting like ``MCPIROp`` (external, possibly
+    sensitive server-authored content) — unlike the discovery-only
+    ``mcp_list_resources``/``mcp_list_resource_templates`` path, which mirrors
+    ``list_tools`` (no permission gate, no op-kind)."""
+    kind: Literal["mcp_read_resource"]
+    server: str
+    uri: str
+
+
 class AskUserIROp(BaseModel):
     kind: Literal["ask_user"]
     question: str
@@ -535,6 +546,10 @@ OP_KIND_MODEL_MAP: dict[str, type[BaseModel]] = {
     "glob_files":  GlobFilesIROp,
     "grep_files":  GrepFilesIROp,
     "mcp":         MCPIROp,
+    # #2597 slice ②a: resources consumption — read is permission-gated (external
+    # content); list/list-templates stay op-kind-free, mirroring list_tools (see
+    # op_runtime/mcp_read_resource.py + session.py's _mcp_list_resources).
+    "mcp_read_resource": MCPReadResourceIROp,
     "ask_user":    AskUserIROp,
     "web_fetch":   WebFetchIROp,
     "web_search":  WebSearchIROp,
@@ -583,7 +598,7 @@ if TYPE_CHECKING:
             FileIROp,
             ReadFileIROp, WriteFileIROp, EditFileIROp, DeleteFileIROp,
             GlobFilesIROp, GrepFilesIROp,
-            MCPIROp, AskUserIROp,
+            MCPIROp, MCPReadResourceIROp, AskUserIROp,
             WebFetchIROp, WebSearchIROp, MCPInstallIROp,
             MCPDropServerIROp,
             IndexQueryIROp, RecallIROp, IndexDropIROp,

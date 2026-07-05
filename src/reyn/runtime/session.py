@@ -1532,6 +1532,10 @@ class Session:
             mcp_list_servers=self._mcp_list_servers,
             mcp_list_tools=self._mcp_list_tools,
             mcp_call_tool=self._mcp_call_tool,
+            # #2597 slice ②a: resources consumption (list/read/templates).
+            mcp_list_resources=self._mcp_list_resources,
+            mcp_list_resource_templates=self._mcp_list_resource_templates,
+            mcp_read_resource=self._mcp_read_resource,
             send_to_agent=self._send_to_agent,
             put_outbox=self._put_outbox,
             append_history=self._append_history,
@@ -5487,6 +5491,111 @@ class Session:
             return await gateway.list_tools(server, expanded)
         except MCPFault as exc:
             return [{"error": str(exc)}]
+
+    async def _mcp_list_resources(self, server: str) -> list[dict]:
+        """Query the MCP server for its resources list.
+
+        #2597 slice ②a: mirrors ``_mcp_list_tools`` exactly — discovery-only,
+        NOT permission-gated (no op-kind), routed through the same
+        ``MCPGateway`` seam (held connection service on a non-ephemeral
+        session, one-shot pool otherwise). Emits ``mcp_resources_listed`` for
+        observability (list_tools has no analogous event; this ask is
+        explicit per the #2597 ②a slice spec).
+        """
+        from reyn.mcp.client import expand_env
+        from reyn.mcp.gateway import MCPFault, MCPGateway
+
+        servers = self._mcp_servers_flat()
+        if not servers:
+            return [{"error": "no MCP servers configured"}]
+        server_cfg = servers.get(server)
+        if not server_cfg:
+            return [{"error": f"MCP server {server!r} not configured"}]
+
+        expanded = expand_env(server_cfg)
+        if not isinstance(expanded, dict):
+            return [{"error": f"MCP server {server!r} config must be a dict"}]
+        if "type" not in expanded and expanded.get("url"):
+            expanded = {**expanded, "type": "http"}
+
+        gateway = (
+            MCPGateway(pool=self._mcp_connection_service, agent_id=self._agent_id)
+            if not self._ephemeral
+            else MCPGateway(agent_id=self._agent_id)
+        )
+        try:
+            resources = await gateway.list_resources(server, expanded)
+        except MCPFault as exc:
+            return [{"error": str(exc)}]
+        self._chat_events.emit(
+            "mcp_resources_listed", server=server, count=len(resources),
+        )
+        return resources
+
+    async def _mcp_list_resource_templates(self, server: str) -> list[dict]:
+        """Query the MCP server for its resource templates list.
+
+        #2597 slice ②a: mirrors ``_mcp_list_resources`` (discovery-only, not
+        permission-gated). Empty list is a normal result for a server that
+        registers no templates.
+        """
+        from reyn.mcp.client import expand_env
+        from reyn.mcp.gateway import MCPFault, MCPGateway
+
+        servers = self._mcp_servers_flat()
+        if not servers:
+            return [{"error": "no MCP servers configured"}]
+        server_cfg = servers.get(server)
+        if not server_cfg:
+            return [{"error": f"MCP server {server!r} not configured"}]
+
+        expanded = expand_env(server_cfg)
+        if not isinstance(expanded, dict):
+            return [{"error": f"MCP server {server!r} config must be a dict"}]
+        if "type" not in expanded and expanded.get("url"):
+            expanded = {**expanded, "type": "http"}
+
+        gateway = (
+            MCPGateway(pool=self._mcp_connection_service, agent_id=self._agent_id)
+            if not self._ephemeral
+            else MCPGateway(agent_id=self._agent_id)
+        )
+        try:
+            return await gateway.list_resource_templates(server, expanded)
+        except MCPFault as exc:
+            return [{"error": str(exc)}]
+
+    async def _mcp_read_resource(self, server: str, uri: str) -> dict:
+        """Read one MCP resource by URI and return its contents.
+
+        #2597 slice ②a: mirrors ``_mcp_call_tool`` exactly — permission-gated
+        (``require_mcp``, same server-scoped axis a tool call uses) + routed
+        through ``execute_op`` on the ``mcp_read_resource`` op kind, so the
+        SAME connection-service-vs-per-call-pool split ``_mcp_call_tool``
+        documents applies here too.
+        """
+        from reyn.core.op_runtime import execute_op
+        from reyn.schemas.models import MCPReadResourceIROp
+        from reyn.security.permissions.permissions import PermissionDecl
+
+        op = MCPReadResourceIROp(kind="mcp_read_resource", server=server, uri=uri)
+        ctx = self._make_router_op_context()
+        ctx.intervention_bus = ChatInterventionBus(
+            self, run_id=None, actor="chat_router",
+            channel_id=DEFAULT_CHAT_CHANNEL_ID,
+        )
+        ctx.permission_decl = PermissionDecl(
+            file_read=ctx.permission_decl.file_read,
+            file_write=ctx.permission_decl.file_write,
+            mcp=[server],
+        )
+        if not self._ephemeral:
+            ctx.mcp_connection_service = self._mcp_connection_service
+            return await execute_op(op, ctx)
+        from reyn.mcp.pool import MCPClientPool
+        async with MCPClientPool() as pool:
+            ctx.mcp_pool = pool
+            return await execute_op(op, ctx)
 
     async def _mcp_call_tool(self, server: str, tool: str, args: dict) -> dict:
         """Invoke an MCP tool and return its result.

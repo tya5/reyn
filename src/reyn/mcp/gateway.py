@@ -139,6 +139,24 @@ class MCPGateway:
             timeout=timeout,
         )
 
+    async def list_resources(self, server: str, config: dict) -> list[dict]:
+        """Return the server's advertised resources. Raises :class:`MCPFault` on
+        any contained fault (mirrors :meth:`list_tools`)."""
+        return await self._run(server, config, lambda c: c.list_resources(),
+                               timeout=resolve_call_timeout(config))
+
+    async def list_resource_templates(self, server: str, config: dict) -> list[dict]:
+        """Return the server's advertised resource templates. Raises
+        :class:`MCPFault` on any contained fault (mirrors :meth:`list_tools`)."""
+        return await self._run(server, config, lambda c: c.list_resource_templates(),
+                               timeout=resolve_call_timeout(config))
+
+    async def read_resource(self, server: str, uri: str, config: dict) -> dict:
+        """Read one resource by URI and return ``{"contents": [...]}``. Raises
+        :class:`MCPFault` on any contained fault (mirrors :meth:`call_tool`)."""
+        return await self._run(server, config, lambda c: c.read_resource(uri),
+                               timeout=resolve_call_timeout(config))
+
     async def probe(self, server: str, config: dict) -> None:
         """Open the server (MCP initialize handshake) to verify reachability, then release it.
         Returns None on success; raises :class:`MCPFault` if the server cannot be reached/opened."""

@@ -399,6 +399,54 @@ class MCPClient:
             raise MCPError(f"MCP tools/list error: {exc}") from exc
         return [_tool_to_dict(t) for t in tools]
 
+    # ── resources (#2597 slice ②a — consumption only; subscribe is ②b) ─────────
+
+    async def list_resources(self) -> list[dict[str, Any]]:
+        """Return the resources advertised by this server as plain dicts.
+
+        Mirrors :meth:`list_tools`: uses FastMCP's auto-paginating
+        ``Client.list_resources()`` (follows ``nextCursor``) and gates on the
+        ``"resources"`` capability before issuing the request.
+        """
+        await self.initialize()
+        require_capability(self, "resources")
+        try:
+            resources = await self._client.list_resources()
+        except Exception as exc:
+            raise MCPError(f"MCP resources/list error: {exc}") from exc
+        return [_resource_to_dict(r) for r in resources]
+
+    async def list_resource_templates(self) -> list[dict[str, Any]]:
+        """Return the resource templates advertised by this server as plain
+        dicts. Mirrors :meth:`list_resources`; empty list is a normal
+        (not an error) result for a server that registers no templates."""
+        await self.initialize()
+        require_capability(self, "resources")
+        try:
+            templates = await self._client.list_resource_templates()
+        except Exception as exc:
+            raise MCPError(f"MCP resources/templates/list error: {exc}") from exc
+        return [_resource_to_dict(t) for t in templates]
+
+    async def read_resource(self, uri: str) -> dict[str, Any]:
+        """Read one resource (or a resolved resource-template URI) and return
+        its contents flattened to a dict: ``{"contents": [...]}`` — each
+        entry a flattened ``TextResourceContents``/``BlobResourceContents``.
+
+        Uses FastMCP's raw ``read_resource_mcp`` (not the convenience
+        ``read_resource``, which strips the ``ReadResourceResult`` envelope
+        down to just ``.contents``) so the shape-flattening lives in ONE
+        place (:func:`_read_resource_result_to_dict`), mirroring how
+        :meth:`call_tool` uses ``call_tool_mcp`` for the same reason.
+        """
+        await self.initialize()
+        require_capability(self, "resources")
+        try:
+            result = await self._client.read_resource_mcp(uri)
+        except Exception as exc:
+            raise MCPError(f"MCP resources/read error: {exc}") from exc
+        return _read_resource_result_to_dict(result)
+
     async def close(self) -> None:
         """Tear down the transport and session. Safe to call repeatedly."""
         if self._client is None:
@@ -693,3 +741,36 @@ def _tool_to_dict(tool: Any) -> dict[str, Any]:
     if hasattr(tool, "model_dump"):
         return tool.model_dump()
     return dict(tool)
+
+
+def _resource_to_dict(resource: Any) -> dict[str, Any]:
+    """Flatten an ``mcp.types.Resource`` or ``mcp.types.ResourceTemplate`` into a
+    JSON-safe plain dict (mirrors :func:`_tool_to_dict`).
+
+    ``mode="json"`` (not plain ``model_dump()``) — unlike ``Tool``, ``Resource``/
+    ``ResourceTemplate`` carry a ``uri: AnyUrl`` field; a plain ``model_dump()``
+    leaves that as a live ``pydantic.AnyUrl`` object, which downstream JSON
+    encoding (events / tool-result serialization) cannot handle without a
+    ``default=str`` escape hatch. ``mode="json"`` serializes it to ``str`` at
+    the source instead.
+    """
+    if hasattr(resource, "model_dump"):
+        return resource.model_dump(mode="json")
+    return dict(resource)
+
+
+def _read_resource_result_to_dict(result: Any) -> dict[str, Any]:
+    """Flatten an ``mcp.types.ReadResourceResult`` into
+    ``{"contents": [...]}`` — each entry a flattened
+    ``TextResourceContents``/``BlobResourceContents`` (mirrors
+    :func:`_result_to_dict`'s content-flattening for tool calls). Uses
+    ``mode="json"`` for the same AnyUrl-safety reason as :func:`_resource_to_dict`."""
+    contents: list[dict[str, Any]] = []
+    for item in getattr(result, "contents", []) or []:
+        if hasattr(item, "model_dump"):
+            contents.append(item.model_dump(mode="json"))
+        elif isinstance(item, dict):
+            contents.append(item)
+        else:
+            contents.append({"text": str(item)})
+    return {"contents": contents}

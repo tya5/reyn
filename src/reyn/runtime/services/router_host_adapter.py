@@ -75,6 +75,12 @@ class RouterHostAdapter:
         Async callback ``(server: str) -> list[dict]``.
     mcp_call_tool:
         Async callback ``(server: str, tool: str, args: dict) -> dict``.
+    mcp_list_resources:
+        Async callback ``(server: str) -> list[dict]`` (#2597 slice ②a).
+    mcp_list_resource_templates:
+        Async callback ``(server: str) -> list[dict]`` (#2597 slice ②a).
+    mcp_read_resource:
+        Async callback ``(server: str, uri: str) -> dict`` (#2597 slice ②a).
     send_to_agent:
         Async callback ``(*, to, request, depth, chain_id) -> None``.
     put_outbox:
@@ -121,6 +127,13 @@ class RouterHostAdapter:
         mcp_list_servers: Callable[..., Awaitable[list]],
         mcp_list_tools: Callable[..., Awaitable[list]],
         mcp_call_tool: Callable[..., Awaitable[dict]],
+        # #2597 slice ②a: resources consumption (list/read/templates) — defaults to
+        # None so pre-existing hand-built adapters (tests, other call sites that
+        # construct RouterHostAdapter without resources support) stay valid; the
+        # mcp_verbs handlers getattr-guard before calling.
+        mcp_list_resources: "Callable[..., Awaitable[list]] | None" = None,
+        mcp_list_resource_templates: "Callable[..., Awaitable[list]] | None" = None,
+        mcp_read_resource: "Callable[..., Awaitable[dict]] | None" = None,
         # Action callbacks
         send_to_agent: Callable[..., Awaitable[None]],
         put_outbox: Callable[..., Awaitable[None]],
@@ -338,6 +351,9 @@ class RouterHostAdapter:
         self._mcp_list_servers_cb = mcp_list_servers
         self._mcp_list_tools_cb = mcp_list_tools
         self._mcp_call_tool_cb = mcp_call_tool
+        self._mcp_list_resources_cb = mcp_list_resources
+        self._mcp_list_resource_templates_cb = mcp_list_resource_templates
+        self._mcp_read_resource_cb = mcp_read_resource
         # Action callbacks
         self._send_to_agent_cb = send_to_agent
         self._put_outbox_cb = put_outbox
@@ -1366,6 +1382,24 @@ class RouterHostAdapter:
 
     async def mcp_call_tool(self, server: str, tool: str, args: dict) -> dict:
         return await self._mcp_call_tool_cb(server, tool, args)
+
+    # #2597 slice ②a: resources consumption. getattr-guarded callback (None when
+    # not wired) rather than a hard AttributeError — mirrors how mcp_verbs' host
+    # duck-type callers already tolerate missing methods elsewhere.
+    async def mcp_list_resources(self, server: str) -> list[dict]:
+        if self._mcp_list_resources_cb is None:
+            return [{"error": "mcp resources listing is not wired on this host"}]
+        return await self._mcp_list_resources_cb(server)
+
+    async def mcp_list_resource_templates(self, server: str) -> list[dict]:
+        if self._mcp_list_resource_templates_cb is None:
+            return [{"error": "mcp resource templates listing is not wired on this host"}]
+        return await self._mcp_list_resource_templates_cb(server)
+
+    async def mcp_read_resource(self, server: str, uri: str) -> dict:
+        if self._mcp_read_resource_cb is None:
+            return {"status": "error", "error": "mcp resource read is not wired on this host"}
+        return await self._mcp_read_resource_cb(server, uri)
 
     # --- Model resolution ---
 

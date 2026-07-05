@@ -111,6 +111,9 @@ from . import judge_output as _judge_output  # noqa: F401, E402
 from . import mcp as _mcp  # noqa: F401, E402
 from . import mcp_drop_server as _mcp_drop_server  # noqa: F401, E402
 from . import mcp_install as _mcp_install  # noqa: F401, E402
+
+# #2597 slice ②a: mcp_read_resource — permission-gated resource read (mirrors mcp.py).
+from . import mcp_read_resource as _mcp_read_resource  # noqa: F401, E402
 from . import recall as _recall  # noqa: F401, E402
 from . import sandboxed_exec as _sandboxed_exec  # noqa: F401, E402
 
