@@ -2,7 +2,7 @@
 type: reference
 topic: runtime
 audience: [human, agent]
-search_hints: [pipeline DSL, pipeline grammar, transform step, tool step, agent step, call step, match step, fold step, for_each step, expr, R1 expression, verify schema, run_pipeline, run_pipeline_async, run_pipeline_inline, safety.spawn.max_pipeline_fan_out_depth, safety.spawn.max_pipeline_spawns]
+search_hints: [pipeline DSL, pipeline grammar, EBNF, formal grammar, agent generation grammar, transform step, tool step, agent step, call step, match step, fold step, for_each step, parallel step, expr, R1 expression, verify schema, run_pipeline, run_pipeline_async, run_pipeline_inline, safety.spawn.max_pipeline_fan_out_depth, safety.spawn.max_pipeline_spawns]
 ---
 
 # Pipeline DSL reference
@@ -46,6 +46,112 @@ steps:
 `input`, `defaults`, and `refine` are part of the pipeline design's fuller
 grammar but have no runtime yet — a document using them fails to parse with
 an explicit "not yet supported" error rather than being silently ignored.
+
+## Formal grammar
+
+The EBNF below is the **canonical, current** grammar — derived directly from
+`parse_pipeline_dsl` (`src/reyn/core/pipeline/parser.py`), not from an
+earlier design proposal. It covers exactly what the parser accepts today: a
+definition conforming to it parses cleanly; a violation is rejected. Mapping
+keys are unordered in YAML — the linear order below is for readability, not
+a positional requirement. `NAME` is a bare identifier-like string; `EXPR` is
+an [R1 expression](#the-r1-expression-language) source string; `TPL` is an
+`agent.prompt` template string (`{ctx.dotted.path}` / `{pipe}` interpolation,
+not R1).
+
+```ebnf
+Document      ::= YamlDoc ("---" YamlDoc)*        (* exactly one PipelineDoc across the whole text *)
+YamlDoc       ::= SchemaDoc | PipelineDoc
+
+SchemaDoc     ::= "schema:" NAME "fields:" FieldMap
+PipelineDoc   ::= "pipeline:" NAME
+                  ("description:" STRING)?
+                  "steps:" Step+
+
+Step          ::= "transform:" TransformBody
+                 | "tool:"      ToolBody
+                 | "shell:"     ShellBody
+                 | "agent:"     AgentBody
+                 | "call:"      CallBody
+                 | "match:"     MatchBody
+                 | "fold:"      FoldBody
+                 | "for_each:"  ForEachBody
+                 | "parallel:"  ParallelBody
+
+TransformBody ::= "{" "value:" EXPR ["output:" NAME] "}"
+
+ToolBody      ::= "{" "name:" STRING
+                      ["args:" ArgMap]
+                      ["schema:" NAME]
+                      ["output:" NAME] "}"
+ArgMap        ::= "{" (KEY ":" ArgValue ("," KEY ":" ArgValue)*)? "}"
+ArgValue      ::= LITERAL | "!expr" EXPR        (* !expr only as the WHOLE value, never nested *)
+
+ShellBody     ::= "{" "command:" ArgValue
+                      ["schema:" NAME]
+                      ["output:" NAME] "}"
+
+AgentBody     ::= "{" "prompt:" TPL
+                      ["identity:" NAME]
+                      ["capabilities:" "{" "tools:" "[" NAME* "]" "}"]
+                      ["schema:" NAME]
+                      ["output:" NAME] "}"
+
+CallBody      ::= "{" "pipeline:" NAME            (* static literal, never EXPR *)
+                      ["pass:" "[" NAME* "]"]
+                      ["output:" NAME] "}"
+
+MatchBody     ::= "{" "on:" EXPR
+                      "cases:" "{" (LABEL ":" MatchTarget)+ "}"
+                      ["default:" MatchTarget]
+                      ["output:" NAME] "}"
+MatchTarget   ::= "{" "pipeline:" NAME ["pass:" "[" NAME* "]"] "}"
+
+FoldBody      ::= "{" [ListSource]
+                      "init:" EXPR
+                      "do:" Step
+                      "output:" NAME              (* required, unlike call's *)
+                      ["max_items:" INT] "}"
+
+ForEachBody   ::= "{" [ListSource]
+                      ["max_parallel:" INT]
+                      "on_error:" OnError          (* required — no default *)
+                      "do:" Step
+                      "collect:" Step
+                      ["output:" NAME] "}"
+
+ParallelBody  ::= "{" ["on_error:" OnError]        (* optional — defaults to "abort" *)
+                      "branches:" "{" (NAME ":" Step)+ "}"
+                      "collect:" Step
+                      ["output:" NAME] "}"
+
+ListSource    ::= "over:" EXPR | "items:" "[" LITERAL* "]"   (* mutually exclusive *)
+OnError       ::= "continue" | "abort" | "retry(" INT ")"
+
+FieldMap      ::= "{" (NAME ":" FieldType)+ "}"
+FieldType     ::= "{" "type:" ("bool" | "string" | "number") "}"
+                 | "{" "type:" "enum" "values:" "[" LITERAL+ "]" "}"
+                 | "{" "type:" "list" "of:" FieldType "}"     (* 'of' non-list; no lists-of-lists *)
+                 | "{" "type:" "object" "fields:" FieldMap "}"
+                 | "{" "type:" "ref" "schema:" NAME "}"
+```
+
+Structural invariants the grammar alone doesn't show (enforced by the parser
+and executor, not just documented convention):
+
+- A `call`/`match`/`fold`'s `do`/`for_each`'s `do`/`collect`/`parallel`'s
+  branch/`collect` is a **full nested `Step`** — any step kind, including
+  another compositional primitive.
+- `call`, `match`'s case/`default`, and `parallel`'s `branches` all name a
+  **static literal** pipeline/step target — never a runtime expression. Only
+  `match.on` and `for_each`/`fold`'s `over` are runtime-evaluated.
+- `pass:` is the *only* channel a `call`/`match` callee's context is built
+  from — a caller's named store not listed there is invisible to the callee.
+- `for_each`/`parallel` branches each get an **isolated copy** of the outer
+  named stores — no sibling communication between concurrent items/branches.
+- `!expr` is the *only* way a `tool`/`shell` argument becomes a resolved
+  expression instead of a literal — nesting it inside a list/mapping value is
+  a parse error, not a silent no-op.
 
 ## Step kinds
 
@@ -284,6 +390,35 @@ not a code-execution sandbox. It has no recursion, no user-defined functions,
 no unbounded loops (every combinator iterates one already-materialized list
 exactly once), no IO, and no `eval`/`exec`.
 
+```ebnf
+expr           ::= or_expr
+or_expr        ::= and_expr ("or" and_expr)*
+and_expr       ::= not_expr ("and" not_expr)*
+not_expr       ::= "not" not_expr | comparison
+comparison     ::= additive (cmp_op additive)?
+additive       ::= multiplicative (("+" | "-") multiplicative)*
+multiplicative ::= unary (("*" | "/") unary)*
+unary          ::= "-" unary | primary
+primary        ::= NUMBER | STRING | "true" | "false" | "null"
+                  | "(" expr ")"
+                  | "[" (expr ("," expr)*)? "]"
+                  | "{" (IDENT ":" expr ("," IDENT ":" expr)*)? "}"
+                  | combinator
+                  | path
+combinator     ::= "map" "(" expr "," lambda ")"
+                  | "filter" "(" expr "," lambda ")"
+                  | "all" "(" expr "," lambda ")"
+                  | "any" "(" expr "," lambda ")"
+                  | "find" "(" expr "," lambda ")"
+                  | "count" "(" expr ")"
+                  | "sum" "(" expr ")"
+                  | "join" "(" expr "," expr ")"
+                  | "get" "(" expr "," STRING ("," expr)? ")"
+lambda         ::= IDENT "->" expr        (* only valid as a combinator's own argument *)
+path           ::= IDENT ("." IDENT)*
+cmp_op         ::= "==" | "!=" | "<" | ">" | "<=" | ">="
+```
+
 **Literals**: `true` / `false` / `null`, integers, floats, single- or
 double-quoted strings.
 
@@ -444,3 +579,103 @@ launching a pipeline (any of the four tools above) sits on the same
 `HIGH`-severity, spawn-adjacent capability floor as delegating to another
 agent. A context narrowed by the untrusted-content floor or an unbound
 delegate's floor cannot launch a pipeline, registered or inline.
+
+## Grammar (for generation)
+
+A compact, self-contained block for an agent authoring a pipeline definition
+at run time (e.g. for `run_pipeline_inline`) — the grammar plus the rules
+that don't fall out of the grammar alone, plus one canonical example. This
+section stands on its own; it does not assume the prose above has been read.
+
+**Grammar** — same EBNF as [Formal grammar](#formal-grammar) above, repeated
+here for convenience:
+
+```ebnf
+Document      ::= YamlDoc ("---" YamlDoc)*        (* exactly one PipelineDoc total *)
+YamlDoc       ::= SchemaDoc | PipelineDoc
+SchemaDoc     ::= "schema:" NAME "fields:" FieldMap
+PipelineDoc   ::= "pipeline:" NAME ("description:" STRING)? "steps:" Step+
+
+Step          ::= "transform:" "{" "value:" EXPR ["output:" NAME] "}"
+                 | "tool:"     "{" "name:" STRING ["args:" ArgMap] ["schema:" NAME] ["output:" NAME] "}"
+                 | "shell:"    "{" "command:" ArgValue ["schema:" NAME] ["output:" NAME] "}"
+                 | "agent:"    "{" "prompt:" TPL ["identity:" NAME]
+                                    ["capabilities:" "{" "tools:" "[" NAME* "]" "}"]
+                                    ["schema:" NAME] ["output:" NAME] "}"
+                 | "call:"     "{" "pipeline:" NAME ["pass:" "[" NAME* "]"] ["output:" NAME] "}"
+                 | "match:"    "{" "on:" EXPR "cases:" "{" (LABEL ":" MatchTarget)+ "}"
+                                    ["default:" MatchTarget] ["output:" NAME] "}"
+                 | "fold:"     "{" [ListSource] "init:" EXPR "do:" Step "output:" NAME
+                                    ["max_items:" INT] "}"
+                 | "for_each:" "{" [ListSource] ["max_parallel:" INT] "on_error:" OnError
+                                    "do:" Step "collect:" Step ["output:" NAME] "}"
+                 | "parallel:" "{" ["on_error:" OnError] "branches:" "{" (NAME ":" Step)+ "}"
+                                    "collect:" Step ["output:" NAME] "}"
+
+MatchTarget   ::= "{" "pipeline:" NAME ["pass:" "[" NAME* "]"] "}"
+ArgMap        ::= "{" (KEY ":" ArgValue ("," KEY ":" ArgValue)*)? "}"
+ArgValue      ::= LITERAL | "!expr" EXPR
+ListSource    ::= "over:" EXPR | "items:" "[" LITERAL* "]"
+OnError       ::= "continue" | "abort" | "retry(" INT ")"
+FieldMap      ::= "{" (NAME ":" FieldType)+ "}"
+FieldType     ::= "{type: bool}" | "{type: string}" | "{type: number}"
+                 | "{type: enum, values: [" LITERAL+ "]}"
+                 | "{type: list, of:" FieldType "}"
+                 | "{type: object, fields:" FieldMap "}"
+                 | "{type: ref, schema:" NAME "}"
+EXPR          ::= (* see The R1 expression language above *)
+TPL           ::= (* a string with {ctx.dotted.path} / {pipe} interpolation, values only *)
+```
+
+**Hard rules** (violating any of these is either a parse error or a
+run-time step failure — never a silent wrong result):
+
+1. `call`'s `pipeline:`, `match`'s case/`default` `pipeline:`, and every
+   `parallel` branch's step: only `pipeline:` targets in `call`/`match` are
+   ever a static literal name — never an expression. The runtime-evaluated
+   `match.on` only ever selects a case *label*, never a target directly.
+2. `!expr` marks a `tool`/`shell` argument as an R1 expression; everything
+   else is a literal, passed through untouched. Do not write `{ctx.x}`
+   inside an unmarked argument expecting interpolation — that only works
+   for `agent.prompt` (`TPL`), and only there.
+3. `pass:` is the only way a `call`/`match` callee sees any of the caller's
+   named stores — list every name the callee needs. An omitted name is
+   invisible to the callee, not silently inherited.
+4. `for_each.on_error` is **required** — state `continue`/`abort`/`retry(n)`
+   explicitly. `parallel.on_error` is optional and defaults to `abort`.
+5. A `for_each`/`parallel` item or branch cannot see any other item's or
+   branch's result — only `collect` sees the merged set (an ordered list for
+   `for_each`, a `{branch_name: result}` map for `parallel`).
+6. `fold.output` is required (a fold's entire point is a named accumulated
+   result); every other step kind's `output` is optional.
+7. Every `agent` step is capability-narrowed to at most the invoking
+   session's own envelope — naming a wider `capabilities` set than the
+   invoker has does not grant it. In an inline (agent-generated, not
+   file-registered) definition, an `agent` step's `identity` must be omitted
+   or equal to the invoker's own — naming any other identity is rejected.
+8. `!expr` may only be the *entire* value of an `args`/`command` entry —
+   never nested inside a list or mapping value.
+
+**One canonical example** (all three step kinds, one primitive, one schema):
+
+```yaml
+schema: Review
+fields:
+  passed: {type: bool}
+  notes: {type: string}
+---
+pipeline: review_and_report
+description: Review a document and summarize the verdict.
+steps:
+  - agent:
+      prompt: "Review {ctx.doc}. Reply with passed (bool) and notes (string)."
+      schema: Review
+      output: review
+  - transform:
+      value: "review.passed and 'OK' or 'NEEDS WORK'"
+      output: verdict
+  - tool:
+      name: shell
+      args: {command: !expr "'echo ' + verdict"}
+      output: shouted
+```

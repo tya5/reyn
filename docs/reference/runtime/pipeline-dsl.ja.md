@@ -2,7 +2,7 @@
 type: reference
 topic: runtime
 audience: [human, agent]
-search_hints: [pipeline DSL, pipeline grammar, transform step, tool step, agent step, call step, match step, fold step, for_each step, expr, R1 expression, verify schema, run_pipeline, run_pipeline_async, run_pipeline_inline, safety.spawn.max_pipeline_fan_out_depth, safety.spawn.max_pipeline_spawns]
+search_hints: [pipeline DSL, pipeline grammar, EBNF, formal grammar, agent generation grammar, transform step, tool step, agent step, call step, match step, fold step, for_each step, parallel step, expr, R1 expression, verify schema, run_pipeline, run_pipeline_async, run_pipeline_inline, safety.spawn.max_pipeline_fan_out_depth, safety.spawn.max_pipeline_spawns]
 ---
 
 # Pipeline DSL リファレンス
@@ -38,6 +38,95 @@ steps:
 | `steps` | 必須 | 順に実行される、空でないステップのリスト(下記の「ステップ種別」と「合成プリミティブ」参照)。 |
 
 `input` / `defaults` / `refine` は pipeline 設計のより完全な文法の一部ですが、まだランタイムがありません — これらを使ったドキュメントは、静かに無視されるのではなく、明示的な「まだサポートされていない」エラーで parse に失敗します。
+
+## 形式文法
+
+以下の EBNF は**規範的な、現行の**文法です — 初期の設計提案からではなく、`parse_pipeline_dsl`(`src/reyn/core/pipeline/parser.py`)から直接導出されています。今日パーサが受け付けるものを正確にカバーしています: これに適合する定義はクリーンに parse でき、違反は拒否されます。YAML のマッピングキーは無順序です — 以下の線形な並びは可読性のためであり、位置的な要求ではありません。`NAME` は識別子的な bare 文字列、`EXPR` は [R1 expression](#r1-expression) のソース文字列、`TPL` は `agent.prompt` のテンプレート文字列(`{ctx.dotted.path}` / `{pipe}` 補間、R1 ではない)です。
+
+```ebnf
+Document      ::= YamlDoc ("---" YamlDoc)*        (* テキスト全体で PipelineDoc はちょうど 1 つ *)
+YamlDoc       ::= SchemaDoc | PipelineDoc
+
+SchemaDoc     ::= "schema:" NAME "fields:" FieldMap
+PipelineDoc   ::= "pipeline:" NAME
+                  ("description:" STRING)?
+                  "steps:" Step+
+
+Step          ::= "transform:" TransformBody
+                 | "tool:"      ToolBody
+                 | "shell:"     ShellBody
+                 | "agent:"     AgentBody
+                 | "call:"      CallBody
+                 | "match:"     MatchBody
+                 | "fold:"      FoldBody
+                 | "for_each:"  ForEachBody
+                 | "parallel:"  ParallelBody
+
+TransformBody ::= "{" "value:" EXPR ["output:" NAME] "}"
+
+ToolBody      ::= "{" "name:" STRING
+                      ["args:" ArgMap]
+                      ["schema:" NAME]
+                      ["output:" NAME] "}"
+ArgMap        ::= "{" (KEY ":" ArgValue ("," KEY ":" ArgValue)*)? "}"
+ArgValue      ::= LITERAL | "!expr" EXPR        (* !expr は値全体としてのみ、ネスト不可 *)
+
+ShellBody     ::= "{" "command:" ArgValue
+                      ["schema:" NAME]
+                      ["output:" NAME] "}"
+
+AgentBody     ::= "{" "prompt:" TPL
+                      ["identity:" NAME]
+                      ["capabilities:" "{" "tools:" "[" NAME* "]" "}"]
+                      ["schema:" NAME]
+                      ["output:" NAME] "}"
+
+CallBody      ::= "{" "pipeline:" NAME            (* 静的リテラル、EXPR ではない *)
+                      ["pass:" "[" NAME* "]"]
+                      ["output:" NAME] "}"
+
+MatchBody     ::= "{" "on:" EXPR
+                      "cases:" "{" (LABEL ":" MatchTarget)+ "}"
+                      ["default:" MatchTarget]
+                      ["output:" NAME] "}"
+MatchTarget   ::= "{" "pipeline:" NAME ["pass:" "[" NAME* "]"] "}"
+
+FoldBody      ::= "{" [ListSource]
+                      "init:" EXPR
+                      "do:" Step
+                      "output:" NAME              (* 必須。call とは異なる *)
+                      ["max_items:" INT] "}"
+
+ForEachBody   ::= "{" [ListSource]
+                      ["max_parallel:" INT]
+                      "on_error:" OnError          (* 必須 — デフォルト無し *)
+                      "do:" Step
+                      "collect:" Step
+                      ["output:" NAME] "}"
+
+ParallelBody  ::= "{" ["on_error:" OnError]        (* 任意 — デフォルトは "abort" *)
+                      "branches:" "{" (NAME ":" Step)+ "}"
+                      "collect:" Step
+                      ["output:" NAME] "}"
+
+ListSource    ::= "over:" EXPR | "items:" "[" LITERAL* "]"   (* 互いに排他的 *)
+OnError       ::= "continue" | "abort" | "retry(" INT ")"
+
+FieldMap      ::= "{" (NAME ":" FieldType)+ "}"
+FieldType     ::= "{" "type:" ("bool" | "string" | "number") "}"
+                 | "{" "type:" "enum" "values:" "[" LITERAL+ "]" "}"
+                 | "{" "type:" "list" "of:" FieldType "}"     (* 'of' は list 不可。リストのリスト無し *)
+                 | "{" "type:" "object" "fields:" FieldMap "}"
+                 | "{" "type:" "ref" "schema:" NAME "}"
+```
+
+文法だけでは示されない構造的な不変条件(単なる慣習ではなく、パーサとエグゼキュータによって強制されます):
+
+- `call`/`match`/`fold` の `do`、`for_each` の `do`/`collect`、`parallel` の branch/`collect` は**完全にネストされた `Step`** です — どのステップ種別でもよく、別の合成プリミティブでも構いません。
+- `call`、`match` の case/`default`、`parallel` の `branches` は、いずれも**静的リテラル**の pipeline / ステップターゲットを指定します — 実行時の expression では決してありません。実行時に評価されるのは `match.on` と `for_each`/`fold` の `over` だけです。
+- `pass:` は `call`/`match` の callee のコンテキストが構築される*唯一の*チャネルです — そこに列挙されていない caller の named store は callee から不可視です。
+- `for_each`/`parallel` のブランチはそれぞれ、外側の named store の**隔離されたコピー**を受け取ります — 並行なアイテム/ブランチ間の sibling 通信はありません。
+- `!expr` は `tool`/`shell` の引数を解決すべき expression にする*唯一の*方法です — リスト / マッピングの中にネストすると静かな no-op ではなく parse エラーになります。
 
 ## ステップ種別
 
@@ -233,6 +322,35 @@ callee の最初のステップは call サイトでの caller の pipe data を
 
 `transform.value`、`!expr` タグの付いた `tool`/`shell` の引数、`match.on` は、いずれも同じ小さな**total**な expression 言語(R1)に対して解決されます — 汎用のスクリプト言語でも、コード実行サンドボックスでもない、専用のツリーウォーク・インタプリタです。再帰も、ユーザー定義関数も、無限ループも(すべてのコンビネータは既に実体化された 1 つのリストをちょうど 1 回だけ走査する)、IO も、`eval`/`exec` もありません。
 
+```ebnf
+expr           ::= or_expr
+or_expr        ::= and_expr ("or" and_expr)*
+and_expr       ::= not_expr ("and" not_expr)*
+not_expr       ::= "not" not_expr | comparison
+comparison     ::= additive (cmp_op additive)?
+additive       ::= multiplicative (("+" | "-") multiplicative)*
+multiplicative ::= unary (("*" | "/") unary)*
+unary          ::= "-" unary | primary
+primary        ::= NUMBER | STRING | "true" | "false" | "null"
+                  | "(" expr ")"
+                  | "[" (expr ("," expr)*)? "]"
+                  | "{" (IDENT ":" expr ("," IDENT ":" expr)*)? "}"
+                  | combinator
+                  | path
+combinator     ::= "map" "(" expr "," lambda ")"
+                  | "filter" "(" expr "," lambda ")"
+                  | "all" "(" expr "," lambda ")"
+                  | "any" "(" expr "," lambda ")"
+                  | "find" "(" expr "," lambda ")"
+                  | "count" "(" expr ")"
+                  | "sum" "(" expr ")"
+                  | "join" "(" expr "," expr ")"
+                  | "get" "(" expr "," STRING ("," expr)? ")"
+lambda         ::= IDENT "->" expr        (* コンビネータ自身の引数としてのみ有効 *)
+path           ::= IDENT ("." IDENT)*
+cmp_op         ::= "==" | "!=" | "<" | ">" | "<=" | ">="
+```
+
 **リテラル**: `true` / `false` / `null`、整数、浮動小数点数、シングルまたはダブルクォート文字列。
 
 **フィールド参照**: コンテキストに対するドット区切りのパス。例: `ctx.review.passed`、または bare な `pipe`。パスが存在しないか、中間セグメントが非マッピングであれば例外を送出します — bare なパスは安全なナビゲーションではありません。それには下記の `get(...)` を使ってください。
@@ -328,3 +446,81 @@ safety:
 ## セキュリティ
 
 [Pipeline registration § セキュリティ](../../concepts/runtime/pipeline-registration.md#security-launching-a-pipeline-stays-gated)参照: pipeline を起動すること(上記 4 ツールのいずれでも)は、別のエージェントへの delegate と同じ `HIGH` severity の、spawn-adjacent な capability floor に位置します。untrusted-content floor、または unbound な delegate の floor に narrowing されたコンテキストは、登録済みであれ inline であれ、pipeline を起動できません。
+
+## 文法(生成用)
+
+実行時に pipeline 定義を作成するエージェント(例: `run_pipeline_inline`)向けの、コンパクトで自己完結したブロックです — 文法そのものに加え、文法だけからは導けないルール、そして 1 つの規範的な例。このセクションは単独で成立します。上記の文章を読んでいることを前提としません。
+
+**文法** — 上記の形式文法と同じ EBNF を、参照の便宜のため再掲します:
+
+```ebnf
+Document      ::= YamlDoc ("---" YamlDoc)*        (* 全体でちょうど 1 つの PipelineDoc *)
+YamlDoc       ::= SchemaDoc | PipelineDoc
+SchemaDoc     ::= "schema:" NAME "fields:" FieldMap
+PipelineDoc   ::= "pipeline:" NAME ("description:" STRING)? "steps:" Step+
+
+Step          ::= "transform:" "{" "value:" EXPR ["output:" NAME] "}"
+                 | "tool:"     "{" "name:" STRING ["args:" ArgMap] ["schema:" NAME] ["output:" NAME] "}"
+                 | "shell:"    "{" "command:" ArgValue ["schema:" NAME] ["output:" NAME] "}"
+                 | "agent:"    "{" "prompt:" TPL ["identity:" NAME]
+                                    ["capabilities:" "{" "tools:" "[" NAME* "]" "}"]
+                                    ["schema:" NAME] ["output:" NAME] "}"
+                 | "call:"     "{" "pipeline:" NAME ["pass:" "[" NAME* "]"] ["output:" NAME] "}"
+                 | "match:"    "{" "on:" EXPR "cases:" "{" (LABEL ":" MatchTarget)+ "}"
+                                    ["default:" MatchTarget] ["output:" NAME] "}"
+                 | "fold:"     "{" [ListSource] "init:" EXPR "do:" Step "output:" NAME
+                                    ["max_items:" INT] "}"
+                 | "for_each:" "{" [ListSource] ["max_parallel:" INT] "on_error:" OnError
+                                    "do:" Step "collect:" Step ["output:" NAME] "}"
+                 | "parallel:" "{" ["on_error:" OnError] "branches:" "{" (NAME ":" Step)+ "}"
+                                    "collect:" Step ["output:" NAME] "}"
+
+MatchTarget   ::= "{" "pipeline:" NAME ["pass:" "[" NAME* "]"] "}"
+ArgMap        ::= "{" (KEY ":" ArgValue ("," KEY ":" ArgValue)*)? "}"
+ArgValue      ::= LITERAL | "!expr" EXPR
+ListSource    ::= "over:" EXPR | "items:" "[" LITERAL* "]"
+OnError       ::= "continue" | "abort" | "retry(" INT ")"
+FieldMap      ::= "{" (NAME ":" FieldType)+ "}"
+FieldType     ::= "{type: bool}" | "{type: string}" | "{type: number}"
+                 | "{type: enum, values: [" LITERAL+ "]}"
+                 | "{type: list, of:" FieldType "}"
+                 | "{type: object, fields:" FieldMap "}"
+                 | "{type: ref, schema:" NAME "}"
+EXPR          ::= (* 上記の R1 expression 言語を参照 *)
+TPL           ::= (* {ctx.dotted.path} / {pipe} 補間を持つ文字列、値のみ *)
+```
+
+**Hard rules**(これらのいずれかへの違反は parse エラーか実行時のステップ失敗になります — 静かな誤った結果になることは決してありません):
+
+1. `call` の `pipeline:`、`match` の case/`default` の `pipeline:`、そして各 `parallel` ブランチのステップ: `call`/`match` における `pipeline:` ターゲットは常に静的リテラル名です — 実行時の expression では決してありません。実行時に評価される `match.on` が選ぶのは常に case の*ラベル*であり、ターゲット自体ではありません。
+2. `!expr` は `tool`/`shell` の引数を R1 expression としてマークします。それ以外はすべてリテラルで、そのまま渡されます。補間を期待してマークしていない引数の中に `{ctx.x}` と書かないでください — それが機能するのは `agent.prompt`(`TPL`)だけで、そこだけです。
+3. `pass:` は、`call`/`match` の callee が caller のどの named store を見られるかを決める唯一の方法です — callee が必要とするすべての名前を列挙してください。省略された名前は callee から不可視であり、暗黙に継承されることはありません。
+4. `for_each.on_error` は**必須**です — `continue`/`abort`/`retry(n)` を明示的に指定してください。`parallel.on_error` は任意で、デフォルトは `abort` です。
+5. `for_each`/`parallel` のアイテム / ブランチは、他のどのアイテム / ブランチの結果も見ることができません — マージされた集合を見るのは `collect` だけです(`for_each` は順序付きリスト、`parallel` は `{branch_name: result}` マップ)。
+6. `fold.output` は必須です(fold の存在意義は名前付きの累積結果を生成すること)。他のすべてのステップ種別の `output` は任意です。
+7. すべての `agent` ステップは、起動しているセッション自身の envelope 以下に capability を narrowing されます — 起動者が持つより広い `capabilities` 集合を指定しても、それが付与されることはありません。inline(エージェントが生成した、ファイル登録されていない)定義では、`agent` ステップの `identity` は省略するか起動者自身と等しくなければなりません — それ以外の identity を指定すると拒否されます。
+8. `!expr` は `args`/`command` エントリの*値全体*としてのみ有効です — リストやマッピングの値の中にネストすることはできません。
+
+**1 つの規範的な例**(3 つのステップ種別すべて、1 つのプリミティブ、1 つの schema):
+
+```yaml
+schema: Review
+fields:
+  passed: {type: bool}
+  notes: {type: string}
+---
+pipeline: review_and_report
+description: Review a document and summarize the verdict.
+steps:
+  - agent:
+      prompt: "Review {ctx.doc}. Reply with passed (bool) and notes (string)."
+      schema: Review
+      output: review
+  - transform:
+      value: "review.passed and 'OK' or 'NEEDS WORK'"
+      output: verdict
+  - tool:
+      name: shell
+      args: {command: !expr "'echo ' + verdict"}
+      output: shouted
+```
