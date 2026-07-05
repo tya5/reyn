@@ -411,6 +411,7 @@ def run(args: argparse.Namespace) -> None:
             state_log=state_log,
             budget_tracker=budget_tracker,
             hooks_config=session_cfg.config.hooks,  # #1800 slice 5b (pass-through, not bundled)
+            fs_watch_config=session_cfg.config.fs_watch,  # #2608 H4 (pass-through, not bundled)
             # #2093: the uniform reyn.yaml-derived per-session config bundle (sandbox /
             # multimodal / action_retrieval / embedding / router / retry /
             # tool-use-scheme) — one source point for all five sites.

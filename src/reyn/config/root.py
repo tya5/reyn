@@ -49,6 +49,7 @@ from reyn.config.infra import (
     CronConfig,
     DelegationConfig,
     EventsConfig,
+    FsWatchConfig,
     LLMConfig,
     PythonConfig,
     SandboxConfig,
@@ -254,6 +255,12 @@ class ReynConfig:
     # FP-0009 Component B — cron-driven scheduled message dispatch.
     # Empty by default; operator declares jobs in reyn.yaml ``cron.jobs``.
     cron: CronConfig = field(default_factory=CronConfig)
+    # #2608 H4 — operator-declared filesystem watch paths -> ``file_changed``
+    # external-event hook. Empty by default (paths=[]) → the session-owned
+    # FsWatcher never starts (byte-identical to pre-H4). OUT-set only (restart-
+    # only, reyn.yaml/reyn.local.yaml) — see FsWatchConfig's docstring for why
+    # this must never be an agent-settable / hot-reloadable surface.
+    fs_watch: FsWatchConfig = field(default_factory=FsWatchConfig)
     # FP-0041 #489 PR-D2 — external chat transport routing (= Slack /
     # LINE / Discord etc.). Empty by default; operator declares
     # transport → MCP tool mapping in reyn.yaml ``external_transports``.

@@ -101,6 +101,11 @@ web = [
 # Web UI (= `reyn web` + openui) と TUI (= `reyn chat`) と並列に動かす。
 chainlit = ["chainlit>=2.0"]
 mcp = ["fastmcp==3.4.2"]
+# #2608 H4: filesystem watcher external-event source (`fs_watch:` config block ->
+# `file_changed` hook). Extras-only — a build with no fs_watch config configured
+# never imports this, and a build WITH config but no extra installed degrades to
+# "feature off + warn" (see reyn.runtime.fs_watcher module docstring).
+fs-watch = ["watchdog>=4.0"]
 release = [
     "build>=1.0",
     "twine>=5.0",

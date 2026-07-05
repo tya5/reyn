@@ -61,6 +61,11 @@ ALLOWED_HOOK_POINTS: frozenset[str] = frozenset({
     # #2608 H1: external-event point — fired by a pushed MCP resources/updated
     # notification for a subscribed resource, NOT by the lifecycle run-loop.
     "mcp_resource_updated",
+    # #2608 H4: external-event point — fired by the session-owned FsWatcher
+    # (reyn.runtime.fs_watcher) on a create/modify/delete under an
+    # operator-declared ``fs_watch.paths`` entry. Matchable field: ``path``
+    # (glob via fnmatch — see hooks/matcher.py's _GLOB_FIELDS).
+    "file_changed",
 })
 
 

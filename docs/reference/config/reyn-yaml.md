@@ -825,6 +825,42 @@ cron:
 - `docs/concepts/data-retrieval/operational-intelligence.md` — scheduling a
   recurring events-log indexing agent
 
+## `fs_watch:` block
+
+Operator-declared filesystem watch paths (#2608 H4). Each path is watched
+recursively; a create/modify/delete under it fires the `file_changed`
+external-event hook (see the `hooks:` block above — `on: file_changed`, plus
+a `matcher: {path: "..."}` glob to scope a hook to a sub-tree).
+
+```yaml
+fs_watch:
+  paths:
+    - /repo/src
+    - /repo/docs
+  debounce_seconds: 0.2   # coalesce a write-burst on one path into ONE fire
+```
+
+### Fields
+
+- **`paths`** (optional, default `[]`) — list of directories to watch,
+  recursively. Empty (the default) → the watcher never starts.
+- **`debounce_seconds`** (optional, default `0.2`) — a burst of writes to the
+  SAME path within this window coalesces to one hook fire.
+
+### Security
+
+`fs_watch:` is **OUT-set only** — restart-only, loaded from
+`reyn.yaml`/`reyn.local.yaml`, never from a `.reyn/*.yaml` hot-reload file.
+There is no op or tool verb an agent can use to register or widen a watch —
+a filesystem-wide change-notification feed is an info-gathering surface, so
+it gets the same operator-only gate as `sandbox:` policy.
+
+### Requirements
+
+Requires the optional `watchdog` package (`pip install reyn[fs-watch]`). If
+`paths` is configured but `watchdog` isn't installed, the feature logs a
+warning and stays off — the rest of the session is unaffected.
+
 ## `permissions` block
 
 Project-wide capability defaults. Per-skill permissions in `skill.md` override these.

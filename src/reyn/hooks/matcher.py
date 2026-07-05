@@ -10,12 +10,13 @@ action runs.
 Shape
 -----
 ``matcher: dict[str, str] | None`` — e.g. ``{"server": "github", "uri":
-"file:///repo/**"}``. A hook fires iff **every** field named in the matcher
-matches:
+"file:///repo/**"}`` or (H4) ``{"path": "/repo/src/**"}``. A hook fires iff
+**every** field named in the matcher matches:
 
-- exact string equality for every field EXCEPT ``uri``;
-- ``uri`` matches via a shell-style glob (``fnmatch.fnmatch``), so
-  ``"file:///repo/**"`` matches any URI under that prefix.
+- exact string equality for every field EXCEPT ``uri``/``path``;
+- ``uri``/``path`` match via a shell-style glob (``fnmatch.fnmatch``), so
+  ``"file:///repo/**"`` matches any URI under that prefix and
+  ``"/repo/src/**"`` matches any watched path under that directory.
 
 A field named in the matcher that is ABSENT from ``template_vars`` (e.g. a
 lifecycle hook-point's vars have no ``server``/``uri``, or a future source's
@@ -27,18 +28,24 @@ every hook that predates H2, and for an external-event hook that opts not to
 filter). This is the byte-identical-to-H1 default: ``matches(None, ...)`` and
 ``matches({}, ...)`` are both ``True`` unconditionally.
 
-Deliberately general: the ``uri``-globs-others-exact rule is keyed off the
-FIELD NAME, not the hook-point, so a future external-event source (cron/
-webhook/fs-watcher, H4/H5) that also emits a ``uri``-shaped field gets glob
-matching for free, and any other field it introduces gets exact matching
-with zero code changes here.
+Deliberately general: the glob-vs-exact rule is keyed off the FIELD NAME, not
+the hook-point, so a future external-event source (cron/webhook, H5) that
+also emits a ``uri``- or ``path``-shaped field gets glob matching for free,
+and any other field it introduces gets exact matching with zero code changes
+here.
+
+#2608 H4 adds ``path`` to ``_GLOB_FIELDS`` for the ``file_changed`` point
+(see ``reyn.runtime.fs_watcher``): a hook's matcher can scope to a watched
+sub-tree, e.g. ``{"path": "/repo/src/**"}``.
 """
 from __future__ import annotations
 
 from fnmatch import fnmatch
 
 # Field names matched via glob (fnmatch) rather than exact string equality.
-_GLOB_FIELDS: frozenset[str] = frozenset({"uri"})
+# "uri" — #2608 H1 (mcp_resource_updated). "path" — #2608 H4 (file_changed):
+# lets a hook's matcher scope to a sub-tree via e.g. {"path": "/repo/src/**"}.
+_GLOB_FIELDS: frozenset[str] = frozenset({"uri", "path"})
 
 
 def matches(matcher: "dict[str, str] | None", template_vars: dict) -> bool:

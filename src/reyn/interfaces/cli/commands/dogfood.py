@@ -489,6 +489,7 @@ def _build_live_runner(agent_name: str, *, env_backend=None, ws_base_dir=None, w
                 state_log=None,  # no WAL for dogfood dispatch
                 budget_tracker=budget_tracker,
                 hooks_config=config.hooks,  # #1800 slice 5b (pass-through, not bundled)
+                fs_watch_config=config.fs_watch,  # #2608 H4 (pass-through, not bundled)
                 # #2093: the uniform per-session config bundle. dogfood deliberately
                 # keeps embedding_config=None (the documented gap — it had
                 # action_retrieval but not its sibling embedding), preserved via
