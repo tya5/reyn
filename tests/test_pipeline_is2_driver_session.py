@@ -346,6 +346,59 @@ async def test_run_pipeline_async_launches_and_delivers_result(tmp_path: Path, m
 
 
 @pytest.mark.asyncio
+async def test_pipeline_run_async_reachable_via_invoke_action(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    """Tier 2c: #2589 — ``pipeline__run_async`` (one of the 4 verbs that were
+    dispatch-wired but NEVER enumerated for a default agent) is reachable
+    end-to-end through ``invoke_action``, not just the direct handler call
+    the test above exercises. Drives the SAME production entry point a
+    default enumerate-all agent would use (``INVOKE_ACTION.handler({
+    "action_name": "pipeline__run_async", ...})``), proving resolve →
+    lookup → dispatch → real async driver-session launch all connect for
+    the previously-unreachable verb."""
+    from reyn.tools.universal_catalog import INVOKE_ACTION
+
+    _install_side_effect_tool(monkeypatch)
+    state_log = StateLog(tmp_path / ".reyn" / "wal.jsonl")
+    scripted = _ScriptedAgentReply("acknowledged")
+    reg = _agent_registry(tmp_path, state_log, scripted)
+    out_file = tmp_path / "out.txt"
+
+    pipeline_registry = PipelineRegistry()
+    pipeline_registry.register("p", _three_step_pipeline(out_file))
+
+    caller = reg.get_or_load("worker")
+    ctx = ToolContext(
+        events=caller._router_host.events,
+        permission_resolver=None,
+        workspace=None,
+        caller_kind="router",
+        router_state=RouterCallerState(
+            pipeline_registry=pipeline_registry,
+            agent_registry=reg,
+            host=caller._router_host,
+        ),
+        state_log=state_log,
+    )
+
+    result = await INVOKE_ACTION.handler(
+        {"action_name": "pipeline__run_async", "args": {"name": "p", "input": {"seed": 10}}},
+        ctx,
+    )
+    assert result["status"] == "started"
+    run_id = result["data"]["run_id"]
+    run_dir = pipeline_run_dir(tmp_path / ".reyn", run_id)
+    assert (run_dir / "invocation.json").is_file()
+
+    assert await _wait_for(lambda: _result_json(run_dir) is not None)
+    terminal = _result_json(run_dir)
+    assert terminal["status"] == "ok" and terminal["delivered"] is True
+    assert out_file.read_text(encoding="utf-8").splitlines() == ["11", "second"]
+    assert await _wait_for(lambda: scripted.calls >= 1)
+
+
+@pytest.mark.asyncio
 async def test_run_pipeline_async_error_contracts(tmp_path: Path) -> None:
     """Tier 1: unregistered pipeline name and missing WAL each yield a clear
     error (never a silent no-op launch)."""
