@@ -50,10 +50,52 @@ Elicitation (#2597 slice ③ — server->client ``elicitation/create``):
   that routes a server's structured question through reyn's consent path
   (:class:`~reyn.mcp.connection_service.MCPConnectionService` builds one per
   held connection); this module only plumbs the constructor kwarg through.
+
+OAuth 2.1 (#2597 slice ④ — the umbrella's LAST slice, hosted MCP servers like
+GitHub MCP / Atlassian that require browser-based OAuth rather than a static
+bearer token):
+
+  A server config's ``auth`` key selects the auth mode for the ``http``
+  transport (``sse``/``stdio`` reject a non-empty ``auth`` — OAuth only makes
+  sense over Streamable HTTP). Static bearer/API-key auth is UNCHANGED —
+  still expressed via ``headers: {Authorization: "Bearer ..."}`` and carries
+  no ``auth`` key at all (the pre-#2597-④ path, still exercised by
+  ``test_http_transport_round_trip``). ``auth`` is new and, when present,
+  MUST resolve to ``{"type": "oauth", ...}`` (a bare string ``"oauth"`` is
+  shorthand for ``{"type": "oauth"}``) — any other ``type`` is a config
+  error raised eagerly at transport-open time, matching this module's
+  existing lazy-validate-at-connect-time posture (``type``/``url`` are
+  validated the same way).
+
+  :meth:`_open_http` builds a ``fastmcp.client.auth.OAuth(mcp_url=url,
+  scopes=..., client_id=..., client_secret=..., token_storage=
+  MCPOAuthTokenStorage())`` (see :mod:`reyn.mcp.oauth_token_storage` for the
+  exact verified FastMCP contract — NOT the ``mcp.client.auth.TokenStorage``
+  ABC the umbrella issue originally assumed; FastMCP 3.4.2 instead wants a
+  generic ``key_value.aio`` ``AsyncKeyValue`` store) and passes it as
+  ``StreamableHttpTransport(url, headers=..., auth=oauth)`` — FastMCP's own
+  ``OAuth`` object IS an ``httpx.Auth`` (via ``OAuthClientProvider``), so it
+  slots into the same ``auth=`` parameter ``StreamableHttpTransport`` already
+  exposed (unused pre-④). FastMCP's ``OAuth`` runs the full Authorization
+  Code Grant + PKCE + browser-open + localhost-callback dance internally on
+  first use — reyn does NOT reimplement any of that; it only supplies the
+  token_storage backend + the pre-flight headless check below.
+
+  Headless graceful failure: before constructing ``OAuth``,
+  :meth:`_open_http` checks :func:`~reyn.mcp.oauth_token_storage.
+  has_stored_token` for this URL. If no usable token is cached AND this
+  client is running non-interactively (``non_interactive`` constructor kwarg,
+  or auto-detected via ``sys.stdin.isatty()`` when not explicitly passed —
+  mirrors ``reyn.runtime.session``'s own ``non_interactive`` flag's "no user
+  to ask" rationale), :meth:`_open_http` raises :class:`MCPError` immediately
+  with a clear message rather than let FastMCP open a browser + wait (bounded
+  only by ``OAuth``'s own ``callback_timeout``, default 300s) for a callback
+  nobody can complete.
 """
 from __future__ import annotations
 
 import os
+import sys
 import tempfile
 import warnings
 from typing import Any, NoReturn
@@ -238,6 +280,7 @@ class MCPClient:
         message_handler: Any = None,
         elicitation_handler: Any = None,
         server_name: str | None = None,
+        non_interactive: bool | None = None,
     ) -> None:
         if not isinstance(config, dict):
             raise ValueError(f"MCP server config must be a dict, got {type(config).__name__}")
@@ -246,6 +289,14 @@ class MCPClient:
             raise ValueError(
                 f"Unsupported MCP server type: {srv_type!r}. "
                 f"Expected one of {sorted(_SUPPORTED_TYPES)}."
+            )
+        # #2597 slice ④: 'auth' (OAuth) only makes sense over Streamable HTTP —
+        # reject it eagerly at construction time for stdio/sse rather than
+        # silently ignoring it (only _open_http ever reads 'auth').
+        if config.get("auth") and srv_type != "http":
+            raise ValueError(
+                f"MCP server 'auth' config is only supported for 'http' "
+                f"(Streamable HTTP) servers, not {srv_type!r}."
             )
         self._config: dict[str, Any] = dict(config)
         self._type: str = srv_type
@@ -279,6 +330,11 @@ class MCPClient:
         # always install one; the ephemeral per-call ``MCPClientPool`` path
         # never does, same None-default no-op pattern as ``message_handler``).
         self._elicitation_handler: Any = elicitation_handler
+        # #2597 slice ④: explicit override for the headless-OAuth pre-flight check
+        # in _open_http (see module docstring's "Headless graceful failure").
+        # None (default) means auto-detect via sys.stdin.isatty() at the point
+        # _open_http actually needs the answer — see _is_non_interactive().
+        self._non_interactive_override: bool | None = non_interactive
         self._client: Any = None  # fastmcp.Client when initialized
         self._initialized = False
         # Captures subprocess stderr for stdio transport so initialize
@@ -892,6 +948,90 @@ class MCPClient:
             log_file=log_file,
         )
 
+    def _is_non_interactive(self) -> bool:
+        """Resolve the effective headless/non-interactive posture for the
+        #2597 slice ④ OAuth pre-flight check (see :meth:`_build_oauth_auth`).
+
+        The explicit constructor kwarg wins when given; otherwise auto-detect
+        via ``sys.stdin.isatty()`` — no attached TTY means there is no human
+        to complete a browser OAuth round-trip. Defensive: any failure while
+        probing stdin (closed / non-file-backed stdin, seen in some
+        subprocess / CI harnesses) is treated as non-interactive — the
+        conservative choice, since raising a clear error beats hanging.
+        """
+        if self._non_interactive_override is not None:
+            return self._non_interactive_override
+        try:
+            return not sys.stdin.isatty()
+        except Exception:  # noqa: BLE001
+            return True
+
+    def _build_oauth_auth(self, url: str) -> "Any":
+        """Build the ``fastmcp.client.auth.OAuth`` object for ``self._config
+        ["auth"]``, or return None if this server config carries no ``auth``
+        key at all (the pre-④ static-bearer-via-``headers`` path, unchanged).
+
+        See the module docstring's "OAuth 2.1 (#2597 slice ④)" section for
+        the full contract this implements. Raises :class:`MCPError` eagerly
+        (this module's existing lazy-validate-at-connect-time posture, same
+        as the ``type``/``url`` checks above) for: a non-``oauth`` ``auth``
+        type, an ``auth`` key on a non-``http`` transport, or a headless
+        caller with no cached token yet.
+        """
+        auth_cfg = self._config.get("auth")
+        if not auth_cfg:
+            return None
+        if isinstance(auth_cfg, str):
+            if auth_cfg != "oauth":
+                raise MCPError(
+                    f"Unsupported MCP 'auth' shorthand: {auth_cfg!r}. "
+                    "The only supported string shorthand is 'oauth'."
+                )
+            auth_cfg = {"type": "oauth"}
+        if not isinstance(auth_cfg, dict):
+            raise MCPError(
+                "MCP server 'auth' config must be the string 'oauth' or a "
+                f"dict, got {type(auth_cfg).__name__}."
+            )
+        auth_type = auth_cfg.get("type")
+        if auth_type != "oauth":
+            raise MCPError(
+                f"Unsupported MCP 'auth.type': {auth_type!r}. Only 'oauth' is "
+                "supported today — static bearer/API-key auth uses the "
+                "'headers' key instead (e.g. headers: {Authorization: "
+                "'Bearer ${TOKEN}'})."
+            )
+        # Note: the http-only restriction is already enforced eagerly in
+        # __init__ (config.get("auth") + srv_type != "http" raises there) —
+        # this method is only ever reached via _open_http, so self._type is
+        # guaranteed "http" here.
+
+        from reyn.mcp.oauth_token_storage import (
+            MCPOAuthTokenStorage,
+            has_stored_token,
+        )
+
+        server = self.server_name or url
+        if self._is_non_interactive() and not has_stored_token(url):
+            raise MCPError(
+                f"MCP server {server!r} requires OAuth authentication and no "
+                "cached token was found at ~/.reyn/oauth_tokens.json. Run "
+                "reyn interactively once against this server to complete the "
+                "browser-based OAuth flow — the token is then cached for "
+                "subsequent headless/non-interactive runs."
+            )
+
+        from fastmcp.client.auth import OAuth
+
+        scopes = auth_cfg.get("scopes")
+        return OAuth(
+            mcp_url=url,
+            scopes=scopes,
+            client_id=auth_cfg.get("client_id"),
+            client_secret=auth_cfg.get("client_secret"),
+            token_storage=MCPOAuthTokenStorage(),
+        )
+
     def _open_http(self) -> "Any":
         """Open the Streamable HTTP transport.
 
@@ -905,6 +1045,11 @@ class MCPClient:
             ``${VAR}`` interpolation is the caller's responsibility (the
             standard load_config path applies ``expand_env`` recursively
             across the whole merged config — see ADR-0030).
+          - ``auth`` (optional — #2597 slice ④) — ``"oauth"`` or
+            ``{"type": "oauth", "scopes": [...], "client_id": ..., "client_secret":
+            ...}``. Mutually additive with ``headers`` (both can be set; a
+            server that also needs a static header alongside OAuth is
+            supported). See :meth:`_build_oauth_auth`.
           - ``timeout`` (optional, default 30) — request timeout in seconds.
             FastMCP's ``StreamableHttpTransport`` has no per-transport
             connect timeout (its ``sse_read_timeout`` ctor kwarg is
@@ -932,7 +1077,8 @@ class MCPClient:
         # need to spoof in tests or proxy in production.
         if self._agent_id and "X-Reyn-Agent-Id" not in headers:
             headers["X-Reyn-Agent-Id"] = self._agent_id
-        return StreamableHttpTransport(url, headers=headers)
+        auth = self._build_oauth_auth(url)
+        return StreamableHttpTransport(url, headers=headers, auth=auth)
 
     def _open_sse(self) -> "Any":
         """Open the SSE transport (#2597 S1 free win — FastMCP ships it, so no
