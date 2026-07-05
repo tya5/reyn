@@ -239,6 +239,30 @@ class HookDispatcher:
         the only difference between the two is where ``resolved`` comes from."""
         if not resolved.push_when:
             return  # conditional push guard (or a render/parse failure — fail-safe)
+        # #2608 observability: every push FIRE (template_push's Jinja2 render or
+        # shell_push's stdout JSON, both funnel through here) is surfaced as a P6
+        # event — previously ONLY shell_exec/shell_push emitted `hook_shell_executed`
+        # on the RUN side; a push's only artifact was the WAL `inbox_put`/staged
+        # context, so a push that fired but never drained (sat in the inbox forever)
+        # left no EventLog trace at all. `hook_push_fired` closes that gap: metadata
+        # only (hook_name/point/wake/target_session) — NEVER the rendered message
+        # body, which may carry secrets from template_vars. Best-effort: a sink
+        # error must never break the push (mirrors shell_runner's emit_event guard).
+        if self._emit_event is not None:
+            try:
+                self._emit_event(
+                    "hook_push_fired",
+                    hook_name=hook.name,
+                    point=point,
+                    wake=resolved.wake,
+                    target_session=(
+                        resolved.session.strip()
+                        if resolved.session and resolved.session.strip()
+                        else self._current_session_id
+                    ),
+                )
+            except Exception as exc:  # noqa: BLE001 — telemetry is best-effort
+                _log.debug("hook push_fired emit_event failed for %r: %s", hook.name, exc)
         # Attribution name (#1800 slice 6): the hook's operator label when set,
         # else the lifecycle point (slice-5b default) — the ``[hook:<name>]``
         # system-role prefix (shared E + C renderer).
