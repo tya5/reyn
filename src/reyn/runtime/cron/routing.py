@@ -12,6 +12,13 @@ mapping — each job is its own conversation, PERSISTENT per job (the stable job
 resumes the same Session across fires, so the conversation accumulates a history of
 prior runs = "what changed since last run"). Standalone ``reyn cron run`` (no
 registry) is unchanged.
+
+#2608 H5: :func:`dispatch_cron_fired` fires the ``cron_fired`` external-event
+hook on the job's resolved session — the LAST source in the
+external-event->hooks arc (after H1's MCP push, H4's fs-watcher). Called from
+the same ingress coroutine as the job's own inbox delivery (see
+``reyn.interfaces.web.server``'s cron runner), right after
+:func:`resolve_cron_session`.
 """
 from __future__ import annotations
 
@@ -37,3 +44,24 @@ def resolve_cron_session(registry, agent_name: str, job_name: str):
     session = registry.resolve_session(agent_name, CRON_TRANSPORT, job_name)
     registry.ensure_session_running(agent_name, cron_session_id(job_name))
     return session
+
+
+def dispatch_cron_fired(session, job_name: str, to: str) -> None:
+    """#2608 H5: fire the ``cron_fired`` external-event hook on ``session``
+    (the job's own resolved Session — pass the object :func:`resolve_cron_session`
+    returned, so the hook fires on the SAME session the job's message was
+    delivered to).
+
+    Non-blocking (``reyn.hooks.external_fire.fire_and_forget``) — a slow hook
+    action must never stall the cron job's own inbox delivery. ``template_vars``
+    carry only operator-authored config metadata (``job_name``, the target
+    agent name) — a cron job never carries end-user-supplied secrets the way
+    an inbound webhook body can, so nothing is withheld here (contrast
+    ``reyn.runtime.webhook_routing.dispatch_webhook_received``). ``job_name``
+    is the matchable field (exact match — not a glob field, see
+    ``reyn.hooks.matcher``), e.g. ``matcher: {job_name: "backup"}``.
+    """
+    from reyn.hooks.external_fire import fire_and_forget
+    fire_and_forget(
+        session, "cron_fired", {"point": "cron_fired", "job_name": job_name, "to": to},
+    )

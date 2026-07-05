@@ -102,8 +102,13 @@ async def push_to_agent(
     # pollute the user's REPL/web conversation. Fire-and-forget: ensure_session_running
     # boots the run-loop (no forwarder); the reply routes via the factory-wired outbox
     # interceptor from reply_to=ExternalRef below (output unchanged, reuse).
-    from reyn.runtime.webhook_routing import resolve_webhook_session
+    from reyn.runtime.webhook_routing import dispatch_webhook_received, resolve_webhook_session
     session = resolve_webhook_session(registry, target_agent, sender)
+    # #2608 H5: fire the webhook_received external-event hook on the resolved
+    # session — non-blocking, and template_vars carry ONLY transport/sender
+    # (never `text`/`extra_meta`, which may carry secrets from the raw
+    # inbound payload). See dispatch_webhook_received's docstring.
+    dispatch_webhook_received(session, sender)
     envelope: dict[str, Any] = {
         "text": text,
         "sender": sender,
