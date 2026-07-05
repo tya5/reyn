@@ -232,6 +232,7 @@ class _HeldConnection:
     """Duck-typed drop-in for :class:`MCPClient`, returned by
     :meth:`MCPConnectionService.get`. Exposes exactly the surface
     :class:`~reyn.mcp.gateway.MCPGateway` calls (``call_tool`` / ``list_tools`` /
+    ``list_resources`` / ``list_resource_templates`` / ``read_resource`` /
     ``is_initialized``) so it's usable anywhere a bare ``MCPClient`` is expected.
 
     Looks up the currently-live held ``MCPClient`` by server name on every call
@@ -281,6 +282,20 @@ class _HeldConnection:
         # Retry-once: tools/list is an idempotent read, safe to re-run on the fresh
         # connection, so it heals transparently (no user-visible failure).
         return await self._heal(lambda c: c.list_tools(), heal_only=False)
+
+    # #2597 slice ②a: resources consumption. All three are idempotent READS (no
+    # server-side side effect), so — like list_tools, unlike side-effectful call_tool
+    # — they heal with heal_only=False (retry-once on the fresh connection). A resource
+    # read/list re-run after a mid-call transport drop is safe (at-most-once is not a
+    # concern for a pure read), so the healed connection serves the retry transparently.
+    async def list_resources(self) -> list[dict[str, Any]]:
+        return await self._heal(lambda c: c.list_resources(), heal_only=False)
+
+    async def list_resource_templates(self) -> list[dict[str, Any]]:
+        return await self._heal(lambda c: c.list_resource_templates(), heal_only=False)
+
+    async def read_resource(self, uri: str) -> dict[str, Any]:
+        return await self._heal(lambda c: c.read_resource(uri), heal_only=False)
 
     async def _heal(
         self, op: "Callable[[MCPClient], Awaitable[Any]]", *, heal_only: bool,

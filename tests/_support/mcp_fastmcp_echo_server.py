@@ -23,6 +23,10 @@ Tools:
                             ``call_tool`` hit the SAME held subprocess (no
                             re-handshake) rather than comparing Python object
                             identity alone.
+  - ``resource://pid``   -> a RESOURCE whose content is this server process's PID
+                            (the resource analog of ``pid()``). Used by #2597 slice
+                            ②a to prove a 2nd ``read_resource`` hit the SAME held
+                            subprocess.
   - ``bump()`` /         -> a per-process side-effect counter (#2597 S2a). ``bump``
     ``bump_then_die()``     increments + returns the count; ``bump_then_die``
                             increments THEN kills the subprocess AFTER the side
@@ -68,6 +72,17 @@ def pid() -> int:
     import os
 
     return os.getpid()
+
+
+# #2597 slice ②a: a resource whose CONTENT is this server process's PID — the
+# resource analog of the ``pid()`` tool. Held-connection-reuse tests read it twice
+# and assert the same PID, proving the 2nd read hit the SAME held subprocess (no
+# re-handshake) — the resource-path twin of the S2a ``pid()`` tool round-trip.
+@mcp.resource("resource://pid")
+def pid_resource() -> str:
+    import os
+
+    return str(os.getpid())
 
 
 # #2597 S2a: a FILE-BACKED side-effect recorder. The count lives on disk (a byte

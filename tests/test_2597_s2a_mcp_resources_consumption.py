@@ -184,6 +184,88 @@ def test_gateway_read_resource_raises_mcp_fault_on_ungated_server():
         _run(_it())
 
 
+# ── Tier 2: held connection (non-ephemeral session path) — the PRODUCTION path ─
+# The live (non-ephemeral) session routes resource reads through a held-open
+# MCPConnectionService (Option C), NOT the one-shot MCPGateway() pool the tests
+# above exercise. That path hands the gateway a _HeldConnection (not a bare
+# MCPClient), so read_resource/list_resources must exist ON THE HELD HANDLE or the
+# call AttributeErrors. These tests route through a REAL MCPConnectionService — the
+# coverage the one-shot-pool tests structurally cannot give.
+
+
+@pytest.mark.asyncio
+async def test_held_connection_reads_resource_and_reuses_subprocess():
+    """Tier 2: the CORE held-path coverage — a resource read through a REAL
+    MCPConnectionService (via MCPGateway(pool=service), exactly as the live session
+    wires it) works, and a 2nd read hits the SAME held subprocess. Proven via the
+    echo server's ``resource://pid`` (content = the server PID): identical PID across
+    two reads = the held connection was reused, no re-handshake. This is the exact
+    production path #2605-review flagged as crashing (AttributeError) and untested."""
+    from reyn.mcp.connection_service import MCPConnectionService
+
+    service = MCPConnectionService()
+    try:
+        gateway = MCPGateway(pool=service)
+        r1 = await gateway.read_resource("srv", "resource://pid", _stdio_cfg(_ECHO_SERVER))
+        r2 = await gateway.read_resource("srv", "resource://pid", _stdio_cfg(_ECHO_SERVER))
+        pid_1 = r1["contents"][0]["text"]
+        pid_2 = r2["contents"][0]["text"]
+        assert pid_1 and pid_1 == pid_2, "same held subprocess reused across reads (no re-handshake)"
+        assert service.held_servers() == ["srv"], "the connection is held open, not opened+closed per read"
+    finally:
+        await service.aclose()
+
+
+@pytest.mark.asyncio
+async def test_held_connection_lists_resources_and_templates():
+    """Tier 2: list_resources + list_resource_templates on the HELD handle
+    (_HeldConnection) — both must exist there (not just on the one-shot MCPClient),
+    routed through the same MCPConnectionService the live session uses."""
+    from reyn.mcp.connection_service import MCPConnectionService
+
+    service = MCPConnectionService()
+    try:
+        gateway = MCPGateway(pool=service)
+        resources = await gateway.list_resources("srv", _stdio_cfg(_ECHO_SERVER))
+        templates = await gateway.list_resource_templates("srv", _stdio_cfg(_ECHO_SERVER))
+        uris = [r["uri"] for r in resources]
+        assert "resource://pid" in uris, "the echo server's pid resource is listed via the held handle"
+        assert isinstance(templates, list), "list_resource_templates returns a list via the held handle"
+    finally:
+        await service.aclose()
+
+
+@pytest.mark.asyncio
+async def test_execute_reads_via_connection_service_not_just_pool():
+    """Tier 2: the op handler's _execute reads through ctx.mcp_connection_service
+    (the non-ephemeral session's wiring) — NOT only ctx.mcp_pool. Mirrors the
+    ``_mcp_read_resource`` non-ephemeral branch (session.py) which sets
+    ctx.mcp_connection_service, the path the crash lived on."""
+    from reyn.core.op_runtime.mcp_read_resource import _execute
+    from reyn.mcp.connection_service import MCPConnectionService
+
+    events = EventLog()
+    service = MCPConnectionService()
+    op = MCPReadResourceIROp(kind="mcp_read_resource", server="srv", uri="resource://pid")
+
+    try:
+        ctx = OpContext(
+            workspace=Workspace(events=events),
+            events=events,
+            permission_decl=PermissionDecl(),
+            permission_resolver=None,  # permission bypassed — this asserts the transport wiring
+            mcp_servers={"srv": _stdio_cfg(_ECHO_SERVER)},
+            actor="chat_router",
+        )
+        ctx.mcp_connection_service = service  # the non-ephemeral wiring (not mcp_pool)
+        result = await _execute(op, ctx)
+    finally:
+        await service.aclose()
+
+    assert result["status"] == "ok"
+    assert result["contents"][0]["text"], "resource content read through the held connection service"
+
+
 # ── Tier 2: op_runtime mcp_read_resource — permission gate + events ───────────
 
 
