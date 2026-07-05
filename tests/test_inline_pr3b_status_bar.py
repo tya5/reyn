@@ -3,23 +3,41 @@
 The status bar is now declarative: each chip is a ``ChipSpec`` with a key,
 label, value function, and optional expansion builder. Tests exercise the
 public surface (``_CHIP_SPECS``, ``_model_expansion``, ``_cost_expansion``,
-``_agent_expansion``, ``_task_expansion``, ``_more_expansion``) using real
-instances; no mocks.
+``_agent_expansion``, ``_task_expansion``) using real instances; no mocks.
+
+The "…" ("more") chip is a 2-level redesign: it has no ``expansion`` of its
+own — Enter on it shows a level-1 sub-bar (``_MORE_SUB_CHIP_SPECS``: tool /
+mcp / skill / pipe / hook / cron), and Enter on a sub-chip shows THAT
+category's own dropdown (level 2), reusing the same menu_region/dropdown +
+height-cap windowing every other chip uses. Each category has its own
+expansion function (``_tool_category_expansion`` etc.) tested below in
+isolation — the core regression this redesign guards against is categories
+bleeding into each other (the old ``_more_expansion`` concatenated everything
+into one flat list).
 """
 from __future__ import annotations
 
 from reyn.interfaces.inline.app import (
     _CHIP_SPECS,
     _MENU_REGION_MAX_HEIGHT,
+    _MORE_SUB_CHIP_SPECS,
     _agent_expansion,
     _build_task_tree,
     _cost_expansion,
+    _cron_category_expansion,
+    _extract_skills,
+    _hook_category_expansion,
+    _mcp_category_expansion,
     _model_expansion,
-    _more_expansion,
+    _pipe_category_expansion,
     _session_hook_items,
+    _session_pipelines,
     _session_visibility_items,
+    _skill_category_expansion,
     _task_expansion,
     _task_rows,
+    _tool_category_expansion,
+    _visibility_items_by_kind,
 )
 from reyn.interfaces.inline.region import DetailElement
 from reyn.interfaces.inline.region_command import CommandUIElement
@@ -43,6 +61,8 @@ def _snap(**over):
         "cron_jobs": [],
         "mcp_servers": [],
         "hooks": [],
+        "skills": [],
+        "pipelines": [],
         "visibility_items": [],
         "hook_items": [],
     }
@@ -113,82 +133,109 @@ def test_task_chip_value_returns_count_string() -> None:
     assert spec.value(_snap(task_count=0)) == "0"
 
 
-def test_more_chip_has_expansion() -> None:
-    """Tier 2: the 'more' chip has a non-None expansion (Phase 5a)."""
+def test_more_chip_has_no_expansion() -> None:
+    """Tier 2: the 'more' chip has NO expansion (2-level redesign) — Enter on
+    it opens the level-1 sub-bar (_MORE_SUB_CHIP_SPECS) via app.py's
+    _is_more()/_menu_open special-case, not a menu_region dropdown directly."""
     spec = next(s for s in _CHIP_SPECS if s.key == "more")
-    assert spec.expansion is not None
+    assert spec.expansion is None
+
+
+def _all_lines(el) -> list[str]:
+    """Flatten lines from a RegionElement (or a list of them)."""
+    if isinstance(el, list):
+        return [ln for e in el for ln in e.lines()]
+    return el.lines()
 
 
 # ---------------------------------------------------------------------------
-# _more_expansion (Phase 5a → #2285: visibility/hook toggles + read-only cron)
+# _MORE_SUB_CHIP_SPECS registry
 # ---------------------------------------------------------------------------
 
-def _all_lines(elements: list) -> list[str]:
-    """Flatten lines from a list of RegionElements (DetailElement or CommandUIElement)."""
-    return [ln for el in elements for ln in el.lines()]
+
+def test_more_sub_chip_specs_has_required_keys_in_order() -> None:
+    """Tier 2: the sub-bar exposes tool/mcp/skill/pipe/hook/cron in that order."""
+    keys = [s.key for s in _MORE_SUB_CHIP_SPECS]
+    assert keys == ["tool", "mcp", "skill", "pipe", "hook", "cron"]
 
 
-def test_more_expansion_returns_element_list() -> None:
-    """Tier 2: _more_expansion always returns a list of RegionElements (not a single element)."""
-    result = _more_expansion(_snap(), lambda _: None)
-    assert isinstance(result, list)
-    assert len(result) >= 1
+def test_more_sub_chip_specs_all_have_an_expansion() -> None:
+    """Tier 2: every sub-bar category (unlike "more" itself) has a real expansion —
+    each Enter on a sub-chip must show something, never a dead dropdown."""
+    assert all(s.expansion is not None for s in _MORE_SUB_CHIP_SPECS)
 
 
-def test_more_expansion_fallback_all_detail_elements_when_no_session_data() -> None:
-    """Tier 2: without visibility_items/hook_items the panel is all-read-only DetailElements."""
-    result = _more_expansion(_snap(), lambda _: None)
-    assert all(isinstance(el, DetailElement) for el in result)
+# ---------------------------------------------------------------------------
+# Category isolation — the core regression this redesign guards against: the
+# old _more_expansion concatenated tool/mcp/skill/hook/cron into ONE flat
+# list; each category expansion below must show ONLY its own kind.
+# ---------------------------------------------------------------------------
 
 
-def test_more_expansion_empty_shows_all_section_headers() -> None:
-    """Tier 2: empty snap shows mcp/hooks/cron headers in the panel."""
-    joined = " ".join(_all_lines(_more_expansion(_snap(), lambda _: None)))
-    assert "mcp" in joined
-    assert "hooks" in joined
-    assert "cron" in joined
-    assert "(none)" in joined
-
-
-def test_more_expansion_populated_cron_shows_on_off_markers() -> None:
-    """Tier 2: populated cron_jobs render nightly with 'on' and paused with 'off'."""
+def test_tool_category_shows_only_tool_items_not_mcp_or_skill() -> None:
+    """Tier 2: _tool_category_expansion ignores mcp/skill visibility_items even
+    when all three kinds are present in the same snapshot."""
     snap = _snap(
-        cron_jobs=[
-            {"name": "nightly", "schedule": "0 0 * * *", "enabled": True},
-            {"name": "paused",  "schedule": "0 * * * *", "enabled": False},
+        visibility_items=[
+            {"kind": "tool", "name": "bash", "on": True},
+            {"kind": "mcp", "name": "github", "on": True},
+            {"kind": "skill", "name": "pdf_editing", "on": True},
         ],
-        mcp_servers=[{"name": "github"}],
-        hooks=[{"label": "on_push"}],
     )
-    joined = " ".join(_all_lines(_more_expansion(snap, lambda _: None)))
-    assert "nightly" in joined
-    assert "on" in joined
-    assert "paused" in joined
-    assert "off" in joined
+    el = _tool_category_expansion(snap, lambda _: None)
+    lines = _all_lines(el)
+    assert any("bash" in ln for ln in lines)
+    assert not any("github" in ln for ln in lines)
+    assert not any("pdf_editing" in ln for ln in lines)
 
 
-def test_more_expansion_populated_mcp_shows_server_name() -> None:
-    """Tier 2: populated mcp_servers renders the server name in fallback mode."""
-    snap = _snap(mcp_servers=[{"name": "github"}])
-    joined = " ".join(_all_lines(_more_expansion(snap, lambda _: None)))
-    assert "github" in joined
+def test_mcp_category_shows_only_mcp_items_not_tool_or_skill() -> None:
+    """Tier 2: _mcp_category_expansion ignores tool/skill visibility_items."""
+    snap = _snap(
+        visibility_items=[
+            {"kind": "tool", "name": "bash", "on": True},
+            {"kind": "mcp", "name": "github", "on": True},
+            {"kind": "skill", "name": "pdf_editing", "on": True},
+        ],
+    )
+    el = _mcp_category_expansion(snap, lambda _: None)
+    lines = _all_lines(el)
+    assert any("github" in ln for ln in lines)
+    assert not any("bash" in ln for ln in lines)
+    assert not any("pdf_editing" in ln for ln in lines)
 
 
-def test_more_expansion_populated_hooks_shows_label() -> None:
-    """Tier 2: populated hooks renders the hook label in fallback mode."""
-    snap = _snap(hooks=[{"label": "on_push"}])
-    joined = " ".join(_all_lines(_more_expansion(snap, lambda _: None)))
-    assert "on_push" in joined
+def test_skill_category_shows_only_skill_items_not_tool_or_mcp() -> None:
+    """Tier 2: _skill_category_expansion ignores tool/mcp visibility_items."""
+    snap = _snap(
+        visibility_items=[
+            {"kind": "tool", "name": "bash", "on": True},
+            {"kind": "mcp", "name": "github", "on": True},
+            {"kind": "skill", "name": "pdf_editing", "on": True},
+        ],
+    )
+    el = _skill_category_expansion(snap, lambda _: None)
+    lines = _all_lines(el)
+    assert any("pdf_editing" in ln for ln in lines)
+    assert not any("bash" in ln for ln in lines)
+    assert not any("github" in ln for ln in lines)
 
 
 # ---------------------------------------------------------------------------
-# _more_expansion toggle mode (#2285: visibility_items / hook_items present)
+# _tool_category_expansion
 # ---------------------------------------------------------------------------
 
 
-def test_more_expansion_visibility_items_yield_command_ui_rows() -> None:
-    """Tier 2: when visibility_items are present, _more_expansion returns CommandUIElement
-    rows (selectable) with [on]/[off] markers and /visibility dispatch commands."""
+def test_tool_category_empty_shows_none() -> None:
+    """Tier 2: no tool visibility_items and no fallback source → "(none)"."""
+    el = _tool_category_expansion(_snap(), lambda _: None)
+    assert isinstance(el, DetailElement)
+    assert _all_lines(el) == ["(none)"]
+
+
+def test_tool_category_toggle_rows_and_dispatch() -> None:
+    """Tier 2: tool visibility_items yield [on]/[off] CommandUIElement rows;
+    selecting dispatches '/visibility off|on tool <name>'."""
     dispatched: list[str] = []
     snap = _snap(
         visibility_items=[
@@ -196,91 +243,189 @@ def test_more_expansion_visibility_items_yield_command_ui_rows() -> None:
             {"kind": "tool", "name": "sandboxed_exec", "on": False},
         ],
     )
-    result = _more_expansion(snap, dispatched.append)
+    el = _tool_category_expansion(snap, dispatched.append)
+    assert isinstance(el, CommandUIElement)
+    lines = el.lines()
+    assert any("[on] bash" in ln for ln in lines)
+    assert any("[off] sandboxed_exec" in ln for ln in lines)
+    el.on_select(0)
+    el.on_select(1)
+    assert dispatched == ["/visibility off tool bash", "/visibility on tool sandboxed_exec"]
 
-    # At least one CommandUIElement for the tool items.
-    cmd_els = [el for el in result if isinstance(el, CommandUIElement)]
-    assert cmd_els, "expected at least one selectable CommandUIElement for tool items"
 
-    all_ln = _all_lines(result)
-    assert any("[on] bash" in ln for ln in all_ln)
-    assert any("[off] sandboxed_exec" in ln for ln in all_ln)
+# ---------------------------------------------------------------------------
+# _mcp_category_expansion (has a config-based fallback, unlike tool)
+# ---------------------------------------------------------------------------
 
 
-def test_more_expansion_toggle_on_item_dispatches_off_command() -> None:
-    """Tier 2: selecting an [on] tool row dispatches '/visibility off tool <name>'."""
+def test_mcp_category_falls_back_to_config_servers_when_no_visibility_items() -> None:
+    """Tier 2: without mcp visibility_items, falls back to the read-only
+    mcp_servers config listing (name-only, no toggle state)."""
+    snap = _snap(mcp_servers=[{"name": "github"}])
+    el = _mcp_category_expansion(snap, lambda _: None)
+    assert isinstance(el, DetailElement)
+    assert any("github" in ln for ln in _all_lines(el))
+
+
+def test_mcp_category_toggle_rows_and_dispatch() -> None:
+    """Tier 2: mcp visibility_items yield toggle rows; selecting dispatches
+    '/visibility on mcp <name>' for an [off] row."""
     dispatched: list[str] = []
-    snap = _snap(
-        visibility_items=[{"kind": "tool", "name": "bash", "on": True}],
-    )
-    result = _more_expansion(snap, dispatched.append)
-    cmd_el = next(el for el in result if isinstance(el, CommandUIElement))
-    cmd_el.on_select(0)
-    assert dispatched == ["/visibility off tool bash"]
-
-
-def test_more_expansion_toggle_off_item_dispatches_on_command() -> None:
-    """Tier 2: selecting an [off] mcp row dispatches '/visibility on mcp <name>'."""
-    dispatched: list[str] = []
-    snap = _snap(
-        visibility_items=[{"kind": "mcp", "name": "brave", "on": False}],
-    )
-    result = _more_expansion(snap, dispatched.append)
-    cmd_el = next(el for el in result if isinstance(el, CommandUIElement))
-    cmd_el.on_select(0)
+    snap = _snap(visibility_items=[{"kind": "mcp", "name": "brave", "on": False}])
+    el = _mcp_category_expansion(snap, dispatched.append)
+    assert isinstance(el, CommandUIElement)
+    el.on_select(0)
     assert dispatched == ["/visibility on mcp brave"]
 
 
-def test_more_expansion_section_headers_are_non_selectable() -> None:
-    """Tier 2: section header elements are DetailElement (non-selectable) even when
-    item rows are CommandUIElement — the Region cursor skips them."""
-    snap = _snap(
-        visibility_items=[{"kind": "tool", "name": "bash", "on": True}],
-    )
-    result = _more_expansion(snap, lambda _: None)
-    # All DetailElements must have selectable=False.
-    for el in result:
-        if isinstance(el, DetailElement):
-            assert el.selectable is False
+# ---------------------------------------------------------------------------
+# _skill_category_expansion (has a config-based fallback, mirrors mcp)
+# ---------------------------------------------------------------------------
 
 
-def test_more_expansion_hook_items_show_toggle_rows() -> None:
-    """Tier 2: hook_items produce [on]/[off] rows; selecting dispatches /hook command."""
+def test_skill_category_falls_back_to_config_skills_when_no_visibility_items() -> None:
+    """Tier 2: without skill visibility_items, falls back to the read-only
+    skills config listing (name-only, no toggle state)."""
+    snap = _snap(skills=[{"name": "pdf_editing"}])
+    el = _skill_category_expansion(snap, lambda _: None)
+    assert isinstance(el, DetailElement)
+    assert any("pdf_editing" in ln for ln in _all_lines(el))
+
+
+def test_skill_category_toggle_rows_and_dispatch() -> None:
+    """Tier 2: skill visibility_items yield toggle rows; selecting dispatches
+    '/visibility off skill <name>' for an [on] row."""
+    dispatched: list[str] = []
+    snap = _snap(visibility_items=[{"kind": "skill", "name": "pdf_editing", "on": True}])
+    el = _skill_category_expansion(snap, dispatched.append)
+    assert isinstance(el, CommandUIElement)
+    el.on_select(0)
+    assert dispatched == ["/visibility off skill pdf_editing"]
+
+
+# ---------------------------------------------------------------------------
+# _hook_category_expansion
+# ---------------------------------------------------------------------------
+
+
+def test_hook_category_falls_back_to_config_hooks_when_no_hook_items() -> None:
+    """Tier 2: without hook_items, falls back to the read-only hooks config listing."""
+    snap = _snap(hooks=[{"label": "on_push"}])
+    el = _hook_category_expansion(snap, lambda _: None)
+    assert isinstance(el, DetailElement)
+    assert any("on_push" in ln for ln in _all_lines(el))
+
+
+def test_hook_category_toggle_rows_and_dispatch() -> None:
+    """Tier 2: hook_items yield [on]/[off] rows; selecting dispatches '/hook off|on <name>'."""
     dispatched: list[str] = []
     snap = _snap(
         hook_items=[
             {"name": "format", "scope": "runtime", "on": True},
-            {"name": "lint",   "scope": "per-agent", "on": False},
+            {"name": "lint", "scope": "per-agent", "on": False},
         ],
     )
-    result = _more_expansion(snap, dispatched.append)
-
-    all_ln = _all_lines(result)
-    assert any("[on] format" in ln for ln in all_ln)
-    assert any("[off] lint" in ln for ln in all_ln)
-
-    # on→off
-    cmd_el = next(el for el in result if isinstance(el, CommandUIElement))
-    cmd_el.on_select(0)
-    assert "/hook off format" in dispatched
+    el = _hook_category_expansion(snap, dispatched.append)
+    assert isinstance(el, CommandUIElement)
+    lines = el.lines()
+    assert any("[on] format" in ln for ln in lines)
+    assert any("[off] lint" in ln for ln in lines)
+    el.on_select(0)
+    assert dispatched == ["/hook off format"]
 
 
-def test_more_expansion_cron_section_always_read_only() -> None:
-    """Tier 2: the cron section is always a DetailElement (deferred in #2285) even
-    when visibility_items are present."""
+# ---------------------------------------------------------------------------
+# _pipe_category_expansion (always read-only — no toggle mechanism, in scope)
+# ---------------------------------------------------------------------------
+
+
+def test_pipe_category_empty_shows_none() -> None:
+    """Tier 2: no registered pipelines → "(none)"."""
+    el = _pipe_category_expansion(_snap(), lambda _: None)
+    assert isinstance(el, DetailElement)
+    assert _all_lines(el) == ["(none)"]
+
+
+def test_pipe_category_shows_name_and_description_read_only() -> None:
+    """Tier 2: registered pipelines show name + description; always DetailElement
+    (never CommandUIElement — on/off toggling for pipelines is explicitly out
+    of scope for this slice)."""
+    snap = _snap(pipelines=[{"name": "hello", "description": "Minimal greeting pipeline"}])
+    el = _pipe_category_expansion(snap, lambda _: None)
+    assert isinstance(el, DetailElement)
+    assert el.selectable is False
+    joined = " ".join(_all_lines(el))
+    assert "hello" in joined
+    assert "Minimal greeting pipeline" in joined
+
+
+# ---------------------------------------------------------------------------
+# _cron_category_expansion (always read-only — no toggle mechanism, in scope)
+# ---------------------------------------------------------------------------
+
+
+def test_cron_category_empty_shows_none() -> None:
+    """Tier 2: no cron jobs → "(none)"."""
+    el = _cron_category_expansion(_snap(), lambda _: None)
+    assert isinstance(el, DetailElement)
+    assert _all_lines(el) == ["(none)"]
+
+
+def test_cron_category_shows_on_off_markers_read_only() -> None:
+    """Tier 2: cron jobs render nightly with 'on' and paused with 'off'; always
+    DetailElement (cron on/off toggling is explicitly out of scope for this slice)."""
     snap = _snap(
-        visibility_items=[{"kind": "tool", "name": "bash", "on": True}],
-        cron_jobs=[{"name": "nightly", "schedule": "0 0 * * *", "enabled": True}],
+        cron_jobs=[
+            {"name": "nightly", "schedule": "0 0 * * *", "enabled": True},
+            {"name": "paused", "schedule": "0 * * * *", "enabled": False},
+        ],
     )
-    result = _more_expansion(snap, lambda _: None)
-    # Verify cron content appears in the lines.
-    joined = " ".join(_all_lines(result))
-    assert "nightly" in joined
-    # All elements including the cron one must be either Detail or Command; the cron
-    # section itself (containing "cron") must be a DetailElement.
-    cron_els = [el for el in result if isinstance(el, DetailElement)
-                and any("cron" in ln for ln in el.lines())]
-    assert cron_els, "cron section must be a read-only DetailElement"
+    el = _cron_category_expansion(snap, lambda _: None)
+    assert isinstance(el, DetailElement)
+    assert el.selectable is False
+    joined = " ".join(_all_lines(el))
+    assert "[on] nightly" in joined
+    assert "[off] paused" in joined
+
+
+# ---------------------------------------------------------------------------
+# _extract_skills / _session_pipelines graceful fallback
+# ---------------------------------------------------------------------------
+
+
+def test_extract_skills_returns_empty_on_missing_config() -> None:
+    """Tier 2: _extract_skills returns [] when config has no skills/entries section."""
+    class _NoSkills:
+        pass
+    assert _extract_skills(_NoSkills()) == []
+
+
+def test_extract_skills_reads_entries_dict() -> None:
+    """Tier 2: _extract_skills reads config.skills.entries (a name→spec dict)."""
+    class _WithSkills:
+        skills = {"entries": {"pdf_editing": {"path": "skills/pdf.md"}}}
+    result = _extract_skills(_WithSkills())
+    assert result == [{"name": "pdf_editing"}]
+
+
+def test_session_pipelines_returns_empty_when_attribute_absent() -> None:
+    """Tier 2: _session_pipelines returns [] when session has no pipeline_registry
+    (defensive — Session always constructs one in practice)."""
+    assert _session_pipelines(object()) == []
+
+
+def test_session_pipelines_reads_registry_entries() -> None:
+    """Tier 2: _session_pipelines calls pipeline_registry.entries() and returns
+    name/description dicts."""
+    class _FakeRegistry:
+        def entries(self):
+            return (("hello", "Minimal greeting pipeline"),)
+
+    class _FakeSession:
+        pipeline_registry = _FakeRegistry()
+
+    result = _session_pipelines(_FakeSession())
+    assert result == [{"name": "hello", "description": "Minimal greeting pipeline"}]
 
 
 # ---------------------------------------------------------------------------
@@ -688,26 +833,27 @@ def test_task_rows_empty_tree_replacement_shows_fallback() -> None:
 
 
 # ---------------------------------------------------------------------------
-# _more_expansion overflow (the "…" chip dropdown "Window too small" bug)
+# Category dropdown overflow (the "…" chip's original "Window too small" bug,
+# #2633) — still a live concern PER CATEGORY after this 2-level redesign: the
+# tool category alone can list one row per registered tool (76 observed live).
 # ---------------------------------------------------------------------------
 
 
-def test_more_expansion_many_tools_exceeds_menu_region_cap() -> None:
+def test_tool_category_many_tools_exceeds_menu_region_cap() -> None:
     """Tier 2: a real session's per-tool visibility list (one row per registered
-    tool, dozens in production — 76 observed live) produces MORE total lines than
-    _MENU_REGION_MAX_HEIGHT. Pins the exact scenario that made app.py's
-    dropdown_height() (unbounded Dimension.exact(len(menu_region.lines()))) crash
-    prompt_toolkit with "Window too small" for the "…" chip specifically — the
-    model/cost/agent/task chips' expansions never approach this size, so the bug
-    was invisible until a session with many registered tools opened "…". The fix
-    (menu_region.set_max_visible + windowed dropdown_frags/height, mirroring
-    above_region) lives in local closures inside run_inline_input and isn't
-    unit-testable directly; this pins the upstream content-volume precondition.
-    """
+    tool, dozens in production — 76 observed live) produces MORE lines than
+    _MENU_REGION_MAX_HEIGHT for the tool category ALONE. #2633 fixed
+    app.py's dropdown_height() (was unbounded Dimension.exact(len(menu_region.
+    lines()))) with menu_region.set_max_visible() + windowed rendering — this
+    2-level redesign reuses that SAME menu_region/dropdown for each sub-bar
+    category, so the cap must still hold per-category (this pins the
+    content-volume precondition; the actual height-cap fix lives in
+    un-exported closures inside run_inline_input and isn't unit-testable
+    directly — see test_inline_region_framework.py for the underlying
+    Region.set_max_visible mechanics)."""
     many_tools = [
         {"kind": "tool", "name": f"tool_{i}", "on": True} for i in range(76)
     ]
     snap = _snap(visibility_items=many_tools)
-    result = _more_expansion(snap, lambda _: None)
-    total_lines = sum(len(el.lines()) for el in result)
-    assert total_lines > _MENU_REGION_MAX_HEIGHT
+    el = _tool_category_expansion(snap, lambda _: None)
+    assert len(el.lines()) > _MENU_REGION_MAX_HEIGHT
