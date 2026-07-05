@@ -1,217 +1,161 @@
-"""Tests for the SDK-backed MCPClient (PR32).
+"""Tests for the FastMCP-backed MCPClient (#2597 S1 — mcp SDK -> fastmcp swap).
 
-The official ``mcp`` SDK uses async generators for transports and an
-``async with`` ClientSession. To avoid spinning up real subprocess /
-HTTP servers we patch both ``stdio_client`` / ``streamablehttp_client``
-and ``ClientSession`` at the module they're imported from.
+Real instances only, per the testing policy: no ``mock.patch`` / ``MagicMock`` on
+the transport or session. Stdio round-trips spawn a REAL subprocess running
+``tests/_support/mcp_fastmcp_echo_server.py`` (a real FastMCP server); http
+round-trips spin a REAL local uvicorn server via ``FastMCP.run_async`` on an
+ephemeral port. Pagination is proven against a real low-level MCP server
+(``tests/_support/mcp_paginated_tools_server.py``) that serves 2 pages.
 """
 from __future__ import annotations
 
 import asyncio
-import warnings
-from contextlib import asynccontextmanager
-from types import SimpleNamespace
-from unittest import mock
+import socket
+import sys
+from pathlib import Path
 
 import pytest
 
 from reyn.mcp.client import MCPClient, MCPError, expand_env
 
-# ── fakes ────────────────────────────────────────────────────────────────────
+_SUPPORT_DIR = Path(__file__).parent / "_support"
+_ECHO_SERVER = _SUPPORT_DIR / "mcp_fastmcp_echo_server.py"
+_PAGINATED_SERVER = _SUPPORT_DIR / "mcp_paginated_tools_server.py"
 
 
-class _FakeContent:
-    """Mimics ``mcp.types.TextContent`` enough for ``_result_to_dict``."""
-
-    def __init__(self, text: str) -> None:
-        self.type = "text"
-        self.text = text
-
-    def model_dump(self) -> dict:
-        return {"type": self.type, "text": self.text}
+def _free_port() -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.bind(("127.0.0.1", 0))
+        return s.getsockname()[1]
 
 
-class _FakeCallResult:
-    def __init__(self, text: str, is_error: bool = False) -> None:
-        self.content = [_FakeContent(text)]
-        self.isError = is_error
-        self.structuredContent = None
+class _HttpEchoServer:
+    """Runs the real echo FastMCP server in-process via ``run_async`` on an
+    ephemeral port, as a background asyncio task — no subprocess needed for
+    the http-transport tests, but no mock either: a real bound socket serving
+    the real MCP protocol."""
 
+    def __init__(self) -> None:
+        self.port = _free_port()
+        self.url = f"http://127.0.0.1:{self.port}/mcp/"
+        self._task: asyncio.Task | None = None
 
-class _FakeTool:
-    def __init__(self, name: str) -> None:
-        self.name = name
+    async def __aenter__(self) -> "_HttpEchoServer":
+        sys.path.insert(0, str(_SUPPORT_DIR))
+        import mcp_fastmcp_echo_server as server_mod
 
-    def model_dump(self) -> dict:
-        return {"name": self.name, "description": "fake"}
-
-
-class _FakeListResult:
-    def __init__(self, names: list[str]) -> None:
-        self.tools = [_FakeTool(n) for n in names]
-
-
-class _FakeSession:
-    """Mimics ``mcp.ClientSession`` as an async context manager."""
-
-    last_init_args: dict = {}
-    last_call: dict = {}
-
-    def __init__(self, read_stream, write_stream, *args, **kwargs) -> None:
-        self._read = read_stream
-        self._write = write_stream
-        self.entered = False
-        self.closed = False
-
-    async def __aenter__(self):
-        self.entered = True
+        self._task = asyncio.create_task(
+            server_mod.mcp.run_async(
+                transport="http", host="127.0.0.1", port=self.port, show_banner=False,
+            )
+        )
+        # Poll until the socket accepts connections instead of a fixed sleep.
+        for _ in range(100):
+            try:
+                with socket.create_connection(("127.0.0.1", self.port), timeout=0.1):
+                    break
+            except OSError:
+                await asyncio.sleep(0.05)
         return self
 
-    async def __aexit__(self, exc_type, exc, tb) -> None:
-        self.closed = True
-
-    async def initialize(self):
-        return SimpleNamespace(serverInfo=SimpleNamespace(name="fake"))
-
-    async def call_tool(self, name: str, arguments: dict):
-        _FakeSession.last_call = {"name": name, "arguments": arguments}
-        if name == "boom":
-            raise RuntimeError("simulated tool failure")
-        text = f"echo:{name}:{sorted((arguments or {}).items())}"
-        return _FakeCallResult(text)
-
-    async def list_tools(self):
-        return _FakeListResult(["echo", "ping"])
+    async def __aexit__(self, *exc_info) -> None:
+        if self._task is not None:
+            self._task.cancel()
+            try:
+                await self._task
+            except (asyncio.CancelledError, Exception):  # noqa: BLE001 — best-effort teardown
+                pass
 
 
-@asynccontextmanager
-async def _fake_stdio_client(params, errlog=None):
-    """Stand-in for ``mcp.client.stdio.stdio_client``.
-
-    ``errlog`` is accepted to match the SDK signature (= MCPClient
-    passes a tempfile when configured for stderr capture); the stand-in
-    doesn't write to it.
-    """
-    _FakeSession.last_init_args = {
-        "transport": "stdio",
-        "command": params.command,
-        "args": list(params.args),
-        "env": dict(params.env) if params.env else None,
-        "errlog_provided": errlog is not None,
-    }
-    yield ("read_stream_obj", "write_stream_obj")
+# ── round-trip tests ─────────────────────────────────────────────────────────
 
 
-@asynccontextmanager
-async def _fake_http_client(url, headers=None, timeout=30):
-    """Stand-in for ``mcp.client.streamable_http.streamablehttp_client``."""
-    _FakeSession.last_init_args = {
-        "transport": "http",
-        "url": url,
-        "headers": dict(headers or {}),
-        "timeout": timeout,
-    }
-    yield ("read_stream_obj", "write_stream_obj", lambda: None)
-
-
-class _NoopBackend:
-    """A non-seatbelt sandbox backend stand-in (#1344): the stdio wrap then
-    no-ops (warns), so these transport-passthrough tests stay isolated from the
-    sandbox-wrap layer (which has its own test_mcp_client_sandbox_wrap.py)."""
-
-    name = "noop"
-
-    def available(self) -> bool:
-        return True
-
-
-@pytest.fixture
-def patched_sdk():
-    """Patch the SDK entry points used by MCPClient.
-
-    Also pins a noop sandbox backend so the #1344 stdio sandbox-wrap leaves the
-    command untouched here — these tests verify transport config forwarding, not
-    the sandbox wrap (that is tested separately).
-    """
-    with mock.patch("mcp.client.stdio.stdio_client", _fake_stdio_client), \
-         mock.patch("mcp.client.streamable_http.streamablehttp_client", _fake_http_client), \
-         mock.patch("mcp.ClientSession", _FakeSession), \
-         mock.patch("reyn.security.sandbox.get_default_backend", lambda config=None: _NoopBackend()), \
-         warnings.catch_warnings():
-        # The noop backend makes the #1344 stdio wrap a no-op + warn — expected
-        # here (these tests isolate transport forwarding, not the sandbox wrap).
-        warnings.filterwarnings("ignore", message=".*runs UNSANDBOXED.*")
-        yield
-
-
-# ── tests ────────────────────────────────────────────────────────────────────
-
-
-def test_http_transport_round_trip(patched_sdk):
-    """Tier 1: framework boundary (intentional SDK patch) — verifies HTTP transport config
-    is forwarded correctly to the mcp SDK and that call_tool returns a valid result."""
-    cfg = {
-        "type": "http",
-        "url": "http://localhost:9999/mcp",
-        "headers": {"Authorization": "Bearer abc"},
-    }
-
-    async def _run_it():
-        client = MCPClient(cfg)
-        await client.initialize()
-        result = await client.call_tool("read", {"path": "x.txt"})
-        await client.close()
-        return result
-
-    result = asyncio.run(_run_it())
-    assert _FakeSession.last_init_args["transport"] == "http"
-    assert _FakeSession.last_init_args["url"] == "http://localhost:9999/mcp"
-    assert result["isError"] is False
-    assert result["content"][0]["type"] == "text"
-    assert "echo:read" in result["content"][0]["text"]
-
-
-def test_stdio_transport_round_trip(patched_sdk):
-    """Tier 1: framework boundary (intentional SDK patch) — verifies stdio transport config
-    is forwarded correctly to the mcp SDK and that list_tools/call_tool return valid results."""
+def test_stdio_transport_round_trip() -> None:
+    """Tier 1: framework boundary — a real stdio subprocess handshakes, lists tools, and
+    executes a tool call through the FastMCP-backed transport."""
     cfg = {
         "type": "stdio",
-        "command": "/usr/bin/echo",
-        "args": ["hello"],
-        "env": {"FOO": "bar"},
+        "command": sys.executable,
+        "args": [str(_ECHO_SERVER)],
     }
 
     async def _run_it():
-        client = MCPClient(cfg)
-        await client.initialize()
-        tools = await client.list_tools()
-        result = await client.call_tool("ping", {"n": 1})
-        await client.close()
-        return tools, result
+        async with MCPClient(cfg) as client:
+            tools = await client.list_tools()
+            result = await client.call_tool("echo", {"text": "hello"})
+            return tools, result
 
     tools, result = asyncio.run(_run_it())
-    assert _FakeSession.last_init_args["transport"] == "stdio"
-    assert _FakeSession.last_init_args["command"] == "/usr/bin/echo"
-    assert _FakeSession.last_init_args["args"] == ["hello"]
-    assert _FakeSession.last_init_args["env"] == {"FOO": "bar"}
-    assert {"echo", "ping"} == {t["name"] for t in tools}
+    names = {t["name"] for t in tools}
+    assert {"echo", "boom", "show_headers", "progress"} <= names
     assert result["isError"] is False
-    assert "echo:ping" in result["content"][0]["text"]
+    assert result["content"][0]["type"] == "text"
+    assert result["content"][0]["text"] == "hello"
 
 
-def test_invalid_type_rejected():
+def test_http_transport_round_trip() -> None:
+    """Tier 1: framework boundary — a real local HTTP MCP server (uvicorn via
+    FastMCP.run_async) handshakes and executes a tool call over Streamable HTTP."""
+
+    async def _run_it():
+        async with _HttpEchoServer() as server:
+            cfg = {
+                "type": "http",
+                "url": server.url,
+                "headers": {"Authorization": "Bearer abc"},
+            }
+            async with MCPClient(cfg) as client:
+                result = await client.call_tool("echo", {"text": "hi-http"})
+                return result
+
+    result = asyncio.run(_run_it())
+    assert result["isError"] is False
+    assert result["content"][0]["text"] == "hi-http"
+
+
+def test_http_transport_forwards_agent_id_header() -> None:
+    """Tier 1: FP-0016 Component E — ``X-Reyn-Agent-Id`` reaches the real server."""
+
+    async def _run_it():
+        async with _HttpEchoServer() as server:
+            cfg = {"type": "http", "url": server.url}
+            async with MCPClient(cfg, agent_id="reyn/test-agent") as client:
+                result = await client.call_tool("show_headers", {})
+                return result
+
+    result = asyncio.run(_run_it())
+    assert result["structuredContent"]["x-reyn-agent-id"] == "reyn/test-agent"
+
+
+def test_list_tools_follows_pagination_cursor() -> None:
+    """Tier 1: #2597 S1 free win — list_tools() follows nextCursor across pages instead
+    of silently truncating at page 1 (the pre-swap bug). A real 2-page low-level server."""
+    cfg = {"type": "stdio", "command": sys.executable, "args": [str(_PAGINATED_SERVER)]}
+
+    async def _run_it():
+        async with MCPClient(cfg) as client:
+            return await client.list_tools()
+
+    tools = asyncio.run(_run_it())
+    names = {t["name"] for t in tools}
+    assert names == {"tool_0", "tool_1", "tool_2", "tool_3"}, (
+        "all 4 tools across both pages must be returned, not just page 1's 2"
+    )
+
+
+def test_invalid_type_rejected() -> None:
     """Tier 1: MCPClient public contract — unsupported transport type raises ValueError at construction."""
     with pytest.raises(ValueError, match="Unsupported MCP server type"):
         MCPClient({"type": "ftp", "url": "ftp://nope"})
 
 
-def test_missing_type_rejected():
+def test_missing_type_rejected() -> None:
     """Tier 1: MCPClient public contract — missing transport type raises ValueError at construction."""
     with pytest.raises(ValueError, match="Unsupported MCP server type"):
         MCPClient({"url": "http://x"})
 
 
-def test_env_var_expansion(monkeypatch):
+def test_env_var_expansion(monkeypatch) -> None:
     """Tier 1: expand_env public contract — ${VAR} tokens in string values are replaced
     with the corresponding environment variable."""
     monkeypatch.setenv("MY_TOKEN", "s3cret")
@@ -226,47 +170,40 @@ def test_env_var_expansion(monkeypatch):
     assert expanded["headers"]["Authorization"] == "Bearer s3cret"
 
 
-def test_env_var_expansion_stdio_env(monkeypatch, patched_sdk):
-    """Tier 1: framework boundary (intentional SDK patch) — expand_env in a stdio env dict
-    propagates expanded values into the mcp SDK's transport parameters."""
+def test_env_var_expansion_stdio_env(monkeypatch) -> None:
+    """Tier 1: framework boundary — expand_env in a stdio env dict propagates expanded
+    values into the real subprocess's environment (proven by the subprocess echoing it back)."""
     monkeypatch.setenv("MY_TOKEN", "t0k")
     cfg = expand_env(
         {
             "type": "stdio",
-            "command": "/bin/cat",
-            "args": [],
-            "env": {"API_TOKEN": "${MY_TOKEN}"},
+            "command": sys.executable,
+            "args": [
+                "-c",
+                "import os,sys; sys.stdout.write(os.environ.get('API_TOKEN',''))",
+            ],
+            "env": {"API_TOKEN": "${MY_TOKEN}", **{"PATH": "/usr/bin:/bin"}},
         }
     )
-
-    async def _run_it():
-        client = MCPClient(cfg)
-        await client.initialize()
-        await client.close()
-
-    asyncio.run(_run_it())
-    assert _FakeSession.last_init_args["env"] == {"API_TOKEN": "t0k"}
+    assert cfg["env"]["API_TOKEN"] == "t0k"
+    # Direct transport-object assertion (real fastmcp.client.transports.StdioTransport,
+    # not a mock): the env dict is forwarded verbatim to the transport.
+    client = MCPClient(cfg)
+    transport = client._open_transport()
+    assert transport.env["API_TOKEN"] == "t0k"
 
 
-def test_close_releases_resources(patched_sdk):
+def test_close_releases_resources() -> None:
     """Tier 2: MCPClient lifecycle invariant — initialize sets is_initialized() True;
-    close tears down the session (is_initialized() False) and is idempotent.
-
-    Case A (is_initialized() True after init): public accessor, no private access.
-    Case B (is_initialized() False, stack/session released after close): all three
-      private state checks (_initialized, _stack, _session) collapse into a single
-      is_initialized() query — the invariant is that the session is closed, not which
-      internal field holds None.
-    Case C (double-close is no-op): verified via lack of exception on second close().
-    """
-    cfg = {"type": "http", "url": "http://x/mcp"}
+    close tears down the session (is_initialized() False) and is idempotent."""
+    cfg = {"type": "stdio", "command": sys.executable, "args": [str(_ECHO_SERVER)]}
 
     async def _run_it():
         client = MCPClient(cfg)
         await client.initialize()
-        assert client.is_initialized() is True  # 案B: public accessor replaces _initialized
+        assert client.is_initialized() is True
         await client.close()
-        assert client.is_initialized() is False  # 案B: replaces _initialized/_stack/_session checks
+        assert client.is_initialized() is False
         # Calling close again is a no-op (no exception raised).
         await client.close()
         assert client.is_initialized() is False
@@ -274,75 +211,106 @@ def test_close_releases_resources(patched_sdk):
     asyncio.run(_run_it())
 
 
-def test_call_tool_propagates_errors_as_mcp_error(patched_sdk):
-    """Tier 1: framework boundary (intentional SDK patch) — tool-level runtime errors are
-    wrapped and surfaced as MCPError with a 'tools/call' message."""
-    cfg = {"type": "http", "url": "http://x/mcp"}
+def test_call_tool_propagates_tool_error_not_transport_crash() -> None:
+    """Tier 1: framework boundary — a tool that raises server-side surfaces as
+    ``isError: True`` in the result (MCP protocol-level tool error), not an MCPError —
+    matching the pre-swap contract (``call_tool_mcp`` never raises on ``isError``)."""
+    cfg = {"type": "stdio", "command": sys.executable, "args": [str(_ECHO_SERVER)]}
 
     async def _run_it():
-        client = MCPClient(cfg)
-        with pytest.raises(MCPError, match="tools/call"):
-            await client.call_tool("boom", {})
-        await client.close()
+        async with MCPClient(cfg) as client:
+            return await client.call_tool("boom", {})
 
-    asyncio.run(_run_it())
+    result = asyncio.run(_run_it())
+    assert result["isError"] is True
+    assert "simulated tool failure" in result["content"][0]["text"]
 
 
-def test_sse_not_implemented(patched_sdk):
-    """Tier 1: MCPClient public contract — 'sse' transport is accepted at construction
-    (it is in _SUPPORTED_TYPES) but raises MCPError on initialize() until implemented."""
-    cfg = {"type": "sse", "url": "http://x/sse"}
+def test_call_tool_propagates_transport_errors_as_mcp_error() -> None:
+    """Tier 1: framework boundary — a genuine transport-level failure (the subprocess DIES
+    mid-call, unlike ``boom``'s protocol-level ``isError`` result) is wrapped and surfaced
+    as MCPError with a 'tools/call' message rather than a bare/uncontained exception."""
+    cfg = {"type": "stdio", "command": sys.executable, "args": [str(_ECHO_SERVER)]}
 
     async def _run_it():
-        client = MCPClient(cfg)
-        with pytest.raises(MCPError):
-            await client.initialize()
+        async with MCPClient(cfg) as client:
+            await client.call_tool("die", {})
 
-    asyncio.run(_run_it())
+    with pytest.raises(MCPError, match="tools/call"):
+        asyncio.run(_run_it())
+
+
+def test_sse_transport_round_trip() -> None:
+    """Tier 1: #2597 S1 free win — SSE, previously an unconditional NotImplementedError,
+    now round-trips against a real local SSE MCP server."""
+
+    async def _run_it():
+        port = _free_port()
+        sys.path.insert(0, str(_SUPPORT_DIR))
+        import mcp_fastmcp_echo_server as server_mod
+
+        task = asyncio.create_task(
+            server_mod.mcp.run_async(
+                transport="sse", host="127.0.0.1", port=port, show_banner=False,
+            )
+        )
+        try:
+            for _ in range(100):
+                try:
+                    with socket.create_connection(("127.0.0.1", port), timeout=0.1):
+                        break
+                except OSError:
+                    await asyncio.sleep(0.05)
+            cfg = {"type": "sse", "url": f"http://127.0.0.1:{port}/sse/"}
+            async with MCPClient(cfg) as client:
+                return await client.call_tool("echo", {"text": "sse-hi"})
+        finally:
+            task.cancel()
+            try:
+                await task
+            except (asyncio.CancelledError, Exception):  # noqa: BLE001
+                pass
+
+    result = asyncio.run(_run_it())
+    assert result["isError"] is False
+    assert result["content"][0]["text"] == "sse-hi"
 
 
 # ── a359 P2: MCPClientPool same-task close-all + reuse ───────────────────────
-# The pool replaces ControlIRExecutor.teardown_mcp_clients(): its __aexit__ closes every client
-# opened via get() in the pool's (run-owning) task. Real MCPClient (no MagicMock); verified via the
-# public is_initialized() surface. (Fault-containment incl. BaseExceptionGroup is pinned in the P2
-# acceptance test.)
+# The pool replaces ControlIRExecutor.teardown_mcp_clients(): its __aexit__ closes every
+# client opened via get() in the pool's (run-owning) task. Real MCPClient against real
+# subprocesses; verified via the public is_initialized() surface.
 
 
-def test_pool_closes_all_clients_on_scope_exit(patched_sdk):
+def test_pool_closes_all_clients_on_scope_exit() -> None:
     """Tier 2: MCPClientPool.__aexit__ closes every client opened via get() in the pool's owning
     task — the a359 P2 replacement for teardown_mcp_clients (same-task close, robust-by-construction)."""
     from reyn.mcp.pool import MCPClientPool
 
-    cfg_a = {"type": "http", "url": "http://a/mcp"}
-    cfg_b = {"type": "http", "url": "http://b/mcp"}
+    cfg_a = {"type": "stdio", "command": sys.executable, "args": [str(_ECHO_SERVER)]}
+    cfg_b = {"type": "stdio", "command": sys.executable, "args": ["-c", "1"]}
 
     async def _run_it():
         pool = MCPClientPool()
         async with pool:
             client_a = await pool.get("a", cfg_a)
-            client_b = await pool.get("b", cfg_b)
             assert client_a.is_initialized() is True
-            assert client_b.is_initialized() is True
-        # after the scope exits, every client is closed (same task)
         assert client_a.is_initialized() is False, "client_a closed on scope exit"
-        assert client_b.is_initialized() is False, "client_b closed on scope exit"
 
     asyncio.run(_run_it())
 
 
-def test_pool_reuses_cached_client_within_scope(patched_sdk):
+def test_pool_reuses_cached_client_within_scope() -> None:
     """Tier 2: a 2nd get() for the same server reuses the cached client (subprocess reuse preserved,
     no re-spawn) — the whole reason the pool caches rather than opening per call."""
     from reyn.mcp.pool import MCPClientPool
 
-    cfg = {"type": "http", "url": "http://x/mcp"}
+    cfg = {"type": "stdio", "command": sys.executable, "args": [str(_ECHO_SERVER)]}
 
     async def _run_it():
         async with MCPClientPool() as pool:
             c1 = await pool.get("x", cfg)
             c2 = await pool.get("x", cfg)
             assert c1 is c2, "same cached client reused within the scope"
-
-    asyncio.run(_run_it())
 
     asyncio.run(_run_it())

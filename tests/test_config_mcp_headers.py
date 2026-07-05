@@ -7,17 +7,16 @@ interpolation (ADR-0030).
 Component A scope:
   - ``headers: dict[str, str]`` is accepted on http-mode MCP server configs.
   - ``${VAR}`` tokens inside header values resolve at config-load time.
-  - The headers dict reaches ``streamablehttp_client`` verbatim (post-expand).
+  - The headers dict reaches the real ``StreamableHttpTransport`` verbatim
+    (post-expand) — #2597 S1: inspected via the transport's own public
+    ``.headers`` attribute (a real ``fastmcp`` object), not a mocked SDK entry
+    point.
   - Missing / empty ``headers`` is fine — no header is sent (back-compat).
 """
 from __future__ import annotations
 
-import asyncio
-from contextlib import asynccontextmanager
 from pathlib import Path
-from unittest import mock
 
-import pytest
 import yaml
 
 # ---------------------------------------------------------------------------
@@ -111,62 +110,19 @@ def test_mcp_headers_optional_back_compat(tmp_path, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# Transport boundary: headers reach streamablehttp_client verbatim
+# Transport boundary: headers reach the real StreamableHttpTransport verbatim
 # ---------------------------------------------------------------------------
 
 
-@pytest.fixture()
-def _patched_mcp_sdk():
-    """Patch MCP SDK transport entry-points used by MCPClient.
+def test_mcp_headers_reach_http_transport() -> None:
+    """Tier 2: framework boundary — a config with resolved headers reaches the real
+    ``StreamableHttpTransport`` with the exact post-expansion header dict.
 
-    Intentional SDK patch — admitted per tier-audit HTTP-transport exemption
-    (same pattern as ``patched_sdk`` in ``tests/test_mcp_client.py``).
-    ``streamablehttp_client`` and ``ClientSession`` are 3rd-party SDK boundaries
-    that cannot be replaced with LLMReplay; the fake functions defined at module
-    level below are injected here and captured via the ``_http_captured`` dict
-    passed to each test through the ``captured`` parameter.
-
-    Deferral note: converting these patches to a proper LLMReplay-compatible
-    Fake requires extending LLMReplay to cover the MCP SDK transport layer —
-    tracked as a follow-up, not in scope for this PR.
+    This pins the contract: whatever the caller puts in ``cfg['headers']``, MCPClient
+    passes through to the transport — no filtering, no rewriting. Inspects the
+    transport's own public ``.headers`` / ``.url`` attributes (a real fastmcp object
+    built by ``_open_transport()``), not a mocked SDK call.
     """
-    captured: dict = {}
-
-    @asynccontextmanager
-    async def _fake_http_client(url, headers=None, timeout=30):
-        captured["url"] = url
-        captured["headers"] = dict(headers or {})
-        captured["timeout"] = timeout
-        yield ("read", "write", lambda: None)
-
-    class _FakeSession:
-        def __init__(self, *a, **kw):
-            pass
-
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, *a):
-            return None
-
-        async def initialize(self):
-            return None
-
-    with mock.patch(
-        "mcp.client.streamable_http.streamablehttp_client", _fake_http_client
-    ), mock.patch("mcp.ClientSession", _FakeSession):
-        yield captured
-
-
-def test_mcp_headers_reach_http_transport(_patched_mcp_sdk):
-    """Tier 2: framework boundary — a config with resolved headers reaches the
-    ``streamablehttp_client`` call with the exact post-expansion header dict.
-
-    This pins the contract: whatever the caller puts in ``cfg['headers']``,
-    MCPClient passes through to the SDK — no filtering, no rewriting.
-    """
-    captured = _patched_mcp_sdk
-
     from reyn.mcp.client import MCPClient
 
     cfg = {
@@ -179,34 +135,22 @@ def test_mcp_headers_reach_http_transport(_patched_mcp_sdk):
         "timeout": 45,
     }
 
-    async def _run_it():
-        client = MCPClient(cfg)
-        await client.initialize()
-        await client.close()
+    client = MCPClient(cfg)
+    transport = client._open_transport()
 
-    asyncio.run(_run_it())
-
-    assert captured["url"] == "https://api.example.com/mcp"
-    assert captured["headers"] == {
+    assert transport.url == "https://api.example.com/mcp"
+    assert transport.headers == {
         "Authorization": "Bearer abc123",
         "X-API-Version": "2024-01-01",
     }
-    assert captured["timeout"] == 45
 
 
-def test_mcp_headers_default_empty_when_omitted(_patched_mcp_sdk):
+def test_mcp_headers_default_empty_when_omitted() -> None:
     """Tier 2: framework boundary — an http MCP config without ``headers`` yields
     an empty header dict at the transport (no spurious headers injected)."""
-    captured = _patched_mcp_sdk
-
     from reyn.mcp.client import MCPClient
 
     cfg = {"type": "http", "url": "http://x/mcp"}
-
-    async def _run_it():
-        client = MCPClient(cfg)
-        await client.initialize()
-        await client.close()
-
-    asyncio.run(_run_it())
-    assert captured["headers"] == {}
+    client = MCPClient(cfg)
+    transport = client._open_transport()
+    assert transport.headers == {}

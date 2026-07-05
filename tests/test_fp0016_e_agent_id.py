@@ -122,56 +122,38 @@ def test_event_log_agent_id_property_readable() -> None:
 # ── 3. MCPClient X-Reyn-Agent-Id header ────────────────────────────────────
 
 
-def test_mcp_client_injects_x_reyn_agent_id_header(monkeypatch) -> None:
-    """Tier 2: MCPClient(agent_id=...) adds X-Reyn-Agent-Id to HTTP headers."""
+def test_mcp_client_injects_x_reyn_agent_id_header() -> None:
+    """Tier 2: MCPClient(agent_id=...) adds X-Reyn-Agent-Id to HTTP headers.
+
+    #2597 S1: inspects the real ``StreamableHttpTransport.headers`` built by
+    ``_open_http()`` directly (a real fastmcp object), not a mocked SDK call.
+    """
     from reyn.mcp.client import MCPClient
-
-    captured: dict = {}
-
-    def fake_streamablehttp_client(url, headers=None, timeout=None):  # noqa: ARG001
-        captured["headers"] = headers
-        return None
 
     client = MCPClient(
         {"type": "http", "url": "https://example.com/mcp"},
         agent_id="reyn/test-agent",
     )
-    monkeypatch.setattr("mcp.client.streamable_http.streamablehttp_client",
-                        fake_streamablehttp_client)
-    client._open_http()
-    assert captured["headers"].get("X-Reyn-Agent-Id") == "reyn/test-agent"
+    transport = client._open_http()
+    assert transport.headers.get("X-Reyn-Agent-Id") == "reyn/test-agent"
 
 
-def test_mcp_client_no_agent_id_no_header(monkeypatch) -> None:
+def test_mcp_client_no_agent_id_no_header() -> None:
     """Tier 2: agent_id=None → no X-Reyn-Agent-Id header (= backwards compat)."""
     from reyn.mcp.client import MCPClient
 
-    captured: dict = {}
-
-    def fake_streamablehttp_client(url, headers=None, timeout=None):  # noqa: ARG001
-        captured["headers"] = headers
-        return None
-
     client = MCPClient({"type": "http", "url": "https://example.com/mcp"})
-    monkeypatch.setattr("mcp.client.streamable_http.streamablehttp_client",
-                        fake_streamablehttp_client)
-    client._open_http()
-    assert "X-Reyn-Agent-Id" not in (captured["headers"] or {})
+    transport = client._open_http()
+    assert "X-Reyn-Agent-Id" not in transport.headers
 
 
-def test_mcp_client_operator_header_wins(monkeypatch) -> None:
+def test_mcp_client_operator_header_wins() -> None:
     """Tier 2: operator-set X-Reyn-Agent-Id in config wins over agent_id arg.
 
     Operators may need to spoof for tests or proxy in production; respect
     their explicit header.
     """
     from reyn.mcp.client import MCPClient
-
-    captured: dict = {}
-
-    def fake_streamablehttp_client(url, headers=None, timeout=None):  # noqa: ARG001
-        captured["headers"] = headers
-        return None
 
     client = MCPClient(
         {
@@ -181,10 +163,8 @@ def test_mcp_client_operator_header_wins(monkeypatch) -> None:
         },
         agent_id="reyn/auto",
     )
-    monkeypatch.setattr("mcp.client.streamable_http.streamablehttp_client",
-                        fake_streamablehttp_client)
-    client._open_http()
-    assert captured["headers"]["X-Reyn-Agent-Id"] == "reyn/spoofed"
+    transport = client._open_http()
+    assert transport.headers["X-Reyn-Agent-Id"] == "reyn/spoofed"
 
 
 # ── 4. OpContext.agent_id field ────────────────────────────────────────────
