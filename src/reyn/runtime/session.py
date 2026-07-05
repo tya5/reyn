@@ -1937,6 +1937,16 @@ class Session:
         self._event_store = new_store
 
     @property
+    def non_interactive(self) -> bool:
+        """#2585 PR2: read-only public surface for ``_non_interactive`` (set at
+        construction from the frontend's session_factory, and force-overridden
+        to True for ephemeral spawns by ``AgentRegistry.spawn_session_recorded``
+        — see its ``mode == "ephemeral"`` branch). Lets callers/tests observe
+        the effective ask-vs-proceed SP branch without reaching into the
+        "private" attribute."""
+        return self._non_interactive
+
+    @property
     def total_usage(self):
         return self._budget.total_usage
 

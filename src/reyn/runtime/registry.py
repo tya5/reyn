@@ -2697,6 +2697,17 @@ class AgentRegistry:
             ephemeral_session = self._peek_session(name, sid)
             if ephemeral_session is not None:
                 ephemeral_session._ephemeral = True
+                # #2585 PR2: an ephemeral spawn is structurally headless — it
+                # receives exactly ONE prompt via MessageBus.request (see
+                # session_api.run_agent_step) and returns; there is no
+                # interactive user on the other end to answer a clarifying
+                # question, regardless of which frontend's session_factory
+                # spawned it. Force the override here (NOT in spawn_session
+                # itself, which persistent/A2A spawns also use and which MAY
+                # have a real user eventually) so the worker always lands on
+                # the "proceed with assumption" SP branch instead of wasting
+                # its one turn asking a question no one can answer.
+                ephemeral_session._non_interactive = True
         if narrowing:
             import yaml
             cfg_path = self._session_state_dir(name, sid) / "config.yaml"
