@@ -216,13 +216,21 @@ async def test_list_actions_pipeline_category_surfaces_registered_pipeline() -> 
     assert items["pipeline__digest_report"]["short_description"] == (
         "Summarize the week's incoming reports."
     )
+    # #2589: the static launch verbs (incl. the previously-unreachable
+    # async/inline ones) are ALSO surfaced alongside the dynamic per-name
+    # entry — the hybrid enumeration mirroring the ``mcp`` category.
+    assert {
+        "pipeline__run", "pipeline__run_async",
+        "pipeline__run_inline", "pipeline__run_inline_async",
+    } <= items.keys()
 
 
 @pytest.mark.asyncio
-async def test_list_actions_pipeline_category_empty_registry_returns_empty() -> None:
+async def test_list_actions_pipeline_category_empty_registry_returns_static_verbs_only() -> None:
     """Tier 2: no registered pipelines -> list_actions(category=["pipeline"])
-    returns an empty item list (not an error), same graceful-empty posture
-    as the other resource categories (mcp.server / rag_corpus)."""
+    returns ONLY the static launch verbs (#2589 hybrid enumeration), not an
+    empty list — the ``mcp`` category's hybrid pattern always surfaces its
+    static verbs regardless of dynamic population; ``pipeline`` now matches."""
     from reyn.tools.types import ToolContext
     from reyn.tools.universal_catalog import LIST_ACTIONS
 
@@ -238,7 +246,11 @@ async def test_list_actions_pipeline_category_empty_registry_returns_empty() -> 
 
     result = await LIST_ACTIONS.handler({"category": ["pipeline"]}, ctx)
 
-    assert result["items"] == []
+    names = {it["qualified_name"] for it in result["items"]}
+    assert names == {
+        "pipeline__run", "pipeline__run_async",
+        "pipeline__run_inline", "pipeline__run_inline_async",
+    }
 
 
 # ---------------------------------------------------------------------------

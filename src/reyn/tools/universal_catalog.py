@@ -720,26 +720,31 @@ def _enumerate_category(category: str, ctx: ToolContext) -> list[dict[str, str]]
         return out2
 
     if category == "pipeline":
-        # IS-5: enumerate REGISTERED pipelines from the caller state's
-        # PipelineRegistry (mirrors the rag_corpus branch above). Each
-        # ``pipeline__<name>`` entry is directly invokable — D19 resource
-        # invoke, ``universal_dispatch._RESOURCE_RULES["pipeline"]`` curries
-        # ``name`` and forwards ``input`` to ``run_pipeline`` — same pattern
-        # as ``rag_corpus__<name>`` currying ``sources`` into ``recall``. The
-        # pre-existing static ``pipeline__run`` verb (``args={name, input}``)
-        # keeps working unchanged (exact _OPERATION_RULES match wins first).
-        # None registry (narrow test hosts / a host that doesn't support
-        # run_pipeline) → empty list.
+        # #2589: HYBRID enumeration — mirrors the ``mcp`` category above.
+        # Static launch verbs (pipeline__run / _async / _inline / _inline_async)
+        # are in ``_OPERATION_RULES`` (universal_dispatch.py), floored under
+        # "pipeline-run" (capability_profile.py), and classified — but were
+        # NEVER enumerated, so a default enumerate-all agent could dispatch
+        # them (invoke_action) yet never discover them (list_actions never
+        # surfaced them). Enumerate the static verbs FIRST, then extend with
+        # the IS-5 dynamic per-registered-pipeline ``pipeline__<name>``
+        # entries (D19 resource invoke, ``universal_dispatch._RESOURCE_
+        # RULES["pipeline"]`` curries ``name`` and forwards ``input`` to
+        # ``run_pipeline`` — same pattern as ``rag_corpus__<name>`` currying
+        # ``sources`` into ``recall``). None registry (narrow test hosts / a
+        # host that doesn't support run_pipeline) → static verbs only.
+        items = list(_enumerate_static_category("pipeline"))
         pipeline_registry = getattr(rs, "pipeline_registry", None) if rs is not None else None
         if pipeline_registry is None:
-            return []
-        return [
+            return items
+        items.extend(
             {
                 "qualified_name": build_qualified_name("pipeline", name),
                 "short_description": _truncate_short_description(description),
             }
             for name, description in pipeline_registry.entries()
-        ]
+        )
+        return items
 
     # exec category — sandboxed_exec (FP-0017).
     # Visible only when a real sandbox backend is configured (D14-ext).
