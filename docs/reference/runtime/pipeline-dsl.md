@@ -89,7 +89,8 @@ ArgValue      ::= LITERAL | "!expr" EXPR        (* !expr only as the WHOLE value
 
 ShellBody     ::= "{" "command:" ArgValue
                       ["schema:" NAME]
-                      ["output:" NAME] "}"
+                      ["output:" NAME]
+                      ["timeout:" INT] "}"
 
 AgentBody     ::= "{" "prompt:" TPL
                       ["identity:" NAME]
@@ -191,24 +192,30 @@ registered tool name (`web_search`).
 | `schema` | no | A registered schema name the result must conform to (`verify: schema` — see [Schemas](#schemas-verify-schema)). Non-conformance fails the step. |
 | `output` | no | Named store to write the result to. |
 
-`shell` is sugar for a `tool` step named `"shell"`:
+`shell` is sugar for a `tool` step named `"shell"`: `command` runs as
+`/bin/sh -c <command>` inside the operator's sandbox
+(`sandboxed_exec` — same confinement, policy precedence, and audit events as
+a direct `sandboxed_exec` call). The step's incoming pipe data is threaded to
+the process's **STDIN, JSON-encoded**; the process's **STDOUT becomes the
+step's result** — JSON-decoded when it parses as JSON (so `verify: schema`,
+which requires a `dict`, can apply to a JSON-emitting command), otherwise the
+raw text.
 
 ```yaml
 - shell: {command: !expr "'ls ' + ctx.dir", output: listing}
 ```
 
-!!! warning "`shell` is not yet functional at runtime"
-    A `shell` step (or a `tool` step naming `"shell"` directly) parses
-    correctly, but no `"shell"` tool is currently registered — every `shell`
-    step fails at run time with a "does not resolve to a registered tool"
-    error. The other step kinds are unaffected. Until this closes, use a
-    `tool` step naming a real registered tool/action instead of `shell`.
-
 | Key | Required | Meaning |
 |-----|----------|---------|
-| `command` | yes | Literal or `!expr`, same rule as a `tool` step's `args` values. |
+| `command` | yes | Literal or `!expr`, same rule as a `tool` step's `args` values. Run as `/bin/sh -c <command>`. |
 | `schema` | no | Same as `tool`. |
 | `output` | no | Same as `tool`. |
+| `timeout` | no | Wall-clock time limit in seconds. Defaults to 60. |
+
+Launching a `shell` step sits on the same `HIGH`-severity capability floor as
+`exec__sandboxed_exec` — a context narrowed by the untrusted-content floor or
+an unbound delegate's floor cannot run one, same as it cannot call
+`sandboxed_exec` directly.
 
 #### Literals vs `!expr`
 
@@ -605,7 +612,7 @@ PipelineDoc   ::= "pipeline:" NAME ("description:" STRING)? "steps:" Step+
 
 Step          ::= "transform:" "{" "value:" EXPR ["output:" NAME] "}"
                  | "tool:"     "{" "name:" STRING ["args:" ArgMap] ["schema:" NAME] ["output:" NAME] "}"
-                 | "shell:"    "{" "command:" ArgValue ["schema:" NAME] ["output:" NAME] "}"
+                 | "shell:"    "{" "command:" ArgValue ["schema:" NAME] ["output:" NAME] ["timeout:" INT] "}"
                  | "agent:"    "{" "prompt:" TPL ["identity:" NAME]
                                     ["capabilities:" "{" "tools:" "[" NAME* "]" "}"]
                                     ["schema:" NAME] ["output:" NAME] "}"
@@ -681,12 +688,7 @@ steps:
   - transform:
       value: "review.passed and 'OK' or 'NEEDS WORK'"
       output: verdict
-  - tool:
-      name: file__write
-      args: {path: "verdict.txt", content: !expr verdict}
-      output: written
+  - shell:
+      command: !expr "'echo ' + verdict"
+      output: shouted
 ```
-
-Note: this uses `file__write`, not `shell` — `shell` currently fails at run
-time (see the warning above), so avoid it in a generated definition until
-that closes.
