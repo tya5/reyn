@@ -111,6 +111,17 @@ phase frontmatter         LLM emits Control IR        OS dispatches
 
 The boundary is sharp on purpose: workflows describe what they want, the OS decides how to get it. Adding a new MCP server doesn't touch any OS code (P7).
 
+### Resources: list + read
+
+Alongside tools, a server can expose **resources** (server-hosted content addressed by URI — files, database rows, generated documents) and **resource templates** (parameterized URI patterns the LLM fills in). Reyn's chat surface mirrors the tools flow:
+
+- `list_mcp_resources(server)` / `list_mcp_resource_templates(server)` — discovery, unpermissioned (mirrors `list_mcp_tools`; no Control IR op kind, no `permissions.mcp` gate — resource *metadata* carries no more risk than a tool's name/description).
+- `read_mcp_resource(server, uri)` — reads one resource's contents. This one IS gated: it's a `mcp_read_resource` Control IR op, requiring the same `permissions.mcp: [server_name]` grant as a tool call, because a resource's *contents* are external, potentially sensitive server-authored data — the same reasoning `call_mcp_tool` already applies to a tool result. Every read emits `mcp_resource_read` before, `mcp_resource_read_completed` (or `_failed`) after.
+
+Both list and read are additionally gated by the server's **negotiated capabilities**: a server that never advertised `resources` in its `initialize` handshake fails fast with a clear error (`require_capability` in `reyn/mcp/client.py`) instead of a raw protocol error.
+
+`resources/subscribe` (push notifications on resource change) is not yet implemented — today's surface is list + read only.
+
 ## Transport choice (stdio vs HTTP)
 
 Most official MCP servers are local processes you launch over stdio. A few hosted services expose HTTP endpoints. SSE transport is reserved for a future release.

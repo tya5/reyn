@@ -16,11 +16,26 @@ dispatch branches were removed alongside the control-IR / phase-dispatch
 executor (#2542): ``ToolContext.caller_kind`` is always "router" at
 runtime, so the handlers run their router logic unconditionally.
 
+#2597 slice ②a adds three MORE capabilities, parallel to the tools surface
+above (list_mcp_tools -> list_mcp_resources; call_mcp_tool's gated-content
+shape -> read_mcp_resource; a resource-templates twin with no tools
+analogue):
+
+  LIST_MCP_RESOURCES         — gates.router=allow (mirrors LIST_MCP_TOOLS)
+  READ_MCP_RESOURCE          — gates.router=allow (mirrors CALL_MCP_TOOL's
+                                external-content + permission-gated shape)
+  LIST_MCP_RESOURCE_TEMPLATES — gates.router=allow
+
+``resources/subscribe`` + ``resources/updated`` push notifications are OUT
+OF SCOPE (slice ②b) — these three are list/read only.
+
 ## Router-side dispatch
 
 The router-side handlers are thin adapters over the existing session-level
-callbacks (mcp_list_servers / mcp_list_tools / mcp_call_tool). The ToolContext
-router_state carries the host adapter; adapters pull from ctx.router_state.
+callbacks (mcp_list_servers / mcp_list_tools / mcp_call_tool / #2597
+mcp_list_resources / mcp_list_resource_templates / mcp_read_resource). The
+ToolContext router_state carries the host adapter; adapters pull from
+ctx.router_state.
 
 ## DO NOT TOUCH shared files
 
@@ -132,6 +147,62 @@ _DESCRIBE_MCP_TOOL_PARAMETERS: dict[str, Any] = {
 }
 
 
+# ── #2597 slice ②a: resources consumption parameters ──────────────────────────
+
+_LIST_MCP_RESOURCES_DESCRIPTION = (
+    "List resources exposed by one MCP server "
+    "(with uri + description per resource)."
+)
+
+_LIST_MCP_RESOURCES_PARAMETERS: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "server": {
+            "type": "string",
+            "description": "MCP server name — choose from the enum (verbatim).",
+        },
+    },
+    "required": ["server"],
+}
+
+_LIST_MCP_RESOURCE_TEMPLATES_DESCRIPTION = (
+    "List resource templates (parameterized URI patterns) exposed by one "
+    "MCP server. Use list_mcp_resources for concrete resources."
+)
+
+_LIST_MCP_RESOURCE_TEMPLATES_PARAMETERS: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "server": {
+            "type": "string",
+            "description": "MCP server name — choose from the enum (verbatim).",
+        },
+    },
+    "required": ["server"],
+}
+
+_READ_MCP_RESOURCE_DESCRIPTION = (
+    "Read the contents of one MCP resource by URI. Get the uri from "
+    "list_mcp_resources (or by resolving a list_mcp_resource_templates "
+    "template)."
+)
+
+_READ_MCP_RESOURCE_PARAMETERS: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "server": {
+            "type": "string",
+            "description": "MCP server name — choose from the enum (verbatim).",
+        },
+        "uri": {
+            "type": "string",
+            "description": "Resource URI, verbatim from list_mcp_resources.",
+        },
+    },
+    "required": ["server", "uri"],
+}
+
+
 # ── Handlers ──────────────────────────────────────────────────────────────────
 
 async def _handle_list_mcp_servers(
@@ -198,6 +269,53 @@ async def _handle_list_mcp_tools(
         entry["name"] = f"{server}__{inner_name}"
         rebuilt.append(entry)
     return {"mcp_tools": rebuilt}
+
+
+async def _handle_list_mcp_resources(
+    args: Mapping[str, Any], ctx: ToolContext
+) -> ToolResult:
+    """Adapter for list_mcp_resources.
+
+    Delegates to host.mcp_list_resources(server) via ctx.router_state —
+    mirrors _handle_list_mcp_tools exactly, minus the #879 name-rewrite
+    (resources are addressed by URI, not a <server>__<name> identifier).
+    """
+    host = _require_host(ctx)
+    server = str(args["server"])
+    result = await host.mcp_list_resources(server)
+    if result and isinstance(result[0], Mapping) and "error" in result[0]:
+        return {"error": result[0]["error"]}
+    return {"resources": list(result or [])}
+
+
+async def _handle_list_mcp_resource_templates(
+    args: Mapping[str, Any], ctx: ToolContext
+) -> ToolResult:
+    """Adapter for list_mcp_resource_templates. Mirrors
+    _handle_list_mcp_resources; an empty list is a normal result (no
+    templates registered), not an error."""
+    host = _require_host(ctx)
+    server = str(args["server"])
+    result = await host.mcp_list_resource_templates(server)
+    if result and isinstance(result[0], Mapping) and "error" in result[0]:
+        return {"error": result[0]["error"]}
+    return {"resource_templates": list(result or [])}
+
+
+async def _handle_read_mcp_resource(
+    args: Mapping[str, Any], ctx: ToolContext
+) -> ToolResult:
+    """Adapter for read_mcp_resource.
+
+    Delegates to host.mcp_read_resource(server, uri) via ctx.router_state.
+    Mirrors _handle_call_mcp_tool's delegation shape; the gated content
+    itself is enforced upstream (require_mcp on the mcp_read_resource op
+    kind), not here.
+    """
+    host = _require_host(ctx)
+    server = str(args["server"])
+    uri = str(args["uri"])
+    return await host.mcp_read_resource(server, uri)
 
 
 async def _handle_call_mcp_tool(
@@ -386,6 +504,51 @@ DESCRIBE_MCP_TOOL = ToolDefinition(
     category="discovery",
     purity="read_only",
     returns_external_content=True,  # FP-0050/#1822: external server-authored schema/description
+    schema_enricher=_enrich_router_schema,
+)
+
+
+# ── #2597 slice ②a: resources consumption ToolDefinitions ────────────────────
+# Parallel to LIST_MCP_TOOLS / CALL_MCP_TOOL above — same gates, same
+# schema-enrichment reuse (server enum only; _enrich_router_schema no-ops on
+# the absent mcp_tool_name prop for these three).
+
+LIST_MCP_RESOURCES = ToolDefinition(
+    name="list_mcp_resources",
+    router_dispatched=True,
+    description=_LIST_MCP_RESOURCES_DESCRIPTION,
+    parameters=_LIST_MCP_RESOURCES_PARAMETERS,
+    gates=ToolGates(router="allow", phase="allow"),
+    handler=_handle_list_mcp_resources,
+    category="discovery",
+    purity="read_only",
+    returns_external_content=True,  # FP-0050/#1822: external server-authored resource listing
+    schema_enricher=_enrich_router_schema,
+)
+
+LIST_MCP_RESOURCE_TEMPLATES = ToolDefinition(
+    name="list_mcp_resource_templates",
+    router_dispatched=True,
+    description=_LIST_MCP_RESOURCE_TEMPLATES_DESCRIPTION,
+    parameters=_LIST_MCP_RESOURCE_TEMPLATES_PARAMETERS,
+    gates=ToolGates(router="allow", phase="allow"),
+    handler=_handle_list_mcp_resource_templates,
+    category="discovery",
+    purity="read_only",
+    returns_external_content=True,  # FP-0050/#1822: external server-authored template listing
+    schema_enricher=_enrich_router_schema,
+)
+
+READ_MCP_RESOURCE = ToolDefinition(
+    name="read_mcp_resource",
+    router_dispatched=True,
+    description=_READ_MCP_RESOURCE_DESCRIPTION,
+    parameters=_READ_MCP_RESOURCE_PARAMETERS,
+    gates=ToolGates(router="allow", phase="allow"),
+    handler=_handle_read_mcp_resource,
+    category="discovery",
+    purity="read_only",  # a resource read has no reyn-side side effects (unlike call_mcp_tool)
+    returns_external_content=True,  # FP-0050/#1822: external MCP server resource content
     schema_enricher=_enrich_router_schema,
 )
 
