@@ -557,6 +557,43 @@ class MCPClient:
             _classify_and_raise(exc, f"MCP resources/read error: {exc}")
         return _read_resource_result_to_dict(result)
 
+    # ── prompts (#2597 slice ②c — consumption) ──────────────────────────────────
+
+    async def list_prompts(self) -> list[dict[str, Any]]:
+        """Return the prompts advertised by this server as plain dicts.
+
+        Mirrors :meth:`list_resources`: uses FastMCP's auto-paginating
+        ``Client.list_prompts()`` (follows ``nextCursor``) and gates on the
+        ``"prompts"`` capability before issuing the request.
+        """
+        await self.initialize()
+        require_capability(self, "prompts")
+        try:
+            prompts = await self._client.list_prompts()
+        except Exception as exc:
+            _classify_and_raise(exc, f"MCP prompts/list error: {exc}")
+        return [_prompt_to_dict(p) for p in prompts]
+
+    async def get_prompt(self, name: str, arguments: dict[str, Any] | None = None) -> dict[str, Any]:
+        """Fetch one rendered prompt's messages and return them flattened to a
+        dict: ``{"description": str | None, "messages": [...]}`` — each entry
+        a flattened ``PromptMessage``.
+
+        Uses FastMCP's raw ``get_prompt_mcp`` (not the convenience
+        ``get_prompt``, which additionally supports background-task /
+        version kwargs this slice does not need) so the shape-flattening
+        lives in ONE place (:func:`_get_prompt_result_to_dict`), mirroring
+        how :meth:`read_resource` uses ``read_resource_mcp`` for the same
+        reason.
+        """
+        await self.initialize()
+        require_capability(self, "prompts")
+        try:
+            result = await self._client.get_prompt_mcp(name=name, arguments=arguments)
+        except Exception as exc:
+            _classify_and_raise(exc, f"MCP prompts/get error: {exc}")
+        return _get_prompt_result_to_dict(result)
+
     # ── resource subscriptions (#2597 slice ②b) ─────────────────────────────────
 
     def _require_resources_subscribe_capability(self) -> None:
@@ -931,6 +968,36 @@ def _resource_to_dict(resource: Any) -> dict[str, Any]:
     if hasattr(resource, "model_dump"):
         return resource.model_dump(mode="json")
     return dict(resource)
+
+
+def _prompt_to_dict(prompt: Any) -> dict[str, Any]:
+    """Flatten an ``mcp.types.Prompt`` into a JSON-safe plain dict (mirrors
+    :func:`_resource_to_dict`). ``mode="json"`` for the same reason: a
+    ``Prompt`` has no ``AnyUrl`` field today, but ``mode="json"`` is the
+    uniform, future-proof choice across this module's model-dump helpers."""
+    if hasattr(prompt, "model_dump"):
+        return prompt.model_dump(mode="json")
+    return dict(prompt)
+
+
+def _get_prompt_result_to_dict(result: Any) -> dict[str, Any]:
+    """Flatten an ``mcp.types.GetPromptResult`` into
+    ``{"description": str | None, "messages": [...]}`` — each entry a
+    flattened ``PromptMessage`` (mirrors :func:`_read_resource_result_to_dict`'s
+    content-flattening for resource reads). Uses ``mode="json"`` for the same
+    AnyUrl-safety reason as :func:`_resource_to_dict`."""
+    messages: list[dict[str, Any]] = []
+    for item in getattr(result, "messages", []) or []:
+        if hasattr(item, "model_dump"):
+            messages.append(item.model_dump(mode="json"))
+        elif isinstance(item, dict):
+            messages.append(item)
+        else:
+            messages.append({"role": "user", "content": {"type": "text", "text": str(item)}})
+    return {
+        "description": getattr(result, "description", None),
+        "messages": messages,
+    }
 
 
 def _read_resource_result_to_dict(result: Any) -> dict[str, Any]:

@@ -98,11 +98,49 @@ def _mcp_read_resource_to_canonical(result: dict) -> CanonicalToolResult:
     )
 
 
+def _mcp_get_prompt_to_canonical(result: dict) -> CanonicalToolResult:
+    """MCP get-prompt result → canonical (#2597 slice ②c). ``messages`` is a
+    list of flattened ``PromptMessage`` dicts (``{"role": ..., "content":
+    {...}}``); each message's text-bearing content joins into the canonical
+    ``text`` (same offload-safe path as a resource's joined ``contents``); a
+    non-text content block (image/audio/embedded-resource) becomes a
+    ``structured`` attachment rather than a ``media`` one, for the same
+    reason ``_mcp_read_resource_to_canonical`` isolates a resource ``blob`` —
+    the existing ``media`` attachment path assumes vision-follow-up-shaped
+    image blocks a prompt's arbitrary content block does not fit. A large
+    rendered prompt (many/long messages) is the SAME second-oversized-field
+    risk a tool's ``structuredContent`` or a resource's ``blob`` posed — this
+    mapper keeps ``text`` the sole offload-decision payload, same as its two
+    siblings above.
+    """
+    attachments: list[dict] = []
+    text_parts: list[str] = []
+    for message in result.get("messages") or []:
+        if not isinstance(message, dict):
+            continue
+        content = message.get("content")
+        if isinstance(content, dict) and content.get("type") == "text" and content.get("text") is not None:
+            text_parts.append(str(content["text"]))
+        elif content is not None:
+            attachments.append({"kind": "structured", "data": content})
+    meta = {
+        k: v for k, v in result.items()
+        if k in ("kind", "status", "server", "name", "description", "error")
+    }
+    return CanonicalToolResult(
+        text="\n".join(text_parts),
+        attachments=attachments,
+        source_ref=None,
+        meta=meta,
+    )
+
+
 # op-kind → canonical mapper. New ops register here (or return canonical directly); a raw dict with no
 # registered mapper falls back to a whole-dict wrap so nothing is ever lost (see ``to_canonical``).
 _MAPPERS: dict[str, Any] = {
     "mcp": _mcp_to_canonical,
     "mcp_read_resource": _mcp_read_resource_to_canonical,
+    "mcp_get_prompt": _mcp_get_prompt_to_canonical,
 }
 
 

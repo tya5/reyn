@@ -85,6 +85,11 @@ class RouterHostAdapter:
         Async callback ``(server: str, uri: str) -> dict`` (#2597 slice ②b).
     mcp_unsubscribe_resource:
         Async callback ``(server: str, uri: str) -> dict`` (#2597 slice ②b).
+    mcp_list_prompts:
+        Async callback ``(server: str) -> list[dict]`` (#2597 slice ②c).
+    mcp_get_prompt:
+        Async callback ``(server: str, name: str, arguments: dict | None) -> dict``
+        (#2597 slice ②c).
     send_to_agent:
         Async callback ``(*, to, request, depth, chain_id) -> None``.
     put_outbox:
@@ -142,6 +147,10 @@ class RouterHostAdapter:
         # getattr-guard pattern as the ②a resources callbacks above.
         mcp_subscribe_resource: "Callable[..., Awaitable[dict]] | None" = None,
         mcp_unsubscribe_resource: "Callable[..., Awaitable[dict]] | None" = None,
+        # #2597 slice ②c: prompts consumption — same None-default / getattr-guard
+        # pattern as the ②a resources callbacks above. No subscribe analogue.
+        mcp_list_prompts: "Callable[..., Awaitable[list]] | None" = None,
+        mcp_get_prompt: "Callable[..., Awaitable[dict]] | None" = None,
         # Action callbacks
         send_to_agent: Callable[..., Awaitable[None]],
         put_outbox: Callable[..., Awaitable[None]],
@@ -364,6 +373,8 @@ class RouterHostAdapter:
         self._mcp_read_resource_cb = mcp_read_resource
         self._mcp_subscribe_resource_cb = mcp_subscribe_resource
         self._mcp_unsubscribe_resource_cb = mcp_unsubscribe_resource
+        self._mcp_list_prompts_cb = mcp_list_prompts
+        self._mcp_get_prompt_cb = mcp_get_prompt
         # Action callbacks
         self._send_to_agent_cb = send_to_agent
         self._put_outbox_cb = put_outbox
@@ -1422,6 +1433,18 @@ class RouterHostAdapter:
         if self._mcp_unsubscribe_resource_cb is None:
             return {"status": "error", "error": "mcp resource unsubscribe is not wired on this host"}
         return await self._mcp_unsubscribe_resource_cb(server, uri)
+
+    # #2597 slice ②c: prompts consumption. Same getattr-guarded-callback
+    # pattern as the ②a resources methods above. No subscribe analogue.
+    async def mcp_list_prompts(self, server: str) -> list[dict]:
+        if self._mcp_list_prompts_cb is None:
+            return [{"error": "mcp prompts listing is not wired on this host"}]
+        return await self._mcp_list_prompts_cb(server)
+
+    async def mcp_get_prompt(self, server: str, name: str, arguments: dict | None = None) -> dict:
+        if self._mcp_get_prompt_cb is None:
+            return {"status": "error", "error": "mcp prompt get is not wired on this host"}
+        return await self._mcp_get_prompt_cb(server, name, arguments)
 
     # --- Model resolution ---
 

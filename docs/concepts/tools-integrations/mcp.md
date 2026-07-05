@@ -129,6 +129,17 @@ Both list and read are additionally gated by the server's **negotiated capabilit
 - **Survives a transport-death reconnect.** A dropped connection (subprocess death, broken HTTP) re-opens a fresh MCP session with no memory of prior subscriptions; `MCPConnectionService` automatically re-issues every tracked subscription against the fresh connection, so a subscription set up before a drop keeps delivering pushes after reyn heals the connection.
 - **The push lands on the EventLog, not in a tool result.** `mcp_resource_updated` (`server`, `uri`) is emitted asynchronously whenever the notification arrives — independent of any Control IR op call. Wiring it into the hook dispatcher (so a workflow can react to it directly) is a later slice; today it's an audit-trail signal a workflow author reads back via the EventLog.
 
+### Prompts: list + get
+
+Alongside tools and resources, a server can expose **prompts** (named, server-authored prompt templates the LLM can render with arguments). Reyn's chat surface mirrors the resources flow exactly:
+
+- `list_mcp_prompts(server)` — discovery, unpermissioned (mirrors `list_mcp_resources`/`list_mcp_tools`; no Control IR op kind, no `permissions.mcp` gate). Returns each prompt's `name` + `description` + `arguments` schema.
+- `get_mcp_prompt(server, name, arguments?)` — fetches one rendered prompt's messages. This one IS gated: it's a `mcp_get_prompt` Control IR op, requiring the same `permissions.mcp: [server_name]` grant as a tool call / resource read, because a rendered prompt's *messages* are external, potentially sensitive server-authored content. Every get emits `mcp_prompt_get` before, `mcp_prompt_get_completed` (or `_failed`) after.
+
+Both list and get are additionally gated by the server's **negotiated capabilities**: a server that never advertised `prompts` in its `initialize` handshake fails fast with a clear error (`require_capability` in `reyn/mcp/client.py`) instead of a raw protocol error.
+
+Prompts have no subscribe concept — MCP defines no per-prompt push notification (only the coarser `notifications/prompts/list_changed`, already bridged to an `mcp_prompt_list_changed` EventLog event); there is no `subscribe_mcp_prompt`.
+
 ## Transport choice (stdio vs HTTP)
 
 Most official MCP servers are local processes you launch over stdio. A few hosted services expose HTTP endpoints. SSE transport is reserved for a future release.

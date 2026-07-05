@@ -296,7 +296,8 @@ class _HeldConnection:
     :meth:`MCPConnectionService.get`. Exposes exactly the surface
     :class:`~reyn.mcp.gateway.MCPGateway` calls (``call_tool`` / ``list_tools`` /
     ``list_resources`` / ``list_resource_templates`` / ``read_resource`` /
-    ``subscribe_resource`` / ``unsubscribe_resource`` / ``is_initialized``) so it's
+    ``subscribe_resource`` / ``unsubscribe_resource`` / ``list_prompts`` /
+    ``get_prompt`` / ``is_initialized``) so it's
     usable anywhere a bare ``MCPClient`` is expected.
 
     Looks up the currently-live held ``MCPClient`` by server name on every call
@@ -360,6 +361,15 @@ class _HeldConnection:
 
     async def read_resource(self, uri: str) -> dict[str, Any]:
         return await self._heal(lambda c: c.read_resource(uri), heal_only=False)
+
+    # #2597 slice ②c: prompts consumption. Both are idempotent READS (no
+    # server-side side effect), so — like list_resources/read_resource above —
+    # they heal with heal_only=False (retry-once on the fresh connection).
+    async def list_prompts(self) -> list[dict[str, Any]]:
+        return await self._heal(lambda c: c.list_prompts(), heal_only=False)
+
+    async def get_prompt(self, name: str, arguments: dict[str, Any] | None = None) -> dict[str, Any]:
+        return await self._heal(lambda c: c.get_prompt(name, arguments), heal_only=False)
 
     # #2597 slice ②b: resource subscriptions. Unlike call_tool, subscribe/unsubscribe
     # are connection-MANAGEMENT operations, not data reads — but they still go through

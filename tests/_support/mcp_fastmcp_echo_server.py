@@ -27,6 +27,10 @@ Tools:
                             (the resource analog of ``pid()``). Used by #2597 slice
                             ②a to prove a 2nd ``read_resource`` hit the SAME held
                             subprocess.
+  - ``pid_prompt``       -> a PROMPT whose rendered message is this server
+                            process's PID (the prompt analog of ``pid()``). Used
+                            by #2597 slice ②c to prove a 2nd ``get_prompt`` hit
+                            the SAME held subprocess.
   - ``bump()`` /         -> a per-process side-effect counter (#2597 S2a). ``bump``
     ``bump_then_die()``     increments + returns the count; ``bump_then_die``
                             increments THEN kills the subprocess AFTER the side
@@ -80,6 +84,17 @@ def pid() -> int:
 # re-handshake) — the resource-path twin of the S2a ``pid()`` tool round-trip.
 @mcp.resource("resource://pid")
 def pid_resource() -> str:
+    import os
+
+    return str(os.getpid())
+
+
+# #2597 slice ②c: a prompt whose RENDERED MESSAGE is this server process's PID —
+# the prompt analog of the ``pid()`` tool / ``resource://pid`` resource.
+# Held-connection-reuse tests get it twice and assert the same PID, proving the
+# 2nd get hit the SAME held subprocess (no re-handshake).
+@mcp.prompt()
+def pid_prompt() -> str:
     import os
 
     return str(os.getpid())

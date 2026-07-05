@@ -148,6 +148,18 @@ class MCPUnsubscribeResourceIROp(BaseModel):
     uri: str
 
 
+class MCPGetPromptIROp(BaseModel):
+    """#2597 slice ②c: fetch one rendered MCP prompt (messages) by name.
+    Permission-gated + event-emitting like ``MCPReadResourceIROp`` (external,
+    possibly sensitive server-authored content) — unlike the discovery-only
+    ``mcp_list_prompts`` path, which mirrors ``list_tools``/``list_resources``
+    (no permission gate, no op-kind)."""
+    kind: Literal["mcp_get_prompt"]
+    server: str
+    name: str
+    arguments: dict[str, Any] = Field(default_factory=dict)
+
+
 class AskUserIROp(BaseModel):
     kind: Literal["ask_user"]
     question: str
@@ -577,6 +589,10 @@ OP_KIND_MODEL_MAP: dict[str, type[BaseModel]] = {
     # (mcp_resource_updated), not routed through the Op union at all.
     "mcp_subscribe_resource": MCPSubscribeResourceIROp,
     "mcp_unsubscribe_resource": MCPUnsubscribeResourceIROp,
+    # #2597 slice ②c: prompts consumption — get is permission-gated (external
+    # content); list stays op-kind-free, mirroring list_tools/list_resources (see
+    # op_runtime/mcp_get_prompt.py + session.py's _mcp_list_prompts).
+    "mcp_get_prompt": MCPGetPromptIROp,
     "ask_user":    AskUserIROp,
     "web_fetch":   WebFetchIROp,
     "web_search":  WebSearchIROp,
@@ -627,6 +643,7 @@ if TYPE_CHECKING:
             GlobFilesIROp, GrepFilesIROp,
             MCPIROp, MCPReadResourceIROp,
             MCPSubscribeResourceIROp, MCPUnsubscribeResourceIROp,
+            MCPGetPromptIROp,
             AskUserIROp,
             WebFetchIROp, WebSearchIROp, MCPInstallIROp,
             MCPDropServerIROp,

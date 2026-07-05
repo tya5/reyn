@@ -157,6 +157,19 @@ class MCPGateway:
         return await self._run(server, config, lambda c: c.read_resource(uri),
                                timeout=resolve_call_timeout(config))
 
+    async def list_prompts(self, server: str, config: dict) -> list[dict]:
+        """Return the server's advertised prompts. Raises :class:`MCPFault` on
+        any contained fault (mirrors :meth:`list_resources`)."""
+        return await self._run(server, config, lambda c: c.list_prompts(),
+                               timeout=resolve_call_timeout(config))
+
+    async def get_prompt(self, server: str, name: str, arguments: dict, config: dict) -> dict:
+        """Fetch one rendered prompt's messages by name and return
+        ``{"description": ..., "messages": [...]}``. Raises :class:`MCPFault`
+        on any contained fault (mirrors :meth:`read_resource`)."""
+        return await self._run(server, config, lambda c: c.get_prompt(name, arguments),
+                               timeout=resolve_call_timeout(config))
+
     async def subscribe_resource(self, server: str, uri: str, config: dict) -> None:
         """Subscribe to server-pushed ``resources/updated`` for ``uri``. Raises
         :class:`MCPFault` on any contained fault (mirrors :meth:`read_resource`).
