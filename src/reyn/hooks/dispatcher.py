@@ -30,6 +30,7 @@ import json
 import logging
 from typing import Any, Awaitable, Callable
 
+from reyn.hooks.matcher import matches as matcher_matches
 from reyn.hooks.registry import HookRegistry
 from reyn.hooks.render import ResolvedPush, render_pipeline_input, render_push
 from reyn.hooks.schema import HookDef
@@ -138,10 +139,17 @@ class HookDispatcher:
         Per-hook ``try/except``: a raising hook is logged + skipped; siblings and
         the lifecycle point proceed. Never propagates out of ``dispatch()``.
         Empty registry → the loop body never runs → byte-identical no-op.
+
+        #2608 H2: before running a hook's action, its (optional) ``matcher`` is
+        evaluated against ``template_vars`` (``reyn.hooks.matcher.matches``) — a
+        non-matching hook is skipped, same as a disabled hook. A hook with no
+        matcher always matches (fire-always, unchanged from pre-H2).
         """
         for hook in self._registry.hooks_for(point):
             if self._is_hook_disabled is not None and self._is_hook_disabled(hook):
                 continue  # #2285: hook disabled for THIS session (live applicability toggle)
+            if not matcher_matches(hook.matcher, template_vars):
+                continue  # #2608 H2: matcher didn't match this event's template_vars
             try:
                 await self._dispatch_one(hook, point, template_vars)
             except Exception as exc:  # noqa: BLE001 — per-hook isolation boundary

@@ -138,6 +138,42 @@ def _parse_pipeline_launch_block(raw: object, entry_index: int) -> PipelineLaunc
     return PipelineLaunchBlock(name=name, input_template=input_template)
 
 
+def _parse_matcher(raw: object, entry_index: int) -> "dict[str, str] | None":
+    """Validate and convert the ``matcher:`` sub-dict (#2608 H2).
+
+    Structural only: ``matcher`` must be a mapping of string keys to string
+    values (a per-hook-point matchable-field ALLOWLIST is deliberately NOT
+    enforced here — the loader has no per-point payload schema, and a future
+    external-event source (H4/H5) may introduce its own matchable fields
+    with zero change to this function; ``reyn.hooks.matcher.matches`` is the
+    seam that interprets field names). ``None`` or ``{}`` -> ``None``
+    (fire-always default, unchanged from H1).
+    """
+    if raw is None:
+        return None
+    if not isinstance(raw, dict):
+        raise HookConfigError(
+            f"hooks[{entry_index}].matcher must be a mapping of string field -> "
+            f"string pattern, got {type(raw).__name__!r}."
+        )
+    if not raw:
+        return None
+    matcher: dict[str, str] = {}
+    for key, value in raw.items():
+        if not isinstance(key, str) or not key.strip():
+            raise HookConfigError(
+                f"hooks[{entry_index}].matcher keys must be non-empty strings, "
+                f"got {key!r}."
+            )
+        if not isinstance(value, str):
+            raise HookConfigError(
+                f"hooks[{entry_index}].matcher[{key!r}] must be a string pattern, "
+                f"got {type(value).__name__!r}."
+            )
+        matcher[key] = value
+    return matcher
+
+
 def _parse_entry(raw: object, entry_index: int) -> HookDef:
     """Validate one raw hooks list entry and return a ``HookDef``."""
     if not isinstance(raw, dict):
@@ -213,14 +249,8 @@ def _parse_entry(raw: object, entry_index: int) -> HookDef:
     if "pipeline_launch" in raw:
         pipeline_launch = _parse_pipeline_launch_block(raw["pipeline_launch"], entry_index)
 
-    # ── matcher (optional, reserved) ───────────────────────────────────────
-    matcher_raw = raw.get("matcher", None)
-    if matcher_raw is not None and not isinstance(matcher_raw, str):
-        raise HookConfigError(
-            f"hooks[{entry_index}].matcher must be a string or null, "
-            f"got {type(matcher_raw).__name__!r}."
-        )
-    matcher: str | None = matcher_raw if matcher_raw else None
+    # ── matcher (optional, #2608 H2 — a field->pattern filter dict) ────────
+    matcher: "dict[str, str] | None" = _parse_matcher(raw.get("matcher", None), entry_index)
 
     # ── name (optional, #1800 slice 6) — the [hook:name] attribution label; ──
     # absent / blank → None (the dispatcher defaults it to the hook-point).

@@ -36,7 +36,7 @@ def _raw_push(
     wake: bool | str = True,
     push_when: str = "true",
     session: str | None = None,
-    matcher: str | None = None,
+    matcher: "dict[str, str] | None" = None,
 ) -> dict:
     """Build a raw push-hook dict (valid by default)."""
     push: dict = {"message": message, "wake": wake, "push_when": push_when}
@@ -66,7 +66,9 @@ def test_hookdef_push_shape() -> None:
         push_when="{{ ctx.condition }}",
         session="session-abc",
     )
-    hd = HookDef(on="turn_end", template_push=push, shell_exec=None, matcher="my-matcher")
+    hd = HookDef(
+        on="turn_end", template_push=push, shell_exec=None, matcher={"server": "my-matcher"}
+    )
 
     assert hd.on == "turn_end"
     assert hd.template_push is push
@@ -74,7 +76,7 @@ def test_hookdef_push_shape() -> None:
     assert hd.template_push.wake == "{{ ctx.needs_wake }}"
     assert hd.template_push.push_when == "{{ ctx.condition }}"
     assert hd.template_push.session == "session-abc"
-    assert hd.matcher == "my-matcher"
+    assert hd.matcher == {"server": "my-matcher"}
     assert hd.shell_exec is None
 
 
@@ -138,7 +140,7 @@ def test_load_hooks_push_all_fields_accepted() -> None:
                 "push_when": "{{ ctx.should_push }}",
                 "session": "{{ ctx.target_session }}",
             },
-            "matcher": "my-task-filter",
+            "matcher": {"server": "my-task-filter"},
         }
     ]
     registry = load_hooks(raw)
@@ -149,7 +151,7 @@ def test_load_hooks_push_all_fields_accepted() -> None:
     assert hd.template_push.wake == "{{ ctx.wake_needed }}"
     assert hd.template_push.push_when == "{{ ctx.should_push }}"
     assert hd.template_push.session == "{{ ctx.target_session }}"
-    assert hd.matcher == "my-task-filter"
+    assert hd.matcher == {"server": "my-task-filter"}
 
 
 def test_load_hooks_shell_valid() -> None:
@@ -330,11 +332,13 @@ hooks:
       wake: false
       push_when: "{{ ctx.should_notify }}"
       session: "{{ ctx.target_session }}"
-    matcher: task-done-filter
+    matcher:
+      server: task-done-filter
 
   - on: session_start
     shell_exec: "scripts/on-session-start.sh"
-    matcher: session-filter
+    matcher:
+      server: session-filter
 """.lstrip()
 
     reyn_yaml = tmp_path / "reyn.yaml"
@@ -356,7 +360,7 @@ hooks:
     # non-default session template (default is None)
     assert h1.template_push.session == "{{ ctx.target_session }}"
     # non-default matcher (default is None)
-    assert h1.matcher == "task-done-filter"
+    assert h1.matcher == {"server": "task-done-filter"}
 
     # ── Hook 2: shell hook at session_start ───────────────────────────────
     session_start_hooks = registry.hooks_for("session_start")
@@ -364,7 +368,7 @@ hooks:
     assert h2.on == "session_start"
     assert h2.shell_exec == "scripts/on-session-start.sh"
     assert h2.template_push is None
-    assert h2.matcher == "session-filter"
+    assert h2.matcher == {"server": "session-filter"}
 
     # ── Hooks at other points are empty (no stray registrations) ─────────
     assert registry.hooks_for("turn_end") == []
