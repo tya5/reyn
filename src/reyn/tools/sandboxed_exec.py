@@ -48,29 +48,19 @@ _SANDBOXED_EXEC_PARAMETERS: dict[str, Any] = {
 }
 
 
-async def _handle(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
-    """Adapter wrapping op_runtime.sandboxed_exec.handle.
+async def op_context_from_tool_context(ctx: ToolContext) -> Any:
+    """Bridge a (args, ctx) ``ToolContext`` into the legacy ``OpContext`` the
+    ``op_runtime.sandboxed_exec`` handler (and any other op_runtime handler
+    reached this way) expects.
 
-    Bridges between the unified (args, ctx) signature and the
-    existing (op, ctx) signature for the sandboxed_exec handler.
-    Builds a SandboxedExecIROp from args and a legacy OpContext from
-    ToolContext, then delegates to the op_runtime handler.
+    Shared by :func:`_handle` (the ``sandboxed_exec`` tool) and the ``shell``
+    tool (:mod:`reyn.tools.shell`, #2593) — both need the SAME
+    router_state → legacy-OpContext bridge (sandbox_config derivation +
+    op_context_factory-or-minimal-synthesis); duplicating it would let the two
+    surfaces drift on sandbox policy derivation.
     """
     from reyn.core.op_runtime.context import OpContext
-    from reyn.core.op_runtime.sandboxed_exec import handle as handle_sandboxed_exec
-    from reyn.schemas.models import SandboxedExecIROp
     from reyn.security.permissions.permissions import PermissionDecl
-
-    # #1339 / sandbox-model completion: the LLM supplies only argv (+ timeout).
-    # The op's policy fields keep their defaults here — the effective sandbox
-    # policy is operator-or-default, resolved onto the OpContext
-    # (ctx.default_sandbox_policy), which the op_runtime handler applies over the
-    # op fields. The LLM cannot set network / fs scope via this tool.
-    op = SandboxedExecIROp(
-        kind="sandboxed_exec",
-        argv=args["argv"],
-        timeout_seconds=int(args.get("timeout_seconds", 60)),
-    )
 
     # Derive sandbox_config from RouterCallerState.sandbox_backend when
     # available, otherwise fall back to None (= op_runtime auto-detects).
@@ -91,12 +81,10 @@ async def _handle(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
         # Inject derived sandbox_config so the handler uses the configured backend.
         if sandbox_config is not None:
             legacy_ctx = _with_sandbox_config(legacy_ctx, sandbox_config)
-        return await handle_sandboxed_exec(
-            op=op, ctx=legacy_ctx,
-        )
+        return legacy_ctx
 
     # Minimal synthesis path (= test sites / narrow callers).
-    legacy_ctx = OpContext(
+    return OpContext(
         workspace=ctx.workspace,
         events=ctx.events,
         permission_decl=PermissionDecl(),
@@ -119,6 +107,30 @@ async def _handle(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
         parent_run_id=None,
         sandbox_config=sandbox_config,
     )
+
+
+async def _handle(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
+    """Adapter wrapping op_runtime.sandboxed_exec.handle.
+
+    Bridges between the unified (args, ctx) signature and the
+    existing (op, ctx) signature for the sandboxed_exec handler.
+    Builds a SandboxedExecIROp from args and a legacy OpContext from
+    ToolContext, then delegates to the op_runtime handler.
+    """
+    from reyn.core.op_runtime.sandboxed_exec import handle as handle_sandboxed_exec
+    from reyn.schemas.models import SandboxedExecIROp
+
+    # #1339 / sandbox-model completion: the LLM supplies only argv (+ timeout).
+    # The op's policy fields keep their defaults here — the effective sandbox
+    # policy is operator-or-default, resolved onto the OpContext
+    # (ctx.default_sandbox_policy), which the op_runtime handler applies over the
+    # op fields. The LLM cannot set network / fs scope via this tool.
+    op = SandboxedExecIROp(
+        kind="sandboxed_exec",
+        argv=args["argv"],
+        timeout_seconds=int(args.get("timeout_seconds", 60)),
+    )
+    legacy_ctx = await op_context_from_tool_context(ctx)
     return await handle_sandboxed_exec(op=op, ctx=legacy_ctx)
 
 

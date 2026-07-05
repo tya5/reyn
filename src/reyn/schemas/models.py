@@ -147,6 +147,7 @@ class SandboxedExecIROp(BaseModel):
     allow_subprocess: bool = False                       # may spawn children
     env_passthrough: list[str] = Field(default_factory=list)  # env-var allowlist
     timeout_seconds: int = 60                            # wall-clock cap
+    stdin: bytes | None = None                           # #2593: bytes written to the process's stdin, if any
 
 
 

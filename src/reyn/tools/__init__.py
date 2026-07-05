@@ -101,6 +101,7 @@ def get_default_registry() -> ToolRegistry:
     )
     from reyn.tools.sandboxed_exec import SANDBOXED_EXEC
     from reyn.tools.session_spawn import SESSION_SPAWN
+    from reyn.tools.shell import SHELL
     from reyn.tools.skill_verbs import SKILL_INSTALL_LOCAL, SKILL_INSTALL_SOURCE
     from reyn.tools.topology_create import TOPOLOGY_CREATE
 
@@ -164,6 +165,12 @@ def get_default_registry() -> ToolRegistry:
     # "gates.router=deny" comment alongside the now-removed `shell` op (the only
     # true router=deny here was shell / ask_user). ASK_USER=router="deny".
     registry.register(SANDBOXED_EXEC)
+    # #2593: pipeline DSL `shell` step sugar — a bare-registry tool (no
+    # invoke_action qualified route; a pipeline `tool` step resolves it by
+    # bare name via ``pipeline_verbs._make_tool_dispatch``'s bare-lookup
+    # fallback, same as SANDBOXED_EXEC's own qualified route falls back for
+    # unqualified callers).
+    registry.register(SHELL)
     registry.register(ASK_USER)
     # ── Router-only capabilities (gates.router=allow, gates.phase=deny) ──
     registry.register(DELEGATE_TO_AGENT)

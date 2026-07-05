@@ -260,7 +260,7 @@ def _reject_unknown_keys(
 
 _TRANSFORM_KEYS = frozenset({"value", "output"})
 _TOOL_KEYS = frozenset({"name", "args", "schema", "output"})
-_SHELL_KEYS = frozenset({"command", "schema", "output"})
+_SHELL_KEYS = frozenset({"command", "schema", "output", "timeout"})
 _AGENT_KEYS = frozenset({"prompt", "identity", "capabilities", "schema", "output"})
 _CALL_KEYS = frozenset({"pipeline", "pass", "output"})
 _MATCH_KEYS = frozenset({"on", "cases", "default", "output"})
@@ -296,6 +296,14 @@ def _parse_tool_step(body: "dict[str, Any]") -> ToolStep:
 
 
 def _parse_shell_step(body: "dict[str, Any]") -> ToolStep:
+    """``shell`` is tool-step sugar (#2593): the command is STATIC (a literal or
+    ``!expr``-tagged value, same rule as any tool ``args`` entry — see the module
+    docstring); the previous step's pipe-data is threaded to the process STDIN via
+    an ``ExprRef("pipe")`` arg, resolved for free by the executor's existing
+    ``ToolStep`` arg-resolution (``evaluate_expr("pipe", context)`` against the
+    ``{"ctx": ..., "pipe": pipe_data}`` context every step already receives) — no
+    executor change needed. STDOUT becomes the step's output/pipe-data, optionally
+    ``verify: schema``-checked, same as any other tool step."""
     _reject_unknown_keys(body, _SHELL_KEYS, where="shell step")
     if "command" not in body:
         _fail("shell step: missing required field 'command'")
@@ -303,8 +311,14 @@ def _parse_shell_step(body: "dict[str, Any]") -> ToolStep:
     schema = body.get("schema")
     if schema is not None and not isinstance(schema, str):
         _fail(f"shell step 'schema': expected a schema-name string, got {type(schema).__name__}")
+    args: "dict[str, Any]" = {"command": command, "stdin_pipe": ExprRef("pipe")}
+    if "timeout" in body:
+        timeout = body["timeout"]
+        if not isinstance(timeout, int) or isinstance(timeout, bool):
+            _fail(f"shell step 'timeout': expected an integer, got {type(timeout).__name__}")
+        args["timeout"] = timeout
     return ToolStep(
-        name="shell", args={"command": command}, output=body.get("output"), schema=schema,
+        name="shell", args=args, output=body.get("output"), schema=schema,
     )
 
 
