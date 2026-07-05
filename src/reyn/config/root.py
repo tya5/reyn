@@ -274,6 +274,18 @@ class ReynConfig:
     #         auto_invoke: true
     # Merged across config tiers by name (explicit entries win on collision).
     skills: dict = field(default_factory=dict)
+    # #2575: pipeline registration config. Raw dict passed to
+    # reyn.data.pipelines.registry.build_pipeline_registry at session-factory
+    # time (SessionFactoryConfig.from_config). Shape:
+    #   pipelines:
+    #     scan_dirs: ["pipelines"]       # project-root-relative; default ["pipelines"]
+    # Each ``*.yaml`` under a scan dir is an Appendix-B DSL document parsed via
+    # ``parse_pipeline_dsl``; the pipeline registers under its own declared
+    # ``pipeline:`` name (the file name is just a container). Absent/empty →
+    # no pipelines loaded (byte-identical to pre-#2575). Cross-tier: the whole
+    # ``pipelines`` block is last-tier-wins (generic ``_merge`` else-branch —
+    # no per-entry union, unlike ``skills``, since scan_dirs is a plain list).
+    pipelines: dict = field(default_factory=dict)
 
     def model_class_for(self, purpose: str) -> str:
         """#1672: the model CLASS for a logical call *purpose*.

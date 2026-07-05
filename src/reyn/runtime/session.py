@@ -727,6 +727,11 @@ class Session:
         # RouterLoopDriver construction.  None (default) = build RouterLoopDriver
         # from the existing args unchanged (byte-identical behaviour).
         loop_driver: "ExecutionDriver | None" = None,
+        # #2575: the pre-built PipelineRegistry (populated from disk once at the
+        # session factory, SessionFactoryConfig.from_config → build_scoped_chat_
+        # session). None (direct/test construction) → an empty registry, byte-
+        # identical to pre-#2575's own-constructed empty one.
+        pipeline_registry: "PipelineRegistry | None" = None,
     ) -> None:
         """
         snapshot_path: optional override for the per-agent snapshot file
@@ -1056,13 +1061,18 @@ class Session:
         # and for agent-to-agent message routing (PR11). The factory in
         # cli/commands/chat.py wires this; tests can leave it None.
         self._registry = registry
-        # IS-5: Session owns a real (initially empty) PipelineRegistry so
-        # ``run_pipeline`` has a live registry to look up against in
-        # production — populating it from disk / a YAML DSL parser is a
-        # later slice; registration is programmatic for now (mirrors the
-        # pre-parser AgentRegistry posture). Threaded to RouterHostAdapter
-        # below (mirrors ``agent_registry=self._registry`` just above).
-        self._pipeline_registry = PipelineRegistry()
+        # IS-5 / #2575: Session owns a live PipelineRegistry so ``run_pipeline``
+        # has a registry to look up against. The session factory builds it ONCE
+        # from ``config.pipelines`` (disk scan → parse → register) and passes it
+        # in; a direct/test construction with no registry falls back to an empty
+        # one (byte-identical to the pre-#2575 own-constructed empty registry).
+        # Threaded to RouterHostAdapter below (mirrors ``agent_registry=
+        # self._registry`` just above) → RouterCallerState.pipeline_registry →
+        # the universal catalog's ``pipeline`` category enumerator surfaces each
+        # registered pipeline as ``pipeline__<name>`` to the LLM (IS-5 D19).
+        self._pipeline_registry = (
+            pipeline_registry if pipeline_registry is not None else PipelineRegistry()
+        )
         # PR11: max delegation hop depth (LangGraph-style). 0 = user input,
         # each `_send_to_agent` increments. Refuse send when depth > limit.
         self._max_hop_depth = _safety.loop.max_agent_hops

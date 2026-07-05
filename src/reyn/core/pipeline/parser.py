@@ -447,7 +447,10 @@ def _parse_pipeline_doc(doc: "dict[str, Any]") -> Pipeline:
     if not isinstance(raw_steps, list) or not raw_steps:
         _fail(f"pipeline {name!r}: 'steps' must be a non-empty list")
     steps = [_parse_step(s, index=i) for i, s in enumerate(raw_steps)]
-    return Pipeline(steps=steps, description=description)
+    # #2575: carry the declared ``pipeline:`` name on the Pipeline so the disk
+    # loader can register under it (authoritative for ``call``/``match``
+    # resolution) and it persists through work-order/recovery.
+    return Pipeline(steps=steps, description=description, name=name)
 
 
 def _parse_schema_doc(doc: "dict[str, Any]", schema_registry: SchemaRegistry) -> None:

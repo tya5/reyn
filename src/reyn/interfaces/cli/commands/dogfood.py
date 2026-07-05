@@ -495,7 +495,7 @@ def _build_live_runner(agent_name: str, *, env_backend=None, ws_base_dir=None, w
                 # replace() as an EXPLICIT, visible deviation (not a silent miss) →
                 # behavior byte-identical to before the bundle.
                 factory_config=replace(
-                    SessionFactoryConfig.from_config(config), embedding_config=None,
+                    SessionFactoryConfig.from_config(config, project_root), embedding_config=None,
                 ),
                 # #1289: same backend instance to both seams (single-shared-sandbox).
                 environment_backend=env_backend,
@@ -525,7 +525,7 @@ def _build_live_runner(agent_name: str, *, env_backend=None, ws_base_dir=None, w
             session_factory=_session_factory,
             state_log=None,
             # #2093: the uniform reyn.yaml-derived registry config bundle.
-            factory_config=SessionFactoryConfig.from_config(config),
+            factory_config=SessionFactoryConfig.from_config(config, project_root),
             environment_backend=env_backend,   # #1544: container shadow-git
             workspace_state_dir=ws_state_dir,  # #1557 gap-#1: shadow git-dir under --state-dir
         )

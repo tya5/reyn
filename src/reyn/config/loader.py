@@ -484,6 +484,7 @@ def load_config(cwd: Path | None = None) -> ReynConfig:
             merged.get("external_transports"),
         ),
         skills=_as_config_dict(merged.get("skills"), "skills"),
+        pipelines=_as_config_dict(merged.get("pipelines"), "pipelines"),
     )
     _reconcile_embedding_class(_cfg)
     return _cfg

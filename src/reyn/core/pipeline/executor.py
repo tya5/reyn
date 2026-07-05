@@ -238,10 +238,21 @@ class Pipeline:
     deciding whether to ``run_pipeline`` a registered pipeline sees what it
     does, not just its bare name. Empty string when the registrant omits
     it — the enumerator still lists the pipeline (name is enough to invoke
-    it), just with no description text."""
+    it), just with no description text.
+
+    ``name`` (#2575): the declared ``pipeline:`` name from the DSL document.
+    The DSL parser populates it from the ``pipeline:`` key; a hand-built
+    ``Pipeline`` (tests, inline construction) may leave it ``""``. It is the
+    AUTHORITATIVE key the disk loader registers under and the identity a
+    ``call``/``match`` step's ``pipeline: LIT`` resolves against. Additive
+    (default ``""``) so it travels with the pipeline through work-order /
+    invocation.json persistence + recovery for free; an on-disk
+    invocation.json written before this field existed simply decodes to
+    ``""`` (default-tolerant round-trip)."""
 
     steps: "list[Step]"
     description: str = ""
+    name: str = ""
 
 
 @dataclass(frozen=True)

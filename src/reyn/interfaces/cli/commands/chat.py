@@ -414,7 +414,7 @@ def run(args: argparse.Namespace) -> None:
             # #2093: the uniform reyn.yaml-derived per-session config bundle (sandbox /
             # multimodal / action_retrieval / embedding / router / retry /
             # tool-use-scheme) — one source point for all five sites.
-            factory_config=SessionFactoryConfig.from_config(session_cfg.config),
+            factory_config=SessionFactoryConfig.from_config(session_cfg.config, project_root),
             eager_embedding_build=getattr(args, "eager_embedding_build", False),
             agent_id=session_cfg.config.agent.id,  # FP-0016 E
             exclude_tools=_exclude_tools,  # #187: hide tools (e.g. web) from the LLM catalog
@@ -461,7 +461,7 @@ def run(args: argparse.Namespace) -> None:
         state_log=state_log,
         # #2093: the uniform reyn.yaml-derived registry config bundle
         # (delegation_capability_default) — one source point.
-        factory_config=SessionFactoryConfig.from_config(session_cfg.config),
+        factory_config=SessionFactoryConfig.from_config(session_cfg.config, project_root),
         environment_backend=env_backend,
         workspace_state_dir=ws_state_dir,
     )
