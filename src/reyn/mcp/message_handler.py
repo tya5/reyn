@@ -74,10 +74,35 @@ class ReynMCPMessageHandler(TaskNotificationHandler):
     """Bridges FastMCP server-pushed notifications on a held connection to reyn's
     ``EventLog`` (#2597 S2b). One instance per held server connection.
 
-    Scope (S2b): ``tools/list_changed``, ``prompts/list_changed``, ``notifications/
-    progress``. ``resources/updated`` / ``resources/subscribe`` are DEFERRED to the
-    resources-consumption slice (nothing is subscribed yet) — the inherited
-    ``on_resource_updated`` / ``on_resource_list_changed`` stay base-class no-ops.
+    Scope (S2b): ``tools/list_changed``, ``prompts/list_changed``. ``resources/
+    updated`` / ``resources/subscribe`` are DEFERRED to the resources-consumption
+    slice (nothing is subscribed yet) — the inherited ``on_resource_updated`` /
+    ``on_resource_list_changed`` stay base-class no-ops.
+
+    #2597 F2 (live-verified, NOT emitted here — see :meth:`on_progress`):
+    ``notifications/progress`` is NOT bridged to ``mcp_progress`` by this handler.
+    A live probe (real fastmcp 3.4.2 stdio server + a held ``MCPConnectionService``
+    connection + a per-call ``progress_callback``, both wired simultaneously)
+    confirmed the SDK dual-delivers every in-call progress notification: FastMCP's
+    ``mcp.shared.session.BaseSession`` receive loop invokes the per-call
+    ``progress_callback`` registered for that request's ``progressToken`` via
+    ``ClientSession.call_tool(progress_callback=...)`` (``op_runtime/mcp.py``'s
+    ``_on_progress`` — richer context: carries the tool name) AND separately
+    dispatches the SAME notification through the installed ``message_handler``
+    (this class) — a 3-step ``progress`` tool call produced 3
+    ``PER_CALL_progress_cb`` events AND 3 ``mcp_progress`` bridge events with
+    identical progress/total/message payloads. Emitting from BOTH paths would
+    double every in-call progress event on the EventLog (mirrors the S2b-log
+    dual-delivery already documented for LOGGING notifications). Since the
+    per-call callback path already covers ALL call-scoped progress with richer
+    context (the tool name; ``on_progress`` here can't see it — the bridge has no
+    visibility into which in-flight request a ``progressToken`` belongs to), the
+    minimal correct fix is: this bridge does not emit ``mcp_progress`` at all.
+    Unsolicited/out-of-band progress (a notification with no per-call handler,
+    e.g. a long-running server-initiated task with no corresponding client
+    request) is out of scope until a real case demonstrates the SDK delivering
+    one ONLY through the message_handler path — nothing observed here proves
+    that path exists independently of the per-call one.
     """
 
     def __init__(
@@ -122,17 +147,11 @@ class ReynMCPMessageHandler(TaskNotificationHandler):
         await super().on_prompt_list_changed(message)
 
     async def on_progress(self, message: Any) -> None:
-        params = getattr(message, "params", None)
-        token = getattr(params, "progressToken", None)
-        self._emit(
-            "mcp_progress",
-            server=self._server_name,
-            tool=None,
-            progress=getattr(params, "progress", None),
-            total=getattr(params, "total", None),
-            message=getattr(params, "message", None),
-            progress_token=str(token) if token is not None else None,
-        )
+        # #2597 F2: deliberately does NOT emit ``mcp_progress`` — see this class's
+        # docstring for the live-verified dual-delivery observation + the decision.
+        # The per-call ``progress_callback`` path (``op_runtime/mcp.py``'s
+        # ``_on_progress``) already emits ``mcp_progress`` (with tool-name context)
+        # for every call-scoped progress notification the SDK also routes here.
         await super().on_progress(message)
 
     # ── sink dispatch ───────────────────────────────────────────────────────────────
