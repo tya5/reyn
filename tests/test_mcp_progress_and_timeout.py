@@ -7,13 +7,23 @@ level but unused by the Reyn integration before this PR — are now
 forwarded end-to-end:
 
   1. ``MCPClient.call_tool`` accepts ``progress_callback`` /
-     ``timeout_seconds`` kwargs and passes them to the SDK session.
+     ``timeout_seconds`` kwargs and passes them to the FastMCP client
+     (#2597 S1: ``fastmcp.Client.call_tool_mcp(progress_handler=...,
+     timeout=...)``, which itself forwards to the SDK session's
+     ``call_tool(progress_callback=..., read_timeout_seconds=...)`` —
+     same underlying SDK parameter names one layer down).
   2. ``op_runtime.mcp._execute`` builds a progress callback that emits
      ``mcp_progress`` events on the run's EventLog so subscribers can
      observe what the MCP server is doing.
   3. ``op_runtime.mcp._execute`` reads ``call_timeout_seconds`` from the
      server's raw config dict (the per-server entry under
      ``mcp.servers.<name>``) and forwards it to ``MCPClient.call_tool``.
+
+The fakes below stand in for ``fastmcp.Client`` (``client._client``, the
+post-#2597 attribute) rather than the old ``mcp.ClientSession``
+(``client._session``) — they fake ``call_tool_mcp(name, arguments,
+progress_handler=None, timeout=None, meta=None)``, FastMCP's own method
+signature, which ``MCPClient.call_tool`` calls directly.
 """
 from __future__ import annotations
 
@@ -56,10 +66,10 @@ def test_call_tool_signature_accepts_progress_callback_and_timeout() -> None:
     assert params["timeout_seconds"].default is None
 
 
-def test_call_tool_passes_progress_callback_and_timedelta_to_sdk_session() -> None:
+def test_call_tool_passes_progress_callback_and_timedelta_to_fastmcp_client() -> None:
     """Tier 2: when both kwargs are set, ``MCPClient.call_tool`` forwards them
-    to ``self._session.call_tool`` using the SDK's parameter names
-    (``progress_callback`` and ``read_timeout_seconds`` as a ``timedelta``).
+    to ``self._client.call_tool_mcp`` using FastMCP's parameter names
+    (``progress_handler`` and ``timeout`` as a ``timedelta``).
     """
     captured: dict[str, Any] = {}
 
@@ -72,8 +82,8 @@ def test_call_tool_passes_progress_callback_and_timedelta_to_sdk_session() -> No
         def model_dump(self, mode: str = "json") -> dict:
             return {"content": [], "isError": False}
 
-    class _FakeSession:
-        async def call_tool(
+    class _FakeFastMCPClient:
+        async def call_tool_mcp(
             self,
             name: str,
             arguments: dict[str, Any] | None = None,
@@ -89,7 +99,7 @@ def test_call_tool_passes_progress_callback_and_timedelta_to_sdk_session() -> No
     # state directly so we don't have to spawn a subprocess.
     client = MCPClient({"type": "stdio", "command": "/bin/true"})
     client._initialized = True
-    client._session = _FakeSession()
+    client._client = _FakeFastMCPClient()
 
     async def _on_progress(progress: float, total: float | None, msg: str | None) -> None:
         return None
@@ -105,17 +115,17 @@ def test_call_tool_passes_progress_callback_and_timedelta_to_sdk_session() -> No
 
     assert captured["name"] == "demo"
     assert captured["arguments"] == {"x": 1}
-    assert captured["kwargs"].get("progress_callback") is _on_progress
-    read_to = captured["kwargs"].get("read_timeout_seconds")
+    assert captured["kwargs"].get("progress_handler") is _on_progress
+    read_to = captured["kwargs"].get("timeout")
     assert isinstance(read_to, timedelta)
     assert read_to == timedelta(seconds=4.5)
 
 
 def test_call_tool_omits_kwargs_when_none_for_backwards_compat() -> None:
-    """Tier 2: with default-None kwargs, neither ``progress_callback`` nor
-    ``read_timeout_seconds`` is added to the SDK call — preserves
-    pre-#264 behaviour exactly so configs that omit the new keys see
-    no observable change.
+    """Tier 2: with default-None kwargs, neither ``progress_handler`` nor
+    ``timeout`` is added to the FastMCP client call — preserves pre-#264
+    behaviour exactly so configs that omit the new keys see no observable
+    change.
     """
     captured: dict[str, Any] = {}
 
@@ -123,8 +133,8 @@ def test_call_tool_omits_kwargs_when_none_for_backwards_compat() -> None:
         def model_dump(self, mode: str = "json") -> dict:
             return {"content": [], "isError": False}
 
-    class _FakeSession:
-        async def call_tool(
+    class _FakeFastMCPClient:
+        async def call_tool_mcp(
             self,
             name: str,
             arguments: dict[str, Any] | None = None,
@@ -135,12 +145,12 @@ def test_call_tool_omits_kwargs_when_none_for_backwards_compat() -> None:
 
     client = MCPClient({"type": "stdio", "command": "/bin/true"})
     client._initialized = True
-    client._session = _FakeSession()
+    client._client = _FakeFastMCPClient()
 
     asyncio.run(client.call_tool("demo", {"x": 1}))
 
-    assert "progress_callback" not in captured["kwargs"]
-    assert "read_timeout_seconds" not in captured["kwargs"]
+    assert "progress_handler" not in captured["kwargs"]
+    assert "timeout" not in captured["kwargs"]
 
 
 # ── 2. op_runtime.mcp emits mcp_progress events from the SDK callback ──
@@ -159,22 +169,20 @@ def test_op_handler_progress_callback_emits_mcp_progress_event() -> None:
         def model_dump(self, mode: str = "json") -> dict:
             return {"content": [], "isError": False}
 
-    class _CapturingSession:
-        async def call_tool(
+    class _CapturingFastMCPClient:
+        async def call_tool_mcp(
             self,
             name: str,
             arguments: dict[str, Any] | None = None,
             **kwargs: Any,
         ) -> _FakeResult:
-            # Capture the callback the op handler passed; the SDK would
+            # Capture the callback the op handler passed; FastMCP would
             # invoke this with (progress, total, message) when the server
             # sends notifications/progress.
-            captured_callback["cb"] = kwargs.get("progress_callback")
-            captured_callback["read_timeout_seconds"] = kwargs.get(
-                "read_timeout_seconds",
-            )
+            captured_callback["cb"] = kwargs.get("progress_handler")
+            captured_callback["timeout"] = kwargs.get("timeout")
             # Simulate two progress notifications mid-call.
-            cb = kwargs.get("progress_callback")
+            cb = kwargs.get("progress_handler")
             if cb is not None:
                 await cb(0.25, 1.0, "starting")
                 await cb(1.0, 1.0, "done")
@@ -195,7 +203,7 @@ def test_op_handler_progress_callback_emits_mcp_progress_event() -> None:
     # Pre-install a fake client so MCPClient construction is skipped.
     client = MCPClient({"type": "stdio", "command": "/bin/true"})
     client._initialized = True
-    client._session = _CapturingSession()
+    client._client = _CapturingFastMCPClient()
     ctx.mcp_pool = _StubPool(client)
 
     op = MCPIROp(kind="mcp", server="demo", tool="thing", args={})
@@ -234,16 +242,14 @@ def test_op_handler_reads_call_timeout_from_server_config() -> None:
         def model_dump(self, mode: str = "json") -> dict:
             return {"content": [], "isError": False}
 
-    class _CapturingSession:
-        async def call_tool(
+    class _CapturingFastMCPClient:
+        async def call_tool_mcp(
             self,
             name: str,
             arguments: dict[str, Any] | None = None,
             **kwargs: Any,
         ) -> _FakeResult:
-            captured["read_timeout_seconds"] = kwargs.get(
-                "read_timeout_seconds",
-            )
+            captured["timeout"] = kwargs.get("timeout")
             return _FakeResult()
 
     from reyn.core.op_runtime.context import OpContext
@@ -267,13 +273,13 @@ def test_op_handler_reads_call_timeout_from_server_config() -> None:
         {"type": "stdio", "command": "/bin/true", "call_timeout_seconds": 7.5},
     )
     client._initialized = True
-    client._session = _CapturingSession()
+    client._client = _CapturingFastMCPClient()
     ctx.mcp_pool = _StubPool(client)
 
     op = MCPIROp(kind="mcp", server="demo", tool="thing", args={})
     asyncio.run(mcp_op_handler._execute(op, ctx))
 
-    read_to = captured["read_timeout_seconds"]
+    read_to = captured["timeout"]
     assert isinstance(read_to, timedelta)
     assert read_to == timedelta(seconds=7.5)
 
@@ -300,8 +306,8 @@ def test_op_handler_call_timeout_default_finite_and_optout() -> None:
             def model_dump(self, mode: str = "json") -> dict:
                 return {"content": [], "isError": False}
 
-        class _CapturingSession:
-            async def call_tool(
+        class _CapturingFastMCPClient:
+            async def call_tool_mcp(
                 self,
                 name: str,
                 arguments: dict[str, Any] | None = None,
@@ -323,20 +329,20 @@ def test_op_handler_call_timeout_default_finite_and_optout() -> None:
             )
         client = MCPClient(cfg)
         client._initialized = True
-        client._session = _CapturingSession()
+        client._client = _CapturingFastMCPClient()
         ctx.mcp_pool = _StubPool(client)
 
         op = MCPIROp(kind="mcp", server="demo", tool="thing", args={})
         asyncio.run(mcp_op_handler._execute(op, ctx))
 
         if expect_forwarded:
-            assert "read_timeout_seconds" in captured["kwargs"], (
-                f"cfg {cfg!r} should forward a FINITE default read_timeout_seconds (hung-server "
+            assert "timeout" in captured["kwargs"], (
+                f"cfg {cfg!r} should forward a FINITE default timeout (hung-server "
                 f"guard), got kwargs={captured['kwargs']}"
             )
         else:
-            assert "read_timeout_seconds" not in captured["kwargs"], (
-                f"cfg {cfg!r} is an explicit opt-out (<=0) → NO read_timeout_seconds, "
+            assert "timeout" not in captured["kwargs"], (
+                f"cfg {cfg!r} is an explicit opt-out (<=0) → NO timeout, "
                 f"got kwargs={captured['kwargs']}"
             )
 
@@ -346,15 +352,16 @@ def test_op_handler_call_timeout_default_finite_and_optout() -> None:
 
 def test_mcp_client_call_tool_forwards_progress_and_timeout_kwargs() -> None:
     """Tier 2: source-level pin that ``MCPClient.call_tool`` constructs the
-    SDK kwargs from ``progress_callback`` / ``timeout_seconds``. Catches
-    a future refactor that quietly drops the kwargs without noticing
-    the round-trip tests still pass (= belt-and-suspenders for the
-    behavioural test above).
+    FastMCP client kwargs from ``progress_callback`` / ``timeout_seconds``
+    (#2597 S1: forwarded as FastMCP's own ``progress_handler`` / ``timeout``
+    parameter names). Catches a future refactor that quietly drops the
+    kwargs without noticing the round-trip tests still pass (=
+    belt-and-suspenders for the behavioural test above).
     """
     src = inspect.getsource(MCPClient.call_tool)
-    # Both kwargs must appear in the SDK kwargs builder.
+    # Both kwargs must appear in the FastMCP kwargs builder.
     assert "progress_callback" in src
-    assert "read_timeout_seconds" in src
+    assert "progress_handler" in src
     assert "timedelta" in src, (
-        "timeout_seconds must be converted to a timedelta before the SDK call"
+        "timeout_seconds must be converted to a timedelta before the FastMCP call"
     )

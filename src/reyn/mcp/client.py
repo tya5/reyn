@@ -1,14 +1,19 @@
 """
-MCP client — thin wrapper around the official Anthropic ``mcp`` SDK.
+MCP client — thin wrapper around ``fastmcp.Client`` (v3.4.2; #2597 S1).
 
-Supports two transports today: ``stdio`` and ``http`` (Streamable HTTP).
-``sse`` is reserved for a future SDK-backed implementation.
+Supports two transports today: ``stdio`` and ``http`` (Streamable HTTP);
+``sse`` uses FastMCP's ``SSETransport`` (previously ``NotImplementedError`` —
+a free win from the swap: no incremental cost to wire once FastMCP's own
+transport inference exists).
 
-Each ``MCPClient`` owns a persistent ``ClientSession`` opened on
-:meth:`initialize` and torn down on :meth:`close`. The session is kept
-alive via an ``AsyncExitStack`` so multiple :meth:`call_tool` invocations
-re-use the same transport (matching the previous hand-rolled client's
-caching semantics on ``OpContext.mcp_clients``).
+Each ``MCPClient`` owns a single ``fastmcp.Client`` opened on
+:meth:`initialize` and torn down on :meth:`close`. FastMCP's ``Client`` is
+itself a reentrant async context manager wrapping the transport + the
+underlying ``mcp.ClientSession``; MCPClient enters it once and holds it open
+for the object's lifetime (matching the previous hand-rolled client's
+caching semantics on ``OpContext.mcp_clients`` / the pool's subprocess-reuse
+contract — FastMCP's ``StdioTransport(keep_alive=True)`` is the same
+persistent-subprocess semantics).
 
 Environment variable expansion:
   ``${VAR_NAME}`` in any string config value is replaced with
@@ -21,7 +26,6 @@ from __future__ import annotations
 import os
 import tempfile
 import warnings
-from contextlib import AsyncExitStack
 from typing import Any
 
 # ── Env var expansion ─────────────────────────────────────────────────────────
@@ -43,7 +47,7 @@ _SUPPORTED_TYPES = {"stdio", "http", "sse"}
 # ── Client ───────────────────────────────────────────────────────────────────
 
 class MCPClient:
-    """Thin async wrapper around ``mcp.ClientSession``.
+    """Thin async wrapper around ``fastmcp.Client``.
 
     Construct with the *raw* server config dict from ``reyn.yaml`` (the
     caller is responsible for env-var expansion via :func:`expand_env`).
@@ -78,18 +82,17 @@ class MCPClient:
         # agent. None preserves prior behaviour for direct callers (= the
         # session factory passes ReynConfig.agent.id; tests can omit).
         self._agent_id: str | None = agent_id
-        self._stack: AsyncExitStack | None = None
-        self._session: Any = None  # mcp.ClientSession when initialized
+        self._client: Any = None  # fastmcp.Client when initialized
         self._initialized = False
         # Captures subprocess stderr for stdio transport so initialize
         # failures (e.g. self-made MCP server exits immediately, writes
         # a traceback to stderr before the MCP handshake completes) can
         # surface the actual error text rather than the opaque "Connection
-        # close" wording the SDK produces. mcp SDK's ``stdio_client``
-        # passes errlog directly to ``anyio.open_process(stderr=...)``,
-        # which needs a real fileno — ``io.StringIO`` doesn't work, but
-        # ``tempfile.TemporaryFile`` does. Lazily created in
-        # ``_open_stdio``; closed in ``close``.
+        # close" wording the SDK produces. FastMCP's ``StdioTransport``
+        # takes a ``log_file`` (Path | TextIO) for subprocess stderr —
+        # ``io.StringIO`` doesn't work (needs a real fileno for the
+        # underlying anyio subprocess), but ``tempfile.TemporaryFile``
+        # does. Lazily created in ``_open_stdio``; closed in ``close``.
         self._stderr_capture: Any = None  # tempfile.TemporaryFile | None
         # #1344: path of the temp Seatbelt profile (.sb) used to sandbox a
         # stdio MCP server's subprocess, if one was generated in _open_stdio.
@@ -125,29 +128,29 @@ class MCPClient:
         if self._initialized:
             return
         try:
-            from mcp import ClientSession
+            from fastmcp import Client as FastMCPClient
         except ImportError as exc:
             raise MCPError(
-                "The 'mcp' package is required for MCP support. "
+                "The 'fastmcp' package is required for MCP support. "
                 "Install with: pip install reyn[mcp]"
             ) from exc
 
-        stack = AsyncExitStack()
         try:
-            transport = await stack.enter_async_context(self._open_transport())
-            # streamablehttp_client yields (read, write, get_session_id);
-            # stdio_client yields (read, write).
-            read_stream, write_stream = transport[0], transport[1]
-            session = await stack.enter_async_context(
-                ClientSession(read_stream, write_stream)
-            )
-            await session.initialize()
+            transport = self._open_transport()
+            client_kwargs: dict[str, Any] = {}
+            if self._type in ("http", "sse"):
+                # Client-level default read timeout — see _open_http docstring:
+                # the pre-swap connect-level ``timeout=`` kwarg on
+                # ``streamablehttp_client`` maps to FastMCP's Client-level
+                # default ``read_timeout_seconds`` (same knob call_tool's
+                # per-call ``timeout_seconds`` overrides).
+                client_kwargs["timeout"] = self._config.get("timeout", 30)
+            client = FastMCPClient(transport, **client_kwargs)
+            await client.__aenter__()
         except MCPError:
-            await stack.aclose()
             self.close_stderr_capture()
             raise
         except Exception as exc:
-            await stack.aclose()
             tail = self.read_stderr_tail()
             self.close_stderr_capture()
             # #1344/#1339-D migration hint: a sandboxed stdio server defaults to
@@ -173,8 +176,7 @@ class MCPClient:
                 ) from exc
             raise MCPError(f"MCP initialize failed: {exc}{hint}") from exc
 
-        self._stack = stack
-        self._session = session
+        self._client = client
         self._initialized = True
 
     async def __aenter__(self) -> "MCPClient":
@@ -210,6 +212,10 @@ class MCPClient:
             message: str | None) -> None`` that the MCP SDK invokes when the
             server emits a ``notifications/progress`` for this call. Default
             ``None`` matches pre-#264 behaviour (= no progress visibility).
+            Forwarded to FastMCP's ``call_tool_mcp(progress_handler=...)``,
+            which passes it straight through to
+            ``mcp.ClientSession.call_tool(progress_callback=...)`` — same SDK
+            parameter, same signature.
           - ``timeout_seconds``: float; if set, converts to ``timedelta`` and
             passes as ``read_timeout_seconds`` to the SDK so the call fails
             fast on a stuck server. Default ``None`` keeps the SDK's own
@@ -218,36 +224,45 @@ class MCPClient:
         await self.initialize()
         kwargs: dict[str, Any] = {}
         if progress_callback is not None:
-            kwargs["progress_callback"] = progress_callback
+            kwargs["progress_handler"] = progress_callback
         if timeout_seconds is not None:
             from datetime import timedelta
-            kwargs["read_timeout_seconds"] = timedelta(seconds=timeout_seconds)
+            kwargs["timeout"] = timedelta(seconds=timeout_seconds)
         try:
-            result = await self._session.call_tool(name, args or {}, **kwargs)
+            # call_tool_mcp (not FastMCP's raise_on_error-by-default call_tool)
+            # returns the RAW mcp.types.CallToolResult unchanged — same object
+            # shape _result_to_dict already flattens, so op_runtime/mcp.py's
+            # consumed shape stays byte-identical.
+            result = await self._client.call_tool_mcp(name, args or {}, **kwargs)
         except Exception as exc:
             raise MCPError(f"MCP tools/call error: {exc}") from exc
         return _result_to_dict(result)
 
     async def list_tools(self) -> list[dict[str, Any]]:
-        """Return the tools advertised by this server as plain dicts."""
+        """Return the tools advertised by this server as plain dicts.
+
+        Uses FastMCP's auto-paginating ``Client.list_tools()`` (follows
+        ``nextCursor`` up to a 250-page guard) instead of a single page-1
+        request — #2597 S1 free win: servers with >1 page of tools no
+        longer silently truncate.
+        """
         await self.initialize()
         try:
-            result = await self._session.list_tools()
+            tools = await self._client.list_tools()
         except Exception as exc:
             raise MCPError(f"MCP tools/list error: {exc}") from exc
-        return [_tool_to_dict(t) for t in result.tools]
+        return [_tool_to_dict(t) for t in tools]
 
     async def close(self) -> None:
         """Tear down the transport and session. Safe to call repeatedly."""
-        if self._stack is None:
+        if self._client is None:
             self.close_stderr_capture()
             return
-        stack = self._stack
-        self._stack = None
-        self._session = None
+        client = self._client
+        self._client = None
         self._initialized = False
         try:
-            await stack.aclose()
+            await client.close()
         except Exception:
             # Best-effort cleanup; transport may already be down.
             pass
@@ -316,7 +331,13 @@ class MCPClient:
 
     # ── transport dispatch ──────────────────────────────────────────────────
 
-    def _open_transport(self):
+    def _open_transport(self) -> "Any":
+        """Build the ``fastmcp.client.transports.ClientTransport`` for this server.
+
+        Unlike the pre-swap ``mcp`` SDK version, this returns a constructed
+        transport OBJECT (not an entered async context manager / stream
+        tuple) — FastMCP's ``Client(transport)`` owns opening it.
+        """
         if self._type == "stdio":
             return self._open_stdio()
         if self._type == "http":
@@ -395,8 +416,8 @@ class MCPClient:
         )
         return command, args
 
-    def _open_stdio(self):
-        from mcp.client.stdio import StdioServerParameters, stdio_client
+    def _open_stdio(self) -> "Any":
+        from fastmcp.client.transports import StdioTransport
 
         command = self._config.get("command")
         if not command:
@@ -406,15 +427,10 @@ class MCPClient:
         # so an LLM-invoked MCP tool cannot escape the sandbox via the server.
         command, args = self._sandbox_wrap_stdio(command, args)
         env = self._config.get("env")
-        params = StdioServerParameters(
-            command=command,
-            args=args,
-            env=dict(env) if env else None,
-            cwd=self._config.get("cwd"),
-        )
         # Subprocess stderr capture for diagnostic readback on init
-        # failure. ``stdio_client`` passes errlog to
-        # ``anyio.open_process(stderr=...)`` which requires a real
+        # failure. FastMCP's ``StdioTransport`` accepts ``log_file`` (a
+        # Path or TextIO) and passes it straight through to the underlying
+        # ``anyio.open_process(stderr=...)``, which requires a real
         # fileno — ``io.StringIO`` doesn't work. ``tempfile.TemporaryFile``
         # auto-deletes on close. Text-mode + utf-8 matches the SDK's
         # default (= sys.stderr). On failure to open the temp file we
@@ -426,10 +442,22 @@ class MCPClient:
             )
         except Exception:  # noqa: BLE001 — temp-file failure is non-fatal
             self._stderr_capture = None
-            return stdio_client(params)
-        return stdio_client(params, errlog=self._stderr_capture)
+            log_file = None
+        else:
+            log_file = self._stderr_capture
+        return StdioTransport(
+            command=command,
+            args=args,
+            env=dict(env) if env else None,
+            cwd=self._config.get("cwd"),
+            # keep_alive=True matches the pre-swap subprocess-reuse contract:
+            # MCPClient/pool open once and hold the same transport/subprocess
+            # for the object's lifetime (a359 P2 task-affine caching).
+            keep_alive=True,
+            log_file=log_file,
+        )
 
-    def _open_http(self):
+    def _open_http(self) -> "Any":
         """Open the Streamable HTTP transport.
 
         Reads from ``self._config``:
@@ -443,8 +471,17 @@ class MCPClient:
             standard load_config path applies ``expand_env`` recursively
             across the whole merged config — see ADR-0030).
           - ``timeout`` (optional, default 30) — request timeout in seconds.
+            FastMCP's ``StreamableHttpTransport`` has no per-transport
+            connect timeout (its ``sse_read_timeout`` ctor kwarg is
+            deprecated/unused by the new streamable-http client); the
+            equivalent bound is the ``Client``-level default read timeout
+            (``fastmcp.Client(transport, timeout=...)``), which flows into
+            every request's ``read_timeout_seconds`` exactly like the
+            per-call ``timeout_seconds`` kwarg on :meth:`call_tool` — same
+            SDK knob, applied as this transport's default instead of the
+            old connect-level timeout.
         """
-        from mcp.client.streamable_http import streamablehttp_client
+        from fastmcp.client.transports import StreamableHttpTransport
 
         url = self._config.get("url")
         if not url:
@@ -460,40 +497,22 @@ class MCPClient:
         # need to spoof in tests or proxy in production.
         if self._agent_id and "X-Reyn-Agent-Id" not in headers:
             headers["X-Reyn-Agent-Id"] = self._agent_id
-        timeout = self._config.get("timeout", 30)
-        return streamablehttp_client(url, headers=headers, timeout=timeout)
+        return StreamableHttpTransport(url, headers=headers)
 
-    def _open_sse(self):
-        # The SDK ships sse_client but we defer wiring it until we have a
-        # real test target. Surface a clean error instead of half-supporting.
-        raise NotImplementedError(
-            "MCP 'sse' transport is not yet implemented. Use 'stdio' or 'http'."
-        )
+    def _open_sse(self) -> "Any":
+        """Open the SSE transport (#2597 S1 free win — FastMCP ships it, so no
+        incremental cost to wire vs. leaving the pre-swap ``NotImplementedError``)."""
+        from fastmcp.client.transports import SSETransport
 
-
-# ── Backward-compat shim ─────────────────────────────────────────────────────
-
-class MCPHTTPClient(MCPClient):
-    """Deprecated alias for :class:`MCPClient` configured for HTTP.
-
-    Preserved for any out-of-tree caller that imported the old class
-    directly. New code should use ``MCPClient({"type": "http", ...})``.
-    """
-
-    def __init__(
-        self,
-        url: str,
-        headers: dict[str, str] | None = None,
-        timeout: int = 30,
-    ) -> None:
-        super().__init__(
-            {
-                "type": "http",
-                "url": url,
-                "headers": dict(headers or {}),
-                "timeout": timeout,
-            }
-        )
+        url = self._config.get("url")
+        if not url:
+            raise MCPError("sse MCP server config requires 'url'")
+        headers = {
+            str(k): str(v) for k, v in (self._config.get("headers") or {}).items()
+        }
+        if self._agent_id and "X-Reyn-Agent-Id" not in headers:
+            headers["X-Reyn-Agent-Id"] = self._agent_id
+        return SSETransport(url, headers=headers)
 
 
 # ── helpers ──────────────────────────────────────────────────────────────────

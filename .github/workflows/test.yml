@@ -28,7 +28,7 @@ jobs:
       - name: Install dependencies
         # Install all optional extras the test suite touches:
         #   dev  — pytest + pytest-asyncio + ruff + mypy
-        #   mcp  — `mcp` SDK, used by tests/test_mcp_client.py
+        #   mcp  — `fastmcp` (v3.4.2; #2597 S1), used by tests/test_mcp_client.py
         #   web  — fastapi + uvicorn + websockets, used by tests/web/
         run: pip install -e ".[dev,mcp,web]"
 
