@@ -44,6 +44,7 @@ from reyn.core.pipeline.executor import (
     ForEachStep,
     MatchCase,
     MatchStep,
+    ParallelStep,
     Pipeline,
     Step,
     ToolStep,
@@ -238,6 +239,30 @@ def _decode_for_each(data: "dict[str, Any]") -> "ForEachStep":
     )
 
 
+def _encode_parallel(step: "ParallelStep") -> "dict[str, Any]":
+    # ``branches`` AND ``collect`` are each a Step — recurse through `step_to_dict`
+    # so a parallel whose branch/collect is a `call` (or nested parallel/
+    # for_each) round-trips faithfully.
+    return {
+        "kind": "parallel",
+        "branches": {name: step_to_dict(s) for name, s in step.branches.items()},
+        "collect": step_to_dict(step.collect),
+        "on_error": step.on_error,
+        "output": step.output,
+    }
+
+
+def _decode_parallel(data: "dict[str, Any]") -> "ParallelStep":
+    return ParallelStep(
+        branches={
+            name: step_from_dict(s) for name, s in dict(data.get("branches") or {}).items()
+        },
+        collect=step_from_dict(data["collect"]),
+        on_error=str(data.get("on_error") or "abort"),
+        output=data.get("output"),
+    )
+
+
 # Dispatch tables: encoder keyed by step type, decoder keyed by ``kind`` marker.
 # A future primitive ADDS one entry to each (mirroring the executor's
 # ``STEP_DISPATCH`` and the parser's ``_STEP_PARSERS``) rather than editing a
@@ -250,6 +275,7 @@ ENCODERS: "dict[type, Callable[[Step], dict[str, Any]]]" = {
     MatchStep: _encode_match,
     FoldStep: _encode_fold,
     ForEachStep: _encode_for_each,
+    ParallelStep: _encode_parallel,
 }
 DECODERS: "dict[str, Callable[[dict[str, Any]], Step]]" = {
     "transform": _decode_transform,
@@ -259,6 +285,7 @@ DECODERS: "dict[str, Callable[[dict[str, Any]], Step]]" = {
     "match": _decode_match,
     "fold": _decode_fold,
     "for_each": _decode_for_each,
+    "parallel": _decode_parallel,
 }
 
 
