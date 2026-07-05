@@ -170,14 +170,16 @@ async def test_real_file_write_fires_hook_with_path_and_event_type(tmp_path):
 @pytest.mark.asyncio
 async def test_symlinked_watch_path_reports_events_under_the_configured_prefix(tmp_path):
     """Tier 2: (#2623) the macOS ``/tmp`` -> ``/private/tmp`` footgun, reproduced
-    with a real symlink (not OS-specific — this works the same on Linux). A
+    with a real symlink — cross-platform (macOS fsevents AND Linux inotify). A
     ``fs_watch.paths`` entry given via a symlink (mirroring an operator writing
-    ``paths: ['/tmp/x']`` on macOS) must report the fired event's ``path`` under
-    the CONFIGURED (symlink) prefix, not the OS-resolved realpath — so a naive
-    ``matcher: {path: '<configured>/**'}`` glob (evaluated against the
-    configured prefix an operator actually wrote) matches, instead of silently
-    never firing because the reported path secretly points at the resolved
-    target directory."""
+    ``paths: ['/tmp/x']`` on macOS) must fire a ``file_changed`` for a write
+    under it AND report the event's ``path`` under the CONFIGURED (symlink)
+    prefix — not the OS-resolved realpath — so a naive ``matcher: {path:
+    '<configured>/**'}`` glob (evaluated against the configured prefix an
+    operator actually wrote) matches, instead of silently never matching because
+    the reported path secretly points at the resolved target directory. The fix
+    watches the RESOLVED path on both platforms (inotify shares the inode; a
+    write via the symlink fires it) so this is portable, not macOS-only."""
     real_dir = tmp_path / "real_target"
     real_dir.mkdir()
     symlink_dir = tmp_path / "watched_via_symlink"
@@ -193,7 +195,18 @@ async def test_symlinked_watch_path_reports_events_under_the_configured_prefix(t
         target = symlink_dir / "a.txt"
         target.write_text("hello")
 
-        await _wait_for(lambda: len(trigger.calls) >= 1)
+        # Wait-until-fired (never a fixed sleep): fs-event latency differs
+        # macOS-fsevents vs Linux-inotify and is larger on a slow CI runner.
+        # A generous budget, then an EXPLICIT non-empty assertion so a genuine
+        # "never fired" fails loudly (with the diagnostic below) instead of an
+        # opaque IndexError on ``calls[0]``.
+        await _wait_for(lambda: len(trigger.calls) >= 1, attempts=500, delay=0.02)
+        assert trigger.calls, (
+            f"no file_changed hook fired within the wait budget for a write under "
+            f"a symlinked watch path (configured={configured_path!r}, "
+            f"resolved={os.path.realpath(configured_path)!r}) — the watch must fire "
+            f"for a write via the configured symlink path on this platform"
+        )
         (point, template_vars) = trigger.calls[0]
         assert point == "file_changed"
         # The reported path must be reachable under the OPERATOR'S configured

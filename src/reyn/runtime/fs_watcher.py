@@ -24,21 +24,27 @@ bound+drop+log discipline (``_QUEUE_MAXSIZE``, overflow drops the newest event
 
 Path normalization (#2623): on macOS ``/tmp`` is a symlink to ``/private/tmp``
 (same class of footgun exists anywhere an operator's configured
-``fs_watch.paths`` entry traverses a symlink). ``watchdog``'s OS backend
-(fsevents on macOS) reports the RESOLVED path in every fired event regardless
-of which path string ``Observer.schedule`` was given — so a naive matcher
+``fs_watch.paths`` entry traverses a symlink). Left unhandled, a naive matcher
 written against the operator's CONFIGURED path (e.g. ``matcher: {path:
-'/tmp/x/**'}``) silently never matches an event path of
-``/private/tmp/x/...``. Fixed at registration (:meth:`FsWatcher.start`): for
-each configured path whose ``os.path.realpath`` differs from its own
-(normalized) form, a resolved-path -> configured-path REWRITE is recorded
-(:attr:`_path_rewrites`). Every fired event's path is rewritten back onto the
-operator's configured prefix (:meth:`_rewrite_path`) before it ever reaches
-``hook_trigger`` — so ``matcher: {path: <the path the operator wrote in
-fs_watch.paths>}`` Just Works, and the ``file_changed`` event's ``path``
-template var is exactly the configured path (not a resolved alias of it) for
-any file under it. A path with no symlink component is unaffected
-(rewrite is a no-op — ``resolved == configured`` and no entry is added).
+'/tmp/x/**'}``) silently never matches, because the reported event path is the
+symlink-resolved ``/private/tmp/x/...``. Worse, the two OS backends disagree on
+how they report/handle a symlinked watch (fsevents reports the realpath;
+inotify's recursive watch on a symlink *root* is inconsistent) — so a naive
+"watch the configured path" is not even portable.
+
+Fixed at registration (:meth:`FsWatcher.start`) by making the behavior UNIFORM:
+each watch is scheduled on the ``os.path.realpath`` of its configured path (safe
+— inotify watches INODES, which the symlink and its realpath target share, and
+fsevents already resolves), and for each path whose ``realpath`` differs from
+its normalized configured form a resolved-path -> configured-path REWRITE is
+recorded (:attr:`_path_rewrites`). Every fired event now arrives under the
+resolved prefix on BOTH platforms, and :meth:`_rewrite_path` maps it back onto
+the operator's configured prefix before it ever reaches ``hook_trigger`` — so
+``matcher: {path: <the path the operator wrote in fs_watch.paths>}`` Just Works,
+and the ``file_changed`` event's ``path`` template var is exactly the configured
+path (not a resolved alias of it). A path with no symlink component is
+unaffected (``resolved == configured``, no rewrite entry, watch scheduled on the
+same path as before).
 
 Debounce (F7-3): editors emit event BURSTS for one logical change (temp files,
 multiple writes, create-then-modify). Coalesced per-path on the watchdog
@@ -184,23 +190,30 @@ class FsWatcher:
         self._queue = asyncio.Queue(maxsize=_QUEUE_MAXSIZE)
         self._drain_task = asyncio.create_task(self._drain_events())
 
-        # #2623: build the resolved->configured path rewrite table BEFORE
-        # scheduling — the OS backend (fsevents on macOS, symlink-transparent
-        # on Linux too) reports events at the REALPATH regardless of which
-        # path string we hand ``observer.schedule``, so every reported event
-        # path needs rewriting back onto what the operator actually wrote in
-        # ``fs_watch.paths`` for a ``matcher: {path: <configured>}`` to match.
+        # #2623: schedule each watch on the RESOLVED (symlink-free) path and
+        # build a resolved->configured rewrite table, so the reported event
+        # path is UNIFORM across OS backends and always maps back onto what the
+        # operator wrote in ``fs_watch.paths`` (for a ``matcher: {path:
+        # <configured>}`` to match). Watching the resolved path is the
+        # cross-platform-deterministic choice:
+        #   - inotify (Linux) watches INODES — the symlink and its realpath
+        #     target share one inode, so a write via the configured symlink
+        #     path fires on the realpath-registered watch; but a recursive
+        #     watch scheduled on a symlink *root* reports/handles the tree
+        #     inconsistently (the macOS→Linux CI-RED that motivated this).
+        #   - fsevents (macOS) already reports the realpath in every event.
+        # So: watch realpath everywhere -> events always arrive under the
+        # resolved prefix -> _rewrite_path() maps every one back to the
+        # configured prefix, on both platforms.
         self._path_rewrites = []
+        handler = _build_handler(FileSystemEventHandler, self)
+        observer = Observer()
         for configured in self._paths:
             resolved = os.path.realpath(configured)
             normalized_configured = os.path.normpath(configured)
             if resolved != normalized_configured:
                 self._path_rewrites.append((resolved, normalized_configured))
-
-        handler = _build_handler(FileSystemEventHandler, self)
-        observer = Observer()
-        for path in self._paths:
-            observer.schedule(handler, path, recursive=True)
+            observer.schedule(handler, resolved, recursive=True)
         observer.start()
         self._observer = observer
         self._started = True
