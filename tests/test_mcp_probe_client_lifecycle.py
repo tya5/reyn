@@ -22,7 +22,7 @@ class _FakeMCPClient:
 
     last_config = None
 
-    def __init__(self, config, *, agent_id=None) -> None:
+    def __init__(self, config, *, agent_id=None, server_name=None) -> None:
         if not isinstance(config, dict):
             raise ValueError("MCP server config must be a dict")
         _FakeMCPClient.last_config = config

@@ -62,7 +62,7 @@ class _FakeMCPClient:
 
     instances: list = []
 
-    def __init__(self, config, *, agent_id=None) -> None:
+    def __init__(self, config, *, agent_id=None, server_name=None) -> None:
         self.closed = False
         self.close_task = None
         self.list_task = None

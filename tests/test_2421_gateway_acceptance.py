@@ -31,7 +31,7 @@ class _FaultClient:
 
     _next_exc: BaseException = RuntimeError("unset")
 
-    def __init__(self, config, *, agent_id=None) -> None:
+    def __init__(self, config, *, agent_id=None, server_name=None) -> None:
         self._exc = _FaultClient._next_exc
 
     async def __aenter__(self):
@@ -85,7 +85,7 @@ class _SlowClient:
 
     hang_on: str = "op"  # "init" | "op"
 
-    def __init__(self, config, *, agent_id=None) -> None:
+    def __init__(self, config, *, agent_id=None, server_name=None) -> None:
         pass
 
     async def __aenter__(self):
