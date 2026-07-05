@@ -18,9 +18,16 @@ and ``reyn.mcp.connection_service.MCPConnectionService``'s bounded
 sync->async bridge). Unlike the six lifecycle points above (fired from the
 session/turn/task run-loop on the agent's own task), this point is fired
 from the MCP receive-loop task via a bounded queue drained on the session's
-event loop. ``HookDef.matcher`` stays reserved/uninterpreted for this
-point in H1 (scoping is via which resources the user subscribed to) — a
-later slice (H2) may add matcher filtering.
+event loop. ``HookDef.matcher`` stayed reserved/uninterpreted for this
+point in H1 (scoping was via which resources the user subscribed to).
+
+#2608 H2 interprets ``matcher``: a ``dict[str, str]`` of field -> pattern,
+evaluated against the event's ``template_vars`` BEFORE the hook's action runs
+(``reyn.hooks.matcher.matches``, called from ``HookDispatcher.dispatch``).
+For ``mcp_resource_updated`` the two matchable fields are ``server`` (exact
+match) and ``uri`` (glob via ``fnmatch``) — e.g. ``{"server": "github", "uri":
+"file:///repo/**"}``. Absent/empty matcher -> fires always (unchanged for
+every pre-H2 hook, lifecycle or external-event).
 
 #2608 H3 adds the 4th action, ``pipeline_launch`` — a hook can launch a
 REGISTERED Pipeline (``reyn.core.pipeline.registry.PipelineRegistry.get``)
@@ -181,7 +188,13 @@ class HookDef:
         later on this session's inbox as a ``pipeline_result`` message).
         Mutually exclusive with the other actions.
     matcher:
-        Reserved optional filter string.  Not interpreted in this slice.
+        Optional ``dict[str, str]`` filter (#2608 H2) — a hook fires only when
+        every named field matches the event's ``template_vars``: exact string
+        equality for every field except ``uri`` (glob via ``fnmatch``). See
+        ``reyn.hooks.matcher.matches`` for the match semantics and
+        ``reyn.hooks.dispatcher.HookDispatcher.dispatch`` for where it's
+        applied (before the hook's action runs). Absent/empty -> always fires
+        (unchanged for every hook that predates H2).
     """
 
     on: str
@@ -190,4 +203,4 @@ class HookDef:
     shell_exec: str | None = field(default=None)
     shell_push: str | None = field(default=None)
     pipeline_launch: PipelineLaunchBlock | None = field(default=None)
-    matcher: str | None = field(default=None)
+    matcher: "dict[str, str] | None" = field(default=None)
