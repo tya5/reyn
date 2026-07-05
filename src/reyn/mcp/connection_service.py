@@ -52,6 +52,14 @@ boundary into an LLM-visible error result, same as the pre-S2a per-call path.
 Runtime-only state (S2a scope note): held connections are NOT WAL-derived / recoverable
 state — they are reconstructed fresh (lazy-connect) after any process restart, exactly
 like the pool's per-call clients were. Nothing here writes to the WAL.
+
+#2597 S2b: because the connection stays open, FastMCP's ``session_task`` keeps its
+receive loop running, so server-pushed notifications (tools/prompts ``list_changed``,
+``notifications/progress``) arrive on the wire even between calls. ``emit_sink`` /
+``tools_cache_invalidate`` (both optional; None = no bridge, byte-identical to pre-S2b
+behaviour) are threaded down to a per-server :class:`~reyn.mcp.message_handler.
+ReynMCPMessageHandler` built fresh each time :meth:`_ensure_open` opens (or reopens, on
+reconnect) a held client — see that module for the notification->EventLog bridge design.
 """
 from __future__ import annotations
 
@@ -60,6 +68,7 @@ import logging
 from typing import Any, Awaitable, Callable
 
 from reyn.mcp.client import MCPClient, MCPError
+from reyn.mcp.message_handler import EmitSink, ReynMCPMessageHandler, ToolsCacheInvalidate
 from reyn.mcp.pool import describe_fault, is_real_control_flow
 
 logger = logging.getLogger(__name__)
@@ -81,7 +90,18 @@ class MCPConnectionService:
         await service.aclose()  # session teardown — closes every held connection
     """
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        *,
+        emit_sink: EmitSink | None = None,
+        tools_cache_invalidate: ToolsCacheInvalidate | None = None,
+    ) -> None:
+        # #2597 S2b: threaded into a fresh ReynMCPMessageHandler per held server
+        # connection (see _ensure_open). None (default) = no notifications bridge —
+        # the ephemeral per-call MCPClientPool path never constructs this service with
+        # a sink, so it stays byte-identical to pre-S2b behaviour.
+        self._emit_sink = emit_sink
+        self._tools_cache_invalidate = tools_cache_invalidate
         self._clients: dict[str, MCPClient] = {}
         # One handle per server, cached so repeated get() calls for the same server
         # return the SAME object (connection-reuse identity) across the connection's
@@ -135,7 +155,16 @@ class MCPConnectionService:
             self._clients.pop(server, None)
             client = None
         if client is None:
-            client = MCPClient(config, agent_id=agent_id)
+            # #2597 S2b: a fresh handler per open (including every reconnect) — bound
+            # to the server name closed over here, so a reconnected client's
+            # notifications keep landing under the same server attribution.
+            handler = None
+            if self._emit_sink is not None:
+                handler = ReynMCPMessageHandler(
+                    self._emit_sink, server,
+                    tools_cache_invalidate=self._tools_cache_invalidate,
+                )
+            client = MCPClient(config, agent_id=agent_id, message_handler=handler)
             await client.__aenter__()  # initialize; held open (no matching __aexit__ until aclose/reconnect)
             self._clients[server] = client
         return client

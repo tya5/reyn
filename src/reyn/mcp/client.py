@@ -65,6 +65,7 @@ class MCPClient:
         config: dict[str, Any],
         *,
         agent_id: str | None = None,
+        message_handler: Any = None,
     ) -> None:
         if not isinstance(config, dict):
             raise ValueError(f"MCP server config must be a dict, got {type(config).__name__}")
@@ -82,6 +83,14 @@ class MCPClient:
         # agent. None preserves prior behaviour for direct callers (= the
         # session factory passes ReynConfig.agent.id; tests can omit).
         self._agent_id: str | None = agent_id
+        # #2597 S2b: optional async server->client notifications bridge — a
+        # ReynMCPMessageHandler (fastmcp.client.tasks.TaskNotificationHandler subclass;
+        # see reyn.mcp.message_handler) that receives tools/prompts list_changed +
+        # progress notifications on this client's held connection and emits them onto
+        # reyn's EventLog. None (default) preserves pre-S2b behaviour — no bridge, no
+        # behaviour change for callers that don't pass one (e.g. the ephemeral
+        # per-call MCPClientPool path never installs a handler).
+        self._message_handler: Any = message_handler
         self._client: Any = None  # fastmcp.Client when initialized
         self._initialized = False
         # Captures subprocess stderr for stdio transport so initialize
@@ -145,7 +154,17 @@ class MCPClient:
                 # default ``read_timeout_seconds`` (same knob call_tool's
                 # per-call ``timeout_seconds`` overrides).
                 client_kwargs["timeout"] = self._config.get("timeout", 30)
+            # #2597 S2b: install the notifications bridge, if one was supplied. Passed
+            # as a constructor kwarg per FastMCP's own contract (Client(transport,
+            # message_handler=...)); ReynMCPMessageHandler's weakref binding to THIS
+            # client is completed via bind_client() right below — see
+            # reyn/mcp/message_handler.py's module docstring ("two-phase client
+            # binding") for why that two-step is necessary.
+            if self._message_handler is not None:
+                client_kwargs["message_handler"] = self._message_handler
             client = FastMCPClient(transport, **client_kwargs)
+            if self._message_handler is not None:
+                self._message_handler.bind_client(client)
             await client.__aenter__()
         except MCPError:
             self.close_stderr_capture()

@@ -1576,6 +1576,39 @@ class RouterHostAdapter:
                 cache_path, exc,
             )
 
+    def invalidate_mcp_tools_cache(self, server: str) -> None:
+        """Invalidate the lazy MCP tools cache (#2597 S2b) so the next
+        ``ensure_mcp_tools_cached()`` re-probes every configured server.
+
+        Called from the async notifications bridge
+        (``reyn.mcp.message_handler.ReynMCPMessageHandler.on_tool_list_changed``) when
+        a held MCP connection reports a server-pushed
+        ``notifications/tools/list_changed`` for ``server`` — issue #160's lazy cache
+        has no other way to learn the cached tool list may now be stale (it probes
+        ONCE per session by design).
+
+        Resets the WHOLE in-memory cache (not just ``server``'s entry), because
+        ``ensure_mcp_tools_cached``'s populated-guard is all-or-nothing (``if
+        self._mcp_tools_cache is not None: return``) — there is no cheaper
+        single-server re-probe path today. The next turn boundary's
+        ``ensure_mcp_tools_cached()`` re-probes every configured server in parallel
+        (cheap; the existing per-server timeout already caps a slow/unreachable one),
+        so a list-changed notification for ONE server causes a full (but bounded)
+        re-probe rather than a targeted one. ``server`` is accepted (not ``*args``)
+        so the call site + a future targeted implementation both have a stable
+        signature; unused beyond that today.
+
+        Known interaction (not a regression, flagged for awareness): FP-0037 S1's
+        on-disk warm-start cache (``<state_dir>/mcp_tools_cache.json``) is consulted
+        BEFORE a live probe in ``ensure_mcp_tools_cached`` — if that file exists and
+        wasn't itself refreshed, invalidation still warm-starts from it (stale)
+        instead of forcing a live probe. This mirrors the disk-cache's own existing
+        staleness window (``reyn mcp refresh`` is the operator-driven cache-buster)
+        and is out of scope for #2597 S2b to close.
+        """
+        self._mcp_tools_cache = None
+        self._mcp_tools_cache_mtime = None
+
     def maybe_reload_mcp_tools_cache_from_disk(self) -> None:
         """Reload the in-memory MCP tools cache if the on-disk file is newer.
 

@@ -1059,8 +1059,19 @@ class Session:
         # per-call MCPClientPool so a sub-second-lived session never holds a
         # connection open. Closed at session teardown via aclose_mcp_connections
         # (registry.remove_session / archive_agent's main-session path).
+        # #2597 S2b: emit_sink / tools_cache_invalidate are lambdas that defer
+        # resolution of ``self._chat_events`` / ``self._router_host`` to CALL time
+        # (mirrors the ``emit_event=lambda et, **d: self._chat_events.emit(et, **d)``
+        # pattern used a few lines below) — both attributes are assigned LATER in this
+        # __init__ (``_chat_events`` at construction of the EventLog; ``_router_host``
+        # when the RouterHostAdapter is built), but neither lambda is ever CALLED until
+        # a held MCP connection actually receives a server-pushed notification, long
+        # after __init__ has finished.
         from reyn.mcp.connection_service import MCPConnectionService
-        self._mcp_connection_service = MCPConnectionService()
+        self._mcp_connection_service = MCPConnectionService(
+            emit_sink=lambda et, **d: self._chat_events.emit(et, **d),
+            tools_cache_invalidate=lambda server: self._router_host.invalidate_mcp_tools_cache(server),
+        )
         self.output_language = output_language
         self._prompt_cache_enabled = prompt_cache_enabled
         self._project_context = project_context

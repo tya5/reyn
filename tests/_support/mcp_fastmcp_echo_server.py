@@ -12,6 +12,12 @@ Tools:
                             real FastMCP ``Context.report_progress`` API, so
                             progress-callback plumbing is exercised against the
                             real protocol (not a hand-rolled fake).
+  - ``notify_tool_list_changed()``   -> sends a real
+                            ``notifications/tools/list_changed`` via
+                            ``Context.send_notification`` (#2597 S2b — the
+                            async notifications bridge).
+  - ``notify_prompt_list_changed()`` -> sends a real
+                            ``notifications/prompts/list_changed`` (#2597 S2b).
   - ``pid()``            -> returns ``os.getpid()`` of THIS server process. Used
                             by #2597 S2a connection-reuse tests to prove a second
                             ``call_tool`` hit the SAME held subprocess (no
@@ -103,6 +109,26 @@ async def progress(steps: int, ctx: Context) -> str:
     for i in range(1, steps + 1):
         await ctx.report_progress(progress=i, total=steps, message=f"step-{i}")
     return "done"
+
+
+# #2597 S2b: real server-pushed list_changed notifications, for the async
+# notifications-bridge tests (ReynMCPMessageHandler.on_tool_list_changed /
+# on_prompt_list_changed). ``Context.send_notification`` sends immediately on the
+# session — a real SEP-1686 notification, not a fake.
+@mcp.tool()
+async def notify_tool_list_changed(ctx: Context) -> str:
+    import mcp.types as types
+
+    await ctx.send_notification(types.ToolListChangedNotification())
+    return "sent"
+
+
+@mcp.tool()
+async def notify_prompt_list_changed(ctx: Context) -> str:
+    import mcp.types as types
+
+    await ctx.send_notification(types.PromptListChangedNotification())
+    return "sent"
 
 
 if __name__ == "__main__":
