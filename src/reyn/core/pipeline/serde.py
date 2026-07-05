@@ -40,6 +40,8 @@ from reyn.core.pipeline.executor import (
     AgentStep,
     CallStep,
     ExprRef,
+    MatchCase,
+    MatchStep,
     Pipeline,
     Step,
     ToolStep,
@@ -150,6 +152,37 @@ def _decode_call(data: "dict[str, Any]") -> "CallStep":
     )
 
 
+def _encode_match_case(case: "MatchCase") -> "dict[str, Any]":
+    return {"pipeline": case.pipeline, "pass": list(case.pass_)}
+
+
+def _decode_match_case(data: "dict[str, Any]") -> "MatchCase":
+    return MatchCase(pipeline=data["pipeline"], pass_=list(data.get("pass") or []))
+
+
+def _encode_match(step: "MatchStep") -> "dict[str, Any]":
+    return {
+        "kind": "match",
+        "on": step.on,
+        "cases": {label: _encode_match_case(case) for label, case in step.cases.items()},
+        "default": _encode_match_case(step.default) if step.default is not None else None,
+        "output": step.output,
+    }
+
+
+def _decode_match(data: "dict[str, Any]") -> "MatchStep":
+    raw_default = data.get("default")
+    return MatchStep(
+        on=data["on"],
+        cases={
+            label: _decode_match_case(case)
+            for label, case in dict(data.get("cases") or {}).items()
+        },
+        default=_decode_match_case(raw_default) if raw_default is not None else None,
+        output=data.get("output"),
+    )
+
+
 # Dispatch tables: encoder keyed by step type, decoder keyed by ``kind`` marker.
 # A future primitive ADDS one entry to each (mirroring the executor's
 # ``STEP_DISPATCH`` and the parser's ``_STEP_PARSERS``) rather than editing a
@@ -159,12 +192,14 @@ ENCODERS: "dict[type, Callable[[Step], dict[str, Any]]]" = {
     ToolStep: _encode_tool,
     AgentStep: _encode_agent,
     CallStep: _encode_call,
+    MatchStep: _encode_match,
 }
 DECODERS: "dict[str, Callable[[dict[str, Any]], Step]]" = {
     "transform": _decode_transform,
     "tool": _decode_tool,
     "agent": _decode_agent,
     "call": _decode_call,
+    "match": _decode_match,
 }
 
 
