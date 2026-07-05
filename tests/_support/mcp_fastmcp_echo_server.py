@@ -12,6 +12,16 @@ Tools:
                             real FastMCP ``Context.report_progress`` API, so
                             progress-callback plumbing is exercised against the
                             real protocol (not a hand-rolled fake).
+  - ``pid()``            -> returns ``os.getpid()`` of THIS server process. Used
+                            by #2597 S2a connection-reuse tests to prove a second
+                            ``call_tool`` hit the SAME held subprocess (no
+                            re-handshake) rather than comparing Python object
+                            identity alone.
+  - ``bump()`` /         -> a per-process side-effect counter (#2597 S2a). ``bump``
+    ``bump_then_die()``     increments + returns the count; ``bump_then_die``
+                            increments THEN kills the subprocess AFTER the side
+                            effect (drop-after-execution) — proves call_tool is
+                            at-most-once across a mid-call drop (no double-count).
 
 Usage:
   stdio: ``python mcp_fastmcp_echo_server.py``
@@ -45,6 +55,40 @@ def die() -> str:
     import os
 
     os._exit(1)
+
+
+@mcp.tool()
+def pid() -> int:
+    import os
+
+    return os.getpid()
+
+
+# #2597 S2a: a FILE-BACKED side-effect recorder. The count lives on disk (a byte
+# appended per execution) so it SURVIVES the subprocess death — unlike an in-memory
+# counter, which a fresh reconnected subprocess would reset. ``bump(path)`` records one
+# execution; ``bump_then_die(path)`` records the side effect THEN kills the subprocess
+# AFTER executing it (the drop-after-execution window). A caller that auto-retried
+# ``bump_then_die`` would append TWICE (once per subprocess); at-most-once appends once.
+@mcp.tool()
+def bump(path: str) -> str:
+    with open(path, "a", encoding="utf-8") as f:
+        f.write("x")
+    return "bumped"
+
+
+@mcp.tool()
+def bump_then_die(path: str) -> str:
+    import os
+
+    with open(path, "a", encoding="utf-8") as f:
+        f.write("x")
+        f.flush()
+        os.fsync(f.fileno())
+    # The side effect (the append) is durably on disk; now drop the transport BEFORE the
+    # response reaches the client — the drop-after-execution window.
+    os._exit(1)
+    return "unreachable"
 
 
 @mcp.tool()

@@ -40,10 +40,13 @@ async def _execute(op: MCPIROp, ctx: OpContext) -> dict:
         if expanded.get("url"):
             expanded = {**expanded, "type": "http"}
 
-    # #a359 P2: the client comes from the per-turn structured pool (opened + closed in the pool's
-    # owning task — no cross-SDK-task teardown). None = no pool wired on this ctx (a non-MCP
-    # OpContext should never reach the mcp handler; guard defensively).
-    if ctx.mcp_pool is None:
+    # #2597 S2a: prefer the session-owned held-open connection service (Option C) when wired —
+    # it replaces the per-turn pool on the live (non-ephemeral) session path with one persistent
+    # connection per server, reused across turns/tasks. Falls back to the #a359 P2 per-turn
+    # structured pool (opened + closed in the pool's owning task) for the ephemeral-session /
+    # one-shot path. Neither wired = no MCP context wired on this ctx (a non-MCP OpContext should
+    # never reach the mcp handler; guard defensively).
+    if ctx.mcp_connection_service is None and ctx.mcp_pool is None:
         return {"kind": "mcp", "status": "error", "server": op.server,
                 "tool": op.tool, "error": "no MCP client pool on this context"}
 
@@ -80,7 +83,7 @@ async def _execute(op: MCPIROp, ctx: OpContext) -> dict:
     # connect, a bad config, a malformed response, or a transport group all surface here as a clean
     # MCPFault → contained error tool-result (owner req: MCP misbehavior must not crash the router
     # loop). Cancellation is never swallowed (is_real_control_flow re-raises genuine cancel/KI/SE).
-    gateway = MCPGateway(pool=ctx.mcp_pool, agent_id=ctx.agent_id)
+    gateway = MCPGateway(pool=ctx.mcp_connection_service or ctx.mcp_pool, agent_id=ctx.agent_id)
     try:
         result = await gateway.call_tool(
             op.server, op.tool, op.args, expanded, progress_cb=_on_progress,

@@ -14,17 +14,19 @@ import re
 from pathlib import Path
 
 # The seam: the pool constructs clients; client.py defines the class (+ docstring examples).
-_ALLOWED = {"mcp/pool.py", "mcp/client.py"}
+_ALLOWED = {"mcp/pool.py", "mcp/client.py", "mcp/connection_service.py"}
 # ``MCPClient(`` construction — the paren distinguishes it from the ``MCPClientPool`` /
 # ``MCPClient`` type-reference (``Pool`` / ``]`` / import follows, not ``(``).
 _CONSTRUCT = re.compile(r"\bMCPClient\s*\(")
 
 
 def test_no_direct_mcpclient_construction_outside_seam():
-    """Tier 2: MCP ops go through MCPGateway → MCPClientPool → MCPClient. A new entry path that
-    constructs ``MCPClient(...)`` directly would bypass the contain-all boundary + task-affine
-    lifecycle (the sibling-sweep-miss class that caused the list-path crash). RED if a direct
-    construction reappears anywhere in src outside the pool/client seam."""
+    """Tier 2: MCP ops go through MCPGateway → (MCPClientPool | MCPConnectionService) → MCPClient
+    (#2597 S2a added the held-open connection service as a second pool-compatible seam alongside
+    the per-turn pool). A new entry path that constructs ``MCPClient(...)`` directly would bypass
+    the contain-all boundary + task-affine/reconnect lifecycle (the sibling-sweep-miss class that
+    caused the list-path crash). RED if a direct construction reappears anywhere in src outside the
+    pool/client/connection-service seam."""
     src = Path(__file__).resolve().parents[1] / "src" / "reyn"
     offenders: list[str] = []
     for py in src.rglob("*.py"):

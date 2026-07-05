@@ -1,11 +1,16 @@
-"""Tier 2: _mcp_list_tools closes the MCP client on EVERY exit path + surfaces errors (list crash).
+"""Tier 2: _mcp_list_tools (EPHEMERAL session) closes the MCP client on EVERY exit path + surfaces
+errors (list crash).
 
-``Session._mcp_list_tools`` now routes through the ``MCPGateway`` seam (→ ``MCPClientPool`` →
-``MCPClient``, #2421). The pool opens + closes the client in the SAME task on success, error, AND
-cancellation, and the gateway contains any fault into an ``MCPFault`` → the list method returns an
-``[{"error": …}]`` result instead of leaking the SDK's anyio cancel-scope cross-task (the owner-facing
+``Session._mcp_list_tools`` routes an EPHEMERAL session's calls through the one-shot ``MCPGateway``
+seam (→ ``MCPClientPool`` → ``MCPClient``, #2421); #2597 S2a's held-open ``MCPConnectionService``
+is the NON-ephemeral (persistent/main session) default instead — see
+``test_2597_s2a_mcp_connection_service.py`` for that path's connection-reuse contract. The one-shot
+pool opens + closes the client in the SAME task on success, error, AND cancellation, and the
+gateway contains any fault into an ``MCPFault`` → the list method returns an ``[{"error": …}]``
+result instead of leaking the SDK's anyio cancel-scope cross-task (the owner-facing
 ``list_mcp_tools`` crash). This pins the close-on-error guarantee + same-task affinity + error
-surfacing through the real Session, with the fake patched where the POOL constructs it. No subprocess.
+surfacing through the real Session's ephemeral path, with the fake patched where the POOL
+constructs it. No subprocess.
 """
 from __future__ import annotations
 
@@ -40,7 +45,13 @@ async def _session(tmp_path) -> Session:
     reg = _make_registry(tmp_path)
     reg.get_or_load("alice")
     sid = await reg.spawn_session_recorded("alice")
-    return reg.get_session("alice", sid)
+    sess = reg.get_session("alice", sid)
+    # #2597 S2a: only an EPHEMERAL session still routes _mcp_list_tools through the
+    # one-shot MCPClientPool this test exercises — a persistent session now holds its
+    # connection open via MCPConnectionService instead (see
+    # test_2597_s2a_mcp_connection_service.py).
+    sess._ephemeral = True
+    return sess
 
 
 class _FakeMCPClient:
