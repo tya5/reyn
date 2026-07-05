@@ -248,78 +248,109 @@ def _task_expansion(snap, dispatch):
     return DetailElement(lambda: _task_rows(tree, 0))
 
 
-def _more_expansion(snap, dispatch):
-    """Status-bar overflow panel: visibility + hook toggles + read-only sections.
+def _visibility_items_by_kind(snap, kind: str) -> list[dict]:
+    """The session-backed visibility toggle items for one kind (tool/mcp/skill/…)."""
+    return [it for it in (snap.get("visibility_items") or []) if it.get("kind") == kind]
 
-    Returns a list of RegionElements — DetailElement section headers (non-
-    selectable, cursor skips them) and CommandUIElement item rows (selectable,
-    Enter dispatches a /visibility or /hook command). When the backend hasn't
-    wired visibility_items / hook_items yet the corresponding sections fall back
-    to the existing read-only config listing. Cron is always read-only (deferred
-    per #2285 design).
 
-    Slash command format locked with e2e-coder (#2285):
-      /visibility on|off  tool|mcp|category  <name>
-      /hook        on|off  <name>
-    """
-    elements: list = []
+def _toggle_category_expansion(snap, dispatch, kind: str, fallback_key: "str | None"):
+    """A togglable category's dropdown: CommandUIElement rows when the session
+    has wired visibility state for ``kind``, else a read-only fallback listing
+    (``snap[fallback_key]``, name-only — no toggle state available). ``None``
+    fallback_key (tool has no config-declared name source) shows "(none)".
 
-    # --- Visibility toggles (tool / mcp) ---
-    vis_items = snap.get("visibility_items") or []
-    if vis_items:
-        # Group by kind so each kind gets its own section.
-        by_kind: dict[str, list[dict]] = {}
-        for it in vis_items:
-            by_kind.setdefault(it.get("kind", "tool"), []).append(it)
-        for kind, items in by_kind.items():
-            n = len(items)
-            hdr = f"{kind}  ({n})"
-            elements.append(DetailElement(lambda h=hdr: [h]))
-            rows = [f"  [{'on' if it['on'] else 'off'}] {it['name']}" for it in items]
-            cmds = [
-                f"/visibility {'off' if it['on'] else 'on'} {kind} {it['name']}"
-                for it in items
-            ]
-            elements.append(CommandUIElement(rows, cmds, dispatch))
-    else:
-        # Fallback: read-only mcp listing from config (no session state yet).
-        mcp_servers = snap.get("mcp_servers") or []
-        mcp_lines = [f"  {s['name']}" for s in mcp_servers] or ["  (none)"]
-        n = len(mcp_servers)
-        elements.append(DetailElement(lambda n=n, ls=mcp_lines: [f"mcp  ({n})"] + ls))
-
-    # --- Hook applicability toggles ---
-    hook_items = snap.get("hook_items") or []
-    if hook_items:
-        n = len(hook_items)
-        hdr = f"hooks  ({n})"
-        elements.append(DetailElement(lambda h=hdr: [h]))
-        rows = [
-            f"  [{'on' if h['on'] else 'off'}] {h['name']}"
-            + (f"  · {h['scope']}" if h.get("scope") else "")
-            for h in hook_items
+    Shared by the tool / mcp / skill sub-bar categories (#2285's
+    /visibility on|off <kind> <name> dispatch, unchanged)."""
+    items = _visibility_items_by_kind(snap, kind)
+    if items:
+        rows = [f"[{'on' if it['on'] else 'off'}] {it['name']}" for it in items]
+        cmds = [
+            f"/visibility {'off' if it['on'] else 'on'} {kind} {it['name']}"
+            for it in items
         ]
-        cmds = [f"/hook {'off' if h['on'] else 'on'} {h['name']}" for h in hook_items]
-        elements.append(CommandUIElement(rows, cmds, dispatch))
-    else:
-        # Fallback: read-only hooks listing from config.
-        hooks = snap.get("hooks") or []
-        hook_lines = [f"  {h['label']}" for h in hooks] or ["  (none)"]
-        n = len(hooks)
-        elements.append(DetailElement(lambda n=n, ls=hook_lines: [f"hooks  ({n})"] + ls))
+        return CommandUIElement(rows, cmds, dispatch)
+    names = [d["name"] for d in (snap.get(fallback_key) or [])] if fallback_key else []
+    lines = [f"{n}" for n in names] or ["(none)"]
+    return DetailElement(lambda ls=lines: ls)
 
-    # --- Cron section (read-only; per-session cron is deferred in #2285) ---
+
+def _tool_category_expansion(snap, dispatch):
+    return _toggle_category_expansion(snap, dispatch, "tool", None)
+
+
+def _mcp_category_expansion(snap, dispatch):
+    return _toggle_category_expansion(snap, dispatch, "mcp", "mcp_servers")
+
+
+def _skill_category_expansion(snap, dispatch):
+    return _toggle_category_expansion(snap, dispatch, "skill", "skills")
+
+
+def _hook_category_expansion(snap, dispatch):
+    """Hook applicability toggles: CommandUIElement rows when the session has
+    wired hook_items, else a read-only config-derived fallback listing."""
+    items = snap.get("hook_items") or []
+    if items:
+        rows = [
+            f"[{'on' if h['on'] else 'off'}] {h['name']}"
+            + (f"  · {h['scope']}" if h.get("scope") else "")
+            for h in items
+        ]
+        cmds = [f"/hook {'off' if h['on'] else 'on'} {h['name']}" for h in items]
+        return CommandUIElement(rows, cmds, dispatch)
+    hooks = snap.get("hooks") or []
+    lines = [f"{h['label']}" for h in hooks] or ["(none)"]
+    return DetailElement(lambda ls=lines: ls)
+
+
+def _pipe_category_expansion(snap, dispatch):
+    """Registered pipelines: always read-only (no on/off toggle mechanism —
+    explicitly out of scope for this slice, unlike tool/mcp/skill/hook)."""
+    pipelines = snap.get("pipelines") or []
+    lines = [
+        f"{p['name']}  {p['description']}" if p.get("description") else f"{p['name']}"
+        for p in pipelines
+    ] or ["(none)"]
+    return DetailElement(lambda ls=lines: ls)
+
+
+def _cron_category_expansion(snap, dispatch):
+    """Cron jobs: always read-only (no on/off toggle mechanism — explicitly
+    out of scope for this slice, unlike tool/mcp/skill/hook)."""
     cron_jobs = snap.get("cron_jobs") or []
-    cron_lines: list[str] = []
-    for j in cron_jobs:
-        marker = "on" if j.get("enabled") else "off"
-        cron_lines.append(f"  [{marker}] {j['name']}  {j['schedule']}")
-    if not cron_lines:
-        cron_lines = ["  (none)"]
-    n = len(cron_jobs)
-    elements.append(DetailElement(lambda n=n, ls=cron_lines: [f"cron  ({n})"] + ls))
+    lines = [
+        f"[{'on' if j.get('enabled') else 'off'}] {j['name']}  {j['schedule']}"
+        for j in cron_jobs
+    ] or ["(none)"]
+    return DetailElement(lambda ls=lines: ls)
 
-    return elements
+
+def _mcp_count(snap) -> int:
+    items = _visibility_items_by_kind(snap, "mcp")
+    return len(items) if items else len(snap.get("mcp_servers") or [])
+
+
+def _skill_count(snap) -> int:
+    items = _visibility_items_by_kind(snap, "skill")
+    return len(items) if items else len(snap.get("skills") or [])
+
+
+def _hook_count(snap) -> int:
+    items = snap.get("hook_items") or []
+    return len(items) if items else len(snap.get("hooks") or [])
+
+
+_MORE_SUB_CHIP_SPECS = [
+    ChipSpec("tool",  "tool",  lambda s: str(len(_visibility_items_by_kind(s, "tool"))),
+             _tool_category_expansion),
+    ChipSpec("mcp",   "mcp",   lambda s: str(_mcp_count(s)), _mcp_category_expansion),
+    ChipSpec("skill", "skill", lambda s: str(_skill_count(s)), _skill_category_expansion),
+    ChipSpec("pipe",  "pipe",  lambda s: str(len(s.get("pipelines") or [])),
+             _pipe_category_expansion),
+    ChipSpec("hook",  "hook",  lambda s: str(_hook_count(s)), _hook_category_expansion),
+    ChipSpec("cron",  "cron",  lambda s: str(len(s.get("cron_jobs") or [])),
+             _cron_category_expansion),
+]
 
 
 _CHIP_SPECS = [
@@ -331,7 +362,10 @@ _CHIP_SPECS = [
              value_color=_CC_COOL),
     ChipSpec("task",  "task",  lambda s: str(s.get("task_count", 0)), _task_expansion,
              value_color=_CC_WARN),
-    ChipSpec("more",  "",      lambda s: "…", _more_expansion,
+    # "more" has no `expansion` — Enter on it opens the level-2 sub-bar
+    # (_MORE_SUB_CHIP_SPECS) instead of a menu_region dropdown directly; see
+    # _is_more()/_sub_bar_visible() in run_inline_input.
+    ChipSpec("more",  "",      lambda s: "…", None,
              value_color=_CC_DIM),
 ]
 
@@ -414,6 +448,20 @@ def _extract_mcp_servers(config) -> list[dict]:
     return [{"name": name} for name in source]
 
 
+def _extract_skills(config) -> list[dict]:
+    """Extract skill name dicts from config. Returns [] on any missing/malformed section.
+
+    Mirrors ``_extract_mcp_servers`` — the config-only fallback shown when the
+    session hasn't wired ``visibility_items`` for kind="skill" yet."""
+    skills = getattr(config, "skills", None)
+    if not isinstance(skills, dict):
+        return []
+    entries = skills.get("entries")
+    if not isinstance(entries, dict):
+        return []
+    return [{"name": name} for name in entries]
+
+
 def _extract_hooks(config) -> list[dict]:
     """Extract hook label dicts from config. Returns [] on any missing/malformed section."""
     hooks_raw = getattr(config, "hooks", None)
@@ -482,6 +530,22 @@ def _session_hook_items(session) -> list[dict]:
         return []
 
 
+def _session_pipelines(session) -> list[dict]:
+    """Read registered pipeline names + descriptions from the session's
+    PipelineRegistry — always constructed at Session.__init__ (never a "not
+    wired yet" seam like visibility_items/hook_items); the try/except is
+    defensive against an unexpected attribute-shape drift, not a feature gate.
+    Shape: [{name, description}, ...]."""
+    getter = getattr(session, "pipeline_registry", None)
+    if getter is None:
+        return []
+    try:
+        return [{"name": name, "description": desc} for name, desc in getter.entries()]
+    except Exception:  # noqa: BLE001
+        logger.warning("pipeline_registry.entries() raised; pipe panel degraded to []", exc_info=True)
+        return []
+
+
 def _snapshot(registry, task_cache=None, config=None):
     """Read live status values off the attached session via sync accessors."""
     s = registry.attached_session()
@@ -516,10 +580,14 @@ def _snapshot(registry, task_cache=None, config=None):
         "cron_jobs": _extract_cron_jobs(config) if config is not None else [],
         "mcp_servers": _extract_mcp_servers(config) if config is not None else [],
         "hooks": _extract_hooks(config) if config is not None else [],
+        "skills": _extract_skills(config) if config is not None else [],
         # #2285: session-scoped capability visibility + hook applicability toggles.
         # Populated once e2e lands the backend; graceful fallback to [] until then.
         "visibility_items": _session_visibility_items(s),
         "hook_items": _session_hook_items(s),
+        # Always available (Session owns a PipelineRegistry from __init__) —
+        # not a "not wired yet" seam like the two lines above.
+        "pipelines": _session_pipelines(s),
     }
 
 
@@ -542,11 +610,19 @@ async def run_inline_input(registry, renderer, config=None) -> None:
         multiline=False, history=history,
         completer=_SLASH_COMPLETER, complete_while_typing=True,
     )
-    # sel: which chip; open: detail/picker shown. The dropdown's selectable
-    # cursor lives in `menu_region` (the below-input Region hosting the opened
-    # chip's element), not here — the same selection mechanism as the above-input
-    # region (interventions / the /rewind picker), unified in F5.
-    menu = {"sel": 0, "open": False}
+    # sel: which main chip; open: its detail/picker shown. The dropdown's
+    # selectable cursor lives in `menu_region` (the below-input Region hosting
+    # the opened chip's element), not here — the same selection mechanism as
+    # the above-input region (interventions / the /rewind picker), unified in F5.
+    #
+    # The "…" ("more") chip is a special 2-level case: opening it (open=True)
+    # shows a SUB-status-bar row (_MORE_SUB_CHIP_SPECS: tool/mcp/skill/pipe/
+    # hook/cron) instead of a menu_region dropdown directly. sub_sel is which
+    # sub-chip is highlighted; cat_open is whether THAT sub-chip's own
+    # menu_region dropdown is showing (level 2). For every other main chip,
+    # sub_sel/cat_open are unused — open=True goes straight to its dropdown,
+    # unchanged from before this 2-level "more" redesign.
+    menu = {"sel": 0, "open": False, "sub_sel": 0, "cat_open": False}
     # Async-polled task cache: updated every ~1 s by _task_poll; read by
     # _snapshot so the status bar and dropdown reflect live active tasks.
     task_cache: dict = {"tree": [], "count": 0}
@@ -569,6 +645,25 @@ async def run_inline_input(registry, renderer, config=None) -> None:
     # What the region is currently showing: "iv:<id>" (intervention) or
     # "cmd:<id>" (command-UI) or None. Lets the poll skip rebuilding each tick.
     region_holder: dict = {"key": None}
+
+    def _current_spec() -> ChipSpec:
+        return _CHIP_SPECS[menu["sel"]]
+
+    def _is_more() -> bool:
+        return _current_spec().key == "more"
+
+    def _sub_bar_visible() -> bool:
+        # The "more" chip's level-1 sub-bar shows once open, until its own
+        # category (level 2) is opened.
+        return menu["open"] and _is_more() and not menu["cat_open"]
+
+    def _dropdown_visible() -> bool:
+        # Whether menu_region/dropdown should currently render: every other
+        # chip shows it as soon as it's open (unchanged); "more" only shows it
+        # once a sub-bar category has been entered (cat_open).
+        if not menu["open"]:
+            return False
+        return menu["cat_open"] if _is_more() else True
 
     def _working_frags() -> list:
         wf = getattr(renderer, "working_frags", None)
@@ -615,6 +710,10 @@ async def run_inline_input(registry, renderer, config=None) -> None:
                 get_app().layout.has_focus(above_region_win),
                 region_holder["key"],
             )
+        elif _is_more() and menu["open"]:
+            # Detailed navigation hint lives on the sub-bar row itself
+            # (sub_status_fragments) — the main bar just shows a generic close.
+            hint = "  [esc / ↑ close]"
         elif menu["open"] and menu_region.cursor_on_selectable:
             hint = "  [↑↓ select · enter switch · esc close]"
         elif menu["open"]:
@@ -626,6 +725,41 @@ async def run_inline_input(registry, renderer, config=None) -> None:
 
     status_win = Window(
         FormattedTextControl(status_fragments, focusable=True), height=1
+    )
+
+    def sub_status_fragments() -> list:
+        # The "more" chip's level-1 sub-bar: tool/mcp/skill/pipe/hook/cron.
+        # Same rendering shape as status_fragments, one level down. Stays
+        # visible (as a breadcrumb) even while a sub-chip's own category
+        # dropdown (level 2) is open below it.
+        snap = _snapshot(registry, task_cache, config)
+        if snap is None:
+            return []
+        frags: list = []
+        for i, spec in enumerate(_MORE_SUB_CHIP_SPECS):
+            val = spec.value(snap)
+            selected = i == menu["sub_sel"]
+            if selected:
+                mark = " ▾" if menu["cat_open"] else ""
+                frags.append((f"fg:#0d0f12 bg:{_CC_ACCENT} bold", f" {spec.label} {val}{mark} "))
+            else:
+                frags.append((f"fg:{_CC_DIM}", f" {spec.label} "))
+                frags.append((f"fg:{spec.value_color} bold", val))
+                frags.append((f"fg:{_CC_DIM}", " "))
+            if i < len(_MORE_SUB_CHIP_SPECS) - 1:
+                frags.append((f"fg:{_CC_DIM}", "│"))
+        if menu["cat_open"] and menu_region.cursor_on_selectable:
+            hint = "  [↑↓ select · enter toggle · esc back]"
+        elif menu["cat_open"]:
+            hint = "  [esc / ↑ back]"
+        else:
+            hint = "  [←→ select · enter open · esc back]"
+        frags.append((f"fg:{_CC_DIM}", hint))
+        return frags
+
+    sub_status_win = ConditionalContainer(
+        Window(FormattedTextControl(sub_status_fragments), height=1),
+        filter=Condition(lambda: menu["open"] and _is_more()),
     )
 
     def dropdown_frags() -> list:
@@ -668,7 +802,7 @@ async def run_inline_input(registry, renderer, config=None) -> None:
     dropdown = ConditionalContainer(
         Window(FormattedTextControl(dropdown_frags), height=dropdown_height),
         filter=Condition(
-            lambda: menu["open"] and get_app().layout.has_focus(status_win)
+            lambda: _dropdown_visible() and get_app().layout.has_focus(status_win)
         ),
     )
 
@@ -747,61 +881,100 @@ async def run_inline_input(registry, renderer, config=None) -> None:
             event.app.layout.focus(status_win)
 
     def _actionable_open() -> bool:
-        # Open AND the opened chip's element is the selectable model picker (a
+        # Dropdown showing AND the opened element is a selectable picker (a
         # CommandUIElement). Check the live menu_region cursor state — a selectable
         # element (CommandUIElement with classes) reports True; a read-only
         # DetailElement always reports False.
-        return menu["open"] and menu_region.cursor_on_selectable
+        return _dropdown_visible() and menu_region.cursor_on_selectable
 
     def _menu_submit(text: str) -> None:
-        # A picker row was selected → close the menu and run /model <class> via the
-        # normal slash path (cost-warn confirm + budget rebuild reused).
-        _menu_close()
+        # A picker row was selected → close the menu and run /model or
+        # /visibility or /hook via the normal slash path (cost-warn confirm +
+        # budget rebuild reused). For "more"'s categories this closes back to
+        # the sub-bar (cat_close), not all the way to the main bar — matches
+        # every other picker staying open at its OWN level after a submit for
+        # non-"more" chips (menu["open"] stays True; only menu_region clears).
+        if _is_more():
+            _cat_close()
+        else:
+            _menu_close()
         app.create_background_task(_submit(registry, text))
 
-    def _menu_open() -> None:
-        # Build the opened chip's element(s) fresh and host them in menu_region.
-        # Expansion functions may return a single element (model / agent / …) or a
-        # list of mixed elements (_more_expansion: DetailElement headers +
-        # CommandUIElement toggle rows). Both paths are supported.
-        spec = _CHIP_SPECS[menu["sel"]]
+    def _fill_menu_region(expansion, snap, *, live_task: bool = False) -> None:
+        """Build one chip/category's element(s) fresh and host them in
+        menu_region. Expansion functions may return a single element (model /
+        agent / a category / …) or a list of mixed elements (multiple
+        DetailElement / CommandUIElement rows). Both paths are supported.
+
+        ``live_task=True`` (task chip only): snap["task_tree"] is frozen at
+        open time but task_cache updates every second (_task_poll) — swap in
+        a live-reading provider so the dropdown reflects task state changes
+        while it stays open, BEFORE registering (not after — a post-hoc
+        re-register would double the work for no benefit)."""
         menu_region.clear()
+        if expansion is None or snap is None:
+            return
+        result = expansion(snap, _menu_submit)
+        if live_task and isinstance(result, DetailElement):
+            _tc = task_cache
+            def _live_tasks() -> list[str]:
+                return _task_rows(_tc.get("tree") or [], 0) or ["(no active tasks)"]
+            result = DetailElement(_live_tasks)
+        if isinstance(result, list):
+            for el in result:
+                menu_region.register(el)
+        else:
+            menu_region.register(result)
+
+    def _menu_open() -> None:
+        # Enter the selected MAIN chip. "more" enters its level-1 sub-bar
+        # (no menu_region content yet — that's _cat_open, one level down);
+        # every other chip goes straight to its dropdown, unchanged.
+        spec = _current_spec()
+        if spec.key == "more":
+            menu["open"] = True
+            menu["cat_open"] = False
+            return
         snap = _snapshot(registry, task_cache, config)
-        if spec.expansion is not None and snap is not None:
-            result = spec.expansion(snap, _menu_submit)
-            # Task chip: snap["task_tree"] is frozen at open time but task_cache
-            # updates every second (_task_poll). Swap in a live-reading provider
-            # so the dropdown reflects task state changes while it stays open.
-            if spec.key == "task" and isinstance(result, DetailElement):
-                _tc = task_cache
-                def _live_tasks() -> list[str]:
-                    return _task_rows(_tc.get("tree") or [], 0) or ["(no active tasks)"]
-                result = DetailElement(_live_tasks)
-            if isinstance(result, list):
-                for el in result:
-                    menu_region.register(el)
-            else:
-                menu_region.register(result)
+        _fill_menu_region(spec.expansion, snap, live_task=(spec.key == "task"))
         menu["open"] = True
 
     def _menu_close() -> None:
+        # Fully closes back to the main bar — used by the non-"more" chips'
+        # existing close path and by Esc from the "more" sub-bar (level 1).
         menu["open"] = False
+        menu["cat_open"] = False
+        menu_region.clear()
+
+    def _cat_open() -> None:
+        # Enter the selected SUB-chip's category (level 2) — "more" only.
+        spec = _MORE_SUB_CHIP_SPECS[menu["sub_sel"]]
+        snap = _snapshot(registry, task_cache, config)
+        _fill_menu_region(spec.expansion, snap)
+        menu["cat_open"] = True
+
+    def _cat_close() -> None:
+        # Close the category dropdown back to the sub-bar — "more" only;
+        # menu["open"] stays True (still showing the sub-bar).
+        menu["cat_open"] = False
         menu_region.clear()
 
     @kb.add("up", filter=has_focus(status_win))
     def _menu_up(event) -> None:
-        # In an open picker, ↑ moves the cursor up; at the top row it closes. A
-        # read-only panel has no cursor, so ↑ simply closes it.
+        # In an open picker, ↑ moves the cursor up; at the top row it closes
+        # one level. A read-only panel has no cursor, so ↑ closes immediately.
         if _actionable_open() and not menu_region.at_first_selectable:
             menu_region.navigate(-1)
-        elif menu["open"]:
-            # dropdown is open but not navigable (at top / read-only): close it
-            # and return to input — don't also navigate history since the user
-            # was browsing a dropdown, not requesting history recall.
-            _menu_close()
-            event.app.layout.focus(input_win)
+        elif _dropdown_visible():
+            if _is_more():
+                _cat_close()  # back to the sub-bar, still in status_win
+            else:
+                _menu_close()
+                event.app.layout.focus(input_win)
+        elif _sub_bar_visible():
+            _menu_close()  # back to the main bar, still in status_win
         else:
-            # No dropdown open — user is browsing chips in the status bar.
+            # Nothing open — user is browsing chips in the status bar.
             # ↑ returns to input AND navigates one step back in history so the
             # experience feels like a single "go up" rather than two keypresses.
             event.app.layout.focus(input_win)
@@ -814,30 +987,46 @@ async def run_inline_input(registry, renderer, config=None) -> None:
 
     @kb.add("escape", filter=has_focus(status_win))
     def _menu_esc(event) -> None:
-        if menu["open"]:
+        if _dropdown_visible():
+            if _is_more():
+                _cat_close()
+                return
             _menu_close()
+        elif _sub_bar_visible():
+            _menu_close()
+            return
         event.app.layout.focus(input_win)
 
     @kb.add("left", filter=has_focus(status_win))
     def _menu_left(event) -> None:
-        if not menu["open"]:
+        if _sub_bar_visible():
+            menu["sub_sel"] = (menu["sub_sel"] - 1) % len(_MORE_SUB_CHIP_SPECS)
+        elif not menu["open"]:
             menu["sel"] = (menu["sel"] - 1) % len(_CHIP_SPECS)
 
     @kb.add("right", filter=has_focus(status_win))
     def _menu_right(event) -> None:
-        if not menu["open"]:
+        if _sub_bar_visible():
+            menu["sub_sel"] = (menu["sub_sel"] + 1) % len(_MORE_SUB_CHIP_SPECS)
+        elif not menu["open"]:
             menu["sel"] = (menu["sel"] + 1) % len(_CHIP_SPECS)
 
     @kb.add("enter", filter=has_focus(status_win))
     def _menu_enter(event) -> None:
-        # Read-only chip: enter toggles the detail panel. Actionable picker: when
-        # open, enter applies the cursor row (region.select → on_submit → /model
-        # via the slash path); when closed, it opens the dropdown.
+        # Read-only chip/category: enter toggles the detail panel closed.
+        # Actionable picker: when open, enter applies the cursor row
+        # (region.select → on_submit → /model or /visibility or /hook via the
+        # slash path); when closed, it opens the next level down.
         if _actionable_open():
             menu_region.select()
-        elif menu["open"]:
-            _menu_close()
-            event.app.layout.focus(input_win)
+        elif _dropdown_visible():
+            if _is_more():
+                _cat_close()
+            else:
+                _menu_close()
+                event.app.layout.focus(input_win)
+        elif _sub_bar_visible():
+            _cat_open()
         else:
             _menu_open()
 
@@ -957,7 +1146,7 @@ async def run_inline_input(registry, renderer, config=None) -> None:
 
     body = HSplit(
         [working, above_region_box, top_rule, inputrow, bottom_rule, status_win,
-         dropdown]
+         sub_status_win, dropdown]
     )
     # FloatContainer so the slash-command completions menu can float at the cursor
     # (typing `/` opens it; ↑↓ navigate, Tab/Enter accept — see _SlashCompleter).
