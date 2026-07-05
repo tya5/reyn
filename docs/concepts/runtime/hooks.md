@@ -6,8 +6,8 @@ audience: [human, agent]
 
 # Agent lifecycle hooks
 
-Hooks are a thin operator- and skill-scoped layer that lets you inject context,
-trigger self-continuation, or run a sandboxed side-effect at any of the eight
+Hooks are a thin operator-scoped layer that lets you inject context,
+trigger self-continuation, or run a sandboxed side-effect at any of the six
 lifecycle points in a reyn session.
 
 They are built on two mechanisms that already exist: the **unified inbox** (the
@@ -17,13 +17,12 @@ OS change (P7).
 
 ## Lifecycle points
 
-Hooks fire at eight points, one for each combination of scope and direction:
+Hooks fire at six points, one for each combination of scope and direction:
 
 | Scope   | `_start` | `_end` |
 |---------|----------|--------|
 | session | `session_start` | `session_end` |
 | turn    | `turn_start` | `turn_end` |
-| skill   | `skill_start` | `skill_end` |
 | task    | `task_start` | `task_end` |
 
 Every point is an **awaited dispatch**: the hook completes (shell exits, push is
@@ -34,12 +33,9 @@ the first turn begins.
 Implementation anchors:
 
 - `turn_end` fires at the terminal `stop_reason`
-- `skill_start` / `skill_end` fire at `SkillRegistry.start()` / `.complete()`
 - `task_start` fires at the `_create` Control IR op; `task_end` fires at
   `_update_status` (status → completed) AND at `_abort` (status → aborted) —
   every task that starts is guaranteed a matching `task_end` regardless of how it terminates
-- `skill_end` currently fires only on clean completion — interrupt and error are
-  deferred to [#2068](https://github.com/tya5/reyn/issues/2068)
 
 ## Three config schemes
 
@@ -229,10 +225,7 @@ The following capabilities are designed but not yet implemented:
   session's inbox is not yet wired; today a push always lands in the current
   session.
 - **Agent-level and phase-level hooks** — fine-grained points inside a turn
-  (rare use cases; session/turn/skill/task covers the common ones).
-- **`skill_end` on interrupt or error** — `skill_end` currently fires on clean
-  completion only. Error and interrupt paths are tracked in
-  [#2068](https://github.com/tya5/reyn/issues/2068).
+  (rare use cases; session/turn/task covers the common ones).
 
 ## See also
 
