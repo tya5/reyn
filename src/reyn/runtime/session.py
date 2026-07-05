@@ -1075,11 +1075,22 @@ class Session:
         # connection's receive loop enqueues an external event, long after __init__ has
         # finished. ``self.agent_name`` IS already resolvable here (``self._agent`` is
         # set earlier in this __init__), so it's passed eagerly (not deferred).
+        # #2597 slice ③ (elicitation): SAME consent_bus/consent_gate split
+        # #2095's shell-hook consent already uses (see the HookDispatcher
+        # construction above) — a server->client elicitation is routed
+        # through THIS session's RequestBus ONLY when a live intervention
+        # listener is attached; headless (no listener) auto-declines inside
+        # the handler (reyn.mcp.elicitation), never here. ``as_request_bus()``
+        # is safe to call eagerly here (unlike the deferred lambdas above) —
+        # it just wraps ``self`` in an adapter, no attribute it reads is
+        # constructed later in this __init__.
         from reyn.mcp.connection_service import MCPConnectionService
         self._mcp_connection_service = MCPConnectionService(
             emit_sink=lambda et, **d: self._chat_events.emit(et, **d),
             tools_cache_invalidate=lambda server: self._router_host.invalidate_mcp_tools_cache(server),
             hook_trigger=lambda point, template_vars: self._hook_dispatcher.dispatch(point, template_vars),
+            elicitation_bus=self.as_request_bus(),
+            elicitation_gate=lambda: self._interventions.has_active_listener(),
             agent_name=self.agent_name,
         )
         self.output_language = output_language

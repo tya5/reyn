@@ -40,6 +40,16 @@ Capability / version gate (#2597 capability slice):
   exposes the raw protocol version string for callers/later slices to
   branch on — this slice deliberately does not build a version-semantics
   matrix, just makes the version + capabilities readable and gated.
+
+Elicitation (#2597 slice ③ — server->client ``elicitation/create``):
+  an optional ``elicitation_handler`` (constructor kwarg, same shape as
+  ``message_handler``) is forwarded verbatim to ``fastmcp.Client(...,
+  elicitation_handler=...)`` — passing ANY non-None handler is itself what
+  makes FastMCP declare the ``elicitation`` client capability during the
+  initialize handshake. See :mod:`reyn.mcp.elicitation` for the handler
+  that routes a server's structured question through reyn's consent path
+  (:class:`~reyn.mcp.connection_service.MCPConnectionService` builds one per
+  held connection); this module only plumbs the constructor kwarg through.
 """
 from __future__ import annotations
 
@@ -226,6 +236,7 @@ class MCPClient:
         *,
         agent_id: str | None = None,
         message_handler: Any = None,
+        elicitation_handler: Any = None,
         server_name: str | None = None,
     ) -> None:
         if not isinstance(config, dict):
@@ -259,6 +270,15 @@ class MCPClient:
         # behaviour change for callers that don't pass one (e.g. the ephemeral
         # per-call MCPClientPool path never installs a handler).
         self._message_handler: Any = message_handler
+        # #2597 slice ③: optional FastMCP ``ElicitationHandler`` (see
+        # ``reyn.mcp.elicitation.build_elicitation_handler``) — routes a
+        # server->client ``elicitation/create`` request through reyn's
+        # consent path. Passing ANY non-None handler to ``fastmcp.Client``
+        # is itself what causes FastMCP to declare the ``elicitation`` client
+        # capability during the initialize handshake (D6 — held connections
+        # always install one; the ephemeral per-call ``MCPClientPool`` path
+        # never does, same None-default no-op pattern as ``message_handler``).
+        self._elicitation_handler: Any = elicitation_handler
         self._client: Any = None  # fastmcp.Client when initialized
         self._initialized = False
         # Captures subprocess stderr for stdio transport so initialize
@@ -378,6 +398,10 @@ class MCPClient:
             # binding") for why that two-step is necessary.
             if self._message_handler is not None:
                 client_kwargs["message_handler"] = self._message_handler
+            # #2597 slice ③: same constructor-kwarg contract as message_handler —
+            # FastMCP's ``Client(transport, elicitation_handler=...)``.
+            if self._elicitation_handler is not None:
+                client_kwargs["elicitation_handler"] = self._elicitation_handler
             client = FastMCPClient(transport, **client_kwargs)
             if self._message_handler is not None:
                 self._message_handler.bind_client(client)
