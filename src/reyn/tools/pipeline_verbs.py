@@ -85,9 +85,13 @@ before ``run_pipeline_attached`` / ``start_pipeline_run`` is called).
     to the driver_sid's events for the run's duration. The async handlers
     (``_handle_run_pipeline_async`` / ``_handle_run_pipeline_inline_async``) have
     no attached live viewer and never pass these — no marker.
-    Ctrl-C (``Session.cancel_inflight`` → the driver's ``request_cancel``) stops
-    the run cooperatively at the next step BOUNDARY, leaving a resumable R4
-    journal under a terminal ``cancelled`` marker.
+    Ctrl-C stops the run cooperatively at the next step BOUNDARY, leaving a
+    resumable R4 journal under a terminal ``cancelled`` marker. #2588: the
+    Ctrl-C hits ``cancel_inflight`` on the ATTACHED CALLER session, not the
+    spawned driver-session; ``run_pipeline_attached`` bridges it by registering
+    the driver's ``request_cancel`` as a cancel-forward on the caller for the
+    attached run's duration (``Session.register_cancel_forward``), so the
+    caller's Ctrl-C reaches the driver's step-boundary ``cancel_check``.
   - **Real tool-step dispatch, not a stub.** A pipeline ``ToolStep``'s
     ``tool_dispatch`` is wired through the SAME routing seam
     ``invoke_action`` uses (``universal_dispatch.resolve_invoke_action`` +

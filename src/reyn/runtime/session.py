@@ -1778,6 +1778,17 @@ class Session:
             )
         )
 
+        # #2588: additional cancel-forward targets. ``cancel_inflight`` always
+        # cancels this session's OWN ``_loop_driver`` (the turn); it ALSO fires
+        # ``request_cancel`` on every callable registered here. Populated only
+        # transiently — e.g. ``run_pipeline_attached`` registers the spawned
+        # pipeline driver-session's ``request_cancel`` for the duration of a sync
+        # attached run so a Ctrl-C on THIS (the attached caller) session reaches
+        # the driver-session's cooperative cancel flag (the executor's
+        # step-boundary ``cancel_check``). Empty for every ordinary turn, so the
+        # normal turn-cancel path is byte-identical when nothing is registered.
+        self._cancel_forward_targets: list[Callable[[], None]] = []
+
         # session.py refactor PR-4 (FP-0019 series final): ChainTimeoutGlue owns
         # chain timeout lifecycle.
         from reyn.runtime.services.chain_timeout_glue import ChainTimeoutGlue
@@ -2125,9 +2136,40 @@ class Session:
         already in flight completes before the cancel takes effect (subprocess
         kill is a follow-up scope). Any spawned tasks are cancelled immediately
         via asyncio task cancellation (existing behaviour, preserved here).
+
+        #2588: after cancelling this session's own turn, forward the cancel to
+        every registered cancel-forward target (see ``register_cancel_forward``).
+        No-op for an ordinary turn (the list is empty), so the normal turn-cancel
+        path is unchanged; the one live user is ``run_pipeline_attached``, which
+        registers the spawned pipeline driver-session's ``request_cancel`` for the
+        duration of a sync attached run so a Ctrl-C here reaches the driver.
         """
         self._loop_driver.request_cancel()
+        for forward in list(self._cancel_forward_targets):
+            forward()
         return "✗ cancelled turn"
+
+    def register_cancel_forward(self, forward: "Callable[[], None]") -> "Callable[[], None]":
+        """#2588: register ``forward`` to also fire on the next ``cancel_inflight``.
+
+        Returns an idempotent unregister closure — the caller MUST invoke it
+        (try/finally) when the forward is no longer relevant so it does not leak
+        past its window. Used by ``run_pipeline_attached``: while the caller is
+        attached-and-pumping a spawned pipeline driver-session, register that
+        driver's ``request_cancel`` so a Ctrl-C on THIS (the attached caller)
+        session — which only cancels THIS session's own ``_loop_driver`` — also
+        reaches the driver-session's cooperative cancel flag (the executor polls
+        it at each step boundary). Unregistered when the attached run ends, so
+        the bridge never fires for a later, unrelated turn."""
+        self._cancel_forward_targets.append(forward)
+
+        def _unregister() -> None:
+            try:
+                self._cancel_forward_targets.remove(forward)
+            except ValueError:
+                pass  # already removed — idempotent
+
+        return _unregister
 
     async def await_quiescent(self) -> None:
         """Block until every append-capable task has settled (ADR-0038 Stage 1c).
