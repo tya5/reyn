@@ -18,7 +18,11 @@ Tier 2 (OS invariant): a REAL ``watchdog`` ``Observer`` + REAL file writes
   modify fires with correct path + event_type; a burst of writes to one path
   debounces to ONE fire; a path NOT under a watched dir never fires; empty
   ``paths`` config -> the watcher never starts (byte-identical to pre-H4);
-  ``watchdog`` not importable -> warn + no-op (never raises).
+  ``watchdog`` not importable -> warn + no-op (never raises); (#2623) a
+  ``fs_watch.paths`` entry given via a SYMLINK reports events with the path
+  rewritten back onto the operator's configured (symlink) prefix, so a
+  ``matcher: {path: <configured>}`` glob still matches — closing the macOS
+  ``/tmp`` -> ``/private/tmp`` footgun.
 
 Policy (docs/deep-dives/contributing/testing.md): real instances only — no
 ``unittest.mock``/``MagicMock``/``AsyncMock``/``patch``. ``pytest.importorskip``
@@ -27,6 +31,7 @@ guards every test that needs a real ``watchdog`` Observer.
 from __future__ import annotations
 
 import asyncio
+import os
 import time
 from pathlib import Path
 
@@ -158,6 +163,49 @@ async def test_real_file_write_fires_hook_with_path_and_event_type(tmp_path):
         assert template_vars["point"] == "file_changed"
         assert Path(template_vars["path"]) == target
         assert template_vars["event_type"] in ("created", "modified")
+    finally:
+        await watcher.aclose()
+
+
+@pytest.mark.asyncio
+async def test_symlinked_watch_path_reports_events_under_the_configured_prefix(tmp_path):
+    """Tier 2: (#2623) the macOS ``/tmp`` -> ``/private/tmp`` footgun, reproduced
+    with a real symlink (not OS-specific — this works the same on Linux). A
+    ``fs_watch.paths`` entry given via a symlink (mirroring an operator writing
+    ``paths: ['/tmp/x']`` on macOS) must report the fired event's ``path`` under
+    the CONFIGURED (symlink) prefix, not the OS-resolved realpath — so a naive
+    ``matcher: {path: '<configured>/**'}`` glob (evaluated against the
+    configured prefix an operator actually wrote) matches, instead of silently
+    never firing because the reported path secretly points at the resolved
+    target directory."""
+    real_dir = tmp_path / "real_target"
+    real_dir.mkdir()
+    symlink_dir = tmp_path / "watched_via_symlink"
+    os.symlink(real_dir, symlink_dir)
+    configured_path = str(symlink_dir)
+
+    trigger = _Recorder()
+    watcher = FsWatcher(paths=[configured_path], hook_trigger=trigger, debounce_seconds=0.05)
+    try:
+        await watcher.start()
+        assert watcher.is_started()
+
+        target = symlink_dir / "a.txt"
+        target.write_text("hello")
+
+        await _wait_for(lambda: len(trigger.calls) >= 1)
+        (point, template_vars) = trigger.calls[0]
+        assert point == "file_changed"
+        # The reported path must be reachable under the OPERATOR'S configured
+        # (symlink) prefix — not silently swapped for the OS-resolved realpath.
+        reported_path = template_vars["path"]
+        assert reported_path.startswith(configured_path), (
+            f"expected {reported_path!r} to start with the configured prefix "
+            f"{configured_path!r} — the #2623 symlink-normalization contract"
+        )
+        # The load-bearing consumer-facing proof: a matcher glob written
+        # against the operator's CONFIGURED path actually matches the event.
+        assert matches({"path": f"{configured_path}/**"}, template_vars) is True
     finally:
         await watcher.aclose()
 

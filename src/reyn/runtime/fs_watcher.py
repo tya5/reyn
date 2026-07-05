@@ -22,6 +22,24 @@ docs. That scheduled callable does the actual (loop-thread-only) bounded
 bound+drop+log discipline (``_QUEUE_MAXSIZE``, overflow drops the newest event
 + logs, never grows unboundedly, never blocks the watchdog thread).
 
+Path normalization (#2623): on macOS ``/tmp`` is a symlink to ``/private/tmp``
+(same class of footgun exists anywhere an operator's configured
+``fs_watch.paths`` entry traverses a symlink). ``watchdog``'s OS backend
+(fsevents on macOS) reports the RESOLVED path in every fired event regardless
+of which path string ``Observer.schedule`` was given — so a naive matcher
+written against the operator's CONFIGURED path (e.g. ``matcher: {path:
+'/tmp/x/**'}``) silently never matches an event path of
+``/private/tmp/x/...``. Fixed at registration (:meth:`FsWatcher.start`): for
+each configured path whose ``os.path.realpath`` differs from its own
+(normalized) form, a resolved-path -> configured-path REWRITE is recorded
+(:attr:`_path_rewrites`). Every fired event's path is rewritten back onto the
+operator's configured prefix (:meth:`_rewrite_path`) before it ever reaches
+``hook_trigger`` — so ``matcher: {path: <the path the operator wrote in
+fs_watch.paths>}`` Just Works, and the ``file_changed`` event's ``path``
+template var is exactly the configured path (not a resolved alias of it) for
+any file under it. A path with no symlink component is unaffected
+(rewrite is a no-op — ``resolved == configured`` and no entry is added).
+
 Debounce (F7-3): editors emit event BURSTS for one logical change (temp files,
 multiple writes, create-then-modify). Coalesced per-path on the watchdog
 thread with a simple leading-edge scheme: :meth:`_FsEventHandler._maybe_fire`
@@ -61,6 +79,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import time
 from typing import TYPE_CHECKING, Any, Awaitable, Callable
 
@@ -126,6 +145,9 @@ class FsWatcher:
         self._queue: "asyncio.Queue[tuple[str, str]] | None" = None
         self._drain_task: "asyncio.Task | None" = None
         self._started = False
+        # #2623: resolved-symlink-path -> operator-configured-path rewrites,
+        # built in :meth:`start` — see module docstring "Path normalization".
+        self._path_rewrites: "list[tuple[str, str]]" = []
 
     def is_started(self) -> bool:
         """Read-only introspection for callers/tests — mirrors
@@ -162,6 +184,19 @@ class FsWatcher:
         self._queue = asyncio.Queue(maxsize=_QUEUE_MAXSIZE)
         self._drain_task = asyncio.create_task(self._drain_events())
 
+        # #2623: build the resolved->configured path rewrite table BEFORE
+        # scheduling — the OS backend (fsevents on macOS, symlink-transparent
+        # on Linux too) reports events at the REALPATH regardless of which
+        # path string we hand ``observer.schedule``, so every reported event
+        # path needs rewriting back onto what the operator actually wrote in
+        # ``fs_watch.paths`` for a ``matcher: {path: <configured>}`` to match.
+        self._path_rewrites = []
+        for configured in self._paths:
+            resolved = os.path.realpath(configured)
+            normalized_configured = os.path.normpath(configured)
+            if resolved != normalized_configured:
+                self._path_rewrites.append((resolved, normalized_configured))
+
         handler = _build_handler(FileSystemEventHandler, self)
         observer = Observer()
         for path in self._paths:
@@ -169,6 +204,20 @@ class FsWatcher:
         observer.start()
         self._observer = observer
         self._started = True
+
+    def _rewrite_path(self, path: str) -> str:
+        """#2623: rewrite a fired event's (possibly symlink-resolved) path back
+        onto the operator's configured ``fs_watch.paths`` prefix, so
+        ``matcher: {path: <configured>}`` matches regardless of a
+        macOS-``/tmp``-style symlink in the watched path. A path with no
+        matching resolved-prefix (no symlink was involved) passes through
+        unchanged."""
+        for resolved, configured in self._path_rewrites:
+            if path == resolved:
+                return configured
+            if path.startswith(resolved + os.sep):
+                return configured + path[len(resolved):]
+        return path
 
     # ── thread->async bridge (called from the watchdog OS thread) ──────────
 
@@ -181,6 +230,12 @@ class FsWatcher:
         loop = self._loop
         if loop is None:
             return  # stopped/never started — defensive, should not happen mid-callback
+        # #2623: rewrite the (possibly symlink-resolved) path back onto the
+        # operator's configured prefix BEFORE it ever reaches hook_trigger —
+        # _path_rewrites is built once in start() (loop thread) before the
+        # observer thread is started, so this read-only lookup from the
+        # watchdog thread is race-free (no further writes after start()).
+        path = self._rewrite_path(path)
         try:
             loop.call_soon_threadsafe(self._enqueue, event_type, path)
         except RuntimeError:
