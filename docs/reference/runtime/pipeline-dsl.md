@@ -2,7 +2,7 @@
 type: reference
 topic: runtime
 audience: [human, agent]
-search_hints: [pipeline DSL, pipeline grammar, EBNF, formal grammar, agent generation grammar, transform step, tool step, agent step, call step, match step, fold step, for_each step, parallel step, expr, R1 expression, verify schema, run_pipeline, run_pipeline_async, run_pipeline_inline, safety.spawn.max_pipeline_fan_out_depth, safety.spawn.max_pipeline_spawns]
+search_hints: [pipeline DSL, pipeline grammar, EBNF, formal grammar, agent generation grammar, transform step, tool step, agent step, call step, match step, fold step, for_each step, parallel step, expr, R1 expression, verify schema, run_pipeline, run_pipeline_async, run_pipeline_inline, safety.spawn.max_pipeline_fan_out_depth, safety.spawn.max_pipeline_spawns, parse_json]
 ---
 
 # Pipeline DSL reference
@@ -499,6 +499,7 @@ combinator     ::= "map" "(" expr "," lambda ")"
                   | "sum" "(" expr ")"
                   | "join" "(" expr "," expr ")"
                   | "get" "(" expr "," STRING ("," expr)? ")"
+                  | "parse_json" "(" expr ")"
 lambda         ::= IDENT "->" expr        (* only valid as a combinator's own argument *)
 path           ::= IDENT ("." IDENT)*
 cmp_op         ::= "==" | "!=" | "<" | ">" | "<=" | ">="
@@ -530,6 +531,7 @@ set:
 | `sum` | `sum(list)` | Numeric sum. |
 | `join` | `join(list, sep)` | String-join. |
 | `get` | `get(base, "dotted.path", default?)` | **Safe** navigation — unlike a bare `Path`, never raises on a missing path; returns `default` (or `null`) instead. |
+| `parse_json` | `parse_json(string)` | Decode a JSON string into its value (object/array/string/number/bool/null). Raises if the argument is not a string or is not valid JSON — there is no safe/default-returning variant. |
 
 A `lambda` (`item -> expr`) is only ever valid as the direct argument of
 `map`/`filter`/`all`/`any`/`find` — it is not a value that can be assigned or

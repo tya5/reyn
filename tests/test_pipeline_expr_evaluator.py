@@ -7,8 +7,10 @@ a pure, total, tree-walking evaluator for the expression language used by
 pin the public surface (``parse`` / ``evaluate`` / ``evaluate_expr`` /
 ``ExprEvalError`` / ``ExprParseError``): the spec's own example expressions
 must evaluate correctly, the combinator set must cover the reshape needs
-appendix A/C call out, and the totality/safety properties (no recursion, no
-calls, no IO) must hold structurally — not just as an untested claim.
+appendix A/C call out (plus ``parse_json`` for decoding a string payload — e.g.
+an MCP tool result's ``content`` field — into a structured value), and the
+totality/safety properties (no recursion, no calls, no IO) must hold
+structurally — not just as an untested claim.
 """
 from __future__ import annotations
 
@@ -132,6 +134,39 @@ def test_get_with_default_on_absent_path() -> None:
     assert evaluate_expr('get(review, "passed")', ctx) is True
     assert evaluate_expr('get(review, "missing.nested", "fallback")', ctx) == "fallback"
     assert evaluate_expr('get(review, "missing.nested")', ctx) is None
+
+
+def test_parse_json_decodes_object() -> None:
+    """Tier 1: `parse_json(string)` decodes a JSON object into a dict, including
+    nested arrays/bools/null (the R1 grammar's own literal shapes)."""
+    ctx = {"raw": '{"a": 1, "b": [true, null]}'}
+    assert evaluate_expr("parse_json(raw)", ctx) == {"a": 1, "b": [True, None]}
+
+
+def test_parse_json_decodes_array() -> None:
+    """Tier 1: `parse_json(string)` decodes a top-level JSON array into a list."""
+    assert evaluate_expr("parse_json(raw)", {"raw": "[1,2,3]"}) == [1, 2, 3]
+
+
+def test_parse_json_decodes_plain_string() -> None:
+    """Tier 1: `parse_json(string)` on JSON that is itself just a quoted string
+    decodes to that plain string (a valid, if degenerate, JSON document)."""
+    assert evaluate_expr("parse_json(raw)", {"raw": '"just a string"'}) == "just a string"
+
+
+def test_parse_json_invalid_json_raises_eval_error() -> None:
+    """Tier 1: `parse_json(string)` on malformed JSON raises `ExprEvalError` — R1's
+    only combinator error variant is raise, there is no safe/default-returning form
+    (unlike `get()`'s explicit safe-navigation design)."""
+    with pytest.raises(ExprEvalError):
+        evaluate_expr("parse_json(raw)", {"raw": "{not valid"})
+
+
+def test_parse_json_non_string_argument_raises_eval_error() -> None:
+    """Tier 1: `parse_json(expr)` on a non-string value raises `ExprEvalError`
+    rather than silently stringifying or passing the value through."""
+    with pytest.raises(ExprEvalError):
+        evaluate_expr("parse_json(n)", {"n": 42})
 
 
 # ---------------------------------------------------------------------------

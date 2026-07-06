@@ -13,6 +13,8 @@ Real `StateLog` + `SchemaRegistry` throughout — no mocks, no private-state ass
 """
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from reyn.core.events.state_log import StateLog
@@ -24,6 +26,7 @@ from reyn.core.pipeline.executor import (
     ToolStep,
     TransformStep,
 )
+from reyn.core.pipeline.parser import parse_pipeline_dsl
 from reyn.core.pipeline.schema import SchemaRegistry
 
 
@@ -65,6 +68,44 @@ async def test_linear_pipeline_threads_pipe_data_and_named_stores_via_real_evalu
         "1": "HELLO WORLD!!!",
         "2": "HELLO WORLD!!! (done)",
     }
+
+
+@pytest.mark.asyncio
+async def test_parse_json_decodes_a_tool_result_string_field_end_to_end():
+    """Tier 2: the owner use case — an MCP-style `tool` step returns a payload
+    whose `content` field is a plain TEXT string that is itself JSON-encoded
+    (see `op_runtime/mcp.py`'s `_execute` handler). A DSL string is parsed via
+    the REAL `parse_pipeline_dsl` (not `evaluate_expr` in isolation) and run
+    through the REAL `PipelineExecutor`: a `transform` step decodes that
+    string with `parse_json`, and a later step reads a field off the decoded
+    object via `ctx.<name>.<field>` — proving the full round-trip, not just
+    the isolated combinator call."""
+    dsl = """
+pipeline: mcp-parse-demo
+description: tool result content string parsed into a structured value
+steps:
+  - tool: {name: search, args: {query: "reyn"}, output: raw}
+  - transform: {value: "parse_json(ctx.raw.content)", output: parsed}
+  - transform: {value: "ctx.parsed.count + 1", output: total}
+"""
+    pipeline = parse_pipeline_dsl(dsl, SchemaRegistry())
+
+    def tool_dispatch(name: str, args: dict):
+        assert name == "search"
+        payload = {"count": 5, "items": ["a", "b"]}
+        return {"content": json.dumps(payload)}
+
+    executor = PipelineExecutor()
+    result = await executor.run(
+        pipeline,
+        {},
+        tool_dispatch=tool_dispatch,
+        state_log=None,
+        run_id="run-parse-json-e2e",
+    )
+
+    assert result.named_stores["parsed"] == {"count": 5, "items": ["a", "b"]}
+    assert result.pipe_data == 6
 
 
 @pytest.mark.asyncio

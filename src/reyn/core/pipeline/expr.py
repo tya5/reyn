@@ -11,7 +11,8 @@ trust context. This module is total by construction instead:
 
 - No recursion and no user-defined functions: the grammar has no call syntax
   beyond a fixed, closed set of combinators (``map``/``filter``/``all``/
-  ``any``/``count``/``sum``/``find``/``join``/``get``), and a ``Lambda`` node
+  ``any``/``count``/``sum``/``find``/``join``/``get``/``parse_json``), and a
+  ``Lambda`` node
   can only be produced as the direct argument of one of those combinators —
   it is never a value, so it can't be stored, named, returned, or invoked
   more than once per element.
@@ -28,6 +29,7 @@ path an expression reads (feeds the future data-flow analyzer).
 """
 from __future__ import annotations
 
+import json
 import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
@@ -129,7 +131,7 @@ class Combinator:
 ExprNode = Union[Literal, Path, ListLit, ObjectLit, Unary, Binary, Lambda, Combinator]
 
 COMBINATOR_NAMES = frozenset(
-    {"map", "filter", "all", "any", "count", "sum", "find", "join", "get"}
+    {"map", "filter", "all", "any", "count", "sum", "find", "join", "get", "parse_json"}
 )
 _LAMBDA_COMBINATORS = frozenset({"map", "filter", "all", "any", "find"})
 
@@ -403,7 +405,7 @@ class _Parser:
             self._expect("COMMA")
             lam = self._parse_lambda()
             args = [list_expr, lam]
-        elif name in ("count", "sum"):
+        elif name in ("count", "sum", "parse_json"):
             args = [self._parse_or()]
         elif name == "join":
             list_expr = self._parse_or()
@@ -704,5 +706,14 @@ def _eval_combinator(node: Combinator, context: Mapping[str, Any]) -> Any:
         parts = path_literal.value.split(".")
         default = evaluate(node.args[2], context) if len(node.args) > 2 else None
         return _resolve_path_safe(parts, base, default)
+
+    if name == "parse_json":
+        value = evaluate(node.args[0], context)
+        if not isinstance(value, str):
+            raise ExprEvalError(f"parse_json() requires a string, got {type(value).__name__}")
+        try:
+            return json.loads(value)
+        except json.JSONDecodeError as exc:
+            raise ExprEvalError(f"parse_json() failed to decode: {exc}") from exc
 
     raise ExprEvalError(f"unknown combinator {name!r}")  # pragma: no cover
