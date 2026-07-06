@@ -227,6 +227,15 @@ def run_run(args: argparse.Namespace) -> None:
 
 async def _run_scheduler() -> None:
     """Build scheduler, start jobs, block until Ctrl-C."""
+    from reyn.core.events.asyncio_diagnostics import (
+        install_asyncio_exception_handler,
+    )
+    # `reyn cron run` is a real long-running foreground process (blocks until
+    # Ctrl-C) that starts one background asyncio task per enabled job — a
+    # durable capture point for a job task that raises unnoticed. See
+    # reyn.core.events.asyncio_diagnostics.
+    install_asyncio_exception_handler(asyncio.get_running_loop())
+
     from reyn.runtime.cron import CronJob, CronScheduler
 
     job_configs = _load_jobs()

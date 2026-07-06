@@ -463,8 +463,20 @@ async def shutdown_logging() -> None:
 
 
 def run_async(coro: Coroutine[object, object, T]) -> T:
-    """`asyncio.run` plus LiteLLM logging-worker drain. See `shutdown_logging`."""
+    """`asyncio.run` plus LiteLLM logging-worker drain. See `shutdown_logging`.
+
+    This is the shared loop-owning choke point for `reyn chat` (the
+    interactive REPL / `--once` one-shot drive) and the mcp.py CLI commands
+    that build their own event loop -- installing the durable asyncio
+    unhandled-exception capture here (rather than at each call site)
+    covers all of them from one place. See
+    ``reyn.core.events.asyncio_diagnostics`` for why.
+    """
     async def _wrapped() -> T:
+        from reyn.core.events.asyncio_diagnostics import (
+            install_asyncio_exception_handler,
+        )
+        install_asyncio_exception_handler(asyncio.get_running_loop())
         try:
             return await coro
         finally:

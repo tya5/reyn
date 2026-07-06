@@ -342,8 +342,16 @@ def run_run(args: argparse.Namespace) -> None:
     if replay_dir:
         print(f"  replay mode: {replay_dir}")
 
-    result = asyncio.run(
-        run_scenario_set(
+    async def _drive() -> object:
+        # Batch driver: spins up N real agent Sessions (each with its own
+        # background tasks — hot-reload, fs-watch) on this one loop. Durable
+        # capture point for a background task that outlives its scenario.
+        # See reyn.core.events.asyncio_diagnostics.
+        from reyn.core.events.asyncio_diagnostics import (
+            install_asyncio_exception_handler,
+        )
+        install_asyncio_exception_handler(asyncio.get_running_loop())
+        return await run_scenario_set(
             scenario_set,
             run_id=getattr(args, "run_id", None),
             storage_dir=storage_dir,
@@ -354,7 +362,8 @@ def run_run(args: argparse.Namespace) -> None:
             with_interpretation=getattr(args, "with_interpretation", False),
             interpretation_model=getattr(args, "interpretation_model", None),
         )
-    )
+
+    result = asyncio.run(_drive())
 
     agg = result.aggregate()
     run_dir = storage_dir or (_runs_dir() / result.run_id)
