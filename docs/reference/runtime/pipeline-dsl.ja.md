@@ -26,8 +26,43 @@ pipeline: review_and_report
 description: Review a document and summarize the verdict.
 steps:
   - agent: {prompt: "Review {ctx.doc}. Reply with passed/notes.", schema: Review, output: review}
-  - transform: {value: "review.passed and 'OK' or 'NEEDS WORK'", output: verdict}
+  - transform: {value: "ctx.review.passed and 'OK' or 'NEEDS WORK'", output: verdict}
 ```
+
+## ステップ間のデータフロー {#data-flow-between-steps}
+
+すべてのステップの expression / テンプレートは、常にこの 2 つに対してのみ評価されます — 第三の形は無く、bare name のショートカットもありません:
+
+- **`ctx`** — 現在のスコープでこれまでに蓄積された、すべての named store をフラットな namespace として持つもの。`output: X` を宣言したステップは、それ以降のスコープ内のすべてのステップから `ctx.X` として読めるようになります — bare な `X` としてではありません。
+- **`pipe`** — 現在のスコープで直前に実行されたステップ自身の結果。名前は無く、一時的です。bare な `pipe` として読みます(`ctx.pipe` ではありません — `pipe` は named store ではなく、コンテキストのトップレベルキーです)。`output:` を宣言しないステップも、次のステップのための `pipe` data は生成します。単に永続的な名前が付かないだけです。
+
+つまり `output: X` は同時に 2 つのことを行います: 同じシーケンスの次のステップの `pipe` になる、*かつ* `ctx.X` として永続的に書き込まれ、スコープが終わるまで(下記参照)それ以降のスコープ内のすべてのステップから見えるようになります(直後のステップだけではありません)。
+
+**実例のトレース** — 3 つのステップで、各境界で `ctx` と `pipe` が何を保持しているかを正確に示します:
+
+```yaml
+steps:
+  - transform: {value: "ctx.name + '!'", output: greeting}   # ステップ 0
+  - tool: {name: shout, args: {text: !expr pipe}, output: shouted}  # ステップ 1
+  - transform: {value: "ctx.shouted + ' (done)'", output: final}   # ステップ 2
+```
+
+`ctx = {name: "Reyn"}` でシードした場合:
+
+| ステップの前 | `ctx` | `pipe` |
+|---|---|---|
+| 0 | `{name: "Reyn"}` | `null`(先行ステップ無し) |
+| 1 | `{name: "Reyn", greeting: "Reyn!"}` | `"Reyn!"`(ステップ 0 の結果) |
+| 2 | `{name: "Reyn", greeting: "Reyn!", shouted: "REYN!"}` | `"REYN!"`(ステップ 1 の結果) |
+| *(ステップ 2 の後)* | `{..., final: "REYN! (done)"}` | `"REYN! (done)"` |
+
+ステップ 1 はステップ 0 の結果を、両方とも機能する 2 通りの方法で読めます: bare な `pipe`(直前のステップ)か `ctx.greeting`(永続的な store)です — ステップ 0 の直後はどちらも同じ値を保持しますが、間に別のステップが挟まると `ctx.greeting` だけが到達可能なままです。
+
+**スコープの例外**(規範的な記述は下記の[形式文法 § 構造的な不変条件](#formal-grammar)参照):
+
+- `for_each`/`parallel` のブランチはそれぞれ、ブランチ開始時点での外側の `ctx` の**隔離されたコピー**に対して評価します — ブランチ内の書き込みが外側のスコープや sibling ブランチに漏れ出すことはありません。
+- `call`/`match` の callee の `ctx` は `pass:` に列挙された名前**のみ**から構築されます — そこに列挙されていない caller の named store は、`ctx` のショートカットであっても callee から不可視です。
+- `fold` の `do` と `for_each` の `do` は、それぞれ自身のコンテキストに `ctx`/`pipe` に加えて追加のトップレベルキー(`fold` は `item`/`acc`、`for_each` は `item`)を持ちます — 下記のそれぞれのセクション参照。
 
 ### `pipeline:` ドキュメントのキー
 
@@ -39,7 +74,7 @@ steps:
 
 `input` / `defaults` / `refine` は pipeline 設計のより完全な文法の一部ですが、まだランタイムがありません — これらを使ったドキュメントは、静かに無視されるのではなく、明示的な「まだサポートされていない」エラーで parse に失敗します。
 
-## 形式文法
+## 形式文法 {#formal-grammar}
 
 以下の EBNF は**規範的な、現行の**文法です — 初期の設計提案からではなく、`parse_pipeline_dsl`(`src/reyn/core/pipeline/parser.py`)から直接導出されています。今日パーサが受け付けるものを正確にカバーしています: これに適合する定義はクリーンに parse でき、違反は拒否されます。YAML のマッピングキーは無順序です — 以下の線形な並びは可読性のためであり、位置的な要求ではありません。`NAME` は識別子的な bare 文字列、`EXPR` は [R1 expression](#r1-expression) のソース文字列、`TPL` は `agent.prompt` のテンプレート文字列(`{ctx.dotted.path}` / `{pipe}` 補間、R1 ではない)です。
 
@@ -125,8 +160,8 @@ FieldType     ::= "{" "type:" ("bool" | "string" | "number") "}"
 
 - `call`/`match`/`fold` の `do`、`for_each` の `do`/`collect`、`parallel` の branch/`collect` は**完全にネストされた `Step`** です — どのステップ種別でもよく、別の合成プリミティブでも構いません。
 - `call`、`match` の case/`default`、`parallel` の `branches` は、いずれも**静的リテラル**の pipeline / ステップターゲットを指定します — 実行時の expression では決してありません。実行時に評価されるのは `match.on` と `for_each`/`fold` の `over` だけです。
-- `pass:` は `call`/`match` の callee のコンテキストが構築される*唯一の*チャネルです — そこに列挙されていない caller の named store は callee から不可視です。
-- `for_each`/`parallel` のブランチはそれぞれ、外側の named store の**隔離されたコピー**を受け取ります — 並行なアイテム/ブランチ間の sibling 通信はありません。
+- `pass:` は `call`/`match` の callee のコンテキストが構築される*唯一の*チャネルです — そこに列挙されていない caller の named store は callee から不可視です([ステップ間のデータフロー](#data-flow-between-steps)参照)。
+- `for_each`/`parallel` のブランチはそれぞれ、外側の named store の**隔離されたコピー**を受け取ります — 並行なアイテム/ブランチ間の sibling 通信はありません([ステップ間のデータフロー](#data-flow-between-steps)参照)。
 - `!expr` は `tool`/`shell` の引数を解決すべき expression にする*唯一の*方法です — リスト / マッピングの中にネストすると静かな no-op ではなく parse エラーになります。
 
 ## ステップ種別
@@ -135,7 +170,7 @@ FieldType     ::= "{" "type:" ("bool" | "string" | "number") "}"
 
 ### `transform`
 
-純粋なステップです: `value` は現在のコンテキストに対して [R1 expression](#r1-expression) として評価され、その結果がこのステップの pipe data になります(`output` が設定されていれば、その named store にも書き込まれます)。
+純粋なステップです: `value` は現在のコンテキスト(`ctx`/`pipe` — [ステップ間のデータフロー](#data-flow-between-steps)参照)に対して [R1 expression](#r1-expression) として評価され、その結果がこのステップの pipe data になります(`output` が設定されていれば、その named store にも書き込まれます)。
 
 ```yaml
 - transform: {value: "'Hello, ' + ctx.name + '!'", output: greeting}
@@ -184,7 +219,7 @@ FieldType     ::= "{" "type:" ("bool" | "string" | "number") "}"
 args: {query: !expr ctx.brief, limit: !expr "ctx.n + 1", label: "a plain string"}
 ```
 
-`query` と `limit` は R1 expression のソースで、実行時にステップのコンテキストに対して解決されます。`label` はリテラル文字列 `"a plain string"` です。`!expr` は引数の**値全体**としてのみ有効です — ネストしたリスト / マッピングの中に隠れていると parse エラーになるため、「たまたま expression に見えるリテラル」と「expression」の間に曖昧さはありません。
+`query` と `limit` は R1 expression のソースで、実行時にステップの `ctx`/`pipe` コンテキストに対して解決されます([ステップ間のデータフロー](#data-flow-between-steps)参照)。`label` はリテラル文字列 `"a plain string"` です。`!expr` は引数の**値全体**としてのみ有効です — ネストしたリスト / マッピングの中に隠れていると parse エラーになるため、「たまたま expression に見えるリテラル」と「expression」の間に曖昧さはありません。
 
 `transform.value` は常に R1 expression です(`transform` ステップにリテラル形式は無いため `!expr` タグは不要)。`agent` ステップの `prompt` は決して R1 expression ではありません — 下記参照。
 
@@ -232,7 +267,7 @@ callee の最初のステップは call サイトでの caller の pipe data を
 
 ```yaml
 - match:
-    on: "review.passed"
+    on: "ctx.review.passed"
     cases:
       "True": {pipeline: report_pass, pass: [review]}
       "False": {pipeline: report_fail, pass: [review]}
@@ -251,7 +286,7 @@ callee の最初のステップは call サイトでの caller の pipe data を
 
 ### `fold` — 逐次アキュムレータ
 
-リストを順に走査し、繰り返される `do` ステップを通してアキュムレータを引き継ぎます。
+リストを順に走査し、繰り返される `do` ステップを通してアキュムレータを引き継ぎます。`do` のコンテキストは、通常の `ctx`/`pipe`([ステップ間のデータフロー](#data-flow-between-steps)参照)に加えて `item` と `acc` という 2 つの追加のトップレベルキーを持ちます — 詳細は下の表を参照。
 
 ```yaml
 - fold:
@@ -275,7 +310,7 @@ callee の最初のステップは call サイトでの caller の pipe data を
 
 ### `for_each` — 並行 fan-out
 
-各リストアイテムに対して `do` を隔離された並行サブスコープとして実行し、その後 `collect` を一度だけ結果に対して実行します。
+各リストアイテムに対して `do` を隔離された並行サブスコープとして実行し、その後 `collect` を一度だけ結果に対して実行します。このセクションの `do` コンテキストが依拠する隔離ルール(各アイテムが自身の `ctx` コピーを持ち、書き込みがアイテム間や外側のスコープに漏れ出すことはない)については[ステップ間のデータフロー](#data-flow-between-steps)参照。
 
 ```yaml
 - for_each:
@@ -301,7 +336,7 @@ callee の最初のステップは call サイトでの caller の pipe data を
 
 ### `parallel` — 異種・名前付きブランチの fan-out
 
-`for_each` の異種版の兄弟です: 実行時サイズのリストに対して単一の `do` を fan-out する代わりに、`parallel` は静的で有限な、*それぞれ異なる*名前付きブランチの集合を並行に fan-out し、その後 `collect` を一度だけそれらの結果の名前付きマップに対して実行します。
+`for_each` の異種版の兄弟です: 実行時サイズのリストに対して単一の `do` を fan-out する代わりに、`parallel` は静的で有限な、*それぞれ異なる*名前付きブランチの集合を並行に fan-out し、その後 `collect` を一度だけそれらの結果の名前付きマップに対して実行します。`for_each` と同じ隔離ルールです — [ステップ間のデータフロー](#data-flow-between-steps)参照: 各ブランチは自身の `ctx` コピーを持ち、`collect` の `pipe` はどれか 1 つのブランチの結果ではなく `{branch_name: result}` マップ全体です。
 
 ```yaml
 - parallel:
@@ -309,7 +344,7 @@ callee の最初のステップは call サイトでの caller の pipe data を
     branches:
       security: {agent: {prompt: "Security-review {ctx.doc}", schema: Review}}
       style: {agent: {prompt: "Style-review {ctx.doc}", schema: Review}}
-    collect: {transform: {value: "{'security': security, 'style': style}"}}
+    collect: {transform: {value: "{security: pipe.security, style: pipe.style}"}}
     output: reviews
 ```
 
@@ -521,9 +556,9 @@ steps:
       schema: Review
       output: review
   - transform:
-      value: "review.passed and 'OK' or 'NEEDS WORK'"
+      value: "ctx.review.passed and 'OK' or 'NEEDS WORK'"
       output: verdict
   - shell:
-      command: !expr "'echo ' + verdict"
+      command: !expr "'echo ' + ctx.verdict"
       output: shouted
 ```

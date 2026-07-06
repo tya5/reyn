@@ -1,9 +1,19 @@
-# Sample pipeline (#2575) — the minimal end-to-end example.
+# Sample pipeline — the minimal end-to-end example.
 #
-# Drop an Appendix-B DSL file into this directory (`pipelines/`, the default
-# scan dir) and it is loaded + registered at session start under its declared
-# `pipeline:` name. This one registers as `hello` (the file name is just a
-# container — the `pipeline:` key below is authoritative).
+# This file is NOT registered by merely sitting in this directory — pipelines
+# are registered only via an explicit `pipelines.entries.<name>` declaration
+# in config (see docs/concepts/runtime/pipeline-registration.md). To make
+# this one live, either add:
+#
+#     pipelines:
+#       entries:
+#         hello:
+#           path: pipelines/hello.yaml
+#
+#   to reyn.yaml, or call `pipeline_management__install_local` with this
+#   file's path. Either way it registers as `hello` — the `pipeline:` key
+#   below is authoritative, not the file name — and is live immediately via
+#   hot-reload (no session restart needed).
 #
 # An agent can then launch it:
 #     run_pipeline(name="hello", input={name: "Reyn"})
