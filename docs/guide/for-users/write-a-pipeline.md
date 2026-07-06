@@ -1,17 +1,17 @@
 # Write and run a pipeline
 
 A pipeline is a small YAML file describing a deterministic, multi-step
-control flow. This guide walks through writing one, dropping it into your
-project, and invoking it — plus the ad-hoc, no-registration alternative for a
-one-off procedure an agent generates on the fly. For the full grammar and
+control flow. This guide walks through writing one, registering it, and
+invoking it — plus the ad-hoc, no-registration alternative for a one-off
+procedure an agent generates on the fly. For the full grammar and
 invocation-tool reference, see the [Pipeline DSL reference](../../reference/runtime/pipeline-dsl.md);
 for the why/architecture, see [Pipelines](../../concepts/runtime/pipelines.md).
 
 ## 1. Write the pipeline
 
-Create a `pipelines/` directory at your project root (the default scan
-directory) and drop in a `*.yaml` file. This one takes a `name`, greets it,
-and shouts the result:
+Write an Appendix-B DSL file anywhere in your project (there is no default
+scan directory — see step 2). This one takes a `name`, greets it, and shouts
+the result:
 
 ```yaml
 # pipelines/greet.yaml
@@ -19,7 +19,7 @@ pipeline: greet
 description: Greet a name and shout it.
 steps:
   - transform: {value: "'Hello, ' + ctx.name + '!'", output: greeting}
-  - shell: {command: !expr "'echo ' + greeting", output: shouted}
+  - shell: {command: !expr "'echo ' + ctx.greeting", output: shouted}
 ```
 
 A few things worth noting about this file:
@@ -31,9 +31,12 @@ A few things worth noting about this file:
   `agent`, or one of the [compositional primitives](../../reference/runtime/pipeline-dsl.md#compositional-primitives)).
 - `ctx.name` is the seed input this pipeline expects; `greeting`, once
   written by the first step's `output`, becomes available as `ctx.greeting`
-  in later steps — here referenced bare as `greeting` inside the `!expr`
-  string-concat, since the second step's context still exposes it as a named
-  store.
+  in every later step. There is no bare-name shortcut — reading it as bare
+  `greeting` (instead of `ctx.greeting`) fails the step, since every
+  expression evaluates against a context whose only two top-level keys are
+  `ctx` (all named stores) and `pipe` (the immediately-preceding step's own
+  result). See [Data flow between steps](../../reference/runtime/pipeline-dsl.md#data-flow-between-steps)
+  for the full rule and a worked trace.
 - `!expr` marks `command` as an expression to evaluate, not a literal string
   — see [Literals vs `!expr`](../../reference/runtime/pipeline-dsl.md#literals-vs-expr).
 - `shell` runs the command in the operator's sandbox and threads the
@@ -42,16 +45,33 @@ A few things worth noting about this file:
   [reference doc's `shell` section](../../reference/runtime/pipeline-dsl.md#tool-shell-sugar)
   for the full STDIN/STDOUT contract.
 
-## 2. Start (or restart) the session
+## 2. Register it
 
-Pipelines are registered from disk at session start — there's no separate
-"install" step and no `reyn.yaml` entry required for the default `pipelines/`
-directory. Restart your session (or start a fresh one) and `greet` is
-registered.
+Pipelines are registered purely via an explicit `pipelines.entries`
+declaration in config — there is no directory scan, so a `*.yaml` file
+sitting on disk is invisible to every session until it is registered. Add an
+entry to `reyn.yaml` (the entry key must match the DSL's own declared
+`pipeline:` name exactly):
 
-If a file fails to parse, or two files declare the same `pipeline:` name,
-session start fails loudly, naming the offending file — a typo never
-silently drops a pipeline you meant to ship. See
+```yaml
+# reyn.yaml
+pipelines:
+  entries:
+    greet:
+      path: pipelines/greet.yaml
+      description: "Greet a name and shout it"
+```
+
+or, equivalently, ask an agent to call
+`pipeline_management__install_local(path="pipelines/greet.yaml")`, which
+parses the file, validates the name, and writes the same kind of entry to
+`.reyn/config/pipelines.yaml` for you. Either way the change takes effect at
+the next turn boundary via hot-reload — **no session restart needed** to pick
+up a newly-registered pipeline.
+
+If the file fails to parse, or two entries declare the same `pipeline:` name,
+loading fails loudly, naming the offending entry — a typo never silently
+drops a pipeline you meant to ship. See
 [Pipeline registration § Failure behavior](../../concepts/runtime/pipeline-registration.md#failure-behavior-fail-loud)
 for the full table.
 
@@ -140,9 +160,9 @@ steps:
           schema: Review
       collect: {transform: {value: "pipe"}}
       output: reviews
-  - transform: {value: "all(reviews, r -> r.passed)", output: all_passed}
+  - transform: {value: "all(ctx.reviews, r -> r.passed)", output: all_passed}
   - match:
-      on: all_passed
+      on: ctx.all_passed
       cases:
         "True": {pipeline: report_pass, pass: [reviews]}
         "False": {pipeline: report_fail, pass: [reviews]}
@@ -162,7 +182,13 @@ run_pipeline(name="review", input={reviewers: ["reviewer_a", "reviewer_b"], doc:
 
 Each reviewer runs as an isolated, concurrent `agent` step (up to 4 at once,
 each retried once on failure); once all have landed, `all_passed` folds them
-into one boolean via the R1 `all()` combinator, and `match` routes to a
-`report_pass` or `report_fail` sub-pipeline accordingly (both would need to
-be registered separately, or replaced with plain `transform`/`tool` steps for
-a self-contained single-file version).
+into one boolean via the R1 `all()` combinator — read from `ctx.reviews`,
+the durable named store the `for_each` step's `output` wrote, not a bare
+`reviews` — and `match` routes to a `report_pass` or `report_fail`
+sub-pipeline accordingly (both would need to be registered separately, or
+replaced with plain `transform`/`tool` steps for a self-contained single-file
+version).
+
+This second pipeline would need its own `pipelines.entries` declaration (or
+`pipeline_management__install_local` call), same as step 2 above, before an
+agent can launch it.

@@ -32,8 +32,64 @@ pipeline: review_and_report
 description: Review a document and summarize the verdict.
 steps:
   - agent: {prompt: "Review {ctx.doc}. Reply with passed/notes.", schema: Review, output: review}
-  - transform: {value: "review.passed and 'OK' or 'NEEDS WORK'", output: verdict}
+  - transform: {value: "ctx.review.passed and 'OK' or 'NEEDS WORK'", output: verdict}
 ```
+
+## Data flow between steps
+
+Every step's expression / template evaluates against exactly the same two
+top-level things — there is no third form and no bare-name shortcut:
+
+- **`ctx`** — every named store accumulated so far in the current scope, as a
+  flat namespace. A step that declared `output: X` makes it readable, from
+  every later step in scope, as `ctx.X` — never bare `X`.
+- **`pipe`** — the immediately preceding step's own result in the current
+  scope, unnamed and ephemeral. Read as bare `pipe` (not `ctx.pipe` — `pipe`
+  is a top-level context key, not a named store). A step with no `output:`
+  still produces `pipe` data for whichever step runs next; it just isn't
+  durably named.
+
+So `output: X` does two things at once: it becomes `pipe` for the very next
+step in the same sequence, *and* it is durably written to `ctx.X`, visible to
+every later step in scope (not only the immediate next one) until the scope
+ends.
+
+**A worked trace** — three steps, showing exactly what `ctx` and `pipe` hold
+at each boundary:
+
+```yaml
+steps:
+  - transform: {value: "ctx.name + '!'", output: greeting}   # step 0
+  - tool: {name: shout, args: {text: !expr pipe}, output: shouted}  # step 1
+  - transform: {value: "ctx.shouted + ' (done)'", output: final}   # step 2
+```
+
+seeded with `ctx = {name: "Reyn"}`:
+
+| Before step | `ctx` | `pipe` |
+|---|---|---|
+| 0 | `{name: "Reyn"}` | `null` (no prior step) |
+| 1 | `{name: "Reyn", greeting: "Reyn!"}` | `"Reyn!"` (step 0's result) |
+| 2 | `{name: "Reyn", greeting: "Reyn!", shouted: "REYN!"}` | `"REYN!"` (step 1's result) |
+| *(after step 2)* | `{..., final: "REYN! (done)"}` | `"REYN! (done)"` |
+
+Step 1 reads step 0's result two ways that both work: bare `pipe` (its
+immediate predecessor) or `ctx.greeting` (the durable store) — they hold the
+same value right after step 0, but only `ctx.greeting` stays reachable once a
+step runs in between.
+
+**Scoping exceptions** (see [Formal grammar § Structural
+invariants](#formal-grammar) below for the normative statement):
+
+- `for_each`/`parallel` branches each evaluate against an **isolated copy**
+  of the outer `ctx` taken at branch-start — a write inside a branch never
+  leaks back to the outer scope or to a sibling branch.
+- A `call`/`match` callee's `ctx` is built **only** from the names listed in
+  `pass:` — a caller's named store not listed there is invisible to the
+  callee, `ctx` shortcut or not.
+- `fold`'s `do` and `for_each`'s `do` add extra top-level keys to their own
+  context (`item`/`acc` for `fold`, `item` for `for_each`) alongside `ctx`
+  and `pipe` — see their own sections below.
 
 ### `pipeline:` document keys
 
@@ -147,9 +203,11 @@ and executor, not just documented convention):
   **static literal** pipeline/step target — never a runtime expression. Only
   `match.on` and `for_each`/`fold`'s `over` are runtime-evaluated.
 - `pass:` is the *only* channel a `call`/`match` callee's context is built
-  from — a caller's named store not listed there is invisible to the callee.
+  from — a caller's named store not listed there is invisible to the callee
+  (see [Data flow between steps](#data-flow-between-steps)).
 - `for_each`/`parallel` branches each get an **isolated copy** of the outer
-  named stores — no sibling communication between concurrent items/branches.
+  named stores — no sibling communication between concurrent items/branches
+  (see [Data flow between steps](#data-flow-between-steps)).
 - `!expr` is the *only* way a `tool`/`shell` argument becomes a resolved
   expression instead of a literal — nesting it inside a list/mapping value is
   a parse error, not a silent no-op.
@@ -162,8 +220,10 @@ steps** — they read the context, do one piece of work, and produce a result:
 ### `transform`
 
 A pure step: `value` is evaluated as an [R1 expression](#the-r1-expression-language)
-against the current context; the result becomes this step's pipe data (and,
-if `output` is set, is also written to that named store).
+against the current context (`ctx`/`pipe` — see
+[Data flow between steps](#data-flow-between-steps)); the result becomes this
+step's pipe data (and, if `output` is set, is also written to that named
+store).
 
 ```yaml
 - transform: {value: "'Hello, ' + ctx.name + '!'", output: greeting}
@@ -227,7 +287,9 @@ args: {query: !expr ctx.brief, limit: !expr "ctx.n + 1", label: "a plain string"
 ```
 
 `query` and `limit` are R1 expression sources, resolved against the step's
-context at run time; `label` is the literal string `"a plain string"`.
+`ctx`/`pipe` context at run time (see
+[Data flow between steps](#data-flow-between-steps)); `label` is the literal
+string `"a plain string"`.
 `!expr` is only honored as the **whole value** of an argument — one hiding
 inside a nested list or mapping is a parse error, so there is no ambiguity
 between "a literal that happens to look like an expression" and "an
@@ -291,7 +353,7 @@ runs that case's target exactly like a `call` step.
 
 ```yaml
 - match:
-    on: "review.passed"
+    on: "ctx.review.passed"
     cases:
       "True": {pipeline: report_pass, pass: [review]}
       "False": {pipeline: report_fail, pass: [review]}
@@ -312,6 +374,9 @@ selects a *label*, never a target directly.
 ### `fold` — sequential accumulator
 
 Walks a list in order, threading an accumulator through a repeated `do` step.
+`do`'s context extends the usual `ctx`/`pipe` (see
+[Data flow between steps](#data-flow-between-steps)) with two extra top-level
+keys, `item` and `acc` — see the table below.
 
 ```yaml
 - fold:
@@ -340,7 +405,10 @@ collect independently.
 ### `for_each` — concurrent fan-out
 
 Runs `do` over each list item as an isolated concurrent sub-scope, then runs
-`collect` once over the ordered results.
+`collect` once over the ordered results. See
+[Data flow between steps](#data-flow-between-steps) for the isolation rule
+this section's `do` context relies on (each item gets its own `ctx` copy —
+writes never leak between items or back to the outer scope).
 
 ```yaml
 - for_each:
@@ -371,7 +439,10 @@ cannot see any other item's result.
 `for_each`'s heterogeneous sibling: instead of fanning one `do` step out over
 a runtime-sized list, `parallel` fans a static, finite set of *distinct*
 named branches out concurrently, then runs `collect` once over the named map
-of their results.
+of their results. Same isolation rule as `for_each` — see
+[Data flow between steps](#data-flow-between-steps): each branch gets its own
+`ctx` copy, and `collect`'s `pipe` is the whole `{branch_name: result}` map,
+not any one branch's result directly.
 
 ```yaml
 - parallel:
@@ -379,7 +450,7 @@ of their results.
     branches:
       security: {agent: {prompt: "Security-review {ctx.doc}", schema: Review}}
       style: {agent: {prompt: "Style-review {ctx.doc}", schema: Review}}
-    collect: {transform: {value: "{'security': security, 'style': style}"}}
+    collect: {transform: {value: "{security: pipe.security, style: pipe.style}"}}
     output: reviews
 ```
 
@@ -686,9 +757,9 @@ steps:
       schema: Review
       output: review
   - transform:
-      value: "review.passed and 'OK' or 'NEEDS WORK'"
+      value: "ctx.review.passed and 'OK' or 'NEEDS WORK'"
       output: verdict
   - shell:
-      command: !expr "'echo ' + verdict"
+      command: !expr "'echo ' + ctx.verdict"
       output: shouted
 ```

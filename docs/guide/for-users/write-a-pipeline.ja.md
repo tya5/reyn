@@ -1,10 +1,10 @@
 # pipeline を書いて実行する
 
-pipeline は、決定的なマルチステップ制御フローを記述する小さな YAML ファイルです。本ガイドでは、pipeline を書き、プロジェクトに配置し、起動するまでを扱います — さらに、エージェントがその場で生成する一回限りの手順向けに、登録不要な ad-hoc の代替手段も扱います。完全な文法と起動ツールのリファレンスは [Pipeline DSL リファレンス](../../reference/runtime/pipeline-dsl.ja.md) を、why / アーキテクチャは [Pipeline](../../concepts/runtime/pipelines.ja.md) を参照してください。
+pipeline は、決定的なマルチステップ制御フローを記述する小さな YAML ファイルです。本ガイドでは、pipeline を書き、登録し、起動するまでを扱います — さらに、エージェントがその場で生成する一回限りの手順向けに、登録不要な ad-hoc の代替手段も扱います。完全な文法と起動ツールのリファレンスは [Pipeline DSL リファレンス](../../reference/runtime/pipeline-dsl.ja.md) を、why / アーキテクチャは [Pipeline](../../concepts/runtime/pipelines.ja.md) を参照してください。
 
 ## 1. pipeline を書く
 
-プロジェクトルートに `pipelines/` ディレクトリ(デフォルトのスキャン対象ディレクトリ)を作成し、`*.yaml` ファイルを配置します。以下は `name` を受け取り、挨拶し、その結果を叫ぶ pipeline です:
+プロジェクト内の任意の場所に Appendix-B DSL ファイルを書きます(デフォルトのスキャン対象ディレクトリは無くなりました — 手順 2 参照)。以下は `name` を受け取り、挨拶し、その結果を叫ぶ pipeline です:
 
 ```yaml
 # pipelines/greet.yaml
@@ -12,22 +12,33 @@ pipeline: greet
 description: Greet a name and shout it.
 steps:
   - transform: {value: "'Hello, ' + ctx.name + '!'", output: greeting}
-  - shell: {command: !expr "'echo ' + greeting", output: shouted}
+  - shell: {command: !expr "'echo ' + ctx.greeting", output: shouted}
 ```
 
 このファイルについて注目すべき点がいくつかあります:
 
 - pipeline は `pipeline:` キーの名前(`greet`)の下に登録されます。ファイル名ではありません — `pipelines/greet.yaml` は何にリネームしても `greet` として登録され続けます。
 - 各ステップは、自身の種別(`transform`、`tool`、`agent`、または合成プリミティブ(Pipeline DSL リファレンス参照)のいずれか)を名前とする単一キーのマッピングです。
-- `ctx.name` はこの pipeline が期待する seed input です。`greeting` は最初のステップの `output` で書き込まれた後、後続のステップで `ctx.greeting` として利用可能になります — ここでは 2 番目のステップのコンテキストがそれを named store として公開しているため、`!expr` 文字列連結の中で bare な `greeting` として参照しています。
+- `ctx.name` はこの pipeline が期待する seed input です。`greeting` は最初のステップの `output` で書き込まれた後、それ以降のすべてのステップから `ctx.greeting` として利用可能になります。bare name のショートカットはありません — `ctx.greeting` の代わりに bare な `greeting` として読もうとするとステップが失敗します。すべての expression は `ctx`(すべての named store)と `pipe`(直前のステップ自身の結果)の 2 つだけをトップレベルキーとして持つコンテキストに対して評価されるためです。完全なルールと実例のトレースは [ステップ間のデータフロー](../../reference/runtime/pipeline-dsl.ja.md#data-flow-between-steps) を参照してください。
 - `!expr` は `command` をリテラル文字列ではなく評価すべき expression としてマークします — [リテラル vs `!expr`](../../reference/runtime/pipeline-dsl.ja.md#vs-expr) 参照。
 - `shell` は operator のサンドボックスの中でコマンドを実行し、前のステップの pipe data を JSON エンコードして STDIN に渡します — この pipeline はその入力を使いませんが、完全な STDIN/STDOUT の契約は[リファレンスの `shell` セクション](../../reference/runtime/pipeline-dsl.ja.md#tool-shell)を参照してください。
 
-## 2. セッションを開始(または再起動)する
+## 2. 登録する
 
-pipeline はセッション開始時にディスクから登録されます — 別途「インストール」ステップは無く、デフォルトの `pipelines/` ディレクトリには `reyn.yaml` へのエントリも不要です。セッションを再起動する(または新しく開始する)と `greet` が登録されます。
+pipeline は、config 内の明示的な `pipelines.entries` 宣言によってのみ登録されます — ディレクトリスキャンは無いため、ディスク上に置かれた `*.yaml` ファイルは登録されるまでどのセッションからも不可視です。`reyn.yaml` にエントリを追加します(エントリキーは DSL 自身が宣言する `pipeline:` 名と完全に一致しなければなりません):
 
-ファイルの parse に失敗した場合、または 2 つのファイルが同じ `pipeline:` 名を宣言した場合、セッション開始は問題のファイルを名指しして大きく失敗します — タイプミスが、出荷するつもりだった pipeline を静かに消すことはありません。詳細な表は [Pipeline registration § Failure behavior](../../concepts/runtime/pipeline-registration.md#failure-behavior-fail-loud) を参照してください。
+```yaml
+# reyn.yaml
+pipelines:
+  entries:
+    greet:
+      path: pipelines/greet.yaml
+      description: "Greet a name and shout it"
+```
+
+あるいは、同等の効果として、エージェントに `pipeline_management__install_local(path="pipelines/greet.yaml")` を呼んでもらうこともできます — これはファイルを parse し、名前を検証し、`.reyn/config/pipelines.yaml` に同種のエントリを書き込みます。どちらの方法でも、変更は次のターン境界で hot-reload によって反映されます — 新しく登録した pipeline を反映させるのに**セッションの再起動は不要**です。
+
+ファイルの parse に失敗した場合、または 2 つのエントリが同じ `pipeline:` 名を宣言した場合、読み込みは問題のエントリを名指しして大きく失敗します — タイプミスが、出荷するつもりだった pipeline を静かに消すことはありません。詳細な表は [Pipeline registration § Failure behavior](../../concepts/runtime/pipeline-registration.md#failure-behavior-fail-loud) を参照してください。
 
 ## 3. 起動する
 
@@ -91,9 +102,9 @@ steps:
           schema: Review
       collect: {transform: {value: "pipe"}}
       output: reviews
-  - transform: {value: "all(reviews, r -> r.passed)", output: all_passed}
+  - transform: {value: "all(ctx.reviews, r -> r.passed)", output: all_passed}
   - match:
-      on: all_passed
+      on: ctx.all_passed
       cases:
         "True": {pipeline: report_pass, pass: [reviews]}
         "False": {pipeline: report_fail, pass: [reviews]}
@@ -111,4 +122,6 @@ fields:
 run_pipeline(name="review", input={reviewers: ["reviewer_a", "reviewer_b"], doc: "..."})
 ```
 
-各レビュアーは隔離された並行 `agent` ステップとして実行され(最大 4 並行、失敗時は 1 回リトライ)、全員の結果が揃うと、R1 の `all()` コンビネータで `all_passed` という 1 つの boolean に畳み込まれ、`match` がそれに応じて `report_pass` または `report_fail` の sub-pipeline にルーティングします(どちらも別途登録が必要です。単一ファイルで完結させたい場合は、素の `transform`/`tool` ステップに置き換えてください)。
+各レビュアーは隔離された並行 `agent` ステップとして実行され(最大 4 並行、失敗時は 1 回リトライ)、全員の結果が揃うと、R1 の `all()` コンビネータで `all_passed` という 1 つの boolean に畳み込まれます — これは bare な `reviews` ではなく、`for_each` ステップの `output` が書き込んだ永続的な named store である `ctx.reviews` から読みます — そして `match` がそれに応じて `report_pass` または `report_fail` の sub-pipeline にルーティングします(どちらも別途登録が必要です。単一ファイルで完結させたい場合は、素の `transform`/`tool` ステップに置き換えてください)。
+
+この 2 つ目の pipeline も、手順 2 と同様に独自の `pipelines.entries` 宣言(または `pipeline_management__install_local` 呼び出し)が必要です — エージェントがそれを起動できるようになる前に。
