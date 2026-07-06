@@ -2,7 +2,7 @@
 type: reference
 topic: runtime
 audience: [human, agent]
-search_hints: [pipeline DSL, pipeline grammar, EBNF, formal grammar, agent generation grammar, transform step, tool step, agent step, call step, match step, fold step, for_each step, parallel step, expr, R1 expression, verify schema, run_pipeline, run_pipeline_async, run_pipeline_inline, safety.spawn.max_pipeline_fan_out_depth, safety.spawn.max_pipeline_spawns]
+search_hints: [pipeline DSL, pipeline grammar, EBNF, formal grammar, agent generation grammar, transform step, tool step, agent step, call step, match step, fold step, for_each step, parallel step, expr, R1 expression, verify schema, run_pipeline, run_pipeline_async, run_pipeline_inline, safety.spawn.max_pipeline_fan_out_depth, safety.spawn.max_pipeline_spawns, parse_json]
 ---
 
 # Pipeline DSL リファレンス
@@ -385,6 +385,7 @@ combinator     ::= "map" "(" expr "," lambda ")"
                   | "sum" "(" expr ")"
                   | "join" "(" expr "," expr ")"
                   | "get" "(" expr "," STRING ("," expr)? ")"
+                  | "parse_json" "(" expr ")"
 lambda         ::= IDENT "->" expr        (* コンビネータ自身の引数としてのみ有効 *)
 path           ::= IDENT ("." IDENT)*
 cmp_op         ::= "==" | "!=" | "<" | ">" | "<=" | ">="
@@ -409,6 +410,7 @@ cmp_op         ::= "==" | "!=" | "<" | ">" | "<=" | ">="
 | `sum` | `sum(list)` | 数値の合計。 |
 | `join` | `join(list, sep)` | 文字列 join。 |
 | `get` | `get(base, "dotted.path", default?)` | **安全な**ナビゲーション — bare な `Path` と異なり、パスが存在しなくても例外を送出せず、`default`(無ければ `null`)を返す。 |
+| `parse_json` | `parse_json(string)` | JSON 文字列をその値(object/array/string/number/bool/null)にデコードする。引数が文字列でないか、有効な JSON でなければ例外を送出する — 安全なデフォルト返却バリアントは存在しない。 |
 
 `lambda`(`item -> expr`)は `map`/`filter`/`all`/`any`/`find` の直接の引数としてのみ有効です — 代入したり受け渡したりできる値ではありません。この固定コンビネータ集合の外にある名前を関数呼び出しとして書くと parse エラーになります。
 
