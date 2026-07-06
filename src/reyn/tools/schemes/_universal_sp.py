@@ -209,6 +209,14 @@ def build_universal_tool_use_slots(
             "`pipeline__run` runs a REGISTERED pipeline by name to completion "
             "and returns its final output (synchronous — blocks until done)."
         )
+        _r2.append(
+            "- **pipeline_management** — manage pipeline definitions: "
+            "`pipeline_management__install_local` to register a local pipeline "
+            "DSL file into .reyn/config/pipelines.yaml; "
+            "`pipeline_management__install_source` to fetch and install a "
+            "pipeline from a git/GitHub URL (shallow-clones to "
+            ".reyn/pipelines/<name>/)."
+        )
         _r2.append("")
         if has_hot_list_aliases:
             _r2.append(

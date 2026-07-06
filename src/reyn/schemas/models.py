@@ -293,6 +293,42 @@ class SkillInstallIROp(BaseModel):
     source: str | None = None              # git/GitHub URL (installs to .reyn/skills/<name>/)
 
 
+class PipelineInstallIROp(BaseModel):
+    """Register a pipeline into the project pipelines config (mirrors SkillInstallIROp).
+
+    Writes a ``pipelines.entries.<name>`` entry to ``.reyn/config/pipelines.yaml``.
+    Same handler pipeline as ``skill_install``: (threat-scan description) →
+    permission gate → config write → record_config_generation → emit event →
+    hot-reload.
+
+    Two install paths:
+    - **Local path** (``source is None``): ``path`` points at a pipeline DSL
+      ``*.yaml`` file directly (unlike skills, there is no directory-or-file
+      resolution — a pipeline registration is always exactly one file).
+    - **Source path** (``source`` set): ``source`` is a git URL or GitHub URL.
+      The handler shallow-clones the repo to ``.reyn/pipelines/<name>/``, reads
+      the DSL file from that clone (``path`` selects the file inside the clone;
+      required when the repo root/subdir contains more than one candidate),
+      and registers the installed copy's path.
+
+    ``name`` resolution: the pipeline DSL's own declared ``pipeline:`` name is
+    ALWAYS the registration identity (the key a ``call``/``match`` step
+    resolves against) — unlike skill, where the config key IS the identity.
+    When ``name`` is supplied it must match the DSL's declared ``pipeline:``
+    name; a mismatch is refused (``status="error"``) rather than silently
+    diverging the config key from the resolution key. When omitted, the
+    config key defaults to the DSL's declared name.
+    """
+    kind: Literal["pipeline_install"]
+    path: str = ""                              # local DSL *.yaml file (ignored when source set; also selects the file inside a cloned source repo)
+    scope: str = ".reyn/config/pipelines.yaml"   # target config file (no-op tier arg, forward-compat with mcp_install's `scope`)
+    name: str | None = None                      # must match the DSL's declared `pipeline:` name when set
+    # When set, the pipeline DSL is fetched from this git/GitHub URL (mirrors SkillInstallIROp.source).
+    # Supports optional subdir via "//": "https://github.com/user/repo" (root) or
+    # "https://github.com/user/repo//pipelines/my-pipeline" (pipelines/my-pipeline subdir).
+    source: str | None = None                   # git/GitHub URL (installs to .reyn/pipelines/<name>/)
+
+
 # ---------------------------------------------------------------------------
 # RAG-extensible OS (ADR-0033) — embed / index_* / recall ops + ChunkMetadata
 # ---------------------------------------------------------------------------
@@ -622,6 +658,9 @@ OP_KIND_MODEL_MAP: dict[str, type[BaseModel]] = {
     # #2548 PR-C: local skill directory install — register a SKILL.md dir into
     # skills.entries (parallel to mcp_install writing mcp.servers).
     "skill_install": SkillInstallIROp,
+    # pipeline install — register a pipeline DSL file into pipelines.entries
+    # (mirrors skill_install writing skills.entries; parallel install mechanism).
+    "pipeline_install": PipelineInstallIROp,
 }
 
 # Frozenset of op kinds — DSL linter, contextual gate.
@@ -655,6 +694,7 @@ if TYPE_CHECKING:
             TaskHeartbeatIROp, TaskRegisterUnblockPredicateIROp,
             TaskCommentIROp,
             SkillInstallIROp,
+            PipelineInstallIROp,
         ],
         Field(discriminator="kind"),
     ]

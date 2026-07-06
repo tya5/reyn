@@ -588,6 +588,10 @@ _ROUTE_CONTRACT_SAMPLES: list[tuple[str, dict[str, Any]]] = [
     ("skill_management__install_local",  {"path": "/tmp/my-skill"}),
     # skill_management category (#2548 PR-D) — install_source requires source URL.
     ("skill_management__install_source", {"source": "https://github.com/user/skill-repo"}),
+    # pipeline_management category — install_local requires path.
+    ("pipeline_management__install_local",  {"path": "/tmp/my-pipeline.yaml"}),
+    # pipeline_management category — install_source requires source URL.
+    ("pipeline_management__install_source", {"source": "https://github.com/user/pipeline-repo"}),
     # pipeline category (IS-1) — run_pipeline requires name; input is optional.
     ("pipeline__run", {"name": "my_pipeline", "input": {"topic": "x"}}),
     # pipeline category (IS-2) — async launch, same surface as the sync verb.

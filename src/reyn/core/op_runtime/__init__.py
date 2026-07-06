@@ -121,6 +121,9 @@ from . import mcp_read_resource as _mcp_read_resource  # noqa: F401, E402
 # #2597 slice ②b: resource subscriptions — subscribe/unsubscribe (mirrors mcp_read_resource.py).
 from . import mcp_subscribe_resource as _mcp_subscribe_resource  # noqa: F401, E402
 from . import mcp_unsubscribe_resource as _mcp_unsubscribe_resource  # noqa: F401, E402
+
+# pipeline install op (register a pipeline DSL file into pipelines.entries — mirrors skill_install).
+from . import pipeline_install as _pipeline_install  # noqa: F401, E402
 from . import recall as _recall  # noqa: F401, E402
 from . import sandboxed_exec as _sandboxed_exec  # noqa: F401, E402
 

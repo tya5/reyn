@@ -93,6 +93,10 @@ def get_default_registry() -> ToolRegistry:
         REMEMBER_AGENT,
         REMEMBER_SHARED,
     )
+    from reyn.tools.pipeline_management_verbs import (
+        PIPELINE_INSTALL_LOCAL,
+        PIPELINE_INSTALL_SOURCE,
+    )
     from reyn.tools.pipeline_verbs import (
         RUN_PIPELINE,
         RUN_PIPELINE_ASYNC,
@@ -235,6 +239,10 @@ def get_default_registry() -> ToolRegistry:
     registry.register(SKILL_INSTALL_LOCAL)
     # #2548 PR-D: skill install verb (git/GitHub URL source fetch).
     registry.register(SKILL_INSTALL_SOURCE)
+    # pipeline install verbs (local DSL file registration + git/GitHub URL
+    # source fetch) — mirrors SKILL_INSTALL_LOCAL / SKILL_INSTALL_SOURCE.
+    registry.register(PIPELINE_INSTALL_LOCAL)
+    registry.register(PIPELINE_INSTALL_SOURCE)
     # IS-1 (pipeline v0.9 R6): run_pipeline — sync launch of a REGISTERED
     # pipeline. Router+phase allow. IS-5: surfaced to the live LLM catalog
     # via the ``pipeline`` universal-catalog category enumerator (lists

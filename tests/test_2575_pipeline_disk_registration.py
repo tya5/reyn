@@ -1,20 +1,25 @@
-"""#2575 — production pipeline registration: disk dir → session PipelineRegistry.
+"""#2575 — production pipeline registration: config-entries → session PipelineRegistry.
 
 Before #2575 a ``Session`` owned an EMPTY ``PipelineRegistry`` and nothing in
 production ever populated it, so no pipeline was launchable in a real session.
 This slice adds the disk loader (``reyn.data.pipelines.registry.
-build_pipeline_registry``): an operator drops Appendix-B DSL ``*.yaml`` files
-into ``pipelines/`` (the default scan dir) and each is parsed + registered under
-its OWN declared ``pipeline:`` name at session-factory time.
+build_pipeline_registry``): an operator declares ``pipelines.entries.<key>:
+{path: ...}`` in config (the SAME explicit-registration model as
+``skills.entries`` / ``mcp.servers`` — clean break from an earlier
+directory-scan design; there is no ``scan_dirs`` / blind glob) and each
+declared entry is parsed + registered under its OWN declared ``pipeline:``
+name at session-factory time.
 
 Coverage:
   1. Contract — the parser now carries the declared name on ``Pipeline.name``,
      and serde round-trips it (default-tolerant for pre-existing on-disk data).
-  2. Loader — disk dir → registry keyed by the declared name (filename is a
-     container); malformed / duplicate → FAIL LOUD with the path; empty → empty.
+  2. Loader — config entries → registry keyed by the declared name; a config
+     key that disagrees with the DSL's declared name FAILS LOUD (the
+     authoritative resolution key is the DSL's, never the config key);
+     malformed / duplicate → FAIL LOUD with the path; empty → empty.
   3. Wiring — ``from_config(config, project_root)`` builds the registry once;
      ``Session(pipeline_registry=)`` adopts it.
-  4. Surfacing + invoke — a disk-loaded pipeline surfaces as ``pipeline__<name>``
+  4. Surfacing + invoke — a config-loaded pipeline surfaces as ``pipeline__<name>``
      (list_actions) and runs end-to-end through the real router loop.
   5. Cross-pipeline ``call`` — a loaded pipeline whose step ``call``s ANOTHER
      loaded pipeline resolves + runs (the foundation's deferred named-callee
@@ -52,6 +57,11 @@ from reyn.runtime.session import Session
 def _write(dir_: Path, filename: str, text: str) -> None:
     dir_.mkdir(parents=True, exist_ok=True)
     (dir_ / filename).write_text(text, encoding="utf-8")
+
+
+def _entries(*names_and_paths: "tuple[str, str]") -> dict:
+    """Build a ``pipelines: {entries: {...}}`` raw dict for build_pipeline_registry."""
+    return {"entries": {name: {"path": path} for name, path in names_and_paths}}
 
 
 _HELLO_DSL = """
@@ -101,43 +111,67 @@ def test_pipeline_from_dict_defaults_name_when_absent() -> None:
     assert restored.name == ""
 
 
-# ── 2. Loader: disk → registry, keyed by declared name; fail-loud ─────────────
+# ── 2. Loader: config entries → registry, keyed by declared name; fail-loud ───
 
 
-def test_loader_registers_pipeline_from_disk_under_declared_name(tmp_path: Path) -> None:
-    """Tier 2: a DSL file under the scan dir is parsed + registered under its
-    declared ``pipeline:`` name, with its name + description surfaced via
-    ``entries()`` (what the catalog enumerator reads)."""
+def test_loader_registers_pipeline_from_entry_under_declared_name(tmp_path: Path) -> None:
+    """Tier 2: a ``pipelines.entries.<key>`` declaration is parsed + registered
+    under its declared ``pipeline:`` name, with its name + description surfaced
+    via ``entries()`` (what the catalog enumerator reads)."""
     _write(tmp_path / "pipelines", "hello.yaml", _HELLO_DSL)
 
-    registry = build_pipeline_registry({"scan_dirs": ["pipelines"]}, tmp_path)
+    registry = build_pipeline_registry(_entries(("hello", "pipelines/hello.yaml")), tmp_path)
 
     assert set(registry.names()) == {"hello"}
     assert registry.entries() == (("hello", "greet the seed name"),)
     assert registry.get("hello").name == "hello"
 
 
-def test_loader_default_scan_dir_is_pipelines(tmp_path: Path) -> None:
-    """Tier 2: an absent ``scan_dirs`` falls back to the default ``pipelines/``
-    dir (the documented default), so a bare ``pipelines: {}`` still loads."""
+def test_loader_no_entries_yields_empty_registry(tmp_path: Path) -> None:
+    """Tier 2: NO directory scan exists any more — an absent ``entries`` key
+    (or a bare ``pipelines: {}``) yields an empty registry even when a
+    ``pipelines/`` directory full of *.yaml files sits on disk (clean break:
+    a file with no explicit config entry is invisible)."""
     _write(tmp_path / "pipelines", "hello.yaml", _HELLO_DSL)
 
-    registry = build_pipeline_registry({}, tmp_path)
-
-    assert set(registry.names()) == {"hello"}
+    assert build_pipeline_registry({}, tmp_path).names() == ()
 
 
-def test_loader_keys_on_declared_name_not_filename(tmp_path: Path) -> None:
-    """Tier 2: the declared ``pipeline:`` name is authoritative — a file named
-    ``greet.yaml`` declaring ``pipeline: hello`` registers as ``hello`` (the
-    identity a ``call`` resolves against), NOT under the file stem. Registering
-    under the filename while ``call`` resolves the declared name would be a
-    call that can never find its target."""
-    _write(tmp_path / "pipelines", "greet.yaml", _HELLO_DSL)  # file stem = "greet"
+def test_loader_scan_dirs_key_is_ignored(tmp_path: Path) -> None:
+    """Tier 2: the removed ``scan_dirs`` config key is now IGNORED — no directory
+    scan occurs regardless of its presence (clean break, no back-compat shim)."""
+    _write(tmp_path / "pipelines", "hello.yaml", _HELLO_DSL)
 
     registry = build_pipeline_registry({"scan_dirs": ["pipelines"]}, tmp_path)
 
+    assert registry.names() == (), (
+        "scan_dirs must be a no-op — only pipelines.entries registers a pipeline"
+    )
+
+
+def test_loader_entry_path_may_use_any_filename(tmp_path: Path) -> None:
+    """Tier 2: an entry's ``path`` may point at any filename — the declared
+    ``pipeline:`` name (not the filename) is the registration identity, and the
+    entry key must match it (see the mismatch test below)."""
+    _write(tmp_path / "pipelines", "greet.yaml", _HELLO_DSL)  # file stem = "greet"
+
+    registry = build_pipeline_registry(_entries(("hello", "pipelines/greet.yaml")), tmp_path)
+
     assert set(registry.names()) == {"hello"}  # declared name, not "greet"
+
+
+def test_loader_entry_key_declared_name_mismatch_fails_loudly(tmp_path: Path) -> None:
+    """Tier 2: a config entry key that disagrees with the DSL's declared
+    ``pipeline:`` name is a footgun (a ``call`` step resolves the DECLARED
+    name, not the config key you'd naturally look for) — FAILS LOUD rather
+    than silently registering under one or the other."""
+    _write(tmp_path / "pipelines", "hello.yaml", _HELLO_DSL)  # declares "hello"
+
+    with pytest.raises(PipelineLoadError) as exc:
+        build_pipeline_registry(_entries(("mismatched-key", "pipelines/hello.yaml")), tmp_path)
+
+    assert "mismatched-key" in str(exc.value)
+    assert "hello" in str(exc.value)
 
 
 def test_loader_malformed_file_fails_loudly_with_path(tmp_path: Path) -> None:
@@ -147,38 +181,69 @@ def test_loader_malformed_file_fails_loudly_with_path(tmp_path: Path) -> None:
     _write(tmp_path / "pipelines", "broken.yaml", "pipeline: broken\nsteps: not-a-list\n")
 
     with pytest.raises(PipelineLoadError) as exc:
-        build_pipeline_registry({"scan_dirs": ["pipelines"]}, tmp_path)
+        build_pipeline_registry(_entries(("broken", "pipelines/broken.yaml")), tmp_path)
 
     assert "broken.yaml" in str(exc.value)
 
 
 def test_loader_duplicate_declared_name_fails_loudly(tmp_path: Path) -> None:
-    """Tier 2: two files declaring the SAME ``pipeline:`` name surface the
-    registry's re-registration guard as a loud load error (with the offending
-    file path), never a silent last-wins overwrite."""
-    _write(tmp_path / "pipelines", "a.yaml", _HELLO_DSL)
+    """Tier 2: two entries declaring the SAME ``pipeline:`` name (via distinct
+    files that both name themselves after their own key) surface the
+    registry's re-registration guard as a loud load error, never a silent
+    last-wins overwrite. Constructed via two distinct on-disk copies of the
+    same DSL, each entry-keyed to its own file's declared name — the collision
+    is forced by writing a THIRD entry that repeats an already-used key path
+    is not representable (entries is a dict = unique keys), so the realistic
+    collision path is two entries whose files coincidentally declare the same
+    name under two different keys."""
+    _write(tmp_path / "pipelines", "a.yaml", _HELLO_DSL)  # declares "hello"
     _write(tmp_path / "pipelines", "b.yaml", _HELLO_DSL)  # also declares "hello"
 
     with pytest.raises(PipelineLoadError) as exc:
-        build_pipeline_registry({"scan_dirs": ["pipelines"]}, tmp_path)
+        build_pipeline_registry(
+            {
+                "entries": {
+                    "hello": {"path": "pipelines/a.yaml"},
+                    "hello-again": {"path": "pipelines/b.yaml"},
+                }
+            },
+            tmp_path,
+        )
 
     assert "hello" in str(exc.value)
 
 
 def test_loader_empty_config_yields_empty_registry(tmp_path: Path) -> None:
-    """Tier 2: ``None`` (util/no-root path) → empty. An empty ``{}`` block scans
-    the default ``pipelines/`` dir but yields empty here because that dir is
-    absent — byte-identical to the pre-#2575 own-constructed empty registry."""
+    """Tier 2: ``None`` (util/no-root path) → empty. An empty ``{}`` block has
+    no entries → empty — byte-identical zero-pipelines state."""
     assert build_pipeline_registry(None, tmp_path).names() == ()
-    assert build_pipeline_registry({}, tmp_path).names() == ()  # dir absent → nothing
+    assert build_pipeline_registry({}, tmp_path).names() == ()
 
 
-def test_loader_missing_scan_dir_is_not_an_error(tmp_path: Path) -> None:
-    """Tier 2: a configured scan dir that does not exist yet is not an error
-    (the operator may add files later) — it simply contributes nothing."""
-    registry = build_pipeline_registry({"scan_dirs": ["does_not_exist"]}, tmp_path)
+def test_loader_disabled_entry_is_not_registered(tmp_path: Path) -> None:
+    """Tier 2: ``enabled: false`` removes the entry from the registry entirely
+    (mirrors the skills.entries ``enabled`` semantics)."""
+    _write(tmp_path / "pipelines", "hello.yaml", _HELLO_DSL)
+
+    registry = build_pipeline_registry(
+        {"entries": {"hello": {"path": "pipelines/hello.yaml", "enabled": False}}},
+        tmp_path,
+    )
 
     assert registry.names() == ()
+
+
+def test_loader_missing_file_fails_loudly(tmp_path: Path) -> None:
+    """Tier 2: an entry whose ``path`` does not exist on disk fails loud with
+    the path — never a silent skip (an operator typo in ``path:`` must surface,
+    not vanish the pipeline silently)."""
+    with pytest.raises(PipelineLoadError) as exc:
+        build_pipeline_registry(
+            {"entries": {"hello": {"path": "pipelines/does_not_exist.yaml"}}},
+            tmp_path,
+        )
+
+    assert "does_not_exist.yaml" in str(exc.value)
 
 
 # ── 3. Wiring: from_config build-once + Session adoption ──────────────────────
@@ -192,7 +257,11 @@ def test_from_config_builds_populated_registry_from_project_root(tmp_path: Path)
     from reyn.runtime.factory_config import SessionFactoryConfig
 
     _write(tmp_path / "pipelines", "hello.yaml", _HELLO_DSL)
-    config = load_config()  # no reyn.yaml → default pipelines: {} → default scan dir
+    (tmp_path / "reyn.yaml").write_text(
+        "model: standard\npipelines:\n  entries:\n    hello:\n      path: pipelines/hello.yaml\n",
+        encoding="utf-8",
+    )
+    config = load_config(tmp_path)
 
     fc = SessionFactoryConfig.from_config(config, tmp_path)
 
@@ -201,12 +270,16 @@ def test_from_config_builds_populated_registry_from_project_root(tmp_path: Path)
 
 def test_from_config_without_project_root_is_empty(tmp_path: Path, monkeypatch) -> None:
     """Tier 2: from_config(config) with no project_root → an EMPTY registry even
-    if a pipelines/ dir exists at cwd — the util/test path stays byte-identical
-    to pre-#2575 (no accidental disk scan without an explicit root)."""
+    if entries are declared — the util/test path stays byte-identical to
+    pre-#2575 (no accidental population without an explicit root)."""
     from reyn.config.loader import load_config
     from reyn.runtime.factory_config import SessionFactoryConfig
 
     _write(tmp_path / "pipelines", "hello.yaml", _HELLO_DSL)
+    (tmp_path / "reyn.yaml").write_text(
+        "model: standard\npipelines:\n  entries:\n    hello:\n      path: pipelines/hello.yaml\n",
+        encoding="utf-8",
+    )
     monkeypatch.chdir(tmp_path)
 
     fc = SessionFactoryConfig.from_config(load_config())
@@ -242,7 +315,7 @@ def test_session_without_registry_owns_empty_one(tmp_path: Path) -> None:
     assert session.pipeline_registry.names() == ()
 
 
-# ── 4. Surfacing: a disk-loaded pipeline shows as pipeline__<name> ────────────
+# ── 4. Surfacing: a config-loaded pipeline shows as pipeline__<name> ──────────
 
 
 class _FakeHost:
@@ -285,15 +358,16 @@ class _FakeHost:
 
 @pytest.mark.asyncio
 async def test_disk_loaded_pipeline_surfaces_in_list_actions(tmp_path: Path) -> None:
-    """Tier 2: a pipeline loaded from disk surfaces as ``pipeline__<name>`` with
-    its own description via list_actions(category=["pipeline"]) — the enumerate
-    path the default scheme flat-lists. Proves disk-load → catalog end-to-end."""
+    """Tier 2: a pipeline loaded from a config entry surfaces as
+    ``pipeline__<name>`` with its own description via
+    list_actions(category=["pipeline"]) — the enumerate path the default
+    scheme flat-lists. Proves config-entry→catalog end-to-end."""
     from reyn.runtime.router_loop import RouterLoop
     from reyn.tools.types import ToolContext
     from reyn.tools.universal_catalog import LIST_ACTIONS
 
     _write(tmp_path / "pipelines", "hello.yaml", _HELLO_DSL)
-    registry = build_pipeline_registry({"scan_dirs": ["pipelines"]}, tmp_path)
+    registry = build_pipeline_registry(_entries(("hello", "pipelines/hello.yaml")), tmp_path)
 
     loop = RouterLoop(host=_FakeHost(pipeline_registry=registry), chain_id="c1", router_model="standard")
     rs = await loop._build_router_caller_state()
@@ -314,10 +388,11 @@ async def test_disk_loaded_pipeline_surfaces_in_list_actions(tmp_path: Path) -> 
 
 @pytest.mark.asyncio
 async def test_disk_loaded_pipeline_call_resolves_and_runs_end_to_end(tmp_path: Path) -> None:
-    """Tier 2: two pipelines loaded FROM DISK — one whose ``call`` step targets
-    the other by its declared name — resolve + run end-to-end. This closes the
-    foundation's deferred named-callee production registration: a ``call``
-    against a disk-registered pipeline now works in production."""
+    """Tier 2: two pipelines loaded FROM config entries — one whose ``call``
+    step targets the other by its declared name — resolve + run end-to-end.
+    This closes the foundation's deferred named-callee production
+    registration: a ``call`` against a config-registered pipeline now works
+    in production."""
     callee_dsl = """
 pipeline: inner
 description: inner callee
@@ -334,7 +409,10 @@ steps:
     _write(tmp_path / "pipelines", "inner.yaml", callee_dsl)
     _write(tmp_path / "pipelines", "outer.yaml", caller_dsl)
 
-    registry = build_pipeline_registry({"scan_dirs": ["pipelines"]}, tmp_path)
+    registry = build_pipeline_registry(
+        _entries(("inner", "pipelines/inner.yaml"), ("outer", "pipelines/outer.yaml")),
+        tmp_path,
+    )
     outer = registry.get("outer")
 
     result = await PipelineExecutor().run(
@@ -342,7 +420,7 @@ steps:
         tool_dispatch=lambda *_a, **_k: None,
         state_log=None,
         run_id="run-2575-call",
-        pipeline_registry=registry,  # the SAME disk-loaded registry resolves the callee
+        pipeline_registry=registry,  # the SAME config-loaded registry resolves the callee
     )
 
     assert result.named_stores["called"] == "x-inner"
@@ -381,7 +459,7 @@ def test_floor_still_denies_pipeline_launch_verbs(profile_factory_name: str) -> 
 
 def test_loading_a_pipeline_does_not_loosen_the_floor(tmp_path: Path) -> None:
     """Tier 2: the floor is registration-INDEPENDENT — a populated registry
-    (a real disk-loaded pipeline) does not create a bypass. The resolved
+    (a real config-loaded pipeline) does not create a bypass. The resolved
     untrusted floor still denies the launch verbs the loaded pipeline would be
     reached through (``pipeline__<name>`` curries to the denied run_pipeline
     target)."""
@@ -389,7 +467,7 @@ def test_loading_a_pipeline_does_not_loosen_the_floor(tmp_path: Path) -> None:
     from reyn.security.permissions.effective import CapabilityAxis, ContextualLayer
 
     _write(tmp_path / "pipelines", "hello.yaml", _HELLO_DSL)
-    registry = build_pipeline_registry({"scan_dirs": ["pipelines"]}, tmp_path)
+    registry = build_pipeline_registry(_entries(("hello", "pipelines/hello.yaml")), tmp_path)
     assert "hello" in registry.names()  # a pipeline IS registered
 
     contextual, _ = cp.resolve_profile(cp.builtin_untrusted_profile())
@@ -400,7 +478,7 @@ def test_loading_a_pipeline_does_not_loosen_the_floor(tmp_path: Path) -> None:
     assert layer.allows(CapabilityAxis.TOOL, "pipeline__run") is False
 
 
-# ── 4b. Full live loop: disk-loaded pipeline invoked via pipeline__<name> ─────
+# ── 4b. Full live loop: config-loaded pipeline invoked via pipeline__<name> ────
 
 
 _EMPTY_USAGE = TokenUsage(prompt_tokens=5, completion_tokens=3)
@@ -421,13 +499,14 @@ def _make_llm_stub(results: list[LLMToolCallResult]):
 async def test_disk_loaded_pipeline_invokable_through_full_live_loop(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Tier 2c: an agent launches a DISK-LOADED pipeline through the REAL router
-    loop via the ``pipeline__<name>`` form the enumerator advertises, and its
-    real transform output round-trips into chat history — the disk→surface→
-    invoke chain end-to-end (not the handler in isolation)."""
+    """Tier 2c: an agent launches a CONFIG-LOADED pipeline through the REAL
+    router loop via the ``pipeline__<name>`` form the enumerator advertises,
+    and its real transform output round-trips into chat history — the
+    config-entry→surface→invoke chain end-to-end (not the handler in
+    isolation)."""
     monkeypatch.chdir(tmp_path)
     _write(tmp_path / "pipelines", "hello.yaml", _HELLO_DSL)
-    loaded = build_pipeline_registry({"scan_dirs": ["pipelines"]}, tmp_path)
+    loaded = build_pipeline_registry(_entries(("hello", "pipelines/hello.yaml")), tmp_path)
 
     state_log = StateLog(tmp_path / ".reyn" / "state.wal")
     holder: dict = {}
@@ -437,7 +516,7 @@ async def test_disk_loaded_pipeline_invokable_through_full_live_loop(
             agent_name=profile.name, state_log=state_log,
             registry=holder.get("reg"), non_interactive=True,
             chat_tool_use_scheme="universal-category",
-            pipeline_registry=loaded,  # the disk-loaded registry, threaded as the factory would
+            pipeline_registry=loaded,  # the config-loaded registry, threaded as the factory would
         )
 
     reg = AgentRegistry(project_root=tmp_path, session_factory=_factory, state_log=state_log)

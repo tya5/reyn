@@ -249,6 +249,15 @@ _FLOORED_QUALIFIED: "dict[str, frozenset[str]]" = {
         "skill_management__install_local",
         "skill_management__install_source",
     }),
+    # pipeline install — no registering pipelines from untrusted content
+    # (mirrors skill-install exactly: a source install adds an HTTP trust
+    # boundary; a pipeline's own steps run under the launching invoker's
+    # narrowed identity, but the REGISTRATION action itself must not be
+    # reachable from untrusted content / an unbound delegate).
+    "pipeline-install": frozenset({
+        "pipeline_management__install_local",
+        "pipeline_management__install_source",
+    }),
     # session/agent spawn — no spawning sub-sessions/agents from untrusted content / an
     # unbound delegate (#2103: unbounded spawn is a DoS vector; the ⊆-parent model
     # blocks ESCALATION, but spawning ITSELF is restrict-floored like re-delegation —
@@ -413,6 +422,7 @@ _FLOORED_AUDIT_SEVERITY: "dict[str, str]" = {
     "exec": "HIGH",
     "mcp-install": "HIGH",
     "skill-install": "HIGH",  # #2548: registering skills from untrusted content is a persistence vector
+    "pipeline-install": "HIGH",  # registering pipelines from untrusted content — same persistence vector as skill-install
     "memory-write": "MED",
     "spawn": "HIGH",  # #2103: unbounded sub-session spawn (DoS) — peer of re-delegation
     "pipeline-run": "HIGH",  # IS-1: pipeline launch is spawn-adjacent (peer of "spawn")

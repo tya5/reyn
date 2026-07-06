@@ -281,17 +281,27 @@ class ReynConfig:
     #         auto_invoke: true
     # Merged across config tiers by name (explicit entries win on collision).
     skills: dict = field(default_factory=dict)
-    # #2575: pipeline registration config. Raw dict passed to
+    # Pipeline registry config. Raw dict passed to
     # reyn.data.pipelines.registry.build_pipeline_registry at session-factory
-    # time (SessionFactoryConfig.from_config). Shape:
+    # time (SessionFactoryConfig.from_config). Pipelines are registered PURELY
+    # via explicit ``pipelines.entries`` declarations — the same registration
+    # model as ``skills.entries`` / ``mcp.servers`` (clean break: the prior
+    # directory-scan model — ``pipelines.scan_dirs`` + a blind glob over a
+    # ``pipelines/`` dir — is removed; a *.yaml file with no config entry is
+    # invisible to every session). Shape:
     #   pipelines:
-    #     scan_dirs: ["pipelines"]       # project-root-relative; default ["pipelines"]
-    # Each ``*.yaml`` under a scan dir is an Appendix-B DSL document parsed via
-    # ``parse_pipeline_dsl``; the pipeline registers under its own declared
-    # ``pipeline:`` name (the file name is just a container). Absent/empty →
-    # no pipelines loaded (byte-identical to pre-#2575). Cross-tier: the whole
-    # ``pipelines`` block is last-tier-wins (generic ``_merge`` else-branch —
-    # no per-entry union, unlike ``skills``, since scan_dirs is a plain list).
+    #     entries:
+    #       <name>:
+    #         path: "pipelines/hello.yaml"
+    #         description: "One-line description"   # optional
+    #         enabled: true                          # optional, default true
+    # Each entry's ``path`` is parsed via ``parse_pipeline_dsl``; the pipeline
+    # registers under its OWN declared ``pipeline:`` name (the authoritative
+    # resolution key a ``call``/``match`` step targets), not the config entry
+    # key — see ``build_pipeline_registry``'s name-mismatch validation.
+    # Absent/empty → no pipelines loaded. Merged across config tiers by name
+    # (explicit entries win on collision) — same union-merge shape as
+    # ``skills`` (see ``_merge`` in loader.py).
     pipelines: dict = field(default_factory=dict)
 
     def model_class_for(self, purpose: str) -> str:
