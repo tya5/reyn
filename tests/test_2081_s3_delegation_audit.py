@@ -168,6 +168,8 @@ def test_reachable_role_that_denies_is_clean(tmp_path: Path, monkeypatch) -> Non
         "mcp__install_local, mcp_install_registry, mcp_install_package, mcp_install_local, "
         "skill_management__install_local, skill_install_local, "  # #2548 PR-C: skill-install class
         "skill_management__install_source, skill_install_source, "  # #2548 PR-D: source install
+        "pipeline_management__install_local, pipeline_install_local, "  # pipeline-install class (mirrors skill-install)
+        "pipeline_management__install_source, pipeline_install_source, "  # pipeline source install
         "session_spawn, agent_spawn, topology_create, "  # #2103: the full spawn class (session + agent + topology)
         "pipeline__run, run_pipeline, "  # IS-1: pipeline-run class (spawn-adjacent)
         "pipeline__run_async, run_pipeline_async, "  # IS-2: async launch, same class

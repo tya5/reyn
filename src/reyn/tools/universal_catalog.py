@@ -92,6 +92,10 @@ CATEGORIES: Final[tuple[str, ...]] = (
     # ad-hoc INLINE launches of an agent-GENERATED DSL definition, gated by a
     # static-analysis pass before spawn.
     "pipeline",
+    # pipeline management ops (install_local / install_source). NOT the
+    # ``pipeline__`` resource category (per-registered-pipeline dynamic
+    # dispatch); this is the management plane — mirrors ``skill_management``.
+    "pipeline_management",
 )
 
 
@@ -665,6 +669,17 @@ def _enumerate_category(category: str, ctx: ToolContext) -> list[dict[str, str]]
         # → unreachable on the enumerate-all production-default scheme + empty
         # list_actions(task). The single-source enumeration seam (#2032).
         "task",
+        # Pre-existing #2032-class gap found + closed while adding
+        # pipeline_management: skill_management had a static _OPERATION_RULES
+        # entry + dispatch route but was NEVER added to this enumeration list —
+        # list_actions(category=["skill_management"]) silently returned empty
+        # even though skill_management__install_local/_source were fully
+        # dispatchable via invoke_action (the exact "registered + dispatchable
+        # but LLM-invisible" bug class, same root cause as #2589/#2621).
+        # pipeline_management is added alongside it so the new verbs don't
+        # repeat the same gap.
+        "skill_management",
+        "pipeline_management",
     ):
         return _enumerate_static_category(category)
 

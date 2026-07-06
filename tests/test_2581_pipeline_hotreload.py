@@ -49,12 +49,16 @@ from reyn.runtime.session import Session
 
 def _make_session(tmp_path: Path, *, agent_name: str = "test-agent") -> Session:
     """Minimal real Session in *tmp_path* with a live pipeline registry built
-    from whatever ``pipelines/`` files exist right now — mirrors
-    ``SessionFactoryConfig.from_config``'s production build-once path."""
-    (tmp_path / "reyn.yaml").write_text("model: standard\n", encoding="utf-8")
+    from whatever ``pipelines.entries`` the config cascade currently declares
+    (``reyn.yaml`` and/or the dynamic ``.reyn/config/pipelines.yaml`` — see
+    ``_write_dynamic_entries``) — mirrors ``SessionFactoryConfig.from_config``'s
+    production build-once path. A bare ``model: standard`` reyn.yaml (no
+    ``pipelines:`` block) is also valid and yields an empty registry."""
+    if not (tmp_path / "reyn.yaml").exists():
+        (tmp_path / "reyn.yaml").write_text("model: standard\n", encoding="utf-8")
     from reyn.config.loader import load_config
     from reyn.data.pipelines.registry import build_pipeline_registry
-    cfg = load_config()
+    cfg = load_config(tmp_path)
     registry = build_pipeline_registry(cfg.pipelines, tmp_path)
     return Session(
         agent_name=agent_name,
@@ -68,6 +72,20 @@ def _write_pipeline(tmp_path: Path, filename: str, dsl_text: str) -> None:
     d = tmp_path / "pipelines"
     d.mkdir(parents=True, exist_ok=True)
     (d / filename).write_text(dsl_text, encoding="utf-8")
+
+
+def _write_dynamic_entries(tmp_path: Path, *names_and_paths: "tuple[str, str]") -> None:
+    """Write ``.reyn/config/pipelines.yaml`` declaring ``pipelines.entries`` —
+    the IN-set dynamic file (mirrors ``.reyn/config/skills.yaml``), the
+    runtime-mutable layer an install tool / operator edits between reloads
+    (as opposed to the restart-only ``reyn.yaml``)."""
+    import yaml
+    path = tmp_path / ".reyn" / "config" / "pipelines.yaml"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        yaml.dump({"pipelines": {"entries": {n: {"path": p} for n, p in names_and_paths}}}),
+        encoding="utf-8",
+    )
 
 
 _HELLO_V1 = """
@@ -106,6 +124,7 @@ async def test_hotreload_adds_pipeline_to_live_registry(
     assert "hello" not in _names(session)
 
     _write_pipeline(tmp_path, "hello.yaml", _HELLO_V1)
+    _write_dynamic_entries(tmp_path, ("hello", "pipelines/hello.yaml"))
 
     changed = await session._reapply_pipelines({})
 
@@ -126,6 +145,7 @@ async def test_hotreload_changes_pipeline_description_on_live_registry(
     proves the swap is a fresh object, not a stale cached one."""
     monkeypatch.chdir(tmp_path)
     _write_pipeline(tmp_path, "hello.yaml", _HELLO_V1)
+    _write_dynamic_entries(tmp_path, ("hello", "pipelines/hello.yaml"))
     session = _make_session(tmp_path)
     assert session.pipeline_registry.get("hello").steps[0].value.startswith("'v1-'")
 
@@ -161,6 +181,7 @@ async def test_hotreload_via_apply_pending_dual_write(
     monkeypatch.chdir(tmp_path)
     session = _make_session(tmp_path)
     _write_pipeline(tmp_path, "hello.yaml", _HELLO_V1)
+    _write_dynamic_entries(tmp_path, ("hello", "pipelines/hello.yaml"))
 
     session._hot_reloader.request_reload(source="operator")
     summary = await session._hot_reloader.apply_pending()
@@ -185,6 +206,7 @@ async def test_hotreload_malformed_pipeline_keeps_old_registry_intact(
     broken file does NOT half-apply or clear the live registry."""
     monkeypatch.chdir(tmp_path)
     _write_pipeline(tmp_path, "hello.yaml", _HELLO_V1)
+    _write_dynamic_entries(tmp_path, ("hello", "pipelines/hello.yaml"))
     session = _make_session(tmp_path)
     assert "hello" in _names(session)
     old_registry = session.pipeline_registry
@@ -216,6 +238,7 @@ async def test_hotreload_malformed_pipeline_observable_via_warning_and_noop_appl
     the /reload operator visible feedback rather than a silent half-apply."""
     monkeypatch.chdir(tmp_path)
     _write_pipeline(tmp_path, "hello.yaml", _HELLO_V1)
+    _write_dynamic_entries(tmp_path, ("hello", "pipelines/hello.yaml"))
     session = _make_session(tmp_path)
 
     _write_pipeline(tmp_path, "hello.yaml", "pipeline: hello\nsteps: not-a-list\n")

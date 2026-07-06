@@ -83,6 +83,16 @@ _NOT_EXTERNAL = {
     # classification rationale as mcp_install_local / topology_create.
     "subscribe_mcp_resource", "unsubscribe_mcp_resource",
     "skill_install_source",
+    # pipeline_install_local writes .reyn/config/pipelines.yaml — returns an
+    # install status dict (path / name / status), not fetched external content.
+    # Same classification rationale as skill_install_local / mcp_install_local.
+    "pipeline_install_local",
+    # pipeline_install_source shallow-clones a git repo and writes
+    # .reyn/config/pipelines.yaml — returns an install status dict, not the
+    # fetched repo content. The cloned DSL description is threat-scanned before
+    # registration; the scan result is internal OS state, not forwarded
+    # external content. Same rationale as skill_install_source.
+    "pipeline_install_source",
     "cron_register", "cron_unregister", "cron_enable", "cron_disable",
     # #2073 S3: hooks_add writes .reyn/hooks.yaml + schedules a reload — returns a
     # status dict (on / added / reload_scheduled / path), not external content.

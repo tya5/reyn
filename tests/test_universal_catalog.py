@@ -70,6 +70,10 @@ def test_categories_master_table_order() -> None:
         "skill_management",
         # IS-1: pipeline launch verb(s) (pipeline__run = run_pipeline).
         "pipeline",
+        # pipeline management ops (install_local / install_source). NOT the
+        # ``pipeline__`` resource category; management plane (mirrors
+        # ``skill_management``).
+        "pipeline_management",
     )
 
 

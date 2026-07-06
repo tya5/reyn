@@ -1212,6 +1212,31 @@ skills:
 
 See [Concepts: Skills](../../concepts/tools-integrations/skills.md) for the full registration model, the three-layer exposure model (menu / on-demand read / bundled assets), and the install tools.
 
+## `pipelines` block
+
+Registers pipeline DSL files — the same explicit-registration model as `skills.entries` / `mcp.servers` (clean break: there is no directory scan; a `*.yaml` file with no config entry is invisible to every session).
+
+```yaml
+pipelines:
+  entries:
+    hello:
+      path: pipelines/hello.yaml   # project-root-relative or absolute
+      description: "Minimal greeting pipeline"   # optional
+      enabled: true                              # optional, default true
+```
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `path` | string | required | Path to the pipeline's `*.yaml` DSL file. |
+| `description` | string | `""` | Optional one-line summary; if omitted, the DSL's own `description:` key is used. |
+| `enabled` | bool | `true` | `false` removes the entry from the registry entirely. |
+
+The entry **key must match the DSL file's own declared `pipeline:` name exactly** — the declared name is the authoritative identity a `call`/`match` step resolves against, not the config key. A mismatch fails session start loudly, naming both the key and the declared name.
+
+`pipelines.entries` merges across `~/.reyn/config.yaml` ⊕ `reyn.yaml` ⊕ `reyn.local.yaml` ⊕ the dynamic `<project>/.reyn/config/pipelines.yaml` (written by the `pipeline_management__install_local` / `pipeline_management__install_source` chat tools), later tiers winning on name collision — the same merge shape as `skills.entries` / `mcp.servers`.
+
+See [Concepts: Pipeline registration](../../concepts/runtime/pipeline-registration.md) for the full registration model and the install tools.
+
 ## `embedding` block
 
 RAG embedding model classes and batch settings. Built-in defaults cover the OpenAI path — no `reyn.yaml` changes are required for a fresh install with `OPENAI_API_KEY`.

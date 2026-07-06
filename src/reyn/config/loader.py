@@ -219,6 +219,21 @@ def _merge(base: dict, override: dict) -> dict:
                 **val,
                 "entries": {**existing_entries, **new_entries},
             }
+        elif key == "pipelines" and isinstance(val, dict):
+            # Pipeline registry entries union across config tiers — mirrors the
+            # ``skills`` branch above exactly (same #470-style invariant:
+            # ``entries`` is a per-name union with later tier winning on
+            # collision, not last-tier-wins-wholesale). Lets ~/.reyn/config.yaml
+            # declare global pipelines while reyn.yaml / .reyn/config/pipelines.yaml
+            # add project-local ones.
+            existing = result.get("pipelines", {})
+            existing_entries = existing.get("entries", {}) if isinstance(existing, dict) else {}
+            new_entries = val.get("entries", {}) if isinstance(val, dict) else {}
+            result["pipelines"] = {
+                **existing,
+                **val,
+                "entries": {**existing_entries, **new_entries},
+            }
         else:
             result[key] = val
     return result
@@ -374,6 +389,17 @@ def load_config(cwd: Path | None = None) -> ReynConfig:
         dynamic_skills = _load_yaml(project_root / ".reyn" / "config" / "skills.yaml")
         merged = _merge(merged, dynamic_skills)
 
+        # Pipeline registry separated from static config — same #470 invariant
+        # as skills/MCP. .reyn/config/pipelines.yaml carries project-local
+        # pipeline declarations (written by the pipeline_management__install_*
+        # tools); merged LAST so it wins on name collision with operator-edited
+        # reyn.yaml pipeline entries. Shape: {"pipelines": {"entries": {<name>:
+        # {<entry>}}}} — same as the pipelines section in reyn.yaml, handled by
+        # the _merge pipelines branch above. Also in _HOT_RELOAD_FILES (the
+        # IN-set) so pipeline declarations hot-reload at the turn boundary.
+        dynamic_pipelines = _load_yaml(project_root / ".reyn" / "config" / "pipelines.yaml")
+        merged = _merge(merged, dynamic_pipelines)
+
         # ADR-0031: <project>/.reyn/config.yaml is DEPRECATED (removed from
         # the 3-layer cascade).  Emit a one-time warning if the file exists so
         # users know to migrate.  The file is intentionally NOT loaded.
@@ -507,6 +533,7 @@ def load_config(cwd: Path | None = None) -> ReynConfig:
 _HOT_RELOAD_FILES: tuple[str, ...] = (
     "config/mcp.yaml", "config/cron.yaml", "config/hooks.yaml",
     "config/skills.yaml",  # #2548 PR-B: skills IN-set hot-reload
+    "config/pipelines.yaml",  # pipelines IN-set hot-reload (mirrors skills.yaml)
 )
 
 

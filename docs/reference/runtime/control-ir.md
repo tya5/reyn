@@ -30,6 +30,7 @@ Control IR is the list of side-effect operations the LLM may emit alongside its 
 | `mcp_install` | Install an MCP server from the registry into the project config | `permissions.mcp_install: true` in skill frontmatter |
 | `mcp_drop_server` | Remove an MCP server from project/local/user config (inverse of `mcp_install`) | `permissions.mcp_drop_server: true` in skill frontmatter |
 | `skill_install` | Register a skill (local dir or git/URL source) into the project skills config | `file.write: [.reyn/config/skills.yaml]` in skill frontmatter; `http.get: [{host: <source_host>}]` when `source` is set |
+| `pipeline_install` | Register a pipeline (local DSL file or git/URL source) into the project pipelines config | `file.write: [.reyn/config/pipelines.yaml]` in skill frontmatter; `http.get: [{host: <source_host>}]` when `source` is set |
 | `index_query` | Semantic vector search over one indexed source | none |
 | `recall` | Macro: embed query (provider-direct) → index_query per source → merge top-K | none (embedding API cost) |
 | `index_drop` | Remove an indexed source entirely (destructive) | `permissions.index_drop: ask` in skill frontmatter |
@@ -422,6 +423,83 @@ Result fields: `status` (`"installed"` / `"blocked"` / `"error"`), `name`, `path
 
 Events emitted: `skill_install_threat_match`, `skill_install_threat_blocked` (threat scan),
 `skill_installed` (P6 on success).
+
+## `pipeline_install`
+
+Registers a pipeline (from a local DSL file or a git/GitHub source URL) into the
+project's `pipelines.entries` config. Two tool surface verbs converge on the same
+`op_runtime/pipeline_install.py` handler: `pipeline_management__install_local` (local
+path) and `pipeline_management__install_source` (git/URL). Mirrors `skill_install`
+as closely as possible, reusing its generic path-safety + sandboxed git-clone helpers
+verbatim (`_safe_skill_name` / `_contained_under` / `_parse_source_spec` /
+`_source_host` / `_shallow_clone` / `_read_yaml` / `_write_yaml` /
+`_resolve_project_root` carry no skill-specific logic).
+
+Local-path example:
+```json
+{
+  "kind": "pipeline_install",
+  "path": "pipelines/hello.yaml"
+}
+```
+
+Source/git example:
+```json
+{
+  "kind": "pipeline_install",
+  "source": "https://github.com/user/pipeline-repo"
+}
+```
+
+Subdir convention (mirrors Terraform, same as `skill_install`):
+`"https://github.com/user/repo//pipelines/my-pipeline"` selects the
+`pipelines/my-pipeline` subdirectory inside the cloned repo.
+
+Fields:
+- `path` (required when `source` is absent) — the direct path to the pipeline's
+  `*.yaml` DSL file. Unlike `skill_install`, there is no directory-or-file
+  resolution — a pipeline registration is always exactly one file. For a source
+  install, `path` (when set) selects the DSL file relative to the repo root/subdir;
+  when omitted, the repo root/subdir must contain exactly one `*.yaml` file.
+- `source` (optional) — git or GitHub URL. The handler shallow-clones the repo
+  to `.reyn/pipelines/<name>/`. Subdir inside the repo is specified via `//` separator.
+  Requires `http.get: [{host: <source_host>}]` in the caller's permission declaration.
+- `scope` (optional, default `".reyn/config/pipelines.yaml"`) — retained for
+  forward compat; currently unused (all installs write to `.reyn/config/pipelines.yaml`).
+- `name` (optional) — when set, MUST match the DSL's own declared `pipeline:` name
+  exactly; a mismatch is refused (`status="error"`). Unlike `skill_install`'s `name`
+  (which freely renames the registered key), a pipeline's declared `pipeline:` name
+  is ALWAYS the resolution key a `call`/`match` step targets — the config entry key
+  cannot diverge from it. When `name` is omitted, the config key defaults to the
+  DSL's declared name.
+
+Handler lifecycle (source path inserts steps 0a–0d before step 1):
+0. **Source path only**: (a) Gate `require_http_get` for the source host. (b) Sanitize the
+   candidate name + verify the clone destination is contained under
+   `.reyn/pipelines/` — refuse before any filesystem mutation if either
+   fails (path-traversal → arbitrary-rmtree guard). Shallow-clone repo to
+   `.reyn/pipelines/<candidate_name>/`. (c) Locate the DSL file (`path` selects it, or
+   the sole `*.yaml` file in the repo root/subdir). (d) After the declared name is
+   resolved AND sanitized, containment-check + rename clone dir if name ≠ candidate.
+1. Resolve the DSL file path (local: `op.path` directly; source: the located clone file)
+2. Parse via `parse_pipeline_dsl` — a malformed file is refused (`status="error"`), never registered
+3. Resolve + validate the registration name: `op.name` (if set) must match the DSL's
+   declared `pipeline:` name exactly; a mismatch is refused
+4. Threat-scan the pipeline description via `content_guard.scan_for_threats(scope="strict")` — block on
+   blocking-severity match (source path: removes clone on block)
+5. Gate via `PermissionResolver.require_file_write` (= `.reyn/config/pipelines.yaml`)
+6. Write `pipelines.entries.<name>` to `.reyn/config/pipelines.yaml` with
+   `{path, description, enabled: true}` (+ `source: <url>` when set)
+7. Call `record_config_generation` (recovery-core: truncation-surviving snapshot, #2259 / CLAUDE.md gate)
+8. Emit `pipeline_installed` event (P6 audit trail)
+9. Request hot-reload via `get_active_hot_reloader().request_reload(source="pipeline_install")`
+   (the existing `"pipelines"` seam — `Session._reapply_pipelines` — rebuilds the registry)
+
+Result fields: `status` (`"installed"` / `"blocked"` / `"error"`), `name`, `path`,
+`description`, `config_path`, `source` (empty string for local installs).
+
+Events emitted: `pipeline_install_threat_match`, `pipeline_install_threat_blocked` (threat scan),
+`pipeline_installed` (P6 on success).
 
 ## `index_query`
 

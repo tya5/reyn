@@ -337,6 +337,14 @@ _OPERATION_RULES: Final[dict[str, tuple[str, Callable[[str, Mapping[str, Any]], 
     "skill_management__install_local":  ("skill_install_local",  _passthrough_args),
     "skill_management__install_source": ("skill_install_source", _passthrough_args),
 
+    # pipeline_management category: pipeline directory/DSL install verbs
+    # (mirrors skill_management__install_local / __install_source above).
+    # NOTE: pipeline__ is the RESOURCE category prefix (per-registered-pipeline
+    # dynamic dispatch, e.g. pipeline__hello). Management operations use
+    # pipeline_management__ to avoid colliding with that resource namespace.
+    "pipeline_management__install_local":  ("pipeline_install_local",  _passthrough_args),
+    "pipeline_management__install_source": ("pipeline_install_source", _passthrough_args),
+
     # pipeline category (IS-1: sync + REGISTERED-only run_pipeline;
     # IS-2: async launch in a crash-recoverable driver-session;
     # IS-4: ad-hoc INLINE launches — agent-GENERATED DSL + a static-analysis
