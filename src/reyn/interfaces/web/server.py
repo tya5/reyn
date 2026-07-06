@@ -117,6 +117,21 @@ _DISPOSITION_SWEEP_INTERVAL_SECONDS = 30.0
 async def _lifespan(app: FastAPI):
     # ── Startup ──
 
+    # Durable asyncio unhandled-exception capture (see
+    # reyn.core.events.asyncio_diagnostics). `reyn web` is uvicorn-owned —
+    # uvicorn.run() creates and owns the loop, so there is no
+    # asyncio.run()-call-site choke point to hook (unlike `run_async` for
+    # the CLI chat path). The lifespan startup hook is the first point this
+    # process has a *running* loop to install the handler on, and it runs
+    # exactly once per server process regardless of how many browser/API
+    # clients subsequently attach.
+    import asyncio  # noqa: PLC0415
+
+    from reyn.core.events.asyncio_diagnostics import (  # noqa: PLC0415
+        install_asyncio_exception_handler,
+    )
+    install_asyncio_exception_handler(asyncio.get_running_loop())
+
     # FP-0001 + issue #267 Gap 5: RunRegistry singleton — process-wide
     # task lifecycle tracking with snapshot persistence so a process
     # restart preserves A2A async-task state (= the structural gap that

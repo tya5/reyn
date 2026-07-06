@@ -255,6 +255,38 @@ found` — the mode never crashes on missing files.
 
 ---
 
+# Asyncio Unhandled Exceptions (`asyncio_unhandled_exception` event)
+
+reyn installs a durable-capture `asyncio` exception handler
+(`reyn.core.events.asyncio_diagnostics.install_asyncio_exception_handler`) on
+every real loop-owning entrypoint (`reyn chat`, `reyn web`, `reyn cron run`,
+`reyn dogfood`, the chainlit server). Before this existed, a fire-and-forget
+background task (`asyncio.create_task(...)` whose result nobody awaits or
+checks) that raised was caught only by Python's own
+`asyncio.BaseEventLoop.default_exception_handler` — logged to stderr and then
+gone, the exact "Unhandled exception in event loop" / "exception: None"
+signature an operator cannot investigate after the fact.
+
+The handler always defers to the loop's own default handler first (no change
+to existing stderr/log visibility), then durably emits an
+`asyncio_unhandled_exception` P6 event via `emit_cli_event` (session-
+independent — routes to `.reyn/events/direct/cli/<date>.jsonl`, found the
+same way regardless of which entrypoint hit it).
+
+```bash
+python scripts/dogfood_trace.py --mode full --filter asyncio_unhandled_exception --root .reyn
+```
+
+Fields on the event: `exception_type` (str, `""` when asyncio reported a
+message-only context with no exception object), `exception_message`,
+`traceback` (full, untruncated in the stored JSONL — `--mode full`'s console
+printer truncates long lines like it does for every event kind; read the
+`.reyn/events/direct/cli/*.jsonl` file directly for the complete traceback),
+`context_message` (asyncio's raw `context["message"]`, always present), and
+`task_repr` (best-effort `repr()` of the task/future, `""` if undeterminable).
+
+---
+
 # LLM Replay (`scripts/llm_replay.py`)
 
 `llm_replay.py` takes a trace file, finds a specific request by `request_id`,

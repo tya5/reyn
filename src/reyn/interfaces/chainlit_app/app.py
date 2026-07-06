@@ -136,6 +136,17 @@ async def _get_or_build_registry() -> "AgentRegistry":
         if _REGISTRY is not None:
             return _REGISTRY
 
+        # This runs exactly once per process (guarded by _REGISTRY is None
+        # above), on the shared loop chainlit's ASGI server owns — the
+        # equivalent choke point to the FastAPI `_lifespan` startup hook in
+        # reyn.interfaces.web.server, since chainlit (like `reyn web`) has
+        # no asyncio.run()-call-site of its own for this process to hook.
+        # See reyn.core.events.asyncio_diagnostics.
+        from reyn.core.events.asyncio_diagnostics import (
+            install_asyncio_exception_handler,
+        )
+        install_asyncio_exception_handler(asyncio.get_running_loop())
+
         import argparse
 
         from reyn.config import _find_project_root, load_project_context
