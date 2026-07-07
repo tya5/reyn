@@ -192,3 +192,61 @@ version).
 This second pipeline would need its own `pipelines.entries` declaration (or
 `pipeline_management__install_local` call), same as step 2 above, before an
 agent can launch it.
+
+## 5. Manage and run pipelines from the CLI directly
+
+Everything above happens through an agent's tool calls inside a chat session.
+`reyn pipe` does the same three things — list, install, run — as a direct CLI
+command, for when you want to manage or execute a pipeline without a live
+session:
+
+```console
+$ reyn pipe list
+No pipelines configured.
+Add one with: reyn pipe install --path <file.yaml>  or edit reyn.yaml manually.
+
+$ reyn pipe install --path pipelines/greet.yaml --non-interactive
+Installing pipeline from path: pipelines/greet.yaml
+
+Pipeline 'greet' installed successfully.
+Config written to: .reyn/config/pipelines.yaml
+...
+
+$ reyn pipe list
+NAME   PATH                      DESCRIPTION                  ENABLED  LOAD STATUS
+────────────────────────────────────────────────────────────────────────────────
+greet  pipelines/greet.yaml      Greet a name and shout it    yes      loaded
+
+$ reyn pipe run greet --input '{"name": "Reyn"}'
+{
+  "pipe_data": "Hello, Reyn! (shouted)",
+  "named_stores": {
+    "name": "Reyn",
+    "greeting": "Hello, Reyn!",
+    "shouted": "Hello, Reyn! (shouted)"
+  }
+}
+```
+
+`reyn pipe install` also accepts `--source <git/GitHub URL>` (same `//subdir`
+convention as `reyn mcp install`), and `--name` to assert the installed
+pipeline's identity up front — a mismatch against the DSL's own declared
+`pipeline:` name is refused with a clear error rather than silently diverging
+the two.
+
+`reyn pipe list`'s **LOAD STATUS** column is the direct way to see a broken
+entry without digging through logs: an entry that is `enabled: true` but
+failed to parse (bad DSL, missing file, a duplicate declared name) shows
+`FAILED` right there, instead of just silently not appearing anywhere.
+
+`reyn pipe run` executes the pipeline **standalone, in the CLI process
+itself** — there is no live agent session to attach an `agent` step to, and
+no router/tool-catalog context to dispatch a `tool` step through. It runs
+pipelines built from `transform` / `call` / `match` / `fold` / `for_each` /
+`parallel` steps end-to-end; a pipeline that reaches a `tool:` or `agent:`
+step (directly, or through a `call`/`match` target) is refused up front with
+a clear message, rather than silently doing nothing or crashing mid-run —
+run that pipeline from a live agent session (`run_pipeline`) instead. There
+is also no crash-recovery for a `reyn pipe run` invocation: it is a one-shot
+foreground command, so a killed/interrupted run is simply a failed command,
+the same as any other CLI tool — not a resumable driver-session.
