@@ -84,17 +84,42 @@ Hand-editing any of the first three is a normal way to register a pipeline;
 the fourth is written automatically by the install tools below and reflects
 what a session installed for itself.
 
-## Failure behavior — fail loud
+## Failure behavior — per-entry isolated, visible but non-fatal
 
-Loading is strict, so a broken definition is never silently dropped:
+Loading is per-entry isolated: a broken declaration is never silently
+dropped, but it also never takes down the rest of the session's pipelines
+(or the session itself). At session-factory time (every `reyn chat` / `reyn
+web` startup), a broken entry is caught, logged as a warning, durably
+recorded as a `pipeline_load_failed` event (readable via
+`scripts/dogfood_trace.py` / the raw `.reyn/events/direct/cli/*.jsonl`
+files), and skipped — every other declared entry still loads and registers
+normally:
 
 | Condition | Behavior |
 |-----------|----------|
-| Malformed DSL file | Session start fails, naming the offending file. |
-| Entry key ≠ the DSL's declared `pipeline:` name | Session start fails, naming both the key and the declared name. |
-| Two entries declaring the same `pipeline:` name | Session start fails, naming the collision. |
-| An entry's `path` does not exist | Session start fails, naming the path. |
-| No `pipelines.entries` declared | No pipelines registered (empty registry). |
+| Malformed DSL file | That entry is skipped; logged + durably recorded, naming the offending file. Other entries still load. |
+| Entry key ≠ the DSL's declared `pipeline:` name | That entry is skipped; logged + durably recorded, naming both the key and the declared name. Other entries still load. |
+| Two entries declaring the same `pipeline:` name | The FIRST-registered entry (config declaration order) wins; the later, colliding entry is skipped and logged + durably recorded. |
+| An entry's `path` does not exist | That entry is skipped; logged + durably recorded, naming the path. Other entries still load. |
+| No `pipelines.entries` declared | No pipelines registered (empty registry) — not a failure, nothing logged. |
+
+This is a deliberate middle ground between two failure postures neither of
+which fit: fully silent (a typo could vanish a pipeline the operator meant to
+ship, with zero trace — the earlier design's own stated reason for
+fail-loud) and fully fatal (the original fail-loud design — the first
+broken entry anywhere in `pipelines.entries` used to crash the ENTIRE
+session, which meant one unrelated pipeline's typo could take down `reyn
+chat` / `reyn web` startup entirely). Per-entry isolation keeps a broken
+entry visible to the operator (warning + durable event) while letting every
+healthy entry — and the session itself — start normally.
+
+The hot-reload seam (`/reload`, `Session._reapply_pipelines`) is the one
+exception: it opts back into the OLD atomic, fail-loud posture (any broken
+entry aborts the WHOLE rebuild, leaving the previously-loaded registry
+fully intact) — a live session's already-running pipeline registry should
+never have an entry silently vanish out from under it mid-reload, so a
+broken edit at reload time is rejected wholesale rather than partially
+applied.
 
 ## Installing pipelines
 

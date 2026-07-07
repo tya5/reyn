@@ -14,9 +14,11 @@ Coverage:
   1. Contract — the parser now carries the declared name on ``Pipeline.name``,
      and serde round-trips it (default-tolerant for pre-existing on-disk data).
   2. Loader — config entries → registry keyed by the declared name; a config
-     key that disagrees with the DSL's declared name FAILS LOUD (the
-     authoritative resolution key is the DSL's, never the config key);
-     malformed / duplicate → FAIL LOUD with the path; empty → empty.
+     key that disagrees with the DSL's declared name, a malformed file, a
+     missing path, or a duplicate declared name are each isolated PER ENTRY
+     (logged + durably emitted, the entry skipped, remaining entries still
+     load — see the follow-up bugfix in test_2639-style commit history: a
+     single broken entry must never crash session startup); empty → empty.
   3. Wiring — ``from_config(config, project_root)`` builds the registry once;
      ``Session(pipeline_registry=)`` adopts it.
   4. Surfacing + invoke — a config-loaded pipeline surfaces as ``pipeline__<name>``
@@ -40,12 +42,32 @@ from typing import Any
 
 import pytest
 
+
+def _read_events_of_kind(events_dir: Path, kind: str) -> list[dict]:
+    """Read every JSONL event of *kind* from anywhere under *events_dir*.
+
+    Mirrors tests/test_asyncio_diagnostics.py's helper of the same name — the
+    canonical way to read back an ``emit_cli_event``-durable-captured event
+    from a real ``.reyn/events/`` tree in a test.
+    """
+    found: list[dict] = []
+    if not events_dir.exists():
+        return found
+    for path in events_dir.rglob("*.jsonl"):
+        for line in path.read_text().splitlines():
+            if not line.strip():
+                continue
+            rec = json.loads(line)
+            if rec.get("type") == kind:
+                found.append(rec)
+    return found
+
 from reyn.core.events.state_log import StateLog
 from reyn.core.pipeline.executor import Pipeline, PipelineExecutor, TransformStep
 from reyn.core.pipeline.registry import PipelineRegistry
 from reyn.core.pipeline.schema import SchemaRegistry
 from reyn.core.pipeline.serde import pipeline_from_dict, pipeline_to_dict
-from reyn.data.pipelines.registry import PipelineLoadError, build_pipeline_registry
+from reyn.data.pipelines.registry import build_pipeline_registry
 from reyn.llm.llm import LLMToolCallResult
 from reyn.llm.pricing import TokenUsage
 from reyn.runtime.registry import AgentRegistry
@@ -160,57 +182,108 @@ def test_loader_entry_path_may_use_any_filename(tmp_path: Path) -> None:
     assert set(registry.names()) == {"hello"}  # declared name, not "greet"
 
 
-def test_loader_entry_key_declared_name_mismatch_fails_loudly(tmp_path: Path) -> None:
+def test_loader_entry_key_declared_name_mismatch_is_skipped_not_fatal(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Tier 2: a config entry key that disagrees with the DSL's declared
     ``pipeline:`` name is a footgun (a ``call`` step resolves the DECLARED
-    name, not the config key you'd naturally look for) — FAILS LOUD rather
-    than silently registering under one or the other."""
+    name, not the config key you'd naturally look for) — the entry is
+    skipped (not registered) and the failure is durably logged, but
+    ``build_pipeline_registry`` itself does NOT raise (regression: this used
+    to crash the whole session at startup — see the module docstring)."""
+    reyn_dir = tmp_path / ".reyn"
+    reyn_dir.mkdir()
+    monkeypatch.chdir(tmp_path)
     _write(tmp_path / "pipelines", "hello.yaml", _HELLO_DSL)  # declares "hello"
 
-    with pytest.raises(PipelineLoadError) as exc:
-        build_pipeline_registry(_entries(("mismatched-key", "pipelines/hello.yaml")), tmp_path)
+    registry = build_pipeline_registry(
+        _entries(("mismatched-key", "pipelines/hello.yaml")), tmp_path,
+    )
 
-    assert "mismatched-key" in str(exc.value)
-    assert "hello" in str(exc.value)
+    assert registry.names() == ()
+    events = _read_events_of_kind(reyn_dir / "events", "pipeline_load_failed")
+    [event] = events
+    assert event["data"]["key"] == "mismatched-key"
+    assert "hello" in event["data"]["error"]
 
 
-def test_loader_malformed_file_fails_loudly_with_path(tmp_path: Path) -> None:
-    """Tier 2: a malformed DSL file raises PipelineLoadError naming the file —
-    NOT a silent skip (a typo must not silently drop a pipeline the operator
-    meant to ship)."""
+def test_loader_malformed_file_is_skipped_and_durably_logged(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Tier 2: a malformed DSL file is skipped (not registered), NOT a silent
+    vanish (a typo must not silently drop a pipeline with zero trace) — a
+    warning is logged and a ``pipeline_load_failed`` event is durably
+    captured naming the file. ``build_pipeline_registry`` itself does not
+    raise (regression: one broken entry used to crash reyn startup)."""
+    reyn_dir = tmp_path / ".reyn"
+    reyn_dir.mkdir()
+    monkeypatch.chdir(tmp_path)
     _write(tmp_path / "pipelines", "broken.yaml", "pipeline: broken\nsteps: not-a-list\n")
 
-    with pytest.raises(PipelineLoadError) as exc:
-        build_pipeline_registry(_entries(("broken", "pipelines/broken.yaml")), tmp_path)
+    registry = build_pipeline_registry(_entries(("broken", "pipelines/broken.yaml")), tmp_path)
 
-    assert "broken.yaml" in str(exc.value)
+    assert registry.names() == ()
+    events = _read_events_of_kind(reyn_dir / "events", "pipeline_load_failed")
+    [event] = events
+    assert event["data"]["key"] == "broken"
+    assert "broken.yaml" in event["data"]["error"]
 
 
-def test_loader_duplicate_declared_name_fails_loudly(tmp_path: Path) -> None:
+def test_loader_broken_entry_does_not_prevent_valid_sibling_from_loading(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Tier 2: the actual regression scenario — one malformed
+    ``pipelines.entries`` declaration must NOT prevent a second, VALID entry
+    in the SAME config from registering. Before the fix, the first entry's
+    ``PipelineLoadError`` propagated straight out of ``build_pipeline_registry``
+    and crashed session construction before the loop ever reached the second,
+    healthy entry."""
+    reyn_dir = tmp_path / ".reyn"
+    reyn_dir.mkdir()
+    monkeypatch.chdir(tmp_path)
+    _write(tmp_path / "pipelines", "broken.yaml", "pipeline: broken\nsteps: not-a-list\n")
+    _write(tmp_path / "pipelines", "hello.yaml", _HELLO_DSL)
+
+    registry = build_pipeline_registry(
+        _entries(("broken", "pipelines/broken.yaml"), ("hello", "pipelines/hello.yaml")),
+        tmp_path,
+    )
+
+    assert set(registry.names()) == {"hello"}
+    events = _read_events_of_kind(reyn_dir / "events", "pipeline_load_failed")
+    [event] = events  # exactly one failure captured — unpack raises otherwise
+    assert event["data"]["key"] == "broken"
+
+
+def test_loader_duplicate_declared_name_first_wins_second_skipped(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Tier 2: two entries declaring the SAME ``pipeline:`` name (via distinct
-    files that both name themselves after their own key) surface the
-    registry's re-registration guard as a loud load error, never a silent
-    last-wins overwrite. Constructed via two distinct on-disk copies of the
-    same DSL, each entry-keyed to its own file's declared name — the collision
-    is forced by writing a THIRD entry that repeats an already-used key path
-    is not representable (entries is a dict = unique keys), so the realistic
-    collision path is two entries whose files coincidentally declare the same
-    name under two different keys."""
+    files that both name themselves after their own key) — the FIRST entry
+    (dict iteration = declaration order) wins the registration; the second
+    entry is logged + durably captured and skipped, never a silent
+    last-wins overwrite and never fatal to the whole load."""
+    reyn_dir = tmp_path / ".reyn"
+    reyn_dir.mkdir()
+    monkeypatch.chdir(tmp_path)
     _write(tmp_path / "pipelines", "a.yaml", _HELLO_DSL)  # declares "hello"
     _write(tmp_path / "pipelines", "b.yaml", _HELLO_DSL)  # also declares "hello"
 
-    with pytest.raises(PipelineLoadError) as exc:
-        build_pipeline_registry(
-            {
-                "entries": {
-                    "hello": {"path": "pipelines/a.yaml"},
-                    "hello-again": {"path": "pipelines/b.yaml"},
-                }
-            },
-            tmp_path,
-        )
+    registry = build_pipeline_registry(
+        {
+            "entries": {
+                "hello": {"path": "pipelines/a.yaml"},
+                "hello-again": {"path": "pipelines/b.yaml"},
+            }
+        },
+        tmp_path,
+    )
 
-    assert "hello" in str(exc.value)
+    assert set(registry.names()) == {"hello"}
+    events = _read_events_of_kind(reyn_dir / "events", "pipeline_load_failed")
+    [event] = events
+    assert event["data"]["key"] == "hello-again"
+    assert "hello" in event["data"]["error"]
 
 
 def test_loader_empty_config_yields_empty_registry(tmp_path: Path) -> None:
@@ -233,17 +306,27 @@ def test_loader_disabled_entry_is_not_registered(tmp_path: Path) -> None:
     assert registry.names() == ()
 
 
-def test_loader_missing_file_fails_loudly(tmp_path: Path) -> None:
-    """Tier 2: an entry whose ``path`` does not exist on disk fails loud with
-    the path — never a silent skip (an operator typo in ``path:`` must surface,
-    not vanish the pipeline silently)."""
-    with pytest.raises(PipelineLoadError) as exc:
-        build_pipeline_registry(
-            {"entries": {"hello": {"path": "pipelines/does_not_exist.yaml"}}},
-            tmp_path,
-        )
+def test_loader_missing_file_is_skipped_and_durably_logged(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Tier 2: an entry whose ``path`` does not exist on disk is skipped, but
+    never a SILENT skip (an operator typo in ``path:`` must surface via the
+    warning log + durable event, not vanish the pipeline with zero trace) —
+    and it does not crash ``build_pipeline_registry`` itself."""
+    reyn_dir = tmp_path / ".reyn"
+    reyn_dir.mkdir()
+    monkeypatch.chdir(tmp_path)
 
-    assert "does_not_exist.yaml" in str(exc.value)
+    registry = build_pipeline_registry(
+        {"entries": {"hello": {"path": "pipelines/does_not_exist.yaml"}}},
+        tmp_path,
+    )
+
+    assert registry.names() == ()
+    events = _read_events_of_kind(reyn_dir / "events", "pipeline_load_failed")
+    [event] = events
+    assert event["data"]["key"] == "hello"
+    assert "does_not_exist.yaml" in event["data"]["error"]
 
 
 # ── 3. Wiring: from_config build-once + Session adoption ──────────────────────
