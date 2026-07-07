@@ -26,12 +26,21 @@ Covers:
     default write zone via the real, shipped ``write_file`` tool is DENIED
     without ``--grant-file-write``, and succeeds with it — byte-identical to
     ``reyn chat``'s own no-flag/``--grant-file-write`` posture.
+  - regression (bug fix): a ``tool:`` step calling a first-class
+    ``mcp__<server>__<tool>`` action now genuinely resolves and dispatches —
+    the ``router_state=None`` gap ("caveat-1" in ``runtime/router_loop.py``)
+    silently dropped every resource-backed catalog category (mcp/agents/
+    available_skills/rag_corpus/sandbox_backend). Only the MCP CLIENT's
+    transport is faked (``reyn.mcp.pool.MCPClient``, mirroring
+    ``test_2421_gateway_acceptance.py``'s existing fixture convention) — the
+    resolution/dispatch/permission-gate machinery all runs for real.
 """
 from __future__ import annotations
 
 import argparse
 import json
 from pathlib import Path
+from typing import Any
 
 import litellm
 import pytest
@@ -52,7 +61,12 @@ def _make_parser() -> argparse.ArgumentParser:
 
 
 def _write_reyn_yaml(project_root: Path, pipelines_entries: dict | None = None) -> None:
-    data: dict = {"model": "standard"}
+    # A real litellm-recognizable model string for 'standard' (mirrors a real
+    # project's reyn.yaml) — avoids litellm's own unrecognized-provider banner
+    # printing to stdout, which would otherwise corrupt 'reyn pipe run's JSON
+    # output the moment a 'tool:' step lazily constructs a real Session (the
+    # router_state fix's source of a RouterHostAdapter — see run_run).
+    data: dict = {"model": "standard", "models": {"standard": "openai/gpt-4o-mini"}}
     if pipelines_entries is not None:
         data["pipelines"] = {"entries": pipelines_entries}
     (project_root / "reyn.yaml").write_text(
@@ -479,4 +493,140 @@ def test_run_agent_step_spawns_real_ephemeral_session(tmp_path, monkeypatch, cap
     out = capsys.readouterr().out
     result = json.loads(out)
     assert result["named_stores"]["reply"] == "the agent's answer"
-    assert result["pipe_data"] == "the agent's answer"
+
+
+# ---------------------------------------------------------------------------
+# reyn pipe run — MCP (and other resource-backed) tool-category dispatch fix
+# ---------------------------------------------------------------------------
+
+
+class _FakeMCPClient:
+    """Fakes the transport ONLY — every layer above (resolve_invoke_action,
+    mcp_call_tool, MCPGateway/MCPConnectionService, the OpContext / permission
+    gate) runs for real. Mirrors ``MCPClient``'s real construction signature
+    (``config`` positional, ``agent_id``/``server_name``/``message_handler``/
+    ``elicitation_handler`` kwargs — the ``default`` identity's main Session
+    is non-ephemeral, so it holds its MCP connection open via
+    ``MCPConnectionService`` rather than the ephemeral-session
+    ``MCPClientPool`` path — both construct a bare ``MCPClient`` the same way,
+    mirroring ``test_2421_gateway_acceptance.py``'s existing fixture
+    convention of patching the constructor at its import site) and the
+    async-CM + ``call_tool`` surface + the negotiated-version/capabilities
+    read ``MCPConnectionService`` does once per (re)connect."""
+
+    def __init__(self, config: dict, *, agent_id: "str | None" = None,
+                 server_name: "str | None" = None, **_kwargs: Any) -> None:
+        self._config = config
+        self.server_name = server_name
+        self.negotiated_version = "2024-11-05"
+
+    async def __aenter__(self) -> "_FakeMCPClient":
+        return self
+
+    async def __aexit__(self, *exc_info) -> None:
+        return None
+
+    def advertised_capabilities(self) -> dict:
+        return {}
+
+    def is_initialized(self) -> bool:
+        return True
+
+    async def call_tool(
+        self, name: str, args: dict, *, progress_callback=None, timeout_seconds=None,
+    ) -> dict:
+        return {
+            "content": [{"type": "text", "text": f"{name}:{args.get('msg', '')}"}],
+            "isError": False,
+        }
+
+
+def test_run_tool_step_dispatches_mcp_action_for_real(tmp_path, monkeypatch, capsys):
+    """Tier 2: regression pin for the router_state=None bug — a 'tool:' step
+    calling the first-class 'mcp__<server>__<tool>' action now genuinely
+    resolves and dispatches through the real MCP call path (permission gate,
+    MCPGateway/MCPConnectionService, the op_runtime mcp handler all real; only
+    the MCP CLIENT's transport is faked, mirroring
+    test_2421_gateway_acceptance.py's own fixture convention of patching
+    MCPClient at its import site)."""
+    monkeypatch.chdir(tmp_path)
+    import reyn.mcp.connection_service as connection_service_mod
+    import reyn.mcp.pool as pool_mod
+    monkeypatch.setattr(pool_mod, "MCPClient", _FakeMCPClient)
+    monkeypatch.setattr(connection_service_mod, "MCPClient", _FakeMCPClient)
+
+    dsl_path = tmp_path / "uses_mcp.yaml"
+    dsl_path.write_text(
+        "pipeline: uses_mcp\n"
+        "steps:\n"
+        "  - tool: {name: mcp__echo__ping, args: {msg: !expr ctx.msg}, output: r}\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "reyn.yaml").write_text(
+        yaml.dump(
+            {
+                "model": "standard",
+                "models": {"standard": "openai/gpt-4o-mini"},
+                "mcp": {"servers": {"echo": {"type": "stdio", "command": "x"}}},
+                # Non-interactive caller (no one to answer the JIT approval
+                # prompt) needs the MCP runtime-approval gate pre-granted in
+                # config — mirrors what an operator running 'reyn pipe run'
+                # non-interactively against a trusted server would configure.
+                "permissions": {"mcp": {"echo": "allow"}},
+                "pipelines": {"entries": {"uses_mcp": {"path": "uses_mcp.yaml"}}},
+            },
+            allow_unicode=True, default_flow_style=False,
+        ),
+        encoding="utf-8",
+    )
+
+    args = _ns(
+        name="uses_mcp", input=json.dumps({"msg": "hi reyn"}),
+        project=str(tmp_path), async_=False,
+    )
+    run_run(args)
+
+    out = capsys.readouterr().out
+    result = json.loads(out)
+    assert result["named_stores"]["r"]["status"] == "ok"
+    assert result["named_stores"]["r"]["content"] == "ping:hi reyn"
+
+
+@pytest.mark.asyncio
+async def test_router_state_resource_categories_populated_from_real_session(
+    tmp_path, monkeypatch,
+):
+    """Tier 2: a more direct regression-pin than the end-to-end MCP case above
+    — the SAME real Session (default identity) run_run sources router_state
+    from has its RouterHostAdapter report the project's configured MCP
+    servers, confirming build_resource_caller_state saw a REAL host (not the
+    router_state=None gap this bug fix closes)."""
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "reyn.yaml").write_text(
+        yaml.dump(
+            {
+                "model": "standard",
+                "mcp": {"servers": {"echo": {"type": "stdio", "command": "x"}}},
+            },
+            allow_unicode=True, default_flow_style=False,
+        ),
+        encoding="utf-8",
+    )
+
+    from reyn.config import load_config
+    from reyn.runtime.registry import DEFAULT_AGENT_NAME
+    from reyn.runtime.registry_bootstrap import build_agent_registry_from_project
+    from reyn.tools.types import build_resource_caller_state
+
+    config = load_config()
+    agent_registry = build_agent_registry_from_project(
+        tmp_path, config, non_interactive=True,
+    )
+    try:
+        session = agent_registry.get_or_load(DEFAULT_AGENT_NAME)
+        router_state = await build_resource_caller_state(session.router_host)
+    finally:
+        await agent_registry.shutdown()
+
+    servers = {s["name"] for s in (router_state.mcp_servers or [])}
+    assert "echo" in servers

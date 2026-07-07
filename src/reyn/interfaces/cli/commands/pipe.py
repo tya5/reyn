@@ -47,6 +47,18 @@ blanket-granted (see ``_build_run_tool_context``'s docstring). This matters
 because a pipeline may be installed from an untrusted source (``reyn pipe
 install --source``) — it must not silently gain broad file/network access
 merely by being RUN.
+
+Bug fix (was: ``router_state=None`` unconditionally): a bare ``ToolContext``
+with no ``router_state`` silently drops every resource-backed universal-
+catalog category — ``mcp``, ``agents``, ``available_skills``, ``rag_corpus``,
+``sandbox_backend`` (documented as "caveat-1" in ``runtime/router_loop.py``'s
+``UniversalCategoryScheme.catalog_entries``) — so a ``tool:`` step calling
+``mcp__<server>__<tool>`` could never resolve. ``run_run`` now builds
+``router_state`` via ``reyn.tools.types.build_resource_caller_state``, fed
+the ``default`` identity's own Session's ``RouterHostAdapter`` (every real
+``Session`` builds one unconditionally in ``__init__``, live chat loop or
+not) — the exact same machinery the async pipeline driver-session's tool-step
+dispatch already uses (``runtime/services/pipeline_executor_driver.py``).
 """
 from __future__ import annotations
 
@@ -443,7 +455,9 @@ def run_install(args: argparse.Namespace) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _build_run_tool_context(project_root: Path, *, grant_file_write: bool = False):
+def _build_run_tool_context(
+    project_root: Path, router_state: "Any | None", *, grant_file_write: bool = False,
+):
     """Build a real, standalone ``ToolContext`` for ``reyn pipe run``'s
     ``tool:`` step dispatch — routed through the SAME seam a live agent
     session's ``ToolStep`` uses (``_make_tool_dispatch`` /
@@ -476,11 +490,16 @@ def _build_run_tool_context(project_root: Path, *, grant_file_write: bool = Fals
         caller (including the non-interactive pipeline driver-session,
         ``services/pipeline_executor_driver.py``) already sets this same
         literal.
-      - ``router_state=None``: no live router/host context exists standalone.
-        A tool handler that specifically needs ``ctx.router_state`` (e.g.
-        ``run_pipeline``'s own tool, structurally denied inside a pipeline
-        step anyway — R6 S3) raises its own clear "no router context"
-        error — an honest, narrow limitation, not a silent gap.
+      - ``router_state``: the caller-supplied ``RouterCallerState`` (built via
+        ``reyn.tools.types.build_resource_caller_state`` from a real Session's
+        ``RouterHostAdapter`` — see ``run_run``) so ``mcp``/``agents``/
+        ``available_skills``/``rag_corpus``/``sandbox_backend`` catalog
+        categories resolve exactly like a live ``reyn chat`` turn's. A tool
+        handler that specifically needs loop-local fields this state does NOT
+        carry (chain_id, budget, dispatch callbacks — e.g. ``run_pipeline``'s
+        own tool, structurally denied inside a pipeline step anyway — R6 S3)
+        raises its own clear error — an honest, narrow limitation, not a
+        silent gap.
       - ``resolver``/``hot_reloader``/``state_log``: ``None`` — each is
         documented (``tools/types.py``) to gracefully degrade when absent.
     """
@@ -516,7 +535,7 @@ def _build_run_tool_context(project_root: Path, *, grant_file_write: bool = Fals
         permission_resolver=perm_resolver,
         workspace=workspace,
         caller_kind="router",
-        router_state=None,
+        router_state=router_state,
         resolver=None,
         hot_reloader=None,
         state_log=None,
@@ -553,13 +572,19 @@ def run_run(args: argparse.Namespace) -> None:
     (:func:`_build_run_tool_context`); an ``agent:`` step spawns a real
     ephemeral session under the ``default`` agent identity via a real,
     standalone ``AgentRegistry`` (``registry_bootstrap.
-    build_agent_registry_from_project``). The one remaining narrow gap: a
-    ``tool:`` step that specifically needs ``ctx.router_state`` (e.g. a
-    hand-authored tool reading ``router_state.pipeline_registry`` directly)
-    still fails — with that tool's own clear error — since no live router
-    context exists standalone; nothing in the shipped tool catalog needs
-    ``router_state`` outside of ``run_pipeline`` itself, which is already
-    structurally denied inside a pipeline step (R6 S3, nesting is call-only).
+    build_agent_registry_from_project``).
+
+    ``router_state`` (fixed — was a hardcoded ``None`` landmine, see
+    ``runtime/router_loop.py``'s "caveat-1" comment): the resource-backed
+    catalog categories (``mcp``, ``agents``, ``available_skills``,
+    ``rag_corpus``, ``sandbox_backend``) are populated via
+    ``reyn.tools.types.build_resource_caller_state``, fed the ``default``
+    identity's own ``RouterHostAdapter`` (``AgentRegistry.get_or_load(
+    DEFAULT_AGENT_NAME).router_host`` — every real ``Session`` builds one
+    unconditionally in ``__init__``). This is the SAME machinery the async
+    pipeline driver-session's tool-step dispatch already uses
+    (``runtime/services/pipeline_executor_driver.py::_make_dispatch``) —
+    not a new mechanism, just reused for this standalone caller too.
     """
     from reyn.core.pipeline.executor import PipelineExecutionError, PipelineExecutor
     from reyn.core.pipeline.registry import PipelineNotFoundError
@@ -567,6 +592,7 @@ def run_run(args: argparse.Namespace) -> None:
     from reyn.runtime.registry import DEFAULT_AGENT_NAME
     from reyn.runtime.registry_bootstrap import build_agent_registry_from_project
     from reyn.tools.pipeline_verbs import _make_tool_dispatch
+    from reyn.tools.types import build_resource_caller_state
 
     if getattr(args, "async_", False):
         print(
@@ -622,11 +648,12 @@ def run_run(args: argparse.Namespace) -> None:
         sys.exit(1)
 
     grant_file_write = bool(getattr(args, "grant_file_write", False))
-    tool_ctx = _build_run_tool_context(project_root, grant_file_write=grant_file_write)
-    tool_dispatch = _make_tool_dispatch(tool_ctx)
     # A real, standalone AgentRegistry (registry_bootstrap) so an
     # AgentStep can genuinely spawn+run an ephemeral session — see the module
-    # docstring for the corrected tool:/agent: scope decision.
+    # docstring for the corrected tool:/agent: scope decision. It also doubles
+    # as the source of a real Session (the `default` identity's own) whose
+    # RouterHostAdapter feeds the tool-step ToolContext's router_state below —
+    # every real Session builds one unconditionally, live chat session or not.
     agent_registry = build_agent_registry_from_project(
         project_root, config, non_interactive=True, grant_file_write=grant_file_write,
     )
@@ -636,6 +663,38 @@ def run_run(args: argparse.Namespace) -> None:
 
     async def _run() -> Any:
         try:
+            # A pipeline that never reaches a 'tool:' step should not pay the
+            # cost of constructing a real Session (LLM client / resolver
+            # setup) just to source a router_state nobody will read — so the
+            # `default` identity's Session (and the #2567 build_resource_
+            # caller_state call it feeds) is resolved LAZILY, on the FIRST
+            # actual tool dispatch, not unconditionally up front.
+            _router_state_cache: "dict[str, Any]" = {}
+
+            async def _resolve_router_state() -> Any:
+                if "state" not in _router_state_cache:
+                    # #2567's pattern, reused: build the host-derived
+                    # RouterCallerState subset from a real Session's
+                    # RouterHostAdapter, so mcp/agents/available_skills/
+                    # rag_corpus/sandbox_backend resolve exactly like a live
+                    # router turn's — NOT the hardcoded router_state=None gap
+                    # documented as "caveat-1" in runtime/router_loop.py.
+                    source_session = agent_registry.get_or_load(DEFAULT_AGENT_NAME)
+                    _router_state_cache["state"] = await build_resource_caller_state(
+                        source_session.router_host,
+                    )
+                return _router_state_cache["state"]
+
+            tool_ctx = _build_run_tool_context(
+                project_root, None, grant_file_write=grant_file_write,
+            )
+            base_dispatch = _make_tool_dispatch(tool_ctx)
+
+            async def tool_dispatch(tool_name: str, resolved_args: dict) -> Any:
+                if tool_ctx.router_state is None:
+                    tool_ctx.router_state = await _resolve_router_state()
+                return await base_dispatch(tool_name, resolved_args)
+
             return await executor.run(
                 pipeline,
                 seed_ctx or None,
