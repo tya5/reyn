@@ -11,9 +11,17 @@ Covers:
     asserts ``.reyn/config/pipelines.yaml`` gets the correct entry.
   - ``reyn pipe run NAME``: a real registered transform-only pipeline
     executed end-to-end via ``run_run``, asserting the printed JSON result.
-  - the clear-error path for a pipeline reaching a ``tool:`` step (scoped out
-    of v1 standalone execution) — asserts a clean ``SystemExit(1)`` with an
-    actionable message, never a crash or silent no-op.
+  - ``reyn pipe run`` on a pipeline reaching a ``tool:`` step: real dispatch
+    through a real, standalone ``ToolContext`` (a real side-effect-free test
+    tool registered into the real ``ToolRegistry``, mirroring the IS-4
+    inline-pipeline tests' ``_install_write_tool`` idiom) — no more blanket
+    refusal.
+  - ``reyn pipe run`` on a pipeline reaching an ``agent:`` step: a real
+    ``AgentRegistry``/``Session``/``MessageBus`` ephemeral spawn under the
+    ``default`` identity, with ONLY the LLM completion call faked (the
+    documented ``litellm.acompletion`` replay seam — see
+    ``test_llm_request_event_1669.py``), asserting the pipeline's final
+    output reflects the (faked) LLM reply.
 """
 from __future__ import annotations
 
@@ -21,6 +29,7 @@ import argparse
 import json
 from pathlib import Path
 
+import litellm
 import pytest
 import yaml
 
@@ -275,25 +284,120 @@ def test_run_unregistered_pipeline_is_clean_error(tmp_path, monkeypatch, capsys)
     assert "not registered" in err.lower()
 
 
-def test_run_tool_step_is_refused_with_clear_error_not_a_crash(tmp_path, monkeypatch, capsys):
-    """Tier 2: a pipeline reaching a 'tool:' step is refused BEFORE anything
-    runs, with a clear, actionable message pointing at a live agent session —
-    never a silent no-op, never a confusing mid-run crash."""
+def _install_echo_tool(monkeypatch) -> None:
+    """Register a REAL, side-effect-free test tool into the real
+    ``ToolRegistry`` — mirrors ``test_pipeline_is4_inline.py``'s
+    ``_install_write_tool`` idiom (a genuinely-dispatched real tool, not a
+    caller-supplied fake ``tool_dispatch``)."""
+    import reyn.tools as tools_pkg
+    from reyn.tools.types import ToolDefinition, ToolGates
+
+    async def _handler(args, ctx):
+        return {"content": str(args.get("text", "")).upper()}
+
+    tool = ToolDefinition(
+        name="cli_pipe_echo",
+        description="Test tool: uppercases 'text' (no side effect).",
+        parameters={"type": "object", "properties": {}},
+        gates=ToolGates(router="allow", phase="allow"),
+        handler=_handler,
+        category="io",
+        purity="pure",
+    )
+    base = tools_pkg.get_default_registry
+
+    def _with_tool():
+        registry = base()
+        registry.register(tool)
+        return registry
+
+    monkeypatch.setattr(tools_pkg, "get_default_registry", _with_tool)
+
+
+def test_run_tool_step_dispatches_for_real(tmp_path, monkeypatch, capsys):
+    """Tier 2: a pipeline reaching a 'tool:' step now dispatches for REAL
+    through a standalone ToolContext — the corrected scope decision (was:
+    a blanket refusal)."""
     monkeypatch.chdir(tmp_path)
+    _install_echo_tool(monkeypatch)
 
     dsl_path = tmp_path / "uses_tool.yaml"
     dsl_path.write_text(
         "pipeline: uses_tool\n"
         "steps:\n"
-        "  - tool: {name: search, args: {query: \"reyn\"}, output: hits}\n",
+        "  - tool: {name: cli_pipe_echo, args: {text: !expr ctx.msg}, output: shout}\n",
         encoding="utf-8",
     )
     _write_reyn_yaml(tmp_path, {"uses_tool": {"path": "uses_tool.yaml"}})
 
-    args = _ns(name="uses_tool", input="{}", project=str(tmp_path), async_=False)
-    with pytest.raises(SystemExit) as exc_info:
-        run_run(args)
-    assert exc_info.value.code == 1
-    err = capsys.readouterr().err
-    assert "tool:" in err
-    assert "does not yet support" in err.lower() or "live agent session" in err.lower()
+    args = _ns(
+        name="uses_tool", input=json.dumps({"msg": "hi reyn"}),
+        project=str(tmp_path), async_=False,
+    )
+    run_run(args)
+
+    out = capsys.readouterr().out
+    result = json.loads(out)
+    assert result["named_stores"]["shout"] == {"content": "HI REYN"}
+    assert result["pipe_data"] == {"content": "HI REYN"}
+
+
+def _fake_scripted_acompletion(content: str):
+    """Real async fake for litellm.acompletion (the documented replay seam —
+    see test_llm_request_event_1669.py) — a fixed plain-text reply, no tool
+    calls, regardless of the actual prompt/messages sent."""
+
+    async def _acompletion(*_args, **_kwargs):
+        return litellm.ModelResponse(
+            choices=[{
+                "index": 0,
+                "message": {"role": "assistant", "content": content},
+                "finish_reason": "stop",
+            }],
+            usage={"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
+            model="openai/gemini-2.5-flash-lite",
+        )
+
+    return _acompletion
+
+
+def test_run_agent_step_spawns_real_ephemeral_session(tmp_path, monkeypatch, capsys):
+    """Tier 2: a pipeline reaching an 'agent:' step genuinely spawns an
+    ephemeral session (real AgentRegistry/Session/MessageBus) under the
+    'default' identity and runs it to completion — ONLY the LLM completion
+    call is faked (litellm.acompletion, the documented replay seam), so the
+    pipeline's final output is the (faked) LLM reply threaded through R3."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        litellm, "acompletion", _fake_scripted_acompletion("the agent's answer"),
+    )
+
+    dsl_path = tmp_path / "uses_agent.yaml"
+    dsl_path.write_text(
+        "pipeline: uses_agent\n"
+        "steps:\n"
+        "  - agent: {prompt: 'please answer', output: reply}\n",
+        encoding="utf-8",
+    )
+    # A real litellm-recognizable model string for 'standard' (mirrors a real
+    # project's reyn.yaml) — avoids litellm's own unrecognized-provider
+    # banner, which is orthogonal to what this test exercises.
+    (tmp_path / "reyn.yaml").write_text(
+        yaml.dump(
+            {
+                "model": "standard",
+                "models": {"standard": "openai/gpt-4o-mini"},
+                "pipelines": {"entries": {"uses_agent": {"path": "uses_agent.yaml"}}},
+            },
+            allow_unicode=True, default_flow_style=False,
+        ),
+        encoding="utf-8",
+    )
+
+    args = _ns(name="uses_agent", input="{}", project=str(tmp_path), async_=False)
+    run_run(args)
+
+    out = capsys.readouterr().out
+    result = json.loads(out)
+    assert result["named_stores"]["reply"] == "the agent's answer"
+    assert result["pipe_data"] == "the agent's answer"

@@ -246,12 +246,11 @@ def _setup_interactive_logging(project_root: Path) -> None:
 
 def run(args: argparse.Namespace) -> None:
     from reyn.config import _find_project_root, load_project_context
-    from reyn.core.events.state_log import StateLog
     from reyn.interfaces.repl.repl import run_repl
-    from reyn.runtime.budget.budget import BudgetTracker
     from reyn.runtime.factory_config import SessionFactoryConfig
     from reyn.runtime.profile import AgentProfile
     from reyn.runtime.registry import DEFAULT_AGENT_NAME, AgentRegistry
+    from reyn.runtime.registry_bootstrap import build_budget_tracker, build_state_log
     from reyn.runtime.scoped_session_factory import build_scoped_chat_session
     from reyn.security.permissions.permissions import PermissionResolver
 
@@ -302,19 +301,19 @@ def run(args: argparse.Namespace) -> None:
         print("State reset. Starting with empty session.", file=sys.stderr)
 
     # PR21: process-shared WAL for crash recovery. Owned by AgentRegistry,
-    # injected into each Session at construction.
-    state_log = StateLog(project_root / ".reyn" / "state" / "wal.jsonl")
+    # injected into each Session at construction. Extracted to
+    # registry_bootstrap.build_state_log (byte-identical) so reyn pipe run's
+    # AgentRegistry construction can't silently drift from this one.
+    state_log = build_state_log(project_root)
     # PR22: process-shared budget tracker. Defaults to all unlimited unless
-    # `cost:` is configured.
-    budget_tracker = BudgetTracker(session_cfg.config.cost)
-    # PR25: hydrate daily / monthly counters from the persistent ledger.
-    budget_tracker.hydrate(project_root / ".reyn" / "state" / "budget_ledger.jsonl")
-    # R-D8: restore in-memory counters (per-agent / per-sub-agent) from
-    # the state snapshot written by the previous run. Together with PR25
-    # ledger hydration, this makes cap enforcement survive crash + restart.
-    budget_state_path = project_root / ".reyn" / "state" / "budget_state.json"
-    budget_tracker.load_state(budget_state_path)
-    budget_tracker.set_state_path(budget_state_path)
+    # `cost:` is configured. PR25: hydrated from the persistent ledger.
+    # R-D8: in-memory counters (per-agent / per-sub-agent) restored from the
+    # state snapshot written by the previous run — together with PR25 ledger
+    # hydration, cap enforcement survives crash + restart across the
+    # session's multi-turn lifetime. Extracted to
+    # registry_bootstrap.build_budget_tracker (byte-identical, hydrate=True
+    # is the default — same as before).
+    budget_tracker = build_budget_tracker(session_cfg.config.cost, project_root)
     perm_config = getattr(session_cfg.config, "permissions", {}) or {}
     # #187: --grant-file-write grants file.read/write at the resolver layer
     # (mirrors `reyn run` run.py:126 + the eval swe_bench path
