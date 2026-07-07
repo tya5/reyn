@@ -8,11 +8,14 @@ the DSL's EXISTING general mechanism for "evaluate something against the
 current ctx/pipe/item/acc context": R1 expressions — the same ones
 `transform.value`/`agent.prompt`/`match.on` already use.
 
-Every `pass:` list entry is now a single-key mapping `{NAME: EXPR}` — `EXPR`
-is an R1 expression source evaluated against the CALLER's full current
-context (`ctx`/`pipe`/`item`/`acc`, whatever is in scope) at call time, and
-the result is bound to `NAME` in the callee's isolated `ctx`. There is no
-bare-NAME shorthand: every entry states its own expression explicitly.
+`pass:` is a flat mapping `{NAME: EXPR, ...}` — `EXPR` is an R1 expression
+source evaluated against the CALLER's full current context (`ctx`/`pipe`/
+`item`/`acc`, whatever is in scope) at call time, and the result is bound to
+`NAME` in the callee's isolated `ctx`. There is no bare-NAME shorthand: every
+entry states its own expression explicitly. Each NAME has no
+ordering-dependent semantics (unlike `steps:`, a genuine sequence), so the
+mapping is a single flat `{NAME: EXPR}` dict rather than a list of
+single-key wrappers.
 
 Real `parse_pipeline_dsl` + `PipelineExecutor` + `PipelineRegistry` throughout
 (mirrors the `parse_json` end-to-end style in `test_pipeline_executor_r3_r4.py`)
@@ -28,14 +31,14 @@ from reyn.core.pipeline.executor import (
     PipelineExecutor,
     TransformStep,
 )
-from reyn.core.pipeline.parser import parse_pipeline_dsl
+from reyn.core.pipeline.parser import PipelineParseError, parse_pipeline_dsl
 from reyn.core.pipeline.registry import PipelineRegistry
 from reyn.core.pipeline.schema import SchemaRegistry
 
 
 @pytest.mark.asyncio
 async def test_for_each_do_call_pass_current_item_forwards_the_loop_variable():
-    """Tier 2: a `for_each`'s `do: {call: ..., pass: [{current: item}]}`
+    """Tier 2: a `for_each`'s `do: {call: ..., pass: {current: item}}`
     forwards the loop item into the callee under the explicit name `current`
     — `ctx.current` resolves inside the sub-pipeline, the original owner ask
     (an `agent` step's `{item}` in the same position already worked; `call`'s
@@ -56,7 +59,7 @@ steps:
         call:
           pipeline: echo_current
           pass:
-            - current: item
+            current: item
       collect:
         transform:
           value: pipe
@@ -77,7 +80,7 @@ steps:
 
 @pytest.mark.asyncio
 async def test_fold_do_call_pass_running_forwards_the_accumulator():
-    """Tier 2: a `fold`'s `do: {call: ..., pass: [{running: acc}]}` forwards
+    """Tier 2: a `fold`'s `do: {call: ..., pass: {running: acc}}` forwards
     the running ACCUMULATOR under the explicit name `running`."""
     registry = PipelineRegistry()
     registry.register(
@@ -95,7 +98,7 @@ steps:
         call:
           pipeline: bump_running
           pass:
-            - running: acc
+            running: acc
       output: total
 """
     pipeline = parse_pipeline_dsl(dsl, SchemaRegistry())
@@ -116,7 +119,7 @@ steps:
 @pytest.mark.asyncio
 async def test_pass_entry_is_a_genuine_computed_expression_not_just_an_alias():
     """Tier 2: a `pass:` entry's value is a FULL R1 expression, not merely a
-    rename — `pass: [{doubled: "item * 2"}]` computes a value the old
+    rename — `pass: {doubled: "item * 2"}` computes a value the old
     bare-NAME mechanism could never produce (it could only forward a NAME
     verbatim). This is the actual payoff of reusing the expression
     evaluator instead of a bespoke name-lookup mechanism."""
@@ -136,7 +139,7 @@ steps:
         call:
           pipeline: echo_doubled
           pass:
-            - doubled: "item * 2"
+            doubled: "item * 2"
       collect:
         transform:
           value: pipe
@@ -173,7 +176,7 @@ steps:
   - call:
       pipeline: leaky
       pass:
-        - x: ctx.nonexistent
+        x: ctx.nonexistent
 """
     pipeline = parse_pipeline_dsl(dsl, SchemaRegistry())
     with pytest.raises(PipelineExecutionError, match="x"):
@@ -215,11 +218,11 @@ steps:
             loud:
               pipeline: shout_loud
               pass:
-                - label: "'shout-' + item"
+                label: "'shout-' + item"
             quiet:
               pipeline: whisper_quiet
               pass:
-                - label: "'whisper-' + item"
+                label: "'whisper-' + item"
       collect:
         transform:
           value: pipe
@@ -236,3 +239,33 @@ steps:
     )
 
     assert result.named_stores["results"] == ["shout-Hi", "shout-Yo"]
+
+
+def test_pass_as_a_list_of_single_key_mappings_is_a_parse_error():
+    """Tier 1: `pass:` must be a flat `{NAME: EXPR}` mapping — the superseded
+    list-of-single-key-mappings surface (`pass: [{name: expr}]`) is now
+    rejected at PARSE time with a clear error, not silently accepted."""
+    dsl = """
+pipeline: outer
+steps:
+  - call:
+      pipeline: leaky
+      pass:
+        - x: ctx.nonexistent
+"""
+    with pytest.raises(PipelineParseError, match="pass"):
+        parse_pipeline_dsl(dsl, SchemaRegistry())
+
+
+def test_pass_as_a_bare_string_is_a_parse_error():
+    """Tier 1: a non-mapping `pass:` (e.g. a bare string) is a clear parse
+    error, not a runtime surprise."""
+    dsl = """
+pipeline: outer
+steps:
+  - call:
+      pipeline: leaky
+      pass: "not a mapping"
+"""
+    with pytest.raises(PipelineParseError, match="pass"):
+        parse_pipeline_dsl(dsl, SchemaRegistry())

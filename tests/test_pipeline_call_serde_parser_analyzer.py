@@ -47,15 +47,15 @@ def test_call_serde_round_trip_non_default_values():
 
 def test_call_parses_from_dsl():
     """Tier 1: the DSL ``call`` step parses to a ``CallStep`` (moved out of the
-    not-yet-supported set) with ``pass``/``output`` honored — every ``pass:``
-    entry is the explicit ``{NAME: EXPR}`` mapping form."""
+    not-yet-supported set) with ``pass``/``output`` honored — ``pass:`` is a
+    flat ``{NAME: EXPR}`` mapping."""
     text = """
 pipeline: outer
 steps:
   - call:
       pipeline: inner
       pass:
-        - brief: ctx.brief
+        brief: ctx.brief
       output: summary
 """
     parsed = parse_pipeline_dsl(text, SchemaRegistry())
@@ -67,7 +67,7 @@ steps:
 def test_call_dsl_requires_literal_pipeline_name():
     """Tier 1: an empty/missing ``pipeline`` name is a parse error (Hard rule 2 —
     the target is a static literal, and it must be present)."""
-    missing = "pipeline: o\nsteps:\n  - call:\n      pass:\n        - x: ctx.x\n"
+    missing = "pipeline: o\nsteps:\n  - call:\n      pass:\n        x: ctx.x\n"
     with pytest.raises(PipelineParseError):
         parse_pipeline_dsl(missing, SchemaRegistry())
 

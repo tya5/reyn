@@ -486,7 +486,7 @@ steps:
 pipeline: outer
 description: calls inner
 steps:
-  - call: {pipeline: inner, pass: [{seed: ctx.seed}], output: called}
+  - call: {pipeline: inner, pass: {seed: ctx.seed}, output: called}
   - transform: {value: "ctx.called + '-outer'", output: final}
 """
     _write(tmp_path / "pipelines", "inner.yaml", callee_dsl)
