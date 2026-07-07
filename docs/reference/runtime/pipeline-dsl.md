@@ -114,18 +114,18 @@ steps:
         call:
           pipeline: interrogate
           pass:
-            - suspect: item
+            suspect: item
       collect: {transform: {value: "pipe"}}
       output: verdicts
 ```
 
 Here `interrogate` (a registered sub-pipeline) reads the current suspect as
-`ctx.suspect` — `pass: [{suspect: item}]` evaluated the bare-path expression
+`ctx.suspect` — `pass: {suspect: item}` evaluated the bare-path expression
 `item` against the `for_each` scope's context (which carries `item`
 alongside `ctx`/`pipe`) and bound the result to `suspect` in the callee's
 `ctx`. `fold` works the same way, and its `do`-scope additionally carries
-`acc` (the running accumulator), reachable the same way: `pass: [{running:
-acc}]`.
+`acc` (the running accumulator), reachable the same way: `pass: {running:
+acc}`.
 
 ### `pipeline:` document keys
 
@@ -191,15 +191,14 @@ AgentBody     ::= "{" "prompt:" TPL
                       ["output:" NAME] "}"
 
 CallBody      ::= "{" "pipeline:" NAME            (* static literal, never EXPR *)
-                      ["pass:" "[" PassEntry* "]"]
+                      ["pass:" "{" (NAME ":" EXPR)* "}"]
                       ["output:" NAME] "}"
-PassEntry     ::= "{" NAME ":" EXPR "}"           (* single-key mapping — no bare-NAME form *)
 
 MatchBody     ::= "{" "on:" EXPR
                       "cases:" "{" (LABEL ":" MatchTarget)+ "}"
                       ["default:" MatchTarget]
                       ["output:" NAME] "}"
-MatchTarget   ::= "{" "pipeline:" NAME ["pass:" "[" PassEntry* "]"] "}"
+MatchTarget   ::= "{" "pipeline:" NAME ["pass:" "{" (NAME ":" EXPR)* "}"] "}"
 
 FoldBody      ::= "{" [ListSource]
                       "init:" EXPR
@@ -374,15 +373,15 @@ its final output out as this step's result.
 - call:
     pipeline: validate_doc
     pass:
-      - doc: ctx.doc
-      - rules: ctx.rules
+      doc: ctx.doc
+      rules: ctx.rules
     output: validation
 ```
 
 | Key | Required | Meaning |
 |-----|----------|---------|
 | `pipeline` | yes | A static literal pipeline name — never a runtime expression. An unregistered target fails the step. |
-| `pass` | no | List of `{NAME: EXPR}` mappings. The callee's context is built **fresh** from only these bindings — a `NAME` not bound by any entry is structurally invisible to the callee. Each entry's `EXPR` is an R1 expression evaluated against the caller's current context (`ctx`/`pipe`/`item`/`acc` — whatever is in scope, exactly like `transform.value`), and the result is bound to `NAME` in the callee's `ctx` (see [Data flow between steps](#data-flow-between-steps)). A failing expression fails the step, naming the entry. |
+| `pass` | no | A flat `{NAME: EXPR}` mapping. The callee's context is built **fresh** from only these bindings — a `NAME` not bound by any entry is structurally invisible to the callee. Each entry's `EXPR` is an R1 expression evaluated against the caller's current context (`ctx`/`pipe`/`item`/`acc` — whatever is in scope, exactly like `transform.value`), and the result is bound to `NAME` in the callee's `ctx` (see [Data flow between steps](#data-flow-between-steps)). A failing expression fails the step, naming the entry. |
 | `output` | no | Named store to write the callee's final result to. |
 
 The callee's first step receives the caller's pipe data at the call site; the
@@ -398,8 +397,8 @@ runs that case's target exactly like a `call` step.
 - match:
     on: "ctx.review.passed"
     cases:
-      "True": {pipeline: report_pass, pass: [{review: ctx.review}]}
-      "False": {pipeline: report_fail, pass: [{review: ctx.review}]}
+      "True": {pipeline: report_pass, pass: {review: ctx.review}}
+      "False": {pipeline: report_fail, pass: {review: ctx.review}}
     default: {pipeline: report_unknown}
     output: report
 ```
@@ -407,7 +406,7 @@ runs that case's target exactly like a `call` step.
 | Key | Required | Meaning |
 |-----|----------|---------|
 | `on` | yes | An R1 expression evaluated against the current context; its stringified result selects a case label. |
-| `cases` | yes | Non-empty mapping of `LABEL: {pipeline, pass?}` — each target a static literal name, exactly like `call` (same `pass:` NAME -> R1-EXPRESSION mapping). |
+| `cases` | yes | Non-empty mapping of `LABEL: {pipeline, pass?}` — each target a static literal name, exactly like `call` (same `pass:` flat NAME -> R1-EXPRESSION mapping). |
 | `default` | no | `{pipeline, pass?}` run when no case label matches. A step with no matching case and no `default` fails. |
 | `output` | no | Named store to write the selected callee's result to. |
 
@@ -446,7 +445,7 @@ on the accumulated state of the ones before it, so there is nothing to
 collect independently.
 
 `item`/`acc` are reachable beyond `do`'s own step: a `do: {call: {pipeline:
-X, pass: [{current: item}]}}` (or `pass: [{running: acc}]`) forwards the
+X, pass: {current: item}}}` (or `pass: {running: acc}`) forwards the
 current element (or the running accumulator) into a `call`/`match`
 sub-pipeline, the same way an `agent` `do`'s `{item}`/`{acc}` prompt
 reference already could.
@@ -484,7 +483,7 @@ like `fold`. There is no `item`-level `acc` (that is `fold`-only) — an item
 cannot see any other item's result.
 
 `item` is reachable beyond `do`'s own step the same way `fold`'s `item`/`acc`
-are: `do: {call: {pipeline: X, pass: [{current: item}]}}` forwards the
+are: `do: {call: {pipeline: X, pass: {current: item}}}` forwards the
 current element into a `call`/`match` sub-pipeline used as `do:`.
 
 ### `parallel` — heterogeneous named-branch fan-out
@@ -742,7 +741,7 @@ Step          ::= "transform:" "{" "value:" EXPR ["output:" NAME] "}"
                  | "agent:"    "{" "prompt:" TPL ["identity:" NAME]
                                     ["capabilities:" "{" "tools:" "[" NAME* "]" "}"]
                                     ["schema:" NAME] ["output:" NAME] "}"
-                 | "call:"     "{" "pipeline:" NAME ["pass:" "[" PassEntry* "]"] ["output:" NAME] "}"
+                 | "call:"     "{" "pipeline:" NAME ["pass:" "{" (NAME ":" EXPR)* "}"] ["output:" NAME] "}"
                  | "match:"    "{" "on:" EXPR "cases:" "{" (LABEL ":" MatchTarget)+ "}"
                                     ["default:" MatchTarget] ["output:" NAME] "}"
                  | "fold:"     "{" [ListSource] "init:" EXPR "do:" Step "output:" NAME
@@ -752,8 +751,7 @@ Step          ::= "transform:" "{" "value:" EXPR ["output:" NAME] "}"
                  | "parallel:" "{" ["on_error:" OnError] "branches:" "{" (NAME ":" Step)+ "}"
                                     "collect:" Step ["output:" NAME] "}"
 
-MatchTarget   ::= "{" "pipeline:" NAME ["pass:" "[" PassEntry* "]"] "}"
-PassEntry     ::= "{" NAME ":" EXPR "}"           (* single-key mapping — no bare-NAME form *)
+MatchTarget   ::= "{" "pipeline:" NAME ["pass:" "{" (NAME ":" EXPR)* "}"] "}"
 ArgMap        ::= "{" (KEY ":" ArgValue ("," KEY ":" ArgValue)*)? "}"
 ArgValue      ::= LITERAL | "!expr" EXPR
 ListSource    ::= "over:" EXPR | "items:" "[" LITERAL* "]"

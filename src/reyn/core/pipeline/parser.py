@@ -242,28 +242,27 @@ def _resolve_arg_value(value: Any, *, where: str) -> Any:
 
 
 def _parse_pass_entries(raw_pass: Any, *, where: str) -> "list[tuple[str, str]]":
-    """Normalize a ``pass:`` list into ``list[(callee_name, expr_source)]`` at
-    PARSE time. Every entry MUST be a single-key mapping ``{NAME: EXPR}`` —
+    """Normalize a ``pass:`` mapping into ``list[(callee_name, expr_source)]``
+    at PARSE time. ``pass:`` MUST be a flat mapping ``{NAME: EXPR, ...}`` —
     ``EXPR`` is an R1 expression SOURCE (validated by ``expr.parse`` here,
     exactly like ``transform.value``), evaluated at call time against the
     caller's full context (``ctx``/``pipe``/``item``/``acc``, whatever is in
     scope — the same context ``transform.value`` evaluates against) and
     bound to ``NAME`` in the callee's ``ctx``. There is no bare-``NAME``
     shorthand: every entry states its own expression explicitly, so a
-    ``pass:`` list is self-evident by construction — no hidden
-    "bare name means ctx.NAME" convention to memorize."""
-    if not isinstance(raw_pass, list):
-        _fail(f"{where}: expected a list of {{NAME: EXPR}} mappings, got {raw_pass!r}")
+    ``pass:`` mapping is self-evident by construction — no hidden
+    "bare name means ctx.NAME" convention to memorize. Each NAME has no
+    ordering-dependent semantics (unlike ``steps:``, a genuine sequence), so
+    the mapping keys — not a list of single-key wrappers — are the natural
+    surface form; Python dicts preserve insertion order, so the returned
+    list still preserves declaration order for anything downstream that
+    cares (e.g. deterministic error messages)."""
+    if not isinstance(raw_pass, dict):
+        _fail(f"{where}: expected a {{NAME: EXPR}} mapping, got {raw_pass!r}")
     entries: "list[tuple[str, str]]" = []
-    for entry in raw_pass:
-        if not isinstance(entry, dict) or len(entry) != 1:
-            _fail(
-                f"{where}: expected each entry to be a single-key {{NAME: EXPR}} "
-                f"mapping, got {entry!r}"
-            )
-        ((name, expr_src),) = entry.items()
+    for name, expr_src in raw_pass.items():
         if not isinstance(name, str) or not name:
-            _fail(f"{where}: entry {entry!r} key must be a non-empty store-name string")
+            _fail(f"{where}: key {name!r} must be a non-empty store-name string")
         entries.append((name, _validate_expr_source(expr_src, where=f"{where} entry {name!r}")))
     return entries
 
@@ -381,9 +380,9 @@ def _parse_agent_step(body: "dict[str, Any]") -> AgentStep:
 
 
 def _parse_call_step(body: "dict[str, Any]") -> CallStep:
-    """``call = {pipeline: LIT, pass: [{NAME: EXPR}*], output: NAME}`` (Appendix
+    """``call = {pipeline: LIT, pass: {NAME: EXPR}*, output: NAME}`` (Appendix
     B, R7, redesigned). ``pipeline`` is a STATIC literal name (Hard rule 2 —
-    never an expression); ``pass`` is a NAME -> R1-EXPRESSION mapping list —
+    never an expression); ``pass`` is a flat NAME -> R1-EXPRESSION mapping —
     each entry's ``EXPR`` is evaluated against the caller's current context
     (exactly like ``transform.value``) and bound to ``NAME`` in the callee's
     isolated ``ctx``; ``output`` binds the callee's final result to a caller
@@ -397,7 +396,7 @@ def _parse_call_step(body: "dict[str, Any]") -> CallStep:
             f"call step 'pipeline': expected a non-empty literal pipeline name, "
             f"got {name!r}"
         )
-    pass_entries = _parse_pass_entries(body.get("pass") or [], where="call step 'pass'")
+    pass_entries = _parse_pass_entries(body.get("pass") or {}, where="call step 'pass'")
     output = body.get("output")
     if output is not None and not isinstance(output, str):
         _fail(f"call step 'output': expected a store-name string, got {type(output).__name__}")
@@ -405,8 +404,8 @@ def _parse_call_step(body: "dict[str, Any]") -> CallStep:
 
 
 def _parse_match_case(body: Any, *, where: str) -> MatchCase:
-    """A ``match`` case/``default`` body: ``{pipeline: LIT, pass: [{NAME:
-    EXPR}*]}`` — the SAME shape (and Hard-rule-2 static-literal-target rule)
+    """A ``match`` case/``default`` body: ``{pipeline: LIT, pass: {NAME:
+    EXPR}*}`` — the SAME shape (and Hard-rule-2 static-literal-target rule)
     as a ``call`` step's own ``{pipeline, pass}``, just nested under a case
     LABEL / the ``default`` key instead of being the step body itself."""
     if not isinstance(body, dict):
@@ -417,13 +416,13 @@ def _parse_match_case(body: Any, *, where: str) -> MatchCase:
     name = body["pipeline"]
     if not isinstance(name, str) or not name:
         _fail(f"{where} 'pipeline': expected a non-empty literal pipeline name, got {name!r}")
-    pass_entries = _parse_pass_entries(body.get("pass") or [], where=f"{where} 'pass'")
+    pass_entries = _parse_pass_entries(body.get("pass") or {}, where=f"{where} 'pass'")
     return MatchCase(pipeline=name, pass_=pass_entries)
 
 
 def _parse_match_step(body: "dict[str, Any]") -> MatchStep:
-    """``match = {on: PATH, cases: {LABEL: {pipeline: LIT, pass: [{NAME:
-    EXPR}*]}}+, default?: {pipeline: LIT, pass: [{NAME: EXPR}*]}, output?:
+    """``match = {on: PATH, cases: {LABEL: {pipeline: LIT, pass: {NAME:
+    EXPR}*}}+, default?: {pipeline: LIT, pass: {NAME: EXPR}*}, output?:
     NAME}`` (Appendix B, redesigned). ``on`` is an R1 expression source (same
     as ``transform.value``) whose
     RUNTIME VALUE selects a case LABEL by string equality — every case/

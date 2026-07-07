@@ -85,7 +85,7 @@ steps:
         cat:
           pipeline: on-cat
           pass:
-            - brief: ctx.brief
+            brief: ctx.brief
         dog:
           pipeline: on-dog
       default:
@@ -119,7 +119,7 @@ def test_match_dsl_case_requires_literal_pipeline_name():
     error (Hard rule 2 — every case target is a static literal)."""
     text = (
         "pipeline: o\nsteps:\n  - match:\n      on: ctx.kind\n      "
-        "cases:\n        a:\n          pass:\n            - x: ctx.x\n"
+        "cases:\n        a:\n          pass:\n            x: ctx.x\n"
     )
     with pytest.raises(PipelineParseError):
         parse_pipeline_dsl(text, SchemaRegistry())

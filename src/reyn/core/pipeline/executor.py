@@ -185,7 +185,7 @@ class CallStep:
     """A COMPOSITIONAL step (R7 — the first non-linear primitive): synchronously
     run a REGISTERED sub-pipeline and thread ITS final output out as this step's
     N2 return value (Appendix B, redesigned: ``call = {pipeline: LIT, pass:
-    [{NAME: EXPR}*], output: NAME}``).
+    {NAME: EXPR}*, output: NAME}``).
 
     - ``pipeline`` is a STATIC literal name (Hard rule 2 — never a runtime
       expression), resolved through the run's ``PipelineRegistry`` at execution.
@@ -193,12 +193,12 @@ class CallStep:
     - ``pass_`` (wire/DSL key ``pass`` — the Python field can't be the ``pass``
       keyword) is the ONLY channel by which the caller's scope reaches the
       callee: it is a ``list[(callee_name, expr_source)]`` NAME -> R1-EXPRESSION
-      mapping (normalized from the DSL's ``{NAME: EXPR}`` entries at parse
+      mapping (normalized from the DSL's flat ``{NAME: EXPR}`` mapping at parse
       time — no bare-NAME shorthand, every entry states its own expression
       explicitly). Each ``expr_source`` is evaluated via :func:`evaluate_expr`
       against the CALLER's full current context — ``ctx``/``pipe``/``item``/
       ``acc``, whatever is in scope (the SAME context ``transform.value``
-      evaluates against, so ``pass: [{current: item}]`` reaches a
+      evaluates against, so ``pass: {current: item}`` reaches a
       ``for_each``/``fold`` loop variable exactly like an ``agent`` step's
       ``{item}`` prompt already could) — and the result is bound to
       ``callee_name`` in the callee's FRESH, isolated ``ctx``: the callee
@@ -241,8 +241,8 @@ class MatchStep:
     select the :class:`MatchCase` whose LABEL string-equals that value —
     ``default`` runs when no case LABEL matches, and a step with no matching
     case and no ``default`` fails cleanly (Appendix B, redesigned: ``match =
-    {on: PATH, cases: {LABEL: {pipeline: LIT, pass: [{NAME: EXPR}*]}}+,
-    default?: {pipeline: LIT, pass: [{NAME: EXPR}*]}, output?: NAME}``).
+    {on: PATH, cases: {LABEL: {pipeline: LIT, pass: {NAME: EXPR}*}}+,
+    default?: {pipeline: LIT, pass: {NAME: EXPR}*}, output?: NAME}``).
 
     - Hard rule 2: every case/``default`` target is a STATIC literal pipeline
       name — the runtime VALUE only ever selects a LABEL, never a target.
@@ -300,8 +300,8 @@ class FoldStep:
       ``{item}``/``{acc}`` — the SAME ``Path``/``{...}`` resolution
       ``ctx.NAME``/``pipe`` already use, just against two more top-level keys.
       A ``do: {call: ...}`` / ``do: {match: ...}`` reaches the SAME two
-      bindings via an explicit ``pass:`` entry — e.g. ``pass: [{current:
-      item}]`` / ``pass: [{running: acc}]`` — evaluated against this ``do``'s
+      bindings via an explicit ``pass:`` entry — e.g. ``pass: {current:
+      item}`` / ``pass: {running: acc}`` — evaluated against this ``do``'s
       full context the same way ``transform.value`` would be, so ``item``/
       ``acc`` are forwardable into a sub-pipeline (under whatever name the
       entry chooses), not just readable from an ``agent`` prompt in the same
@@ -361,7 +361,7 @@ class ForEachStep:
       (that is ``fold``-only) and NO sibling visibility — an item cannot see any
       other item's result (writes happen only in ``collect``, Hard rule 6). A
       ``do: {call: ...}`` / ``do: {match: ...}`` reaches ``item`` via an
-      explicit ``pass:`` entry, e.g. ``pass: [{current: item}]`` (evaluated
+      explicit ``pass:`` entry, e.g. ``pass: {current: item}`` (evaluated
       against this ``do``'s full context the same way ``transform.value``
       would be), forwarding the loop item into a sub-pipeline the same way an
       ``agent`` step's ``{item}`` prompt already could.
