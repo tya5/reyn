@@ -125,3 +125,41 @@ run_pipeline(name="review", input={reviewers: ["reviewer_a", "reviewer_b"], doc:
 各レビュアーは隔離された並行 `agent` ステップとして実行され(最大 4 並行、失敗時は 1 回リトライ)、全員の結果が揃うと、R1 の `all()` コンビネータで `all_passed` という 1 つの boolean に畳み込まれます — これは bare な `reviews` ではなく、`for_each` ステップの `output` が書き込んだ永続的な named store である `ctx.reviews` から読みます — そして `match` がそれに応じて `report_pass` または `report_fail` の sub-pipeline にルーティングします(どちらも別途登録が必要です。単一ファイルで完結させたい場合は、素の `transform`/`tool` ステップに置き換えてください)。
 
 この 2 つ目の pipeline も、手順 2 と同様に独自の `pipelines.entries` 宣言(または `pipeline_management__install_local` 呼び出し)が必要です — エージェントがそれを起動できるようになる前に。
+
+## 5. CLI から直接 pipeline を管理・実行する
+
+ここまでは、すべてチャットセッション内のエージェントのツール呼び出しを通じて行われていました。`reyn pipe` は、list / install / run という同じ 3 つのことを、ライブセッションなしで pipeline を管理・実行したい場合のために、直接の CLI コマンドとして提供します:
+
+```console
+$ reyn pipe list
+No pipelines configured.
+Add one with: reyn pipe install --path <file.yaml>  or edit reyn.yaml manually.
+
+$ reyn pipe install --path pipelines/greet.yaml --non-interactive
+Installing pipeline from path: pipelines/greet.yaml
+
+Pipeline 'greet' installed successfully.
+Config written to: .reyn/config/pipelines.yaml
+...
+
+$ reyn pipe list
+NAME   PATH                      DESCRIPTION                  ENABLED  LOAD STATUS
+────────────────────────────────────────────────────────────────────────────────
+greet  pipelines/greet.yaml      Greet a name and shout it    yes      loaded
+
+$ reyn pipe run greet --input '{"name": "Reyn"}'
+{
+  "pipe_data": "Hello, Reyn! (shouted)",
+  "named_stores": {
+    "name": "Reyn",
+    "greeting": "Hello, Reyn!",
+    "shouted": "Hello, Reyn! (shouted)"
+  }
+}
+```
+
+`reyn pipe install` は `--source <git/GitHub URL>` (`reyn mcp install` と同じ `//subdir` 記法) と、インストールする pipeline の identity を事前に明示する `--name` も受け付けます — DSL 自身が宣言する `pipeline:` 名と食い違う場合は、両者を静かに乖離させるのではなく、明確なエラーで拒否されます。
+
+`reyn pipe list` の **LOAD STATUS** 列は、ログを掘らずに壊れたエントリを直接見る手段です: `enabled: true` なのにパースに失敗したエントリ(DSL の不備、ファイル欠如、宣言名の重複)は、どこにも現れず静かに消えるのではなく、その場で `FAILED` と表示されます。
+
+`reyn pipe run` は pipeline を **CLI プロセス自身の中で単独実行**します — `agent` ステップをアタッチできるライブなエージェントセッションも、`tool` ステップをディスパッチするための router / tool-catalog コンテキストも存在しません。`transform` / `call` / `match` / `fold` / `for_each` / `parallel` ステップだけで構成された pipeline はエンドツーエンドで実行されますが、(直接、または `call`/`match` のターゲット経由で) `tool:` や `agent:` ステップに到達する pipeline は、静かに何もしない・実行途中でわかりにくくクラッシュするのではなく、実行前に明確なメッセージとともに拒否されます — そのような pipeline はライブなエージェントセッション(`run_pipeline`)から実行してください。また `reyn pipe run` の呼び出しにはクラッシュリカバリもありません: これは one-shot のフォアグラウンドコマンドなので、途中で kill/中断された実行は、他の CLI ツールと同様、単に失敗したコマンドであり、再開可能な driver-session ではありません。
