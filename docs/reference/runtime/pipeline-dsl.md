@@ -85,11 +85,41 @@ invariants](#formal-grammar) below for the normative statement):
   of the outer `ctx` taken at branch-start — a write inside a branch never
   leaks back to the outer scope or to a sibling branch.
 - A `call`/`match` callee's `ctx` is built **only** from the names listed in
-  `pass:` — a caller's named store not listed there is invisible to the
-  callee, `ctx` shortcut or not.
+  `pass:` — a name not listed there is invisible to the callee, `ctx`
+  shortcut or not. Each listed name resolves against the caller's named
+  stores (`ctx`) **first**; if the `call`/`match` step itself sits inside a
+  `for_each`/`fold`'s `do:` and the name isn't a named store, it falls back
+  to that scope's own `item`/`acc` binding (`ctx` wins on a name collision —
+  see the `for_each`/`fold` sections below and [Data flow between
+  steps](#data-flow-between-steps) for a worked example). A name in neither
+  place fails the step.
 - `fold`'s `do` and `for_each`'s `do` add extra top-level keys to their own
   context (`item`/`acc` for `fold`, `item` for `for_each`) alongside `ctx`
   and `pipe` — see their own sections below.
+
+**Forwarding a loop variable into a sub-pipeline.** `item`/`acc` are
+top-level context keys, not named stores — so an `agent` step's `{item}`
+prompt reads them directly, but a `call`/`match` step used as `do:` needs
+`pass:` to name them explicitly (`pass:`'s first lookup is `ctx`; `item`/
+`acc` are the fallback):
+
+```yaml
+pipeline: outer
+steps:
+  - for_each:
+      over: ctx.suspects
+      on_error: abort
+      do:
+        call: {pipeline: interrogate, pass: [item]}
+      collect: {transform: {value: "pipe"}}
+      output: verdicts
+```
+
+Here `interrogate` (a registered sub-pipeline) reads the current suspect as
+`ctx.item` — `pass: [item]` resolved it from the `for_each` scope's `item`
+binding, since no named store called `item` exists to shadow it. `fold`
+works the same way, and additionally supports `pass: [acc]` for the running
+accumulator.
 
 ### `pipeline:` document keys
 
@@ -339,7 +369,7 @@ its final output out as this step's result.
 | Key | Required | Meaning |
 |-----|----------|---------|
 | `pipeline` | yes | A static literal pipeline name — never a runtime expression. An unregistered target fails the step. |
-| `pass` | no | List of this pipeline's named-store names to expose to the callee. The callee's context is built **fresh** from only these names — a store not listed here is structurally invisible to the callee. A name absent from the caller's stores fails the step. |
+| `pass` | no | List of names to expose to the callee. The callee's context is built **fresh** from only these names — a name not listed here is structurally invisible to the callee. Each name resolves against the caller's named stores first; if this `call` sits inside a `for_each`/`fold`'s `do:`, a name not in the named stores falls back to that scope's `item`/`acc` binding (`ctx` wins on a collision — see [Data flow between steps](#data-flow-between-steps)). A name in neither place fails the step. |
 | `output` | no | Named store to write the callee's final result to. |
 
 The callee's first step receives the caller's pipe data at the call site; the
@@ -364,7 +394,7 @@ runs that case's target exactly like a `call` step.
 | Key | Required | Meaning |
 |-----|----------|---------|
 | `on` | yes | An R1 expression evaluated against the current context; its stringified result selects a case label. |
-| `cases` | yes | Non-empty mapping of `LABEL: {pipeline, pass?}` — each target a static literal name, exactly like `call`. |
+| `cases` | yes | Non-empty mapping of `LABEL: {pipeline, pass?}` — each target a static literal name, exactly like `call` (same `pass:` resolution rule, including the `item`/`acc` fallback inside a `for_each`/`fold`'s `do:`). |
 | `default` | no | `{pipeline, pass?}` run when no case label matches. A step with no matching case and no `default` fails. |
 | `output` | no | Named store to write the selected callee's result to. |
 
@@ -402,6 +432,11 @@ fold. There is no `collect` (unlike `for_each`) — each item's result depends
 on the accumulated state of the ones before it, so there is nothing to
 collect independently.
 
+`item`/`acc` are reachable beyond `do`'s own step: a `do: {call: {pipeline:
+X, pass: [item]}}` (or `pass: [acc]`) forwards the current element (or the
+running accumulator) into a `call`/`match` sub-pipeline, the same way an
+`agent` `do`'s `{item}`/`{acc}` prompt reference already could.
+
 ### `for_each` — concurrent fan-out
 
 Runs `do` over each list item as an isolated concurrent sub-scope, then runs
@@ -433,6 +468,10 @@ writes never leak between items or back to the outer scope).
 \* `over`/`items` are mutually exclusive, falling back to incoming pipe data
 like `fold`. There is no `item`-level `acc` (that is `fold`-only) — an item
 cannot see any other item's result.
+
+`item` is reachable beyond `do`'s own step the same way `fold`'s `item`/`acc`
+are: `do: {call: {pipeline: X, pass: [item]}}` forwards the current element
+into a `call`/`match` sub-pipeline used as `do:`.
 
 ### `parallel` — heterogeneous named-branch fan-out
 
@@ -725,9 +764,13 @@ run-time step failure — never a silent wrong result):
    else is a literal, passed through untouched. Do not write `{ctx.x}`
    inside an unmarked argument expecting interpolation — that only works
    for `agent.prompt` (`TPL`), and only there.
-3. `pass:` is the only way a `call`/`match` callee sees any of the caller's
-   named stores — list every name the callee needs. An omitted name is
-   invisible to the callee, not silently inherited.
+3. `pass:` is the only way a `call`/`match` callee sees anything from the
+   caller's scope — list every name the callee needs. An omitted name is
+   invisible to the callee, not silently inherited. Each listed name
+   resolves against the caller's named stores first, falling back to that
+   scope's `item`/`acc` binding (`for_each`/`fold`'s `do:` only) when the
+   name isn't a named store — see [Data flow between
+   steps](#data-flow-between-steps).
 4. `for_each.on_error` is **required** — state `continue`/`abort`/`retry(n)`
    explicitly. `parallel.on_error` is optional and defaults to `abort`.
 5. A `for_each`/`parallel` item or branch cannot see any other item's or
