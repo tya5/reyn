@@ -22,16 +22,31 @@ a CLI invocation is one-shot/foreground/single-process, so it uses
 machinery (IS-6) — that machinery exists to let a run survive a PROCESS crash
 and resume from another turn; a CLI command that dies mid-run is just "the
 command failed", the same as any other CLI tool, with no recovery
-expectation. v1 supports pipelines built ONLY from ``transform``/``call``/
-``match``/``fold``/``for_each``/``parallel`` steps (real dispatch, real
-recursion into registered callees) — ``tool``/``agent`` steps are NOT
-dispatchable standalone (real tool dispatch needs a live ``ToolContext`` with
-a router_state / permission resolver / workspace bridge; a real ``agent``
-step needs a live ``AgentRegistry`` capable of spawning ephemeral sessions —
-both are substantially more than a CLI convenience wrapper should assemble).
-A pipeline that reaches either step kind (directly or through a ``call``/
-``match`` target) gets one clear, actionable error before anything runs —
-never a silent no-op, never a confusing crash.
+expectation.
+
+Corrected scope (was: ``tool``/``agent`` steps refused outright — see #2643's
+PR history): a pipeline ``ToolStep``'s real dispatch only needs a real
+``ToolContext`` (``reyn.tools.types.ToolContext`` — a dataclass whose
+``router_state``/``resolver``/``hot_reloader``/``state_log`` fields are
+documented to gracefully degrade to ``None``, NOT an all-or-nothing live-
+session requirement), and an ``AgentStep`` only needs a real ``AgentRegistry``
+capable of ``spawn_session_recorded(mode="ephemeral")`` + one ``MessageBus``
+turn (``reyn.runtime.session_api.run_agent_step`` — the lightweight
+ephemeral-session-spawn primitive, NOT a live chat session or router loop).
+Both are constructible standalone: ``reyn.runtime.registry_bootstrap.
+build_agent_registry_from_project`` extracts the reusable core of ``reyn
+chat``'s own ``AgentRegistry`` construction for exactly this. So ``run_run``
+now builds a real (host-backend, non-interactive) ``ToolContext`` +
+``AgentRegistry`` and wires both into the executor — a pipeline built from
+ANY step kind (``transform``/``tool``/``agent``/``call``/``match``/``fold``/
+``for_each``/``parallel``) runs standalone. Permissions are **fail-closed by
+default** (byte-identical to ``reyn chat``'s own no-flag posture) — a
+``--grant-file-write`` flag, same name/semantics as ``reyn chat``'s, opts a
+SPECIFIC invocation into file.read/file.write; ``http.get`` is never
+blanket-granted (see ``_build_run_tool_context``'s docstring). This matters
+because a pipeline may be installed from an untrusted source (``reyn pipe
+install --source``) — it must not silently gain broad file/network access
+merely by being RUN.
 """
 from __future__ import annotations
 
@@ -41,6 +56,7 @@ import json
 import sys
 import uuid
 from pathlib import Path
+from typing import Any
 
 # ---------------------------------------------------------------------------
 # Shared helpers
@@ -196,6 +212,22 @@ def register(sub) -> None:
         dest="async_",
         action="store_true",
         help=argparse.SUPPRESS,
+    )
+    # Same flag name/semantics as `reyn chat --grant-file-write` (chat.py):
+    # OFF by default (fail-closed — a pipeline installed from an untrusted
+    # source must not silently gain file.read/file.write merely by being
+    # RUN); the operator opts in per invocation to trust THIS run.
+    run_p.add_argument(
+        "--grant-file-write",
+        dest="grant_file_write",
+        action="store_true",
+        help=(
+            "Grant file.read/file.write at the resolver layer for this run, "
+            "scoped to the project root. Off by default — a tool:/agent: "
+            "step that touches the filesystem without this flag is denied, "
+            "the same fail-closed posture 'reyn chat' has without its own "
+            "--grant-file-write."
+        ),
     )
     run_p.set_defaults(func=run_run)
 
@@ -410,73 +442,85 @@ def run_install(args: argparse.Namespace) -> None:
 # run_run
 # ---------------------------------------------------------------------------
 
-# The step kinds a standalone 'reyn pipe run' can execute end-to-end (real
-# recursion through call/match/fold/for_each/parallel; real dispatch for
-# transform). 'tool' and 'agent' are NOT supported standalone — see the
-# module docstring for why.
-_UNSUPPORTED_STEP_LABELS = {"tool", "agent"}
 
+def _build_run_tool_context(project_root: Path, *, grant_file_write: bool = False):
+    """Build a real, standalone ``ToolContext`` for ``reyn pipe run``'s
+    ``tool:`` step dispatch — routed through the SAME seam a live agent
+    session's ``ToolStep`` uses (``_make_tool_dispatch`` /
+    ``resolve_invoke_action`` / the unified ``ToolRegistry``), just without a
+    live router loop behind it.
 
-def _find_unsupported_steps(pipeline, registry, *, _visited=None) -> "list[str]":
-    """Walk ``pipeline``'s steps (recursing into any ``call``/``match`` target
-    resolvable through ``registry``, and into ``fold``/``for_each``'s ``do``,
-    ``for_each``'s ``collect``, and ``parallel``'s ``branches``/``collect``)
-    and return the sorted set of unsupported step-kind labels reachable from
-    it (``"tool"`` / ``"agent"``), or ``[]`` if the whole reachable pipeline
-    is executable standalone. An unresolvable ``call``/``match`` target is
-    NOT flagged here — that surfaces as the executor's own clear
-    "not registered" error at run time instead."""
-    from reyn.core.pipeline.executor import (
-        AgentStep,
-        CallStep,
-        FoldStep,
-        ForEachStep,
-        MatchStep,
-        ParallelStep,
-        ToolStep,
+    Field-by-field:
+      - ``events``: a real ``EventLog`` (mirrors ``reyn pipe install``).
+      - ``permission_resolver``: **fail-closed by default** — ``perm_config``
+        is exactly ``reyn.yaml``'s own ``permissions:`` section, byte-
+        identical to ``reyn chat``'s own no-flag posture. ``grant_file_write``
+        (``--grant-file-write``, off by default) mirrors ``reyn chat
+        --grant-file-write`` exactly (``file.read``/``file.write`` only).
+        ``http.get`` is NEVER blanket-granted — ``reyn chat`` doesn't either
+        (it relies on ``require_http_get``'s interactive JIT prompt; a
+        non-interactive caller with no prompt to answer is correctly
+        denied, same as a non-interactive ``reyn chat``). A pipeline
+        installed from an untrusted source (``reyn pipe install --source``)
+        must not silently gain broad file/network access merely by being
+        RUN — the operator opts in per invocation.
+      - ``workspace``: a real ``reyn.data.workspace.Workspace`` anchored on
+        ``project_root`` (host backend) — a real tool handler (``read_file``,
+        ``write_file``, …) calls real methods on it (``read_file_bytes`` etc.),
+        so a synthetic ``base_dir``-only stand-in (fine for ``pipeline_install``,
+        which never dispatches an arbitrary tool) is not enough here.
+      - ``caller_kind="router"``: the type's ONLY literal value — an audit
+        taxonomy label forwarded verbatim into ``tool_called``/
+        ``tool_returned`` events (``core/dispatch/dispatcher.py``), not a
+        claim that a live router loop is driving this call. Every existing
+        caller (including the non-interactive pipeline driver-session,
+        ``services/pipeline_executor_driver.py``) already sets this same
+        literal.
+      - ``router_state=None``: no live router/host context exists standalone.
+        A tool handler that specifically needs ``ctx.router_state`` (e.g.
+        ``run_pipeline``'s own tool, structurally denied inside a pipeline
+        step anyway — R6 S3) raises its own clear "no router context"
+        error — an honest, narrow limitation, not a silent gap.
+      - ``resolver``/``hot_reloader``/``state_log``: ``None`` — each is
+        documented (``tools/types.py``) to gracefully degrade when absent.
+    """
+    from reyn.core.events.events import EventLog
+    from reyn.data.workspace import Workspace
+    from reyn.security.permissions.permissions import PermissionResolver
+    from reyn.tools.types import ToolContext
+
+    perm_config: dict = {}
+    try:
+        from reyn.config import load_config
+        perm_config = dict(getattr(load_config(), "permissions", {}) or {})
+    except Exception:
+        perm_config = {}
+    if grant_file_write:
+        perm_config.setdefault("file.read", "allow")
+        perm_config.setdefault("file.write", "allow")
+    perm_resolver = PermissionResolver(
+        config_permissions=perm_config,
+        project_root=project_root,
+        file_zone_root=project_root,
+        interactive=False,
     )
-    from reyn.core.pipeline.registry import PipelineNotFoundError
-
-    if _visited is None:
-        _visited = set()
-    found: "set[str]" = set()
-
-    def _walk_callee(callee_name: str) -> None:
-        if callee_name in _visited:
-            return
-        _visited.add(callee_name)
-        try:
-            callee = registry.get(callee_name)
-        except PipelineNotFoundError:
-            return
-        for s in callee.steps:
-            _walk_step(s)
-
-    def _walk_step(step) -> None:
-        if isinstance(step, ToolStep):
-            found.add("tool")
-        elif isinstance(step, AgentStep):
-            found.add("agent")
-        elif isinstance(step, CallStep):
-            _walk_callee(step.pipeline)
-        elif isinstance(step, MatchStep):
-            for case in step.cases.values():
-                _walk_callee(case.pipeline)
-            if step.default is not None:
-                _walk_callee(step.default.pipeline)
-        elif isinstance(step, FoldStep):
-            _walk_step(step.do)
-        elif isinstance(step, ForEachStep):
-            _walk_step(step.do)
-            _walk_step(step.collect)
-        elif isinstance(step, ParallelStep):
-            for branch in step.branches.values():
-                _walk_step(branch)
-            _walk_step(step.collect)
-
-    for top_step in pipeline.steps:
-        _walk_step(top_step)
-    return sorted(found)
+    events = EventLog()
+    workspace = Workspace(
+        events=events,
+        permission_resolver=perm_resolver,
+        actor="pipeline_run_cli",
+        base_dir=project_root,
+    )
+    return ToolContext(
+        events=events,
+        permission_resolver=perm_resolver,
+        workspace=workspace,
+        caller_kind="router",
+        router_state=None,
+        resolver=None,
+        hot_reloader=None,
+        state_log=None,
+    )
 
 
 def run_run(args: argparse.Namespace) -> None:
@@ -502,16 +546,27 @@ def run_run(args: argparse.Namespace) -> None:
     param) — the FIRST step's ``ctx.*`` sees these keys, exactly like
     ``run_pipeline``'s ``input`` argument.
 
-    Scope: only pipelines reachable through ``transform``/``call``/``match``/
-    ``fold``/``for_each``/``parallel`` steps run standalone. A pipeline
-    containing (or reaching, through a ``call``/``match`` target) a
-    ``tool``/``agent`` step is refused BEFORE anything runs, with a clear
-    message pointing at running it from a live agent session instead — never
-    a silent no-op, never a confusing crash mid-run.
+    Scope: every step kind (``transform``/``tool``/``agent``/``call``/
+    ``match``/``fold``/``for_each``/``parallel``) runs standalone — see the
+    module docstring for the corrected ``tool:``/``agent:`` scope decision.
+    A ``tool:`` step dispatches through a real, standalone ``ToolContext``
+    (:func:`_build_run_tool_context`); an ``agent:`` step spawns a real
+    ephemeral session under the ``default`` agent identity via a real,
+    standalone ``AgentRegistry`` (``registry_bootstrap.
+    build_agent_registry_from_project``). The one remaining narrow gap: a
+    ``tool:`` step that specifically needs ``ctx.router_state`` (e.g. a
+    hand-authored tool reading ``router_state.pipeline_registry`` directly)
+    still fails — with that tool's own clear error — since no live router
+    context exists standalone; nothing in the shipped tool catalog needs
+    ``router_state`` outside of ``run_pipeline`` itself, which is already
+    structurally denied inside a pipeline step (R6 S3, nesting is call-only).
     """
     from reyn.core.pipeline.executor import PipelineExecutionError, PipelineExecutor
     from reyn.core.pipeline.registry import PipelineNotFoundError
     from reyn.data.pipelines.registry import build_pipeline_registry
+    from reyn.runtime.registry import DEFAULT_AGENT_NAME
+    from reyn.runtime.registry_bootstrap import build_agent_registry_from_project
+    from reyn.tools.pipeline_verbs import _make_tool_dispatch
 
     if getattr(args, "async_", False):
         print(
@@ -566,43 +621,40 @@ def run_run(args: argparse.Namespace) -> None:
         )
         sys.exit(1)
 
-    unsupported = _find_unsupported_steps(pipeline, pipeline_registry)
-    if unsupported:
-        labels = "/".join(f"{k}:" for k in unsupported)
-        print(
-            f"error: pipeline '{name}' contains a {labels} step (directly or "
-            "via a call/match target) — 'reyn pipe run' does not yet support "
-            "tool:/agent: steps standalone. Run this pipeline from a live "
-            "agent session instead (the 'run_pipeline' tool).",
-            file=sys.stderr,
-        )
-        sys.exit(1)
-
-    def _tool_dispatch(tool_name: str, _resolved_args: dict):
-        # Defensive only: _find_unsupported_steps already refused any
-        # pipeline reaching a ToolStep before we got here.
-        raise PipelineExecutionError(
-            f"tool step {tool_name!r} cannot be dispatched standalone by "
-            "'reyn pipe run' — run this pipeline from a live agent session "
-            "instead."
-        )
+    grant_file_write = bool(getattr(args, "grant_file_write", False))
+    tool_ctx = _build_run_tool_context(project_root, grant_file_write=grant_file_write)
+    tool_dispatch = _make_tool_dispatch(tool_ctx)
+    # A real, standalone AgentRegistry (registry_bootstrap) so an
+    # AgentStep can genuinely spawn+run an ephemeral session — see the module
+    # docstring for the corrected tool:/agent: scope decision.
+    agent_registry = build_agent_registry_from_project(
+        project_root, config, non_interactive=True, grant_file_write=grant_file_write,
+    )
 
     run_id = f"cli-{uuid.uuid4().hex}"
     executor = PipelineExecutor()
-    try:
-        result = asyncio.run(
-            executor.run(
+
+    async def _run() -> Any:
+        try:
+            return await executor.run(
                 pipeline,
                 seed_ctx or None,
-                tool_dispatch=_tool_dispatch,
+                tool_dispatch=tool_dispatch,
                 state_log=None,
                 run_id=run_id,
                 schema_registry=schema_registry,
-                registry=None,
-                default_identity=None,
+                registry=agent_registry,
+                default_identity=DEFAULT_AGENT_NAME,
                 pipeline_registry=pipeline_registry,
             )
-        )
+        finally:
+            try:
+                await agent_registry.shutdown()
+            except Exception:  # noqa: BLE001 — best-effort teardown only
+                pass
+
+    try:
+        result = asyncio.run(_run())
     except PipelineExecutionError as exc:
         print(f"error: pipeline '{name}' failed: {exc}", file=sys.stderr)
         sys.exit(1)

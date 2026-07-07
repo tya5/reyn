@@ -240,13 +240,14 @@ failed to parse (bad DSL, missing file, a duplicate declared name) shows
 `FAILED` right there, instead of just silently not appearing anywhere.
 
 `reyn pipe run` executes the pipeline **standalone, in the CLI process
-itself** — there is no live agent session to attach an `agent` step to, and
-no router/tool-catalog context to dispatch a `tool` step through. It runs
-pipelines built from `transform` / `call` / `match` / `fold` / `for_each` /
-`parallel` steps end-to-end; a pipeline that reaches a `tool:` or `agent:`
-step (directly, or through a `call`/`match` target) is refused up front with
-a clear message, rather than silently doing nothing or crashing mid-run —
-run that pipeline from a live agent session (`run_pipeline`) instead. There
-is also no crash-recovery for a `reyn pipe run` invocation: it is a one-shot
-foreground command, so a killed/interrupted run is simply a failed command,
-the same as any other CLI tool — not a resumable driver-session.
+itself** — every step kind runs, including `tool:` and `agent:`. A `tool:`
+step dispatches through a real, standalone tool-execution context (the same
+routing a live session's tool step uses); an `agent:` step spawns a real,
+short-lived ("ephemeral") session under the `default` agent and runs it to
+completion, the same as a chat session's `agent:` step would. There is no
+live chat REPL and no `--docker`/`--sandbox-backend` container option behind
+`reyn pipe run` (host filesystem/exec only) — a pipeline that needs those
+should run from `reyn chat`/`reyn run` instead. There is also no
+crash-recovery for a `reyn pipe run` invocation: it is a one-shot foreground
+command, so a killed/interrupted run is simply a failed command, the same as
+any other CLI tool — not a resumable driver-session.
